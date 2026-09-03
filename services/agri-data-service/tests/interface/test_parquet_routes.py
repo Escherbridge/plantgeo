@@ -20,11 +20,22 @@ from sanic import Sanic
 from agri_data_service import app as app_module
 from agri_data_service.interface.http import parquet_routes
 from agri_data_service.parquet_ops import faults
+from agri_data_service.parquet_ops.availability_coverage import SnapshotForwardAvailability
 from agri_data_service.parquet_ops.coverage import CensusLane
 from agri_data_service.parquet_ops.request_params import ReadScope
+from agri_data_service.parquet_ops.snapshot_products import SnapshotCoverageCensus
 from agri_data_service.parquet_ops.wire import DayNotWritten
+from agri_data_service.pipeline.direct.climate.products import CLIMATE_DIRECT_WRITER_START_DAY
+from agri_data_service.pipeline.parquet.availability_index import AvailabilityUnavailableError
 from tests.contract.wire_contract import WIRE_BASE_PATH, WIRE_ROUTES, WireCoverage, WireWindow
 from tests.parquet_ops.fakes import FakeListing, FakeRowReader, instant
+from tests.parquet_ops.test_availability_coverage import (
+    DROUGHT_LANE,
+    SIGNAL_LANE,
+    ExplodingListing,
+    ScriptedReader,
+    whole_ladder,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -163,6 +174,35 @@ async def test_an_allowlisted_snapshot_day_uses_exact_day_dispatch(
 
 
 @pytest.mark.asyncio
+async def test_a_snapshot_layer_s_forward_day_is_routed_to_the_live_lane(
+    warehouse: tuple[FakeListing, FakeRowReader],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The predicate is DAY-aware. A layer-only test sent a day the direct writer owns to a frozen manifest.
+
+    `climate-field-air-temperature-mean` is closed below `CLIMATE_DIRECT_WRITER_START_DAY` and live at
+    and above it, so the same layer answers one day from each path.
+    """
+    listing, reader = warehouse
+    forward_day = CLIMATE_DIRECT_WRITER_START_DAY
+    layer = "climate-field-air-temperature-mean"
+    part = listing.write_day(layer, "observed", 13, forward_day)
+    reader.rows_by_key[part] = ({"cell_id": "4127", "normalized_value": 21.4},)
+
+    async def refuse_snapshot(*, scope: object, day: date) -> dict[str, object]:
+        raise AssertionError(f"{scope} {day} belongs to the live lane and must never reach the snapshot path")
+
+    monkeypatch.setattr(parquet_routes, "_run_snapshot_day", refuse_snapshot)
+    response = await parquet_routes.read_day(request_with(layer=layer, zoom="13", day=forward_day.isoformat()))
+
+    assert response.status == HTTP_OK
+    body = payload_of(response)
+    assert body["state"] == "published"
+    assert body["served_day"] == forward_day.isoformat()
+    assert body["rows"] == [{"cell_id": "4127", "normalized_value": 21.4}]
+
+
+@pytest.mark.asyncio
 async def test_every_absent_state_is_still_an_http_200(warehouse: tuple[FakeListing, FakeRowReader]) -> None:
     """A 404 here would turn 'nothing was ingested' and 'the service is down' into the same answer."""
     listing, _ = warehouse
@@ -271,6 +311,130 @@ async def test_the_coverage_route_answers_the_whole_warehouse_with_no_viewport(
     assert by_zoom[13].earliest_day == "2026-08-01"
     assert [(span.from_, span.to) for span in by_zoom[13].published_ranges] == [("2026-08-01", "2026-08-01")]
     assert all(by_zoom[tier].earliest_day is None for tier in (0, 5, 9))
+
+
+#: The one refusal the transitional mode is allowed to answer from a listing: no pointer object.
+_AVAILABILITY_MISSING = AvailabilityUnavailableError("availability_missing", "no pointer has been published")
+
+
+class _EmptySnapshotCoverage:
+    """A snapshot census that answers nothing, so a direct-lane test is only about direct lanes."""
+
+    def __init__(self) -> None:
+        self.policies: list[str] = []
+        self.forward_ports: list[object] = []
+
+    def get(
+        self,
+        store: object,
+        *,
+        now: datetime,
+        policy: str = "census_until_bootstrap",
+        forward_availability: object = None,
+    ) -> SnapshotCoverageCensus:
+        """Return an empty immutable-product census, recording what authority it was asked under."""
+        del store, now
+        self.policies.append(policy)
+        self.forward_ports.append(forward_availability)
+        return SnapshotCoverageCensus(lanes=(), withheld=())
+
+
+def _direct_lane_coverage(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    authority: str,
+    reader: ScriptedReader,
+    lanes: tuple[CensusLane, ...],
+    listing: object,
+) -> _EmptySnapshotCoverage:
+    """Point the real coverage builder at scripted availability evidence and one listing."""
+    snapshots = _EmptySnapshotCoverage()
+    monkeypatch.setattr(parquet_routes.settings, "parquet_coverage_authority", authority)
+    monkeypatch.setattr(parquet_routes, "open_availability_reader", lambda: reader)
+    monkeypatch.setattr(parquet_routes, "registered_census_lanes", lambda: lanes)
+    monkeypatch.setattr(parquet_routes, "open_listing", lambda: listing)
+    monkeypatch.setattr(parquet_routes, "open_snapshot_store", lambda: None)
+    monkeypatch.setattr(parquet_routes, "_snapshot_coverage_cache", snapshots)
+    parquet_routes._coverage_cache.clear()
+    return snapshots
+
+
+@pytest.mark.asyncio
+async def test_availability_authority_answers_coverage_without_listing_one_object(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The runbook's steady state: a pointer and a generation, and NOTHING that walks a prefix."""
+    reader = ScriptedReader({"signal": whole_ladder(SIGNAL_LANE, published=[date(2026, 8, 1)])})
+    snapshots = _direct_lane_coverage(
+        monkeypatch,
+        authority="availability",
+        reader=reader,
+        lanes=(SIGNAL_LANE,),
+        listing=ExplodingListing(),
+    )
+
+    payload = await parquet_routes._build_coverage_payload(datetime(2026, 8, 25, 4, tzinfo=UTC))
+    census = WireCoverage.model_validate(payload)
+
+    assert {lane.coverage_authority for lane in census.lanes} == {"availability"}
+    assert {lane.source_ceiling_day for lane in census.lanes} == {"2026-08-07"}
+    assert all(lane.required_rungs == [0, 5, 9, 13] for lane in census.lanes)
+    assert reader.reads == ["signal"]
+    # The SNAPSHOT half is authority-aware too: six products carry a live edge, and listing it on
+    # every cold request is precisely the cost the index was published to retire.
+    assert snapshots.policies == ["availability"]
+    assert isinstance(snapshots.forward_ports[0], SnapshotForwardAvailability)
+    assert snapshots.forward_ports[0].reader is reader
+
+
+@pytest.mark.asyncio
+async def test_a_lane_that_cannot_prove_itself_is_withheld_rather_than_censused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fail closed: an unbootstrapped lane under `availability` offers no days and lists nothing."""
+    reader = ScriptedReader({"signal": _AVAILABILITY_MISSING})
+    _direct_lane_coverage(
+        monkeypatch,
+        authority="availability",
+        reader=reader,
+        lanes=(SIGNAL_LANE,),
+        listing=ExplodingListing(),
+    )
+
+    payload = await parquet_routes._build_coverage_payload(datetime(2026, 8, 25, 4, tzinfo=UTC))
+    census = WireCoverage.model_validate(payload)
+
+    assert {lane.withheld_reason for lane in census.lanes} == {"availability_unpublished"}
+    assert all(lane.earliest_day is None and lane.latest_day is None for lane in census.lanes)
+
+
+@pytest.mark.asyncio
+async def test_the_transitional_mode_serves_a_bootstrapped_lane_and_censuses_the_rest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bridge-then-cut: one lane reads its index while its neighbour still pays for a listing."""
+    listing = FakeListing()
+    listing.write_day("drought", "observed", 13, date(2026, 8, 18))
+    reader = ScriptedReader(
+        {
+            "signal": whole_ladder(SIGNAL_LANE, published=[date(2026, 8, 1)]),
+            "drought": _AVAILABILITY_MISSING,
+        }
+    )
+    _direct_lane_coverage(
+        monkeypatch,
+        authority="census_until_bootstrap",
+        reader=reader,
+        lanes=(SIGNAL_LANE, DROUGHT_LANE),
+        listing=listing,
+    )
+
+    payload = await parquet_routes._build_coverage_payload(datetime(2026, 8, 25, 4, tzinfo=UTC))
+    census = WireCoverage.model_validate(payload)
+
+    by_layer = {lane.layer: lane.coverage_authority for lane in census.lanes}
+    assert by_layer == {"signal": "availability", "drought": "census"}
+    assert {lane.zoom for lane in census.lanes if lane.layer == "drought"} == {0, 5, 9, 13}
 
 
 @pytest.mark.asyncio
@@ -590,6 +754,7 @@ def test_the_http_adapter_owns_every_core_refusal_status() -> None:
         "census_budget_exhausted",
         "snapshot_unpublished",
         "snapshot_schema_mismatch",
+        "snapshot_manifest_conflict",
     }
 
     assert set(parquet_routes._REFUSAL_HTTP_STATUS) == expected

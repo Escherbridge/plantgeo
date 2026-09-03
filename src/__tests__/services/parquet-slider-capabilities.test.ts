@@ -5,6 +5,7 @@ import {
   climateFieldStreamName,
 } from "@/lib/environmental/climate-field";
 import { UpstreamHttpError } from "@/lib/server/http/bounded-upstream";
+import type { ParquetAvailabilityWithheldReason } from "@/lib/server/services/parquet-plane-client";
 
 const mocks = vi.hoisted(() => ({
   getParquetWarehouseCoverage: vi.fn(),
@@ -71,7 +72,43 @@ type CoverageRow = {
   publishedRanges: Array<{ from: string; to: string }>;
   gapRanges: Array<{ from: string; to: string }>;
   governedAbsenceRanges: Array<{ from: string; to: string }>;
+  coverageAuthority: "availability" | "census";
+  availabilityGenerationSha256: string | null;
+  availabilityPointerKey: string | null;
+  sourceCeilingDay: string | null;
+  requiredRungs: readonly ZoomTier[];
+  withheldReason: ParquetAvailabilityWithheldReason | null;
 };
+
+/** A healthy, index-backed lane: the state every test starts from and then breaks one field of. */
+const AVAILABILITY_EVIDENCE = {
+  coverageAuthority: "availability",
+  availabilityGenerationSha256: "b".repeat(64),
+  availabilityPointerKey: "availability/_LATEST.json",
+  sourceCeilingDay: null,
+  requiredRungs: ZOOM_TIERS,
+  withheldReason: null,
+} as const satisfies Omit<
+  CoverageRow,
+  | "layer"
+  | "nature"
+  | "kind"
+  | "zoomTier"
+  | "earliestDay"
+  | "latestDay"
+  | "publishedRanges"
+  | "gapRanges"
+  | "governedAbsenceRanges"
+>;
+
+/** Rewrite one lane's rows across every rung; a lane's index is withheld for all four or none. */
+function withLane(
+  lanes: CoverageRow[],
+  layer: string,
+  patch: Partial<CoverageRow>
+): CoverageRow[] {
+  return lanes.map((lane) => (lane.layer === layer ? { ...lane, ...patch } : lane));
+}
 
 function natureFor(layer: string): CoverageRow["nature"] {
   if (layer === "drought" || layer === "burn-severity") return "release_series";
@@ -93,12 +130,14 @@ function completeCoverage(): CoverageRow[] {
       publishedRanges: [{ from: FIRST_DAY, to: LAST_DAY }],
       gapRanges: [],
       governedAbsenceRanges: [],
+      ...AVAILABILITY_EVIDENCE,
     }))
   );
 }
 
 function setCoverage(lanes: CoverageRow[]): void {
   mocks.getParquetWarehouseCoverage.mockResolvedValue({
+    coverageSchemaVersion: 2,
     generatedAt: "2026-08-28T12:00:00Z",
     evaluatedThroughDay: "2026-08-28",
     lanes,
@@ -235,6 +274,8 @@ describe("getParquetSliderCapabilities", () => {
       {
         ...baseCapability("burn-severity"),
         governedAbsenceRanges: [],
+        // The cumulative reader restates the whole axis as described, so BOTH boundaries clear.
+        describedThroughDay: null,
         minimumDailyObservationCount: null,
       }
     );
@@ -282,6 +323,7 @@ describe("getParquetSliderCapabilities", () => {
       governedAbsenceRanges: [],
       thinRanges: [],
       describedFromDay: null,
+      describedThroughDay: null,
       earliestObservedDateRule: "full_history",
       earliestContinuousObservationDate: "2015-04-01",
       observedDayCount: 10,
@@ -525,6 +567,50 @@ describe("getParquetSliderCapabilities", () => {
     });
   });
 
+  /**
+   * The ceiling is the lane's freshness horizon; `evaluatedThroughDay` is only when the census ran.
+   * Running the closing gap to today would report every day the upstream has not published yet as
+   * an ingest hole, so a lane correctly waiting on a lagged release reads as dead.
+   */
+  it("closes the tail at the lane's own source horizon, not at the census day", async () => {
+    setCoverage(
+      withLane(completeCoverage(), "vegetation", {
+        latestDay: "2026-08-18",
+        publishedRanges: [{ from: FIRST_DAY, to: "2026-08-18" }],
+        sourceCeilingDay: "2026-08-20",
+      })
+    );
+
+    const result = await getParquetSliderCapabilities();
+
+    // Two owed days, not the ten that run to the 2026-08-28 census day.
+    //
+    // `describedThroughDay` publishes the bound the tail was clamped to. Without it the eight days
+    // above the ceiling are absent from `coverageGaps` for the SAME reason a dense day is, and a
+    // client would read the server's deliberate silence as coverage -- inverting the clamp.
+    expect(result.layers.find((layer) => layer.layerName === "vegetation")).toMatchObject({
+      latestObservedDate: "2026-08-18",
+      coverageGaps: [{ from: "2026-08-19", to: "2026-08-20" }],
+      describedThroughDay: "2026-08-20",
+    });
+  });
+
+  it("owes nothing at all when the lane already holds through its own ceiling", async () => {
+    setCoverage(
+      withLane(completeCoverage(), "vegetation", {
+        latestDay: "2026-08-18",
+        publishedRanges: [{ from: FIRST_DAY, to: "2026-08-18" }],
+        sourceCeilingDay: "2026-08-18",
+      })
+    );
+
+    const result = await getParquetSliderCapabilities();
+
+    expect(
+      result.layers.find((layer) => layer.layerName === "vegetation")?.coverageGaps
+    ).toEqual([]);
+  });
+
   it("keeps legacy water facts auditable without stretching the selectable daily series", async () => {
     setCoverage(
       completeCoverage().map((entry) =>
@@ -679,6 +765,7 @@ describe("getParquetSliderCapabilities", () => {
 
   it("withholds every Parquet-owned row when coverage predates the server current day", async () => {
     mocks.getParquetWarehouseCoverage.mockResolvedValue({
+      coverageSchemaVersion: 2,
       generatedAt: "2026-08-27T23:59:59Z",
       evaluatedThroughDay: "2026-08-27",
       lanes: completeCoverage(),
@@ -696,6 +783,212 @@ describe("getParquetSliderCapabilities", () => {
     expect(result.withheldParquetCapabilities.every((entry) => entry.reason === "coverage_not_current")).toBe(
       true
     );
+  });
+
+  /**
+   * The availability index is the strongest evidence the plane publishes, and a withheld one is a
+   * statement that the evidence is not there to be reasoned from. Falling back to the census walk
+   * would answer, from a weaker witness, the exact question the warehouse just declined.
+   */
+  it.each([
+    "availability_unpublished",
+    "availability_stale",
+    "availability_malformed",
+    "availability_checksum_invalid",
+  ] as const)("withholds a lane whose availability index reports %s", async (withheldReason) => {
+    setCoverage(withLane(completeCoverage(), "vegetation", { withheldReason }));
+
+    const result = await getParquetSliderCapabilities();
+
+    expect(result.layers.some((layer) => layer.layerName === "vegetation")).toBe(false);
+    expect(result.withheldParquetCapabilities).toContainEqual({
+      layerName: "vegetation",
+      parquetLanes: ["vegetation"],
+      reason: withheldReason,
+      // One entry per LANE, not per rung: a withheld index is a fact about the lane's published
+      // evidence as a whole, so naming all four rungs would overstate what was measured.
+      missingEvidence: [{ parquetLane: "vegetation", zoomTier: null }],
+    });
+    // Every other row is untouched: withholding is per lane, not a census-wide kill switch.
+    expect(result.layers.some((layer) => layer.layerName === "water-gauges")).toBe(true);
+  });
+
+  it("reports the wire's first-declared reason when rungs of one lane disagree", async () => {
+    setCoverage(
+      completeCoverage().map((entry) =>
+        entry.layer !== "vegetation"
+          ? entry
+          : {
+              ...entry,
+              withheldReason:
+                entry.zoomTier === 13 ? "availability_checksum_invalid" : "availability_unpublished",
+            }
+      )
+    );
+
+    const result = await getParquetSliderCapabilities();
+
+    expect(
+      result.withheldParquetCapabilities.find((entry) => entry.layerName === "vegetation")?.reason
+    ).toBe("availability_unpublished");
+  });
+
+  /**
+   * burn-severity is deliberately still served from PostgreSQL, but a withheld Parquet index for
+   * it is not a reason to reach for the older reader: the withheld proof is about that layer's
+   * published evidence, and the passthrough is not a second opinion about it.
+   */
+  it("drops even the PostgreSQL passthrough row when its Parquet lane withholds its index", async () => {
+    setCoverage(
+      withLane(completeCoverage(), "burn-severity", {
+        withheldReason: "availability_checksum_invalid",
+      })
+    );
+
+    const result = await getParquetSliderCapabilities();
+
+    expect(result.layers.some((layer) => layer.layerName === "burn-severity")).toBe(false);
+    expect(result.withheldParquetCapabilities).toContainEqual(
+      expect.objectContaining({
+        layerName: "burn-severity",
+        reason: "availability_checksum_invalid",
+      })
+    );
+  });
+
+  /**
+   * The other half of that rule, and the half that is easy to over-apply: withholding is per NAMED
+   * lane. An unrelated lane's unpublished index says nothing about burn-severity's evidence, so
+   * dropping the passthrough on it would blank a layer nobody made a claim about -- a false report
+   * of its own, in the same direction fail-closed is trying to avoid errors in.
+   */
+  it("keeps the passthrough row when a DIFFERENT lane withholds its index", async () => {
+    setCoverage(
+      withLane(completeCoverage(), "vegetation", { withheldReason: "availability_unpublished" })
+    );
+
+    const result = await getParquetSliderCapabilities();
+
+    expect(result.layers.some((layer) => layer.layerName === "burn-severity")).toBe(true);
+    expect(
+      result.withheldParquetCapabilities.some((entry) => entry.layerName === "burn-severity")
+    ).toBe(false);
+  });
+
+  it("asks availability before currency, so one lane's unpublished index is not read as a stale census", async () => {
+    mocks.getParquetWarehouseCoverage.mockResolvedValue({
+      coverageSchemaVersion: 2,
+      generatedAt: "2026-08-27T23:59:59Z",
+      evaluatedThroughDay: "2026-08-27",
+      lanes: withLane(completeCoverage(), "vegetation", {
+        withheldReason: "availability_unpublished",
+      }),
+    });
+
+    const result = await getParquetSliderCapabilities();
+
+    expect(
+      result.withheldParquetCapabilities.find((entry) => entry.layerName === "vegetation")?.reason
+    ).toBe("availability_unpublished");
+    expect(
+      result.withheldParquetCapabilities.find((entry) => entry.layerName === "water-gauges")?.reason
+    ).toBe("coverage_not_current");
+  });
+
+  /**
+   * A day the source cannot have published is a lane that is wrong about something. Clamping the
+   * axis to the ceiling would hide that behind a plausible answer; withholding names the rung.
+   */
+  it("withholds a rung holding a day past its own source ceiling rather than clamping it", async () => {
+    setCoverage(
+      completeCoverage().map((entry) =>
+        entry.layer === "vegetation" && entry.zoomTier === 9
+          ? { ...entry, sourceCeilingDay: "2026-08-19" }
+          : entry
+      )
+    );
+
+    const result = await getParquetSliderCapabilities();
+
+    expect(result.layers.some((layer) => layer.layerName === "vegetation")).toBe(false);
+    expect(result.withheldParquetCapabilities).toContainEqual({
+      layerName: "vegetation",
+      parquetLanes: ["vegetation"],
+      reason: "ceiling_violation",
+      missingEvidence: [{ parquetLane: "vegetation", zoomTier: 9 }],
+    });
+  });
+
+  it("accepts a latest day that sits exactly on the ceiling", async () => {
+    setCoverage(withLane(completeCoverage(), "vegetation", { sourceCeilingDay: LAST_DAY }));
+
+    const result = await getParquetSliderCapabilities();
+
+    expect(
+      result.layers.find((layer) => layer.layerName === "vegetation")?.latestObservedDate
+    ).toBe(LAST_DAY);
+  });
+
+  it("surfaces the authority, the binding ceiling and the declared rungs on the published row", async () => {
+    setCoverage(
+      completeCoverage().map((entry) =>
+        entry.layer !== "vegetation"
+          ? entry
+          : {
+              ...entry,
+              // The most binding ceiling wins, and one census rung makes the whole row a census row.
+              sourceCeilingDay: entry.zoomTier === 5 ? "2026-08-21" : "2026-08-25",
+              coverageAuthority: entry.zoomTier === 0 ? "census" : "availability",
+            }
+      )
+    );
+
+    const result = await getParquetSliderCapabilities();
+
+    expect(result.layers.find((layer) => layer.layerName === "vegetation")).toMatchObject({
+      coverageAuthority: "census",
+      sourceCeilingDay: "2026-08-21",
+      requiredRungs: [0, 5, 9, 13],
+    });
+  });
+
+  it("reports an availability-backed row as such when every rung read the index", async () => {
+    const result = await getParquetSliderCapabilities();
+
+    expect(result.layers.find((layer) => layer.layerName === "water-gauges")).toMatchObject({
+      coverageAuthority: "availability",
+      sourceCeilingDay: null,
+      // Nothing bounds the source, so the tail ran to the coverage end and the row is described
+      // all the way there. The bound is stated rather than left absent: `undefined` means "a
+      // server that predates the field", which a client must read as "described forever".
+      describedThroughDay: "2026-08-28",
+    });
+  });
+
+  /**
+   * `requiredRungs` is a LABEL for what the gate enforced, never a gate the client re-applies --
+   * and `REQUIRED_ZOOM_TIERS` is what `proveCapability` enforced before this row could exist.
+   * Publishing `[]` when the wire declared nothing labelled a four-rung proof as an unconditional
+   * one, which is the single reading of this field a client must never be able to take.
+   */
+  it("labels a row with the rungs the gate enforced when the wire declares none", async () => {
+    setCoverage(withLane(completeCoverage(), "vegetation", { requiredRungs: [] }));
+
+    const result = await getParquetSliderCapabilities();
+
+    expect(
+      result.layers.find((layer) => layer.layerName === "vegetation")?.requiredRungs
+    ).toEqual([0, 5, 9, 13]);
+  });
+
+  it("keeps the wire's own declaration when it makes one", async () => {
+    setCoverage(withLane(completeCoverage(), "vegetation", { requiredRungs: [9, 13] }));
+
+    const result = await getParquetSliderCapabilities();
+
+    expect(
+      result.layers.find((layer) => layer.layerName === "vegetation")?.requiredRungs
+    ).toEqual([9, 13]);
   });
 
   it("does not let the retired PostgreSQL stream scan remount a withheld Parquet slider", async () => {

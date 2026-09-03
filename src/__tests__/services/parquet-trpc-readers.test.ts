@@ -11,6 +11,7 @@ vi.mock("@/lib/server/services/parquet-plane-client", async (importOriginal) => 
 });
 
 import {
+  UpstreamAbortedError,
   UpstreamConfigurationError,
   UpstreamHttpError,
   UpstreamPayloadError,
@@ -253,9 +254,10 @@ describe("Parquet tRPC state adapter", () => {
   it("reads a climate field from its exact promoted z13 lane without PostgreSQL fallback", async () => {
     mockedDay.mockResolvedValue(published("2026-08-06", [climateLineageRow()]));
 
-    const result = await getParquetClimateField({
+    const { result, zoomTier } = await getParquetClimateField({
       bbox: "-125,42,-111,49",
       date: "2026-08-06",
+      mapZoom: 14,
       signal: "precipitation",
       variant: "mean",
     });
@@ -266,10 +268,90 @@ describe("Parquet tRPC state adapter", () => {
       zoomTier: 13,
       bbox: "-125,42,-111,49",
     });
+    // The rung is reported back, not inferred by the caller: the renderer must be able to say
+    // whether it is drawing stored cells or an aggregate without re-resolving the ladder.
+    expect(zoomTier).toBe(13);
     expect(result).toMatchObject({
       state: "ready",
       data: [{ cellId: "nasa-power-001", value: 2.5, observationCount: 2 }],
     });
+  });
+
+  /**
+   * The three coarse rungs are published and, until this change, were never read: the reader
+   * pinned z13 at every zoom. Exactly one rung answers a request -- never two merged, which would
+   * double-count the ground both describe.
+   */
+  it.each([
+    [3, 0],
+    [7, 5],
+    [11.4, 9],
+    [13, 13],
+  ])("resolves map zoom %s onto the single serving rung z%s", async (mapZoom, zoomTier) => {
+    const detail = zoomTier === 13;
+    mockedDay.mockResolvedValue(
+      published("2026-08-06", [
+        detail ? climateLineageRow() : { ...climateLineageRow(), cell_id: null },
+      ])
+    );
+
+    const read = await getParquetClimateField({
+      bbox: "-125,42,-111,49",
+      date: "2026-08-06",
+      mapZoom,
+      signal: "precipitation",
+      variant: "mean",
+    });
+
+    expect(mockedDay).toHaveBeenCalledWith(expect.objectContaining({ zoomTier }));
+    expect(mockedDay).toHaveBeenCalledTimes(1);
+    expect(read.zoomTier).toBe(zoomTier);
+    expect(read.result).toMatchObject({ state: "ready" });
+  });
+
+  /**
+   * The same identity rule `decodeSoilFieldRows` enforces. A coarse row that kept its `cell_id`,
+   * or a z13 row that lost one, means the reader is reading a rung it did not ask for -- and an
+   * aggregate captioned as a stored cell is the exact confusion `aggregated` exists to prevent.
+   */
+  it.each([
+    [3, "kept", climateLineageRow()],
+    [14, "lost", { ...climateLineageRow(), cell_id: null }],
+  ] as const)(
+    "fails closed when a z%s row has %s its cell identity",
+    async (mapZoom, _verb, row) => {
+      mockedDay.mockResolvedValue(published("2026-08-06", [row]));
+
+      const { result } = await getParquetClimateField({
+        bbox: "-125,42,-111,49",
+        date: "2026-08-06",
+        mapZoom,
+        signal: "precipitation",
+        variant: "mean",
+      });
+
+      expect(result).toMatchObject({ state: "upstream_unavailable", fault: { kind: "contract" } });
+    }
+  );
+
+  it("threads the caller's cancellation into the lane read as abortSignal", async () => {
+    const controller = new AbortController();
+    mockedDay.mockResolvedValue(published("2026-08-06", [climateLineageRow()]));
+
+    await getParquetClimateField({
+      bbox: "-125,42,-111,49",
+      date: "2026-08-06",
+      mapZoom: 14,
+      signal: "precipitation",
+      variant: "mean",
+      abortSignal: controller.signal,
+    });
+
+    // `signal` here is the measured quantity and never the cancellation; the reader's `Omit`
+    // makes handing one to the other a compile error rather than a runtime surprise.
+    expect(mockedDay).toHaveBeenCalledWith(
+      expect.objectContaining({ signal: controller.signal })
+    );
   });
 
   it("fails a climate row from the wrong signal closed", async () => {
@@ -281,9 +363,10 @@ describe("Parquet tRPC state adapter", () => {
       getParquetClimateField({
         bbox: "-125,42,-111,49",
         date: "2026-08-06",
+        mapZoom: 14,
         signal: "precipitation",
         variant: "mean",
-      })
+      }).then((read) => read.result)
     ).resolves.toMatchObject({ state: "upstream_unavailable", fault: { kind: "contract" } });
   });
 
@@ -298,9 +381,10 @@ describe("Parquet tRPC state adapter", () => {
         published("2026-08-02", [signalPlaneClimateRow(signalName, unit)])
       );
 
-      const result = await getParquetClimateField({
+      const { result } = await getParquetClimateField({
         bbox: "-125,42,-111,49",
         date: "2026-08-02",
+        mapZoom: 14,
         signal,
         variant,
       });
@@ -318,9 +402,10 @@ describe("Parquet tRPC state adapter", () => {
   it("reads manifest-bound NASA soil wetness from its exact snapshot product", async () => {
     mockedDay.mockResolvedValue(published("2026-08-02", [soilWetnessRow()]));
 
-    const result = await getParquetClimateField({
+    const { result } = await getParquetClimateField({
       bbox: "-125,42,-111,49",
       date: "2026-08-02",
+      mapZoom: 14,
       signal: "soil-wetness-root-zone",
       variant: "mean",
     });
@@ -343,9 +428,10 @@ describe("Parquet tRPC state adapter", () => {
       getParquetClimateField({
         bbox: "-125,42,-111,49",
         date: "2026-08-02",
+        mapZoom: 14,
         signal: "soil-wetness-root-zone",
         variant: "mean",
-      })
+      }).then((read) => read.result)
     ).resolves.toMatchObject({ state: "upstream_unavailable", fault: { kind: "contract" } });
   });
 
@@ -429,6 +515,9 @@ describe("Parquet tRPC state adapter", () => {
     ["payload", new UpstreamPayloadError("oversized")],
     ["timeout", new UpstreamTimeoutError("timed out")],
     ["contract", new ParquetPlaneContractError("wire drift")],
+    // Its own kind, not `timeout`: the two are the same DOMException on the wire and mean
+    // opposite things, and calling a client that navigated away an outage would page someone.
+    ["aborted", new UpstreamAbortedError("cancelled by its caller")],
   ] as const)("makes a %s failure typed and visible", async (kind, error) => {
     mockedDay.mockRejectedValue(error);
 
@@ -439,6 +528,42 @@ describe("Parquet tRPC state adapter", () => {
     });
 
     expect(result).toMatchObject({ state: "upstream_unavailable", fault: { kind } });
+  });
+
+  /**
+   * A signal accepted on the input and then dropped is the worst of both worlds: the caller
+   * believes the read was abandoned while the upstream keeps working.
+   */
+  it("threads the caller's cancellation into the window read it fans out to", async () => {
+    const controller = new AbortController();
+    mockedWindow.mockResolvedValue([
+      published("2026-08-19", []),
+      published("2026-08-20", [waterRow()]),
+    ]);
+
+    await getParquetWaterGauges({
+      bbox: "-125,42,-111,49",
+      mapZoom: 9,
+      nowMs: Date.parse("2026-08-20T20:00:00Z"),
+      signal: controller.signal,
+    });
+
+    expect(mockedWindow).toHaveBeenCalledWith(
+      expect.objectContaining({ signal: controller.signal })
+    );
+  });
+
+  it("omits the field entirely for a caller with nothing to cancel", async () => {
+    mockedDay.mockResolvedValue(published("2026-08-20", [waterRow()]));
+
+    await getParquetWaterGauges({
+      bbox: "-125,42,-111,49",
+      date: "2026-08-20",
+      mapZoom: 9,
+      nowMs: Date.parse("2026-08-21T20:00:00Z"),
+    });
+
+    expect(Object.keys(mockedDay.mock.calls[0][0])).not.toContain("signal");
   });
 
   it("makes a fetch transport failure typed and visible", async () => {

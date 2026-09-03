@@ -11,6 +11,7 @@ and absence apart is scoped the same way, and the tests below say so both direct
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta, timezone
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -31,8 +32,11 @@ from agri_data_service.foundation.parquet.paths import (
     try_parse_absence_marker_path,
     try_parse_partition_path,
 )
+from agri_data_service.pipeline.parquet.gap_fill import GAP_FILL_PARTITION_KIND, _export_one_day
+from agri_data_service.pipeline.parquet.lane_registry import LaneRegistration
 from agri_data_service.pipeline.parquet.objectstore import (
     ABSENCE_CONTENT_TYPE,
+    EmptyPartitionError,
     GovernedAbsenceConflictError,
     ObjectStore,
 )
@@ -44,6 +48,14 @@ from tests.parquet.test_objectstore_writer import (
     RecordingBackend,
     signal_rows,
 )
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from agri_data_service.pipeline.parquet.lane_registry import LaneAdapter
+
+#: A COARSE rung, so a first-conflict refusal would already have marked the rungs before it.
+CONFLICTING_TIER = 5
 
 
 def sample_absence() -> GovernedAbsence:
@@ -381,3 +393,71 @@ def test_the_store_prefix_wraps_the_marker_too() -> None:
     assert receipt.key == f"sandbox/{relative}"
     assert receipt.relative_path == relative
     assert list(backend.objects) == [f"sandbox/{relative}"]
+
+
+# --- the ladder is refused whole, or written whole ---------------------------------------------
+
+
+class _EmptyLane:
+    """A lane adapter whose export finds nothing, which is what opens the absence ladder."""
+
+    async def __call__(self, *_args: object, **_kwargs: object) -> object:
+        raise EmptyPartitionError("the fixture export returned 0 rows")
+
+
+class _RollbackSession:
+    """The only session behaviour `_govern_absent_day`'s caller needs: a rollback that succeeds."""
+
+    async def execute(self, *_args: object, **_kwargs: object) -> None:
+        return None
+
+    async def rollback(self) -> None:
+        return None
+
+
+def _absence_lane() -> LaneRegistration:
+    return LaneRegistration(
+        slug=SIGNAL_PLANE_STREAM,
+        adapter=cast("LaneAdapter", _EmptyLane()),
+        history_floor=JULY_FOURTH,
+        publication_lag_days=0,
+        nature="daily_series",
+        floor_basis="test fixture for the governed-absence ladder",
+        watermark=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_rung_holding_parts_refuses_the_whole_ladder_before_any_marker_is_written() -> None:
+    """Coarse-first-and-refuse-on-conflict left z0 and z5 governed-absent while z13 served its rows.
+
+    That day is base-complete, so `build_gap_census` never selects it again: the lie is stable and
+    invisible. The ladder is therefore pre-checked at every rung and refused as a whole.
+    """
+    backend = RecordingBackend()
+    store = ObjectStore(backend)
+    # ONE rung holds data. It is not the censused base rung, so a first-conflict refusal would have
+    # already written the coarser markers by the time it was found.
+    store.write_partition(
+        signal_rows(),
+        layer=SIGNAL_PLANE_STREAM,
+        kind=GAP_FILL_PARTITION_KIND,
+        zoom=CONFLICTING_TIER,
+        day=JULY_FOURTH,
+    )
+
+    outcome, _parts, _rows, marked_bytes, detail = await _export_one_day(
+        cast("AsyncSession", _RollbackSession()),
+        store,
+        _absence_lane(),
+        day=JULY_FOURTH,
+        run_id="governed-absence-ladder",
+        now=lambda: datetime(2026, 7, 5, tzinfo=UTC),
+    )
+
+    assert outcome == "blocked"
+    assert marked_bytes == 0
+    assert detail is not None
+    assert f"z{CONFLICTING_TIER}" in detail, "the note must name the rung an admin has to look at"
+    written_markers = [key for key in backend.objects if key.endswith(ABSENCE_FILE_NAME)]
+    assert written_markers == [], "a refused ladder writes no marker at ANY rung, coarse ones included"

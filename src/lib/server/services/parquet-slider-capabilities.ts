@@ -6,7 +6,10 @@ import {
 } from "@/lib/server/services/environmental-read-model";
 import {
   getParquetWarehouseCoverage,
+  PARQUET_AVAILABILITY_WITHHELD_REASONS,
   ParquetPlaneContractError,
+  type ParquetAvailabilityWithheldReason,
+  type ParquetCoverageAuthority,
   type ParquetLaneCoverage,
   type ParquetLaneNature,
 } from "@/lib/server/services/parquet-plane-client";
@@ -26,7 +29,14 @@ import { SLIDER_STREAM_LAYER_NAMES, type DayRange, type TemporalKind } from "@/t
 
 const REQUIRED_ZOOM_TIERS = [0, 5, 9, 13] as const satisfies readonly ZoomTier[];
 
-/** Why a Parquet-owned slider row is deliberately absent from the public census. */
+/**
+ * Why a Parquet-owned slider row is deliberately absent from the public census.
+ *
+ * The four `availability_*` members are the wire's own `withheld_reason` spellings, carried
+ * through unchanged rather than translated: a mapping table between two enums that mean the same
+ * thing is a place for the two to drift, and an operator reading this list should be able to
+ * grep the serving side for the identical string.
+ */
 export type WithheldParquetCapabilityReason =
   | "coverage_unavailable"
   | "coverage_not_current"
@@ -37,7 +47,13 @@ export type WithheldParquetCapabilityReason =
   | "rung_never_written"
   | "lane_nature_mismatch"
   | "invalid_rung_bounds"
-  | "no_common_readable_history";
+  | "no_common_readable_history"
+  | "availability_unpublished"
+  | "availability_stale"
+  | "availability_malformed"
+  | "availability_checksum_invalid"
+  /** A rung holds a day past its own source's ceiling; see `ParquetLaneCoverage.sourceCeilingDay`. */
+  | "ceiling_violation";
 
 export interface MissingParquetCapabilityEvidence {
   parquetLane: string;
@@ -185,6 +201,9 @@ function restoreCumulativeBurnHistory(
     governedAbsenceRanges: [],
     thinRanges: [],
     describedFromDay: null,
+    // Both boundaries cleared together: this reader restates the whole axis as described, and a
+    // retained upper bound would leave the cumulative history described at one end only.
+    describedThroughDay: null,
     coverageGapsTruncated: false,
     coverageGapsDescribedFromDay: null,
     thinRangesTruncated: false,
@@ -199,14 +218,37 @@ function restoreCumulativeBurnHistory(
   };
 }
 
+/**
+ * The PostgreSQL rows that survive the cutover.
+ *
+ * THE WITHHOLDING RULE, stated once and enforced only here and at the two call sites in
+ * `getParquetSliderCapabilities`:
+ *
+ * 1. **Withholding is per named lane.** A withheld availability index is a statement about ONE
+ *    lane's published evidence. It withholds that lane's census days and that lane's PostgreSQL
+ *    passthrough, and it says nothing whatever about any other lane.
+ * 2. **A withheld lane gets neither fallback.** Not census facts, not the older PostgreSQL row --
+ *    both would answer a question the warehouse just declined to answer, in a form the client
+ *    cannot tell apart from a proved one. `withheldPassthroughNames` is how (2) reaches the
+ *    passthrough, and it is built by filtering the proofs down to passthrough layer names, so
+ *    burn-severity is dropped when BURN-SEVERITY withheld its index and never because some
+ *    unrelated lane did.
+ * 3. **A wholly unavailable census is not a withholding.** It leaves every Parquet-owned row
+ *    unproven (`coverage_unavailable`) and leaves PostgreSQL-only passthrough lanes exactly as
+ *    they are: nothing was said about those lanes' evidence, and blanking a layer the census
+ *    never claimed to describe would be its own false report. That path therefore calls this
+ *    function with an EMPTY withheld set, deliberately.
+ */
 function retainedPostgresCapabilities(
-  capabilities: ResolvedSliderCapabilities
+  capabilities: ResolvedSliderCapabilities,
+  withheldPassthroughNames: ReadonlySet<string> = new Set()
 ): ResolvedSliderLayerCapability[] {
   return capabilities.layers
     .filter(
       (layer) =>
-        !PARQUET_CAPABILITY_NAMES.has(layer.layerName) ||
-        POSTGRES_CAPABILITY_PASSTHROUGH_NAMES.has(layer.layerName)
+        (!PARQUET_CAPABILITY_NAMES.has(layer.layerName) ||
+          POSTGRES_CAPABILITY_PASSTHROUGH_NAMES.has(layer.layerName)) &&
+        !withheldPassthroughNames.has(layer.layerName)
     )
     .map(restoreCumulativeBurnHistory);
 }
@@ -258,17 +300,124 @@ function missing(
   };
 }
 
-function intersectingBounds(entries: readonly ParquetLaneCoverage[]): {
+/** Where a reason sits in the wire's declared order, which doubles as its precedence. */
+function reasonPrecedence(reason: ParquetAvailabilityWithheldReason): number {
+  return PARQUET_AVAILABILITY_WITHHELD_REASONS.indexOf(reason);
+}
+
+/**
+ * The lanes the serving side refuses to describe, one reason each.
+ *
+ * Keyed by physical LANE and not by rung: a withheld availability index is a statement about the
+ * lane's published evidence as a whole, so one rung reporting it withholds all four. Where rungs
+ * disagree the earliest-declared reason wins, so the answer does not depend on lane ordering.
+ */
+function availabilityWithheldLanes(
+  coverage: readonly ParquetLaneCoverage[]
+): Map<string, ParquetAvailabilityWithheldReason> {
+  const withheld = new Map<string, ParquetAvailabilityWithheldReason>();
+  for (const entry of coverage) {
+    if (entry.withheldReason === null) continue;
+    const held = withheld.get(entry.layer);
+    if (held === undefined || reasonPrecedence(entry.withheldReason) < reasonPrecedence(held)) {
+      withheld.set(entry.layer, entry.withheldReason);
+    }
+  }
+  return withheld;
+}
+
+/**
+ * A capability whose lane withheld itself, or null when every one of its lanes is describable.
+ *
+ * Checked BEFORE any census fact and before the PostgreSQL passthrough, which is the whole point
+ * of the fail-closed rule: an unpublished, stale, malformed or checksum-invalid availability index
+ * says nothing about which days exist, so falling back to a census walk -- or to the PostgreSQL
+ * row the layer used to be served from -- would answer a question the warehouse just declined to
+ * answer, in a form the client cannot tell apart from a proved one.
+ */
+function availabilityWithholding(
+  contract: ParquetCapabilityContract,
+  withheldLanes: ReadonlyMap<string, ParquetAvailabilityWithheldReason>
+): CapabilityProof | null {
+  const withheld = contract.parquetLanes.flatMap((parquetLane) => {
+    const reason = withheldLanes.get(parquetLane);
+    return reason === undefined ? [] : [{ parquetLane, reason }];
+  });
+  const strongest = withheld.reduce<{ parquetLane: string; reason: ParquetAvailabilityWithheldReason } | null>(
+    (held, entry) =>
+      held === null || reasonPrecedence(entry.reason) < reasonPrecedence(held.reason) ? entry : held,
+    null
+  );
+  if (strongest === null) return null;
+  return missing(
+    contract,
+    strongest.reason,
+    withheld.map((entry) => ({ parquetLane: entry.parquetLane, zoomTier: null }))
+  );
+}
+
+/** A row is only as authoritative as its WEAKEST rung: one census walk makes the whole row a walk. */
+function rowCoverageAuthority(
+  entries: readonly ParquetLaneCoverage[]
+): ParquetCoverageAuthority {
+  return entries.every((entry) => entry.coverageAuthority === "availability")
+    ? "availability"
+    : "census";
+}
+
+/** The most binding ceiling across the rungs; null only when every one of them is unbounded. */
+function rowSourceCeilingDay(entries: readonly ParquetLaneCoverage[]): string | null {
+  return entries.reduce<string | null>(
+    (lowest, entry) =>
+      entry.sourceCeilingDay !== null && (lowest === null || entry.sourceCeilingDay < lowest)
+        ? entry.sourceCeilingDay
+        : lowest,
+    null
+  );
+}
+
+/**
+ * Every rung the serving side declared required, deduplicated and ordered low to high; falls back
+ * to the rungs this module actually gated on when the wire declared none.
+ *
+ * An empty list is not "no rungs were required" -- `REQUIRED_ZOOM_TIERS` is what `proveCapability`
+ * enforced before this row could exist, and a wire that stated nothing does not relax it (see
+ * `src/lib/server/services/AGENTS.md` §availability-authority: `requiredRungs` is a label, not a
+ * gate). Publishing `[]` labelled a four-rung proof as an unconditional one, which is the one
+ * reading of this field a client must never be able to take.
+ */
+function rowRequiredRungs(entries: readonly ParquetLaneCoverage[]): ZoomTier[] {
+  const declared = [...new Set(entries.flatMap((entry) => entry.requiredRungs))].sort(
+    (left, right) => left - right
+  );
+  return declared.length > 0 ? declared : [...REQUIRED_ZOOM_TIERS];
+}
+
+/**
+ * A rung `proveCapability`'s `invalid_rung_bounds` check has already cleared, so both of its days
+ * are known present.
+ *
+ * The narrowing exists so the readers below state that guarantee in the type instead of restating
+ * it as a non-null assertion at each use. Six assertions meant six independent bets that a check
+ * forty lines above still ran first; `hasReadableBounds` is the one place the bet is made.
+ */
+type BoundedLaneCoverage = ParquetLaneCoverage & { earliestDay: string; latestDay: string };
+
+function hasReadableBounds(entry: ParquetLaneCoverage): entry is BoundedLaneCoverage {
+  return entry.earliestDay !== null && entry.latestDay !== null;
+}
+
+function intersectingBounds(entries: readonly BoundedLaneCoverage[]): {
   earliestDay: string;
   latestDay: string;
 } | null {
   const earliestDay = entries.reduce(
-    (latest, entry) => (entry.earliestDay! > latest ? entry.earliestDay! : latest),
-    entries[0].earliestDay!
+    (latest, entry) => (entry.earliestDay > latest ? entry.earliestDay : latest),
+    entries[0].earliestDay
   );
   const latestDay = entries.reduce(
-    (earliest, entry) => (entry.latestDay! < earliest ? entry.latestDay! : earliest),
-    entries[0].latestDay!
+    (earliest, entry) => (entry.latestDay < earliest ? entry.latestDay : earliest),
+    entries[0].latestDay
   );
   return earliestDay <= latestDay ? { earliestDay, latestDay } : null;
 }
@@ -320,23 +469,33 @@ function mergeRanges(
   );
 }
 
-/** Exact-day rungs are unavailable after their own immutable last written day. */
+/**
+ * Exact-day rungs are unavailable after their own immutable last written day, up to the day the
+ * LANE's source can reach -- not up to today.
+ *
+ * `sourceCeilingDay` is the lane's own freshness horizon and `evaluatedThroughDay` is merely when
+ * the census ran. Running the tail to the later of the two would report every day the upstream has
+ * not published yet as an ingest hole, turning a lane that is correctly waiting on a weekly or
+ * lagged source into one that reads as dead. The golden fixture is exactly this shape: a lane
+ * holding through 2026-08-05 with a ceiling of 2026-08-07, censused on 2026-08-25 -- two owed
+ * days, not twenty.
+ */
 function coverageTailRanges(
   entries: readonly ParquetLaneCoverage[],
   evaluatedThroughDay: string
 ): DayRange[] {
   return entries.flatMap((entry) => {
-    if (
-      entry.nature !== "daily_series" ||
-      entry.latestDay === null ||
-      entry.latestDay >= evaluatedThroughDay
-    ) {
+    const horizon =
+      entry.sourceCeilingDay !== null && entry.sourceCeilingDay < evaluatedThroughDay
+        ? entry.sourceCeilingDay
+        : evaluatedThroughDay;
+    if (entry.nature !== "daily_series" || entry.latestDay === null || entry.latestDay >= horizon) {
       return [];
     }
     return [
       {
         from: calendarDay(epochDay(entry.latestDay) + 1),
-        to: evaluatedThroughDay,
+        to: horizon,
       },
     ];
   });
@@ -417,6 +576,11 @@ function synthesizeCapability(
   excludedPublishedDayCount: number
 ): ResolvedSliderLayerCapability {
   const coverageEnd = serverCurrentDate < latestDay ? latestDay : serverCurrentDate;
+  // The same bound `coverageTailRanges` clamps each tail to, published rather than kept private:
+  // above it the tail asked no question, so `coverageGaps`' silence there is not a claim that the
+  // days are dense. Without this the client reads the ceiling-to-today span as covered, which
+  // inverts the very reason the tail stops at the ceiling.
+  const describedThroughDay = rowSourceCeilingDay(entries) ?? coverageEnd;
   const allCoverageGaps = mergeDayRanges(
     [
       ...entries.flatMap((entry) => entry.gapRanges),
@@ -445,6 +609,7 @@ function synthesizeCapability(
     governedAbsenceRanges,
     thinRanges: [],
     describedFromDay: coverageGapsDescribedFromDay,
+    describedThroughDay,
     coverageGapsTruncated,
     coverageGapsDescribedFromDay,
     thinRangesTruncated: false,
@@ -462,6 +627,11 @@ function synthesizeCapability(
     gapExcludedObservedDayCount: excludedPublishedDayCount,
     densityExcludedObservedDayCount: 0,
     minimumDailyObservationCount: null,
+    // Published so the UI can say WHICH evidence it is drawing and what bounded it, rather than
+    // presenting an object-store walk and a checksummed index as the same claim.
+    coverageAuthority: rowCoverageAuthority(entries),
+    sourceCeilingDay: rowSourceCeilingDay(entries),
+    requiredRungs: rowRequiredRungs(entries),
   };
 }
 
@@ -529,10 +699,24 @@ function proveCapability(
     .map((entry) => ({ parquetLane: entry.layer, zoomTier: entry.zoomTier }));
   if (invalidRungs.length > 0) return missing(contract, "invalid_rung_bounds", invalidRungs);
 
-  const bounds = intersectingBounds(exactEntries);
+  // Every rung has both days from here down, which the check above just proved and this filter
+  // records in the type. Same membership, narrower type: nothing can be dropped here without
+  // `invalid_rung_bounds` having returned already.
+  const boundedEntries = exactEntries.filter(hasReadableBounds);
+
+  // Withheld rather than clamped. A rung holding a day its own source cannot have published is
+  // wrong about something -- a mislabelled partition, a clock skew, a forecast row in an observed
+  // stream -- and a lane that disagrees with its source at the live edge has not earned belief on
+  // the days below it either. Clamping would hide the disagreement behind a plausible axis.
+  const beyondCeiling = boundedEntries
+    .filter((entry) => entry.sourceCeilingDay !== null && entry.latestDay > entry.sourceCeilingDay)
+    .map((entry) => ({ parquetLane: entry.layer, zoomTier: entry.zoomTier }));
+  if (beyondCeiling.length > 0) return missing(contract, "ceiling_violation", beyondCeiling);
+
+  const bounds = intersectingBounds(boundedEntries);
   if (bounds === null) return missing(contract, "no_common_readable_history", []);
   const recordedPublishedRanges = commonPublishedRanges(
-    exactEntries,
+    boundedEntries,
     bounds.earliestDay,
     bounds.latestDay
   );
@@ -545,7 +729,7 @@ function proveCapability(
     return missing(contract, "no_common_readable_history", []);
   }
   const publishedRanges = commonPublishedRanges(
-    exactEntries,
+    boundedEntries,
     boundedEarliestDay,
     bounds.latestDay
   );
@@ -568,7 +752,7 @@ function proveCapability(
   return {
     capability: synthesizeCapability(
       contract,
-      exactEntries,
+      boundedEntries,
       bounds.earliestDay,
       earliestDay,
       latestDay,
@@ -611,18 +795,32 @@ export async function getParquetSliderCapabilities(): Promise<ParquetSliderCapab
   }
   const coverage = coverageResult.value;
   const evidence = buildEvidenceIndex(coverage.lanes);
-  const proofs = PARQUET_CAPABILITY_CONTRACTS.filter(
-    (contract) => !POSTGRES_CAPABILITY_PASSTHROUGH_NAMES.has(contract.layerName)
-  ).map((contract) =>
-    coverage.evaluatedThroughDay === postgresCapabilities.serverCurrentDate
-      ? proveCapability(contract, coverage.lanes, evidence, postgresCapabilities.serverCurrentDate)
-      : missing(contract, "coverage_not_current", [])
+  const withheldLanes = availabilityWithheldLanes(coverage.lanes);
+  // Availability is asked FIRST, and of every contract including the passthrough ones: a lane
+  // that withheld its index is withheld everywhere, and `coverage_not_current` would report the
+  // whole-census reason for what is really one lane's unpublished evidence.
+  const proofs = PARQUET_CAPABILITY_CONTRACTS.flatMap((contract) => {
+    const withheld = availabilityWithholding(contract, withheldLanes);
+    if (withheld !== null) return [withheld];
+    if (POSTGRES_CAPABILITY_PASSTHROUGH_NAMES.has(contract.layerName)) return [];
+    return [
+      coverage.evaluatedThroughDay === postgresCapabilities.serverCurrentDate
+        ? proveCapability(contract, coverage.lanes, evidence, postgresCapabilities.serverCurrentDate)
+        : missing(contract, "coverage_not_current", []),
+    ];
+  });
+  const withheldPassthroughNames = new Set(
+    proofs.flatMap((proof) =>
+      proof.withheld !== null && POSTGRES_CAPABILITY_PASSTHROUGH_NAMES.has(proof.withheld.layerName)
+        ? [proof.withheld.layerName]
+        : []
+    )
   );
 
   return {
     ...postgresCapabilities,
     layers: [
-      ...retainedPostgresCapabilities(postgresCapabilities),
+      ...retainedPostgresCapabilities(postgresCapabilities, withheldPassthroughNames),
       ...proofs.flatMap((proof) => (proof.capability === null ? [] : [proof.capability])),
     ],
     // Every PostgreSQL stream row is Parquet-owned above; its retired scan cannot remount one.

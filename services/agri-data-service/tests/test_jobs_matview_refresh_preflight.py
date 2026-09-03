@@ -7,6 +7,13 @@ test file (not one of the two named in this package's test ownership) written sp
 production incident this preflight exists to prevent: `agri.matview_refresh_state` missing dead-lettered
 ten `matview-refresh` shards and parked thirteen `strategy-mv-refresh` ones, one fresh doomed work item
 per tick, before the underlying migration was applied.
+
+SINCE 2026-09-02 THERE ARE TWO PREFLIGHTS AND THIS FILE OWNS THE BOUNDARY BETWEEN THEM. This one is
+definition-level: it refuses the whole lane, before a run is opened, over relations with no graceful
+path. `matview_refresh.py::_absent_relations` is per-spec, runs inside the handler, and turns an
+absent VIEW into the governed `relation_absent` outcome instead -- covered in
+`tests/test_matview_refresh.py`. A view must never migrate into this file's tuple; the two tests at
+the bottom are what stop it.
 """
 
 from __future__ import annotations
@@ -16,6 +23,8 @@ from typing import TYPE_CHECKING
 
 from agri_data_service.jobs.matview_refresh import (
     MATVIEW_REFRESH_DEFINITION_NAME,
+    MATVIEW_REFRESH_QUALIFIED_NAMES,
+    MATVIEW_REFRESH_REQUIRED_RELATIONS,
     MATVIEW_REFRESH_STATE_RELATION,
     trigger_matview_refresh,
 )
@@ -119,6 +128,32 @@ async def test_matview_refresh_refuses_before_it_ever_upserts_the_definition() -
     assert session.emitted("insert_job_run") is False
     assert session.emitted("insert_job_work_items") is False
     assert session.emitted("claim_work_item") is False
+
+
+def test_the_definition_preflight_declares_the_ledger_and_never_a_matview() -> None:
+    """TWO preflights exist and they must not be confused; this pins the boundary between them.
+
+    The DEFINITION-level one here refuses the whole lane before it opens a run, and it may only ever
+    name relations with no graceful path -- the shared ledger, whose absence makes every read and
+    write raise. The PER-SPEC one (`matview_refresh.py::_absent_relations`, inside the handler)
+    handles an absent VIEW, and its answer is the governed `relation_absent` outcome, not a refusal.
+
+    Promoting a view into this tuple would turn "nine of ten views are ready, refresh them" into
+    "refuse the tick", which is a strictly worse answer than the bug being fixed: a lane that refuses
+    every tick over a relation the Parquet pivot deliberately dropped never refreshes anything again.
+    """
+    assert MATVIEW_REFRESH_REQUIRED_RELATIONS == (MATVIEW_REFRESH_STATE_RELATION,)
+    assert set(MATVIEW_REFRESH_REQUIRED_RELATIONS).isdisjoint(MATVIEW_REFRESH_QUALIFIED_NAMES)
+
+
+async def test_the_definition_preflight_asks_the_catalog_about_the_ledger_alone() -> None:
+    """The declaration above is what the statement actually binds, not merely what the constant says."""
+    session = _missing_relation_session()
+
+    await trigger_matview_refresh(session, requested_by="test")
+
+    asked = [params for sql, params in session.statements if RecordingSession.marker_of(sql) == "check_relations_exist"]
+    assert asked == [{"qualified_names": [MATVIEW_REFRESH_STATE_RELATION]}]
 
 
 async def test_strategy_mv_refresh_refuses_on_the_same_shared_relation() -> None:

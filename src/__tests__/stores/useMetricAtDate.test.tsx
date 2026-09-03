@@ -376,9 +376,9 @@ describe("publishing what each layer is actually drawing", () => {
   });
 
   /**
-   * A background refresh of the day already painted -- `staleTime` expiring, or `useFireData`'s
-   * two-minute poll -- is a fetch nobody is waiting on. Reporting it blinked an "Updating" mark
-   * over an idle map every two minutes.
+   * A background refresh of the day already painted -- `staleTime` expiring, or a refetch on
+   * window focus -- is a fetch nobody is waiting on. Reporting it blinked an "Updating" mark
+   * over an idle map every two minutes, back when the fire feed also polled on a timer.
    */
   it("does not report a refresh of the day already painted as loading", () => {
     renderReports([{ ...settled("water", "2026-08-05"), isFetching: true }]);

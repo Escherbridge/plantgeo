@@ -19,7 +19,6 @@ import {
   getPublishedStreamflowGauges,
   getPublishedWeatherForBbox,
   getPublishedWeatherForPoint,
-  getSliderCapabilities,
   resolveCachedLayerId,
   resolveRequestedObservationDay,
   serverCurrentDate,
@@ -32,6 +31,7 @@ import {
   type InterventionSuitability,
 } from "@/lib/server/services/carbon-potential";
 import type { WaterGauge } from "@/lib/server/services/usgs-water";
+import { getParquetSliderCapabilities } from "@/lib/server/services/parquet-slider-capabilities";
 import { droughtLevelAtPoint } from "@/lib/server/services/alert-engine";
 import {
   REGIONAL_EVIDENCE_SOURCES,
@@ -655,11 +655,20 @@ function coverageOnDay(
   // Reading the list anyway is exactly how a never-ingested day reached
   // `published_with_nothing_at_this_location` and licensed the agent's strongest sentence --
   // "This is an observed absence: you may say there was none here" -- for a day nobody observed.
+  // Both boundaries, because the day can fall outside either: below `describedFromDay` the lists
+  // were truncated, above `describedThroughDay` the server's coverage tail stopped at the lane's
+  // source ceiling. Named separately so the sentence states which silence this is.
   if (!isDayDescribed(capability, date)) {
+    const describedFromDay = capability.describedFromDay ?? null;
+    const describedThroughDay = capability.describedThroughDay ?? null;
+    const bound =
+      describedFromDay !== null && date < describedFromDay
+        ? `only from ${describedFromDay} onward`
+        : `only through ${describedThroughDay}`;
     return {
       state: "unknown",
       reason:
-        `${layerName} reports its coverage only from ${capability.describedFromDay} onward, ` +
+        `${layerName} reports its coverage ${bound}, ` +
         `so nothing on record says whether ${date} was ingested.`,
     };
   }
@@ -768,7 +777,11 @@ export async function assembleRegionalContext(
     getPublishedFireDetections(bbox, undefined, dateBySource.get("fireDetections")),
     readPublishedFirePerimeters(west, south, east, north),
     getInterventionSuitability(lat, lon),
-    getSliderCapabilities(),
+    // The PARQUET resolver, not the PostgreSQL one the browser stopped reading at the 2026-09-01
+    // cutover. They answer differently on purpose: a lane whose availability index is withheld is
+    // absent from this payload and present in the other, so reading the PostgreSQL one described a
+    // withheld lane to the agent as published -- the one claim fail-closed exists to prevent.
+    getParquetSliderCapabilities(),
     // Live external reads, added 2026-08-14 to replace the two fields this assembler used to
     // hardcode to null despite both having a real server-side read path.
     getSoilProperties(lat, lon),

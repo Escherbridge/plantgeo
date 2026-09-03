@@ -127,6 +127,16 @@ async def test_upsert_parses_on_the_conflict_branch_and_the_counter_tracks_the_o
     skipped = await _upsert(engine, probe_view_name, outcome="skipped_missing", refreshed_at=None)
     assert skipped["consecutive_failures"] == _AFTER_TWO_FAILURES
 
+    # `relation_absent` (2026-09-02) rides the same ELSE branch and needed NO migration to do it:
+    # `outcome` is a plain `character varying(64)` with no value CHECK, so the new literal is legal
+    # against a database at the current head. Proven here rather than asserted in prose, because the
+    # whole point of this file is that a statement's behaviour against a real server is the only
+    # evidence the mocked seam cannot fake. A counter that moved here would mean a governed absence
+    # earns a backoff, which would silently withhold the refresh on the tick a relation reappears.
+    absent = await _upsert(engine, probe_view_name, outcome="relation_absent", refreshed_at=None)
+    assert absent["consecutive_failures"] == _AFTER_TWO_FAILURES
+    assert absent["outcome"] == "relation_absent"
+
 
 async def test_a_success_clears_the_backoff_counter(engine: AsyncEngine, probe_view_name: str) -> None:
     """A non-NULL refreshed_at means the attempt succeeded, which is the only thing that resets to 0."""

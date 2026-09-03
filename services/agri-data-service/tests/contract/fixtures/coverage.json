@@ -1,4 +1,5 @@
 {
+  "coverage_schema_version": 2,
   "generated_at": "2026-08-25T04:00:00Z",
   "evaluated_through_day": "2026-08-25",
   "lanes": [
@@ -7,48 +8,72 @@
       "earliest_day": "2022-04-30", "latest_day": "2026-08-06",
       "published_ranges": [{"from": "2022-04-30", "to": "2026-08-06"}],
       "gap_ranges": [{"from": "2026-08-17", "to": "2026-08-25"}],
-      "governed_absence_ranges": [{"from": "2026-08-07", "to": "2026-08-16"}]
+      "governed_absence_ranges": [{"from": "2026-08-07", "to": "2026-08-16"}],
+      "coverage_authority": "census", "availability_generation_sha256": null,
+      "availability_pointer_key": null, "source_ceiling_day": null,
+      "required_rungs": [], "withheld_reason": null
     },
     {
       "layer": "signal", "nature": "daily_series", "kind": "observed", "zoom": 5,
       "earliest_day": "2022-04-30", "latest_day": "2026-08-06",
       "published_ranges": [{"from": "2022-04-30", "to": "2026-08-06"}],
       "gap_ranges": [{"from": "2026-08-17", "to": "2026-08-25"}],
-      "governed_absence_ranges": [{"from": "2026-08-07", "to": "2026-08-16"}]
+      "governed_absence_ranges": [{"from": "2026-08-07", "to": "2026-08-16"}],
+      "coverage_authority": "census", "availability_generation_sha256": null,
+      "availability_pointer_key": null, "source_ceiling_day": null,
+      "required_rungs": [], "withheld_reason": null
     },
     {
       "layer": "signal", "nature": "daily_series", "kind": "observed", "zoom": 9,
       "earliest_day": "2022-04-30", "latest_day": "2026-08-06",
       "published_ranges": [{"from": "2022-04-30", "to": "2026-08-06"}],
       "gap_ranges": [{"from": "2026-08-17", "to": "2026-08-25"}],
-      "governed_absence_ranges": [{"from": "2026-08-07", "to": "2026-08-16"}]
+      "governed_absence_ranges": [{"from": "2026-08-07", "to": "2026-08-16"}],
+      "coverage_authority": "census", "availability_generation_sha256": null,
+      "availability_pointer_key": null, "source_ceiling_day": null,
+      "required_rungs": [], "withheld_reason": null
     },
     {
       "layer": "signal", "nature": "daily_series", "kind": "observed", "zoom": 13,
       "earliest_day": "2022-04-30", "latest_day": "2026-08-06",
       "published_ranges": [{"from": "2022-04-30", "to": "2026-08-06"}],
       "gap_ranges": [{"from": "2026-08-17", "to": "2026-08-25"}],
-      "governed_absence_ranges": [{"from": "2026-08-07", "to": "2026-08-16"}]
+      "governed_absence_ranges": [{"from": "2026-08-07", "to": "2026-08-16"}],
+      "coverage_authority": "census", "availability_generation_sha256": null,
+      "availability_pointer_key": null, "source_ceiling_day": null,
+      "required_rungs": [], "withheld_reason": null
     },
     {
       "layer": "soil-survey", "nature": "static_lookup", "kind": "observed", "zoom": 0,
       "earliest_day": null, "latest_day": null, "published_ranges": [],
-      "gap_ranges": [], "governed_absence_ranges": []
+      "gap_ranges": [], "governed_absence_ranges": [],
+      "coverage_authority": "census", "availability_generation_sha256": null,
+      "availability_pointer_key": null, "source_ceiling_day": null,
+      "required_rungs": [], "withheld_reason": null
     },
     {
       "layer": "soil-survey", "nature": "static_lookup", "kind": "observed", "zoom": 5,
       "earliest_day": null, "latest_day": null, "published_ranges": [],
-      "gap_ranges": [], "governed_absence_ranges": []
+      "gap_ranges": [], "governed_absence_ranges": [],
+      "coverage_authority": "census", "availability_generation_sha256": null,
+      "availability_pointer_key": null, "source_ceiling_day": null,
+      "required_rungs": [], "withheld_reason": null
     },
     {
       "layer": "soil-survey", "nature": "static_lookup", "kind": "observed", "zoom": 9,
       "earliest_day": null, "latest_day": null, "published_ranges": [],
-      "gap_ranges": [], "governed_absence_ranges": []
+      "gap_ranges": [], "governed_absence_ranges": [],
+      "coverage_authority": "census", "availability_generation_sha256": null,
+      "availability_pointer_key": null, "source_ceiling_day": null,
+      "required_rungs": [], "withheld_reason": null
     },
     {
       "layer": "soil-survey", "nature": "static_lookup", "kind": "observed", "zoom": 13,
       "earliest_day": null, "latest_day": null, "published_ranges": [],
-      "gap_ranges": [], "governed_absence_ranges": []
+      "gap_ranges": [], "governed_absence_ranges": [],
+      "coverage_authority": "census", "availability_generation_sha256": null,
+      "availability_pointer_key": null, "source_ceiling_day": null,
+      "required_rungs": [], "withheld_reason": null
     }
   ]
 }

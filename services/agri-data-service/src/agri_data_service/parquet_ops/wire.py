@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, Literal
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
@@ -37,6 +37,40 @@ STATE_PUBLISHED: Final = "published"
 STATE_GOVERNED_ABSENCE: Final = "governed_absence"
 STATE_DAY_NOT_WRITTEN: Final = "day_not_written"
 STATE_LANE_NEVER_WRITTEN: Final = "lane_never_written"
+
+#: The census payload's contract version. Bump whenever a coverage row gains, loses or re-means a
+#: field, so a client reading a cached body can tell which shape it holds. `1` was the field set
+#: frozen before availability indexes existed; `2` adds the six availability-provenance fields.
+COVERAGE_SCHEMA_VERSION: Final = 2
+
+#: Which evidence proved one coverage row. `availability` is one pointer GET plus one bounded
+#: generation GET; `census` is the whole-stream object listing the availability artifact replaces.
+COVERAGE_AUTHORITY_AVAILABILITY: Final = "availability"
+COVERAGE_AUTHORITY_CENSUS: Final = "census"
+
+type CoverageAuthority = Literal["availability", "census"]
+
+#: Why an availability-authority lane publishes NO selectable days. Each names a distinct fault, so
+#: an operator can tell "never bootstrapped" from "the bytes disagree with their receipt".
+WITHHELD_AVAILABILITY_UNPUBLISHED: Final = "availability_unpublished"
+WITHHELD_AVAILABILITY_STALE: Final = "availability_stale"
+WITHHELD_AVAILABILITY_MALFORMED: Final = "availability_malformed"
+WITHHELD_AVAILABILITY_CHECKSUM_INVALID: Final = "availability_checksum_invalid"
+
+type CoverageWithholding = Literal[
+    "availability_unpublished",
+    "availability_stale",
+    "availability_malformed",
+    "availability_checksum_invalid",
+]
+
+#: The four withholding reasons, and the only four. Adapters preserve this vocabulary exactly.
+COVERAGE_WITHHOLDINGS: Final[tuple[str, ...]] = (
+    WITHHELD_AVAILABILITY_UNPUBLISHED,
+    WITHHELD_AVAILABILITY_STALE,
+    WITHHELD_AVAILABILITY_MALFORMED,
+    WITHHELD_AVAILABILITY_CHECKSUM_INVALID,
+)
 
 #: One served row. Deliberately untyped past `object`: the warehouse has a schema per layer per
 #: kind, so one row shape here would be a lie about eleven of the twelve streams.
@@ -199,7 +233,7 @@ class DayRange:
 
 @dataclass(frozen=True, slots=True)
 class LaneCoverage:
-    """One physical lane and zoom rung's independently readable census evidence."""
+    """One physical lane and zoom rung's independently readable coverage evidence, and what proved it."""
 
     layer: str
     nature: LaneNature
@@ -210,9 +244,19 @@ class LaneCoverage:
     published_ranges: tuple[DayRange, ...]
     gap_ranges: tuple[DayRange, ...]
     governed_absence_ranges: tuple[DayRange, ...]
+    #: Provenance. Defaults describe a census row so every pre-availability construction site keeps
+    #: meaning what it meant; see `parquet_ops/AGENTS.md` "Coverage authority".
+    coverage_authority: CoverageAuthority = COVERAGE_AUTHORITY_CENSUS
+    availability_generation_sha256: str | None = None
+    availability_pointer_key: str | None = None
+    source_ceiling_day: date | None = None
+    #: The authoritative rung set the row's days were proven against, EMPTY for a census row: the
+    #: census proves each rung on its own and binds no cross-rung contract to state here.
+    required_rungs: tuple[int, ...] = ()
+    withheld_reason: CoverageWithholding | None = None
 
     def to_wire(self) -> dict[str, object]:
-        """Render one lane's census row."""
+        """Render one lane's coverage row."""
         return {
             "layer": self.layer,
             "nature": self.nature,
@@ -223,6 +267,12 @@ class LaneCoverage:
             "published_ranges": [entry.to_wire() for entry in self.published_ranges],
             "gap_ranges": [entry.to_wire() for entry in self.gap_ranges],
             "governed_absence_ranges": [entry.to_wire() for entry in self.governed_absence_ranges],
+            "coverage_authority": self.coverage_authority,
+            "availability_generation_sha256": self.availability_generation_sha256,
+            "availability_pointer_key": self.availability_pointer_key,
+            "source_ceiling_day": None if self.source_ceiling_day is None else render_day(self.source_ceiling_day),
+            "required_rungs": list(self.required_rungs),
+            "withheld_reason": self.withheld_reason,
         }
 
 
@@ -235,8 +285,14 @@ class WarehouseCoverage:
     lanes: tuple[LaneCoverage, ...]
 
     def to_wire(self) -> dict[str, object]:
-        """Render the census."""
+        """Render the census.
+
+        `evaluated_through_day` is when this answer was COMPUTED and is not a claim about any lane's
+        freshness -- an availability lane states its own horizon as `source_ceiling_day`, so a lane
+        whose source ends days ago no longer reads as current-but-empty.
+        """
         return {
+            "coverage_schema_version": COVERAGE_SCHEMA_VERSION,
             "generated_at": render_instant(self.generated_at),
             "evaluated_through_day": render_day(self.evaluated_through_day),
             "lanes": [lane.to_wire() for lane in self.lanes],

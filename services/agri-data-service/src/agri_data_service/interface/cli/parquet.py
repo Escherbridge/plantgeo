@@ -28,6 +28,7 @@ from agri_data_service.parquet_ops.snapshot_products import (
     SnapshotCoverageCache,
     resolve_snapshot_product,
     resolve_snapshot_window,
+    serves_from_snapshot,
 )
 from agri_data_service.parquet_ops.warehouse_reader import DuckDbRowReader, ObjectStoreListing
 from agri_data_service.parquet_ops.wire import (
@@ -70,7 +71,9 @@ def read_day(layer: str, kind: str, zoom: str, bbox: str | None, day: str) -> No
     """Read one exact day and print its shared wire envelope."""
     scope = _parse_scope(layer=layer, kind=kind, zoom=zoom, bbox=bbox)
     parsed_day = _parse(lambda: parse_calendar_day(day, "day"))
-    if scope.layer in PRODUCT_BY_LAYER:
+    # DAY-AWARE, not layer-aware: a product frozen only below its forward first day answers a later
+    # day from the live lane, exactly as the HTTP route does.
+    if serves_from_snapshot(scope.layer, parsed_day):
         read = _snapshot_day_read(scope=scope, day=parsed_day)
     else:
         read = _row_read(
@@ -99,7 +102,7 @@ def read_window(  # noqa: PLR0913
     """Read a closed, bounded day range and print its shared wire envelope."""
     scope = _parse_scope(layer=layer, kind=kind, zoom=zoom, bbox=bbox)
     first, last = _parse(lambda: parse_window(first_day, last_day))
-    if scope.layer in PRODUCT_BY_LAYER:
+    if serves_from_snapshot(scope.layer, first):
         read = _snapshot_window_read(scope=scope, first_day=first, last_day=last)
     else:
         read = _row_read(
@@ -122,7 +125,7 @@ def read_release(layer: str, kind: str, zoom: str, bbox: str | None, as_of: str)
     """Read the newest release at or before a day and print its shared wire envelope."""
     scope = _parse_scope(layer=layer, kind=kind, zoom=zoom, bbox=bbox)
     parsed_as_of = _parse(lambda: parse_calendar_day(as_of, "as_of"))
-    if scope.layer in PRODUCT_BY_LAYER:
+    if serves_from_snapshot(scope.layer, parsed_as_of):
         refusal = faults.snapshot_unpublished(
             layer=scope.layer,
             snapshot_id=PRODUCT_BY_LAYER[scope.layer].snapshot_id,
@@ -142,6 +145,9 @@ def read_release(layer: str, kind: str, zoom: str, bbox: str | None, as_of: str)
 @parquet.command("coverage")
 def read_coverage() -> None:
     """Read the bounded whole-warehouse coverage census."""
+    # DELIBERATELY CENSUS-ONLY, never the availability reader the HTTP route uses: §4a permits an
+    # AUDIT job to re-list the bucket, and this verb exists to check the index against the objects.
+    # The browser path may not, which is why only that side reads the published availability index.
 
     async def read() -> dict[str, object]:
         credentials = settings.require_object_store()

@@ -27,6 +27,7 @@ from agri_data_service.pipeline.direct.water_gauges import (
     tables_by_publisher_day,
 )
 from agri_data_service.pipeline.lanes.water_gauges import WATER_GAUGES_DIRECT_WRITER_START_DAY
+from agri_data_service.pipeline.parquet.availability_index import BotoAvailabilityStorage
 from agri_data_service.pipeline.parquet.gap_fill import fill_one_lane_day, postgres_lane_day_lock
 from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRY
 from agri_data_service.pipeline.parquet.objectstore import BotoObjectStoreBackend, ObjectStore, conform_to_stream_schema
@@ -41,6 +42,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from agri_data_service.pipeline.parquet.availability_index import AvailabilityStorage
     from agri_data_service.pipeline.parquet.lane_registry import LaneAdapter
 
 KIND: Final = "observed"
@@ -266,8 +268,14 @@ async def _publish_day(  # noqa: PLR0912, PLR0913, PLR0915 - one bounded lane-da
     retry_base_seconds: float,
     contention_poll_seconds: float,
     contention_timeout_seconds: float,
+    availability_storage: AvailabilityStorage | None = None,
 ) -> ForwardDayResult:
-    """Publish one day through the shared lock/finalizer and verify its physical z13 content."""
+    """Publish one day through the shared lock/finalizer and verify its physical z13 content.
+
+    `availability_storage` is threaded through rather than defaulted away: this writer OWNS every
+    water-gauges day from `WATER_GAUGES_DIRECT_WRITER_START_DAY`, so a day it publishes without an
+    index entry is a day `PARQUET_COVERAGE_AUTHORITY=availability` withholds from the slider.
+    """
     adapter = DirectWaterGaugesForwardAdapter(table)
     lane = replace(LANE_REGISTRY[WATER_GAUGES_STREAM], adapter=cast("LaneAdapter", adapter))
     failed_attempts = 0
@@ -290,6 +298,7 @@ async def _publish_day(  # noqa: PLR0912, PLR0913, PLR0915 - one bounded lane-da
                 today=datetime.now(UTC).date(),
                 lane_day_lock=postgres_lane_day_lock,
                 statement_timeout_seconds=STATEMENT_TIMEOUT_SECONDS,
+                availability_storage=availability_storage,
             )
         except Exception as error:  # advisory-lock and session failures share the bounded retry budget
             await session.rollback()
@@ -440,6 +449,9 @@ async def run(args: argparse.Namespace) -> int:
         BotoObjectStoreBackend.from_credentials(credentials),
         prefix=settings.object_store_prefix,
     )
+    # Built from the SAME settings the store above already required, so it adds no failure mode of
+    # its own and opens no socket: a run without object-store credentials raised four lines earlier.
+    availability_storage = BotoAvailabilityStorage.from_settings()
     database_url = settings.require_local_source_loader_database_url()
     results: list[ForwardDayResult] = []
     async with local_source_loader_session(database_url) as session:
@@ -454,6 +466,7 @@ async def run(args: argparse.Namespace) -> int:
                 retry_base_seconds=args.retry_base_seconds,
                 contention_poll_seconds=args.contention_poll_seconds,
                 contention_timeout_seconds=args.contention_timeout_seconds,
+                availability_storage=availability_storage,
             )
             results.append(result)
             emit(

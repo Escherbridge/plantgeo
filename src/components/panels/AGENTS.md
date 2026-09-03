@@ -67,3 +67,27 @@ their own rejected recommendation (`CommunityDetails`'s
 whoever submitted it, so the queue disables the Reject button until the
 reviewer types one — this is enforced client-side only, as a UX nudge; the
 router's `reviewNote` field stays optional server-side.
+
+## ModerationPanel states an absent estimate; it never fabricates one
+
+**2026-09-02.** `ModerationPanel` (mounted by `src/app/moderation/page.tsx`, which renders it and
+not `ContributionQueue`) used to render a "Causal Benefit Score (tau_est)" card reading
+`+18% [11%, 25%]` beside Approve & Publish / Reject / Set ACTIVE. Those three numbers were
+literals assigned inside the `.map()` under the comment "Simulated ML causal benefit score" — no
+evaluated result, no provenance, and `interventions.listProposed` returns no effect field at all.
+A moderator publishing to the public map was reading an invented benefit as if it were evidence.
+
+The rule that replaced it: **absence is a rendered value, not a gap and not a stand-in.** The card
+is now `EffectEvidenceNotice`, driven by a typed `EffectEvidence` discriminated union whose only
+member today is `{ kind: "unavailable", reason: "no_evaluated_estimate" }`. It is deliberately
+zinc, not emerald — a moderator must not read the notice as a positive signal. When a real
+estimate exists it arrives as a new union member with its own provenance and evaluation window,
+and the `if (evidence.kind === "unavailable")` branch stops being the only one; no tRPC field is
+wired for that yet, so nothing here reads server state it cannot justify.
+
+Do not re-add a number, a bar, a range or a percentage to this panel from any source that cannot
+name the evaluation that produced it. `interventions.proposeIntervention` defaults
+`causalTauEst: input.causalTauEst ?? 0.15` on submission
+(`src/lib/server/trpc/routers/interventions.ts:325`) — that default is the same class of invention
+and is tracked by the conformity track; it is not a source this panel may render.
+Pinned by `src/__tests__/components/ModerationPanel.test.tsx`.

@@ -1,4 +1,4 @@
-"""The lane registry: thirteen streams, three natures, four return shapes folded into one, cited floors.
+"""The lane registry: twenty-one streams, three natures, four return shapes folded into one, cited floors.
 
 The exporters themselves are exercised by their own lane tests; what is pinned here is the
 integration surface -- that every registered slug has a schema the writer can autoload, that the
@@ -44,12 +44,29 @@ from tests.parquet.test_soil_survey_lane import soil_survey_row
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-EXPECTED_LANE_COUNT = 13
+# Twelve database-backed lanes, the eight source-direct NASA POWER climate fields, and `calendar`.
+EXPECTED_LANE_COUNT = 21
 AUGUST_SIXTH = date(2026, 8, 6)
 
 # RUNBOOK section 0.26.6's table -- the wave-2 join's own record of what landed -- plus `calendar`,
 # the conformed date dimension, which is a registered stream with no source system.
-EXPECTED_SLUGS = frozenset(
+# The eight NASA POWER climate fields have NO PostgreSQL producer and never had one: their registry
+# entry exists so the streams get a floor, a lag, a nature and a census, while their days are written
+# by `pipeline/direct/climate/forward.py`. Their registered adapter refuses a generic export.
+SOURCE_DIRECT_SLUGS = frozenset(
+    {
+        "climate-field-air-temperature-max",
+        "climate-field-air-temperature-mean",
+        "climate-field-air-temperature-min",
+        "climate-field-dew-point",
+        "climate-field-precipitation",
+        "climate-field-relative-humidity",
+        "climate-field-shortwave-radiation",
+        "climate-field-wind-speed",
+    }
+)
+
+EXPECTED_SLUGS = SOURCE_DIRECT_SLUGS | frozenset(
     {
         "burn-severity",
         "calendar",
@@ -153,7 +170,7 @@ def absence_receipt(*, size: int = 128) -> AbsenceWriteReceipt:
     )
 
 
-def test_exactly_the_thirteen_streams_are_registered_and_interventions_is_not() -> None:
+def test_exactly_the_registered_streams_are_present_and_interventions_is_not() -> None:
     """RUNBOOK section 0.26.1 keeps `interventions` in Postgres; an entry here would move it."""
     assert set(registered_lane_slugs()) == EXPECTED_SLUGS
     assert len(LANE_REGISTRATIONS) == EXPECTED_LANE_COUNT

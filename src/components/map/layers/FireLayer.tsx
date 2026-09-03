@@ -5,14 +5,14 @@ import type { Map as MapLibreMap, Popup } from "maplibre-gl";
 import { getFirstSymbolLayer, safeRemoveLayerAndSource } from "@/lib/map/layer-utils";
 import { useStyleReady } from "@/components/map/layers/use-style-ready";
 import {
-  formatAbsoluteDateTime,
-  formatTimestampWithRelative,
-  resolveObservationIso,
-  toIsoTimestamp,
-} from "@/lib/map/time-format";
+  fireCellCaptionText,
+  fireDetectionCellLines,
+  FIRE_CELL_CAPTION_TITLE,
+} from "@/lib/map/fire-cell-caption";
+import type { FireDetectionCollection } from "@/lib/environmental/parquet-fire-presentation";
 import type { ExpressionSpecification } from "@/types/map";
 
-const EMPTY_FIRE_DATA: GeoJSON.FeatureCollection = {
+const EMPTY_FIRE_DATA: FireDetectionCollection = {
   type: "FeatureCollection",
   features: [],
 };
@@ -25,46 +25,92 @@ export interface FireColorStop {
 }
 
 /**
- * NIFC incidents: colour by reported containment.
+ * Published fire-detection cells: colour by total fire radiative power, in megawatts.
  *
- * Red-green endpoints on one ramp are the worst colorblind case; blue keeps "resolved"
- * visually distinct from "danger".
+ * The NIFC containment ramp and the per-detection brightness ramp that stood here until the
+ * 2026-09-01 Parquet cutover are gone with the feeds that fed them. `/api/fires` was the only
+ * producer of `PercentContained`, `IncidentSize`, `brightness` and `confidence`, and no caller
+ * reaches this component with those keys any more -- an expression reading them would paint
+ * every cell from its `coalesce` fallback while looking like it was reading data.
  */
-export const FIRE_CONTAINMENT_COLOR_STOPS: readonly FireColorStop[] = [
-  { value: 0, color: "#dc2626", label: "0% contained" },
-  { value: 50, color: "#f97316", label: "50%" },
-  { value: 100, color: "#2563eb", label: "100% contained" },
+export const FIRE_DETECTION_FRP_COLOR_STOPS: readonly FireColorStop[] = [
+  { value: 0, color: "#fbbf24", label: "0 MW" },
+  { value: 100, color: "#f97316", label: "100 MW" },
+  { value: 500, color: "#dc2626", label: "500 MW" },
+  { value: 2000, color: "#991b1b", label: "2,000 MW" },
 ];
 
 /**
- * Warehouse FIRMS detections: colour by brightness temperature, not by containment -- a
- * satellite detection reports no containment at all, so the two feeds share one circle
- * layer but never one ramp.
+ * A cell whose detections carried no FRP reading at all. Deliberately off the ramp rather
+ * than at its 0 MW end: no reported power is not zero power.
  */
-export const FIRE_BRIGHTNESS_COLOR_STOPS: readonly FireColorStop[] = [
-  { value: 300, color: "#fbbf24", label: "300 K" },
-  { value: 400, color: "#f97316", label: "400 K" },
-  { value: 500, color: "#dc2626", label: "500 K" },
-];
+export const FIRE_DETECTION_NO_FRP_COLOR = "#94a3b8";
+export const FIRE_DETECTION_NO_FRP_LABEL = "No FRP reported";
+
+/** The ring on a cell holding at least one high-confidence detection. */
+export const FIRE_DETECTION_HIGH_CONFIDENCE_RING_COLOR = "#ffffff";
+export const FIRE_DETECTION_HIGH_CONFIDENCE_RING_LABEL =
+  "Contains a high-confidence detection";
+
+/** The ring on a cell holding none. */
+export const FIRE_DETECTION_LOW_CONFIDENCE_RING_COLOR = "#64748b";
+export const FIRE_DETECTION_LOW_CONFIDENCE_RING_LABEL = "No high-confidence detection";
 
 /**
  * Derived from the exported stops rather than restated, so the map and the legend cannot
  * drift. The assertion is forced by the same typing MapLibre imposes on VegetationLayer's
  * NDVI fill: spreading a mapped array widens the fixed-length expression tuple.
+ *
+ * The unclassified branch tests BOTH `frpObservationCount > 0` and a non-null `frpSum`, which is
+ * the same condition `fireDetectionCellLines` uses to decide whether it prints a number -- so the
+ * colour and the caption can never disagree about which cells reported power. Either half alone
+ * lets a null sum fall through `coalesce` to 0 MW and paint "no reading" as "no power": the count
+ * alone misses a cell that counted observations but carries no sum, and the sum alone misses
+ * nothing today but restates a rule the caption owns.
  */
 const FIRE_CIRCLE_COLOR = [
   "case",
-  // NIFC data: color by containment
-  ["has", "PercentContained"],
   [
-    "interpolate", ["linear"], ["coalesce", ["get", "PercentContained"], 0],
-    ...FIRE_CONTAINMENT_COLOR_STOPS.flatMap((stop) => [stop.value, stop.color]),
+    "any",
+    ["<=", ["coalesce", ["get", "frpObservationCount"], 0], 0],
+    ["==", ["typeof", ["get", "frpSum"]], "null"],
   ],
-  // Warehouse FIRMS detections: color by brightness.
+  FIRE_DETECTION_NO_FRP_COLOR,
   [
-    "interpolate", ["linear"], ["coalesce", ["get", "brightness"], 350],
-    ...FIRE_BRIGHTNESS_COLOR_STOPS.flatMap((stop) => [stop.value, stop.color]),
+    "interpolate", ["linear"], ["coalesce", ["get", "frpSum"], 0],
+    ...FIRE_DETECTION_FRP_COLOR_STOPS.flatMap((stop) => [stop.value, stop.color]),
   ],
+] as unknown as ExpressionSpecification;
+
+/** The ring says whether any detection in the cell cleared the high-confidence bar. */
+const FIRE_RING_COLOR = [
+  "case",
+  [">", ["coalesce", ["get", "highConfidenceDetectionCount"], 0], 0],
+  FIRE_DETECTION_HIGH_CONFIDENCE_RING_COLOR,
+  FIRE_DETECTION_LOW_CONFIDENCE_RING_COLOR,
+] as unknown as ExpressionSpecification;
+
+/**
+ * Dot size is how many detections the cell aggregates. Written once and reused at each zoom
+ * anchor below rather than restated three times, which is how the containment/acreage pair
+ * this replaces came to carry six copies of two ramps.
+ */
+const FIRE_DETECTION_COUNT_RADIUS = [
+  "interpolate", ["linear"],
+  ["coalesce", ["get", "detectionCount"], 1],
+  1, 4,
+  5, 7,
+  25, 11,
+  100, 16,
+  500, 22,
+];
+
+/** The same detection-count ramp, scaled down as the map zooms out. */
+const FIRE_CIRCLE_RADIUS = [
+  "interpolate", ["linear"], ["zoom"],
+  4, ["*", 0.45, FIRE_DETECTION_COUNT_RADIUS],
+  8, ["*", 0.7, FIRE_DETECTION_COUNT_RADIUS],
+  12, FIRE_DETECTION_COUNT_RADIUS,
 ] as unknown as ExpressionSpecification;
 
 const FIRE_SOURCE = "published-fire-source";
@@ -92,8 +138,8 @@ interface FireLayerProps {
    * src/lib/map/layer-opacity.ts.
    */
   opacityScale?: number;
-  /** Verified fire GeoJSON. Missing data renders an empty layer. */
-  geojson?: GeoJSON.FeatureCollection;
+  /** Published fire-detection cells. Missing data renders an empty layer. */
+  geojson?: FireDetectionCollection;
 }
 
 export function FireLayer({
@@ -129,71 +175,10 @@ export function FireLayer({
           source: FIRE_SOURCE,
           paint: {
             "circle-color": FIRE_CIRCLE_COLOR,
-            "circle-radius": [
-              "interpolate", ["linear"], ["zoom"],
-              4, ["*", 0.45, [
-                "case",
-                // NIFC data: size by acreage
-                ["has", "IncidentSize"],
-                [
-                  "interpolate", ["linear"],
-                  ["coalesce", ["get", "IncidentSize"], 10],
-                  0, 4,
-                  100, 7,
-                  1000, 10,
-                  10000, 14,
-                  100000, 20,
-                ],
-                // Warehouse FIRMS detections: size by confidence.
-                [
-                  "interpolate", ["linear"],
-                  ["coalesce", ["get", "confidence"], 50],
-                  50, 5,
-                  100, 12,
-                ],
-              ]],
-              8, ["*", 0.7, [
-                "case",
-                ["has", "IncidentSize"],
-                [
-                  "interpolate", ["linear"],
-                  ["coalesce", ["get", "IncidentSize"], 10],
-                  0, 4,
-                  100, 7,
-                  1000, 10,
-                  10000, 14,
-                  100000, 20,
-                ],
-                [
-                  "interpolate", ["linear"],
-                  ["coalesce", ["get", "confidence"], 50],
-                  50, 5,
-                  100, 12,
-                ],
-              ]],
-              12, [
-                "case",
-                ["has", "IncidentSize"],
-                [
-                  "interpolate", ["linear"],
-                  ["coalesce", ["get", "IncidentSize"], 10],
-                  0, 4,
-                  100, 7,
-                  1000, 10,
-                  10000, 14,
-                  100000, 20,
-                ],
-                [
-                  "interpolate", ["linear"],
-                  ["coalesce", ["get", "confidence"], 50],
-                  50, 5,
-                  100, 12,
-                ],
-              ],
-            ],
+            "circle-radius": FIRE_CIRCLE_RADIUS,
             "circle-opacity": drawnOpacity,
             "circle-stroke-width": 1.5,
-            "circle-stroke-color": "#ffffff",
+            "circle-stroke-color": FIRE_RING_COLOR,
           },
         },
         beforeId,
@@ -206,69 +191,10 @@ export function FireLayer({
           type: "circle",
           source: FIRE_SOURCE,
           paint: {
-            "circle-radius": [
-              "interpolate", ["linear"], ["zoom"],
-              4, ["*", 0.45, [
-                "case",
-                ["has", "IncidentSize"],
-                [
-                  "interpolate", ["linear"],
-                  ["coalesce", ["get", "IncidentSize"], 10],
-                  0, 4,
-                  100, 7,
-                  1000, 10,
-                  10000, 14,
-                  100000, 20,
-                ],
-                [
-                  "interpolate", ["linear"],
-                  ["coalesce", ["get", "confidence"], 50],
-                  50, 5,
-                  100, 12,
-                ],
-              ]],
-              8, ["*", 0.7, [
-                "case",
-                ["has", "IncidentSize"],
-                [
-                  "interpolate", ["linear"],
-                  ["coalesce", ["get", "IncidentSize"], 10],
-                  0, 4,
-                  100, 7,
-                  1000, 10,
-                  10000, 14,
-                  100000, 20,
-                ],
-                [
-                  "interpolate", ["linear"],
-                  ["coalesce", ["get", "confidence"], 50],
-                  50, 5,
-                  100, 12,
-                ],
-              ]],
-              12, [
-                "case",
-                ["has", "IncidentSize"],
-                [
-                  "interpolate", ["linear"],
-                  ["coalesce", ["get", "IncidentSize"], 10],
-                  0, 4,
-                  100, 7,
-                  1000, 10,
-                  10000, 14,
-                  100000, 20,
-                ],
-                [
-                  "interpolate", ["linear"],
-                  ["coalesce", ["get", "confidence"], 50],
-                  50, 5,
-                  100, 12,
-                ],
-              ],
-            ],
+            "circle-radius": FIRE_CIRCLE_RADIUS,
             "circle-color": "transparent",
             "circle-stroke-width": 1.5,
-            "circle-stroke-color": "#ffffff",
+            "circle-stroke-color": FIRE_RING_COLOR,
             // Deliberately 0, and it stays 0 at every multiplier: the ring this layer exists
             // to draw is on circle-stroke-opacity below. This is the worked example for why
             // opacity is a multiplier -- an absolute writer would fill every fire circle with
@@ -374,27 +300,28 @@ export function FireLayer({
       import("maplibre-gl").then(({ Popup }) => {
         if (popupRef.current) popupRef.current.remove();
 
-        const name = escapeHtml(props.IncidentName ?? "Unknown Fire");
-        const size = props.IncidentSize ? `${Number(props.IncidentSize).toLocaleString()} acres` : "N/A";
-        const contained = props.PercentContained != null ? `${Number(props.PercentContained).toFixed(0)}%` : "N/A";
-        const state = escapeHtml(props.POOState ?? props.satellite ?? "Unknown");
-        // NIFC incidents carry a discovery date; FIRMS detections only carry an
-        // observation time. Both are the event's own date, not an ingestion date.
-        const discovered = formatAbsoluteDateTime(
-          toIsoTimestamp(props.FireDiscoveryDateTime ?? props.discoveredAt),
-        );
-        const detected = formatTimestampWithRelative(
-          resolveObservationIso(props) ?? toIsoTimestamp(props.detectedAt),
-        );
+        // The cell vocabulary, and only it. Every incident field this popup used to read
+        // (`IncidentName`, `IncidentSize`, `PercentContained`, `POOState`) came from
+        // `/api/fires`, which no map surface calls any more -- reading them would print
+        // "Unknown Fire / N/A / N/A" over a cell that has real numbers to show.
+        //
+        // The wording is `fire-cell-caption.ts`'s, shared with the hover tooltip: this popup and
+        // that tooltip describe the SAME cell, and each maintaining its own copy of the six
+        // fields is how they came to disagree about capitalisation, digit grouping and which
+        // reading counts as an FRP measurement. Only the markup is this file's.
+        const captionLines = fireDetectionCellLines(props);
+        const body = captionLines
+          .map((line) =>
+            line.meta
+              ? `<div class="map-popup-meta">${escapeHtml(fireCellCaptionText(line))}</div>`
+              : `<div>${escapeHtml(line.label ?? "")}: <strong>${escapeHtml(line.value)}</strong></div>`
+          )
+          .join("\n            ");
 
         const html = `
           <div style="font-size:12px;min-width:180px">
-            <strong style="display:block;margin-bottom:4px;color:#dc2626">${name}</strong>
-            <div>Size: <strong>${escapeHtml(size)}</strong></div>
-            <div>Contained: <strong>${escapeHtml(contained)}</strong></div>
-            <div>State: <strong>${state}</strong></div>
-            ${discovered ? `<div class="map-popup-meta">Discovered: ${escapeHtml(discovered)}</div>` : ""}
-            ${detected ? `<div class="map-popup-meta">Detected: ${escapeHtml(detected)}</div>` : ""}
+            <strong style="display:block;margin-bottom:4px;color:#dc2626">${escapeHtml(FIRE_CELL_CAPTION_TITLE)}</strong>
+            ${body}
           </div>
         `;
 

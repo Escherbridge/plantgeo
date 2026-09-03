@@ -251,6 +251,7 @@ async def test_checkpoint_is_verified_while_the_lane_day_lock_is_held(
         day=date(2026, 8, 25),
         source_fingerprint=_SOURCE_FINGERPRINT,
         lane_day_lock=recording_lock,
+        availability_storage=None,
     )
 
     assert result.outcome == "checkpointed"
@@ -456,6 +457,7 @@ async def test_durable_drain_takes_the_first_25_fair_targets_then_leaves_20(
         lane_day_lock=cast("forward_module.VegetationLaneDayLock", object()),
         sleep=cast("object", object()),
         monotonic=lambda: 0.0,
+        availability_storage=None,
     )
 
     assert written == [target.day for target in targets[:_DRAIN_MAX_DAYS]]
@@ -543,11 +545,13 @@ async def test_day_writer_retries_with_bounded_backoff_and_then_resumes(
         day: date,
         source_fingerprint: str,
         lane_day_lock: object,
+        availability_storage: object,
     ) -> VegetationForwardDayResult:
         nonlocal attempts
         attempts += 1
         assert source_fingerprint == _SOURCE_FINGERPRINT
         assert lane_day_lock is not None
+        assert availability_storage is None
         if attempts < _MAX_ATTEMPTS:
             raise OSError("transient object-store failure")
         return VegetationForwardDayResult(day=day, outcome="written", attempt_count=1)
@@ -566,6 +570,7 @@ async def test_day_writer_retries_with_bounded_backoff_and_then_resumes(
         retry_base_seconds=1.0,
         lane_day_lock=cast("forward_module.VegetationLaneDayLock", object()),
         sleep=record_delay,
+        availability_storage=None,
     )
 
     assert result.outcome == "written"
@@ -598,3 +603,51 @@ async def test_bound_callback_raises_when_a_bounded_run_leaves_pending_days(
     )
     with pytest.raises(VegetationForwardIncompleteError, match="1 pending day"):
         await callback(writes)
+
+
+async def test_the_vegetation_writer_hands_its_availability_storage_to_every_day_it_publishes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """This writer OWNS the vegetation forward edge, so a day it indexes nowhere is a day withheld.
+
+    `fill_one_lane_day` returns before the availability step whenever the storage is `None`, so a
+    missing kwarg is silent: every rung looks healthy and the published index never hears of the day.
+    """
+    storage = object()
+    handed: list[object] = []
+
+    async def record(*_args: object, **kwargs: object) -> tuple[str, int, int, int, None]:
+        handed.append(kwargs.get("availability_storage"))
+        return ("written", 1, 1, 32, None)
+
+    monkeypatch.setattr(forward_module, "fill_one_lane_day", record)
+    monkeypatch.setattr(forward_module, "_ladder_checkpoint_is_current", _checkpoint_after_first_call())
+
+    result = await forward_module._write_day_once(
+        cast("AsyncSession", _AffectedDaySession()),
+        cast("ObjectStore", object()),
+        day=date(2026, 8, 25),
+        source_fingerprint=_SOURCE_FINGERPRINT,
+        lane_day_lock=_granted_lock,
+        availability_storage=storage,  # type: ignore[arg-type]
+    )
+
+    assert result.outcome == "written"
+    assert handed == [storage], "the lane-day path must receive this writer's own storage, not None"
+
+
+def _checkpoint_after_first_call() -> object:
+    """A ladder checkpoint that is stale on the way in and current on the way out of one day."""
+    calls: list[int] = []
+
+    def current(*_args: object, **_kwargs: object) -> bool:
+        calls.append(1)
+        return len(calls) > 1
+
+    return current
+
+
+@asynccontextmanager
+async def _granted_lock(*_args: object, **_kwargs: object) -> AsyncIterator[bool]:
+    """The lane-day lock, canned as granted: contention has its own tests."""
+    yield True

@@ -1871,8 +1871,8 @@ export interface PublishedClimateFieldCollection
    */
   reason: "not_published" | "stale" | "not_forecastable" | null;
   /**
-   * Always `"detail"`: stored cells are served as themselves at every zoom. Published in the
-   * shared vocabulary anyway, so a client can read this collection and a soil one alike.
+   * `detail` on the z13 rung; the coarse rungs return an aggregate and say so. See
+   * `parquet-climate-field.ts`.
    */
   granularity: ZoomGranularity;
   /** Which quantity was read; echoed so a client cannot mis-attribute a cached collection. */
@@ -3389,16 +3389,23 @@ function buildCapability(row: ObservationWindowRow): ResolvedSliderLayerCapabili
  *
  * `describedFromDay` is recomputed here rather than carried through, because appending to a
  * capped list can push one more range off the old end and that moves the boundary.
+ *
+ * `describedThroughDay` is stamped on EVERY path out of here, including the two early returns.
+ * This reader runs its closing gap to the server's today rather than to a source ceiling, so
+ * "today" is exactly how far its silence is evidence -- and a row that skipped the stamp would
+ * publish `undefined`, which `isDayDescribed` reads as "described forever". The Parquet service
+ * bounds its own rows at `min(sourceCeilingDay, evaluatedThroughDay)` instead; see
+ * `parquet-slider-capabilities.ts` `synthesizeCapability`.
  */
 function closeCoverageGapsAtLiveEdge(
   layer: ResolvedSliderLayerCapability,
   today: string
 ): ResolvedSliderLayerCapability {
   const lastPublishedDay = layer.latestRecordedObservationDate;
-  if (lastPublishedDay === null) return layer;
+  if (lastPublishedDay === null) return { ...layer, describedThroughDay: today };
 
   const dayAfterLastPublished = addUtcDays(lastPublishedDay, 1);
-  if (dayAfterLastPublished > today) return layer;
+  if (dayAfterLastPublished > today) return { ...layer, describedThroughDay: today };
 
   // buildCapability already capped this list, so appending to the CAPPED list keeps the
   // trailing gap without re-widening what was dropped; the boundary it recorded therefore
@@ -3421,6 +3428,7 @@ function closeCoverageGapsAtLiveEdge(
       coverageGapsDescribedFromDay,
       layer.thinRangesDescribedFromDay
     ),
+    describedThroughDay: today,
   };
 }
 

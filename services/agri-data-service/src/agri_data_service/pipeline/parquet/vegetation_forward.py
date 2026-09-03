@@ -38,6 +38,7 @@ from agri_data_service.execution.vegetation_ndvi_plane import (
 )
 from agri_data_service.foundation.parquet.paths import partition_day_statuses, try_parse_partition_path
 from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
+from agri_data_service.pipeline.parquet.availability_index import BotoAvailabilityStorage
 from agri_data_service.pipeline.parquet.gap_fill import (
     GAP_FILL_PARTITION_KIND,
     _lane_day_lock_key,
@@ -58,6 +59,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from agri_data_service.ingest.writer import FeatureWrite
+    from agri_data_service.pipeline.parquet.availability_index import AvailabilityStorage
 
     VegetationLaneDayLock = Callable[[AsyncSession, str], AbstractAsyncContextManager[bool]]
 
@@ -445,14 +447,21 @@ async def _prepare_forward(
     raise AssertionError("bounded preparation attempts exhausted without returning or raising")
 
 
-async def _write_day_once(
+async def _write_day_once(  # noqa: PLR0913 - one lane-day coordinate or injected seam per arg
     session: AsyncSession,
     store: ObjectStore,
     *,
     day: date,
     source_fingerprint: str,
     lane_day_lock: VegetationLaneDayLock,
+    availability_storage: AvailabilityStorage | None,
 ) -> VegetationForwardDayResult:
+    """Publish one vegetation day through the shared lane-day contract, index entry included.
+
+    `availability_storage` is threaded rather than defaulted away: this writer owns the vegetation
+    lane's forward edge, so a day it publishes without an index entry is a day
+    `PARQUET_COVERAGE_AUTHORITY=availability` withholds from the slider.
+    """
     lane = LANE_REGISTRY[VEGETATION_PLANE_STREAM]
     try:
         async with lane_day_lock(session, _lane_day_lock_key(lane, day)) as granted:
@@ -476,6 +485,7 @@ async def _write_day_once(
                 lane_day_lock=unlocked_lane_day,
                 vegetation_publication_barrier=unlocked_vegetation_publication_barrier,
                 statement_timeout_seconds=VEGETATION_FORWARD_STATEMENT_TIMEOUT_SECONDS,
+                availability_storage=availability_storage,
             )
             if outcome != "written" or not _ladder_checkpoint_is_current(
                 store,
@@ -508,6 +518,7 @@ async def _write_day_with_retry(  # noqa: PLR0913 - retry policy and injected se
     retry_base_seconds: float,
     lane_day_lock: VegetationLaneDayLock,
     sleep: Callable[[float], Awaitable[None]],
+    availability_storage: AvailabilityStorage | None,
 ) -> VegetationForwardDayResult:
     last_error: Exception | None = None
     for attempt in range(1, max_attempts + 1):
@@ -518,6 +529,7 @@ async def _write_day_with_retry(  # noqa: PLR0913 - retry policy and injected se
                 day=day,
                 source_fingerprint=source_fingerprint,
                 lane_day_lock=lane_day_lock,
+                availability_storage=availability_storage,
             )
         except Exception as error:
             last_error = error
@@ -589,6 +601,7 @@ async def _drain_pending_vegetation(  # noqa: PLR0913 - bounded drain policy and
     lane_day_lock: VegetationLaneDayLock,
     sleep: Callable[[float], Awaitable[None]],
     monotonic: Callable[[], float],
+    availability_storage: AvailabilityStorage | None,
 ) -> VegetationPublicationDrainSummary:
     pending = await pending_vegetation_publication(session, limit=2_147_483_647)
     await session.rollback()
@@ -612,6 +625,7 @@ async def _drain_pending_vegetation(  # noqa: PLR0913 - bounded drain policy and
                 retry_base_seconds=retry_base_seconds,
                 lane_day_lock=lane_day_lock,
                 sleep=sleep,
+                availability_storage=availability_storage,
             )
         except Exception as error:
             await record_vegetation_publication_attempt(
@@ -671,6 +685,7 @@ async def catch_up_vegetation_publication(  # noqa: PLR0913 - explicit cron boun
     lane_day_lock: VegetationLaneDayLock = postgres_lane_day_lock,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     monotonic: Callable[[], float] = time.monotonic,
+    availability_storage: AvailabilityStorage | None = None,
 ) -> VegetationPublicationDrainSummary:
     """Unconditionally revalidate 45 days, then fairly drain every durable pending day."""
     if max_days_per_run <= 0:
@@ -723,6 +738,7 @@ async def catch_up_vegetation_publication(  # noqa: PLR0913 - explicit cron boun
             lane_day_lock=lane_day_lock,
             sleep=sleep,
             monotonic=monotonic,
+            availability_storage=availability_storage,
         )
 
 
@@ -738,6 +754,7 @@ async def forward_vegetation_scope(  # noqa: PLR0913 - explicit bounds and seams
     lane_day_lock: VegetationLaneDayLock = postgres_lane_day_lock,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     monotonic: Callable[[], float] = time.monotonic,
+    availability_storage: AvailabilityStorage | None = None,
 ) -> VegetationForwardSummary:
     """Promote one exact NDVI scope, then publish a bounded resumable slice of its affected days."""
     if max_days_per_run <= 0:
@@ -775,6 +792,7 @@ async def forward_vegetation_scope(  # noqa: PLR0913 - explicit bounds and seams
             lane_day_lock=lane_day_lock,
             sleep=sleep,
             monotonic=monotonic,
+            availability_storage=availability_storage,
         )
     return VegetationForwardSummary(
         scope=scope,
@@ -799,6 +817,7 @@ async def forward_persisted_vegetation(  # noqa: PLR0913 - explicit bounds and s
     lane_day_lock: VegetationLaneDayLock = postgres_lane_day_lock,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     monotonic: Callable[[], float] = time.monotonic,
+    availability_storage: AvailabilityStorage | None = None,
 ) -> VegetationForwardSummary:
     """Promote the writes accepted by ingestion and publish their exact governed day scope."""
     return await forward_vegetation_scope(
@@ -812,6 +831,7 @@ async def forward_persisted_vegetation(  # noqa: PLR0913 - explicit bounds and s
         lane_day_lock=lane_day_lock,
         sleep=sleep,
         monotonic=monotonic,
+        availability_storage=availability_storage,
     )
 
 
@@ -825,6 +845,7 @@ async def forward_changed_vegetation(  # noqa: PLR0913 - CLI bounds are explicit
     time_budget_seconds: float = VEGETATION_FORWARD_TIME_BUDGET_SECONDS,
     max_attempts: int = VEGETATION_FORWARD_MAX_ATTEMPTS,
     retry_base_seconds: float = VEGETATION_FORWARD_RETRY_BASE_SECONDS,
+    availability_storage: AvailabilityStorage | None = None,
 ) -> VegetationForwardSummary:
     """Promote and publish raw vegetation changes without repeating upstream sampling."""
     scope = await changed_vegetation_forward_scope(session, since=since, through_day=through_day)
@@ -836,6 +857,7 @@ async def forward_changed_vegetation(  # noqa: PLR0913 - CLI bounds are explicit
         time_budget_seconds=time_budget_seconds,
         max_attempts=max_attempts,
         retry_base_seconds=retry_base_seconds,
+        availability_storage=availability_storage,
     )
 
 
@@ -843,15 +865,29 @@ def bind_vegetation_forward_writer(
     session: AsyncSession,
     *,
     store: ObjectStore | None = None,
+    availability_storage: AvailabilityStorage | None = None,
 ) -> Callable[[Sequence[FeatureWrite]], Awaitable[Mapping[str, int]]]:
-    """Bind the ingest session to the post-persistence callback, constructing object storage lazily."""
+    """Bind the ingest session to the post-persistence callback, constructing object storage lazily.
+
+    The availability adapter is built from the SAME settings the store is, at the same moment and
+    with the same failure mode -- neither opens a socket -- so a day this callback publishes reaches
+    the lane's index rather than being withheld the next time coverage is asked for it.
+    """
     resolved_store = store
+    resolved_availability = availability_storage
 
     async def forward(writes: Sequence[FeatureWrite]) -> Mapping[str, int]:
-        nonlocal resolved_store
+        nonlocal resolved_store, resolved_availability
         if resolved_store is None:
             resolved_store = ObjectStore.from_settings()
-        summary = await forward_persisted_vegetation(session, resolved_store, writes)
+        if resolved_availability is None:
+            resolved_availability = BotoAvailabilityStorage.from_settings()
+        summary = await forward_persisted_vegetation(
+            session,
+            resolved_store,
+            writes,
+            availability_storage=resolved_availability,
+        )
         if summary.stop_reason != "complete" or summary.contended_day_count:
             raise VegetationForwardIncompleteError(
                 f"vegetation forward publication stopped as {summary.stop_reason} with "

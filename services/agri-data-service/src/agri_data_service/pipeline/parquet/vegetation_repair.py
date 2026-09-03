@@ -35,6 +35,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from agri_data_service.pipeline.parquet.availability_index import AvailabilityStorage
     from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 
 VEGETATION_REPAIR_MAX_DAYS: Final = 10_000
@@ -79,6 +80,7 @@ async def repair_and_reconcile_exact_vegetation(  # noqa: PLR0913
     progress_every_days: int = DEFAULT_PROGRESS_EVERY_DAYS,
     progress: Callable[[dict[str, object]], None] | None = None,
     barrier_held: bool = False,
+    availability_storage: AvailabilityStorage | None = None,
 ) -> VegetationRepairAuditReport:
     """Hold one barrier while an opening audit authors repairs and a closing audit proves parity."""
     if max_days <= 0 or max_days > VEGETATION_REPAIR_MAX_DAYS:
@@ -125,6 +127,7 @@ async def repair_and_reconcile_exact_vegetation(  # noqa: PLR0913
             lane_day_lock=postgres_lane_day_lock,
             sleep=asyncio.sleep,
             monotonic=time.monotonic,
+            availability_storage=availability_storage,
         )
         closing = await reconcile_exact_vegetation(
             session,

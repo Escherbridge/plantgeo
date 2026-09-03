@@ -13,7 +13,7 @@
 
 import { useMemo } from "react";
 import { keepPreviousData } from "@tanstack/react-query";
-import { LAYER_REGISTRY, type LayerToggleId } from "@/lib/map/layer-registry";
+import { isLayerPermanentlyWithheld as isWithheld } from "@/lib/map/layer-registry";
 import { bboxSquareDegrees, viewportBbox } from "@/lib/map/viewport-bbox";
 
 /**
@@ -129,14 +129,9 @@ export interface ProxiedQueryOptions {
   enabled: boolean;
 }
 
-/**
- * Governance, applied to the request and not just to the render: a layer the registry
- * withholds at every date is never asked for, so a panel can never become the sole
- * requester of a layer the map is forbidden to draw.
- */
-function isWithheld(toggleId: LayerToggleId): boolean {
-  return LAYER_REGISTRY[toggleId].permanentlyUnavailableReason !== null;
-}
+// `isWithheld` is `layer-registry.ts`'s `isLayerPermanentlyWithheld`, imported under the name
+// this file's five call sites already use. The rule moved there so the fire lane's own hook
+// applies the identical predicate rather than a second copy of it.
 
 /** HUC12 watershed boundaries for the viewport, proxied live from USGS NHD+ HR. */
 export function useWatershedsQuery(
@@ -249,14 +244,25 @@ export interface ClimateFieldQueryOptions extends ProxiedQueryOptions {
    * returns -- squares, contours or points -- not merely how the same features are painted.
    */
   renderForm: ClimateRenderForm;
+  /**
+   * Selects the one physical Parquet rung that answers, and therefore the geometry drawn.
+   *
+   * `number`, not `number | undefined` as `useSoilFieldQuery` takes it: the procedure requires
+   * `zoom`, so an omitted value is a failed request rather than a server-resolved default. Both
+   * callers must read it from the SAME `useViewportBounds()` derivation as `bbox`, or the map and
+   * the panel key two entries and draw two different aggregations of one viewport.
+   */
+  zoom: number;
 }
 
 /**
- * One NASA POWER climate field for the viewport, read from the warehouse.
+ * One NASA POWER climate field for the viewport, read from the warehouse at the rung serving
+ * this zoom.
  *
- * No `zoom`, unlike `useSoilFieldQuery`: the lane has one serving tier, so zoom is not part of
- * the answer and must not be part of the key. Every other input here IS part of the key, so
- * the map and the panel must pass the same three -- both take `bbox` from the one
+ * `zoom` IS part of the key, correcting the note that stood here: the claim that "the lane has one
+ * serving tier" described the reader's hard-coded z13, not the warehouse, which publishes
+ * z13/z9/z5/z0 for these lanes like every other. Every input here is part of the key, so the map
+ * and the panel must pass the same four -- both take `bbox` and `zoom` from the one
  * `useViewportBounds()` derivation, `date` from `useDebouncedLayerDay(<this signal's toggle>)`,
  * and `variant` from the climate store.
  *
@@ -267,11 +273,11 @@ export interface ClimateFieldQueryOptions extends ProxiedQueryOptions {
  */
 export function useClimateFieldQuery(
   bbox: string | null | undefined,
-  { enabled, signal, variant, date, renderForm }: ClimateFieldQueryOptions
+  { enabled, signal, variant, date, renderForm, zoom }: ClimateFieldQueryOptions
 ) {
   const requested = bbox ?? null;
   return trpc.environmental.getClimateField.useQuery(
-    { bbox: requested ?? NO_VIEWPORT_BBOX, signal, variant, date, renderForm },
+    { bbox: requested ?? NO_VIEWPORT_BBOX, signal, variant, date, renderForm, zoom },
     {
       enabled:
         enabled && requested !== null && !isWithheld(climateFieldToggleId(signal)),

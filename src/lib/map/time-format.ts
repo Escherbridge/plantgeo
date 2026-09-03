@@ -2,10 +2,6 @@
 // the click popups. No React, no maplibre imports -- keeps this testable in isolation.
 // See src/components/map/AGENTS.md for why event times are shown absolutely.
 
-type Properties = Record<string, unknown>;
-
-const ISO_WITH_TIMEZONE = /(?:Z|[+-]\d{2}:\d{2})$/i;
-const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 const ALL_DIGITS = /^\d+$/;
 
 /** Epoch values below this magnitude are seconds, not milliseconds (~1973 in ms). */
@@ -37,31 +33,6 @@ export function toIsoTimestamp(value: unknown): string | null {
 
   const parsed = Date.parse(trimmed);
   return Number.isFinite(parsed) ? new Date(parsed).toISOString() : null;
-}
-
-/** Resolves a FIRMS-style observedAt, or acqDate+acqTime, to an ISO timestamp. */
-export function resolveObservationIso(properties: Properties): string | null {
-  const observedAt = properties.observedAt;
-  if (typeof observedAt === "string" && ISO_WITH_TIMEZONE.test(observedAt.trim())) {
-    const timestamp = Date.parse(observedAt);
-    if (Number.isFinite(timestamp)) return observedAt;
-  }
-
-  const acqDate = properties.acqDate;
-  if (typeof acqDate === "string" && DATE_ONLY.test(acqDate.trim())) {
-    const acqTimeRaw = properties.acqTime;
-    const acqTime =
-      typeof acqTimeRaw === "string" || typeof acqTimeRaw === "number"
-        ? String(acqTimeRaw).trim().padStart(4, "0")
-        : "";
-    if (/^\d{4}$/.test(acqTime)) {
-      const iso = `${acqDate.trim()}T${acqTime.slice(0, 2)}:${acqTime.slice(2)}:00Z`;
-      const timestamp = Date.parse(iso);
-      if (Number.isFinite(timestamp)) return iso;
-    }
-  }
-
-  return null;
 }
 
 const DATE_FORMAT: Intl.DateTimeFormatOptions = {

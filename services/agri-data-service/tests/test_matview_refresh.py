@@ -9,9 +9,14 @@ the existence check), on the column alias each one selects.
 Timing-sensitive tests freeze `datetime.now` by monkeypatching the NAME `matview_refresh.datetime` to a
 `datetime.datetime` subclass with an overridden `now()` classmethod -- `datetime.datetime` itself is an
 immutable C type and refuses `setattr` on its own `now`, so the subclass-and-rebind-the-module-name
-technique is the only one that works. Two tests need it (their eligibility math depends on elapsed time
-against a real clock); the rest use specs with no prior state at all, where `_eligibility` short-circuits
-on "never refreshed" before `now` is ever consulted, so they need no clock control.
+technique is the only one that works. Only the tests whose eligibility math depends on elapsed time need
+it; the rest use specs with no prior state at all, where `_eligibility` short-circuits on "never
+refreshed" before `now` is ever consulted, so they need no clock control.
+
+`FakeSession` answers `check_relations_exist` from `existing_views` like every other existence check,
+so scripting a view absent is visible to the handler's per-spec preflight. `preflight_present_views`
+separates the two ONLY so a test can build the mid-tick race `relation_absent` and `skipped_missing`
+exist to tell apart.
 """
 
 # ruff: noqa: PLR2004 -- every assertion below names a literal statement count, row count, or seconds
@@ -62,17 +67,15 @@ from agri_data_service.jobs.registry import JOB_HANDLERS, JobInvocation
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-# The hand-spelled 12-name list this lane must cover -- asserted against, never generated from, the
-# module's own MATVIEW_REFRESH_SPECS, so the two cannot drift together and still pass. Nine new
-# matviews drizzle/0029 creates, two adopted (geo.watershed_rollup, agri.mv_forecast_ml_daily_serving),
-# and the day axis drizzle/0031 splits out of geo.mv_feature_observation_day.
+# The hand-spelled 10-name list this lane must cover -- asserted against, never generated from, the
+# module's own MATVIEW_REFRESH_SPECS, so the two cannot drift together and still pass. Eight of the
+# nine matviews drizzle/0029 creates, plus two adopted (geo.watershed_rollup,
+# agri.mv_forecast_ml_daily_serving).
 EXPECTED_MATVIEW_NAMES: frozenset[str] = frozenset(
     {
         "geo.mv_feature_observation_day",
-        "geo.mv_feature_observation_day_axis",
         "geo.mv_signal_observation_day",
         "geo.mv_drought_observation_day",
-        "geo.mv_signal_cell_daily",
         "geo.mv_drought_release_index",
         "geo.mv_layer_feature_stats",
         "geo.mv_layer_hourly_activity",
@@ -80,6 +83,18 @@ EXPECTED_MATVIEW_NAMES: frozenset[str] = frozenset(
         "geo.mv_soil_survey_union",
         "geo.watershed_rollup",
         "agri.mv_forecast_ml_daily_serving",
+    }
+)
+
+# Removed from the lane on 2026-09-02 and asserted absent below, so a future re-add has to be
+# deliberate rather than a merge artefact. `geo.mv_signal_cell_daily` was dropped from production on
+# 2026-08-18 under the Parquet/DuckDB pivot; `geo.mv_feature_observation_day_axis` (drizzle/0031) was
+# never applied against production and, under the same pivot, will not be. Both were absent, both
+# were therefore eligible on every tick, and between them they dead-lettered 200 shards.
+REMOVED_MATVIEW_NAMES: frozenset[str] = frozenset(
+    {
+        "geo.mv_signal_cell_daily",
+        "geo.mv_feature_observation_day_axis",
     }
 )
 
@@ -187,9 +202,14 @@ class FakeSession:
         watermark_overrides: Mapping[str, Mapping[str, object]] | None = None,
         prior_state_rows: Sequence[Mapping[str, object]] = (),
         row_count_estimates: Mapping[str, int] | None = None,
+        preflight_present_views: frozenset[str] | None = None,
     ) -> None:
         all_views = MATVIEW_REFRESH_QUALIFIED_NAMES
         self._existing_views = all_views if existing_views is None else existing_views
+        # Normally the preflight and the per-view existence check see the same world. They are
+        # separable ONLY so a test can build the mid-tick race the two statuses exist to tell apart:
+        # a relation present at preflight and gone by its own REFRESH.
+        self._preflight_views = self._existing_views if preflight_present_views is None else preflight_present_views
         self._populated_views = all_views if populated_views is None else populated_views
         self._unique_index_views = all_views if unique_index_views is None else unique_index_views
         self._fail_on = fail_on
@@ -212,11 +232,18 @@ class FakeSession:
         self.statements.append((sql, params))
 
         if "check_relations_exist" in sql:
-            # Preflight (`worker.py::preflight_required_relations`) always passes here: no scenario in
-            # this file exercises the missing-relation refusal, so every requested relation reports as
-            # existing, leaving the rest of this FakeSession's scripted flow unchanged.
+            # TWO callers share this statement and they must be answered differently. The lane's
+            # DEFINITION-level preflight (`worker.py::preflight_required_relations`) asks about
+            # `agri.matview_refresh_state`, which is not a view and always exists here -- no scenario
+            # in this file exercises that refusal. The handler's PER-SPEC preflight
+            # (`_absent_relations`) asks about the spec table, and that one must answer from
+            # `existing_views`, or scripting a view as absent would be invisible to the very check
+            # that exists to see it.
             names = params.get("qualified_names", [])
-            return FakeResult([{"qualified_name": name, "relation_exists": True} for name in names])
+            candidates = names if isinstance(names, list) else []
+            return FakeResult(
+                [{"qualified_name": name, "relation_exists": self._relation_exists(str(name))} for name in candidates]
+            )
         if "select_matview_refresh_state" in sql:
             return FakeResult(list(self._prior_state_rows))
         if "upsert_matview_refresh_state" in sql:
@@ -248,6 +275,12 @@ class FakeSession:
                 return FakeResult([self._watermark_overrides.get(marker, default_row)])
         raise AssertionError(f"FakeSession has no answer scripted for: {sql[:160]!r}")
 
+    def _relation_exists(self, qualified_name: str) -> bool:
+        """Answer one `check_relations_exist` row; anything that is not a spec view is the ledger table."""
+        if qualified_name not in MATVIEW_REFRESH_QUALIFIED_NAMES:
+            return True
+        return qualified_name in self._preflight_views
+
     async def commit(self) -> None:
         self.commits += 1
 
@@ -256,6 +289,10 @@ class FakeSession:
 
     def refresh_statements(self) -> list[str]:
         return [sql for sql, _ in self.statements if sql.startswith("REFRESH MATERIALIZED VIEW")]
+
+    def state_writes(self) -> list[dict[str, object]]:
+        """Every `upsert_matview_refresh_state` this session was asked to run, with its parameters."""
+        return [params for sql, params in self.statements if "upsert_matview_refresh_state" in sql]
 
 
 class _FakeClock:
@@ -296,9 +333,19 @@ def _fake_invocation(
 # --- The spec table itself: the denominator this lane must cover, hand-spelled against it. ---
 
 
-def test_the_spec_table_covers_exactly_the_hand_spelled_twelve_views() -> None:
+def test_the_spec_table_covers_exactly_the_hand_spelled_ten_views() -> None:
     assert MATVIEW_REFRESH_QUALIFIED_NAMES == EXPECTED_MATVIEW_NAMES
-    assert len(MATVIEW_REFRESH_SPECS) == len(EXPECTED_MATVIEW_NAMES) == 12
+    assert len(MATVIEW_REFRESH_SPECS) == len(EXPECTED_MATVIEW_NAMES) == 10
+
+
+def test_the_two_relations_the_parquet_pivot_dropped_are_not_on_this_lane() -> None:
+    """A spec naming an absent relation is a standing instruction to rebuild what was deliberately dropped.
+
+    The preflight below makes an absence GOVERNED rather than fatal, which is a different guarantee
+    and does not replace this one: `relation_absent` stops a missing relation dead-lettering the
+    lane, while this assertion stops the lane from asking for a relation nobody intends to have.
+    """
+    assert MATVIEW_REFRESH_QUALIFIED_NAMES.isdisjoint(REMOVED_MATVIEW_NAMES)
 
 
 def test_every_spec_name_is_unique() -> None:
@@ -312,11 +359,18 @@ def test_the_three_strategy_recommendation_views_are_not_on_this_lane() -> None:
 
 
 def test_the_heaviest_view_carries_the_highest_priority_number_and_widest_watermark_bounds() -> None:
+    """With `geo.mv_signal_cell_daily` gone, the wide feature census is the heaviest thing left.
+
+    Its 286,800 ms measured rebuild is what "heaviest" now means on this lane, and it must keep the
+    highest priority NUMBER -- which runs it LAST on a budget-truncated tick -- so that one expensive
+    relation can never starve the nine cheap ones behind it.
+    """
     by_name = {spec.qualified_name: spec for spec in MATVIEW_REFRESH_SPECS}
-    heavy = by_name["geo.mv_signal_cell_daily"]
+    heavy = by_name["geo.mv_feature_observation_day"]
     assert heavy.priority == max(spec.priority for spec in MATVIEW_REFRESH_SPECS)
-    assert heavy.min_interval_seconds == 86_400
-    assert heavy.max_staleness_seconds == 259_200
+    assert heavy.min_interval_seconds == 21_600
+    assert heavy.max_staleness_seconds == 86_400
+    assert heavy.statement_timeout_seconds == max(spec.statement_timeout_seconds for spec in MATVIEW_REFRESH_SPECS)
 
 
 def test_no_spec_carries_a_geometry_producing_watermark_query() -> None:
@@ -473,6 +527,29 @@ def test_report_is_not_failing_when_only_skipped_unchanged_or_skipped_budget() -
     assert not MatviewRefreshReport(results=(skip1, skip2)).has_failures
 
 
+def test_relation_absent_is_never_a_failure_even_when_it_is_the_whole_tick() -> None:
+    """The exact inversion of `skipped_missing`, and the reason the two statuses are separate.
+
+    A tick made entirely of `skipped_missing` fails, because a relation that was there at preflight
+    and gone at REFRESH is a surprise. A tick made entirely of `relation_absent` completes, because a
+    relation that was never there is a fact about the database's shape and no amount of retrying will
+    change it -- retrying is exactly what dead-lettered 200 shards.
+    """
+    absent = MatviewRefreshResult("v", "relation_absent", False, 0.0, None)
+    report = MatviewRefreshReport(results=(absent,))
+    assert not report.has_failures
+    assert report.relations_absent == ("v",)
+
+
+def test_an_absent_relation_never_masks_a_real_failure_beside_it() -> None:
+    absent = MatviewRefreshResult("v1", "relation_absent", False, 0.0, None)
+    failed = MatviewRefreshResult("v2", "failed", False, 2.0, None, detail="OperationalError")
+    report = MatviewRefreshReport(results=(absent, failed))
+    assert report.has_failures
+    assert "v2" in report.failure_summary()
+    assert "v1" not in report.failure_summary()
+
+
 def test_report_to_metrics_carries_every_view_and_its_detail() -> None:
     result = MatviewRefreshResult("v", "failed", False, 2.5, None, detail="OperationalError")
     metrics = MatviewRefreshReport(results=(result,)).to_metrics()
@@ -486,6 +563,7 @@ def test_report_to_metrics_carries_every_view_and_its_detail() -> None:
             "detail": "OperationalError",
         }
     ]
+    assert metrics["relations_absent"] == []
 
 
 # --- _refresh_one_matview: existence, self-heal, unique-index fallback, failure ---
@@ -572,7 +650,7 @@ async def test_a_steady_state_tick_with_everything_fresh_skips_every_view(monkey
     assert outcome.kind == "completed"
     assert session.refresh_statements() == []
     views = outcome.metrics["views"]
-    assert len(views) == 12
+    assert len(views) == 10
     assert all(entry["status"] == "skipped_unchanged" for entry in views)
 
 
@@ -662,15 +740,124 @@ async def test_resuming_from_a_cursor_skips_the_views_already_completed_this_run
     assert refreshed_views == MATVIEW_REFRESH_QUALIFIED_NAMES - set(already_completed)
 
 
+# --- The per-spec preflight: an absent relation is governed, not fatal ---
+#
+# THE PRODUCTION SHAPE THESE TESTS PIN (RUNBOOK, 2026-09-02): `jobs-matview-refresh` held 200 standing
+# dead letters and failed on every tick because two relations on the spec table were absent. An absent
+# view can never succeed, so `refreshed_at` stays NULL and `_eligibility` reads it as "never
+# refreshed, try it" forever; `upsert_matview_refresh_state.sql` deliberately does not count a
+# non-`failed` outcome, so no backoff ever engaged; and the all-attempted-missing rule then failed the
+# whole tick. Each of the four tests below removes one link of that chain.
+
+
 @pytest.mark.asyncio
-async def test_all_attempted_views_missing_fails_the_tick() -> None:
+async def test_an_absent_relation_is_governed_not_failed_and_costs_no_refresh() -> None:
+    """The headline repair: a tick where EVERY relation is absent completes, with nothing attempted."""
     session = FakeSession(existing_views=frozenset())
+
+    async with matview_refresh_context(MatviewRefreshLaneContext(session=session)):
+        outcome = await matview_refresh_handler(_fake_invocation())
+
+    assert outcome.kind == "completed"
+    assert session.refresh_statements() == []
+    statuses = {entry["view"]: entry["status"] for entry in outcome.metrics["views"]}
+    assert set(statuses) == MATVIEW_REFRESH_QUALIFIED_NAMES
+    assert set(statuses.values()) == {"relation_absent"}
+    # Lifted to the top level of the metrics, not only buried in the per-view array: a governed
+    # non-failure nobody can see on a green tick is a governed non-failure nobody reads.
+    assert set(outcome.metrics["relations_absent"]) == MATVIEW_REFRESH_QUALIFIED_NAMES
+
+
+@pytest.mark.asyncio
+async def test_one_absent_relation_does_not_stop_the_others_refreshing() -> None:
+    absent = "geo.mv_soil_survey_union"
+    session = FakeSession(existing_views=MATVIEW_REFRESH_QUALIFIED_NAMES - {absent})
+
+    async with matview_refresh_context(MatviewRefreshLaneContext(session=session)):
+        outcome = await matview_refresh_handler(_fake_invocation())
+
+    assert outcome.kind == "completed"
+    statuses = {entry["view"]: entry["status"] for entry in outcome.metrics["views"]}
+    assert statuses[absent] == "relation_absent"
+    assert outcome.metrics["relations_absent"] == [absent]
+    refreshed = {sql.rsplit(" ", 1)[-1] for sql in session.refresh_statements()}
+    assert refreshed == MATVIEW_REFRESH_QUALIFIED_NAMES - {absent}
+
+
+@pytest.mark.asyncio
+async def test_an_absent_relation_reads_no_watermark_and_carries_its_last_one_forward(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Nothing was queried, so nothing new may be claimed to have been observed.
+
+    Writing a fresh `{}` watermark over the stored one would erase a real observation and then read
+    as "the watermark changed" on the tick the relation reappears -- a fabricated fact that happens
+    to reach the right decision, which is exactly the class of defect this lane refuses elsewhere.
+    """
+    now = datetime(2026, 9, 2, 12, 0, 0, tzinfo=UTC)
+    monkeypatch.setattr(_FrozenDateTime, "fixed_now", now)
+    monkeypatch.setattr(mv_module, "datetime", _FrozenDateTime)
+    absent = "geo.mv_soil_survey_union"
+    prior_rows = _fresh_prior_state_rows(now)
+    stored_watermark = next(row["source_watermark"] for row in prior_rows if row["view_name"] == absent)
+    session = FakeSession(
+        existing_views=MATVIEW_REFRESH_QUALIFIED_NAMES - {absent},
+        prior_state_rows=prior_rows,
+    )
+
+    async with matview_refresh_context(MatviewRefreshLaneContext(session=session)):
+        await matview_refresh_handler(_fake_invocation())
+
+    absent_watermark_reads = [sql for sql, _ in session.statements if "soil_survey_coverage" in sql]
+    written = [write for write in session.state_writes() if write["view_name"] == absent]
+    assert written == [
+        {
+            "view_name": absent,
+            "source_watermark": stored_watermark,
+            # NULL, so `upsert_matview_refresh_state.sql`'s COALESCE keeps the last real success and
+            # its `consecutive_failures` CASE leaves the counter alone -- no backoff is earned by a
+            # catalogue lookup, and none is needed, because no work was done.
+            "refreshed_at": None,
+            "duration_ms": 0,
+            "row_count": None,
+            "outcome": "relation_absent",
+        }
+    ]
+    # `geo.mv_soil_survey_grid` shares this watermark query and IS present, so the query still runs --
+    # what must not happen is the absent spec adding a read of its own.
+    assert len(absent_watermark_reads) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_relation_that_reappears_is_refreshed_on_the_very_next_tick() -> None:
+    """`relation_absent` must self-heal: it records a fact about now, never a decision about later."""
+    reborn = "geo.mv_soil_survey_union"
+    session = FakeSession(existing_views=MATVIEW_REFRESH_QUALIFIED_NAMES)
+
+    async with matview_refresh_context(MatviewRefreshLaneContext(session=session)):
+        outcome = await matview_refresh_handler(_fake_invocation())
+
+    assert outcome.kind == "completed"
+    assert outcome.metrics["relations_absent"] == []
+    assert f"REFRESH MATERIALIZED VIEW CONCURRENTLY {reborn}" in session.refresh_statements()
+
+
+@pytest.mark.asyncio
+async def test_a_relation_that_vanishes_after_preflight_is_still_the_loud_missing_case() -> None:
+    """The mid-tick race `skipped_missing` exists for, and the reason it is not folded into `relation_absent`.
+
+    A relation the preflight saw and the REFRESH did not is a DDL surprise inside one tick, not a
+    deliberate absence, so it keeps the degraded all-attempted-missing signal the lane already had.
+    """
+    session = FakeSession(existing_views=frozenset(), preflight_present_views=MATVIEW_REFRESH_QUALIFIED_NAMES)
 
     async with matview_refresh_context(MatviewRefreshLaneContext(session=session)):
         outcome = await matview_refresh_handler(_fake_invocation())
 
     assert outcome.kind == "failed"
     assert outcome.failure_class == "matview_refresh_failed"
+    statuses = {entry["status"] for entry in outcome.metrics["views"]}
+    assert statuses == {"skipped_missing"}
 
 
 @pytest.mark.asyncio
@@ -893,11 +1080,13 @@ async def test_each_refresh_pins_its_own_spec_worker_count_not_a_lane_wide_one()
 
 
 def test_the_required_budget_is_capped_at_the_view_own_statement_timeout() -> None:
-    """Twice geo.mv_signal_cell_daily's measured 1,729 s is 3,458 s, which no tick of this lane ever
-    has -- so the uncapped rule made that view permanently unstartable while reporting the healthy
-    `skipped_budget`. The statement timeout is the bound that is actually true."""
-    heavy = next(s for s in MATVIEW_REFRESH_SPECS if s.qualified_name == "geo.mv_signal_cell_daily")
-    assert _required_budget_seconds(heavy, 1_729.0) == float(heavy.statement_timeout_seconds)
+    """The uncapped `2 x estimate` rule made a heavy view permanently unstartable on a healthy-looking
+    `skipped_budget`: twice geo.mv_signal_cell_daily's measured 1,729 s was 3,458 s, more than any
+    tick of this lane ever has. That view is gone, but the rule it broke is not -- the wide feature
+    census reproduces it exactly once a run costs more than half its own 900 s cap, and the statement
+    timeout is the bound that is actually true."""
+    heavy = next(s for s in MATVIEW_REFRESH_SPECS if s.qualified_name == "geo.mv_feature_observation_day")
+    assert _required_budget_seconds(heavy, 500.0) == float(heavy.statement_timeout_seconds)
     # The doubling still governs wherever it is the smaller number, which is every other view.
     small = next(s for s in MATVIEW_REFRESH_SPECS if s.qualified_name == "geo.mv_layer_feature_stats")
     assert _required_budget_seconds(small, 5.0) == 10.0

@@ -33,6 +33,7 @@ from agri_data_service.foundation.parquet.paths import (
     completion_marker_path,
     partition_path,
 )
+from agri_data_service.pipeline.parquet import drain
 from agri_data_service.pipeline.parquet.derivation import DerivationResult, DerivedTierReport
 from agri_data_service.pipeline.parquet.drain import (
     LegacyLayoutRetirement,
@@ -117,6 +118,21 @@ class _LockRaisingSession:
 
     async def rollback(self) -> None:
         self.rollbacks += 1
+
+
+class _RecordingAvailabilityStorage:
+    """A stand-in for `AvailabilityStorage`: it only has to be identifiable, never readable."""
+
+    def read(self, key: str, *, max_bytes: int) -> None:
+        raise AssertionError(f"this drain must not read availability object {key!r} ({max_bytes} bytes)")
+
+    def put_immutable(self, key: str, payload: bytes, *, content_type: str) -> None:
+        raise AssertionError(f"this drain must not publish {key!r} ({len(payload)} {content_type} bytes)")
+
+    def compare_and_swap(self, key: str, payload: bytes, *, expected_etag: str | None, content_type: str) -> bool:
+        raise AssertionError(
+            f"this drain must not advance {key!r} from {expected_etag!r} ({len(payload)} {content_type} bytes)"
+        )
 
 
 def _session() -> AsyncSession:
@@ -634,6 +650,69 @@ async def test_one_guarded_duckdb_session_serves_the_whole_ladder_walk() -> None
     assert spill_settings == ["0 bytes"] * THREE_LANE_DAYS, (
         "the walk's shared session must carry the derivation guards; spilling is the load-bearing one"
     )
+
+
+@pytest.mark.asyncio
+async def test_a_drain_hands_its_availability_storage_to_every_exported_day(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A drain writes the same terminal lane-days the cron writes, so it owes the same index entries.
+
+    Without the kwarg the extension step is silently inert -- `fill_one_lane_day` returns early on
+    `availability_storage is None` -- and a bulk repair leaves the published index thousands of days
+    behind the bucket while every rung it wrote looks healthy.
+    """
+    store, _ = _store()
+    storage = _RecordingAvailabilityStorage()
+    handed: list[object] = []
+
+    async def record(*_args: object, **kwargs: object) -> tuple[str, int, int, int, None]:
+        handed.append(kwargs.get("availability_storage"))
+        return ("written", 1, 1, 32, None)
+
+    monkeypatch.setattr(drain, "fill_one_lane_day", record)
+
+    await run_drain(
+        _session(),
+        store,
+        lanes=[LANE_REGISTRY[STREAM]],
+        today=DAY,
+        run_id=RUN_ID,
+        selection="missing",
+        max_days_per_lane=1,
+        now=_now,
+        lane_day_lock=unlocked_lane_day,
+        availability_storage=storage,  # type: ignore[arg-type]
+    )
+
+    assert handed == [storage], "the export path must receive the drain's own storage, not None"
+
+
+@pytest.mark.asyncio
+async def test_a_drain_given_no_availability_storage_stays_inert(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The control: the default is None, so a caller that has bootstrapped no index publishes nothing."""
+    store, _ = _store()
+    handed: list[object] = []
+
+    async def record(*_args: object, **kwargs: object) -> tuple[str, int, int, int, None]:
+        handed.append(kwargs.get("availability_storage"))
+        return ("written", 1, 1, 32, None)
+
+    monkeypatch.setattr(drain, "fill_one_lane_day", record)
+
+    await run_drain(
+        _session(),
+        store,
+        lanes=[LANE_REGISTRY[STREAM]],
+        today=DAY,
+        run_id=RUN_ID,
+        selection="missing",
+        max_days_per_lane=1,
+        now=_now,
+        lane_day_lock=unlocked_lane_day,
+    )
+
+    assert handed == [None]
 
 
 # --- Retiring the pre-zoom layout ----------------------------------------------------------------

@@ -61,6 +61,24 @@ def test_receiver_actor_is_normalized_and_bounded() -> None:
         _settings(local_publish_token=_TOKEN, local_publish_actor="publisher\nadmin")
 
 
+def test_coverage_authority_defaults_to_the_transitional_mode() -> None:
+    """No lane has a production bootstrap receipt yet; defaulting to `availability` empties the slider."""
+    assert _settings().parquet_coverage_authority == "census_until_bootstrap"
+
+
+def test_coverage_authority_is_flipped_by_one_environment_variable(monkeypatch: pytest.MonkeyPatch) -> None:
+    """One variable is the whole cutover switch, so the rollback is one variable too."""
+    monkeypatch.setenv("PARQUET_COVERAGE_AUTHORITY", "availability")
+
+    assert Settings(_env_file=None).parquet_coverage_authority == "availability"
+
+
+def test_an_unknown_coverage_authority_is_refused_at_boot() -> None:
+    """A typo must fail the process, not silently select the mode it happened to resemble."""
+    with pytest.raises(ValidationError, match="parquet_coverage_authority"):
+        _settings(parquet_coverage_authority="availability_probably")
+
+
 def test_migration_url_requires_a_synchronous_driver() -> None:
     configured = _settings(database_url_sync="postgres://migration@example.test/plantgeo")
     assert configured.database_url_sync.startswith("postgresql://")

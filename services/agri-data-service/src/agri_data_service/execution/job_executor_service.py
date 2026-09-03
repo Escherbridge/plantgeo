@@ -42,6 +42,11 @@ from agri_data_service.jobs import (
 from agri_data_service.jobs.lease import apply_statement_timeout, canonical_json, fetch_row, required_column
 from agri_data_service.jobs.matview_refresh import MATVIEW_REFRESH_TIME_BUDGET_SECONDS
 from agri_data_service.jobs.strategy_mv_refresh import STRATEGY_MV_REFRESH_TIME_BUDGET_SECONDS
+from agri_data_service.pipeline.direct.climate.products import (
+    CLIMATE_DEFAULT_TIME_BUDGET_SECONDS,
+    CLIMATE_FIELD_PRODUCTS,
+    CLIMATE_SHORTWAVE_RADIATION_PUBLICATION_LAG_DAYS,
+)
 from agri_data_service.pipeline.lanes.fire_detections import FIRE_DETECTIONS_DIRECT_WRITER_START_DAY
 from agri_data_service.pipeline.lanes.water_gauges import WATER_GAUGES_DIRECT_WRITER_START_DAY
 from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRATIONS, LANE_REGISTRY
@@ -309,12 +314,27 @@ def _postgres_spec(  # noqa: PLR0913 - cadence metadata stays beside each source
     )
 
 
+#: The registered streams `plantgeo-ingest-cron` never produced a single day of; see
+#: `execution/AGENTS.md`, "climate-nasa-power-direct-forward", for why it is not their legacy owner.
+_SOURCE_DIRECT_SLUGS: Final[frozenset[str]] = frozenset(product.stream for product in CLIMATE_FIELD_PRODUCTS)
+
+#: The direct climate writer and the eight generic `parquet-climate-field-*` specs are two owners of
+#: one calendar, so `parse_activation` refuses the pairing from either side.
+CLIMATE_DIRECT_LANE_ID: Final = "climate-nasa-power-direct-forward"
+CLIMATE_GENERIC_LANE_IDS: Final[tuple[str, ...]] = tuple(
+    f"parquet-{product.stream}" for product in CLIMATE_FIELD_PRODUCTS
+)
+
+
 def _parquet_spec(slug: str) -> LaneExecutionSpec:
     lag, publication_cadence, writer_ceiling = _registration(slug)
-    handoffs: tuple[str, ...] = (_disabled(INGEST_CRON_OWNER),)
-    legacy_owners: tuple[str, ...] = (INGEST_CRON_OWNER,)
+    source_direct = slug in _SOURCE_DIRECT_SLUGS
+    handoffs: tuple[str, ...] = () if source_direct else (_disabled(INGEST_CRON_OWNER),)
+    legacy_owners: tuple[str, ...] = () if source_direct else (INGEST_CRON_OWNER,)
+    conflicts: tuple[str, ...] = (CLIMATE_DIRECT_LANE_ID,) if source_direct else ()
     return _spec(
         f"parquet-{slug}",
+        conflicts_with=conflicts,
         command=(
             "agri-service",
             "data",
@@ -532,6 +552,27 @@ _MIGRATION_INPUT_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
         publication_lag_source="static lookup; no temporal publication lag",
         timeout_seconds=3000,
         description="Finite SoilGrids cache warmer with database-backed cached-cell checkpoints.",
+    ),
+    _spec(
+        CLIMATE_DIRECT_LANE_ID,
+        command=("python", "-m", "agri_data_service.pipeline.direct.climate"),
+        # No legacy owner, the larger of the two lags, the earliest of the eight floors, and the
+        # generic-spec conflict set: see execution/AGENTS.md "climate-nasa-power-direct-forward".
+        legacy_owners=(),
+        conflicts_with=CLIMATE_GENERIC_LANE_IDS,
+        disposition="source-specific",
+        phase_offset_seconds=2400,
+        schedule="40 * * * *",
+        publication_lag_days=CLIMATE_SHORTWAVE_RADIATION_PUBLICATION_LAG_DAYS,
+        publication_cadence_days=1,
+        publication_lag_source="pipeline/parquet/lane_registry.py climate-field-* contracts",
+        selection_policy="newest settled unfilled day first, one product-day per lane-day lock",
+        timeout_seconds=int(CLIMATE_DEFAULT_TIME_BUDGET_SECONDS) + COMMAND_CLEANUP_MARGIN_SECONDS,
+        description=(
+            "Direct NASA POWER forward writer for the eight climate-field streams; shadow until the "
+            "snapshot readers can see forward days."
+        ),
+        writer_floor=min(product.history_floor for product in CLIMATE_FIELD_PRODUCTS).isoformat(),
     ),
     _spec(
         "soil-moisture-parquet-backfill",

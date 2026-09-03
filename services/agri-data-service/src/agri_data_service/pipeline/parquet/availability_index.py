@@ -30,8 +30,8 @@ from agri_data_service.foundation.parquet.paths import (
     try_parse_completion_marker_path,
     try_parse_partition_path,
 )
-from agri_data_service.pipeline.parquet.gap_fill import postgres_lane_publication_barrier
 from agri_data_service.pipeline.parquet.objectstore import BotoObjectStoreBackend
+from agri_data_service.pipeline.parquet.publication_barrier import postgres_lane_publication_barrier
 from agri_data_service.warehouse.schemas.availability_index import (
     AVAILABILITY_INDEX_SCHEMA,
     AVAILABILITY_METADATA_KEYS,
@@ -71,6 +71,20 @@ BOOTSTRAP_INVENTORY_SCHEMA_VERSION: Final = "availability-bootstrap-inventory-v1
 SOURCE_EVIDENCE_SCHEMA_VERSION: Final = "availability-source-evidence-v1"
 TERMINAL_EVIDENCE_SCHEMA_VERSION: Final = "availability-terminal-evidence-v1"
 SYSTEM_BOOTSTRAP_SCHEMA_VERSION: Final = "availability-system-bootstrap-v1"
+BOOTSTRAP_MARKER_SCHEMA_VERSION: Final = "availability-bootstrap-marker-v1"
+
+#: The bootstrap RECEIPT is content-addressed, so nothing can find it without already knowing its
+#: digest. This marker sits at a deterministic key beside it and names it, which is what lets a
+#: reader ask "was this lane ever bootstrapped?" with ONE GET instead of a prefix walk. See
+#: `parquet_ops/availability_coverage.py`: a bootstrapped lane whose pointer is gone is withheld,
+#: never quietly re-censused.
+BOOTSTRAP_MARKER_MAX_BYTES: Final = 64 * 1024
+_BOOTSTRAP_MARKER_FIELDS: Final = {
+    "bootstrap_receipt_key",
+    "bootstrap_receipt_sha256",
+    "lane_root",
+    "schema_version",
+}
 _IDENTITY_FIELDS: Final = {
     "lane_root",
     "lane",
@@ -799,6 +813,92 @@ def availability_generation_key(lane_root: str, generation_sha256: str) -> str:
     return f"{lane_root}/availability/generation={generation_sha256}/availability.parquet"
 
 
+def availability_lane_identity(lane_root: str) -> tuple[str, str]:
+    """Return one lane root's `(layer, kind)`, refusing anything outside the frozen layout."""
+    return _physical_lane_identity(lane_root)
+
+
+def availability_bootstrap_marker_key(lane_root: str) -> str:
+    """Return the DETERMINISTIC key naming this lane's immutable bootstrap receipt."""
+    _require_lane_root(lane_root)
+    return f"{lane_root}/availability/bootstrap/_BOOTSTRAPPED.json"
+
+
+def read_bootstrap_marker(store: AvailabilityStorage, *, lane_root: str) -> EvidenceReceipt | None:
+    """Return the bootstrap receipt this lane's marker names, or `None` when it was never bootstrapped.
+
+    ONE GET, and never a listing. A lane that answers `None` here has no availability history at all,
+    which is the only state a transitional census may fall back on; a lane that answers a receipt and
+    has no pointer has LOST its head, which is a fault to withhold rather than to re-prove by scan.
+    """
+    stored = store.read(availability_bootstrap_marker_key(lane_root), max_bytes=BOOTSTRAP_MARKER_MAX_BYTES)
+    if stored is None:
+        return None
+    value = _decode_canonical_json_object(stored.payload, "availability bootstrap marker")
+    # EVERY shape fault becomes `AvailabilityMalformedError`, because the caller is the coverage
+    # reader: a bare `ValueError` out of here is not one of the four refusals it classifies and
+    # would fail the whole census instead of withholding one lane.
+    try:
+        _require_exact_keys(value, _BOOTSTRAP_MARKER_FIELDS, "availability bootstrap marker")
+        if value["schema_version"] != BOOTSTRAP_MARKER_SCHEMA_VERSION:
+            raise ValueError(f"bootstrap marker schema must be {BOOTSTRAP_MARKER_SCHEMA_VERSION}")
+        if value["lane_root"] != lane_root:
+            raise ValueError("bootstrap marker does not describe the lane it is filed under")
+        return EvidenceReceipt(
+            key=_require_string(value["bootstrap_receipt_key"], "bootstrap_receipt_key"),
+            sha256=_require_string(value["bootstrap_receipt_sha256"], "bootstrap_receipt_sha256"),
+        )
+    except ValueError as exc:
+        raise AvailabilityMalformedError(f"malformed availability bootstrap marker for {lane_root!r}") from exc
+
+
+def _bootstrap_marker_payload(lane_root: str, receipt: EvidenceReceipt) -> bytes:
+    """Render the marker. Receipt-derived ONLY, so a re-attempt writes byte-identical immutable content."""
+    return canonical_json(
+        {
+            "bootstrap_receipt_key": receipt.key,
+            "bootstrap_receipt_sha256": receipt.sha256,
+            "lane_root": lane_root,
+            "schema_version": BOOTSTRAP_MARKER_SCHEMA_VERSION,
+        }
+    ).encode("utf-8")
+
+
+def read_terminal_evidence(
+    store: AvailabilityStorage,
+    receipt: EvidenceReceipt,
+    *,
+    identity: AvailabilityIdentity,
+) -> TerminalEvidence:
+    """Read and fully verify one rung's terminal evidence wrapper and the physical objects it binds."""
+    evidence, _snapshots = _verify_terminal_evidence_receipt(store, receipt, expected_identity=identity)
+    return evidence
+
+
+def availability_row_from_terminal_evidence(
+    evidence: TerminalEvidence,
+    *,
+    terminal_receipt: EvidenceReceipt,
+) -> AvailabilityRow:
+    """Rebuild the one row a terminal evidence document can bind, so a retry cannot invent a different one."""
+    return AvailabilityRow(
+        lane=evidence.identity.lane,
+        product=evidence.identity.product,
+        nature=evidence.identity.nature,
+        day=evidence.day,
+        rung=evidence.rung,
+        terminal_state=evidence.terminal_state,
+        row_count=evidence.row_count,
+        source_receipt=evidence.source_receipt,
+        terminal_receipt=terminal_receipt,
+        data_receipts=evidence.data_receipts,
+        completion_receipt=evidence.completion_receipt,
+        absence_reason=evidence.absence_reason,
+        source_ceiling=evidence.source_ceiling,
+        published_at=evidence.published_at,
+    )
+
+
 def compute_verified_source_inventory_root(receipts: Sequence[EvidenceReceipt]) -> str:
     """Digest the exact sorted bootstrap manifest/checkpoint inventory."""
     ordered = tuple(sorted(receipts, key=lambda receipt: receipt.key))
@@ -974,6 +1074,15 @@ def _bootstrap_availability_owned(store: AvailabilityStorage, request: Bootstrap
             verified = list(verified_inventory)
             verified.extend(_verify_rows_evidence(store, request.rows, identity=request.identity))
             store.put_immutable(receipt.key, receipt_payload, content_type=JSON_CONTENT_TYPE)
+            # The deterministic marker, written BEFORE the pointer exists: it is what proves this
+            # lane was bootstrapped at all once its mutable head is gone. Immutable and
+            # receipt-derived, so a retried bootstrap re-writes identical bytes and a DIFFERENT
+            # bootstrap is refused here rather than quietly beginning a second history.
+            store.put_immutable(
+                availability_bootstrap_marker_key(request.identity.lane_root),
+                _bootstrap_marker_payload(request.identity.lane_root, receipt),
+                content_type=JSON_CONTENT_TYPE,
+            )
             verified.append(
                 _verify_system_bootstrap_receipt(
                     store,

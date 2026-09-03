@@ -58,6 +58,9 @@ twelve serving fields plus twenty-one source-lineage fields. Earlier task prose 
 must not drop a lineage field to fit the stale count. Coarse rungs keep snapshot identity and null
 row-level locators that cannot honestly name one contributor.
 
+The lineage columns are scoped by `source_snapshot_id`: on a `direct:<sha256>` row they name the
+NASA POWER response object the value was read from, not a row of `agri.signal_observation`.
+
 The four soil-temperature depths share the completed bundle's separate 21-field lane contract.
 Their coarse cells sum physical-candidate counts, null selected-row identity, and compute
 `lineage_sha256` from sorted child digests with one newline per value. The helper registers these

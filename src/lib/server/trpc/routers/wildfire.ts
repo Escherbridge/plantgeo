@@ -7,6 +7,7 @@ import { getPublishedWeatherForPoint } from "@/lib/server/services/environmental
 import {
   getParquetFireDetections,
   getParquetWeatherObservations,
+  rejectAborted,
 } from "@/lib/server/services/parquet-trpc-readers";
 
 /** Matches the "west,south,east,north" bbox format environmental.getStreamflow validates. */
@@ -68,12 +69,13 @@ async function findInterventionsLayerId(ctx: Context): Promise<string | null> {
 
 export const wildfireRouter = router({
   /**
-   * Get fire detection features filtered by bounding box.
+   * Published fire-detection cells for a viewport, at the rung `zoom` selects.
    * bbox: "west,south,east,north"
    *
-   * `date` narrows to one FIRMS acquisition day instead of the rolling `dayRange` lookback.
-   * NOTE: `src/app/api/fires/route.ts` -- which `useFireData` actually calls -- does not
-   * forward a date yet, so the map's fire layer is still dateless. See
+   * `date` narrows to one FIRMS acquisition day; omitting it reads the rolling `dayRange`
+   * lookback ending at the server's today. This is the map's ONLY fire read as of the
+   * 2026-09-01 cutover -- `useParquetFireDetections` calls it for both `LayerManager` and
+   * `FireDetails`, and no map surface calls `/api/fires` any more. See
    * `src/lib/server/AGENTS.md` §slider-day.
    */
   getFireDetections: publicProcedure
@@ -85,13 +87,22 @@ export const wildfireRouter = router({
         zoom: mapZoomSchema,
       })
     )
-    .query(({ input }) =>
-      getParquetFireDetections({
-        bbox: input.bbox,
-        dayRange: input.dayRange,
-        date: input.date,
-        mapZoom: input.zoom,
-      })
+    .query(async ({ input, signal }) =>
+      rejectAborted(
+        await getParquetFireDetections({
+          bbox: input.bbox,
+          dayRange: input.dayRange,
+          date: input.date,
+          mapZoom: input.zoom,
+          // Abandoned by the client (a pan, a scrub, an unmount) reaches the socket: the reader
+          // forwards this into its bounded fetch. Stopping the server read is best-effort -- a
+          // batched HTTP request only aborts once EVERY op in it has -- so the guarantee that
+          // matters is `rejectAborted`, which keeps an abandoned read off the data path instead
+          // of letting a cached `aborted` payload replay as a warehouse answer. See
+          // `src/lib/server/services/AGENTS.md` §request-cancellation.
+          signal,
+        })
+      )
     ),
 
   /**
@@ -203,11 +214,15 @@ export const wildfireRouter = router({
         zoom: mapZoomSchema,
       })
     )
-    .query(({ input }) =>
-      getParquetWeatherObservations({
-        bbox: input.bbox,
-        date: input.date,
-        mapZoom: input.zoom,
-      })
+    .query(async ({ input, signal }) =>
+      rejectAborted(
+        await getParquetWeatherObservations({
+          bbox: input.bbox,
+          date: input.date,
+          mapZoom: input.zoom,
+          // Same seam as `getFireDetections` above; the reader already forwards it.
+          signal,
+        })
+      )
     ),
 });

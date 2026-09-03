@@ -24,6 +24,7 @@ from agri_data_service.parquet_ops import coverage as coverage_module
 from agri_data_service.parquet_ops.coverage import (
     CENSUS_LIST_WORKERS,
     DEDICATED_SLIDER_PRODUCT_LAYERS,
+    NON_SLIDER_REGISTERED_LAYERS,
     CensusLane,
     CoverageCache,
     build_coverage,
@@ -33,6 +34,7 @@ from agri_data_service.parquet_ops.coverage import (
 from agri_data_service.parquet_ops.faults import ServingRefusalError
 from agri_data_service.parquet_ops.request_params import ReadScope
 from agri_data_service.parquet_ops.serving import resolve_release
+from agri_data_service.parquet_ops.snapshot_products import PRODUCT_BY_LAYER
 from agri_data_service.parquet_ops.warehouse_reader import ObjectStoreListing
 from agri_data_service.parquet_ops.wire import DayRange, LaneCoverage, WarehouseCoverage
 from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRY
@@ -94,6 +96,14 @@ def test_the_census_renderer_reproduces_the_frozen_payload_byte_for_byte() -> No
             published_ranges=tuple(_range(entry) for entry in lane["published_ranges"]),
             gap_ranges=tuple(_range(entry) for entry in lane["gap_ranges"]),
             governed_absence_ranges=tuple(_range(entry) for entry in lane["governed_absence_ranges"]),
+            coverage_authority=lane["coverage_authority"],
+            availability_generation_sha256=lane["availability_generation_sha256"],
+            availability_pointer_key=lane["availability_pointer_key"],
+            source_ceiling_day=(
+                None if lane["source_ceiling_day"] is None else date.fromisoformat(str(lane["source_ceiling_day"]))
+            ),
+            required_rungs=tuple(lane["required_rungs"]),
+            withheld_reason=lane["withheld_reason"],
         )
         for lane in payload["lanes"]
     )
@@ -369,6 +379,40 @@ def test_a_built_census_satisfies_the_frozen_contract_model() -> None:
     assert all(lane.earliest_day is None for lane in parsed.lanes if lane.layer == "soil-survey")
 
 
+def test_a_census_row_says_it_was_proven_by_a_listing_and_cites_no_availability_evidence() -> None:
+    """A listing binds no cross-rung contract and no ceiling, so it must claim neither."""
+    listing = FakeListing()
+    listing.write_day("signal", "observed", 13, date(2026, 8, 1))
+
+    census = build_coverage(
+        listing,
+        lanes=(SIGNAL_LANE,),
+        generated_at=datetime(2026, 8, 25, 4, 0, tzinfo=UTC),
+    )
+
+    for lane in census.lanes:
+        assert lane.coverage_authority == "census"
+        assert lane.availability_generation_sha256 is None
+        assert lane.availability_pointer_key is None
+        assert lane.source_ceiling_day is None
+        assert lane.required_rungs == ()
+        assert lane.withheld_reason is None
+
+
+def test_the_memo_is_rebuilt_when_a_bootstrapped_lane_leaves_the_census() -> None:
+    """Reusing a wider memo would emit a lane twice: once from its index, once from a stale listing."""
+    listing = _CountingListing()
+    cache = CoverageCache(ttl_seconds=600)
+    now = datetime(2026, 8, 25, 4, 0, tzinfo=UTC)
+
+    both = cache.get(listing, lanes=(SIGNAL_LANE, SOIL_LANE), now=now)
+    narrowed = cache.get(listing, lanes=(SOIL_LANE,), now=now)
+
+    assert {lane.layer for lane in both.lanes} == {"signal", "soil-survey"}
+    assert {lane.layer for lane in narrowed.lanes} == {"soil-survey"}
+    assert listing.calls > LISTINGS_PER_CENSUS, "a different lane set is a different census"
+
+
 def test_the_census_covers_all_direct_lanes_and_every_schema_backed_slider_product() -> None:
     lanes = registered_census_lanes()
 
@@ -382,10 +426,12 @@ def test_the_census_covers_all_direct_lanes_and_every_schema_backed_slider_produ
     product_lanes = {lane.layer: lane for lane in lanes if lane.layer in DEDICATED_SLIDER_PRODUCT_LAYERS}
     assert set(product_lanes) == set(DEDICATED_SLIDER_PRODUCT_LAYERS)
     assert all(lane.nature == "daily_series" for lane in product_lanes.values())
-    assert {lane.layer for lane in lanes if lane.layer in LANE_REGISTRY} == set(LANE_REGISTRY) - {
-        "calendar",
-        "signal",
-    }
+    # The two exclusion sets are IMPORTED, never respelt: an immutable product is registered as a
+    # lane so it has a floor and a schedule, and censused through `build_snapshot_coverage` instead,
+    # so a hand-written list here goes stale the day a product gains or loses its snapshot.
+    assert {lane.layer for lane in lanes if lane.layer in LANE_REGISTRY} == (
+        set(LANE_REGISTRY) - NON_SLIDER_REGISTERED_LAYERS - set(PRODUCT_BY_LAYER)
+    )
     for layer in DEDICATED_SLIDER_PRODUCT_LAYERS:
         assert get_stream_schema(layer, "observed").name == layer
     assert len(lanes) == EXPECTED_REGISTERED_CENSUS_LANES, (
@@ -535,7 +581,7 @@ def test_every_registered_lane_carries_its_own_cadence_and_publication_lag_into_
     lanes = {lane.layer: lane for lane in registered_census_lanes()}
 
     for slug, registration in LANE_REGISTRY.items():
-        if slug in {"calendar", "signal"}:
+        if slug in NON_SLIDER_REGISTERED_LAYERS or slug in PRODUCT_BY_LAYER:
             continue
         lane = lanes[slug]
         assert (lane.cadence_days, lane.publication_lag_days) == (

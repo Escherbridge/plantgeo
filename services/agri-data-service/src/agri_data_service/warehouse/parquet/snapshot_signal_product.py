@@ -1,4 +1,8 @@
-"""Canonical registrations for immutable snapshot-derived signal products."""
+"""Canonical registrations for immutable snapshot-derived signal products.
+
+The lineage columns are scoped by `source_snapshot_id`: on a `direct:<sha256>` row they name the
+NASA POWER response object the value was read from, never a row of `agri.signal_observation`.
+"""
 
 from __future__ import annotations
 

@@ -444,6 +444,14 @@ The corpus is digested again after materialisation and the transaction refuses i
 the two reads, so a READ COMMITTED registration cannot label observations from one raw revision
 with another revision's source-release checksum.
 
+## The publication barrier is a leaf
+
+`postgres_lane_publication_barrier` lives in `publication_barrier.py`, importing `db.advisory_keys`
+and nothing else in this package. It used to sit on `gap_fill`, which forced `availability_index` to
+import the DRIVER at module scope for a default argument - and that edge is why every import in the
+other direction (`gap_fill` -> `availability_extension`, twice) had to be a lazy function-body
+import carrying a `# noqa: PLC0415`. One leaf module removes the cycle and all of the lazy imports.
+
 ## `availability_index.py` — immutable generations, one conditional pointer
 
 Each time-bearing physical lane owns `<lane-root>/availability/_LATEST.json` and content-addressed
@@ -500,3 +508,163 @@ enables apply must drain old writer processes, because a process predating this 
 the lock protocol. The full lock order is vegetation-wide barrier where applicable, shared lane
 publication barrier, exclusive lane-day lock, then object mutations; availability takes only the
 exclusive lane publication barrier.
+
+## `availability_extension.py` — the terminal day joins the index, and only after it is terminal
+
+Every lane-day that `gap_fill.fill_one_lane_day` makes TERMINAL — published parts plus derived rungs
+plus the base completion marker, or a governed absence — is offered to its lane's availability
+generation by this module, and never before. The order inside one lane-day is fixed and is the whole
+point: parts, prune, coarse rungs, base marker, THEN availability evidence, THEN the conditional
+`_LATEST.json` swap. Nothing may move earlier. A day whose index entry is written before its
+completion marker would be advertised as selectable while a crash could still leave it half-written,
+which is the exact stable lie the marker contract exists to prevent, arrived at one layer up.
+
+A BOOTSTRAP LEAVES A DETERMINISTIC MARKER beside its content-addressed receipt, at
+`<lane-root>/availability/bootstrap/_BOOTSTRAPPED.json`. It is immutable and derived only from the
+receipt it names, so a retried bootstrap writes identical bytes while a DIFFERENT bootstrap is
+refused there rather than quietly beginning a second history. Its whole purpose is one GET: without
+it nothing can ask "was this lane ever bootstrapped?" without already knowing the receipt digest,
+and `parquet_ops/availability_coverage.py` needs that answer to tell a lane that never had an index
+from one that LOST its pointer.
+
+The receipts come from a WRITE LEDGER, not from re-reading the bucket. `ObjectStore` grew
+`recording_written_objects()`: a scope that captures the `ParquetWriteReceipt`,
+`CompletionWriteReceipt` and `AbsenceWriteReceipt` — key, relative path, row count and SHA-256, all
+of which the writer already computed — of every object written inside it. `fill_one_lane_day` opens
+one scope per lane-day around the export, so the availability step names every part of every rung
+without opening a single one. The store records nothing unless a scope is open, so no other caller
+pays for it, and nested scopes each get their own ledger while receipts fan out to all of them.
+
+The source receipt of a `gap_fill` day is what POSTGRES HELD AT EXPORT TIME, not a claim about the
+upstream source system — the same distinction `zero_row_absence` already draws. It is one canonical
+JSON object under `<lane-root>/availability/source/day=<day>/export=<sha>.json` carrying the run id,
+row count, part count and export instant, wrapped in the ordinary content-addressed source evidence
+document. A direct writer that really did fetch an upstream API passes its own `LaneDaySource`
+origin and detail instead; the contract cares that the receipt is exact, not that it is Postgres.
+
+### The source ceiling is the LANE's, never the day's
+
+`FinalizedLaneDay.source_ceiling` is REQUIRED and comes from `lane_ceiling.allowed_source_ceiling`,
+which is `today - publication_lag_days` for a time-bearing lane and `today` for a `static_lookup`.
+It used to default to "the day itself", and that default was a coverage outage in slow motion: the
+publisher ratchets the pointer's ceiling to the maximum any row declares, so a day that declared
+itself its own ceiling pinned the lane's horizon to its newest published day. Coverage then closed
+every lane exactly at its own last row (`close_lane_coverage(horizon=ceiling)`), so `gap_ranges`
+could never hold a tail and a release lane's bounded carry collapsed to nothing. ONE definition,
+imported by the publisher and by `parquet_ops/availability_coverage.py`, is what keeps the two from
+drifting; `max(allowed, day)` keeps the statement honest for a day a forward writer published past
+the generic ceiling, because a lane cannot have a ceiling below a day it demonstrably holds.
+
+`writer_ceiling` is deliberately NOT applied. That field says which WRITER owns a day, not how far
+the SOURCE has published, and folding it in would make every lane a forward writer owns declare a
+ceiling below the days it publishes.
+
+### Six typed outcomes, and which of them lose the day
+
+- `extended` - the generation now covers the day at every required rung, pointer advanced last.
+- `skipped_unchanged` - the generation already carries these exact grains and receipts. A replay,
+  including the retry path, is a no-op rather than a correction generation.
+- `not_bootstrapped` - the lane has no generation zero (production bootstrap is separately
+  authorized and has not run), or no conditional storage is wired into this run. Nothing is owed:
+  the offline bootstrap builds generation zero FROM the objects this day is already among, so the
+  claim is cleared rather than left for a retry that would find the day already covered.
+- `ladder_incomplete` - this day cannot form the exact required-rungs ladder, so no honest row set
+  exists. A retry would rebuild the identical gap, so none is kept and the day is LOST from the
+  index. It is therefore a named field in `GapFillSummary.to_summary()` and in the drain's report
+  rather than a sentence inside one day's detail string.
+- `retry_claim_failed` - the day is terminal and its retry claim could not be written, so nothing
+  will ever bring it back. Counted for the same reason and separately, because it is a store fault
+  rather than a data one.
+- `retry_owed` - the availability step alone failed: pointer CAS exhausted its bounded attempts,
+  the lane publication barrier was contended, the head could not be read, or the evidence objects
+  could not be written. The prior generation stays valid, the claim stands, and the DATA DAY IS
+  NEVER RE-EXPORTED for it.
+
+### The retry claim is written BEFORE the head is read
+
+`build_gap_census` walks the base tier and never revisits a completed day, so any exit that leaves a
+terminal day out of BOTH the index and the retry ledger loses it permanently - silently, on a green
+tick. The claim at `<lane-root>/availability/pending/day=<day>.json` is therefore written first,
+from LEDGER FACTS ALONE: the day's physical part, completion and absence receipts, its terminal
+state, its absence reason, its source ceiling, and the exporting process's own `LaneDaySource`. None
+of that needs the pointer, which is exactly the read that has to be survivable.
+
+That is why the claim is `availability-retry-v2`. v1 named the TYPED EVIDENCE receipts, whose keys
+derive from the lane identity the pointer carries - so it could only be written after the head read
+had already succeeded, and an unreadable head produced `retry_owed` with no claim at all. v2's
+receipts are the ones the writer already computed, so `retry_pending_availability` rebuilds
+byte-identical evidence and rows from the claim, re-writes the evidence objects idempotently,
+republishes, and drops the claim. `MAX_AVAILABILITY_RETRY_BYTES` moved to 8 MiB to hold them:
+`soil-survey` streams ~3,016 parts in one day, and a claim that could not fit would lose that day.
+
+The claim is cleared on success, on `skipped_unchanged`, on `not_bootstrapped`, and on
+`ladder_incomplete` - the last because a claim that can never be satisfied would spin a drain
+forever. `run_gap_fill` drains up to `DEFAULT_MAX_RETRIES_PER_LANE` claims per lane BEFORE taking
+any new day, because owed availability is the cheap half of a tick and a spent budget would
+otherwise defer it forever. The cost of claim-first is one extra PUT and one DELETE per terminal
+lane-day, which is the price of never losing one.
+
+`input_sha256` on the publication request is the SOURCE EVIDENCE digest, not a re-hash of the rows
+being published. Hashing a request's own rows and shipping the digest alongside them proved nothing;
+the source evidence document is an object outside the request that every row of the day cites.
+
+### Why an emptied rung strands its day, and what would unstrand it
+
+A derived rung that generalises to zero rows is RETRACTED by `derivation._retract_tier`: its parts
+and its completion marker are deleted, because a rung that still claimed to be finished would go on
+serving rows the base day no longer contains. Correct for the bucket, and fatal for the ladder - the
+day is base-complete, so no census brings it back, and it can never present the exact required-rungs
+set a generation demands. `_rung_objects` names that case `derived_to_zero_rows` so a summary counts
+it apart from a genuinely broken export.
+
+NEITHER OBVIOUS ENCODING IS REACHABLE FROM THIS DIRECTORY, and the exact constraint chain is worth
+writing down rather than rediscovering:
+
+1. A governed absence at the emptied rung alone would MIX terminal states inside one day, which
+   `availability_index._validate_generation_day` refuses outright ("mixes terminal states across its
+   ladder") - and `AvailabilityIndex.selectable_days` rests on that same rule, so relaxing it would
+   make such a day unselectable at every rung rather than merely unindexed. It is also a false
+   claim: a governed absence says the SOURCE had nothing, and the base rung demonstrably holds rows.
+2. A `published` row with `row_count=0` and a completion receipt is refused twice over.
+   `_validate_terminal_payload` requires a positive `row_count` and non-empty data receipts, and -
+   decisively - `foundation/parquet/completion.py::PartitionCompletion` refuses `part_count <= 0`
+   with its own stated rationale, so there is no zero-part completion marker for such a row to bind.
+
+Closing the ladder therefore needs a `foundation` change (permit a zero-part completion marker for a
+DERIVED rung, then relax the two availability validators to accept a published row that binds one).
+Until that lands the day stays unindexed - and counting `ladder_incomplete` as a named summary field
+is precisely what keeps that loss visible while it does.
+
+LOCK ORDER. `postgres_lane_day_lock` already holds the lane's SHARED publication barrier for the
+whole lane-day, and `publish_availability` takes the EXCLUSIVE one. Same session, so its own shared
+hold does not conflict; ANOTHER writer's does, and that is a `retry_owed` rather than a fault — the
+drain and the hourly cron are designed to overlap.
+
+## Governed absences settle the whole ladder, not just the censused rung
+
+`_export_one_day` writes the governed-absence marker at EVERY zoom tier, coarse rungs first and the
+censused base rung LAST — the same ordering `_finalize_written_day` uses for exactly the same
+reason. An empty day is empty at every RESOLUTION of itself, and a reader at z9 must be able to tell
+a governed emptiness from a rung nobody ever wrote. Only the base rung is censused, so writing it
+first and then dying would leave a covered day that is never revisited and silent above z13.
+
+THE WHOLE LADDER IS CHECKED BEFORE THE FIRST MARKER IS WRITTEN. `_govern_absent_day` asks
+`ObjectStore.part_blocking_absence` about every rung first and refuses the ladder atomically when
+any rung still holds parts: the day is `blocked`, the note names every conflicting rung and its
+blocking part key, and NO marker exists at any rung. Refusing on the first conflict instead left the
+coarser rungs marked absent while z13 went on serving rows - and nothing brings that day back, since
+the base tier is already complete. If a write still fails mid-ladder, the markers this attempt had
+written are DELETED before the day is failed; a rollback that cannot itself complete says so and
+needs an admin. Coarse-first ordering still keeps the censused base rung out of the conflict window.
+
+The REASON is therefore rung-independent (`zero_row_absence_reason`), while the tier stays named in
+`upstream_response` and in the key. One absent day whose rungs disagreed about why could never be
+bound into an availability ladder, which requires a single reason across the four rows.
+
+The cost is that retracting an absence is now a four-rung action. `write_partition` refuses a rung
+carrying an absence claim, so a base-only retraction — an admin's, or a direct writer's automatic
+`clear_absence_marker` when its source starts publishing a day — would strand the day failing at z9
+forever. `_finalize_written_day` closes that: a `GovernedAbsenceConflictError` out of the derivation
+means a coarse rung still claims a day whose base rung now holds data, which the successful base
+write already PROVED retracted, so the surviving coarse markers are removed and the day is left
+unfinished for the next tick to rebuild. It decides nothing an admin had not already decided.

@@ -3,6 +3,10 @@
 Rationale and constraints that the code's one-line doc comments deliberately omit.
 Add a section per module as it grows; sections are independent.
 
+Parquet reader zoom-tier resolution, availability-backed capability decode and request
+cancellation: see `src/lib/server/services/AGENTS.md` §climate-zoom, §availability-authority,
+§request-cancellation.
+
 ## §regional-intelligence
 
 The AI advisor that answers "what should be done about this place?" for a map
@@ -769,10 +773,16 @@ asserting one cache entry, two observers, one set of options and one request per
 deliberately does not mock `useQuery`: a mock would let the two callers diverge and still
 report green, which is exactly the state this section exists to prevent.
 
-Known gap, deliberately unfixed here: `abortOnUnmount` is unset (tRPC default `false`)
-and `fetchBoundedJson` does not forward an inbound `AbortSignal`, so panning away
-cancels nothing server-side. Both are transport-layer concerns in `lib/trpc/client.ts`
-and `http/bounded-upstream.ts` respectively, not per-query settings.
+Both halves of the cancellation gap this section used to record are now closed, and each was
+closed where it belonged rather than as a per-query setting. `fetchBoundedJson` forwards an
+inbound `AbortSignal`: `http/bounded-upstream.ts` `boundedSignal` combines the caller's signal
+with the request's own timeout, so a signal can only shorten a request, never extend it past the
+bound. `abortOnUnmount: true` is set on `createTRPCReact` in `lib/trpc/client.ts`, which is what
+makes the resolver `signal` the routers thread a signal that actually fires. Panning away now
+abandons the browser-side result exactly and the server-side read best-effort — a batched request
+aborts only once every op in it has. See `src/lib/server/services/AGENTS.md`
+§request-cancellation for that asymmetry and for `rejectAborted`, the guard that keeps an
+abandoned read from being cached as an answer.
 
 ## §slider-day
 
@@ -843,11 +853,19 @@ helper both miss it. Exempt only when the value lands directly in a PostGIS argu
 signature already declares the type (`ST_MakeEnvelope`, `ST_SimplifyPreserveTopology`).
 `expectNoBareFractionalParameter` in the read-model test guards each new statement.
 
-Known gap: `wildfire.getFireDetections` and `getPublishedFireDetections` accept a `date`, but
-`useFireData` calls `/api/fires` — a route handler that takes no parameters — so the map's fire
-layer is still dateless. Forwarding `?date=` from that route to `getPublishedFireDetections` is
-all that is missing; the client must not send one before then, because the route would ignore
-it and draw today's detections under the selected day.
+Closed 2026-09-01: the map's fire layer is dated. Both fire surfaces —
+`LayerManager` and `FireDetails` — read `wildfire.getFireDetections` through
+`useParquetFireDetections`, which sends the `fire` row's settled day, the viewport bbox and the
+viewport zoom, and the procedure serves them from the private Parquet plane at the rung that
+zoom resolves to. No map surface calls `/api/fires`.
+
+Two earlier statements here were wrong and are corrected rather than deleted, because both were
+cited elsewhere. `/api/fires` was never dateless — it accepts `?date=` and forwards it (see
+`src/__tests__/api/fires-route.test.ts` §"GET /api/fires date handling") — so the client was
+free to send a day long before this cutover; what it could not do was scope the read to a
+viewport, pick a serving rung, or tell an unwritten day from an empty one. Those three are what
+the Parquet procedure adds, and they are the reason for the move. The route and `useFireData`
+remain on disk with no map caller until the acceptance track has parity evidence.
 
 ## §vegetation-tiles
 

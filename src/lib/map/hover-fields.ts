@@ -2,9 +2,13 @@
 // No React, no maplibre imports (types only) -- keeps this testable in isolation.
 
 import {
+  fireCellCaptionText,
+  fireDetectionCellLines,
+  FIRE_CELL_CAPTION_TITLE,
+} from "@/lib/map/fire-cell-caption";
+import {
   formatAbsoluteDate,
   formatTimestampWithRelative,
-  resolveObservationIso,
   toIsoTimestamp,
 } from "@/lib/map/time-format";
 
@@ -81,20 +85,20 @@ function buildContent(title: string, lines: (string | null)[]): HoverContent | n
   return { title, lines: filtered };
 }
 
+/**
+ * One published fire-detection CELL -- see `lib/environmental/parquet-fire-presentation.ts`.
+ *
+ * The lines themselves come from `lib/map/fire-cell-caption.ts`, which `FireLayer`'s click popup
+ * reads too: two hand-written copies of these six fields drifted into two different renderings of
+ * one cell ("not reported" against "Not reported", `1234.6 MW` against `1,234.6 MW`). This
+ * formatter flattens each line and keeps the file-wide rule that a feature carrying none of the
+ * fields yields no tooltip rather than a shell of empty labels.
+ */
 function formatFireDetection(props: Properties): HoverContent | null {
-  const confidence = formatInteger(props.confidence, "%");
-  const frp = formatFixed(props.frp, 1, " MW");
-  const brightness = formatInteger(props.brightness, " K");
-  const satellite = stringField(props.satellite);
-  const detected = formatTimestampWithRelative(resolveObservationIso(props));
-
-  return buildContent("Fire detection", [
-    confidence ? `Confidence: ${confidence}` : null,
-    frp ? `FRP: ${frp}` : null,
-    brightness ? `Brightness: ${brightness}` : null,
-    satellite ? `Satellite: ${satellite}` : null,
-    detected ? `Detected: ${detected}` : null,
-  ]);
+  return buildContent(
+    FIRE_CELL_CAPTION_TITLE,
+    fireDetectionCellLines(props).map(fireCellCaptionText)
+  );
 }
 
 function formatWaterGauge(props: Properties): HoverContent | null {

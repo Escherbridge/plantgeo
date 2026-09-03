@@ -1,3 +1,4 @@
+import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import {
   climateFieldSignalDefinition,
@@ -15,7 +16,8 @@ import {
   type SoilFieldDepth,
   type SoilFieldMeasure,
 } from "@/lib/environmental/soil-field";
-import { resolveZoomTier } from "@/lib/map/zoom-tiers";
+import { resolveZoomTier, type ZoomTier } from "@/lib/map/zoom-tiers";
+import { granularityForZoomTier } from "@/lib/server/services/zoom-granularity";
 import { isFreshObservation } from "@/lib/server/services/environmental-time";
 import {
   SOIL_FIELD_MAX_CELLS,
@@ -24,6 +26,7 @@ import {
   type SoilFieldReadOptions,
 } from "@/lib/server/services/environmental-read-model";
 import {
+  UpstreamAbortedError,
   UpstreamConfigurationError,
   UpstreamHttpError,
   UpstreamPayloadError,
@@ -84,13 +87,19 @@ const SOIL_MOISTURE_SOURCE_PARAMETERS = {
   deep: "soil_moisture_28_to_100cm_mean",
 } as const satisfies Readonly<Record<Exclude<SoilFieldDepth, "substratum">, string>>;
 
+/**
+ * `aborted` is the odd one out and deliberately so: the other six describe the UPSTREAM, while an
+ * abort describes the caller that walked away. It is never retryable, never an outage, and -- see
+ * `rejectAborted` below -- never stored as an answer.
+ */
 export type ParquetReaderFailureKind =
   | "configuration"
   | "http"
   | "network"
   | "payload"
   | "timeout"
-  | "contract";
+  | "contract"
+  | "aborted";
 
 export type ParquetReaderResult<T> =
   | {
@@ -120,12 +129,40 @@ export type ParquetReaderResult<T> =
       };
     };
 
+/**
+ * An abandoned read is never an answer: turns an `aborted` fault into a thrown error.
+ *
+ * Every reader here returns its faults as DATA, which is what lets the map caption an outage
+ * instead of blanking -- but react-query stores data, and a `{ kind: "aborted" }` payload cached
+ * against a viewport would be replayed to the next reader of that key as though the warehouse had
+ * said something. Throwing puts it on the error path, where `retry: 1` and the placeholder rules
+ * already handle it. 499 rather than 503: the client closed the request, and nothing is down.
+ *
+ * It lives beside the readers rather than in one router because EVERY procedure that threads a
+ * `signal` owes the same guard -- see `src/lib/server/services/AGENTS.md` §request-cancellation.
+ */
+export function rejectAborted<T>(result: ParquetReaderResult<T>): ParquetReaderResult<T> {
+  if (result.state === "upstream_unavailable" && result.fault.kind === "aborted") {
+    throw new TRPCError({ code: "CLIENT_CLOSED_REQUEST", message: result.fault.message });
+  }
+  return result;
+}
+
 export interface ParquetViewportRead {
   bbox?: string;
   date?: string;
   mapZoom: number;
   /** Test seam for omitted-day selection; production callers leave it unset. */
   nowMs?: number;
+  /**
+   * The tRPC resolver's cancellation, threaded down to the socket.
+   *
+   * Optional so a caller with nothing to cancel is unchanged, and named `signal` to match the
+   * resolver option it is spread from -- `({ input, signal }) => read({ ...input, signal })`.
+   * `getParquetClimateField` is the one reader that cannot use this name, because its `signal` is
+   * already the measured quantity; see the `Omit` on its input.
+   */
+  signal?: AbortSignal;
 }
 
 const daySchema = z.string().regex(DAY_PATTERN);
@@ -456,7 +493,8 @@ const STANDARD_CLIMATE_FIELD_LANES = {
 >;
 
 export interface ParquetClimateFieldObservation {
-  cellId: string;
+  /** The stored cell's identity at z13; null on the coarse rungs, whose cells are anonymous aggregates. */
+  cellId: string | null;
   observedDay: string;
   value: number;
   observationCount: number;
@@ -617,6 +655,11 @@ type ParquetUpstreamFailure = Extract<
 >;
 
 export function parquetUpstreamFailure(error: unknown): ParquetUpstreamFailure | null {
+  // First, and ahead of the timeout arm: an abort and a timeout are the same DOMException on the
+  // wire, and calling a client that navigated away a service outage would page someone for it.
+  if (error instanceof UpstreamAbortedError) {
+    return { state: "upstream_unavailable", fault: { kind: "aborted", message: error.message } };
+  }
   if (error instanceof UpstreamConfigurationError) {
     return { state: "upstream_unavailable", fault: { kind: "configuration", message: error.message } };
   }
@@ -657,7 +700,16 @@ async function boundedResult<T>(work: () => Promise<ParquetReaderResult<T>>): Pr
 function commonRequest(input: ParquetViewportRead, layer: string) {
   const day = selectedDay(input.date, input.nowMs);
   const zoomTier = resolveZoomTier(input.mapZoom);
-  return { day, request: { layer, day, zoomTier, ...(input.bbox === undefined ? {} : { bbox: input.bbox }) } };
+  return {
+    day,
+    request: {
+      layer,
+      day,
+      zoomTier,
+      ...(input.bbox === undefined ? {} : { bbox: input.bbox }),
+      ...(input.signal === undefined ? {} : { signal: input.signal }),
+    },
+  };
 }
 
 function decodeWaterRows(rows: readonly Record<string, unknown>[]): ParquetWaterGauge[] {
@@ -741,7 +793,8 @@ function decodeClimateFieldRows(
   rows: readonly Record<string, unknown>[],
   signal: ParquetClimateFieldSignalId,
   variant: AirTemperatureVariant,
-  servedDay: string
+  servedDay: string,
+  zoomTier: ZoomTier
 ): ParquetClimateFieldObservation[] {
   const contract = climateFieldProduct(signal, variant);
   const { layer } = contract;
@@ -759,10 +812,15 @@ function decodeClimateFieldRows(
       row.support_key !== "surface" ||
       row.signal_name !== expectedSignalName ||
       row.normalized_unit !== expectedUnit ||
-      row.observed_day !== servedDay ||
-      row.cell_id === null
+      row.observed_day !== servedDay
     ) {
-      throw contractError(`${layer} returned a row outside its registered z13 climate contract`);
+      throw contractError(`${layer} returned a row outside its registered climate contract`);
+    }
+    // The same rule `decodeSoilFieldRows` enforces: only the detail rung carries a stored cell
+    // identity, and the coarse rungs carry an anonymous aggregate. A z13 row with no `cell_id`,
+    // or a coarse row that kept one, means the reader is reading a rung it did not ask for.
+    if ((zoomTier === 13) !== (row.cell_id !== null)) {
+      throw contractError(`${layer} returned invalid cell identity nullability at z${zoomTier}`);
     }
     if (
       contract.rowContract === "snapshot-lineage" &&
@@ -791,10 +849,13 @@ function decodeClimateFieldRows(
     ) {
       throw contractError(`${layer} returned a cell outside WGS84 bounds`);
     }
-    if (seenCells.has(row.cell_id)) {
-      throw contractError(`${layer} returned duplicate z13 cell ${row.cell_id} for ${servedDay}`);
+    // Keyed on the coordinate pair where there is no identity to key on, so the duplicate check
+    // survives the coarse rungs instead of silently passing on a set of nulls.
+    const cellKey = row.cell_id ?? `${row.cell_longitude}:${row.cell_latitude}`;
+    if (seenCells.has(cellKey)) {
+      throw contractError(`${layer} returned duplicate cell ${cellKey} for ${servedDay}`);
     }
-    seenCells.add(row.cell_id);
+    seenCells.add(cellKey);
     return {
       cellId: row.cell_id,
       observedDay: row.observed_day,
@@ -809,37 +870,68 @@ function decodeClimateFieldRows(
   });
 }
 
-/** Read one exact published climate day from a promoted, frozen-layout Parquet lane. */
-export async function getParquetClimateField(input: {
-  bbox: string;
-  date?: string;
-  signal: ClimateFieldSignalId;
-  variant: AirTemperatureVariant;
-  nowMs?: number;
-}): Promise<ParquetReaderResult<readonly ParquetClimateFieldObservation[]>> {
+/**
+ * One climate day, and the ONE physical rung that answered it.
+ *
+ * The tier travels beside the result rather than inside its `ready` arm because every state needs
+ * it: an empty collection built from a `day_not_written` still has to declare which rung was asked,
+ * or the renderer cannot say whether it is looking at stored cells or at an aggregate.
+ */
+export interface ParquetClimateFieldRead {
+  zoomTier: ZoomTier;
+  result: ParquetReaderResult<readonly ParquetClimateFieldObservation[]>;
+}
+
+/**
+ * Read one exact published climate day from a promoted, frozen-layout Parquet lane, at the rung
+ * that serves the caller's map zoom.
+ *
+ * `abortSignal`, not `signal`, and `Omit<ParquetViewportRead, "signal">` to make that a compile
+ * error rather than a convention: this lane's `signal` is already the measured quantity
+ * (`ClimateFieldSignalId`), and one field meaning two things is exactly the collision that ends
+ * with a `ClimateFieldSignalId` passed to `fetch`.
+ *
+ * EXACTLY ONE RUNG PER REQUEST. The hard-coded `zoomTier: 13` this replaced asked the detail rung
+ * at every zoom, so a zoomed-out viewport paid for stored cells it could not draw and the z9/z5/z0
+ * partitions the lane publishes were never read at all.
+ */
+export async function getParquetClimateField(
+  input: Omit<ParquetViewportRead, "signal"> & {
+    bbox: string;
+    signal: ClimateFieldSignalId;
+    variant: AirTemperatureVariant;
+    abortSignal?: AbortSignal;
+  }
+): Promise<ParquetClimateFieldRead> {
   const day = selectedDay(input.date, input.nowMs);
+  const zoomTier = resolveZoomTier(input.mapZoom);
   if (!isParquetClimateFieldSignal(input.signal)) {
     return {
-      state: "upstream_unavailable",
-      fault: {
-        kind: "contract",
-        message: `No frozen-layout Parquet reader is registered for ${input.signal}`,
+      zoomTier,
+      result: {
+        state: "upstream_unavailable",
+        fault: {
+          kind: "contract",
+          message: `No frozen-layout Parquet reader is registered for ${input.signal}`,
+        },
       },
     };
   }
   const signal = input.signal;
   const layer = climateFieldProduct(signal, input.variant).layer;
-  return boundedResult(async () =>
+  const result = await boundedResult(async () =>
     mapEnvelope(
       await getParquetLayerDay({
         layer,
         day,
-        zoomTier: 13,
+        zoomTier,
         bbox: input.bbox,
+        ...(input.abortSignal === undefined ? {} : { signal: input.abortSignal }),
       }),
-      (rows) => decodeClimateFieldRows(rows, signal, input.variant, day)
+      (rows) => decodeClimateFieldRows(rows, signal, input.variant, day, zoomTier)
     )
   );
+  return { zoomTier, result };
 }
 
 function soilFieldLane(measure: SoilFieldMeasure, depth: SoilFieldDepth): string {
@@ -868,7 +960,7 @@ function emptyParquetSoilField(
     features: [],
     availability: "unavailable",
     reason,
-    granularity: zoomTier === 13 ? "detail" : zoomTier === 9 ? "regional-average" : "coarse-average",
+    granularity: granularityForZoomTier(zoomTier),
     measure,
     depth,
     unit: definition.unit,
@@ -976,10 +1068,16 @@ function soilFieldPolygon(
   };
 }
 
-/** Read one soil-field viewport exclusively from its registered Parquet product lane. */
+/**
+ * Read one soil-field viewport exclusively from its registered Parquet product lane.
+ *
+ * The cancellation is an intersection on the parameter rather than a field added to
+ * `SoilFieldReadOptions`: that interface is the PostgreSQL read model's own vocabulary
+ * (`environmental-read-model.ts`) and is shared with readers that have no socket to cancel.
+ */
 export async function getParquetSoilField(
   bbox: string,
-  options: SoilFieldReadOptions = {}
+  options: SoilFieldReadOptions & { signal?: AbortSignal } = {}
 ): Promise<PublishedSoilFieldCollection> {
   const measure = options.measure ?? "moisture";
   const definition = soilFieldMeasureDefinition(measure);
@@ -1003,6 +1101,7 @@ export async function getParquetSoilField(
     day: requestedDay,
     zoomTier,
     bbox,
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
   });
   if (envelope.state !== "published") {
     return emptyParquetSoilField(
@@ -1061,7 +1160,7 @@ export async function getParquetSoilField(
     features,
     availability: "published",
     reason: null,
-    granularity: zoomTier === 13 ? "detail" : zoomTier === 9 ? "regional-average" : "coarse-average",
+    granularity: granularityForZoomTier(zoomTier),
     measure,
     depth,
     unit: definition.unit,
@@ -1101,6 +1200,7 @@ export async function getParquetWaterGauges(
       lastDay: day,
       zoomTier: request.zoomTier,
       bbox: input.bbox,
+      ...(input.signal === undefined ? {} : { signal: input.signal }),
     });
     const days = envelopes.map((envelope) => mapEnvelope(envelope, decodeWaterRows));
     const published = days.filter(
@@ -1163,6 +1263,7 @@ export async function getParquetWeatherObservations(
       lastDay: day,
       zoomTier: request.zoomTier,
       bbox: input.bbox,
+      ...(input.signal === undefined ? {} : { signal: input.signal }),
     });
     const days = envelopes.map((envelope) => mapEnvelope(envelope, decodeWeatherRows));
     const published = days.filter(
@@ -1219,6 +1320,7 @@ export async function getParquetDrought(
       layer: "drought",
       zoomTier,
       ...(input.bbox === undefined ? {} : { bbox: input.bbox }),
+      ...(input.signal === undefined ? {} : { signal: input.signal }),
     } as const;
     const envelope = await getParquetLatestRelease({
       ...releaseRequest,
@@ -1307,6 +1409,7 @@ export async function getParquetVegetation(
       lastDay,
       zoomTier,
       bbox: input.bbox,
+      ...(input.signal === undefined ? {} : { signal: input.signal }),
     });
     const days = envelopes.map((envelope) =>
       mapEnvelope(envelope, (rows) =>
@@ -1366,6 +1469,7 @@ export async function getParquetFireDetections(
       lastDay,
       zoomTier,
       ...(input.bbox === undefined ? {} : { bbox: input.bbox }),
+      ...(input.signal === undefined ? {} : { signal: input.signal }),
     });
     const days = envelopes.map((envelope) =>
       mapEnvelope(envelope, (rows) =>

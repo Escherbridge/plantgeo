@@ -18,6 +18,7 @@ from agri_data_service.pipeline.direct.water_gauges import (
 from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.lanes.water_gauges import WATER_GAUGES_DIRECT_WRITER_START_DAY
 from agri_data_service.pipeline.parquet import water_gauges_forward
+from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRY
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 from agri_data_service.warehouse.schemas.fire_detections import FIRE_DETECTIONS_STREAM
 from agri_data_service.warehouse.schemas.water_gauges import (
@@ -62,6 +63,66 @@ def _table(rows: list[dict[str, object]]) -> pa.Table:
 def test_direct_package_imports_both_source_writers() -> None:
     assert water_gauges.WATER_GAUGES_STREAM == WATER_GAUGES_STREAM
     assert fire_detections.FIRE_DETECTIONS_STREAM == FIRE_DETECTIONS_STREAM
+
+
+class _SessionDouble:
+    """Counts rollbacks and executes no real SQL."""
+
+    def __init__(self) -> None:
+        self.rollbacks = 0
+
+    async def execute(self, statement: object, params: dict[str, object] | None = None) -> None:
+        self.bound = (statement, params)
+
+    async def rollback(self) -> None:
+        self.rollbacks += 1
+
+
+@pytest.mark.asyncio
+async def test_the_fire_writer_hands_its_availability_storage_to_every_day_it_exports(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A direct writer publishes the same terminal lane-days the drain does, so it owes the same index.
+
+    Without the kwarg the extension step is silently inert -- `fill_one_lane_day` returns early on
+    `availability_storage is None` -- and under `PARQUET_COVERAGE_AUTHORITY=availability` every day
+    this lane publishes is withheld while every rung it wrote looks healthy. Mirrors
+    `tests/parquet/test_drain.py::test_a_drain_hands_its_availability_storage_to_every_exported_day`.
+
+    The attempt is then allowed to fail on its own terms: what this proves is the kwarg reaching the
+    export, which happens before any outcome is decided.
+    """
+    storage = object()
+    handed: list[object] = []
+
+    async def record(*_args: object, **kwargs: object) -> tuple[str, int, int, int, str]:
+        handed.append(kwargs.get("availability_storage"))
+        return ("contended", 0, 0, 0, "another run holds this lane-day")
+
+    monkeypatch.setattr(fire_detections, "fill_one_lane_day", record)
+
+    with pytest.raises(fire_detections.DirectFireDetectionsError, match="four-tier ladder"):
+        await fire_detections._publish_locked_day_with_retries(
+            _SessionDouble(),
+            ObjectStore(RecordingBackend()),
+            LANE_REGISTRY[FIRE_DETECTIONS_STREAM],
+            DAY,
+            today=DAY,
+            run_id="availability-run",
+            config=fire_detections.FireForwardConfig(
+                bbox="-125,42,-111,49",
+                lookback_days=1,
+                max_days=1,
+                max_records_per_day=10,
+                retry_attempts=1,
+                retry_base_seconds=0.1,
+                retry_max_seconds=0.1,
+                contention_timeout_seconds=1.0,
+            ),
+            availability_storage=storage,
+        )
+
+    assert handed == [storage], "the export path must receive the writer's own storage, not None"
 
 
 def test_direct_water_writer_refuses_days_owned_by_generic_gap_repair() -> None:

@@ -4,7 +4,6 @@ import {
   formatAbsoluteDateTime,
   formatRelativeTime,
   formatTimestampWithRelative,
-  resolveObservationIso,
   toIsoTimestamp,
 } from "@/lib/map/time-format";
 
@@ -30,29 +29,6 @@ describe("toIsoTimestamp", () => {
     expect(toIsoTimestamp("not a date")).toBeNull();
     expect(toIsoTimestamp(NaN)).toBeNull();
     expect(toIsoTimestamp({})).toBeNull();
-  });
-});
-
-describe("resolveObservationIso", () => {
-  it("prefers an explicit timezone-qualified observedAt", () => {
-    expect(resolveObservationIso({ observedAt: "2026-07-14T09:30:00Z" })).toBe(
-      "2026-07-14T09:30:00Z",
-    );
-  });
-
-  it("falls back to acqDate + acqTime", () => {
-    expect(resolveObservationIso({ acqDate: "2026-07-14", acqTime: "0930" })).toBe(
-      "2026-07-14T09:30:00Z",
-    );
-    expect(resolveObservationIso({ acqDate: "2026-07-14", acqTime: 930 })).toBe(
-      "2026-07-14T09:30:00Z",
-    );
-  });
-
-  it("returns null when neither shape is present or valid", () => {
-    expect(resolveObservationIso({})).toBeNull();
-    expect(resolveObservationIso({ observedAt: "2026-07-14T09:30:00" })).toBeNull();
-    expect(resolveObservationIso({ acqDate: "2026-07-14" })).toBeNull();
   });
 });
 

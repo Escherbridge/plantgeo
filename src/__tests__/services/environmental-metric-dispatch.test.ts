@@ -81,10 +81,15 @@ beforeEach(() => {
   mocks.getPublishedClimateField.mockResolvedValue(climateCollection);
   mocks.getPublishedSoilField.mockReset();
   mocks.getParquetClimateField.mockReset();
+  // `{ zoomTier, result }` since the reader resolves exactly one rung per request and the
+  // router needs to know which one answered to caption the collection.
   mocks.getParquetClimateField.mockResolvedValue({
-    state: "not_generated",
-    requestedDay: "2026-08-05",
-    reason: "day_not_written",
+    zoomTier: 13,
+    result: {
+      state: "not_generated",
+      requestedDay: "2026-08-05",
+      reason: "day_not_written",
+    },
   });
   mocks.getParquetSoilField.mockReset();
   mocks.getParquetSoilField.mockResolvedValue({
@@ -150,11 +155,13 @@ describe("environmental reader ownership dispatch", () => {
         bbox: "-117,43,-116,44",
         date: "2026-08-05",
         signal,
+        zoom: 13,
       });
 
       expect(mocks.getParquetClimateField).toHaveBeenCalledWith({
         bbox: "-117,43,-116,44",
         date: "2026-08-05",
+        mapZoom: 13,
         signal,
         variant: "mean",
       });
@@ -163,11 +170,12 @@ describe("environmental reader ownership dispatch", () => {
   );
 
   it("routes an omitted climate signal to the default air-temperature Parquet reader", async () => {
-    await caller.getClimateField({ bbox: "-117,43,-116,44" });
+    await caller.getClimateField({ bbox: "-117,43,-116,44", zoom: 13 });
 
     expect(mocks.getParquetClimateField).toHaveBeenCalledWith({
       bbox: "-117,43,-116,44",
       date: undefined,
+      mapZoom: 13,
       signal: "air-temperature",
       variant: "mean",
     });
@@ -176,8 +184,11 @@ describe("environmental reader ownership dispatch", () => {
 
   it("fails a migrated climate signal closed without consulting PostgreSQL", async () => {
     mocks.getParquetClimateField.mockResolvedValue({
-      state: "upstream_unavailable",
-      fault: { kind: "http", message: "private Parquet API unavailable" },
+      zoomTier: 13,
+      result: {
+        state: "upstream_unavailable",
+        fault: { kind: "http", message: "private Parquet API unavailable" },
+      },
     });
 
     await expect(
@@ -185,6 +196,7 @@ describe("environmental reader ownership dispatch", () => {
         bbox: "-117,43,-116,44",
         date: "2026-08-05",
         signal: "precipitation",
+        zoom: 13,
       })
     ).rejects.toMatchObject({ code: "SERVICE_UNAVAILABLE" });
     expect(mocks.getPublishedClimateField).not.toHaveBeenCalled();
@@ -195,6 +207,7 @@ describe("environmental reader ownership dispatch", () => {
       caller.getClimateField({
         bbox: "-117,43,-116,44",
         signal: "future-climate-signal" as never,
+        zoom: 13,
       })
     ).rejects.toMatchObject({ code: "BAD_REQUEST" });
 

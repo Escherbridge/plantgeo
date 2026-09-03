@@ -239,13 +239,22 @@ export function isWithinGovernedAbsence(
  * reading the list anyway is what let the map paint an uningested day as solid and let the
  * agent be told "This is an observed absence: you may say there was none here".
  *
+ * Bounded at BOTH ends. `describedThroughDay` is the newest day the server's coverage tail ran
+ * to, which for a Parquet row is its source's ceiling rather than today: above it nothing was
+ * asked, so absence from `coverageGaps` there is silence, not coverage. A layer waiting on a
+ * lagged weekly release would otherwise read as densely covered for every day between its
+ * ceiling and now -- the exact inversion the ceiling clamp exists to prevent.
+ *
  * Guarded rather than trusted, like the range lists themselves: a payload from a server that
- * predates the field carries no boundary, and a missing boundary must read as "the whole axis
+ * predates either field carries no boundary, and a missing boundary must read as "the whole axis
  * is described" -- which is what that older server meant -- never as a crash.
  */
 export function isDayDescribed(layer: SliderLayerCapability, date: string): boolean {
   const describedFromDay = layer.describedFromDay ?? null;
-  return describedFromDay === null || date >= describedFromDay;
+  const describedThroughDay = layer.describedThroughDay ?? null;
+  if (describedFromDay !== null && date < describedFromDay) return false;
+  if (describedThroughDay !== null && date > describedThroughDay) return false;
+  return true;
 }
 
 /** The warehouse stream name behind a toggle, or null when no stream backs it. */

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, timedelta
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, Protocol
 
 from agri_data_service.foundation.parquet.absence import GovernedAbsence, GovernedAbsenceError
 from agri_data_service.foundation.parquet.paths import (
@@ -44,6 +44,12 @@ RELEASE_LOOKBACK_YEARS: Final = 12
 
 #: The month a year rolls over on, named so the month walk below is not a bare literal.
 DECEMBER: Final = 12
+
+
+class AbsenceMarkerSource(Protocol):
+    """The one object read a governed-absence decode needs; every listing already satisfies it."""
+
+    def read_object(self, relative_key: str) -> bytes | None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -175,8 +181,13 @@ def resolve_release(
     return LaneNeverWritten(requested_day=as_of)
 
 
-def read_absence_evidence(listing: WarehouseListing, *, scope: ReadScope, day: date) -> AbsenceEvidence:
-    """Decode one governed-absence marker; an absence without its evidence is not served as one."""
+def read_absence_evidence(listing: AbsenceMarkerSource, *, scope: ReadScope, day: date) -> AbsenceEvidence:
+    """Decode one governed-absence marker; an absence without its evidence is not served as one.
+
+    Typed to the ONE method it uses rather than to `WarehouseListing`, so the immutable-snapshot
+    store -- which lists a different key space and implements no `list_keys` -- decodes a forward
+    day's absence through this decoder instead of respelling its two fail-closed refusals.
+    """
     key = absence_marker_path(scope.layer, scope.kind, scope.tier, day)
     payload = listing.read_object(key)
     if payload is None:

@@ -27,6 +27,7 @@ from agri_data_service.foundation.parquet.paths import (
     PartitionDayStatus,
     partition_day_statuses,
 )
+from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
 from agri_data_service.ingest.firms import (
     FIRMS_BOUNDS,
     build_fire_detection_write,
@@ -39,6 +40,7 @@ from agri_data_service.ingest.http import upstream_client
 from agri_data_service.ingest.policy import resolve_bounded_bbox
 from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.lanes.fire_detections import FIRE_DETECTIONS_DIRECT_WRITER_START_DAY
+from agri_data_service.pipeline.parquet.availability_index import BotoAvailabilityStorage
 from agri_data_service.pipeline.parquet.gap_fill import (
     _lane_day_lock_key,
     fill_one_lane_day,
@@ -65,6 +67,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from agri_data_service.foundation.parquet.zoom import ZoomTier
+    from agri_data_service.pipeline.parquet.availability_index import AvailabilityStorage
 
 FIRE_DIRECT_KIND: Final = "observed"
 FIRE_DIRECT_ALL_TIERS: Final[tuple[ZoomTier, ...]] = (
@@ -135,24 +138,23 @@ class DirectFireDetectionsAdapter:
                     day=day,
                 )
             )
-        if store.absence_exists(
-            FIRE_DETECTIONS_STREAM,
-            FIRE_DIRECT_KIND,
-            LANE_BASE_ZOOM_TIER,
-            day,
-        ):
-            store.clear_absence_marker(
-                FIRE_DETECTIONS_STREAM,
-                FIRE_DIRECT_KIND,
-                LANE_BASE_ZOOM_TIER,
-                day,
-            )
+        # EVERY TIER, not only the base rung. An absence is propagated up the whole ladder, so a
+        # base-only retraction leaves the three coarse rungs asserting a governed absence over a day
+        # that now carries rows -- a `conflict` at three rungs out of four. `gap_fill` heals it on a
+        # later tick, but only after a tick spent on a day that was already correct.
+        retracted = tuple(
+            tier for tier in ZOOM_TIERS if store.absence_exists(FIRE_DETECTIONS_STREAM, FIRE_DIRECT_KIND, tier, day)
+        )
+        if retracted:
+            for tier in retracted:
+                store.clear_absence_marker(FIRE_DETECTIONS_STREAM, FIRE_DIRECT_KIND, tier, day)
             _emit(
                 {
                     "event": "fire_detections_forward_absence_retracted",
                     "run_id": run_id,
                     "day": day.isoformat(),
                     "tier": LANE_BASE_ZOOM_TIER,
+                    "tiers": list(retracted),
                 }
             )
         return normalise_export_outcome(
@@ -379,6 +381,8 @@ async def run_fire_forward(config: FireForwardConfig) -> dict[str, object]:
         _emit({"event": "fire_detections_forward_noop", **report})
         return report
     store = ObjectStore.from_settings()
+    # Beside the object store, so an unwired bucket fails identically and nothing opens a socket here.
+    availability_storage = BotoAvailabilityStorage.from_settings()
     statuses = await _retry_async(
         "initial fire-detections R2 census",
         lambda: asyncio.to_thread(_tier_status_window, store, first_day, settled_through),
@@ -422,6 +426,7 @@ async def run_fire_forward(config: FireForwardConfig) -> dict[str, object]:
                 today=today,
                 run_id=run_id,
                 config=config,
+                availability_storage=availability_storage,
             )
             results.append(result)
             _emit({"event": "fire_detections_forward_day_complete", "run_id": run_id, **result})
@@ -466,6 +471,7 @@ async def _publish_day_with_retries(  # noqa: PLR0913
     today: date,
     run_id: str,
     config: FireForwardConfig,
+    availability_storage: AvailabilityStorage,
 ) -> dict[str, object]:
     """Acquire once, then refetch and republish under that lock for every bounded attempt."""
     deadline = time.monotonic() + config.contention_timeout_seconds
@@ -480,6 +486,7 @@ async def _publish_day_with_retries(  # noqa: PLR0913
                     today=today,
                     run_id=run_id,
                     config=config,
+                    availability_storage=availability_storage,
                 )
         await session.rollback()
         remaining = deadline - time.monotonic()
@@ -515,6 +522,7 @@ async def _publish_locked_day_with_retries(  # noqa: PLR0913
     today: date,
     run_id: str,
     config: FireForwardConfig,
+    availability_storage: AvailabilityStorage,
 ) -> dict[str, object]:
     """Refetch before every write/verification attempt while one advisory lock remains held."""
     for write_attempt in range(1, config.retry_attempts + 1):
@@ -540,6 +548,7 @@ async def _publish_locked_day_with_retries(  # noqa: PLR0913
                 today=today,
                 lane_day_lock=unlocked_lane_day,
                 statement_timeout_seconds=FIRE_DIRECT_STATEMENT_TIMEOUT_SECONDS,
+                availability_storage=availability_storage,
             )
             await session.rollback()
         except Exception as error:

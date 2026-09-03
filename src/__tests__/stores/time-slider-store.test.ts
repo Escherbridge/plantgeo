@@ -416,6 +416,47 @@ describe("isDayDescribed -- a capped range list stops being evidence below its b
       SliderLayerCapability;
     expect(isDayDescribed(olderPayload, "2016-04-09")).toBe(true);
   });
+
+  /**
+   * The upper bound, and the reason it is not symmetric decoration: the server runs its closing
+   * coverage tail to `min(sourceCeilingDay, evaluatedThroughDay)`, because days a lagged upstream
+   * has not published yet are not ingest holes. Above that day it asked nothing -- so reading
+   * "not in coverageGaps" there as coverage would report every day between a weekly release's
+   * ceiling and today as densely covered, which is the exact inversion the clamp exists to avoid.
+   */
+  it("reports every day undescribed above describedThroughDay", () => {
+    const ceilinged: SliderLayerCapability = {
+      ...vegetationLayer,
+      describedFromDay: null,
+      describedThroughDay: "2026-08-20",
+    };
+
+    expect(isWithinCoverageGap(ceilinged, "2026-08-25")).toBe(false);
+    // ...and that `false` is exactly what must never be read as "published on 2026-08-25".
+    expect(isDayDescribed(ceilinged, "2026-08-21")).toBe(false);
+    expect(isDayDescribed(ceilinged, "2026-08-28")).toBe(false);
+    expect(isDayDescribed(ceilinged, "2026-08-20")).toBe(true);
+    expect(isDayDescribed(ceilinged, "2019-01-01")).toBe(true);
+  });
+
+  it("applies both boundaries at once", () => {
+    const bounded: SliderLayerCapability = {
+      ...vegetationLayer,
+      describedFromDay: "2018-06-01",
+      describedThroughDay: "2026-08-20",
+    };
+
+    expect(isDayDescribed(bounded, "2018-05-31")).toBe(false);
+    expect(isDayDescribed(bounded, "2018-06-01")).toBe(true);
+    expect(isDayDescribed(bounded, "2026-08-20")).toBe(true);
+    expect(isDayDescribed(bounded, "2026-08-21")).toBe(false);
+  });
+
+  it("reads a payload with no upper boundary as described through today", () => {
+    const noCeiling = { ...vegetationLayer, describedThroughDay: undefined } as unknown as
+      SliderLayerCapability;
+    expect(isDayDescribed(noCeiling, "2026-08-28")).toBe(true);
+  });
 });
 
 describe("hasSelectableDay -- one rule decides both the control and the filter", () => {

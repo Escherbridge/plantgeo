@@ -602,6 +602,33 @@ describe("LayerTimeSlider", () => {
       );
     });
 
+    /**
+     * The mirror of the `describedFromDay` case, and the one the source ceiling creates: the
+     * server ran its closing coverage tail only to the lane's own freshness horizon, because days
+     * a lagged upstream has not published yet are not ingest holes. Above that day the range
+     * lists were never asked to say anything, so falling through to `dense` there would report a
+     * lane correctly waiting on a weekly release as fully covered up to today.
+     */
+    it("paints the days above describedThroughDay undescribed rather than dense", () => {
+      const ceilinged = vegetationCapability({
+        coverageGaps: [],
+        thinRanges: [],
+        describedFromDay: null,
+        describedThroughDay: "2019-03-01",
+      });
+
+      expect(dayCoverageState(VEGETATION_DOMAIN, ceilinged, "2019-02-28")).toBe("dense");
+      expect(dayCoverageState(VEGETATION_DOMAIN, ceilinged, "2019-03-01")).toBe("dense");
+      for (const day of ["2019-03-02", "2019-03-05", SERVER_CURRENT_DATE]) {
+        expect(dayCoverageState(VEGETATION_DOMAIN, ceilinged, day), day).toBe("undescribed");
+      }
+
+      const segments = buildCoverageSegments(VEGETATION_DOMAIN, ceilinged);
+      const undescribed = segments.filter((segment) => segment.kind === "undescribed");
+      expect(undescribed).toHaveLength(1);
+      expect(dayOffset(FIRST_DAY, "2019-03-02")).toBe(undescribed[0].startOffset);
+    });
+
     it("agrees day for day between the painted partition and the single-day lookup", () => {
       const layer = vegetationCapability();
       const segments = buildCoverageSegments(VEGETATION_DOMAIN, layer);

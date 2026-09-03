@@ -10,7 +10,7 @@ rather than silently written as a present, empty partition.
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
@@ -23,6 +23,7 @@ from agri_data_service.pipeline.lanes.water_gauges import (
     export_water_gauges_day,
     read_water_gauges_day,
 )
+from agri_data_service.pipeline.parquet import water_gauges_forward
 from agri_data_service.pipeline.parquet.objectstore import EmptyPartitionError, ObjectStore
 from agri_data_service.warehouse.schemas.water_gauges import WATER_GAUGES_SCHEMA, WATER_GAUGES_STREAM
 from tests.parquet.test_objectstore_writer import RecordingBackend
@@ -145,3 +146,39 @@ async def test_the_export_lands_at_the_observed_partition_sorted_to_the_grain() 
     assert receipt.key == partition_path(WATER_GAUGES_STREAM, "observed", LANE_BASE_ZOOM_TIER, AUGUST_SIXTH)
     assert receipt.kind == "observed"
     assert receipt.row_count == expected_rows
+
+
+@pytest.mark.asyncio
+async def test_the_forward_writer_hands_its_availability_storage_to_every_day_it_publishes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """This writer OWNS every water-gauges day from its start day, so an unindexed one is withheld.
+
+    `fill_one_lane_day` returns before the availability step whenever the storage is `None`, so a
+    missing kwarg is silent: the bucket grows, every rung looks healthy, and the published index
+    never hears of the day -- which under `PARQUET_COVERAGE_AUTHORITY=availability` is a gap.
+    """
+    storage = object()
+    handed: list[object] = []
+
+    async def record(*_args: object, **kwargs: object) -> tuple[str, int, int, int, None]:
+        handed.append(kwargs.get("availability_storage"))
+        return ("raised", 0, 0, 0, None)
+
+    monkeypatch.setattr(water_gauges_forward, "fill_one_lane_day", record)
+
+    result = await water_gauges_forward._publish_day(
+        cast("Any", RecordingSession([])),
+        ObjectStore(RecordingBackend()),
+        day=AUGUST_SIXTH,
+        table=WATER_GAUGES_SCHEMA.arrow_schema.empty_table(),
+        run_id="water-gauges-forward-test",
+        max_day_attempts=1,
+        retry_base_seconds=0.0,
+        contention_poll_seconds=0.0,
+        contention_timeout_seconds=0.0,
+        availability_storage=storage,  # type: ignore[arg-type]
+    )
+
+    assert handed == [storage], "the lane-day path must receive this writer's own storage, not None"
+    assert result.outcome == "raised"

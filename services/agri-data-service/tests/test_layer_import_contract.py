@@ -70,15 +70,17 @@ SUBPACKAGE_FORBIDDEN_IMPORTS: dict[str, set[str]] = {
 # forgotten entry is silently unenforced.
 DOMAIN_PARENTS: tuple[str, ...] = ("ingest", "execution")
 
-# The same "a lane never imports another lane" rule, for the directories where lanes are FLAT
-# MODULES rather than subpackages. `layer-lanes.md` section 1 puts one file per layer per lattice
-# layer, so the domain-package walk above -- which looks for subdirectories -- cannot see them.
-# Ten lanes landed here concurrently and none of them crossed; this test is what keeps that true.
+# The same "a lane never imports another lane" rule, for the directories the domain-package walk
+# above cannot see: it is keyed on `ingest`/`execution` and looks only for subdirectories, while
+# `layer-lanes.md` section 1 puts one FILE per layer in each lattice directory. `pipeline/direct`
+# holds both shapes at once -- `fire_detections.py` and `water_gauges.py` are modules, `climate/` is
+# a package -- so the walk below treats a subpackage as one lane exactly like a module.
 SIBLING_MODULE_DIRECTORIES: tuple[str, ...] = (
     "pipeline/lanes",
     "warehouse/schemas",
     "method/monte_carlo",
     "pipeline/validation",
+    "pipeline/direct",
 )
 
 DOMAIN_PARENT_SHARED_SUBPACKAGES: dict[str, set[str]] = {
@@ -255,20 +257,34 @@ def test_domain_packages_do_not_import_each_other() -> None:
     assert not violations, "Domain isolation violations found:\n" + "\n".join(violations)
 
 
+def _lane_names(lane_dir: Path) -> set[str]:
+    """Name every lane in one directory: each flat module, and each subpackage as a single lane."""
+    modules = {path.stem for path in lane_dir.glob("*.py") if path.stem != "__init__"}
+    packages = {path.name for path in lane_dir.iterdir() if path.is_dir() and (path / "__init__.py").is_file()}
+    return modules | packages
+
+
+def _lane_of(path: Path, lane_dir: Path) -> str:
+    """Return which lane one file belongs to: its own stem, or the subpackage that contains it."""
+    relative = path.relative_to(lane_dir)
+    return relative.parts[0] if len(relative.parts) > 1 else path.stem
+
+
 def _sibling_module_violations(pkg_root: Path, directory: str) -> list[str]:
-    """Return every import of one lane module by a sibling lane module in the same directory."""
+    """Return every import of one lane by a sibling lane in the same directory."""
     lane_dir = pkg_root / directory
     if not lane_dir.is_dir():
         return []
     package = f"agri_data_service.{directory.replace('/', '.')}"
-    modules = {path.stem for path in lane_dir.glob("*.py") if path.stem != "__init__"}
+    lanes = _lane_names(lane_dir)
     # Keyed by (file, line): `_resolved_imports` reports one `from X import a` twice on purpose,
     # and a reader wants the offending LINE named once, not once per matching form.
     violations: dict[tuple[str, int], str] = {}
-    for path in sorted(lane_dir.glob("*.py")):
-        if path.stem == "__init__":
+    for path in sorted(lane_dir.rglob("*.py")):
+        if path.name == "__init__.py" and path.parent == lane_dir:
             continue
-        siblings = {f"{package}.{other}" for other in modules if other != path.stem}
+        own = _lane_of(path, lane_dir)
+        siblings = {f"{package}.{other}" for other in lanes if other != own}
         for line_no, imp in _resolved_imports(path, pkg_root):
             for sibling in siblings:
                 if imp == sibling or imp.startswith(sibling + "."):
@@ -290,6 +306,34 @@ def test_lanes_do_not_import_each_other() -> None:
     violations = [v for d in SIBLING_MODULE_DIRECTORIES for v in _sibling_module_violations(pkg_root, d)]
 
     assert not violations, "Cross-lane import violations found:\n" + "\n".join(violations)
+
+
+def test_the_cross_lane_rule_sees_a_subpackage_lane(tmp_path: Path) -> None:
+    """`pipeline/direct` holds two flat lanes and one package lane, and the package must be policed.
+
+    The domain walk cannot see it (it is keyed on `ingest`/`execution`) and the module walk used to
+    look only at `*.py` directly in the directory, so a `climate/` importing `water_gauges` -- or the
+    reverse -- crossed two lanes with nothing to catch it.
+    """
+    lane_dir = tmp_path / "pipeline" / "direct"
+    climate_dir = lane_dir / "climate"
+    climate_dir.mkdir(parents=True)
+    (lane_dir / "__init__.py").write_text("", encoding="utf-8")
+    (lane_dir / "water_gauges.py").write_text("", encoding="utf-8")
+    (lane_dir / "fire_detections.py").write_text(
+        "from agri_data_service.pipeline.direct.climate.source import fetch_climate_day\n", encoding="utf-8"
+    )
+    (climate_dir / "__init__.py").write_text("", encoding="utf-8")
+    (climate_dir / "forward.py").write_text(
+        "from agri_data_service.pipeline.direct import water_gauges\n", encoding="utf-8"
+    )
+
+    violations = _sibling_module_violations(tmp_path, "pipeline/direct")
+
+    expected_violation_count = 2  # one flat lane reaching into the package, one package lane reaching out
+    assert len(violations) == expected_violation_count, violations
+    assert any("climate" in violation for violation in violations)
+    assert any("water_gauges" in violation for violation in violations)
 
 
 def test_the_cross_lane_rule_actually_fires(tmp_path: Path) -> None:

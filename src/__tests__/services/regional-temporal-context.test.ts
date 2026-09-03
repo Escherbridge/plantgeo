@@ -6,7 +6,7 @@ const mocks = vi.hoisted(() => ({
   getPublishedWeatherForPoint: vi.fn(),
   getPublishedWeatherForBbox: vi.fn(),
   getPublishedFireDetections: vi.fn(),
-  getSliderCapabilities: vi.fn(),
+  getParquetSliderCapabilities: vi.fn(),
   getStrategyRecommendations: vi.fn(),
   getInterventionSuitability: vi.fn(),
   getServerSession: vi.fn(),
@@ -75,8 +75,19 @@ vi.mock("@/lib/server/services/environmental-read-model", async () => {
     getPublishedWeatherForPoint: mocks.getPublishedWeatherForPoint,
     getPublishedWeatherForBbox: mocks.getPublishedWeatherForBbox,
     getPublishedFireDetections: mocks.getPublishedFireDetections,
-    getSliderCapabilities: mocks.getSliderCapabilities,
   };
+});
+
+/**
+ * The assembler reads the PARQUET resolver, not the PostgreSQL one: a lane whose availability
+ * index is withheld is absent from that payload and present in the other, and describing a
+ * withheld lane to the agent as published is the claim fail-closed exists to prevent. Mocked at
+ * the module boundary exactly as the router tests mock it.
+ */
+vi.mock("@/lib/server/services/parquet-slider-capabilities", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/lib/server/services/parquet-slider-capabilities")>();
+  return { ...actual, getParquetSliderCapabilities: mocks.getParquetSliderCapabilities };
 });
 
 vi.mock("@/lib/server/services/strategy-scoring", () => ({
@@ -189,7 +200,7 @@ beforeEach(() => {
     type: "FeatureCollection",
     features: [],
   });
-  mocks.getSliderCapabilities.mockResolvedValue(sliderCapabilities());
+  mocks.getParquetSliderCapabilities.mockResolvedValue(sliderCapabilities());
   // Unconfigured by default, same as the pre-2026-08-14 hardcoded nulls this replaced: no test
   // in this file exercises soil/MTBS content unless it explicitly overrides these.
   mocks.getSoilProperties.mockRejectedValue(new Error("No soil fixture configured"));
@@ -262,7 +273,7 @@ describe("assembling regional context at the days the user is viewing", () => {
     expect(mocks.getPublishedWeatherForBbox).not.toHaveBeenCalled();
 
     vi.clearAllMocks();
-    mocks.getSliderCapabilities.mockResolvedValue(sliderCapabilities());
+    mocks.getParquetSliderCapabilities.mockResolvedValue(sliderCapabilities());
     mocks.getPublishedDroughtClassification.mockResolvedValue(emptyDrought());
     mocks.getPublishedStreamflowGauges.mockResolvedValue([]);
     mocks.getPublishedFireDetections.mockResolvedValue({
@@ -396,7 +407,7 @@ describe("assembling regional context at the days the user is viewing", () => {
    * and the sets differ in the other direction: the map draws the whole record.
    */
   it("does not claim the map filtered a row whose axis the payload never described", async () => {
-    mocks.getSliderCapabilities.mockResolvedValue({
+    mocks.getParquetSliderCapabilities.mockResolvedValue({
       serverCurrentDate: SERVER_TODAY,
       futureAxisDays: 0,
       streamsUnavailable: false,
@@ -432,7 +443,7 @@ describe("assembling regional context at the days the user is viewing", () => {
   });
 
   it("reports coverage as unknown when the coverage record itself could not be read", async () => {
-    mocks.getSliderCapabilities.mockRejectedValue(new Error("capabilities unavailable"));
+    mocks.getParquetSliderCapabilities.mockRejectedValue(new Error("capabilities unavailable"));
 
     const result = await assembleRegionalContext(43.6, -116.2, [
       { layer: "fire", date: DAY_INSIDE_THE_FIRE_HOLE, hasDataOnDate: false },

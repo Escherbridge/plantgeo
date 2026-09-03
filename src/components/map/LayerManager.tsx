@@ -13,7 +13,7 @@ import {
   type LayerVisibility,
 } from "@/lib/map/layer-toggle-context";
 import { scaleOpacityValue, styleLayerOpacityTargets } from "@/lib/map/layer-opacity";
-import { useFireData } from "@/hooks/useFireData";
+import { useParquetFireDetections } from "@/hooks/useParquetFireDetections";
 import {
   useSoilFieldQuery,
   useSoilSurveyQuery,
@@ -199,7 +199,8 @@ export default function LayerManager() {
   // One call per layer rather than a loop, for the same reason the three soil fields below are
   // three calls: hooks cannot be called from one. The upside over the single global read this
   // replaces is that a scrub on one row now re-runs one of these, not all of them.
-  const fireDay = useDebouncedLayerDay("fire");
+  // No `fireDay` here: `useParquetFireDetections` reads the `fire` row's day itself and hands
+  // back the settled one, so the map and `FireDetails` cannot key two entries for one answer.
   const droughtDay = useDebouncedLayerDay("drought");
   const waterDay = useDebouncedLayerDay("water");
   const vegetationDay = useDebouncedLayerDay("vegetation");
@@ -247,7 +248,12 @@ export default function LayerManager() {
     hasSelectableDay(state.capabilities, "sensors")
   );
 
-  const fireData = useFireData(layerVisibility.fire, fireDay.requestDate);
+  // Published fire-detection CELLS, read from the private Parquet plane through
+  // `wildfire.getFireDetections` with this layer's settled day, the viewport bbox and the
+  // viewport zoom. It replaced `useFireData` -> `/api/fires` on 2026-09-01: that route was
+  // global (no bbox), un-tiered, silently capped at 2,000 rows, and had no way to say a day
+  // was never written. See conductor/tracks/parquet_reader_cutover_acceptance_20260901.
+  const fire = useParquetFireDetections(layerVisibility.fire);
   // `placeholderData: keepPreviousData` on every dated feed below: each keys on a day AND a
   // bbox, so without it every settled scrub and every pan blanked the layer for a full round
   // trip. Legal only because `usePublishedDrawnLayerDays` below labels the retained frame --
@@ -396,10 +402,14 @@ export default function LayerManager() {
     () => presentParquetWeather(weatherQuery.data),
     [weatherQuery.data]
   );
+  // `fault` is an outage: nothing is drawn and the reason is upstream. `notice` is a true
+  // statement ABOUT what is drawn -- a truncated read paints real cells that stop short of the
+  // viewport, which must be said rather than left to look like the edge of the fire.
   const parquetLayerFaults = [
     vegetationEnabled && vegetationQuery.data?.state === "upstream_unavailable"
       ? {
           layerId: "vegetation",
+          tone: "fault" as const,
           message:
             "Measured vegetation observations are temporarily unavailable from the data service.",
         }
@@ -407,7 +417,64 @@ export default function LayerManager() {
     weatherEnabled && weatherQuery.data?.state === "upstream_unavailable"
       ? {
           layerId: "weather",
+          tone: "fault" as const,
           message: "Weather observations are temporarily unavailable from the data service.",
+        }
+      : null,
+    layerVisibility.fire && fire.state === "upstream_unavailable"
+      ? {
+          layerId: "fire",
+          tone: "fault" as const,
+          message: "Fire detections are temporarily unavailable from the data service.",
+        }
+      : null,
+    // The transport failed before the reader returned any state at all, so there is no typed
+    // refusal to quote -- and an empty canvas beside a lit switch would read as "no fires".
+    // A `fault` and not a `notice`: nothing about the lane was established.
+    layerVisibility.fire && fire.state === "request_failed"
+      ? {
+          layerId: "fire-request-failed",
+          tone: "fault" as const,
+          message:
+            "The fire detections request failed before returning a state. No fallback is shown.",
+        }
+      : null,
+    // Every accepted fire answer is asserted un-truncated; a truncated one is surfaced here
+    // instead of being quietly drawn as the whole viewport's detections.
+    layerVisibility.fire && fire.truncated
+      ? {
+          layerId: "fire-truncated",
+          tone: "notice" as const,
+          message:
+            "The Parquet row budget was reached. The fire detections drawn are a subset of this viewport.",
+        }
+      : null,
+    // The two refusals an empty canvas cannot tell apart from "no fires burned here", and the
+    // reason each is a `notice` rather than a `fault`: nothing is down. A governed absence is a
+    // POSITIVE record that the upstream was checked and published nothing, so the reason it
+    // carries is the evidence and is quoted verbatim -- the same sentence `FireDetails` shows,
+    // because a reader looking at the map and a reader looking at the dock must not be told two
+    // different things about one day.
+    layerVisibility.fire && fire.state === "absent"
+      ? {
+          layerId: "fire-absent",
+          tone: "notice" as const,
+          message: `The fire lane recorded a governed absence for this day: ${
+            fire.result?.state === "absent" ? fire.result.evidence.reason : "reason unavailable"
+          }.`,
+        }
+      : null,
+    // `not_generated` is the opposite claim: nobody checked. Named by which silence it is --
+    // one day missing from a written lane, or a lane that has never been written at all --
+    // because "no detections" would assert an observation neither one made.
+    layerVisibility.fire && fire.state === "not_generated"
+      ? {
+          layerId: "fire-not-generated",
+          tone: "notice" as const,
+          message:
+            fire.result?.state === "not_generated" && fire.result.reason === "lane_never_written"
+              ? "The fire lane has never been written, so no detections can be drawn for any day."
+              : "This day has not been written for the fire lane, so no detections can be drawn for it.",
         }
       : null,
   ].filter((fault): fault is NonNullable<typeof fault> => fault !== null);
@@ -422,15 +489,13 @@ export default function LayerManager() {
     {
       layerId: "fire",
       isDrawn: layerVisibility.fire,
-      requestedDate: fireDay.settledDate,
-      // `useFireData` is not a react-query read, but it retains the previous day's detections
-      // across a 304, a failed fetch and a date change, and states that as
-      // `isStaleForRequestedDate` -- whose own doc says a caller must read it before captioning
-      // `data`. `count` is what separates a retained frame from nothing having loaded at all,
-      // which `isStaleForRequestedDate` alone does not.
-      isFetching: fireData.isLoading,
-      hasLandedForRequestedDate: fireData.isStaleForRequestedDate !== true,
-      isShowingPreviousDay: fireData.isStaleForRequestedDate === true && fireData.count > 0,
+      // The day the READ settled on, not a second lookup of the same row: one hook owns both.
+      requestedDate: fire.settledDate,
+      // Already derived the way `parquetDrawnDayFlags` derives them, `upstream_unavailable`
+      // downgrade included -- see `useParquetFireDetections`.
+      isFetching: fire.isFetching,
+      hasLandedForRequestedDate: fire.hasLandedForRequestedDate,
+      isShowingPreviousDay: fire.isShowingPreviousDay,
     },
     {
       layerId: "drought",
@@ -753,7 +818,7 @@ export default function LayerManager() {
       <FireLayer
         map={map}
         visible={layerVisibility.fire}
-        geojson={fireData.data}
+        geojson={fire.geojson}
         opacityScale={layerOpacity.fire}
       />
       <WaterLayer
@@ -820,7 +885,7 @@ export default function LayerManager() {
       {/* Nine instances, one per signal, each on its own row's day and in its own form. The
           ERA5-Land fields above get one instance per measure for the same reason: these are
           toggles a reader may have on at once, and one instance cannot hold two days. */}
-      <ClimateFieldLayers map={map} bbox={bbox} />
+      <ClimateFieldLayers map={map} bbox={bbox} zoom={zoom} />
       <DemandHeatmapLayer
         map={map}
         bbox={bbox}
@@ -843,7 +908,11 @@ export default function LayerManager() {
             <p
               key={fault.layerId}
               role="alert"
-              className="rounded-md border border-red-500/40 bg-[hsl(var(--card))]/95 px-3 py-1.5 text-xs font-medium text-red-600 shadow-sm backdrop-blur dark:text-red-400"
+              className={
+                fault.tone === "fault"
+                  ? "rounded-md border border-red-500/40 bg-[hsl(var(--card))]/95 px-3 py-1.5 text-xs font-medium text-red-600 shadow-sm backdrop-blur dark:text-red-400"
+                  : "rounded-md border border-amber-500/40 bg-[hsl(var(--card))]/95 px-3 py-1.5 text-xs font-medium text-amber-700 shadow-sm backdrop-blur dark:text-amber-400"
+              }
               data-testid={`parquet-layer-unavailable-${fault.layerId}`}
             >
               {fault.message}

@@ -1,8 +1,10 @@
 "use client";
 
 import { Flame, Wind, AlertTriangle, MapPin, Droplets } from "lucide-react";
-import { useFireData } from "@/hooks/useFireData";
-import { useDebouncedLayerDay } from "@/lib/map/layer-toggle-context";
+import {
+  useParquetFireDetections,
+  type ParquetFireDetectionsRead,
+} from "@/hooks/useParquetFireDetections";
 import { haversineDistance } from "@/lib/map/measurement";
 import { trpc } from "@/lib/trpc/client";
 
@@ -49,6 +51,79 @@ function reading(value: number | null | undefined, decimals: number, unit: strin
     : "N/A";
 }
 
+/** What a refusal renders in the number's place. Never a 0, which reads as a measurement. */
+const NO_READING = "—";
+
+/** One card's worth of copy, plus the banner a refusal or a truncation owes the reader. */
+interface FireDetectionsReading {
+  value: string;
+  sub: string;
+  alert: string | null;
+}
+
+/**
+ * The detections card, resolved from exactly one reader state.
+ *
+ * Every branch but `ready` renders `NO_READING`: an absent day, an unwritten lane and an
+ * unreachable data service each have NO count, and printing 0 for them would state that the
+ * satellites saw nothing -- the one claim none of them supports. The retained-frame branch is
+ * the same rule one step earlier: a previous day's count under this day's caption is a
+ * measurement attached to the wrong date.
+ */
+function fireDetectionsReading(fire: ParquetFireDetectionsRead): FireDetectionsReading {
+  const dayCaption = fire.settledDate ?? "the live FIRMS window";
+
+  // Two separate guards, not one `||`: only a bare discriminant comparison narrows `state`, and
+  // the switch below must be exhaustive over what is left.
+  if (fire.state === "pending") {
+    return { value: "...", sub: `Loading ${dayCaption}`, alert: null };
+  }
+  if (fire.isShowingPreviousDay) {
+    // A previous day's count under this day's caption is a measurement on the wrong date.
+    return { value: "...", sub: `Loading ${dayCaption}`, alert: null };
+  }
+
+  switch (fire.state) {
+    case "ready":
+      return {
+        value: fire.detectionCount.toLocaleString(),
+        sub: `${fire.cellCount.toLocaleString()} published cells, ${dayCaption}`,
+        alert: fire.truncated
+          ? "The Parquet row budget was reached. The count above is a subset of this viewport, not its total."
+          : null,
+      };
+    case "absent":
+      return {
+        value: NO_READING,
+        sub: `No detections published for ${dayCaption}`,
+        alert: `The fire lane recorded a governed absence for this day: ${fire.result?.state === "absent" ? fire.result.evidence.reason : "reason unavailable"}.`,
+      };
+    case "not_generated":
+      return {
+        value: NO_READING,
+        sub:
+          fire.result?.state === "not_generated" && fire.result.reason === "lane_never_written"
+            ? "The fire lane has never been written"
+            : "This day has not been written for the fire lane",
+        alert: null,
+      };
+    case "upstream_unavailable":
+      return {
+        value: NO_READING,
+        sub: `Data service unavailable${fire.result?.state === "upstream_unavailable" ? ` (${fire.result.fault.kind})` : ""}`,
+        alert:
+          "Published fire detections could not be read. No PostgreSQL or synthetic fallback is shown.",
+      };
+    case "request_failed":
+      return {
+        value: NO_READING,
+        sub: "The request failed before returning a typed state",
+        alert:
+          "The private Parquet request failed before returning a typed state. No PostgreSQL or synthetic fallback is shown.",
+      };
+  }
+}
+
 interface FireDetailsProps {
   /** The map centre, which is the point the weather cards describe. */
   center: { lat: number; lon: number };
@@ -57,8 +132,8 @@ interface FireDetailsProps {
 /**
  * What the fire layers are showing, as the Fire section of the map dock.
  *
- * Mounted only while that section is expanded -- which is what `useFireData`'s enabled flag
- * now reads, in place of the `open` prop the sheet passed it. The four `<LayerToggle>` rows
+ * Mounted only while that section is expanded, which is the gate the fire read is enabled by,
+ * in place of the `open` prop the sheet passed it. The four `<LayerToggle>` rows
  * this panel used to carry are gone: the section's own layer rows are the switches now, and
  * two controls over one `activeLayers` entry, one of them out of sight, is the drift the dock
  * was built to end.
@@ -70,21 +145,13 @@ interface FireDetailsProps {
  * map's weather layer can never disagree about what has been published.
  */
 export function FireDetails({ center }: FireDetailsProps) {
-  // The `fire` row's own settled day -- the same one LayerManager gives the map's fire layer,
-  // so the count here can never describe a different date than the pins beside it: one query
-  // key, one answer. Keyed by the toggle rather than by anything map-wide, because since
-  // 2026-08-09 every layer scrubs its own axis and there is no map-wide day to borrow. The
-  // count below is a count OF THOSE PINS, so it has to move with them and with nothing else.
-  const { requestDate } = useDebouncedLayerDay("fire");
-  const fireData = useFireData(true, requestDate);
-  const effectiveFireCount = fireData.count;
-  // `data`/`count` may still be a RETAINED previous day's answer -- loading is not the only
-  // state that makes them untrustworthy, see useFireData's `isStaleForRequestedDate` doc.
-  const fireCountUnsettled = fireData.isLoading || fireData.isStaleForRequestedDate;
-  const fireCountSub =
-    requestDate === undefined
-      ? "Published FIRMS detections, live window"
-      : `Published FIRMS detections, ${requestDate}`;
+  // The same read the map's fire layer draws from: the hook owns the `fire` row's settled day,
+  // the viewport bbox and the viewport zoom, so this count can never describe a different date
+  // -- or a different viewport -- than the cells beside it. One query key, one answer. Since
+  // 2026-08-09 every layer scrubs its own axis, so there is no map-wide day to borrow, and
+  // since the 2026-09-01 cutover there is no `/api/fires` to ask either.
+  const fire = useParquetFireDetections(true);
+  const fireDetections = fireDetectionsReading(fire);
 
   const weatherQuery = trpc.wildfire.getWeatherForPoint.useQuery({
     lat: center.lat,
@@ -112,11 +179,14 @@ export function FireDetails({ center }: FireDetailsProps) {
 
   return (
     <div className="flex flex-col gap-4">
-      {fireData.error && !fireData.isLoading && (
-        <div className="flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 dark:bg-amber-950/20">
-          <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600" />
-          <p className="text-xs font-medium text-amber-700 dark:text-amber-400">
-            Published fire detections could not be refreshed. Previously loaded data may be stale.
+      {fireDetections.alert !== null && (
+        <div
+          className="flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 dark:bg-amber-950/20"
+          data-testid="fire-detections-alert"
+        >
+          <AlertTriangle aria-hidden="true" className="h-4 w-4 shrink-0 text-amber-600" />
+          <p role="alert" className="text-xs font-medium text-amber-700 dark:text-amber-400">
+            {fireDetections.alert}
           </p>
         </div>
       )}
@@ -149,8 +219,8 @@ export function FireDetails({ center }: FireDetailsProps) {
         <StatCard
           icon={<Flame className="h-3.5 w-3.5" />}
           label="Fire Detections"
-          value={fireCountUnsettled ? "..." : effectiveFireCount}
-          sub={fireCountSub}
+          value={fireDetections.value}
+          sub={fireDetections.sub}
         />
         <StatCard
           icon={<Wind className="h-3.5 w-3.5" />}

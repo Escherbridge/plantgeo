@@ -39,12 +39,9 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from agri_data_service.db.advisory_keys import parquet_lane_publication_barrier_from_day_lock_key
-from agri_data_service.pipeline.parquet.gap_fill import (
-    _lane_day_lock_key,
-    postgres_lane_day_lock,
-    postgres_lane_publication_barrier,
-)
+from agri_data_service.pipeline.parquet.gap_fill import _lane_day_lock_key, postgres_lane_day_lock
 from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRY
+from agri_data_service.pipeline.parquet.publication_barrier import postgres_lane_publication_barrier
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator

@@ -10,6 +10,8 @@ from agri_data_service.foundation.parquet.lane_contract import LANE_NATURES as F
 from agri_data_service.foundation.parquet.paths import PARTITION_KINDS as FOUNDATION_PARTITION_KINDS
 from agri_data_service.parquet_ops import wire
 from tests.contract.wire_contract import (
+    COVERAGE_SCHEMA_VERSION,
+    COVERAGE_WITHHELD_REASONS,
     LANE_NATURES,
     PARTITION_KINDS,
     WIRE_BASE_PATH,
@@ -55,6 +57,12 @@ def test_the_four_state_names_agree_with_the_freeze() -> None:
         wire.STATE_LANE_NEVER_WRITTEN,
     )
     assert served == WIRE_STATES
+
+
+def test_the_withholding_vocabulary_agrees_with_the_freeze() -> None:
+    """A fifth withholding reason would reach the client as an unknown state it silently drops."""
+    assert wire.COVERAGE_WITHHOLDINGS == COVERAGE_WITHHELD_REASONS
+    assert wire.COVERAGE_SCHEMA_VERSION == COVERAGE_SCHEMA_VERSION
 
 
 def test_the_frozen_enumerations_are_the_warehouse_s_own() -> None:

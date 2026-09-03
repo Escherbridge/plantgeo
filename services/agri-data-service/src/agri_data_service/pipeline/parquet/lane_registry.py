@@ -4,7 +4,12 @@ Layer L2: may import `foundation`, `warehouse` and `db`; may NOT import method, 
 interface. It lives in `pipeline/parquet/` and deliberately NOT in `pipeline/lanes/` -- a module
 inside that directory importing its siblings would (correctly) fail
 `tests/test_layer_import_contract.py::test_lanes_do_not_import_each_other`. The registry is not a
-lane; it is the one module allowed to know all thirteen of them.
+lane; it is the one module allowed to know all twenty-one of them -- twelve database-backed, eight
+source-direct NASA POWER climate fields, and the calendar dimension.
+
+IT IMPORTS `pipeline/direct/climate/products.py` AND NOTHING ELSE FROM THAT PACKAGE. That module
+depends only on `warehouse`, so the edge is one-directional; the package `__init__` is deliberately
+empty of re-exports because pulling in the writer would close a cycle back through this file.
 
 EVERY LANE DECLARES WHAT ITS PARTITION DAY MEANS. `daily_series` and `release_series` key to a
 publication lag off the calendar; `static_lookup` keys to a SOURCE WATERMARK -- the source's own
@@ -39,6 +44,11 @@ from agri_data_service.foundation.parquet.lane_contract import (
     validate_lane_nature,
 )
 from agri_data_service.foundation.parquet.paths import validate_layer_slug
+from agri_data_service.pipeline.direct.climate.products import (
+    CLIMATE_FIELD_PRODUCTS,
+    CLIMATE_METEOROLOGY_PUBLICATION_LAG_DAYS,
+    CLIMATE_SHORTWAVE_RADIATION_PUBLICATION_LAG_DAYS,
+)
 from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.lanes.burn_severity import export_burn_severity_release_day
 from agri_data_service.pipeline.lanes.calendar import export_calendar_version
@@ -83,6 +93,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
     from sqlalchemy.sql.elements import TextClause
 
+    from agri_data_service.pipeline.direct.climate.products import ClimateFieldProduct
     from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 
 _SPATIAL_CELL_IDS_SQL: Final = text(load_query_sql("pipeline/lane_registry_spatial_cell_ids.sql"))
@@ -917,13 +928,75 @@ _DATABASE_BACKED_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = (
     ),
 )
 
+# Source-direct lanes: registered so they have a floor, a lag, a nature and a census, but with no
+# PostgreSQL producer behind them, so the registered adapter refuses. See
+# `pipeline/direct/AGENTS.md`, "Ownership, and why the registered adapter refuses".
+
+
+async def _refuse_source_direct_export(
+    session: AsyncSession,  # noqa: ARG001 - uniform adapter shape; this lane has no query to run
+    store: ObjectStore,  # noqa: ARG001 - uniform adapter shape; the direct writer owns the write
+    *,
+    day: date,
+    run_id: str,  # noqa: ARG001 - uniform adapter shape; the refusal is not a run outcome
+) -> LaneRunResult:
+    """Refuse a generic export of a source-direct lane, naming the writer that actually owns it."""
+    raise LaneRegistryError(
+        f"this lane has no PostgreSQL producer, so the generic gap-fill driver cannot export "
+        f"{day.isoformat()}. Its days are written by "
+        "`python -m agri_data_service.pipeline.direct.climate`, which substitutes its own adapter."
+    )
+
+
+def _climate_floor_basis(product: ClimateFieldProduct) -> str:
+    """Cite this product's floor and lag from the artifacts they were read off, never from a guess."""
+    lag_citation = (
+        "Lag 5 is NASA POWER's MEASURED meteorology publication lag, "
+        "`execution/coverage_census.py` PUBLICATION_LAG_DAYS['nasa-power-daily']."
+        if product.publication_lag_days == CLIMATE_METEOROLOGY_PUBLICATION_LAG_DAYS
+        else (
+            f"Lag {CLIMATE_SHORTWAVE_RADIATION_PUBLICATION_LAG_DAYS} is CONSERVATIVE AND NOT MEASURED against "
+            "POWER's live solar edge. It is 5 (the measured meteorology lag) plus the 67-day difference between "
+            "the canonical snapshot's meteorology last day (2026-08-06) and its ALLSKY_SFC_SW_DWN last day "
+            "(2026-05-31) in the same build, plus three days of slack. MEASURE POWER's own solar edge and "
+            "replace it: over-waiting delays a real day by one tick, under-waiting manufactures a wrong "
+            "governed absence."
+        )
+    )
+    return (
+        "NATURE daily_series, NOT forecastable: no method/monte_carlo module projects a climate field, and the "
+        "lane deliberately claims no horizon. SOURCE-DIRECT: there is no PostgreSQL producer, so the registered "
+        "adapter refuses and `pipeline/direct/climate/forward.py` writes every day through this same "
+        f"registration. Floor {product.history_floor.isoformat()} is the day after this product's OWN immutable "
+        f"history ends ({product.snapshot_last_day.isoformat()}), which for shortwave radiation is nine weeks "
+        "earlier than for the meteorology products -- "
+        "`scripts/build_shortwave_radiation_from_canonical_snapshot.py` pins SOURCE_SNAPSHOT_LAST_DAY=2026-08-06 "
+        "and EXPECTED_LAST_DAY=2026-05-31. Those days are immutable and the adapter refuses to republish them. "
+        f"{lag_citation}"
+    )
+
+
+_SOURCE_DIRECT_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = tuple(
+    LaneRegistration(
+        slug=product.stream,
+        adapter=_refuse_source_direct_export,
+        history_floor=product.history_floor,
+        publication_lag_days=product.publication_lag_days,
+        nature="daily_series",
+        floor_basis=_climate_floor_basis(product),
+    )
+    for product in CLIMATE_FIELD_PRODUCTS
+)
+
 # --- The conformed calendar dimension -----------------------------------------------------------
 #
 # The floor is DERIVED, not declared: the union of every database-backed lane's own floor, so the
 # dimension covers every day any lane can key to it. Deriving it is what stops the calendar and the
 # deepest lane (`fire-detections`, 2000-11-01) drifting apart when a floor is next corrected.
 
-CALENDAR_HISTORY_FLOOR: Final[date] = min(registration.history_floor for registration in _DATABASE_BACKED_REGISTRATIONS)
+CALENDAR_HISTORY_FLOOR: Final[date] = min(
+    registration.history_floor for registration in (*_DATABASE_BACKED_REGISTRATIONS, *_SOURCE_DIRECT_REGISTRATIONS)
+)
 
 CALENDAR_REGISTRATION: Final = LaneRegistration(
     slug=CALENDAR_STREAM,
@@ -934,7 +1007,7 @@ CALENDAR_REGISTRATION: Final = LaneRegistration(
     watermark=_calendar_watermark,
     floor_basis=(
         "NATURE static_lookup, WATERMARK-DRIVEN, and the ONE lane with no source system. The floor is DERIVED "
-        f"as min(history_floor) across the twelve database-backed lanes -- {CALENDAR_HISTORY_FLOOR.isoformat()}, "
+        f"as min(history_floor) across the twenty source-bearing lanes -- {CALENDAR_HISTORY_FLOOR.isoformat()}, "
         "which is fire-detections' -- so every day any lane can key to the dimension is in it. Each version "
         f"covers its own day plus {CALENDAR_VERSION_FORWARD_DAYS} days, and must reach today plus "
         f"{CALENDAR_REQUIRED_FORWARD_DAYS}, so a 30-day horizon from any as-of date always resolves and the "
@@ -943,7 +1016,10 @@ CALENDAR_REGISTRATION: Final = LaneRegistration(
 )
 
 LANE_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = tuple(
-    sorted((*_DATABASE_BACKED_REGISTRATIONS, CALENDAR_REGISTRATION), key=lambda entry: entry.slug)
+    sorted(
+        (*_DATABASE_BACKED_REGISTRATIONS, *_SOURCE_DIRECT_REGISTRATIONS, CALENDAR_REGISTRATION),
+        key=lambda entry: entry.slug,
+    )
 )
 
 LANE_REGISTRY: Final[Mapping[str, LaneRegistration]] = MappingProxyType(

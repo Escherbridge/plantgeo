@@ -38,6 +38,7 @@ from agri_data_service.pipeline.parquet.availability_index import (
     SourceEvidence,
     StoredAvailabilityObject,
     TerminalEvidence,
+    availability_lane_identity,
     availability_pointer_key,
     build_bootstrap_inventory_evidence,
     build_source_evidence,
@@ -267,6 +268,14 @@ def test_reader_rejects_pointer_parquet_cross_binding_mutation() -> None:
         read_latest_availability(store, lane_root=_LANE_ROOT)
 
     assert error.value.code == "availability_stale"
+
+
+def test_lane_identity_decomposes_a_lane_root_and_refuses_anything_else() -> None:
+    """The public inverse of `objectstore.availability_lane_root`, so a reader need not respell it."""
+    assert availability_lane_identity(_LANE_ROOT) == ("test-lane", "observed")
+
+    with pytest.raises(ValueError, match="lane_root must be exactly"):
+        availability_lane_identity("layer=test-lane/kind=hourly")
 
 
 def test_exact_json_loader_rejects_duplicate_object_keys(tmp_path: Path) -> None:

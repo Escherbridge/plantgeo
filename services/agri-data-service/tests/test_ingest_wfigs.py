@@ -14,14 +14,17 @@ from agri_data_service.ingest import wfigs
 from agri_data_service.ingest.http import UpstreamHttpError, UpstreamPayloadError
 from agri_data_service.ingest.wfigs import (
     MAX_RECORD_COUNT,
+    WFIGS_BOUNDS,
     WFIGS_GEOMETRY_PRECISION,
     WFIGS_HISTORY_CAPABILITY,
     WFIGS_PERIMETER_HISTORY_EARLIEST,
     WFIGS_SOURCE,
+    WFIGS_TOTAL_BYTE_BUDGET,
     build_perimeter_write,
     build_query_url,
     epoch_milliseconds_to_iso,
     fetch_fire_perimeters,
+    fetch_fire_perimeters_walk,
     parse_perimeter_collection,
     perimeter_severity,
     run_fire_perimeters_ingestion_job,
@@ -355,3 +358,142 @@ async def test_the_job_reports_truncation_when_the_upstream_says_more_perimeters
 
     assert result.status == "ingested"
     assert result.truncated is True
+
+
+# --- The 2026-09-02 repair: a page the byte cap refuses, and a record no page can hold ---
+#
+# `postgres-fire-perimeters` entered retry backoff with `UpstreamPayloadError: upstream response
+# exceeded the byte limit`. Nothing about that was transient: a 100-record page of large 2026
+# perimeters is simply over `WFIGS_BOUNDS.max_bytes`, and every retry asked for the same page again.
+# `is_retryable_failure` correctly declines to retry it, so the lane failed, retried at the JOB level,
+# and burned its way to backoff -- once an hour, indefinitely.
+
+
+def _oversized_response() -> httpx.Response:
+    """A body whose declared `content-length` alone is over the cap, so it is refused before it is read."""
+    return httpx.Response(
+        200,
+        content=json.dumps(_collection()).encode(),
+        headers={"content-type": "application/json", "content-length": str(WFIGS_BOUNDS.max_bytes + 1)},
+    )
+
+
+def _record_count_of(request: httpx.Request) -> int:
+    return int(request.url.params["resultRecordCount"])
+
+
+async def test_a_page_over_the_byte_cap_is_halved_until_it_fits_rather_than_failing_the_lane() -> None:
+    asked: list[tuple[str | None, int]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        asked.append((request.url.params.get("resultOffset"), _record_count_of(request)))
+        if _record_count_of(request) > 50:
+            return _oversized_response()
+        return _json_response(_collection())
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        perimeters, outcome = await fetch_fire_perimeters_walk(client, "-125,42,-111,49", _no_sleep)
+
+    assert asked == [("0", MAX_RECORD_COUNT), ("0", 50)]
+    assert len(perimeters) == 1
+    assert outcome.oversized == ()
+    assert outcome.truncated is False
+
+
+async def test_a_single_perimeter_over_the_cap_is_named_skipped_and_never_fatal() -> None:
+    """The record that fits in no page: a governed source refusal carrying its object id and size."""
+    asked: list[tuple[str | None, int, str | None]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        offset = request.url.params.get("resultOffset")
+        geometry = request.url.params.get("returnGeometry")
+        asked.append((offset, _record_count_of(request), geometry))
+        if geometry == "false":
+            # The identity probe: attributes only, so the record that could not be transferred with
+            # its geometry can still be NAMED. Nothing from this answer is ever written.
+            return _json_response(_collection())
+        if offset == "0":
+            return _oversized_response()
+        return _json_response(_collection(attr_UniqueFireIdentifier="2026-ID1AX-000619"))
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        perimeters, outcome = await fetch_fire_perimeters_walk(client, "-125,42,-111,49", _no_sleep)
+
+    # 100 -> 50 -> 25 -> 12 -> 6 -> 3 -> 1 at offset 0, then the identity probe, then offset 1.
+    ladder = [count for offset, count, geometry in asked if offset == "0" and geometry is None]
+    assert ladder == [100, 50, 25, 12, 6, 3, 1]
+    assert ("0", 1, "false") in asked
+
+    assert len(outcome.oversized) == 1
+    refused = outcome.oversized[0]
+    assert refused.offset == 0
+    assert refused.identity == RECORDED_FIRE_IDENTIFIER
+    assert refused.declared_bytes == WFIGS_BOUNDS.max_bytes + 1
+    # The lane kept going and collected the perimeter AFTER the one it could not have.
+    assert [perimeter["uniqueFireIdentifier"] for perimeter in perimeters] == ["2026-ID1AX-000619"]
+
+
+async def test_a_skipped_perimeter_makes_the_two_tuple_caller_report_truncation() -> None:
+    """`fetch_fire_perimeters` answers a caller that compares perimeter SETS, and a skip changes the set.
+
+    The flag means "are you seeing all of them". A governed oversized-record refusal is a real,
+    named loss, so folding it into `truncated` is the same judgement
+    `run_fire_perimeters_ingestion_job` already makes -- and without it a set-comparing caller reads
+    a short set as complete and concludes the missing perimeters were retired upstream.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.params.get("returnGeometry") == "false":
+            return _json_response(_collection())
+        if request.url.params.get("resultOffset") == "0":
+            return _oversized_response()
+        return _json_response(_collection(attr_UniqueFireIdentifier="2026-ID1AX-000619"))
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        walk_records, outcome = await fetch_fire_perimeters_walk(client, "-125,42,-111,49", _no_sleep)
+        records, more_remaining = await fetch_fire_perimeters(client, "-125,42,-111,49", _no_sleep)
+
+    assert outcome.truncated is False, "the walk itself did not stop early; only a record was skipped"
+    assert len(outcome.oversized) == 1
+    assert more_remaining is True, "an oversized skip is a real loss and must not read as a complete set"
+    assert [record["uniqueFireIdentifier"] for record in records] == [
+        perimeter["uniqueFireIdentifier"] for perimeter in walk_records
+    ]
+
+
+async def test_a_skipped_perimeter_is_stated_in_the_run_outcome_rather_than_only_logged() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.params.get("returnGeometry") == "false":
+            return _json_response(_collection())
+        if request.url.params.get("resultOffset") == "0":
+            return _oversized_response()
+        return _json_response(_collection(attr_UniqueFireIdentifier="2026-ID1AX-000619"))
+
+    writer = RecordingWriter()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        result = await run_fire_perimeters_ingestion_job(writer, bbox="-125,42,-111,49", client=client)
+
+    assert result.status == "ingested"
+    assert result.records_written == 1
+    assert result.details["oversized_records"] == 1
+    # Truncated, because a named skip means the caller is NOT seeing everything -- the same answer
+    # the record ceiling and the transfer limit already give, for a reason the reason line states.
+    assert result.truncated is True
+    assert result.reason is not None
+    assert RECORDED_FIRE_IDENTIFIER in result.reason
+    assert str(WFIGS_BOUNDS.max_bytes) in result.reason
+
+
+async def test_the_two_tuple_contract_the_validation_pipeline_calls_is_unchanged() -> None:
+    """`pipeline/validation/fire_perimeters.py` unpacks (perimeters, more_remaining) and is not owned here."""
+    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _r: _json_response(_collection()))) as client:
+        perimeters, more_remaining = await fetch_fire_perimeters(client, "-125,42,-111,49", _no_sleep)
+
+    assert len(perimeters) == 1
+    assert more_remaining is False
+
+
+def test_one_run_carries_a_total_transfer_budget_well_above_a_single_page() -> None:
+    """Per-request bounds never bounded a RUN: 200 pages at the per-page cap is 3.2 GB."""
+    assert WFIGS_BOUNDS.max_bytes < WFIGS_TOTAL_BYTE_BUDGET
+    assert wfigs.MAX_PAGES * WFIGS_BOUNDS.max_bytes > WFIGS_TOTAL_BYTE_BUDGET

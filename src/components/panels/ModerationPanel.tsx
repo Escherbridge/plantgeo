@@ -2,7 +2,36 @@
 
 import React, { useState } from "react";
 import { trpc } from "@/lib/trpc/client";
-import { ShieldCheck, CheckCircle2, XCircle, AlertCircle, TrendingUp, Sparkles, MapPin } from "lucide-react";
+import { ShieldCheck, CheckCircle2, XCircle, AlertCircle, Info, Sparkles, MapPin } from "lucide-react";
+
+/** Effect evidence for one proposal; only the absence case exists today. See AGENTS.md. */
+type EffectEvidence = { kind: "unavailable"; reason: "no_evaluated_estimate" };
+
+/** `listProposed` returns no effect estimate, so every proposal reports the absence. */
+const NO_EVALUATED_ESTIMATE: EffectEvidence = {
+  kind: "unavailable",
+  reason: "no_evaluated_estimate",
+};
+
+/** Renders effect evidence; the absence is stated, never stood in for by a number. */
+function EffectEvidenceNotice({ evidence }: { evidence: EffectEvidence }) {
+  if (evidence.kind === "unavailable") {
+    return (
+      <div className="bg-zinc-900 border border-zinc-800 px-4 py-2 rounded-lg flex items-start gap-3 max-w-sm">
+        <Info className="w-4 h-4 text-zinc-500 shrink-0 mt-0.5" />
+        <div>
+          <div className="text-xs text-zinc-300">
+            No evaluated effect estimate is available for this proposal
+          </div>
+          <div className="text-[11px] text-zinc-500 mt-0.5">
+            An estimate may appear here once a provenance-carrying, time-honest evaluation has produced one.
+          </div>
+        </div>
+      </div>
+    );
+  }
+  return null;
+}
 
 export function ModerationPanel() {
   const [selectedItem, setSelectedItem] = useState<string | null>(null);
@@ -58,7 +87,7 @@ export function ModerationPanel() {
             Expert Moderation & Lifecycle Queue
           </h2>
           <p className="text-xs text-zinc-400 mt-1">
-            Review proposals with ML causal benefit scorecards (tau_est) and cast verified moderation votes
+            Review submitted proposals and cast verified moderation votes
           </p>
         </div>
         <div className="px-3 py-1 bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-xs font-mono rounded-full">
@@ -74,10 +103,6 @@ export function ModerationPanel() {
         <div className="space-y-4">
           {proposed?.map((item) => {
             const isSelected = selectedItem === item.id;
-            // Simulated ML causal benefit score $\hat{\tau}$ for scorecard
-            const tauEstimate = 0.18;
-            const confidenceLower = 0.11;
-            const confidenceUpper = 0.25;
 
             return (
               <div
@@ -104,18 +129,7 @@ export function ModerationPanel() {
                     </div>
                   </div>
 
-                  {/* ML Causal Scorecard */}
-                  <div className="bg-emerald-950/40 border border-emerald-800/40 px-4 py-2 rounded-lg flex items-center space-x-3">
-                    <TrendingUp className="w-5 h-5 text-emerald-400 shrink-0" />
-                    <div>
-                      <div className="text-[10px] uppercase tracking-wider text-emerald-400 font-mono">
-                        Causal Benefit Score (tau_est)
-                      </div>
-                      <div className="text-sm font-bold text-emerald-200 font-mono">
-                        +{tauEstimate * 100}% <span className="text-xs text-emerald-400 font-normal">[{confidenceLower * 100}%, {confidenceUpper * 100}%]</span>
-                      </div>
-                    </div>
-                  </div>
+                  <EffectEvidenceNotice evidence={NO_EVALUATED_ESTIMATE} />
                 </div>
 
                 {item.description && (

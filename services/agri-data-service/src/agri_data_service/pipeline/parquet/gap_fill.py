@@ -64,16 +64,13 @@ from __future__ import annotations
 
 import time
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Final, Literal
 
 from sqlalchemy import func, select, text
 
-from agri_data_service.db.advisory_keys import (
-    parquet_lane_publication_barrier_from_day_lock_key,
-    parquet_lane_publication_barrier_key,
-)
+from agri_data_service.db.advisory_keys import parquet_lane_publication_barrier_from_day_lock_key
 from agri_data_service.db.vegetation_publication import (
     try_postgres_vegetation_publication_barrier,
     unlocked_vegetation_publication_barrier,
@@ -93,7 +90,16 @@ from agri_data_service.foundation.parquet.paths import (
     try_parse_partition_path,
 )
 from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
+from agri_data_service.pipeline.parquet.availability_extension import (
+    POSTGRES_DAY_EXPORT_ORIGIN,
+    AvailabilityExtensionTally,
+    FinalizedLaneDay,
+    LaneDaySource,
+    extend_availability_for_lane_day,
+    retry_pending_availability,
+)
 from agri_data_service.pipeline.parquet.derivation import DerivationResult, derive_and_write_day_tiers
+from agri_data_service.pipeline.parquet.lane_ceiling import allowed_source_ceiling
 from agri_data_service.pipeline.parquet.objectstore import (
     EmptyPartitionError,
     GovernedAbsenceConflictError,
@@ -117,8 +123,9 @@ if TYPE_CHECKING:
     )
     from agri_data_service.foundation.parquet.paths import PartitionKind
     from agri_data_service.foundation.parquet.zoom import ZoomTier
+    from agri_data_service.pipeline.parquet.availability_index import AvailabilityStorage
     from agri_data_service.pipeline.parquet.lane_registry import LaneRegistration
-    from agri_data_service.pipeline.parquet.objectstore import ObjectStore
+    from agri_data_service.pipeline.parquet.objectstore import ObjectStore, WrittenObjectLedger
 
     # One lane-day's mutual exclusion, injectable so a test need not fake Postgres advisory
     # functions. Yields whether the lock was granted, and releases on exit; the real one is
@@ -138,7 +145,14 @@ GAP_FILL_PARTITION_KIND: Final[PartitionKind] = "observed"
 # writes. Taken from the ladder's own top rather than written as a literal, so a rung added above z13
 # moves the base with it -- the base is "the tier nothing generalized", not the number 13.
 GAP_FILL_ZOOM_TIER: Final[ZoomTier] = ZOOM_TIERS[-1]
-_LANE_ROOT_SEGMENT_COUNT: Final = 2
+
+# The rungs DERIVED from the base one, taken from the ladder rather than listed, so a rung added to
+# `ZOOM_TIERS` is covered by the governed-absence ladder without a second edit anywhere.
+_DERIVED_GAP_FILL_TIERS: Final[tuple[ZoomTier, ...]] = tuple(tier for tier in ZOOM_TIERS if tier != GAP_FILL_ZOOM_TIER)
+
+# Coarse rungs FIRST, the censused base rung LAST: a governed-absence ladder written in this order
+# leaves an interrupted run's day `missing` rather than covered-but-empty above z13.
+_ABSENCE_LADDER_TIERS: Final[tuple[ZoomTier, ...]] = (*_DERIVED_GAP_FILL_TIERS, GAP_FILL_ZOOM_TIER)
 
 # Matches `jobs-pulse`'s own tick budget: generous enough that a healthy incremental tick never trips
 # it, short enough that one stuck lane cannot consume an entire hourly cadence.
@@ -304,6 +318,10 @@ class LaneFillVerdict:
     rows: int
     written_bytes: int
     seconds: float
+    # Terminal days this tick could not index, and what stopped each one. `ladder_incomplete` and
+    # `retry_claim_failed` are PERMANENT losses -- the base-tier census never revisits a completed
+    # day -- so they are counted rather than left inside a detail string.
+    availability: AvailabilityExtensionTally = field(default_factory=AvailabilityExtensionTally)
     detail: str | None = None
 
     def to_row(self) -> dict[str, object]:
@@ -321,6 +339,7 @@ class LaneFillVerdict:
             "rows": self.rows,
             "bytes": self.written_bytes,
             "seconds": round(self.seconds, 3),
+            **self.availability.to_summary(),
             "detail": self.detail,
         }
 
@@ -342,6 +361,14 @@ class GapFillSummary:
         """True only when a lane genuinely failed; a remaining backlog is a healthy steady state."""
         return bool(self.failing_lanes)
 
+    @property
+    def availability(self) -> AvailabilityExtensionTally:
+        """Fold every lane's availability verdicts into one tick-wide tally."""
+        total = AvailabilityExtensionTally()
+        for lane in self.lanes:
+            total.add(lane.availability)
+        return total
+
     def to_summary(self) -> dict[str, object]:
         """Render the operator-facing JSON object the CLI verb echoes as one line."""
         return {
@@ -358,6 +385,14 @@ class GapFillSummary:
             "blocked": sum(lane.blocked for lane in self.lanes),
             "blocked_lanes": [lane.slug for lane in self.lanes if lane.blocked],
             "contended": sum(lane.contended for lane in self.lanes),
+            **self.availability.to_summary(),
+            # The two availability verdicts that lose a terminal day for good, named at the top level
+            # so an operator does not have to read a per-lane detail string to find them.
+            "availability_unindexed_lanes": [
+                lane.slug
+                for lane in self.lanes
+                if lane.availability.ladder_incomplete or lane.availability.retry_claim_failed
+            ],
             "failed": self.failed,
             "failing_lanes": [lane.slug for lane in self.failing_lanes],
         }
@@ -653,6 +688,11 @@ def gap_census_report(census: Sequence[LaneGapCensus]) -> dict[str, object]:
     }
 
 
+def zero_row_absence_reason(slug: str, day: date) -> str:
+    """Return the ONE reason every rung of one absent lane-day carries; the ladder requires they agree."""
+    return f"the {slug} day export returned zero rows for {day.isoformat()}"
+
+
 def zero_row_absence(  # noqa: PLR0913 - one coordinate of the marked day per arg, none foldable
     slug: str,
     *,
@@ -667,11 +707,13 @@ def zero_row_absence(  # noqa: PLR0913 - one coordinate of the marked day per ar
     THE PAYLOAD CLAIMS ONLY WHAT THIS RUN OBSERVED. It says the day-scoped export query over this
     warehouse's own tables returned zero rows; it never says the upstream source system was asked,
     because this driver does not contact one. Reconciling the two is `pipeline/validation/<slug>.py`.
-    The tier is named in the evidence as well as in the key, because a marker lifted out of its path
-    would otherwise read as a claim about the whole ladder when it settles exactly one rung.
+    The tier is named in the `upstream_response` as well as in the key, because a marker lifted out
+    of its path would otherwise read as a claim about the whole ladder when it settles one rung --
+    while the REASON stays rung-independent, because it is the one field the availability ladder
+    requires every rung of one absent day to agree on.
     """
     return GovernedAbsence(
-        reason=f"the {slug} z{zoom} day export returned zero rows for {day.isoformat()}",
+        reason=zero_row_absence_reason(slug, day),
         upstream_response=(
             f"pipeline/lanes/{slug.replace('-', '_')}.py's day-scoped export query over this warehouse's own "
             f"tables returned 0 rows for {day.isoformat()} at zoom tier {zoom}, and the writer refused it: "
@@ -701,6 +743,8 @@ class _LaneProgress:
     seconds: float = 0.0
     stopped: bool = False
     outcome: LaneFillOutcome = "complete"
+    #: Every availability verdict this lane's days produced, including the owed-day drain's.
+    availability: AvailabilityExtensionTally = field(default_factory=AvailabilityExtensionTally)
     detail: str | None = None
 
     def verdict(self) -> LaneFillVerdict:
@@ -726,6 +770,7 @@ class _LaneProgress:
             rows=self.rows,
             written_bytes=self.written_bytes,
             seconds=self.seconds,
+            availability=self.availability,
             detail=self.detail,
         )
 
@@ -850,38 +895,7 @@ async def _export_one_day(  # noqa: PLR0913 - one caller-supplied coordinate per
         result = await lane.adapter(session, store, day=day, run_id=run_id)
     except EmptyPartitionError as empty:
         await session.rollback()
-        try:
-            receipt = store.write_absence(
-                zero_row_absence(
-                    lane.slug,
-                    zoom=GAP_FILL_ZOOM_TIER,
-                    day=day,
-                    run_id=run_id,
-                    observed=str(empty),
-                    recorded_at=now(),
-                ),
-                layer=lane.slug,
-                kind=GAP_FILL_PARTITION_KIND,
-                zoom=GAP_FILL_ZOOM_TIER,
-                day=day,
-            )
-        except GovernedAbsenceConflictError as conflict:
-            # The day still holds parts and its export now yields nothing. Only an admin can say
-            # whether those parts remain valid, so this driver refuses to guess -- but it also
-            # refuses to stop the lane over it, because this day is the NEWEST one and every older
-            # gap sits behind it. See FAILING_LANE_OUTCOMES.
-            return (
-                "blocked",
-                0,
-                0,
-                0,
-                f"{day.isoformat()}: the export returned zero rows but the day still holds part "
-                f"files, so it can be neither written nor governed as absent without an admin "
-                f"deciding whether those parts are still valid: {conflict}",
-            )
-        except Exception as conflict:  # a marker that cannot be written is a real failure, not an absence
-            return "raised", 0, 0, 0, f"{day.isoformat()}: absence marker refused: {conflict}"
-        return "absent", 0, 0, receipt.byte_count, None
+        return _govern_absent_day(store, lane, day=day, run_id=run_id, now=now, observed=str(empty))
     except Exception as error:  # per-lane isolation: one lane's fault must not end the tick
         await session.rollback()
         return "raised", 0, 0, 0, f"{day.isoformat()}: {type(error).__name__}: {error}"
@@ -902,6 +916,102 @@ async def _export_one_day(  # noqa: PLR0913 - one caller-supplied coordinate per
         now=now,
         derive_tiers=derive_tiers,
     )
+
+
+def _govern_absent_day(  # noqa: PLR0913 - one coordinate of the day being governed per arg
+    store: ObjectStore,
+    lane: LaneRegistration,
+    *,
+    day: date,
+    run_id: str,
+    now: Callable[[], datetime],
+    observed: str,
+) -> tuple[LaneDayOutcome, int, int, int, str | None]:
+    """Govern one whole day as absent at EVERY rung, or write no marker at any rung at all.
+
+    THE WHOLE LADDER IS CHECKED BEFORE THE FIRST MARKER IS WRITTEN. Writing coarse-first and
+    refusing on the first conflict left the earlier rungs marked absent while z13 went on serving
+    rows -- the exact stable lie the marker contract exists to prevent, and one no census brings
+    back: `build_gap_census` walks the base tier, which still holds its parts and its completion.
+    A rung that a later write still fails on is ROLLED BACK, marker by marker, for the same reason.
+
+    THE COARSE RUNGS FIRST, THE BASE RUNG LAST, for the reason `_finalize_written_day` derives
+    before it marks: only the base tier is censused, so a run that died after the base marker would
+    leave a day covered and never revisited while every rung above it said nothing at all.
+    """
+    blocked = tuple(
+        (zoom, part)
+        for zoom in _ABSENCE_LADDER_TIERS
+        if (part := store.part_blocking_absence(lane.slug, GAP_FILL_PARTITION_KIND, zoom, day)) is not None
+    )
+    if blocked:
+        # Only an admin can say whether those parts remain valid, so this driver refuses to guess --
+        # but it also refuses to stop the lane over it, because this day is the NEWEST one and every
+        # older gap sits behind it. See FAILING_LANE_OUTCOMES.
+        rungs = ", ".join(f"z{zoom} ({part})" for zoom, part in blocked)
+        return (
+            "blocked",
+            0,
+            0,
+            0,
+            f"{day.isoformat()}: the export returned zero rows but {rungs} still holds part files, so the day "
+            f"can be neither written nor governed as absent without an admin deciding whether those parts are "
+            f"still valid; no absence marker was written at any rung",
+        )
+    marked = 0
+    written: list[ZoomTier] = []
+    for zoom in _ABSENCE_LADDER_TIERS:
+        try:
+            receipt = store.write_absence(
+                zero_row_absence(
+                    lane.slug,
+                    zoom=zoom,
+                    day=day,
+                    run_id=run_id,
+                    observed=observed,
+                    recorded_at=now(),
+                ),
+                layer=lane.slug,
+                kind=GAP_FILL_PARTITION_KIND,
+                zoom=zoom,
+                day=day,
+            )
+        except Exception as refusal:  # a marker that cannot be written is a real failure, not an absence
+            rolled_back = _retract_absence_ladder(store, lane, day=day, written=tuple(written))
+            return (
+                "raised",
+                0,
+                0,
+                marked,
+                f"{day.isoformat()}: z{zoom} absence marker refused: {refusal}. {rolled_back}",
+            )
+        written.append(zoom)
+        marked += receipt.byte_count
+    return "absent", 0, 0, marked, None
+
+
+def _retract_absence_ladder(
+    store: ObjectStore,
+    lane: LaneRegistration,
+    *,
+    day: date,
+    written: tuple[ZoomTier, ...],
+) -> str:
+    """Undo a partly-written absence ladder, so no rung governs a day the others do not."""
+    if not written:
+        return "no rung had been marked, so the day is exactly as this attempt found it"
+    failures: list[str] = []
+    for zoom in written:
+        try:
+            store.clear_absence_marker(lane.slug, GAP_FILL_PARTITION_KIND, zoom, day)
+        except Exception as error:  # one rung's rollback must not skip the rest
+            failures.append(f"z{zoom}: {type(error).__name__}: {error}")
+    if failures:
+        return (
+            "the markers this attempt had already written could NOT all be retracted, so the day now "
+            f"governs some rungs and not others and needs an admin: {'; '.join(failures)}"
+        )
+    return f"the {len(written)} marker(s) this attempt had written were retracted, leaving the day unmarked"
 
 
 def _finalize_written_day(  # noqa: PLR0913 - one coordinate of the day being closed per arg
@@ -964,6 +1074,17 @@ def _finalize_written_day(  # noqa: PLR0913 - one coordinate of the day being cl
     # self-healing instead: the day stays unmarked and the next tick redoes all four rungs.
     try:
         derived = derive_tiers(store, layer=lane.slug, kind=GAP_FILL_PARTITION_KIND, day=day, run_id=run_id, now=now)
+    except GovernedAbsenceConflictError as stranded:
+        # A COARSE ABSENCE CLAIM SURVIVING A WRITTEN BASE RUNG, retracted here rather than left to
+        # fail this day on every tick forever. It decides nothing: `write_partition` refuses a base
+        # rung that still carries an absence claim, so the base export having SUCCEEDED proves that
+        # claim was already retracted -- by an admin, or by a direct writer whose source began
+        # publishing the day. Finishing that retraction across the ladder is the same obligation
+        # `derive_tiers` has to finish the ladder, and a rung claiming a day is governed-empty while
+        # the base rung serves its rows is the stable lie the whole marker contract exists to
+        # prevent. The day still fails this tick and the next one redoes all four rungs.
+        notes.append(_retract_derived_absences(store, lane, day=day, conflict=stranded))
+        return "raised", parts, rows, written_bytes, "; ".join(notes)
     except Exception as error:  # the base rows are published but the ladder above them is not
         notes.append(
             f"{day.isoformat()}: the base rung is written but its coarse rungs are not, so the day stays "
@@ -1016,6 +1137,33 @@ async def _read_watermark(
     finally:
         # Same discipline as a lane-day: read-only, so never hold the snapshot past the answer.
         await session.rollback()
+
+
+def _retract_derived_absences(
+    store: ObjectStore,
+    lane: LaneRegistration,
+    *,
+    day: date,
+    conflict: GovernedAbsenceConflictError,
+) -> str:
+    """Clear every coarse-rung absence claim over a day whose base rung holds data; report what happened."""
+    failures: list[str] = []
+    for zoom in _DERIVED_GAP_FILL_TIERS:
+        try:
+            store.clear_absence_marker(lane.slug, GAP_FILL_PARTITION_KIND, zoom, day)
+        except Exception as error:
+            failures.append(f"z{zoom}: {type(error).__name__}: {error}")
+    if failures:
+        return (
+            f"{day.isoformat()}: a coarse rung still claims this day is governed as absent while its base rung "
+            f"holds data, and the claim could not be retracted, so an admin must remove it: "
+            f"{'; '.join(failures)} (from {conflict})"
+        )
+    return (
+        f"{day.isoformat()}: a coarse rung claimed this day was governed as absent while its base rung holds "
+        f"data; the base export already proved that claim retracted, so the surviving coarse markers were "
+        f"removed and the next tick rebuilds the ladder: {conflict}"
+    )
 
 
 def _prune_surplus(
@@ -1199,30 +1347,6 @@ async def postgres_lane_day_lock(session: AsyncSession, key: str) -> AsyncIterat
                 )
 
 
-@asynccontextmanager
-async def postgres_lane_publication_barrier(session: AsyncSession, lane_root: str) -> AsyncIterator[bool]:
-    """Try one lane's exclusive publication barrier across verification and pointer CAS."""
-    segments = lane_root.split("/")
-    if (
-        len(segments) != _LANE_ROOT_SEGMENT_COUNT
-        or not segments[0].startswith("layer=")
-        or not segments[1].startswith("kind=")
-    ):
-        raise ValueError("lane_root must be exactly layer=<slug>/kind=<observed|forecast>")
-    barrier_key = parquet_lane_publication_barrier_key(
-        segments[0].removeprefix("layer="),
-        segments[1].removeprefix("kind="),
-    )
-    held = await session.execute(select(func.pg_try_advisory_lock(func.hashtextextended(barrier_key, 0))))
-    granted = bool(held.scalar())
-    try:
-        yield granted
-    finally:
-        if granted:
-            with suppress(Exception):
-                await session.execute(select(func.pg_advisory_unlock(func.hashtextextended(barrier_key, 0))))
-
-
 def no_derived_tiers(  # noqa: PLR0913 - the signature IS the seam; it must match what it replaces
     store: ObjectStore,  # noqa: ARG001
     *,
@@ -1254,6 +1378,82 @@ async def unlocked_lane_day(session: AsyncSession, key: str) -> AsyncIterator[bo
     yield True
 
 
+def _append_note(detail: str | None, note: str) -> str:
+    """Fold one more note into a lane-day detail without losing the notes already there."""
+    return note if detail is None else f"{detail}; {note}"
+
+
+async def _extend_availability_for_result(  # noqa: PLR0913 - one coordinate of the finished day per arg
+    session: AsyncSession,
+    store: ObjectStore,
+    lane: LaneRegistration,
+    result: tuple[LaneDayOutcome, int, int, int, str | None],
+    *,
+    day: date,
+    today: date,
+    run_id: str,
+    now: Callable[[], datetime],
+    written: WrittenObjectLedger,
+    availability_storage: AvailabilityStorage | None,
+    tally: AvailabilityExtensionTally | None,
+) -> tuple[LaneDayOutcome, int, int, int, str | None]:
+    """Extend the lane's availability generation AFTER a terminal day, never turning that day back."""
+    outcome, parts, rows, written_bytes, detail = result
+    if outcome not in ("written", "absent"):
+        return result
+    terminal_state: Literal["published", "governed_absence"] = (
+        "published" if outcome == "written" else "governed_absence"
+    )
+    published_at = now()
+    # THE LANE'S OWN CEILING, NOT THE DAY. A day that declared itself its own ceiling ratcheted the
+    # published pointer to the newest day written, and coverage then closed every lane exactly at
+    # its last row -- so no lane could report a gap tail however far behind its source it had
+    # fallen. `max` with the day keeps the statement honest for a day a forward writer published
+    # past the generic ceiling: a lane cannot have a ceiling below a day it demonstrably holds.
+    source_ceiling = max(allowed_source_ceiling(lane, today=today), day)
+    try:
+        extension = await extend_availability_for_lane_day(
+            session,
+            store,
+            lane=lane.slug,
+            kind=GAP_FILL_PARTITION_KIND,
+            day=day,
+            outcome=FinalizedLaneDay(
+                terminal_state=terminal_state,
+                day=day,
+                written=written,
+                source=LaneDaySource(
+                    origin=POSTGRES_DAY_EXPORT_ORIGIN,
+                    run_id=run_id,
+                    row_count=rows,
+                    part_count=parts,
+                    exported_at=published_at,
+                    detail=f"{lane.slug} {lane.nature} day export",
+                ),
+                published_at=published_at,
+                source_ceiling=source_ceiling,
+                absence_reason=(None if terminal_state == "published" else zero_row_absence_reason(lane.slug, day)),
+            ),
+            availability=availability_storage,
+            now=now,
+        )
+    except Exception as error:  # the day is terminal; the index owing an entry may never undo that
+        return (
+            outcome,
+            parts,
+            rows,
+            written_bytes,
+            _append_note(
+                detail,
+                f"{day.isoformat()}: the availability step raised and the day stays terminal: "
+                f"{type(error).__name__}: {error}",
+            ),
+        )
+    if tally is not None:
+        tally.record(extension)
+    return outcome, parts, rows, written_bytes, _append_note(detail, extension.note)
+
+
 async def fill_one_lane_day(  # noqa: PLR0913 - one caller-supplied coordinate per arg, none foldable
     session: AsyncSession,
     store: ObjectStore,
@@ -1267,6 +1467,9 @@ async def fill_one_lane_day(  # noqa: PLR0913 - one caller-supplied coordinate p
     vegetation_publication_barrier: VegetationPublicationBarrier = try_postgres_vegetation_publication_barrier,
     derive_tiers: TierDeriver = derive_and_write_day_tiers,
     statement_timeout_seconds: int = DEFAULT_STATEMENT_TIMEOUT_SECONDS,
+    extend_availability: bool = True,
+    availability_storage: AvailabilityStorage | None = None,
+    availability_tally: AvailabilityExtensionTally | None = None,
 ) -> tuple[LaneDayOutcome, int, int, int, str | None]:
     """Export one lane-day under its advisory lock. Static lanes also bracket their window.
 
@@ -1309,28 +1512,82 @@ async def fill_one_lane_day(  # noqa: PLR0913 - one caller-supplied coordinate p
                     f"{day.isoformat()}: another run holds this lane-day, so it was skipped rather than "
                     "written twice; it stays missing and the next tick will take it",
                 )
-            if lane.watermark is None:
-                return await _export_one_day(
-                    session,
-                    store,
-                    lane,
-                    day=day,
-                    run_id=run_id,
-                    now=now,
-                    derive_tiers=derive_tiers,
-                    statement_timeout_seconds=statement_timeout_seconds,
-                )
-            return await _fill_static_day(
+            # THE LEDGER SPANS THE WHOLE EXPORT so the availability step can name every object this
+            # run wrote -- part keys and digests included -- without re-reading a single byte of them.
+            # It records nothing unless this scope is open, so no other caller pays for it.
+            with store.recording_written_objects() as written:
+                if lane.watermark is None:
+                    result = await _export_one_day(
+                        session,
+                        store,
+                        lane,
+                        day=day,
+                        run_id=run_id,
+                        now=now,
+                        derive_tiers=derive_tiers,
+                        statement_timeout_seconds=statement_timeout_seconds,
+                    )
+                else:
+                    result = await _fill_static_day(
+                        session,
+                        store,
+                        lane,
+                        day=day,
+                        run_id=run_id,
+                        now=now,
+                        today=today,
+                        derive_tiers=derive_tiers,
+                        statement_timeout_seconds=statement_timeout_seconds,
+                    )
+            # SILENT WHEN IT IS NOT WIRED. A run with no conditional storage has the same thing to
+            # say about every day it writes, and saying it on each one would bury the notes that
+            # describe what actually happened to that day.
+            if not extend_availability or availability_storage is None:
+                return result
+            return await _extend_availability_for_result(
                 session,
                 store,
                 lane,
+                result,
                 day=day,
+                today=today,
                 run_id=run_id,
                 now=now,
-                today=today,
-                derive_tiers=derive_tiers,
-                statement_timeout_seconds=statement_timeout_seconds,
+                written=written,
+                availability_storage=availability_storage,
+                tally=availability_tally,
             )
+
+
+async def _drain_owed_availability(  # noqa: PLR0913 - one coordinate of the tick being drained per arg
+    session: AsyncSession,
+    store: ObjectStore,
+    progress: Sequence[_LaneProgress],
+    *,
+    lanes: Mapping[str, LaneRegistration],
+    now: Callable[[], datetime],
+    availability_storage: AvailabilityStorage,
+) -> None:
+    """Retry the availability step alone for every day a previous turn left owed. Never fails a tick."""
+    for entry in progress:
+        lane = lanes.get(entry.census.slug)
+        if lane is None:
+            continue
+        try:
+            outcomes = await retry_pending_availability(
+                session,
+                store,
+                lane=lane.slug,
+                kind=GAP_FILL_PARTITION_KIND,
+                availability=availability_storage,
+                now=now,
+            )
+        except Exception as error:  # an owed index entry may never stop a lane from exporting
+            entry.detail = _append_note(entry.detail, f"owed availability retry raised: {error}")
+            continue
+        for outcome in outcomes:
+            entry.availability.record(outcome)
+            entry.detail = _append_note(entry.detail, outcome.note)
 
 
 async def run_gap_fill(  # noqa: PLR0913 - one parameter per operator-tunable knob of a single tick
@@ -1347,6 +1604,8 @@ async def run_gap_fill(  # noqa: PLR0913 - one parameter per operator-tunable kn
     lane_day_lock: LaneDayLock = postgres_lane_day_lock,
     derive_tiers: TierDeriver = derive_and_write_day_tiers,
     statement_timeout_seconds: int = DEFAULT_STATEMENT_TIMEOUT_SECONDS,
+    extend_availability: bool = True,
+    availability_storage: AvailabilityStorage | None = None,
 ) -> GapFillSummary:
     """Fill every lane's newest missing day, then its next-newest, until the wall-clock budget is spent.
 
@@ -1363,6 +1622,18 @@ async def run_gap_fill(  # noqa: PLR0913 - one parameter per operator-tunable kn
     census = build_gap_census(lanes, store, today=today, max_days_per_lane=max_days_per_lane, watermarks=watermarks)
     progress = [_seeded_progress(entry, today=today) for entry in census]
     by_slug = {lane.slug: lane for lane in lanes}
+    if extend_availability and availability_storage is not None:
+        # OWED AVAILABILITY IS DRAINED BEFORE ANY NEW DAY IS TAKEN. It is the cheap half of the
+        # tick -- no export, no derivation, only the publication a previous turn could not finish --
+        # and leaving it behind the walk would let a spent budget defer it again and again.
+        await _drain_owed_availability(
+            session,
+            store,
+            progress,
+            lanes=by_slug,
+            now=now,
+            availability_storage=availability_storage,
+        )
 
     budget_spent = False
     while not budget_spent:
@@ -1387,6 +1658,9 @@ async def run_gap_fill(  # noqa: PLR0913 - one parameter per operator-tunable kn
                 lane_day_lock=lane_day_lock,
                 derive_tiers=derive_tiers,
                 statement_timeout_seconds=statement_timeout_seconds,
+                extend_availability=extend_availability,
+                availability_storage=availability_storage,
+                availability_tally=entry.availability,
             )
             entry.seconds += monotonic() - started
             entry.parts += parts

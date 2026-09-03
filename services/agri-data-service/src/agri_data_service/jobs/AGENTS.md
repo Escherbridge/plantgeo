@@ -567,15 +567,25 @@ violate; `preflight_missing_relations` is its own stop reason for precisely that
 from `no_open_run`.
 
 **Scoped to the relation that has no graceful path, not to every relation a lane touches.**
-`matview_refresh.py`'s eleven views already handle an individual missing view gracefully
-(`_view_exists` -> `skipped_missing`, self-healing the moment the relation appears — see that
-module's own "Graceful skip, not a crash" comment), and `strategy_mv_refresh.py`'s three guardrailed
-views do the same. Preflighting those too would turn "eight of eleven views are ready, refresh them"
-into "refuse the whole tick because three views are not," a real behavioural regression this change
-does not make. `agri.matview_refresh_state` is different: nothing catches its absence, so it is the
-one relation both lanes declare in `MATVIEW_REFRESH_REQUIRED_RELATIONS` (`jobs/matview_refresh.py`),
-and `strategy_mv_refresh.py` imports that same tuple rather than restating the literal, because it
-writes to the identical table through the identical failure mode.
+`matview_refresh.py`'s ten views handle an individual missing view gracefully — since 2026-09-02
+through the per-spec preflight described below, before that through `_view_exists` ->
+`skipped_missing` — and `strategy_mv_refresh.py`'s three guardrailed views do the same. Preflighting
+those too would turn "eight of ten views are ready, refresh them" into "refuse the whole tick because
+two views are not," a real behavioural regression this change does not make.
+`agri.matview_refresh_state` is different: nothing catches its absence, so it is the one relation
+both lanes declare in `MATVIEW_REFRESH_REQUIRED_RELATIONS` (`jobs/matview_refresh.py`), and
+`strategy_mv_refresh.py` imports that same tuple rather than restating the literal, because it writes
+to the identical table through the identical failure mode.
+`tests/test_jobs_matview_refresh_preflight.py` asserts that tuple stays disjoint from the view list,
+because "just add the missing view to the preflight" is the obvious wrong fix and it is strictly
+worse than the bug: a lane that refuses every tick over a relation the Parquet pivot deliberately
+dropped never refreshes anything again.
+
+**There are TWO preflights now and they answer different questions.** The definition-level one above
+refuses the whole lane before a run is opened. The per-spec one (`matview_refresh.py::_absent_relations`,
+inside the handler) turns an absent VIEW into the governed `relation_absent` outcome. The section
+"5. An absent relation was a failure, and a failure is a retry" below is the whole story of why the
+second one had to exist.
 
 **Dead-lettered shards from before the fix are not re-armed, on purpose.** Both lanes' shards are
 ephemeral refresh cycles, not irreplaceable data windows: `matview_refresh.py` mints a fresh,
@@ -591,10 +601,12 @@ shape, so the ten and thirteen stale rows stay exactly what this file's "Why max
 is `dead_letter` and never silent success" already says they should be: a truthful record that a
 specific tick failed, not a gap anything downstream is missing data because of.
 
-## The matview-refresh lane's four self-inflicted stalls
+## The matview-refresh lane's five self-inflicted stalls
 
-All four were found by measuring production on 2026-08-17 rather than by reading the code, and all
-share one shape: a view that cannot make progress is indistinguishable, to some gate, from a view that
+The first four were found by measuring production on 2026-08-17 rather than by reading the code; the
+fifth surfaced on 2026-09-02 when `plantgeo-job-executor` became the sole scheduler and started
+ticking the lane against a database the Parquet pivot had reshaped underneath it. All five share one
+shape: a view that cannot make progress is indistinguishable, to some gate, from a view that
 is fine. The numbers are here because the code that acts on them is terse by house convention, and
 because a first pass got several of them wrong — every figure below is a live read.
 
@@ -737,6 +749,13 @@ budget can only start on a tick where zero time has elapsed. But it must not sim
 
 ### 4. The census re-grain, and what it actually buys
 
+**Retracted in production, kept for the measurement.** Neither migration was ever applied against
+production, and the Parquet pivot means neither will be — `geo.mv_feature_observation_day_axis` was
+removed from `MATVIEW_REFRESH_SPECS` on 2026-09-02 (see stall 5). Everything below is still the
+correct account of what the split measured and why the wide relation's cadence is what it is; only
+the "the axis is on the slider's critical path" framing is now counterfactual, because there is no
+axis. The wide relation carries the census alone.
+
 `drizzle/0031` adds `geo.mv_feature_observation_day_axis`; `drizzle/0032` repoints
 `geo.v_observation_day_census` onto it behind a `relispopulated` precondition. Two files, because
 **PostgreSQL refuses to read an unpopulated matview** — `materialized view "..." has not been
@@ -764,6 +783,66 @@ A **ghost day** is the accepted residual of the FULL JOIN: a `(surface, day)` th
 holds after the axis has correctly dropped it lingers for up to one wide-relation cadence, so the
 slider offers a day that draws nothing rather than hiding a day that has data. `drizzle/0032`'s header
 states it.
+
+### 5. An absent relation was a failure, and a failure is a retry
+
+**200 standing dead letters, and every mechanism that should have stopped it was working as designed.**
+`plantgeo-job-executor` took sole ownership of the schedule on 2026-09-02 and immediately surfaced
+this: `jobs-matview-refresh` reported 200 dead-lettered work items and a fresh `matview_refresh_failed`
+on the current tick, because `geo.mv_feature_observation_day_axis` and `geo.mv_signal_cell_daily` were
+absent. The second was **dropped on purpose** on 2026-08-18 under the Parquet/DuckDB pivot; the first
+was never applied against production and, under the same pivot, will not be.
+
+Three mechanisms compounded, and each is individually correct:
+
+1. An absent view can never succeed, so `upsert_matview_refresh_state.sql`'s COALESCE leaves
+   `refreshed_at` NULL forever and `_eligibility`'s first branch reads NULL as *never refreshed, try
+   it* — eligible on EVERY tick, with no gate in front of it. This is stall 1's shape, unfixed for
+   this case because stall 1's fix was the backoff, and…
+2. …the backoff never engages. `consecutive_failures` increments only on outcome `failed`, and
+   `skipped_missing` is deliberately not that: a catalogue lookup issues no REFRESH and earns no
+   backoff, and counting it would make an unapplied migration look like a repeatedly-failing view,
+   which is a different fault with a different fix. Correct — and it means nothing slowed the loop.
+3. `has_failures`' all-attempted-missing rule then failed the whole TICK on any tick where the absent
+   views were the only *eligible* ones — which, once every present view is watermark-fresh, is most of
+   them. A failed tick retries, exhausts `max_attempts`, and dead-letters the shard the lane freshly
+   minted for exactly that purpose. Once an hour. Indefinitely.
+
+**The fix answers the question before the gate instead of after the REFRESH.** `_absent_relations`
+runs one `check_relations_exist.sql` round trip (`to_regclass`, no lock, no error on a missing name)
+over the whole spec table at the top of the handler and partitions it. An absent spec never reaches
+`_plan_refreshes` at all: no watermark query, no REFRESH, no failure, no retry. What it gets instead
+is the typed outcome **`relation_absent`** — written to `agri.matview_refresh_state` (so
+`last_attempt_at` moves and an operator can see the lane considered it) and lifted to the TOP LEVEL of
+`job_attempt.metrics` as `relations_absent`, because a governed non-failure readable only by scanning
+a ten-entry array is a governed non-failure nobody reads.
+
+**`relation_absent` and `skipped_missing` are kept apart on purpose.** `relation_absent` is the
+preflight's answer and is a fact about the database's shape: not a failure, not a retry, not a dead
+letter, and self-healing the moment the relation appears, because it records a fact about *now* and no
+decision about later. `skipped_missing` is `_refresh_one_matview`'s answer for a relation that passed
+preflight and then vanished before its own REFRESH — a genuine DDL surprise inside one tick, rare
+enough that a tick made entirely of them still reads as something wrong and keeps the degraded signal.
+Folding them would either make a deliberate drop fail the lane (the bug) or make a mid-tick surprise
+invisible (a new one).
+
+**A `relation_absent` tick writes the LAST OBSERVED watermark, never a fresh empty one.** Nothing was
+queried, so nothing new may be claimed to have been observed. Writing `{}` would erase a real
+observation and then read as "the watermark changed" on the tick the relation reappears — a fabricated
+fact that happens to reach the right decision, which is the exact defect class this lane refuses
+elsewhere (see the census's `metric_counts` note in stall 4).
+
+**Removing the two specs is a separate act from the preflight, and neither substitutes for the
+other.** The preflight stops an absence dead-lettering the lane; removing the specs stops the lane
+standing an instruction to rebuild what we chose to drop. `agent/tools.py:229` still NAMES
+`geo.mv_signal_cell_daily`, correctly: `_unbuilt_planes` probes it with `to_regclass` and answers a
+typed `pre_aggregated_plane_unbuilt` refusal rather than an empty result, which is the serving
+contract now. A refresh lane rebuilding the relation underneath that refusal would contradict the
+pivot rather than serve it. **The 200 dead letters were left standing**, per this file's own
+"Dead-lettered shards from before the fix are not re-armed, on purpose": a refresh shard owns no
+irreplaceable window, so each row is a truthful record that a specific tick failed and nothing
+downstream is missing data because of it. Erasing them to make the scheduler look green is the one
+thing the RUNBOOK explicitly forbids.
 
 ## Metrics
 
@@ -873,3 +952,15 @@ drives the real protocol against a disposable database is the outstanding follow
 This package is the durable runtime; `docs/layer-lane-standard.md` is the contract every lane built on it
 must satisfy end to end (horizon, gap-to-work loop, governed absences, three executor duties, slider, agent tools).
 Read it before registering a new lane -- the ledger is only the middle third of what a finished layer needs.
+
+## The frozen clock and `_DATETIME_TYPE`
+
+`matview_refresh.py` captures the real `datetime` class at import as `_DATETIME_TYPE` and uses it for
+every `isinstance` check. `isinstance(..., datetime)` against the module global cannot work here: the
+only way to control `datetime.now()` in a test is to rebind THIS module's `datetime` name to a
+frozen-clock subclass, because `datetime.datetime` is an immutable C type and refuses `setattr` on
+`now`. A genuine `datetime` handed back by the driver is not an instance of that subclass, so every
+`refreshed_at` would read as `None`, every view would look never-refreshed, and the watermark gate
+would appear to pass every view through on a tick where it should have skipped all of them. The
+failure looks like a lane bug and is a test-harness artefact, which is why the capture is pinned
+rather than left to whichever name happens to be bound at call time.

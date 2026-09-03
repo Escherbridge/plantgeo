@@ -1,5 +1,7 @@
 # Map interaction boundary
 
+Which spatial form a layer may be drawn in is frozen in `src/lib/map/AGENTS.md` §The layer render contract.
+
 Location selection is a privacy boundary. `AgentInteraction` requires an explicit user choice before analysis begins and defaults to an approximate (two-decimal) location; exact coordinates are opt-in. Regional analysis remains informational only: it cannot take external actions, and unavailable data must remain visibly unavailable rather than producing substitute recommendations.
 
 ## The layer toggle is the only source of layer visibility
@@ -36,7 +38,7 @@ It renders nothing while every toggle is off, which is how the map starts, and n
 
 Two shapes preceded it. Until 2026-08-07 it listed `trpc.layers.list` rows — `geo.layers` names, one flat `stylePresets`/`styleOverrides` swatch each — which named warehouse publications rather than drawn encodings: a fill keyed to a `severity` match showed as one arbitrary colour, a ramp showed as nothing at all, and the card needed a network round-trip before it could say anything. That rewrite dropped tRPC and every `layer-store` field but `legendVisible`. `legendVisible` itself went on 2026-08-09: it was a global boolean with two controls over it (the card's own eye and a second one in the manager's header, the latter governing a card the reader could not see while using it), and disclosure here is now local to the component that owns it.
 
-Two invariants keep it honest, both enforced in `layer-legends.ts`. First, **no colour is written in the legend**: every swatch, class row and ramp stop is imported from the module whose paint expression uses it, and where a ramp was inline in a renderer the renderer now reads an exported constant (`FIRE_CONTAINMENT_COLOR_STOPS`, `DEMAND_DENSITY_COLOR_STOPS`, `BURN_SEVERITY_ACRES_STOPS`, the `StyleClass` tables in `layers.ts`), so the two cannot drift. Second, **a toggle earns a spec only if switching it on paints something**: `soil` has none because `getEnvironmentalTileTemplate` returns `""` and `SoilLayer` adds no source at all; `vegetation` legends NDVI only, because `getNDWITileUrl` returns `""` unconditionally and NBR is unpublished for the same reason. `LEGENDLESS_TOGGLE_REASONS` records each. Legending a colour the map never draws is the failure this module exists to prevent, so an entry that "looks missing" is a claim to check against the renderer, not a gap to fill.
+Two invariants keep it honest, both enforced in `layer-legends.ts`. First, **no colour is written in the legend**: every swatch, class row and ramp stop is imported from the module whose paint expression uses it, and where a ramp was inline in a renderer the renderer now reads an exported constant (`FIRE_DETECTION_FRP_COLOR_STOPS`, `DEMAND_DENSITY_COLOR_STOPS`, `BURN_SEVERITY_ACRES_STOPS`, the `StyleClass` tables in `layers.ts`), so the two cannot drift. Second, **a toggle earns a spec only if switching it on paints something**: `soil` has none because `getEnvironmentalTileTemplate` returns `""` and `SoilLayer` adds no source at all; `vegetation` legends NDVI only, because `getNDWITileUrl` returns `""` unconditionally and NBR is unpublished for the same reason. `LEGENDLESS_TOGGLE_REASONS` records each. Legending a colour the map never draws is the failure this module exists to prevent, so an entry that "looks missing" is a claim to check against the renderer, not a gap to fill.
 
 Where the inventory of encodings and the map disagree, the map wins: `burn-severity` is a ramp over **acres**, not MTBS severity classes (that column is null on every published row). The unmounted `BurnHistoryLayer`/`LandFireLayer` components, whose class tables were legended nowhere for that reason, were deleted 2026-08-08 with the rest of the never-mounted layer files. `src/lib/server/services/landfire.ts` is a *server* module with the same name and is **not** dead in the same sense — it is the read-model side and out of a control-surface refactor's reach; check its callers before assuming.
 
@@ -172,7 +174,7 @@ Two halves of one fix, landed together on 2026-08-16, and **neither may ship wit
 Five rules the registry encodes:
 
 - **The drawn day is the last requested day whose collection actually LANDED** — never merely the last one that was not a placeholder. See §retained-answers.
-- **`isLoading` is narrowed to a request whose answer is not yet on the canvas.** A background refresh of the day already painted (`staleTime` expiring, or `useFireData`'s two-minute poll) is a fetch nobody is waiting on; publishing it blinked an "Updating" mark over an idle map every two minutes.
+- **`isLoading` is narrowed to a request whose answer is not yet on the canvas.** A background refresh of the day already painted (`staleTime` expiring, or a refetch on window focus) is a fetch nobody is waiting on; publishing it blinked an "Updating" mark over an idle map every two minutes, back when the fire feed also polled on a timer.
 - **A layer that is switched off publishes nothing.** TanStack keeps `isPlaceholderData` true off `keepPreviousData` even once a query is *disabled*, so a hidden layer would otherwise report itself permanently mid-load and leave a mark nothing could clear. This is the same trap `resolvedDate` documents, met from the other side.
 - **Publishers own disjoint sets.** `LayerManager` publishes nine ids; each of the nine `ClimateSignalLayer`s publishes its own, because it owns its own read. The store merges per publisher, so one reader's silence cannot erase another's.
 - **`isOnLatest` is re-answered against the DRAWN day** in `resolveDrawnViewedDays`. Carrying over the row's answer put two different days in one sentence: click "Latest" on a scrubbed layer and the line read an old date with no "behind its latest" mark, while the reverse marked a day that *was* the latest as behind it. Same rule as `useViewedLayerDays`, different subject — that hook answers for the requested day, which is right for the agent payload and wrong for a caption.
@@ -626,6 +628,35 @@ dense, so hovering the wind layer would be unreliable precisely where there is m
 converts it in between). The ramp is Moreland cool-warm — its arms separate on the blue/red
 axis, which protanopia and deuteranopia both preserve, and its lightness peaks at the neutral
 middle, so the ordering survives greyscale too.
+
+## §fire-detections
+
+**The fire layer draws aggregation CELLS, not detections.** Since the 2026-09-01 Parquet
+cutover, `LayerManager` and `FireDetails` read `wildfire.getFireDetections` through
+`useParquetFireDetections` (day + viewport bbox + viewport zoom) instead of `useFireData` →
+`/api/fires`. Each feature is one warehouse cell at the rung the zoom resolves to, carrying
+`detectionCount`, `frpSum`, `frpObservationCount`, `highConfidenceDetectionCount`,
+`observedDay`, `newestObservedAt` and the `zoomTier` it was aggregated at. Nothing else. A
+buffered polygon is deliberately **not** drawn: a cell is where detections were counted, not
+where anything burned, and a square would assert an extent nothing measured.
+
+**Four properties left the vocabulary and must not come back.** `PercentContained`,
+`IncidentSize`, `brightness` and `confidence` were per-incident/per-detection fields that only
+`/api/fires` ever produced. Every expression reading them would now paint from its `coalesce`
+fallback while looking like it was reading data — the failure mode where a map is uniformly
+wrong and confidently so. The containment ramp went with them, and `layer-legends.ts` legends
+the FRP ramp instead.
+
+**Three channels, three fields, no double-encoding.** Colour is `frpSum` (megawatts) with a
+distinct off-ramp colour for a cell whose `frpObservationCount` is 0 — no reported power is
+not zero power, and an `interpolate` over a null would have said otherwise. Dot size is
+`detectionCount`. Ring colour is whether the cell holds any high-confidence detection.
+
+**What the route could not do is why the read moved.** `/api/fires` was always dated (it
+accepts `?date=` and always has); what it could not do was scope to a viewport, select a
+serving rung, or distinguish a day that was never written from a day with no fires. The
+procedure's four terminal states carry that distinction to the surface, and
+`FireDetails` renders each one rather than a count of zero.
 
 ## §soil-survey render shapes
 

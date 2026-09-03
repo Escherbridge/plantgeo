@@ -62,38 +62,24 @@ function lastRenderOf(component: string): Record<string, unknown> | null {
 }
 
 /**
- * `useFireData` is the one dated feed that is not a tRPC hook, so it cannot be observed through
- * the `trpc` mock below. It is a spy rather than a plain stub because the day it receives is
- * exactly what several cases here assert: fire detections take the `fire` ROW's day, and no
- * other layer's.
+ * Fire detections are a tRPC read like every other dated feed since the 2026-09-01 Parquet
+ * cutover, so they are observed through the `trpc` mock below rather than through a private
+ * stub of `useFireData`. `fireRequestDate()` still asks the same question the hook spy asked:
+ * fire takes the `fire` ROW's day, and no other layer's.
  */
-const fireDataStub = vi.hoisted(() => {
-  /**
-   * Fire detections that have landed for the day being asked for.
-   *
-   * The retention pair is spelled out rather than omitted: `useFireData` keeps the previous
-   * day's detections across a 304, a failed fetch and a date change, and its own contract
-   * requires a caller to read `isStaleForRequestedDate` before captioning `data` as the
-   * requested day's -- which is exactly what LayerManager publishes to `MapDateSummary`. A stub
-   * that left them out would let that read regress to `undefined` and still pass.
-   */
-  const settled = () => ({
-    data: { type: "FeatureCollection", features: [] } as GeoJSON.FeatureCollection,
-    count: 0,
-    isLoading: false,
-    error: null,
-    isStaleForRequestedDate: false,
-    dataDate: undefined as string | undefined,
-    refetch: vi.fn(),
-  });
-  return { settled, hook: vi.fn((_visible: boolean, _date?: string) => settled()) };
-});
+function fireDetectionWindow(cells: unknown[] = [], truncated = false) {
+  return {
+    state: "ready",
+    requestedDay: "2026-08-28",
+    servedDay: "2026-08-28",
+    truncated,
+    data: { firstDay: "2026-08-28", lastDay: "2026-08-28", cells, days: [] },
+  };
+}
 
-vi.mock("@/hooks/useFireData", () => ({ useFireData: fireDataStub.hook }));
-
-/** The `date` argument `useFireData` was last called with. */
+/** The `date` the fire read was last keyed on. */
 function fireRequestDate(): string | undefined {
-  return fireDataStub.hook.mock.calls.at(-1)?.[1];
+  return (inputOf(viewportQueries.getFireDetections) as { date?: string } | undefined)?.date;
 }
 
 /**
@@ -106,6 +92,12 @@ type ViewportQueryResult = {
   isSuccess?: boolean;
   isFetching?: boolean;
   isPlaceholderData?: boolean;
+  /**
+   * Read only by `useParquetFireDetections`, and only when `data` is undefined: a transport
+   * failure BEFORE any typed state came back is the one refusal the reader cannot report as
+   * data, so it is the one flag a stub has to be able to raise.
+   */
+  isError?: boolean;
 };
 type StreamflowQueryResult = {
   data: unknown;
@@ -145,6 +137,7 @@ const viewportQueries = vi.hoisted(() => ({
   getVegetationIndex: vi.fn((): ViewportQueryResult => ({ data: undefined })),
   getDroughtClassification: vi.fn((): ViewportQueryResult => ({ data: undefined })),
   getWeatherForBbox: vi.fn((): StreamflowQueryResult => ({ data: [] })),
+  getFireDetections: vi.fn((): ViewportQueryResult => ({ data: undefined })),
 }));
 
 vi.mock("@/lib/trpc/client", () => ({
@@ -161,6 +154,7 @@ vi.mock("@/lib/trpc/client", () => ({
     },
     wildfire: {
       getWeatherForBbox: { useQuery: viewportQueries.getWeatherForBbox },
+      getFireDetections: { useQuery: viewportQueries.getFireDetections },
     },
   },
 }));
@@ -458,9 +452,6 @@ beforeEach(() => {
   // What the layers published about the previous case's canvas is a claim about a canvas that
   // no longer exists; LayerManager clears it on unmount, and this is the belt to that braces.
   useDrawnLayerDayStore.setState({ drawnDays: {}, publications: {} });
-  // `vi.clearAllMocks()` clears recorded CALLS and not implementations, so a case that overrides
-  // what the fire hook answers would otherwise answer that way for every case after it.
-  fireDataStub.hook.mockImplementation(() => fireDataStub.settled());
   dynamicStub.renders.length = 0;
   viewportQueries.getWatersheds.mockReturnValue({ data: undefined });
   viewportQueries.getSoilSurvey.mockReturnValue({ data: undefined });
@@ -471,6 +462,11 @@ beforeEach(() => {
   viewportQueries.getVegetationIndex.mockReturnValue({ data: undefined });
   viewportQueries.getDroughtClassification.mockReturnValue({ data: undefined });
   viewportQueries.getWeatherForBbox.mockReturnValue({ data: [] });
+  // `vi.clearAllMocks()` clears recorded CALLS and not implementations, so a case that
+  // overrides what the fire read answers would otherwise answer that way for every case after
+  // it. A landed empty window rather than `undefined`, because several cases below assert the
+  // fire row publishes a DRAWN day, which only a landed answer produces.
+  viewportQueries.getFireDetections.mockReturnValue(landed(fireDetectionWindow()));
 });
 
 afterEach(() => {
@@ -1013,6 +1009,7 @@ describe("LayerManager gives each warehouse-backed feed its own layer's day", ()
     ["getVegetationIndex", viewportQueries.getVegetationIndex],
     ["getSoilField", viewportQueries.getSoilField],
     ["getWeatherForBbox", viewportQueries.getWeatherForBbox],
+    ["getFireDetections", viewportQueries.getFireDetections],
   ] as const;
   // `getClimateField` is deliberately absent. The nine NASA POWER rows moved into
   // `ClimateFieldLayers` on 2026-08-10 -- each needs its own day and its own query, which is
@@ -1085,11 +1082,43 @@ describe("LayerManager gives each warehouse-backed feed its own layer's day", ()
       ["getStreamflow", viewportQueries.getStreamflow],
       ["getVegetationIndex", viewportQueries.getVegetationIndex],
       ["getWeatherForBbox", viewportQueries.getWeatherForBbox],
+      ["getFireDetections", viewportQueries.getFireDetections],
     ] as const) {
       const input = inputOf(query) as { zoom?: number };
       expect(input.zoom, name).toBeTypeOf("number");
       expect(Number.isFinite(input.zoom), name).toBe(true);
     }
+  });
+
+  /**
+   * The cutover, stated as one assertion. `/api/fires` and `useFireData` are still on disk
+   * until the acceptance track has parity evidence, so nothing structural stops a future edit
+   * from reaching for them again -- this is what does. It watches `fetch` rather than the hook
+   * module, because the defect it guards against is a REQUEST reaching that route, however it
+   * was issued.
+   */
+  it("issues no request to /api/fires while the fire layer is visible", () => {
+    // `src/test/setup.ts` replaces the global `fetch` with a spy for the whole suite, so this
+    // reads that one rather than installing a second.
+    const fetchMock = globalThis.fetch as unknown as {
+      mock: { calls: unknown[][] };
+      mockClear: () => void;
+    };
+    fetchMock.mockClear();
+    useMapStore.setState({ activeLayers: ["fire"] });
+    renderWithLayerDates({ fire: "2026-07-30" });
+
+    const fireRouteCalls = fetchMock.mock.calls.filter((call: unknown[]) =>
+      String(call[0] instanceof Request ? call[0].url : call[0]).includes("/api/fires")
+    );
+    expect(fireRouteCalls).toEqual([]);
+    // ...and the read it issues instead carries the row's day, the viewport and the rung.
+    expect(inputOf(viewportQueries.getFireDetections)).toEqual(
+      expect.objectContaining({ date: "2026-07-30", zoom: expect.any(Number) })
+    );
+    expect((inputOf(viewportQueries.getFireDetections) as { bbox?: string }).bbox).toBeTypeOf(
+      "string"
+    );
   });
 
   it("omits the date for a layer sitting on the server's today, so that feed keeps one cache entry", () => {
@@ -1766,6 +1795,126 @@ describe("LayerManager holds the previous day while the next one loads", () => {
   });
 
   /**
+   * Five fire answers an empty canvas cannot be told apart from "no fires burned here", and the
+   * overlay is the only surface that distinguishes them for a reader looking at the map rather
+   * than at the dock. `truncated` was cited as gate-3 evidence with no test rendering it at all;
+   * `absent` and `not_generated` had no entry in `parquetLayerFaults` to render; and
+   * `request_failed` -- the sixth read state, and the one `FireDetails` has always captioned --
+   * had no entry either, so a dead transport drew a silent empty canvas under a lit switch.
+   */
+  describe("every fire refusal reaches the map overlay", () => {
+    function renderFireState(data: unknown) {
+      useMapStore.setState({ activeLayers: ["fire"] });
+      viewportQueries.getFireDetections.mockReturnValue(landed(data));
+      const fakeMap = createFakeMap();
+      fakeMap.setStyleLoaded(true);
+      return renderLayerManager(fakeMap);
+    }
+
+    /** No answer at all: the request failed before the reader could return a typed state. */
+    function renderFireRequestFailure() {
+      useMapStore.setState({ activeLayers: ["fire"] });
+      viewportQueries.getFireDetections.mockReturnValue({
+        data: undefined,
+        isSuccess: false,
+        isFetching: false,
+        isPlaceholderData: false,
+        isError: true,
+      });
+      const fakeMap = createFakeMap();
+      fakeMap.setStyleLoaded(true);
+      return renderLayerManager(fakeMap);
+    }
+
+    it("says a truncated read is a subset of the viewport", () => {
+      const rendered = renderFireState(fireDetectionWindow([], true));
+
+      expect(
+        rendered.getByTestId("parquet-layer-unavailable-fire-truncated").textContent
+      ).toContain("The Parquet row budget was reached");
+    });
+
+    it("says the data service is unavailable on an upstream fault", () => {
+      const rendered = renderFireState({
+        state: "upstream_unavailable",
+        fault: { kind: "http", message: "upstream 503", status: 503 },
+      });
+
+      expect(rendered.getByTestId("parquet-layer-unavailable-fire").textContent).toContain(
+        "Fire detections are temporarily unavailable"
+      );
+    });
+
+    // A governed absence is a POSITIVE record: the upstream was checked and published nothing.
+    // Its recorded reason is the evidence, so it is quoted rather than paraphrased -- and it is
+    // the same sentence `FireDetails` shows, so the map and the dock cannot say two things.
+    it("quotes the recorded reason for a governed absence", () => {
+      const rendered = renderFireState({
+        state: "absent",
+        requestedDay: "2026-08-28",
+        servedDay: "2026-08-28",
+        evidence: {
+          reason: "FIRMS published no detections for this day",
+          upstreamResponse: "200 []",
+          recordedAt: "2026-08-29T00:00:00Z",
+          runId: "run-fire",
+        },
+      });
+
+      const notice = rendered.getByTestId("parquet-layer-unavailable-fire-absent").textContent;
+      expect(notice).toContain("governed absence");
+      expect(notice).toContain("FIRMS published no detections for this day");
+      expect(rendered.queryByTestId("parquet-layer-unavailable-fire")).toBeNull();
+    });
+
+    // The opposite claim: nobody checked. Named by WHICH silence it is, because "no detections"
+    // would assert an observation neither one made.
+    it.each([
+      ["day_not_written", "This day has not been written for the fire lane"],
+      ["lane_never_written", "The fire lane has never been written"],
+    ] as const)("names the %s silence rather than drawing zero", (reason, sentence) => {
+      const rendered = renderFireState({
+        state: "not_generated",
+        requestedDay: "2026-08-28",
+        reason,
+      });
+
+      expect(
+        rendered.getByTestId("parquet-layer-unavailable-fire-not-generated").textContent
+      ).toContain(sentence);
+    });
+
+    // The state the reader itself cannot report as data: no typed refusal came back, so there
+    // is nothing to quote and nothing about the lane was established. Distinct from
+    // `upstream_unavailable`, which IS a typed answer about a named fault.
+    it("says the request failed before any state was returned", () => {
+      const rendered = renderFireRequestFailure();
+
+      const notice = rendered.getByTestId(
+        "parquet-layer-unavailable-fire-request-failed"
+      ).textContent;
+      expect(notice).toContain("failed before returning a state");
+      expect(notice).toContain("No fallback is shown");
+      // Not also reported as an upstream outage: that would name a cause nobody established.
+      expect(rendered.queryByTestId("parquet-layer-unavailable-fire")).toBeNull();
+    });
+
+    it("says nothing at all about a healthy read", () => {
+      const rendered = renderFireState(fireDetectionWindow());
+
+      for (const testId of [
+        "parquet-layer-unavailable-fire",
+        "parquet-layer-unavailable-fire-request-failed",
+        "parquet-layer-unavailable-fire-truncated",
+        "parquet-layer-unavailable-fire-absent",
+        "parquet-layer-unavailable-fire-not-generated",
+      ]) {
+        expect(rendered.queryByTestId(testId), testId).toBeNull();
+      }
+    });
+  });
+
+  /**
    * The whole of D4/D5, as one case. The row has moved to a new day and the collection on screen
    * is still the old one -- so what the map is DRAWING is the old day, and any surface that says
    * otherwise turns an ordinary fetch into what reads as a data bug.
@@ -1841,14 +1990,12 @@ describe("LayerManager holds the previous day while the next one loads", () => {
   });
 
   /**
-   * A cross-lane contract, pinned here because this is its only consumer on the map.
-   * `useFireData` is not a tRPC hook and has no `isPlaceholderData`, but it retains the previous
-   * day's detections for the same reasons and states that as `isStaleForRequestedDate`. Its own
-   * doc says a caller must read it before captioning `data` as the requested day's -- so
-   * ignoring it here would put fire's retained frame on the canvas under the new day's date,
-   * which is the exact defect the rest of this block exists to prevent for every other feed.
+   * Fire joined the react-query lane on 2026-09-01, so it is labelled by the same
+   * `drawnDayFlagsFromQuery` rule as every other feed rather than by a private staleness flag.
+   * The case is kept because the property it pins did not change: a retained frame must never
+   * be put on the canvas under the new day's date.
    */
-  it("labels fire's retained frame from the hook's own staleness flag", async () => {
+  it("labels fire's retained frame from the query's own placeholder flag", async () => {
     useTimeSliderStore.setState({
       layerDates: { fire: "2026-07-30" },
       forecastVariant: "monte_carlo",
@@ -1866,20 +2013,10 @@ describe("LayerManager holds the previous day while the next one loads", () => {
       isLoading: false,
     });
 
-    // The reader scrubs back; that day's fetch has not landed, so the detections still painted
-    // are 2026-07-30's -- reported as such without LayerManager ever being told which day they
-    // came from, because the previous settled day is what it already watched land.
-    // A retained frame means features are actually painted, which is what `count` says and
-    // `isStaleForRequestedDate` alone cannot: that flag is equally true before anything has ever
-    // loaded, where the layer is empty and there is no earlier day to name.
-    fireDataStub.hook.mockImplementation(() => ({
-      ...fireDataStub.settled(),
-      data: polygonCollection(),
-      count: 1,
-      isLoading: true,
-      isStaleForRequestedDate: true,
-      dataDate: "2026-07-30",
-    }));
+    // The reader scrubs back; that day's request has not landed, so the cells still painted are
+    // 2026-07-30's -- reported as such without LayerManager ever being told which day they came
+    // from, because the previous settled day is what it already watched land.
+    viewportQueries.getFireDetections.mockReturnValue(retaining(fireDetectionWindow()));
     act(() => {
       useTimeSliderStore.getState().setLayerDate("fire", "2026-07-25");
     });

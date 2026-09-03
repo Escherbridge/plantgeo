@@ -323,8 +323,9 @@ describe("useDebouncedLayerDay", () => {
     // explicit `layerDates` override with no capabilities dependency at all (e.g. a persisted
     // selection hydrated before the capabilities poll lands). Omitting the date here would ask
     // the warehouse for ITS OWN idea of "today" while every caption already names 2026-07-30 --
-    // and for /api/fires specifically that is a different answer (the live window), not merely
-    // a colder cache entry for the same one.
+    // and for a Parquet reader whose omitted day resolves against the SERVER's clock, it can ask
+    // for a different calendar day than the one the caption names, not merely a colder cache
+    // entry for the same one.
     useTimeSliderStore.setState({
       layerDates: { fire: "2026-07-30" },
       forecastVariant: "monte_carlo",

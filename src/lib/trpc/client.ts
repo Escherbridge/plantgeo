@@ -6,7 +6,12 @@ import superjson from "superjson";
 import type { AppRouter } from "@/lib/server/trpc/router";
 import { createBudgetedFetch } from "@/lib/net/request-budget";
 
-export const trpc = createTRPCReact<AppRouter>();
+/**
+ * The react-query tRPC hooks. `abortOnUnmount` is what makes every `signal` the routers thread
+ * server-side actually fire -- see src/lib/server/services/AGENTS.md §request-cancellation for
+ * what a batch does with it.
+ */
+export const trpc = createTRPCReact<AppRouter>({ abortOnUnmount: true });
 export const api = trpc;
 
 /**

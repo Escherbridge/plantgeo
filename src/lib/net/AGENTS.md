@@ -168,7 +168,9 @@ carries its own abort listener for its entire lifetime, both phases:
   retained hook, but both paths share the same budget structurally.
 - **Raw `fetch`** (`/api/fires`, the offline-sync replay, the tile-prefetch fallback): each of
   these gets its own `createBudgetedFetch("<lane>")` (or a `runBudgeted` wrapper around the
-  existing call), a drop-in replacement with the exact same call shape.
+  existing call), a drop-in replacement with the exact same call shape. (`/api/fires` has had no
+  map caller since the 2026-09-01 Parquet cutover; the lane survives only until the route is
+  deleted.)
 
 Either way, the caller's own `AbortSignal` (react-query's per-query controller for tRPC;
 `useFireData`'s own `AbortController` for fires) is what the budgeted fetch uses for BOTH queue
@@ -216,7 +218,9 @@ whoever wires or extends it next:
    case; wire via `createBudgetedFetch("offline-sync")` or a `runBudgeted` wrapper per iteration.
 3. **`tile-cache.ts`'s no-SW `prefetchTiles` fallback** (`:80-104`, fetch at `:90`) -- same
    treatment, lane `"tile-prefetch"`.
-4. **`useFireData.ts`'s raw fetch** (`:66-69`) -- `createBudgetedFetch("fires")`.
+4. **`useFireData.ts`'s raw fetch** (`:66-69`) -- `createBudgetedFetch("fires")`. (`/api/fires` has
+   had no map caller since the 2026-09-01 Parquet cutover; the lane survives only until the route
+   is deleted.)
 5. **The ~16 tRPC-routed layer queries** -- one edit, `trpcLinks()` in `src/lib/trpc/client.ts`.
 6. **`useDebounce` / `SCRUB_SETTLE_MS` / `PREFETCH_RADIUS_DAYS` and the SSE/WS reconnect
    backoff** -- explicitly NOT subsumed; see "Non-goals" above. Listed here only because the

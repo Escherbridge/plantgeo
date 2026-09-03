@@ -471,6 +471,19 @@ export function layerLabel(toggleId: LayerToggleId): string {
   return LAYER_REGISTRY[toggleId].label;
 }
 
+/**
+ * Governance as a REQUEST-time predicate, not merely a render-time one.
+ *
+ * A layer the registry withholds at every date must never be asked for, so that a panel cannot
+ * become the sole requester of a layer the map is forbidden to draw. It lives here rather than
+ * inside one hook file because every viewport read owes the same check -- the proxied lanes in
+ * `useViewportProxiedLayers.ts` and the fire lane's own hook alike -- and a second copy of the
+ * rule is a second place for one of them to be forgotten.
+ */
+export function isLayerPermanentlyWithheld(toggleId: LayerToggleId): boolean {
+  return LAYER_REGISTRY[toggleId].permanentlyUnavailableReason !== null;
+}
+
 /** Entries whose visibility is flipped with setLayoutProperty instead of mount/unmount. */
 export function styleBackedLayerEntries(): LayerRegistryEntry[] {
   return layerRegistryEntries().filter((entry) => entry.styleLayerIds.length > 0);

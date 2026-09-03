@@ -227,6 +227,43 @@ export interface SliderLayerCapability {
    * overstating it is the bug.
    */
   describedFromDay: string | null;
+  /**
+   * The newest day `coverageGaps` and `thinRanges` completely describe; null when they describe
+   * this layer's axis all the way to today.
+   *
+   * `describedFromDay`'s twin at the other end, and it exists for the same reason: the server
+   * runs the closing coverage tail only to `min(sourceCeilingDay, evaluatedThroughDay)`, because
+   * days a lagged upstream has not published yet are not ingest holes (see
+   * `src/lib/server/services/AGENTS.md` §source-ceiling). Everything above that bound is
+   * therefore a day the census made NO claim about -- and without publishing the bound, a client
+   * reading "not in coverageGaps" there would turn the server's deliberate silence into "dense
+   * coverage", which is the exact inversion the tail clamp was introduced to avoid.
+   *
+   * Optional and null-tolerant like the fields around it: a payload from a server that predates
+   * it states no bound, and no bound must read as "described through today".
+   */
+  describedThroughDay?: string | null;
+  /**
+   * Which evidence decided this row's days: `"availability"` for the published, checksummed
+   * availability index, `"census"` for a live object-store walk.
+   *
+   * Optional for the same reason `governedAbsenceRanges` is -- a payload published before the
+   * Parquet plane reported an authority carries neither, and a client must read the absence as
+   * "not stated" rather than as either value. A row read from a walk must never be captioned as
+   * though it came from the index. See `parquet-plane-client.ts` §PARQUET_COVERAGE_AUTHORITIES.
+   */
+  coverageAuthority?: "availability" | "census";
+  /**
+   * Newest day the SOURCE can offer, `YYYY-MM-DD`; null when nothing bounds it, absent when the
+   * server did not state one. Never a day the axis may exceed -- a row whose warehouse days run
+   * past this is withheld entirely rather than clamped.
+   */
+  sourceCeilingDay?: string | null;
+  /**
+   * The zoom rungs the server declared this row must publish before it could be offered.
+   * A label for what was proved, never a gate the client re-applies.
+   */
+  requiredRungs?: readonly number[];
 }
 
 /** The server's answer to "what can the slider offer, and what day is it?". */

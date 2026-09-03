@@ -39,6 +39,42 @@ class UpstreamPayloadError(UpstreamError):
     """Raised when an upstream body is oversized, absent, mistyped, or unparseable."""
 
 
+class UpstreamPayloadTooLargeError(UpstreamPayloadError):
+    """Raised for the oversized case alone, carrying the cap it broke and the size that broke it.
+
+    A SUBCLASS, never a replacement: every existing `except UpstreamPayloadError` still catches this,
+    `upstream_retry.py::is_retryable_failure` still declines to retry it (the message never matches
+    `BUSY_MESSAGE_PATTERN`), and the message still opens with the exact string production logged --
+    so an operator's existing filter keeps matching. What is new is that a caller which wants to
+    ADAPT to the refusal rather than fail on it can now read the numbers instead of parsing prose.
+    See ingest/AGENTS.md "arcgis.py: page-size halving, and the record that fits in no page".
+    """
+
+    def __init__(
+        self,
+        *,
+        limit_bytes: int,
+        declared_bytes: int | None = None,
+        observed_bytes: int | None = None,
+    ) -> None:
+        """Record the cap and whichever of the declared or observed size proved it was broken."""
+        evidence = f"declared {declared_bytes}" if declared_bytes is not None else f"read {observed_bytes}"
+        super().__init__(f"upstream response exceeded the byte limit ({evidence} bytes against {limit_bytes})")
+        self.limit_bytes = limit_bytes
+        self.declared_bytes = declared_bytes
+        self.observed_bytes = observed_bytes
+
+    @property
+    def transferred_bytes(self) -> int:
+        """Bytes actually pulled off the wire before the cap tripped; zero when `content-length` refused it first."""
+        return self.observed_bytes or 0
+
+    @property
+    def size_bytes(self) -> int | None:
+        """The best available measure of how big the body was, declared first because it is the whole size."""
+        return self.declared_bytes if self.declared_bytes is not None else self.observed_bytes
+
+
 class UpstreamTimeoutError(UpstreamError):
     """Raised when an upstream did not answer within the bounded timeout."""
 
@@ -63,11 +99,23 @@ class BoundedResponse:
     content_type: str | None
     text: str
     payload_error: UpstreamPayloadError | None
+    # Bytes read off the wire for this response, whether or not the body survived the cap. Defaulted
+    # so every existing construction (and every test that builds one by hand) still type-checks; the
+    # only caller that needs a real number is a paged walk budgeting its own total transfer.
+    byte_count: int = 0
 
     @property
     def ok(self) -> bool:
         """True for a 2xx status."""
         return SUCCESS_STATUS_MINIMUM <= self.status < SUCCESS_STATUS_MAXIMUM
+
+
+@dataclass(frozen=True, slots=True)
+class SizedJson:
+    """One parsed JSON body beside what it cost to read, for a caller budgeting a whole walk's transfer."""
+
+    payload: object
+    byte_count: int
 
 
 # How many times a transport-level failure is re-attempted, and the base delay between attempts.
@@ -110,25 +158,31 @@ async def upstream_client(bounds: UpstreamBounds) -> AsyncIterator[httpx.AsyncCl
 async def _read_bounded_body(
     response: httpx.Response,
     bounds: UpstreamBounds,
-) -> tuple[bytes, UpstreamPayloadError | None]:
-    """Read a response body under the byte cap, rejecting an oversized declaration before reading anything."""
+) -> tuple[bytes, int, UpstreamPayloadError | None]:
+    """Read a response body under the byte cap, rejecting an oversized declaration before reading anything.
+
+    The middle element is how many bytes actually crossed the wire -- zero when `content-length`
+    refused the body before a single chunk was read, which is the distinction a caller budgeting a
+    whole walk's transfer needs and cannot recover afterwards.
+    """
     declared = response.headers.get("content-length")
     if declared is not None:
         try:
             declared_bytes = int(declared)
         except ValueError:
-            return b"", UpstreamPayloadError("upstream declared an unreadable content length")
+            return b"", 0, UpstreamPayloadError("upstream declared an unreadable content length")
         if declared_bytes < 0 or declared_bytes > bounds.max_bytes:
-            return b"", UpstreamPayloadError("upstream response exceeded the byte limit")
+            return b"", 0, UpstreamPayloadTooLargeError(limit_bytes=bounds.max_bytes, declared_bytes=declared_bytes)
 
     chunks: list[bytes] = []
     total_bytes = 0
     async for chunk in response.aiter_bytes():
         total_bytes += len(chunk)
         if total_bytes > bounds.max_bytes:
-            return b"", UpstreamPayloadError("upstream response exceeded the byte limit")
+            refusal = UpstreamPayloadTooLargeError(limit_bytes=bounds.max_bytes, observed_bytes=total_bytes)
+            return b"", total_bytes, refusal
         chunks.append(chunk)
-    return b"".join(chunks), None
+    return b"".join(chunks), total_bytes, None
 
 
 async def fetch_bounded(
@@ -154,12 +208,13 @@ async def fetch_bounded(
             async with client.stream(
                 "GET", url, headers=dict(headers or {}), timeout=bounds.timeout_seconds
             ) as response:
-                body, payload_error = await _read_bounded_body(response, bounds)
+                body, byte_count, payload_error = await _read_bounded_body(response, bounds)
                 return BoundedResponse(
                     status=response.status_code,
                     content_type=response.headers.get("content-type"),
                     text=body.decode("utf-8", errors="replace"),
                     payload_error=payload_error,
+                    byte_count=byte_count,
                 )
         except httpx.HTTPError as error:
             last_error = error
@@ -176,13 +231,19 @@ async def fetch_bounded(
     raise UpstreamTransportError(f"upstream request failed ({last_error.__class__.__name__})") from last_error
 
 
-async def fetch_bounded_json(
+async def fetch_bounded_json_sized(
     client: httpx.AsyncClient,
     url: str,
     bounds: UpstreamBounds,
     headers: Mapping[str, str] | None = None,
-) -> object:
-    """Fetch and parse JSON, raising the status failure before the body failure so backoff stays reachable."""
+) -> SizedJson:
+    """Fetch and parse JSON, reporting what the body cost as well as what it said.
+
+    Identical in every observable way to `fetch_bounded_json`, which delegates here: same order of
+    raises (status before body, so a 429 answering with a huge error page stays reachable for
+    backoff), same exception types. The only addition is the byte count, which a paged walk needs to
+    hold a whole run inside a transfer budget rather than only each request inside a per-request cap.
+    """
     response = await fetch_bounded(client, url, bounds, headers)
     if not response.ok:
         raise UpstreamHttpError(response.status)
@@ -191,9 +252,19 @@ async def fetch_bounded_json(
     if response.content_type is not None and "json" not in response.content_type.lower():
         raise UpstreamPayloadError("upstream response was not JSON")
     try:
-        return json.loads(response.text)
+        return SizedJson(payload=json.loads(response.text), byte_count=response.byte_count)
     except ValueError as error:
         raise UpstreamPayloadError("upstream response contained invalid JSON") from error
+
+
+async def fetch_bounded_json(
+    client: httpx.AsyncClient,
+    url: str,
+    bounds: UpstreamBounds,
+    headers: Mapping[str, str] | None = None,
+) -> object:
+    """Fetch and parse JSON, raising the status failure before the body failure so backoff stays reachable."""
+    return (await fetch_bounded_json_sized(client, url, bounds, headers)).payload
 
 
 async def fetch_bounded_text(

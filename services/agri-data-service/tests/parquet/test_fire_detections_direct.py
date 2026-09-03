@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 
     from agri_data_service.foundation.parquet.paths import PartitionDayStatus
     from agri_data_service.foundation.parquet.zoom import ZoomTier
+    from agri_data_service.pipeline.parquet.availability_index import AvailabilityStorage
     from agri_data_service.pipeline.parquet.lane_registry import LaneRegistration
     from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 
@@ -31,6 +32,8 @@ TODAY = date(2026, 8, 27)
 BBOX = "-125,42,-111,49"
 BBOX_ARGUMENT = f"--bbox={BBOX}"
 EXPECTED_WRITE_ATTEMPTS = 2
+# Every case below patches `fill_one_lane_day`, so the storage is threaded through, never called.
+INERT_AVAILABILITY_STORAGE = cast("AvailabilityStorage", object())
 FORWARD_ENV = (
     "FIRE_FORWARD_START_DAY",
     "FIRE_FORWARD_LOOKBACK_DAYS",
@@ -170,6 +173,7 @@ async def test_lock_precedes_fetch_and_each_publish_retry_refetches(monkeypatch:
         today=TODAY,
         run_id="test",
         config=config(),
+        availability_storage=INERT_AVAILABILITY_STORAGE,
     )
 
     assert fetched == [1, 2]
@@ -214,6 +218,7 @@ async def test_contention_times_out_without_fetching_or_consuming_a_write_attemp
             today=TODAY,
             run_id="test",
             config=config(),
+            availability_storage=INERT_AVAILABILITY_STORAGE,
         )
 
     assert calls == {"fetch": 0, "fill": 0}
@@ -271,6 +276,7 @@ async def test_publish_attempt_bound_also_bounds_source_refetches(monkeypatch: p
             today=TODAY,
             run_id="test",
             config=config(retry_attempts=EXPECTED_WRITE_ATTEMPTS),
+            availability_storage=INERT_AVAILABILITY_STORAGE,
         )
 
     assert fetches == EXPECTED_WRITE_ATTEMPTS

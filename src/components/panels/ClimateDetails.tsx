@@ -16,14 +16,18 @@ import {
 } from "@/lib/environmental/climate-field";
 
 /**
- * No `zoom`, unlike `SoilDetailsProps`. Zoom selects the SSURGO survey's and the ERA5-Land
- * fields' server-side granularity and so keys their queries; the NASA POWER lane has one
- * serving tier, so a zoom here would put a value in the cache key that changes nothing about
- * the answer and split one entry into one per zoom level.
+ * `zoom` exactly as `SoilDetailsProps` takes it, correcting the note that stood here: the claim
+ * that "the NASA POWER lane has one serving tier" described the reader's hard-coded z13, not the
+ * warehouse, which publishes z13/z9/z5/z0 for these lanes like every other. Zoom selects the one
+ * physical rung that answers, so it keys the query -- and it must come from the SAME
+ * `useViewportBounds()` derivation the map's own read uses, or this section and the map split
+ * into two entries drawing two different aggregations of one viewport.
  */
 interface ClimateDetailsProps {
   /** The map's viewport, handed down by the dock exactly as the other sections get it. */
   bbox?: string;
+  /** The map's zoom, from the same derivation as `bbox`. Required: the procedure requires it. */
+  zoom: number;
 }
 
 function ColorLegendRow({ color, label }: { color: string; label: string }) {
@@ -60,7 +64,7 @@ const NOTICE_CLASS_NAME =
  * air-temperature statistic, and the report each drawn signal owes its reader -- the day
  * actually drawn, the coverage, and the band table.
  */
-export function ClimateDetails({ bbox }: ClimateDetailsProps) {
+export function ClimateDetails({ bbox, zoom }: ClimateDetailsProps) {
   // `useLayerVisibility` and not `useLayerToggle`: this section must not become the sole
   // requester of a layer governance withholds from the map.
   const layerVisibility = useLayerVisibility();
@@ -82,7 +86,7 @@ export function ClimateDetails({ bbox }: ClimateDetailsProps) {
   return (
     <div className="mt-1.5 flex flex-col gap-3">
       {drawn.map((signal) => (
-        <ClimateSignalReport key={signal} signal={signal} bbox={bbox} />
+        <ClimateSignalReport key={signal} signal={signal} bbox={bbox} zoom={zoom} />
       ))}
     </div>
   );
@@ -97,9 +101,11 @@ export function ClimateDetails({ bbox }: ClimateDetailsProps) {
 function ClimateSignalReport({
   signal,
   bbox,
+  zoom,
 }: {
   signal: ClimateFieldSignalId;
   bbox?: string;
+  zoom: number;
 }) {
   const definition = climateFieldSignalDefinition(signal);
   const climateMode = useClimateDisplayMode();
@@ -118,6 +124,7 @@ function ClimateSignalReport({
     variant: climateMode.airTemperatureVariant,
     date: requestDate,
     renderForm,
+    zoom,
   });
   // Read back only while the collection is the one this report is describing.
   //
@@ -244,6 +251,17 @@ function ClimateSignalReport({
         </p>
       )}
 
+      {/* The coarse rungs serve points whatever form was asked for (`tierRenderForm`,
+          parquet-climate-field.ts), and the map draws what arrived. Said here because the
+          picker above still shows the requested chip selected: without this line the control
+          reads as broken rather than as outranked by the zoom. */}
+      {field !== undefined && field.renderForm !== renderForm && (
+        <p role="status" aria-live="polite" className={NOTICE_CLASS_NAME}>
+          Drawn as {CLIMATE_RENDER_FORM_LABELS[field.renderForm].toLowerCase()} at this zoom;
+          zoom in for the requested {CLIMATE_RENDER_FORM_LABELS[renderForm].toLowerCase()} form.
+        </p>
+      )}
+
       {/* More cells intersect the viewport than one response may carry, so the drawn field
           describes part of the view rather than the view. */}
       {field?.truncated === true && (
@@ -270,13 +288,26 @@ function ClimateSignalReport({
                 once against production and rendered directly above this live count until the
                 backfill widened the pilot and the two openly contradicted each other on
                 screen. A denominator that is not measured beside its numerator will always
-                eventually lie. */}
-            <p className="text-[10px] mb-2 text-[hsl(var(--muted-foreground))]">
-              {field.cellCount} of the {field.latticeCellCount} half-degree cells in this view
-              carry a measurement for {field.observedDay}.
-              {field.renderForm === "isoline" &&
-                " Contours are interpolated between those cells; read values from the filled form."}
-            </p>
+                eventually lie.
+
+                And it is published for the DETAIL rung only: `latticeCellCount` is the
+                half-degree lattice's own count, which a z9/z5/z0 answer is not drawn from, so
+                the reader sends 0 there rather than a number measured against a lattice it did
+                not use. Rendering it anyway would put "of the 0 half-degree cells" on screen
+                and call an aggregate a half-degree cell in the same breath. */}
+            {field.zoomTier === 13 ? (
+              <p className="text-[10px] mb-2 text-[hsl(var(--muted-foreground))]">
+                {field.cellCount} of the {field.latticeCellCount} half-degree cells in this view
+                carry a measurement for {field.observedDay}.
+                {field.renderForm === "isoline" &&
+                  " Contours are interpolated between those cells; read values from the filled form."}
+              </p>
+            ) : (
+              <p className="text-[10px] mb-2 text-[hsl(var(--muted-foreground))]">
+                {field.cellCount} aggregated cell{field.cellCount === 1 ? "" : "s"} in this view
+                carry a measurement for {field.observedDay}. Zoom in for the half-degree lattice.
+              </p>
+            )}
             <div className="flex flex-col gap-1">
               {bands.map((band) => (
                 <ColorLegendRow key={band.bandIndex} color={band.color} label={band.label} />

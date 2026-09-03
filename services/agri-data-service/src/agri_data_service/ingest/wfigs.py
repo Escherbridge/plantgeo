@@ -11,9 +11,9 @@ from typing import TYPE_CHECKING, Final
 
 from agri_data_service.ingest.arcgis import (
     ArcGisEnvelopeQuery,
+    adaptive_page_offset_walk,
     optional_number,
     optional_text,
-    page_offset_walk,
     parse_feature_collection,
     require_feature_properties,
     require_polygon_geometry,
@@ -22,6 +22,7 @@ from agri_data_service.ingest.http import (
     UpstreamBounds,
     UpstreamPayloadError,
     fetch_bounded_json,
+    fetch_bounded_json_sized,
     upstream_client,
 )
 from agri_data_service.ingest.identity import (
@@ -41,10 +42,11 @@ from agri_data_service.ingest.upstream_retry import UpstreamRetryPolicy, retry_u
 from agri_data_service.ingest.writer import FeatureWrite
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Mapping
+    from collections.abc import Awaitable, Callable, Mapping, Sequence
 
     import httpx
 
+    from agri_data_service.ingest.arcgis import AdaptiveWalkOutcome, OversizedSourceRecord
     from agri_data_service.ingest.writer import FeatureWriter
 
 WFIGS_SOURCE: Final = "wfigs-fire-perimeters"
@@ -93,6 +95,20 @@ MAX_RECORD_COUNT: Final = 100
 # records is double DEFAULT_MAX_SOURCE_RECORDS, so the configured ceiling is what stops an ordinary
 # run, not this bound.
 MAX_PAGES: Final = 200
+
+# ONE RUN'S TOTAL TRANSFER, which nothing bounded before. `WFIGS_BOUNDS.max_bytes` caps each
+# REQUEST; with MAX_PAGES at 200 a pathological feed could still pull 200 x 16 MiB = 3.2 GB through
+# a container sized for none of it, and the adaptive walk below makes that MORE reachable rather
+# than less, because it now keeps going where it used to raise. 128 MiB is eight full pages at the
+# per-request cap and roughly twelve times the 10,950,562 bytes the whole PNW extent measured at
+# `geometryPrecision=5` on 2026-08-08 -- ample for a fire season far denser than any measured, and
+# still a real ceiling. Hitting it reports `truncated=True`, exactly like the record ceiling.
+WFIGS_TOTAL_BYTE_BUDGET: Final = 128 * 1024 * 1024
+
+# How many refused records the run outcome names before it stops listing and only counts. The whole
+# list is in the structured log (`arcgis_oversized_record_skipped`, one line each); this bound is on
+# the single-line `reason` string an operator reads first.
+MAX_NAMED_OVERSIZED_RECORDS: Final = 5
 
 # The retry ladder itself is shared (widened 2026-08-10 after the throttle incident); this source
 # only names its own budget. See ingest/AGENTS.md "upstream_retry.py".
@@ -170,9 +186,20 @@ def epoch_milliseconds_to_iso(value: object) -> str | None:
         return None
 
 
-def build_query_url(bbox: str, offset: int = 0, max_record_count: int = MAX_RECORD_COUNT) -> str:
+def build_query_url(
+    bbox: str,
+    offset: int = 0,
+    max_record_count: int = MAX_RECORD_COUNT,
+    *,
+    return_geometry: bool = True,
+) -> str:
     """Build the bounded ArcGIS GeoJSON query URL for one page of one bbox."""
-    return WFIGS_PAGE_QUERY.page_url(bbox=bbox, offset=offset, max_record_count=max_record_count)
+    return WFIGS_PAGE_QUERY.page_url(
+        bbox=bbox,
+        offset=offset,
+        max_record_count=max_record_count,
+        return_geometry=return_geometry,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,9 +208,13 @@ class WfigsPerimeterPage:
 
     perimeters: list[dict[str, object]]
     exceeded_transfer_limit: bool
+    # What this page cost on the wire. Defaulted so every hand-built page in a test stays valid; the
+    # adaptive walk is the only caller that supplies a real number, to hold one run inside
+    # WFIGS_TOTAL_BYTE_BUDGET rather than only each request inside WFIGS_BOUNDS.
+    byte_count: int = 0
 
 
-def parse_perimeter_collection(payload: object) -> WfigsPerimeterPage:
+def parse_perimeter_collection(payload: object, *, byte_count: int = 0) -> WfigsPerimeterPage:
     """Parse an ArcGIS GeoJSON answer into one page of perimeter records, rejecting its HTTP-200 error payload."""
     collection = parse_feature_collection(
         payload,
@@ -213,28 +244,96 @@ def parse_perimeter_collection(payload: object) -> WfigsPerimeterPage:
                 ),
             }
         )
-    return WfigsPerimeterPage(perimeters=perimeters, exceeded_transfer_limit=collection.exceeded_transfer_limit)
+    return WfigsPerimeterPage(
+        perimeters=perimeters,
+        exceeded_transfer_limit=collection.exceeded_transfer_limit,
+        byte_count=byte_count,
+    )
 
 
-async def fetch_fire_perimeters_page(
+async def fetch_fire_perimeters_page(  # noqa: PLR0913 - the page size joins the existing clock seam
     client: httpx.AsyncClient,
     bbox: str,
     offset: int = 0,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     monotonic: Callable[[], float] = time.monotonic,
+    *,
+    record_count: int = MAX_RECORD_COUNT,
 ) -> WfigsPerimeterPage:
-    """Fetch one bounded page of WFIGS perimeters, retrying only a busy or transient upstream."""
-    url = build_query_url(bbox, offset)
+    """Fetch one bounded page of WFIGS perimeters, retrying only a busy or transient upstream.
+
+    `record_count` is keyword-only and defaulted, so the positional `(client, bbox, offset, sleep,
+    monotonic)` call shape every existing caller and test uses is untouched.
+    """
+    url = build_query_url(bbox, offset, record_count)
 
     async def attempt_once() -> WfigsPerimeterPage:
-        return parse_perimeter_collection(await fetch_bounded_json(client, url, WFIGS_BOUNDS))
+        answer = await fetch_bounded_json_sized(client, url, WFIGS_BOUNDS)
+        return parse_perimeter_collection(answer.payload, byte_count=answer.byte_count)
 
     return await retry_upstream(
         attempt_once,
         WFIGS_RETRY,
-        context={"offset": offset},
+        context={"offset": offset, "record_count": record_count},
         sleep=sleep,
         monotonic=monotonic,
+    )
+
+
+async def probe_perimeter_identity(client: httpx.AsyncClient, bbox: str, offset: int) -> str | None:
+    """Name the one perimeter at `offset` by asking for it WITHOUT its geometry.
+
+    The geometry is what made this record undeliverable, so dropping it is what makes the record
+    nameable at all -- a `returnGeometry=false` answer for one record is attributes only, kilobytes
+    rather than megabytes. Nothing here is ever written: the answer is read for
+    `attr_UniqueFireIdentifier` and discarded, so this is a diagnostic, not a lower-fidelity data
+    path, and it is emphatically NOT the `geometryPrecision` reduction ingest/AGENTS.md refuses to
+    pull silently.
+
+    No retry ladder, deliberately: one extra request to put a name on a record already being skipped
+    is the whole budget this is worth, and `arcgis.py::_identify_refused_record` turns any
+    `UpstreamError` raised here back into an anonymous refusal rather than a failed run.
+    """
+    url = build_query_url(bbox, offset, 1, return_geometry=False)
+    collection = parse_feature_collection(
+        await fetch_bounded_json(client, url, WFIGS_BOUNDS),
+        error_prefix=WFIGS_ERROR_PREFIX,
+        unexpected_shape_reason=UNEXPECTED_SHAPE_REASON,
+    )
+    if not collection.features:
+        return None
+    properties = require_feature_properties(collection.features[0], unexpected_shape_reason=UNEXPECTED_SHAPE_REASON)
+    return optional_text(properties, "attr_UniqueFireIdentifier")
+
+
+async def fetch_fire_perimeters_walk(
+    client: httpx.AsyncClient,
+    bbox: str,
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    monotonic: Callable[[], float] = time.monotonic,
+) -> tuple[list[dict[str, object]], AdaptiveWalkOutcome]:
+    """Page bounded WFIGS perimeters adaptively: shrink a page the byte cap refuses, skip a record it cannot hold.
+
+    This is the whole repair for the `postgres-fire-perimeters` retry backoff. The old walk asked for
+    100 records a page and had one answer to `UpstreamPayloadError` -- fail the lane -- which a retry
+    could never clear, because the page size was the thing that was wrong. See ingest/AGENTS.md
+    "wfigs.py: the page that cannot be delivered, and the record that cannot be delivered either".
+    """
+
+    async def fetch_page(offset: int, record_count: int) -> tuple[list[dict[str, object]], bool, int]:
+        page = await fetch_fire_perimeters_page(client, bbox, offset, sleep, monotonic, record_count=record_count)
+        return page.perimeters, page.exceeded_transfer_limit, page.byte_count
+
+    async def identify(offset: int) -> str | None:
+        return await probe_perimeter_identity(client, bbox, offset)
+
+    return await adaptive_page_offset_walk(
+        fetch_page,
+        max_record_count=MAX_RECORD_COUNT,
+        max_pages=MAX_PAGES,
+        record_ceiling=resolve_max_source_records(),
+        byte_budget=WFIGS_TOTAL_BYTE_BUDGET,
+        identify_record=identify,
     )
 
 
@@ -244,13 +343,30 @@ async def fetch_fire_perimeters(
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     monotonic: Callable[[], float] = time.monotonic,
 ) -> tuple[list[dict[str, object]], bool]:
-    """Page bounded WFIGS perimeters until the upstream stops clipping, reporting whether more were left behind."""
+    """Page bounded WFIGS perimeters until the upstream stops clipping, reporting whether more were left behind.
 
-    async def fetch_page(offset: int) -> tuple[list[dict[str, object]], bool]:
-        page = await fetch_fire_perimeters_page(client, bbox, offset, sleep, monotonic)
-        return page.perimeters, page.exceeded_transfer_limit
+    The unchanged two-tuple contract `pipeline/validation/fire_perimeters.py` calls. It runs the
+    adaptive walk underneath and keeps only "were records left behind" -- and a governed
+    oversized-record SKIP is exactly that: the caller compares perimeter SETS, and a skipped record
+    is missing from this one, so it reports as truncated for the same reason
+    `run_fire_perimeters_ingestion_job` counts it. Only the STRUCTURED detail is dropped; the named
+    refusal is still in the walk's own structured log.
+    """
+    records, outcome = await fetch_fire_perimeters_walk(client, bbox, sleep, monotonic)
+    return records, outcome.truncated or bool(outcome.oversized)
 
-    return await page_offset_walk(fetch_page, max_pages=MAX_PAGES, record_ceiling=resolve_max_source_records())
+
+def oversized_refusal_reason(oversized: Sequence[OversizedSourceRecord]) -> str | None:
+    """State, in one operator-facing line, which perimeters WFIGS could not deliver at all."""
+    if not oversized:
+        return None
+    named = ", ".join(record.describe() for record in oversized[:MAX_NAMED_OVERSIZED_RECORDS])
+    unnamed = len(oversized) - min(len(oversized), MAX_NAMED_OVERSIZED_RECORDS)
+    tail = f", and {unnamed} more" if unnamed else ""
+    return (
+        f"skipped {len(oversized)} source record(s) WFIGS could not deliver inside the "
+        f"{WFIGS_BOUNDS.max_bytes}-byte response bound: {named}{tail}"
+    )
 
 
 def build_perimeter_write(perimeter: Mapping[str, object], layer_name: str) -> FeatureWrite | None:
@@ -294,9 +410,9 @@ async def run_fire_perimeters_ingestion_job(
 
     if client is None:
         async with upstream_client(WFIGS_BOUNDS) as owned_client:
-            perimeters, more_remaining = await fetch_fire_perimeters(owned_client, area)
+            perimeters, walk = await fetch_fire_perimeters_walk(owned_client, area)
     else:
-        perimeters, more_remaining = await fetch_fire_perimeters(client, area)
+        perimeters, walk = await fetch_fire_perimeters_walk(client, area)
 
     selected = perimeters[: resolve_max_source_records()]
     layer_name = resolve_fire_perimeters_layer_name()
@@ -309,6 +425,14 @@ async def run_fire_perimeters_ingestion_job(
         status="ingested",
         records_seen=len(perimeters),
         records_written=await write_features(writes),
-        truncated=more_remaining or len(perimeters) > len(selected),
-        details={"rejected": len(selected) - len(writes)},
+        # An oversized-record refusal is a real, named loss, so it reports as truncated alongside the
+        # two truncation causes that were already here. `truncated` answers "are you seeing all of
+        # it", and after a skip the answer is no -- for a reason `reason` states by name.
+        truncated=walk.truncated or bool(walk.oversized) or len(perimeters) > len(selected),
+        reason=oversized_refusal_reason(walk.oversized),
+        details={
+            "rejected": len(selected) - len(writes),
+            "oversized_records": len(walk.oversized),
+            "bytes_read": walk.bytes_read,
+        },
     )

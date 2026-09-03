@@ -1812,3 +1812,60 @@ timeouts exceed each inner definition's maximum slice budget by a cleanup margin
 not killed merely because its parent used the old 900-second default. The inner signal remains
 cooperative: a handler already inside one unit releases only when it returns to a transaction-safe
 boundary, after which the parent's bounded kill is still the final fallback.
+
+## `climate-nasa-power-direct-forward`: the one lane with no legacy owner
+
+Every other entry in `_MIGRATION_INPUT_SPECS` replaces an observed legacy Railway writer and must
+acknowledge that service as disabled before it may be activated. This one replaces a GAP. Nothing
+has ever produced a forward NASA POWER climate day: `weather_observations/nasa_power.py` is a
+retired local backfill verb with no scheduler owner, and the Parquet history for the eight
+`climate-field-*` streams was built once from the immutable canonical snapshot by
+`scripts/build_*_from_canonical_snapshot.py`. `legacy_owners=()` is therefore a fact, not a
+shortcut, and `required_handoff_acknowledgements` is empty because there is no service to disable.
+
+The same reasoning removes the eight generic `parquet-climate-field-*` specs from
+`plantgeo-ingest-cron`'s ownership. `_parquet_spec` normally names that service as the legacy owner
+of every Parquet lane, and `_require_atomic_owner_cutovers` then insists its lanes cut over
+together. The ingest cron never produced a climate day, so naming it would invent a dependency: the
+real ingest cutover would be blocked until an operator also activated eight lanes whose registered
+adapter refuses by design (`lane_registry._refuse_source_direct_export`).
+
+Its `publication_lag_days` is the LARGER of the two climate lags -- 75, shortwave radiation's -- for
+the same reason the `signal` registration takes the larger of ERA5-Land's and POWER's: at the
+meteorology lag of 5 the solar product's newest ~70 days would report as missing while NASA POWER
+has genuinely not published them. `writer_floor` is the EARLIEST floor across the eight streams
+(2026-06-01, shortwave radiation's), because a floor of 2026-08-07 would hide the nine extra weeks
+this writer owns on that product.
+
+Its phase offset is 2400 s (:40), deliberately distinct from the direct fire and water writers at
+:15 and the SoilGrids warmer at :25, so four source-direct lanes never contend for the same minute.
+It ships in SHADOW: it appears in no active lane list, and `parse_activation` defaults every lane to
+shadow, so activation stays an explicit operator act.
+
+### It conflicts with its own generic specs, from both sides
+
+`climate-nasa-power-direct-forward` declares `conflicts_with=CLIMATE_GENERIC_LANE_IDS` and each of the
+eight `parquet-climate-field-*` specs declares the direct lane in return, so `parse_activation`
+refuses the pairing whichever one an operator names first. Both are true statements about the same
+eight calendars: the generic lane runs `parquet-gap-fill`, whose registered adapter for these streams
+refuses by design, and the direct lane substitutes its own adapter over the same lane-day locks.
+Activating both would schedule two owners for one day -- one of which can only ever fail -- and the
+failure would read as a broken writer rather than as a configuration mistake. Declared on ONE side it
+would still be enforced (the check intersects the union), but stating it once would leave the
+inventory row of the other eight silent about a constraint they are subject to.
+
+### `command_timeout_seconds` is derived from the CLI default, not chosen
+
+The spec's timeout is `int(CLIMATE_DEFAULT_TIME_BUDGET_SECONDS) + COMMAND_CLEANUP_MARGIN_SECONDS` --
+900 + 300 = 1200 s -- so the outer kill is strictly greater than the inner wall clock by a stated
+300-second grace, and the two cannot drift apart. The grace is what the process needs to finish the
+day it is on, roll back its session and print its terminal report AFTER the budget stops it selecting
+more work; the writer must reach its own stop, because a `SIGKILL` mid-day leaves a session advisory
+lock held until the backend is reaped. `CLIMATE_DEFAULT_TIME_BUDGET_SECONDS` lives in
+`pipeline/direct/climate/products.py` rather than in `forward.py` precisely so this module can import
+it without dragging the object store and the database engine into the scheduler's import graph.
+
+An operator override above the default (`--time-budget-seconds`, capped at
+`CLIMATE_MAX_TIME_BUDGET_SECONDS = 3000`) is NOT covered by that derivation: the executor's command
+carries no override, so the default is what runs under the scheduler, and raising the budget for a
+manual drain means raising the spec's timeout in the same change.

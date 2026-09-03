@@ -270,7 +270,19 @@ Only a busy ArcGIS payload — an HTTP-200 body carrying an `error` object — o
 
 **No extracted, importable retry helper existed to reuse.** `is_retryable_failure`, `jittered_retry_delay_seconds` and `BUSY_MESSAGE_PATTERN` are still hand-duplicated, byte-for-byte, in `evacuation_zones.py` — a second bespoke copy of the same status-level retry loop, not a shared seam the way `open_meteo_lane.py` is for its consumers. Widening that duplicate too was out of scope here: the incident and the fix are scoped to WFIGS, and touching `evacuation_zones.py` risks its own, unrelated behaviour. The two modules' retry code is kept structurally identical on purpose so a future extraction into one shared module is a mechanical move, not a rewrite.
 
-**A single unpaged query outgrew `WFIGS_BOUNDS.max_bytes` on an ordinary day, not only at fire-season peak, and the fix is the same ArcGIS pagination `evacuation_zones.py` already established.** `run_fire_perimeters_ingestion_job` crashed hourly in production from 2026-08-06 with `UpstreamPayloadError("upstream response exceeded the byte limit")`. Measured live 2026-08-08: one `resultRecordCount=2000` query over the PNW bbox (114 current perimeters, an ordinary day) answered 18,091,373 bytes against the 16 MiB cap — the previous single-shot fetch was already broken before any peak-season growth. `fetch_fire_perimeters` now pages with `resultOffset`, honouring `properties.exceededTransferLimit` (confirmed present on this host's GeoJSON responses, nested exactly as `evacuation_zones.py`'s `_exceeded_transfer_limit` already expects) as the keep-paging signal, and stops at `resolve_max_source_records()` or the `MAX_PAGES` circuit breaker, mirroring `fetch_evacuation_zones`. `MAX_RECORD_COUNT` (the page size) dropped from 2,000 to 100 and `geometryPrecision=5` (~1.1 m) was added to `build_query_url`, which measured 10,950,562 bytes for the same 114-perimeter query — cutting a fire perimeter's coordinate strings is what evacuation zones never needed, because a fire perimeter is roughly 15x heavier per row (`fire-perimeters` at ~130,583 bytes/row against `evacuation-zones` at ~8,032, per the pipelines skill's measured storage table). **The byte cap itself is untouched** — raising `max_bytes` was rejected as the fix per the incident's own diagnosis; a single page that is still too heavy (one pathologically complex perimeter) still fails that page rather than being silently permitted through a wider ceiling.
+**A single unpaged query outgrew `WFIGS_BOUNDS.max_bytes` on an ordinary day, not only at fire-season peak, and the fix is the same ArcGIS pagination `evacuation_zones.py` already established.** `run_fire_perimeters_ingestion_job` crashed hourly in production from 2026-08-06 with `UpstreamPayloadError("upstream response exceeded the byte limit")`. Measured live 2026-08-08: one `resultRecordCount=2000` query over the PNW bbox (114 current perimeters, an ordinary day) answered 18,091,373 bytes against the 16 MiB cap — the previous single-shot fetch was already broken before any peak-season growth. `fetch_fire_perimeters` now pages with `resultOffset`, honouring `properties.exceededTransferLimit` (confirmed present on this host's GeoJSON responses, nested exactly as `evacuation_zones.py`'s `_exceeded_transfer_limit` already expects) as the keep-paging signal, and stops at `resolve_max_source_records()` or the `MAX_PAGES` circuit breaker, mirroring `fetch_evacuation_zones`. `MAX_RECORD_COUNT` (the page size) dropped from 2,000 to 100 and `geometryPrecision=5` (~1.1 m) was added to `build_query_url`, which measured 10,950,562 bytes for the same 114-perimeter query — cutting a fire perimeter's coordinate strings is what evacuation zones never needed, because a fire perimeter is roughly 15x heavier per row (`fire-perimeters` at ~130,583 bytes/row against `evacuation-zones` at ~8,032, per the pipelines skill's measured storage table). **The byte cap itself is untouched** — raising `max_bytes` was rejected as the fix per the incident's own diagnosis; a single page that is still too heavy is not silently permitted through a wider ceiling. **What that page does INSTEAD changed on 2026-09-02, and the last clause of this paragraph used to read "still fails that page":** it no longer does. See the next section.
+
+## wfigs.py: the page that cannot be delivered, and the record that cannot be delivered either
+
+The 2026-08-08 fix above sized `MAX_RECORD_COUNT` against a measured average of ~96 KB per feature and left "a page that is still too heavy fails that page" as the backstop. The 2026 season falsified the average without falsifying the measurement: a 100-record page of large perimeters went over 16 MiB, and "fails that page" turned out to mean *fails the lane, every hour, forever* — `is_retryable_failure` correctly declines to retry an oversized body, so the job-level retry re-asked for the identical page three times and drove `postgres-fire-perimeters` into backoff (RUNBOOK, 2026-09-02).
+
+`fetch_fire_perimeters_walk` runs `arcgis.py::adaptive_page_offset_walk` (see that section for the halving ladder, the sticky shrink, the identity probe and the per-run byte budget). Three WFIGS-specific decisions sit here rather than there:
+
+- **The two-tuple `fetch_fire_perimeters` contract is preserved deliberately.** `pipeline/validation/fire_perimeters.py:122` unpacks `(perimeters, more_remaining)` and belongs to a different track, so `fetch_fire_perimeters` stays exactly what it was and delegates to the walk, discarding everything but "were records left behind". The walk logs its own `arcgis_oversized_record_skipped` line either way, so nothing goes unrecorded on that path — only the *structured* detail is dropped, for a caller that compares perimeter sets and never writes them.
+- **A skipped record reports `truncated=True` and states itself in `reason`.** `IngestionJobResult.details` is `Mapping[str, int]`, so the counts (`oversized_records`, `bytes_read`) go there and the NAMES go in `reason` — `oversized_refusal_reason` caps the list at `MAX_NAMED_OVERSIZED_RECORDS` and counts the rest, because the whole list is already one structured log line each. A `reason` on an `ingested` result is exactly what that field's own contract asks for: "why it did not write more".
+- **The record cap and the page cap are unchanged.** `resolve_max_source_records()` and `MAX_PAGES` bound the walk as before; `MAX_PAGES` now counts requests that returned a page *or* refused a record, which is a superset of what it counted before and therefore still a real circuit breaker. The halving re-asks inside one iteration, bounded by the ladder's own depth (seven requests from 100 down to 1), so it cannot spend the breaker faster than log₂ of the page size.
+
+`wfigs_upstream_retry` keeps its event name and its `attempt`/`offset`/`error`/`elapsed_seconds` fields exactly as the 2026-08-10 section promised, so an operator's existing filter still matches; `record_count` was **added** to that same line, because "which page size was being attempted" is now a real variable and a retry log that omits it is ambiguous.
 
 ## usdm.py
 
@@ -706,10 +718,59 @@ HTTP 500 when asked to sort while returning geometry, which is a deliberate reje
 oversight.** `ArcGisEnvelopeQuery.order_by_fields` is `None` for both: ArcGIS paging without a deterministic sort may repeat or
 skip rows, so turning it on is a genuine improvement, but it also changes which records survive a bitten record cap on a live
 feed, and neither `attr_UniqueFireIdentifier` nor `GlobalID` has been probed as a sortable field on its host. The
-`returnCountOnly` pre-check is not offered to them at all, for the contract reason above. Page-size halving is not enabled either:
-`wfigs.py`'s own section states that a page still too heavy for `WFIGS_BOUNDS.max_bytes` must fail that page rather than be
-silently permitted through, and halving would change that documented answer. Each of the three needs a live probe and an owner
-decision, not a refactor's discretion.
+`returnCountOnly` pre-check is not offered to them at all, for the contract reason above. **Page-size halving WAS the third, and
+it was switched on for WFIGS on 2026-09-02 — see the next section, which supersedes this paragraph's "not enabled either".** The
+`order_by_fields` and `returnCountOnly` decisions stand unchanged; only halving moved, and it moved because production forced the
+owner decision this paragraph said it needed.
+
+## arcgis.py: page-size halving, and the record that fits in no page
+
+**This reverses a documented refusal, so the reversal is stated rather than quietly applied.** The paragraph above used to end
+"halving would change that documented answer", and `wfigs.py`'s own section used to say a page too heavy for
+`WFIGS_BOUNDS.max_bytes` "still fails that page rather than being silently permitted through a wider ceiling". Production made
+the second half of that sentence the load-bearing one: **the byte cap was never widened and still is not** — what changed is that
+failing the page is no longer the only available answer to hitting it.
+
+**What forced it.** `postgres-fire-perimeters` entered retry backoff (RUNBOOK, 2026-09-02) with `UpstreamPayloadError: upstream
+response exceeded the byte limit`. Nothing about that failure was transient: a 100-record page of large 2026 perimeters is simply
+over 16 MiB, `is_retryable_failure` correctly declines to retry an oversized-body `UpstreamPayloadError`, and the job-level retry
+then asked for **the same page again**, three times, once an hour, forever. A retry cannot fix a request whose SHAPE is wrong.
+
+`adaptive_page_offset_walk` is `page_offset_walk` with two additions and no other behavioural change. On
+`UpstreamPayloadTooLargeError` it **halves the record count and re-asks at the same offset** (100 → 50 → 25 → … → 1), and when a
+one-record page is still refused it records that record as a governed refusal and steps over it. Four properties are load-bearing:
+
+- **Offsets stay exact.** `resultOffset` advances by `len(page)` — the records actually returned — never by the size that was
+  *asked* for, so shrinking mid-walk can neither skip nor re-read a record. A refused single record advances the offset by
+  exactly one, which is the only honest way past a record the upstream will not hand over.
+- **A shrink sticks; a refusal does not.** `mtbs.py::_fetch_page_within_service_limits` set the first half of that precedent ("a
+  narrowed window sticks: the next page of the same cohort is no smaller") and this walk keeps it, because one oversized page is
+  evidence about the whole feed's density. A single oversized RECORD is evidence about that record only, so the page size after a
+  skip returns to what it was rather than pinning the rest of the walk to one record per request.
+- **Only the byte refusal is absorbed.** A throttle, a 5xx or a schema change propagates untouched. Shrinking a page cannot fix
+  any of them, and pretending otherwise would turn a real outage into a slow, quiet walk down to one record at a time — a lane
+  reporting partial success over an upstream that is simply down.
+- **`geometryPrecision` is not a lever.** Reducing it would shrink the same payload by degrading the geometry that gets STORED,
+  silently, on every record rather than on the one that overflowed. That is an owner decision about data quality, not a transfer
+  tactic, and the walk never touches it. The one place `returnGeometry=false` appears is the **identity probe**
+  (`ArcGisEnvelopeQuery.page_url(return_geometry=False)`, `wfigs.py::probe_perimeter_identity`): after a record proves
+  undeliverable *with* its geometry, one extra request asks for that offset's attributes alone so the refusal can name it. The
+  answer is read for an object id and discarded — never written, never a lower-fidelity data path. A probe that itself fails
+  leaves the record anonymous rather than failing the run.
+
+**A per-run byte budget came with it, and it is the bound nothing had before.** `UpstreamBounds.max_bytes` caps each REQUEST;
+with `MAX_PAGES = 200` a pathological feed could still pull 200 × 16 MiB = 3.2 GB through a container sized for none of it — and
+the adaptive walk makes that *more* reachable, not less, precisely because it now keeps going where it used to raise.
+`WFIGS_TOTAL_BYTE_BUDGET` (128 MiB) stops a run the way the record ceiling does, reporting `truncated=True` rather than failing.
+The budget counts bytes actually pulled off the wire, which includes a stream-rejected body and excludes a `content-length`
+rejection — the latter transfers nothing, and `UpstreamPayloadTooLargeError.transferred_bytes` is where that distinction lives.
+
+**`http.py` grew the two things this needs and nothing else.** `UpstreamPayloadTooLargeError` is a SUBCLASS of
+`UpstreamPayloadError`, so every existing `except` still catches it, `is_retryable_failure` still declines to retry it, and its
+message still opens with the exact string production logged — an operator's existing filter keeps matching. What is new is that a
+caller wanting to ADAPT rather than fail can read `limit_bytes`/`declared_bytes`/`observed_bytes` instead of parsing prose.
+`fetch_bounded_json_sized` reports the byte count beside the payload; `fetch_bounded_json` is now a one-line delegate to it and is
+behaviour-identical, including the deliberate status-before-body raise order.
 
 **The parse split is behaviour-identical, and the reason it is safe is that one message covers every shape rejection.**
 `parse_feature_collection` validates each feature's `type` before the caller's loop reaches any of them, where the old code
@@ -925,3 +986,31 @@ warehouse on 127.0.0.1:5442 was not running when this landed, and no disposable 
 `docs/layer-lane-standard.md` is the end-to-end contract every lane here must satisfy -- horizon,
 gap-to-work loop, governed absences, three crons, slider registration, agent tools. A producer that
 ingests correctly and is absent from the slider capability catalogue is not a finished layer.
+
+## evacuation_zones.py: the same adaptive walk WFIGS runs
+
+`fetch_evacuation_zones` ran `page_offset_walk` until 2026-09-02 and was therefore carrying the exact
+defect that put `postgres-fire-perimeters` into permanent retry backoff: an `UpstreamPayloadError` on
+an oversized page has no answer but failing the lane, and the retry asks for the same page again.
+Oregon's statewide evacuation layer has never hit the cap -- but "has not yet" is not a bound, and the
+two lanes are the same shape over the same ArcGIS transport, so keeping two answers to one failure
+mode is what guarantees the second one is discovered in production rather than here.
+
+It now runs `adaptive_page_offset_walk` with the same four load-bearing properties documented under
+"arcgis.py: page-size halving, and the record that fits in no page", plus
+`EVACUATION_ZONES_TOTAL_BYTE_BUDGET` (64 MiB, four full pages at the 16 MiB per-request cap) as the
+per-run transfer ceiling `page_offset_walk` never had.
+
+**The two-tuple return contract is unchanged**, which is why this is a switch rather than a migration:
+`fetch_evacuation_zones` still answers `(records, more_remaining)`. A governed oversized-record SKIP
+folds into `more_remaining` -- `outcome.truncated or bool(outcome.oversized)` -- for the same reason
+`wfigs.py::fetch_fire_perimeters` does it: the flag answers "are you seeing all of them", and a
+skipped record is missing from what the caller sees. `probe_evacuation_zone_identity` names a refused
+record by re-asking for its offset with `returnGeometry=false`; its answer is read for a `GlobalID`
+and discarded, and a probe that fails leaves the record anonymous rather than failing the run.
+
+**`page_offset_walk` now has no production caller** and is kept deliberately, not by oversight: it is
+the baseline the adaptive walk is described against above, and `tests/test_ingest_arcgis.py` uses it to
+pin the offset semantics BOTH walks share (`resultOffset` advances by `len(page)`, the ceiling stops
+the run, an empty page ends it). Deleting it would delete that regression proof with it. If a third
+ArcGIS source is ever added, it starts on the adaptive walk.

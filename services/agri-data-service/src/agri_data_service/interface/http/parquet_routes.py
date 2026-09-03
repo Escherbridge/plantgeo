@@ -17,6 +17,12 @@ from sanic.response import HTTPResponse  # noqa: TC002 - sanic-ext evaluates han
 
 from agri_data_service.config import settings
 from agri_data_service.parquet_ops import faults
+from agri_data_service.parquet_ops.availability_coverage import (
+    AvailabilityCoverageReaderHolder,
+    SnapshotForwardAvailability,
+    merge_direct_lane_rows,
+    resolve_availability_lanes,
+)
 from agri_data_service.parquet_ops.coverage import CoverageCache, registered_census_lanes
 from agri_data_service.parquet_ops.duckdb_session import run_serving_read
 from agri_data_service.parquet_ops.faults import ServingRefusalError
@@ -34,6 +40,7 @@ from agri_data_service.parquet_ops.snapshot_products import (
     load_snapshot_scope_evidence,
     resolve_snapshot_evidence_day,
     resolve_snapshot_evidence_window,
+    serves_from_snapshot,
 )
 from agri_data_service.parquet_ops.warehouse_reader import DuckDbRowReader, ObjectStoreListing
 from agri_data_service.parquet_ops.wire import (
@@ -57,8 +64,10 @@ from agri_data_service.pipeline.parquet.objectstore import BotoObjectStoreBacken
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
+    from agri_data_service.parquet_ops.availability_coverage import AvailabilityCoverageReader
     from agri_data_service.parquet_ops.request_params import ReadScope
     from agri_data_service.parquet_ops.warehouse_reader import PartitionRowReader, WarehouseListing
+    from agri_data_service.parquet_ops.wire import LaneCoverage
 
 logger = structlog.get_logger()
 
@@ -86,6 +95,7 @@ _REFUSAL_HTTP_STATUS: Final[dict[str, int]] = {
     "census_budget_exhausted": HTTP_CONFLICT,
     "snapshot_unpublished": HTTP_SERVICE_UNAVAILABLE,
     "snapshot_schema_mismatch": HTTP_SERVICE_UNAVAILABLE,
+    "snapshot_manifest_conflict": HTTP_CONFLICT,
 }
 
 #: Row reads finish inside the client's 15 s budget. Coverage retains a 29 s shielded build budget:
@@ -95,6 +105,7 @@ COVERAGE_TIMEOUT_SECONDS: Final = 29.0
 
 _coverage_cache = CoverageCache()
 _snapshot_coverage_cache = SnapshotCoverageCache()
+_availability_readers = AvailabilityCoverageReaderHolder()
 
 
 class _CoveragePayloadCache:
@@ -179,6 +190,11 @@ def open_snapshot_store() -> ObjectStoreSnapshotStore:
     return ObjectStoreSnapshotStore(backend=listing.backend, prefix=listing.prefix)
 
 
+def open_availability_reader() -> AvailabilityCoverageReader:
+    """Return the process's availability reader. Patched in tests to answer without a network."""
+    return _availability_readers.get(settings)
+
+
 @parquet_bp.get(f"/{ROUTE_DAY}")
 async def read_day(request: Request) -> HTTPResponse:
     """One layer's rows for one day at one tier, or the state that says why there are none."""
@@ -188,7 +204,9 @@ async def read_day(request: Request) -> HTTPResponse:
     except RequestError as exc:
         return _refused(exc)
 
-    if scope.layer in PRODUCT_BY_LAYER:
+    # DAY-AWARE, not layer-aware. Six climate products are frozen only BELOW their forward first
+    # day; a request at or above it is answered by the live lane like any other layer's day.
+    if serves_from_snapshot(scope.layer, day):
         return await _answer(
             lambda: _run_snapshot_day(scope=scope, day=day),
             ROW_READ_TIMEOUT_SECONDS,
@@ -210,7 +228,9 @@ async def read_window(request: Request) -> HTTPResponse:
     except RequestError as exc:
         return _refused(exc)
 
-    if scope.layer in PRODUCT_BY_LAYER:
+    # Routed on the window's FIRST day: a range that starts in the closed snapshot is answered by
+    # the snapshot path, which itself reads each day at or above the boundary from the live lane.
+    if serves_from_snapshot(scope.layer, first_day):
         return await _answer(
             lambda: _run_snapshot_window(scope=scope, first_day=first_day, last_day=last_day),
             ROW_READ_TIMEOUT_SECONDS,
@@ -237,7 +257,9 @@ async def read_release(request: Request) -> HTTPResponse:
     except RequestError as exc:
         return _refused(exc)
 
-    if scope.layer in PRODUCT_BY_LAYER:
+    # Release carry is refused only for the FROZEN half: above the boundary the live lane owns the
+    # days, and a live lane resolves release carry exactly as every other lane does.
+    if serves_from_snapshot(scope.layer, as_of):
         return _refusal(
             faults.snapshot_unpublished(
                 layer=scope.layer,
@@ -344,13 +366,48 @@ async def _run_coverage_read() -> dict[str, object]:
 
 
 async def _build_coverage_payload(generated_at: datetime) -> dict[str, object]:
-    """Build one merged metadata-only census outside the DuckDB serving pool."""
+    """Build one merged metadata-only coverage answer outside the DuckDB serving pool.
+
+    Availability is asked FIRST and the census is asked only for the lanes availability did not
+    answer. Under `PARQUET_COVERAGE_AUTHORITY=availability` no TIME-BEARING lane is listed and no
+    snapshot product's forward edge is listed either -- the products' forward halves come from the
+    same availability reader, through `SnapshotForwardAvailability`.
+
+    ONE PREFIX IS STILL WALKED UNDER `availability`, AND IT IS NAMED HERE RATHER THAN GLOSSED: a
+    `static_lookup` lane has no time axis, therefore owns no index (`layer-lanes.md` 4a), and stays
+    on the listing census under both policies. The three of them are the whole remainder; every
+    daily and release lane is answered from one pointer GET and one generation GET.
+    """
 
     def work() -> dict[str, object]:
-        direct = _coverage_cache.get(open_listing(), lanes=registered_census_lanes(), now=generated_at)
+        lanes = registered_census_lanes()
+        policy = settings.parquet_coverage_authority
+        reader = open_availability_reader()
+        resolution = resolve_availability_lanes(
+            reader,
+            lanes=lanes,
+            policy=policy,
+            now=generated_at,
+        )
+        for lane in resolution.withheld:
+            logger.warning(
+                "availability_coverage_withheld",
+                layer=lane.layer,
+                kind=lane.kind,
+                code=lane.reason,
+                reason=lane.detail,
+            )
+        census_rows: tuple[LaneCoverage, ...] = ()
+        evaluated_through_day = generated_at.astimezone(UTC).date()
+        if resolution.census_lanes:
+            direct = _coverage_cache.get(open_listing(), lanes=resolution.census_lanes, now=generated_at)
+            census_rows = direct.lanes
+            evaluated_through_day = direct.evaluated_through_day
         snapshot = _snapshot_coverage_cache.get(
             open_snapshot_store(),
             now=generated_at,
+            policy=policy,
+            forward_availability=SnapshotForwardAvailability(reader=reader, now=generated_at),
         )
         for withheld in snapshot.withheld:
             logger.warning(
@@ -359,10 +416,11 @@ async def _build_coverage_payload(generated_at: datetime) -> dict[str, object]:
                 code=withheld.code,
                 reason=withheld.message,
             )
+        direct_rows = merge_direct_lane_rows(lanes=lanes, resolution=resolution, census_rows=census_rows)
         return WarehouseCoverage(
             generated_at=generated_at,
-            evaluated_through_day=direct.evaluated_through_day,
-            lanes=direct.lanes + snapshot.lanes,
+            evaluated_through_day=evaluated_through_day,
+            lanes=direct_rows + snapshot.lanes,
         ).to_wire()
 
     return await asyncio.to_thread(work)

@@ -28,7 +28,7 @@
     }
   ],
   "partitions": {
-    "computed_at": "2026-09-01T00:00:00-06:00",
+    "computed_at": "2026-09-02T00:00:00-06:00",
     "confidence": "verified",
     "shared_writes": [
       "Reader, capability, climate-rung and fire-route files remain owned by parquet_reader_cutover_acceptance_20260901 and multiscale_polygon_surface_20260901.",
@@ -150,6 +150,30 @@
         "status": "planned"
       }
     ],
-    "integration_slice": "c4"
+    "integration_slice": "c4",
+    "computed_at_commit": "cb12d94e77104a53c76e441f4de7d38d60fa7ae1",
+    "orchestration_wave1_20260902": {
+      "computed_at": "2026-09-02T00:00:00-06:00",
+      "computed_at_commit": "cb12d94e77104a53c76e441f4de7d38d60fa7ae1",
+      "wave": "wave1-20260902",
+      "rule": "shared working tree, disjoint write sets per slice, no builds/tests inside slices, one orchestrator sweep at the join",
+      "serialized_overlaps": [
+        "src/lib/server/services/parquet-trpc-readers.ts and parquet-climate-field.ts: r2b (wave 1) then m1 (wave 2)",
+        "src/components/map/layers/FireLayer.tsx: r1 (wave 1) then m3 (wave 2)",
+        "src/hooks/useViewportProxiedLayers.ts: r2b (wave 1) then conformity c2 (later)",
+        "src/__tests__/services/parquet-trpc-readers.test.ts: r2b (wave 1), not r1"
+      ],
+      "pre_declared_seams": [
+        "ParquetViewportRead.signal?: AbortSignal added by r2b, passed by r1 from wildfire.ts",
+        "coverage wire fields emitted by r2a and decoded by r2b: coverage_authority, availability_generation_sha256, availability_pointer_key, source_ceiling_day, required_rungs, withheld_reason"
+      ],
+      "write_sets": {
+        "c0": [
+          "src/components/panels/ModerationPanel.tsx",
+          "src/__tests__/components/ModerationPanel.test.tsx",
+          "src/components/panels/AGENTS.md"
+        ]
+      }
+    }
   }
 }

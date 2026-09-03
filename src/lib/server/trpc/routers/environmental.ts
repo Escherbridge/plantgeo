@@ -17,6 +17,7 @@ import {
   getParquetVegetation,
   getParquetWaterGauges,
   parquetUpstreamFailure,
+  rejectAborted,
 } from "@/lib/server/services/parquet-trpc-readers";
 import {
   AIR_TEMPERATURE_VARIANT_IDS,
@@ -281,8 +282,15 @@ export const environmentalRouter = router({
         zoom: mapZoomSchema,
       })
     )
-    .query(({ input }) =>
-      getParquetWaterGauges({ bbox: input.bbox, date: input.date, mapZoom: input.zoom })
+    .query(async ({ input, signal }) =>
+      rejectAborted(
+        await getParquetWaterGauges({
+          bbox: input.bbox,
+          date: input.date,
+          mapZoom: input.zoom,
+          signal,
+        })
+      )
     ),
 
   /**
@@ -308,8 +316,15 @@ export const environmentalRouter = router({
         zoom: mapZoomSchema,
       })
     )
-    .query(({ input }) =>
-      getParquetVegetation({ bbox: input.bbox, date: input.date, mapZoom: input.zoom })
+    .query(async ({ input, signal }) =>
+      rejectAborted(
+        await getParquetVegetation({
+          bbox: input.bbox,
+          date: input.date,
+          mapZoom: input.zoom,
+          signal,
+        })
+      )
     ),
 
   /**
@@ -324,8 +339,15 @@ export const environmentalRouter = router({
         zoom: mapZoomSchema,
       })
     )
-    .query(({ input }) =>
-      getParquetDrought({ bbox: input.bbox, date: input.date, mapZoom: input.zoom })
+    .query(async ({ input, signal }) =>
+      rejectAborted(
+        await getParquetDrought({
+          bbox: input.bbox,
+          date: input.date,
+          mapZoom: input.zoom,
+          signal,
+        })
+      )
     ),
 
   /**
@@ -501,19 +523,22 @@ export const environmentalRouter = router({
         zoom: z.number().finite().optional(),
       })
     )
-    .query(async ({ input }) => {
+    .query(async ({ input, signal }) => {
       try {
         return await getParquetSoilField(input.bbox, {
           date: input.date,
           measure: input.measure as SoilFieldMeasure | undefined,
           depth: input.depth as SoilFieldDepth | undefined,
           zoom: input.zoom,
+          signal,
         });
       } catch (error) {
         const failure = parquetUpstreamFailure(error);
         if (failure !== null) {
+          // Same split `rejectAborted` makes on the enveloping readers: this one throws its faults
+          // rather than returning them, so the abort has to be separated here instead.
           throw new TRPCError({
-            code: "SERVICE_UNAVAILABLE",
+            code: failure.fault.kind === "aborted" ? "CLIENT_CLOSED_REQUEST" : "SERVICE_UNAVAILABLE",
             message: failure.fault.message,
           });
         }
@@ -522,12 +547,18 @@ export const environmentalRouter = router({
     }),
 
   /**
-   * One NASA POWER climate field for the viewport, on the slider's day.
+   * One NASA POWER climate field for the viewport, on the slider's day, at the rung that serves
+   * the caller's zoom.
    *
-   * No `zoom`, unlike `getSoilField`: this lane has one serving tier. Its lattice is 0.5
-   * degrees and 397 cells in total, so there is nothing a coarser aggregate would save and
-   * the reader draws stored cells at every zoom -- see `environmental-read-model.ts`
-   * §climate-field.
+   * `zoom` is REQUIRED, like `getStreamflow`'s and unlike `getSoilField`'s optional one, because
+   * there is no zoomless behaviour to preserve here: the reader this replaced pinned z13 for every
+   * request. The claim that used to sit in this comment -- "this lane has one serving tier" -- was
+   * false as written: the climate lanes publish z13/z9/z5/z0 like every other lane, and pinning the
+   * detail rung meant the three coarse ones were written and never once read.
+   *
+   * Exactly ONE physical rung answers each request. `zoom` is therefore part of the query key, and
+   * the map and the panel must pass the same one or they split into two cache entries drawing two
+   * different aggregations of the same viewport.
    *
    * Deliberately NOT wrapped in `areaBoundedBbox`, for the same reason `getSoilField` is not:
    * it reads the local warehouse rather than proxying a third party, and the whole-lattice
@@ -538,6 +569,8 @@ export const environmentalRouter = router({
       z.object({
         bbox: bboxSchema,
         date: observationDateSchema.optional(),
+        /** Viewport zoom; selects the one physical rung that answers. */
+        zoom: mapZoomSchema,
         // Enumerated from the shared tables rather than restated, so a signal added there
         // cannot be rejected here. `variant` is the union across signals; the reader resolves
         // a variant the chosen signal does not publish to that signal's single reading.
@@ -550,22 +583,27 @@ export const environmentalRouter = router({
         renderForm: z.enum(CLIMATE_RENDER_FORMS as [string, ...string[]]).optional(),
       })
     )
-    .query(async ({ input }) => {
+    // `abortSignal` is the cancellation and `signal` is the measured quantity; the reader's input
+    // type spells the difference out so the two can never be handed to each other.
+    .query(async ({ input, signal: abortSignal }) => {
       const signal =
         (input.signal as ClimateFieldSignalId | undefined) ?? DEFAULT_CLIMATE_FIELD_SIGNAL;
       const variant =
         (input.variant as AirTemperatureVariant | undefined) ??
         DEFAULT_AIR_TEMPERATURE_VARIANT;
       const renderForm = input.renderForm as ClimateRenderForm | undefined;
-      const result = await getParquetClimateField({
+      const { zoomTier, result } = await getParquetClimateField({
         bbox: input.bbox,
         date: input.date,
+        mapZoom: input.zoom,
         signal,
         variant,
+        abortSignal,
       });
       if (result.state === "upstream_unavailable") {
         throw new TRPCError({
-          code: "SERVICE_UNAVAILABLE",
+          code:
+            result.fault.kind === "aborted" ? "CLIENT_CLOSED_REQUEST" : "SERVICE_UNAVAILABLE",
           message: result.fault.message,
         });
       }
@@ -574,6 +612,7 @@ export const environmentalRouter = router({
         signal,
         variant,
         input.bbox,
+        zoomTier,
         renderForm
       );
     }),

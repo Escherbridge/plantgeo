@@ -12,9 +12,9 @@ from typing import TYPE_CHECKING, Final
 
 from agri_data_service.ingest.arcgis import (
     ArcGisEnvelopeQuery,
+    adaptive_page_offset_walk,
     optional_number,
     optional_text,
-    page_offset_walk,
     parse_feature_collection,
     require_feature_properties,
     require_polygon_geometry,
@@ -23,6 +23,7 @@ from agri_data_service.ingest.http import (
     UpstreamBounds,
     UpstreamPayloadError,
     fetch_bounded_json,
+    fetch_bounded_json_sized,
     upstream_client,
 )
 from agri_data_service.ingest.identity import (
@@ -95,6 +96,12 @@ EVACUATION_ZONES_BOUNDS: Final = UpstreamBounds(max_bytes=16 * 1024 * 1024, time
 # rather than silently clipped to the first page.
 MAX_RECORD_COUNT: Final = 1_000
 MAX_PAGES: Final = 20
+
+# ONE RUN'S TOTAL TRANSFER, the ceiling `page_offset_walk` never had. 16 MiB is the per-REQUEST cap
+# above and 20 pages of it is 320 MiB, which no container here is sized for; 64 MiB is four full
+# pages and far above anything Oregon's statewide layer has measured at. Hitting it reports
+# `truncated=True`. See ingest/AGENTS.md, "evacuation_zones.py: the same adaptive walk WFIGS runs".
+EVACUATION_ZONES_TOTAL_BYTE_BUDGET: Final = 64 * 1024 * 1024
 
 # Widened 2026-08-10 onto the shared ladder. This module carried the pre-incident 3-attempt fixed
 # `(1.0, 2.0)` tuple -- the exact shape that lost every hourly `plantgeo-cron-fire-perimeters` run
@@ -185,20 +192,36 @@ def epoch_milliseconds_to_datetime(value: object) -> datetime | None:
         return None
 
 
-def build_query_url(bbox: str, offset: int = 0, max_record_count: int = MAX_RECORD_COUNT) -> str:
+def build_query_url(
+    bbox: str,
+    offset: int = 0,
+    max_record_count: int = MAX_RECORD_COUNT,
+    *,
+    return_geometry: bool = True,
+) -> str:
     """Build the bounded ArcGIS GeoJSON query URL for one page of one bbox."""
-    return EVACUATION_ZONES_PAGE_QUERY.page_url(bbox=bbox, offset=offset, max_record_count=max_record_count)
+    return EVACUATION_ZONES_PAGE_QUERY.page_url(
+        bbox=bbox,
+        offset=offset,
+        max_record_count=max_record_count,
+        return_geometry=return_geometry,
+    )
 
 
 @dataclass(frozen=True, slots=True)
 class EvacuationZonePage:
-    """One page of evacuation areas plus whether the upstream said more of them remain."""
+    """One page of evacuation areas, whether more remain, and what the body cost to read.
+
+    `byte_count` is defaulted so every existing construction still type-checks; the only caller that
+    needs a real number is the adaptive walk budgeting a whole run's transfer.
+    """
 
     zones: list[dict[str, object]]
     exceeded_transfer_limit: bool
+    byte_count: int = 0
 
 
-def parse_evacuation_zone_collection(payload: object) -> EvacuationZonePage:
+def parse_evacuation_zone_collection(payload: object, *, byte_count: int = 0) -> EvacuationZonePage:
     """Parse an ArcGIS GeoJSON answer into evacuation-area records, rejecting its HTTP-200 error payload."""
     collection = parse_feature_collection(
         payload,
@@ -240,29 +263,59 @@ def parse_evacuation_zone_collection(payload: object) -> EvacuationZonePage:
                 ),
             }
         )
-    return EvacuationZonePage(zones=zones, exceeded_transfer_limit=collection.exceeded_transfer_limit)
+    return EvacuationZonePage(
+        zones=zones,
+        exceeded_transfer_limit=collection.exceeded_transfer_limit,
+        byte_count=byte_count,
+    )
 
 
-async def fetch_evacuation_zone_page(
+async def fetch_evacuation_zone_page(  # noqa: PLR0913 - the page size joins the existing clock seam
     client: httpx.AsyncClient,
     bbox: str,
     offset: int = 0,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     monotonic: Callable[[], float] = time.monotonic,
+    *,
+    record_count: int = MAX_RECORD_COUNT,
 ) -> EvacuationZonePage:
-    """Fetch one bounded page of evacuation areas, retrying only a busy or transient upstream."""
-    url = build_query_url(bbox, offset)
+    """Fetch one bounded page of evacuation areas, retrying only a busy or transient upstream.
+
+    `record_count` is keyword-only and defaulted, so the positional `(client, bbox, offset, sleep,
+    monotonic)` call shape every existing caller and test uses is untouched.
+    """
+    url = build_query_url(bbox, offset, record_count)
 
     async def attempt_once() -> EvacuationZonePage:
-        return parse_evacuation_zone_collection(await fetch_bounded_json(client, url, EVACUATION_ZONES_BOUNDS))
+        answer = await fetch_bounded_json_sized(client, url, EVACUATION_ZONES_BOUNDS)
+        return parse_evacuation_zone_collection(answer.payload, byte_count=answer.byte_count)
 
     return await retry_upstream(
         attempt_once,
         EVACUATION_ZONES_RETRY,
-        context={"offset": offset},
+        context={"offset": offset, "record_count": record_count},
         sleep=sleep,
         monotonic=monotonic,
     )
+
+
+async def probe_evacuation_zone_identity(client: httpx.AsyncClient, bbox: str, offset: int) -> str | None:
+    """Name the one area at `offset` by asking for it WITHOUT its geometry; the answer is discarded.
+
+    The geometry is what made the record undeliverable, so dropping it is what makes the record
+    nameable at all. No retry ladder: `arcgis.py::_identify_refused_record` turns any `UpstreamError`
+    raised here back into an anonymous refusal rather than a failed run.
+    """
+    url = build_query_url(bbox, offset, 1, return_geometry=False)
+    collection = parse_feature_collection(
+        await fetch_bounded_json(client, url, EVACUATION_ZONES_BOUNDS),
+        error_prefix=EVACUATION_ZONES_ERROR_PREFIX,
+        unexpected_shape_reason=UNEXPECTED_SHAPE_REASON,
+    )
+    if not collection.features:
+        return None
+    properties = require_feature_properties(collection.features[0], unexpected_shape_reason=UNEXPECTED_SHAPE_REASON)
+    return optional_text(properties, "GlobalID")
 
 
 async def fetch_evacuation_zones(
@@ -271,13 +324,29 @@ async def fetch_evacuation_zones(
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     monotonic: Callable[[], float] = time.monotonic,
 ) -> tuple[list[dict[str, object]], bool]:
-    """Page bounded evacuation areas until the upstream stops clipping, reporting whether more were left behind."""
+    """Page bounded evacuation areas adaptively, reporting whether any of them were left behind.
 
-    async def fetch_page(offset: int) -> tuple[list[dict[str, object]], bool]:
-        page = await fetch_evacuation_zone_page(client, bbox, offset, sleep, monotonic)
-        return page.zones, page.exceeded_transfer_limit
+    The two-tuple contract is unchanged; a governed oversized-record SKIP reports as truncated for
+    the same reason WFIGS' does -- the caller is being told whether it is seeing all of them, and a
+    skipped record is missing from what it sees. See ingest/AGENTS.md, "evacuation_zones.py".
+    """
 
-    return await page_offset_walk(fetch_page, max_pages=MAX_PAGES, record_ceiling=resolve_max_source_records())
+    async def fetch_page(offset: int, record_count: int) -> tuple[list[dict[str, object]], bool, int]:
+        page = await fetch_evacuation_zone_page(client, bbox, offset, sleep, monotonic, record_count=record_count)
+        return page.zones, page.exceeded_transfer_limit, page.byte_count
+
+    async def identify(offset: int) -> str | None:
+        return await probe_evacuation_zone_identity(client, bbox, offset)
+
+    records, outcome = await adaptive_page_offset_walk(
+        fetch_page,
+        max_record_count=MAX_RECORD_COUNT,
+        max_pages=MAX_PAGES,
+        record_ceiling=resolve_max_source_records(),
+        byte_budget=EVACUATION_ZONES_TOTAL_BYTE_BUDGET,
+        identify_record=identify,
+    )
+    return records, outcome.truncated or bool(outcome.oversized)
 
 
 def build_evacuation_zone_identity(zone: Mapping[str, object]) -> FeatureIdentity:

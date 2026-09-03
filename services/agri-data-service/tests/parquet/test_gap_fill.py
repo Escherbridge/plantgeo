@@ -14,7 +14,7 @@ would report the lane complete and never fill the day.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -28,8 +28,10 @@ from agri_data_service.foundation.parquet.paths import (
     absence_marker_path,
     completion_marker_path,
     partition_path,
+    try_parse_absence_marker_path,
     try_parse_partition_path,
 )
+from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
 from agri_data_service.interface.cli import cli
 from agri_data_service.pipeline.parquet.gap_fill import (
     GAP_FILL_ZOOM_TIER,
@@ -43,6 +45,7 @@ from agri_data_service.pipeline.parquet.gap_fill import (
     no_derived_tiers,
     resolve_lane_watermarks,
     run_gap_fill,
+    zero_row_absence_reason,
 )
 from agri_data_service.pipeline.parquet.lane_registry import (
     LaneRegistration,
@@ -308,6 +311,39 @@ def seed_completion(
     )
 
 
+@dataclass
+class EmptyAvailabilityStorage:
+    """An availability storage holding NOTHING: every read misses, and a write would be a bug.
+
+    It is the cheapest honest probe of the driver's wiring. A lane with no generation has nothing to
+    extend, so the extension must read the pointer exactly once per finalized day, write nothing at
+    all, and say so on the day rather than failing it.
+    """
+
+    reads: list[str] = field(default_factory=list)
+    writes: list[str] = field(default_factory=list)
+
+    def read(self, key: str, *, max_bytes: int) -> None:
+        del max_bytes
+        self.reads.append(key)
+
+    def put_immutable(self, key: str, payload: bytes, *, content_type: str) -> None:
+        del payload, content_type
+        self.writes.append(key)
+
+    def compare_and_swap(
+        self,
+        key: str,
+        payload: bytes,
+        *,
+        expected_etag: str | None,
+        content_type: str,
+    ) -> bool:
+        del payload, expected_etag, content_type
+        self.writes.append(key)
+        return True
+
+
 async def drive(  # noqa: PLR0913 - one knob per driver parameter a test needs to vary
     lanes: list[LaneRegistration],
     store: ObjectStore,
@@ -317,6 +353,8 @@ async def drive(  # noqa: PLR0913 - one knob per driver parameter a test needs t
     max_days_per_lane: int | None = None,
     monotonic: FakeClock | None = None,
     derive_tiers: TierDeriver = no_derived_tiers,
+    extend_availability: bool = True,
+    availability_storage: EmptyAvailabilityStorage | None = None,
 ) -> GapFillSummary:
     """Run one tick against the frozen clock, day and run id every test in this module shares.
 
@@ -338,6 +376,8 @@ async def drive(  # noqa: PLR0913 - one knob per driver parameter a test needs t
         monotonic=monotonic if monotonic is not None else FakeClock(step=0.0),
         now=lambda: FROZEN_NOW,
         derive_tiers=derive_tiers,
+        extend_availability=extend_availability,
+        availability_storage=availability_storage,
     )
 
 
@@ -489,12 +529,93 @@ async def test_a_zero_row_day_becomes_an_absence_that_never_claims_the_upstream_
     assert newest.isoformat() in absence.reason
     assert "returned 0 rows" in absence.upstream_response
     # The key already carries the tier; the evidence repeats it, so a marker read on its own still
-    # settles one rung rather than reading as a claim about the whole ladder.
+    # settles one rung rather than reading as a claim about the whole ladder. The REASON does not
+    # repeat it: every rung of one absent day must agree on why, or no availability ladder can bind
+    # them together as one outcome.
     assert f"zoom tier {GAP_FILL_ZOOM_TIER}" in absence.upstream_response
+    assert f"z{GAP_FILL_ZOOM_TIER}" not in absence.reason
     assert "DID NOT CONTACT THE UPSTREAM SOURCE SYSTEM" in absence.upstream_response
     assert summary.lanes[0].absent == 1
     assert summary.lanes[0].written == WINDOW_DAYS - 1
     assert not summary.failed
+
+
+@pytest.mark.asyncio
+async def test_an_absent_day_is_marked_absent_at_every_rung_with_the_censused_one_last() -> None:
+    """An empty day is empty at every RESOLUTION of itself, and a z9 reader must be told so.
+
+    The base rung goes LAST for the reason `_finalize_written_day` derives before it marks: the
+    census reads the base tier alone, so a run that died after the base marker would leave a day
+    that is covered, never revisited, and silent at every rung above it.
+    """
+    calls: list[LaneCall] = []
+    backend = RecordingBackend()
+    newest = days_newest_first(1)[0]
+
+    summary = await drive([stub_lane("signal", calls, empty_on={newest})], ObjectStore(backend))
+
+    written_order = [key for key in backend.objects if try_parse_absence_marker_path(key) is not None]
+    assert written_order == [
+        absence_marker_path("signal", "observed", tier, newest)
+        for tier in (*(rung for rung in ZOOM_TIERS if rung != BASE_TIER), BASE_TIER)
+    ]
+    reasons = {GovernedAbsence.from_json_bytes(backend.objects[key]).reason for key in written_order}
+    assert reasons == {zero_row_absence_reason("signal", newest)}
+    assert summary.lanes[0].absent == 1
+
+
+@pytest.mark.asyncio
+async def test_every_terminal_day_reaches_the_availability_step_exactly_once() -> None:
+    """Written days and absent days alike: each is offered to the index once, and neither fails over it.
+
+    THE TALLY IS THE OBSERVABLE HERE, NOT THE POINTER READ. This module stubs the coarse rungs out
+    by default (`drive`), so a written day holds only its base rung and the extension refuses it
+    from the LEDGER ALONE -- before it ever reads the pointer -- as `ladder_incomplete`. That
+    refusal is the availability step, and counting it is the only way the loss is reported as a
+    number instead of being buried in one day's detail string. The absent day marks every rung, so
+    its ladder is complete and it alone gets as far as the pointer.
+    """
+    calls: list[LaneCall] = []
+    backend = RecordingBackend()
+    newest = days_newest_first(1)[0]
+    availability = EmptyAvailabilityStorage()
+
+    summary = await drive(
+        [stub_lane("signal", calls, empty_on={newest})],
+        ObjectStore(backend),
+        availability_storage=availability,
+    )
+
+    tally = summary.availability
+    assert sum(tally.to_summary().values()) == WINDOW_DAYS, "each terminal day is counted once, and only once"
+    assert tally.not_bootstrapped == 1
+    assert tally.ladder_incomplete == WINDOW_DAYS - 1
+    pointer_reads = [key for key in availability.reads if key.endswith("/availability/_LATEST.json")]
+    assert pointer_reads == ["layer=signal/kind=observed/availability/_LATEST.json"]
+    # A lane with no generation has nothing to extend, so nothing may be written into one.
+    assert availability.writes == []
+    assert summary.lanes[0].absent == 1
+    assert summary.lanes[0].written == WINDOW_DAYS - 1
+    assert not summary.failed
+    assert "availability ladder_incomplete" in (summary.lanes[0].detail or "")
+
+
+@pytest.mark.asyncio
+async def test_the_availability_step_can_be_switched_off_for_one_run() -> None:
+    """The seam a caller disables: the day still completes and the index is never even read."""
+    calls: list[LaneCall] = []
+    availability = EmptyAvailabilityStorage()
+
+    summary = await drive(
+        [stub_lane("signal", calls)],
+        ObjectStore(RecordingBackend()),
+        extend_availability=False,
+        availability_storage=availability,
+    )
+
+    assert availability.reads == []
+    assert summary.lanes[0].written == WINDOW_DAYS
+    assert summary.lanes[0].detail is None
 
 
 @pytest.mark.asyncio

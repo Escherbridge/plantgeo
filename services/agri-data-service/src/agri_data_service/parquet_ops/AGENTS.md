@@ -33,9 +33,142 @@ Five behaviours the contract encodes, and where each one lives:
    includes the 11 direct slider lanes plus the 15 schema-backed dedicated climate/soil prefixes.
    Catalogue products without a serving schema stay unregistered and therefore cannot be proven.
 
+## Coverage authority: the index answers, the census is the fallback
+
+RUNBOOK "Availability artifact contract"; `conductor/code_styleguides/layer-lanes.md` §4a. The
+capability/slider census used to LIST every day prefix of every lane on every cold request. It no
+longer may. `availability_coverage.py` answers a lane from **one pointer GET** of
+`<lane-root>/availability/_LATEST.json` plus **one bounded Parquet GET** of the
+`generation=<sha>/availability.parquet` that pointer names, and never touches a `WarehouseListing`.
+
+`lane_root` is `foundation.parquet.paths.stream_prefix(layer, kind)` minus its trailing separator —
+`layer=signal/kind=observed`. It is derived from the SAME helper the warehouse writes through and the
+census lists through, deliberately: a second spelling here would make a published index invisible to
+the reader and look exactly like "not bootstrapped yet".
+
+**One evidence source per lane, chosen by `Settings.parquet_coverage_authority`
+(`PARQUET_COVERAGE_AUTHORITY`).**
+
+- `availability` — every TIME-BEARING lane is served from its index, and so is every snapshot
+  product's forward half. A lane that cannot prove itself is WITHHELD: it stays on the wire with
+  null bounds, empty ranges and one of four `withheld_reason` values, and offers no selectable days.
+- `census_until_bootstrap` — **TRANSITIONAL, and it is deleted, not kept.** Per lane: a valid index
+  wins and that lane never lists again; a lane whose pointer object is ABSENT falls back to the
+  existing census and is labelled `coverage_authority: "census"`. A malformed or checksum-invalid
+  index is withheld in this mode too — falling back on corruption would let the scan the artifact
+  exists to retire quietly re-prove a lane whose bytes disagree with their receipt. **Delete this
+  mode, its `Literal` arm and this bullet once every lane's production bootstrap receipt is
+  recorded**; until then it is the bridge, and after then it is a way to silently resume listing.
+
+**A `static_lookup` stays on the census under BOTH policies.** §4a gives an index to every
+TIME-BEARING lane, and a version stamp is not a time axis, so these lanes will never publish one. It
+used to be withheld under `availability` to keep the mode's zero-LIST promise literally true; that
+bought three fewer listings by deleting three published reference sets from coverage entirely, which
+is a worse answer than the listing. The three of them are the whole remainder under `availability`;
+every daily and release lane costs one pointer GET and one generation GET.
+
+**A lane that was bootstrapped and then lost its pointer is WITHHELD, never censused.** Falling back
+silently on `availability_missing` cannot distinguish "this lane has no index yet" from "this lane's
+mutable head is gone", and the second re-opens the whole-stream listing the artifact retired —
+forever, on a green tick. The discriminator is one GET at the deterministic
+`<lane-root>/availability/bootstrap/_BOOTSTRAPPED.json` marker the bootstrap writes beside its
+content-addressed receipt. A marker is immutable, so a positive answer is cached for the process
+life and a negative one never is. Every census fallback logs at WARNING with the lane root, because
+the bridge is meant to empty rather than to persist.
+
+**A pointer frozen beyond tolerance is withheld `availability_stale`.** `read_latest_availability`
+receives a `required_source_ceiling` of the lane's own allowed ceiling minus
+`cadence_days + publication_lag_days + AVAILABILITY_STALE_GRACE_DAYS`: one whole publication period,
+plus grace. The ceiling only advances when a day is actually published, so a lane whose upstream
+skipped one issue is merely quiet, while a lane that has missed a period AND the grace has a
+publisher that stopped. Too tight a value greys out healthy lanes on one missed cron tick, which is
+strictly worse than serving a horizon a few days old — that horizon is itself on the wire as
+`source_ceiling_day`, so a client can judge it. The test is applied where the pointer is FETCHED and
+reused for at most one `POINTER_REVALIDATE_SECONDS`, within which the lane's allowed ceiling cannot
+have moved by a day.
+
+Everything the four rung rows say comes from `coverage.close_lane_coverage`, the same closing
+function the census uses, fed `LaneDays` built from the index instead of from object keys. What
+changes is the HORIZON: the census closes against today, an availability lane closes against its own
+`source_ceiling`. That is why a lane whose source lags a week no longer reports a week of phantom
+gaps — and why `source_ceiling_day` rides on the wire beside the envelope's `evaluated_through_day`,
+which is only when the answer was computed.
+
+That ceiling is `pipeline/parquet/lane_ceiling.allowed_source_ceiling`, the SAME function the
+publisher used to declare it, so it has already subtracted the lane's publication lag. The
+availability path therefore passes `horizon_already_lag_adjusted=True` and `_owed_but_unwritten`
+does not charge the lag a second time; charging it twice would silently hide one whole lag period of
+a release lane's real gap tail. The census keeps passing today, unadjusted, and keeps charging the
+lag itself — a USDM Tuesday map is not late on the Tuesday.
+
+Every rung reports the lane's **selectable** days — days whose whole authoritative rung set agrees on
+one terminal state — and not that rung's own rows. The intersection is a subset of each rung, so no
+row over-claims, and a slider can never mount an axis at z13 over a day z0 cannot draw.
+
+Two bounds are not tuning. `POINTER_REVALIDATE_SECONDS` (60 s) is the entire staleness budget of the
+availability path, because `AvailabilityStorage.read` is an unconditional GET with no `If-None-Match`
+to revalidate against. `MAX_CACHED_GENERATION_BYTES` (8 MiB) bounds what a generation may cost in
+memory: the publication contract allows 256 MiB per generation, and one of those held per lane is
+the 2026-08-24 ceiling incident again in a different costume. A generation key carries its own
+digest, so a cache hit can never be a stale hit and the cache needs no expiry.
+
+An availability read that fails with anything OTHER than the four refusals — a botocore fault, a
+timeout — propagates and refuses the whole coverage answer. The four `withheld_reason` values mean
+exactly what they say and must not become a bucket for transport faults; the census this replaces
+fails the whole answer for the same reason.
+
 `snapshot_products.SNAPSHOT_PRODUCTS` is the single immutable-product allowlist. Add a product only
 after its production `manifest.json` and `_COMPLETE` are final. Dew point entered the allowlist only
 after its final output receipt was pinned; no product may be registered with a guessed digest.
+
+### `forward_first_day`: a product may be frozen at one end only
+
+The six NASA POWER climate products are closed BELOW `pipeline/direct/climate/products.py`'s
+`CLIMATE_DIRECT_WRITER_START_DAY` and live at and above it — the direct writer publishes those days
+into the ORDINARY lane layout, `layer=<slug>/kind=observed/zoom=NN/year=/month=/day=/`, under a
+completion marker rather than under this module's receipt chain. The constant is IMPORTED from the
+writer, never restated: a reader boundary that drifted from the writer's start day would silently
+strand every day between the two.
+
+Three consequences, each of which was a live defect before the boundary existed:
+
+- **Routing is day-aware.** `serves_from_snapshot(layer, day)` replaces `layer in PRODUCT_BY_LAYER`
+  in every HTTP and CLI adapter. The layer-only test answered `day_not_written` for days sitting in
+  the bucket. A window is routed on its FIRST day and straddles the boundary internally.
+- **Coverage unions both halves, and the forward half is AUTHORITY-AWARE.** Under
+  `census_until_bootstrap` it is one listing of the product's live lane prefix, labelled
+  `coverage_authority: "census"` and logged once per `SnapshotCoverageCache` TTL, because that is
+  the bridge's real per-request cost. Under `availability` a request-path LIST is exactly what the
+  index exists to retire, so the forward half comes from the product's OWN availability index at the
+  ordinary `availability_lane_root(layer, "observed")` — and when no index exists the forward half
+  is WITHHELD (`availability_unpublished` on the product's coverage row) rather than listed. The
+  port (`ForwardAvailabilityPort`) is declared in `snapshot_products.py` and implemented in
+  `availability_coverage.py`, that way round because `coverage.py` already imports
+  `snapshot_products` and an import back at module scope would close a cycle. The manifest-equality
+  check stays scoped to the closed half, because the manifest is silent above the boundary by
+  construction — and a manifest day AT OR ABOVE the boundary now refuses the whole product
+  (`snapshot_manifest_conflict`), since a day excluded from the equality check and then unioned into
+  the answer is an unverified claim published as closed evidence.
+- **A forward governed absence is a governed absence.** It is admitted into
+  `governed_absence_ranges` and subtracted from `gap_ranges`. Reporting it as a hole told a client
+  to keep asking for a day the lane had already settled.
+- **`source_ceiling_day` is a maximum, not the manifest's last day.** Once a writer publishes past
+  the frozen edge, reporting the manifest's day would put `latest_day` above the lane's own ceiling,
+  which reads as a lane serving days its source cannot have produced.
+
+A forward day's ROWS come back through the ordinary `DuckDbRowReader`, not through the snapshot's
+pinned-schema reader, so a forward day and a closed day of the same layer cannot disagree about
+columns, viewport support or budgets. It costs ONE listing of one day prefix; a fully frozen product
+lists nothing at all.
+
+**One row order across the boundary.** The closed half's SQL ends `ORDER BY cell_longitude,
+cell_latitude`; `DuckDbRowReader` orders every lane's day by source key, so a window straddling
+`forward_first_day` returned two differently-ordered halves in one answer.
+`_in_closed_half_order` re-sorts the forward rows rather than changing the reader, which serves
+twelve other lanes whose grain is not a cell. THE TRUNCATION BOUNDARY IS NOT RE-SORTED and cannot
+be: the reader's `LIMIT` selects in ITS order, so a truncated forward day returns a source-key
+ordered SUBSET presented in lon/lat order. That is what `truncated` on the envelope is for — a
+partial day is declared partial, and its last row is not the day's last row.
 
 ## Why the memory ceiling is not advisory
 

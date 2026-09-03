@@ -66,7 +66,9 @@ from __future__ import annotations
 
 import io
 from collections.abc import Mapping
-from dataclasses import dataclass
+from contextlib import contextmanager
+from dataclasses import dataclass, field
+from datetime import date as date_type
 from datetime import datetime
 from typing import TYPE_CHECKING, Final, Protocol
 
@@ -85,6 +87,7 @@ from agri_data_service.foundation.parquet.paths import (
     day_prefix,
     month_prefix,
     partition_path,
+    stream_prefix,
     try_parse_absence_marker_path,
     try_parse_completion_marker_path,
     try_parse_partition_path,
@@ -104,8 +107,52 @@ if TYPE_CHECKING:
 PARQUET_CONTENT_TYPE: Final = "application/vnd.apache.parquet"
 ABSENCE_CONTENT_TYPE: Final = "application/json"
 COMPLETION_CONTENT_TYPE: Final = "application/json"
+AVAILABILITY_RETRY_CONTENT_TYPE: Final = "application/json"
 MAX_LISTED_KEYS: Final = 500_000
+# One availability retry claim names every PHYSICAL receipt of one lane-day's whole ladder, because
+# that is what a later turn rebuilds the day's evidence from without re-exporting it. The ceiling is
+# therefore sized to the same population `availability_index.TYPED_RECEIPT_MAX_BYTES` allows per rung
+# (1 MiB), times the four rungs, times a margin -- `soil-survey` streams ~3,016 parts in one day and
+# a claim it could not fit would lose that day from the index for good. Anything past this is a
+# caller trying to park a payload here rather than a pointer to one.
+MAX_AVAILABILITY_RETRY_BYTES: Final = 8 * 1024 * 1024
+_AVAILABILITY_RETRY_SEGMENT: Final = "availability/pending/"
+_AVAILABILITY_RETRY_DAY_PREFIX: Final = "day="
+_AVAILABILITY_RETRY_SUFFIX: Final = ".json"
 _ABSENT_OBJECT_CODES: Final = frozenset({"404", "NoSuchKey", "NotFound"})
+
+
+def availability_lane_root(layer: str, kind: PartitionKind) -> str:
+    """Return the `layer=<slug>/kind=<kind>` root the availability contract keys everything beneath."""
+    return stream_prefix(layer, kind).rstrip("/")
+
+
+def availability_retry_path(layer: str, kind: PartitionKind, day: date) -> str:
+    """Return the relative key of one lane-day's availability retry marker."""
+    return (
+        f"{availability_lane_root(layer, kind)}/{_AVAILABILITY_RETRY_SEGMENT}"
+        f"{_AVAILABILITY_RETRY_DAY_PREFIX}{day.isoformat()}{_AVAILABILITY_RETRY_SUFFIX}"
+    )
+
+
+def availability_retry_prefix(layer: str, kind: PartitionKind) -> str:
+    """Return the prefix holding every availability retry marker of one lane."""
+    return f"{availability_lane_root(layer, kind)}/{_AVAILABILITY_RETRY_SEGMENT}"
+
+
+def try_parse_availability_retry_path(path: str) -> date | None:
+    """Return the day one availability retry marker owes, or `None` when the key is not one."""
+    marker, separator, tail = path.partition(f"/{_AVAILABILITY_RETRY_SEGMENT}")
+    if not separator or not marker or not tail.startswith(_AVAILABILITY_RETRY_DAY_PREFIX):
+        return None
+    if not tail.endswith(_AVAILABILITY_RETRY_SUFFIX):
+        return None
+    rendered = tail[len(_AVAILABILITY_RETRY_DAY_PREFIX) : -len(_AVAILABILITY_RETRY_SUFFIX)]
+    try:
+        parsed = date_type.fromisoformat(rendered)
+    except ValueError:
+        return None
+    return parsed if parsed.isoformat() == rendered else None
 
 
 class ParquetWriteError(RuntimeError):
@@ -238,6 +285,46 @@ class SurplusPruneResult:
         return "; ".join(lines)
 
 
+@dataclass(slots=True)
+class WrittenObjectLedger:
+    """Every layout object one recording scope wrote, keyed by relative path, the last write winning."""
+
+    partitions: dict[str, ParquetWriteReceipt] = field(default_factory=dict)
+    completions: dict[str, CompletionWriteReceipt] = field(default_factory=dict)
+    absences: dict[str, AbsenceWriteReceipt] = field(default_factory=dict)
+
+    def parts_for(self, *, kind: PartitionKind, zoom: ZoomTier, day: date) -> tuple[ParquetWriteReceipt, ...]:
+        """Return one rung-day's part receipts in OBJECT-KEY order, which is the order evidence requires."""
+        matched = (
+            receipt
+            for receipt in self.partitions.values()
+            if receipt.kind == kind and receipt.zoom == zoom and receipt.day == day
+        )
+        return tuple(sorted(matched, key=lambda receipt: receipt.relative_path))
+
+    def completion_for(self, *, kind: PartitionKind, zoom: ZoomTier, day: date) -> CompletionWriteReceipt | None:
+        """Return the completion marker this scope wrote for one rung-day, if it wrote one."""
+        return next(
+            (
+                receipt
+                for receipt in self.completions.values()
+                if receipt.kind == kind and receipt.zoom == zoom and receipt.day == day
+            ),
+            None,
+        )
+
+    def absence_for(self, *, kind: PartitionKind, zoom: ZoomTier, day: date) -> AbsenceWriteReceipt | None:
+        """Return the governed-absence marker this scope wrote for one rung-day, if it wrote one."""
+        return next(
+            (
+                receipt
+                for receipt in self.absences.values()
+                if receipt.kind == kind and receipt.zoom == zoom and receipt.day == day
+            ),
+            None,
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class BotoObjectStoreBackend:
     """`ObjectStoreBackend` over one boto3 S3 client and one bucket."""
@@ -316,6 +403,8 @@ class ObjectStore:
     def __init__(self, backend: ObjectStoreBackend, *, prefix: str = "") -> None:
         self._backend = backend
         self._prefix = f"{prefix.strip('/')}/" if prefix.strip("/") else ""
+        # Empty unless a caller opened `recording_written_objects`; see AGENTS.md, "the write ledger".
+        self._ledgers: list[WrittenObjectLedger] = []
 
     @classmethod
     def from_settings(cls, source: Settings | None = None) -> ObjectStore:
@@ -338,6 +427,31 @@ class ObjectStore:
         if not key.startswith(self._prefix):
             raise ValueError(f"key {key!r} does not live under this store's prefix {self._prefix!r}")
         return key[len(self._prefix) :]
+
+    @contextmanager
+    def recording_written_objects(self) -> Iterator[WrittenObjectLedger]:
+        """Capture the receipt of every part, completion and absence written inside this scope."""
+        ledger = WrittenObjectLedger()
+        self._ledgers.append(ledger)
+        try:
+            yield ledger
+        finally:
+            self._ledgers.remove(ledger)
+
+    def _record_partition(self, receipt: ParquetWriteReceipt) -> ParquetWriteReceipt:
+        for ledger in self._ledgers:
+            ledger.partitions[receipt.relative_path] = receipt
+        return receipt
+
+    def _record_absence(self, receipt: AbsenceWriteReceipt) -> AbsenceWriteReceipt:
+        for ledger in self._ledgers:
+            ledger.absences[receipt.relative_path] = receipt
+        return receipt
+
+    def _record_completion(self, receipt: CompletionWriteReceipt) -> CompletionWriteReceipt:
+        for ledger in self._ledgers:
+            ledger.completions[receipt.relative_path] = receipt
+        return receipt
 
     def write_partition(  # noqa: PLR0913 - one partition coordinate per arg, and none may be defaulted
         self,
@@ -373,16 +487,18 @@ class ObjectStore:
             # which is the safe direction; the module docstring says why this may not move earlier.
             self.clear_completion_marker(layer, kind, zoom, day)
         self._backend.put(key, payload, content_type=PARQUET_CONTENT_TYPE)
-        return ParquetWriteReceipt(
-            key=key,
-            relative_path=relative_path,
-            stream=stream.name,
-            kind=kind,
-            zoom=zoom,
-            day=day,
-            row_count=conformed.num_rows,
-            byte_count=len(payload),
-            sha256=sha256_digest(payload),
+        return self._record_partition(
+            ParquetWriteReceipt(
+                key=key,
+                relative_path=relative_path,
+                stream=stream.name,
+                kind=kind,
+                zoom=zoom,
+                day=day,
+                row_count=conformed.num_rows,
+                byte_count=len(payload),
+                sha256=sha256_digest(payload),
+            )
         )
 
     def write_absence(
@@ -410,14 +526,16 @@ class ObjectStore:
         relative_path = absence_marker_path(layer, kind, zoom, day)
         key = self.key_for(relative_path)
         self._backend.put(key, payload, content_type=ABSENCE_CONTENT_TYPE)
-        return AbsenceWriteReceipt(
-            key=key,
-            relative_path=relative_path,
-            kind=kind,
-            zoom=zoom,
-            day=day,
-            byte_count=len(payload),
-            sha256=sha256_digest(payload),
+        return self._record_absence(
+            AbsenceWriteReceipt(
+                key=key,
+                relative_path=relative_path,
+                kind=kind,
+                zoom=zoom,
+                day=day,
+                byte_count=len(payload),
+                sha256=sha256_digest(payload),
+            )
         )
 
     def write_completion_marker(
@@ -440,16 +558,18 @@ class ObjectStore:
         relative_path = completion_marker_path(layer, kind, zoom, day)
         key = self.key_for(relative_path)
         self._backend.put(key, payload, content_type=COMPLETION_CONTENT_TYPE)
-        return CompletionWriteReceipt(
-            key=key,
-            relative_path=relative_path,
-            kind=kind,
-            zoom=zoom,
-            day=day,
-            part_count=completion.part_count,
-            row_count=completion.row_count,
-            byte_count=len(payload),
-            sha256=sha256_digest(payload),
+        return self._record_completion(
+            CompletionWriteReceipt(
+                key=key,
+                relative_path=relative_path,
+                kind=kind,
+                zoom=zoom,
+                day=day,
+                part_count=completion.part_count,
+                row_count=completion.row_count,
+                byte_count=len(payload),
+                sha256=sha256_digest(payload),
+            )
         )
 
     def clear_completion_marker(self, layer: str, kind: PartitionKind, zoom: ZoomTier, day: date) -> None:
@@ -468,6 +588,42 @@ class ObjectStore:
     def clear_absence_marker(self, layer: str, kind: PartitionKind, zoom: ZoomTier, day: date) -> None:
         """Explicitly authorize absence-to-data correction; see AGENTS.md."""
         self._backend.delete(self.key_for(absence_marker_path(layer, kind, zoom, day)))
+
+    def availability_retry_marker_path(self, layer: str, kind: PartitionKind, day: date) -> str:
+        """Return where one lane-day's availability retry claim lives, without touching the store."""
+        return availability_retry_path(layer, kind, day)
+
+    def write_availability_retry(self, payload: bytes, *, layer: str, kind: PartitionKind, day: date) -> str:
+        """Record that one terminal lane-day still owes its availability step; returns the marker path."""
+        if not payload or len(payload) > MAX_AVAILABILITY_RETRY_BYTES:
+            raise ValueError(
+                f"an availability retry marker must be 1..{MAX_AVAILABILITY_RETRY_BYTES} bytes, got {len(payload)}"
+            )
+        relative_path = availability_retry_path(layer, kind, day)
+        self._backend.put(self.key_for(relative_path), payload, content_type=AVAILABILITY_RETRY_CONTENT_TYPE)
+        return relative_path
+
+    def read_availability_retry(self, layer: str, kind: PartitionKind, day: date) -> bytes | None:
+        """Return one lane-day's availability retry marker, or `None` when nothing is owed."""
+        payload = self._backend.get(self.key_for(availability_retry_path(layer, kind, day)))
+        if payload is not None and len(payload) > MAX_AVAILABILITY_RETRY_BYTES:
+            raise ValueError(f"availability retry marker for {layer!r} {kind} {day.isoformat()} exceeds its ceiling")
+        return payload
+
+    def list_availability_retry_days(self, layer: str, kind: PartitionKind) -> tuple[date, ...]:
+        """Return every day of one lane whose availability step is owed, oldest first."""
+        days: list[date] = []
+        for listed in self._backend.list_objects(self.key_for(availability_retry_prefix(layer, kind))):
+            day = try_parse_availability_retry_path(self.relative_key(listed.key))
+            if day is not None:
+                days.append(day)
+            if len(days) > MAX_LISTED_KEYS:
+                raise ValueError(f"listing {layer!r} {kind} availability retries exceeded the key budget")
+        return tuple(sorted(days))
+
+    def clear_availability_retry(self, layer: str, kind: PartitionKind, day: date) -> None:
+        """Retract one lane-day's availability retry claim once the generation covers it."""
+        self._backend.delete(self.key_for(availability_retry_path(layer, kind, day)))
 
     def list_partition_objects(
         self,
@@ -666,6 +822,20 @@ class ObjectStore:
     def absence_exists(self, layer: str, kind: PartitionKind, zoom: ZoomTier, day: date) -> bool:
         """Report whether one stream-day carries a governed-absence marker AT THIS TIER, without downloading it."""
         return self._backend.size_of(self.key_for(absence_marker_path(layer, kind, zoom, day))) is not None
+
+    def part_blocking_absence(self, layer: str, kind: PartitionKind, zoom: ZoomTier, day: date) -> str | None:
+        """Return one part key that would make a governed absence at this rung a lie, or `None`.
+
+        The SAME listing `write_absence` performs before it refuses, exposed so a caller writing a
+        whole LADDER of markers can ask about every rung BEFORE it writes the first one -- a ladder
+        that refuses half-way leaves coarse markers standing over a base rung that still serves rows.
+        """
+        day_scope = self.key_for(day_prefix(layer, kind, zoom, day))
+        for existing in self._backend.list_objects(day_scope):
+            relative_path = self.relative_key(existing.key)
+            if try_parse_partition_path(relative_path) is not None:
+                return relative_path
+        return None
 
     def read_absence(self, layer: str, kind: PartitionKind, zoom: ZoomTier, day: date) -> GovernedAbsence | None:
         """Return one tier's governed-absence evidence, or ``None`` when no marker exists."""

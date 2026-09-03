@@ -103,6 +103,7 @@ from agri_data_service.foundation.parquet.paths import (
     validate_layer_slug,
     validate_partition_kind,
 )
+from agri_data_service.pipeline.parquet.availability_extension import AvailabilityExtensionTally
 from agri_data_service.pipeline.parquet.derivation import derive_and_write_day_tiers
 from agri_data_service.pipeline.parquet.gap_fill import (
     FAILING_LANE_OUTCOMES,
@@ -128,6 +129,7 @@ if TYPE_CHECKING:
 
     from agri_data_service.foundation.parquet.paths import PartitionKind
     from agri_data_service.foundation.parquet.zoom import ZoomTier
+    from agri_data_service.pipeline.parquet.availability_index import AvailabilityStorage
     from agri_data_service.pipeline.parquet.gap_fill import (
         LaneDayLock,
         LaneDayOutcome,
@@ -313,6 +315,10 @@ class DrainLaneProgress:
     # `water-gauges` and `sensors`, whose rows may have no location at all -- and for such a day the
     # rungs are honestly empty, which is indistinguishable from never-derived through a listing.
     emptied: list[date] = field(default_factory=list)
+    # Export selection only. Which availability verdicts this lane's terminal days produced, so a
+    # day that landed in the bucket and NOT in the index is a number in the report rather than a
+    # sentence inside one day's detail string.
+    availability: AvailabilityExtensionTally = field(default_factory=AvailabilityExtensionTally)
 
     @property
     def done(self) -> bool:
@@ -355,6 +361,12 @@ class DrainSummary:
             # Days a `ladder` selection will keep re-selecting because every rung of them is
             # honestly empty. Surfaced at the top level so it cannot be mistaken for backlog.
             "emptied_ladders": sum(len(lane.emptied) for lane in self.lanes),
+            # Terminal days this drain wrote into the bucket and could NOT put into the availability
+            # index. Both are permanent: the base-tier census never revisits a completed day, so a
+            # loss counted only inside a per-day detail string is a loss reported as success.
+            "availability_ladder_incomplete": sum(lane.availability.ladder_incomplete for lane in self.lanes),
+            "availability_retry_claim_failed": sum(lane.availability.retry_claim_failed for lane in self.lanes),
+            "availability_retry_owed": sum(lane.availability.retry_owed for lane in self.lanes),
             "lanes": [
                 {
                     "lane": lane.slug,
@@ -367,6 +379,7 @@ class DrainSummary:
                     "remaining": len(lane.pending),
                     "abandoned_contended": len(lane.abandoned),
                     "emptied_ladders": len(lane.emptied),
+                    **lane.availability.to_summary(),
                     "rows": lane.rows,
                     "parts": lane.parts,
                     "megabytes": round(lane.written_bytes / 1_048_576, 1),
@@ -613,6 +626,7 @@ async def run_drain(  # noqa: PLR0913 - one parameter per operator-tunable knob 
     now: Callable[[], datetime] = _utc_now,
     lane_day_lock: LaneDayLock = postgres_lane_day_lock,
     derive_tiers: TierDeriver = derive_and_write_day_tiers,
+    availability_storage: AvailabilityStorage | None = None,
 ) -> DrainSummary:
     """Walk every lane's outstanding history and write it, round-robin, until nothing is left.
 
@@ -634,6 +648,12 @@ async def run_drain(  # noqa: PLR0913 - one parameter per operator-tunable knob 
     `LOAD spatial` PER RUNG otherwise -- three per day, ~3,000 across the measured 1,037-day repair
     -- and `derivation_session` exists to be reused exactly this way. The export selection opens
     none here: its rungs are derived inside `gap_fill`, which owns that path's session.
+
+    `availability_storage` DEFAULTS TO None AND IS THEREFORE INERT. A drain writes the same terminal
+    lane-days the hourly cron writes, so it owes the same availability entries; passing the storage
+    is how a bulk repair stops leaving the published index thousands of days behind the bucket. It
+    stays optional because the ladder selection exports nothing, and because a caller that has not
+    bootstrapped a lane's index has nothing for the extension step to extend.
     """
     deadline = None if time_budget_seconds is None else monotonic() + time_budget_seconds
     started = monotonic()
@@ -680,6 +700,7 @@ async def run_drain(  # noqa: PLR0913 - one parameter per operator-tunable knob 
                         derive_tiers=derive_tiers,
                         connection=connection,
                         on_day=on_day,
+                        availability_storage=availability_storage,
                     )
             if not advanced:
                 break
@@ -818,6 +839,8 @@ async def _run_one_day(  # noqa: PLR0913 - one coordinate of the day being run p
     selection: DrainSelection,
     derive_tiers: TierDeriver,
     connection: DuckDBPyConnection | None,
+    availability_storage: AvailabilityStorage | None,
+    availability_tally: AvailabilityExtensionTally,
 ) -> _DayResult:
     """Run one day through the path its selection names: a Postgres export, or a derivation alone.
 
@@ -847,6 +870,8 @@ async def _run_one_day(  # noqa: PLR0913 - one coordinate of the day being run p
         today=today,
         lane_day_lock=lane_day_lock,
         statement_timeout_seconds=statement_timeout_seconds,
+        availability_storage=availability_storage,
+        availability_tally=availability_tally,
     )
     return _DayResult(outcome, parts, rows, written_bytes, detail)
 
@@ -868,6 +893,7 @@ async def _drain_one_day(  # noqa: PLR0913 - one coordinate of the day being dra
     derive_tiers: TierDeriver,
     connection: DuckDBPyConnection | None,
     on_day: Callable[[str, date, str, str | None], None] | None,
+    availability_storage: AvailabilityStorage | None,
 ) -> None:
     """Fill one day through the cron's own per-day path, then fold the outcome into the lane tally.
 
@@ -893,6 +919,8 @@ async def _drain_one_day(  # noqa: PLR0913 - one coordinate of the day being dra
             selection=selection,
             derive_tiers=derive_tiers,
             connection=connection,
+            availability_storage=availability_storage,
+            availability_tally=lane.availability,
         )
     except Exception as error:
         await _end_lane_day_transaction(session)

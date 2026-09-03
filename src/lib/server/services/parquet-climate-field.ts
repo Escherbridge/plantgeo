@@ -13,13 +13,27 @@ import {
   type ClimateFieldFeatureProperties,
   type PublishedClimateFieldCollection,
 } from "@/lib/server/services/environmental-read-model";
+import type { ZoomTier } from "@/lib/map/zoom-tiers";
+import { granularityForZoomTier } from "@/lib/server/services/zoom-granularity";
 import type {
   ParquetClimateFieldObservation,
   ParquetReaderResult,
 } from "@/lib/server/services/parquet-trpc-readers";
 
+/**
+ * The DETAIL rung's lattice pitch, and only that rung's.
+ *
+ * The coarse rungs aggregate onto their own lattices, whose pitch this module is not told and must
+ * not guess: drawing a z0 aggregate as a 0.5-degree square would paint a continent-wide mean as
+ * though it were one stored cell. Until the support geometry lands (a later slice), the coarse
+ * rungs are drawn as POINTS at the aggregate's own centre -- honest, self-locating, and needing no
+ * pitch at all. `CELL_DEGREES` is therefore read only under `zoomTier === 13`.
+ */
 const CELL_DEGREES = 0.5;
 const CELL_HALF_DEGREES = CELL_DEGREES / 2;
+
+/** The rung that serves the producer's own geometry; every other rung is an aggregate. */
+const DETAIL_ZOOM_TIER = 13;
 
 type ClimateResult = ParquetReaderResult<readonly ParquetClimateFieldObservation[]>;
 type ClimateLatticeRow = readonly [
@@ -110,20 +124,49 @@ function cellPolygon(row: ParquetClimateFieldObservation): GeoJSON.Polygon {
   };
 }
 
+/**
+ * A collection that also declares WHICH rung answered it.
+ *
+ * Declared here rather than added to `PublishedClimateFieldCollection`: that interface is the
+ * PostgreSQL read model's own and is shared with a reader that has no zoom ladder. Extending it
+ * locally keeps the tier on every Parquet answer without asserting the older reader publishes one.
+ */
+export interface ZoomedClimateFieldCollection extends PublishedClimateFieldCollection {
+  /** The one physical rung the rows came from; exactly one per request. */
+  zoomTier: ZoomTier;
+}
+
+/**
+ * Only the detail rung may be drawn in the form the client asked for.
+ *
+ * Squares need the lattice pitch and contours need a regular lattice; a coarse rung has neither
+ * yet. Degrading to points is reported back in `renderForm`, so a client cannot mistake the
+ * returned geometry for the one it requested.
+ */
+function tierRenderForm(
+  zoomTier: ZoomTier,
+  signal: ClimateFieldSignalId,
+  requested: ClimateRenderForm | undefined
+): ClimateRenderForm {
+  return zoomTier === DETAIL_ZOOM_TIER ? resolveClimateRenderForm(signal, requested) : "symbol";
+}
+
 function emptyCollection(
   signal: ClimateFieldSignalId,
   variant: AirTemperatureVariant,
   renderForm: ClimateRenderForm,
   requestedDay: string,
-  latticeCellCount: number
-): PublishedClimateFieldCollection {
+  latticeCellCount: number,
+  zoomTier: ZoomTier
+): ZoomedClimateFieldCollection {
   const definition = climateFieldSignalDefinition(signal);
   return {
     type: "FeatureCollection",
     features: [],
     availability: "unavailable",
     reason: "not_published",
-    granularity: "detail",
+    granularity: granularityForZoomTier(zoomTier),
+    zoomTier,
     signal,
     variant,
     unit: definition.unit,
@@ -182,7 +225,10 @@ function cellFeatures(
     const band = climateFieldBandFor(signal, row.value);
     return {
       type: "Feature" as const,
-      id: row.cellId,
+      // Coarse rungs carry no cell identity, so the position is the identity -- the same fallback
+      // `getParquetSoilField` uses. A feature with no stable id re-enters the map as a new one on
+      // every pan and defeats MapLibre's own diffing.
+      id: row.cellId ?? `${row.longitude}:${row.latitude}`,
       geometry: renderForm === "symbol"
         ? { type: "Point" as const, coordinates: [row.longitude, row.latitude] }
         : cellPolygon(row),
@@ -192,7 +238,9 @@ function cellFeatures(
         bandIndex: band.bandIndex,
         bandLabel: band.label,
         observedDay: row.observedDay,
-        aggregated: false,
+        // A null identity IS the aggregate marker; the two can never disagree because they are
+        // read off the same field.
+        aggregated: row.cellId === null,
         cellKey: row.cellId,
         coverageFraction: row.coverageFraction,
       } satisfies ClimateFieldFeatureProperties,
@@ -200,23 +248,34 @@ function cellFeatures(
   });
 }
 
-/** Convert a fail-closed Parquet day result into the existing climate GeoJSON contract. */
+/**
+ * Convert a fail-closed Parquet day result into the existing climate GeoJSON contract, declaring
+ * the rung it was read from.
+ *
+ * `latticeCellCount` is the DETAIL lattice's count and is published only for the detail rung: it
+ * is the denominator "267 of the 397 cells in view" is measured against, and a coarse rung's cells
+ * are not drawn from that lattice at all. Zero there means "not measured on this request", exactly
+ * as `emptyCollection`'s default does.
+ */
 export function parquetClimateFieldCollection(
   result: Exclude<ClimateResult, { state: "upstream_unavailable" }>,
   signal: ClimateFieldSignalId,
   variant: AirTemperatureVariant,
   bbox: string,
+  zoomTier: ZoomTier,
   requestedRenderForm?: ClimateRenderForm
-): PublishedClimateFieldCollection {
-  const renderForm = resolveClimateRenderForm(signal, requestedRenderForm);
-  const latticeCellCount = climateFieldLatticeCellCount(bbox);
+): ZoomedClimateFieldCollection {
+  const renderForm = tierRenderForm(zoomTier, signal, requestedRenderForm);
+  const latticeCellCount =
+    zoomTier === DETAIL_ZOOM_TIER ? climateFieldLatticeCellCount(bbox) : 0;
   if (result.state !== "ready" || result.data.length === 0) {
     return emptyCollection(
       signal,
       variant,
       renderForm,
       result.requestedDay,
-      latticeCellCount
+      latticeCellCount,
+      zoomTier
     );
   }
   const definition = climateFieldSignalDefinition(signal);
@@ -228,7 +287,8 @@ export function parquetClimateFieldCollection(
       variant,
       renderForm,
       result.requestedDay,
-      latticeCellCount
+      latticeCellCount,
+      zoomTier
     );
   }
   return {
@@ -236,7 +296,8 @@ export function parquetClimateFieldCollection(
     features,
     availability: "published",
     reason: null,
-    granularity: "detail",
+    granularity: granularityForZoomTier(zoomTier),
+    zoomTier,
     signal,
     variant,
     unit: definition.unit,

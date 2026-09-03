@@ -39,11 +39,13 @@ import type { DayRange, SliderLayerCapability } from "@/types/time-slider";
  *   so a track that drew a thin day as a hole would assert the warehouse recorded nothing on a
  *   day it recorded something. See `SliderLayerCapability.thinRanges`.
  * - `undescribed` against `dense`: below `SliderLayerCapability.describedFromDay` the server's
- *   range lists are TRUNCATED, so their silence about a day is not evidence the day was
- *   published. Painting those days dense is the exact defect the boundary was added to close --
- *   a gap dropped by the cap drew as solid coverage, `dayCoverageState` answered "dense",
- *   `describeDayCoverage` therefore said nothing, and the day read as an ordinary published one
- *   to a sighted reader and to a screen reader alike.
+ *   range lists are TRUNCATED, and above `SliderLayerCapability.describedThroughDay` its
+ *   coverage tail simply stopped -- at the lane's source ceiling, not at today. Either way the
+ *   lists' silence about such a day is not evidence the day was published. Painting those days
+ *   dense is the exact defect the boundaries were added to close -- a gap dropped by the cap
+ *   drew as solid coverage, `dayCoverageState` answered "dense", `describeDayCoverage`
+ *   therefore said nothing, and the day read as an ordinary published one to a sighted reader
+ *   and to a screen reader alike.
  */
 export type CoverageKind =
   | "dense"
@@ -174,9 +176,11 @@ function paintRanges(
  *
  * The default is dense only where the payload's range lists reach. Below
  * `describedFromDay` the seed is `undescribed`, because there the lists were truncated and
- * their silence is an absence of evidence rather than evidence of coverage. Seeded per day
+ * their silence is an absence of evidence rather than evidence of coverage; ABOVE
+ * `describedThroughDay` it is `undescribed` for the mirror reason, since the server ran its
+ * coverage tail only to the lane's source ceiling and asked nothing beyond it. Seeded per day
  * through the store's own `isDayDescribed` rather than from an offset computed here, so this
- * sweep and `dayCoverageState` can never disagree about where the boundary falls -- the
+ * sweep and `dayCoverageState` can never disagree about where either boundary falls -- the
  * per-day loop runs only for a payload that actually reports one.
  *
  * Absent, governed absence and thin are painted OVER the seed, in that order. A range that the server did
@@ -196,7 +200,7 @@ export function buildCoverageSegments(
   if (dayCount === 0) return [];
 
   const claims: CoverageKind[] = new Array<CoverageKind>(dayCount).fill("dense");
-  if ((layer.describedFromDay ?? null) !== null) {
+  if ((layer.describedFromDay ?? null) !== null || (layer.describedThroughDay ?? null) !== null) {
     for (let offset = 0; offset < dayCount; offset += 1) {
       if (isDayDescribed(layer, addDays(domain.firstDay, offset))) continue;
       claims[offset] = "undescribed";

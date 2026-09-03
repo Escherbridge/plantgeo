@@ -10,6 +10,9 @@ export class UpstreamPayloadError extends Error {}
 
 export class UpstreamTimeoutError extends Error {}
 
+/** The CALLER walked away (client disconnect, superseded viewport); the upstream is not at fault. */
+export class UpstreamAbortedError extends Error {}
+
 interface BoundedJsonOptions {
   maxBytes: number;
   timeoutMs: number;
@@ -19,6 +22,25 @@ interface BoundedJsonOptions {
    * (NASA FIRMS) depend on this being honoured.
    */
   revalidateSeconds?: number;
+  /**
+   * The caller's cancellation, combined with (never replacing) this request's timeout.
+   * See `src/lib/server/services/AGENTS.md` §request-cancellation.
+   */
+  signal?: AbortSignal;
+}
+
+/**
+ * The caller's cancellation and this request's timeout as one signal.
+ *
+ * `AbortSignal.any` rather than a hand-rolled listener pair: the runtime this ships on
+ * (`node:22.16` in `Dockerfile:1`) and the jsdom the suite runs under both implement it, and a
+ * manual combiner has to own listener teardown that `any` does for free. The timeout is always
+ * present, so dropping a caller signal can only ever make a request live LONGER than asked --
+ * never longer than the bound.
+ */
+function boundedSignal(options: BoundedJsonOptions): AbortSignal {
+  const timeout = AbortSignal.timeout(options.timeoutMs);
+  return options.signal === undefined ? timeout : AbortSignal.any([options.signal, timeout]);
 }
 
 /** Build the caching half of a `RequestInit`, defaulting to no-store. */
@@ -110,6 +132,13 @@ interface BoundedFetchResult {
  * interpret the result. This is the escape hatch other helpers (and hand-rolled
  * call sites that need raw status/text access, e.g. relaying an upstream error
  * body) build on.
+ *
+ * A caller-cancelled request throws `UpstreamAbortedError`, never `UpstreamTimeoutError`: the
+ * two look identical on the wire and mean opposite things. A timeout is a statement about the
+ * upstream that a retry may plausibly beat; an abort is a statement about the CALLER, and
+ * relabelling one as the other would report a client that navigated away as a service outage.
+ * The caller's own signal decides, not the DOMException name, so a custom abort reason still
+ * classifies correctly.
  */
 export async function fetchBounded(
   url: string | URL,
@@ -120,9 +149,12 @@ export async function fetchBounded(
   try {
     response = await fetch(url, {
       ...init,
-      signal: AbortSignal.timeout(options.timeoutMs),
+      signal: boundedSignal(options),
     });
   } catch (error) {
+    if (options.signal?.aborted === true) {
+      throw new UpstreamAbortedError("Upstream request was cancelled by its caller");
+    }
     if (
       error instanceof DOMException &&
       (error.name === "AbortError" || error.name === "TimeoutError")
@@ -137,6 +169,11 @@ export async function fetchBounded(
   try {
     bytes = await readBoundedBytes(response, options.maxBytes);
   } catch (error) {
+    // The body streams after the response head resolves, so an abort can land here too --
+    // where a raw rethrow would escape the taxonomy as a bare DOMException.
+    if (options.signal?.aborted === true) {
+      throw new UpstreamAbortedError("Upstream request was cancelled by its caller");
+    }
     if (!(error instanceof UpstreamPayloadError)) throw error;
     bodyError = error;
   }

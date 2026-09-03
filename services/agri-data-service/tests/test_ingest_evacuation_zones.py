@@ -13,6 +13,7 @@ import pytest
 
 from agri_data_service.ingest import evacuation_zones
 from agri_data_service.ingest.evacuation_zones import (
+    EVACUATION_ZONES_BOUNDS,
     EVACUATION_ZONES_CHANNEL,
     EVACUATION_ZONES_HISTORY_CAPABILITY,
     EVACUATION_ZONES_PRODUCER,
@@ -324,6 +325,54 @@ async def test_the_wall_clock_ceiling_stops_retrying_before_the_attempt_budget_i
             await fetch_evacuation_zones(client, "-125,42,-111,49", jump_clock, lambda: clock_seconds)
 
     assert 1 <= len(attempts) < evacuation_zones.MAX_ATTEMPTS
+
+
+def _oversized_response() -> httpx.Response:
+    """A body whose declared `content-length` alone is over the cap, so it is refused before it is read."""
+    return httpx.Response(
+        200,
+        content=json.dumps(_collection()).encode(),
+        headers={"content-type": "application/json", "content-length": str(EVACUATION_ZONES_BOUNDS.max_bytes + 1)},
+    )
+
+
+async def test_an_oversized_page_is_halved_and_an_undeliverable_area_is_skipped_not_fatal() -> None:
+    """The same failure that put `postgres-fire-perimeters` into permanent backoff, answered the same way.
+
+    Oregon's layer has never hit the byte cap, but "has not yet" is not a bound: `page_offset_walk`
+    had exactly one answer to an oversized page -- fail the lane -- and the retry asks for the same
+    page again. See ingest/AGENTS.md, "evacuation_zones.py: the same adaptive walk WFIGS runs".
+    """
+    asked: list[tuple[str | None, int, str | None]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        offset = request.url.params.get("resultOffset")
+        geometry = request.url.params.get("returnGeometry")
+        asked.append((offset, int(request.url.params["resultRecordCount"]), geometry))
+        if geometry == "false":
+            return _json_response(_collection())
+        if offset == "0":
+            return _oversized_response()
+        return _json_response(_collection(GlobalID="8f1f2f2f-0000-4000-8000-000000000001"))
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        zones, more_remaining = await fetch_evacuation_zones(client, "-125,42,-111,49", _no_sleep)
+
+    ladder = [count for offset, count, geometry in asked if offset == "0" and geometry is None]
+    assert ladder == [1000, 500, 250, 125, 62, 31, 15, 7, 3, 1]
+    assert ("0", 1, "false") in asked, "the identity probe must name the area before it is stepped over"
+    assert more_remaining is True, "a governed skip is a real loss and must not read as a complete set"
+    assert [zone["globalId"] for zone in zones] == ["8f1f2f2f-0000-4000-8000-000000000001"]
+
+
+def test_the_identity_probe_asks_for_one_record_without_its_geometry() -> None:
+    """The geometry is what made the area undeliverable, so dropping it is what makes it nameable."""
+    url = build_query_url("-125,42,-111,49", 7, 1, return_geometry=False)
+
+    assert "returnGeometry=false" in url
+    assert "resultOffset=7" in url
+    assert "resultRecordCount=1" in url
+    assert "returnGeometry" not in build_query_url("-125,42,-111,49")
 
 
 async def test_the_ceiling_stops_paging_even_when_the_upstream_says_more_remain(

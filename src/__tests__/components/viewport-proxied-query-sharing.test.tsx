@@ -95,20 +95,15 @@ vi.mock("@/components/map/layers/ClimateFieldLayer", () => ({
   ClimateFieldLayer: () => null,
 }));
 
-vi.mock("@/hooks/useFireData", () => ({
-  useFireData: () => ({
-    data: { type: "FeatureCollection", features: [] },
-    count: 0,
-    isLoading: false,
-    error: null,
-    refetch: vi.fn(),
-  }),
-}));
+// No `useFireData` stub here since the 2026-09-01 cutover: fire detections are a tRPC read
+// like every other dated feed, so they go through the recording link below and the map/panel
+// pair is measured by the same "one entry, two observers" rule as the rest of this file.
 
 import LayerManager from "@/components/map/LayerManager";
 import { LayerPanel } from "@/components/map/layer-panel/LayerPanel";
 import { ClimateFieldLayers } from "@/components/map/layers/ClimateFieldLayers";
 import { ClimateDetails } from "@/components/panels/ClimateDetails";
+import { FireDetails } from "@/components/panels/FireDetails";
 import { SoilDetails } from "@/components/panels/SoilDetails";
 import { WaterDetails } from "@/components/panels/WaterDetails";
 
@@ -119,6 +114,9 @@ panelRegistry.SoilDetails = function SoilDetailsAdapter(props) {
 };
 panelRegistry.WaterDetails = function WaterDetailsAdapter(props) {
   return <WaterDetails {...(props as unknown as React.ComponentProps<typeof WaterDetails>)} />;
+};
+panelRegistry.FireDetails = function FireDetailsAdapter(props) {
+  return <FireDetails {...(props as unknown as React.ComponentProps<typeof FireDetails>)} />;
 };
 layerRegistry.ClimateFieldLayers = function ClimateFieldLayersAdapter(props) {
   return (
@@ -161,6 +159,12 @@ const PARQUET_ARRAY_PROCEDURES = new Set([
   "wildfire.getWeatherForBbox",
 ]);
 
+/** Parquet readers whose `ready` payload is a day WINDOW rather than a bare row array. */
+const PARQUET_WINDOW_PROCEDURES = new Set(["wildfire.getFireDetections"]);
+
+/** The nearest-observation read `FireDetails` also makes; answered as nothing published. */
+const POINT_WEATHER_PROCEDURES = new Set(["wildfire.getWeatherForPoint"]);
+
 /** Records each operation and answers it out-of-band, the way a network link would. */
 function recordingLink(): TRPCLink<AppRouter> {
   return () =>
@@ -176,9 +180,28 @@ function recordingLink(): TRPCLink<AppRouter> {
                 data: [],
                 truncated: false,
               }
-            : ARRAY_PROCEDURES.has(op.path)
-              ? []
-              : EMPTY_PROXIED_COLLECTION;
+            : PARQUET_WINDOW_PROCEDURES.has(op.path)
+              ? {
+                  state: "ready",
+                  requestedDay: "2026-08-28",
+                  servedDay: "2026-08-28",
+                  truncated: false,
+                  data: {
+                    firstDay: "2026-08-28",
+                    lastDay: "2026-08-28",
+                    cells: [],
+                    days: [],
+                  },
+                }
+              : POINT_WEATHER_PROCEDURES.has(op.path)
+                ? {
+                    availability: "unavailable",
+                    reason: "no_fresh_weather_observation_published",
+                    observation: null,
+                  }
+                : ARRAY_PROCEDURES.has(op.path)
+                  ? []
+                  : EMPTY_PROXIED_COLLECTION;
           observer.next({
             result: {
               data,
@@ -242,7 +265,7 @@ async function renderMapAndDock(): Promise<QueryClient> {
 }
 
 /** The dock open with one section's details expanded, which is what mounts that region. */
-function openDockAt(section: "soil" | "water" | "climate"): void {
+function openDockAt(section: "soil" | "water" | "climate" | "fire"): void {
   usePanelStore.setState({ layerPanelOpen: true, expandedDetails: [section] });
 }
 
@@ -399,8 +422,10 @@ describe("viewport-proxied feeds are fetched once for the map and its dock secti
   });
 
   /**
-   * The NASA POWER lane, keyed on four inputs rather than the soil field's five: it has one
-   * serving tier, so `zoom` is deliberately absent from the key and `depth` has no analogue.
+   * The NASA POWER lane, keyed like the soil field's minus `depth`, which has no analogue here.
+   * `zoom` IS in the key: it selects the one physical rung, so the map and the dock must agree
+   * on it -- the note that stood here ("one serving tier, zoom deliberately absent") described
+   * the reader's hard-coded z13, not the warehouse, which publishes z13/z9/z5/z0 for these lanes.
    * The sharing hazard is the same one -- the section describing a signal must key its read
    * exactly as the map drawing it does.
    *
@@ -457,9 +482,43 @@ describe("viewport-proxied feeds are fetched once for the map and its dock secti
     // are registered above.
     expect(operations).toHaveLength(drawnSignals.length);
     expect(new Set(inputs.map((input) => input.signal))).toEqual(new Set(drawnSignals));
-    // A zoom in the key would split one answer into one entry per zoom level for a lane that
-    // serves the same cells at every zoom.
-    for (const input of inputs) expect(input.zoom).toBeUndefined();
+    // Zoom is in the key, and BOTH readers must have taken it from the one `useViewportBounds()`
+    // derivation: a second derivation would show up here as two zooms for one viewport, which is
+    // two physical rungs and therefore two different aggregations drawn at once.
+    for (const input of inputs) expect(input.zoom).toBeTypeOf("number");
+    expect(new Set(inputs.map((input) => input.zoom))).toHaveProperty("size", 1);
+  });
+
+  /**
+   * The fire lane, joined to this contract by the 2026-09-01 Parquet cutover.
+   *
+   * Until then `FireDetails` and `LayerManager` each called `useFireData` — two private
+   * `fetch` lanes with two ETag caches, agreeing on the day only because both happened to
+   * read `useDebouncedLayerDay("fire")` and happening to disagree about the viewport always,
+   * since that route took no bbox at all. `useParquetFireDetections` reads the day, the bbox
+   * and the zoom ITSELF, so there is no argument for the two callers to differ on: one entry,
+   * two observers, one request.
+   */
+  it("gives the fire map layer and the fire section one query entry and one request", async () => {
+    useMapStore.setState({ activeLayers: ["fire"] });
+    openDockAt("fire");
+
+    const queryClient = await renderMapAndDock();
+    await settle(queryClient);
+
+    const entries = cacheEntriesFor(queryClient, "getFireDetections");
+    expect(entries).toHaveLength(1);
+    // The map's layer and the panel's count. A second entry here would mean the caption and
+    // the cells beside it describe different days, different viewports, or both.
+    expect(entries[0].observers).toHaveLength(2);
+    expect(operationsFor("wildfire.getFireDetections")).toHaveLength(1);
+
+    // The request itself carries all three key inputs, which is what `/api/fires` could not do.
+    const [operation] = operationsFor("wildfire.getFireDetections");
+    const input = operation.input as { bbox?: string; zoom?: number; dayRange?: number };
+    expect(input.bbox).toBeTypeOf("string");
+    expect(input.zoom).toBeTypeOf("number");
+    expect(input.dayRange).toBe(1);
   });
 
   /**

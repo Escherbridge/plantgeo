@@ -22,9 +22,9 @@
   ],
   "note": "Replace coarse raw dots and disconnected blocks with semantically honest support geometry: continuous tessellations/isobands, event aggregate cells or heatmaps, and topology-preserving native polygons.",
   "partitions": {
-    "computed_at": "2026-09-01T00:00:00-06:00",
-    "computed_at_commit": "269cc4224ff419c273bed5b660837c5b7f66caa3",
-    "confidence": "verified_design_surface",
+    "computed_at": "2026-09-02T00:00:00-06:00",
+    "computed_at_commit": "cb12d94e77104a53c76e441f4de7d38d60fa7ae1",
+    "confidence": "verified",
     "shared_writes": [
       "The reader track freezes supportKind, zoomTier and cell extent/resolution before m1 edits shared response types.",
       "Climate and soil renderers are one lane; event renderers are another; native polygon validation owns no shared renderer file.",
@@ -133,6 +133,29 @@
         "status": "planned"
       }
     ],
-    "integration_slice": "m5"
+    "integration_slice": "m5",
+    "orchestration_wave1_20260902": {
+      "computed_at": "2026-09-02T00:00:00-06:00",
+      "computed_at_commit": "cb12d94e77104a53c76e441f4de7d38d60fa7ae1",
+      "wave": "wave1-20260902",
+      "rule": "shared working tree, disjoint write sets per slice, no builds/tests inside slices, one orchestrator sweep at the join",
+      "serialized_overlaps": [
+        "src/lib/server/services/parquet-trpc-readers.ts and parquet-climate-field.ts: r2b (wave 1) then m1 (wave 2)",
+        "src/components/map/layers/FireLayer.tsx: r1 (wave 1) then m3 (wave 2)",
+        "src/hooks/useViewportProxiedLayers.ts: r2b (wave 1) then conformity c2 (later)",
+        "src/__tests__/services/parquet-trpc-readers.test.ts: r2b (wave 1), not r1"
+      ],
+      "pre_declared_seams": [
+        "ParquetViewportRead.signal?: AbortSignal added by r2b, passed by r1 from wildfire.ts",
+        "coverage wire fields emitted by r2a and decoded by r2b: coverage_authority, availability_generation_sha256, availability_pointer_key, source_ceiling_day, required_rungs, withheld_reason"
+      ],
+      "write_sets": {
+        "m0": [
+          "src/lib/map/layer-render-contract.ts",
+          "src/lib/map/AGENTS.md",
+          "src/__tests__/lib/map/layer-render-contract.test.ts"
+        ]
+      }
+    }
   }
 }

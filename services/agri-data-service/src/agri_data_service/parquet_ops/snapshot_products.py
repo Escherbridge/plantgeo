@@ -1,4 +1,15 @@
-"""Bounded reads over manifest-closed immutable snapshot product prefixes."""
+"""Bounded reads over manifest-closed immutable snapshot product prefixes.
+
+A PRODUCT MAY HAVE A FORWARD EDGE THE MANIFEST CANNOT SEE. Six climate products were frozen at
+`CLIMATE_DIRECT_WRITER_START_DAY` and every day from that day on is written by the NASA POWER direct
+writer into the ORDINARY lane layout -- `layer=<stream>/kind=observed/zoom=NN/year=/month=/day=/` --
+under a completion marker rather than under this module's receipt chain. `forward_first_day` is the
+one boundary between the two: below it a day is proven by the closed manifest and served from
+`part_receipts`; at or above it a day is proven exactly as every other lane's day is, by
+`day_status_sets`, and served through the ordinary `DuckDbRowReader`. Without the split the products
+would go on reporting a frozen last day while the bucket grew past it, which is the failure that
+showed the browser a 27-day tail on five products.
+"""
 
 from __future__ import annotations
 
@@ -13,29 +24,46 @@ from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING, Final, Literal, Protocol
 
 import pyarrow as pa  # type: ignore[import-untyped]
+import structlog
 
+from agri_data_service.foundation.parquet.paths import day_prefix, stream_prefix
 from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
 from agri_data_service.parquet_ops import faults
-from agri_data_service.parquet_ops.serving import WINDOW_ROW_BUDGET
+from agri_data_service.parquet_ops.serving import WINDOW_ROW_BUDGET, day_status_sets, read_absence_evidence
+from agri_data_service.parquet_ops.warehouse_reader import DuckDbRowReader, RowRead, part_keys_for_day
 from agri_data_service.parquet_ops.wire import (
+    COVERAGE_AUTHORITY_AVAILABILITY,
+    COVERAGE_AUTHORITY_CENSUS,
+    WITHHELD_AVAILABILITY_UNPUBLISHED,
     DayNotWritten,
     DayRange,
     DeclaredListCell,
+    GovernedAbsenceDay,
     LaneCoverage,
     LaneNeverWritten,
     PublishedDay,
     contiguous_ranges,
 )
+from agri_data_service.pipeline.direct.climate.products import CLIMATE_DIRECT_WRITER_START_DAY
 from agri_data_service.warehouse.parquet.schema import SIGNAL_PLANE_SCHEMA, get_stream_schema
 from agri_data_service.warehouse.parquet.snapshot_signal_product import SOIL_TEMPERATURE_FIELDS
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
 
+    from agri_data_service.config import CoverageAuthorityPolicy
+    from agri_data_service.foundation.parquet.zoom import ZoomTier
     from agri_data_service.parquet_ops.duckdb_session import ServingSession
     from agri_data_service.parquet_ops.request_params import ReadScope
-    from agri_data_service.parquet_ops.wire import DayEnvelope, ServedRow
+    from agri_data_service.parquet_ops.wire import (
+        CoverageAuthority,
+        CoverageWithholding,
+        DayEnvelope,
+        ServedRow,
+    )
     from agri_data_service.pipeline.parquet.objectstore import ObjectStoreBackend
+
+logger = structlog.get_logger()
 
 SNAPSHOT_ID: Final = "prod-20260826-full-signal-v1"
 MAX_SNAPSHOT_KEYS: Final = 30_000
@@ -48,6 +76,9 @@ METADATA_VERIFY_WORKERS: Final = 16
 SNAPSHOT_COVERAGE_PRODUCT_WORKERS: Final = 4
 MAX_EVIDENCE_CACHE_ENTRIES: Final = 64
 BASE_ZOOM_TIER: Final = ZOOM_TIERS[-1]
+#: The one stream a snapshot product publishes, and therefore the one its forward edge is listed
+#: under. `Final` so the value narrows to the `PartitionKind` literal rather than to bare `str`.
+FORWARD_PARTITION_KIND: Final = "observed"
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 _DAILY_PART = re.compile(
     r"/kind=observed/zoom=(?P<zoom>00|05|09|13)/year=(?P<year>\d{4})/month=(?P<month>\d{2})/"
@@ -82,6 +113,9 @@ class SnapshotProduct:
     contract_version: str | None = None
     coverage_cell_grid_name: str | None = None
     coverage_cells_per_day: int | None = None
+    #: First day a LIVE writer owns, beyond the closed snapshot's reach. `None` means the product is
+    #: frozen end to end and every one of its days is proven by the manifest.
+    forward_first_day: date | None = None
 
 
 def _layer_root(layer: str) -> str:
@@ -141,6 +175,7 @@ SNAPSHOT_PRODUCTS: Final[tuple[SnapshotProduct, ...]] = (
         contract_version="plantgeo.air-temperature.snapshot-product.v1",
         coverage_cell_grid_name="nasa-power-0.5-degree",
         coverage_cells_per_day=397,
+        forward_first_day=CLIMATE_DIRECT_WRITER_START_DAY,
     ),
     SnapshotProduct(
         "climate-field-air-temperature-max",
@@ -151,6 +186,7 @@ SNAPSHOT_PRODUCTS: Final[tuple[SnapshotProduct, ...]] = (
         contract_version="plantgeo.air-temperature.snapshot-product.v1",
         coverage_cell_grid_name="nasa-power-0.5-degree",
         coverage_cells_per_day=397,
+        forward_first_day=CLIMATE_DIRECT_WRITER_START_DAY,
     ),
     SnapshotProduct(
         "climate-field-air-temperature-min",
@@ -161,6 +197,7 @@ SNAPSHOT_PRODUCTS: Final[tuple[SnapshotProduct, ...]] = (
         contract_version="plantgeo.air-temperature.snapshot-product.v1",
         coverage_cell_grid_name="nasa-power-0.5-degree",
         coverage_cells_per_day=397,
+        forward_first_day=CLIMATE_DIRECT_WRITER_START_DAY,
     ),
     SnapshotProduct(
         "climate-field-relative-humidity",
@@ -168,6 +205,7 @@ SNAPSHOT_PRODUCTS: Final[tuple[SnapshotProduct, ...]] = (
         _layer_root("climate-field-relative-humidity"),
         f"{_layer_root('climate-field-relative-humidity')}/_breakdown",
         contract_version="climate-field-relative-humidity.snapshot-breakdown.v1",
+        forward_first_day=CLIMATE_DIRECT_WRITER_START_DAY,
     ),
     SnapshotProduct(
         "climate-field-dew-point",
@@ -179,6 +217,7 @@ SNAPSHOT_PRODUCTS: Final[tuple[SnapshotProduct, ...]] = (
         contract_version="plantgeo.dew-point.snapshot-product.v1",
         coverage_cell_grid_name="nasa-power-0.5-degree",
         coverage_cells_per_day=397,
+        forward_first_day=CLIMATE_DIRECT_WRITER_START_DAY,
     ),
     SnapshotProduct(
         "climate-field-wind-speed",
@@ -188,6 +227,7 @@ SNAPSHOT_PRODUCTS: Final[tuple[SnapshotProduct, ...]] = (
         expected_manifest_sha256="7dced7e273ed8357cafc8388742b892074061dcd59cd9ffeff086f0cb95da13f",
         schema_columns=SIGNAL_PRODUCT_COLUMNS,
         contract_version="plantgeo.climate-field-wind-speed.snapshot.v1",
+        forward_first_day=CLIMATE_DIRECT_WRITER_START_DAY,
     ),
     SnapshotProduct(
         "soil-field-vpd",
@@ -345,6 +385,35 @@ class SnapshotCoverageWithholding:
 
 
 @dataclass(frozen=True, slots=True)
+class ForwardAvailability:
+    """One product's forward half, proven from its lane's availability index and never by listing."""
+
+    published_days: frozenset[date]
+    absent_days: frozenset[date]
+    source_ceiling: date
+    generation_sha256: str
+    pointer_key: str
+
+
+@dataclass(frozen=True, slots=True)
+class ForwardAvailabilityWithheld:
+    """Why a product's forward half may not be published, in the census's own withholding vocabulary."""
+
+    reason: CoverageWithholding
+    detail: str
+
+
+class ForwardAvailabilityPort(Protocol):
+    """How this module asks for a forward half without importing the reader that answers.
+
+    Declared HERE and implemented in `parquet_ops/availability_coverage.py`, because `coverage.py`
+    already imports this module -- an import back the other way at module scope would close a cycle.
+    """
+
+    def forward_days(self, *, layer: str, first_day: date) -> ForwardAvailability | ForwardAvailabilityWithheld: ...
+
+
+@dataclass(frozen=True, slots=True)
 class SnapshotCoverageCensus:
     """Healthy rung evidence plus exact product-local reasons withheld from the frozen wire."""
 
@@ -365,6 +434,19 @@ def product_for_layer(layer: str) -> SnapshotProduct:
     if product is None:
         raise faults.snapshot_unpublished(layer=layer, snapshot_id=SNAPSHOT_ID, detail="layer is not allowlisted")
     return product
+
+
+def serves_from_snapshot(layer: str, day: date) -> bool:
+    """Decide which of the two paths owns ONE requested day of ONE layer.
+
+    Every route adapter asks this instead of testing `layer in PRODUCT_BY_LAYER`, because that test
+    is day-BLIND: it sent a day the direct writer owns to a manifest that has never heard of it, and
+    the frozen product answered `day_not_written` for a day sitting in the bucket.
+    """
+    product = PRODUCT_BY_LAYER.get(layer)
+    if product is None:
+        return False
+    return product.forward_first_day is None or day < product.forward_first_day
 
 
 def load_snapshot_evidence(store: SnapshotStore, product: SnapshotProduct) -> SnapshotEvidence:
@@ -582,6 +664,19 @@ def _resolve_snapshot_evidence(  # noqa: PLR0913 - exact evidence, request, and 
     verified_parts: set[str] | None = None,
     row_budget: int = SNAPSHOT_ROW_BUDGET,
 ) -> DayEnvelope:
+    # Read off the EVIDENCE's own product rather than through `serves_from_snapshot`: a window may
+    # straddle the boundary, so this branch has to hold for a request the route sent down the
+    # snapshot path, and it must not depend on the layer being reachable in `PRODUCT_BY_LAYER`.
+    forward_first_day = evidence.product.forward_first_day
+    if forward_first_day is not None and day >= forward_first_day:
+        return _resolve_forward_lane_day(
+            store,
+            session,
+            product=evidence.product,
+            scope=scope,
+            day=day,
+            row_budget=row_budget,
+        )
     tier_parts = evidence.parts_by_tier[int(scope.tier)]
     if not tier_parts:
         return LaneNeverWritten(requested_day=day)
@@ -617,10 +712,104 @@ def _resolve_snapshot_evidence(  # noqa: PLR0913 - exact evidence, request, and 
     )
 
 
+def _resolve_forward_lane_day(  # noqa: PLR0913 - the live-lane read needs its own store, session and budget
+    store: SnapshotStore,
+    session: ServingSession,
+    *,
+    product: SnapshotProduct,
+    scope: ReadScope,
+    day: date,
+    row_budget: int,
+) -> DayEnvelope:
+    """Serve one day the LIVE writer owns, through the ordinary layout and never through receipts.
+
+    A day at or after `forward_first_day` was written into `layer=<slug>/kind=observed/zoom=NN/...`
+    by a direct writer and is bound by a COMPLETION MARKER, not by the frozen manifest, so there is
+    no receipt chain to verify it against. The four-state classification below is exactly
+    `serving.resolve_day`'s, applied through the snapshot store's two primitives, and the rows come
+    back through the same `DuckDbRowReader` every other lane's day is served by -- so a forward day
+    and a lane day of the same shape can never disagree about columns, viewport support or budgets.
+
+    ONE DAY PREFIX IS LISTED, never the tier: the day is named, so the listing that proves it is the
+    cheapest one that can, and this path stays affordable on the per-request budget.
+
+    THE ROWS COME BACK IN THE CLOSED HALF'S ORDER. `_read_observed_day` sorts the frozen half by
+    `cell_longitude, cell_latitude`; `DuckDbRowReader` sorts every lane's day by source key, which
+    for a window straddling `forward_first_day` puts two differently-ordered halves in one answer.
+    They are re-sorted here rather than in the reader, because that reader serves twelve other lanes
+    whose grain is not a cell. THE TRUNCATION BOUNDARY IS NOT RE-SORTED and cannot be: the reader's
+    `LIMIT` selects by ITS order, so a truncated forward day returns a source-key-ordered SUBSET
+    presented in lon/lat order. That is why `truncated` rides on the envelope -- a partial day is
+    declared partial, and a client may not read its last row as the day's last row.
+    """
+    keys = tuple(store.iter_keys(day_prefix(product.layer, FORWARD_PARTITION_KIND, scope.tier, day)))
+    statuses = day_status_sets(keys, layer=product.layer, kind=FORWARD_PARTITION_KIND, tier=scope.tier)
+    if day in statuses.conflict:
+        raise faults.day_conflict(layer=product.layer, day=day.isoformat())
+    if day in statuses.incomplete:
+        raise faults.day_incomplete(layer=product.layer, day=day.isoformat())
+    if day in statuses.absent:
+        return GovernedAbsenceDay(
+            requested_day=day,
+            served_day=day,
+            absence=read_absence_evidence(store, scope=scope, day=day),
+        )
+    if day not in statuses.data:
+        # `DayNotWritten`, never `LaneNeverWritten`: the closed snapshot below this boundary already
+        # proves the lane has published, so the lane-level state cannot honestly be "never written".
+        return DayNotWritten(requested_day=day)
+    result = DuckDbRowReader(session=session).read_rows(
+        RowRead(
+            scope=scope,
+            keys=part_keys_for_day(keys, layer=product.layer, kind=FORWARD_PARTITION_KIND, tier=scope.tier, day=day),
+            row_budget=row_budget,
+        )
+    )
+    return PublishedDay(
+        requested_day=day,
+        served_day=day,
+        rows=_in_closed_half_order(tuple(row for _, row in result.rows)),
+        truncated=result.budget_exhausted or result.unpositioned_rows > 0,
+    )
+
+
+#: The grain the closed half is sorted by, and therefore the one the forward half must match.
+_SNAPSHOT_ROW_ORDER: Final = ("cell_longitude", "cell_latitude")
+
+
+def _in_closed_half_order(rows: tuple[ServedRow, ...]) -> tuple[ServedRow, ...]:
+    """Sort forward rows by the same key the closed half's SQL orders on, when they carry it.
+
+    A row missing either column is left where it was rather than sorted under a fabricated key --
+    every snapshot product declares both, so this is a guard rather than a supported second shape.
+    """
+    if not rows or any(column not in row for row in rows for column in _SNAPSHOT_ROW_ORDER):
+        return rows
+    return tuple(sorted(rows, key=lambda row: tuple(_sortable(row[column]) for column in _SNAPSHOT_ROW_ORDER)))
+
+
+def _sortable(value: object) -> tuple[int, float]:
+    """Order a coordinate cell, putting a null last rather than raising on a mixed comparison."""
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return (0, float(value))
+    return (1, 0.0)
+
+
 def build_snapshot_coverage(
     store: SnapshotStore,
+    *,
+    policy: CoverageAuthorityPolicy = "census_until_bootstrap",
+    forward_availability: ForwardAvailabilityPort | None = None,
 ) -> SnapshotCoverageCensus:
-    """Prove each product independently through bounded metadata-only evidence."""
+    """Prove each product independently through bounded metadata-only evidence.
+
+    THE FORWARD HALF IS AUTHORITY-AWARE, and it has to be: six products carry a live edge, and
+    listing it is a `layer=<slug>/kind=observed/` prefix walk on every cold `GET /coverage`. Under
+    `availability` that walk is exactly the cost the index exists to retire, so the forward half is
+    proven from the product's OWN availability index or withheld -- never from a LIST. Under
+    `census_until_bootstrap` the listing is the declared transitional cost, labelled `census` and
+    logged once per cache TTL, because this function runs only on a `SnapshotCoverageCache` miss.
+    """
     rows: list[LaneCoverage] = []
     withheld: list[SnapshotCoverageWithholding] = []
     worker_count = min(SNAPSHOT_COVERAGE_PRODUCT_WORKERS, len(SNAPSHOT_PRODUCTS))
@@ -628,7 +817,12 @@ def build_snapshot_coverage(
         return SnapshotCoverageCensus(lanes=(), withheld=())
     with ThreadPoolExecutor(max_workers=worker_count) as executor:
         evidence_results = executor.map(
-            lambda product: _coverage_evidence_or_withholding(store, product),
+            lambda product: _coverage_inputs(
+                store,
+                product,
+                policy=policy,
+                forward_availability=forward_availability,
+            ),
             SNAPSHOT_PRODUCTS,
         )
         ordered_results = tuple(evidence_results)
@@ -643,6 +837,71 @@ def build_snapshot_coverage(
     return SnapshotCoverageCensus(lanes=tuple(rows), withheld=tuple(withheld))
 
 
+@dataclass(frozen=True, slots=True)
+class _ForwardHalf:
+    """One product's forward days PER RUNG, what proved them, and why they may be missing entirely.
+
+    Per rung because the two authorities prove different things at different grains and neither may
+    be flattened into the other: a listing proves each rung on its own, while an availability index
+    proves the days the WHOLE required ladder agrees on and therefore hands every rung one set.
+    """
+
+    published_days: Mapping[ZoomTier, frozenset[date]]
+    absent_days: Mapping[ZoomTier, frozenset[date]]
+    authority: CoverageAuthority
+    source_ceiling: date | None = None
+    generation_sha256: str | None = None
+    pointer_key: str | None = None
+    withheld_reason: CoverageWithholding | None = None
+
+    def published_for(self, tier: ZoomTier) -> set[date]:
+        """Return one rung's forward published days."""
+        return set(self.published_days.get(tier, frozenset()))
+
+    def absent_for(self, tier: ZoomTier) -> set[date]:
+        """Return one rung's forward governed-absence days."""
+        return set(self.absent_days.get(tier, frozenset()))
+
+
+def _every_rung(days: frozenset[date]) -> Mapping[ZoomTier, frozenset[date]]:
+    """Give every authoritative rung the same day set, as a ladder-agreeing proof does."""
+    return dict.fromkeys(ZOOM_TIERS, days)
+
+
+#: A frozen product has no live edge at all, so its forward half is empty and costs nothing to prove.
+_NO_FORWARD_EDGE: Final = _ForwardHalf(
+    published_days=_every_rung(frozenset()),
+    absent_days=_every_rung(frozenset()),
+    authority=COVERAGE_AUTHORITY_CENSUS,
+)
+
+
+@dataclass(frozen=True, slots=True)
+class _ProductCoverageInputs:
+    """One product's closed evidence plus the forward half its live days are proven from."""
+
+    evidence: SnapshotEvidence
+    forward: _ForwardHalf
+
+
+def _coverage_inputs(
+    store: SnapshotStore,
+    product: SnapshotProduct,
+    *,
+    policy: CoverageAuthorityPolicy,
+    forward_availability: ForwardAvailabilityPort | None,
+) -> _ProductCoverageInputs | SnapshotCoverageWithholding:
+    """Gather everything one product's rungs are built from, inside the census's own worker thread."""
+    loaded = _coverage_evidence_or_withholding(store, product)
+    if isinstance(loaded, SnapshotCoverageWithholding):
+        return loaded
+    try:
+        forward = _forward_half(store, product, policy=policy, forward_availability=forward_availability)
+    except faults.ServingRefusalError as exc:
+        return SnapshotCoverageWithholding(layer=product.layer, code=exc.code, message=exc.message)
+    return _ProductCoverageInputs(evidence=loaded, forward=forward)
+
+
 def _coverage_evidence_or_withholding(
     store: SnapshotStore,
     product: SnapshotProduct,
@@ -653,11 +912,115 @@ def _coverage_evidence_or_withholding(
         return SnapshotCoverageWithholding(layer=product.layer, code=exc.code, message=exc.message)
 
 
+def _forward_half(
+    store: SnapshotStore,
+    product: SnapshotProduct,
+    *,
+    policy: CoverageAuthorityPolicy,
+    forward_availability: ForwardAvailabilityPort | None,
+) -> _ForwardHalf:
+    """Prove one product's forward days from whichever evidence its authority policy allows."""
+    if product.forward_first_day is None:
+        return _NO_FORWARD_EDGE
+    if policy == "availability":
+        if forward_availability is None:
+            # `availability` promises no request-path LIST. An unwired port is a wiring fault, and
+            # listing anyway would break that promise silently instead of stating it on the wire.
+            return _ForwardHalf(
+                published_days=_every_rung(frozenset()),
+                absent_days=_every_rung(frozenset()),
+                authority=COVERAGE_AUTHORITY_AVAILABILITY,
+                withheld_reason=WITHHELD_AVAILABILITY_UNPUBLISHED,
+            )
+        return _forward_half_from_index(
+            product,
+            forward_availability.forward_days(layer=product.layer, first_day=product.forward_first_day),
+        )
+    return _forward_half_from_listing(store, product)
+
+
+def _forward_half_from_index(
+    product: SnapshotProduct,
+    answer: ForwardAvailability | ForwardAvailabilityWithheld,
+) -> _ForwardHalf:
+    """Turn the index's answer for one product into a forward half, withholding rather than listing."""
+    if isinstance(answer, ForwardAvailabilityWithheld):
+        logger.warning(
+            "snapshot_forward_availability_withheld",
+            layer=product.layer,
+            code=answer.reason,
+            reason=answer.detail,
+        )
+        return _ForwardHalf(
+            published_days=_every_rung(frozenset()),
+            absent_days=_every_rung(frozenset()),
+            authority=COVERAGE_AUTHORITY_AVAILABILITY,
+            withheld_reason=answer.reason,
+        )
+    return _ForwardHalf(
+        published_days=_every_rung(answer.published_days),
+        absent_days=_every_rung(answer.absent_days),
+        authority=COVERAGE_AUTHORITY_AVAILABILITY,
+        source_ceiling=answer.source_ceiling,
+        generation_sha256=answer.generation_sha256,
+        pointer_key=answer.pointer_key,
+    )
+
+
+def _forward_half_from_listing(store: SnapshotStore, product: SnapshotProduct) -> _ForwardHalf:
+    """List the live lane prefix once for all four rungs: the TRANSITIONAL census, labelled as one.
+
+    ONE listing per product, not one per rung: the four tiers share `layer=<slug>/kind=observed/`,
+    and `day_status_sets` already ignores keys of another tier. Logged because this runs only on a
+    coverage-cache miss, so the log rate is bounded by that TTL and states the bridge's real cost.
+    """
+    if product.forward_first_day is None:  # pragma: no cover - the caller already returned for these
+        return _NO_FORWARD_EDGE
+    logger.warning(
+        "snapshot_forward_census_listing",
+        layer=product.layer,
+        prefix=stream_prefix(product.layer, FORWARD_PARTITION_KIND),
+        reason="census_until_bootstrap proves this product's forward half by walking its live lane prefix",
+    )
+    keys = tuple(store.iter_keys(stream_prefix(product.layer, FORWARD_PARTITION_KIND)))
+    first_day = product.forward_first_day
+    published: dict[ZoomTier, frozenset[date]] = {}
+    absent: dict[ZoomTier, frozenset[date]] = {}
+    for tier in ZOOM_TIERS:
+        statuses = day_status_sets(keys, layer=product.layer, kind=FORWARD_PARTITION_KIND, tier=tier)
+        published[tier] = frozenset(day for day in statuses.data if day >= first_day)
+        absent[tier] = frozenset(day for day in statuses.absent if day >= first_day)
+    return _ForwardHalf(published_days=published, absent_days=absent, authority=COVERAGE_AUTHORITY_CENSUS)
+
+
 def _build_product_coverage(
-    evidence: SnapshotEvidence,
+    inputs: _ProductCoverageInputs,
 ) -> tuple[LaneCoverage, ...]:
-    """Build all four rungs for one product or raise one product-local typed refusal."""
+    """Build all four rungs for one product or raise one product-local typed refusal.
+
+    An immutable product owns no availability index yet, so it stays `census` authority and states
+    its own last day as its source ceiling. That ceiling is what stops the census's
+    `evaluated_through_day` from reading as a claim that the frozen snapshot is current through it.
+
+    A PRODUCT WITH A FORWARD EDGE REPORTS BOTH HALVES. Days below `forward_first_day` come from the
+    closed manifest; days at or above it come from the live lane, proven by whichever authority the
+    coverage policy allows. The manifest-equality check therefore holds only over the closed half --
+    above the boundary the manifest is silent BY CONSTRUCTION, and asking it to agree there would
+    refuse the whole product the moment the writer wrote a day.
+
+    A MANIFEST DAY AT OR ABOVE THE BOUNDARY REFUSES THE PRODUCT. The frozen snapshot cannot
+    legitimately declare a day it was closed before; a day excluded from the equality check and then
+    unioned into the answer anyway is a manifest claim nothing verified, published as if it were.
+
+    `coverage_authority` on a forward product names WHAT PROVED ITS LIVE EDGE, because that is the
+    only half whose evidence can change: the closed half is manifest-bound under either policy, and
+    a frozen product stays `census` because it has no live edge to prove. A withheld forward half
+    leaves the closed half standing and states its reason on the row -- the manifest did not stop
+    being evidence because the index is missing.
+    """
     rows: list[LaneCoverage] = []
+    evidence = inputs.evidence
+    forward = inputs.forward
     product = evidence.product
     declared_days = _declared_contiguous_days(evidence)
     if product.layout == "monthly":
@@ -671,30 +1034,97 @@ def _build_product_coverage(
         shared_days = declared_days
     else:
         shared_days = set()
+    _require_manifest_below_forward_boundary(declared_days, product=product)
     for tier in ZOOM_TIERS:
         tier_parts = evidence.parts_by_tier[tier]
-        days = _daily_days(tier_parts, product=product) if product.layout == "daily" else shared_days
-        if product.layout == "daily" and declared_days is not None and days != declared_days:
+        closed_days = _daily_days(tier_parts, product=product) if product.layout == "daily" else shared_days
+        _require_manifest_below_forward_boundary(closed_days, product=product, tier=tier)
+        if (
+            product.layout == "daily"
+            and declared_days is not None
+            and _closed_half(closed_days, product) != _closed_half(declared_days, product)
+        ):
             raise faults.snapshot_schema_mismatch(
                 layer=product.layer,
                 key=product.data_root,
                 detail=f"tier z{tier:02d} day paths do not equal the manifest's closed day range",
             )
-        ranges = contiguous_ranges(days)
+        published_days = closed_days | forward.published_for(tier)
+        # A FORWARD GOVERNED ABSENCE IS A GOVERNED ABSENCE, not a gap. The lane looked at the day and
+        # the source deliberately had nothing; reporting it as a hole tells a client to keep asking.
+        absence_days = forward.absent_for(tier) - published_days
+        accounted = published_days | absence_days
         rows.append(
             LaneCoverage(
                 layer=product.layer,
                 nature="daily_series",
                 kind="observed",
                 zoom=tier,
-                earliest_day=min(days) if days else None,
-                latest_day=max(days) if days else None,
-                published_ranges=ranges,
-                gap_ranges=_gap_ranges(days),
-                governed_absence_ranges=(),
+                earliest_day=min(published_days) if published_days else None,
+                latest_day=max(published_days) if published_days else None,
+                published_ranges=contiguous_ranges(published_days),
+                gap_ranges=_gap_ranges(accounted) if accounted else (),
+                governed_absence_ranges=contiguous_ranges(absence_days),
+                coverage_authority=forward.authority,
+                availability_generation_sha256=forward.generation_sha256,
+                availability_pointer_key=forward.pointer_key,
+                source_ceiling_day=_product_source_ceiling(declared_days, published_days, forward),
+                withheld_reason=forward.withheld_reason,
             )
         )
     return tuple(rows)
+
+
+def _require_manifest_below_forward_boundary(
+    days: set[date] | None,
+    *,
+    product: SnapshotProduct,
+    tier: ZoomTier | None = None,
+) -> None:
+    """Refuse a closed product that claims a day the LIVE writer owns."""
+    first_day = product.forward_first_day
+    if first_day is None or not days:
+        return
+    trespassing = sorted(day for day in days if day >= first_day)
+    if not trespassing:
+        return
+    scope = "manifest" if tier is None else f"tier z{tier:02d}"
+    raise faults.snapshot_manifest_conflict(
+        layer=product.layer,
+        snapshot_id=product.snapshot_id,
+        detail=(
+            f"the {scope} declares {trespassing[0].isoformat()} at or after the forward boundary "
+            f"{first_day.isoformat()}, which only the live writer may own"
+        ),
+    )
+
+
+def _closed_half(days: set[date], product: SnapshotProduct) -> set[date]:
+    """Narrow a day set to the half the frozen manifest is allowed to speak for."""
+    if product.forward_first_day is None:
+        return days
+    return {day for day in days if day < product.forward_first_day}
+
+
+def _product_source_ceiling(
+    declared_days: set[date] | None,
+    tier_days: set[date],
+    forward: _ForwardHalf,
+) -> date | None:
+    """Return this product's source ceiling: the newest horizon any of its evidence establishes.
+
+    The manifest's last day alone was right while every product was frozen. It stops being right the
+    moment a forward writer publishes past it: the row would then carry `latest_day` ABOVE its own
+    `source_ceiling_day`, which reads as a lane serving days its source cannot have produced. An
+    availability-proven forward half states its OWN ceiling, which is the only one of the three that
+    can sit ahead of the newest published day and therefore the only one that can show a gap tail.
+    """
+    candidates = {max(declared_days)} if declared_days else set()
+    if tier_days:
+        candidates.add(max(tier_days))
+    if forward.source_ceiling is not None:
+        candidates.add(forward.source_ceiling)
+    return max(candidates) if candidates else None
 
 
 class SnapshotCoverageCache:
@@ -710,7 +1140,10 @@ class SnapshotCoverageCache:
         store: SnapshotStore,
         *,
         now: datetime,
+        policy: CoverageAuthorityPolicy = "census_until_bootstrap",
+        forward_availability: ForwardAvailabilityPort | None = None,
     ) -> SnapshotCoverageCensus:
+        """Return the held census, rebuilding it under the caller's authority policy on a miss."""
         held = self._fresh(now)
         if held is not None:
             return held
@@ -718,7 +1151,7 @@ class SnapshotCoverageCache:
             held = self._fresh(now)
             if held is not None:
                 return held
-            built = build_snapshot_coverage(store)
+            built = build_snapshot_coverage(store, policy=policy, forward_availability=forward_availability)
             self._held = (now, built)
             return built
 
@@ -2000,6 +2433,7 @@ def _read_observed_day(
 
 
 __all__ = [
+    "FORWARD_PARTITION_KIND",
     "MAX_SNAPSHOT_READ_PARTS",
     "PRODUCT_BY_LAYER",
     "SIGNAL_PRODUCT_COLUMNS",
@@ -2007,6 +2441,9 @@ __all__ = [
     "SNAPSHOT_PRODUCTS",
     "SOIL_TEMPERATURE_COLUMNS",
     "SOIL_WETNESS_COLUMNS",
+    "ForwardAvailability",
+    "ForwardAvailabilityPort",
+    "ForwardAvailabilityWithheld",
     "ObjectStoreSnapshotStore",
     "SnapshotCoverageCache",
     "SnapshotCoverageCensus",
@@ -2022,5 +2459,6 @@ __all__ = [
     "resolve_snapshot_evidence_window",
     "resolve_snapshot_product",
     "resolve_snapshot_window",
+    "serves_from_snapshot",
     "snapshot_product_columns",
 ]

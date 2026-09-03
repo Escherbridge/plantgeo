@@ -58,6 +58,25 @@ streams. `rows` is `list[dict]` and the caller that knows its layer narrows it.
 - `src/__tests__/services/parquet-plane-client.test.ts` reads the **same** fixture files through the
   real zod schemas and the real mapping. Both sides consume identical bytes.
 
+## Coverage provenance (`coverage_schema_version: 2`)
+
+Every coverage row now says WHICH evidence proved it. `coverage_authority` is `availability` (one
+`_LATEST.json` GET plus one bounded `generation=<sha>/availability.parquet` GET) or `census` (the
+whole-stream object listing that artifact retires). An `availability` row carries the generation
+digest and pointer key, so an operator can fetch exactly the bytes the row was derived from; a
+`census` row carries nulls and an empty `required_rungs`, because a listing binds no cross-rung
+contract to state.
+
+Two fields are easy to conflate and must not be. `evaluated_through_day` (envelope) is when the
+answer was COMPUTED. `source_ceiling_day` (row) is how far that lane's SOURCE reaches. Before the
+second existed, a lane whose source ends four days back looked current-but-empty — evaluated through
+today, no days near today — which reads as an outage rather than as a normal publication lag.
+
+`withheld_reason` is a closed vocabulary of four: `availability_unpublished`, `availability_stale`,
+`availability_malformed`, `availability_checksum_invalid`. A withheld lane is still PRESENT with
+null bounds and empty ranges; dropping the row would be indistinguishable from a lane that does not
+exist. `coverage_availability.json` is the golden for both halves — one proven lane, one withheld.
+
 ## Changing the contract
 
 Edit the `WIRE` block, `wire_contract.py`, and the fixtures **in one change**, and expect both test

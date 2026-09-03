@@ -135,6 +135,45 @@ export const PARQUET_LANE_NATURES = [
 /** One of the three lane natures above. */
 export type ParquetLaneNature = (typeof PARQUET_LANE_NATURES)[number];
 
+/**
+ * WHICH EVIDENCE decided a lane's days.
+ *
+ * `availability` means the serving side read the lane's immutable `_LATEST.json` pointer and the
+ * `availability.parquet` generation it names -- a published, checksummed statement of what exists.
+ * `census` means it walked the object store instead, which is a live listing and therefore a
+ * weaker claim: a part still being written appears in a walk before it is readable. Nothing in
+ * TypeScript reads either artefact; this field is the serving side reporting which one it used,
+ * and it is carried rather than collapsed because a slider captioned from a walk must not be
+ * presented as though it were reading the published index.
+ */
+export const PARQUET_COVERAGE_AUTHORITIES = ["availability", "census"] as const;
+
+/** One of the two authorities above. */
+export type ParquetCoverageAuthority = (typeof PARQUET_COVERAGE_AUTHORITIES)[number];
+
+/**
+ * Why the serving side refuses to describe a lane AT ALL, in the wire's own declared order.
+ *
+ * Declaration order doubles as precedence: when several rungs of one capability withhold for
+ * different reasons, the earliest member here is the one reported, so the answer is stable
+ * rather than dependent on lane ordering. A second, separately-ordered precedence list would be
+ * a second place for the same decision to drift.
+ *
+ * Each member is a statement about the AVAILABILITY INDEX, never about the data: an unpublished
+ * index says nothing about whether days exist, which is exactly why a lane carrying one may not
+ * be described from census facts instead. See `parquet-slider-capabilities.ts`.
+ */
+export const PARQUET_AVAILABILITY_WITHHELD_REASONS = [
+  "availability_unpublished",
+  "availability_stale",
+  "availability_malformed",
+  "availability_checksum_invalid",
+] as const;
+
+/** One of the four withheld reasons above. */
+export type ParquetAvailabilityWithheldReason =
+  (typeof PARQUET_AVAILABILITY_WITHHELD_REASONS)[number];
+
 /** Fields every one of the three row reads carries. */
 interface ParquetReadBase {
   /** Layer slug, lower-case and hyphenated (`drought-areas`), as the partition path spells it. */
@@ -155,6 +194,15 @@ interface ParquetReadBase {
    * shrink that layer's answer.
    */
   bbox?: string;
+  /**
+   * The caller's cancellation, combined with this read's own timeout by `fetchBounded`.
+   *
+   * Optional so a caller with nothing to cancel (a background job, a test) is unchanged, and
+   * carried on the REQUEST rather than as a second argument so it travels with `...request`
+   * spreads the way `bbox` already does. An abandoned viewport surfaces as `UpstreamAbortedError`
+   * and never as an envelope -- a cancelled read is not a statement about the warehouse.
+   */
+  signal?: AbortSignal;
 }
 
 /** One layer's rows for one day. */
@@ -202,10 +250,52 @@ export interface ParquetLaneCoverage {
    * Disjoint from `gapRanges` by construction: a day cannot both hold a marker and hold nothing.
    */
   governedAbsenceRanges: DayRange[];
+  /** Which evidence produced every field above; see `PARQUET_COVERAGE_AUTHORITIES`. */
+  coverageAuthority: ParquetCoverageAuthority;
+  /**
+   * Checksum of the `availability.parquet` generation this evidence was read from; null under
+   * `census` authority, where there is no generation to name. Provenance for a human tracing a
+   * disputed day back to the exact published artefact -- never compared or recomputed here.
+   */
+  availabilityGenerationSha256: string | null;
+  /** Object key of the `_LATEST.json` pointer that named that generation; null under `census`. */
+  availabilityPointerKey: string | null;
+  /**
+   * Newest day the SOURCE itself can offer, `YYYY-MM-DD`; null when nothing bounds it.
+   *
+   * Distinct from `latestDay`, which is what the warehouse HOLDS. A lane may hold a day past its
+   * source's ceiling only through a bug -- a mislabelled partition, a clock skew, a forecast row
+   * written into an observed stream -- and offering that day would put a date on the slider that
+   * no upstream ever published. The capability gate withholds such a lane rather than clamping
+   * it, because a lane that disagrees with its own source is not trustworthy on the days below
+   * the ceiling either.
+   */
+  sourceCeilingDay: string | null;
+  /**
+   * Rungs the serving side declares this lane must publish before it may be read.
+   *
+   * Carried so the client can LABEL what was proved, not so it can lower the bar: the capability
+   * gate still requires every rung of the ladder, so a lane declaring fewer cannot talk its way
+   * into the census with partial evidence.
+   */
+  requiredRungs: readonly ZoomTier[];
+  /**
+   * Set when the availability index itself cannot be trusted, so nothing below it may be read.
+   * Null on a healthy lane. See `PARQUET_AVAILABILITY_WITHHELD_REASONS`.
+   */
+  withheldReason: ParquetAvailabilityWithheldReason | null;
 }
 
 /** The whole warehouse's census: one entry per physical lane/rung, with no viewport. */
 export interface ParquetWarehouseCoverage {
+  /**
+   * The body shape the serving side wrote, echoed rather than assumed.
+   *
+   * Carried even though `decodeCoverage` only ever accepts one value of it, because the number is
+   * what an operator needs to see in a log line when a deploy half-lands: "the slider blanked"
+   * and "the slider blanked because the service is still on version 1" are different pages.
+   */
+  coverageSchemaVersion: number;
   /**
    * When the service computed this census, as an opaque ISO-8601 instant. Load-bearing because the
    * answer is memoized for minutes: a caller captioning it as "now" would overstate its freshness.
@@ -238,6 +328,16 @@ export interface ParquetWarehouseCoverage {
  *     short array would read as "the missing days are fine".
  *  7. Coverage is per physical lane AND per tier. A part on z13 never proves z9/z5/z0 readable,
  *     and a generic signal part never proves one derived product or depth exists.
+ *  8. Every coverage lane names its own AUTHORITY and may withhold itself. The six fields that
+ *     carry this (`coverage_authority`, `availability_generation_sha256`,
+ *     `availability_pointer_key`, `source_ceiling_day`, `required_rungs`, `withheld_reason`) are
+ *     mandatory on every lane, `null` where they do not apply -- an omitted field is a contract
+ *     break, not a lane that happens to be healthy. Nothing here reads `_LATEST.json` or
+ *     `availability.parquet`; those stay entirely on the serving side and reach this client only
+ *     as the six fields above.
+ *  9. The coverage body names its own shape in `coverage_schema_version`, and this client accepts
+ *     exactly one value of it. See `COVERAGE_SCHEMA_VERSION` below; bumping it is a change to
+ *     `wire_contract.py`, `parquet_ops/wire.py`, the fixtures and this file in ONE commit.
  * ------------------------------------------------------------------------- */
 
 const WIRE = {
@@ -298,7 +398,42 @@ const wireWindowSchema = z.object({ days: z.array(wireEnvelopeSchema) });
 const wireCalendarDaySchema = z.string().regex(CALENDAR_DAY_PATTERN);
 const wireDayRangeSchema = z.object({ from: wireCalendarDaySchema, to: wireCalendarDaySchema });
 
+/**
+ * One rung of the ladder, spelled ONCE so `zoom` and `required_rungs` cannot drift apart.
+ *
+ * Literals rather than `z.number()`, so a rung the ladder does not publish is a contract error
+ * here instead of a partition prefix nobody wrote. The proof that these ARE the ladder's rungs
+ * is `decodeCoverage` below: it assigns them to `ZoomTier`-typed fields, so a literal added here
+ * that `zoom-tiers.ts` does not publish fails the build.
+ */
+const wireZoomTierSchema = z.union([
+  z.literal(0),
+  z.literal(5),
+  z.literal(9),
+  z.literal(13),
+]);
+
+/** Lower-case hex, exactly as `availability.parquet` generations are named. */
+const wireSha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
+
+/**
+ * The coverage body shape this client is written against; `COVERAGE_SCHEMA_VERSION` in
+ * `wire_contract.py` and `parquet_ops/wire.py`, which must be bumped in the same change.
+ *
+ * `1` was the field set frozen before availability indexes existed; `2` adds the six provenance
+ * fields. REJECTED rather than logged when it disagrees: a version-1 body carries no
+ * `withheld_reason` at all, and reading that silence as "every lane's index is healthy" is exactly
+ * the fail-open this decode exists to close. A serving side that has not been redeployed yet must
+ * blank the slider, not quietly narrow it. The rejection lives in `decodeCoverage` and names the
+ * number, so the operator reading the log sees "still on version 1" rather than "contract drift".
+ */
+const COVERAGE_SCHEMA_VERSION = 2;
+
 const wireCoverageSchema = z.object({
+  // Decoded as a plain integer and gated separately in `decodeCoverage`, not pinned with
+  // `z.literal` here: a zod failure would report "the census does not match the contract" for what
+  // is really a half-landed deploy, and the version number is the one fact that says which.
+  coverage_schema_version: z.number().int(),
   generated_at: z.string(),
   evaluated_through_day: wireCalendarDaySchema,
   lanes: z.array(
@@ -306,12 +441,20 @@ const wireCoverageSchema = z.object({
       layer: z.string(),
       nature: z.enum(PARQUET_LANE_NATURES),
       kind: z.enum(PARQUET_PARTITION_KINDS),
-      zoom: z.union([z.literal(0), z.literal(5), z.literal(9), z.literal(13)]),
+      zoom: wireZoomTierSchema,
       earliest_day: wireCalendarDaySchema.nullable(),
       latest_day: wireCalendarDaySchema.nullable(),
       published_ranges: z.array(wireDayRangeSchema),
       gap_ranges: z.array(wireDayRangeSchema),
       governed_absence_ranges: z.array(wireDayRangeSchema),
+      coverage_authority: z.enum(PARQUET_COVERAGE_AUTHORITIES),
+      availability_generation_sha256: wireSha256Schema.nullable(),
+      // Mirrors `wire_contract.py` exactly, blankness included: a second, stricter opinion here
+      // would reject a body the serving side considers valid, which is the drift the freeze forbids.
+      availability_pointer_key: z.string().nullable(),
+      source_ceiling_day: wireCalendarDaySchema.nullable(),
+      required_rungs: z.array(wireZoomTierSchema),
+      withheld_reason: z.enum(PARQUET_AVAILABILITY_WITHHELD_REASONS).nullable(),
     })
   ),
 });
@@ -455,7 +598,14 @@ function decodeCoverage(payload: unknown): ParquetWarehouseCoverage {
       "Parquet plane answered a coverage census that does not match the published contract"
     );
   }
+  if (parsed.data.coverage_schema_version !== COVERAGE_SCHEMA_VERSION) {
+    throw new ParquetPlaneContractError(
+      `Parquet plane answered coverage schema version ${parsed.data.coverage_schema_version}; ` +
+        `this client reads only version ${COVERAGE_SCHEMA_VERSION}`
+    );
+  }
   return {
+    coverageSchemaVersion: parsed.data.coverage_schema_version,
     generatedAt: parsed.data.generated_at,
     evaluatedThroughDay: parsed.data.evaluated_through_day,
     lanes: parsed.data.lanes.map((lane) => ({
@@ -468,6 +618,12 @@ function decodeCoverage(payload: unknown): ParquetWarehouseCoverage {
       publishedRanges: lane.published_ranges,
       gapRanges: lane.gap_ranges,
       governedAbsenceRanges: lane.governed_absence_ranges,
+      coverageAuthority: lane.coverage_authority,
+      availabilityGenerationSha256: lane.availability_generation_sha256,
+      availabilityPointerKey: lane.availability_pointer_key,
+      sourceCeilingDay: lane.source_ceiling_day,
+      requiredRungs: lane.required_rungs,
+      withheldReason: lane.withheld_reason,
     })),
   };
 }
@@ -500,18 +656,39 @@ function applyReadBase(url: URL, request: ParquetReadBase): void {
   if (request.bbox !== undefined) url.searchParams.set(WIRE.params.bbox, request.bbox);
 }
 
-/** GET with the shared bounds; `revalidateSeconds` omitted means `cache: "no-store"`. */
-async function readJson(
-  url: URL,
-  maxBytes: number,
-  timeoutMs: number,
-  revalidateSeconds?: number
-): Promise<unknown> {
+/** Everything a read may bound itself by, so `readJson` keeps one parameter per concern. */
+interface ReadBounds {
+  maxBytes: number;
+  timeoutMs: number;
+  /** Omitted means `cache: "no-store"`. */
+  revalidateSeconds?: number;
+  /** The caller's cancellation; the timeout above still applies either way. */
+  signal?: AbortSignal;
+}
+
+/** GET with the shared bounds. */
+async function readJson(url: URL, bounds: ReadBounds): Promise<unknown> {
   return fetchBoundedJson(
     url,
     { method: "GET", headers: { Accept: "application/json" } },
-    { maxBytes, timeoutMs, ...(revalidateSeconds === undefined ? {} : { revalidateSeconds }) }
+    {
+      maxBytes: bounds.maxBytes,
+      timeoutMs: bounds.timeoutMs,
+      ...(bounds.revalidateSeconds === undefined
+        ? {}
+        : { revalidateSeconds: bounds.revalidateSeconds }),
+      ...(bounds.signal === undefined ? {} : { signal: bounds.signal }),
+    }
   );
+}
+
+/** The byte/time/cancellation bounds every ROW read shares. */
+function rowReadBounds(request: ParquetReadBase): ReadBounds {
+  return {
+    maxBytes: MAX_ROW_RESPONSE_BYTES,
+    timeoutMs: ROW_READ_TIMEOUT_MS,
+    ...(request.signal === undefined ? {} : { signal: request.signal }),
+  };
 }
 
 /**
@@ -526,7 +703,7 @@ export async function getParquetLayerDay(
   const url = endpoint(WIRE.routes.day);
   applyReadBase(url, request);
   url.searchParams.set(WIRE.params.day, requireCalendarDay(request.day, "day"));
-  return decodeEnvelope(await readJson(url, MAX_ROW_RESPONSE_BYTES, ROW_READ_TIMEOUT_MS));
+  return decodeEnvelope(await readJson(url, rowReadBounds(request)));
 }
 
 /**
@@ -549,7 +726,7 @@ export async function getParquetLayerDayWindow(
   applyReadBase(url, request);
   url.searchParams.set(WIRE.params.firstDay, firstDay);
   url.searchParams.set(WIRE.params.lastDay, lastDay);
-  const payload = await readJson(url, MAX_ROW_RESPONSE_BYTES, ROW_READ_TIMEOUT_MS);
+  const payload = await readJson(url, rowReadBounds(request));
   return decodeWindow(payload, firstDay, lastDay);
 }
 
@@ -567,7 +744,7 @@ export async function getParquetLatestRelease(
   const url = endpoint(WIRE.routes.release);
   applyReadBase(url, request);
   url.searchParams.set(WIRE.params.asOfDay, requireCalendarDay(request.asOfDay, "asOfDay"));
-  return decodeEnvelope(await readJson(url, MAX_ROW_RESPONSE_BYTES, ROW_READ_TIMEOUT_MS));
+  return decodeEnvelope(await readJson(url, rowReadBounds(request)));
 }
 
 /**
@@ -576,16 +753,20 @@ export async function getParquetLatestRelease(
  * No bbox or requested zoom: this one answer includes every rung and is shared by every viewport.
  * Filtering the request on either axis would fragment the cache and let one rung stand in for the
  * others at the capability gate.
+ *
+ * Takes NO caller signal, unlike the three row reads. The answer is single-flighted and memoized
+ * across every session, so one caller's cancellation would abort an in-flight read that other
+ * callers are already awaiting -- a browser tab closing would blank the slider for everyone else.
+ * The 8-second budget is the only bound this read needs.
  */
 export async function getParquetWarehouseCoverage(): Promise<ParquetWarehouseCoverage> {
   coverageRequest ??= (async () => {
     const url = endpoint(WIRE.routes.coverage);
-    const payload = await readJson(
-      url,
-      MAX_COVERAGE_RESPONSE_BYTES,
-      COVERAGE_TIMEOUT_MS,
-      COVERAGE_REVALIDATE_SECONDS
-    );
+    const payload = await readJson(url, {
+      maxBytes: MAX_COVERAGE_RESPONSE_BYTES,
+      timeoutMs: COVERAGE_TIMEOUT_MS,
+      revalidateSeconds: COVERAGE_REVALIDATE_SECONDS,
+    });
     return decodeCoverage(payload);
   })();
   const request = coverageRequest;

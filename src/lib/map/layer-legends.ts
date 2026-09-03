@@ -16,8 +16,13 @@
  */
 
 import {
-  FIRE_BRIGHTNESS_COLOR_STOPS,
-  FIRE_CONTAINMENT_COLOR_STOPS,
+  FIRE_DETECTION_FRP_COLOR_STOPS,
+  FIRE_DETECTION_HIGH_CONFIDENCE_RING_COLOR,
+  FIRE_DETECTION_HIGH_CONFIDENCE_RING_LABEL,
+  FIRE_DETECTION_LOW_CONFIDENCE_RING_COLOR,
+  FIRE_DETECTION_LOW_CONFIDENCE_RING_LABEL,
+  FIRE_DETECTION_NO_FRP_COLOR,
+  FIRE_DETECTION_NO_FRP_LABEL,
 } from "@/components/map/layers/FireLayer";
 import { DROUGHT_DRAWN_CLASSES } from "@/components/map/layers/DroughtLayer";
 import { GAUGE_READING_COLORS, WELL_TREND_COLORS } from "@/components/map/layers/WaterLayer";
@@ -253,22 +258,36 @@ function temperatureRampStops(): LegendRampStop[] {
 
 /** Specs that do not depend on any display mode. */
 const STATIC_LAYER_LEGENDS: Partial<Record<LayerToggleId, LayerLegendSpec>> = {
+  // One feed, one encoding, since the 2026-09-01 Parquet cutover. The containment ramp
+  // legended here until then described NIFC incidents that only `/api/fires` ever produced,
+  // and no map surface calls that route any more.
   fire: {
-    title: "Active fire",
+    title: "Fire detections",
     blocks: [
       {
         kind: "ramp",
-        caption: "Incidents: containment",
-        stops: FIRE_CONTAINMENT_COLOR_STOPS,
+        caption: "Cell total fire radiative power",
+        stops: FIRE_DETECTION_FRP_COLOR_STOPS,
       },
       {
-        kind: "ramp",
-        caption: "Detections: brightness",
-        stops: FIRE_BRIGHTNESS_COLOR_STOPS,
+        kind: "classes",
+        shape: "dot",
+        caption: "Off the ramp",
+        classes: [{ color: FIRE_DETECTION_NO_FRP_COLOR, label: FIRE_DETECTION_NO_FRP_LABEL }],
+      },
+      {
+        kind: "swatch",
+        label: FIRE_DETECTION_HIGH_CONFIDENCE_RING_LABEL,
+        outlineColor: FIRE_DETECTION_HIGH_CONFIDENCE_RING_COLOR,
+      },
+      {
+        kind: "swatch",
+        label: FIRE_DETECTION_LOW_CONFIDENCE_RING_LABEL,
+        outlineColor: FIRE_DETECTION_LOW_CONFIDENCE_RING_COLOR,
       },
       {
         kind: "note",
-        text: "Dot size: incident size (detections: confidence).",
+        text: "Dot size: detections aggregated into the cell.",
       },
     ],
   },

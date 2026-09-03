@@ -25,8 +25,8 @@
   },
   "note": "Hard-cut every eligible live map and tRPC reader to bounded day+bbox+zoom Parquet reads with explicit terminal states. Fire is first because production currently advertises Parquet capability while drawing through the legacy global PostgreSQL route.",
   "partitions": {
-    "computed_at": "2026-09-01T00:00:00-06:00",
-    "computed_at_commit": "269cc4224ff419c273bed5b660837c5b7f66caa3",
+    "computed_at": "2026-09-02T00:00:00-06:00",
+    "computed_at_commit": "cb12d94e77104a53c76e441f4de7d38d60fa7ae1",
     "confidence": "verified",
     "shared_writes": [
       "src/lib/server/services/parquet-plane-client.ts and capability registries are serialized owners; no other track edits them until r2 lands.",
@@ -125,6 +125,79 @@
         "status": "planned"
       }
     ],
-    "integration_slice": "r4"
+    "integration_slice": "r4",
+    "orchestration_wave1_20260902": {
+      "computed_at": "2026-09-02T00:00:00-06:00",
+      "computed_at_commit": "cb12d94e77104a53c76e441f4de7d38d60fa7ae1",
+      "wave": "wave1-20260902",
+      "rule": "shared working tree, disjoint write sets per slice, no builds/tests inside slices, one orchestrator sweep at the join",
+      "serialized_overlaps": [
+        "src/lib/server/services/parquet-trpc-readers.ts and parquet-climate-field.ts: r2b (wave 1) then m1 (wave 2)",
+        "src/components/map/layers/FireLayer.tsx: r1 (wave 1) then m3 (wave 2)",
+        "src/hooks/useViewportProxiedLayers.ts: r2b (wave 1) then conformity c2 (later)",
+        "src/__tests__/services/parquet-trpc-readers.test.ts: r2b (wave 1), not r1"
+      ],
+      "pre_declared_seams": [
+        "ParquetViewportRead.signal?: AbortSignal added by r2b, passed by r1 from wildfire.ts",
+        "coverage wire fields emitted by r2a and decoded by r2b: coverage_authority, availability_generation_sha256, availability_pointer_key, source_ceiling_day, required_rungs, withheld_reason"
+      ],
+      "write_sets": {
+        "r1": [
+          "src/hooks/useParquetFireDetections.ts",
+          "src/lib/environmental/parquet-fire-presentation.ts",
+          "src/components/map/LayerManager.tsx",
+          "src/components/panels/FireDetails.tsx",
+          "src/components/map/layers/FireLayer.tsx",
+          "src/components/map/HoverTooltip.tsx",
+          "src/lib/map/layer-legends.ts",
+          "src/stores/useMetricAtDate.ts",
+          "src/lib/server/trpc/routers/wildfire.ts",
+          "src/lib/server/AGENTS.md",
+          "src/components/map/AGENTS.md",
+          "src/hooks/AGENTS.md",
+          "src/__tests__/hooks/useParquetFireDetections.test.ts",
+          "src/__tests__/lib/environmental/parquet-fire-presentation.test.ts",
+          "src/__tests__/components/LayerManager.test.tsx",
+          "src/__tests__/components/viewport-proxied-query-sharing.test.tsx",
+          "src/__tests__/components/dark-mode-layer-visibility.test.tsx",
+          "src/__tests__/stores/useMetricAtDate.test.tsx",
+          "conductor/tracks/parquet_reader_cutover_acceptance_20260901/evidence/r1-fire-hard-cut.md"
+        ],
+        "r2a": [
+          "services/agri-data-service/src/agri_data_service/parquet_ops/availability_coverage.py",
+          "services/agri-data-service/src/agri_data_service/parquet_ops/coverage.py",
+          "services/agri-data-service/src/agri_data_service/parquet_ops/snapshot_products.py",
+          "services/agri-data-service/src/agri_data_service/parquet_ops/wire.py",
+          "services/agri-data-service/src/agri_data_service/parquet_ops/AGENTS.md",
+          "services/agri-data-service/src/agri_data_service/interface/http/parquet_routes.py",
+          "services/agri-data-service/src/agri_data_service/config.py",
+          "services/agri-data-service/tests/parquet_ops/test_availability_coverage.py",
+          "services/agri-data-service/tests/parquet_ops/test_coverage_census.py",
+          "services/agri-data-service/tests/parquet_ops/test_snapshot_products.py",
+          "services/agri-data-service/tests/interface/test_parquet_routes.py",
+          "services/agri-data-service/tests/contract/",
+          "services/agri-data-service/tests/test_config.py"
+        ],
+        "r2b": [
+          "src/lib/server/services/parquet-plane-client.ts",
+          "src/lib/server/services/parquet-envelope.ts",
+          "src/lib/server/services/parquet-slider-capabilities.ts",
+          "src/lib/server/services/parquet-trpc-readers.ts",
+          "src/lib/server/services/parquet-climate-field.ts",
+          "src/lib/server/http/bounded-upstream.ts",
+          "src/lib/server/trpc/routers/environmental.ts",
+          "src/hooks/useViewportProxiedLayers.ts",
+          "src/stores/useTimeSliderStore.ts",
+          "src/lib/server/services/AGENTS.md",
+          "src/__tests__/services/parquet-plane-client.test.ts",
+          "src/__tests__/services/parquet-slider-capabilities.test.ts",
+          "src/__tests__/services/parquet-trpc-readers.test.ts",
+          "src/__tests__/services/parquet-climate-field.test.ts",
+          "src/__tests__/lib/server/http/",
+          "src/__tests__/components/TimeSliderCapabilitiesLoader.test.tsx",
+          "src/__tests__/components/LayerTimeSlider.test.tsx"
+        ]
+      }
+    }
   }
 }

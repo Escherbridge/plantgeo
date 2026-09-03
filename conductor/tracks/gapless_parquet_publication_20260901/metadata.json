@@ -20,9 +20,9 @@
   "note": "Give every time-bearing product one durable source owner for forward refresh, repair and coverage status under the stateful executor. Historical completeness does not satisfy this track.",
   "production_authorization": "Owner directive 2026-09-02 authorizes an executor-only repository release and eventual controlled removal of the six inventoried Railway writer objects. Feature-branch activation/removal remains forbidden. After merge, the exact main executor deployment must reach SUCCESS and the orchestration task must explicitly resume the production handoff before any fencing, activation, or service deletion.",
   "partitions": {
-    "computed_at": "2026-09-01T00:00:00-06:00",
-    "computed_at_commit": "269cc4224ff419c273bed5b660837c5b7f66caa3",
-    "confidence": "planned_from_production_evidence",
+    "computed_at": "2026-09-02T00:00:00-06:00",
+    "computed_at_commit": "cb12d94e77104a53c76e441f4de7d38d60fa7ae1",
+    "confidence": "verified",
     "shared_writes": [
       "pipeline/direct/ and pipeline/parquet/lane_registry.py are serialized registries with one owner at a time; p0a is the sole interface/cli/data.py owner for the availability bootstrap, and p5 depends transitively on p0a without editing that file.",
       "gapless p0a owns the availability schema/publisher/bootstrap; reader r2 may consume the frozen artifact only after p0a lands.",
@@ -250,6 +250,62 @@
         "status": "blocked"
       }
     ],
-    "integration_slice": "p6"
+    "integration_slice": "p6",
+    "orchestration_wave1_20260902": {
+      "computed_at": "2026-09-02T00:00:00-06:00",
+      "computed_at_commit": "cb12d94e77104a53c76e441f4de7d38d60fa7ae1",
+      "wave": "wave1-20260902",
+      "rule": "shared working tree, disjoint write sets per slice, no builds/tests inside slices, one orchestrator sweep at the join",
+      "serialized_overlaps": [
+        "src/lib/server/services/parquet-trpc-readers.ts and parquet-climate-field.ts: r2b (wave 1) then m1 (wave 2)",
+        "src/components/map/layers/FireLayer.tsx: r1 (wave 1) then m3 (wave 2)",
+        "src/hooks/useViewportProxiedLayers.ts: r2b (wave 1) then conformity c2 (later)",
+        "src/__tests__/services/parquet-trpc-readers.test.ts: r2b (wave 1), not r1"
+      ],
+      "pre_declared_seams": [
+        "ParquetViewportRead.signal?: AbortSignal added by r2b, passed by r1 from wildfire.ts",
+        "coverage wire fields emitted by r2a and decoded by r2b: coverage_authority, availability_generation_sha256, availability_pointer_key, source_ceiling_day, required_rungs, withheld_reason"
+      ],
+      "write_sets": {
+        "p1": [
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/climate/",
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/AGENTS.md",
+          "services/agri-data-service/src/agri_data_service/pipeline/parquet/lane_registry.py",
+          "services/agri-data-service/src/agri_data_service/execution/job_executor_service.py",
+          "services/agri-data-service/src/agri_data_service/execution/AGENTS.md",
+          "services/agri-data-service/src/agri_data_service/execution/weather_observations/nasa_power.py",
+          "services/agri-data-service/tests/direct/",
+          "services/agri-data-service/tests/parquet/test_lane_registry.py",
+          "services/agri-data-service/tests/test_job_executor_service.py"
+        ],
+        "p4a": [
+          "services/agri-data-service/src/agri_data_service/pipeline/parquet/availability_extension.py",
+          "services/agri-data-service/src/agri_data_service/pipeline/parquet/gap_fill.py",
+          "services/agri-data-service/src/agri_data_service/pipeline/parquet/availability_index.py",
+          "services/agri-data-service/src/agri_data_service/pipeline/parquet/AGENTS.md",
+          "services/agri-data-service/src/agri_data_service/pipeline/AGENTS.md",
+          "services/agri-data-service/tests/parquet/test_availability_extension.py",
+          "services/agri-data-service/tests/parquet/test_gap_fill.py",
+          "services/agri-data-service/tests/parquet/test_availability_publication.py",
+          "services/agri-data-service/tests/parquet/test_availability_index.py"
+        ],
+        "p5-fix": [
+          "services/agri-data-service/src/agri_data_service/jobs/matview_refresh.py",
+          "services/agri-data-service/src/agri_data_service/jobs/AGENTS.md",
+          "services/agri-data-service/src/agri_data_service/sql/jobs/",
+          "services/agri-data-service/src/agri_data_service/ingest/wfigs.py",
+          "services/agri-data-service/src/agri_data_service/ingest/arcgis.py",
+          "services/agri-data-service/src/agri_data_service/ingest/http.py",
+          "services/agri-data-service/src/agri_data_service/ingest/policy.py",
+          "services/agri-data-service/src/agri_data_service/ingest/AGENTS.md",
+          "services/agri-data-service/tests/test_matview_refresh.py",
+          "services/agri-data-service/tests/test_jobs_matview_refresh_preflight.py",
+          "services/agri-data-service/tests/test_jobs_matview_refresh_state_agri_db.py",
+          "services/agri-data-service/tests/test_ingest_wfigs.py",
+          "services/agri-data-service/tests/test_ingest_arcgis.py",
+          "conductor/tracks/gapless_parquet_publication_20260901/evidence/p3-runtime-blockers-repair.md"
+        ]
+      }
+    }
   }
 }

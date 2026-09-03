@@ -32,6 +32,11 @@ and shared capability registry have one serialized owner.
 - [ ] Prove parity and no-live-request evidence.
 - [ ] Trace cold and warm capability reads and prove zero historical LIST/data-part operations.
 - [ ] Delete or quarantine the obsolete fire REST route and hook.
+- [ ] Surface `coverageAuthority` and `sourceCeilingDay` in the slider caption
+      (`LayerRow`/`layer-coverage-track`) — published by the capability service 2026-09-02, no UI
+      consumer yet. A row read from an object-store walk currently captions identically to one
+      proved from the checksummed availability index, and a lane held back by its source's ceiling
+      captions identically to one that is simply behind.
 - [ ] Run the focused TypeScript, lint and reader suites once after all reader changes.
 - [ ] Obtain a separate reviewer verdict.
 

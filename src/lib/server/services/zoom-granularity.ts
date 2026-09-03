@@ -36,3 +36,21 @@ export function resolveZoomGranularity(
   if (zoom >= tiers.regionalMinZoom) return "regional-average";
   return "coarse-average";
 }
+
+/**
+ * The same vocabulary read off a PUBLISHED RUNG rather than off a map zoom.
+ *
+ * The Parquet readers do not choose a band from a threshold: the warehouse publishes exactly four
+ * rungs and `resolveZoomTier` has already picked one, so the band is a property of the rung that
+ * answered. Three call sites spelled this as an inline `zoomTier === 13 ? ... : zoomTier === 9 ?
+ * ...` chain, which is three places for a future fifth rung to be forgotten in -- and each one
+ * captions a panel, so a missed rung would describe an aggregate as an individual observation.
+ *
+ * Deliberately NOT expressed through `resolveZoomGranularity`: that function takes a zoom and a
+ * per-layer threshold pair, and a rung is neither.
+ */
+export function granularityForZoomTier(zoomTier: number): ZoomGranularity {
+  if (zoomTier >= 13) return "detail";
+  if (zoomTier >= 9) return "regional-average";
+  return "coarse-average";
+}

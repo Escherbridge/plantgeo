@@ -122,6 +122,16 @@ def snapshot_unpublished(*, layer: str, snapshot_id: str, detail: str) -> Servin
     )
 
 
+def snapshot_manifest_conflict(*, layer: str, snapshot_id: str, detail: str) -> ServingRefusalError:
+    """A closed manifest claims a day that only the LIVE forward writer may own."""
+    return ServingRefusalError(
+        "snapshot_manifest_conflict",
+        f"{layer} snapshot {snapshot_id} claims a day past its own forward boundary ({detail}); the manifest is "
+        "silent above that boundary by construction, so a day it names there was verified by nothing and "
+        "publishing it would present an unchecked claim as closed evidence",
+    )
+
+
 def snapshot_schema_mismatch(*, layer: str, key: str, detail: str) -> ServingRefusalError:
     """One immutable product object does not carry the exact allowlisted serving schema."""
     return ServingRefusalError(

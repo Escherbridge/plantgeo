@@ -407,9 +407,8 @@ export interface LiveLayerDayReport {
    *
    * Never `!isPlaceholderData`. That flag is false on ERROR as well as on success, so a failed
    * day would be recorded as the day in hand -- and then named over the NEXT request's retained
-   * frame, which paints the day before it. `useFireData.dataDate` gets this right by moving only
-   * when a fetch for that day actually lands; `drawnDayFlagsFromQuery` is how a react-query read
-   * says the same thing.
+   * frame, which paints the day before it. `drawnDayFlagsFromQuery` is how a react-query read
+   * says "this request landed" positively, rather than by the absence of a placeholder.
    */
   hasLandedForRequestedDate: boolean;
   /**
@@ -457,9 +456,9 @@ export function drawnDayFlagsFromQuery(
  * `resolvedDate` documents above -- so a hidden layer would report itself permanently mid-load.
  *
  * `isLoading` is published narrowed to a request whose answer is NOT yet on the canvas. A
- * background refresh of the day already painted -- react-query's `staleTime` expiring, or
- * `useFireData`'s two-minute poll -- is a fetch nobody is waiting on, and reporting it would
- * blink an "Updating" mark over an idle map every two minutes.
+ * background refresh of the day already painted -- react-query's `staleTime` expiring, or a
+ * refetch on window focus -- is a fetch nobody is waiting on, and reporting it would blink an
+ * "Updating" mark over an idle map.
  */
 export function usePublishedDrawnLayerDays(
   publisher: DrawnLayerDayPublisher,

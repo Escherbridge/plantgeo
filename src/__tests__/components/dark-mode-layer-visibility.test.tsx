@@ -3,6 +3,7 @@ import { act, render } from "@testing-library/react";
 import type { Map as MapLibreMap } from "maplibre-gl";
 import { FireLayer } from "@/components/map/layers/FireLayer";
 import { WaterLayer } from "@/components/map/layers/WaterLayer";
+import type { FireDetectionCollection } from "@/lib/environmental/parquet-fire-presentation";
 
 /**
  * Reproduces the reported bug: a hard load in dark mode leaves fire/water
@@ -78,13 +79,26 @@ function createFakeMap() {
 
 type FakeMap = ReturnType<typeof createFakeMap>;
 
-const FIRE_GEOJSON: GeoJSON.FeatureCollection = {
+/**
+ * One published fire-detection cell, in the vocabulary `FireLayer` has painted since the
+ * 2026-09-01 Parquet cutover. The `brightness`/`confidence` pair this carried before came
+ * from `/api/fires`, which no map surface calls any more.
+ */
+const FIRE_GEOJSON: FireDetectionCollection = {
   type: "FeatureCollection",
   features: [
     {
       type: "Feature",
       geometry: { type: "Point", coordinates: [-116.2, 43.6] },
-      properties: { brightness: 400, confidence: 80 },
+      properties: {
+        detectionCount: 4,
+        frpSum: 120.5,
+        frpObservationCount: 4,
+        highConfidenceDetectionCount: 2,
+        observedDay: "2026-08-28",
+        newestObservedAt: "2026-08-28T19:12:00Z",
+        zoomTier: 9,
+      },
     },
   ],
 };

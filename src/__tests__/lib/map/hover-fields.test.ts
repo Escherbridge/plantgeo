@@ -41,49 +41,96 @@ describe("HOVERABLE_LAYER_IDS", () => {
   });
 });
 
+/**
+ * The 2026-09-01 Parquet cutover replaced the per-detection FIRMS point with a published CELL:
+ * a square of ground carrying counts and a summed radiative power over one observed day, not one
+ * satellite's one reading. None of the old properties (`confidence`, `frp`, `brightness`,
+ * `satellite`, `acqDate`/`acqTime`) is emitted any more -- see
+ * `src/lib/environmental/parquet-fire-presentation.ts` for the shape the layer actually draws.
+ */
 describe("formatHoverContent: published-fire-circles", () => {
-  it("formats a full FIRMS detection", () => {
+  it("formats a full published fire cell", () => {
     const content = formatHoverContent("published-fire-circles", {
-      confidence: 79.6,
-      frp: 12.34,
-      brightness: 320.9,
-      satellite: "VIIRS",
-      observedAt: new Date(Date.now() - 3 * 3600_000).toISOString(),
+      detectionCount: 1234,
+      frpSum: 12.34,
+      frpObservationCount: 9,
+      highConfidenceDetectionCount: 87,
+      observedDay: "2026-07-14",
+      newestObservedAt: new Date(Date.now() - 3 * 3600_000).toISOString(),
+      zoomTier: 9,
     });
-    expect(content?.title).toBe("Fire detection");
-    expect(content?.lines).toContain("Confidence: 80%");
-    expect(content?.lines).toContain("FRP: 12.3 MW");
-    expect(content?.lines).toContain("Brightness: 321 K");
-    expect(content?.lines).toContain("Satellite: VIIRS");
-    expect(content?.lines.find((l) => l.startsWith("Detected"))).toMatch(/3h ago/);
+    expect(content?.title).toBe("Fire detection cell");
+    expect(content?.lines).toContain("Detections: 1,234");
+    expect(content?.lines).toContain("High confidence: 87");
+    expect(content?.lines).toContain("Total FRP: 12.3 MW");
+    expect(content?.lines).toContain("Observed: 2026-07-14");
+    expect(content?.lines).toContain("Aggregated at z9");
+    expect(content?.lines.find((l) => l.startsWith("Newest detection"))).toMatch(/3h ago/);
     assertNoSentinels(content);
   });
 
-  it("shows the detection's own timestamp, not only its relative age", () => {
-    const detected = formatHoverContent("published-fire-circles", {
-      confidence: 80,
-      observedAt: "2026-07-14T09:30:00Z",
-    })?.lines.find((l) => l.startsWith("Detected"));
-    expect(detected).toMatch(/2026/);
-    expect(detected).toMatch(/\d:\d{2}/);
+  it("shows the newest detection's own timestamp, not only its relative age", () => {
+    const newest = formatHoverContent("published-fire-circles", {
+      detectionCount: 4,
+      newestObservedAt: "2026-07-14T09:30:00Z",
+    })?.lines.find((l) => l.startsWith("Newest detection"));
+    expect(newest).toMatch(/2026/);
+    expect(newest).toMatch(/\d:\d{2}/);
   });
 
-  it("falls back to acqDate+acqTime when observedAt is absent", () => {
-    const content = formatHoverContent("published-fire-circles", {
-      acqDate: "2020-01-01",
-      acqTime: "1200",
+  // A cell whose detections all lacked an FRP reading has `frpSum: 0` from the SUM, which is not
+  // the same claim as "these fires radiated no power". The observation count is what tells the
+  // two apart, so it -- and not the sum's own value -- decides whether a number is shown.
+  it("captions an unobserved FRP rather than reporting the sum's zero", () => {
+    const unobserved = formatHoverContent("published-fire-circles", {
+      detectionCount: 6,
+      frpSum: 0,
+      frpObservationCount: 0,
     });
-    expect(content?.lines.find((l) => l.startsWith("Detected"))).toMatch(/2020/);
-    assertNoSentinels(content);
+    expect(unobserved?.lines).toContain("Total FRP: Not reported");
+    expect(unobserved?.lines.some((l) => l.includes("MW"))).toBe(false);
+
+    const measured = formatHoverContent("published-fire-circles", {
+      detectionCount: 6,
+      frpSum: 0,
+      frpObservationCount: 6,
+    });
+    expect(measured?.lines).toContain("Total FRP: 0.0 MW");
   });
 
-  it("omits missing fields instead of rendering sentinels", () => {
+  // The file-wide rule: a feature carrying none of the fields yields NO tooltip rather than a
+  // shell of empty labels. The FRP caption is the only line with a value for an absent field, so
+  // it is conditional on `detectionCount` -- a cell that exists always has one. Unconditional, it
+  // turned an empty property bag into a one-line tooltip that asserted nothing.
+  it("omits missing fields instead of rendering sentinels, and an empty bag yields no tooltip", () => {
     const content = formatHoverContent("published-fire-circles", {
-      confidence: null,
-      frp: undefined,
-      brightness: NaN,
+      detectionCount: null,
+      highConfidenceDetectionCount: undefined,
+      frpSum: NaN,
+      observedDay: "null",
+      newestObservedAt: undefined,
+      zoomTier: undefined,
     });
     expect(content).toBeNull();
+
+    // A cell that DOES exist still says its FRP is unreported rather than staying silent about it.
+    const counted = formatHoverContent("published-fire-circles", {
+      detectionCount: 6,
+      observedDay: "null",
+    });
+    expect(counted?.lines).toEqual(["Detections: 6", "Total FRP: Not reported"]);
+    assertNoSentinels(counted);
+  });
+
+  // One formatter, shared with `FireLayer`'s click popup: the two used to render the same six
+  // fields differently ("not reported" against "Not reported", `1234.6 MW` against `1,234.6 MW`).
+  it("groups a large FRP sum the way the popup does", () => {
+    const content = formatHoverContent("published-fire-circles", {
+      detectionCount: 12,
+      frpSum: 1234.56,
+      frpObservationCount: 12,
+    });
+    expect(content?.lines).toContain("Total FRP: 1,234.6 MW");
   });
 });
 

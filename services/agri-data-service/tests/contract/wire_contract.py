@@ -30,6 +30,22 @@ WIRE_STATES = ("published", "governed_absence", "day_not_written", "lane_never_w
 LANE_NATURES = ("daily_series", "release_series", "static_lookup")
 PARTITION_KINDS = ("observed", "forecast")
 
+#: Which evidence proved one coverage row. `availability` is one pointer GET plus one bounded
+#: generation GET; `census` is the whole-stream object listing that artifact replaces.
+COVERAGE_AUTHORITIES = ("availability", "census")
+
+#: Why an availability-authority lane publishes no selectable days. Four reasons, and only four.
+COVERAGE_WITHHELD_REASONS = (
+    "availability_unpublished",
+    "availability_stale",
+    "availability_malformed",
+    "availability_checksum_invalid",
+)
+
+#: `1` was the field set frozen before availability indexes existed; `2` adds the six provenance
+#: fields below. A client reading a cached body uses this to tell which shape it holds.
+COVERAGE_SCHEMA_VERSION = 2
+
 #: `YYYY-MM-DD`, checked by shape only -- the server owns the calendar.
 CalendarDay = Annotated[str, Field(pattern=r"^\d{4}-\d{2}-\d{2}$")]
 
@@ -104,7 +120,12 @@ class WireDayRange(_Frozen):
 
 
 class WireCoverageLane(_Frozen):
-    """One physical lane and published zoom rung's independently readable census evidence."""
+    """One physical lane and published zoom rung's independently readable coverage evidence.
+
+    The six provenance fields say WHICH evidence proved the row. `availability` rows carry the
+    generation digest and pointer key an operator can fetch to re-derive them; `census` rows carry
+    nulls and an empty `required_rungs`, because a listing binds no cross-rung contract.
+    """
 
     layer: str = Field(min_length=1)
     nature: Literal["daily_series", "release_series", "static_lookup"]
@@ -115,11 +136,28 @@ class WireCoverageLane(_Frozen):
     published_ranges: list[WireDayRange]
     gap_ranges: list[WireDayRange]
     governed_absence_ranges: list[WireDayRange]
+    coverage_authority: Literal["availability", "census"]
+    availability_generation_sha256: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")] | None
+    availability_pointer_key: str | None
+    #: The lane's OWN horizon. `evaluated_through_day` says when the answer was computed; this says
+    #: how far the lane's source reaches, so a lane behind the live edge is not read as dead.
+    source_ceiling_day: CalendarDay | None
+    required_rungs: list[Literal[0, 5, 9, 13]]
+    withheld_reason: (
+        Literal[
+            "availability_unpublished",
+            "availability_stale",
+            "availability_malformed",
+            "availability_checksum_invalid",
+        ]
+        | None
+    )
 
 
 class WireCoverage(_Frozen):
     """The whole-warehouse census the slider's capability rows are built from."""
 
+    coverage_schema_version: int
     generated_at: str = Field(min_length=1)
     evaluated_through_day: CalendarDay
     lanes: list[WireCoverageLane]

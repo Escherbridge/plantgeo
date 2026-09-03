@@ -18,6 +18,9 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
 from tests.contract.wire_contract import (
+    COVERAGE_AUTHORITIES,
+    COVERAGE_SCHEMA_VERSION,
+    COVERAGE_WITHHELD_REASONS,
     WIRE_BASE_PATH,
     WIRE_PARAMS,
     WIRE_ROUTES,
@@ -61,9 +64,59 @@ def test_window_fixture_round_trips() -> None:
     assert WireWindow.model_validate(raw).model_dump(mode="json") == raw
 
 
-def test_coverage_fixture_round_trips() -> None:
-    raw = load("coverage.json")
+@pytest.mark.parametrize("name", ["coverage.json", "coverage_availability.json"])
+def test_coverage_fixture_round_trips(name: str) -> None:
+    raw = load(name)
     assert WireCoverage.model_validate(raw).model_dump(mode="json", by_alias=True) == raw
+
+
+@pytest.mark.parametrize("name", ["coverage.json", "coverage_availability.json"])
+def test_every_coverage_payload_states_which_shape_it_holds(name: str) -> None:
+    """A cached body outlives the deploy that produced it, so it must say which field set it carries."""
+    assert load(name)["coverage_schema_version"] == COVERAGE_SCHEMA_VERSION
+
+
+def test_every_coverage_row_names_the_evidence_that_proved_it() -> None:
+    """`coverage_authority` is what lets an operator tell an index answer from a listing answer."""
+    for name in ("coverage.json", "coverage_availability.json"):
+        for lane in load(name)["lanes"]:
+            assert lane["coverage_authority"] in COVERAGE_AUTHORITIES, name
+
+
+def test_an_availability_row_cites_the_generation_an_operator_can_refetch() -> None:
+    """An index answer with no digest is unfalsifiable; the pointer plus digest re-derive it exactly."""
+    proven = [
+        lane
+        for lane in load("coverage_availability.json")["lanes"]
+        if lane["coverage_authority"] == "availability" and lane["withheld_reason"] is None
+    ]
+    assert proven, "the availability fixture must exercise at least one proven lane"
+    for lane in proven:
+        assert lane["availability_generation_sha256"]
+        assert lane["availability_pointer_key"].endswith("/availability/_LATEST.json")
+        assert lane["required_rungs"] == [0, 5, 9, 13], "a proven lane binds the whole authoritative set"
+        assert lane["latest_day"] <= lane["source_ceiling_day"], "no lane may claim past its own ceiling"
+
+
+def test_a_withheld_lane_publishes_no_selectable_days() -> None:
+    """Fail closed: a lane that cannot prove itself must offer nothing, not a shortened axis."""
+    withheld = [lane for lane in load("coverage_availability.json")["lanes"] if lane["withheld_reason"] is not None]
+    assert withheld, "the availability fixture must exercise withholding"
+    for lane in withheld:
+        assert lane["withheld_reason"] in COVERAGE_WITHHELD_REASONS
+        assert lane["earliest_day"] is None
+        assert lane["latest_day"] is None
+        assert lane["published_ranges"] == []
+        assert lane["gap_ranges"] == []
+        assert lane["governed_absence_ranges"] == []
+
+
+def test_an_unlisted_withholding_reason_is_a_contract_break() -> None:
+    """The four reasons are a closed vocabulary; a fifth would reach the client as an unknown state."""
+    raw = load("coverage_availability.json")
+    broken = {**raw, "lanes": [{**raw["lanes"][-1], "withheld_reason": "availability_probably_fine"}]}
+    with pytest.raises(ValidationError):
+        WireCoverage.model_validate(broken)
 
 
 def test_all_four_states_have_a_fixture() -> None:

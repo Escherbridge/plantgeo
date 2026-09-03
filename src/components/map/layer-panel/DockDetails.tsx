@@ -113,10 +113,9 @@ function SoilDetailsBody() {
 }
 
 function ClimateDetailsBody() {
-  // The bbox only: the NASA POWER lane has one serving tier, so zoom is not part of this
-  // region's query key and must not be, or the map and the region split into two entries.
-  const { bbox } = useViewportBounds();
-  return <ClimateDetails bbox={bbox ?? undefined} />;
+  // Both matter to the key: zoom selects the one physical Parquet rung that answers.
+  const { bbox, zoom } = useViewportBounds();
+  return <ClimateDetails bbox={bbox ?? undefined} zoom={zoom} />;
 }
 
 function CommunityDetailsBody() {

@@ -27,9 +27,15 @@ schemas. Three levels, weakest last:
    builder disagreed with the golden on THREE of five lanes, all the same defect: the day after
    `latest_day` at the live edge was accounted for by no range at all. The golden was wrong and the
    builder was right; `coverage.json`'s gap ranges moved, its shape did not.
-3. `test_wire_agreement.py` compares the serving side's own spelling of every route and parameter
-   against `wire_contract.py`. The contract suite already compares that table to the TypeScript
-   `WIRE` block, so the chain runs client -> contract -> server with no hopeful copy in it.
+3. `test_wire_agreement.py` compares the serving side's own spelling of every route, parameter,
+   state, withholding reason and coverage schema version against `wire_contract.py`. The contract
+   suite already compares that table to the TypeScript `WIRE` block, so the chain runs client ->
+   contract -> server with no hopeful copy in it. The vocabulary assertions live HERE and nowhere
+   else: a second copy in a behaviour test is a copy that can be edited without the freeze noticing.
+
+`test_availability_coverage.py` holds the no-LIST tripwire. Its `ExplodingListing` raises on every
+`WarehouseListing` method, so a coverage regression that reaches for an object prefix fails there
+rather than on a production bill.
 
 ## The tests that exist because of a specific failure
 

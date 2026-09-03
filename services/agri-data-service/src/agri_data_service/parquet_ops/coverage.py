@@ -1,4 +1,9 @@
-"""The exact physical-lane and zoom-rung census shared by Parquet adapters."""
+"""The exact physical-lane and zoom-rung census, and the closing rules every coverage answer obeys.
+
+The LISTING half of this module is the FALLBACK, not the authority: `availability_coverage.py` proves
+a bootstrapped lane from one pointer and one generation and never walks a prefix. What both share is
+`close_lane_coverage`, so an index answer and a listing answer cannot drift apart. See `AGENTS.md`.
+"""
 
 from __future__ import annotations
 
@@ -77,8 +82,12 @@ class CensusLane:
 
 
 @dataclass(frozen=True, slots=True)
-class _LaneDays:
-    """The three serving-relevant status sets retained from one exact physical rung."""
+class LaneDays:
+    """The three serving-relevant status sets for one exact physical rung, whatever proved them.
+
+    An object listing and an availability generation are two evidence sources for the same three
+    sets, so both close through `close_lane_coverage` and cannot drift apart.
+    """
 
     data: frozenset[date]
     absent: frozenset[date]
@@ -121,17 +130,30 @@ def build_lane_coverage(
     today: date,
 ) -> LaneCoverage:
     """Census one physical lane rung, closing its ranges against the live edge."""
-    return _lane_coverage(lane=lane, tier=tier, today=today, days=_tier_days(listing, lane=lane, tier=tier))
+    return close_lane_coverage(lane=lane, tier=tier, horizon=today, days=_tier_days(listing, lane=lane, tier=tier))
 
 
-def _lane_coverage(
+def close_lane_coverage(
     *,
     lane: CensusLane,
     tier: ZoomTier,
-    today: date,
-    days: _LaneDays,
+    horizon: date,
+    days: LaneDays,
+    horizon_already_lag_adjusted: bool = False,
 ) -> LaneCoverage:
-    """Close one lane's already-listed facts against its declared nature and live edge."""
+    """Close one lane's already-proven day sets against its declared nature and its own live edge.
+
+    `horizon` is the live edge this lane is judged against. The census passes TODAY, and
+    `_owed_but_unwritten` then charges a release lane's publication lag against it, because a USDM
+    Tuesday map is not late on the Tuesday.
+
+    An availability read passes the index's `source_ceiling`, which the PUBLISHER already computed
+    as `today - publication_lag_days` (`pipeline/parquet/lane_ceiling.allowed_source_ceiling`) -- so
+    it sets `horizon_already_lag_adjusted` and the lag is not charged a second time. Closing against
+    the ceiling rather than today is what stops a lane whose source ends days ago from reading as
+    current-but-empty; charging the lag twice on top of it would silently hide one lag period of a
+    release lane's real gap tail.
+    """
     data_days = set(days.data)
     absent_days = set(days.absent)
     conflict_days = set(days.conflict)
@@ -158,7 +180,7 @@ def _lane_coverage(
         published_days = _release_carried_days(
             data_days,
             lane=lane,
-            today=today,
+            horizon=horizon,
             latest_status_day=latest_status_day,
         )
         if not published_days:
@@ -173,7 +195,7 @@ def _lane_coverage(
             _release_carried_days(
                 absent_days,
                 lane=lane,
-                today=today,
+                horizon=horizon,
                 latest_status_day=latest_status_day,
             )
             - published_days
@@ -190,8 +212,9 @@ def _lane_coverage(
                 _owed_but_unwritten(
                     data_days | absent_days,
                     lane=lane,
-                    today=today,
+                    horizon=horizon,
                     conflict_days=conflict_days,
+                    lag_already_charged=horizon_already_lag_adjusted,
                 )
             ),
             governed_absence_ranges=contiguous_ranges(governed_absence_days),
@@ -204,7 +227,14 @@ def _lane_coverage(
         earliest_day=earliest_day,
         latest_day=latest_day,
         published_ranges=contiguous_ranges(data_days),
-        gap_ranges=contiguous_ranges(_owed_but_unwritten(data_days | absent_days, lane=lane, today=today)),
+        gap_ranges=contiguous_ranges(
+            _owed_but_unwritten(
+                data_days | absent_days,
+                lane=lane,
+                horizon=horizon,
+                lag_already_charged=horizon_already_lag_adjusted,
+            )
+        ),
         governed_absence_ranges=contiguous_ranges(
             day for day in absent_days if day >= earliest_day and day not in data_days
         ),
@@ -239,10 +269,10 @@ def build_coverage(
         generated_at=generated_at,
         evaluated_through_day=today,
         lanes=tuple(
-            _lane_coverage(
+            close_lane_coverage(
                 lane=lane,
                 tier=tier,
-                today=today,
+                horizon=today,
                 days=days,
             )
             for (_index, lane), facts in zip(jobs, stream_facts, strict=True)
@@ -257,6 +287,10 @@ class CoverageCache:
     def __init__(self, ttl_seconds: int = CENSUS_CACHE_SECONDS) -> None:
         self._ttl = timedelta(seconds=ttl_seconds)
         self._held: WarehouseCoverage | None = None
+        #: The exact lane set the held census answers for. The list SHRINKS as lanes are bootstrapped
+        #: onto availability, and reusing a memo built for a wider set would emit that lane twice --
+        #: once from its index and once from a stale listing -- under one `(layer, kind, zoom)` key.
+        self._held_lanes: tuple[CensusLane, ...] | None = None
         self._last_failure: Exception | None = None
         # `threading`, not `asyncio`: `get` runs inside the route's worker thread. Without it, every
         # cold page load in a burst started its own all-stream walk -- the cost the memo exists to
@@ -264,26 +298,28 @@ class CoverageCache:
         self._refreshing = threading.Lock()
 
     def get(self, listing: WarehouseListing, *, lanes: Sequence[CensusLane], now: datetime) -> WarehouseCoverage:
-        """Return the held census while it is fresh, else compute one under a single-flight lock."""
-        fresh = self._fresh(now)
+        """Return the held census while it is fresh and answers this exact lane set, else rebuild it."""
+        requested = tuple(lanes)
+        fresh = self._fresh(now, requested)
         if fresh is not None:
             return fresh
         waited_for_refresh = not self._refreshing.acquire(blocking=False)
         if waited_for_refresh:
             self._refreshing.acquire()
         try:
-            fresh = self._fresh(now)
+            fresh = self._fresh(now, requested)
             if fresh is not None:
                 return fresh
             if waited_for_refresh and self._last_failure is not None:
                 raise self._last_failure
             self._last_failure = None
             try:
-                built = build_coverage(listing, lanes=lanes, generated_at=now)
+                built = build_coverage(listing, lanes=requested, generated_at=now)
             except Exception as exc:
                 self._last_failure = exc
                 raise
             self._held = built
+            self._held_lanes = requested
             return built
         finally:
             self._refreshing.release()
@@ -291,12 +327,13 @@ class CoverageCache:
     def clear(self) -> None:
         """Drop the held census; a test that changes the warehouse under it needs this."""
         self._held = None
+        self._held_lanes = None
         self._last_failure = None
 
-    def _fresh(self, now: datetime) -> WarehouseCoverage | None:
-        """Return the held census only while it is inside its TTL."""
+    def _fresh(self, now: datetime, lanes: tuple[CensusLane, ...]) -> WarehouseCoverage | None:
+        """Return the held census only while it is inside its TTL and answers the same lanes."""
         held = self._held
-        if held is not None and now - held.generated_at < self._ttl:
+        if held is not None and self._held_lanes == lanes and now - held.generated_at < self._ttl:
             return held
         return None
 
@@ -361,20 +398,20 @@ def _tier_days(
     *,
     lane: CensusLane,
     tier: ZoomTier,
-) -> _LaneDays:
+) -> LaneDays:
     """List and classify one tier without retaining its object keys after the result is known."""
     keys = listing.list_keys(lane.layer, lane.kind, tier)
     statuses = day_status_sets(keys, layer=lane.layer, kind=lane.kind, tier=tier)
     # Only a completed, conflict-free partition is readable. Conflict and incomplete days may hold
     # objects, but serving refuses them, so they cannot prove a slider capability safe to publish.
-    return _LaneDays(data=statuses.data, absent=statuses.absent, conflict=statuses.conflict)
+    return LaneDays(data=statuses.data, absent=statuses.absent, conflict=statuses.conflict)
 
 
 def _stream_tier_days(
     listing: WarehouseListing,
     *,
     lane: CensusLane,
-) -> tuple[_LaneDays, ...]:
+) -> tuple[LaneDays, ...]:
     """List one physical stream once, then classify its four exact rungs locally."""
     keys = tuple(listing.iter_stream_keys(lane.layer, lane.kind))
     return tuple(_tier_days_from_keys(keys, lane=lane, tier=tier) for tier in ZOOM_TIERS)
@@ -385,20 +422,21 @@ def _tier_days_from_keys(
     *,
     lane: CensusLane,
     tier: ZoomTier,
-) -> _LaneDays:
+) -> LaneDays:
     """Classify one rung from a validated stream listing."""
     prefix = zoom_prefix(lane.layer, lane.kind, tier)
     tier_keys = tuple(key for key in keys if key.startswith(prefix))
     statuses = day_status_sets(tier_keys, layer=lane.layer, kind=lane.kind, tier=tier)
-    return _LaneDays(data=statuses.data, absent=statuses.absent, conflict=statuses.conflict)
+    return LaneDays(data=statuses.data, absent=statuses.absent, conflict=statuses.conflict)
 
 
 def _owed_but_unwritten(
     accounted: set[date],
     *,
     lane: CensusLane,
-    today: date,
+    horizon: date,
     conflict_days: set[date] | None = None,
+    lag_already_charged: bool = False,
 ) -> tuple[date, ...]:
     """Return the days this lane OWED and did not deliver, walking its own cadence from the days it did.
 
@@ -411,7 +449,7 @@ def _owed_but_unwritten(
             accounted,
             conflict_days=set() if conflict_days is None else conflict_days,
             lane=lane,
-            today=today,
+            horizon=horizon,
         )
     ordered = sorted(accounted)
     step = timedelta(days=lane.cadence_days)
@@ -422,12 +460,14 @@ def _owed_but_unwritten(
             owed.append(candidate)
             candidate += step
     # At the LIVE EDGE a release is not missing until its publication lag has run out -- USDM's
-    # Tuesday map is not late on the Tuesday. A daily series closes against today instead, matching
-    # the client's own `closeCoverageGapsAtLiveEdge`: every day up to today was owed an observation,
-    # and the days since a lane last published are a gap a reader can act on rather than an unknown.
-    horizon = today - timedelta(days=lane.publication_lag_days) if nature_permits_cadence(lane.nature) else today
+    # Tuesday map is not late on the Tuesday. A daily series closes against the horizon itself,
+    # matching the client's own `closeCoverageGapsAtLiveEdge`: every day up to the horizon was owed
+    # an observation, and the days since a lane last published are a gap a reader can act on.
+    charge_lag = nature_permits_cadence(lane.nature) and not lag_already_charged
+    lag = timedelta(days=lane.publication_lag_days) if charge_lag else timedelta()
+    closing_day = horizon - lag
     candidate = ordered[-1] + step
-    while candidate <= horizon:
+    while candidate <= closing_day:
         owed.append(candidate)
         candidate += step
     return tuple(owed)
@@ -441,7 +481,7 @@ def _release_carried_days(
     releases: set[date],
     *,
     lane: CensusLane,
-    today: date,
+    horizon: date,
     latest_status_day: date,
 ) -> set[date]:
     """Expand historical releases by cadence and the latest stored status by its live allowance."""
@@ -452,7 +492,7 @@ def _release_carried_days(
         for offset in range(
             (LATEST_RELEASE_CARRY_DAYS if release_day == latest_status_day else historical_carry_days) + 1
         )
-        if release_day + timedelta(days=offset) <= today
+        if release_day + timedelta(days=offset) <= horizon
     }
 
 
@@ -461,7 +501,7 @@ def _release_uncovered_days(
     *,
     conflict_days: set[date],
     lane: CensusLane,
-    today: date,
+    horizon: date,
 ) -> tuple[date, ...]:
     """Return each day the release reader cannot answer under historical and live carry limits."""
     status_days = accounted | conflict_days
@@ -470,13 +510,13 @@ def _release_uncovered_days(
     carried = _release_carried_days(
         accounted,
         lane=lane,
-        today=today,
+        horizon=horizon,
         latest_status_day=max(status_days),
     )
     first_status_day = min(status_days)
     return tuple(
         first_status_day + timedelta(days=offset)
-        for offset in range((today - first_status_day).days + 1)
+        for offset in range((horizon - first_status_day).days + 1)
         if first_status_day + timedelta(days=offset) not in carried
     )
 

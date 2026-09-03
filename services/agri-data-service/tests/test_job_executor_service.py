@@ -322,6 +322,60 @@ def test_direct_water_and_generic_gap_repair_are_distinct_serialized_duties() ->
     assert LANE_SPECS[lanes[1]].writer_floor == "2026-09-02"
 
 
+def test_the_climate_forward_lane_is_owned_by_nobody_and_activates_alone() -> None:
+    """Nothing has EVER produced a forward NASA POWER climate day, so there is no handoff to make.
+
+    Every other migration-input lane replaces a legacy Railway writer and must acknowledge it as
+    disabled first. This one replaces a gap: the only POWER ingestion in the tree is a retired local
+    backfill verb, and the Parquet history was built once from the immutable canonical snapshot.
+    Giving it a legacy owner would invent a cutover dependency and pull eight refusing generic lanes
+    into the ingest-cron atomic group with it.
+    """
+    lane_id = "climate-nasa-power-direct-forward"
+    spec = LANE_SPECS[lane_id]
+
+    assert spec.legacy_owners == ()
+    assert spec.required_handoff_acknowledgements == ()
+    assert spec.command == ("python", "-m", "agri_data_service.pipeline.direct.climate")
+    assert spec.schedule == "40 * * * *"
+    assert spec.phase_offset_seconds == 2400
+    assert spec.phase_offset_seconds != LANE_SPECS["fire-detections-direct-forward"].phase_offset_seconds
+    assert spec.migration_disposition == "source-specific"
+    assert spec.executable
+
+    assert parse_activation({}).is_active(lane_id) is False
+    assert parse_activation({ACTIVE_LANES_VARIABLE: lane_id}).active_lanes == frozenset({lane_id})
+
+    climate_lanes = {
+        f"parquet-{registration.slug}"
+        for registration in LANE_REGISTRATIONS
+        if registration.slug.startswith("climate-field-")
+    }
+    assert len(climate_lanes) == 8
+    ingest_owned = {candidate.lane_id for candidate in LANE_SPECS.values() if _INGEST_OWNER in candidate.legacy_owners}
+    assert not climate_lanes & ingest_owned
+    assert lane_id not in ingest_owned
+
+
+def test_the_direct_climate_writer_and_its_generic_specs_refuse_to_run_together() -> None:
+    """Two owners of one calendar, and the generic one's registered adapter can only ever fail.
+
+    Declared on BOTH sides so `parse_activation` refuses whichever an operator names first, and so
+    the inventory row of each generic spec states the constraint it is subject to rather than
+    leaving it discoverable only from the direct lane.
+    """
+    direct = "climate-nasa-power-direct-forward"
+    generic = "parquet-climate-field-precipitation"
+
+    assert generic in LANE_SPECS[direct].conflicts_with
+    assert LANE_SPECS[generic].conflicts_with == (direct,)
+    with pytest.raises(ExecutorConfigurationError, match="conflicts with active lane"):
+        parse_activation({ACTIVE_LANES_VARIABLE: f"{direct},{generic}"})
+    with pytest.raises(ExecutorConfigurationError, match="conflicts with active lane"):
+        parse_activation({ACTIVE_LANES_VARIABLE: f"{generic},{direct}"})
+    assert parse_activation({ACTIVE_LANES_VARIABLE: generic}).is_active(generic) is True
+
+
 def test_complete_recurring_railway_responsibility_set_can_activate_together() -> None:
     lanes = tuple(
         dict.fromkeys(

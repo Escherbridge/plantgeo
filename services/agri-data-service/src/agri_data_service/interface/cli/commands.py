@@ -302,6 +302,7 @@ from agri_data_service.jobs import (
     shutdown_signal,
 )
 from agri_data_service.models.strategy import Strategy
+from agri_data_service.pipeline.parquet.availability_index import BotoAvailabilityStorage
 from agri_data_service.pipeline.parquet.drain import (
     DEFAULT_DAYS_PER_LANE_TURN,
     DEFAULT_DRAIN_SELECTION,
@@ -3832,9 +3833,16 @@ async def _parquet_gap_fill(
     time_budget_seconds: float,
     max_days_per_lane: int | None,
 ) -> GapFillSummary:
-    """Open one loader session for the whole tick and drive every requested lane through it."""
+    """Open one loader session for the whole tick and drive every requested lane through it.
+
+    The availability storage is built from the SAME settings `ObjectStore.from_settings()` above
+    already requires, so it adds no failure mode of its own: a tick without object-store credentials
+    has already raised one line earlier. Neither constructor opens a socket -- both only build the
+    boto3 client -- so an unrelated CLI verb that never reaches here pays nothing.
+    """
     loader_database_url = settings.require_local_source_loader_database_url()
     store = ObjectStore.from_settings()
+    availability_storage = BotoAvailabilityStorage.from_settings()
     async with local_source_loader_session(loader_database_url) as session:
         return await run_gap_fill(
             session,
@@ -3844,6 +3852,7 @@ async def _parquet_gap_fill(
             run_id=run_id,
             time_budget_seconds=time_budget_seconds,
             max_days_per_lane=max_days_per_lane,
+            availability_storage=availability_storage,
         )
 
 
@@ -4053,6 +4062,7 @@ async def _parquet_forward_changed_vegetation(  # noqa: PLR0913 - explicit opera
             time_budget_seconds=time_budget_seconds,
             max_attempts=max_attempts,
             retry_base_seconds=retry_base_seconds,
+            availability_storage=BotoAvailabilityStorage.from_settings(),
         )
 
 
@@ -4075,6 +4085,7 @@ async def _parquet_catch_up_vegetation(
             time_budget_seconds=time_budget_seconds,
             max_attempts=max_attempts,
             retry_base_seconds=retry_base_seconds,
+            availability_storage=BotoAvailabilityStorage.from_settings(),
         )
 
 
@@ -4237,6 +4248,7 @@ async def _parquet_repair_audit_vegetation(  # noqa: PLR0913 - explicit repair a
             progress_every_days=progress_every_days,
             progress=announce if stream_progress else None,
             barrier_held=True,
+            availability_storage=BotoAvailabilityStorage.from_settings(),
         )
 
 

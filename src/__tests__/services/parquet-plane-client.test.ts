@@ -323,7 +323,10 @@ describe("getParquetLatestRelease", () => {
 });
 
 describe("getParquetWarehouseCoverage", () => {
+  const GENERATION_SHA256 = "a".repeat(64);
+
   const census = {
+    coverage_schema_version: 2,
     generated_at: "2026-08-23T04:00:00+00:00",
     evaluated_through_day: "2026-08-23",
     lanes: [
@@ -337,6 +340,12 @@ describe("getParquetWarehouseCoverage", () => {
         published_ranges: [{ from: "2022-08-04", to: "2026-08-14" }],
         gap_ranges: [{ from: "2024-01-04", to: "2024-01-11" }],
         governed_absence_ranges: [{ from: "2025-12-25", to: "2025-12-25" }],
+        coverage_authority: "availability",
+        availability_generation_sha256: GENERATION_SHA256,
+        availability_pointer_key: "availability/drought-areas/_LATEST.json",
+        source_ceiling_day: "2026-08-14",
+        required_rungs: [0, 5, 9, 13],
+        withheld_reason: null,
       },
       {
         layer: "interventions",
@@ -348,6 +357,12 @@ describe("getParquetWarehouseCoverage", () => {
         published_ranges: [],
         gap_ranges: [],
         governed_absence_ranges: [],
+        coverage_authority: "census",
+        availability_generation_sha256: null,
+        availability_pointer_key: null,
+        source_ceiling_day: null,
+        required_rungs: [],
+        withheld_reason: null,
       },
     ],
   };
@@ -400,6 +415,7 @@ describe("getParquetWarehouseCoverage", () => {
 
     const coverage = await getParquetWarehouseCoverage();
 
+    expect(coverage.coverageSchemaVersion).toBe(2);
     expect(coverage.generatedAt).toBe("2026-08-23T04:00:00+00:00");
     expect(coverage.evaluatedThroughDay).toBe("2026-08-23");
     expect(coverage.lanes[0]).toEqual({
@@ -412,14 +428,55 @@ describe("getParquetWarehouseCoverage", () => {
       publishedRanges: [{ from: "2022-08-04", to: "2026-08-14" }],
       gapRanges: [{ from: "2024-01-04", to: "2024-01-11" }],
       governedAbsenceRanges: [{ from: "2025-12-25", to: "2025-12-25" }],
+      coverageAuthority: "availability",
+      availabilityGenerationSha256: GENERATION_SHA256,
+      availabilityPointerKey: "availability/drought-areas/_LATEST.json",
+      sourceCeilingDay: "2026-08-14",
+      requiredRungs: [0, 5, 9, 13],
+      withheldReason: null,
     });
     expect(coverage.lanes[1]).toMatchObject({ earliestDay: null, latestDay: null });
   });
 
+  /**
+   * A lane that walked the object store must not arrive looking like one that read the published
+   * index. The two are different strengths of claim; collapsing them would let a slider caption a
+   * listing as though it were a checksummed generation.
+   */
+  it("keeps a census-authority lane distinguishable from an availability-backed one", async () => {
+    mockedFetch.mockResolvedValue(census);
+
+    const coverage = await getParquetWarehouseCoverage();
+
+    expect(coverage.lanes[1]).toMatchObject({
+      coverageAuthority: "census",
+      availabilityGenerationSha256: null,
+      availabilityPointerKey: null,
+      requiredRungs: [],
+    });
+  });
+
+  it("carries every withheld reason the availability index can report", async () => {
+    for (const reason of [
+      "availability_unpublished",
+      "availability_stale",
+      "availability_malformed",
+      "availability_checksum_invalid",
+    ] as const) {
+      mockedFetch.mockResolvedValue({
+        ...census,
+        lanes: [{ ...census.lanes[0], withheld_reason: reason }],
+      });
+
+      const coverage = await getParquetWarehouseCoverage();
+
+      expect(coverage.lanes[0].withheldReason).toBe(reason);
+    }
+  });
+
   it("rejects a lane nature outside the three the warehouse defines", async () => {
     mockedFetch.mockResolvedValue({
-      generated_at: "2026-08-23T04:00:00+00:00",
-      evaluated_through_day: "2026-08-23",
+      ...census,
       lanes: [{ ...census.lanes[0], nature: "weekly_series" }],
     });
 
@@ -428,13 +485,130 @@ describe("getParquetWarehouseCoverage", () => {
 
   it("rejects legacy tier-agnostic coverage instead of letting one rung stand in for four", async () => {
     const { zoom: _zoom, ...tierAgnosticLane } = census.lanes[0];
+    mockedFetch.mockResolvedValue({ ...census, lanes: [tierAgnosticLane] });
+
+    await expect(getParquetWarehouseCoverage()).rejects.toBeInstanceOf(ParquetPlaneContractError);
+  });
+
+  /**
+   * A version-1 body carries no `withheld_reason` at all. Accepting it would read that silence as
+   * "every lane's availability index is healthy" -- the exact fail-open the field exists to close.
+   */
+  it("refuses a coverage body written to a schema version this client cannot read", async () => {
+    mockedFetch.mockResolvedValue({ ...census, coverage_schema_version: 1 });
+
+    // Named in the message, because "the census does not match the contract" and "the service is
+    // still on version 1" are different pages for whoever is holding the deploy.
+    await expect(getParquetWarehouseCoverage()).rejects.toBeInstanceOf(ParquetPlaneContractError);
+    await expect(getParquetWarehouseCoverage()).rejects.toThrow(/version 1/);
+  });
+
+  it("refuses a coverage body that names no schema version at all", async () => {
+    const { coverage_schema_version: _version, ...unversioned } = census;
+    mockedFetch.mockResolvedValue(unversioned);
+
+    await expect(getParquetWarehouseCoverage()).rejects.toBeInstanceOf(ParquetPlaneContractError);
+  });
+
+  /**
+   * Fail closed on the WIRE, not just at the capability gate. An omitted `withheld_reason` read as
+   * "healthy" would turn a serving side that has not been redeployed yet into a silent claim that
+   * every lane's availability index is fine.
+   */
+  it.each([
+    "coverage_authority",
+    "availability_generation_sha256",
+    "availability_pointer_key",
+    "source_ceiling_day",
+    "required_rungs",
+    "withheld_reason",
+  ])("rejects a coverage lane that omits %s rather than defaulting it", async (field) => {
+    const { [field]: _omitted, ...incompleteLane } = census.lanes[0] as Record<string, unknown>;
+    mockedFetch.mockResolvedValue({ ...census, lanes: [incompleteLane] });
+
+    await expect(getParquetWarehouseCoverage()).rejects.toBeInstanceOf(ParquetPlaneContractError);
+  });
+
+  it("rejects a required rung the ladder does not publish", async () => {
     mockedFetch.mockResolvedValue({
-      generated_at: census.generated_at,
-      evaluated_through_day: census.evaluated_through_day,
-      lanes: [tierAgnosticLane],
+      ...census,
+      lanes: [{ ...census.lanes[0], required_rungs: [0, 5, 9, 11] }],
     });
 
     await expect(getParquetWarehouseCoverage()).rejects.toBeInstanceOf(ParquetPlaneContractError);
+  });
+
+  /**
+   * One caller's cancellation must never abort a read the other callers are already awaiting:
+   * this answer is single-flighted and shared by every viewport in every session.
+   */
+  it("sends no caller signal, because every viewport shares this one in-flight read", async () => {
+    mockedFetch.mockResolvedValue(census);
+
+    await getParquetWarehouseCoverage();
+
+    expect(requestedOptions()?.signal).toBeUndefined();
+  });
+});
+
+/**
+ * Cancellation reaches the socket or it does nothing. A signal accepted on the request and then
+ * dropped before `fetchBounded` is the worst of both: the caller believes the read was abandoned
+ * while the upstream keeps working, which is exactly the load the abort exists to shed.
+ */
+describe("request cancellation", () => {
+  it("threads the caller's signal into every row read, and never into a query parameter", async () => {
+    const controller = new AbortController();
+    mockedFetch.mockResolvedValue(wirePublished("2026-08-20"));
+
+    await getParquetLayerDay({
+      layer: "vegetation",
+      day: "2026-08-20",
+      zoomTier: 9,
+      signal: controller.signal,
+    });
+
+    expect(requestedOptions()?.signal).toBe(controller.signal);
+    expect(requestedUrl().searchParams.has("signal")).toBe(false);
+  });
+
+  it("threads the caller's signal through the window read", async () => {
+    const controller = new AbortController();
+    mockedFetch.mockResolvedValue({
+      days: [wirePublished("2026-08-20"), wirePublished("2026-08-21")],
+    });
+
+    await getParquetLayerDayWindow({
+      layer: "vegetation",
+      firstDay: "2026-08-20",
+      lastDay: "2026-08-21",
+      zoomTier: 9,
+      signal: controller.signal,
+    });
+
+    expect(requestedOptions()?.signal).toBe(controller.signal);
+  });
+
+  it("threads the caller's signal through the release read", async () => {
+    const controller = new AbortController();
+    mockedFetch.mockResolvedValue(wirePublished("2026-08-24", "2026-08-18"));
+
+    await getParquetLatestRelease({
+      layer: "drought-areas",
+      asOfDay: "2026-08-24",
+      zoomTier: 9,
+      signal: controller.signal,
+    });
+
+    expect(requestedOptions()?.signal).toBe(controller.signal);
+  });
+
+  it("omits the option entirely for a caller with nothing to cancel", async () => {
+    mockedFetch.mockResolvedValue(wirePublished("2026-08-20"));
+
+    await getParquetLayerDay({ layer: "vegetation", day: "2026-08-20", zoomTier: 9 });
+
+    expect(requestedOptions()?.signal).toBeUndefined();
   });
 });
 
@@ -679,6 +853,78 @@ describe("the frozen wire contract", () => {
       latestDay: "2026-08-06",
       publishedRanges: [{ from: "2022-04-30", to: "2026-08-06" }],
       governedAbsenceRanges: [{ from: "2026-08-07", to: "2026-08-16" }],
+    });
+  });
+
+  /**
+   * The golden bytes both suites read carry the six provenance fields, and the census-authority
+   * shape they encode -- nulls and an empty `required_rungs` -- is the one an object-store walk
+   * produces. Asserting it here is what proves the two languages mean the same thing by it.
+   */
+  it("carries the coverage provenance the serving side declares in the same bytes", () => {
+    const raw = fixture("coverage") as {
+      coverage_schema_version: number;
+      lanes: readonly Record<string, unknown>[];
+    };
+
+    expect(raw.coverage_schema_version).toBe(2);
+    for (const lane of raw.lanes) {
+      expect(lane).toMatchObject({
+        coverage_authority: "census",
+        availability_generation_sha256: null,
+        availability_pointer_key: null,
+        required_rungs: [],
+        withheld_reason: null,
+      });
+    }
+  });
+
+  it("decodes the fixture's census-authority lanes without inventing an index generation", async () => {
+    mockedFetch.mockResolvedValue(fixture("coverage"));
+
+    const coverage = await getParquetWarehouseCoverage();
+
+    expect(coverage.coverageSchemaVersion).toBe(2);
+    expect(coverage.lanes.every((lane) => lane.coverageAuthority === "census")).toBe(true);
+    expect(coverage.lanes.every((lane) => lane.availabilityGenerationSha256 === null)).toBe(true);
+    expect(coverage.lanes.every((lane) => lane.withheldReason === null)).toBe(true);
+  });
+
+  /**
+   * The withheld-lane golden bytes. Both halves matter: an index-backed lane naming the generation
+   * and pointer an operator can fetch, and a lane whose index was never published at all -- which
+   * carries a pointer key it looked for, a null generation because there was nothing to name, and
+   * empty bounds it must never be described from.
+   */
+  it("decodes an availability-backed census and the lane that withheld itself inside it", async () => {
+    mockedFetch.mockResolvedValue(fixture("coverage_availability"));
+
+    const coverage = await getParquetWarehouseCoverage();
+    const lane = (layer: string, zoomTier: number) =>
+      coverage.lanes.find((entry) => entry.layer === layer && entry.zoomTier === zoomTier);
+
+    expect(lane("signal", 13)).toMatchObject({
+      coverageAuthority: "availability",
+      availabilityGenerationSha256:
+        "9b1f0c4d2a7e63518c0dfb2e94a7150c3d6b8e2f41905ac7db3e6f82c150a4d7",
+      availabilityPointerKey: "layer=signal/kind=observed/availability/_LATEST.json",
+      // The lane's OWN horizon, days ahead of its newest written day and weeks behind the census
+      // day: the gap between the two is owed, everything after it is simply not published yet.
+      sourceCeilingDay: "2026-08-07",
+      latestDay: "2026-08-05",
+      requiredRungs: [0, 5, 9, 13],
+      withheldReason: null,
+    });
+    expect(coverage.evaluatedThroughDay).toBe("2026-08-25");
+
+    expect(lane("burn-severity", 13)).toMatchObject({
+      withheldReason: "availability_unpublished",
+      // A pointer key it looked for, and no generation because there was nothing to name.
+      availabilityPointerKey: "layer=burn-severity/kind=observed/availability/_LATEST.json",
+      availabilityGenerationSha256: null,
+      earliestDay: null,
+      latestDay: null,
+      requiredRungs: [],
     });
   });
 });

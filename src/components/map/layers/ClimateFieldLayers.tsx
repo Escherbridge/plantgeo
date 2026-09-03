@@ -44,6 +44,7 @@ const EMPTY_FEATURE_COLLECTION: GeoJSON.FeatureCollection = {
 export function ClimateFieldLayers({
   map,
   bbox,
+  zoom,
 }: {
   map: MapLibreMap | null;
   /**
@@ -52,11 +53,17 @@ export function ClimateFieldLayers({
    * marginally different bbox strings mid-pan, which is nine cache entries for one viewport.
    */
   bbox: string | null;
+  /**
+   * From the SAME `useViewportBounds()` derivation as `bbox`, for the same reason and one
+   * more: zoom selects the one physical Parquet rung that answers, so the map and the dock
+   * disagreeing on it would draw two different aggregations of one viewport.
+   */
+  zoom: number;
 }) {
   return (
     <>
       {CLIMATE_FIELD_SIGNAL_IDS.map((signal) => (
-        <ClimateSignalLayer key={signal} map={map} bbox={bbox} signal={signal} />
+        <ClimateSignalLayer key={signal} map={map} bbox={bbox} zoom={zoom} signal={signal} />
       ))}
     </>
   );
@@ -73,10 +80,12 @@ export function ClimateFieldLayers({
 function ClimateSignalLayer({
   map,
   bbox,
+  zoom,
   signal,
 }: {
   map: MapLibreMap | null;
   bbox: string | null;
+  zoom: number;
   signal: ClimateFieldSignalId;
 }) {
   const { toggleId } = CLIMATE_FIELD_SIGNALS[signal];
@@ -93,6 +102,7 @@ function ClimateSignalLayer({
     variant: climateMode.airTemperatureVariant,
     date: day.requestDate,
     renderForm,
+    zoom,
   });
 
   // This signal's read retains the previous day's isobands while the next loads
@@ -109,11 +119,18 @@ function ClimateSignalLayer({
     },
   ]);
 
+  // The form the collection ARRIVED in, which below z13 is not the form this row asked for --
+  // see src/components/map/AGENTS.md "climate-field". Read back through the echoed `signal`
+  // exactly as `ClimateDetails` does, because react-query serves the previous key's data for a
+  // frame after a form change and that answer describes a different request.
+  const served = query.data?.signal === signal ? query.data : undefined;
+  const servedForm = served?.renderForm ?? renderForm;
+
   return (
     <ClimateFieldLayer
       map={map}
       signal={signal}
-      renderForm={renderForm}
+      renderForm={servedForm}
       geojson={query.data ?? EMPTY_FEATURE_COLLECTION}
       opacityScale={layerOpacity[toggleId]}
       visible={visible}

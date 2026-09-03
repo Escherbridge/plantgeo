@@ -14,6 +14,11 @@ _MIN_TOKEN_DIVERSITY = 10
 _BUCKET_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9.\-]{1,61}[a-z0-9]$")
 _PRODUCTION_DATABASE_NAME = "plantgeo"
 
+#: Which evidence the slider census is allowed to be built from. `census_until_bootstrap` is
+#: TRANSITIONAL and is deleted once every lane's production bootstrap receipt is recorded; see
+#: `parquet_ops/AGENTS.md` "Coverage authority".
+CoverageAuthorityPolicy = Literal["availability", "census_until_bootstrap"]
+
 
 class ObjectStoreCredentials(BaseModel):
     """Complete, validated coordinates for the S3-compatible Parquet warehouse bucket."""
@@ -165,6 +170,11 @@ class Settings(BaseSettings):
     # Optional root inside the bucket, OUTSIDE the frozen `layer=.../kind=...` layout, so one
     # bucket can hold an isolated sandbox beside the real warehouse.
     object_store_prefix: str = ""
+
+    # Which evidence proves the slider census. Defaults to the TRANSITIONAL mode because no lane has
+    # a production bootstrap receipt yet: flipping to `availability` before one exists withholds
+    # every lane, which is fail-closed and correct but is an empty slider.
+    parquet_coverage_authority: CoverageAuthorityPolicy = "census_until_bootstrap"
 
     @field_validator("object_store_endpoint_url")
     @classmethod

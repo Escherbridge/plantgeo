@@ -292,9 +292,10 @@ export interface DebouncedMapDay {
    * and omitting the date then would silently ask every warehouse reader for ITS OWN idea of
    * "today" while every caption already names `settledDate`. For most readers that is a same-
    * answer no-op today (`resolveRequestedObservationDay` collapses an omitted day and today's
-   * date), which is why this went unnoticed; for `/api/fires` it asks for the live FIRMS
-   * lookback window instead of the settled day's own detections -- a different answer, not just
-   * a colder cache entry for the same one. And it does not self-correct: a stalled capabilities
+   * date), which is why this went unnoticed; for a Parquet reader whose omitted day resolves
+   * against the SERVER's clock, it can ask for a different calendar day than the one the caption
+   * names -- a different answer, not just a colder cache entry for the same one. And it does not
+   * self-correct: a stalled capabilities
    * fetch (a 524 is not hypothetical here -- see `environmental-read-model.ts` around line 3725)
    * leaves `serverCurrentDate` null indefinitely, not just for one round trip.
    */

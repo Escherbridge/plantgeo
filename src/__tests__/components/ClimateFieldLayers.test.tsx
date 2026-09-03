@@ -5,11 +5,13 @@ import { useLayerStore } from "@/stores/layer-store";
 import { useClimateStore } from "@/stores/climate-store";
 import { useTimeSliderStore } from "@/stores/time-slider-store";
 import { SCRUB_SETTLE_MS, useDrawnLayerDayStore } from "@/stores/useMetricAtDate";
+import type { Map as MapLibreMap } from "maplibre-gl";
 import {
   climateFieldStreamName,
   CLIMATE_FIELD_SIGNALS,
   CLIMATE_FIELD_SIGNAL_IDS,
   type ClimateFieldSignalId,
+  type ClimateRenderForm,
 } from "@/lib/environmental/climate-field";
 import type { SliderCapabilities, SliderLayerCapability } from "@/types/time-slider";
 
@@ -139,12 +141,18 @@ afterEach(() => {
   useClimateStore.setState(INITIAL_CLIMATE_STATE, true);
 });
 
-/** Switches the named signals on and renders the container against no map. */
-function renderWithDrawn(signals: readonly ClimateFieldSignalId[]) {
+/**
+ * Switches the named signals on and renders the container against no map.
+ *
+ * `zoom` is a parameter and not the fixed 9 it used to be: zoom selects the physical rung that
+ * answers, and only the detail rung may serve the form that was asked for -- so a case about
+ * the served form has to be able to stand on either side of that line.
+ */
+function renderWithDrawn(signals: readonly ClimateFieldSignalId[], zoom = 9) {
   useMapStore.setState({
     activeLayers: signals.map((signal) => CLIMATE_FIELD_SIGNALS[signal].toggleId),
   });
-  return render(<ClimateFieldLayers map={null} bbox={BBOX} />);
+  return render(<ClimateFieldLayers map={null} bbox={BBOX} zoom={zoom} />);
 }
 
 /** A response that answered for the key it was asked with. */
@@ -272,6 +280,127 @@ describe("the nine climate rows read and draw independently", () => {
 });
 
 /**
+ * Each row draws the form that ARRIVED, never the form it asked for.
+ *
+ * Only the z13 rung may answer in the requested form: a coarse rung has neither the lattice
+ * pitch a square needs nor the regular lattice a contour needs, so `tierRenderForm`
+ * (parquet-climate-field.ts) serves `symbol` -- Point geometry -- for every form below it. A row
+ * that kept painting the REQUESTED form then built `fill`/`line` layers over Points, which
+ * MapLibre draws as nothing at all while `ClimateDetails` went on reporting aggregated cells:
+ * an empty canvas that reads as missing coverage rather than as a zoom-out.
+ */
+describe("each climate row draws the form the server actually served", () => {
+  /** A landed collection that declares which signal it answered for and in which form. */
+  function servedAs(signal: ClimateFieldSignalId, renderForm: ClimateRenderForm) {
+    return {
+      ...landed(),
+      data: { type: "FeatureCollection", features: [], signal, renderForm },
+    };
+  }
+
+  /** The newest props one signal's layer instance was rendered with. */
+  function lastDrawnFor(signal: ClimateFieldSignalId): Record<string, unknown> | undefined {
+    for (let index = drawnLayers.renders.length - 1; index >= 0; index--) {
+      const props = drawnLayers.renders[index];
+      if ((props.signal as string) === signal) return props;
+    }
+    return undefined;
+  }
+
+  it("paints the degraded points form when a coarse rung answers with Points", () => {
+    climateQuery.resultBySignal.set(
+      "air-temperature",
+      servedAs("air-temperature", "symbol")
+    );
+    renderWithDrawn(["air-temperature"], 9);
+
+    // The request still asks for the reader's chosen form; the SERVED form is what is painted.
+    expect(inputFor("air-temperature")?.renderForm).toBe("field");
+    expect(lastDrawnFor("air-temperature")?.renderForm).toBe("symbol");
+  });
+
+  it("paints the requested form once the detail rung answers in it", () => {
+    climateQuery.resultBySignal.set("air-temperature", servedAs("air-temperature", "field"));
+    renderWithDrawn(["air-temperature"], 13);
+
+    expect(inputFor("air-temperature")?.renderForm).toBe("field");
+    expect(lastDrawnFor("air-temperature")?.renderForm).toBe("field");
+  });
+
+  /**
+   * The read-back guard, which is the same one `ClimateDetails` applies: react-query serves the
+   * previous key's data for a frame after a form change, and that answer describes a different
+   * request. Adopting its form would repaint this row from another signal's response.
+   */
+  it("ignores a collection that answered for a different signal", () => {
+    climateQuery.resultBySignal.set("air-temperature", servedAs("dew-point", "symbol"));
+    renderWithDrawn(["air-temperature"], 9);
+
+    expect(lastDrawnFor("air-temperature")?.renderForm).toBe("field");
+  });
+
+  /**
+   * The half that makes the three cases above matter: what `renderForm` actually BUILDS.
+   *
+   * The real `ClimateFieldLayer` is imported past this file's stub, because the defect was not
+   * "the wrong prop was passed" -- it was that a `fill` and a `line` over Point features draw
+   * nothing, silently, with no MapLibre error to find.
+   */
+  describe("the form decides the MapLibre layer built over the served geometry", () => {
+    /** Records what a real `ClimateFieldLayer` asks MapLibre to build. */
+    function createRecordingMap() {
+      const layers = new Map<string, { id: string; type: string }>();
+      const sources = new Map<string, { setData: () => void }>();
+      const added: { id: string; type: string }[] = [];
+      const recorder = {
+        isStyleLoaded: () => true,
+        getStyle: () => ({ layers: [] }),
+        on: () => {},
+        off: () => {},
+        getSource: (id: string) => sources.get(id),
+        addSource: (id: string) => {
+          sources.set(id, { setData: () => {} });
+        },
+        getLayer: (id: string) => layers.get(id),
+        addLayer: (layer: { id: string; type: string }) => {
+          layers.set(layer.id, layer);
+          added.push(layer);
+        },
+        removeLayer: (id: string) => {
+          layers.delete(id);
+        },
+        removeSource: (id: string) => {
+          sources.delete(id);
+        },
+        setPaintProperty: () => {},
+      };
+      // The narrow stand-in cast every fake-map case in this suite makes: these are the only
+      // members the layer's effects touch, and widening the fake to the full Map is noise.
+      return { map: recorder as unknown as MapLibreMap, added };
+    }
+
+    async function renderRealLayer(renderForm: ClimateRenderForm) {
+      const { ClimateFieldLayer } = await vi.importActual<
+        typeof import("@/components/map/layers/ClimateFieldLayer")
+      >("@/components/map/layers/ClimateFieldLayer");
+      const { map, added } = createRecordingMap();
+      render(
+        <ClimateFieldLayer map={map} signal="air-temperature" renderForm={renderForm} />
+      );
+      return added.map((layer) => layer.type);
+    }
+
+    it("builds a circle layer for the served points form, never a fill or a line", async () => {
+      expect(await renderRealLayer("symbol")).toEqual(["circle"]);
+    });
+
+    it("builds the fill and its outline only when the served form is the filled one", async () => {
+      expect(await renderRealLayer("field")).toEqual(["fill", "line"]);
+    });
+  });
+});
+
+/**
  * Each row says which day it is PAINTING, not which day it is asking for.
  *
  * `useClimateFieldQuery` holds the previous answer while the next loads (`keepPreviousData`), so
@@ -339,7 +468,7 @@ describe("each climate row labels the day it is actually painting", () => {
         .setLayerDate(CLIMATE_FIELD_SIGNALS.precipitation.toggleId, "2023-11-30");
     });
     await settleScrub();
-    rendered.rerender(<ClimateFieldLayers map={null} bbox={BBOX} />);
+    rendered.rerender(<ClimateFieldLayers map={null} bbox={BBOX} zoom={9} />);
 
     expect(publishedFor("precipitation")).toEqual({
       drawnDate: paintedDay,
@@ -373,7 +502,7 @@ describe("each climate row labels the day it is actually painting", () => {
         .setLayerDate(CLIMATE_FIELD_SIGNALS.precipitation.toggleId, "2023-11-30");
     });
     await settleScrub();
-    rendered.rerender(<ClimateFieldLayers map={null} bbox={BBOX} />);
+    rendered.rerender(<ClimateFieldLayers map={null} bbox={BBOX} zoom={9} />);
 
     expect(publishedFor("precipitation")).toEqual({
       drawnDate: paintedDay,

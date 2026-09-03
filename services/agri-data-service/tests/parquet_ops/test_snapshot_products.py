@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, Literal
 
@@ -14,6 +14,12 @@ import pyarrow as pa  # type: ignore[import-untyped]
 import pyarrow.parquet as pq  # type: ignore[import-untyped]
 import pytest
 
+from agri_data_service.foundation.parquet.absence import GovernedAbsence
+from agri_data_service.foundation.parquet.paths import (
+    absence_marker_path,
+    completion_marker_path,
+    partition_path,
+)
 from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
 from agri_data_service.parquet_ops import snapshot_products
 from agri_data_service.parquet_ops.faults import ServingRefusalError
@@ -24,6 +30,8 @@ from agri_data_service.parquet_ops.snapshot_products import (
     SNAPSHOT_ID,
     SOIL_TEMPERATURE_COLUMNS,
     SOIL_WETNESS_COLUMNS,
+    ForwardAvailability,
+    ForwardAvailabilityWithheld,
     ObjectStoreSnapshotStore,
     SnapshotProduct,
     build_snapshot_coverage,
@@ -32,7 +40,13 @@ from agri_data_service.parquet_ops.snapshot_products import (
     resolve_snapshot_window,
     snapshot_product_columns,
 )
-from agri_data_service.parquet_ops.wire import DayNotWritten, DeclaredListCell, PublishedDay
+from agri_data_service.parquet_ops.wire import (
+    DayNotWritten,
+    DayRange,
+    DeclaredListCell,
+    GovernedAbsenceDay,
+    PublishedDay,
+)
 from agri_data_service.warehouse.parquet.schema import get_stream_schema
 
 if TYPE_CHECKING:
@@ -844,6 +858,14 @@ def test_declared_and_fixed_lattice_coverage_use_only_bound_metadata(
     assert not census.withheld
     assert all(row.earliest_day == date(2026, 8, 1) and row.latest_day == date(2026, 8, 3) for row in census.lanes)
     assert not any(key.endswith(".parquet") for key in declared_store.reads)
+    assert all(row.coverage_authority == "census" for row in census.lanes), (
+        "an immutable product owns no availability index until it is bootstrapped"
+    )
+    assert all(row.source_ceiling_day == date(2026, 8, 3) for row in census.lanes), (
+        "the MANIFEST's declared last day, so the census's evaluated-through day is not read as a "
+        "claim that a frozen snapshot is current through it"
+    )
+    assert all(row.withheld_reason is None and row.required_rungs == () for row in census.lanes)
 
     original = _product("test-air-style")
     air_style = SnapshotProduct(
@@ -1130,3 +1152,365 @@ def test_a_malformed_manifest_tier_count_becomes_a_product_local_typed_withholdi
     assert census.withheld[0].layer == product.layer
     assert census.withheld[0].code == "snapshot_unpublished"
     assert "part count differs" in census.withheld[0].message
+
+
+# --- The forward edge: days a live writer owns, past the frozen manifest's reach ------------------
+
+
+FORWARD_FIRST_DAY = date(2026, 8, 7)
+FORWARD_DAY = date(2026, 8, 8)
+CLOSED_DAY = date(2026, 8, 1)
+#: A real registered stream, because a forward day is served through `DuckDbRowReader`, which reads
+#: the lane's REGISTERED schema for spatial support and declared list cells.
+FORWARD_LAYER = "climate-field-wind-speed"
+#: Rows the forward day's own Parquet holds, so the count proves the LANE part was read.
+FORWARD_DAY_ROW_COUNT = 2
+
+
+def _forward_product(layer: str = FORWARD_LAYER) -> SnapshotProduct:
+    """A daily product frozen only BELOW `forward_first_day`, which is the six climate products' shape."""
+    return replace(_product(layer, layout="daily"), forward_first_day=FORWARD_FIRST_DAY)
+
+
+def _forward_lane_objects(
+    layer: str,
+    day: date,
+    *,
+    marked: bool = True,
+    absent: bool = False,
+) -> dict[str, bytes]:
+    """Write one live lane-day in the ORDINARY layout, with or without the marker that admits it."""
+    objects: dict[str, bytes] = {}
+    for tier in ZOOM_TIERS:
+        if absent:
+            objects[absence_marker_path(layer, "observed", tier, day)] = GovernedAbsence(
+                reason="every source cell answered with a fill value",
+                upstream_response="{}",
+                recorded_at=datetime(2026, 8, 9, tzinfo=UTC),
+                run_id="forward-test",
+            ).to_json_bytes()
+            continue
+        objects[partition_path(layer, "observed", tier, day)] = b"parquet:forward"
+        if marked:
+            objects[completion_marker_path(layer, "observed", tier, day)] = json.dumps(
+                {"part_count": 1, "row_count": 1, "completed_at": "2026-08-09T00:00:00+00:00", "run_id": "fwd"},
+                sort_keys=True,
+            ).encode()
+    return objects
+
+
+def test_a_forward_day_enters_coverage_only_once_its_completion_marker_exists(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Half an export is not coverage. Admitting an unmarked day would put a truncated release on the map."""
+    product = _forward_product("test-forward-marker")
+    parts = [_part(product, tier, CLOSED_DAY, monthly=False) for tier in ZOOM_TIERS]
+    store = _closed_direct_daily_store(product, parts)
+    store.objects.update(_forward_lane_objects(product.layer, FORWARD_DAY, marked=False))
+    monkeypatch.setattr(snapshot_products, "SNAPSHOT_PRODUCTS", (product,))
+
+    unmarked = build_snapshot_coverage(store)
+
+    assert not unmarked.withheld
+    assert {lane.latest_day for lane in unmarked.lanes} == {CLOSED_DAY}
+
+    store.objects.update(_forward_lane_objects(product.layer, FORWARD_DAY, marked=True))
+    snapshot_products.clear_snapshot_evidence_cache()
+    marked = build_snapshot_coverage(store)
+
+    assert not marked.withheld
+    assert len(marked.lanes) == len(ZOOM_TIERS)
+    assert {lane.latest_day for lane in marked.lanes} == {FORWARD_DAY}
+    assert {lane.earliest_day for lane in marked.lanes} == {CLOSED_DAY}
+    assert {lane.source_ceiling_day for lane in marked.lanes} == {FORWARD_DAY}, (
+        "a ceiling below the newest day the rung proves reads as a lane serving days its source never made"
+    )
+
+
+def test_the_manifest_equality_check_speaks_only_for_the_closed_half(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The manifest is silent above the boundary, so requiring it to agree there refuses every live day."""
+    product = _forward_product("test-forward-equality")
+    parts = [_part(product, tier, CLOSED_DAY, monthly=False) for tier in ZOOM_TIERS]
+    store = _closed_direct_daily_store(product, parts)
+    store.objects.update(_forward_lane_objects(product.layer, FORWARD_DAY))
+    monkeypatch.setattr(snapshot_products, "SNAPSHOT_PRODUCTS", (product,))
+
+    census = build_snapshot_coverage(store)
+
+    assert not census.withheld, "a forward day must not read as a tier disagreeing with the manifest"
+    assert all(lane.published_ranges for lane in census.lanes)
+
+
+def test_a_frozen_product_lists_nothing_while_a_forward_one_lists_its_lane_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The census's metadata-only promise still holds for every product with no live edge."""
+    frozen = _product("test-frozen-no-listing", layout="daily")
+    frozen_parts = [_part(frozen, tier, CLOSED_DAY, monthly=False) for tier in ZOOM_TIERS]
+    store = _closed_direct_daily_store(frozen, frozen_parts)
+    monkeypatch.setattr(snapshot_products, "SNAPSHOT_PRODUCTS", (frozen,))
+
+    build_snapshot_coverage(store)
+
+    assert store.listings == []
+
+    forward = _forward_product("test-forward-one-listing")
+    forward_store = _closed_direct_daily_store(
+        forward, [_part(forward, tier, CLOSED_DAY, monthly=False) for tier in ZOOM_TIERS]
+    )
+    monkeypatch.setattr(snapshot_products, "SNAPSHOT_PRODUCTS", (forward,))
+    snapshot_products.clear_snapshot_evidence_cache()
+
+    build_snapshot_coverage(forward_store)
+
+    assert forward_store.listings == [f"layer={forward.layer}/kind=observed/"], (
+        "one listing serves all four rungs; one per rung would quadruple the census's object-store cost"
+    )
+
+
+def test_a_forward_day_is_read_through_the_lane_path_and_a_closed_day_through_its_receipts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The boundary decides which proof a day is served under, and both halves answer the same layer."""
+    product = _forward_product()
+    closed_parts = [_part(product, tier, CLOSED_DAY, monthly=False) for tier in ZOOM_TIERS]
+    store = _closed_direct_daily_store(product, closed_parts)
+    forward_objects = _forward_lane_objects(product.layer, FORWARD_DAY)
+    store.objects.update(forward_objects)
+
+    closed_local = tmp_path / "closed.parquet"
+    _write_rows(closed_local, [CLOSED_DAY])
+    forward_local = tmp_path / "forward.parquet"
+    _write_rows(forward_local, [FORWARD_DAY, FORWARD_DAY])
+    files = {key: str(closed_local) for key in closed_parts}
+    files.update({key: str(forward_local) for key in forward_objects if key.endswith(".parquet")})
+    session = LocalSession(duckdb.connect(), files)
+    monkeypatch.setitem(snapshot_products.PRODUCT_BY_LAYER, product.layer, product)
+    scope = ReadScope(layer=product.layer, kind="observed", tier=13, bbox=None)
+    try:
+        closed = resolve_snapshot_product(store, session, scope=scope, day=CLOSED_DAY)
+        assert store.listings == [], "a closed day is proven by its receipts and lists nothing"
+        forward = resolve_snapshot_product(store, session, scope=scope, day=FORWARD_DAY)
+    finally:
+        session.connection.close()
+
+    assert isinstance(closed, PublishedDay)
+    assert len(closed.rows) == 1
+
+    assert isinstance(forward, PublishedDay)
+    assert forward.requested_day == forward.served_day == FORWARD_DAY
+    assert len(forward.rows) == FORWARD_DAY_ROW_COUNT
+    assert store.listings == [f"layer={product.layer}/kind=observed/zoom=13/year=2026/month=08/day=08/"], (
+        "a forward day lists ONE day prefix, never the whole tier"
+    )
+
+
+def test_a_forward_day_with_no_objects_is_day_not_written_rather_than_a_snapshot_refusal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The closed half already proves the lane published, so `lane_never_written` would be a lie."""
+    product = _forward_product("test-forward-empty")
+    parts = [_part(product, tier, CLOSED_DAY, monthly=False) for tier in ZOOM_TIERS]
+    store = _closed_direct_daily_store(product, parts)
+    monkeypatch.setitem(snapshot_products.PRODUCT_BY_LAYER, product.layer, product)
+    scope = ReadScope(layer=product.layer, kind="observed", tier=13, bbox=None)
+
+    class NoQuery:
+        def execute(self, *_args: object, **_kwargs: object) -> object:
+            raise AssertionError("an unwritten forward day must never open DuckDB")
+
+    answer = resolve_snapshot_product(
+        store,
+        LocalSession(NoQuery(), {}),  # type: ignore[arg-type]
+        scope=scope,
+        day=FORWARD_DAY,
+    )
+
+    assert isinstance(answer, DayNotWritten)
+
+
+def test_a_forward_governed_absence_is_served_as_one_rather_than_as_an_unwritten_day(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """POWER answers whole fill-value days; serving one as `day_not_written` hides a real upstream fact."""
+    product = _forward_product("test-forward-absence")
+    parts = [_part(product, tier, CLOSED_DAY, monthly=False) for tier in ZOOM_TIERS]
+    store = _closed_direct_daily_store(product, parts)
+    store.objects.update(_forward_lane_objects(product.layer, FORWARD_DAY, absent=True))
+    monkeypatch.setitem(snapshot_products.PRODUCT_BY_LAYER, product.layer, product)
+    scope = ReadScope(layer=product.layer, kind="observed", tier=13, bbox=None)
+
+    class NoQuery:
+        def execute(self, *_args: object, **_kwargs: object) -> object:
+            raise AssertionError("a governed absence must never open DuckDB")
+
+    answer = resolve_snapshot_product(
+        store,
+        LocalSession(NoQuery(), {}),  # type: ignore[arg-type]
+        scope=scope,
+        day=FORWARD_DAY,
+    )
+
+    assert isinstance(answer, GovernedAbsenceDay)
+    assert answer.absence.run_id == "forward-test"
+
+
+# --- The forward half is authority-aware: an index answer, or a withholding, but never a LIST -----
+
+#: The lane's own horizon, deliberately ahead of the newest forward day it has published.
+FORWARD_CEILING = date(2026, 8, 10)
+FORWARD_GENERATION_SHA256 = "9b1f0c4d2a7e63518c0dfb2e94a7150c3d6b8e2f41905ac7db3e6f82c150a4d7"
+
+
+class ExplodingListingStore(FakeStore):
+    """A snapshot store that fails the test the instant the coverage path asks it for object keys."""
+
+    def iter_keys(self, relative_prefix: str) -> Iterator[str]:
+        # Deliberately NOT a generator: a generator body would only run once something iterated it,
+        # and a listing that is built and dropped is exactly the regression this must catch.
+        raise AssertionError(f"the availability path listed {relative_prefix!r}")
+
+
+@dataclass
+class ScriptedForwardAvailability:
+    """The `ForwardAvailabilityPort` a coverage test scripts in one line."""
+
+    answer: ForwardAvailability | ForwardAvailabilityWithheld
+    asked: list[tuple[str, date]] = field(default_factory=list)
+
+    def forward_days(self, *, layer: str, first_day: date) -> ForwardAvailability | ForwardAvailabilityWithheld:
+        self.asked.append((layer, first_day))
+        return self.answer
+
+
+def _availability_store(product: SnapshotProduct, parts: list[str]) -> ExplodingListingStore:
+    """The same closed manifest evidence, behind a store that refuses every listing."""
+    listing = _closed_direct_daily_store(product, parts)
+    return ExplodingListingStore(objects=listing.objects)
+
+
+def test_the_forward_half_under_availability_authority_lists_nothing_at_all(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The tripwire: every `iter_keys` raises, so a surviving census proves no prefix was walked."""
+    product = _forward_product("test-forward-no-listing")
+    parts = [_part(product, tier, CLOSED_DAY, monthly=False) for tier in ZOOM_TIERS]
+    store = _availability_store(product, parts)
+    monkeypatch.setattr(snapshot_products, "SNAPSHOT_PRODUCTS", (product,))
+    port = ScriptedForwardAvailability(
+        ForwardAvailability(
+            published_days=frozenset({FORWARD_DAY}),
+            absent_days=frozenset(),
+            source_ceiling=FORWARD_CEILING,
+            generation_sha256=FORWARD_GENERATION_SHA256,
+            pointer_key=f"layer={product.layer}/kind=observed/availability/_LATEST.json",
+        )
+    )
+
+    census = build_snapshot_coverage(store, policy="availability", forward_availability=port)
+
+    assert port.asked == [(product.layer, FORWARD_FIRST_DAY)]
+    assert not census.withheld
+    assert {lane.coverage_authority for lane in census.lanes} == {"availability"}
+    assert {lane.latest_day for lane in census.lanes} == {FORWARD_DAY}
+    assert {lane.source_ceiling_day for lane in census.lanes} == {FORWARD_CEILING}
+    assert {lane.availability_generation_sha256 for lane in census.lanes} == {FORWARD_GENERATION_SHA256}
+
+
+def test_a_product_with_no_forward_index_withholds_its_forward_half_rather_than_listing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Under `availability` a missing index is evidence to withhold, never permission to scan."""
+    product = _forward_product("test-forward-unpublished")
+    parts = [_part(product, tier, CLOSED_DAY, monthly=False) for tier in ZOOM_TIERS]
+    store = _availability_store(product, parts)
+    monkeypatch.setattr(snapshot_products, "SNAPSHOT_PRODUCTS", (product,))
+    port = ScriptedForwardAvailability(
+        ForwardAvailabilityWithheld(reason="availability_unpublished", detail="no pointer has been published")
+    )
+
+    census = build_snapshot_coverage(store, policy="availability", forward_availability=port)
+
+    assert {lane.withheld_reason for lane in census.lanes} == {"availability_unpublished"}
+    assert {lane.latest_day for lane in census.lanes} == {CLOSED_DAY}, "the closed half still stands on its manifest"
+
+
+def test_a_forward_governed_absence_is_a_governed_absence_in_coverage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A settled empty day reported as a gap tells a client to keep asking for a day the lane closed."""
+    product = _forward_product("test-forward-absence-coverage")
+    parts = [_part(product, tier, CLOSED_DAY, monthly=False) for tier in ZOOM_TIERS]
+    store = _closed_direct_daily_store(product, parts)
+    store.objects.update(_forward_lane_objects(product.layer, FORWARD_DAY, absent=True))
+    monkeypatch.setattr(snapshot_products, "SNAPSHOT_PRODUCTS", (product,))
+
+    census = build_snapshot_coverage(store)
+
+    assert not census.withheld
+    for lane in census.lanes:
+        assert lane.governed_absence_ranges == (DayRange(first_day=FORWARD_DAY, last_day=FORWARD_DAY),)
+        assert all(entry.first_day > FORWARD_DAY or entry.last_day < FORWARD_DAY for entry in lane.gap_ranges), (
+            "a governed absence is accounted for, so it may not also be reported as a hole"
+        )
+
+
+def test_a_manifest_that_claims_a_forward_day_refuses_the_whole_product(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A day excluded from the equality check and unioned in anyway is an unverified claim published as closed."""
+    product = _forward_product("test-forward-manifest-conflict")
+    parts = [_part(product, tier, FORWARD_DAY, monthly=False) for tier in ZOOM_TIERS]
+    store = _closed_direct_daily_store(product, parts)
+    monkeypatch.setattr(snapshot_products, "SNAPSHOT_PRODUCTS", (product,))
+
+    census = build_snapshot_coverage(store)
+
+    assert census.lanes == ()
+    assert [entry.code for entry in census.withheld] == ["snapshot_manifest_conflict"]
+
+
+def test_a_straddling_window_returns_both_halves_in_one_row_order(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Two differently-ordered halves in one answer is a client-visible ordering bug at the boundary."""
+    product = _forward_product()
+    parts = [_part(product, tier, CLOSED_DAY, monthly=False) for tier in ZOOM_TIERS]
+    store = _closed_direct_daily_store(product, parts)
+    forward_objects = _forward_lane_objects(product.layer, FORWARD_DAY)
+    store.objects.update(forward_objects)
+    monkeypatch.setitem(snapshot_products.PRODUCT_BY_LAYER, product.layer, product)
+
+    forward_local = tmp_path / "forward-unordered.parquet"
+    _write_unordered_rows(forward_local, FORWARD_DAY)
+    files = {key: str(tmp_path / "closed.parquet") for key in store.objects if key.endswith(".parquet")}
+    _write_rows(tmp_path / "closed.parquet", [CLOSED_DAY])
+    files.update({key: str(forward_local) for key in forward_objects if key.endswith(".parquet")})
+    session = LocalSession(duckdb.connect(), files)
+    scope = ReadScope(layer=product.layer, kind="observed", tier=13, bbox=None)
+
+    try:
+        answer = resolve_snapshot_product(store, session, scope=scope, day=FORWARD_DAY)
+    finally:
+        session.connection.close()
+
+    assert isinstance(answer, PublishedDay)
+    longitudes = [row["cell_longitude"] for row in answer.rows]
+    assert longitudes == sorted(longitudes), "the forward half must arrive in the closed half's own order"
+
+
+def _write_unordered_rows(path: Path, day: date) -> None:
+    """Write one forward day whose PHYSICAL order is not its lon/lat order."""
+    table = pa.table(
+        {
+            "observed_day": pa.array([day, day, day], type=pa.date32()),
+            "cell_longitude": pa.array([-116.5, -120.25, -118.0], type=pa.float64()),
+            "cell_latitude": pa.array([44.0, 44.0, 44.0], type=pa.float64()),
+            "normalized_value": pa.array([1.0, 2.0, 3.0], type=pa.float64()),
+        }
+    )
+    pq.write_table(table, path)
