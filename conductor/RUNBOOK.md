@@ -89,6 +89,26 @@ conformity c2, dependency removals). PostgreSQL retirement stays UNAUTHORIZED un
   tree first); the 26 c2 violations are pinned as an exact list; docs corrected (`docs/deployment.md`,
   `infra/railway/README.md`, `docs/api-reference.md`, evidence addenda). Sweeps: tsc clean, eslint 0 errors,
   vitest 1,783; ruff, mypy, pytest green, receipt verified on a `git archive` of the staged tree.
+- **Step 4 is a code lane, not an operator command.** No bootstrap-input compiler exists (`grep bootstrap
+  services/agri-data-service/scripts` is empty). `load_bootstrap_request`
+  (`pipeline/parquet/availability_index.py:937-985`) demands, per lane, one document with exact keys
+  (`schema_version: availability-bootstrap-input-v1`, `lane`, `lane_root`, `product`, `nature`, `required_rungs`,
+  `verified_source_inventory_root`, `source_ceiling`, `created_at`, `input_receipts`, `rows`), and every row
+  (`_row_from_mapping`, `:2409`) binds one `(day, rung)` to a `source_receipt`, a `terminal_receipt`, one
+  `data_receipt` per Parquet part and a `completion_receipt`, each as `{key, sha256}`; `--apply` verifies those
+  digests against the objects. Completion markers record no part digests (`foundation/parquet/completion.py`
+  has no sha256), so a compiler must list each lane's whole ladder and download-and-hash every part — for
+  `fire-detections` that is every day since 2000-11-01 at every rung (row cap 250,000). Charter it under the
+  gapless track before steps 4-5 (a `scripts/compile_availability_bootstrap.py` that emits the document and
+  its sha256, runs offline validation, and records the receipt), and do not bootstrap until the NEW executor
+  is live: the old executor cannot extend availability generations, so a bootstrapped lane would freeze its
+  ceiling at the bootstrap day.
+- **Owner action still pending at hand-back (2026-09-03 ~14:30 UTC):** the executor Config-as-code path. This
+  session could not set it — the Railway MCP mutation, a `.claude/settings.local.json` allow rule and even
+  read-only agent launches were denied by the permission classifier after the owner's override instruction.
+  Set it in the dashboard (or run the MCP `update-service` with `railwayConfigFile:
+  services/agri-data-service/railway.job-executor.json` in an interactive session), then push or
+  `railway service redeploy --from-source`.
 - **Left open from the reviews (small):** `src/hooks/useRegionalIntelligence.ts:93-99` header still claims
   the hook subscribes to nothing; `RegionalIntelligencePanel` still re-renders on a layer toggle while open;
   `MapView.tsx` commits as an LF rewrite (it was CRLF in HEAD).

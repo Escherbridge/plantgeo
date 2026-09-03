@@ -199,3 +199,13 @@ without nested blocks). Captures: `conductor/tracks/multiscale_polygon_surface_2
 Wave-3 closure contents and the review ledger are in `conductor/RUNBOOK.md` (HANDOFF 2026-09-03, "Progress
 2026-09-03"). Step 1 stands at: web app and API observed at the new code; executor observation blocked on
 the owner's one setting. Steps 4–12 of the continuation plan are unchanged and next.
+
+## Step 4 scoping note — 2026-09-03
+
+The availability bootstrap input is a per-lane document of `(day, rung)` rows each binding `{key, sha256}`
+receipts for the source object, the terminal marker, every data part and the completion marker
+(`availability_index.py:361-400`, `:2409-2466`), plus `input_receipts` for the manifests/checkpoints; `--apply`
+verifies the digests against R2 (`:1038`). No compiler exists and completion markers carry no part digests, so
+producing the document means listing and hashing the whole ladder per lane. Step 4 therefore starts with a
+tooling slice (charter under this track) and must wait for the new executor to be live. Recorded in the
+RUNBOOK progress block.
