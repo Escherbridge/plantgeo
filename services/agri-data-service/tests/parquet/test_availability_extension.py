@@ -65,6 +65,7 @@ from agri_data_service.pipeline.parquet.objectstore import (
     ObjectStore,
     WrittenObjectLedger,
     availability_retry_path,
+    availability_retry_quarantine_path,
 )
 from agri_data_service.warehouse.schemas.availability_index import AVAILABILITY_REQUIRED_RUNGS
 from tests.parquet.test_gap_fill import RecordingSession
@@ -767,6 +768,45 @@ async def test_an_unreadable_head_still_claims_the_day_and_the_next_turn_indexes
     assert tuple(row.rung for row in index.rows if row.day == DAY) == AVAILABILITY_REQUIRED_RUNGS
     assert DAY in index.selectable_days()
     assert _lane_part_objects(backend) == parts_before, "the retry republished; it never re-exported"
+
+
+@pytest.mark.asyncio
+async def test_an_unparseable_claim_is_quarantined_out_of_the_oldest_first_ledger() -> None:
+    """DO NOT DELETE. A claim that cannot be parsed cannot be retried, and left in place it STARVES.
+
+    `_claim_from_marker` is pure, so the next turn parses the identical bytes into the identical
+    refusal -- forever. The ledger is drained oldest-first and bounded at `DEFAULT_MAX_RETRIES_PER_LANE`
+    days per tick, so one unparseable day permanently occupies one of those slots and can hold back
+    every genuinely replayable day behind it. It leaves the ledger, its bytes stay readable beside
+    it, and its own day is counted as the permanent loss it is.
+    """
+    backend, store, storage, _log = new_lane()
+    bootstrap_lane(store, storage)
+    marker = availability_retry_path(LANE, GAP_FILL_PARTITION_KIND, DAY)
+    backend.objects[store.key_for(marker)] = b'{"schema_version": "availability-retry-v0"}'
+
+    outcomes = await retry_pending_availability(
+        cast("AsyncSession", object()),
+        store,
+        lane=LANE,
+        kind=GAP_FILL_PARTITION_KIND,
+        availability=storage,
+        now=lambda: NOW + timedelta(hours=1),
+        publication_barrier=granted_barrier,
+    )
+
+    assert [item.state for item in outcomes] == ["retry_claim_failed"]
+    assert outcomes[0].error_kind == "retry_marker_malformed"
+    quarantined = availability_retry_quarantine_path(LANE, GAP_FILL_PARTITION_KIND, DAY)
+    assert outcomes[0].retry_marker == quarantined
+    assert store.key_for(marker) not in backend.objects, "the unparseable claim must leave the ledger"
+    assert backend.objects[store.key_for(quarantined)], "and its bytes must stay readable for an operator"
+    assert store.list_availability_retry_days(LANE, GAP_FILL_PARTITION_KIND) == (), (
+        "a quarantined key must not be listed as owed, or it still occupies a retry slot"
+    )
+    tally = AvailabilityExtensionTally()
+    tally.record(outcomes[0])
+    assert tally.to_summary()["availability_retry_claim_failed"] == 1
 
 
 @pytest.mark.asyncio

@@ -52,6 +52,11 @@ the reader and look exactly like "not bootstrapped yet".
 - `availability` — every TIME-BEARING lane is served from its index, and so is every snapshot
   product's forward half. A lane that cannot prove itself is WITHHELD: it stays on the wire with
   null bounds, empty ranges and one of four `withheld_reason` values, and offers no selectable days.
+  **A frozen product whose forward half cannot prove itself is withheld ENTIRELY, closed half
+  included, until its index exists.** Its manifest is still evidence, but the client withholds the
+  whole capability on any non-null `withheld_reason`, so a row carrying the closed half's bounds
+  beside a reason publishes days nothing will ever draw and breaks the "a withheld lane publishes no
+  selectable days" contract test. There is no half-withheld state on the wire to express.
 - `census_until_bootstrap` — **TRANSITIONAL, and it is deleted, not kept.** Per lane: a valid index
   wins and that lane never lists again; a lane whose pointer object is ABSENT falls back to the
   existing census and is labelled `coverage_authority: "census"`. A malformed or checksum-invalid

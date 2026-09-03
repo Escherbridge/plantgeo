@@ -27,6 +27,7 @@ from agri_data_service.pipeline.direct.water_gauges import (
     tables_by_publisher_day,
 )
 from agri_data_service.pipeline.lanes.water_gauges import WATER_GAUGES_DIRECT_WRITER_START_DAY
+from agri_data_service.pipeline.parquet.availability_extension import AvailabilityExtensionTally
 from agri_data_service.pipeline.parquet.availability_index import BotoAvailabilityStorage
 from agri_data_service.pipeline.parquet.gap_fill import fill_one_lane_day, postgres_lane_day_lock
 from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRY
@@ -269,6 +270,7 @@ async def _publish_day(  # noqa: PLR0912, PLR0913, PLR0915 - one bounded lane-da
     contention_poll_seconds: float,
     contention_timeout_seconds: float,
     availability_storage: AvailabilityStorage | None = None,
+    availability: AvailabilityExtensionTally | None = None,
 ) -> ForwardDayResult:
     """Publish one day through the shared lock/finalizer and verify its physical z13 content.
 
@@ -299,6 +301,7 @@ async def _publish_day(  # noqa: PLR0912, PLR0913, PLR0915 - one bounded lane-da
                 lane_day_lock=postgres_lane_day_lock,
                 statement_timeout_seconds=STATEMENT_TIMEOUT_SECONDS,
                 availability_storage=availability_storage,
+                availability_tally=availability,
             )
         except Exception as error:  # advisory-lock and session failures share the bounded retry budget
             await session.rollback()
@@ -402,6 +405,10 @@ async def run(args: argparse.Namespace) -> int:
 
     fetched_at = datetime.now(UTC)
     run_id = f"water-gauges-nwis-forward-{fetched_at.strftime('%Y%m%dT%H%M%SZ')}"
+    # ONE TALLY FOR THE WHOLE RUN, on EVERY terminal record this function emits. Without it an
+    # availability verdict lands only in a day's detail string -- and `ladder_incomplete` and
+    # `retry_claim_failed` both mean a day that is in the bucket and permanently outside the index.
+    availability = AvailabilityExtensionTally()
     async with upstream_client(NWIS_BOUNDS) as client:
         fetched = await fetch_streamflow_gauges(client, bbox, fetched_at)
 
@@ -441,6 +448,7 @@ async def run(args: argparse.Namespace) -> int:
             rows_added=0,
             rows_updated=0,
             bytes=0,
+            **availability.to_summary(),
         )
         return 0
 
@@ -467,6 +475,7 @@ async def run(args: argparse.Namespace) -> int:
                 contention_poll_seconds=args.contention_poll_seconds,
                 contention_timeout_seconds=args.contention_timeout_seconds,
                 availability_storage=availability_storage,
+                availability=availability,
             )
             results.append(result)
             emit(
@@ -508,6 +517,7 @@ async def run(args: argparse.Namespace) -> int:
         parts=sum(result.parts for result in results),
         rows=sum(result.rows for result in results),
         bytes=sum(result.written_bytes for result in results),
+        **availability.to_summary(),
     )
     return 0 if all(result.outcome == "written" for result in results) else 1
 

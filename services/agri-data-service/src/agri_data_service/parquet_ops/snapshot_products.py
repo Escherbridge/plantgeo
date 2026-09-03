@@ -1014,9 +1014,15 @@ def _build_product_coverage(
 
     `coverage_authority` on a forward product names WHAT PROVED ITS LIVE EDGE, because that is the
     only half whose evidence can change: the closed half is manifest-bound under either policy, and
-    a frozen product stays `census` because it has no live edge to prove. A withheld forward half
-    leaves the closed half standing and states its reason on the row -- the manifest did not stop
-    being evidence because the index is missing.
+    a frozen product stays `census` because it has no live edge to prove.
+
+    A WITHHELD FORWARD HALF WITHHOLDS THE WHOLE PRODUCT, null bounds and empty ranges, in exactly the
+    shape `availability_coverage.withheld_lane_coverage` uses. The manifest did not stop being
+    evidence, but the CLIENT cannot gate on half a lane: a non-null `withheld_reason` withholds the
+    whole capability there, so shipping the closed half's bounds beside a reason publishes days
+    nothing on the wire will ever draw -- and `tests/contract/test_wire_contract.py`'s "a withheld
+    lane publishes no selectable days" is a contract this row would break. The manifest's evidence
+    is not lost; it is simply not published until the forward half can prove itself.
     """
     rows: list[LaneCoverage] = []
     evidence = inputs.evidence
@@ -1049,6 +1055,25 @@ def _build_product_coverage(
                 key=product.data_root,
                 detail=f"tier z{tier:02d} day paths do not equal the manifest's closed day range",
             )
+        if forward.withheld_reason is not None:
+            rows.append(
+                LaneCoverage(
+                    layer=product.layer,
+                    nature="daily_series",
+                    kind="observed",
+                    zoom=tier,
+                    earliest_day=None,
+                    latest_day=None,
+                    published_ranges=(),
+                    gap_ranges=(),
+                    governed_absence_ranges=(),
+                    coverage_authority=forward.authority,
+                    availability_generation_sha256=forward.generation_sha256,
+                    availability_pointer_key=forward.pointer_key,
+                    withheld_reason=forward.withheld_reason,
+                )
+            )
+            continue
         published_days = closed_days | forward.published_for(tier)
         # A FORWARD GOVERNED ABSENCE IS A GOVERNED ABSENCE, not a gap. The lane looked at the day and
         # the source deliberately had nothing; reporting it as a hole tells a client to keep asking.
@@ -1069,7 +1094,7 @@ def _build_product_coverage(
                 availability_generation_sha256=forward.generation_sha256,
                 availability_pointer_key=forward.pointer_key,
                 source_ceiling_day=_product_source_ceiling(declared_days, published_days, forward),
-                withheld_reason=forward.withheld_reason,
+                withheld_reason=None,
             )
         )
     return tuple(rows)

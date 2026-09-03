@@ -133,13 +133,14 @@ def build_lane_coverage(
     return close_lane_coverage(lane=lane, tier=tier, horizon=today, days=_tier_days(listing, lane=lane, tier=tier))
 
 
-def close_lane_coverage(
+def close_lane_coverage(  # noqa: PLR0913 - one already-proven fact about the lane being closed per arg
     *,
     lane: CensusLane,
     tier: ZoomTier,
     horizon: date,
     days: LaneDays,
     horizon_already_lag_adjusted: bool = False,
+    carry_horizon: date | None = None,
 ) -> LaneCoverage:
     """Close one lane's already-proven day sets against its declared nature and its own live edge.
 
@@ -153,7 +154,15 @@ def close_lane_coverage(
     the ceiling rather than today is what stops a lane whose source ends days ago from reading as
     current-but-empty; charging the lag twice on top of it would silently hide one lag period of a
     release lane's real gap tail.
+
+    `carry_horizon` IS THE DAY A CARRIED RELEASE MAY STILL BE READ ON, and it is not the horizon a
+    gap is charged against. A drought release published on the 18th answers the 24th; the ceiling
+    that judges lateness is `today - publication_lag_days`, so clipping the carry at it would move a
+    release lane's `latest_day` BACK by its own publication lag the moment the availability
+    authority took over -- the same lane, the same days, a shorter axis. `None` means "the horizon",
+    which is what the census wants: there, the horizon already IS today.
     """
+    carry_edge = horizon if carry_horizon is None else carry_horizon
     data_days = set(days.data)
     absent_days = set(days.absent)
     conflict_days = set(days.conflict)
@@ -180,7 +189,7 @@ def close_lane_coverage(
         published_days = _release_carried_days(
             data_days,
             lane=lane,
-            horizon=horizon,
+            horizon=carry_edge,
             latest_status_day=latest_status_day,
         )
         if not published_days:
@@ -195,7 +204,7 @@ def close_lane_coverage(
             _release_carried_days(
                 absent_days,
                 lane=lane,
-                horizon=horizon,
+                horizon=carry_edge,
                 latest_status_day=latest_status_day,
             )
             - published_days

@@ -25,6 +25,7 @@ from click.testing import CliRunner
 from agri_data_service.config import Settings
 from agri_data_service.foundation.parquet.completion import PartitionCompletion
 from agri_data_service.interface.cli import cli
+from agri_data_service.pipeline.parquet.availability_index import BotoAvailabilityStorage
 from agri_data_service.pipeline.parquet.drain import DrainLaneProgress, DrainSummary
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 from agri_data_service.warehouse.parquet.schema import observed_stream_schema
@@ -146,6 +147,52 @@ def test_the_ladder_selection_reaches_run_drain(monkeypatch: pytest.MonkeyPatch)
 
     assert result.exit_code == 0, result.output
     assert seen["selection"] == "ladder", "the drain ran the selection the operator asked for"
+
+
+def test_the_drain_verb_hands_run_drain_the_availability_storage(monkeypatch: pytest.MonkeyPatch) -> None:
+    """DO NOT DELETE. Without this kwarg the whole bulk repair lands in the bucket and in no index.
+
+    `fill_one_lane_day` returns before its availability step when `availability_storage is None`, so
+    an operator running `parquet-drain` would fill thousands of lane-days, read `days_written` in the
+    thousands beside a row of availability zeros, and have every one of those days permanently
+    invisible to the authority -- the base-tier census never revisits a completed day.
+    """
+    store, _ = _store_with_one_base_complete_day()
+    _pin_store(monkeypatch, store)
+    seen: dict[str, Any] = {}
+    storage = object()
+
+    async def _record(*_args: object, **kwargs: object) -> DrainSummary:
+        seen.update(kwargs)
+        return DrainSummary(run_id=RUN_ID, lanes=(DrainLaneProgress(slug=STREAM, considered=0, pending=[]),), seconds=0)
+
+    class _NoSession:
+        async def __aenter__(self) -> object:
+            return object()
+
+        async def __aexit__(self, *_exc: object) -> bool:
+            return False
+
+    monkeypatch.setattr("agri_data_service.interface.cli.commands.run_drain", _record)
+    monkeypatch.setattr(
+        "agri_data_service.interface.cli.commands.local_source_loader_session",
+        lambda _url: _NoSession(),
+    )
+    monkeypatch.setattr(
+        BotoAvailabilityStorage,
+        "from_settings",
+        classmethod(lambda _cls, _source=None: storage),
+    )
+    monkeypatch.setattr(
+        Settings,
+        "require_local_source_loader_database_url",
+        lambda _self: "postgresql+asyncpg://unused/never-opened",
+    )
+
+    result = CliRunner().invoke(cli, ["data", "parquet-drain", "--layer", STREAM, "--no-progress"])
+
+    assert result.exit_code == 0, result.output
+    assert seen["availability_storage"] is storage, "the drain must publish through the operator's own bucket"
 
 
 def test_the_selection_option_offers_both_walks_and_defaults_to_the_export_drain() -> None:

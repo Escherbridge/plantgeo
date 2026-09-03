@@ -4,7 +4,7 @@ type: runbook
 
 # PlantGeo — Runbook
 
-**Current status (2026-09-02): production is serving the new timeline catalogue, but browser
+**Current status (2026-09-02, after wave 1 at `2b4cfef`, unpushed): production still runs `e4490c3`; the repository now carries the fire reader cutover, availability-backed coverage behind a default-off switch, claim-first availability extension, a shadow NASA POWER climate writer and both scheduler blocker repairs — see "Wave 1 landed" in the LIVE section. In production, browser
 acceptance remains RED. Fire still renders through the legacy PostgreSQL `/api/fires` path; several
 climate and soil products have contiguous unpublished tails; the stateful executor is the sole
 scheduler with 37 active executable lanes; and coarse continuous fields render with visible holes
@@ -31,6 +31,100 @@ This is the current operational handoff. It supersedes the 2026-08-29 cutover ch
 which is now historical. The assessment used a fresh anonymous production browser session at
 `https://plantgeo.aevani.com/`, the default Pacific Northwest camera, and progressively coarser
 zooms. No browser console error explained the failures.
+
+### Wave 1 landed — 2026-09-02, commit `2b4cfef` on `main`, NOT pushed, nothing deployed
+
+Eight opus executors ran on disjoint write sets (partition recorded in each track's `metadata.json`
+→ `partitions.orchestration_wave1_20260902`), followed by one TypeScript sweep, one Python sweep,
+five adversarial reviews and two closure verifications. Every review returned CHANGES-REQUIRED at
+least once; six blockers were found and fixed before the commit. Final sweep on the committed tree:
+`tsc` clean, eslint 0 errors, vitest 1,622 passed; ruff format/lint and mypy clean, pytest 4,748
+passed / 140 DB-gated skips. Pushing this commit redeploys `plantgeo-main`, the agri service and
+the executor; do not push until the deployment order below is decided.
+
+**Repair order 1 (fire reader) — code complete, evidence partial.** `LayerManager` and
+`FireDetails` read through `trpc.wildfire.getFireDetections` with settled day, viewport bbox and
+zoom (`src/hooks/useParquetFireDetections.ts`); all six read states render as themselves on the
+canvas; `truncated` is an amber notice; aborted reads reject through the shared `rejectAborted`
+guard and browser cancellation is real (`createTRPCReact({ abortOnUnmount: true })`, batch caveat
+in `src/lib/server/services/AGENTS.md`). `useFireData` and `/api/fires` remain on disk with no map
+caller; reader slice r3 deletes them after browser parity evidence. Evidence:
+`tracks/parquet_reader_cutover_acceptance_20260901/evidence/r1-fire-hard-cut.md`.
+
+**Repair order 3 (ceilings and `Latest`) — code complete, production flip gated.** The coverage
+route serves per-lane coverage from the availability index (one pointer GET, one generation GET,
+generations cached by sha) behind `PARQUET_COVERAGE_AUTHORITY`: default `census_until_bootstrap`
+censuses a lane only when it has no pointer AND no `availability/bootstrap/_BOOTSTRAPPED.json`
+sentinel (a bootstrapped lane that lost its pointer is withheld); `availability` withholds every
+unbootstrapped time-bearing lane and lists nothing except the three `static_lookup` lanes. Wire
+`coverage_schema_version` 2 adds `coverage_authority`, `availability_generation_sha256`,
+`availability_pointer_key`, `source_ceiling_day`, `required_rungs`, `withheld_reason`; the
+TypeScript side withholds `ceiling_violation` when `Latest` exceeds the ceiling and publishes
+`describedThroughDay` so days past the ceiling read as undescribed, never dense. **No production
+lane is bootstrapped.** Flipping the variable before per-lane bootstrap receipts exist blanks every
+slider. Bootstrap (`agri-service data availability-bootstrap --apply`) is a separately authorized
+production R2 write and has not run.
+
+**Repair order 2 (forward publication) — partially built, all in shadow.** Every terminal
+lane-day through `fill_one_lane_day` now extends its lane's availability generation claim-first
+after the completion marker (retry claim at `<lane-root>/availability/pending/day=<day>.json`,
+pointer last, six counted outcomes in every gap-fill/drain summary); the governed-absence ladder is
+atomic across rungs. A NASA POWER direct writer (`python -m agri_data_service.pipeline.direct.climate`,
+executor lane `climate-nasa-power-direct-forward`) publishes the six climate products from one
+bounded point request per support cell (the 397 `na-sample:1deg:*` cells; `grid_name`
+`nasa-power-0.5-degree` is a misnomer for a one-degree lattice); floors 2026-08-07 (meteorology,
+lag 5) and 2026-06-01 (shortwave, lag 75 UNMEASURED); it is mutually exclusive with the eight
+generic `parquet-climate-field-*` lanes and is NOT in `PLANTGEO_JOB_EXECUTOR_ACTIVE_LANES`. The
+six snapshot-rooted climate products route days at or after `forward_first_day` through the live
+lane. ERA5-Land (moisture, temperature, VPD) has no writer: it is CDS-credential-blocked on the
+inert ingest service. The repository now registers 47 executor responsibilities (38 at production
+release `e4490c3`); none of the nine new ones is active.
+
+**Scheduler blockers — repaired in code, nothing requeued.** `jobs-matview-refresh` answers an
+absent relation with a governed `relation_absent` outcome before the eligibility gate and no longer
+lists the two deliberately dropped views; `postgres-fire-perimeters` (and evacuation zones) halve
+the ArcGIS page size at the same offset under the 16 MiB bound and refuse an oversized record by
+name, with a 128 MiB per-run budget. The 200 standing dead letters are left standing on purpose;
+the operator procedure is `tracks/gapless_parquet_publication_20260901/evidence/p3-runtime-blockers-repair.md`.
+
+**Repair order 4 (surfaces) — contract only.** `src/lib/map/layer-render-contract.ts` freezes the
+render class, permitted forms per band and the closed `supportKind` vocabulary for all 27 toggles;
+fire's detail form is `aggregate_cell` (FIRMS has no raw rung); vegetation's centre-circle render is
+a recorded `shippedDeviation` owned by multiscale m2. Climate reads now select one physical rung by
+zoom and the map draws the served form (`symbol` below z13). Filled tessellations, isobands and
+density cells (m1 to m3) are not built.
+
+**Conformity c0 done.** The fabricated moderation tau/interval is gone; a typed `unavailable`
+evidence value renders instead. `interventions.ts` still stamps `causalTauEst ?? 0.15` on every
+submitted proposal — the same fabrication one layer down, owned by conformity, not fixed.
+
+**Contract holes found by review and left open, in order of consequence.**
+1. A coarse rung that derives to zero rows (`derived_to_zero_rows`) can never close its ladder:
+   `foundation/parquet/completion.py` refuses a zero-part completion marker, so such a day is
+   served at z13 but never indexed. Counted as `availability_ladder_incomplete`; the exact
+   foundation change is in `services/agri-data-service/src/agri_data_service/pipeline/parquet/AGENTS.md`.
+2. Under `availability` authority a withheld forward half leaves a coverage row carrying both
+   bounds and a `withheld_reason`; the wire contract pairs withholding with null bounds.
+3. Two rulings owed to multiscale m1/m2: whether `isoband` is withheld for the four signals that
+   already withhold `isoline` on the fabrication argument, and whether the weather toggle is
+   stations or a sampled grid.
+4. The climate lane has never run against the live POWER service at 397 requests per day.
+
+**Closure follow-up (same day, the commit after `2b4cfef`).** A read-only verification of the Python
+fixes found one new blocker and three open claims, all closed in that commit and re-swept green
+(pytest 4,762): the bulk `parquet-drain` verb never passed availability storage (drained days would
+have been invisible to the index with the new counters reading zero); the availability authority
+truncated release-lane carry (drought) by its publication lag, now `carry_horizon` = today while
+gap closing stays on the ceiling; the climate lanes had no retry drain once the generic lanes were
+excluded (the writer now drains its own claims per product); a withheld forward half shipped bounds
+beside a `withheld_reason` (now null bounds, whole product withheld until its index exists); and
+every direct writer now tallies availability outcomes into its report. Quarantined malformed retry
+claims (`day=<day>.quarantined.json`) accumulate with no sweep; bounded by rarity.
+
+**Deployment order when the owner decides to push:** deploy; observe one unassisted tick each of
+`jobs-matview-refresh` and `postgres-fire-perimeters`; bootstrap availability lane by lane and
+record receipts; only then set `PARQUET_COVERAGE_AUTHORITY=availability`; activate
+`climate-nasa-power-direct-forward` last, after the reader change is live so its days are visible.
 
 ### Browser acceptance verdict: RED
 
@@ -106,8 +200,10 @@ archive, not a working forward publication loop.
   was still running and already reporting source failures. Neither a crash, a removed deployment nor
   a green service badge proves that scheduler responsibility transferred.
 - `plantgeo-job-executor` service `565ecaad-9946-48f1-8a0b-28fa60494a16` is the sole scheduler.
-  It reports 38 registered responsibilities, of which the one-shot soil-moisture snapshot remains
-  terminal and 37 executable lanes are active. A post-redeploy tick ingested 591 NWS sensor rows,
+  It reports 38 registered responsibilities at production release `e4490c3`, of which the one-shot
+  soil-moisture snapshot remains terminal and 37 executable lanes are active; the repository at
+  `2b4cfef` registers 47 (eight `parquet-climate-field-*` generic lanes plus
+  `climate-nasa-power-direct-forward`), none of them activated. A post-redeploy tick ingested 591 NWS sensor rows,
   wrote 584 without truncation, and closed healthy at `2026-09-02T18:05:50Z`.
 - The complete production writer inventory is six service objects: `plantgeo-ingest-cron`,
   `plantgeo-cron-mtbs`, `plantgeo-cron-soilgrids`, `plantgeo-fire-detections-forward`,

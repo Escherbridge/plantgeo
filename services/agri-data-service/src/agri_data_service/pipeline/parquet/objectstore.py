@@ -119,6 +119,7 @@ MAX_AVAILABILITY_RETRY_BYTES: Final = 8 * 1024 * 1024
 _AVAILABILITY_RETRY_SEGMENT: Final = "availability/pending/"
 _AVAILABILITY_RETRY_DAY_PREFIX: Final = "day="
 _AVAILABILITY_RETRY_SUFFIX: Final = ".json"
+_AVAILABILITY_RETRY_QUARANTINE_SUFFIX: Final = ".quarantined.json"
 _ABSENT_OBJECT_CODES: Final = frozenset({"404", "NoSuchKey", "NotFound"})
 
 
@@ -132,6 +133,20 @@ def availability_retry_path(layer: str, kind: PartitionKind, day: date) -> str:
     return (
         f"{availability_lane_root(layer, kind)}/{_AVAILABILITY_RETRY_SEGMENT}"
         f"{_AVAILABILITY_RETRY_DAY_PREFIX}{day.isoformat()}{_AVAILABILITY_RETRY_SUFFIX}"
+    )
+
+
+def availability_retry_quarantine_path(layer: str, kind: PartitionKind, day: date) -> str:
+    """Return where a MALFORMED retry claim is parked so it stops occupying an oldest-first slot.
+
+    Under the SAME prefix as the live claims, and readable by an operator for exactly that reason.
+    `try_parse_availability_retry_path` refuses `day=<day>.quarantined` -- the segment between the
+    prefix and `.json` is not an ISO date -- so `list_availability_retry_days` walks straight past
+    it and one unparseable day can no longer starve the eight retries a lane gets per tick.
+    """
+    return (
+        f"{availability_lane_root(layer, kind)}/{_AVAILABILITY_RETRY_SEGMENT}"
+        f"{_AVAILABILITY_RETRY_DAY_PREFIX}{day.isoformat()}{_AVAILABILITY_RETRY_QUARANTINE_SUFFIX}"
     )
 
 
@@ -624,6 +639,18 @@ class ObjectStore:
     def clear_availability_retry(self, layer: str, kind: PartitionKind, day: date) -> None:
         """Retract one lane-day's availability retry claim once the generation covers it."""
         self._backend.delete(self.key_for(availability_retry_path(layer, kind, day)))
+
+    def quarantine_availability_retry(self, payload: bytes, *, layer: str, kind: PartitionKind, day: date) -> str:
+        """Park an unparseable retry claim beside the live ones and retract it; returns the parked path."""
+        if not payload or len(payload) > MAX_AVAILABILITY_RETRY_BYTES:
+            raise ValueError(
+                f"a quarantined availability retry marker must be 1..{MAX_AVAILABILITY_RETRY_BYTES} bytes, "
+                f"got {len(payload)}"
+            )
+        relative_path = availability_retry_quarantine_path(layer, kind, day)
+        self._backend.put(self.key_for(relative_path), payload, content_type=AVAILABILITY_RETRY_CONTENT_TYPE)
+        self._backend.delete(self.key_for(availability_retry_path(layer, kind, day)))
+        return relative_path
 
     def list_partition_objects(
         self,

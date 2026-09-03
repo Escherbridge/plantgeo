@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import time
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING, Final, Literal
 
@@ -38,6 +38,7 @@ from agri_data_service.execution.vegetation_ndvi_plane import (
 )
 from agri_data_service.foundation.parquet.paths import partition_day_statuses, try_parse_partition_path
 from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
+from agri_data_service.pipeline.parquet.availability_extension import AvailabilityExtensionTally
 from agri_data_service.pipeline.parquet.availability_index import BotoAvailabilityStorage
 from agri_data_service.pipeline.parquet.gap_fill import (
     GAP_FILL_PARTITION_KIND,
@@ -129,6 +130,9 @@ class VegetationForwardSummary:
     examined_day_count: int
     stop_reason: ForwardStopReason
     days: tuple[VegetationForwardDayResult, ...]
+    #: Every availability verdict this run's days produced. A day in the bucket and not in the index
+    #: is a number here rather than a sentence inside one day's detail string.
+    availability: AvailabilityExtensionTally = field(default_factory=AvailabilityExtensionTally)
 
     @property
     def written_day_count(self) -> int:
@@ -144,6 +148,7 @@ class VegetationForwardSummary:
 
     def to_details(self) -> dict[str, int]:
         return {
+            **self.availability.to_summary(),
             "affected_days": self.affected_day_count,
             "checkpointed_days": self.checkpointed_day_count,
             "contended_days": self.contended_day_count,
@@ -167,6 +172,8 @@ class VegetationPublicationDrainSummary:
     source_revision: int
     stop_reason: ForwardStopReason
     days: tuple[VegetationForwardDayResult, ...]
+    #: Every availability verdict this drain's days produced; see `VegetationForwardSummary`.
+    availability: AvailabilityExtensionTally = field(default_factory=AvailabilityExtensionTally)
 
     @property
     def written_day_count(self) -> int:
@@ -186,6 +193,7 @@ class VegetationPublicationDrainSummary:
 
     def to_details(self) -> dict[str, int | str]:
         return {
+            **self.availability.to_summary(),
             "checkpointed_days": self.checkpointed_day_count,
             "contended_days": self.contended_day_count,
             "defensive_days": self.defensive_day_count,
@@ -455,6 +463,7 @@ async def _write_day_once(  # noqa: PLR0913 - one lane-day coordinate or injecte
     source_fingerprint: str,
     lane_day_lock: VegetationLaneDayLock,
     availability_storage: AvailabilityStorage | None,
+    availability: AvailabilityExtensionTally,
 ) -> VegetationForwardDayResult:
     """Publish one vegetation day through the shared lane-day contract, index entry included.
 
@@ -486,6 +495,7 @@ async def _write_day_once(  # noqa: PLR0913 - one lane-day coordinate or injecte
                 vegetation_publication_barrier=unlocked_vegetation_publication_barrier,
                 statement_timeout_seconds=VEGETATION_FORWARD_STATEMENT_TIMEOUT_SECONDS,
                 availability_storage=availability_storage,
+                availability_tally=availability,
             )
             if outcome != "written" or not _ladder_checkpoint_is_current(
                 store,
@@ -519,6 +529,7 @@ async def _write_day_with_retry(  # noqa: PLR0913 - retry policy and injected se
     lane_day_lock: VegetationLaneDayLock,
     sleep: Callable[[float], Awaitable[None]],
     availability_storage: AvailabilityStorage | None,
+    availability: AvailabilityExtensionTally,
 ) -> VegetationForwardDayResult:
     last_error: Exception | None = None
     for attempt in range(1, max_attempts + 1):
@@ -530,6 +541,7 @@ async def _write_day_with_retry(  # noqa: PLR0913 - retry policy and injected se
                 source_fingerprint=source_fingerprint,
                 lane_day_lock=lane_day_lock,
                 availability_storage=availability_storage,
+                availability=availability,
             )
         except Exception as error:
             last_error = error
@@ -605,6 +617,9 @@ async def _drain_pending_vegetation(  # noqa: PLR0913 - bounded drain policy and
 ) -> VegetationPublicationDrainSummary:
     pending = await pending_vegetation_publication(session, limit=2_147_483_647)
     await session.rollback()
+    # ONE TALLY PER RUN, and this drain IS the run: every vegetation day of every entry point flows
+    # through it, so a tally minted above it would be per-caller rather than per-run.
+    availability = AvailabilityExtensionTally()
     started_at = monotonic()
     results: list[VegetationForwardDayResult] = []
     stop_reason: ForwardStopReason = "complete"
@@ -626,6 +641,7 @@ async def _drain_pending_vegetation(  # noqa: PLR0913 - bounded drain policy and
                 lane_day_lock=lane_day_lock,
                 sleep=sleep,
                 availability_storage=availability_storage,
+                availability=availability,
             )
         except Exception as error:
             await record_vegetation_publication_attempt(
@@ -670,6 +686,7 @@ async def _drain_pending_vegetation(  # noqa: PLR0913 - bounded drain policy and
         source_revision=source_revision,
         stop_reason=stop_reason,
         days=tuple(results),
+        availability=availability,
     )
 
 
@@ -802,6 +819,7 @@ async def forward_vegetation_scope(  # noqa: PLR0913 - explicit bounds and seams
         examined_day_count=len(drain.days),
         stop_reason=drain.stop_reason,
         days=drain.days,
+        availability=drain.availability,
     )
 
 

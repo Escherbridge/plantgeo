@@ -103,7 +103,11 @@ from agri_data_service.foundation.parquet.paths import (
     validate_layer_slug,
     validate_partition_kind,
 )
-from agri_data_service.pipeline.parquet.availability_extension import AvailabilityExtensionTally
+from agri_data_service.pipeline.parquet.availability_extension import (
+    AvailabilityExtensionOutcome,
+    AvailabilityExtensionTally,
+    retry_pending_availability,
+)
 from agri_data_service.pipeline.parquet.derivation import derive_and_write_day_tiers
 from agri_data_service.pipeline.parquet.gap_fill import (
     FAILING_LANE_OUTCOMES,
@@ -117,11 +121,12 @@ from agri_data_service.pipeline.parquet.gap_fill import (
     postgres_lane_day_lock,
     resolve_lane_watermarks,
 )
+from agri_data_service.pipeline.parquet.objectstore import availability_lane_root
 from agri_data_service.warehouse.parquet.tiers import BASE_ZOOM_TIER, DERIVED_ZOOM_TIERS, derivation_session
 from agri_data_service.warehouse.schemas.vegetation import VEGETATION_PLANE_STREAM
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Sequence
+    from collections.abc import Callable, Iterable, Mapping, Sequence
     from contextlib import AbstractContextManager
 
     from duckdb import DuckDBPyConnection
@@ -608,6 +613,53 @@ def plan_drain(census: Sequence[LaneGapCensus]) -> tuple[DrainLaneProgress, ...]
     )
 
 
+async def _drain_owed_availability(  # noqa: PLR0913 - one coordinate of the walk being drained per arg
+    session: AsyncSession,
+    store: ObjectStore,
+    progress: Sequence[DrainLaneProgress],
+    *,
+    lanes: Mapping[str, LaneRegistration],
+    now: Callable[[], datetime],
+    availability_storage: AvailabilityStorage,
+) -> None:
+    """Retry the availability step alone for every day a previous run left owed. Never fails a walk.
+
+    ONCE PER LANE, BEFORE THE WALK, and not once per round-robin turn: the retry re-verifies every
+    physical part of a day, so repeating it on each of a lane's turns would spend a bulk repair
+    re-reading the same backlog. It runs for lanes with nothing pending too -- an owed claim is a
+    fact about the ledger, not about whether this run's census found the lane any work.
+
+    The same shape as `gap_fill._drain_owed_availability`, and deliberately: the two drivers must not
+    disagree about what an owed day is or when it is retried.
+    """
+    for lane in progress:
+        registration = lanes.get(lane.slug)
+        if registration is None:
+            continue
+        try:
+            outcomes = await retry_pending_availability(
+                session,
+                store,
+                lane=registration.slug,
+                kind=GAP_FILL_PARTITION_KIND,
+                availability=availability_storage,
+                now=now,
+            )
+        except Exception:  # an owed index entry may never stop a lane from draining its history
+            lane.availability.record(
+                AvailabilityExtensionOutcome(
+                    state="retry_owed",
+                    lane_root=availability_lane_root(registration.slug, GAP_FILL_PARTITION_KIND),
+                    day=None,
+                    reason="the owed availability retry raised, so every claim this lane holds stands",
+                    error_kind="retry_ledger_unreadable",
+                )
+            )
+            continue
+        for outcome in outcomes:
+            lane.availability.record(outcome)
+
+
 async def run_drain(  # noqa: PLR0913 - one parameter per operator-tunable knob of a single drain
     session: AsyncSession,
     store: ObjectStore,
@@ -654,6 +706,11 @@ async def run_drain(  # noqa: PLR0913 - one parameter per operator-tunable knob 
     is how a bulk repair stops leaving the published index thousands of days behind the bucket. It
     stays optional because the ladder selection exports nothing, and because a caller that has not
     bootstrapped a lane's index has nothing for the extension step to extend.
+
+    WHEN IT IS WIRED, THE OWED LEDGER IS DRAINED FIRST, exactly as `run_gap_fill` drains it. A drain
+    that only extended the days of THIS run would leave every claim an earlier turn could not finish
+    where it was, and the base-tier census never revisits a completed day -- so a claim nothing
+    retries is a terminal day permanently outside the index, on a green tick.
     """
     deadline = None if time_budget_seconds is None else monotonic() + time_budget_seconds
     started = monotonic()
@@ -669,6 +726,15 @@ async def run_drain(  # noqa: PLR0913 - one parameter per operator-tunable knob 
         progress = plan_drain(census)
         derivation_scope = nullcontext()
     by_slug = {lane.slug: lane for lane in lanes}
+    if availability_storage is not None:
+        await _drain_owed_availability(
+            session,
+            store,
+            progress,
+            lanes=by_slug,
+            now=now,
+            availability_storage=availability_storage,
+        )
 
     with derivation_scope as connection:
         while any(not lane.done for lane in progress):

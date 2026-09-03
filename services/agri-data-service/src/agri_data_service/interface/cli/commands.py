@@ -3983,6 +3983,11 @@ async def _parquet_drain(  # noqa: PLR0913 - one parameter per operator-tunable 
     """Open one loader session for the whole drain and walk every requested lane's history through it."""
     loader_database_url = settings.require_local_source_loader_database_url()
     store = ObjectStore.from_settings()
+    # Built from the SAME settings the store is, so an unwired bucket fails identically. WITHOUT IT
+    # every drained day returns from `fill_one_lane_day` before the availability step, and the whole
+    # bulk repair lands in the bucket and in no index -- permanently, since the base-tier census
+    # never revisits a completed day, and reported as a row of zeros in `DrainSummary.to_report`.
+    availability_storage = BotoAvailabilityStorage.from_settings()
 
     def announce(slug: str, day: date, outcome: str, detail: str | None) -> None:
         # One line per finished day, to STDERR so a caller can still pipe the JSON summary on stdout.
@@ -4003,6 +4008,7 @@ async def _parquet_drain(  # noqa: PLR0913 - one parameter per operator-tunable 
             statement_timeout_seconds=statement_timeout_seconds,
             selection=selection,
             on_day=announce if stream_progress else None,
+            availability_storage=availability_storage,
         )
 
 

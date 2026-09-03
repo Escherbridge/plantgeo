@@ -37,8 +37,13 @@ from agri_data_service.pipeline.direct.climate.source import (
 )
 from agri_data_service.pipeline.direct.climate.support import NASA_POWER_SUPPORT_CELL_COUNT, load_nasa_power_support
 from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
+from agri_data_service.pipeline.parquet.availability_extension import (
+    AvailabilityExtensionTally,
+    retry_pending_availability,
+)
 from agri_data_service.pipeline.parquet.availability_index import BotoAvailabilityStorage
 from agri_data_service.pipeline.parquet.gap_fill import (
+    GAP_FILL_PARTITION_KIND,
     _lane_day_lock_key,
     fill_one_lane_day,
     postgres_lane_day_lock,
@@ -129,6 +134,11 @@ async def run_climate_forward(config: ClimateForwardConfig) -> dict[str, object]
     cache = ClimateSourceCache(request_budget=config.request_budget)
     deadline = time.monotonic() + config.time_budget_seconds
     results: list[dict[str, object]] = []
+    # ONE TALLY FOR THE WHOLE RUN. Without it every availability verdict lands only inside a day's
+    # detail string, which is the failure `AvailabilityExtensionTally`'s own docstring forbids: a
+    # `ladder_incomplete` or `retry_claim_failed` day is permanently outside the index, and a run
+    # that states it in prose reports that loss as a green tick.
+    availability = AvailabilityExtensionTally()
 
     loader_database_url = settings.require_local_source_loader_database_url()
     async with local_source_loader_session(loader_database_url) as session:
@@ -150,6 +160,7 @@ async def run_climate_forward(config: ClimateForwardConfig) -> dict[str, object]
                     config=config,
                     deadline=deadline,
                     availability_storage=availability_storage,
+                    availability=availability,
                 )
             )
 
@@ -161,6 +172,7 @@ async def run_climate_forward(config: ClimateForwardConfig) -> dict[str, object]
         "streams": [product.stream for product in products],
         "request_budget": cache.request_budget,
         "requests_spent": cache.requests_spent,
+        **availability.to_summary(),
         "results": results,
     }
     emit({"event": "climate_forward_complete", **report})
@@ -179,11 +191,27 @@ async def _publish_product(  # noqa: PLR0913 - the store, product, support, cach
     config: ClimateForwardConfig,
     deadline: float,
     availability_storage: AvailabilityStorage,
+    availability: AvailabilityExtensionTally,
 ) -> dict[str, object]:
-    """Take one product's turn: census its owed window, then publish at most `max_days` days."""
+    """Take one product's turn: census its owed window, then publish at most `max_days` days.
+
+    THE OWED LEDGER IS DRAINED FIRST, once per product per run. Nothing else retries these claims:
+    `retry_pending_availability` is otherwise called only from `run_gap_fill`, and activating
+    `climate-nasa-power-direct-forward` deactivates the eight generic lanes through `conflicts_with`
+    -- so a climate day whose pointer read failed writes a claim that no driver in this service would
+    ever come back for, and the base-tier census never revisits a completed day.
+    """
     ceiling = settled_through(product, today=today)
     if ceiling < product.history_floor:
         return _skipped(product, today=today, outcome="not_yet_settled")
+    retried = await _retry_owed_availability(
+        session,
+        store,
+        product,
+        deadline=deadline,
+        availability_storage=availability_storage,
+        availability=availability,
+    )
     first_day = max(product.history_floor, ceiling - timedelta(days=CLIMATE_BACKLOG_SCAN_DAYS - 1))
     statuses = await asyncio.to_thread(_tier_status_window, store, product, first_day, ceiling)
     backlog = _pending_days(product, statuses)
@@ -215,6 +243,7 @@ async def _publish_product(  # noqa: PLR0913 - the store, product, support, cach
                 config=config,
                 deadline=deadline,
                 availability_storage=availability_storage,
+                availability=availability,
             )
         )
     return {
@@ -226,8 +255,58 @@ async def _publish_product(  # noqa: PLR0913 - the store, product, support, cach
         "publication_lag_days": product.publication_lag_days,
         "scan_first_day": first_day.isoformat(),
         "backlog_days": len(backlog),
+        "availability_retried_days": retried,
         "days": published,
     }
+
+
+async def _retry_owed_availability(  # noqa: PLR0913 - one coordinate of the product's turn per arg
+    session: AsyncSession,
+    store: ObjectStore,
+    product: ClimateFieldProduct,
+    *,
+    deadline: float,
+    availability_storage: AvailabilityStorage,
+    availability: AvailabilityExtensionTally,
+) -> int:
+    """Retry this product's owed availability claims once, inside the turn's budget. Never raises.
+
+    Bounded by the SAME deadline the publication walk is: the retry re-verifies every physical part
+    of a day, so a run whose clock has already run out must not start one. An unindexed day is not
+    lost by waiting -- its claim is what makes it recoverable -- but a turn that overran its budget
+    for it would cost the next product its whole turn.
+    """
+    if time.monotonic() >= deadline:
+        return 0
+    try:
+        outcomes = await retry_pending_availability(
+            session,
+            store,
+            lane=LANE_REGISTRY[product.stream].slug,
+            kind=GAP_FILL_PARTITION_KIND,
+            availability=availability_storage,
+            now=lambda: datetime.now(UTC),
+        )
+    except Exception as error:  # an owed index entry may never stop a product from publishing
+        emit(
+            {
+                "event": "climate_forward_availability_retry_failed",
+                "layer": product.stream,
+                "detail": f"{type(error).__name__}: {error}",
+            }
+        )
+        return 0
+    for outcome in outcomes:
+        availability.record(outcome)
+        emit(
+            {
+                "event": "climate_forward_availability_retry",
+                "layer": product.stream,
+                "state": outcome.state,
+                "detail": outcome.note,
+            }
+        )
+    return len(outcomes)
 
 
 def _skipped(product: ClimateFieldProduct, *, today: date, outcome: str) -> dict[str, object]:
@@ -272,6 +351,7 @@ async def _publish_day_with_retries(  # noqa: PLR0913 - one lane-day coordinate 
     config: ClimateForwardConfig,
     deadline: float,
     availability_storage: AvailabilityStorage,
+    availability: AvailabilityExtensionTally,
 ) -> dict[str, object]:
     """Acquire the lane-day lock once, then refetch and republish under it for every bounded attempt."""
     refuse_immutable_day(product, day)
@@ -298,6 +378,7 @@ async def _publish_day_with_retries(  # noqa: PLR0913 - one lane-day coordinate 
                     config=config,
                     deadline=deadline,
                     availability_storage=availability_storage,
+                    availability=availability,
                 )
         await session.rollback()
         remaining = contention_deadline - time.monotonic()
@@ -338,6 +419,7 @@ async def _publish_locked_day(  # noqa: PLR0913 - one lane-day coordinate per ar
     config: ClimateForwardConfig,
     deadline: float,
     availability_storage: AvailabilityStorage,
+    availability: AvailabilityExtensionTally,
 ) -> dict[str, object]:
     """Refetch before every write attempt while one advisory lock stays held, then prove all four rungs."""
     lane = LANE_REGISTRY[product.stream]
@@ -365,6 +447,7 @@ async def _publish_locked_day(  # noqa: PLR0913 - one lane-day coordinate per ar
                 lane_day_lock=unlocked_lane_day,
                 statement_timeout_seconds=CLIMATE_STATEMENT_TIMEOUT_SECONDS,
                 availability_storage=availability_storage,
+                availability_tally=availability,
             )
             await session.rollback()
         except ClimateTimeBudgetExhaustedError as stop:

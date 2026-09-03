@@ -14,6 +14,7 @@ evidence from it without re-exporting a single row.
 from __future__ import annotations
 
 import json
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, Final, Literal
@@ -376,7 +377,15 @@ async def _retry_one_day(  # noqa: PLR0911, PLR0913 - one typed outcome per exit
     try:
         claim = _claim_from_marker(payload, lane_root=lane_root, day=day)
     except (ValueError, AvailabilityError) as error:
-        return _retry_failure(lane_root, day, "retry_marker_malformed", error)
+        return _quarantine_malformed_claim(
+            store,
+            payload,
+            lane=lane,
+            kind=kind,
+            day=day,
+            lane_root=lane_root,
+            error=error,
+        )
     try:
         index = read_latest_availability(availability, lane_root=lane_root)
     except AvailabilityUnavailableError as unavailable:
@@ -972,6 +981,49 @@ def _read_failure(
         ),
         error_kind="availability_unreadable",
         retry_marker=retry_marker,
+    )
+
+
+def _quarantine_malformed_claim(  # noqa: PLR0913 - one lane-day coordinate per arg, plus the refusal
+    store: ObjectStore,
+    payload: bytes,
+    *,
+    lane: str,
+    kind: PartitionKind,
+    day: date,
+    lane_root: str,
+    error: Exception,
+) -> AvailabilityExtensionOutcome:
+    """Park an unreplayable claim out of the retry ledger and report the day as permanently lost.
+
+    A MALFORMED CLAIM CANNOT BE RETRIED, EVER: `_claim_from_marker` is pure, so the next turn parses
+    the identical bytes into the identical refusal. Left in place it is not merely useless -- the
+    ledger is drained OLDEST-FIRST and bounded at `DEFAULT_MAX_RETRIES_PER_LANE` per tick, so one
+    unparseable day permanently occupies a slot and can starve every genuinely replayable day behind
+    it. Quarantined, the listing walks past it and an operator still has the bytes.
+
+    `retry_claim_failed` RATHER THAN `retry_owed`, because nothing is owed any more: the day is
+    terminal, the base-tier census never revisits a completed day, and no claim now names it. That
+    is the exact loss the tally's two must-be-visible counters exist to state as a number.
+    """
+    parked: str | None = None
+    try:
+        parked = store.quarantine_availability_retry(payload, layer=lane, kind=kind, day=day)
+    except Exception:  # a claim that can never be replayed must leave the ledger even unparked
+        with suppress(Exception):
+            _clear_claim(store, lane=lane, kind=kind, day=day)
+    return AvailabilityExtensionOutcome(
+        state="retry_claim_failed",
+        lane_root=lane_root,
+        day=day,
+        reason=(
+            f"the owed availability claim could not be parsed and can never be replayed, so this terminal day "
+            f"leaves the index for good; its bytes are "
+            f"{'quarantined at ' + parked if parked is not None else 'unparkable and were dropped'}: "
+            f"{type(error).__name__}: {error}"
+        ),
+        error_kind="retry_marker_malformed",
+        retry_marker=parked,
     )
 
 

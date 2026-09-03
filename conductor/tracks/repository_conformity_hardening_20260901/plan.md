@@ -9,7 +9,8 @@ resource: ./spec.md
 
 ## Wave C0 — safety and evidence freeze
 
-- [ ] Remove the fabricated moderation scorecard; show unavailable evidence honestly.
+- [x] Remove the fabricated moderation scorecard; show unavailable evidence honestly
+  (2026-09-02, `2b4cfef`; `interventions.ts` `causalTauEst ?? 0.15` submission default still open).
 - [ ] Store the audit inventory with each candidate classified as immediate, confirmed, contingent,
   refactor, enforcement gap, or protected evidence.
 - [ ] Freeze file ownership with the four active Parquet tracks before shared edits.

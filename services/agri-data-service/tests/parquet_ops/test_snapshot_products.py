@@ -1435,7 +1435,39 @@ def test_a_product_with_no_forward_index_withholds_its_forward_half_rather_than_
     census = build_snapshot_coverage(store, policy="availability", forward_availability=port)
 
     assert {lane.withheld_reason for lane in census.lanes} == {"availability_unpublished"}
-    assert {lane.latest_day for lane in census.lanes} == {CLOSED_DAY}, "the closed half still stands on its manifest"
+    # THE WHOLE PRODUCT IS WITHHELD, closed half included. The client withholds a capability on ANY
+    # non-null `withheld_reason`, so a row shipping the manifest's bounds beside one publishes days
+    # nothing will ever draw -- and `tests/contract/test_wire_contract.py`'s "a withheld lane
+    # publishes no selectable days" is exactly the shape this row has to hold to.
+    assert {lane.earliest_day for lane in census.lanes} == {None}
+    assert {lane.latest_day for lane in census.lanes} == {None}
+    assert {lane.published_ranges for lane in census.lanes} == {()}
+    assert {lane.gap_ranges for lane in census.lanes} == {()}
+    assert {lane.governed_absence_ranges for lane in census.lanes} == {()}
+
+
+def test_a_withheld_product_row_is_shaped_exactly_like_a_withheld_lane_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The producer-side mirror of the wire contract: one shape for withholding, not two."""
+    product = _forward_product("test-forward-withheld-shape")
+    parts = [_part(product, tier, CLOSED_DAY, monthly=False) for tier in ZOOM_TIERS]
+    store = _availability_store(product, parts)
+    monkeypatch.setattr(snapshot_products, "SNAPSHOT_PRODUCTS", (product,))
+    port = ScriptedForwardAvailability(
+        ForwardAvailabilityWithheld(reason="availability_checksum_invalid", detail="bytes disagree")
+    )
+
+    census = build_snapshot_coverage(store, policy="availability", forward_availability=port)
+
+    assert census.lanes, "a withheld product stays ON the wire, offering nothing"
+    for lane in census.lanes:
+        assert lane.withheld_reason == "availability_checksum_invalid"
+        assert lane.earliest_day is None
+        assert lane.latest_day is None
+        assert lane.published_ranges == ()
+        assert lane.gap_ranges == ()
+        assert lane.governed_absence_ranges == ()
 
 
 def test_a_forward_governed_absence_is_a_governed_absence_in_coverage(

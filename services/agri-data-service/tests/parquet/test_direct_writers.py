@@ -18,6 +18,10 @@ from agri_data_service.pipeline.direct.water_gauges import (
 from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.lanes.water_gauges import WATER_GAUGES_DIRECT_WRITER_START_DAY
 from agri_data_service.pipeline.parquet import water_gauges_forward
+from agri_data_service.pipeline.parquet.availability_extension import (
+    AvailabilityExtensionOutcome,
+    AvailabilityExtensionTally,
+)
 from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRY
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 from agri_data_service.warehouse.schemas.fire_detections import FIRE_DETECTIONS_STREAM
@@ -120,9 +124,141 @@ async def test_the_fire_writer_hands_its_availability_storage_to_every_day_it_ex
                 contention_timeout_seconds=1.0,
             ),
             availability_storage=storage,
+            availability=AvailabilityExtensionTally(),
         )
 
     assert handed == [storage], "the export path must receive the writer's own storage, not None"
+
+
+@pytest.mark.asyncio
+async def test_the_fire_run_report_states_its_availability_verdicts_as_numbers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An availability verdict that lives only in a day's detail string reports a lost day as green.
+
+    `ladder_incomplete` and `retry_claim_failed` each leave a terminal day in the bucket and out of
+    the index for good, which is exactly what `AvailabilityExtensionTally` exists to state as a
+    number. Mirrors `tests/parquet/test_drain.py`'s report assertions.
+    """
+    window = {tier: {DAY: "missing"} for tier in fire_detections.FIRE_DIRECT_ALL_TIERS}
+    settled = {tier: {DAY: "data"} for tier in fire_detections.FIRE_DIRECT_ALL_TIERS}
+    censuses = iter((window, settled))
+
+    async def publish(*_args: object, **kwargs: object) -> dict[str, object]:
+        tally = kwargs["availability"]
+        assert isinstance(tally, AvailabilityExtensionTally)
+        tally.record(
+            AvailabilityExtensionOutcome(
+                state="retry_claim_failed",
+                lane_root="layer=fire-detections/kind=observed",
+                day=DAY,
+                reason="no retry claim could be recorded, so nothing will bring this day back",
+            )
+        )
+        return {"day": DAY.isoformat(), "outcome": "written"}
+
+    monkeypatch.setattr(fire_detections, "_tier_status_window", lambda *_a, **_k: next(censuses))
+    monkeypatch.setattr(fire_detections, "_publish_day_with_retries", publish)
+    monkeypatch.setattr(
+        fire_detections.ObjectStore, "from_settings", classmethod(lambda _cls, _source=None: _pinned_store())
+    )
+    monkeypatch.setattr(
+        fire_detections.BotoAvailabilityStorage, "from_settings", classmethod(lambda _cls, _source=None: object())
+    )
+    monkeypatch.setattr(fire_detections, "local_source_loader_session", lambda _url: _NoSession())
+    monkeypatch.setattr(
+        fire_detections.settings.__class__,
+        "require_local_source_loader_database_url",
+        lambda _self: "postgresql+asyncpg://unused/never-opened",
+    )
+
+    report = await fire_detections.run_fire_forward(_fire_config())
+
+    assert report["availability_retry_claim_failed"] == 1, "the loss is a counter, not a sentence in one day"
+    assert report["availability_extended"] == 0
+
+
+@pytest.mark.asyncio
+async def test_the_water_gauges_writer_hands_its_run_tally_to_every_day_it_publishes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """This writer owns every day past its start boundary, so its verdicts must reach the run report."""
+    tally = AvailabilityExtensionTally()
+    handed: list[object] = []
+
+    async def record(*_args: object, **kwargs: object) -> tuple[str, int, int, int, str]:
+        handed.append(kwargs.get("availability_tally"))
+        return ("raised", 0, 0, 0, "the export refused")
+
+    monkeypatch.setattr(water_gauges_forward, "fill_one_lane_day", record)
+
+    result = await water_gauges_forward._publish_day(
+        _SessionDouble(),
+        ObjectStore(RecordingBackend()),
+        day=DAY,
+        table=_table([_row(observed_at=FIRST_INSTANT, ingested_at=FIRST_INSTANT, flow_cfs=12.0)]),
+        run_id="tally-run",
+        max_day_attempts=1,
+        retry_base_seconds=0.1,
+        contention_poll_seconds=0.1,
+        contention_timeout_seconds=1.0,
+        availability_storage=object(),
+        availability=tally,
+    )
+
+    assert result.outcome == "raised"
+    assert handed == [tally], "the lane-day path must receive the RUN's tally, not None"
+
+
+def test_the_water_gauges_terminal_record_states_its_availability_verdicts_as_numbers() -> None:
+    """The emitted completion record is this writer's report, so the counters have to be on it."""
+    tally = AvailabilityExtensionTally()
+    tally.record(
+        AvailabilityExtensionOutcome(
+            state="ladder_incomplete",
+            lane_root="layer=water-gauges/kind=observed",
+            day=DAY,
+            reason="the day is terminal and cannot form the required ladder",
+        )
+    )
+
+    summary = tally.to_summary()
+
+    assert summary["availability_ladder_incomplete"] == 1
+    assert set(summary) == {
+        "availability_extended",
+        "availability_skipped_unchanged",
+        "availability_not_bootstrapped",
+        "availability_ladder_incomplete",
+        "availability_retry_owed",
+        "availability_retry_claim_failed",
+    }
+
+
+def _fire_config() -> fire_detections.FireForwardConfig:
+    """One fully-bounded fire turn, so a test names only the knob it is about."""
+    return fire_detections.FireForwardConfig(
+        bbox="-125,42,-111,49",
+        lookback_days=1,
+        max_days=1,
+        max_records_per_day=10,
+        retry_attempts=1,
+        retry_base_seconds=0.1,
+        retry_max_seconds=0.1,
+        contention_timeout_seconds=1.0,
+    )
+
+
+def _pinned_store() -> ObjectStore:
+    return ObjectStore(RecordingBackend())
+
+
+class _NoSession:
+    async def __aenter__(self) -> object:
+        return _SessionDouble()
+
+    async def __aexit__(self, *_exc: object) -> bool:
+        return False
 
 
 def test_direct_water_writer_refuses_days_owned_by_generic_gap_repair() -> None:

@@ -28,7 +28,7 @@ from agri_data_service.parquet_ops.availability_coverage import (
     merge_direct_lane_rows,
     resolve_availability_lanes,
 )
-from agri_data_service.parquet_ops.coverage import CensusLane, build_coverage
+from agri_data_service.parquet_ops.coverage import CensusLane, build_coverage, build_lane_coverage
 from agri_data_service.parquet_ops.wire import DayRange, WarehouseCoverage
 from agri_data_service.pipeline.parquet.availability_index import (
     BOOTSTRAP_MARKER_SCHEMA_VERSION,
@@ -327,7 +327,7 @@ def test_every_rung_reports_only_days_the_whole_authoritative_set_agrees_on() ->
     complete = [terminal_row(SIGNAL_LANE, day=date(2026, 8, 1), rung=rung) for rung in AVAILABILITY_REQUIRED_RUNGS]
     partial = [terminal_row(SIGNAL_LANE, day=date(2026, 8, 2), rung=rung) for rung in AVAILABILITY_REQUIRED_RUNGS[:-1]]
 
-    rows = lane_coverage_from_index(index_of(SIGNAL_LANE, [*complete, *partial]), lane=SIGNAL_LANE)
+    rows = lane_coverage_from_index(index_of(SIGNAL_LANE, [*complete, *partial]), lane=SIGNAL_LANE, now=NOW)
 
     assert {entry.zoom for entry in rows} == set(ZOOM_TIERS)
     for entry in rows:
@@ -347,7 +347,7 @@ def test_a_day_whose_rungs_disagree_on_their_outcome_is_not_selectable() -> None
         for rung in AVAILABILITY_REQUIRED_RUNGS
     ]
 
-    rows = lane_coverage_from_index(index_of(SIGNAL_LANE, disagreeing), lane=SIGNAL_LANE)
+    rows = lane_coverage_from_index(index_of(SIGNAL_LANE, disagreeing), lane=SIGNAL_LANE, now=NOW)
 
     assert all(entry.earliest_day is None for entry in rows)
     assert all(entry.published_ranges == () for entry in rows)
@@ -362,7 +362,7 @@ def test_the_latest_day_never_passes_the_index_s_own_source_ceiling() -> None:
         source_ceiling=date(2026, 8, 5),
     )
 
-    rows = lane_coverage_from_index(proven, lane=SIGNAL_LANE)
+    rows = lane_coverage_from_index(proven, lane=SIGNAL_LANE, now=NOW)
 
     for entry in rows:
         assert entry.source_ceiling_day == date(2026, 8, 5)
@@ -378,9 +378,38 @@ def test_a_lane_behind_the_live_edge_reports_no_phantom_gap_tail() -> None:
         source_ceiling=date(2026, 8, 2),
     )
 
-    rows = lane_coverage_from_index(proven, lane=SIGNAL_LANE)
+    rows = lane_coverage_from_index(proven, lane=SIGNAL_LANE, now=NOW)
 
     assert all(entry.gap_ranges == () for entry in rows), "the ceiling, not today, closes an availability lane"
+
+
+def test_both_authorities_carry_a_release_lane_to_the_same_latest_day() -> None:
+    """The SAME lane and the SAME releases must not shorten by four days because the evidence changed.
+
+    Drought publishes weekly with a four-day lag, so on 2026-08-24 its ceiling is 2026-08-20 while
+    its newest release (2026-08-18) still carries to today -- that is what a reader draws. Closing
+    the CARRY at the ceiling instead of at today moved `latest_day` back by exactly the publication
+    lag the moment `PARQUET_COVERAGE_AUTHORITY=availability` took the lane over: same bucket, same
+    days, four fewer on the slider. The census is the control here, not a second opinion.
+    """
+    today = date(2026, 8, 24)
+    release = date(2026, 8, 18)
+    ceiling = date(2026, 8, 20)
+    assert ceiling == today - timedelta(days=DROUGHT_LANE.publication_lag_days), "the publisher's own ceiling"
+
+    listing = FakeListing()
+    for tier in ZOOM_TIERS:
+        listing.write_day(DROUGHT_LANE.layer, DROUGHT_LANE.kind, tier, release)
+    censused = tuple(build_lane_coverage(listing, lane=DROUGHT_LANE, tier=tier, today=today) for tier in ZOOM_TIERS)
+    proven = whole_ladder(DROUGHT_LANE, published=[release], source_ceiling=ceiling)
+
+    available = lane_coverage_from_index(proven, lane=DROUGHT_LANE, now=datetime(2026, 8, 24, 9, tzinfo=UTC))
+
+    assert {entry.latest_day for entry in censused} == {today}, "the census carries the release to today"
+    assert {entry.latest_day for entry in available} == {today}, "the index must carry it exactly as far"
+    assert {entry.published_ranges for entry in available} == {(DayRange(first_day=release, last_day=today),)}
+    assert {entry.coverage_authority for entry in available} == {"availability"}
+    assert {entry.source_ceiling_day for entry in available} == {ceiling}, "the ceiling still judges lateness"
 
 
 def test_a_release_lane_keeps_its_registered_carry_and_cadence() -> None:
@@ -391,7 +420,7 @@ def test_a_release_lane_keeps_its_registered_carry_and_cadence() -> None:
         source_ceiling=date(2026, 8, 20),
     )
 
-    rows = lane_coverage_from_index(proven, lane=DROUGHT_LANE)
+    rows = lane_coverage_from_index(proven, lane=DROUGHT_LANE, now=datetime(2026, 8, 20, 9, tzinfo=UTC))
 
     for entry in rows:
         assert entry.published_ranges == (
@@ -511,7 +540,7 @@ def test_a_lane_behind_its_own_ceiling_reports_the_gap_tail_it_owes() -> None:
         source_ceiling=ceiling,
     )
 
-    rows = lane_coverage_from_index(proven, lane=SIGNAL_LANE)
+    rows = lane_coverage_from_index(proven, lane=SIGNAL_LANE, now=NOW)
 
     for entry in rows:
         assert entry.latest_day == newest
@@ -528,7 +557,7 @@ def test_a_release_lane_is_not_charged_its_publication_lag_twice() -> None:
     )
     proven = whole_ladder(lane, published=[date(2026, 8, 4)], source_ceiling=date(2026, 8, 25))
 
-    rows = lane_coverage_from_index(proven, lane=lane)
+    rows = lane_coverage_from_index(proven, lane=lane, now=NOW)
 
     for entry in rows:
         # Cadence steps from 08-04 up to the ceiling ITSELF. Charging the 4-day lag a second time

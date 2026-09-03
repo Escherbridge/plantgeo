@@ -40,6 +40,7 @@ from agri_data_service.ingest.http import upstream_client
 from agri_data_service.ingest.policy import resolve_bounded_bbox
 from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.lanes.fire_detections import FIRE_DETECTIONS_DIRECT_WRITER_START_DAY
+from agri_data_service.pipeline.parquet.availability_extension import AvailabilityExtensionTally
 from agri_data_service.pipeline.parquet.availability_index import BotoAvailabilityStorage
 from agri_data_service.pipeline.parquet.gap_fill import (
     _lane_day_lock_key,
@@ -359,6 +360,10 @@ async def run_fire_forward(config: FireForwardConfig) -> dict[str, object]:
     run_id = f"{FIRE_DIRECT_RUN_ID_PREFIX}{uuid.uuid4()}"
     today = datetime.now(UTC).date()
     lane = LANE_REGISTRY[FIRE_DETECTIONS_STREAM]
+    # ONE TALLY FOR THE WHOLE RUN, on EVERY report this function can return. Without it every
+    # availability verdict lands only in a day's detail string -- and `ladder_incomplete` and
+    # `retry_claim_failed` both mean a day that is in the bucket and permanently outside the index.
+    availability = AvailabilityExtensionTally()
     settled_through = today - timedelta(days=lane.publication_lag_days)
     first_day = settled_through - timedelta(days=config.lookback_days - 1)
     first_day = max(first_day, config.forward_start_day)
@@ -373,6 +378,7 @@ async def run_fire_forward(config: FireForwardConfig) -> dict[str, object]:
             "forward_start_day": config.forward_start_day.isoformat(),
             "force_day": None if config.force_day is None else config.force_day.isoformat(),
             "days_published": 0,
+            **availability.to_summary(),
             "results": [],
             "remaining_window_backlog": [],
             "tier_status_counts": {},
@@ -427,6 +433,7 @@ async def run_fire_forward(config: FireForwardConfig) -> dict[str, object]:
                 run_id=run_id,
                 config=config,
                 availability_storage=availability_storage,
+                availability=availability,
             )
             results.append(result)
             _emit({"event": "fire_detections_forward_day_complete", "run_id": run_id, **result})
@@ -456,6 +463,7 @@ async def run_fire_forward(config: FireForwardConfig) -> dict[str, object]:
         "forward_start_day": config.forward_start_day.isoformat(),
         "force_day": None if config.force_day is None else config.force_day.isoformat(),
         "days_published": len(results),
+        **availability.to_summary(),
         "results": results,
         "remaining_window_backlog": [day.isoformat() for day in window_backlog],
         "tier_status_counts": _tier_status_counts(final_statuses),
@@ -472,6 +480,7 @@ async def _publish_day_with_retries(  # noqa: PLR0913
     run_id: str,
     config: FireForwardConfig,
     availability_storage: AvailabilityStorage,
+    availability: AvailabilityExtensionTally,
 ) -> dict[str, object]:
     """Acquire once, then refetch and republish under that lock for every bounded attempt."""
     deadline = time.monotonic() + config.contention_timeout_seconds
@@ -487,6 +496,7 @@ async def _publish_day_with_retries(  # noqa: PLR0913
                     run_id=run_id,
                     config=config,
                     availability_storage=availability_storage,
+                    availability=availability,
                 )
         await session.rollback()
         remaining = deadline - time.monotonic()
@@ -523,6 +533,7 @@ async def _publish_locked_day_with_retries(  # noqa: PLR0913
     run_id: str,
     config: FireForwardConfig,
     availability_storage: AvailabilityStorage,
+    availability: AvailabilityExtensionTally,
 ) -> dict[str, object]:
     """Refetch before every write/verification attempt while one advisory lock remains held."""
     for write_attempt in range(1, config.retry_attempts + 1):
@@ -549,6 +560,7 @@ async def _publish_locked_day_with_retries(  # noqa: PLR0913
                 lane_day_lock=unlocked_lane_day,
                 statement_timeout_seconds=FIRE_DIRECT_STATEMENT_TIMEOUT_SECONDS,
                 availability_storage=availability_storage,
+                availability_tally=availability,
             )
             await session.rollback()
         except Exception as error:

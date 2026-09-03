@@ -25,6 +25,11 @@ from agri_data_service.pipeline.direct.climate.products import (
 )
 from agri_data_service.pipeline.direct.climate.source import ClimateSourceCache, ClimateTimeBudgetExhaustedError
 from agri_data_service.pipeline.direct.climate.support import NASA_POWER_SUPPORT_CELL_COUNT
+from agri_data_service.pipeline.parquet.availability_extension import (
+    AvailabilityExtensionOutcome,
+    AvailabilityExtensionTally,
+)
+from agri_data_service.pipeline.parquet.gap_fill import GAP_FILL_PARTITION_KIND
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 from tests.direct.climate.conftest import product_for
 from tests.parquet.test_objectstore_writer import RecordingBackend
@@ -244,6 +249,7 @@ async def test_a_day_the_request_budget_cannot_cover_is_reported_rather_than_hal
         config=bounded_config(),
         deadline=time.monotonic() + 60,
         availability_storage=None,
+        availability=AvailabilityExtensionTally(),
     )
 
     days = result["days"]
@@ -278,6 +284,7 @@ async def test_an_expired_deadline_stops_a_locked_day_before_it_fetches_anything
         config=bounded_config(),
         deadline=time.monotonic() - 1.0,
         availability_storage=None,
+        availability=AvailabilityExtensionTally(),
     )
 
     assert result["outcome"] == forward.CLIMATE_TIME_BUDGET_OUTCOME
@@ -310,6 +317,7 @@ async def test_a_time_budget_exhausted_fetch_is_a_bounded_stop_and_not_a_lane_fa
         config=bounded_config(),
         deadline=time.monotonic() + 60,
         availability_storage=None,
+        availability=AvailabilityExtensionTally(),
     )
 
     assert result["outcome"] == forward.CLIMATE_TIME_BUDGET_OUTCOME
@@ -342,6 +350,7 @@ async def test_the_retry_wait_is_clamped_to_the_remaining_budget_rather_than_the
         config=bounded_config(retry_attempts=2, retry_base_seconds=30.0, retry_max_seconds=60.0),
         deadline=time.monotonic() + NARROW_BUDGET_SECONDS,
         availability_storage=None,
+        availability=AvailabilityExtensionTally(),
     )
 
     assert result["outcome"] == forward.CLIMATE_TIME_BUDGET_OUTCOME
@@ -374,6 +383,7 @@ async def test_the_contention_wait_is_bounded_by_the_turn_deadline_not_by_its_ow
         config=bounded_config(contention_timeout_seconds=3_600.0),
         deadline=time.monotonic() + NARROW_BUDGET_SECONDS,
         availability_storage=None,
+        availability=AvailabilityExtensionTally(),
     )
 
     assert result["outcome"] == forward.CLIMATE_TIME_BUDGET_OUTCOME
@@ -412,6 +422,135 @@ async def test_the_climate_writer_hands_its_availability_storage_to_every_day_it
             config=bounded_config(retry_attempts=1),
             deadline=time.monotonic() + 60,
             availability_storage=storage,
+            availability=AvailabilityExtensionTally(),
         )
 
     assert handed == [storage], "the export path must receive the writer's own storage, not None"
+
+
+@pytest.mark.asyncio
+async def test_the_climate_writer_drains_its_own_owed_availability_claims(
+    support: NasaPowerSupport,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """DO NOT DELETE. Nothing else retries a climate lane's claims, so without this they are never read.
+
+    `retry_pending_availability` is otherwise reached only from `run_gap_fill`, and activating
+    `climate-nasa-power-direct-forward` DEACTIVATES the eight generic lanes through `conflicts_with`.
+    A climate day whose pointer read failed therefore wrote a claim that no driver in this service
+    would ever come back for -- and the base-tier census never revisits a completed day.
+    """
+    storage = object()
+    asked: list[tuple[object, object, object]] = []
+
+    async def record_retry(*_args: object, **kwargs: object) -> tuple[AvailabilityExtensionOutcome, ...]:
+        asked.append((kwargs["lane"], kwargs["kind"], kwargs["availability"]))
+        return (
+            AvailabilityExtensionOutcome(
+                state="extended",
+                lane_root="layer=climate-field-air-temperature-mean/kind=observed",
+                day=date(2026, 8, 20),
+                reason="the owed day joined the generation",
+            ),
+        )
+
+    async def no_days(*_args: object, **_kwargs: object) -> tuple[str, int, int, int, None]:
+        return ("written", 1, 1, 1, None)
+
+    monkeypatch.setattr(forward, "retry_pending_availability", record_retry)
+    monkeypatch.setattr(forward, "fill_one_lane_day", no_days)
+    tally = AvailabilityExtensionTally()
+
+    result = await forward._publish_product(
+        SessionDouble(),
+        ObjectStore(RecordingBackend()),
+        product_for(PLANE_STREAM),
+        support=support,
+        cache=ClimateSourceCache(request_budget=0),
+        today=TODAY,
+        run_id="retry-run",
+        config=bounded_config(),
+        deadline=time.monotonic() + 60,
+        availability_storage=storage,
+        availability=tally,
+    )
+
+    assert asked == [(PLANE_STREAM, GAP_FILL_PARTITION_KIND, storage)], "once, for this product's own lane"
+    assert result["availability_retried_days"] == 1
+    assert tally.to_summary()["availability_extended"] == 1, "a retried day is a number in the run report"
+
+
+@pytest.mark.asyncio
+async def test_an_owed_retry_is_not_started_after_the_turn_deadline(
+    support: NasaPowerSupport,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The retry re-verifies every physical part of a day; a turn out of clock must not begin one."""
+
+    async def refuse_retry(*_args: object, **_kwargs: object) -> tuple[AvailabilityExtensionOutcome, ...]:
+        raise AssertionError("an expired turn started an availability retry")
+
+    monkeypatch.setattr(forward, "retry_pending_availability", refuse_retry)
+
+    result = await forward._publish_product(
+        SessionDouble(),
+        ObjectStore(RecordingBackend()),
+        product_for(PLANE_STREAM),
+        support=support,
+        cache=ClimateSourceCache(request_budget=0),
+        today=TODAY,
+        run_id="expired-run",
+        config=bounded_config(),
+        deadline=time.monotonic() - 1,
+        availability_storage=object(),
+        availability=AvailabilityExtensionTally(),
+    )
+
+    assert result["availability_retried_days"] == 0
+
+
+@pytest.mark.asyncio
+async def test_the_climate_run_report_states_its_availability_verdicts_as_numbers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A verdict that lives only in a day's detail string reports a permanently unindexed day as green."""
+
+    async def publish(*_args: object, **kwargs: object) -> dict[str, object]:
+        tally = kwargs["availability"]
+        assert isinstance(tally, AvailabilityExtensionTally)
+        tally.record(
+            AvailabilityExtensionOutcome(
+                state="ladder_incomplete",
+                lane_root="layer=climate-field-dew-point/kind=observed",
+                day=date(2026, 8, 20),
+                reason="the day is terminal and cannot form the required ladder",
+            )
+        )
+        return {"layer": "climate-field-dew-point", "days": []}
+
+    @asynccontextmanager
+    async def session(_url: str) -> AsyncIterator[SessionDouble]:
+        yield SessionDouble()
+
+    async def support_of(*_args: object, **_kwargs: object) -> object:
+        return object()
+
+    monkeypatch.setattr(forward, "_publish_product", publish)
+    monkeypatch.setattr(forward, "local_source_loader_session", session)
+    monkeypatch.setattr(forward, "load_nasa_power_support", support_of)
+    monkeypatch.setattr(
+        forward.ObjectStore, "from_settings", classmethod(lambda _cls, _source=None: ObjectStore(RecordingBackend()))
+    )
+    monkeypatch.setattr(
+        forward.BotoAvailabilityStorage, "from_settings", classmethod(lambda _cls, _source=None: object())
+    )
+    monkeypatch.setattr(
+        forward.settings.__class__,
+        "require_local_source_loader_database_url",
+        lambda _self: "postgresql+asyncpg://unused/never-opened",
+    )
+
+    report = await forward.run_climate_forward(bounded_config(product_id="dew-point", today=TODAY))
+
+    assert report["availability_ladder_incomplete"] == 1, "the loss is a counter, not a sentence in one day"
+    assert report["availability_extended"] == 0

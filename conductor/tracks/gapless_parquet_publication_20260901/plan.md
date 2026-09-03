@@ -34,7 +34,9 @@ resource: ./spec.md
 
 ## Wave P1 — parallel source-family writers
 
-- [ ] Build climate direct writers, solar first, within one bounded source-family owner.
+- [x] Build climate direct writers, solar first, within one bounded source-family owner
+  (2026-09-02, `2b4cfef`: NASA POWER point-per-cell writer for all six products, SHADOW, never run live;
+  ERA5-Land products remain CDS-credential-blocked).
 - [ ] Build NASA POWER and ERA5-Land soil/product writers in disjoint ownership lanes.
 - [ ] Reconcile existing fire, water, vegetation, weather and sensor writer ownership.
 - [ ] Register each product only after its source-family review passes and its writer extends the
@@ -44,7 +46,9 @@ resource: ./spec.md
 
 - [ ] Author missing-day work and bounded idempotent repair.
 - [ ] Require every required rung before terminal publication.
-- [ ] Extend availability for published and governed-absence outcomes without rescanning history.
+- [x] Extend availability for published and governed-absence outcomes without rescanning history
+  (2026-09-02: claim-first extension after the completion marker in `fill_one_lane_day`; the
+  `derived_to_zero_rows` ladder hole is open, see `pipeline/parquet/AGENTS.md`).
 - [x] Register executor schedules, leases, checkpoints, retries and dead-letter visibility.
 - [x] Document source-by-source pause, lease-expiry, activation and rollback procedures.
 - [x] Inventory every live Railway scheduled/one-shot writer and bind its exact command, cadence,
@@ -66,9 +70,11 @@ resource: ./spec.md
       inactive before activation.
 - [x] Fence all six legacy service objects with null schedules, no-op commands and `NEVER` restart;
       verify `scheduled=[]` across the production environment and activate 37 executable lanes.
-- [ ] Repair 200 pre-existing `matview-refresh` dead letters caused by absent
+- [x] Repair 200 pre-existing `matview-refresh` dead letters caused by absent
       `geo.mv_feature_observation_day_axis` and `geo.mv_signal_cell_daily`; repair the WFIGS payload
-      bound that placed `postgres-fire-perimeters` in retry backoff.
+      bound that placed `postgres-fire-perimeters` in retry backoff (code repaired 2026-09-02,
+      `2b4cfef`; dead letters left standing; first unassisted tick not yet observed —
+      `evidence/p3-runtime-blockers-repair.md`).
 - [ ] Close the bounded observed tails without rewriting valid immutable days.
 - [ ] Publish governed absences only with source receipts.
 - [ ] Observe retry, restart and expired-lease recovery.

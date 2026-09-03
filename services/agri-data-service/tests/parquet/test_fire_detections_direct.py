@@ -13,6 +13,7 @@ import pytest
 
 from agri_data_service.pipeline.direct import fire_detections as direct
 from agri_data_service.pipeline.lanes.fire_detections import FIRE_DETECTIONS_DIRECT_WRITER_START_DAY
+from agri_data_service.pipeline.parquet.availability_extension import AvailabilityExtensionTally
 from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRY
 from agri_data_service.pipeline.parquet.objectstore import ParquetWriteReceipt
 
@@ -174,6 +175,7 @@ async def test_lock_precedes_fetch_and_each_publish_retry_refetches(monkeypatch:
         run_id="test",
         config=config(),
         availability_storage=INERT_AVAILABILITY_STORAGE,
+        availability=AvailabilityExtensionTally(),
     )
 
     assert fetched == [1, 2]
@@ -219,6 +221,7 @@ async def test_contention_times_out_without_fetching_or_consuming_a_write_attemp
             run_id="test",
             config=config(),
             availability_storage=INERT_AVAILABILITY_STORAGE,
+            availability=AvailabilityExtensionTally(),
         )
 
     assert calls == {"fetch": 0, "fill": 0}
@@ -277,6 +280,7 @@ async def test_publish_attempt_bound_also_bounds_source_refetches(monkeypatch: p
             run_id="test",
             config=config(retry_attempts=EXPECTED_WRITE_ATTEMPTS),
             availability_storage=INERT_AVAILABILITY_STORAGE,
+            availability=AvailabilityExtensionTally(),
         )
 
     assert fetches == EXPECTED_WRITE_ATTEMPTS

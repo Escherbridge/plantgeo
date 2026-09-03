@@ -65,6 +65,8 @@ if TYPE_CHECKING:
     from agri_data_service.foundation.parquet.zoom import ZoomTier
 
 STREAM: Final = "fire-detections"
+#: A second registered lane, so "once per lane" is distinguishable from "once per walk".
+OTHER_STREAM: Final = "water-gauges"
 DAY: Final = dt.date(2026, 8, 1)
 OLDER_DAY: Final = dt.date(2026, 7, 30)
 OLDEST_DAY: Final = dt.date(2026, 7, 29)
@@ -713,6 +715,115 @@ async def test_a_drain_given_no_availability_storage_stays_inert(monkeypatch: py
     )
 
     assert handed == [None]
+
+
+@pytest.mark.asyncio
+async def test_a_drain_retries_each_lane_s_owed_availability_exactly_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """DO NOT DELETE. Nothing else in a drain comes back for a claim an earlier turn could not finish.
+
+    `build_gap_census` never revisits a base-complete day, so a terminal day whose availability step
+    failed is recoverable ONLY through its retry claim -- and until this pass existed the bulk drain
+    wrote the claim and then walked past it forever. ONCE per lane, not once per round-robin turn:
+    the retry re-verifies every physical part of a day, so repeating it per turn would spend a
+    multi-hour repair re-reading the same backlog.
+    """
+    store, _ = _store()
+    storage = _RecordingAvailabilityStorage()
+    retried: list[str] = []
+
+    async def record_retry(*_args: object, **kwargs: object) -> tuple[object, ...]:
+        retried.append(str(kwargs["lane"]))
+        assert kwargs["availability"] is storage, "the retry must use the drain's own storage"
+        return ()
+
+    async def record_day(*_args: object, **kwargs: object) -> tuple[str, int, int, int, None]:
+        del kwargs
+        return ("written", 1, 1, 32, None)
+
+    monkeypatch.setattr(drain, "retry_pending_availability", record_retry)
+    monkeypatch.setattr(drain, "fill_one_lane_day", record_day)
+
+    await run_drain(
+        _session(),
+        store,
+        lanes=[LANE_REGISTRY[STREAM], LANE_REGISTRY[OTHER_STREAM]],
+        today=DAY,
+        run_id=RUN_ID,
+        selection="missing",
+        days_per_lane_turn=1,
+        max_days_per_lane=TWO_LANE_DAYS,
+        now=_now,
+        lane_day_lock=unlocked_lane_day,
+        availability_storage=storage,  # type: ignore[arg-type]
+    )
+
+    assert retried == [STREAM, OTHER_STREAM], "one retry pass per lane, before that lane takes a day"
+
+
+@pytest.mark.asyncio
+async def test_a_drain_with_no_availability_storage_retries_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The control: the ledger belongs to the index, so an unwired run must not read it at all."""
+    store, _ = _store()
+
+    async def refuse_retry(*_args: object, **_kwargs: object) -> tuple[object, ...]:
+        raise AssertionError("a drain with no availability storage read the retry ledger")
+
+    async def record_day(*_args: object, **kwargs: object) -> tuple[str, int, int, int, None]:
+        del kwargs
+        return ("written", 1, 1, 32, None)
+
+    monkeypatch.setattr(drain, "retry_pending_availability", refuse_retry)
+    monkeypatch.setattr(drain, "fill_one_lane_day", record_day)
+
+    summary = await run_drain(
+        _session(),
+        store,
+        lanes=[LANE_REGISTRY[STREAM]],
+        today=DAY,
+        run_id=RUN_ID,
+        selection="missing",
+        max_days_per_lane=1,
+        now=_now,
+        lane_day_lock=unlocked_lane_day,
+    )
+
+    assert summary.to_report()["availability_retry_owed"] == 0
+
+
+@pytest.mark.asyncio
+async def test_a_raising_retry_pass_never_stops_the_walk(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An owed index entry is a smaller loss than a drain that stops; the lane still drains its history."""
+    store, _ = _store()
+    storage = _RecordingAvailabilityStorage()
+
+    async def raise_retry(*_args: object, **_kwargs: object) -> tuple[object, ...]:
+        raise RuntimeError("the retry ledger could not be listed")
+
+    async def record_day(*_args: object, **kwargs: object) -> tuple[str, int, int, int, None]:
+        del kwargs
+        return ("written", 1, 1, 32, None)
+
+    monkeypatch.setattr(drain, "retry_pending_availability", raise_retry)
+    monkeypatch.setattr(drain, "fill_one_lane_day", record_day)
+
+    summary = await run_drain(
+        _session(),
+        store,
+        lanes=[LANE_REGISTRY[STREAM]],
+        today=DAY,
+        run_id=RUN_ID,
+        selection="missing",
+        max_days_per_lane=1,
+        now=_now,
+        lane_day_lock=unlocked_lane_day,
+        availability_storage=storage,  # type: ignore[arg-type]
+    )
+
+    report = summary.to_report()
+    assert report["days_written"] == 1, "the walk continued past an unreadable ledger"
+    assert report["availability_retry_owed"] == 1, "and the unread ledger is a number, not silence"
 
 
 # --- Retiring the pre-zoom layout ----------------------------------------------------------------

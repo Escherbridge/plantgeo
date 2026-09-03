@@ -19,6 +19,10 @@ from agri_data_service.foundation.parquet.completion import PartitionCompletion
 from agri_data_service.foundation.parquet.paths import completion_marker_path, partition_path
 from agri_data_service.ingest.vegetation import build_ndvi_write
 from agri_data_service.pipeline.parquet import vegetation_forward as forward_module
+from agri_data_service.pipeline.parquet.availability_extension import (
+    AvailabilityExtensionOutcome,
+    AvailabilityExtensionTally,
+)
 from agri_data_service.pipeline.parquet.vegetation_forward import (
     VegetationForwardDayResult,
     VegetationForwardError,
@@ -252,6 +256,7 @@ async def test_checkpoint_is_verified_while_the_lane_day_lock_is_held(
         source_fingerprint=_SOURCE_FINGERPRINT,
         lane_day_lock=recording_lock,
         availability_storage=None,
+        availability=AvailabilityExtensionTally(),
     )
 
     assert result.outcome == "checkpointed"
@@ -546,12 +551,14 @@ async def test_day_writer_retries_with_bounded_backoff_and_then_resumes(
         source_fingerprint: str,
         lane_day_lock: object,
         availability_storage: object,
+        availability: AvailabilityExtensionTally,
     ) -> VegetationForwardDayResult:
         nonlocal attempts
         attempts += 1
         assert source_fingerprint == _SOURCE_FINGERPRINT
         assert lane_day_lock is not None
         assert availability_storage is None
+        assert isinstance(availability, AvailabilityExtensionTally)
         if attempts < _MAX_ATTEMPTS:
             raise OSError("transient object-store failure")
         return VegetationForwardDayResult(day=day, outcome="written", attempt_count=1)
@@ -571,6 +578,7 @@ async def test_day_writer_retries_with_bounded_backoff_and_then_resumes(
         lane_day_lock=cast("forward_module.VegetationLaneDayLock", object()),
         sleep=record_delay,
         availability_storage=None,
+        availability=AvailabilityExtensionTally(),
     )
 
     assert result.outcome == "written"
@@ -630,10 +638,65 @@ async def test_the_vegetation_writer_hands_its_availability_storage_to_every_day
         source_fingerprint=_SOURCE_FINGERPRINT,
         lane_day_lock=_granted_lock,
         availability_storage=storage,  # type: ignore[arg-type]
+        availability=AvailabilityExtensionTally(),
     )
 
     assert result.outcome == "written"
     assert handed == [storage], "the lane-day path must receive this writer's own storage, not None"
+
+
+async def test_the_vegetation_writer_tallies_its_availability_verdicts_into_its_report(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An outcome that lands only in one day's detail string reports a lost day as a green run.
+
+    `AvailabilityExtensionTally`'s own docstring names the two that MUST be visible:
+    `ladder_incomplete` and `retry_claim_failed` each leave a terminal day outside the index for
+    good. This writer's report is `to_details()`, so that is where they have to surface.
+    """
+    tally = AvailabilityExtensionTally()
+    handed: list[object] = []
+
+    async def record(*_args: object, **kwargs: object) -> tuple[str, int, int, int, None]:
+        handed.append(kwargs.get("availability_tally"))
+        return ("written", 1, 1, 32, None)
+
+    monkeypatch.setattr(forward_module, "fill_one_lane_day", record)
+    monkeypatch.setattr(forward_module, "_ladder_checkpoint_is_current", _checkpoint_after_first_call())
+
+    await forward_module._write_day_once(
+        cast("AsyncSession", _AffectedDaySession()),
+        cast("ObjectStore", object()),
+        day=date(2026, 8, 25),
+        source_fingerprint=_SOURCE_FINGERPRINT,
+        lane_day_lock=_granted_lock,
+        availability_storage=object(),  # type: ignore[arg-type]
+        availability=tally,
+    )
+
+    assert handed == [tally], "the lane-day path must receive the RUN's tally, not None"
+
+    tally.record(
+        AvailabilityExtensionOutcome(
+            state="ladder_incomplete",
+            lane_root="layer=vegetation/kind=observed",
+            day=date(2026, 8, 25),
+            reason="the day is terminal and cannot form the required ladder",
+        )
+    )
+    details = VegetationPublicationDrainSummary(
+        through_day=date(2026, 8, 25),
+        defensive_day_count=0,
+        pending_day_count=0,
+        remaining_day_count=0,
+        source_revision=_SOURCE_REVISION,
+        stop_reason="complete",
+        days=(),
+        availability=tally,
+    ).to_details()
+
+    assert details["availability_ladder_incomplete"] == 1
+    assert details["availability_extended"] == 0
 
 
 def _checkpoint_after_first_call() -> object:

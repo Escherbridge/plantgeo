@@ -342,13 +342,20 @@ def merge_direct_lane_rows(
     return tuple(merged)
 
 
-def lane_coverage_from_index(index: AvailabilityIndex, *, lane: CensusLane) -> tuple[LaneCoverage, ...]:
+def lane_coverage_from_index(index: AvailabilityIndex, *, lane: CensusLane, now: datetime) -> tuple[LaneCoverage, ...]:
     """Close one lane's four rung rows against its index, its cadence and its own source ceiling.
 
     Every rung reports the lane's SELECTABLE days -- the days whose whole authoritative rung set
     agrees on one terminal state -- and not that rung's own rows. The intersection is a subset of
     each rung, so no row over-claims, and a slider can never mount an axis at z13 over a day z0
     cannot draw.
+
+    `now` IS PASSED AS THE CARRY HORIZON AND NOTHING ELSE. The ceiling is what judges lateness, but a
+    release lane's published day CARRIES: drought's map for the 18th is what a reader draws on the
+    24th, and the ceiling sits one publication lag behind that. Closing the carry at the ceiling
+    shortens a release lane's axis by exactly its lag when the authority flips from census to
+    availability -- the census closes the same carry at today, so the two would disagree about the
+    same lane's `latest_day`.
     """
     ceiling = index.pointer.source_ceiling
     selectable = frozenset(day for day in index.selectable_days() if day <= ceiling)
@@ -365,6 +372,7 @@ def lane_coverage_from_index(index: AvailabilityIndex, *, lane: CensusLane) -> t
                 # The publisher already subtracted this lane's publication lag when it declared the
                 # ceiling; charging it again would hide one lag period of the real gap tail.
                 horizon_already_lag_adjusted=True,
+                carry_horizon=now.astimezone(UTC).date(),
             ),
             coverage_authority=COVERAGE_AUTHORITY_AVAILABILITY,
             availability_generation_sha256=index.pointer.generation_sha256,
@@ -449,7 +457,7 @@ def _read_lane(
         if exc.code == "availability_missing":
             return _no_pointer(reader, lane, policy=policy, detail=str(exc))
         return _withheld(lane, reason=WITHHELD_AVAILABILITY_STALE, detail=str(exc))
-    return _LaneOutcome(rows=lane_coverage_from_index(index, lane=lane), withholding=None, census=False)
+    return _LaneOutcome(rows=lane_coverage_from_index(index, lane=lane, now=now), withholding=None, census=False)
 
 
 def _no_pointer(
