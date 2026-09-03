@@ -293,7 +293,12 @@ pre-deploy step applies the committed migrations, it does not certify data.
 
 - Repository root: `/`
 - Dockerfile: `/Dockerfile`
-- Config-as-code: `/railway.json`
+- Config-as-code: none since 2026-09-03 — the root `railway.json` was deleted and its exact settings live on
+  the service (Dockerfile `Dockerfile`, pre-deploy `node scripts/migrate.mjs`, start `node server.js`,
+  healthcheck `/api/ready` / 60 s, `ON_FAILURE` / 5). Railway deprecated config-as-code (repo files stop being
+  read 2026-12-01; new services cannot opt in), and while the root file existed every push made
+  `plantgeo-job-executor` build the Next.js Dockerfile. Follow-up: migrate the remaining legacy files with
+  `railway config migrate` to `.railway/railway.ts`.
 - Liveness: `GET /api/health`
 - Rollout readiness: `GET /api/ready` (auth configuration plus bounded PostgreSQL and Redis probes)
 - Runtime port: Railway-provided `PORT`, default `3000`
@@ -778,8 +783,8 @@ repository has no `.github/workflows/`. A push to `main` on
    `npm run check:data-boundary`, `npm run type-check`, `npm run lint`, and
    `npm test` before `next build`, so a failing gate fails the image and no
    release is produced. The production public-URL gate runs in the same stage.
-2. **Pre-deploy migration.** `railway.json` sets
-   `deploy.preDeployCommand` to `node scripts/migrate.mjs`. Railway runs it in
+2. **Pre-deploy migration.** The service's pre-deploy command (set on the service since 2026-09-03; formerly
+   `railway.json`'s `deploy.preDeployCommand`) is `node scripts/migrate.mjs`. Railway runs it in
    the new runtime image, once, before any traffic is routed. A non-zero exit
    aborts the deployment and the previous release keeps serving.
 3. **Healthcheck.** Railway polls `GET /api/ready`, which requires the exact

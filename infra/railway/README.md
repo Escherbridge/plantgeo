@@ -61,7 +61,9 @@ inventory**.
 ### `plantgeo-main`
 
 - Repository root: `/`
-- Config-as-code: `/railway.json`
+- Config-as-code: none since 2026-09-03 (root `railway.json` deleted; settings live on the service — see
+  docs/deployment.md). Railway deprecated config-as-code; `railway config migrate` to `.railway/railway.ts` is the
+  follow-up for the remaining legacy files.
 - Dockerfile: `/Dockerfile`
 - Liveness endpoint: `GET /api/health`
 - Rollout readiness endpoint: `GET /api/ready` (auth configuration + PostgreSQL + Redis)
