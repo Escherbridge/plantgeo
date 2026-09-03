@@ -321,6 +321,7 @@ await trpc.teams.createInvitation.mutate({
   teamId: string;
   email: string;
   teamRole?: "member" | "viewer";  // Default "member"
+  returnLink?: boolean;            // Default false
 });
 
 // Response
@@ -329,7 +330,8 @@ await trpc.teams.createInvitation.mutate({
   email: string;
   teamRole: "owner" | "member" | "viewer";
   expiresAt: Date;
-  acceptUrl: string;
+  acceptUrl: string;  // Live credential. Empty unless `returnLink: true` was passed;
+                      // the invitee always receives it by email regardless.
 }
 ```
 
@@ -337,13 +339,14 @@ await trpc.teams.createInvitation.mutate({
 
 #### inviteMember
 
-**Deprecated** — backward-compat shim over `createInvitation` that looks up a user's email from their `userId` and sends the same consent-based email invitation. Prefer `createInvitation`.
+**Deprecated, sunset 2026-10-01** — backward-compat shim over `createInvitation` that looks up a user's email from their `userId` and sends the same consent-based email invitation. Use `createInvitation`.
 
 ```typescript
 await trpc.teams.inviteMember.mutate({
   teamId: string;
   userId: string;
   teamRole?: "member" | "viewer";  // Default "member"
+  returnLink?: boolean;            // Default false
 });
 
 // Response: same shape as createInvitation

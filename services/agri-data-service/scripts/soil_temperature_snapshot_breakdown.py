@@ -25,6 +25,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
+from functools import partial
 from pathlib import Path
 from typing import Any, Final, Protocol
 
@@ -32,7 +33,12 @@ import boto3  # type: ignore[import-untyped]
 import pyarrow as pa  # type: ignore[import-untyped]
 import pyarrow.parquet as pq  # type: ignore[import-untyped]
 from botocore.config import Config  # type: ignore[import-untyped]
-from botocore.exceptions import ClientError, ConnectionClosedError, EndpointConnectionError, ReadTimeoutError
+from botocore.exceptions import (  # type: ignore[import-untyped]
+    ClientError,
+    ConnectionClosedError,
+    EndpointConnectionError,
+    ReadTimeoutError,
+)
 
 SERVICE_ROOT = Path(__file__).resolve().parent.parent
 CHECKOUT_ENV_FILE: Final = Path.home() / "Programming" / "plantgeo" / "services" / "agri-data-service" / ".env"
@@ -333,7 +339,7 @@ class RetryPolicy:
     attempts: int = 8
     base_delay_seconds: float = 0.5
 
-    def run(self, operation: Callable[[], Any]) -> Any:
+    def run[T](self, operation: Callable[[], T]) -> T:
         for attempt in range(self.attempts):
             try:
                 return operation()
@@ -443,7 +449,10 @@ class SnapshotStore:
             request: dict[str, object] = {"Bucket": self.bucket, "Prefix": prefix}
             if token is not None:
                 request["ContinuationToken"] = token
-            response = self.retry.run(lambda request=request: self.client.list_objects_v2(**request))
+            # `partial` rather than `lambda request=request:`: the default-argument idiom binds
+            # the page request eagerly (bugbear B023) but leaves the callable un-inferable for a
+            # `Callable[[], T]` parameter. `partial` binds just as eagerly and keeps the type.
+            response = self.retry.run(partial(self.client.list_objects_v2, **request))
             contents = response.get("Contents")
             if isinstance(contents, list):
                 for item in contents:
@@ -571,7 +580,8 @@ def load_input_contract(
         table = pq.read_table(io.BytesIO(payload))
         if table.num_rows != int(metadata["row_count"]):
             raise BreakdownError(f"canonical dimension {name!r} failed row reconciliation")
-        return table.to_pylist()
+        dimension: list[dict[str, Any]] = table.to_pylist()
+        return dimension
 
     release_rows = dimension_rows("source_release")
     source_rows = dimension_rows("data_source")
@@ -773,7 +783,7 @@ def load_canonical_part(store: SnapshotStore, metadata: Mapping[str, Any]) -> li
     table = pq.read_table(io.BytesIO(payload))
     if not table.schema.equals(RAW_SCHEMA, check_metadata=False):
         raise BreakdownError(f"canonical soil-temperature part {key!r} has the wrong Arrow schema")
-    rows = table.to_pylist()
+    rows: list[dict[str, Any]] = table.to_pylist()
     if len(rows) != int(metadata["row_count"]) or row_set_digest(rows) != metadata["row_digest"]:
         raise BreakdownError(f"canonical soil-temperature part {key!r} failed physical-row reconciliation")
     for ordinal, row in enumerate(rows):
@@ -976,13 +986,17 @@ def classify_month(
         source = source_by_row[row_id]
         reason = rejection_by_row[row_id]
         if reason is None:
-            rank = ranks[row_id]
-            disposition = "selected" if rank == 1 else "superseded"
-            disposition_reason = "release_precedence_winner" if rank == 1 else "newer_release_or_observation_id"
+            # Named apart from the `rank` enumerate variable above: a rejected row HAS no precedence
+            # rank, so this one is nullable and that one never is.
+            precedence_rank: int | None = ranks[row_id]
+            disposition = "selected" if precedence_rank == 1 else "superseded"
+            disposition_reason = (
+                "release_precedence_winner" if precedence_rank == 1 else "newer_release_or_observation_id"
+            )
             selected_id: int | None = winner_by_row[row_id]
         else:
             rejection_counts[reason] += 1
-            rank = None
+            precedence_rank = None
             disposition = "rejected"
             disposition_reason = reason
             selected_id = None
@@ -991,7 +1005,7 @@ def classify_month(
                 "lane": product.lane,
                 "disposition": disposition,
                 "disposition_reason": disposition_reason,
-                "precedence_rank": rank,
+                "precedence_rank": precedence_rank,
                 "selected_observation_id": selected_id,
                 "release_retrieved_at": release["retrieved_at"],
                 "release_source_version": release["source_version"],
@@ -1005,11 +1019,11 @@ def classify_month(
         provenance.append(row)
 
     by_day: dict[date, list[dict[str, Any]]] = defaultdict(list)
-    for winner, grain_rows in winners:
+    for winner, winner_candidates in winners:
         winner_id = int(winner["id"])
         release = release_by_row[winner_id]
         source = source_by_row[winner_id]
-        candidate_hashes = [str(row["canonical_row_sha256"]) for row in grain_rows]
+        candidate_hashes = [str(row["canonical_row_sha256"]) for row in winner_candidates]
         output = {
             "data_source_key": winner["data_source_key"],
             "source_parameter": winner["source_parameter"],
@@ -1099,10 +1113,12 @@ def verify_provenance_lineage(
     ordinals: dict[str, set[int]] = defaultdict(set)
     for row in rows:
         key = str(row["source_part_key"])
-        part = expected.get(key)
-        if part is None:
+        # Named apart from the `part` loop variables above: a lookup that may miss cannot share a
+        # name with one that never does, or the miss is un-narrowable.
+        source_part = expected.get(key)
+        if source_part is None:
             raise BreakdownError(f"provenance row references unconsumed source part {key!r}")
-        if row["source_part_sha256"] != part["sha256"]:
+        if row["source_part_sha256"] != source_part["sha256"]:
             raise BreakdownError(f"provenance row changed source-part SHA-256 for {key!r}")
         if row["canonical_row_sha256"] != canonical_row_hash(row):
             raise BreakdownError(f"provenance row changed its canonical physical fact for {key!r}")
@@ -1470,7 +1486,8 @@ def base_checkpoint_sha256(
 
 def load_lane_table(store: SnapshotStore, receipt: Mapping[str, Any]) -> list[dict[str, Any]]:
     payload = verify_receipt(store, receipt, schema=LANE_SCHEMA)
-    return pq.read_table(io.BytesIO(payload)).to_pylist()
+    lane_rows: list[dict[str, Any]] = pq.read_table(io.BytesIO(payload)).to_pylist()
+    return lane_rows
 
 
 def validate_tier_checkpoint_semantics(
@@ -1703,7 +1720,7 @@ def finalize_lane(
     consumed_raw: dict[str, Mapping[str, Any]] = {}
     expected_output_keys: set[str] = set()
     object_receipts: dict[str, dict[str, Any]] = {}
-    aggregate = Counter()
+    aggregate: Counter[str] = Counter()
     all_days: list[str] = []
     input_month_digests: list[str] = []
     selected_month_digests: list[str] = []

@@ -16,16 +16,10 @@ that caused it. A key without `zoom=` is not of this layout and does not parse: 
 before this axis existed are being discarded and re-drained, never migrated, so a tolerant parse
 would only let a stale key read as a covered day.
 
-A DAY PREFIX HOLDS THREE OBJECT KINDS, NOT TWO (owner, 2026-08-23; RUNBOOK 0.34.1). Alongside the
-part file and the governed-absence marker there is now a COMPLETION marker, written after the last
-part of an export and required before that day counts as `data`. This deliberately gives up a
-constraint the layout held from the start -- "a day prefix holds exactly two kinds" -- and the cost
-was weighed: a day that cannot say whether it finished is worse than a layout with three kinds.
-A run killed between two part uploads leaves a PREFIX of a release behind, every part of it new, so
-freshness alone reads the wreckage as a completed export. Completion is therefore ASSERTED by an
-object rather than inferred from the parts, and `partition_day_statuses` reports a day holding parts
-without that assertion as `incomplete` -- a fourth status, distinct from `missing` so an operator can
-see the difference, and filled exactly like `missing` so the driver repairs it.
+A DAY PREFIX HOLDS FOUR OBJECT NAMES, NOT TWO (owner, 2026-08-23; RUNBOOK 0.34.1): the part file,
+the governed-absence marker, the COMPLETION marker, and the DERIVED-EMPTY completion marker that
+closes a coarse rung which generalised every base row away. See `AGENTS.md` in this directory,
+"Completion is asserted, and emptiness has its own name".
 """
 
 from __future__ import annotations
@@ -42,6 +36,11 @@ if TYPE_CHECKING:
 
     from agri_data_service.foundation.parquet.zoom import ZoomTier
 
+#: The rung nothing generalises: the most detailed tier of the ladder, and the only one whose
+#: emptiness is a governed absence rather than a derived-empty receipt. Spelled from the ladder's own
+#: top rather than as a literal, and restated here because L0 may not import `warehouse`.
+BASE_PARTITION_ZOOM: Final[int] = ZOOM_TIERS[-1]
+
 PartitionKind = Literal["observed", "forecast"]
 PartitionDayStatus = Literal["data", "absent", "conflict", "incomplete", "missing"]
 
@@ -53,6 +52,9 @@ ABSENCE_FILE_NAME: Final = "absent.json"
 # scanning a day prefix by eye reads it as metadata rather than as another record of the population.
 # It is JSON, never Parquet, which is what keeps every `*.parquet` scan glob in `planes/` blind to it.
 COMPLETION_FILE_NAME: Final = "_complete.json"
+# The SIBLING name a derived rung's emptiness is asserted under, so a partless ordinary marker stops
+# being ambiguous. See `AGENTS.md`, "Completion is asserted, and emptiness has its own name".
+DERIVED_EMPTY_COMPLETION_FILE_NAME: Final = "_complete.empty.json"
 
 # Explicit budgets at the boundary; every one of these has a wrong answer that is silently plausible.
 MAX_PART_INDEX: Final = 9_999
@@ -119,7 +121,7 @@ _COMPLETION_PATH_PATTERN: Final = re.compile(
     r"/year=(?P<year>\d{4})"
     r"/month=(?P<month>\d{2})"
     r"/day=(?P<day>\d{2})"
-    r"/_complete\.json$"
+    r"/_complete(?P<empty>\.empty)?\.json$"
 )
 
 
@@ -160,17 +162,38 @@ class AbsenceMarkerPath:
 
 @dataclass(frozen=True, slots=True)
 class CompletionMarkerPath:
-    """One completion marker, decomposed: the inverse of `completion_marker_path`."""
+    """One completion marker, decomposed, and which of the two names it was written under."""
 
     layer: str
     kind: PartitionKind
     zoom: ZoomTier
     day: date
+    #: True for `_complete.empty.json`: a DERIVED rung that generalised every base row away and
+    #: therefore holds no parts. The name is the claim, so no reader opens the body to tell a rung
+    #: that is honestly empty from one whose parts were deleted out from under its marker.
+    derived_empty: bool = False
 
     @property
     def key(self) -> str:
         """Rebuild the relative object key this instance was parsed from."""
+        if self.derived_empty:
+            return derived_empty_completion_marker_path(self.layer, self.kind, self.zoom, self.day)
         return completion_marker_path(self.layer, self.kind, self.zoom, self.day)
+
+
+@dataclass(frozen=True, slots=True)
+class TierDayObjects:
+    """Which days one tier's listing names, split by object kind: the parse every classifier shares."""
+
+    parts: frozenset[date]
+    absences: frozenset[date]
+    completions: frozenset[date]
+    derived_empties: frozenset[date]
+
+    @property
+    def named_days(self) -> frozenset[date]:
+        """Every day any object of this tier mentions, whatever it claims about it."""
+        return self.parts | self.absences | self.completions | self.derived_empties
 
 
 def validate_layer_slug(slug: str) -> str:
@@ -280,8 +303,19 @@ def completion_marker_path(layer: str, kind: PartitionKind, zoom: ZoomTier, day:
     return f"{day_prefix(layer, kind, zoom, day)}{COMPLETION_FILE_NAME}"
 
 
+def derived_empty_completion_marker_path(layer: str, kind: PartitionKind, zoom: ZoomTier, day: date) -> str:
+    """Return the relative object key asserting that one DERIVED rung finished holding nothing."""
+    return f"{day_prefix(layer, kind, zoom, day)}{DERIVED_EMPTY_COMPLETION_FILE_NAME}"
+
+
 def try_parse_completion_marker_path(path: str) -> CompletionMarkerPath | None:
-    """Decompose a relative object key, returning `None` for anything that is not a completion marker."""
+    """Decompose either completion-marker name, returning `None` for anything that is neither.
+
+    ONE PARSER FOR BOTH NAMES, deliberately: every guard that asks "is this key a member of the
+    layout" (`warehouse_reader._is_layout_object`, `objectstore.list_partition_objects`, the legacy
+    sweep in `drain.py`) must accept the derived-empty receipt without being taught a fourth parser,
+    and a guard that missed it would read a published rung as a stray object and offer it for delete.
+    """
     match = _COMPLETION_PATH_PATTERN.match(path.replace("\\", "/"))
     if match is None:
         return None
@@ -293,7 +327,69 @@ def try_parse_completion_marker_path(path: str) -> CompletionMarkerPath | None:
     except ValueError:
         return None
     kind: PartitionKind = "observed" if match["kind"] == "observed" else "forecast"
-    return CompletionMarkerPath(layer=match["layer"], kind=kind, zoom=zoom, day=day)
+    return CompletionMarkerPath(
+        layer=match["layer"], kind=kind, zoom=zoom, day=day, derived_empty=match["empty"] is not None
+    )
+
+
+def tier_day_objects(
+    keys: Iterable[str],
+    *,
+    layer: str,
+    kind: PartitionKind,
+    zoom: ZoomTier,
+) -> TierDayObjects:
+    """Split one tier's listing into the four day sets every status rule is decided from, in ONE pass.
+
+    `keys` is consumed exactly once, so a generator argument is safe to hand here and nowhere twice.
+    """
+    validate_layer_slug(layer)
+    validate_partition_kind(kind)
+    validate_zoom_tier(zoom)
+    parts: set[date] = set()
+    absences: set[date] = set()
+    completions: set[date] = set()
+    derived_empties: set[date] = set()
+    for key in keys:
+        partition = try_parse_partition_path(key)
+        if partition is not None and (partition.layer, partition.kind, partition.zoom) == (layer, kind, zoom):
+            parts.add(partition.day)
+            continue
+        absence = try_parse_absence_marker_path(key)
+        if absence is not None and (absence.layer, absence.kind, absence.zoom) == (layer, kind, zoom):
+            absences.add(absence.day)
+            continue
+        finished = try_parse_completion_marker_path(key)
+        if finished is not None and (finished.layer, finished.kind, finished.zoom) == (layer, kind, zoom):
+            (derived_empties if finished.derived_empty else completions).add(finished.day)
+    return TierDayObjects(
+        parts=frozenset(parts),
+        absences=frozenset(absences),
+        completions=frozenset(completions),
+        derived_empties=frozenset(derived_empties),
+    )
+
+
+def classify_partition_day(day: date, objects: TierDayObjects, *, zoom: ZoomTier) -> PartitionDayStatus:
+    """Return the ONE status one day of one tier holds, from the day sets alone.
+
+    THE SINGLE DEFINITION. `partition_day_statuses` and `parquet_ops/serving.py::day_status_sets` both
+    resolve here, so a census and a reader cannot disagree about what a day is. See `AGENTS.md`,
+    "Completion is asserted, and emptiness has its own name", for why each branch reads as it does.
+    """
+    has_parts = day in objects.parts
+    has_absence = day in objects.absences
+    if has_parts and has_absence:
+        return "conflict"
+    if has_parts:
+        return "data" if day in objects.completions else "incomplete"
+    if has_absence:
+        return "absent"
+    if day in objects.derived_empties and zoom != BASE_PARTITION_ZOOM:
+        return "data"
+    if day in objects.completions or day in objects.derived_empties:
+        return "incomplete"
+    return "missing"
 
 
 def completed_partition_days(
@@ -303,25 +399,32 @@ def completed_partition_days(
     kind: PartitionKind,
     zoom: ZoomTier,
 ) -> set[date]:
-    """Return the days of one stream-tier whose export ASSERTED that it finished, from `keys` alone.
+    """Return the days of one stream-tier whose export ASSERTED that it finished, under EITHER name.
 
-    The one primitive every reader shares. A day holding part files but no completion marker is a
-    release that stopped part-way through uploading, and nothing -- census, validation or serving --
-    may count it: `planes/` enumerate their published days by parsing part keys directly rather than
-    through `partition_day_statuses`, so without this they would each have re-derived the rule, and
-    the one that got it wrong would put half a release on the map.
+    The primitive `planes/` share, and it is deliberately about the ASSERTION alone: those readers
+    parse part keys themselves and intersect with this set, so a derived-empty receipt has to be in
+    it or a rung that honestly holds nothing would read as never finished. A caller asking "is this
+    rung `data`" wants `completed_rung_days`, which applies the whole status rule.
     """
-    validate_layer_slug(layer)
-    validate_partition_kind(kind)
-    validate_zoom_tier(zoom)
-    return {
-        marker.day
-        for key in keys
-        if (marker := try_parse_completion_marker_path(key)) is not None
-        and marker.layer == layer
-        and marker.kind == kind
-        and marker.zoom == zoom
-    }
+    objects = tier_day_objects(keys, layer=layer, kind=kind, zoom=zoom)
+    return set(objects.completions | objects.derived_empties)
+
+
+def completed_rung_days(
+    keys: Iterable[str],
+    *,
+    layer: str,
+    kind: PartitionKind,
+    zoom: ZoomTier,
+) -> set[date]:
+    """Return the days of one tier that are `data`: parts and their marker, or a derived-empty receipt.
+
+    STRICTER THAN `completed_partition_days`, and the ladder census wants this one: a marker whose
+    parts were deleted out from under it is a LOST rung, not a finished one, and counting it as
+    finished is what left such a rung unrepairable by any tick. See `AGENTS.md`.
+    """
+    objects = tier_day_objects(keys, layer=layer, kind=kind, zoom=zoom)
+    return {day for day in objects.named_days if classify_partition_day(day, objects, zoom=zoom) == "data"}
 
 
 def partition_day_statuses(  # noqa: PLR0913 - the six are one gap census's whole scope: stream, tier, window, keys.
@@ -333,65 +436,21 @@ def partition_day_statuses(  # noqa: PLR0913 - the six are one gap census's whol
     last_day: date,
     keys: Iterable[str],
 ) -> dict[date, PartitionDayStatus]:
-    """Classify every day in `[first_day, last_day]` at one tier from `keys` alone, in chronological order.
+    """Classify every day in `[first_day, last_day]` at one tier from `keys` alone, chronologically.
 
-    `data` = at least one part file AND the completion marker that export wrote last; `incomplete` =
-    part files with no such marker, which is a release that stopped part-way through uploading;
-    `absent` = a governed-absence marker; `conflict` = data and a governed absence together, which
-    only a manual admin action should ever produce; `missing` = nothing at all, a real gap.
-
-    `incomplete` IS NOT FOLDED INTO `missing`, and the difference is the whole point of reporting it:
-    both are filled, but "this day was never attempted" and "this day was attempted and the container
-    died holding half a release" are different facts about the warehouse, and an operator reading a
-    census that showed only `missing` could not tell a backlog from a repeated crash. A governed
-    absence needs no completion marker of its own -- it is ONE object, so it cannot be half-written.
-
-    Keys of another tier are ignored rather than counted: a day published at z0 says nothing about
-    whether z13 was written, and blending the tiers would report a covered day over a real gap.
+    Every branch is `classify_partition_day`'s, so this and `parquet_ops/serving.py::day_status_sets`
+    cannot drift. Keys of another tier are ignored rather than counted. See `AGENTS.md`.
     """
-    validate_layer_slug(layer)
-    validate_partition_kind(kind)
-    validate_zoom_tier(zoom)
     if last_day < first_day:
         raise PartitionPathError(f"gap window {first_day}..{last_day} runs backwards")
     span = (last_day - first_day).days + 1
     if span > MAX_GAP_WINDOW_DAYS:
         raise PartitionPathError(f"gap window of {span} days exceeds the {MAX_GAP_WINDOW_DAYS}-day budget")
-    # `keys` is an Iterable and is consumed exactly once, so the three kinds are separated in one
-    # pass rather than by handing the same (possibly generator) argument to a second helper.
-    part_days: set[date] = set()
-    absent_days: set[date] = set()
-    complete_days: set[date] = set()
-    for key in keys:
-        parsed = try_parse_partition_path(key)
-        if parsed is not None and parsed.layer == layer and parsed.kind == kind and parsed.zoom == zoom:
-            part_days.add(parsed.day)
-            continue
-        marker = try_parse_absence_marker_path(key)
-        if marker is not None and marker.layer == layer and marker.kind == kind and marker.zoom == zoom:
-            absent_days.add(marker.day)
-            continue
-        finished = try_parse_completion_marker_path(key)
-        if finished is not None and finished.layer == layer and finished.kind == kind and finished.zoom == zoom:
-            complete_days.add(finished.day)
-    statuses: dict[date, PartitionDayStatus] = {}
-    for offset in range(span):
-        day = first_day + timedelta(days=offset)
-        if day in part_days:
-            # `conflict` outranks completion: a day carrying both a release and a governed absence is
-            # a contradiction to escalate, and reporting it as merely unfinished would hide that.
-            if day in absent_days:
-                statuses[day] = "conflict"
-            else:
-                statuses[day] = "data" if day in complete_days else "incomplete"
-        elif day in absent_days:
-            statuses[day] = "absent"
-        else:
-            # A completion marker with no parts beside it is not a covered day. It is the residue of
-            # a day whose parts were deleted out from under it, and calling it `data` would serve
-            # nothing while claiming coverage -- so it falls through to `missing` and is re-exported.
-            statuses[day] = "missing"
-    return statuses
+    objects = tier_day_objects(keys, layer=layer, kind=kind, zoom=zoom)
+    return {
+        day: classify_partition_day(day, objects, zoom=zoom)
+        for day in (first_day + timedelta(days=offset) for offset in range(span))
+    }
 
 
 def missing_partition_days(  # noqa: PLR0913 - mirrors `partition_day_statuses`, whose scope it narrows.

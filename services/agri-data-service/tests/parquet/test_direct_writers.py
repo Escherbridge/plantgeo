@@ -232,7 +232,8 @@ def test_the_water_gauges_terminal_record_states_its_availability_verdicts_as_nu
         "availability_ladder_incomplete",
         "availability_retry_owed",
         "availability_retry_claim_failed",
-        "availability_quarantined",
+        "availability_quarantined_standing",
+        "availability_reindex_owed",
     }
 
 

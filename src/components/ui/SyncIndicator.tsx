@@ -1,6 +1,6 @@
 "use client";
 
-import { CheckCircle, WifiOff, RefreshCw, Clock } from "lucide-react";
+import { CheckCircle, WifiOff, RefreshCw } from "lucide-react";
 import { useOfflineSync } from "@/hooks/useOfflineSync";
 import { cn } from "@/lib/utils";
 

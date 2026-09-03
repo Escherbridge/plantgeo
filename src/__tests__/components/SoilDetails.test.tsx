@@ -91,9 +91,11 @@ type SoilFieldResult = {
         zoomTier: 0 | 5 | 9 | 13;
         /**
          * The envelope the reader now attaches to the whole collection. Only the two fields the
-         * caption reads are declared, for the same reason the rest of this type is partial.
+         * caption reads are declared, for the same reason the rest of this type is partial, and
+         * OPTIONAL because a response replayed out of IndexedDB may predate it -- `support` only
+         * arrived on 2026-09-02 and `query-persister.ts` persists this procedure.
          */
-        support: { supportKind: string; cellWidthDegrees?: number };
+        support?: { supportKind: string; cellWidthDegrees?: number };
       })
     | undefined;
   isLoading: boolean;
@@ -713,6 +715,27 @@ describe("SoilDetails soil-moisture field", () => {
 
     expect(screen.getByText(/Zoomed out to the z5 rung/)).toBeTruthy();
     expect(screen.getByText(/Still the measured 0.25° grain/)).toBeTruthy();
+  });
+
+  /**
+   * `query-persister.ts:155-156` replays this procedure's answer out of IndexedDB, serialized by
+   * whatever schema was current when it was written -- and `support` only arrived on 2026-09-02.
+   * Dereferencing it throws inside render and takes the panel down; the honest fallback is to
+   * omit the one caption that cannot be written and keep the report.
+   */
+  it("renders a replayed collection that predates the support envelope", () => {
+    const replayed = moistureCollection({
+      granularity: "coarse-average",
+      zoomTier: 0,
+      latticeDegrees: 5,
+      cellCount: 1568,
+    });
+    delete replayed.support;
+    renderWithMoistureOn(replayed, 3);
+
+    // The caption that names the cell size is gone, and the rest of the section is not.
+    expect(screen.queryByText(/Zoomed out to the z0 rung/)).toBeNull();
+    expect(screen.getByText(/Volumetric soil water/)).toBeTruthy();
   });
 
   it("makes no average claim at the detail tier, where the cells are the measurements", () => {

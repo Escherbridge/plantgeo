@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
+from agri_data_service.db.vegetation_publication import unlocked_vegetation_publication_barrier
 from agri_data_service.foundation.canonical import sha256_digest
 from agri_data_service.foundation.parquet.completion import PartitionCompletion
 from agri_data_service.foundation.parquet.paths import COMPLETION_FILE_NAME, completion_marker_path
@@ -56,11 +57,12 @@ from agri_data_service.pipeline.parquet.gap_fill import (
     GAP_FILL_PARTITION_KIND,
     GAP_FILL_ZOOM_TIER,
     fill_one_lane_day,
+    repair_one_lane_day,
     unlocked_lane_day,
     zero_row_absence,
     zero_row_absence_reason,
 )
-from agri_data_service.pipeline.parquet.lane_registry import LaneRegistration, LaneRunResult
+from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRY, LaneRegistration, LaneRunResult
 from agri_data_service.pipeline.parquet.objectstore import (
     ObjectStore,
     WrittenObjectLedger,
@@ -78,6 +80,7 @@ if TYPE_CHECKING:
 
     from agri_data_service.foundation.parquet.paths import PartitionKind
     from agri_data_service.foundation.parquet.zoom import ZoomTier
+    from agri_data_service.pipeline.parquet.gap_fill import LadderRepairOutcome
 
 LANE = "signal"
 LANE_ROOT = "layer=signal/kind=observed"
@@ -89,6 +92,8 @@ ROWS_PER_RUNG = 3
 #: The LANE's declared horizon, deliberately AHEAD of the day being written: the whole point of
 #: `FinalizedLaneDay.source_ceiling` is that a lane's horizon is not its newest published day.
 CEILING = date(2026, 8, 21)
+#: When a LADDER REPAIR publishes, strictly after the export it corrects.
+REPAIRED_AT = NOW + timedelta(hours=1)
 
 
 class LoggingBackend(RecordingBackend):
@@ -938,7 +943,9 @@ async def test_parked_claims_are_counted_in_the_walk_the_retry_pass_already_pays
     assert all(day.isoformat() in swept.reason for day in parked_days)
     tally = AvailabilityExtensionTally()
     tally.record(swept)
-    assert tally.to_summary()["availability_quarantined"] == len(parked_days)
+    assert tally.to_summary()["availability_quarantined_standing"] == len(parked_days), (
+        "the parked set is a STANDING gauge: each sweep restates it whole rather than incrementing"
+    )
     for day in parked_days:
         key = store.key_for(availability_retry_quarantine_path(LANE, GAP_FILL_PARTITION_KIND, day))
         assert key in backend.objects, "nothing is deleted: reading a malformed claim is an admin's call"
@@ -958,7 +965,8 @@ def test_the_tally_folds_lane_totals_without_losing_a_verdict() -> None:
         "availability_ladder_incomplete": 1,
         "availability_retry_owed": 0,
         "availability_retry_claim_failed": 1,
-        "availability_quarantined": 0,
+        "availability_quarantined_standing": 0,
+        "availability_reindex_owed": 0,
     }
 
 
@@ -1027,3 +1035,212 @@ def _coarse_rung_writer(  # noqa: PLR0913 - the signature IS the seam; it must m
             )
         )
     return DerivationResult(tiers=tuple(reports), notes=())
+
+
+# --- A repaired day joins the index -------------------------------------------------------------
+#
+# A ladder repair rewrites three of the day's four rungs, so their receipts change. Until the claim
+# existed nothing told the index: the day was complete at all four rungs, `derived_rung_completions`
+# never selected it again, the generation still bound receipts of objects that no longer existed,
+# and the tick reported `repaired: 1`. The loss was permanent and it was green.
+
+DERIVED_RUNGS: tuple[ZoomTier, ...] = tuple(tier for tier in ZOOM_TIERS if tier != GAP_FILL_ZOOM_TIER)
+
+
+def rewriting_deriver(*, cell_ids: tuple[str, ...]) -> Callable[..., DerivationResult]:
+    """A deriver that really writes each coarse rung, with content the previous derivation did not hold.
+
+    Real objects, because the availability contract opens every receipt it is handed and re-hashes
+    the bytes -- a deriver that only returned counts would let this test pass over receipts that
+    point at nothing. Different `cell_ids` are what make the new receipts DIFFER from the old, which
+    is the whole subject: identical bytes would resolve as `skipped_unchanged` and prove nothing.
+    """
+
+    def derive(  # noqa: PLR0913 - the signature IS the seam; it must match what it replaces
+        store: ObjectStore,
+        *,
+        layer: str,
+        kind: PartitionKind,
+        day: date,
+        run_id: str,
+        now: Callable[[], datetime],
+        connection: object = None,
+        base_table: object = None,
+    ) -> DerivationResult:
+        del connection, base_table
+        reports: list[DerivedTierReport] = []
+        for tier in DERIVED_RUNGS:
+            receipt = store.write_partition(signal_rows(cell_ids=cell_ids), layer=layer, kind=kind, zoom=tier, day=day)
+            store.write_completion_marker(
+                PartitionCompletion(part_count=1, row_count=len(cell_ids), completed_at=now(), run_id=run_id),
+                layer=layer,
+                kind=kind,
+                zoom=tier,
+                day=day,
+            )
+            reports.append(
+                DerivedTierReport(tier=tier, part_count=1, row_count=len(cell_ids), byte_count=receipt.byte_count)
+            )
+        return DerivationResult(tiers=tuple(reports), notes=())
+
+    return derive
+
+
+async def repair(
+    store: ObjectStore,
+    storage: LaneAvailabilityStorage | None,
+    *,
+    day: date = DAY,
+    cell_ids: tuple[str, ...] = ("c9", "c8"),
+) -> LadderRepairOutcome:
+    """Re-derive one published day's coarse rungs through the real driver, lock seam granted.
+
+    `REPAIRED_AT` is deliberately LATER than the export's `published_at`: a correction whose rows do
+    not postdate the ones they replace is refused as a stale publication, which is the contract doing
+    its job -- an out-of-order retry must never overwrite a newer generation.
+    """
+    return await repair_one_lane_day(
+        cast("AsyncSession", RecordingSession()),
+        store,
+        LANE_REGISTRY[LANE],
+        day=day,
+        run_id=RUN_ID,
+        now=lambda: REPAIRED_AT,
+        today=CEILING,
+        lane_day_lock=unlocked_lane_day,
+        vegetation_publication_barrier=unlocked_vegetation_publication_barrier,
+        derive_tiers=rewriting_deriver(cell_ids=cell_ids),
+        availability_storage=storage,
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_repaired_day_writes_the_claim_that_brings_it_into_the_index() -> None:
+    """DO NOT DELETE. Without the claim a repaired day is complete, unindexed and unreachable.
+
+    Every rung is marked, so no census re-selects it; `_extend_availability_for_result` is gated on
+    an EXPORT outcome and never runs; `_LadderGap` writes no claim. The day would sit outside the
+    generation for good while the tick reported `repaired: 1`.
+    """
+    _backend, store, storage, _log = new_lane()
+    bootstrap_lane(store, storage)
+    write_published_day(store, day=DAY)
+
+    outcome = await repair(store, storage)
+
+    assert outcome.outcome == "written"
+    assert outcome.availability is not None
+    assert outcome.availability.state == "retry_owed"
+    assert store.read_availability_retry(LANE, GAP_FILL_PARTITION_KIND, DAY) is not None
+    index = read_latest_availability(storage, lane_root=LANE_ROOT)
+    assert not [row for row in index.rows if row.day == DAY], "the claim indexes on the NEXT turn, not this one"
+
+
+@pytest.mark.asyncio
+async def test_the_next_turn_indexes_the_repaired_day_without_re_exporting_a_row() -> None:
+    """The claim names every physical receipt, so the drain publishes from it and touches no lane part."""
+    backend, store, storage, _log = new_lane()
+    bootstrap_lane(store, storage)
+    write_published_day(store, day=DAY)
+    await repair(store, storage)
+    parts_before = dict(_lane_part_objects(backend))
+
+    outcomes = await retry_pending_availability(
+        cast("AsyncSession", object()),
+        store,
+        lane=LANE,
+        kind=GAP_FILL_PARTITION_KIND,
+        availability=storage,
+        now=lambda: NOW,
+        publication_barrier=granted_barrier,
+    )
+
+    assert [outcome.state for outcome in outcomes] == ["extended"]
+    assert _lane_part_objects(backend) == parts_before, "the availability step re-exported lane data"
+    assert store.read_availability_retry(LANE, GAP_FILL_PARTITION_KIND, DAY) is None
+    index = read_latest_availability(storage, lane_root=LANE_ROOT)
+    added = tuple(row for row in index.rows if row.day == DAY)
+    assert tuple(row.rung for row in added) == AVAILABILITY_REQUIRED_RUNGS
+    assert DAY in index.selectable_days()
+    for row in added:
+        for receipt in row.data_receipts:
+            assert sha256_digest(backend.objects[receipt.key]) == receipt.sha256
+
+
+@pytest.mark.asyncio
+async def test_a_re_derivation_after_a_cleared_marker_publishes_a_correction_generation() -> None:
+    """DO NOT DELETE. This is the `write_partition` half of the same hole.
+
+    `write_partition` clears the completion marker at `part_index == 0`, so a re-derivation that dies
+    right after that leaves an ALREADY-INDEXED day whose next repair writes new parts and new SHAs
+    while the generation still binds the old receipts. Nothing re-selects the day -- it is complete
+    at every rung once the repair finishes -- so without the claim the index and the bucket diverge
+    permanently and silently. The claim turns the changed receipts into a correction generation.
+    """
+    backend, store, storage, _log = new_lane()
+    bootstrap_lane(store, storage)
+    ledger = write_published_day(store, day=DAY)
+    assert (await extend(store, storage, published_outcome(ledger))).state == "extended"
+    before = read_latest_availability(storage, lane_root=LANE_ROOT)
+    old_receipts = {
+        row.rung: tuple(receipt.sha256 for receipt in row.data_receipts) for row in before.rows if row.day == DAY
+    }
+
+    # The container died after `part-0` cleared z9's claim: the rung holds parts and no marker.
+    store.clear_completion_marker(LANE, GAP_FILL_PARTITION_KIND, cast("ZoomTier", 9), DAY)
+    await repair(store, storage, cell_ids=("c7", "c6", "c5", "c4"))
+    outcomes = await retry_pending_availability(
+        cast("AsyncSession", object()),
+        store,
+        lane=LANE,
+        kind=GAP_FILL_PARTITION_KIND,
+        availability=storage,
+        now=lambda: NOW,
+        publication_barrier=granted_barrier,
+    )
+
+    assert [outcome.state for outcome in outcomes] == ["extended"]
+    after = read_latest_availability(storage, lane_root=LANE_ROOT)
+    assert after.pointer.generation_key != before.pointer.generation_key, "the correction never published"
+    assert after.pointer.prior_generation_key == before.pointer.generation_key
+    corrected = {
+        row.rung: tuple(receipt.sha256 for receipt in row.data_receipts) for row in after.rows if row.day == DAY
+    }
+    for rung in DERIVED_RUNGS:
+        assert corrected[rung] != old_receipts[rung], f"z{rung} still binds the receipts of replaced objects"
+        for receipt in next(row for row in after.rows if row.day == DAY and row.rung == rung).data_receipts:
+            assert sha256_digest(backend.objects[receipt.key]) == receipt.sha256
+    assert corrected[GAP_FILL_ZOOM_TIER] == old_receipts[GAP_FILL_ZOOM_TIER], "the repair rewrote the base rung"
+
+
+@pytest.mark.asyncio
+async def test_a_repair_reuses_the_source_evidence_of_a_day_the_generation_already_holds() -> None:
+    """No export happened, so no second export-source document is minted for one that never ran."""
+    _backend, store, storage, log = new_lane()
+    bootstrap_lane(store, storage)
+    ledger = write_published_day(store, day=DAY)
+    await extend(store, storage, published_outcome(ledger))
+    before = read_latest_availability(storage, lane_root=LANE_ROOT)
+    held = {row.source_receipt for row in before.rows if row.day == DAY}
+    assert len(held) == 1
+
+    await repair(store, storage, cell_ids=("c7", "c6"))
+    log.clear()
+    outcomes = await retry_pending_availability(
+        cast("AsyncSession", object()),
+        store,
+        lane=LANE,
+        kind=GAP_FILL_PARTITION_KIND,
+        availability=storage,
+        now=lambda: NOW,
+        publication_barrier=granted_barrier,
+    )
+
+    # Asserted FIRST: a refused correction leaves the held rows in place, so every assertion below
+    # this line passes vacuously on a retry that never published.
+    assert [outcome.state for outcome in outcomes] == ["extended"]
+    after = read_latest_availability(storage, lane_root=LANE_ROOT)
+    assert {row.source_receipt for row in after.rows if row.day == DAY} == held
+    assert not [line for line in log if "/availability/source/" in line], (
+        "a repair minted a new export-source object for a fetch that never happened"
+    )

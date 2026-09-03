@@ -268,14 +268,9 @@ def preflight_vegetation_rewrite_day(store: ObjectStore, day: date) -> Vegetatio
     )
     status_by_tier: Mapping[ZoomTier, PartitionDayStatus] = dict(statuses)
     for tier in VEGETATION_REWRITE_ZOOM_TIERS:
-        status = status_by_tier[tier]
-        if status in {"absent", "conflict", "incomplete"}:
-            raise VegetationRewriteRefusal(f"refusing vegetation/observed z{tier} {day.isoformat()}: state is {status}")
-        if status == "missing" and keys_by_tier[tier]:
-            raise VegetationRewriteRefusal(
-                f"refusing vegetation/observed z{tier} {day.isoformat()}: marker-only residue is not a clean "
-                "missing checkpoint"
-            )
+        detail = _unapproved_rung_detail(status_by_tier[tier], keys_by_tier[tier])
+        if detail is not None:
+            raise VegetationRewriteRefusal(f"refusing vegetation/observed z{tier} {day.isoformat()}: {detail}")
 
     base_status = status_by_tier[BASE_ZOOM_TIER]
     if base_status == "missing":
@@ -294,6 +289,28 @@ def preflight_vegetation_rewrite_day(store: ObjectStore, day: date) -> Vegetatio
             f"legacy coordinate-less schema; columns={names}"
         )
     return VegetationRewritePreflight(base_state="legacy", tier_statuses=statuses)
+
+
+def _unapproved_rung_detail(status: PartitionDayStatus, keys: tuple[str, ...]) -> str | None:
+    """Name why one rung is not a clean rewrite checkpoint, or `None` when it is.
+
+    A marker whose parts are gone reads `incomplete` rather than `missing` now that a bare completion
+    assertion no longer counts as a finished rung, so the two layouts sharing that status are told
+    apart from the listing: residue with parts is a truncated export, residue without them is
+    marker-only. See `pipeline/parquet/AGENTS.md`, "`vegetation_rewrite.py`".
+    """
+    if status in {"absent", "conflict"}:
+        return f"state is {status}"
+    if status == "incomplete" or (status == "missing" and keys):
+        if _holds_part_files(keys):
+            return "state is incomplete"
+        return "marker-only residue is not a clean missing checkpoint"
+    return None
+
+
+def _holds_part_files(keys: tuple[str, ...]) -> bool:
+    """True when an already tier- and day-filtered listing carries at least one part file."""
+    return any(try_parse_partition_path(key) is not None for key in keys)
 
 
 def _key_is_for_day(key: str, *, tier: ZoomTier, day: date) -> bool:

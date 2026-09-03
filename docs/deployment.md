@@ -20,17 +20,35 @@ lanes. The six legacy writer service objects have `cronSchedule: null`, a no-op 
 Rollback disables an executor lane and never restores a cron service or schedule. See the Conductor
 [`scheduler-handoff-20260902.md`](../conductor/tracks/gapless_parquet_publication_20260901/evidence/scheduler-handoff-20260902.md).
 
-| Service | PlantGeo responsibility | Current gate |
-| --- | --- | --- |
-| `plantgeo-main` | Next.js application | Running; Railway's GitHub integration deploys it from `main`, and no other service is deployed by a web release. |
-| `plantgeo-job-executor` | Sole continuous scheduler for independently registered source, maintenance, gap-repair, MTBS, SoilGrids, fire and water lanes | Dedicated `railway.job-executor.json`; continuous `agri-service ops jobs-executor`, `ON_FAILURE`, no Railway schedule. Exact `main` release `e4490c3` is active with 37 executable lanes. |
-| six fenced legacy writer objects | `plantgeo-ingest-cron`, MTBS, SoilGrids, direct fire, direct water and completed soil-moisture load | All schedules are null and all start commands are no-ops. Keep `plantgeo-ingest-cron` inert until its hidden CDS credentials and service-reference variables are promoted to stable owners; remove each other object only after its mapped executor lane has an observed successful run. Never redeploy or use these objects as rollback. |
-| `plantgeo-dataservice` | Bounded Python API and publication receiver | Running; Alembic owns only the `agri` schema. |
-| `plantgeo-Redis` | Cache, pub/sub, and non-durable wake-up transport | Running; never use it as the durable job ledger. |
-| `Plantgeo` | Legacy PlantGeo PostgreSQL 18.3 database | Running, but the last audit found no required geospatial/time-series extensions. |
-| `plantgeo-spatiotemporal-db` | Replacement database (PostgreSQL 18 + PostGIS) | Running; TimescaleDB was removed on 2026-08-25 after holding only an empty hypertable with no continuous aggregates. Current extensions, measured 2026-08-25: btree_gist, hypopg, pg_buffercache, pgcrypto, plpgsql, postgis (3.6), vector. |
-| `plantgeo-martin` | Private vector-tile service | Provisioned but stopped/crashed. Its initial target lacked PostGIS; the sealed database reference now points to the replacement candidate for a reviewed redeploy. |
-| `Aevani-Postgress` | Parent affiliate/UGC/monetization data | Out of scope. Never query, migrate, reset, grant, or reference it from PlantGeo. |
+**One dated inventory.** Every row below is the 14-service production census read on
+**2026-09-02** and recorded in `scheduler-handoff-20260902.md`. Service IDs are quoted because a
+name is mutable and an ID is not. Anything that read records as fenced is written as fenced here;
+anything it does not establish is marked **unproven by this inventory** rather than guessed.
+
+| Service | Service ID | PlantGeo responsibility | State on 2026-09-02 |
+| --- | --- | --- | --- |
+| `plantgeo-main` | `fa08a3aa-6d1d-43eb-846b-15dbfd887d61` | Next.js application | Active deployment `f232fb54` `SUCCESS`. Railway's GitHub integration deploys it from `main`, and no other service is deployed by a web release. |
+| `plantgeo-job-executor` | `565ecaad-9946-48f1-8a0b-28fa60494a16` | Sole continuous scheduler for independently registered source, maintenance, gap-repair, MTBS, SoilGrids, fire and water lanes | Dedicated `railway.job-executor.json`; continuous `agri-service ops jobs-executor`, `ON_FAILURE`, no Railway schedule. Deployment `b1f35a20` `SUCCESS` at exact `main` release `e4490c3`, 37 active executable lanes plus one terminal snapshot-only responsibility. Environment `scheduled == []`. |
+| `plantgeo-parquet-api` | `33aed861-af76-4fdd-a95e-784bdcc95e55` | Private published-reader Parquet API on port `8080`; no public domain | Active deployment `91b791ab` `SUCCESS`. Classified serving, not a scheduler target. |
+| `plantgeo-martin` | `fe6ef46e-7b4c-41ef-8b64-5100a344c526` | Vector-tile service | Active deployment `dc48f11a` `SUCCESS`, classified **serving**. This supersedes the older "provisioned but stopped/crashed" note. Whether a public domain is attached is **unproven by this inventory**, which records status and classification only. |
+| `plantgeo-spatiotemporal-db` | `1e166530-9c8a-4d4a-b685-a70c801fc449` | The production database (PostgreSQL 18 + PostGIS 3.6) | Active deployment `1f33637e` `SUCCESS`, classified data-bearing, never removed by a cleanup. TimescaleDB was dropped 2026-08-25 after holding only an empty hypertable with no continuous aggregate. Extensions measured that day: btree_gist, hypopg, pg_buffercache, pgcrypto, plpgsql, postgis (3.6), vector. |
+| `plantgeo-Redis` | `ae23c58e-b1e3-4c01-9d94-cd365550f363` | Cache, pub/sub, and non-durable wake-up transport | Active deployment `dcc757e0` `SUCCESS`. Never the durable job ledger — that is `agri.job_*`. |
+| `aevani-web` | `b6c06bf1-f1f4-4733-a33d-0f88d178c2fc` | Different repository/application | Active deployment `de0db5ba` `SUCCESS`. Out of scope. |
+| `Aevani-Postgress` | `3e0ea761-f509-474e-97cf-0086acd9ab7a` | Parent affiliate/UGC/monetization data | Active deployment `b3a6ab66` `SUCCESS`. Out of scope. Never query, migrate, reset, grant, or reference it from PlantGeo. |
+| `plantgeo-ingest-cron` | `3ae3cc37-c398-43fe-b74c-83e4da130423` | **Fenced** legacy composite writer | `cronSchedule: null`, start command `sh -c 'echo retired-to-plantgeo-job-executor; exit 0'`, `restartPolicyType: NEVER`, zero retries. Inert credential/reference holder: keep until its hidden CDS secrets and service references move to stable owners. |
+| `plantgeo-cron-mtbs` | `a683cc83-2b49-4276-a136-941e1b2cbe24` | **Fenced** legacy MTBS writer | Same fence. Remove only after an observed `mtbs-forward` executor success. |
+| `plantgeo-cron-soilgrids` | `0960aa81-4499-4cb1-9daa-3350eed4d654` | **Fenced** legacy SoilGrids warmer | Same fence. Remove only after an observed `soilgrids-cache-warm` success. |
+| `plantgeo-fire-detections-forward` | `f4ad61fe-e71a-4776-b9d5-0b153c9ee5b7` | **Fenced** legacy direct fire writer | Same fence. Direct executor publication already succeeded; retain until a removal receipt is recorded. |
+| `plantgeo-water-gauges-forward` | `40cb252b-e21c-4140-8d94-5db77eb2398d` | **Fenced** legacy direct water writer | Same fence. Remove only after the `2026-09-02` direct-ownership boundary and terminal-day proof. |
+| `plantgeo-soil-moisture-parquet-load` | `4a1413f1-5f96-44ea-853c-6a379c7673c4` | **Fenced** completed one-shot load | No schedule; terminal receipt deployment `29c54089` completed 1,556 days / 6,861,960 rows through `2026-08-02`. Remove after an immutable-artifact re-read receipt. |
+
+Two service names that older revisions of this guide and `infra/railway/README.md` treated as live
+do **not** appear anywhere in the 2026-09-02 census: **`plantgeo-dataservice`** and **`Plantgeo`**.
+Treat both as absent. In particular, a variable written `${{Plantgeo.DATABASE_URL}}` cannot resolve
+against this inventory; `plantgeo-spatiotemporal-db` is the only PlantGeo database service it
+records. The handoff evidence deliberately records variable *names* only, so the resolved value of
+`plantgeo-main`'s `DATABASE_URL` is **unproven by this inventory** and must be read from Railway
+before being relied on.
 
 Automation and operator scripts must use the exact PlantGeo allowlist above and
 must reject `Aevani-Postgress`. Use Railway reference variables rather than

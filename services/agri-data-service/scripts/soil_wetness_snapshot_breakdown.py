@@ -25,6 +25,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
+from functools import partial
 from pathlib import Path
 from typing import Any, Final, Protocol
 
@@ -32,7 +33,12 @@ import boto3  # type: ignore[import-untyped]
 import pyarrow as pa  # type: ignore[import-untyped]
 import pyarrow.parquet as pq  # type: ignore[import-untyped]
 from botocore.config import Config  # type: ignore[import-untyped]
-from botocore.exceptions import ClientError, ConnectionClosedError, EndpointConnectionError, ReadTimeoutError
+from botocore.exceptions import (  # type: ignore[import-untyped]
+    ClientError,
+    ConnectionClosedError,
+    EndpointConnectionError,
+    ReadTimeoutError,
+)
 
 SERVICE_ROOT = Path(__file__).resolve().parent.parent
 CHECKOUT_ENV_FILE: Final = Path.home() / "Programming" / "plantgeo" / "services" / "agri-data-service" / ".env"
@@ -280,7 +286,7 @@ class RetryPolicy:
     attempts: int = 8
     base_delay_seconds: float = 0.5
 
-    def run(self, operation: Callable[[], Any]) -> Any:
+    def run[T](self, operation: Callable[[], T]) -> T:
         for attempt in range(self.attempts):
             try:
                 return operation()
@@ -367,7 +373,7 @@ class SnapshotStore:
             if not isinstance(content_length, int) or content_length != expected_bytes:
                 body = response.get("Body")
                 if body is not None and hasattr(body, "close"):
-                    body.close()  # type: ignore[attr-defined]
+                    body.close()
                 raise BreakdownError(f"object {key!r} has declared size {content_length!r}; expected {expected_bytes}")
             body = response.get("Body")
             if body is None:
@@ -377,7 +383,7 @@ class SnapshotStore:
                 return payload if isinstance(payload, bytes) else bytes(payload)
             finally:
                 if hasattr(body, "close"):
-                    body.close()  # type: ignore[attr-defined]
+                    body.close()
 
         payload = self.retry.run(load)
         if payload is not None and len(payload) != expected_bytes:
@@ -424,7 +430,10 @@ class SnapshotStore:
             request: dict[str, object] = {"Bucket": self.bucket, "Prefix": prefix}
             if token is not None:
                 request["ContinuationToken"] = token
-            response = self.retry.run(lambda request=request: self.client.list_objects_v2(**request))
+            # `partial` rather than `lambda request=request:`: the default-argument idiom binds
+            # the page request eagerly (bugbear B023) but leaves the callable un-inferable for a
+            # `Callable[[], T]` parameter. `partial` binds just as eagerly and keeps the type.
+            response = self.retry.run(partial(self.client.list_objects_v2, **request))
             contents = response.get("Contents")
             if isinstance(contents, list):
                 for item in contents:
@@ -521,7 +530,8 @@ def load_input_contract(
         table = pq.read_table(io.BytesIO(payload))
         if table.num_rows != int(metadata["row_count"]):
             raise BreakdownError(f"canonical dimension {name!r} failed row reconciliation")
-        return table.to_pylist()
+        dimension: list[dict[str, Any]] = table.to_pylist()
+        return dimension
 
     release_rows = dimension_rows("source_release")
     source_rows = dimension_rows("data_source")
@@ -581,7 +591,7 @@ def load_raw_part(store: SnapshotStore, metadata: Mapping[str, Any], product: Pr
     table = pq.read_table(io.BytesIO(payload))
     if not table.schema.equals(RAW_SCHEMA, check_metadata=False):
         raise BreakdownError(f"canonical soil part {key!r} has the wrong Arrow schema")
-    rows = table.to_pylist()
+    rows: list[dict[str, Any]] = table.to_pylist()
     if len(rows) != int(metadata["row_count"]) or row_set_digest(rows) != metadata["row_digest"]:
         raise BreakdownError(f"canonical soil part {key!r} failed physical-row reconciliation")
     for row in rows:
@@ -609,7 +619,18 @@ def day_directory(root: str, tier: int, day: date) -> str:
     return f"{root}/kind=observed/zoom={tier:02d}/year={day.year:04d}/month={day.month:02d}/day={day.day:02d}"
 
 
-def verify_receipt(store: SnapshotStore, receipt: Mapping[str, Any], *, schema: pa.Schema | None = None) -> bytes:
+class ByteReader(Protocol):
+    """The single capability receipt verification needs: read exactly this many bytes at this key.
+
+    Narrower than `SnapshotStore` deliberately. `soil_wetness_snapshot_audit.py` is an INDEPENDENT
+    audit that wraps the store in a read-only view exposing no writer at all; demanding the whole
+    store here would force a read-only check to be handed write capability to satisfy a type.
+    """
+
+    def get_exact(self, key: str, *, expected_bytes: int) -> bytes | None: ...
+
+
+def verify_receipt(store: ByteReader, receipt: Mapping[str, Any], *, schema: pa.Schema | None = None) -> bytes:
     key = receipt.get("key")
     size = receipt.get("byte_count")
     row_count = receipt.get("row_count")
@@ -742,13 +763,17 @@ def classify_month(
         source = source_by_row[row_id]
         reason = rejection_by_row[row_id]
         if reason is None:
-            rank = ranks[row_id]
-            disposition = "selected" if rank == 1 else "superseded"
-            disposition_reason = "release_precedence_winner" if rank == 1 else "newer_release_or_observation_id"
+            # Named apart from the `rank` enumerate variable above: a rejected row HAS no precedence
+            # rank, so this one is nullable and that one never is.
+            precedence_rank: int | None = ranks[row_id]
+            disposition = "selected" if precedence_rank == 1 else "superseded"
+            disposition_reason = (
+                "release_precedence_winner" if precedence_rank == 1 else "newer_release_or_observation_id"
+            )
             selected_id: int | None = winner_by_row[row_id]
         else:
             rejection_counts[reason] += 1
-            rank = None
+            precedence_rank = None
             disposition = "rejected"
             disposition_reason = reason
             selected_id = None
@@ -757,7 +782,7 @@ def classify_month(
                 "lane": product.lane,
                 "disposition": disposition,
                 "disposition_reason": disposition_reason,
-                "precedence_rank": rank,
+                "precedence_rank": precedence_rank,
                 "selected_observation_id": selected_id,
                 "release_retrieved_at": release["retrieved_at"],
                 "release_source_version": release["source_version"],
@@ -771,11 +796,11 @@ def classify_month(
         provenance.append(row)
 
     by_day: dict[date, list[dict[str, Any]]] = defaultdict(list)
-    for winner, grain_rows in winners:
+    for winner, winner_candidates in winners:
         winner_id = int(winner["id"])
         release = release_by_row[winner_id]
         source = source_by_row[winner_id]
-        candidate_hashes = [str(row["canonical_row_sha256"]) for row in grain_rows]
+        candidate_hashes = [str(row["canonical_row_sha256"]) for row in winner_candidates]
         output = {
             "support_key": winner["support_key"],
             "signal_name": winner["signal_name"],
@@ -783,8 +808,8 @@ def classify_month(
             "cell_id": winner["cell_id"],
             "observed_day": winner["observation_day"],
             "normalized_value": winner["normalized_value"],
-            "observation_count": len(grain_rows),
-            "newest_observed_at": max(_as_utc(row["observed_at"]) for row in grain_rows),
+            "observation_count": len(winner_candidates),
+            "newest_observed_at": max(_as_utc(row["observed_at"]) for row in winner_candidates),
             "coverage_fraction": winner["coverage_fraction"],
             "allowed_client_exposure": source["allowed_client_exposure"],
             "cell_longitude": winner["cell_centroid_longitude"],
@@ -793,7 +818,7 @@ def classify_month(
             "selected_canonical_row_sha256": winner["canonical_row_sha256"],
             "selected_source_release_id": winner["source_release_id"],
             "selected_release_retrieved_at": release["retrieved_at"],
-            "physical_candidate_count": len(grain_rows),
+            "physical_candidate_count": len(winner_candidates),
             "lineage_sha256": lineage_digest(candidate_hashes),
             "input_manifest_sha256": contract.manifest_sha256,
         }
@@ -934,7 +959,7 @@ def verify_checkpoint_once(
 
 
 def validate_checkpoint_objects(
-    store: SnapshotStore,
+    store: ByteReader,
     checkpoint: Mapping[str, Any],
     *,
     verify_workers: int = DEFAULT_VERIFY_WORKERS,
@@ -1152,7 +1177,8 @@ def write_day_marker(
 
 def load_lane_table(store: SnapshotStore, receipt: Mapping[str, Any]) -> list[dict[str, Any]]:
     payload = verify_receipt(store, receipt, schema=LANE_SCHEMA)
-    return pq.read_table(io.BytesIO(payload)).to_pylist()
+    lane_rows: list[dict[str, Any]] = pq.read_table(io.BytesIO(payload)).to_pylist()
+    return lane_rows
 
 
 def build_tier_month(
@@ -1296,7 +1322,7 @@ def finalize_lane(
     expected_raw = expected_input_parts(store, contract, product)
     consumed_raw: dict[str, Mapping[str, Any]] = {}
     expected_output_keys: set[str] = set()
-    aggregate = Counter()
+    aggregate: Counter[str] = Counter()
     all_days: list[str] = []
     input_month_digests: list[str] = []
     selected_month_digests: list[str] = []

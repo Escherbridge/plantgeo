@@ -454,32 +454,13 @@ def build_lane_ladder_census(
     tiers: Sequence[ZoomTier] = DERIVED_ZOOM_TIERS,
     max_days_per_lane: int | None = None,
 ) -> LaneLadderCensus:
-    """Classify one lane's published days by whether EVERY coarse rung asserts it finished.
+    """Classify one lane's published days by whether EVERY coarse rung holds it as `data`.
 
-    THE WINDOW COMES FROM THE LISTING, NOT FROM `lane_window`, and that is what lets one function
-    serve all three lane natures. A `static_lookup` lane has no calendar window at all -- its
-    partition day is a version stamp -- so asking `lane_window` for one raises. The days a lane has
-    actually published are a fact about the bucket, and the bucket is what a repair sweep is over.
-
-    A rung counts as finished only when it carries its own completion marker, for the same reason
-    `completed_partition_days` is the shared primitive one contract down: parts without a marker are
-    a derivation that stopped part-way, and re-deriving one is exactly the work never deriving it
-    was. Only the BASE rung's day statuses are consulted for the population, because a day with no
-    base rows has nothing a coarse rung could be derived FROM.
-
-    THE BASE POPULATION IS STRICTER THAN THE RUNG TEST -- parts AND a marker for the base, a marker
-    alone for a rung -- and that asymmetry, written here before the receipt that needed it existed,
-    is now load-bearing. A rung that generalised every base row away holds NO parts and a
-    `derived_empty` completion marker, so a rule demanding parts at a rung would re-select such a day
-    on every census forever. `_write_tier` puts its parts before its marker and `_retract_tier`
-    clears the marker before deleting the parts, so a marked rung is either fully written or honestly
-    empty; a stricter rule here would be a SECOND definition of "finished".
-
-    AN EMPTY `tiers` IS REFUSED RATHER THAN VACUOUSLY COMPLETE. The rung loop below intersects, so
-    with no rungs to intersect over every published day reads as ladder-complete and the census
-    reports a green ladder for a warehouse that has none. Today `DERIVED_ZOOM_TIERS` is never empty;
-    it becomes empty the day `ZOOM_TIERS` is reduced to one entry, and that change must fail loudly
-    rather than silently report every lane finished.
+    THE WINDOW COMES FROM THE LISTING, NOT FROM `lane_window` -- this walk is over the WHOLE bucket,
+    which is the half of the ladder the scoped hourly census deliberately leaves to it. A rung counts
+    as finished under `derived_rung_completions`' one rule: parts under an ordinary marker, or nothing
+    under a derived-empty one. An empty `tiers` is refused rather than vacuously complete. See
+    `AGENTS.md` in this directory, "Two ladder censuses, one rule".
     """
     if not tiers:
         raise ValueError(
@@ -777,33 +758,37 @@ async def _derive_one_day(  # noqa: PLR0913 - one coordinate of the day being de
     registration: LaneRegistration,
     *,
     day: date,
+    today: date,
     run_id: str,
     now: Callable[[], datetime],
     lane_day_lock: LaneDayLock,
     derive_tiers: TierDeriver,
     connection: DuckDBPyConnection | None = None,
+    availability_storage: AvailabilityStorage | None = None,
+    availability_tally: AvailabilityExtensionTally | None = None,
 ) -> _DayResult:
     """Adapt `gap_fill.repair_one_lane_day` to the walk's own result shape. It holds no logic of its own.
 
-    THE REPAIR ITSELF LIVES IN `gap_fill`, WITH THE EXPORT IT MUST NOT RACE. A re-derivation takes the
-    same advisory-lock key, prunes the same rungs and writes the same markers `fill_one_lane_day`
-    does, so a second copy of that dance here would be a second definition of what a lane-day means --
-    and the copy that drifted would let the drain and the hourly tick both prune and both mark one
-    rung, the loser's `part_count` describing objects the winner had already replaced. `gap_fill` now
-    drains its own ladder backlog through exactly this function, which is what makes the two agree by
-    construction rather than by review.
+    The repair itself lives in `gap_fill`, with the export it must not race; see
+    `AGENTS.md`, "One definition of a lane-day, two walks". The availability verdict a repair now
+    produces is folded into the SAME tally an exported day's is, so a drained ladder cannot report a
+    green tick over days its re-derivation left outside the index.
     """
     repair = await repair_one_lane_day(
         session,
         store,
         registration,
         day=day,
+        today=today,
         run_id=run_id,
         now=now,
         lane_day_lock=lane_day_lock,
         derive_tiers=derive_tiers,
         connection=connection,
+        availability_storage=availability_storage,
     )
+    if repair.availability is not None and availability_tally is not None:
+        availability_tally.record(repair.availability)
     return _DayResult(
         repair.outcome,
         repair.parts,
@@ -855,11 +840,14 @@ async def _run_one_day(  # noqa: PLR0913 - one coordinate of the day being run p
             store,
             registration,
             day=day,
+            today=today,
             run_id=run_id,
             now=now,
             lane_day_lock=lane_day_lock,
             derive_tiers=derive_tiers,
             connection=connection,
+            availability_storage=availability_storage,
+            availability_tally=availability_tally,
         )
     outcome, parts, rows, written_bytes, detail = await fill_one_lane_day(
         session,

@@ -304,8 +304,12 @@ function readyWaterWindow(
  * `tessellated_cell` and `mean`, matching `getParquetVegetation`: the lane's cell is the ground
  * this platform measured, and `LAYER_RENDER_CONTRACT.vegetation` permits that form and no other at
  * every band. The z9 rung KEEPS the quarter-degree grain rather than re-flooring onto the ladder's
- * 0.01 grid, which is why the corner has to come from `servedCellLattice` -- it sits on a
- * half-offset phase that a lattice anchored at multiples of 0.25 would miss by half a cell.
+ * 0.01 grid, which is why the corner has to come from `servedCellLattice` rather than from a
+ * hand-written offset.
+ *
+ * The coordinates every caller passes are REAL centroids of the lane's lattice -- odd multiples of
+ * 0.125, because `ingest/vegetation.py:344-347` centres each cell a half step above `row * 0.25` --
+ * so the square built here is the one that actually holds the measurement.
  */
 function vegetationSupport(longitude: number, latitude: number): AggregateEnvelopeSupport {
   const lattice = servedCellLattice(9, LANE_BASE_LATTICES.vegetation);
@@ -513,8 +517,8 @@ describe("measured vegetation", () => {
     const fakeMap = createFakeMap();
     const geojson = presentParquetVegetation(
       readyVegetationWindow([
-        vegetationObservation(-116.25, 43.5),
-        vegetationObservation(-116, 43.5),
+        vegetationObservation(-116.125, 43.625),
+        vegetationObservation(-115.875, 43.625),
       ])
     );
     render(<VegetationLayer map={asMap(fakeMap)} visible geojson={geojson} />);
@@ -538,7 +542,7 @@ describe("measured vegetation", () => {
       <VegetationLayer
         map={asMap(fakeMap)}
         visible
-        geojson={presentParquetVegetation(readyVegetationWindow([vegetationObservation(-116.25, 43.5)]))}
+        geojson={presentParquetVegetation(readyVegetationWindow([vegetationObservation(-116.125, 43.625)]))}
       />
     );
 
@@ -559,7 +563,7 @@ describe("measured vegetation", () => {
       <VegetationLayer
         map={asMap(fakeMap)}
         visible
-        geojson={presentParquetVegetation(readyVegetationWindow([vegetationObservation(-116.25, 43.5)]))}
+        geojson={presentParquetVegetation(readyVegetationWindow([vegetationObservation(-116.125, 43.625)]))}
       />
     );
 
@@ -630,7 +634,7 @@ describe("no declared footprint, no square", () => {
     expect(fakeMap.dataOf("published-fire-source").features[0].geometry.type).toBe("Point");
 
     const vegetationMap = createFakeMap();
-    const observation = vegetationObservation(-116.25, 43.5);
+    const observation = vegetationObservation(-116.125, 43.625);
     render(
       <VegetationLayer
         map={asMap(vegetationMap)}

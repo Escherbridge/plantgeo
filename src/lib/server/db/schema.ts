@@ -10,7 +10,6 @@ import {
   jsonb,
   timestamp,
   doublePrecision,
-  real,
   primaryKey,
   customType,
   unique,

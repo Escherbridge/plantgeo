@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Final
 from agri_data_service.foundation.parquet.absence import GovernedAbsence
 from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
 from agri_data_service.pipeline.direct.soil.rows import soil_day_table
-from agri_data_service.pipeline.direct.soil.source import SoilSourceError
+from agri_data_service.pipeline.direct.soil.source import SoilSourceError, SoilSourceUnsettledError
 from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.parquet.lane_registry import normalise_export_outcome
 
@@ -48,13 +48,26 @@ def refuse_immutable_day(product: SoilFieldProduct, day: date) -> None:
         )
 
 
+def no_mirrored_past_proof() -> str | None:
+    """The fail-closed default: nothing proves the archive has mirrored past the day being written."""
+    return None
+
+
 @dataclass(slots=True)
 class DirectSoilFieldAdapter:
     """Fetch and write one product-day while the caller holds that lane-day advisory lock."""
 
     product: SoilFieldProduct
     fetch_source: Callable[[], Awaitable[SoilDaySource]]
+    #: What proves the ERA5-Land mirror has moved PAST this day, or `None` when nothing does. An
+    #: all-null answer is only a governed absence once that is known; see `pipeline/direct/AGENTS.md`,
+    #: "An all-null day is a refusal until the mirror is proven past it".
+    mirrored_past_proof: Callable[[], str | None] = no_mirrored_past_proof
     source: SoilDaySource | None = field(default=None, init=False)
+    #: The refusal this attempt made instead of governing an unproven all-null day. Recorded as well
+    #: as raised because `gap_fill._export_one_day` turns every adapter exception into `raised`, and
+    #: the forward walk has to tell "not settled yet, come back next tick" from a real failure.
+    unsettled_refusal: SoilSourceUnsettledError | None = field(default=None, init=False)
 
     async def __call__(
         self,
@@ -78,9 +91,24 @@ class DirectSoilFieldAdapter:
             )
         self.source = source
         if source.is_governed_absence:
+            proof = self.mirrored_past_proof()
+            if proof is None:
+                # THE ARCHIVE HAS NOT ANSWERED, IT HAS NOT YET ARRIVED. ERA5-Land publishes a day's
+                # cells as the reanalysis lands, so "every value null" at the settled edge is the
+                # ordinary shape of a day the mirror has not reached. Writing a governed absence for
+                # it claims the SOURCE HAD NOTHING -- a permanent statement, retracted only by a
+                # later turn that re-selects the day -- over a day that simply was not there yet.
+                # A refusal costs one tick; the absence cost a false record until someone noticed.
+                self.unsettled_refusal = SoilSourceUnsettledError(
+                    f"{self.product.stream} {day.isoformat()}: the archive answered for all "
+                    f"{source.null_value_cells} support cells and every {self.product.source_parameter} value was "
+                    f"null, and no later settled day of this product is published with values, so nothing proves "
+                    f"the mirror has moved past this day. It is refused rather than governed as absent"
+                )
+                raise self.unsettled_refusal
             return normalise_export_outcome(
                 store.write_absence(
-                    self._absence(source, run_id=run_id),
+                    self._absence(source, run_id=run_id, proof=proof),
                     layer=self.product.stream,
                     kind=SOIL_DIRECT_KIND,
                     zoom=LANE_BASE_ZOOM_TIER,
@@ -98,15 +126,17 @@ class DirectSoilFieldAdapter:
             )
         )
 
-    def _absence(self, source: SoilDaySource, *, run_id: str) -> GovernedAbsence:
-        """Carry the exact source receipt into the marker; an absence without one is a silent failure."""
+    def _absence(self, source: SoilDaySource, *, run_id: str, proof: str) -> GovernedAbsence:
+        """Carry the source receipt AND the mirrored-past proof into the marker; both justify the claim."""
         return GovernedAbsence(
             reason=(
                 f"the Open-Meteo ERA5-Land archive answered for all {source.null_value_cells} support cells "
                 f"of {self.product.stream} on {source.day.isoformat()} and every "
                 f"{self.product.source_parameter} value was null"
             ),
-            upstream_response=json.dumps(source.receipt.as_event(), sort_keys=True),
+            upstream_response=json.dumps(
+                {"proof_mirror_moved_past_day": proof, "receipt": source.receipt.as_event()}, sort_keys=True
+            ),
             recorded_at=datetime.now(UTC),
             run_id=run_id,
         )
@@ -150,5 +180,6 @@ __all__ = [
     "SOIL_DIRECT_KIND",
     "DirectSoilFieldAdapter",
     "DirectSoilFieldError",
+    "no_mirrored_past_proof",
     "refuse_immutable_day",
 ]

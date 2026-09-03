@@ -127,13 +127,27 @@ background the gate forbids. The contract's own `latticeEdges`, a second impleme
 same arithmetic, was deleted on 2026-09-02.
 
 **What made the two agree is `cellOriginDegrees`, closed 2026-09-02.** The serving lattice has a
-PHASE as well as a pitch (`ServedCellLattice.originOffsetDegrees`: zero for the ladder's own grids,
-minus half a cell for the quarter-degree and one-degree base lattices), and the phase was not on
-the wire — so `supportCellPolygon` assumed a lattice anchored at whole multiples of the cell size
-and disagreed with `servedCellLattice` by up to half a cell wherever that assumption was wrong.
-**Vegetation at z9 and z5 was exactly that case**: a 0.25° base grain KEPT across the ladder's 0.01
-and 0.2 grids, on a half-offset phase. `cellSupport` (`parquet-trpc-readers.ts`) now states the
-snapped south-west corner on every per-cell envelope, and `supportCellPolygon` takes it verbatim.
+PHASE as well as a pitch, and the phase was not on the wire — so `supportCellPolygon` assumed a
+lattice anchored at whole multiples of the cell size and disagreed with `servedCellLattice` by up
+to half a cell wherever that assumption was wrong. **Vegetation at z9 and z5 was exactly that
+case**: a 0.25° base grain KEPT across the ladder's 0.01 and 0.2 grids. `cellSupport`
+(`parquet-trpc-readers.ts`) now states the snapped south-west corner on every per-cell envelope,
+and `supportCellPolygon` takes it verbatim.
+
+**THE PHASE IS A PER-LANE FACT, and it is declared, not inferred** (`LaneBaseLattice.centroidOffsetDegrees`,
+corrected 2026-09-02 after being inverted for the two lanes it matters most for).
+`ServedCellLattice.originOffsetDegrees` is *zero* for the ladder's own grids AND for the
+quarter-degree vegetation and soil-field lanes, and *minus half a cell* only for the one-degree
+climate lattice. The quarter-degree lanes centre each cell a half step above `row * 0.25`
+(`ingest/vegetation.py:344-347`; `ERA5_LAND_SUPPORT_CENTROID_OFFSET_DEGREES = 0.125` and a westmost
+centroid of `-124.875` in `pipeline/direct/soil/support.py:51-57`), so their CENTROIDS are the odd
+multiples of 0.125 and their EDGES are the multiples of 0.25 — while `CLIMATE_FIELD_LATTICE_ROWS`
+samples the whole degrees, so its cell has to straddle its sample. Reading the second shape onto
+the first drew every vegetation and soil-field cell half a cell off at every rung: at z5, 13 of the
+56 longitude columns held two measurements and 13 were empty stripes of basemap. The domain sweep
+in `src/__tests__/lib/map/zoom-tiers.test.ts` walks all 1,568 real centroids at z13/z9/z5 and
+asserts 1,568 squares, no collisions, no interior gaps, and each square containing its own
+centroid.
 
 The corner is enough, and the far edge is not `corner + size`: the phase and the index are both
 recoverable from the corner (`round(corner / size)`, and whatever residue that leaves), so the
@@ -146,10 +160,17 @@ The collection-level envelopes (`soilFieldSupport`, climate's `collectionSupport
 and must not: they describe a lane's whole lattice rather than one cell, and their features are
 built server-side by `tessellatedCellPolygon` already.
 
-**`permittedFormsForTier` is for presentation code; `permittedFormsFor` is for a live camera.**
-Presentation never holds a zoom — it holds features whose envelopes declare the rung they were
-read at, and a retained frame outlives the zoom it was fetched for. Resolving that frame's forms
-through the current zoom would ask the contract about a band its cells were never aggregated for.
+**The permitted-form table is keyed by the RUNG, and it is enforced at presentation time.**
+`permittedFormsForTier`/`isFormPermittedForTier` take a published rung because presentation never
+holds a zoom — it holds features whose envelopes declare the rung they were read at, and a retained
+frame outlives the zoom it was fetched for. Resolving that frame's forms through the current zoom
+would ask the contract about a band its cells were never aggregated for, which is why the
+zoom-keyed twins (`permittedFormsFor`, `isFormPermitted`) were deleted on 2026-09-02 rather than
+kept beside them. `assertFormPermittedForTier` is the production caller the whole table lacked
+until then: `presentParquetFireDetections` and `cellFeatures` (`parquet-climate-field.ts`) each
+check the form they are about to draw against the rung the row was read at, and throw
+`UnpermittedRenderFormError` rather than paint a shape the contract never licensed. A rule reached
+only from tests describes the renderers; it does not bind them.
 
 **Who may import it.** Anything that decides how a layer is *drawn* or *served*: map layer
 components under `src/components/map/layers/`, the presentation modules in

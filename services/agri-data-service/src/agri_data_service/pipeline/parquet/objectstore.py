@@ -85,6 +85,7 @@ from agri_data_service.foundation.parquet.paths import (
     absence_marker_path,
     completion_marker_path,
     day_prefix,
+    derived_empty_completion_marker_path,
     month_prefix,
     partition_path,
     stream_prefix,
@@ -293,6 +294,39 @@ class CompletionWriteReceipt:
     #: Carried out of the payload so a caller reading this ledger can tell a rung that HONESTLY holds
     #: nothing from a receipt whose counts are merely zero. See `foundation/parquet/completion.py`.
     derived_empty: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class ReadPartReceipt:
+    """One part file as it was READ BACK: the same identity a write receipt carries, proven by bytes.
+
+    Distinct from `ParquetWriteReceipt` because it is not provenance for a write -- nothing here
+    claims this process produced the object. It exists so a caller that re-reads a published day can
+    cite its parts by key and digest without a second download.
+    """
+
+    relative_path: str
+    row_count: int
+    byte_count: int
+    sha256: str
+
+
+@dataclass(frozen=True, slots=True)
+class PartitionRead:
+    """One rung-day read back: the concatenated table, and the identity of every part it came from."""
+
+    table: pa.Table
+    parts: tuple[ReadPartReceipt, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class CompletionMarkerRead:
+    """One completion receipt read back, with the key it was found under and that object's digest."""
+
+    relative_path: str
+    completion: PartitionCompletion
+    byte_count: int
+    sha256: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -596,15 +630,8 @@ class ObjectStore:
     ) -> CompletionWriteReceipt:
         """Assert that one stream-day at one tier FINISHED exporting. Must be the export's LAST object.
 
-        Nothing is re-listed to check the claim: the caller has the write receipts of every part it
-        just uploaded, and a listing taken here would only re-ask the store a question the export
-        already answered -- while adding a second failure mode to the one operation that must stay
-        cheap enough to run after every single lane-day.
-
-        THE ONE THING IT DOES REFUSE is a zero-part receipt at the BASE rung. `derived_empty` means
-        "this rung generalised the day's rows away", which no base rung can ever say -- the base rung
-        IS the rows. A base day holding nothing is a governed absence, recorded by `absent.json`, and
-        admitting a second vocabulary for it here would put two markers on one state.
+        A derived-empty receipt goes to its OWN key name and is refused at the base rung; see
+        `pipeline/parquet/AGENTS.md`, "write_completion_marker: the receipt names its own claim".
         """
         if completion.derived_empty and zoom == BASE_ZOOM_TIER:
             raise ValueError(
@@ -613,7 +640,11 @@ class ObjectStore:
                 "rung that dropped every row"
             )
         payload = completion.to_json_bytes()
-        relative_path = completion_marker_path(layer, kind, zoom, day)
+        relative_path = (
+            derived_empty_completion_marker_path(layer, kind, zoom, day)
+            if completion.derived_empty
+            else completion_marker_path(layer, kind, zoom, day)
+        )
         key = self.key_for(relative_path)
         self._backend.put(key, payload, content_type=COMPLETION_CONTENT_TYPE)
         return self._record_completion(
@@ -632,17 +663,18 @@ class ObjectStore:
         )
 
     def clear_completion_marker(self, layer: str, kind: PartitionKind, zoom: ZoomTier, day: date) -> None:
-        """Retract one stream-day-tier's completion claim. Called by the first part write, and may raise.
+        """Retract BOTH completion claims of one stream-day-tier. Called by the first part write; may raise.
 
-        Deleting a key that is not there is a success in S3 and so it is here, which is what lets the
-        write path call it unconditionally rather than behind an existence check that would cost a
-        HEAD on every export to save a delete on almost none of them.
+        Both names, because a rung that derived to nothing last time and to rows this time would
+        otherwise keep its `_complete.empty.json` beside the new parts and claim, at one rung, both
+        that it holds rows and that it holds none. Only a DERIVED rung can carry the empty name, so
+        the base rung pays no second delete. Deleting an absent key is a success in S3 and here.
 
-        IT RAISES ON FAILURE, DELIBERATELY. The caller must abandon the write: uploading a part while
-        an older export's marker still stands is the exact state the marker exists to prevent, and a
-        caller that swallowed this error would reintroduce it while believing it had been closed.
+        IT RAISES ON FAILURE, DELIBERATELY: see `pipeline/parquet/AGENTS.md`.
         """
         self._backend.delete(self.key_for(completion_marker_path(layer, kind, zoom, day)))
+        if zoom != BASE_ZOOM_TIER:
+            self._backend.delete(self.key_for(derived_empty_completion_marker_path(layer, kind, zoom, day)))
 
     def clear_absence_marker(self, layer: str, kind: PartitionKind, zoom: ZoomTier, day: date) -> None:
         """Explicitly authorize absence-to-data correction; see AGENTS.md."""
@@ -767,23 +799,18 @@ class ObjectStore:
     def read_partition(self, layer: str, kind: PartitionKind, zoom: ZoomTier, day: date) -> pa.Table:
         """Return ONE lane-day-tier's part files concatenated into a single table, in part order.
 
-        THE WRITE PATH READS ONLY HERE, AND ONLY FOR DERIVATION. Every other reader in this repo
-        scans the bucket through Polars with `polars_storage_options`, which is the right shape for
-        serving: predicate pushdown, lazy, no bytes through this process. This method exists because
-        the tier derivation runs INSIDE the writer, where there is a `store` and no credentials
-        object -- and because it must see exactly the parts that were just written, not whatever a
-        separately-configured scan resolves.
+        See `pipeline/parquet/AGENTS.md`, "read_partition: the one write-path read", for why this
+        exists beside the Polars scan, why parts are read in index order, and why a part that
+        vanishes mid-read is skipped rather than raised on.
+        """
+        return self.read_partition_with_receipts(layer, kind, zoom, day).table
 
-        Parts are read in INDEX ORDER, not listing order. S3 lists lexically, so `part-10` sorts
-        before `part-2`, and a table assembled in that order would still hold every row but would no
-        longer be in the grain order `conform_to_stream_schema` sorted it into -- which the
-        derivation's own `sort` would then have to redo, and which any reader comparing two tiers
-        byte-for-byte would see as a spurious difference.
+    def read_partition_with_receipts(self, layer: str, kind: PartitionKind, zoom: ZoomTier, day: date) -> PartitionRead:
+        """Read one rung-day back AND digest each part as it passes, so nothing is downloaded twice.
 
-        A part that vanishes between the listing and the read is SKIPPED rather than raising: the
-        only thing that removes a part file is a concurrent prune, and RUNBOOK 0.33.3 B has the bulk
-        drain running alongside the hourly cron by design. The lane-day advisory lock is what makes
-        that race rare; this is what makes it survivable.
+        The digests are what an availability claim cites a day it did not write by. Computing them
+        here is free -- the bytes are already in hand -- while a caller hashing them afterwards would
+        pay a second full download of the day.
         """
         parsed = []
         for relative_path in self.list_partition_keys(layer, kind, zoom, year=day.year, month=day.month):
@@ -796,17 +823,27 @@ class ObjectStore:
                 f"from a day that holds nothing"
             )
         tables = []
+        receipts: list[ReadPartReceipt] = []
         for _, relative_path in sorted(parsed):
             payload = self._backend.get(self.key_for(relative_path))
             if payload is None:
                 continue
-            tables.append(pq.read_table(io.BytesIO(payload)))
+            table = pq.read_table(io.BytesIO(payload))
+            tables.append(table)
+            receipts.append(
+                ReadPartReceipt(
+                    relative_path=relative_path,
+                    row_count=table.num_rows,
+                    byte_count=len(payload),
+                    sha256=sha256_digest(payload),
+                )
+            )
         if not tables:
             raise ParquetWriteError(
                 f"every part file of {layer!r} {kind} z{zoom} {day.isoformat()} disappeared between the listing and "
                 f"the read; a concurrent prune emptied the day mid-derivation"
             )
-        return pa.concat_tables(tables)
+        return PartitionRead(table=pa.concat_tables(tables), parts=tuple(receipts))
 
     def retract_partition_tier(self, layer: str, kind: PartitionKind, zoom: ZoomTier, day: date) -> SurplusPruneResult:
         """Empty ONE rung of one day: clear its completion claim, then delete every part it holds.
@@ -931,9 +968,31 @@ class ObjectStore:
     def read_completion_marker(
         self, layer: str, kind: PartitionKind, zoom: ZoomTier, day: date
     ) -> PartitionCompletion | None:
-        """Return one tier's completion receipt, or ``None`` when no marker exists."""
-        payload = self._backend.get(self.key_for(completion_marker_path(layer, kind, zoom, day)))
-        return None if payload is None else PartitionCompletion.from_json_bytes(payload)
+        """Return one tier's completion receipt under EITHER name, or `None` when the rung has neither."""
+        found = self.read_completion_receipt(layer, kind, zoom, day)
+        return None if found is None else found.completion
+
+    def read_completion_receipt(
+        self, layer: str, kind: PartitionKind, zoom: ZoomTier, day: date
+    ) -> CompletionMarkerRead | None:
+        """Return one tier's completion receipt WITH the key and digest a claim must cite it by.
+
+        The ordinary name is asked first because it is the common one; only a DERIVED rung can carry
+        the empty name at all, so a base rung costs exactly one GET as it always did.
+        """
+        ordinary = completion_marker_path(layer, kind, zoom, day)
+        payload = self._backend.get(self.key_for(ordinary))
+        if payload is None and zoom != BASE_ZOOM_TIER:
+            ordinary = derived_empty_completion_marker_path(layer, kind, zoom, day)
+            payload = self._backend.get(self.key_for(ordinary))
+        if payload is None:
+            return None
+        return CompletionMarkerRead(
+            relative_path=ordinary,
+            completion=PartitionCompletion.from_json_bytes(payload),
+            byte_count=len(payload),
+            sha256=sha256_digest(payload),
+        )
 
     def day_key_prefix(self, layer: str, kind: PartitionKind, zoom: ZoomTier, day: date) -> str:
         """Return the absolute bucket prefix holding every part file for one stream-day at one tier."""

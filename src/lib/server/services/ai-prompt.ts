@@ -259,6 +259,8 @@ function describeViewedLayerReading(reading: ViewedLayerReading): string {
       return `- ${name} — viewing ${day}; the layer PUBLISHED on this day and none of it falls in this location's window. This is an observed absence: you may say there was none here on ${day}.${contradiction}${setMismatch}`;
     case 'not_published_on_viewed_date':
       return `- ${name} — viewing ${day}; the warehouse PUBLISHED NOTHING for this layer on this day.${because} Its absence from the observations above is a coverage hole, not a measurement. Do not write "0", "none", "no activity", or any other absence for ${day} — say the day was never ingested and that nothing is known about it.${contradiction}${setMismatch}`;
+    case 'rung_not_written':
+      return `- ${name} — viewing ${day}; the layer DID publish this day, and the aggregation level this server read has no partition for it, so nothing came back here.${because} The map on the user's screen reads a different aggregation level and may well be drawing this day correctly — do not tell the user their map is empty or wrong. Report this as not readable at your level for ${day}: do not state an absence, do not state a presence, and do not call it a coverage hole.${contradiction}${setMismatch}`;
     case 'coverage_unknown_on_viewed_date':
       return `- ${name} — viewing ${day}; nothing came back for this day and the coverage record cannot say whether the day was ingested.${because} Report this as unknown for ${day}. Do not state an absence and do not state a presence.${contradiction}${setMismatch}`;
     case 'viewed_date_not_observable':

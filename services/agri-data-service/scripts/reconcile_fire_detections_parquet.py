@@ -175,6 +175,8 @@ def _parse_day(value: str) -> date:
 def _float_token(value: object | None) -> str:
     if value is None:
         return "null"
+    if not isinstance(value, int | float | str):
+        raise TypeError(f"semantic checksum expected a float-valued field, got {type(value).__name__}")
     number = float(value)
     if not math.isfinite(number):
         raise ValueError(f"semantic checksum refuses non-finite float {number!r}")
@@ -195,6 +197,8 @@ def _frp_token(value: object | None) -> str:
     """Normalize FRP to the lane's micro-unit semantic checksum precision."""
     if value is None:
         return "null"
+    if not isinstance(value, int | float | str):
+        raise TypeError(f"semantic checksum expected an FRP value, got {type(value).__name__}")
     number = Decimal(str(float(value)))
     if not number.is_finite():
         raise ValueError(f"semantic checksum refuses non-finite FRP {value!r}")
@@ -209,7 +213,7 @@ def _day_value(value: object) -> date:
     return date.fromisoformat(str(value))
 
 
-def _canonical_row(row: Mapping[str, object]) -> tuple[str, ...]:
+def _canonical_row(row: Mapping[str, Any]) -> tuple[str, ...]:
     """Encode every stored field without lossy float or timestamp formatting."""
     return (
         _float_token(row["cell_longitude"]),
@@ -225,11 +229,11 @@ def _canonical_row(row: Mapping[str, object]) -> tuple[str, ...]:
 
 def _semantic_days(table: pa.Table) -> dict[date, DaySemantic]:
     rows_by_day: dict[date, list[tuple[str, ...]]] = defaultdict(list)
-    totals: dict[date, dict[str, object]] = defaultdict(
+    totals: dict[date, dict[str, Any]] = defaultdict(
         lambda: {"detections": 0, "frp_observations": 0, "high": 0, "frp": [], "newest": None}
     )
     for raw in table.to_pylist():
-        row: Mapping[str, object] = raw
+        row: Mapping[str, Any] = raw
         day = _day_value(row["observed_day"])
         rows_by_day[day].append(_canonical_row(row))
         total = totals[day]
@@ -248,8 +252,8 @@ def _semantic_days(table: pa.Table) -> dict[date, DaySemantic]:
     summaries: dict[date, DaySemantic] = {}
     for day, canonical_rows in rows_by_day.items():
         digest = hashlib.sha256()
-        for row in sorted(canonical_rows):
-            digest.update("\x1f".join(row).encode("utf-8"))
+        for encoded_row in sorted(canonical_rows):
+            digest.update("\x1f".join(encoded_row).encode("utf-8"))
             digest.update(b"\n")
         total = totals[day]
         frp_values = total["frp"]
@@ -289,7 +293,7 @@ def _source_row_evidence(row: Mapping[str, object]) -> dict[str, object]:
 
 
 def _validate_source_rows(
-    rows: Sequence[Mapping[str, object]],
+    rows: Sequence[Mapping[str, Any]],
     *,
     first_day: date,
     last_day: date,
@@ -611,21 +615,21 @@ def _marker_issues(
 ) -> list[dict[str, object]]:
     part_counts: dict[date, int] = defaultdict(int)
     for key in snapshot.part_keys:
-        parsed = try_parse_partition_path(key)
-        if parsed is not None:
-            part_counts[parsed.day] += 1
+        parsed_part = try_parse_partition_path(key)
+        if parsed_part is not None:
+            part_counts[parsed_part.day] += 1
     marker_by_day = {
         parsed.day: key for key in snapshot.marker_keys if (parsed := try_parse_completion_marker_path(key)) is not None
     }
     issues: list[dict[str, object]] = []
     for key, payload in snapshot.absence_payloads.items():
-        parsed = try_parse_absence_marker_path(key)
+        parsed_absence = try_parse_absence_marker_path(key)
         try:
             GovernedAbsence.from_json_bytes(payload)
         except Exception as error:
             issues.append(
                 {
-                    "day": parsed.day.isoformat() if parsed is not None else "unknown",
+                    "day": parsed_absence.day.isoformat() if parsed_absence is not None else "unknown",
                     "tier": tier,
                     "code": "invalid_governed_absence_marker",
                     "actual": f"{type(error).__name__}: {error}",
@@ -710,7 +714,7 @@ async def _audit_month(
     first_day: date,
     last_day: date,
     args: argparse.Namespace,
-) -> tuple[dict[str, object], set[date], set[date]]:
+) -> tuple[dict[str, Any], set[date], set[date]]:
     source_table = await _source_month_table(
         session,
         layer_id=layer_id,
@@ -1023,7 +1027,7 @@ def _tree_checksum(months: Mapping[str, object], path: Sequence[str]) -> str:
     return digest.hexdigest()
 
 
-def _sum_month_metric(months: Mapping[str, object], path: Sequence[str]) -> int:
+def _sum_month_metric(months: Mapping[str, Any], path: Sequence[str]) -> int:
     total = 0
     for raw in months.values():
         value: Any = raw
@@ -1033,19 +1037,19 @@ def _sum_month_metric(months: Mapping[str, object], path: Sequence[str]) -> int:
     return total
 
 
-def _checkpoint_value(raw: object, path: Sequence[str]) -> object:
+def _checkpoint_value(raw: object, path: Sequence[str]) -> Any:
     value: Any = raw
     for key in path:
         value = value[key]
     return value
 
 
-def _sum_month_frp(months: Mapping[str, object], path: Sequence[str]) -> str:
+def _sum_month_frp(months: Mapping[str, Any], path: Sequence[str]) -> str:
     values = [float.fromhex(str(_checkpoint_value(raw, path))) for raw in months.values()]
     return math.fsum(values).hex()
 
 
-def _extreme_month_value(months: Mapping[str, object], path: Sequence[str], *, latest: bool) -> object | None:
+def _extreme_month_value(months: Mapping[str, Any], path: Sequence[str], *, latest: bool) -> Any:
     values = [value for raw in months.values() if (value := _checkpoint_value(raw, path)) is not None]
     return (max(values) if latest else min(values)) if values else None
 
@@ -1059,20 +1063,12 @@ def _final_manifest(
     raw_months = checkpoint["months"]
     if not isinstance(raw_months, dict):
         raise TypeError("checkpoint months is not a mapping")
-    months: Mapping[str, object] = raw_months
+    months: Mapping[str, Any] = raw_months
     data_days = _sum_month_metric(months, ("source_postgres", "data_days"))
     calendar_days = _sum_month_metric(months, ("calendar_days",))
-    issues = [issue for raw in months.values() for issue in raw["issues"]]  # type: ignore[index]
-    repaired_issues = [
-        issue
-        for raw in months.values()
-        for issue in raw.get("pre_repair_issues", [])  # type: ignore[union-attr]
-    ]
-    repair_attempts = [
-        repair
-        for raw in months.values()
-        for repair in raw.get("repair_attempts", [])  # type: ignore[union-attr]
-    ]
+    issues = [issue for raw in months.values() for issue in raw["issues"]]
+    repaired_issues = [issue for raw in months.values() for issue in raw.get("pre_repair_issues", [])]
+    repair_attempts = [repair for raw in months.values() for repair in raw.get("repair_attempts", [])]
     expectation_met = expected_data_days is None or data_days == expected_data_days
     source_summary = {
         "data_days": data_days,
@@ -1112,7 +1108,7 @@ def _final_manifest(
     }
     first_month = months[min(months)]
     floor_day = str(checkpoint["first_day"])
-    floor_issues = [issue for issue in first_month["issues"] if issue["day"] == floor_day]  # type: ignore[index]
+    floor_issues = [issue for issue in first_month["issues"] if issue["day"] == floor_day]
     return {
         "schema_version": CHECKPOINT_SCHEMA_VERSION,
         "run_id": run_id,
@@ -1131,7 +1127,7 @@ def _final_manifest(
         "repair_attempts": repair_attempts,
         "modis_floor": {
             "day": floor_day,
-            "source_has_data": first_month["source_postgres"]["first_data_day"] == floor_day,  # type: ignore[index]
+            "source_has_data": first_month["source_postgres"]["first_data_day"] == floor_day,
             "issues": floor_issues,
         },
         "expected_data_days": expected_data_days,
@@ -1266,7 +1262,7 @@ async def _run_locked(args: argparse.Namespace, *, checkpoint_path: Path) -> int
             _atomic_json(checkpoint_path, checkpoint)
             print(
                 f"{month} parity={result['parity']} source_days={result['source_postgres']['data_days']} "
-                f"issues={len(result['issues'])}",  # type: ignore[arg-type,index]
+                f"issues={len(result['issues'])}",
                 flush=True,
             )
 

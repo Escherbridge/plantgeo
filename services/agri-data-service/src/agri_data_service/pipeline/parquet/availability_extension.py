@@ -73,6 +73,11 @@ AVAILABILITY_RETRY_SCHEMA_VERSION: Final = "availability-retry-v2"
 # direct writer that fetched an upstream API passes its own, because the two claim different things.
 POSTGRES_DAY_EXPORT_ORIGIN: Final = "postgres-day-export"
 
+#: The origin a LADDER REPAIR claims. It is not an export: no source was contacted and no base row
+#: was written, so a claim wearing `POSTGRES_DAY_EXPORT_ORIGIN` would assert a query that never ran.
+#: `_prepare_day` also keys the source-evidence REUSE off this value -- see `AGENTS.md`.
+LADDER_REPAIR_ORIGIN: Final = "parquet-ladder-repair"
+
 # How many owed days one lane may retry per tick. The retry re-verifies every physical part of a
 # day, so an unbounded drain would spend a whole tick on a backlog that is by construction rare.
 DEFAULT_MAX_RETRIES_PER_LANE: Final = 8
@@ -160,9 +165,10 @@ class AvailabilityExtensionOutcome:
 class AvailabilityExtensionTally:
     """Every availability verdict one driver saw, counted so a summary can state them as numbers.
 
-    `ladder_incomplete`, `retry_claim_failed` and `quarantined` are the three that MUST be visible:
-    each leaves a terminal day out of the index for good, and a driver that reported them only inside
-    a per-day detail string would present that loss as a green tick.
+    `ladder_incomplete`, `retry_claim_failed`, `quarantined_standing` and `reindex_owed` are the four
+    that MUST be visible: each leaves a terminal day out of the index, and a driver that reported
+    them only inside a per-day detail string would present that loss as a green tick. See
+    `AGENTS.md` in this directory, "The availability tally: four counters and two gauges".
     """
 
     extended: int = 0
@@ -171,13 +177,19 @@ class AvailabilityExtensionTally:
     ladder_incomplete: int = 0
     retry_owed: int = 0
     retry_claim_failed: int = 0
-    #: Claims parked by `_quarantine_malformed_claim` and never swept since. Nothing retries them, so
-    #: a lane whose count only grows is a lane writing claims it cannot read back.
-    quarantined: int = 0
+    #: A GAUGE, NOT A COUNTER: how many claims are parked RIGHT NOW, restated whole by each lane's
+    #: sweep rather than incremented per tick. Nothing retries them, so the same parked day is
+    #: present again next tick, and a counter summed across ticks would report a rising loss where
+    #: the truth is one standing one.
+    quarantined_standing: int = 0
+    #: A GAUGE: published days whose ladder this tick's census could not reach, so no repair will
+    #: bring them back into the index until `drain --selection ladder` walks the whole bucket.
+    reindex_owed: int = 0
 
     def record(self, outcome: AvailabilityExtensionOutcome) -> None:
-        """Fold one outcome into the tally by its own state name, and by how many days it speaks for."""
-        setattr(self, outcome.state, getattr(self, outcome.state) + outcome.counted_days)
+        """Fold one outcome into the tally by its own state, and by how many days it speaks for."""
+        name = _STATE_FIELDS[outcome.state]
+        setattr(self, name, getattr(self, name) + outcome.counted_days)
 
     def add(self, other: AvailabilityExtensionTally) -> None:
         """Fold another tally into this one, field by field."""
@@ -189,6 +201,18 @@ class AvailabilityExtensionTally:
         return {f"availability_{name}": getattr(self, name) for name in _TALLY_FIELDS}
 
 
+#: Which field each verdict lands in. Spelled out rather than derived from the state name, because
+#: `quarantined` is a standing gauge and its field says so.
+_STATE_FIELDS: Final[Mapping[AvailabilityExtensionState, str]] = {
+    "extended": "extended",
+    "skipped_unchanged": "skipped_unchanged",
+    "not_bootstrapped": "not_bootstrapped",
+    "ladder_incomplete": "ladder_incomplete",
+    "retry_owed": "retry_owed",
+    "retry_claim_failed": "retry_claim_failed",
+    "quarantined": "quarantined_standing",
+}
+
 _TALLY_FIELDS: Final[tuple[str, ...]] = (
     "extended",
     "skipped_unchanged",
@@ -196,7 +220,8 @@ _TALLY_FIELDS: Final[tuple[str, ...]] = (
     "ladder_incomplete",
     "retry_owed",
     "retry_claim_failed",
-    "quarantined",
+    "quarantined_standing",
+    "reindex_owed",
 )
 
 
@@ -234,13 +259,31 @@ class _PreparedDay:
     """One day's availability rows and every object that must exist before they may be published."""
 
     rows: tuple[AvailabilityRow, ...]
-    source_object_key: str
-    source_object_payload: bytes
+    #: `None` for a LADDER REPAIR of a day the generation already holds: its source object is already
+    #: published and the rows cite it unchanged, so there is nothing new to write.
+    source_object_key: str | None
+    source_object_payload: bytes | None
     artifacts: tuple[TypedEvidenceArtifact, ...]
     #: The typed source-evidence digest every row of the day cites. Used as the publication's
     #: `input_sha256`, so that field binds the request to an object outside it rather than re-hashing
     #: the very rows it accompanies, which proved nothing.
     source_evidence_sha256: str
+
+
+@dataclass(frozen=True, slots=True)
+class RepairedBaseRung:
+    """The base rung of a REPAIRED day, as the repair's own read-back proved it: keys plus digests.
+
+    A repair writes nothing at the base rung, so its ledger holds nothing for it -- and a claim that
+    named only the rungs it rewrote could never present the exact required-rungs ladder. These are
+    the receipts of the very bytes the derivation read, so citing them costs no extra download.
+    """
+
+    rung: int
+    data_receipts: tuple[EvidenceReceipt, ...]
+    completion_receipt: EvidenceReceipt
+    row_count: int
+    part_count: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -315,6 +358,63 @@ async def extend_availability_for_lane_day(  # noqa: PLR0911, PLR0913 - one type
         retry_marker=claimed,
         now=now,
         publication_barrier=publication_barrier,
+    )
+
+
+def claim_repaired_lane_day(  # noqa: PLR0913 - one coordinate of the repaired day per arg
+    store: ObjectStore,
+    *,
+    lane: str,
+    kind: PartitionKind,
+    day: date,
+    written: WrittenObjectLedger,
+    base_rung: RepairedBaseRung,
+    run_id: str,
+    source_ceiling: date,
+    published_at: datetime,
+) -> AvailabilityExtensionOutcome:
+    """Record that a REPAIRED day owes its availability step, so the next drain indexes it.
+
+    A repair rewrites three of the day's four rungs, which changes their receipts -- and until this
+    existed nothing told the index. The day stayed complete at every rung, was never re-selected, and
+    was reported `repaired: 1` while remaining outside the generation for good. The claim carries the
+    derived rungs from THIS run's ledger and the untouched base rung from the read the derivation
+    already paid for, so no object is downloaded twice. See `AGENTS.md`, "A repaired day joins the
+    index through a claim".
+    """
+    lane_root = availability_lane_root(lane, kind)
+    claim = _claim_from_repair(
+        lane=lane,
+        kind=kind,
+        lane_root=lane_root,
+        day=day,
+        written=written,
+        base_rung=base_rung,
+        run_id=run_id,
+        source_ceiling=source_ceiling,
+        published_at=published_at,
+    )
+    if isinstance(claim, _LadderGap):
+        return AvailabilityExtensionOutcome(
+            state="ladder_incomplete",
+            lane_root=lane_root,
+            day=day,
+            reason=claim.reason,
+            error_kind=claim.kind,
+        )
+    claimed = _write_claim(store, claim, lane=lane, kind=kind, error_kind="repair_pending", recorded_at=published_at)
+    if isinstance(claimed, AvailabilityExtensionOutcome):
+        return claimed
+    return AvailabilityExtensionOutcome(
+        state="retry_owed",
+        lane_root=lane_root,
+        day=day,
+        reason=(
+            "the coarse rungs were re-derived and their receipts changed, so this day owes a re-index; its "
+            "claim names every physical receipt the next drain publishes from"
+        ),
+        error_kind="repair_pending",
+        retry_marker=claimed,
     )
 
 
@@ -491,11 +591,12 @@ async def _index_claimed_day(  # noqa: PLR0913 - one lane-day coordinate or seam
             generation_key=index.pointer.generation_key,
         )
     try:
-        availability.put_immutable(
-            prepared.source_object_key,
-            prepared.source_object_payload,
-            content_type=JSON_CONTENT_TYPE,
-        )
+        if prepared.source_object_key is not None and prepared.source_object_payload is not None:
+            availability.put_immutable(
+                prepared.source_object_key,
+                prepared.source_object_payload,
+                content_type=JSON_CONTENT_TYPE,
+            )
         for artifact in prepared.artifacts:
             availability.put_immutable(artifact.receipt.key, artifact.payload, content_type=JSON_CONTENT_TYPE)
     except AvailabilityError as error:
@@ -614,7 +715,58 @@ def _claim_from_finalized(
     )
 
 
-def _rung_objects(  # noqa: PLR0911 - one named ladder gap per exit; folding them would blur the reasons
+def _claim_from_repair(  # noqa: PLR0913 - one coordinate of the repaired day per arg
+    *,
+    lane: str,
+    kind: PartitionKind,
+    lane_root: str,
+    day: date,
+    written: WrittenObjectLedger,
+    base_rung: RepairedBaseRung,
+    run_id: str,
+    source_ceiling: date,
+    published_at: datetime,
+) -> _DayClaim | _LadderGap:
+    """State one repaired day from this run's ledger plus the base rung the repair read but did not write."""
+    if day > source_ceiling:
+        return _LadderGap(reason=f"{lane} {day.isoformat()}: a repaired day cannot exceed its source ceiling")
+    rungs: list[_RungObjects] = []
+    for rung in AVAILABILITY_REQUIRED_RUNGS:
+        if rung == base_rung.rung:
+            rungs.append(
+                _RungObjects(
+                    rung=rung,
+                    row_count=base_rung.row_count,
+                    data_receipts=base_rung.data_receipts,
+                    completion_receipt=base_rung.completion_receipt,
+                    absence_receipt=None,
+                )
+            )
+            continue
+        objects = _rung_objects_from_ledger(written, rung=rung, kind=kind, day=day)
+        if isinstance(objects, _LadderGap):
+            return _LadderGap(reason=f"{lane} {day.isoformat()}: {objects.reason}", kind=objects.kind)
+        rungs.append(objects)
+    return _DayClaim(
+        lane_root=lane_root,
+        day=day,
+        terminal_state="published",
+        absence_reason=None,
+        source=LaneDaySource(
+            origin=LADDER_REPAIR_ORIGIN,
+            run_id=run_id,
+            row_count=base_rung.row_count,
+            part_count=base_rung.part_count,
+            exported_at=published_at,
+            detail=f"{lane} coarse rungs re-derived from the published base rung",
+        ),
+        source_ceiling=source_ceiling,
+        published_at=published_at,
+        rungs=tuple(rungs),
+    )
+
+
+def _rung_objects(
     outcome: FinalizedLaneDay,
     *,
     rung: int,
@@ -643,6 +795,21 @@ def _rung_objects(  # noqa: PLR0911 - one named ladder gap per exit; folding the
             completion_receipt=None,
             absence_receipt=EvidenceReceipt(key=absence.relative_path, sha256=absence.sha256),
         )
+    return _rung_objects_from_ledger(ledger, rung=rung, kind=kind, day=day)
+
+
+def _rung_objects_from_ledger(  # noqa: PLR0911 - one named ladder gap per exit; folding them blurs the reasons
+    ledger: WrittenObjectLedger,
+    *,
+    rung: int,
+    kind: PartitionKind,
+    day: date,
+) -> _RungObjects | _LadderGap:
+    """Bind one PUBLISHED rung to the parts and completion marker this run's ledger recorded for it."""
+    try:
+        tier = validate_zoom_tier(rung)
+    except ZoomTierError as error:
+        return _LadderGap(reason=f"required rung z{rung} is not a published tier: {error}")
     parts = ledger.parts_for(kind=kind, zoom=tier, day=day)
     completion = ledger.completion_for(kind=kind, zoom=tier, day=day)
     if not parts and completion is None:
@@ -651,7 +818,7 @@ def _rung_objects(  # noqa: PLR0911 - one named ladder gap per exit; folding the
         # branch either predates that receipt or died between the prune and the mark. Either way the
         # day cannot form the exact required-rungs set the generation demands, and it is named so a
         # summary counts it apart from a genuinely broken export -- see `AGENTS.md`. A ladder repair
-        # (`gap_fill`'s `derive_missing_rungs`) re-derives the rung and closes it.
+        # (`gap_fill.repair_one_lane_day`) re-derives the rung, closes it, and claims the day.
         return _LadderGap(
             reason=(
                 f"z{rung} holds neither parts nor a completion marker: every base row was dropped at this rung "
@@ -703,7 +870,12 @@ def _rung_objects(  # noqa: PLR0911 - one named ladder gap per exit; folding the
 
 
 def _prepare_day(index: AvailabilityIndex, claim: _DayClaim) -> _PreparedDay | _LadderGap:
-    """Build every row and evidence object one claimed day owes against the head that will carry it."""
+    """Build every row and evidence object one claimed day owes against the head that will carry it.
+
+    A LADDER REPAIR REUSES THE DAY'S EXISTING SOURCE EVIDENCE when the generation already holds the
+    day. Nothing was exported, so minting a second export-source document would state a fetch that
+    never happened and churn the provenance of a day whose base rows are untouched. See `AGENTS.md`.
+    """
     identity = index.pointer.identity
     if tuple(entry.rung for entry in claim.rungs) != index.pointer.required_rungs:
         return _LadderGap(
@@ -713,6 +885,9 @@ def _prepare_day(index: AvailabilityIndex, claim: _DayClaim) -> _PreparedDay | _
                 f"{index.pointer.required_rungs}"
             )
         )
+    held = _held_source(index, claim)
+    if held is not None:
+        return _prepared_from_held_source(index, claim, held=held)
     source_object_key, source_object_payload = _source_object(identity.lane_root, day=claim.day, source=claim.source)
     source_receipt = EvidenceReceipt(key=source_object_key, sha256=sha256_digest(source_object_payload))
     source_artifact = build_source_evidence(
@@ -726,7 +901,13 @@ def _prepare_day(index: AvailabilityIndex, claim: _DayClaim) -> _PreparedDay | _
     rows: list[AvailabilityRow] = []
     artifacts: list[TypedEvidenceArtifact] = [source_artifact]
     for objects in claim.rungs:
-        evidence = _rung_evidence(identity, claim, objects=objects, source_receipt=source_artifact.receipt)
+        evidence = _rung_evidence(
+            identity,
+            claim,
+            objects=objects,
+            source_receipt=source_artifact.receipt,
+            source_ceiling=claim.source_ceiling,
+        )
         artifact = build_terminal_evidence(evidence)
         artifacts.append(artifact)
         rows.append(availability_row_from_terminal_evidence(evidence, terminal_receipt=artifact.receipt))
@@ -739,12 +920,76 @@ def _prepare_day(index: AvailabilityIndex, claim: _DayClaim) -> _PreparedDay | _
     )
 
 
+@dataclass(frozen=True)
+class _HeldSource:
+    """The source evidence a generation already binds one day to, and the horizon that evidence states."""
+
+    receipt: EvidenceReceipt
+    source_ceiling: date
+
+
+def _held_source(index: AvailabilityIndex, claim: _DayClaim) -> _HeldSource | None:
+    """Return the source evidence the generation already binds this day to, when a REPAIR may reuse it.
+
+    Only for a ladder repair, and only when every rung the generation holds for the day agrees on one
+    source receipt and one source ceiling -- which `_validate_generation_day` already guarantees for
+    any day it admitted.
+    """
+    if claim.source.origin != LADDER_REPAIR_ORIGIN:
+        return None
+    indexed = [row for row in index.rows if row.day == claim.day]
+    receipts = {row.source_receipt for row in indexed}
+    ceilings = {row.source_ceiling for row in indexed}
+    if len(receipts) != 1 or len(ceilings) != 1:
+        return None
+    return _HeldSource(receipt=receipts.pop(), source_ceiling=ceilings.pop())
+
+
+def _prepared_from_held_source(
+    index: AvailabilityIndex,
+    claim: _DayClaim,
+    *,
+    held: _HeldSource,
+) -> _PreparedDay:
+    """Build a repaired day's rows against source evidence already published, writing no new source object.
+
+    THE REUSED DOCUMENT'S CEILING GOVERNS, not the one the repair recomputed. Verification refuses a
+    row whose `source_ceiling` disagrees with the source evidence it binds, and a repair re-derives
+    coarse rungs without observing the source at all, so it has nothing new to say about the horizon.
+    Restating the lane's ceiling here published rows the verifier then refused: the correction stayed
+    `retry_owed` on every tick while the bucket and the index diverged. See `AGENTS.md`, "A repaired
+    day joins the index through a claim".
+    """
+    identity = index.pointer.identity
+    rows: list[AvailabilityRow] = []
+    artifacts: list[TypedEvidenceArtifact] = []
+    for objects in claim.rungs:
+        evidence = _rung_evidence(
+            identity,
+            claim,
+            objects=objects,
+            source_receipt=held.receipt,
+            source_ceiling=held.source_ceiling,
+        )
+        artifact = build_terminal_evidence(evidence)
+        artifacts.append(artifact)
+        rows.append(availability_row_from_terminal_evidence(evidence, terminal_receipt=artifact.receipt))
+    return _PreparedDay(
+        rows=tuple(rows),
+        source_object_key=None,
+        source_object_payload=None,
+        artifacts=tuple(artifacts),
+        source_evidence_sha256=held.receipt.sha256,
+    )
+
+
 def _rung_evidence(
     identity: AvailabilityIdentity,
     claim: _DayClaim,
     *,
     objects: _RungObjects,
     source_receipt: EvidenceReceipt,
+    source_ceiling: date,
 ) -> TerminalEvidence:
     """Render one rung's terminal evidence; the contract's own validators refuse anything dishonest."""
     return TerminalEvidence(
@@ -753,7 +998,7 @@ def _rung_evidence(
         rung=objects.rung,
         terminal_state=claim.terminal_state,
         row_count=objects.row_count,
-        source_ceiling=claim.source_ceiling,
+        source_ceiling=source_ceiling,
         published_at=claim.published_at,
         source_receipt=source_receipt,
         data_receipts=objects.data_receipts,
@@ -1033,15 +1278,8 @@ def _quarantine_malformed_claim(  # noqa: PLR0913 - one lane-day coordinate per 
 ) -> AvailabilityExtensionOutcome:
     """Park an unreplayable claim out of the retry ledger and report the day as permanently lost.
 
-    A MALFORMED CLAIM CANNOT BE RETRIED, EVER: `_claim_from_marker` is pure, so the next turn parses
-    the identical bytes into the identical refusal. Left in place it is not merely useless -- the
-    ledger is drained OLDEST-FIRST and bounded at `DEFAULT_MAX_RETRIES_PER_LANE` per tick, so one
-    unparseable day permanently occupies a slot and can starve every genuinely replayable day behind
-    it. Quarantined, the listing walks past it and an operator still has the bytes.
-
-    `retry_claim_failed` RATHER THAN `retry_owed`, because nothing is owed any more: the day is
-    terminal, the base-tier census never revisits a completed day, and no claim now names it. That
-    is the exact loss the tally's two must-be-visible counters exist to state as a number.
+    `retry_claim_failed` rather than `retry_owed`: nothing is owed any more. See `AGENTS.md`,
+    "A malformed claim can never be retried".
     """
     parked: str | None = None
     try:
@@ -1110,6 +1348,7 @@ __all__ = [
     "AVAILABILITY_RETRY_SCHEMA_VERSION",
     "DEFAULT_MAX_RETRIES_PER_LANE",
     "DERIVED_TO_ZERO_ROWS",
+    "LADDER_REPAIR_ORIGIN",
     "LANE_EXPORT_SOURCE_SCHEMA_VERSION",
     "POSTGRES_DAY_EXPORT_ORIGIN",
     "QUARANTINED_SAMPLE_SIZE",
@@ -1118,6 +1357,8 @@ __all__ = [
     "AvailabilityExtensionTally",
     "FinalizedLaneDay",
     "LaneDaySource",
+    "RepairedBaseRung",
+    "claim_repaired_lane_day",
     "extend_availability_for_lane_day",
     "retry_pending_availability",
 ]

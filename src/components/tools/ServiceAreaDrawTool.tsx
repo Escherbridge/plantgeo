@@ -46,7 +46,6 @@ export function ServiceAreaDrawTool({
     existingServiceArea ? "complete" : "idle"
   );
   const [drawnCoords, setDrawnCoords] = useState<Coordinate[]>([]);
-  const [hoverCoord, setHoverCoord] = useState<Coordinate | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const isDrawing = drawState === "drawing";
@@ -215,14 +214,12 @@ export function ServiceAreaDrawTool({
 
     const handleMouseMove = (e: { lngLat: { lng: number; lat: number } }) => {
       const coord = { lng: e.lngLat.lng, lat: e.lngLat.lat };
-      setHoverCoord(coord);
       updateMapSource(coordsRef.current, coord);
     };
 
     const handleDblClick = (e: { lngLat: { lng: number; lat: number }; preventDefault: () => void }) => {
       e.preventDefault();
       setDrawState("complete");
-      setHoverCoord(null);
       map.getCanvas().style.cursor = "";
       const finalCoords = coordsRef.current;
       if (finalCoords.length >= 3) {
@@ -248,7 +245,6 @@ export function ServiceAreaDrawTool({
     const map = getMap();
     if (map) initLayers();
     setDrawnCoords([]);
-    setHoverCoord(null);
     setDrawState("drawing");
     setError(null);
   }, [getMap, initLayers]);
@@ -256,7 +252,6 @@ export function ServiceAreaDrawTool({
   const handleClear = useCallback(() => {
     setDrawnCoords([]);
     setDrawState("idle");
-    setHoverCoord(null);
     const map = getMap();
     if (map) {
       const source = map.getSource(SOURCE_ID) as
@@ -319,7 +314,6 @@ export function ServiceAreaDrawTool({
           <button
             onClick={() => {
               setDrawState(drawnCoords.length >= 3 ? "complete" : "idle");
-              setHoverCoord(null);
               const map = getMap();
               if (map) map.getCanvas().style.cursor = "";
             }}

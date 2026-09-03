@@ -7,6 +7,24 @@ RUN npm ci --omit=dev --ignore-scripts \
     && node -e "require.resolve('jiti')"
 
 
+# Same locked quality receipt gate as services/agri-data-service/Dockerfile, because this image
+# copies the same Python source. It verifies that the sha256 over `src/**`, `tests/**`,
+# `scripts/**`, `pyproject.toml` and `uv.lock` still equals the digest the last all-green
+# `scripts/check.py --write-receipt` sweep recorded, so an image cannot be built from an unjudged
+# tree. `tests/` and `scripts/` are digest inputs and stay in THIS stage; the final stage copies the
+# verified receipt out, which is also what stops BuildKit pruning the gate as unreferenced.
+FROM python:3.12.12-slim-bookworm@sha256:593bd06efe90efa80dc4eee3948be7c0fde4134606dd40d8dd8dbcade98e669c AS quality-receipt
+
+WORKDIR /app/agri-service
+
+COPY services/agri-data-service/pyproject.toml services/agri-data-service/uv.lock ./
+COPY services/agri-data-service/QUALITY_RECEIPT.json ./
+COPY services/agri-data-service/src/ src/
+COPY services/agri-data-service/tests/ tests/
+COPY services/agri-data-service/scripts/ scripts/
+RUN python scripts/verify_quality_receipt.py
+
+
 FROM python:3.12.12-slim-bookworm@sha256:593bd06efe90efa80dc4eee3948be7c0fde4134606dd40d8dd8dbcade98e669c
 
 COPY --from=ghcr.io/astral-sh/uv:0.11.29 /uv /uvx /bin/
@@ -31,6 +49,9 @@ RUN uv sync --locked --no-dev --no-install-project
 
 COPY services/agri-data-service/src/ src/
 RUN uv sync --locked --no-dev
+
+# The proof this image's Python source passed a green sweep, taken from the stage that verified it.
+COPY --from=quality-receipt /app/agri-service/QUALITY_RECEIPT.json ./QUALITY_RECEIPT.json
 
 COPY --from=soilgrids-dependencies /app/plantgeo/node_modules /app/plantgeo/node_modules
 COPY tsconfig.json /app/plantgeo/tsconfig.json

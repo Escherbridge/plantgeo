@@ -681,7 +681,7 @@ def _empty_rung_row(rung: int) -> AvailabilityRow:
         source_receipt=EvidenceReceipt(key="source/typed.json", sha256="a" * 64),
         terminal_receipt=EvidenceReceipt(key="terminal/typed.json", sha256="b" * 64),
         data_receipts=(),
-        completion_receipt=EvidenceReceipt(key=_completion_key(_EMPTY_DAY, rung), sha256="c" * 64),
+        completion_receipt=EvidenceReceipt(key=_completion_key(_EMPTY_DAY, rung, derived_empty=True), sha256="c" * 64),
         absence_reason=None,
         source_ceiling=_EMPTY_DAY,
         published_at=_CREATED_AT - timedelta(hours=1),
@@ -745,7 +745,9 @@ def test_terminal_evidence_admits_the_same_empty_rung_and_refuses_the_same_base_
             published_at=_CREATED_AT - timedelta(hours=1),
             source_receipt=EvidenceReceipt(key="source/typed.json", sha256="a" * 64),
             data_receipts=(),
-            completion_receipt=EvidenceReceipt(key=_completion_key(_EMPTY_DAY, rung), sha256="c" * 64),
+            completion_receipt=EvidenceReceipt(
+                key=_completion_key(_EMPTY_DAY, rung, derived_empty=True), sha256="c" * 64
+            ),
             absence_receipt=None,
             absence_reason=None,
         )
@@ -813,7 +815,7 @@ def _empty_published_rung(
     """Seed one rung holding NO parts and a derived-empty receipt, as `_retract_tier` leaves it."""
     published_at = _CREATED_AT - timedelta(hours=1)
     completion = store.seed(
-        _completion_key(day, rung),
+        _completion_key(day, rung, derived_empty=True),
         PartitionCompletion(
             part_count=0,
             row_count=0,
@@ -1028,8 +1030,15 @@ def _partition_key(day: date, rung: int) -> str:
     return f"{_partition_prefix(day, rung)}/part-0.parquet"
 
 
-def _completion_key(day: date, rung: int) -> str:
-    return f"{_partition_prefix(day, rung)}/_complete.json"
+def _completion_key(day: date, rung: int, *, derived_empty: bool = False) -> str:
+    """Return the completion-marker key of one rung-day under the name its own claim requires.
+
+    The key NAME is a claim `_verify_completion_object` checks before it opens the body, so a rung
+    that generalised every base row away must be cited at `_complete.empty.json` and never at the
+    ordinary name.
+    """
+    file_name = "_complete.empty.json" if derived_empty else "_complete.json"
+    return f"{_partition_prefix(day, rung)}/{file_name}"
 
 
 def _absence_key(day: date, rung: int) -> str:

@@ -14,19 +14,21 @@ would report the lane complete and never fill the day.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 import pytest
 from click.testing import CliRunner
 
+from agri_data_service.db.vegetation_publication import unlocked_vegetation_publication_barrier
 from agri_data_service.foundation.parquet.absence import GovernedAbsence
 from agri_data_service.foundation.parquet.completion import PartitionCompletion
 from agri_data_service.foundation.parquet.lane_contract import LaneNature, SourceWatermark
 from agri_data_service.foundation.parquet.paths import (
     absence_marker_path,
     completion_marker_path,
+    derived_empty_completion_marker_path,
     partition_path,
     try_parse_absence_marker_path,
     try_parse_partition_path,
@@ -44,11 +46,14 @@ from agri_data_service.pipeline.parquet.gap_fill import (
     gap_census_report,
     lane_window,
     no_derived_tiers,
+    repair_one_lane_day,
     resolve_lane_watermarks,
     run_gap_fill,
+    unlocked_lane_day,
     zero_row_absence_reason,
 )
 from agri_data_service.pipeline.parquet.lane_registry import (
+    LANE_REGISTRY,
     LaneRegistration,
     LaneRunResult,
     resolve_lanes,
@@ -61,13 +66,14 @@ from agri_data_service.pipeline.parquet.objectstore import (
     ListedObject,
     ObjectStore,
 )
-from tests.parquet.test_objectstore_writer import BASE_TIER, WHOLE_WORLD_TIER, RecordingBackend
+from tests.parquet.test_objectstore_writer import BASE_TIER, WHOLE_WORLD_TIER, RecordingBackend, signal_rows
 
 if TYPE_CHECKING:
     # A TYPE_CHECKING-only alias in `gap_fill`, exactly like `LaneDayLock` beside it, so it
     # must be imported the same way here rather than at runtime.
-    from collections.abc import Collection, Iterator, Sequence
+    from collections.abc import Callable, Collection, Iterator, Sequence
 
+    from agri_data_service.foundation.parquet.paths import PartitionKind
     from agri_data_service.foundation.parquet.zoom import ZoomTier
     from agri_data_service.pipeline.parquet.gap_fill import TierDeriver
 
@@ -291,6 +297,14 @@ def seed_absence(backend: RecordingBackend, slug: str, day: date) -> None:
     marker = GovernedAbsence(reason="seeded", upstream_response="seeded", recorded_at=FROZEN_NOW, run_id="seed")
     backend.put(
         absence_marker_path(slug, "observed", BASE_TIER, day), marker.to_json_bytes(), content_type=ABSENCE_CONTENT_TYPE
+    )
+
+
+def seed_absence_at(backend: RecordingBackend, slug: str, day: date, *, tier: ZoomTier) -> None:
+    """Land a governed-absence marker at ONE named rung, as an absence ladder does at each of its four."""
+    marker = GovernedAbsence(reason="seeded", upstream_response="seeded", recorded_at=FROZEN_NOW, run_id="seed")
+    backend.put(
+        absence_marker_path(slug, "observed", tier, day), marker.to_json_bytes(), content_type=ABSENCE_CONTENT_TYPE
     )
 
 
@@ -1380,11 +1394,17 @@ def test_a_base_complete_day_missing_a_coarse_rung_owes_a_repair_and_not_an_expo
 
 
 def test_a_day_marked_at_every_rung_owes_nothing_at_all() -> None:
+    """Every rung holds BOTH its parts and its marker, which is the only shape that reads `data`.
+
+    A marker over a rung with no parts is `incomplete` -- a lost rung, not a finished one -- so the
+    parts are seeded at each tier rather than at the base alone. The one rung that may honestly hold
+    a marker and no parts has its own receipt and its own test below.
+    """
     calls: list[LaneCall] = []
     backend = RecordingBackend()
     newest = days_newest_first(1)[0]
-    seed_partition(backend, "signal", newest)
     for tier in ZOOM_TIERS:
+        seed_partition(backend, "signal", newest, zoom=tier)
         seed_completion(backend, "signal", newest, zoom=tier)
 
     entry = build_gap_census([one_day_lane(calls, newest)], ObjectStore(backend), today=TODAY)[0]
@@ -1392,8 +1412,30 @@ def test_a_day_marked_at_every_rung_owes_nothing_at_all() -> None:
     assert (entry.missing_days, entry.ladder_repair_days) == ((), ())
 
 
-def test_a_rung_marked_without_parts_still_counts_as_finished() -> None:
-    """A rung that generalised every base row away holds NO parts and a derived-empty receipt.
+def seed_derived_empty(
+    backend: RecordingBackend, slug: str, day: date, *, tier: ZoomTier, legacy: bool = False
+) -> None:
+    """Land the receipt a rung that generalised every base row away leaves behind.
+
+    `legacy` writes it where it USED to go -- the ordinary completion key -- which is the shape every
+    such rung already in the bucket wears.
+    """
+    path = (
+        completion_marker_path(slug, "observed", tier, day)
+        if legacy
+        else derived_empty_completion_marker_path(slug, "observed", tier, day)
+    )
+    backend.put(
+        path,
+        PartitionCompletion(
+            part_count=0, row_count=0, completed_at=FROZEN_NOW, run_id="seed", derived_empty=True
+        ).to_json_bytes(),
+        content_type=COMPLETION_CONTENT_TYPE,
+    )
+
+
+def test_a_rung_closed_by_the_empty_receipt_counts_as_finished() -> None:
+    """A rung that generalised every base row away holds NO parts and a `_complete.empty.json`.
 
     Demanding parts at a derived rung would re-select such a day on every tick forever, which is the
     loop `derivation._retract_tier`'s receipt exists to break.
@@ -1405,17 +1447,34 @@ def test_a_rung_marked_without_parts_still_counts_as_finished() -> None:
     seed_completion(backend, "signal", newest)
     for tier in ZOOM_TIERS:
         if tier != GAP_FILL_ZOOM_TIER:
-            backend.put(
-                completion_marker_path("signal", "observed", tier, newest),
-                PartitionCompletion(
-                    part_count=0, row_count=0, completed_at=FROZEN_NOW, run_id="seed", derived_empty=True
-                ).to_json_bytes(),
-                content_type=COMPLETION_CONTENT_TYPE,
-            )
+            seed_derived_empty(backend, "signal", newest, tier=tier)
 
     entry = build_gap_census([one_day_lane(calls, newest)], ObjectStore(backend), today=TODAY)[0]
 
     assert entry.ladder_repair_days == ()
+
+
+def test_a_legacy_empty_receipt_at_the_ordinary_key_is_re_derived_once() -> None:
+    """The migration path, and it must stay self-healing rather than become a break.
+
+    Every derived-empty receipt written before the sibling name sits at the ORDINARY key with no
+    parts, which is now indistinguishable from a LOST rung -- and it has to be, because from a
+    listing it is. So the census re-selects the day, the repair re-derives it, and `_retract_tier`
+    rewrites the receipt under its own name. One repair per such day, then it is quiet forever.
+    """
+    calls: list[LaneCall] = []
+    backend = RecordingBackend()
+    newest = days_newest_first(1)[0]
+    seed_partition(backend, "signal", newest)
+    seed_completion(backend, "signal", newest)
+    for tier in ZOOM_TIERS:
+        if tier != GAP_FILL_ZOOM_TIER:
+            seed_derived_empty(backend, "signal", newest, tier=tier, legacy=True)
+
+    entry = build_gap_census([one_day_lane(calls, newest)], ObjectStore(backend), today=TODAY)[0]
+
+    assert entry.ladder_repair_days == (newest,)
+    assert entry.missing_days == (), "only the RUNGS are owed; the base rung is published and correct"
 
 
 def test_an_unreadable_rung_listing_is_reported_rather_than_read_as_a_whole_ladder() -> None:
@@ -1534,3 +1593,201 @@ async def test_a_lane_whose_export_raised_drops_its_ladder_repairs_too() -> None
     assert summary.lanes[0].outcome == "raised"
     assert derived == [], "the next tick's census re-selects every one of them"
     assert summary.lanes[0].ladder_remaining == 0, "a dropped queue is not a deferred one"
+
+
+# --- The ladder census is scoped, and what it cannot reach is a NUMBER ---------------------------
+
+
+def test_the_hourly_ladder_census_is_scoped_and_counts_what_it_leaves_behind() -> None:
+    """DO NOT DELETE. A scoped census that reported an empty repair set would state a falsehood.
+
+    The hourly tick is responsible for `lane_window` unioned with the days a direct writer owns past
+    `writer_ceiling`; the whole-bucket walk belongs to `drain --selection ladder`. Days below the
+    declared history floor therefore fall outside the tick's reach -- and a SILENCE about them reads
+    exactly like "every rung is whole", which is the one thing this census cannot say about days it
+    did not look at. `ladder_out_of_scope_days` is that hole, stated as a count.
+    """
+    calls: list[LaneCall] = []
+    backend = RecordingBackend()
+    inside = days_newest_first(1)[0]
+    outside = FLOOR - timedelta(days=30)
+    for day in (inside, outside):
+        seed_partition(backend, "signal", day)
+        seed_completion(backend, "signal", day)
+
+    entry = build_gap_census([stub_lane("signal", calls)], ObjectStore(backend), today=TODAY)[0]
+
+    assert entry.ladder_repair_days == (inside,), "the in-window day is the one this tick may repair"
+    assert entry.ladder_out_of_scope_days == 1
+    report = gap_census_report([entry])
+    assert report["ladder_out_of_scope_days"] == 1
+
+
+def test_a_day_a_direct_writer_owns_stays_inside_the_ladder_scope() -> None:
+    """`writer_ceiling` keeps this driver out of a direct writer's EXPORTS, never out of its rungs.
+
+    Those rungs are derived from base parts already in the bucket and invoke no writer at all, so
+    scoping the ladder to the export window would make them unrepairable by any tick.
+    """
+    calls: list[LaneCall] = []
+    backend = RecordingBackend()
+    owned_by_writer = TODAY
+    seed_partition(backend, "signal", owned_by_writer)
+    seed_completion(backend, "signal", owned_by_writer)
+    lane = replace(stub_lane("signal", calls), writer_ceiling=TODAY - timedelta(days=3))
+
+    entry = build_gap_census([lane], ObjectStore(backend), today=TODAY)[0]
+
+    assert entry.ladder_repair_days == (owned_by_writer,)
+    assert entry.ladder_out_of_scope_days == 0
+
+
+@pytest.mark.asyncio
+async def test_the_summary_reports_out_of_scope_ladder_days_as_reindex_owed() -> None:
+    """A published day nothing will re-index is an availability loss, so it lands in that tally."""
+    calls: list[LaneCall] = []
+    backend = RecordingBackend()
+    outside = FLOOR - timedelta(days=30)
+    seed_partition(backend, "signal", outside)
+    seed_completion(backend, "signal", outside)
+
+    result = await run_gap_fill(
+        RecordingSession(),  # type: ignore[arg-type]
+        ObjectStore(backend),
+        lanes=[stub_lane("signal", calls)],
+        today=TODAY,
+        run_id=RUN_ID,
+        time_budget_seconds=UNLIMITED_BUDGET_SECONDS,
+        now=lambda: FROZEN_NOW,
+        lane_day_lock=unlocked_lane_day,
+        derive_tiers=no_derived_tiers,
+    )
+
+    assert result.to_summary()["availability_reindex_owed"] == 1
+
+
+# --- A repair heals a coarse governed absence the export path can never reach --------------------
+
+
+def absence_refusing_deriver() -> TierDeriver:
+    """A deriver that writes each coarse rung through the REAL `write_partition`.
+
+    Real, because the refusal under test is `write_partition`'s own: it raises
+    `GovernedAbsenceConflictError` when the rung it is asked to write still carries an absence
+    marker. A mocked raise would prove the handler runs but not that it runs on the error the
+    warehouse actually produces.
+    """
+
+    def derive(  # noqa: PLR0913 - the signature IS the seam; it must match what it replaces
+        store: ObjectStore,
+        *,
+        layer: str,
+        kind: PartitionKind,
+        day: date,
+        run_id: str,
+        now: Callable[[], datetime],
+        connection: object = None,
+        base_table: object = None,
+    ) -> DerivationResult:
+        del connection, base_table
+        for tier in ZOOM_TIERS:
+            if tier == GAP_FILL_ZOOM_TIER:
+                continue
+            store.write_partition(signal_rows(), layer=layer, kind=kind, zoom=tier, day=day)
+            store.write_completion_marker(
+                PartitionCompletion(part_count=1, row_count=3, completed_at=now(), run_id=run_id),
+                layer=layer,
+                kind=kind,
+                zoom=tier,
+                day=day,
+            )
+        return DerivationResult(tiers=(), notes=())
+
+    return derive
+
+
+@pytest.mark.asyncio
+async def test_a_repair_retracts_a_stranded_coarse_absence_and_finishes_the_ladder() -> None:
+    """DO NOT DELETE. A direct-writer day in this state used to return `raised` on every tick forever.
+
+    An absence is written at every rung. When a DIRECT writer's source starts publishing the day it
+    clears the markers and writes the base rung -- but nothing retracts the coarse claims, because a
+    direct-writer day never reaches `_finalize_written_day`, which is where the export path heals
+    exactly this. The repair inherits the day with its base rung holding rows and three rungs still
+    claiming the source had nothing, and the blanket `except Exception` reported that as a failed
+    derivation until the day was noticed by hand.
+    """
+    backend = RecordingBackend()
+    store = ObjectStore(backend)
+    day = days_newest_first(1)[0]
+    store.write_partition(signal_rows(), layer="signal", kind="observed", zoom=GAP_FILL_ZOOM_TIER, day=day)
+    store.write_completion_marker(
+        PartitionCompletion(part_count=1, row_count=3, completed_at=FROZEN_NOW, run_id=RUN_ID),
+        layer="signal",
+        kind="observed",
+        zoom=GAP_FILL_ZOOM_TIER,
+        day=day,
+    )
+    for tier in ZOOM_TIERS:
+        if tier != GAP_FILL_ZOOM_TIER:
+            seed_absence_at(backend, "signal", day, tier=tier)
+
+    outcome = await repair_one_lane_day(
+        RecordingSession(),  # type: ignore[arg-type]
+        store,
+        LANE_REGISTRY["signal"],
+        day=day,
+        run_id=RUN_ID,
+        now=lambda: FROZEN_NOW,
+        lane_day_lock=unlocked_lane_day,
+        vegetation_publication_barrier=unlocked_vegetation_publication_barrier,
+        derive_tiers=absence_refusing_deriver(),
+    )
+
+    assert outcome.outcome == "written", outcome.detail
+    assert outcome.detail is not None
+    assert "governed as absent" in outcome.detail
+    for tier in ZOOM_TIERS:
+        if tier == GAP_FILL_ZOOM_TIER:
+            continue
+        assert absence_marker_path("signal", "observed", tier, day) not in backend.objects, (
+            f"z{tier} still claims the source had nothing while the base rung serves its rows"
+        )
+        assert partition_path("signal", "observed", tier, day) in backend.objects
+        assert completion_marker_path("signal", "observed", tier, day) in backend.objects
+
+
+@pytest.mark.asyncio
+async def test_a_second_absence_conflict_is_reported_rather_than_looped_on() -> None:
+    """Exactly ONE retry. A claim that survives the retraction is an admin's problem, not a loop's."""
+    backend = RecordingBackend()
+    store = ObjectStore(backend)
+    day = days_newest_first(1)[0]
+    store.write_partition(signal_rows(), layer="signal", kind="observed", zoom=GAP_FILL_ZOOM_TIER, day=day)
+    store.write_completion_marker(
+        PartitionCompletion(part_count=1, row_count=3, completed_at=FROZEN_NOW, run_id=RUN_ID),
+        layer="signal",
+        kind="observed",
+        zoom=GAP_FILL_ZOOM_TIER,
+        day=day,
+    )
+    for tier in ZOOM_TIERS:
+        if tier != GAP_FILL_ZOOM_TIER:
+            seed_absence_at(backend, "signal", day, tier=tier)
+            backend.refuses_delete_of.add(store.key_for(absence_marker_path("signal", "observed", tier, day)))
+
+    outcome = await repair_one_lane_day(
+        RecordingSession(),  # type: ignore[arg-type]
+        store,
+        LANE_REGISTRY["signal"],
+        day=day,
+        run_id=RUN_ID,
+        now=lambda: FROZEN_NOW,
+        lane_day_lock=unlocked_lane_day,
+        vegetation_publication_barrier=unlocked_vegetation_publication_barrier,
+        derive_tiers=absence_refusing_deriver(),
+    )
+
+    assert outcome.outcome == "raised"
+    assert outcome.detail is not None
+    assert "an admin must remove it" in outcome.detail

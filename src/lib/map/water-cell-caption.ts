@@ -23,9 +23,10 @@ export const WATER_CELL_AGGREGATE_NOTE =
  * A declared cell's extent, as "0.25° × 0.25°". Four decimals with trailing zeros dropped, so a
  * 0.1-degree rung does not print the doubled-precision tail of its own cell size.
  *
- * Not named for water although it lives here: the three surfaces that render a streamflow cell are
- * its only callers today, and a fourth that needs the same sentence should import it from here
- * rather than write a second `toFixed(4)`.
+ * Not named for water although it lives here. `fire-cell-caption.ts` is its fourth caller since
+ * 2026-09-02, and it arrived by deleting a private `formatDegrees` that was the same `toFixed(4)`
+ * written twice -- two copies of one sentence's formatting, which is exactly how a 0.25-degree
+ * cell comes to read differently on two surfaces describing the same square.
  */
 export function formatSupportCellSize(
   cellWidthDegrees: number,

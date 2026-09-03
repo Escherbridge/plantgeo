@@ -74,3 +74,19 @@ replaces every one of them with react-query's own machinery plus the day in the 
 see the section above. The one reader still calling PostgreSQL for fire is
 `getPublishedFireDetections`, and its only caller is the server-side alert engine
 (`src/lib/server/services/alert-engine.ts`), which is not a map or agent read.
+
+## useRegionalIntelligence
+
+**It is a controller, not a view model.** It returns exactly three stable callbacks --
+`queryLocation`, `sendFollowUp`, `retryLastRequest` -- and subscribes to no analysis state at
+all. Everything it needs at send time is read through
+`useRegionalIntelligenceStore.getState()` inside the callbacks, which is also what keeps
+`queryLocation` referentially stable: `MapView` carries it in a `useCallback` dependency list.
+
+Until 2026-09-02 it did `const store = useRegionalIntelligenceStore()` and returned
+`{ ...store, ... }`. That subscribed every consumer to the whole store, and the store is written
+on **every streaming token** (`updateLastMessage`), so an in-flight analysis re-rendered
+`MapView` -- the component that owns the MapLibre instance and every layer under it -- once per
+delta. No consumer ever read the spread state: `RegionalIntelligencePanel` already selects its
+eleven fields individually from the store, and `MapView` only ever destructured
+`queryLocation`. A consumer that needs analysis state selects it from the store directly.

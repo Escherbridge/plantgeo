@@ -73,6 +73,93 @@ the ordinary object-store settings, `LOCAL_SOURCE_LOADER_DATABASE_URL` (or its e
 day count, record cap, retry series, and contention timeout. `--force-day YYYY-MM-DD` intentionally
 re-publishes one already-settled day inside that same bounded NRT window for a one-day operational proof.
 
+## An all-null day is a refusal until the mirror is proven past it
+
+Both API-direct writers used to turn "every support cell answered with no value" straight into a
+GOVERNED ABSENCE. That claim is permanent and it is about the SOURCE — *the source published nothing
+for this day* — while the thing actually observed is usually the opposite: the mirror has not reached
+the day yet. ERA5-Land lands a day's cells as the reanalysis is produced; POWER fills a cell whose
+inputs have not arrived. At the settled edge, which is exactly where a forward writer works, an
+all-null answer is the ordinary shape of a day that is still coming.
+
+So the rule is now: **an all-null (soil) or all-fill (climate) day is a `SoilSourceUnsettledError` /
+`ClimateSourceUnsettledError` — a refusal, retried next turn — UNLESS the archive is proven to have
+mirrored past it.**
+
+The proof is the simplest honest one available and costs nothing: **the next settled day of the same
+product, in the same scan window, is already published with values.** If a later day answered with
+rows, the source has moved past this day and the null is its verdict rather than its backlog.
+`_mirrored_past_day` reads it out of the tier-status listing the turn already paid for — no extra
+request and no upstream call — and `_mirrored_past_proof` renders the sentence that is stored inside
+the absence marker's `upstream_response` beside the receipt, so the marker carries WHY it was allowed
+to be written and not only what was fetched.
+
+Consequences worth knowing:
+
+- The **newest** owed day can never satisfy the proof, by construction: nothing is published after it.
+  So the leading edge refuses rather than governs, which is correct.
+- The refusal is reported as `source_unsettled` on that day and does **not** fail the turn or consume
+  the retry series. Refetching inside the same turn asks the same question of the same mirror; the
+  next turn is the soonest the answer can change. `DirectSoilFieldAdapter.unsettled_refusal` /
+  `DirectClimateFieldAdapter.unsettled_refusal` records the refusal as well as raising it, because
+  `gap_fill._export_one_day` turns every adapter exception into `raised` and the walk has to tell
+  "not settled yet" from a real failure.
+- `mirrored_past_proof` defaults to `no_mirrored_past_proof`, which returns `None`. Fail-closed: any
+  caller that has not supplied the proof gets the refusal, never a fabricated absence.
+
+## A governed absence is re-examined, or it is permanent
+
+`_retract_disproven_absence` exists precisely because the archive backfills a day it first answered
+null for. It runs inside the lane-day lock, immediately before the first base write, at EVERY rung —
+and it can only run on a day the walk SELECTS. `_pending_days` skipped every day whose base rung was
+`absent`, so that retraction was unreachable and an absence, once written, was forever.
+
+`_pending_days` now returns two lists concatenated: the days that owe real work (newest first), then
+the days governed as absent within the newest `SOIL_ABSENCE_RECHECK_DAYS` / `CLIMATE_ABSENCE_RECHECK_DAYS`
+(14) of the scan window. Rechecks come **last**, so a day with no data at all always outranks a day
+that already has an answer, and the window is bounded because re-fetching absences from years ago
+would spend every turn on days that settled long since.
+
+A recheck of a day the source still answers all-null is cheap and safe: the proof that justified the
+original absence is still standing (the later day is still published), so the marker is simply
+rewritten. A recheck of a day the source has backfilled retracts the marker at all four rungs and
+publishes the rows.
+
+## One distinct day per turn, across all eight products
+
+The per-turn request budget is sized in DAYS, not in product-days: one archive request carries every
+variable for its locations, so eight products asking for the SAME day cost one day's worth of
+requests. `SoilSourceCache` / `ClimateSourceCache` hold the responses per `(chunk|cell, day)` and the
+budget is `chunks_per_day x --max-days` (soil) or `cells x --max-days x distinct publication clocks`
+(climate).
+
+The consequence to plan around: **the budget covers one distinct day across the eight products.** When
+the products agree on which day they owe — the normal case, since they share a publication clock —
+one turn advances all eight. When they diverge, each divergent pending day costs a whole tick of its
+own, because the second day finds an exhausted budget and reports `request_budget_exhausted`. Eight
+products stranded on eight different days therefore take eight turns to converge, not one.
+
+## The ordinal has nowhere else to go in the lane shape
+
+`_lane_row` writes `selected_observation_id = <response/support ordinal>`, and the column name says
+`observation_id`. That is a genuine mismatch, and it stays, because the contract admits no
+alternative — reported here rather than left to be rediscovered:
+
+- The lane shape (`SOIL_TEMPERATURE_FIELDS`, used by `register_soil_wetness_product` and
+  `register_soil_temperature_product`) has **no ordinal column**. `selected_source_row_ordinal` exists
+  only in the 33-column `SNAPSHOT_LINEAGE_FIELDS`, which is a different row shape, not a superset.
+- Writing NULL is not available either: `selected_observation_id` is listed in
+  `SOIL_TEMPERATURE_BASE_NON_NULL_COLUMNS`, so `objectstore._refuse_null_base_columns` rejects the
+  base rung outright and the lane could not publish at all. The same is true of
+  `selected_source_row_id` in the lineage shape, which is in `SNAPSHOT_LINEAGE_BASE_NON_NULL_COLUMNS`.
+- Both shapes were frozen by `scripts/soil_wetness_snapshot_breakdown.py` and
+  `scripts/soil_temperature_snapshot_breakdown.py`, and the immutable snapshot history is already
+  written in them. Adding a column is a re-export of that history, not an edit.
+
+What makes it readable rather than a trap is the DISCRIMINATOR: `selected_source_release_id` carries
+`direct:<response sha256>`. A reader joining `selected_observation_id` to `agri.signal_observation.id`
+without checking that prefix is reading the wrong namespace — see "Direct lineage namespace".
+
 ## NASA POWER climate fields and soil wetness
 
 `climate/` publishes ELEVEN streams the browser draws under seven toggles: the eight
@@ -246,8 +333,10 @@ the shrunk support visible instead is `fill_cell_count` on the receipt, carried 
 record and into the absence marker. This deliberately reverses the earlier rule that refused any mixed
 day; that rule was written for a single regional response, where a mix genuinely was ambiguous.
 
-Only a day in which EVERY support cell reports a fill is a governed absence, and its marker carries
-the receipt: the sha256 over the day's concatenated response digests, the sha256 over its request
+A day in which EVERY support cell reports a fill is a REFUSAL (`source_unsettled`) unless a later
+settled day of the product is already published with values -- see "An all-null day is a refusal
+until the mirror is proven past it". Only then is it a governed absence, and its marker then carries
+that proof alongside the receipt: the sha256 over the day's concatenated response digests, the sha256 over its request
 URLs, the request count, the total bytes, the newest retrieval instant, the cell count and the fill
 cell count. Everything else short of a complete day is a REFUSAL: a transport failure, a non-2xx
 status, an oversized body, a body that echoes a different point, a missing parameter or day key, an
@@ -430,8 +519,11 @@ days -- `scripts/vpd_snapshot_breakdown.py` and
 `scripts/build_soil_moisture_from_canonical_snapshot.py` both pin EXPECTED_CELLS_PER_DAY = 1,470 and
 both refuse a day holding any other number. So:
 
-- **Zero values** is a governed absence with the day's receipt. That is the honest state of a day the
-  archive has not mirrored yet, which is also why the lag is nine and not five.
+- **Zero values** is a REFUSAL (`source_unsettled`) unless a later settled day of the product is
+  already published with values; only then is it a governed absence, and the marker carries that
+  proof beside the day's receipt. Corrected 2026-09-02: calling an unmirrored day a governed absence
+  states that the SOURCE had nothing, permanently, about a day that had simply not arrived. See
+  "An all-null day is a refusal until the mirror is proven past it".
 - **Exactly 1,470** publishes.
 - **Anything between** is REFUSED, not published thin. A different count is a different land-sea mask,
   and a thin day would merge invisibly with 1,556 days that are not thin. The count is MEASURED for

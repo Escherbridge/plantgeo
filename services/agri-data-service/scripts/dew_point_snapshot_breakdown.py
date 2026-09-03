@@ -10,16 +10,16 @@ import io
 import json
 import sys
 from collections import defaultdict
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import PurePosixPath
-from typing import Final
+from typing import Any, Final
 
 import polars as pl
-import pyarrow as pa
-import pyarrow.parquet as pq
+import pyarrow as pa  # type: ignore[import-untyped]
+import pyarrow.parquet as pq  # type: ignore[import-untyped]
 
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore, conform_to_stream_schema
 from agri_data_service.warehouse.parquet.schema import observed_stream_schema
@@ -72,6 +72,18 @@ class SnapshotContractError(RuntimeError):
     """Raised when immutable snapshot evidence violates the pinned contract."""
 
 
+def _require_frame(value: pl.DataFrame | pl.Series) -> pl.DataFrame:
+    """Narrow `pl.from_arrow`'s declared union: an Arrow Table always yields a DataFrame.
+
+    The union exists because the same call accepts a ChunkedArray and returns a Series for it. Every
+    caller here passes a Table, so the Series arm is unreachable -- and saying so once beats a
+    blanket `union-attr` ignore that would also hide a genuine attribute mistake.
+    """
+    if not isinstance(value, pl.DataFrame):
+        raise SnapshotContractError(f"expected a Polars DataFrame from an Arrow table, got {type(value).__name__}")
+    return value
+
+
 def _arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     subcommands = parser.add_subparsers(dest="command", required=True)
@@ -96,7 +108,7 @@ def _sha256(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def _json_object(payload: bytes, *, key: str) -> dict[str, object]:
+def _json_object(payload: bytes, *, key: str) -> dict[str, Any]:
     try:
         decoded = json.loads(payload)
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
@@ -235,7 +247,7 @@ def _classification(dimensions: Mapping[str, object]) -> tuple[ProductContract |
     return by_parameter, "included-physical-row"
 
 
-def _validate_ledger_summary(entry: Mapping[str, object], ledger: Mapping[str, object], *, key: str) -> None:
+def _validate_ledger_summary(entry: Mapping[str, Any], ledger: Mapping[str, Any], *, key: str) -> None:
     expected = {
         "observation_month": entry.get("observation_month"),
         "cell_batch_index": entry.get("cell_batch_index"),
@@ -269,7 +281,7 @@ def census(store: ObjectStore, *, include_lineage: bool = False) -> dict[str, ob
             f"pinned manifest names {len(ledger_entries)} ledgers, above the bounded limit {MAX_LEDGER_COUNT}"
         )
 
-    products: dict[str, dict[str, object]] = {
+    products: dict[str, dict[str, Any]] = {
         product.product_id: {
             "contract": {
                 "stream": product.stream,
@@ -292,7 +304,7 @@ def census(store: ObjectStore, *, include_lineage: bool = False) -> dict[str, ob
         }
         for product in PRODUCTS
     }
-    exclusions: dict[str, dict[str, object]] = defaultdict(
+    exclusions: dict[str, dict[str, Any]] = defaultdict(
         lambda: {"rows": 0, "parts": 0, "dimension_populations": defaultdict(lambda: {"rows": 0, "parts": 0})}
     )
     total_ledger_parts = 0
@@ -513,8 +525,8 @@ def _dimension_table(
 
 def _read_source_part(
     store: ObjectStore,
-    lineage: Mapping[str, object],
-) -> tuple[dict[str, object], bytes, pa.Table]:
+    lineage: Mapping[str, Any],
+) -> tuple[dict[str, Any], bytes, pa.Table]:
     key = lineage.get("source_part_key")
     expected_sha256 = lineage.get("source_part_sha256")
     expected_rows = lineage.get("rows")
@@ -690,7 +702,7 @@ def _checkpoint_if_complete(
     *,
     product: ProductContract,
     month: str,
-    expected_lineage: list[dict[str, object]],
+    expected_lineage: list[dict[str, Any]],
 ) -> tuple[dict[str, object], bytes] | None:
     key = _checkpoint_key(product, month)
     payload = store._backend.get(store.key_for(key))
@@ -728,7 +740,7 @@ def _build_month(
     *,
     product: ProductContract,
     month: str,
-    lineages: list[dict[str, object]],
+    lineages: list[dict[str, Any]],
     releases: pl.DataFrame,
     data_sources: pl.DataFrame,
     concurrency: int,
@@ -775,7 +787,9 @@ def _build_month(
         if output["sha256"] != lineage["source_part_sha256"]:
             raise SnapshotContractError(f"physical copy of {source_key} is not byte-identical")
         physical_outputs.append(output)
-        physical_frames.append(pl.from_arrow(table).with_columns(pl.lit(source_key).alias("_source_part_key")))
+        physical_frames.append(
+            _require_frame(pl.from_arrow(table)).with_columns(pl.lit(source_key).alias("_source_part_key"))
+        )
 
     physical = pl.concat(physical_frames, how="vertical_relaxed", rechunk=True)
     expected_physical_rows = sum(int(lineage["rows"]) for lineage in expected_lineage)
@@ -803,7 +817,7 @@ def _build_month(
         zoom=int(BASE_ZOOM_TIER),
         table=base,
     )
-    base_frame = pl.from_arrow(base)
+    base_frame = _require_frame(pl.from_arrow(base))
     for zoom in DERIVED_ZOOM_TIERS:
         derived = derive_tier(base_frame, stream=product.stream, tier=zoom)
         rungs[str(int(zoom))] = _write_observed_rung(
@@ -847,7 +861,7 @@ def _build_month(
     return checkpoint, receipt
 
 
-def _sum_checkpoint_counts(checkpoints: list[Mapping[str, object]]) -> dict[str, object]:
+def _sum_checkpoint_counts(checkpoints: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     physical_rows = included_rows = excluded_rows = winner_rows = superseded_rows = 0
     source_parts = 0
     exclusion_classes: dict[str, int] = defaultdict(int)
@@ -894,10 +908,7 @@ def _family_reconciliation(report: Mapping[str, object]) -> dict[str, object]:
     products = report.get("products")
     if not isinstance(snapshot, Mapping) or not isinstance(products, Mapping):
         raise SnapshotContractError("census is missing snapshot or product populations")
-    product_rows = {
-        product.product_id: int(products[product.product_id]["physical_rows"])  # type: ignore[index]
-        for product in PRODUCTS
-    }
+    product_rows = {product.product_id: int(products[product.product_id]["physical_rows"]) for product in PRODUCTS}
     dew_point_rows = sum(product_rows.values())
     snapshot_rows = int(snapshot["manifest_rows"])
     outside_rows = snapshot_rows - dew_point_rows
@@ -914,7 +925,7 @@ def _verify_product(
     store: ObjectStore,
     *,
     product: ProductContract,
-    census_target: Mapping[str, object],
+    census_target: Mapping[str, Any],
     mode: str,
 ) -> dict[str, object]:
     root = _product_root(product)
@@ -1057,7 +1068,7 @@ def _build_product(
     store: ObjectStore,
     *,
     product: ProductContract,
-    census_target: Mapping[str, object],
+    census_target: Mapping[str, Any],
     family_reconciliation: Mapping[str, object],
     releases: pl.DataFrame,
     data_sources: pl.DataFrame,
@@ -1167,7 +1178,7 @@ def _census_products(report: Mapping[str, object]) -> Mapping[str, Mapping[str, 
     products = report.get("products")
     if not isinstance(products, Mapping):
         raise SnapshotContractError("census has no product populations")
-    return products  # type: ignore[return-value]
+    return products
 
 
 def build(store: ObjectStore, *, concurrency: int, verification_mode: str) -> dict[str, object]:
@@ -1185,8 +1196,8 @@ def build(store: ObjectStore, *, concurrency: int, verification_mode: str) -> di
             raise SnapshotContractError(f"dew-point products overlap on source parts: {sorted(overlap)[:3]}")
         all_keys.update(keys)
     manifest = _load_pinned_manifest(store)
-    releases = pl.from_arrow(_dimension_table(store, manifest, "source_release"))
-    data_sources = pl.from_arrow(_dimension_table(store, manifest, "data_source"))
+    releases = _require_frame(pl.from_arrow(_dimension_table(store, manifest, "source_release")))
+    data_sources = _require_frame(pl.from_arrow(_dimension_table(store, manifest, "data_source")))
     family = _family_reconciliation(report)
     products = [
         _build_product(

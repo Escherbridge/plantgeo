@@ -25,6 +25,7 @@ from agri_data_service.pipeline.direct.climate.products import (
 )
 from agri_data_service.pipeline.direct.climate.source import ClimateSourceCache, ClimateTimeBudgetExhaustedError
 from agri_data_service.pipeline.direct.climate.support import NASA_POWER_SUPPORT_CELL_COUNT
+from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.parquet.availability_extension import (
     AvailabilityExtensionOutcome,
     AvailabilityExtensionTally,
@@ -285,6 +286,7 @@ async def test_an_expired_deadline_stops_a_locked_day_before_it_fetches_anything
         deadline=time.monotonic() - 1.0,
         availability_storage=None,
         availability=AvailabilityExtensionTally(),
+        mirrored_past=None,
     )
 
     assert result["outcome"] == forward.CLIMATE_TIME_BUDGET_OUTCOME
@@ -318,6 +320,7 @@ async def test_a_time_budget_exhausted_fetch_is_a_bounded_stop_and_not_a_lane_fa
         deadline=time.monotonic() + 60,
         availability_storage=None,
         availability=AvailabilityExtensionTally(),
+        mirrored_past=None,
     )
 
     assert result["outcome"] == forward.CLIMATE_TIME_BUDGET_OUTCOME
@@ -351,6 +354,7 @@ async def test_the_retry_wait_is_clamped_to_the_remaining_budget_rather_than_the
         deadline=time.monotonic() + NARROW_BUDGET_SECONDS,
         availability_storage=None,
         availability=AvailabilityExtensionTally(),
+        mirrored_past=None,
     )
 
     assert result["outcome"] == forward.CLIMATE_TIME_BUDGET_OUTCOME
@@ -384,6 +388,7 @@ async def test_the_contention_wait_is_bounded_by_the_turn_deadline_not_by_its_ow
         deadline=time.monotonic() + NARROW_BUDGET_SECONDS,
         availability_storage=None,
         availability=AvailabilityExtensionTally(),
+        mirrored_past=None,
     )
 
     assert result["outcome"] == forward.CLIMATE_TIME_BUDGET_OUTCOME
@@ -423,6 +428,7 @@ async def test_the_climate_writer_hands_its_availability_storage_to_every_day_it
             deadline=time.monotonic() + 60,
             availability_storage=storage,
             availability=AvailabilityExtensionTally(),
+            mirrored_past=None,
         )
 
     assert handed == [storage], "the export path must receive the writer's own storage, not None"
@@ -554,3 +560,79 @@ async def test_the_climate_run_report_states_its_availability_verdicts_as_number
 
     assert report["availability_ladder_incomplete"] == 1, "the loss is a counter, not a sentence in one day"
     assert report["availability_extended"] == 0
+
+
+# --- Absences are re-examined, and an all-fill day needs the release proven past it ----------------
+
+
+def _statuses(
+    per_tier: dict[date, str],
+    *,
+    derived: str = "data",
+) -> dict[Any, dict[date, Any]]:
+    """Build the per-rung status map `_pending_days` reads, with one dial per BASE-rung day.
+
+    A base day dialled `absent` seeds the WHOLE ladder absent: since the atomic absence ladder, a
+    governed absence is written at all four rungs at once, so a base-only absence is a state the
+    bucket cannot hold and `_pending_days` rightly refuses it as derived parts under an absence.
+    """
+    return {
+        tier: (
+            dict(per_tier)
+            if tier == LANE_BASE_ZOOM_TIER
+            else {day: ("absent" if status == "absent" else derived) for day, status in per_tier.items()}
+        )
+        for tier in forward.CLIMATE_DIRECT_ALL_TIERS
+    }
+
+
+def test_a_recent_absence_is_re_examined_so_the_retraction_is_reachable_at_all() -> None:
+    """DO NOT DELETE. `_retract_disproven_absence` runs only on a day the walk SELECTS.
+
+    POWER revises a fill-value day into real values once its inputs land. Skipping every `absent` day made that
+    retraction unreachable, so an absence, once written, was permanent whatever the archive did next.
+    """
+    product = products_for("all")[0]
+    newest = date(2026, 8, 20)
+    days = {newest - timedelta(days=offset): "absent" for offset in range(3)}
+
+    pending = forward._pending_days(product, _statuses(days))
+
+    assert set(pending) == set(days), "every recent absence is owed a second look"
+
+
+def test_an_absence_older_than_the_recheck_window_is_left_alone() -> None:
+    """Bounded, or every turn re-fetches days that settled years ago and never reaches a real gap."""
+    product = products_for("all")[0]
+    newest = date(2026, 8, 20)
+    stale = newest - timedelta(days=forward.CLIMATE_ABSENCE_RECHECK_DAYS)
+    days = {stale: "absent", newest: "data"}
+
+    pending = forward._pending_days(product, _statuses(days))
+
+    assert pending == ()
+
+
+def test_a_recheck_never_outranks_a_day_that_holds_no_data_at_all() -> None:
+    """A turn publishes one day; spending it on an answered day while a real gap waits is a regression."""
+    product = products_for("all")[0]
+    newest = date(2026, 8, 20)
+    gap = newest - timedelta(days=1)
+    days = {gap: "missing", newest: "absent"}
+
+    pending = forward._pending_days(product, _statuses(days))
+
+    assert pending[0] == gap, "the real gap must be taken first"
+    assert pending[-1] == newest
+
+
+def test_the_mirrored_past_proof_is_the_next_published_day_or_nothing() -> None:
+    """The proof is read out of the census listing the turn already paid for: no extra request."""
+    newest = date(2026, 8, 20)
+    older = newest - timedelta(days=2)
+    statuses = _statuses({older: "absent", newest: "data"})
+
+    assert forward._mirrored_past_day(statuses, older) == newest
+    assert forward._mirrored_past_day(statuses, newest) is None, (
+        "the newest owed day can never satisfy the proof, so the leading edge refuses"
+    )

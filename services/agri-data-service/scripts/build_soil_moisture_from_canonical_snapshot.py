@@ -9,7 +9,7 @@ import json
 import sys
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -32,7 +32,6 @@ from agri_data_service.foundation.parquet.completion import PartitionCompletion 
 from agri_data_service.foundation.parquet.paths import completion_marker_path, partition_path  # noqa: E402
 from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS  # noqa: E402
 from agri_data_service.warehouse.parquet.tiers import derive_tier  # noqa: E402
-from agri_data_service.warehouse.schemas.soil_field_moisture import SOIL_FIELD_MOISTURE_STREAMS  # noqa: E402
 from agri_data_service.warehouse.schemas.soil_field_moisture_0_7cm import (  # noqa: E402
     SOIL_FIELD_MOISTURE_0_7CM_SCHEMA,
 )
@@ -87,21 +86,21 @@ class ProductSpec:
 PRODUCTS: Final = {
     "soil_moisture_0_to_7cm_mean": ProductSpec(
         product="soil_moisture_0_to_7cm_mean",
-        stream=SOIL_FIELD_MOISTURE_STREAMS["soil_moisture_0_to_7cm_mean"],
+        stream=SOIL_FIELD_MOISTURE_0_7CM_SCHEMA.name,
         signal_name="soil_water_content_layer_1",
         depth_band="0-7cm",
         expected_source_bytes=189_525_236,
     ),
     "soil_moisture_7_to_28cm_mean": ProductSpec(
         product="soil_moisture_7_to_28cm_mean",
-        stream=SOIL_FIELD_MOISTURE_STREAMS["soil_moisture_7_to_28cm_mean"],
+        stream=SOIL_FIELD_MOISTURE_7_28CM_SCHEMA.name,
         signal_name="soil_water_content_layer_2",
         depth_band="7-28cm",
         expected_source_bytes=188_856_768,
     ),
     "soil_moisture_28_to_100cm_mean": ProductSpec(
         product="soil_moisture_28_to_100cm_mean",
-        stream=SOIL_FIELD_MOISTURE_STREAMS["soil_moisture_28_to_100cm_mean"],
+        stream=SOIL_FIELD_MOISTURE_28_100CM_SCHEMA.name,
         signal_name="soil_water_content_layer_3",
         depth_band="28-100cm",
         expected_source_bytes=187_626_927,
@@ -177,6 +176,18 @@ class BreakdownError(RuntimeError):
 
 class ImmutableObjectConflictError(BreakdownError):
     """Raised when a destination key already contains different bytes."""
+
+
+def _require_frame(value: pl.DataFrame | pl.Series) -> pl.DataFrame:
+    """Narrow `pl.from_arrow`'s declared union: an Arrow Table always yields a DataFrame.
+
+    The union exists because the same call accepts a ChunkedArray and returns a Series for it. Every
+    caller here passes a Table, so the Series arm is unreachable -- and saying so once beats a cast
+    at each of the call sites that then does column work on the result.
+    """
+    if not isinstance(value, pl.DataFrame):
+        raise BreakdownError(f"expected a Polars DataFrame from an Arrow table, got {type(value).__name__}")
+    return value
 
 
 @dataclass(frozen=True, slots=True)
@@ -764,7 +775,7 @@ def _write_day(
             content_type=PARQUET_CONTENT_TYPE,
         )
     )
-    source_frame = pl.from_arrow(base)
+    source_frame = _require_frame(pl.from_arrow(base))
     tier_rows: dict[str, int] = {"13": base.num_rows}
     for zoom in (9, 5, 0):
         derived = derive_tier(source_frame, stream=ACTIVE_STREAM, tier=zoom)
@@ -881,7 +892,7 @@ def _verify_checkpoint(store: ImmutableS3, checkpoint: Mapping[str, Any], *, mon
     if not isinstance(exclusion_counts, Mapping) or sum(int(value) for value in exclusion_counts.values()) != excluded:
         raise BreakdownError(f"destination checkpoint {month} has inconsistent exclusion counts")
     with ThreadPoolExecutor(max_workers=DEFAULT_WORKERS) as executor:
-        futures = []
+        futures: list[Future[None]] = []
         for day in days:
             if not isinstance(day, Mapping) or not isinstance(day.get("objects"), list):
                 raise BreakdownError(f"destination checkpoint {month} contains an invalid day receipt")

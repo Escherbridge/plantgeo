@@ -413,6 +413,10 @@ def _tier_days(
     statuses = day_status_sets(keys, layer=lane.layer, kind=lane.kind, tier=tier)
     # Only a completed, conflict-free partition is readable. Conflict and incomplete days may hold
     # objects, but serving refuses them, so they cannot prove a slider capability safe to publish.
+    #
+    # `data` INCLUDES a derived rung closed by `_complete.empty.json` and EXCLUDES a LOST rung -- an
+    # ordinary marker whose parts are gone, which `day_status_sets` now calls `incomplete`. Both come
+    # from `classify_partition_day`, so this census cannot advertise a capability serving refuses.
     return LaneDays(data=statuses.data, absent=statuses.absent, conflict=statuses.conflict)
 
 

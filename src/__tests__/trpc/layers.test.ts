@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 
 // Mock database dependency so importing the router doesn't require a live DB
 vi.mock('@/lib/server/db', () => ({

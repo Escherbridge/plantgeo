@@ -110,7 +110,6 @@ export default function ApiTester() {
       });
 
       setStatus(res.status);
-      const ct = res.headers.get("content-type") ?? "";
       const text = await res.text();
       try {
         setResponse(JSON.stringify(JSON.parse(text), null, 2));

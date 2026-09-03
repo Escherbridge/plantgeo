@@ -64,7 +64,9 @@ export default function OrganizationInvitationsPage() {
 
   const createInvitationMutation = trpc.teams.createInvitation.useMutation({
     onSuccess: (result) => {
-      setLastSentInvite({ email: result.email, acceptUrl: result.acceptUrl });
+      // `acceptUrl` is empty unless the call asked for it; storing the empty string would
+      // render a copy button over nothing.
+      setLastSentInvite(result.acceptUrl ? { email: result.email, acceptUrl: result.acceptUrl } : null);
       utils.teams.listInvitations.invalidate({ teamId });
     },
   });
@@ -103,7 +105,7 @@ export default function OrganizationInvitationsPage() {
     e.preventDefault();
     if (!inviteEmail.trim() || !teamId) return;
     try {
-      await createInvitationMutation.mutateAsync({ teamId, email: inviteEmail.trim(), teamRole: inviteRole });
+      await createInvitationMutation.mutateAsync({ teamId, email: inviteEmail.trim(), teamRole: inviteRole, returnLink: true });
       setInviteEmail("");
       toast.success("Invitation sent");
     } catch (err) {
@@ -115,7 +117,7 @@ export default function OrganizationInvitationsPage() {
   async function handleResend(email: string, teamRole: string | null) {
     if (!teamId) return;
     try {
-      await createInvitationMutation.mutateAsync({ teamId, email, teamRole: toDelegableRole(teamRole) });
+      await createInvitationMutation.mutateAsync({ teamId, email, teamRole: toDelegableRole(teamRole), returnLink: true });
       toast.success("Invitation resent");
     } catch (err) {
       toast.error("Couldn't resend invitation", { description: (err as Error).message });

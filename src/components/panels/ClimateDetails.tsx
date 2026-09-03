@@ -142,6 +142,12 @@ function ClimateSignalReport({
   // response replayed from IndexedDB was serialized by whatever schema was current when it
   // was written -- and a panel that throws is a worse failure than a missing legend.
   const bands = field?.bands ?? [];
+  // The same rule as `bands`, for the same reason: `support` was added to this response on
+  // 2026-09-02, and `query-persister.ts` replays a climate-field response written before that
+  // straight out of IndexedDB. Dereferencing it there throws inside render and takes the whole
+  // panel down, so the cell size is read optionally and the sentence that names it is only
+  // written when there is a number to write.
+  const servedCellWidthDegrees = field?.support?.cellWidthDegrees ?? null;
 
   return (
     <section className="flex flex-col gap-1.5">
@@ -302,15 +308,17 @@ function ClimateSignalReport({
                 ground. Wave 1 had no number to print below z13 -- it drew those rungs as points --
                 and said "zoom in for the half-degree lattice", which described neither the lattice
                 (one degree) nor what was drawn (dots). */}
-            <p className="text-[10px] mb-2 text-[hsl(var(--muted-foreground))]">
-              {field.cellCount} of the {field.latticeCellCount}{" "}
-              {field.support.cellWidthDegrees}° cells in this view carry a measurement for{" "}
-              {field.observedDay}.
-              {field.renderForm === "isoline" &&
-                " Bands are dissolved across those cells; read values from the filled form."}
-              {field.zoomTier !== BASE_ZOOM_TIER &&
-                ` Served from the z${field.zoomTier} rung, which averages every measurement that fell in one cell.`}
-            </p>
+            {servedCellWidthDegrees !== null && (
+              <p className="text-[10px] mb-2 text-[hsl(var(--muted-foreground))]">
+                {field.cellCount} of the {field.latticeCellCount}{" "}
+                {servedCellWidthDegrees}° cells in this view carry a measurement for{" "}
+                {field.observedDay}.
+                {field.renderForm === "isoline" &&
+                  " Bands are dissolved across those cells; read values from the filled form."}
+                {field.zoomTier !== BASE_ZOOM_TIER &&
+                  ` Served from the z${field.zoomTier} rung, which averages every measurement that fell in one cell.`}
+              </p>
+            )}
             <div className="flex flex-col gap-1">
               {bands.map((band) => (
                 <ColorLegendRow key={band.bandIndex} color={band.color} label={band.label} />

@@ -32,6 +32,7 @@ from agri_data_service.foundation.parquet.completion import PartitionCompletion
 from agri_data_service.foundation.parquet.paths import (
     absence_marker_path,
     completion_marker_path,
+    derived_empty_completion_marker_path,
     partition_path,
 )
 from agri_data_service.pipeline.parquet import drain
@@ -249,10 +250,13 @@ def test_a_rung_that_derived_to_nothing_leaves_the_census_rather_than_being_rese
 
     assert set(result.emptied) == set(DERIVED_ZOOM_TIERS), "every rung dropped every row"
     for tier in DERIVED_ZOOM_TIERS:
-        payload = backend.objects[store.key_for(completion_marker_path(STREAM, "observed", tier, DAY))]
+        # The receipt names its own claim: an emptied rung is published under `_complete.empty.json`,
+        # and the ordinary name it held from the first, row-bearing derivation must be gone.
+        payload = backend.objects[store.key_for(derived_empty_completion_marker_path(STREAM, "observed", tier, DAY))]
         receipt = PartitionCompletion.from_json_bytes(payload)
         assert receipt.derived_empty
         assert (receipt.part_count, receipt.row_count) == (0, 0)
+        assert store.key_for(completion_marker_path(STREAM, "observed", tier, DAY)) not in backend.objects
         assert store.key_for(partition_path(STREAM, "observed", tier, DAY)) not in backend.objects
     census = build_lane_ladder_census(LANE_REGISTRY[STREAM], store)
     assert census.incomplete_days == (), "a rung that is honestly empty has finished, so the day is complete"

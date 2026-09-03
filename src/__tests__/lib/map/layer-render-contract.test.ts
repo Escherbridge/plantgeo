@@ -18,10 +18,10 @@ import {
   ZOOM_TIER_BANDS,
   assertNotPerimeter,
   isAggregateSupportKind,
-  isFormPermitted,
+  UnpermittedRenderFormError,
+  assertFormPermittedForTier,
   isFormPermittedForTier,
   layerRenderContractEntries,
-  permittedFormsFor,
   permittedFormsForTier,
   renderClassOf,
   resolveZoomBand,
@@ -240,26 +240,53 @@ describe("each physical rung maps to exactly one band", () => {
   });
 });
 
-describe("the zoom-aware helpers agree with the table", () => {
-  it("returns the detail forms at a detail zoom", () => {
-    expect(permittedFormsFor("fire", 14)).toEqual(["aggregate_cell"]);
+describe("the rung-keyed helpers agree with the table", () => {
+  it("returns the detail forms at the detail rung", () => {
+    expect(permittedFormsForTier("fire", 13)).toEqual(["aggregate_cell"]);
   });
 
-  it("returns the aggregate forms at a coarse zoom", () => {
-    expect(permittedFormsFor("fire", 4)).toEqual(["aggregate_cell", "heatmap", "cluster"]);
+  it("returns the aggregate forms at a coarse rung", () => {
+    expect(permittedFormsForTier("fire", 0)).toEqual(["aggregate_cell", "heatmap", "cluster"]);
   });
 
-  it("answers isFormPermitted from the same table", () => {
-    const cases: readonly { zoom: number; form: SupportKind; permitted: boolean }[] = [
-      { zoom: 4, form: "heatmap", permitted: true },
-      { zoom: 4, form: "raw_point", permitted: false },
-      { zoom: 14, form: "raw_point", permitted: false },
-      { zoom: 14, form: "aggregate_cell", permitted: true },
-      { zoom: 14, form: "cluster", permitted: false },
+  it("answers isFormPermittedForTier from the same table", () => {
+    const cases: readonly { tier: ZoomTier; form: SupportKind; permitted: boolean }[] = [
+      { tier: 0, form: "heatmap", permitted: true },
+      { tier: 0, form: "raw_point", permitted: false },
+      { tier: 13, form: "raw_point", permitted: false },
+      { tier: 13, form: "aggregate_cell", permitted: true },
+      { tier: 13, form: "cluster", permitted: false },
     ];
-    for (const { zoom, form, permitted } of cases) {
-      expect(isFormPermitted("fire", zoom, form), `fire/${form} at z${zoom}`).toBe(permitted);
+    for (const { tier, form, permitted } of cases) {
+      expect(isFormPermittedForTier("fire", tier, form), `fire/${form} at z${tier}`).toBe(
+        permitted
+      );
     }
+  });
+
+  /**
+   * The assertion the two presenters call, and the one that turned this table from a description
+   * into a rule. `isoband` at the detail rung is the exact combination `tierRenderForm`
+   * (`parquet-climate-field.ts`) demotes to `field`: a band asserts the field varies smoothly
+   * between samples, which the detail band permits no layer to claim.
+   */
+  it("throws a typed error for a form the rung does not permit, and returns for one it does", () => {
+    expect(() =>
+      assertFormPermittedForTier("climate-air-temperature", 13, "isoband")
+    ).toThrow(UnpermittedRenderFormError);
+    expect(() => assertFormPermittedForTier("fire", 13, "raw_point")).toThrow(
+      UnpermittedRenderFormError
+    );
+    expect(() =>
+      assertFormPermittedForTier("climate-air-temperature", 5, "isoband")
+    ).not.toThrow();
+    expect(() => assertFormPermittedForTier("fire", 13, "aggregate_cell")).not.toThrow();
+  });
+
+  it("names the layer, the form and the rung it refused, so the throw is actionable", () => {
+    expect(() => assertFormPermittedForTier("fire", 13, "raw_point")).toThrow(
+      /fire may not be drawn as raw_point at z13/
+    );
   });
 
   it("keeps continuous fields filled rather than raw at every band", () => {
@@ -305,12 +332,7 @@ function envelope(overrides: Partial<AggregateEnvelopeSupport> = {}): AggregateE
   };
 }
 
-describe("the tier-keyed helpers answer the same table as the zoom-keyed ones", () => {
-  it("returns the detail forms for the detail rung", () => {
-    expect(permittedFormsForTier("fire", 13)).toEqual(permittedFormsFor("fire", 13));
-    expect(permittedFormsForTier("fire", 13)).toEqual(["aggregate_cell"]);
-  });
-
+describe("the tier-keyed helpers answer one table for every rung", () => {
   it("puts both low rungs on the same coarse answer", () => {
     expect(permittedFormsForTier("water", 0)).toEqual(permittedFormsForTier("water", 5));
     expect(permittedFormsForTier("water", 9)).toEqual(["aggregate_cell", "heatmap", "cluster"]);
@@ -454,11 +476,12 @@ describe("the renderer's square is the server's square", () => {
   }
 
   it("agrees with the serving builder for vegetation at z9 and z5, the case that diverged", () => {
-    // -116.125 is a served vegetation coordinate on the quarter-degree lattice, and both rungs
-    // KEEP that grain: the ladder's 0.01 and 0.2 grids are finer than the ground the lane
+    // A REAL centroid of the vegetation lattice -- an odd multiple of 0.125, because
+    // `ingest/vegetation.py:344-347` centres each cell a half step above `row * 0.25` -- and both
+    // rungs KEEP that grain: the ladder's 0.01 and 0.2 grids are finer than the ground the lane
     // measured, so re-flooring onto them would merge nothing and paint a fictitious footprint.
-    const longitude = -116.125;
-    const latitude = 43.625;
+    const longitude = -124.875;
+    const latitude = 42.125;
     for (const zoomTier of [9, 5] as ZoomTier[]) {
       const lattice = servedCellLattice(zoomTier, LANE_BASE_LATTICES.vegetation);
       expect(
@@ -481,7 +504,7 @@ describe("the renderer's square is the server's square", () => {
         // no cell to compare. Every other lane/rung pair has one.
         if (lattice.cellSizeDegrees === 0) continue;
         const [longitude, latitude] = latticeCellSpan(
-          latticeCellIndex(-116.125, lattice),
+          latticeCellIndex(-124.875, lattice),
           lattice
         );
         expect(

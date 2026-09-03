@@ -25,6 +25,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from datetime import time as datetime_time
+from functools import partial
 from pathlib import Path
 from typing import Any, Final, Protocol
 from urllib.parse import quote
@@ -473,7 +474,10 @@ class BotoSnapshotStore:
             request: dict[str, object] = {"Bucket": self.bucket, "Prefix": prefix}
             if token is not None:
                 request["ContinuationToken"] = token
-            response = self.retry.run(lambda request=request: self.client.list_objects_v2(**request))
+            # `partial` rather than `lambda request=request:`: the default-argument idiom binds
+            # the page request eagerly (bugbear B023) but leaves the callable un-inferable for a
+            # `Callable[[], T]` parameter. `partial` binds just as eagerly and keeps the type.
+            response = self.retry.run(partial(self.client.list_objects_v2, **request))
             contents = response.get("Contents")
             if isinstance(contents, list):
                 for item in contents:
@@ -715,21 +719,23 @@ def _verify_fact_dimension_closure(
         if parent is not None and str(parent) not in cells:
             raise SnapshotError("frozen spatial_cell dimension is not parent-FK closed")
     for row in rows:
-        release = releases.get(str(row["source_release_id"]))
-        cell = cells.get(str(row["cell_id"]))
-        if release is None or cell is None:
+        # Named apart from the `release`/`cell` loop variables above: those are always present,
+        # these are lookups that may miss, and sharing one name makes the miss un-narrowable.
+        row_release = releases.get(str(row["source_release_id"]))
+        row_cell = cells.get(str(row["cell_id"]))
+        if row_release is None or row_cell is None:
             raise SnapshotError("fact row references an identity absent from the frozen companion dimensions")
-        source = sources.get(str(release["data_source_id"]))
-        if source is None:
+        row_source = sources.get(str(row_release["data_source_id"]))
+        if row_source is None:
             raise SnapshotError("fact release references a source absent from the frozen companion dimensions")
         if (
-            str(row["data_source_id"]) != str(source["id"])
-            or row["data_source_key"] != source["key"]
-            or row["cell_key"] != cell["cell_key"]
-            or row["cell_grid_name"] != cell["grid_name"]
-            or row["cell_resolution_m"] != cell["resolution_m"]
-            or row["cell_parent_cell_id"] != cell["parent_cell_id"]
-            or row["cell_centroid_wkb"] != cell["centroid"]
+            str(row["data_source_id"]) != str(row_source["id"])
+            or row["data_source_key"] != row_source["key"]
+            or row["cell_key"] != row_cell["cell_key"]
+            or row["cell_grid_name"] != row_cell["grid_name"]
+            or row["cell_resolution_m"] != row_cell["resolution_m"]
+            or row["cell_parent_cell_id"] != row_cell["parent_cell_id"]
+            or row["cell_centroid_wkb"] != row_cell["centroid"]
         ):
             raise SnapshotError("fact denormalized identity differs from the frozen companion dimensions")
 

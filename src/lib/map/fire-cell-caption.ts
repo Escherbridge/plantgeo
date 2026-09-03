@@ -2,6 +2,7 @@
 // click popup. Pure formatting: no React, no maplibre, no DOM.
 
 import { formatTimestampWithRelative, toIsoTimestamp } from "@/lib/map/time-format";
+import { formatSupportCellSize } from "@/lib/map/water-cell-caption";
 
 /** The heading both surfaces put above the lines below. */
 export const FIRE_CELL_CAPTION_TITLE = "Fire detection cell";
@@ -42,15 +43,6 @@ export function fireCellCaptionText(line: FireCellCaptionLine): string {
 function toFiniteNumber(value: unknown): number | null {
   const num = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
   return Number.isFinite(num) ? num : null;
-}
-
-/**
- * A cell dimension as degrees of arc. Up to four decimals with the trailing zeros dropped, so
- * 0.25 reads "0.25°" and not "0.2500°", and a rung whose size is 0.1 does not print the
- * 0.1000000000000000055 that a raw `String()` of the double would.
- */
-function formatDegrees(degrees: number): string {
-  return `${Number(degrees.toFixed(4))}°`;
 }
 
 function stringField(value: unknown): string | null {
@@ -119,7 +111,7 @@ export function fireDetectionCellLines(props: Record<string, unknown>): FireCell
   if (cellWidth !== null && cellHeight !== null) {
     lines.push({
       label: "Cell",
-      value: `${formatDegrees(cellWidth)} × ${formatDegrees(cellHeight)}`,
+      value: formatSupportCellSize(cellWidth, cellHeight),
       meta: true,
     });
   }

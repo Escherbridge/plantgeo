@@ -112,6 +112,18 @@ class ImmutableObjectConflictError(BreakdownError):
     """Raised when a destination key already contains different bytes."""
 
 
+def _require_frame(value: pl.DataFrame | pl.Series) -> pl.DataFrame:
+    """Narrow `pl.from_arrow`'s declared union: an Arrow Table always yields a DataFrame.
+
+    The union exists because the same call accepts a ChunkedArray and returns a Series for it. Every
+    caller here passes a Table, so the Series arm is unreachable -- and saying so once beats a cast
+    at each of the call sites that then does column work on the result.
+    """
+    if not isinstance(value, pl.DataFrame):
+        raise BreakdownError(f"expected a Polars DataFrame from an Arrow table, got {type(value).__name__}")
+    return value
+
+
 @dataclass(frozen=True, slots=True)
 class ObjectReceipt:
     key: str
@@ -719,7 +731,7 @@ def _write_day(
             content_type=PARQUET_CONTENT_TYPE,
         )
     )
-    source_frame = pl.from_arrow(base)
+    source_frame = _require_frame(pl.from_arrow(base))
     tier_rows: dict[str, int] = {"13": base.num_rows}
     for zoom in (9, 5, 0):
         derived = derive_tier(source_frame, stream=CLIMATE_FIELD_RELATIVE_HUMIDITY_STREAM, tier=zoom)
@@ -914,7 +926,7 @@ def _verify_checkpoint(
                 raise BreakdownError(f"reconstructed lineage digest drifted for {day_name}/{row['cell_id']}")
 
         expected_part_payloads: dict[int, bytes] = {13: _serialize(base)}
-        source_frame = pl.from_arrow(base)
+        source_frame = _require_frame(pl.from_arrow(base))
         for zoom in (9, 5, 0):
             expected_part_payloads[zoom] = _serialize(
                 derive_tier(
@@ -944,8 +956,11 @@ def _verify_checkpoint(
             if not isinstance(receipt, Mapping):
                 raise BreakdownError(f"destination checkpoint day {day_name} has a non-object receipt")
             kind = str(receipt.get("kind"))
+            declared_zoom = receipt.get("zoom")
+            if declared_zoom is None:
+                raise BreakdownError(f"destination checkpoint day {day_name} has an invalid zoom receipt")
             try:
-                zoom = int(receipt.get("zoom"))
+                zoom = int(declared_zoom)
             except (TypeError, ValueError) as error:
                 raise BreakdownError(f"destination checkpoint day {day_name} has an invalid zoom receipt") from error
             identity = (kind, zoom)

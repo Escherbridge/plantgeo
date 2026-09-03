@@ -9,7 +9,7 @@ import json
 import sys
 from collections import Counter, defaultdict
 from collections.abc import Mapping, Sequence
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -120,6 +120,18 @@ class ImmutableObjectConflictError(BreakdownError):
     """Raised when a destination key already contains different bytes."""
 
 
+def _require_frame(value: pl.DataFrame | pl.Series) -> pl.DataFrame:
+    """Narrow `pl.from_arrow`'s declared union: an Arrow Table always yields a DataFrame.
+
+    The union exists because the same call accepts a ChunkedArray and returns a Series for it. Every
+    caller here passes a Table, so the Series arm is unreachable -- and saying so once beats a cast
+    at each of the call sites that then does column work on the result.
+    """
+    if not isinstance(value, pl.DataFrame):
+        raise BreakdownError(f"expected a Polars DataFrame from an Arrow table, got {type(value).__name__}")
+    return value
+
+
 @dataclass(frozen=True, slots=True)
 class ObjectReceipt:
     key: str
@@ -138,6 +150,17 @@ class ObjectReceipt:
             "kind": self.kind,
             "zoom": self.zoom,
         }
+
+
+def _require_int(value: object) -> int:
+    """Narrow one absence-receipt field for arithmetic, refusing what `int()` would only guess at.
+
+    `int()` accepts exactly numbers and numeric strings; everything else is a TypeError deep inside
+    a set comprehension. Naming the field's contract here turns that into a stated refusal.
+    """
+    if isinstance(value, int | float | str):
+        return int(value)
+    raise BreakdownError(f"expected an integer-valued receipt field, found {value!r}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -743,7 +766,7 @@ def _census_source_population(
         for batch_index in range(EXPECTED_SOURCE_LEDGERS // len(month_ledgers))
     }
     actual_absences = {
-        (str(absence["observation_month"]), int(absence["cell_batch_index"])) for absence in ledger_absences
+        (str(absence["observation_month"]), _require_int(absence["cell_batch_index"])) for absence in ledger_absences
     }
     expected_totals = {
         "physical_rows": (physical_rows, EXPECTED_PHYSICAL_ROWS),
@@ -875,7 +898,7 @@ def _write_day(
             content_type=PARQUET_CONTENT_TYPE,
         )
     )
-    source_frame = pl.from_arrow(base)
+    source_frame = _require_frame(pl.from_arrow(base))
     tier_rows: dict[str, int] = {"13": base.num_rows}
     for zoom in (9, 5, 0):
         derived = derive_tier(source_frame, stream=CLIMATE_FIELD_SHORTWAVE_RADIATION_STREAM, tier=zoom)
@@ -992,7 +1015,7 @@ def _verify_checkpoint(store: ImmutableS3, checkpoint: Mapping[str, Any], *, mon
     if not isinstance(exclusion_counts, Mapping) or sum(int(value) for value in exclusion_counts.values()) != excluded:
         raise BreakdownError(f"destination checkpoint {month} has inconsistent exclusion counts")
     with ThreadPoolExecutor(max_workers=DEFAULT_WORKERS) as executor:
-        futures = []
+        futures: list[Future[None]] = []
         for day in days:
             if not isinstance(day, Mapping) or not isinstance(day.get("objects"), list):
                 raise BreakdownError(f"destination checkpoint {month} contains an invalid day receipt")

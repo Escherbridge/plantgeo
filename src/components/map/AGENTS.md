@@ -707,7 +707,7 @@ direction: a row may only be drawn as a NAMED gauge if it has a name, so a `raw_
 without one falls back to the anonymous cell rather than being captioned with an empty string.
 That fallback is also what keeps a reader that sends no envelope at all on the wave-1 shapes.
 
-`permittedFormsFor("water", zoom)` offers `aggregate_cell`, `heatmap` and `cluster` at the
+`permittedFormsForTier("water", zoomTier)` offers `aggregate_cell`, `heatmap` and `cluster` at the
 coarse and middle bands. The cell is chosen because it is the only one the envelope supports: a
 `cluster` would be the client inventing a grouping the warehouse never performed, and a
 `heatmap` would smear discharge across ground where no gauge reported.

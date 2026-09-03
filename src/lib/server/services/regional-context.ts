@@ -48,6 +48,7 @@ import {
   type LayerToggleId,
 } from "@/lib/map/layer-registry";
 import { DATE_FILTERABLE_TILE_LAYER_TOGGLE_IDS } from "@/lib/map/tile-layer-date-filter";
+import { resolveZoomTier, zoomTierPathSegment } from "@/lib/map/zoom-tiers";
 import { hasSelectableDay, isDayDescribed } from "@/stores/time-slider-store";
 import { SLIDER_STREAM_LAYER_NAMES } from "@/types/time-slider";
 
@@ -207,6 +208,19 @@ export type ViewedDateReadOutcome =
    * never observed.
    */
   | "not_published_on_viewed_date"
+  /**
+   * The day IS published, and the one RUNG this server read has no partition for it.
+   *
+   * A separate outcome from `not_published_on_viewed_date` because it is a separate fact and
+   * licenses a different sentence. A base-complete day whose derived rungs were never written is
+   * an ordinary production state, not an ingestion hole: `gap_fill.py:40-44` keeps
+   * `missing_days` and `ladder_repair_days` as two queues precisely because one owes an EXPORT
+   * and the other owes only a RE-DERIVATION from base parts that are already correct, and 1,040
+   * lane-days sat in the second queue at once. Reporting that as "the warehouse published
+   * nothing" would tell the user their own map is showing data that does not exist -- the map
+   * reads a different rung, and it read it successfully.
+   */
+  | "rung_not_written"
   /** Nothing published here AND no coverage record can say whether the day was ingested. */
   | "coverage_unknown_on_viewed_date"
   /** The day itself is not observable: in the future, or not a calendar date. */
@@ -399,9 +413,11 @@ function readString(source: Record<string, unknown>, key: string): string | null
  * - `absent` — the lane looked at the day and the source deliberately had nothing anywhere. Also
  *   a real absence, left to the same coverage lookup rather than asserted here: a governed
  *   absence breaks published continuity, so the capability row is the conservative judge.
- * - `not_generated` — the partition was never written. Stated directly through
- *   `notPublishedReason`, because a capability row that still lists the day as published would
- *   otherwise license "no fires here" for a day nobody observed.
+ * - `not_generated` — the partition for THIS RUNG was never written. Stated through
+ *   `rungNotWrittenReason`, which names the rung, because a capability row that still lists the
+ *   day as published would otherwise license "no fires here" for a partition nobody wrote — and
+ *   because the rung this assembler reads is its own (`CONTEXT_MAP_ZOOM`) and not the one the
+ *   user's map drew from.
  * - `upstream_unavailable`, or the reader raising (a future or malformed day, a contract fault) —
  *   a fault, never an absence. Both land on `failed`, which resolves to `read_failed`.
  */
@@ -413,7 +429,8 @@ interface FireReadOutcome {
   truncated: boolean;
   window: { firstDay: string; lastDay: string; servedDay: string } | null;
   failed: boolean;
-  notPublishedReason: string | null;
+  /** Set only by `not_generated`, and it names the rung this assembler read. */
+  rungNotWrittenReason: string | null;
 }
 
 function resolveFireRead(
@@ -424,7 +441,7 @@ function resolveFireRead(
     totalCount: 0,
     truncated: false,
     window: null,
-    notPublishedReason: null,
+    rungNotWrittenReason: null,
   };
   if (result.status === "rejected") return { ...nothing, failed: true };
 
@@ -454,7 +471,7 @@ function resolveFireRead(
           servedDay: read.servedDay,
         },
         failed: false,
-        notPublishedReason: null,
+        rungNotWrittenReason: null,
       };
     }
     case "absent":
@@ -463,10 +480,15 @@ function resolveFireRead(
       return {
         ...nothing,
         failed: false,
-        notPublishedReason:
+        // THE RUNG IS PART OF THE FACT. This assembler reads its own rung
+        // (`CONTEXT_MAP_ZOOM`), which is not the one the user's map drew from, so a reason that
+        // said only "no partition for 2026-08-20" would read as a statement about the day and
+        // would contradict a map that is displaying that day perfectly well from another rung.
+        rungNotWrittenReason:
           read.reason === "lane_never_written"
             ? "The fire-detections lane has never written any day."
-            : `fire-detections has no partition written for ${read.requestedDay}.`,
+            : `fire-detections has no partition written for ${read.requestedDay} at ` +
+              `${zoomTierPathSegment(resolveZoomTier(CONTEXT_MAP_ZOOM))}.`,
       };
     case "upstream_unavailable":
       return { ...nothing, failed: true };
@@ -836,16 +858,19 @@ interface SourceReadState {
   failed: boolean;
   hasObservations: boolean;
   /**
-   * Set only when the READER itself proved the day was never written, and then it wins over the
-   * coverage record.
+   * Set only when the READER itself proved that the rung IT read has no partition for the day.
    *
-   * The PostgreSQL readers cannot say this -- an empty result is all they have -- so they leave
-   * it unset and the coverage lookup decides, exactly as it always has. The Parquet readers CAN:
-   * `not_generated` is a distinct terminal state. Deferring to coverage there would let a
-   * capability row that still lists a day as published license an absence claim for a partition
-   * the warehouse never wrote, which is the one thing this whole vocabulary exists to prevent.
+   * A RUNG IS NOT A DAY, and this field used to be read as if it were. The PostgreSQL readers
+   * cannot say anything here -- an empty result is all they have -- so they leave it unset and
+   * the coverage lookup decides, exactly as it always has. The Parquet readers CAN:
+   * `not_generated` is a distinct terminal state. But the rung they answer for is this
+   * assembler's own (`CONTEXT_MAP_ZOOM`), never the one the user's map drew from, and a
+   * base-complete day whose derived rungs are still queued for re-derivation is an ordinary
+   * production state (`gap_fill.py:40-44`, `ladder_repair_days`). So this licenses
+   * `rung_not_written` -- and never a contradiction of a client that read a different rung
+   * successfully.
    */
-  notPublishedReason?: string;
+  rungNotWrittenReason?: string;
 }
 
 /**
@@ -1052,9 +1077,9 @@ export async function assembleRegionalContext(
     fireDetections: {
       failed: fireRead.failed,
       hasObservations: fireRead.cells.length > 0,
-      ...(fireRead.notPublishedReason === null
+      ...(fireRead.rungNotWrittenReason === null
         ? {}
-        : { notPublishedReason: fireRead.notPublishedReason }),
+        : { rungNotWrittenReason: fireRead.rungNotWrittenReason }),
     },
     firePerimeters: {
       failed: perimeters.status === "rejected",
@@ -1169,16 +1194,25 @@ function resolveViewedLayerReading(
   if (state.hasObservations) {
     return { ...base, outcome: "observed_on_viewed_date", reason: null };
   }
-  if (state.notPublishedReason !== undefined) {
+  const coverage = coverageOnDay(capabilityLayers, evidenceSource, row.date);
+
+  // A MISSING RUNG NEVER CONTRADICTS THE CLIENT, and it never overrides a coverage record that
+  // says the day published. The reader answered for this assembler's rung
+  // (`CONTEXT_MAP_ZOOM`), which is not the rung the browser drew from, so its `not_generated`
+  // proves only that one partition is unwritten -- the exact state `gap_fill.py`'s
+  // `ladder_repair_days` queue exists for, and one that leaves the base rung and the user's map
+  // entirely correct. Reporting it as "the warehouse published nothing" told the user their own
+  // screen was showing data that does not exist. Every other coverage state falls through to the
+  // switch below, where the coverage record -- which speaks about the DAY -- decides as it always
+  // has.
+  if (state.rungNotWrittenReason !== undefined && coverage.state === "published") {
     return {
       ...base,
-      outcome: "not_published_on_viewed_date",
-      reason: state.notPublishedReason,
-      clientClaimContradicted: row.hasDataOnDate,
+      outcome: "rung_not_written",
+      reason: state.rungNotWrittenReason,
     };
   }
 
-  const coverage = coverageOnDay(capabilityLayers, evidenceSource, row.date);
   switch (coverage.state) {
     case "published":
       return {

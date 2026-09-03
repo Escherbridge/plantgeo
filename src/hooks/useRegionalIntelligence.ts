@@ -90,8 +90,14 @@ function isRegionalIntelligenceResponse(
   );
 }
 
+/**
+ * The analysis controller: three stable callbacks and no state. It deliberately does NOT
+ * subscribe to `useRegionalIntelligenceStore` -- it reads through `getState()` at send time,
+ * and every consumer (`MapView`, `RegionalIntelligencePanel`) selects the fields it renders
+ * from the store itself. Spreading the store into this return value re-rendered both of them
+ * on every streaming token delta. See src/hooks/AGENTS.md.
+ */
 export function useRegionalIntelligence() {
-  const store = useRegionalIntelligenceStore();
   const viewedLayerDays = useViewedLayerDays();
   const capabilities = useTimeSliderStore((state) => state.capabilities);
 
@@ -327,10 +333,5 @@ export function useRegionalIntelligence() {
     );
   }, [queryLocation]);
 
-  return {
-    ...store,
-    queryLocation,
-    sendFollowUp,
-    retryLastRequest,
-  };
+  return { queryLocation, sendFollowUp, retryLastRequest };
 }

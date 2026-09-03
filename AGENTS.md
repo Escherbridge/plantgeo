@@ -56,6 +56,37 @@ applies Drizzle migrations → healthcheck `/api/ready` → traffic. There is no
 GitHub Actions pipeline. A new migration must land with a matching
 `src/lib/server/db/migration-contract.ts` update in the same commit.
 
+## Quality gates
+
+`type-check` and `lint` are the executable half of
+[`conductor/code_styleguides/typescript.md`](conductor/code_styleguides/typescript.md); the
+Docker build stage runs both, so a finding below blocks the deploy rather than accumulating.
+
+**Unused symbols are errors, in both gates.** `tsconfig.json` sets `noUnusedLocals` and
+`noUnusedParameters`; `eslint.config.mjs` sets `@typescript-eslint/no-unused-vars` to `error`
+with `argsIgnorePattern`/`varsIgnorePattern`/`caughtErrorsIgnorePattern` of `^_` and
+`ignoreRestSiblings`. The two overlap deliberately and neither subsumes the other — TypeScript
+sees unused `React` default imports and parameters inside type positions that ESLint does not,
+and ESLint covers `scripts/**`, `public/**` and other JavaScript that `tsconfig`'s `include`
+does not type-check.
+
+The convention, and the only two ways to clear a finding:
+
+- **A parameter that must exist but is not used** — a positional argument before one that is
+  used, or a signature fixed by a callback contract — is prefixed `_` (`_bbox`, `_event`). Same
+  for a caught error you deliberately ignore (`catch (_e)`, or drop the binding entirely).
+- **An unused local, import or piece of state is deleted**, not renamed. TypeScript does not
+  honour the `_` prefix for locals and neither does this convention: a `_`-prefixed local is a
+  claim that something reads it, and nothing does. Write-only React state is the common case —
+  it costs a re-render per setter call and reads to a reviewer as live state.
+
+Never clear a finding with `eslint-disable`, `@ts-expect-error` or `@ts-ignore`
+(`@typescript-eslint/ban-ts-comment` is already an error). If a symbol looks load-bearing but
+is genuinely unreferenced, that is a dead-code finding, not a lint problem: prove it out under
+the proof-before-delete contract in
+`conductor/tracks/repository_conformity_hardening_20260901/spec.md` and delete it with its
+tests.
+
 ## Data layers
 
 Every data layer must satisfy the contract in [`docs/layer-lane-standard.md`](docs/layer-lane-standard.md):

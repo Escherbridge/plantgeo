@@ -899,9 +899,10 @@ export const teamsRouter = router({
         teamId: z.string().uuid(),
         email: z.string().trim().toLowerCase().email().max(254),
         teamRole: delegableRoleSchema.default("member"),
-        // TODO: flip to `false` once the dashboard's one-time-reveal UI stops
-        // assuming the accept link is always present in the response.
-        returnLink: z.boolean().default(true),
+        // Opt-in since 2026-09-02: the accept link is a live credential, so a caller that
+        // does not render a one-time reveal must not receive one. The invitee still gets it
+        // by email either way. `dashboard/org/invitations` asks for it explicitly.
+        returnLink: z.boolean().default(false),
       })
     )
     .mutation(async ({ ctx, input }) =>
@@ -913,14 +914,22 @@ export const teamsRouter = router({
       })
     ),
 
-  /** @deprecated Consent-free membership insertion is gone; this now invites. */
+  /**
+   * @deprecated Use `createInvitation`, which takes the invitee's email directly. Consent-free
+   * membership insertion is gone; this shim only resolves `userId` to an email and then calls
+   * the same `issueInvitation`. Sunset 2026-10-01: after that date this procedure and its
+   * compatibility test in `src/__tests__/security/org-invitations.test.ts` are removed. It is
+   * retained until then only because no production consumer telemetry exists to prove that
+   * nothing outside this repository still calls it -- see the conformity `c3` proof packet.
+   */
   inviteMember: protectedProcedure
     .input(
       z.object({
         teamId: z.string().uuid(),
         userId: z.string().uuid(),
         teamRole: delegableRoleSchema.default("member"),
-        returnLink: z.boolean().default(true),
+        /** Same opt-in default as `createInvitation`; see the note there. */
+        returnLink: z.boolean().default(false),
       })
     )
     .mutation(async ({ ctx, input }) => {

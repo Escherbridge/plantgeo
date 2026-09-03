@@ -55,6 +55,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
     from datetime import date, datetime
 
+    import pyarrow as pa  # type: ignore[import-untyped]
     from duckdb import DuckDBPyConnection
 
     from agri_data_service.foundation.parquet.paths import PartitionKind
@@ -123,48 +124,23 @@ def derive_and_write_day_tiers(  # noqa: PLR0913 - one coordinate of the day bei
     day: date,
     run_id: str,
     now: Callable[[], datetime],
-    base_table: pl.DataFrame | None = None,
+    base_table: pl.DataFrame | pa.Table | None = None,
     tiers: Sequence[ZoomTier] = DERIVED_ZOOM_TIERS,
     connection: DuckDBPyConnection | None = None,
 ) -> DerivationResult:
     """Derive, write, prune and mark every coarse rung of one lane-day. Raises if any rung fails.
 
-    ALL OR NOTHING, BY RAISING. A partial ladder is the state the completion marker exists to make
-    impossible, so a rung that cannot be written must not leave the caller free to mark the base
-    day complete. The caller catches this and treats the whole day as unfinished; the next tick
-    redoes it.
-
-    `base_table` lets a caller that ALREADY holds the day's rows skip the read-back entirely. NO
-    CALLER PASSES IT TODAY and that is worth stating plainly rather than implying otherwise: every
-    path into this function runs through `gap_fill._finalize_written_day`, which receives counts
-    from a lane adapter, never a table. The parameter exists for the forward API-direct writers of
-    RUNBOOK 0.32.1 decision 1, which WILL hold the rows they just fetched.
-
-    THE MEMORY RISK IS REAL AND NAMED: the read-back materialises the whole base day at once, which
-    is precisely what `soil-survey`'s ~3,016-part streaming export avoids on the write side. At its
-    full 1.5M-delineation universe that table is gigabytes. `MAX_DERIVATION_ROWS` refuses rather
-    than swaps, so the failure is loud -- but a lane that trips it needs this function taught to
-    fold rung-by-rung over batches, which is only correct for aggregates that are associative
-    (`sum`/`min`/`max`/`all`/`any`) and NOT for `mean`.
-
-    `connection` IS THE REUSE `derivation_session` ADVERTISES, wired here rather than left as a
-    capability of the pure transform alone. A geometry lane opens a DuckDB session PER RUNG, and
-    `LOAD spatial` on each: three per geometry day, which across a thousand-day repair is three
-    thousand session opens for one session's worth of work. Passing one session through costs the
-    caller a `with` and buys exactly that. `warehouse/parquet/tiers.py::derive_tier` states what it
-    does to a connection it is handed -- it pins this module's guards for the call and restores them.
-
-    AN EMPTY `tiers` IS REFUSED. A day derived against no rungs is trivially "all rungs written",
-    which would let a caller mark a base day complete over a ladder that was never built.
+    All or nothing by raising; `base_table` skips the read-back for a caller that already holds the
+    day; `connection` is the reused DuckDB session; an empty `tiers` is refused. See `AGENTS.md` in
+    this directory, "derive_and_write_day_tiers: all four rungs or none", for each of those and for
+    the named memory risk in the read-back.
     """
     if not tiers:
         raise TierWriteError(
             f"{layer} {day.isoformat()}: a derivation was asked for NO rungs, which would report a complete ladder "
             f"over one that was never built. Ask for {tuple(DERIVED_ZOOM_TIERS)} or a subset of it"
         )
-    source = base_table if base_table is not None else pl.from_arrow(store.read_partition(layer, kind, 13, day))
-    if not isinstance(source, pl.DataFrame):  # pragma: no cover - a chunked read would be a store change
-        source = pl.DataFrame(source)
+    source = _as_frame(base_table if base_table is not None else store.read_partition(layer, kind, 13, day))
     reports: list[DerivedTierReport] = []
     notes: list[str] = []
     emptied: list[ZoomTier] = []
@@ -197,6 +173,21 @@ def derive_and_write_day_tiers(  # noqa: PLR0913 - one coordinate of the day bei
     return DerivationResult(tiers=tuple(reports), notes=tuple(notes), emptied=tuple(emptied))
 
 
+def _as_frame(table: pl.DataFrame | pa.Table) -> pl.DataFrame:
+    """Accept either shape a caller may already hold, and hand the transform a Polars frame.
+
+    The repair path reads the base rung back ITSELF -- it needs the parts' digests for the day's
+    availability claim -- and hands the Arrow table straight through, so this function is what stops
+    a second full download of the day being the price of citing what it read.
+    """
+    if isinstance(table, pl.DataFrame):
+        return table
+    frame = pl.from_arrow(table)
+    if isinstance(frame, pl.DataFrame):
+        return frame
+    return frame.to_frame()  # pragma: no cover - a one-column read would be a store change
+
+
 def _retract_tier(  # noqa: PLR0913 - one coordinate of the rung being emptied per arg
     store: ObjectStore,
     *,
@@ -207,30 +198,13 @@ def _retract_tier(  # noqa: PLR0913 - one coordinate of the rung being emptied p
     run_id: str,
     now: Callable[[], datetime],
 ) -> None:
-    """Empty one rung: clear its old claim, delete every part it held, then declare it EMPTY.
+    """Empty one rung: clear its old claim, delete every part it held, then declare it EMPTY BY NAME.
 
-    `retract_partition_tier` rather than `prune_surplus_parts(written_part_count=0)`: that prune
-    REFUSES zero on purpose, because a prune may only ever trail a completed write. Emptying a rung
-    is a different intent and has its own named operation.
-
-    THE RUNG IS MARKED, NOT LEFT SILENT, and that final write is the whole reason this function is
-    not three lines. Deleting the parts and stopping left the rung with no parts and no marker --
-    indistinguishable, through a listing, from a rung nobody ever derived. The day is base-complete,
-    so no census brought it back; it could never present the exact required-rungs ladder
-    `availability_index` demands; and it was counted `ladder_incomplete` forever on a green tick. A
-    `derived_empty` receipt says the rung finished holding nothing, which is exactly what happened.
-
-    THE MARKER IS WRITTEN LAST, after the prune has provably succeeded, for the same reason
-    `_write_tier` prunes before it marks: a receipt asserting emptiness beside surviving parts would
-    disagree with the bucket at the moment it was written. A failed prune raises and leaves the rung
-    unmarked, so the ladder census selects the day again and the next attempt redoes it.
-
-    A RUNG STILL CLAIMING A GOVERNED ABSENCE IS REFUSED rather than overwritten. The base day
-    demonstrably holds rows, so an absence claim above it is the stranded-ladder state
-    `_finalize_written_day` already knows how to retract -- and it can only do that if this raises
-    the error it watches for. Writing an empty-completion marker beside the absence marker would
-    instead leave two markers making different claims about one rung, which is the conflict the whole
-    contract exists to prevent.
+    The receipt lands at `_complete.empty.json`, its own key, so no reader has to open a marker to
+    tell an honestly-empty rung from one whose parts were deleted. Marker last, after the prune
+    provably succeeded; a rung still claiming a governed absence is REFUSED rather than overwritten,
+    because the caller heals that by retracting the claim. See `AGENTS.md` in this directory,
+    "_retract_tier: emptiness is asserted, never inferred".
     """
     if store.absence_exists(layer, kind, tier, day):
         raise GovernedAbsenceConflictError(

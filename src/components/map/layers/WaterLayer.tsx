@@ -84,8 +84,8 @@ const AGGREGATE_CELL_COLOR = "#7c3aed";
 /**
  * The one form a coarse-rung streamflow cell is drawn in.
  *
- * `permittedFormsFor("water", zoom)` offers `aggregate_cell`, `heatmap` and `cluster` in the
- * coarse and middle bands. The cell is the only one of the three the reader's envelope actually
+ * `permittedFormsForTier("water", zoomTier)` offers `aggregate_cell`, `heatmap` and `cluster` in
+ * the coarse and middle bands. The cell is the only one of the three the reader's envelope actually
  * supports: it declares an origin and a cell size, so the square is a DECLARED footprint rather
  * than a client-side re-binning. A `cluster` would be this component inventing a grouping the
  * warehouse did not perform, and a `heatmap` would smear discharge across ground between cells

@@ -14,12 +14,15 @@ from typing import TYPE_CHECKING
 import pytest
 from pydantic import TypeAdapter
 
-from agri_data_service.foundation.parquet.paths import completion_marker_path
+from agri_data_service.foundation.parquet.paths import (
+    completion_marker_path,
+    derived_empty_completion_marker_path,
+)
 from agri_data_service.parquet_ops import serving
 from agri_data_service.parquet_ops.faults import ServingRefusalError
 from agri_data_service.parquet_ops.request_params import ReadScope
 from agri_data_service.parquet_ops.serving import resolve_day, resolve_release, resolve_window
-from agri_data_service.parquet_ops.wire import DayNotWritten, PublishedDay, render_row, render_window
+from agri_data_service.parquet_ops.wire import PublishedDay, render_row, render_window
 from tests.contract.wire_contract import WireEnvelope, WireWindow
 from tests.parquet_ops.fakes import FakeListing, FakeRowReader, instant
 
@@ -102,24 +105,41 @@ def test_a_gap_day_inside_a_written_lane_serializes_as_day_not_written() -> None
     assert envelope.to_wire() == fixture("day_not_written.json")
 
 
-def test_a_derived_rung_holding_only_a_completion_marker_is_published_and_empty() -> None:
+def test_a_derived_rung_holding_only_the_empty_receipt_is_published_and_empty() -> None:
     """A rung that generalised every base row away is PUBLISHED, holding nothing at this resolution.
 
-    `derivation._retract_tier` leaves exactly this shape -- no parts, a `derived_empty` receipt -- and
-    the day it belongs to holds rows at z13. Serving it `day_not_written` would tell a z0 caller the
-    warehouse never wrote a day it published. The identical objects at the BASE rung mean the
-    opposite (parts deleted out from under a marker), so that reading must not change with them.
+    `derivation._retract_tier` leaves exactly this shape -- no parts, an object named
+    `_complete.empty.json` -- and the day it belongs to holds rows at z13. Serving it
+    `day_not_written` would tell a z0 caller the warehouse never wrote a day it published.
+    """
+    day = date(2026, 8, 9)
+    listing = FakeListing()
+    listing.keys.add(derived_empty_completion_marker_path("signal", "observed", 0, day))
+    listing.write_day("signal", "observed", 13, day)
+
+    coarse = resolve_day(listing, FakeRowReader(), scope=COARSE_SIGNAL_SCOPE, day=day)
+
+    assert coarse == PublishedDay(requested_day=day, served_day=day, rows=(), truncated=False)
+
+
+def test_a_lost_rung_is_refused_out_loud_rather_than_served_as_published_empty() -> None:
+    """DO NOT DELETE. This is the receipt-blind read the sibling key name exists to close.
+
+    An ORDINARY completion marker with no parts beside it is a rung whose parts were deleted out from
+    under it. Until the empty receipt got its own name this was indistinguishable from an honestly
+    empty rung, and serving guessed `published, zero rows` -- a stable lie, because the day then looks
+    covered at that zoom forever and no census brings it back. It is now `incomplete` at EVERY rung:
+    refused to the caller, and re-derived by the ladder census.
     """
     day = date(2026, 8, 9)
     listing = FakeListing()
     listing.keys.add(completion_marker_path("signal", "observed", 0, day))
     listing.keys.add(completion_marker_path("signal", "observed", 13, day))
 
-    coarse = resolve_day(listing, FakeRowReader(), scope=COARSE_SIGNAL_SCOPE, day=day)
-    base = resolve_day(listing, FakeRowReader(), scope=SIGNAL_SCOPE, day=day)
-
-    assert coarse == PublishedDay(requested_day=day, served_day=day, rows=(), truncated=False)
-    assert base == DayNotWritten(requested_day=day)
+    with pytest.raises(ServingRefusalError):
+        resolve_day(listing, FakeRowReader(), scope=COARSE_SIGNAL_SCOPE, day=day)
+    with pytest.raises(ServingRefusalError):
+        resolve_day(listing, FakeRowReader(), scope=SIGNAL_SCOPE, day=day)
 
 
 def test_a_tier_that_has_never_been_written_is_never_reported_as_a_gap() -> None:

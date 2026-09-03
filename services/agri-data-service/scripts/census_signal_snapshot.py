@@ -172,11 +172,13 @@ def main() -> int:
     listed_ledgers = sum(1 for key in ledger_inventory if key.endswith(".json"))
 
     ledger_summaries = manifest.get("month_ledgers")
-    summary_count = len(ledger_summaries) if isinstance(ledger_summaries, list) else None
+    if not isinstance(ledger_summaries, list):
+        raise RuntimeError("pinned manifest has no month_ledgers list")
+    summary_count = len(ledger_summaries)
     if listed_ledgers != 424 or summary_count != 424:
         raise RuntimeError(f"ledger census drift: listed={listed_ledgers}, manifest={summary_count}, expected=424")
 
-    report = {
+    report: dict[str, object] = {
         "status": "pinned",
         "snapshot_id": SNAPSHOT_ID,
         "manifest_key": MANIFEST_KEY,
@@ -193,11 +195,12 @@ def main() -> int:
         "listed_ledger_count": listed_ledgers,
     }
     if arguments.destination_status:
-        report["destination_status"] = {}
+        destination_status: dict[str, dict[str, object]] = {}
+        report["destination_status"] = destination_status
         for product, (lane, _expected_bytes) in ERA5_SOIL_LANES.items():
             inventory = list_objects(f"layer={lane}/")
             metadata_root = f"layer={lane}/_breakdown/snapshot={SNAPSHOT_ID}"
-            report["destination_status"][product] = {
+            destination_status[product] = {
                 "lane": lane,
                 "object_count": len(inventory),
                 "checkpoint_count": sum(
@@ -248,7 +251,8 @@ def main() -> int:
             table = pq.read_table(io.BytesIO(payload))
             if table.num_rows != int(metadata["row_count"]):
                 raise RuntimeError(f"{name} dimension row count drifted")
-            return table.to_pylist()
+            dimension: list[dict[str, Any]] = table.to_pylist()
+            return dimension
 
         data_sources = dimension_rows("data_source")
         source_releases = dimension_rows("source_release")
@@ -420,7 +424,7 @@ def main() -> int:
                 }
             )
 
-        report["full_census"] = {
+        full_census: dict[str, object] = {
             "bounded_ledger_workers": arguments.workers,
             "verified_ledger_count": len(verified),
             "ledger_receipts_sha256": hashlib.sha256("\n".join(sorted(ledger_receipts)).encode()).hexdigest(),
@@ -440,6 +444,7 @@ def main() -> int:
             "data_sources": source_contracts,
             "populations": population_rows,
         }
+        report["full_census"] = full_census
         if arguments.dedup_product:
             product = arguments.dedup_product
             signal_name, expected_physical_rows = ERA5_SOIL_PRODUCTS[product]
@@ -517,7 +522,7 @@ def main() -> int:
                 day_counts.update(item["day_counts"])
             if physical_rows != expected_physical_rows:
                 raise RuntimeError(f"{product} physical rows={physical_rows}, expected={expected_physical_rows}")
-            report["full_census"]["dedup_census"] = {
+            full_census["dedup_census"] = {
                 "product": product,
                 "physical_rows": physical_rows,
                 "eligible_rows": eligible_rows,
@@ -638,7 +643,7 @@ def main() -> int:
                 or selected_bytes + excluded_bytes != int(manifest["fact_byte_count"])
             ):
                 raise RuntimeError("three-lane plus outside-scope whole-snapshot conservation failed")
-            report["full_census"]["lane_verification"] = {
+            full_census["lane_verification"] = {
                 "status": "conserved",
                 "lanes": lane_verifications,
                 "pairwise_source_part_intersections": intersections,

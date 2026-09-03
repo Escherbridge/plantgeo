@@ -96,6 +96,7 @@ from agri_data_service.foundation.parquet.lane_contract import (
 from agri_data_service.foundation.parquet.paths import (
     UNFILLED_PARTITION_STATUSES,
     completed_partition_days,
+    completed_rung_days,
     partition_day_statuses,
     try_parse_absence_marker_path,
     try_parse_partition_path,
@@ -103,18 +104,23 @@ from agri_data_service.foundation.parquet.paths import (
 from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
 from agri_data_service.pipeline.parquet.availability_extension import (
     POSTGRES_DAY_EXPORT_ORIGIN,
+    AvailabilityExtensionOutcome,
     AvailabilityExtensionTally,
     FinalizedLaneDay,
     LaneDaySource,
+    RepairedBaseRung,
+    claim_repaired_lane_day,
     extend_availability_for_lane_day,
     retry_pending_availability,
 )
+from agri_data_service.pipeline.parquet.availability_index import EvidenceReceipt
 from agri_data_service.pipeline.parquet.derivation import DerivationResult, derive_and_write_day_tiers
 from agri_data_service.pipeline.parquet.lane_ceiling import allowed_source_ceiling
 from agri_data_service.pipeline.parquet.objectstore import (
     EmptyPartitionError,
     GovernedAbsenceConflictError,
     SurplusPruneResult,
+    availability_lane_root,
     oldest_export_instant,
 )
 from agri_data_service.warehouse.schemas.vegetation import VEGETATION_PLANE_STREAM
@@ -124,6 +130,7 @@ if TYPE_CHECKING:
     from contextlib import AbstractAsyncContextManager
     from datetime import date
 
+    import pyarrow as pa  # type: ignore[import-untyped]
     from duckdb import DuckDBPyConnection
     from sqlalchemy.ext.asyncio import AsyncSession
     from sqlalchemy.sql.elements import TextClause
@@ -137,7 +144,7 @@ if TYPE_CHECKING:
     from agri_data_service.foundation.parquet.zoom import ZoomTier
     from agri_data_service.pipeline.parquet.availability_index import AvailabilityStorage
     from agri_data_service.pipeline.parquet.lane_registry import LaneRegistration
-    from agri_data_service.pipeline.parquet.objectstore import ObjectStore, WrittenObjectLedger
+    from agri_data_service.pipeline.parquet.objectstore import ObjectStore, PartitionRead, WrittenObjectLedger
 
     # One lane-day's mutual exclusion, injectable so a test need not fake Postgres advisory
     # functions. Yields whether the lock was granted, and releases on exit; the real one is
@@ -264,6 +271,10 @@ class LaneGapCensus:
     # a queue apart from `missing_days` and are counted apart in every report.
     ladder_repair_days: tuple[date, ...] = ()
     ladder_truncated: bool = False
+    #: Ladder-incomplete days outside this tick's ladder scope. They owe a re-index that only
+    #: `drain --selection ladder` will deliver, so they are reported as a number rather than as the
+    #: silence an empty repair queue would otherwise be read as.
+    ladder_out_of_scope_days: int = 0
     #: Set when the derived-rung listing itself failed. The base census still stands; only the ladder
     #: half is unknown, and reporting an empty repair set for it would read as "the ladder is whole".
     ladder_error: str | None = None
@@ -313,6 +324,7 @@ class LaneGapCensus:
             "oldest_missing_day": None if not self.missing_days else self.missing_days[-1].isoformat(),
             "ladder_repair_days": len(self.ladder_repair_days),
             "ladder_truncated": self.ladder_truncated,
+            "ladder_out_of_scope_days": self.ladder_out_of_scope_days,
             "newest_ladder_repair_days": [
                 day.isoformat() for day in self.ladder_repair_days[:GAP_CENSUS_REPORT_DAY_SAMPLE]
             ],
@@ -502,23 +514,16 @@ def derived_rung_completions(
     kind: PartitionKind = GAP_FILL_PARTITION_KIND,
     tiers: Sequence[ZoomTier] = _DERIVED_GAP_FILL_TIERS,
 ) -> dict[ZoomTier, set[date]]:
-    """Return, per DERIVED rung, the days that rung asserts it finished. One listing per rung, no reads.
+    """Return, per DERIVED rung, the days that rung holds as `data`. One listing per rung, no reads.
 
     THE COST, STATED: exactly `len(tiers)` extra `list_partition_keys` calls per lane per census --
-    three today -- and not one object GET. Nothing else scales with the size of the backlog: the days
-    themselves are set arithmetic over keys already in hand. A coarse rung holds far fewer parts than
-    the base rung it came from (typically one per day), so those three listings together are smaller
-    than the base listing the census already pays for.
+    three today -- and not one object GET. See `AGENTS.md` in this directory, "What one ladder census
+    costs per tick".
 
-    A RUNG COUNTS AS FINISHED ON ITS MARKER ALONE, deliberately, and the same asymmetry
-    `drain.build_lane_ladder_census` documents applies for the same reasons: `_write_tier` puts its
-    parts before its marker and `_retract_tier` clears its marker before deleting parts, so a marked
-    rung is either fully written or honestly empty. That second case is the whole point -- a
-    derived-empty receipt has no parts BY CONSTRUCTION, and a rule demanding parts here would
-    re-select such a day on every tick forever.
-
-    Asked through `completed_partition_days` rather than re-derived, because that is the one
-    primitive every reader of this warehouse shares for "did this export assert that it finished".
+    A RUNG COUNTS AS FINISHED WHEN ITS RECEIPT MATCHES WHAT IT HOLDS -- parts under an ordinary
+    marker, or nothing under a derived-empty one. `completed_rung_days` rather than
+    `completed_partition_days`, because a marker whose parts were deleted out from under it is a LOST
+    rung: counting it finished is what made such a rung unrepairable by any tick.
     """
     if not tiers:
         raise GapFillContractError(
@@ -526,7 +531,7 @@ def derived_rung_completions(
             f"{tuple(_DERIVED_GAP_FILL_TIERS)} or a subset of it"
         )
     return {
-        tier: completed_partition_days(store.list_partition_keys(layer, kind, tier), layer=layer, kind=kind, zoom=tier)
+        tier: completed_rung_days(store.list_partition_keys(layer, kind, tier), layer=layer, kind=kind, zoom=tier)
         for tier in tiers
     }
 
@@ -560,43 +565,64 @@ def _base_published_days(keys: Sequence[str], *, layer: str, zoom: ZoomTier) -> 
     return {day for day, status in statuses.items() if status == "data"}
 
 
-def _ladder_repair_census(
+@dataclass(frozen=True, slots=True)
+class _LadderRepairCensus:
+    """One lane's ladder half: the days this TICK may repair, and the ones only the bulk drain reaches."""
+
+    days: tuple[date, ...]
+    truncated: bool = False
+    error: str | None = None
+    #: Ladder-incomplete days OUTSIDE this tick's scope. Nothing in an hourly run will select them, so
+    #: they are reported as `reindex_owed` rather than left as a silence a green tick reads over.
+    out_of_scope: int = 0
+
+
+def _ladder_repair_census(  # noqa: PLR0913 - one census coordinate per arg, none foldable
     lane: LaneRegistration,
     store: ObjectStore,
     *,
     base_keys: Sequence[str],
     zoom: ZoomTier,
     max_days_per_lane: int | None,
-) -> tuple[tuple[date, ...], bool, str | None]:
-    """Return `(repair days newest-first, truncated, error)` for one lane's derived rungs.
+    scope: tuple[date, date] | None = None,
+) -> _LadderRepairCensus:
+    """Census one lane's derived rungs, newest first, over `scope` when the caller bounds one.
 
-    NEWEST-FIRST, matching `missing_days` and for the same reason: a repair is most valuable on the
-    day a user is looking at. The bulk drain reverses it -- see `drain.plan_ladder_drain` -- because
-    it is building a history rather than serving one.
+    THE HOURLY TICK IS SCOPED AND THE BULK DRAIN IS NOT. `scope` is the lane's own settled window
+    unioned with the days a direct writer owns past it, which is the whole range an hourly run is
+    responsible for; the whole-bucket walk stays in `drain --selection ladder`. Days outside it are
+    counted, never dropped silently. See `AGENTS.md`, "What one ladder census costs per tick".
 
-    A FAILURE IS REPORTED, NEVER SWALLOWED INTO AN EMPTY SET, and the guard covers the day-span walk
-    as well as the rung listings: an empty repair set means "the ladder is whole", which is the one
-    thing an unreadable bucket cannot say. It is scoped to the LADDER half -- the base census that
-    produced `base_keys` still stands, and failing that too would stop a lane's exports over a
-    question about its coarse rungs.
+    A FAILURE IS REPORTED, NEVER SWALLOWED INTO AN EMPTY SET: an empty repair set means "the ladder
+    is whole", which is the one thing an unreadable bucket cannot say. It is scoped to the LADDER
+    half -- the base census that produced `base_keys` still stands.
     """
     try:
         base_data_days = _base_published_days(base_keys, layer=lane.slug, zoom=zoom)
         if not base_data_days:
-            return ((), False, None)
+            return _LadderRepairCensus(days=())
         completions = derived_rung_completions(store, layer=lane.slug, kind=GAP_FILL_PARTITION_KIND)
     except Exception as error:  # per-lane isolation: an unreadable rung listing must not end the census
-        return ((), False, f"censusing {lane.slug!r} derived rungs failed: {type(error).__name__}: {error}")
-    # INTERSECTED, NEVER UNIONED: a day is ladder-complete only when EVERY rung marked it, so the
+        return _LadderRepairCensus(
+            days=(), error=f"censusing {lane.slug!r} derived rungs failed: {type(error).__name__}: {error}"
+        )
+    # INTERSECTED, NEVER UNIONED: a day is ladder-complete only when EVERY rung holds it, so the
     # complete set is the intersection and everything else owes a re-derivation. A union would call a
     # day whole because one of its three rungs landed.
     complete = set(base_data_days)
     for marked in completions.values():
         complete &= marked
-    ordered = tuple(sorted(base_data_days - complete, reverse=True))
+    incomplete = base_data_days - complete
+    in_scope = incomplete if scope is None else {day for day in incomplete if scope[0] <= day <= scope[1]}
+    ordered = tuple(sorted(in_scope, reverse=True))
+    out_of_scope = len(incomplete) - len(in_scope)
     if max_days_per_lane is None:
-        return (ordered, False, None)
-    return (ordered[:max_days_per_lane], len(ordered) > max_days_per_lane, None)
+        return _LadderRepairCensus(days=ordered, out_of_scope=out_of_scope)
+    return _LadderRepairCensus(
+        days=ordered[:max_days_per_lane],
+        truncated=len(ordered) > max_days_per_lane,
+        out_of_scope=out_of_scope,
+    )
 
 
 def _static_lane_census(
@@ -693,7 +719,7 @@ def _static_lane_census(
     # parts, which is the one correction a static lane may take without inventing a version. UNCAPPED
     # because a reference set holds versions, not a calendar: capping would defer a rung for a lane
     # that has three days in the bucket.
-    repairs, ladder_truncated, ladder_error = _ladder_repair_census(
+    ladder = _ladder_repair_census(
         lane,
         store,
         base_keys=tuple(entry.relative_path for entry in listed),
@@ -706,9 +732,10 @@ def _static_lane_census(
         first_day=version_day,
         last_day=version_day,
         data_days=len(complete_days),
-        ladder_repair_days=repairs,
-        ladder_truncated=ladder_truncated,
-        ladder_error=ladder_error,
+        ladder_repair_days=ladder.days,
+        ladder_truncated=ladder.truncated,
+        ladder_error=ladder.error,
+        ladder_out_of_scope_days=ladder.out_of_scope,
         # Both arithmetics run over `part_days`, not `complete_days`: a governed absence sitting
         # beside ANY data is the contradiction worth escalating, whether or not that data finished,
         # and scoring it against the completed set alone would quietly downgrade it to `absent`.
@@ -764,14 +791,21 @@ def _series_lane_census(
         if status in UNFILLED_PARTITION_STATUSES
         and (status != "missing" or (day - lane.history_floor).days % lane.cadence_days == 0)
     )
-    # THE LADDER IS CENSUSED OVER THE WHOLE BUCKET, NOT OVER THE SETTLED WINDOW, and the difference
-    # is a whole class of day. `lane_window` clamps `last_day` to `writer_ceiling`, so every day a
-    # DIRECT writer owns sits outside it -- correct for exports, which this driver must not attempt
-    # there, and wrong for rungs, which are derived from published base parts and invoke no writer at
-    # all. Scoped to the window, those days could never be repaired by any tick. It costs no extra
-    # request: the base keys are the ones already listed above.
-    repairs, ladder_truncated, ladder_error = _ladder_repair_census(
-        lane, store, base_keys=base_keys, zoom=zoom, max_days_per_lane=max_days_per_lane
+    # THE LADDER SCOPE IS THE SETTLED WINDOW UNIONED WITH THE DIRECT-WRITER TAIL, not the settled
+    # window alone and not the whole bucket. `lane_window` clamps `last_day` to `writer_ceiling`, so
+    # every day a DIRECT writer owns sits outside it -- correct for exports, which this driver must
+    # not attempt there, and wrong for rungs, which are derived from published base parts and invoke
+    # no writer at all. Bounding it at `today` keeps an hourly tick responsible for the range it can
+    # actually serve while `drain --selection ladder` still walks the whole bucket; whatever falls
+    # outside is counted as `reindex_owed` rather than dropped. It costs no extra request: the base
+    # keys are the ones already listed above.
+    ladder = _ladder_repair_census(
+        lane,
+        store,
+        base_keys=base_keys,
+        zoom=zoom,
+        max_days_per_lane=max_days_per_lane,
+        scope=(lane.history_floor, max(last_day, today)),
     )
     return _census_shell(
         lane,
@@ -779,9 +813,10 @@ def _series_lane_census(
         first_day=first_day,
         last_day=last_day,
         data_days=sum(1 for status in statuses.values() if status == "data"),
-        ladder_repair_days=repairs,
-        ladder_truncated=ladder_truncated,
-        ladder_error=ladder_error,
+        ladder_repair_days=ladder.days,
+        ladder_truncated=ladder.truncated,
+        ladder_error=ladder.error,
+        ladder_out_of_scope_days=ladder.out_of_scope,
         absent_days=sum(1 for status in statuses.values() if status == "absent"),
         conflict_days=sum(1 for status in statuses.values() if status == "conflict"),
         incomplete_days=sum(1 for status in statuses.values() if status == "incomplete"),
@@ -813,15 +848,15 @@ def build_lane_census(
     THE EXPORT TIER IS `GAP_FILL_ZOOM_TIER` AND THE LADDER IS CENSUSED BESIDE IT. `zoom`, and every
     count keyed to it, still describes the base rung alone -- this driver can only EXPORT the tier its
     lane adapters produce. What the row adds is `ladder_repair_days`: base-complete days whose derived
-    rungs are not all marked, which owe a re-derivation rather than an export. Keeping them in a
+    rungs do not all hold them, which owe a re-derivation rather than an export. Keeping them in a
     separate field rather than folding them into `missing_days` is what stops a repair from ever being
     answered with a Postgres export, and what stops the two counts from meaning the same thing.
 
     THE TWO FIELDS ARE SCOPED DIFFERENTLY ON PURPOSE. `missing_days` is over the settled window,
-    which `lane_window` clamps to `writer_ceiling`; `ladder_repair_days` is over every day the base
-    listing shows as published. A direct writer's days are outside the window and must stay outside
-    the EXPORT queue -- but their coarse rungs are derived from base parts this driver already reads,
-    so leaving them out of the repair queue would make them unrepairable by any tick.
+    which `lane_window` clamps to `writer_ceiling`; `ladder_repair_days` is over that window UNIONED
+    with the days a direct writer owns past the ceiling, and whatever falls outside is counted in
+    `ladder_out_of_scope_days` rather than dropped. See `AGENTS.md`, "What one ladder census costs
+    per tick".
     """
     if nature_has_time_axis(lane.nature):
         return _series_lane_census(
@@ -862,6 +897,9 @@ def gap_census_report(census: Sequence[LaneGapCensus]) -> dict[str, object]:
         # The days that are PUBLISHED and invisible below z13. Reported at the top level because a
         # census that only totalled `missing_days` is exactly how 1,040 of them stayed hidden.
         "ladder_repair_days": sum(len(entry.ladder_repair_days) for entry in census),
+        # The ladder-incomplete days an HOURLY tick will never select, because they sit outside the
+        # window it is responsible for. Only `drain --selection ladder` reaches them.
+        "ladder_out_of_scope_days": sum(entry.ladder_out_of_scope_days for entry in census),
         "lanes_with_ladder_repairs": [entry.slug for entry in census if entry.ladder_repair_days],
         "lanes_with_ladder_errors": [entry.slug for entry in census if entry.ladder_error is not None],
         # Surfaced by name, not just summed: a lane accumulating unfinished days every tick is
@@ -1027,6 +1065,11 @@ def _record_repair_outcome(entry: _LaneProgress, result: LadderRepairOutcome) ->
         entry.repaired += 1
     elif result.outcome == "contended":
         entry.contended += 1
+    if result.availability is not None:
+        # A repaired day's index verdict counts exactly as an exported day's does. Without this the
+        # `retry_claim_failed` a failed claim reports would live only inside a detail string, which
+        # is the shape that let repaired days leave the generation silently in the first place.
+        entry.availability.record(result.availability)
     if result.detail is not None:
         entry.detail = _append_note(entry.detail, result.detail)
 
@@ -1034,6 +1077,9 @@ def _record_repair_outcome(entry: _LaneProgress, result: LadderRepairOutcome) ->
 def _seeded_progress(census: LaneGapCensus, *, today: date) -> _LaneProgress:
     """Open one lane's tally, already stopped when its census settled the question before any export."""
     progress = _LaneProgress(census=census, pending=list(census.missing_days), repairs=list(census.ladder_repair_days))
+    # SEEDED, NOT ACCUMULATED. This is a standing gauge: the days whose ladder no tick of this driver
+    # will reach, stated once per run from the census that measured them.
+    progress.availability.reindex_owed = census.ladder_out_of_scope_days
     if census.error is not None:
         progress.stopped, progress.outcome, progress.detail = True, "raised", census.error
     elif census.static_state == "current":
@@ -1586,18 +1632,13 @@ def no_derived_tiers(  # noqa: PLR0913 - the signature IS the seam; it must matc
     run_id: str,  # noqa: ARG001
     now: Callable[[], datetime],  # noqa: ARG001
     connection: DuckDBPyConnection | None = None,  # noqa: ARG001
+    base_table: object | None = None,  # noqa: ARG001
 ) -> DerivationResult:
     """A tier derivation that writes nothing: the seam a test injects when the ladder is not the subject.
 
-    It exists for the same reason `unlocked_lane_day` does, one contract down. Deriving the coarse
-    rungs READS THE BASE RUNG BACK from the store, so with the real deriver every stub lane in a
-    driver test would have to write a schema-conforming part file before its day could close --
-    turning every test about budgets, watermarks and per-lane isolation into a test about Parquet
-    schemas. Tests that ARE about the ladder inject the real one, or call it directly.
-
-    IT TAKES `connection` BECAUSE THE REPAIR PATH PASSES ONE. `repair_one_lane_day` hands its DuckDB
-    session through to whatever deriver it was given, so a seam that did not accept the argument would
-    raise `TypeError` inside the repair's own guard and report every ladder repair as a failed one.
+    It accepts every optional argument the real deriver does -- `connection` and `base_table` are
+    both passed by `repair_one_lane_day` -- because a seam that refused one would raise `TypeError`
+    inside the repair's own guard and report every ladder repair as a failed one. See `AGENTS.md`.
     """
     return DerivationResult(tiers=(), notes=())
 
@@ -1809,6 +1850,9 @@ class LadderRepairOutcome:
     written_bytes: int
     detail: str | None
     emptied_tiers: tuple[ZoomTier, ...] = ()
+    #: What the availability step made of the repaired day. `None` when no availability storage was
+    #: wired; otherwise the verdict a driver folds into its lane tally, exactly as an export's is.
+    availability: AvailabilityExtensionOutcome | None = None
 
 
 async def repair_one_lane_day(  # noqa: PLR0913 - one caller-supplied coordinate per arg, none foldable
@@ -1820,49 +1864,26 @@ async def repair_one_lane_day(  # noqa: PLR0913 - one caller-supplied coordinate
     run_id: str,
     now: Callable[[], datetime],
     lane_day_lock: LaneDayLock,
+    today: date | None = None,
     vegetation_publication_barrier: VegetationPublicationBarrier = try_postgres_vegetation_publication_barrier,
     derive_tiers: TierDeriver = derive_and_write_day_tiers,
     connection: DuckDBPyConnection | None = None,
+    availability_storage: AvailabilityStorage | None = None,
 ) -> LadderRepairOutcome:
-    """Write one already-published day's coarse rungs from its base rung, under the lane-day lock.
+    """Re-derive one published day's coarse rungs from its base rung, then CLAIM the day for the index.
 
-    PUBLIC, AND THE BULK DRAIN'S LADDER SELECTION CALLS EXACTLY THIS. `drain._derive_one_day` used to
-    hold its own copy of this dance; two copies of "what a re-derivation is" is precisely the drift
-    `fill_one_lane_day`'s docstring refuses one contract over, and the drain and the hourly tick now
-    repair a rung the same way or not at all.
-
-    THE SAME LOCK KEY AS THE EXPORT PATH. `fill_one_lane_day` holds `_lane_day_lock_key(lane, day)`
-    across export, prune, rungs and marker precisely so no second writer can interleave with it --
-    and this IS a second writer of three of those four objects. A repair that took a different key,
-    or no key, would race the hourly export on exactly the days it is repairing: both derivations
-    would prune and both would mark, and the loser's `part_count` would describe a rung the winner
-    had already replaced.
-
-    NO STATEMENT TIMEOUT AND NO EXPORT. The only statement this path issues is the advisory lock
-    itself; the base rows come from the object store. That is what makes a repair cheap enough to run
-    over a thousand days inside an hourly tick: `signal` measured 151 s for ONE cold day of its
-    Postgres export, and none of those seconds buy anything when the base rung is already correct.
-
-    A FAILED DERIVATION CHANGES NOTHING, which is what makes the repair safe to re-run. The base rung
-    and its marker are never touched here, so a day that raises is simply still ladder-incomplete and
-    the next census selects it again.
-
-    THE LOCK ITSELF IS INSIDE THE GUARD, not only the derivation, and that is the difference between
-    a recorded failure and a lost run. `pg_try_advisory_lock` is a real statement against a real
-    session: a connection reset, a statement timeout or a session already in a failed transaction
-    raises THERE, before the derivation is reached, and an unguarded `async with` would carry that
-    out of the whole walk -- every lane's tally, not just this day's.
-
-    THE SESSION IS ROLLED BACK ON EVERY PATH, exactly as `_export_one_day` does. SQLAlchemy 2.0's
-    `autobegin` means the lock statement OPENS a transaction this path would otherwise never end;
-    over a multi-hour repair that is one backend idle-in-transaction from the first day to the last.
-    The advisory lock is session-scoped, so the rollback does not release it.
+    THE CLAIM IS NOT OPTIONAL BOOKKEEPING. A repair rewrites three of the day's four rungs, so their
+    receipts change; without a claim the day stays complete at every rung, is never re-selected, and
+    sits outside the availability generation for good while the tick reports `repaired: 1`. See
+    `AGENTS.md`, "A repaired day joins the index through a claim", for the lock, the read-back, the
+    stranded-absence retraction and the session discipline.
     """
     barrier = (
         vegetation_publication_barrier
         if lane.slug == VEGETATION_PLANE_STREAM
         else unlocked_vegetation_publication_barrier
     )
+    notes: list[str] = []
     try:
         async with barrier(session) as publication_granted:
             if publication_granted is False:
@@ -1883,14 +1904,45 @@ async def repair_one_lane_day(  # noqa: PLR0913 - one caller-supplied coordinate
                         f"{day.isoformat()}: another run holds this lane-day, so its coarse rungs were left alone "
                         "rather than derived beside a base rung being rewritten; a later turn will take it",
                     )
-                derived = derive_tiers(
+                # ONE READ OF THE BASE RUNG SERVES BOTH HALVES: the derivation gets the rows and the
+                # claim gets the key and digest of every part it cites. Letting the deriver read the
+                # day again, or hashing the parts afterwards, would download it twice.
+                #
+                # ONLY WHEN A CLAIM IS OWED. With no availability storage wired there is nothing to
+                # cite, so the read stays where it always was -- inside the deriver -- and this path
+                # costs exactly what it did before.
+                base = (
+                    store.read_partition_with_receipts(lane.slug, GAP_FILL_PARTITION_KIND, GAP_FILL_ZOOM_TIER, day)
+                    if availability_storage is not None
+                    else None
+                )
+                with store.recording_written_objects() as written:
+                    derived = _derive_repaired_rungs(
+                        store,
+                        lane,
+                        day=day,
+                        run_id=run_id,
+                        now=now,
+                        derive_tiers=derive_tiers,
+                        connection=connection,
+                        base_table=None if base is None else base.table,
+                        notes=notes,
+                    )
+                # THE CLAIM IS WRITTEN UNDER THE SAME LOCK THE RUNGS WERE, exactly as the export path
+                # extends availability inside its own lock. Written after the lock released, a
+                # concurrent re-export could replace the base parts between the derivation and the
+                # claim, and the claim would then name receipts that no longer exist -- a day that
+                # spins on verification failure every tick instead of joining the index.
+                extension = _claim_repaired_day(
                     store,
-                    layer=lane.slug,
-                    kind=GAP_FILL_PARTITION_KIND,
+                    lane,
                     day=day,
                     run_id=run_id,
                     now=now,
-                    connection=connection,
+                    today=today,
+                    base=base,
+                    written=written,
+                    availability_storage=availability_storage,
                 )
     except Exception as error:
         return LadderRepairOutcome(
@@ -1898,19 +1950,24 @@ async def repair_one_lane_day(  # noqa: PLR0913 - one caller-supplied coordinate
             0,
             0,
             0,
-            f"{day.isoformat()}: the coarse rungs could not be derived from the published base rung, so this "
-            f"day stays visible only at z{GAP_FILL_ZOOM_TIER}. A base rung that no longer matches its lane's "
-            f"schema reads exactly like this and needs retracting and re-exporting, not re-deriving: "
-            f"{type(error).__name__}: {error}",
+            _append_note(
+                "; ".join(notes) or None,
+                f"{day.isoformat()}: the coarse rungs could not be derived from the published base rung, so this "
+                f"day stays visible only at z{GAP_FILL_ZOOM_TIER}. A base rung that no longer matches its lane's "
+                f"schema reads exactly like this and needs retracting and re-exporting, not re-deriving: "
+                f"{type(error).__name__}: {error}",
+            ),
         )
     finally:
         await _end_lane_day_transaction(session)
-    notes = list(derived.notes)
+    notes.extend(derived.notes)
     if derived.tiers:
         rungs = ", ".join(
             f"z{report.tier} {report.row_count} rows in {report.part_count} part(s)" for report in derived.tiers
         )
         notes.append(f"{day.isoformat()}: derived {rungs}")
+    if extension is not None:
+        notes.append(extension.note)
     return LadderRepairOutcome(
         "written",
         derived.part_count,
@@ -1918,7 +1975,109 @@ async def repair_one_lane_day(  # noqa: PLR0913 - one caller-supplied coordinate
         derived.byte_count,
         "; ".join(notes) or None,
         emptied_tiers=tuple(derived.emptied),
+        availability=extension,
     )
+
+
+def _derive_repaired_rungs(  # noqa: PLR0913 - one coordinate of the day being re-derived per arg
+    store: ObjectStore,
+    lane: LaneRegistration,
+    *,
+    day: date,
+    run_id: str,
+    now: Callable[[], datetime],
+    derive_tiers: TierDeriver,
+    connection: DuckDBPyConnection | None,
+    base_table: pa.Table | None,
+    notes: list[str],
+) -> DerivationResult:
+    """Derive the coarse rungs, healing a STRANDED coarse absence once before giving up on the day.
+
+    The base rung demonstrably holds rows -- the ladder census selected this day because it does --
+    so a coarse rung still claiming the day is governed as absent is the same stranded state
+    `_finalize_written_day` retracts on the export path, and it is retracted the same way here. Left
+    to the blanket guard it returned `raised` on every tick forever, because a direct-writer day
+    never reaches the export path that knows how to heal it. Exactly ONE retry: a second conflict is
+    a claim that could not be cleared, which is an admin's problem and not a loop's.
+    """
+    try:
+        return derive_tiers(
+            store,
+            layer=lane.slug,
+            kind=GAP_FILL_PARTITION_KIND,
+            day=day,
+            run_id=run_id,
+            now=now,
+            connection=connection,
+            base_table=base_table,
+        )
+    except GovernedAbsenceConflictError as stranded:
+        notes.append(_retract_derived_absences(store, lane, day=day, conflict=stranded))
+        return derive_tiers(
+            store,
+            layer=lane.slug,
+            kind=GAP_FILL_PARTITION_KIND,
+            day=day,
+            run_id=run_id,
+            now=now,
+            connection=connection,
+            base_table=base_table,
+        )
+
+
+def _claim_repaired_day(  # noqa: PLR0913 - one coordinate of the repaired day per arg
+    store: ObjectStore,
+    lane: LaneRegistration,
+    *,
+    day: date,
+    run_id: str,
+    now: Callable[[], datetime],
+    today: date | None,
+    base: PartitionRead | None,
+    written: WrittenObjectLedger,
+    availability_storage: AvailabilityStorage | None,
+) -> AvailabilityExtensionOutcome | None:
+    """Record that the repaired day owes a re-index, or say why it could not be claimed. Never raises."""
+    if availability_storage is None or base is None:
+        return None
+    try:
+        marker = store.read_completion_receipt(lane.slug, GAP_FILL_PARTITION_KIND, GAP_FILL_ZOOM_TIER, day)
+        if marker is None:
+            raise GapFillContractError(
+                f"{lane.slug} {day.isoformat()}: the base rung holds parts but no completion marker, so the "
+                "repaired day has no receipt an availability row could bind"
+            )
+        published_at = now()
+        return claim_repaired_lane_day(
+            store,
+            lane=lane.slug,
+            kind=GAP_FILL_PARTITION_KIND,
+            day=day,
+            written=written,
+            base_rung=RepairedBaseRung(
+                rung=GAP_FILL_ZOOM_TIER,
+                data_receipts=tuple(EvidenceReceipt(key=part.relative_path, sha256=part.sha256) for part in base.parts),
+                completion_receipt=EvidenceReceipt(key=marker.relative_path, sha256=marker.sha256),
+                row_count=marker.completion.row_count,
+                part_count=marker.completion.part_count,
+            ),
+            run_id=run_id,
+            # THE LANE'S OWN CEILING, NOT THE DAY, for the reason `_extend_availability_for_result`
+            # gives: a day that declared itself its own ceiling closes every lane at its last row.
+            source_ceiling=max(allowed_source_ceiling(lane, today=today or day), day),
+            published_at=published_at,
+        )
+    except Exception as error:  # the rungs are written; an unclaimable day may never undo that
+        return AvailabilityExtensionOutcome(
+            state="retry_claim_failed",
+            lane_root=availability_lane_root(lane.slug, GAP_FILL_PARTITION_KIND),
+            day=day,
+            reason=(
+                f"the coarse rungs were re-derived but no availability claim could be recorded, so the day's "
+                f"new receipts stay outside the index: {type(error).__name__}: {error}"
+            ),
+            error_kind="repair_claim_unwritable",
+        )
 
 
 async def _end_lane_day_transaction(session: AsyncSession) -> None:
@@ -2067,8 +2226,10 @@ async def run_gap_fill(  # noqa: PLR0913 - one parameter per operator-tunable kn
                     day=entry.repairs.pop(0),
                     run_id=run_id,
                     now=now,
+                    today=today,
                     lane_day_lock=lane_day_lock,
                     derive_tiers=derive_tiers,
+                    availability_storage=availability_storage if extend_availability else None,
                 )
                 entry.parts += repair.parts
                 entry.rows += repair.rows

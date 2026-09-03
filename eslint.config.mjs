@@ -9,6 +9,15 @@ export default defineConfig([
     rules: {
       "@typescript-eslint/ban-ts-comment": "error",
       "@typescript-eslint/no-explicit-any": "error",
+      "@typescript-eslint/no-unused-vars": [
+        "error",
+        {
+          argsIgnorePattern: "^_",
+          varsIgnorePattern: "^_",
+          caughtErrorsIgnorePattern: "^_",
+          ignoreRestSiblings: true,
+        },
+      ],
       "prefer-const": "warn",
       "react-hooks/immutability": "warn",
       "react-hooks/refs": "warn",

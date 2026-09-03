@@ -4,6 +4,7 @@ import {
   parquetClimateFieldCollection,
 } from "@/lib/server/services/parquet-climate-field";
 import { LANE_BASE_LATTICES, servedCellLattice, type ZoomTier } from "@/lib/map/zoom-tiers";
+import { UnpermittedRenderFormError } from "@/lib/map/layer-render-contract";
 import type { ParquetClimateFieldObservation } from "@/lib/server/services/parquet-trpc-readers";
 
 /** The support envelope the reader now attaches to every row, built the way the reader builds it. */
@@ -323,5 +324,51 @@ describe("Parquet climate-field collection adapter", () => {
     // A wrong step would drop every square and leave nothing to draw.
     expect(collection.features).toHaveLength(1);
     expect(Math.abs(ringArea(ringsOf(collection.features[0])[0]))).toBeCloseTo(4, 9);
+  });
+});
+
+/**
+ * The contract is a RULE at presentation time, not a description of one.
+ *
+ * `cellFeatures` chooses between the cell each row declares and an `isoband` dissolved across
+ * them, and until 2026-09-02 nothing checked either choice against `LAYER_RENDER_CONTRACT`: every
+ * permitted-form lookup in the tree was reached only from tests. A row whose envelope declares a
+ * form the rung does not permit now refuses to draw rather than painting a shape the contract
+ * never licensed -- `raw_point` is permitted on no band of a continuous field, because a dot at a
+ * sample's centre claims a footprint finer than the ground the lane measured.
+ */
+describe("the drawn form is checked against the contract", () => {
+  it("refuses a row whose envelope declares a form no band of a continuous field permits", () => {
+    const declared = row(13);
+    const offending = {
+      ...declared,
+      support: { ...declared.support, supportKind: "raw_point" as const },
+    };
+
+    expect(() =>
+      parquetClimateFieldCollection(
+        ready([offending]),
+        "precipitation",
+        "mean",
+        "-116.1,42.9,-114.9,44.1",
+        13,
+        "field"
+      )
+    ).toThrow(UnpermittedRenderFormError);
+  });
+
+  it("draws the tessellated cell the reader really declares, at every rung", () => {
+    for (const zoomTier of [0, 5, 9, 13] as ZoomTier[]) {
+      expect(() =>
+        parquetClimateFieldCollection(
+          ready([row(zoomTier)]),
+          "precipitation",
+          "mean",
+          "-116.1,42.9,-114.9,44.1",
+          zoomTier,
+          "field"
+        )
+      ).not.toThrow();
+    }
   });
 });

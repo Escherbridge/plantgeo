@@ -1,18 +1,21 @@
+// Spatial predicates are unimplemented here: the `_`-prefixed parameters below are accepted
+// and ignored, so each reader is an unfiltered top-50 scan of `geo.poi`. The module has had no
+// caller since it was written -- see the conformity c3 proof packet before wiring one up.
 import { db } from "@/lib/server/db";
 import { poi } from "@/lib/server/db/schema";
 import { sql } from "drizzle-orm";
 
-export async function searchByCategory(category: string, bbox: { west: number; south: number; east: number; north: number }) {
+export async function searchByCategory(category: string, _bbox: { west: number; south: number; east: number; north: number }) {
   return db.select().from(poi).where(
     sql`${poi.category} = ${category}`
   ).limit(50);
 }
 
-export async function searchNearby(lat: number, lon: number, radius: number, limit: number) {
+export async function searchNearby(_lat: number, _lon: number, _radius: number, limit: number) {
   return db.select().from(poi).limit(limit);
 }
 
-export async function searchByText(query: string, bbox?: { west: number; south: number; east: number; north: number }) {
+export async function searchByText(query: string, _bbox?: { west: number; south: number; east: number; north: number }) {
   return db.select().from(poi).where(sql`${poi.name} ILIKE ${'%' + query + '%'}`).limit(50);
 }
 

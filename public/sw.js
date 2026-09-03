@@ -69,7 +69,7 @@ function isDynamicTileRequest(url) {
   if (url.indexOf('.pmtiles') !== -1) return false;
   try {
     return DYNAMIC_TILE_PATH.test(new URL(url).pathname);
-  } catch (e) {
+  } catch (_e) {
     return false;
   }
 }
@@ -160,7 +160,7 @@ function refreshDynamicTiles(sourceId) {
           var source = segments[segments.length - 4];
           if (!source) return false;
           return source.split(',').indexOf(sourceId) !== -1;
-        } catch (e) {
+        } catch (_e) {
           return false;
         }
       });

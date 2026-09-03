@@ -133,12 +133,20 @@ interface ClimateFieldLayerProps {
    */
   renderForm: ClimateRenderForm;
   /**
-   * The rung the served collection came from. Two things depend on it and neither can be read off
-   * the geometry: the per-cell outline is drawn ONLY at the detail rung, where a stroke separates
-   * two adjacent measurements rather than tiling the viewport with block seams; and a rung change
-   * tears the layers down, so the map can never hold one rung's cells under another's.
+   * The rung the served collection came from, or NULL while no collection has arrived.
+   *
+   * Two things depend on it and neither can be read off the geometry: the per-cell outline is
+   * drawn ONLY at the detail rung, where a stroke separates two adjacent measurements rather than
+   * tiling the viewport with block seams; and a rung change tears the layers down, so the map can
+   * never hold one rung's cells under another's.
+   *
+   * Nullable since 2026-09-02, because the caller used to stand in with `BASE_ZOOM_TIER` before
+   * any answer existed -- which is the one value that turns the outline ON, so a first collection
+   * that arrived from z0 was stroked on every seam of a five-degree tessellation until the next
+   * render corrected the rung. There is no honest default here: the rung is a property of the
+   * ANSWER, and before the answer the only true statement is that it is not yet known.
    */
-  zoomTier: ZoomTier;
+  zoomTier: ZoomTier | null;
   /**
    * The served collection. Empty -- never null -- when the layer is switched off or the
    * viewport holds none, so `setData` has something to clear with.

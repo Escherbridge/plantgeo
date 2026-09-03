@@ -84,8 +84,18 @@ SOIL_MIN_DELAY_SECONDS: Final = 0.1
 #: How far back one turn is willing to look for an unfilled day before reporting a backlog. The
 #: whole owed window is bounded by the history floor, but a single turn must stay bounded too.
 SOIL_BACKLOG_SCAN_DAYS: Final = 400
+#: How far back a turn re-examines a day it has ALREADY governed as absent. The archive backfills a
+#: day it first answered null for, and `adapter._retract_disproven_absence` is the only thing that
+#: undoes such a marker -- it runs only on a day the walk selects, so an absence the walk skipped
+#: forever was permanent whatever the archive did next. Bounded, because rechecking the whole history
+#: would spend every turn re-fetching days that settled years ago. Rechecks are queued BEHIND real
+#: gaps, so they can never starve a day that has no data at all.
+SOIL_ABSENCE_RECHECK_DAYS: Final = 14
 #: The one outcome a bounded turn reports instead of failing when its wall clock runs out.
 SOIL_TIME_BUDGET_OUTCOME: Final = "time_budget_exhausted"
+#: The outcome an all-null day reports when nothing proves the mirror has moved past it. Not a
+#: failure: the day is simply not settled yet, and the next turn asks again.
+SOIL_SOURCE_UNSETTLED_OUTCOME: Final = "source_unsettled"
 #: The one outcome a bounded turn reports instead of fetching past its per-turn request budget.
 SOIL_REQUEST_BUDGET_OUTCOME: Final = "request_budget_exhausted"
 MONTHS_PER_YEAR: Final = 12
@@ -256,6 +266,7 @@ async def _publish_product(  # noqa: PLR0913 - the store, product, support, cach
                 deadline=deadline,
                 availability_storage=availability_storage,
                 availability=availability,
+                mirrored_past=_mirrored_past_day(statuses, day),
             )
         )
     return {
@@ -365,6 +376,7 @@ async def _publish_day_with_retries(  # noqa: PLR0913 - one lane-day coordinate 
     deadline: float,
     availability_storage: AvailabilityStorage,
     availability: AvailabilityExtensionTally,
+    mirrored_past: date | None,
 ) -> dict[str, object]:
     """Acquire the lane-day lock once, then refetch and republish under it for every bounded attempt."""
     refuse_immutable_day(product, day)
@@ -393,6 +405,7 @@ async def _publish_day_with_retries(  # noqa: PLR0913 - one lane-day coordinate 
                     deadline=deadline,
                     availability_storage=availability_storage,
                     availability=availability,
+                    mirrored_past=mirrored_past,
                 )
         await session.rollback()
         remaining = contention_deadline - time.monotonic()
@@ -435,6 +448,7 @@ async def _publish_locked_day(  # noqa: PLR0913 - one lane-day coordinate per ar
     deadline: float,
     availability_storage: AvailabilityStorage,
     availability: AvailabilityExtensionTally,
+    mirrored_past: date | None,
 ) -> dict[str, object]:
     """Refetch before every write attempt while one advisory lock stays held, then prove all four rungs."""
     lane = LANE_REGISTRY[product.stream]
@@ -456,6 +470,7 @@ async def _publish_locked_day(  # noqa: PLR0913 - one lane-day coordinate per ar
                 cache=cache,
                 deadline=deadline,
             ),
+            mirrored_past_proof=lambda: _mirrored_past_proof(product, day=day, mirrored_past=mirrored_past),
         )
         try:
             outcome, parts, rows, written_bytes, detail = await fill_one_lane_day(
@@ -481,6 +496,16 @@ async def _publish_locked_day(  # noqa: PLR0913 - one lane-day coordinate per ar
                 await session.rollback()
             outcome, parts, rows, written_bytes = "raised", 0, 0, 0
             detail = f"{type(error).__name__}: {error}"
+        if adapter.unsettled_refusal is not None:
+            # NOT A FAILURE AND NOT A RETRY. The archive has not reached this day, so refetching it
+            # inside the same turn asks the same question of the same mirror; the next turn is the
+            # soonest the answer can differ. Reported as its own outcome so a run stays green.
+            return _stopped_day(
+                day,
+                outcome=SOIL_SOURCE_UNSETTLED_OUTCOME,
+                attempts=attempt,
+                detail=str(adapter.unsettled_refusal),
+            )
         if outcome == "blocked":
             raise DirectSoilFieldError(detail or f"{product.stream} {day.isoformat()} is blocked")
         if outcome == "absent":
@@ -495,17 +520,10 @@ async def _publish_locked_day(  # noqa: PLR0913 - one lane-day coordinate per ar
                 attempts=attempt,
                 detail=detail,
             )
-        verified = False
-        verification_detail: str | None = None
-        if outcome == "written":
-            try:
-                tier_statuses = await asyncio.to_thread(_tier_status_day, store, product, day)
-                verified = all(status == "data" for status in tier_statuses.values())
-                if not verified:
-                    verification_detail = f"tier statuses after the write were {tier_statuses}"
-            except Exception as error:
-                verification_detail = f"{type(error).__name__}: {error}"
-        if outcome == "written" and verified:
+        # A READ-BACK, NOT A CLAIM: `written` is the writer's own word for what it just did, and only
+        # a day whose four rungs all read `data` out of the bucket is accepted as published.
+        verification_detail = await _verify_written_ladder(store, product, day) if outcome == "written" else None
+        if outcome == "written" and verification_detail is None:
             return _day_result(
                 product,
                 day,
@@ -544,6 +562,17 @@ async def _publish_locked_day(  # noqa: PLR0913 - one lane-day coordinate per ar
         )
         await asyncio.sleep(delay)
     raise AssertionError("bounded soil publish attempts exhausted")
+
+
+async def _verify_written_ladder(store: ObjectStore, product: SoilFieldProduct, day: date) -> str | None:
+    """Return why the day's four rungs do not all read `data` yet, or `None` when every one of them does."""
+    try:
+        tier_statuses = await asyncio.to_thread(_tier_status_day, store, product, day)
+    except Exception as error:
+        return f"{type(error).__name__}: {error}"
+    if all(status == "data" for status in tier_statuses.values()):
+        return None
+    return f"tier statuses after the write were {tier_statuses}"
 
 
 def _day_result(  # noqa: PLR0913 - the adapter evidence and the finalizer counters are separate facts
@@ -633,9 +662,18 @@ def _pending_days(
     product: SoilFieldProduct,
     statuses: Mapping[ZoomTier, Mapping[date, PartitionDayStatus]],
 ) -> tuple[date, ...]:
-    """Return the owed days newest first: a complete day at every rung is an idempotent no-op."""
+    """Return the owed days newest first, then the recent ABSENCES this turn should re-examine.
+
+    A governed absence is not permanent evidence -- the archive backfills a day it first answered
+    null for -- so the newest `SOIL_ABSENCE_RECHECK_DAYS` of them are re-selected, behind every day
+    that owes real work. See `pipeline/direct/AGENTS.md`.
+    """
     days = tuple(statuses[SOIL_DIRECT_ALL_TIERS[0]])
+    if not days:
+        return ()
+    recheck_floor = max(days) - timedelta(days=SOIL_ABSENCE_RECHECK_DAYS - 1)
     pending: list[date] = []
+    rechecks: list[date] = []
     for day in reversed(days):
         rung = {tier: statuses[tier][day] for tier in SOIL_DIRECT_ALL_TIERS}
         if "conflict" in rung.values():
@@ -645,10 +683,36 @@ def _pending_days(
                 raise DirectSoilFieldError(
                     f"{product.stream} {day.isoformat()} is absent at the base rung but carries derived parts: {rung}"
                 )
+            if day >= recheck_floor:
+                rechecks.append(day)
             continue
         if any(status != "data" for status in rung.values()):
             pending.append(day)
-    return tuple(pending)
+    return (*pending, *rechecks)
+
+
+def _mirrored_past_day(
+    statuses: Mapping[ZoomTier, Mapping[date, PartitionDayStatus]],
+    day: date,
+) -> date | None:
+    """Return the earliest LATER settled day this product already publishes with values, or `None`.
+
+    THE SIMPLEST HONEST PROOF that the archive has mirrored past `day`: a day after it answered with
+    rows, so an all-null answer here is the archive's verdict rather than its backlog. Read out of
+    the census listing the turn already paid for -- no extra request, and no upstream call.
+    """
+    base = statuses[LANE_BASE_ZOOM_TIER]
+    return next((later for later in sorted(base) if later > day and base[later] == "data"), None)
+
+
+def _mirrored_past_proof(product: SoilFieldProduct, *, day: date, mirrored_past: date | None) -> str | None:
+    """Render the sentence a governed absence carries as its justification, or `None` when it has none."""
+    if mirrored_past is None:
+        return None
+    return (
+        f"{product.stream} is published with values for {mirrored_past.isoformat()}, which is later than "
+        f"{day.isoformat()}, so the ERA5-Land mirror has moved past this day and its all-null answer is settled"
+    )
 
 
 def _retry_delay(attempt: int, *, config: SoilForwardConfig) -> float:
@@ -730,11 +794,13 @@ async def main(argv: Sequence[str] | None = None) -> int:
 
 
 __all__ = [
+    "SOIL_ABSENCE_RECHECK_DAYS",
     "SOIL_BACKLOG_SCAN_DAYS",
     "SOIL_DEFAULT_TIME_BUDGET_SECONDS",
     "SOIL_DIRECT_ALL_TIERS",
     "SOIL_MAX_DAYS",
     "SOIL_REQUEST_BUDGET_OUTCOME",
+    "SOIL_SOURCE_UNSETTLED_OUTCOME",
     "SOIL_TIME_BUDGET_OUTCOME",
     "SoilForwardConfig",
     "SoilForwardConfigError",

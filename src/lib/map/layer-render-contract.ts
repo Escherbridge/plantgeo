@@ -558,35 +558,21 @@ export function renderClassOf(layerId: LayerToggleId): RenderClass {
 }
 
 /**
- * The forms this layer may be drawn in at this map zoom. Never empty. Throws
- * `ZoomTierResolutionError` for a zoom no published rung serves.
- */
-export function permittedFormsFor(layerId: LayerToggleId, zoom: number): readonly SupportKind[] {
-  return LAYER_RENDER_CONTRACT[layerId].permittedForms[resolveZoomBand(zoom)];
-}
-
-/**
- * The same table keyed by the PUBLISHED RUNG rather than by a live map zoom.
+ * The forms this layer may be drawn in at one PUBLISHED RUNG. Never empty.
  *
- * Presentation code never holds a zoom: it holds features whose envelopes declare the rung they
- * were read at (`AggregateEnvelopeSupport.zoomTier`), and a retained frame outlives the zoom it
- * was fetched for. Resolving that frame's forms through the current zoom would ask the contract
- * about a band the cells in hand were never aggregated for.
+ * Keyed by the rung rather than by a live map zoom, because presentation code never holds a
+ * zoom: it holds features whose envelopes declare the rung they were read at
+ * (`AggregateEnvelopeSupport.zoomTier`), and a retained frame outlives the zoom it was fetched
+ * for. Resolving that frame's forms through the current zoom would ask the contract about a band
+ * the cells in hand were never aggregated for. The zoom-keyed twin this replaced
+ * (`permittedFormsFor`) was deleted on 2026-09-02 with its last caller: a rule nothing enforces
+ * is not a contract, and one enforced only in tests is worse, because it reads as if it were.
  */
 export function permittedFormsForTier(
   layerId: LayerToggleId,
   zoomTier: ZoomTier
 ): readonly SupportKind[] {
   return LAYER_RENDER_CONTRACT[layerId].permittedForms[zoomBandForTier(zoomTier)];
-}
-
-/** True when the layer may be drawn in this form at this zoom. */
-export function isFormPermitted(
-  layerId: LayerToggleId,
-  zoom: number,
-  supportKind: SupportKind
-): boolean {
-  return permittedFormsFor(layerId, zoom).includes(supportKind);
 }
 
 /** True when the layer may be drawn in this form at this published rung. */
@@ -596,6 +582,42 @@ export function isFormPermittedForTier(
   supportKind: SupportKind
 ): boolean {
   return permittedFormsForTier(layerId, zoomTier).includes(supportKind);
+}
+
+/**
+ * Raised when a presenter is about to draw a layer in a form its rung does not permit.
+ *
+ * Typed, and thrown rather than logged, for the same reason `PerimeterMisrepresentationError`
+ * is: the failure it catches is a picture that misrepresents what was measured, and a picture is
+ * not something a user can audit. A caller that would rather draw nothing than draw the wrong
+ * shape can catch this; nothing may swallow it silently.
+ */
+export class UnpermittedRenderFormError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "UnpermittedRenderFormError";
+  }
+}
+
+/**
+ * The contract check at the moment of drawing: refuse a form the layer's rung does not permit.
+ *
+ * THE PRESENTERS ARE WHERE THE FORM IS CHOSEN, so this is where the choice is proved. Until
+ * 2026-09-02 this whole vocabulary had no production caller at all -- the table was complete, the
+ * lookups were exported, and every one of them was reached only from tests, which is a contract
+ * that describes the renderers rather than binding them.
+ */
+export function assertFormPermittedForTier(
+  layerId: LayerToggleId,
+  zoomTier: ZoomTier,
+  supportKind: SupportKind
+): void {
+  if (isFormPermittedForTier(layerId, zoomTier, supportKind)) return;
+  throw new UnpermittedRenderFormError(
+    `${layerId} may not be drawn as ${supportKind} at z${zoomTier}: ` +
+      `LAYER_RENDER_CONTRACT permits ${permittedFormsForTier(layerId, zoomTier).join(", ")} ` +
+      `in the ${zoomBandForTier(zoomTier)} band`
+  );
 }
 
 /**

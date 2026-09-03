@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import io
 from datetime import UTC, date, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 import pyarrow as pa  # type: ignore[import-untyped]
 import pyarrow.parquet as pq  # type: ignore[import-untyped]
@@ -151,12 +151,20 @@ class RecordingBackend:
         return None if payload is None else len(payload)
 
 
+#: Cycled so `signal_rows` stays well-formed at ANY cell count. Sliced, a fixture asking for more
+#: cells than there are values built a table whose value column was SHORTER than every other one,
+#: and pyarrow reported it as a length mismatch from inside whatever was writing the partition.
+_SIGNAL_VALUES: Final = (2.5, 0.5, 1.5)
+
+
 def signal_rows(*, cell_ids: tuple[str, ...] = ("c3", "c1", "c2")) -> pa.Table:
     """Build a signal-plane table in deliberately non-schema column order and non-grain row order."""
     count = len(cell_ids)
     return pa.table(
         {
-            "normalized_value": pa.array([2.5, 0.5, 1.5][:count], pa.float64()),
+            "normalized_value": pa.array(
+                [_SIGNAL_VALUES[index % len(_SIGNAL_VALUES)] for index in range(count)], pa.float64()
+            ),
             "cell_id": pa.array(list(cell_ids), pa.large_string()),
             "observed_day": pa.array([JULY_FOURTH] * count, pa.date32()),
             "support_key": pa.array(["surface"] * count, pa.string()),

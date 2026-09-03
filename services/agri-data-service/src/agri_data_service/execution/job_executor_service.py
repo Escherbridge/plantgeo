@@ -372,7 +372,10 @@ def _parquet_spec(slug: str) -> LaneExecutionSpec:
         publication_lag_days=lag,
         publication_cadence_days=publication_cadence,
         publication_lag_source=f"pipeline/parquet/lane_registry.py {slug} contract",
-        selection_policy="newest missing day first; at most one day per scheduler turn",
+        selection_policy=(
+            "newest missing day first, then newest ladder-repair day; at most one export and one "
+            "ladder repair per lane per turn"
+        ),
         timeout_seconds=1200,
         description=f"Bounded incremental and historical Parquet gap ownership for {slug}.",
         writer_ceiling=writer_ceiling,

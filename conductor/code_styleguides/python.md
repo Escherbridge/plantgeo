@@ -6,16 +6,30 @@ type: code-styleguide
 
 The required standard for the agri data/forecasting service
 (`services/agri-data-service/**/*.py`) and any other PlantGeo Python. It is
-specific to the governed warehouse: Alembic-owned PostGIS/TimescaleDB schema,
-immutable forecast receipts, evaluation-only iteration plane, least-privilege
-DSNs, and Sanic/tRPC-adjacent services. It supplements `ruff` and `mypy --strict`;
+specific to the governed warehouse: Alembic-owned PostGIS schema, immutable
+forecast receipts, evaluation-only iteration plane, single-owner-credential DSN
+custody, and Sanic/tRPC-adjacent services. It supplements `ruff` and `mypy --strict`;
 it does not replace them. It inherits `engineering-principles.md`.
 
 ## Baseline
 
-- `mypy` runs in `strict` mode (with the SQLAlchemy plugin). `Any`, bare
-  `type: ignore`, and broad `dict[str, Any]` payloads are forbidden. Receive
-  untyped values as `object`/`Unknown`, validate, then expose a named type.
+- `mypy` runs in `strict` mode (with the SQLAlchemy plugin) over **`src` and
+  `scripts`**, and `ruff` over `src tests scripts`. A bare `type: ignore` is
+  forbidden; a coded one (`# type: ignore[import-untyped]`) is allowed only where
+  a third-party package genuinely ships no stubs, and the code must name the
+  reason it exists.
+- **`Any` is a boundary type, not a payload type.** Receive untyped values as
+  `object`/`Unknown`, validate, then expose a named type. The one carve-out,
+  reconciled against the tree on 2026-09-02 (747 pre-existing `dict[str, Any]` /
+  `Mapping[str, Any]` occurrences: 218 in `src`, 529 in `scripts`): a document
+  decoded from JSON — an object-store manifest, ledger, checkpoint or receipt —
+  may be typed `Mapping[str, Any]` while it is being indexed by key and
+  re-serialised, because a `TypedDict` cannot describe a document whose keys are
+  mutated in place and whose bytes are SHA-256 pinned. Every value that then
+  drives a decision is still narrowed with an explicit `isinstance` guard or a
+  named helper that raises the module's own contract error. `Any` remains
+  forbidden as the return type of domain logic, as a model field, and as a way to
+  silence a type error rather than answer it.
 - Model domain data with `pydantic` (settings, request/response, external
   payloads) or frozen `dataclass`es; prefer immutability (`frozen=True`,
   `Final`, `tuple` over `list` for fixed collections). Use `enum`/`Literal` for
@@ -109,14 +123,34 @@ it does not replace them. It inherits `engineering-principles.md`.
   tests must not call live APIs/Redis/Railway.
 - After any migration that changes schema, regenerate the declarative tree
   (`db/tools/regenerate.py`) so the parity test stays green.
-- Before ready: `uv run ruff format`, `ruff check src/ tests/`, `mypy src/`, and
-  `pytest`. In a multi-fix pass, apply all fixes first, then run the sweep once.
+- Before ready: `uv run --no-sync python scripts/check.py`, which is the single
+  authority for the four gates (`ruff format --check src tests scripts`,
+  `ruff check src tests scripts`, `mypy src scripts`, `pytest -q`). **Never a bare
+  `uv run`**: it re-resolves from the lock's default groups, drops the dev extra
+  and takes pytest, ruff and mypy with it mid-sweep. In a multi-fix pass, apply
+  all fixes first, then run the sweep once; then `scripts/check.py --write-receipt`
+  so `QUALITY_RECEIPT.json` names the exact tree the green run judged. The image
+  build runs `scripts/verify_quality_receipt.py` and refuses a tree whose digest
+  has moved since that receipt.
 
 ## Review checklist
 
 1. Is DDL Alembic-only, and is any object change forward-loaded from `db/agri/**`?
-2. Does each component use its own least-privilege DSN and fail closed?
+2. Does each component connect with the **single owner credential** and fail
+   closed on a malformed DSN? DSN custody was retired on 2026-08-08 (Alembic
+   `20260808_0019`); a review that asks for a per-component least-privilege role,
+   a host/port/database allowlist or a login assertion is asking for the thing the
+   migration drops. What a review may still require is complete-URL shape
+   validation through `Settings._require_complete_database_url`, and that a
+   `receiver_writer`/`published_reader` profile never carries `DATABASE_URL` or
+   the other profile's DSN.
 3. Is the path leakage-free, deterministic where checksummed, and provenance-carrying?
 4. Are evaluation-only artifacts prevented from reaching publication/serving?
 5. Is every input validated at ingress and every query/loop bounded?
 6. Do tests cover the failure/partial path; did the full sweep pass once?
+7. **Guide-consistency review.** If the change makes any rule in this guide false,
+   the same change fixes the rule and names the ruling or measurement that
+   supersedes it. A checklist item that has quietly outlived its decision is worse
+   than a missing one: it fails review for the wrong reason and teaches the
+   retired design. Items 2 and the `Any`-boundary carve-out under "Baseline" are
+   both repairs of exactly that failure, made 2026-09-02.

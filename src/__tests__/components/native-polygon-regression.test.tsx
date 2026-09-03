@@ -20,12 +20,13 @@ import {
   ZOOM_BANDS,
   assertNotPerimeter,
   layerRenderContractEntries,
-  permittedFormsFor,
+  permittedFormsForTier,
   renderClassOf,
   resolveZoomBand,
   type SupportKind,
   type ZoomBand,
 } from "@/lib/map/layer-render-contract";
+import { resolveZoomTier } from "@/lib/map/zoom-tiers";
 import {
   DATE_FILTERABLE_TILE_LAYER_TOGGLE_IDS,
   dateFilterableStyleLayerIds,
@@ -349,12 +350,14 @@ describe("a native polygon layer may only ever be drawn as its source geometry",
     });
   });
 
-  it("answers the same through the zoom-aware helper at a zoom in each band", () => {
+  it("answers the same through the rung-keyed helper at a zoom in each band", () => {
+    // `resolveZoomBand(zoom)` is `zoomBandForTier(resolveZoomTier(zoom))`, so resolving the zoom
+    // to its rung first asks the contract exactly the question the deleted zoom-keyed helper did.
     for (const layerId of NATIVE_POLYGON_LAYER_IDS) {
       for (const band of ZOOM_BANDS) {
         const zoom = ZOOM_BY_BAND[band];
         expect(resolveZoomBand(zoom)).toBe(band);
-        expect(permittedFormsFor(layerId, zoom)).toEqual(["native_polygon"]);
+        expect(permittedFormsForTier(layerId, resolveZoomTier(zoom))).toEqual(["native_polygon"]);
       }
     }
   });
@@ -381,7 +384,9 @@ describe("a native polygon layer may only ever be drawn as its source geometry",
     // still be a polygon there.
     expect(resolveZoomBand(DEFAULT_VIEWPORT.zoom)).toBe("coarse");
     for (const layerId of NATIVE_POLYGON_LAYER_IDS) {
-      expect(permittedFormsFor(layerId, DEFAULT_VIEWPORT.zoom)).toEqual(["native_polygon"]);
+      expect(permittedFormsForTier(layerId, resolveZoomTier(DEFAULT_VIEWPORT.zoom))).toEqual([
+        "native_polygon",
+      ]);
     }
   });
 });
@@ -566,7 +571,9 @@ describe("MTBS is the production continuity reference", () => {
   it("is classified as a native polygon and drawn as one at every band", () => {
     expect(renderClassOf("burn-severity")).toBe("native_polygon");
     for (const band of ZOOM_BANDS) {
-      expect(permittedFormsFor("burn-severity", ZOOM_BY_BAND[band])).toEqual(["native_polygon"]);
+      expect(
+        permittedFormsForTier("burn-severity", resolveZoomTier(ZOOM_BY_BAND[band]))
+      ).toEqual(["native_polygon"]);
     }
   });
 
@@ -638,7 +645,9 @@ describe("recorded gaps between the contract and the shipped native renderers", 
     // The contract is deliberately NOT widened to match: a dot whose radius means "how many
     // delineations were counted here" is not the survey's geometry, and legalising it would
     // delete the only record that the two disagree.
-    expect(permittedFormsFor("soil-survey", DEFAULT_VIEWPORT.zoom)).toEqual(["native_polygon"]);
+    expect(permittedFormsForTier("soil-survey", resolveZoomTier(DEFAULT_VIEWPORT.zoom))).toEqual([
+      "native_polygon",
+    ]);
     expect(LAYER_RENDER_CONTRACT["soil-survey"].permittedForms.coarse).not.toContain("raw_point");
   });
 });

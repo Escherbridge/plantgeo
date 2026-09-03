@@ -37,18 +37,22 @@ export default function MapView() {
   const [webglError, setWebglError] = useState(false);
   const [agentCoords, setAgentCoords] = useState<[number, number] | null>(null);
 
-  const {
-    viewport,
-    is3DEnabled,
-    isGlobeView,
-    terrainExaggeration,
-    currentStyle,
-    isTerrainEnabled,
-    setViewport,
-  } = useMapStore();
+  // One selector per field, never the whole store: MapView owns the map instance and every
+  // layer under it, so a re-render here is the most expensive one on the page. Subscribing to
+  // the store object re-rendered it on every unrelated write -- a feature selection, a layer
+  // toggle, a query-point pin. See conductor/code_styleguides/typescript.md, "Subscribe to the
+  // narrowest Zustand/Jotai state slice".
+  const viewport = useMapStore((state) => state.viewport);
+  const is3DEnabled = useMapStore((state) => state.is3DEnabled);
+  const isGlobeView = useMapStore((state) => state.isGlobeView);
+  const terrainExaggeration = useMapStore((state) => state.terrainExaggeration);
+  const currentStyle = useMapStore((state) => state.currentStyle);
+  const isTerrainEnabled = useMapStore((state) => state.isTerrainEnabled);
+  const setViewport = useMapStore((state) => state.setViewport);
 
   const prevStyleRef = useRef(currentStyle);
-  const { isOpen: isAIOpen } = useRegionalIntelligenceStore();
+  // Only the open flag: every streaming token of an analysis writes this store.
+  const isAIOpen = useRegionalIntelligenceStore((state) => state.isOpen);
   const { queryLocation } = useRegionalIntelligence();
 
   const handleCloseAgentInteraction = useCallback(() => {

@@ -375,10 +375,16 @@ describe("each climate row draws the form the server actually served", () => {
     expect(lastDrawnFor("air-temperature")?.zoomTier).toBe(9);
   });
 
-  it("stands in with the base rung until an answer has arrived, when nothing is drawn yet", () => {
+  /**
+   * No rung at all until one has answered. `BASE_ZOOM_TIER` is the single value that turns the
+   * per-cell outline on (`ClimateFieldLayer`, "DETAIL RUNG ONLY"), so standing in with it stroked
+   * every seam of whatever collection arrived first -- a five-degree z0 tessellation included.
+   */
+  it("declares no rung until an answer has arrived, rather than standing in with the detail one", () => {
     renderWithDrawn(["air-temperature"], 9);
 
-    expect(lastDrawnFor("air-temperature")?.zoomTier).toBe(13);
+    expect(lastDrawnFor("air-temperature")?.zoomTier).toBeNull();
+    expect(lastDrawnFor("air-temperature")?.zoomTier).not.toBe(13);
   });
 
   /**
@@ -387,10 +393,13 @@ describe("each climate row draws the form the server actually served", () => {
    * request. Adopting its form would repaint this row from another signal's response.
    */
   it("ignores a collection that answered for a different signal", () => {
-    climateQuery.resultBySignal.set("air-temperature", servedAs("dew-point", "symbol"));
+    climateQuery.resultBySignal.set("air-temperature", servedAs("dew-point", "symbol", 0));
     renderWithDrawn(["air-temperature"], 9);
 
     expect(lastDrawnFor("air-temperature")?.renderForm).toBe("field");
+    // ...and takes no rung from it either: z0 would have been another signal's answer deciding
+    // whether THIS row strokes its cells.
+    expect(lastDrawnFor("air-temperature")?.zoomTier).toBeNull();
   });
 
   /**
@@ -433,7 +442,10 @@ describe("each climate row draws the form the server actually served", () => {
       return { map: recorder as unknown as MapLibreMap, added };
     }
 
-    async function renderRealLayer(renderForm: ClimateRenderForm, zoomTier: ZoomTier = 13) {
+    async function renderRealLayer(
+      renderForm: ClimateRenderForm,
+      zoomTier: ZoomTier | null = 13
+    ) {
       const { ClimateFieldLayer } = await vi.importActual<
         typeof import("@/components/map/layers/ClimateFieldLayer")
       >("@/components/map/layers/ClimateFieldLayer");
@@ -474,6 +486,15 @@ describe("each climate row draws the form the server actually served", () => {
     it("draws no per-cell outline at a coarse rung, where it would read as block seams", async () => {
       expect(await renderRealLayer("field", 5)).not.toContain("line");
       expect(await renderRealLayer("field", 0)).not.toContain("line");
+    });
+
+    /**
+     * And none before any rung has answered. The outline is a claim about the detail lattice, and
+     * a null rung is the caller saying it does not yet know which lattice arrived -- which is not
+     * the same as knowing it is the detail one.
+     */
+    it("draws no per-cell outline while the rung is still unknown", async () => {
+      expect(await renderRealLayer("field", null)).toEqual(["fill"]);
     });
 
     /**

@@ -21,8 +21,10 @@ dist
 htmlcov
 
 # Development-only files and runtime output
-# tests IS needed in the build context: the "checks" Dockerfile stage runs
-# `ruff format --check src tests` against it. It never reaches the runtime image.
+# tests/ and scripts/ ARE needed in the build context: they are inputs to the
+# QUALITY_RECEIPT.json tree digest, which the "quality-receipt" Dockerfile stage
+# recomputes. That stage is the only place they land; neither reaches the runtime
+# image, which copies just the verified receipt out of it.
 *.log
 logs
 *.pid

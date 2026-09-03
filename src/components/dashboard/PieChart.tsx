@@ -61,7 +61,6 @@ export function PieChart({ data }: PieChartProps) {
           const isHovered = hovered === s.i;
           const r = isHovered ? outerR + 5 : outerR;
           const path = arcPath(cx, cy, r, s.startAngle, s.endAngle);
-          const holePath = arcPath(cx, cy, innerR, s.startAngle, s.endAngle);
 
           return (
             <path

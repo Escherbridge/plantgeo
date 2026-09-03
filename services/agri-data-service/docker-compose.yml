@@ -30,7 +30,11 @@ services:
       retries: 5
 
   martin:
-    image: ghcr.io/maplibre/martin:v0.14
+    # Pinned to the version the repo actually deploys: `Dockerfile.martin:1` and the root
+    # `docker-compose.yml`'s `plantgeo-martin:1.10.1`. This stack had been left on `v0.14`, which
+    # is a different config-file generation -- a local tile bug reproduced here would not have
+    # been the deployed one.
+    image: ghcr.io/maplibre/martin:1.10.1
     depends_on:
       db:
         condition: service_healthy

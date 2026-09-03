@@ -139,6 +139,28 @@ export interface LaneBaseLattice {
   cellSizeDegrees: number;
   /** Whether a base row's coordinates name the cell's south-west corner or its centre. */
   coordinateMeaning: "cell_origin" | "cell_center";
+  /**
+   * THE LANE'S PHASE: where a base row's own coordinate falls relative to whole multiples of
+   * `cellSizeDegrees`, in degrees.
+   *
+   * Declared per lane rather than derived from `coordinateMeaning`, because the two centred lanes
+   * on this ladder disagree about it and only their producers know which is which. The
+   * quarter-degree lanes put their CENTROIDS a half step off the integer grid -- `cell_south =
+   * row * 0.25` with the centre a half step above it (`ingest/vegetation.py:344-347`), and
+   * `ERA5_LAND_SUPPORT_CENTROID_OFFSET_DEGREES = 0.125` with the westmost centroid at
+   * `-124.875` (`pipeline/direct/soil/support.py:51-57`) -- so their centroids are odd multiples
+   * of 0.125 and their cell EDGES are the multiples of 0.25. The one-degree climate lattice does
+   * the opposite: `CLIMATE_FIELD_LATTICE_ROWS` steps by whole degrees, so its centres are on the
+   * integers and its edges fall on the halves.
+   *
+   * Assuming the second shape for the first is a half-cell shift of every vegetation and
+   * soil-field cell at every rung -- measured at z5 as 13 of 56 longitude columns holding two
+   * measurements while 14 held none and drew as empty stripes of basemap.
+   *
+   * Zero for a `cell_origin` lane: its coordinates are already `floor(x / r) * r`, which is
+   * anchored at zero by construction and has no phase to declare.
+   */
+  centroidOffsetDegrees: number;
 }
 
 /**
@@ -156,18 +178,47 @@ export interface LaneBaseLattice {
  */
 export const LANE_BASE_LATTICES = {
   /** `floor(longitude / 0.005) * 0.005`, fire_detections_day_export.sql:107. */
-  "fire-detections": { cellSizeDegrees: 0.005, coordinateMeaning: "cell_origin" },
-  /** `agri.spatial_cell` quarter-degree grid, written as its centroid. */
-  vegetation: { cellSizeDegrees: 0.25, coordinateMeaning: "cell_center" },
-  /** The same quarter-degree cells; `soilFieldPolygon` has always offset by half a cell here. */
-  "soil-field": { cellSizeDegrees: 0.25, coordinateMeaning: "cell_center" },
-  /** The one-degree NASA POWER sampling lattice; see the note above. */
-  "climate-field": { cellSizeDegrees: 1, coordinateMeaning: "cell_center" },
+  "fire-detections": {
+    cellSizeDegrees: 0.005,
+    coordinateMeaning: "cell_origin",
+    centroidOffsetDegrees: 0,
+  },
+  /**
+   * `agri.spatial_cell` quarter-degree grid, written as its centroid -- and that centroid sits a
+   * HALF STEP off the multiples of 0.25: `ingest/vegetation.py:344-347` builds each cell from
+   * `cell_south = row * 0.25` and takes its centre as `cell_south + 0.25 * 0.5`.
+   */
+  vegetation: {
+    cellSizeDegrees: 0.25,
+    coordinateMeaning: "cell_center",
+    centroidOffsetDegrees: 0.125,
+  },
+  /**
+   * The same quarter-degree cells, on the same half-step phase: `pipeline/direct/soil/support.py`
+   * pins `ERA5_LAND_SUPPORT_CENTROID_OFFSET_DEGREES = 0.125` and a westmost centroid of
+   * `-124.875` (:51-57), so the edges are the multiples of 0.25 and `soilFieldPolygon`'s
+   * long-standing `west = longitude - 0.125` was right.
+   */
+  "soil-field": {
+    cellSizeDegrees: 0.25,
+    coordinateMeaning: "cell_center",
+    centroidOffsetDegrees: 0.125,
+  },
+  /**
+   * The one-degree NASA POWER sampling lattice; see the note above. Phase 0, not a half step:
+   * `CLIMATE_FIELD_LATTICE_ROWS` (parquet-climate-field.ts) steps by whole degrees, so the
+   * SAMPLES are the integers and the drawn cell straddles each of them.
+   */
+  "climate-field": {
+    cellSizeDegrees: 1,
+    coordinateMeaning: "cell_center",
+    centroidOffsetDegrees: 0,
+  },
   /**
    * A gauge is a station, not a cell: it has no base grain at all, so every derived rung's cell is
    * the ladder's own and the base rung stays a raw point with no cell size.
    */
-  "water-gauges": { cellSizeDegrees: 0, coordinateMeaning: "cell_origin" },
+  "water-gauges": { cellSizeDegrees: 0, coordinateMeaning: "cell_origin", centroidOffsetDegrees: 0 },
   /**
    * The same shape as the gauges above, for the same reason: an Open-Meteo observation is a
    * sampled POINT, not a measured cell, so its base rung has no grain and every derived rung's
@@ -178,7 +229,11 @@ export const LANE_BASE_LATTICES = {
    * m0 still owes a ruling on. Until it rules, the honest answer is the one the contract already
    * gives: `weather` is an `event_point` layer, and a point claims no ground.
    */
-  "weather-observations": { cellSizeDegrees: 0, coordinateMeaning: "cell_origin" },
+  "weather-observations": {
+    cellSizeDegrees: 0,
+    coordinateMeaning: "cell_origin",
+    centroidOffsetDegrees: 0,
+  },
 } as const satisfies Readonly<Record<string, LaneBaseLattice>>;
 
 /** A lane with a published base grain. */
@@ -191,7 +246,13 @@ export type CellLaneId = keyof typeof LANE_BASE_LATTICES;
 export interface ServedCellLattice {
   /** The drawn cell's width and height in degrees. */
   cellSizeDegrees: number;
-  /** Where a lattice line falls relative to whole multiples of `cellSizeDegrees`. */
+  /**
+   * Where a lattice LINE falls relative to whole multiples of `cellSizeDegrees` -- the phase, not
+   * the position of the sample inside its cell. Zero for the ladder's own grids (anchored at zero
+   * by `floor(x / r) * r`) and for the quarter-degree lanes, whose centroids are already a half
+   * step off the integer grid; minus half a cell only for the one-degree climate lattice, whose
+   * samples sit ON the integers and so must be straddled. See `LaneBaseLattice.centroidOffsetDegrees`.
+   */
   originOffsetDegrees: number;
   /**
    * Half the pitch of the grid the served coordinate was snapped onto, added back before the
@@ -200,6 +261,23 @@ export interface ServedCellLattice {
   snapCorrectionDegrees: number;
   /** What the served coordinates name, for the envelope this lattice is declared in. */
   origin: "cell_origin" | "cell_center";
+}
+
+/**
+ * Where the LINES of a lane's own base grid fall, as an offset from whole multiples of its pitch.
+ *
+ * A centred lane's coordinate is its cell's middle, so the line below it is half a pitch under the
+ * coordinate -- and the coordinate itself is `centroidOffsetDegrees` off the integer grid, so the
+ * line lands at `centroidOffsetDegrees - cellSizeDegrees / 2`. That is 0 for the quarter-degree
+ * lanes (0.125 - 0.125) and -0.5 for the one-degree climate lattice (0 - 0.5): the two shapes the
+ * producers actually publish, from one expression rather than from a guess about which is normal.
+ *
+ * A `cell_origin` lane's coordinate is already a lattice line, so its offset is zero.
+ */
+function baseLatticeOffsetDegrees(base: LaneBaseLattice): number {
+  return base.coordinateMeaning === "cell_center"
+    ? base.centroidOffsetDegrees - base.cellSizeDegrees / 2
+    : 0;
 }
 
 /**
@@ -222,11 +300,11 @@ export function servedCellLattice(
 ): ServedCellLattice {
   const tierCellDegrees = cellSizeDegreesForTier(zoomTier);
   if (tierCellDegrees === null) {
-    const centred = base.coordinateMeaning === "cell_center";
     return {
       cellSizeDegrees: base.cellSizeDegrees,
-      originOffsetDegrees: centred ? -base.cellSizeDegrees / 2 : 0,
-      snapCorrectionDegrees: centred ? 0 : base.cellSizeDegrees / 2,
+      originOffsetDegrees: baseLatticeOffsetDegrees(base),
+      snapCorrectionDegrees:
+        base.coordinateMeaning === "cell_center" ? 0 : base.cellSizeDegrees / 2,
       origin: base.coordinateMeaning,
     };
   }
@@ -235,8 +313,7 @@ export function servedCellLattice(
     cellSizeDegrees: keepsBaseGrain ? base.cellSizeDegrees : tierCellDegrees,
     // A rung that kept the base grain is still on the BASE lattice, phase included; one that
     // genuinely coarsened is on the ladder's grid, which is anchored at zero by `floor(x / r) * r`.
-    originOffsetDegrees:
-      keepsBaseGrain && base.coordinateMeaning === "cell_center" ? -base.cellSizeDegrees / 2 : 0,
+    originOffsetDegrees: keepsBaseGrain ? baseLatticeOffsetDegrees(base) : 0,
     snapCorrectionDegrees: tierCellDegrees / 2,
     // Every derived rung writes the floored cell origin -- see `GridAggregation` in tiers.py,
     // "the coordinate written back is the floored cell ORIGIN rather than its centre".

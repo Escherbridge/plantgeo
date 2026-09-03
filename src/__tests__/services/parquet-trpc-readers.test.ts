@@ -95,8 +95,12 @@ function vegetationRow(day: string, value: number) {
     data_available_at: `${day}T18:30:00Z`,
     release_count: 1,
     allowed_client_exposure: true,
-    cell_longitude: -114.25,
-    cell_latitude: 43.5,
+    // A REAL cell of the quarter-degree lattice: `ingest/vegetation.py:344-347` centres each cell
+    // a half step above `row * 0.25`, so the centroids are odd multiples of 0.125 and the cell
+    // edges are the multiples of 0.25. The old -114.25/43.5 was a cell EDGE, and a fixture on no
+    // real lattice cannot tell a correct phase from one shifted half a cell.
+    cell_longitude: -124.875,
+    cell_latitude: 42.125,
   };
 }
 
@@ -105,15 +109,18 @@ function soilMoistureRow(overrides: Record<string, unknown> = {}) {
     support_key: "era5-land-0.1deg",
     signal_name: "soil_water_content_layer_2",
     normalized_unit: "m^3/m^3",
-    cell_id: "era5-land:43.5:-114.25",
+    // The pinned south-west cell of the ERA5-Land support lattice
+    // (`pipeline/direct/soil/support.py:51-57`): centroid (-124.875, 42.125), cell edges on the
+    // multiples of 0.25.
+    cell_id: "era5-land:42.125:-124.875",
     observed_day: "2026-08-02",
     normalized_value: 0.23,
     observation_count: 2,
     newest_observed_at: "2026-08-02T00:00:00Z",
     coverage_fraction: 1,
     allowed_client_exposure: false,
-    cell_longitude: -114.25,
-    cell_latitude: 43.5,
+    cell_longitude: -124.875,
+    cell_latitude: 42.125,
     source_key: "open-meteo-era5-land-archive",
     source_parameter: "soil_moisture_7_to_28cm_mean",
     source_snapshot_id: "prod-20260826-full-signal-v1",
@@ -152,8 +159,10 @@ function soilVpdRow(overrides: Record<string, unknown> = {}) {
     newest_observed_at: "2026-08-02T00:00:00Z",
     coverage_fraction: 1,
     allowed_client_exposure: false,
-    cell_longitude: -115,
-    cell_latitude: 40,
+    // What z5 actually carries for the pinned south-west centroid: `floor(-124.875 / 0.2) * 0.2`
+    // and `floor(42.125 / 0.2) * 0.2` (`floor_to_resolution`, tiers.py:313-315).
+    cell_longitude: -125,
+    cell_latitude: 42,
     ...overrides,
   };
 }
@@ -203,8 +212,12 @@ function soilTemperatureRow(overrides: Record<string, unknown> = {}) {
   return {
     data_source_key: "open-meteo-era5-land-archive",
     source_parameter: "soil_temperature_28_to_100cm_mean",
+    // An ERA5-Land lane, so its cell is one of that lattice's, not the NASA POWER one the base
+    // fixture carries: centroid (-124.875, 42.125), `pipeline/direct/soil/support.py:51-57`.
     ...signalPlaneClimateRow("soil_temperature_level_3", "C", {
       support_key: "era5-land-0.1deg",
+      cell_longitude: -124.875,
+      cell_latitude: 42.125,
     }),
     selected_observation_id: 52,
     selected_canonical_row_sha256: sha,
@@ -1307,16 +1320,17 @@ describe("lane day and release semantics", () => {
       sourceClientExposureApproved: false,
       features: [
         {
-          id: "era5-land:43.5:-114.25",
+          id: "era5-land:42.125:-124.875",
+          // The centroid's OWN cell: edges on the multiples of 0.25, centroid in the middle of it.
           geometry: {
             type: "Polygon",
             coordinates: [
               [
-                [-114.375, 43.375],
-                [-114.125, 43.375],
-                [-114.125, 43.625],
-                [-114.375, 43.625],
-                [-114.375, 43.375],
+                [-125, 42],
+                [-124.75, 42],
+                [-124.75, 42.25],
+                [-125, 42.25],
+                [-125, 42],
               ],
             ],
           },
@@ -1373,15 +1387,17 @@ describe("lane day and release semantics", () => {
       smoothingSigmaDegrees: null,
       features: [
         {
+          // The z5 coordinate is recovered onto the BASE cell it came from, edges on the
+          // multiples of 0.25 -- the same square the z13 rung draws for the same measurement.
           geometry: {
             type: "Polygon",
             coordinates: [
               [
-                [-115.125, 39.875],
-                [-114.875, 39.875],
-                [-114.875, 40.125],
-                [-115.125, 40.125],
-                [-115.125, 39.875],
+                [-125, 42],
+                [-124.75, 42],
+                [-124.75, 42.25],
+                [-125, 42.25],
+                [-125, 42],
               ],
             ],
           },

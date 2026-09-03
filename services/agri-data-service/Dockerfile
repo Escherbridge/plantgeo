@@ -11,6 +11,30 @@ WORKDIR /app
 
 # Quality checks run ad-hoc via scripts/check.py; pytest needs a live disposable PostgreSQL environment.
 
+# --- quality-receipt gate: refuse a tree whose locked receipt was not refreshed by a green sweep. ---
+#
+# The 2026-08-07 owner ruling dropped the in-image `checks` STAGE (a Docker build has no disposable
+# PostgreSQL, so pytest could never run here). This is the newer 2026-09-01 audit directive and a
+# different thing: it does not RE-RUN the checks, it verifies that the sha256 over
+# `src/**`, `tests/**`, `scripts/**`, `pyproject.toml` and `uv.lock` still equals the digest
+# `scripts/check.py --write-receipt` recorded after its last all-green run. Editing source without
+# re-running the sweep therefore fails the BUILD instead of shipping unjudged code.
+#
+# `tests/` and `scripts/` are digest inputs, so they are copied HERE and never into `runtime` --
+# a deleting `RUN` would not shrink an already-written layer, so the only way to keep tests out of
+# the production image is to keep them out of its stage. `runtime` copies the verified receipt back
+# out, and that COPY is what forces this stage to build at all: BuildKit prunes an unreferenced
+# stage, and a pruned gate is not a gate.
+#
+# The verifier is deliberately stdlib-only, so it runs on the base interpreter with no virtualenv.
+FROM base AS quality-receipt
+
+COPY pyproject.toml uv.lock QUALITY_RECEIPT.json ./
+COPY src/ src/
+COPY tests/ tests/
+COPY scripts/ scripts/
+RUN python scripts/verify_quality_receipt.py
+
 # --- runtime stage: lean, --no-dev, unchanged from before the gates were added. ---
 FROM base AS runtime
 
@@ -23,6 +47,10 @@ COPY alembic/ alembic/
 COPY db/ db/
 COPY alembic.ini ./
 RUN uv sync --locked --no-dev
+
+# The proof this image's source passed a green sweep, taken from the stage that verified it so the
+# gate cannot be skipped. Kept in the image so a running container can name its own quality receipt.
+COPY --from=quality-receipt /app/QUALITY_RECEIPT.json ./QUALITY_RECEIPT.json
 
 RUN groupadd --system --gid 10001 plantgeo \
     && useradd --system --uid 10001 --gid plantgeo --home-dir /nonexistent \

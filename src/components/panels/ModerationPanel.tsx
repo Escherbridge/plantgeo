@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import { useState } from "react";
 import { trpc } from "@/lib/trpc/client";
 import { ShieldCheck, CheckCircle2, XCircle, AlertCircle, Info, Sparkles, MapPin } from "lucide-react";
 
@@ -34,7 +34,6 @@ function EffectEvidenceNotice({ evidence }: { evidence: EffectEvidence }) {
 }
 
 export function ModerationPanel() {
-  const [selectedItem, setSelectedItem] = useState<string | null>(null);
   const [reviewNote, setReviewNote] = useState("");
   const utils = trpc.useUtils();
 
@@ -43,7 +42,6 @@ export function ModerationPanel() {
   const castVote = trpc.interventions.castModerationVote.useMutation({
     onSuccess: () => {
       setReviewNote("");
-      setSelectedItem(null);
       utils.interventions.listProposed.invalidate();
     },
   });
@@ -102,8 +100,6 @@ export function ModerationPanel() {
       ) : (
         <div className="space-y-4">
           {proposed?.map((item) => {
-            const isSelected = selectedItem === item.id;
-
             return (
               <div
                 key={item.id}

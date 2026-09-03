@@ -1,26 +1,60 @@
 # PlantGeo Railway production configuration
 
-PlantGeo currently runs in the shared Railway project named `Aevani`. The
-project boundary is not a database boundary: every service-to-service variable
-must name the intended PlantGeo service explicitly.
+PlantGeo currently runs in the shared Railway project named `Aevani`
+(`6faaf3ea-ac46-4c8b-bbfe-1351dbb9d990`), production environment
+`b7cfa813-8a5c-4fcd-80f2-cab736d840a7`. The project boundary is not a database boundary: every
+service-to-service variable must name the intended PlantGeo service explicitly.
 
 ## Resource boundary
 
-| Railway service | Status and allowed use |
-| --- | --- |
-| `plantgeo-main` | Next.js application built from the repository root. |
-| `plantgeo-dataservice` | Python data service built from `services/agri-data-service`. |
-| `plantgeo-parquet-api` | Private published-reader Parquet API on Railway-provided port `8080`; no public domain. |
-| `plantgeo-Redis` | PlantGeo cache, pub/sub, and non-durable wake-up transport. |
-| `Plantgeo` | Existing PlantGeo PostgreSQL 18.3 database. It was not extension-ready in the July 2026 audit. |
-| `plantgeo-spatiotemporal-db` | **The production database since the cutover.** PostgreSQL 18.4 + PostGIS 3.6, reached on the `switchback.proxy.rlwy.net:37967` TCP proxy. Was provisioned from `timescale/timescaledb-ha:pg18`; TimescaleDB and timescaledb_toolkit were **dropped 2026-08-25** after holding one always-empty hypertable (`tracking.positions`, 0 rows, 0 chunks) and no continuous aggregate. Installed extensions, measured that day: btree_gist, hypopg, pg_buffercache, pgcrypto, plpgsql, postgis, vector. |
-| `plantgeo-martin` | Provisioned private service. Its bootstrap image crashed against the legacy database because PostGIS was absent; its sealed reference now targets the replacement for the next reviewed deployment. Keep it private until extension and migration verification succeeds. |
-| `Aevani-Postgress` | Aevani parent/affiliate/UGC data. Never reference, query, migrate, reset, or grant it to a PlantGeo service. |
+**There is exactly one service inventory, and it is not in this file.** The dated 14-service census
+read on 2026-09-02 -- service IDs, deployment IDs and per-service state -- lives in
+[`docs/deployment.md`, "Production boundary"](../../docs/deployment.md#production-boundary) and is
+derived from the Conductor evidence
+[`scheduler-handoff-20260902.md`](../../conductor/tracks/gapless_parquet_publication_20260901/evidence/scheduler-handoff-20260902.md).
+This file carries only *configuration*: what each service is set to, never what exists. A second
+table here is exactly how the two documents drifted apart.
 
-**Historical, July 2026 audit — the `Plantgeo` service no longer exists in this project; the row above supersedes it.** The existing `Plantgeo` database reported PostgreSQL 18.3, database `railway`,
-role `postgres`, only the `public` schema, and none of `postgis`, `timescaledb`,
-`vector`, `pgcrypto`, or `uuid-ossp`. That is an observation, not permission to
-install extensions or run migrations against it.
+Three facts from that inventory govern everything below.
+
+- **`plantgeo-job-executor` (`565ecaad-9946-48f1-8a0b-28fa60494a16`) is the sole production
+  scheduler.** Railway cron scheduling is rejected and the environment reports `scheduled == []`. Do
+  not add a `cronSchedule` to any service config; a guard test enumerates tracked Railway JSON and
+  fails if one returns.
+- **Six legacy writer service objects are fenced, not running**: `plantgeo-ingest-cron`,
+  `plantgeo-cron-mtbs`, `plantgeo-cron-soilgrids`, `plantgeo-fire-detections-forward`,
+  `plantgeo-water-gauges-forward`, `plantgeo-soil-moisture-parquet-load`. Each carries
+  `cronSchedule: null`, the no-op start command
+  `sh -c 'echo retired-to-plantgeo-job-executor; exit 0'`, `restartPolicyType: NEVER` and zero
+  retries. They are fences and credential holders. Never redeploy one, and never treat one as a
+  rollback path.
+- **`plantgeo-spatiotemporal-db` (`1e166530-9c8a-4d4a-b685-a70c801fc449`) is the only PlantGeo
+  database service in the inventory.** PostgreSQL 18 + PostGIS 3.6, reached on the
+  `switchback.proxy.rlwy.net:37967` TCP proxy. It was provisioned from `timescale/timescaledb-ha:pg18`;
+  TimescaleDB and timescaledb_toolkit were **dropped 2026-08-25** after holding one always-empty
+  hypertable (`tracking.positions`, 0 rows, 0 chunks) and no continuous aggregate. Installed
+  extensions measured that day: btree_gist, hypopg, pg_buffercache, pgcrypto, plpgsql, postgis,
+  vector.
+
+### `Plantgeo` and `plantgeo-dataservice` are absent from the inventory
+
+Neither name appears in the 2026-09-02 census, and earlier revisions of this file listed both as
+live. `Plantgeo` was the pre-cutover PostgreSQL 18.3 service: the July 2026 audit recorded database
+`railway`, role `postgres`, only the `public` schema, and none of `postgis`, `timescaledb`,
+`vector`, `pgcrypto` or `uuid-ossp` -- an observation, never permission to install extensions or run
+migrations against it. Treat both names as retired; a variable written `${{Plantgeo.DATABASE_URL}}`
+cannot resolve against the recorded inventory.
+
+The handoff evidence deliberately records environment variable **names only**, never resolved
+values. What `plantgeo-main`'s `DATABASE_URL` currently points at is therefore **unproven by that
+inventory**: read it from Railway before depending on it, and do not infer either database from this
+file.
+
+The Python data service still builds from `services/agri-data-service` under the receiver/reader
+profiles described below, and `plantgeo-parquet-api`
+(`33aed861-af76-4fdd-a95e-784bdcc95e55`) is the published-reader instance the census does record.
+Which Railway object, if any, now runs the `receiver_writer` profile is **unproven by this
+inventory**.
 
 ## Service configuration
 
@@ -36,13 +70,16 @@ install extensions or run migrations against it.
 Required service references:
 
 ```dotenv
-DATABASE_URL=${{Plantgeo.DATABASE_URL}}
+DATABASE_URL=${{plantgeo-spatiotemporal-db.DATABASE_URL}}
 REDIS_URL=${{plantgeo-Redis.REDIS_URL}}
 AGRI_PARQUET_SERVICE_URL=http://${{plantgeo-parquet-api.RAILWAY_PRIVATE_DOMAIN}}:8080
 ```
 
-`DATABASE_URL` remains on `Plantgeo` until a reviewed data migration and
-cutover explicitly replaces it. Public `NEXT_PUBLIC_*` map values are compiled
+`DATABASE_URL` names `plantgeo-spatiotemporal-db` because that is the only PlantGeo database service
+in the 2026-09-02 inventory; the older `${{Plantgeo.DATABASE_URL}}` form cannot resolve against it.
+**The value actually configured on the service is unproven** -- the handoff evidence records variable
+names only -- so read the live variable before treating this line as current state rather than as the
+required target. Public `NEXT_PUBLIC_*` map values are compiled
 into the Next.js bundle during the Docker build; they must be configured before
 a production build. `AGRI_PARQUET_SERVICE_URL` is server-only and must remain a
 private Railway reference. If it is absent or invalid, the Parquet reader fails
@@ -92,9 +129,12 @@ reviewed [first metric rehearsal](../local-warehouse/first-metric-forecast.sql).
 - Health endpoint: `GET /health`
 - Set `PORT=3000` explicitly for a stable private-network URL.
 
-The service may be provisioned before cutover, but it must remain private and
-must not be treated as healthy until the target database passes the verification
-gate. Its variables must use an explicit PlantGeo service reference:
+The 2026-09-02 inventory records `plantgeo-martin` (`fe6ef46e-7b4c-41ef-8b64-5100a344c526`) with
+active deployment `dc48f11a-1216-4934-9536-2a41e4f68a5b` at `SUCCESS`, classified **serving** -- it
+is no longer the stopped bootstrap service earlier revisions of this file described. That census
+records status and classification only, so **whether a public domain is attached is unproven by it**;
+confirm in Railway before assuming either. The configuration requirements below are unchanged, and
+its variables must use an explicit PlantGeo service reference:
 
 ```dotenv
 DATABASE_URL=<sealed DSN for a Martin-only login on plantgeo-spatiotemporal-db>
@@ -316,13 +356,21 @@ background forecast worker for this operation.
 
 ## Deployment order
 
-1. Verify the PlantGeo database and migration plan.
+1. Verify `plantgeo-spatiotemporal-db` and the migration plan.
 2. Verify `plantgeo-Redis` authentication over the private reference URL.
-3. Deploy and verify `plantgeo-dataservice`.
+3. Deploy and verify the Python data service under its intended profile. The 2026-09-02 inventory
+   records `plantgeo-parquet-api` as the published-reader instance; the receiver-writer object is
+   named by no service in that census, so identify it in Railway before deploying rather than
+   assuming the retired `plantgeo-dataservice` name.
 4. Redeploy `plantgeo-martin` only after the database gate passes; verify `/health`,
    `/catalog`, and a composite MVT request.
 5. Build `plantgeo-main` with final public R2 and Martin URLs, then verify the
    browser network panel uses no localhost, placeholder, or private hostnames.
+
+`plantgeo-job-executor` is deliberately absent from this order: it is the sole scheduler, it is
+already at the exact `main` release, and it is redeployed by its own config
+(`/services/agri-data-service/railway.job-executor.json`, Dockerfile `infra/job-executor/Dockerfile`,
+root directory `/`) rather than by any step above.
 
 Railway has no `depends_on` equivalent. Services must retry transient startup
 connections, and readiness checks should cover critical dependencies without

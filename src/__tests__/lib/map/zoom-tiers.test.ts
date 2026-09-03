@@ -16,6 +16,52 @@ import {
   zoomTierPathSegment,
 } from "@/lib/map/zoom-tiers";
 
+/* --------------------------------------------------------------------------
+ * The real quarter-degree lattice, as its producers pin it
+ *
+ * Not an invented coordinate near the right area: `pipeline/direct/soil/support.py:51-57` fixes
+ * this grid at 56 longitudes from -124.875 stepping 0.25 and 28 latitudes from 42.125, giving
+ * exactly 1,568 cells, and `ingest/vegetation.py:344-347` builds the vegetation cells the same way
+ * (`cell_south = row * 0.25`, centre a half step above). Every soil-field and vegetation coordinate
+ * in this file is drawn from it, because a coordinate that is on no real lattice cannot tell a
+ * correct phase from an inverted one -- the previous `(-114.25, 43.5)` asserted a corner that is
+ * itself a real centroid, so it passed with the phase half a cell wrong.
+ * ----------------------------------------------------------------------- */
+
+const LATTICE_STEP_DEGREES = 0.25;
+const LATTICE_WEST_CENTROID = -124.875;
+const LATTICE_SOUTH_CENTROID = 42.125;
+const LATTICE_LONGITUDE_COUNT = 56;
+const LATTICE_LATITUDE_COUNT = 28;
+const LATTICE_CELL_COUNT = LATTICE_LONGITUDE_COUNT * LATTICE_LATITUDE_COUNT;
+
+/** The south-west centroid of that lattice; its cell is [-125, -124.75] x [42, 42.25]. */
+const PINNED_SOUTH_WEST_CENTROID = [LATTICE_WEST_CENTROID, LATTICE_SOUTH_CENTROID] as const;
+
+/**
+ * The producer's own floor, character for character: `floor_to_resolution` in
+ * `warehouse/parquet/tiers.py:313-315` is `(values / resolution).floor() * resolution`, NOT
+ * `v - v % r`, because the two disagree for negative values and every longitude here is negative.
+ * A test that floored differently would test a rung the warehouse never wrote.
+ */
+function flooredToResolution(value: number, resolution: number): number {
+  return Math.floor(value / resolution) * resolution;
+}
+
+/** Every centroid of the pinned lattice, in publication order. */
+function pinnedLatticeCentroids(): readonly (readonly [number, number])[] {
+  const centroids: (readonly [number, number])[] = [];
+  for (let column = 0; column < LATTICE_LONGITUDE_COUNT; column += 1) {
+    for (let row = 0; row < LATTICE_LATITUDE_COUNT; row += 1) {
+      centroids.push([
+        LATTICE_WEST_CENTROID + column * LATTICE_STEP_DEGREES,
+        LATTICE_SOUTH_CENTROID + row * LATTICE_STEP_DEGREES,
+      ]);
+    }
+  }
+  return centroids;
+}
+
 describe("the uniform zoom ladder", () => {
   it("publishes exactly z0, z5, z9, z13 in ascending order", () => {
     expect(ZOOM_TIERS).toEqual([0, 5, 9, 13]);
@@ -180,6 +226,7 @@ describe("lane base lattices", () => {
     expect(LANE_BASE_LATTICES["fire-detections"]).toEqual({
       cellSizeDegrees: 0.005,
       coordinateMeaning: "cell_origin",
+      centroidOffsetDegrees: 0,
     });
     expect(LANE_BASE_LATTICES.vegetation.cellSizeDegrees).toBe(0.25);
     expect(LANE_BASE_LATTICES.vegetation.coordinateMeaning).toBe("cell_center");
@@ -187,6 +234,22 @@ describe("lane base lattices", () => {
     expect(LANE_BASE_LATTICES["climate-field"].cellSizeDegrees).toBe(1);
     // A gauge is a station, so this lane has no base cell for a rung to inherit.
     expect(LANE_BASE_LATTICES["water-gauges"].cellSizeDegrees).toBe(0);
+  });
+
+  /**
+   * The phase, which is a per-lane fact and not a consequence of `coordinateMeaning`. The two
+   * quarter-degree lanes put their CENTROIDS a half step off the integer grid
+   * (`ingest/vegetation.py:344-347`, `pipeline/direct/soil/support.py:51-57`), so their cell edges
+   * are the multiples of 0.25; the one-degree climate lattice samples ON the whole degrees.
+   */
+  it("pins each centred lane's phase to the producer that fixes it", () => {
+    expect(LANE_BASE_LATTICES.vegetation.centroidOffsetDegrees).toBe(0.125);
+    expect(LANE_BASE_LATTICES["soil-field"].centroidOffsetDegrees).toBe(0.125);
+    expect(LANE_BASE_LATTICES["climate-field"].centroidOffsetDegrees).toBe(0);
+    // A floored origin is already a lattice line, so a `cell_origin` lane declares no phase.
+    for (const lane of ["fire-detections", "water-gauges", "weather-observations"] as const) {
+      expect(LANE_BASE_LATTICES[lane].centroidOffsetDegrees, lane).toBe(0);
+    }
   });
 });
 
@@ -219,13 +282,22 @@ describe("servedCellLattice", () => {
 });
 
 describe("the tessellated cell one served coordinate stands for", () => {
-  /** The cell `soilFieldPolygon` has always drawn at the detail rung, to the same corner. */
+  /**
+   * The cell `soilFieldPolygon` has always drawn at the detail rung, to the same corner -- and now
+   * for a centroid that is ON the lane's real lattice. `(-124.875, 42.125)` is the pinned south-west
+   * centroid (`pipeline/direct/soil/support.py:51-57`); its cell is the quarter degree whose EDGES
+   * are the multiples of 0.25, so the corner is `(-125, 42)` and not the neighbouring centroid.
+   */
   it("centres a base-rung cell on the row's own coordinate", () => {
     const lattice = servedCellLattice(13, LANE_BASE_LATTICES["soil-field"]);
-    const polygon = tessellatedCellPolygon(-114.25, 43.5, lattice);
+    const polygon = tessellatedCellPolygon(
+      PINNED_SOUTH_WEST_CENTROID[0],
+      PINNED_SOUTH_WEST_CENTROID[1],
+      lattice
+    );
 
-    expect(polygon.coordinates[0][0]).toEqual([-114.375, 43.375]);
-    expect(polygon.coordinates[0][2]).toEqual([-114.125, 43.625]);
+    expect(polygon.coordinates[0][0]).toEqual([-125.0, 42.0]);
+    expect(polygon.coordinates[0][2]).toEqual([-124.75, 42.25]);
   });
 
   /**
@@ -237,19 +309,27 @@ describe("the tessellated cell one served coordinate stands for", () => {
    */
   it("recovers the base cell from a z5 coordinate the derivation floored off-lattice", () => {
     const lattice = servedCellLattice(5, LANE_BASE_LATTICES["soil-field"]);
-    // floor(43.5 / 0.2) * 0.2 = 43.4, the latitude the z5 rung actually carries.
-    const polygon = tessellatedCellPolygon(-114.4, 43.4, lattice);
+    // The z5 rung carries floor(centroid / 0.2) * 0.2, which is (-125, 42) for this centroid.
+    const polygon = tessellatedCellPolygon(
+      flooredToResolution(PINNED_SOUTH_WEST_CENTROID[0], 0.2),
+      flooredToResolution(PINNED_SOUTH_WEST_CENTROID[1], 0.2),
+      lattice
+    );
 
-    expect(polygon.coordinates[0][0]).toEqual([-114.375, 43.375]);
-    expect(polygon.coordinates[0][2]).toEqual([-114.125, 43.625]);
+    expect(polygon.coordinates[0][0]).toEqual([-125.0, 42.0]);
+    expect(polygon.coordinates[0][2]).toEqual([-124.75, 42.25]);
   });
 
   it("recovers the base cell from a z9 coordinate floored onto the 0.01 grid", () => {
     const lattice = servedCellLattice(9, LANE_BASE_LATTICES["soil-field"]);
+    const polygon = tessellatedCellPolygon(
+      flooredToResolution(PINNED_SOUTH_WEST_CENTROID[0], 0.01),
+      flooredToResolution(PINNED_SOUTH_WEST_CENTROID[1], 0.01),
+      lattice
+    );
 
-    expect(tessellatedCellPolygon(-114.25, 43.5, lattice).coordinates[0][0]).toEqual([
-      -114.375, 43.375,
-    ]);
+    expect(polygon.coordinates[0][0]).toEqual([-125.0, 42.0]);
+    expect(polygon.coordinates[0][2]).toEqual([-124.75, 42.25]);
   });
 
   /**
@@ -260,7 +340,7 @@ describe("the tessellated cell one served coordinate stands for", () => {
   it("gives two adjacent cells the SAME double on their shared edge", () => {
     for (const tier of ZOOM_TIERS) {
       const lattice = servedCellLattice(tier, LANE_BASE_LATTICES["soil-field"]);
-      const index = latticeCellIndex(43.5, lattice);
+      const index = latticeCellIndex(PINNED_SOUTH_WEST_CENTROID[1], lattice);
       const [, upperEdge] = latticeCellSpan(index, lattice);
       const [lowerEdgeOfNeighbour] = latticeCellSpan(index + 1, lattice);
 
@@ -304,6 +384,106 @@ describe("every rung of every cell lane resolves to a drawable cell", () => {
           0
         );
       }
+    }
+  });
+});
+
+/* --------------------------------------------------------------------------
+ * The domain sweep: every real cell of the quarter-degree lattice, at every rung that draws it
+ *
+ * The test the inverted phase would have failed and the old point tests could not. It builds all
+ * 1,568 pinned centroids, pushes each through the producer's own floor for the rung
+ * (`floor_to_resolution`, tiers.py:313-315), draws the square the client would draw for the
+ * coordinate that comes out, and then asks the three questions a tessellation has to answer:
+ * every measurement gets its own square, the squares leave no hole, and each square is the one
+ * its measurement is INSIDE. With the phase half a cell off, z5 answered 43 longitude columns
+ * instead of 56 -- 13 squares holding two measurements each and 13 columns of bare basemap.
+ *
+ * z0 is deliberately absent: five degrees genuinely coarsens a quarter-degree lattice, so many
+ * centroids SHOULD share one cell there. Collisions are the correct answer at that rung and a
+ * defect at the other three.
+ * ----------------------------------------------------------------------- */
+describe("the whole pinned lattice tessellates at every rung that keeps its grain", () => {
+  const RUNGS_THAT_KEEP_THE_BASE_GRAIN = [13, 9, 5] as const;
+
+  for (const lane of ["soil-field", "vegetation"] as const) {
+    for (const tier of RUNGS_THAT_KEEP_THE_BASE_GRAIN) {
+      it(`draws ${LATTICE_CELL_COUNT} distinct squares for ${lane} at z${tier}`, () => {
+        const lattice = servedCellLattice(tier, LANE_BASE_LATTICES[lane]);
+        const resolution = cellSizeDegreesForTier(tier);
+        const squaresByCorner = new Map<string, number>();
+
+        for (const [longitude, latitude] of pinnedLatticeCentroids()) {
+          // What the rung actually carries: the base rung carries the centroid, every derived
+          // rung carries that centroid floored onto the ladder's grid.
+          const servedLongitude =
+            resolution === null ? longitude : flooredToResolution(longitude, resolution);
+          const servedLatitude =
+            resolution === null ? latitude : flooredToResolution(latitude, resolution);
+          const [west, south] =
+            tessellatedCellPolygon(servedLongitude, servedLatitude, lattice).coordinates[0][0];
+          const [east, north] =
+            tessellatedCellPolygon(servedLongitude, servedLatitude, lattice).coordinates[0][2];
+
+          // The square is the one the measurement is in, not the neighbour half a cell away.
+          expect(
+            longitude >= west && longitude < east && latitude >= south && latitude < north,
+            `${lane} z${tier}: (${longitude}, ${latitude}) is outside its own square ` +
+              `[${west}, ${east}] x [${south}, ${north}]`
+          ).toBe(true);
+
+          const corner = `${west}:${south}`;
+          squaresByCorner.set(corner, (squaresByCorner.get(corner) ?? 0) + 1);
+        }
+
+        const collided = [...squaresByCorner.values()].filter((count) => count > 1);
+        expect(collided, `${lane} z${tier}: squares holding more than one measurement`).toEqual([]);
+        expect(squaresByCorner.size).toBe(LATTICE_CELL_COUNT);
+
+        // No interior gap: the distinct west edges are a contiguous run of the cell pitch, and so
+        // are the south edges, and the two runs multiply out to every square drawn above.
+        const wests = [...new Set([...squaresByCorner.keys()].map((key) => Number(key.split(":")[0])))].sort(
+          (left, right) => left - right
+        );
+        const souths = [...new Set([...squaresByCorner.keys()].map((key) => Number(key.split(":")[1])))].sort(
+          (left, right) => left - right
+        );
+        expect(wests).toHaveLength(LATTICE_LONGITUDE_COUNT);
+        expect(souths).toHaveLength(LATTICE_LATITUDE_COUNT);
+        for (const edges of [wests, souths]) {
+          for (let position = 1; position < edges.length; position += 1) {
+            expect(
+              edges[position] - edges[position - 1],
+              `${lane} z${tier}: gap between ${edges[position - 1]} and ${edges[position]}`
+            ).toBeCloseTo(lattice.cellSizeDegrees, 9);
+          }
+        }
+        expect(wests.length * souths.length).toBe(squaresByCorner.size);
+      });
+    }
+  }
+
+  /**
+   * The other half of the phase claim: the CLIMATE lane samples on the whole degrees, so its
+   * one-degree cell straddles its sample rather than starting at it. Fixing the quarter-degree
+   * lanes must not move this one.
+   */
+  it("leaves the one-degree climate lattice straddling its whole-degree samples", () => {
+    for (const tier of [13, 9, 5] as const) {
+      const lattice = servedCellLattice(tier, LANE_BASE_LATTICES["climate-field"]);
+      expect(lattice.originOffsetDegrees, `climate z${tier}`).toBe(-0.5);
+    }
+    const detail = servedCellLattice(13, LANE_BASE_LATTICES["climate-field"]);
+    expect(tessellatedCellPolygon(-115, 43, detail).coordinates[0][0]).toEqual([-115.5, 42.5]);
+  });
+
+  /** And fire, whose 0.005-degree ORIGINS are already lattice lines at every rung. */
+  it("leaves the fire lane anchored at zero at every rung", () => {
+    for (const tier of ZOOM_TIERS) {
+      expect(
+        servedCellLattice(tier, LANE_BASE_LATTICES["fire-detections"]).originOffsetDegrees,
+        `fire z${tier}`
+      ).toBe(0);
     }
   });
 });

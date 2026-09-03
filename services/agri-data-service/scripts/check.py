@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import argparse
+import platform
 import shutil
 import subprocess
 import sys
 import time
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
+
+from quality_receipt import RECEIPT_PATH, RECEIPT_SCHEMA_VERSION, compute_tree_digest, write_receipt
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -36,9 +40,18 @@ class CheckResult:
 CHECKS: Final[tuple[CheckDefinition, ...]] = (
     CheckDefinition("format", ("ruff", "format", "--check", "src", "tests", "scripts")),
     CheckDefinition("lint", ("ruff", "check", "src", "tests", "scripts")),
-    CheckDefinition("mypy", ("mypy", "src")),
+    CheckDefinition("mypy", ("mypy", "src", "scripts")),
     CheckDefinition("pytest", ("pytest", "-q")),
 )
+
+#: Every child runs under `--no-sync`. A bare `uv run` re-resolves the environment from the lock's
+#: default groups, which strips the dev group -- pytest and ruff vanish mid-sweep and the gate
+#: reports a tooling failure as a code failure. Recorded incident; do not drop the flag.
+UV_RUN_PREFIX: Final[tuple[str, ...]] = ("run", "--no-sync")
+
+#: Read for the receipt. Each is `<tool> --version` under the same `uv run --no-sync`, so the
+#: recorded version is the one that actually judged the tree.
+RECORDED_TOOLS: Final[tuple[str, ...]] = ("ruff", "mypy", "pytest")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -46,6 +59,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--only", metavar="CHECK[,CHECK...]", help="Run only the named checks.")
     parser.add_argument("--list", action="store_true", help="List available check names and exit.")
+    parser.add_argument(
+        "--write-receipt",
+        action="store_true",
+        help="After a green run of every check, write QUALITY_RECEIPT.json locking this exact tree.",
+    )
     return parser
 
 
@@ -72,7 +90,7 @@ def run_check(check: CheckDefinition, uv_path: str) -> CheckResult:
     started_at = time.perf_counter()
     try:
         completed: subprocess.CompletedProcess[str] = subprocess.run(
-            (uv_path, "run", *check.command),
+            (uv_path, *UV_RUN_PREFIX, *check.command),
             cwd=Path.cwd(),
             check=False,
             shell=False,
@@ -135,6 +153,65 @@ def print_report(results: Sequence[CheckResult]) -> None:
             print("(no output)")
 
 
+def _tool_version(tool: str, uv_path: str) -> str:
+    """Return one tool's self-reported version, or a marker naming why it could not be read."""
+    try:
+        completed = subprocess.run(
+            (uv_path, *UV_RUN_PREFIX, tool, "--version"),
+            check=False,
+            shell=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+    except OSError as error:
+        return f"unreadable: {error}"
+    if completed.returncode != 0:
+        return f"unreadable: exit {completed.returncode}"
+    return completed.stdout.strip().splitlines()[0] if completed.stdout.strip() else "unreadable: no output"
+
+
+def build_receipt(results: Sequence[CheckResult], uv_path: str) -> dict[str, object]:
+    """Build the receipt payload locking this tree to this sweep's result."""
+    tree_digest, file_count = compute_tree_digest()
+    return {
+        "schema_version": RECEIPT_SCHEMA_VERSION,
+        "generated_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        "tree_digest": f"sha256:{tree_digest}",
+        "digest_file_count": file_count,
+        "tools": {
+            "python": platform.python_version(),
+            "uv": _uv_version(uv_path),
+            **{tool: _tool_version(tool, uv_path) for tool in RECORDED_TOOLS},
+        },
+        "checks": [
+            {
+                "name": result.name,
+                "command": " ".join(check.command),
+                "status": "pass" if result.returncode == 0 else "fail",
+                "duration_seconds": round(result.duration_seconds, 3),
+            }
+            for check, result in zip(CHECKS, results, strict=True)
+        ],
+    }
+
+
+def _uv_version(uv_path: str) -> str:
+    """Return uv's own version; it is invoked directly rather than through `uv run`."""
+    try:
+        completed = subprocess.run(
+            (uv_path, "--version"),
+            check=False,
+            shell=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+    except OSError as error:
+        return f"unreadable: {error}"
+    return completed.stdout.strip() or "unreadable: no output"
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run selected validation checks and return a consolidated status."""
     parser = build_parser()
@@ -152,7 +229,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         results = tuple(run_check(check, uv_path) for check in selected_checks)
 
     print_report(results)
-    return 1 if any(result.returncode != 0 for result in results) else 0
+    failed = any(result.returncode != 0 for result in results)
+
+    if arguments.write_receipt:
+        if selected_checks != CHECKS:
+            print("\nRefusing to write a receipt: --write-receipt requires every check, not --only.")
+            return 1
+        if failed or uv_path is None:
+            print("\nRefusing to write a receipt: the sweep was not green.")
+            return 1
+        receipt = build_receipt(results, uv_path)
+        write_receipt(receipt)
+        print(f"\nWrote {RECEIPT_PATH.name}: {receipt['tree_digest']} over {receipt['digest_file_count']} files.")
+
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

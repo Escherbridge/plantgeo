@@ -12,17 +12,23 @@ import json
 import math
 import time
 from collections import defaultdict
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
+from functools import partial
 from typing import Any, Final, Protocol, TypeVar
 
 import boto3  # type: ignore[import-untyped]
 import polars as pl
 import pyarrow as pa  # type: ignore[import-untyped]
 import pyarrow.parquet as pq  # type: ignore[import-untyped]
-from botocore.config import Config
-from botocore.exceptions import ClientError, ConnectionClosedError, EndpointConnectionError, ReadTimeoutError
+from botocore.config import Config  # type: ignore[import-untyped]
+from botocore.exceptions import (  # type: ignore[import-untyped]
+    ClientError,
+    ConnectionClosedError,
+    EndpointConnectionError,
+    ReadTimeoutError,
+)
 
 from agri_data_service.config import ObjectStoreCredentials, Settings
 from agri_data_service.pipeline.parquet.objectstore import conform_to_stream_schema
@@ -116,6 +122,18 @@ class BreakdownError(RuntimeError):
     """A snapshot input or output failed a closed reconciliation gate."""
 
 
+def _require_frame(value: pl.DataFrame | pl.Series) -> pl.DataFrame:
+    """Narrow `pl.from_arrow`'s declared union: an Arrow Table always yields a DataFrame.
+
+    The union exists because the same call accepts a ChunkedArray and returns a Series for it. Every
+    caller here passes a Table, so the Series arm is unreachable -- and saying so once beats a
+    blanket `union-attr` ignore that would also hide a genuine attribute mistake.
+    """
+    if not isinstance(value, pl.DataFrame):
+        raise BreakdownError(f"expected a Polars DataFrame from an Arrow table, got {type(value).__name__}")
+    return value
+
+
 class ImmutableConflictError(BreakdownError):
     """An immutable destination key already holds different bytes."""
 
@@ -155,7 +173,7 @@ class RetryPolicy:
     attempts: int = 8
     base_delay_seconds: float = 0.5
 
-    def run(self, operation: Any) -> Any:
+    def run[T](self, operation: Callable[[], T]) -> T:
         for attempt in range(self.attempts):
             try:
                 return operation()
@@ -240,12 +258,17 @@ class ImmutableStore:
             request: dict[str, object] = {"Bucket": self.bucket, "Prefix": prefix}
             if token is not None:
                 request["ContinuationToken"] = token
-            response = self.retry.run(lambda request=request: self.client.list_objects_v2(**request))
-            keys.extend(
-                str(item["Key"])
-                for item in response.get("Contents", [])
-                if isinstance(item, Mapping) and isinstance(item.get("Key"), str)
-            )
+            # `partial` rather than `lambda request=request:`: the default-argument idiom binds
+            # the page request eagerly (bugbear B023) but leaves the callable un-inferable for a
+            # `Callable[[], T]` parameter. `partial` binds just as eagerly and keeps the type.
+            response = self.retry.run(partial(self.client.list_objects_v2, **request))
+            contents = response.get("Contents")
+            if isinstance(contents, list):
+                keys.extend(
+                    str(item["Key"])
+                    for item in contents
+                    if isinstance(item, Mapping) and isinstance(item.get("Key"), str)
+                )
             next_token = response.get("NextContinuationToken")
             if not isinstance(next_token, str) or not next_token:
                 return keys
@@ -477,7 +500,7 @@ def source_part_rows(
         raise BreakdownError(f"canonical Wind part {key!r} failed schema/row reconciliation")
     if (table.schema.metadata or {}).get(b"plantgeo_contract") != RAW_CONTRACT_VERSION.encode("ascii"):
         raise BreakdownError(f"canonical Wind part {key!r} lost its raw contract metadata")
-    rows = table.to_pylist()
+    rows: list[dict[str, Any]] = table.to_pylist()
     if canonical_row_digest(rows) != part["row_digest"]:
         raise BreakdownError(f"canonical Wind part {key!r} failed row-digest reconciliation")
     return rows
@@ -727,7 +750,7 @@ def process_unit(
         digest_columns=PROVENANCE_SCHEMA.names,
     )
     provenance_receipt["raw_identity_sum256"] = raw_identity_sum256(provenance_table.to_pylist())
-    checkpoint = {
+    checkpoint: dict[str, Any] = {
         "contract_version": CONTRACT_VERSION,
         "precedence_version": PRECEDENCE_VERSION,
         "source_snapshot_id": SOURCE_SNAPSHOT_ID,
@@ -866,7 +889,7 @@ def load_month_stage(store: ImmutableStore, checkpoints: Sequence[Mapping[str, A
     tables = [verify_receipt(store, checkpoint["stage_part"], schema=SERVING_SCHEMA) for checkpoint in checkpoints]
     if not tables:
         raise BreakdownError("a canonical source month produced no Wind stage parts")
-    return pl.from_arrow(pa.concat_tables(tables)).sort(list(SERVING_SORT))  # type: ignore[union-attr]
+    return _require_frame(pl.from_arrow(pa.concat_tables(tables))).sort(list(SERVING_SORT))
 
 
 def expected_days() -> list[date]:
@@ -884,7 +907,12 @@ def verify_completed_snapshot(
     provenance_parts = manifest.get("provenance_parts")
     stage_parts = manifest.get("stage_parts")
     source_units = manifest.get("source_units")
-    if not all(isinstance(items, list) for items in (serving_parts, provenance_parts, stage_parts, source_units)):
+    if not (
+        isinstance(serving_parts, list)
+        and isinstance(provenance_parts, list)
+        and isinstance(stage_parts, list)
+        and isinstance(source_units, list)
+    ):
         raise BreakdownError("completed Wind manifest omits its durable part or source-unit inventory")
     if (
         len(serving_parts) != int(manifest["serving_part_count"])

@@ -39,8 +39,12 @@ type ClimateFieldResult = {
         bands: { bandIndex: number; color: string; label: string }[];
         /** The one rung that answered; the caption names it rather than inferring it. */
         zoomTier: 0 | 5 | 9 | 13;
-        /** Only the field the caption reads is declared, as in `SoilDetails.test.tsx`. */
-        support: { cellWidthDegrees?: number };
+        /**
+         * Only the field the caption reads is declared, as in `SoilDetails.test.tsx`, and
+         * OPTIONAL because a response replayed out of IndexedDB may predate it -- `support`
+         * only arrived on 2026-09-02 and `query-persister.ts` persists this procedure.
+         */
+        support?: { cellWidthDegrees?: number };
       })
     | undefined;
   isFetching?: boolean;
@@ -143,6 +147,25 @@ describe("ClimateDetails coverage caption", () => {
     expect(
       screen.getByText(/Served from the z9 rung, which averages every measurement/)
     ).toBeTruthy();
+  });
+
+  /**
+   * `query-persister.ts:155-156` replays this procedure's answer out of IndexedDB, serialized by
+   * whatever schema was current when it was written -- and `support` only arrived on 2026-09-02.
+   * Dereferencing it throws inside render and takes the panel down; the honest fallback is to
+   * omit the one sentence that cannot be written and keep the report.
+   */
+  it("renders a replayed collection that predates the support envelope", () => {
+    const replayed = collection({ zoomTier: 9, cellCount: 12 });
+    delete replayed.support;
+    queries.getClimateField.mockReturnValue({ data: replayed });
+
+    renderPanel(9);
+
+    // The sentence that names the cell size is gone, and nothing else is.
+    expect(screen.queryByText(/cells in this view carry a measurement/)).toBeNull();
+    expect(screen.getByText("NASA POWER (NASA LaRC)")).toBeTruthy();
+    expect(screen.getByText(/10 . 15 .C/)).toBeTruthy();
   });
 
   it("says nothing about a rung when the base rung answered", () => {

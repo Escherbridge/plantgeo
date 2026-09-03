@@ -9,7 +9,7 @@ import json
 import sys
 from collections import Counter
 from datetime import date
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 from sqlalchemy import text
 
@@ -26,8 +26,12 @@ from agri_data_service.warehouse.schemas.vegetation import VEGETATION_PLANE_SCHE
 if TYPE_CHECKING:
     import pyarrow as pa  # type: ignore[import-untyped]
 
+    from agri_data_service.foundation.parquet.paths import PartitionKind
+
 LAYER = "vegetation"
-KIND = "observed"
+#: Annotated rather than inferred: every path helper takes the `PartitionKind` literal, and a bare
+#: `str` is the one thing they will not accept.
+KIND: Final[PartitionKind] = "observed"
 
 
 def _day_hash(days: list[date]) -> str:

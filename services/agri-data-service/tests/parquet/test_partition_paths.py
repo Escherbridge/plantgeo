@@ -14,8 +14,11 @@ from agri_data_service.foundation.parquet.paths import (
     PartitionKind,
     PartitionPathError,
     absence_marker_path,
+    completed_partition_days,
+    completed_rung_days,
     completion_marker_path,
     day_prefix,
+    derived_empty_completion_marker_path,
     layer_prefix,
     missing_partition_days,
     month_prefix,
@@ -24,6 +27,7 @@ from agri_data_service.foundation.parquet.paths import (
     partition_path,
     stream_prefix,
     try_parse_absence_marker_path,
+    try_parse_completion_marker_path,
     try_parse_partition_path,
     validate_layer_slug,
     validate_partition_kind,
@@ -31,6 +35,7 @@ from agri_data_service.foundation.parquet.paths import (
     zoom_prefix,
 )
 from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS, ZoomTier, ZoomTierError
+from agri_data_service.parquet_ops.serving import day_status_sets
 
 FIRST_JULY = date(2026, 7, 1)
 LEAP_DAY = date(2024, 2, 29)
@@ -448,3 +453,135 @@ def test_missing_partition_days_refuses_a_zoom_off_the_ladder() -> None:
             last_day=FIRST_JULY,
             keys=(),
         )
+
+
+# --- The derived-empty completion name: the distinction that lives in the KEY SPACE ---------------
+#
+# Before 2026-09-02 a rung that generalised every base row away wrote an ORDINARY completion marker
+# with `derived_empty` inside its body. A rung whose parts were deleted out from under its marker
+# produced the identical listing, and `layer-lanes.md` §4 forbids opening a file to decide a gap --
+# so serving guessed "published empty" and a LOST rung looked covered at that zoom forever. The
+# sibling name is what makes the two readable apart from a listing alone.
+
+
+def test_the_two_completion_names_are_siblings_and_parse_apart() -> None:
+    ordinary = completion_marker_path("signal", "observed", TIER_Z9, FIRST_JULY)
+    empty = derived_empty_completion_marker_path("signal", "observed", TIER_Z9, FIRST_JULY)
+
+    assert ordinary.endswith("/_complete.json")
+    assert empty.endswith("/_complete.empty.json")
+    assert day_prefix("signal", "observed", TIER_Z9, FIRST_JULY) == empty[: -len("_complete.empty.json")]
+
+    parsed_ordinary = try_parse_completion_marker_path(ordinary)
+    parsed_empty = try_parse_completion_marker_path(empty)
+    assert parsed_ordinary is not None
+    assert not parsed_ordinary.derived_empty
+    assert parsed_empty is not None
+    assert parsed_empty.derived_empty
+    # Round-trip through `.key`, so a parsed marker cannot be rebuilt under the other name.
+    assert parsed_ordinary.key == ordinary
+    assert parsed_empty.key == empty
+
+
+def test_one_parser_accepts_both_names_so_every_layout_guard_keeps_working() -> None:
+    """DO NOT SPLIT INTO TWO PARSERS.
+
+    `warehouse_reader._is_layout_object`, `objectstore.list_partition_objects` and `drain.py`'s
+    legacy sweep all ask "is this key a member of the layout" through this one function. A guard that
+    did not recognise the new name would read a published rung as a stray object -- and the legacy
+    sweep's output feeds a DELETE.
+    """
+    for key in (
+        completion_marker_path("signal", "observed", TIER_Z9, FIRST_JULY),
+        derived_empty_completion_marker_path("signal", "observed", TIER_Z9, FIRST_JULY),
+    ):
+        assert try_parse_completion_marker_path(key) is not None
+        assert try_parse_partition_path(key) is None
+        assert try_parse_absence_marker_path(key) is None
+
+
+def _statuses(keys: tuple[str, ...], *, zoom: ZoomTier) -> str:
+    return partition_day_statuses(
+        layer="signal", kind="observed", zoom=zoom, first_day=FIRST_JULY, last_day=FIRST_JULY, keys=keys
+    )[FIRST_JULY]
+
+
+def test_a_derived_rung_holding_only_the_empty_receipt_is_data() -> None:
+    """The day IS published; this rung of it honestly holds nothing at this resolution."""
+    empty = derived_empty_completion_marker_path("signal", "observed", TIER_Z9, FIRST_JULY)
+    assert _statuses((empty,), zoom=TIER_Z9) == "data"
+
+
+def test_a_partless_ordinary_marker_is_incomplete_and_neither_missing_nor_data() -> None:
+    """DO NOT DELETE. This is the LOST RUNG, and every wrong answer here is a different silent lie.
+
+    `data` serves a covered day that holds no rows; `missing` at a derived rung reads as a day the
+    warehouse never wrote. `incomplete` is the only true statement: something was written here and
+    its parts are gone, so the rung owes a re-derivation and serving refuses it out loud.
+    """
+    ordinary = completion_marker_path("signal", "observed", TIER_Z9, FIRST_JULY)
+    assert _statuses((ordinary,), zoom=TIER_Z9) == "incomplete"
+
+
+def test_the_base_rung_may_not_be_declared_empty_by_name_either() -> None:
+    """An empty base day is a governed absence. A base rung wearing the empty name is broken, not empty."""
+    empty = derived_empty_completion_marker_path("signal", "observed", TIER_Z13, FIRST_JULY)
+    assert _statuses((empty,), zoom=TIER_Z13) == "incomplete"
+
+
+def test_parts_beside_the_empty_receipt_still_need_their_ordinary_marker() -> None:
+    """A rung cannot both hold rows and assert it holds none; the parts win and the rung is unfinished."""
+    keys = (
+        partition_path("signal", "observed", TIER_Z9, FIRST_JULY),
+        derived_empty_completion_marker_path("signal", "observed", TIER_Z9, FIRST_JULY),
+    )
+    assert _statuses(keys, zoom=TIER_Z9) == "incomplete"
+
+
+def test_completed_rung_days_is_stricter_than_completed_partition_days() -> None:
+    """The two primitives answer different questions and the ladder census needs the strict one.
+
+    `completed_partition_days` answers "did this rung ASSERT completion" -- `planes/` intersect it
+    with part keys they parsed themselves, so it must include the derived-empty receipt.
+    `completed_rung_days` answers "is this rung `data`". Counting a lost rung as finished under the
+    loose rule is exactly what stopped any tick from ever re-deriving one.
+    """
+    lost = (completion_marker_path("signal", "observed", TIER_Z9, FIRST_JULY),)
+    empty = (derived_empty_completion_marker_path("signal", "observed", TIER_Z9, FIRST_JULY),)
+
+    assert completed_partition_days(lost, layer="signal", kind="observed", zoom=TIER_Z9) == {FIRST_JULY}
+    assert completed_rung_days(lost, layer="signal", kind="observed", zoom=TIER_Z9) == set()
+    assert completed_partition_days(empty, layer="signal", kind="observed", zoom=TIER_Z9) == {FIRST_JULY}
+    assert completed_rung_days(empty, layer="signal", kind="observed", zoom=TIER_Z9) == {FIRST_JULY}
+
+
+def test_the_census_and_the_reader_resolve_one_day_the_same_way() -> None:
+    """`partition_day_statuses` and `day_status_sets` must not hold two definitions of a status.
+
+    They did, by one rule, until `classify_partition_day` became the single implementation: serving
+    read a partless marker below z13 as published-empty while the census read it as missing.
+    """
+    cases: tuple[tuple[str, tuple[str, ...]], ...] = (
+        (
+            "data",
+            (
+                partition_path("signal", "observed", TIER_Z9, FIRST_JULY),
+                completion_marker_path("signal", "observed", TIER_Z9, FIRST_JULY),
+            ),
+        ),
+        ("data", (derived_empty_completion_marker_path("signal", "observed", TIER_Z9, FIRST_JULY),)),
+        ("incomplete", (partition_path("signal", "observed", TIER_Z9, FIRST_JULY),)),
+        ("incomplete", (completion_marker_path("signal", "observed", TIER_Z9, FIRST_JULY),)),
+        ("absent", (absence_marker_path("signal", "observed", TIER_Z9, FIRST_JULY),)),
+        (
+            "conflict",
+            (
+                partition_path("signal", "observed", TIER_Z9, FIRST_JULY),
+                absence_marker_path("signal", "observed", TIER_Z9, FIRST_JULY),
+            ),
+        ),
+    )
+    for expected, keys in cases:
+        assert _statuses(keys, zoom=TIER_Z9) == expected, keys
+        served = day_status_sets(keys, layer="signal", kind="observed", tier=TIER_Z9)
+        assert FIRST_JULY in getattr(served, expected), (expected, keys)

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { act, renderHook } from '@testing-library/react'
 import { useRoutingStore } from '@/stores/routing-store'
-import type { TransportMode, Waypoint } from '@/stores/routing-store'
+import type { Waypoint } from '@/stores/routing-store'
 
 describe('useRoutingStore', () => {
   beforeEach(() => {

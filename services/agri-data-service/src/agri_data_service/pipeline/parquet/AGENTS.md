@@ -375,6 +375,16 @@ An incomplete z13 prefix is never treated as a resume checkpoint. It could be a 
 an externally interrupted delete, or an unknown mixture; only exact missing is unambiguous enough
 for this destructive command. Such a day requires inspection rather than a wider retry predicate.
 
+**Marker-only residue is still named, and it now lives inside `incomplete`.** A completion marker
+whose parts are gone used to classify `missing`, so the refusal that names it hung off the
+`missing`-with-keys branch. Since `classify_partition_day` stopped reading a bare assertion as a
+finished rung, that layout classifies `incomplete` alongside a genuinely truncated upload, and the
+specific refusal became unreachable — every unapproved rung answered `state is incomplete`.
+`_unapproved_rung_detail` restores the distinction from the listing the preflight already holds:
+residue WITH part files is a truncated export, residue without them is marker-only. Both are still
+refusals; only the sentence the operator reads differs, and it has to differ because the two need
+different repairs.
+
 ## Vegetation completion: absence ladders and exact reconciliation
 
 Vegetation data days and source-empty days both occupy the zoom ladder. Data is derived from z13,
@@ -672,24 +682,49 @@ ladder census selects them and a re-derivation writes the receipt.
 never written read as finished and nothing ever selected it again — 1,040 lane-days invisible below
 z13 on a green tick, found only by a `drain --selection ladder` census nobody ran hourly.
 
-`LaneGapCensus` now carries `ladder_repair_days`: base-complete days that at least one derived rung
-has not marked, **over the whole bucket rather than the settled window**. `lane_window` clamps to
-`writer_ceiling`, so a direct writer's days sit outside it — correct for exports, which this driver
-must not attempt there, and wrong for rungs, which are derived from published base parts and invoke
-no writer at all. It is a SECOND QUEUE, never folded into `missing_days`, because the two owe
-different work — a missing day owes a Postgres export, a ladder gap owes only a re-derivation from base parts
-that are already correct. `run_gap_fill` drains a lane's exports first and its repairs after, one per
-lane per round, under the same wall-clock budget; `repair_one_lane_day` takes the same advisory-lock
-key the export path takes and is the same function the drain's ladder selection calls.
+`LaneGapCensus` carries `ladder_repair_days`: base-complete days that at least one derived rung does
+not hold as `data`. It is a SECOND QUEUE, never folded into `missing_days`, because the two owe
+different work — a missing day owes a Postgres export, a ladder gap owes only a re-derivation from
+base parts that are already correct. `run_gap_fill` drains a lane's exports first and its repairs
+after, one per lane per round, under the same wall-clock budget; `repair_one_lane_day` takes the same
+advisory-lock key the export path takes and is the same function the drain's ladder selection calls.
 
-**The cost, stated: `len(DERIVED_ZOOM_TIERS)` extra `list_partition_keys` per lane per census —
-three today — and not one object GET.** Nothing scales with the backlog: the day sets are arithmetic
-over keys already in hand, and a coarse rung holds far fewer parts than the base rung it came from
-(usually one per day), so the three listings together are smaller than the base listing the census
-already pays for. `derived_rung_completions` is the one primitive both censuses ask, and it is
-strictly a listing — `build_lane_census` still never opens a file, which is what
-`layer-lanes.md` §4 requires. A rung counts as finished on its MARKER alone, which is also what makes
-a `derived_empty` rung terminate: it has no parts by construction.
+### What one ladder census costs per tick
+
+**Requests: `len(DERIVED_ZOOM_TIERS)` extra `list_partition_keys` per lane per census — three today
+— and not one object GET.** Nothing scales with the backlog: the day sets are arithmetic over keys
+already in hand, and a coarse rung holds far fewer parts than the base rung it came from (usually one
+per day), so the three listings together are smaller than the base listing the census already pays
+for. `build_lane_census` still never opens a file, which is what `layer-lanes.md` §4 requires.
+
+**Days: the hourly tick is SCOPED, the bulk drain is not.** `_ladder_repair_census` takes a `scope`,
+and `_series_lane_census` passes `lane.history_floor .. max(window_last, today)` — the lane's own
+settled window UNIONED with the days a direct writer owns past `writer_ceiling`. That union is
+exactly the range an hourly run is responsible for: a direct writer's days must stay out of the
+EXPORT queue but their rungs are derived from base parts this driver already lists, so leaving them
+out of the repair queue would make them unrepairable by any tick. Days outside the union — below a
+declared history floor, or dated into the future — belong to `drain --selection ladder`, which walks
+the whole bucket by design. A `static_lookup` lane passes no scope: its `day=` is a version stamp,
+not a calendar position, and a reference set holds a handful of them.
+
+**And the hole is a number.** Scoping means an hourly tick can leave ladder-incomplete days it will
+never select. `_LadderRepairCensus.out_of_scope` counts them, `LaneGapCensus.ladder_out_of_scope_days`
+carries them, `gap_census_report` sums them as `ladder_out_of_scope_days`, and `_seeded_progress`
+seeds `AvailabilityExtensionTally.reindex_owed` with the same count so the tick-wide summary reports
+`availability_reindex_owed`. A silence would have read as "every rung is whole", which is the one
+thing a scoped census cannot say about the days it did not look at.
+
+### Two ladder censuses, one rule
+
+`derived_rung_completions` is the primitive BOTH the hourly census and
+`drain.build_lane_ladder_census` ask, so the cron and the drain cannot disagree about which days are
+already repaired. It asks `completed_rung_days`, not `completed_partition_days`: a rung is finished
+when its receipt MATCHES what it holds — parts under `_complete.json`, or nothing under
+`_complete.empty.json`. The older rule ("a marker alone") counted a **lost rung** — an ordinary
+marker whose parts were deleted out from under it — as finished, which is precisely what left such a
+rung unrepairable by any tick. Legacy derived-empty receipts at the ordinary key fail the new rule
+and are therefore re-derived once, which rewrites them at the empty key; see
+`foundation/parquet/AGENTS.md`, "Completion is asserted, and emptiness has its own name".
 
 A failure on the rung half sets `ladder_error` and leaves the base census standing — failing the
 export census over a question about coarse rungs would stop a lane from writing days it can write.
@@ -700,6 +735,163 @@ tick, so a queue gated on `stopped` would never once be drained for them. A lane
 is the exception and drops its repair queue, because something about that lane is wrong and the next
 census re-selects every one of those days anyway.
 
+### A repaired day joins the index through a claim
+
+A ladder repair rewrites three of the day's four rungs, so their part keys, their digests and their
+completion receipts all change. Until 2026-09-02 nothing told the availability index. The day was
+then complete at all four rungs — so `derived_rung_completions` never selected it again — while the
+generation still bound the receipts of objects that no longer existed, and the tick reported
+`repaired: 1`. `_extend_availability_for_result` could not help: it is gated on an EXPORT outcome,
+and `_LadderGap` deliberately writes no claim. The loss was permanent and green.
+
+`repair_one_lane_day` now runs its derivation inside `store.recording_written_objects()` and, on
+`written`, calls `availability_extension.claim_repaired_lane_day`. The claim is the same v2 retry
+claim an export writes — no schema change — assembled from three sources:
+
+- **Derived rungs** from this run's ledger (`_rung_objects_from_ledger`), exactly as an export's are.
+- **The base rung** from `RepairedBaseRung`, built by `store.read_partition_with_receipts`. The
+  repair has to read the base rung anyway to derive from it, so that ONE read yields both the rows
+  and the key+digest of every part the claim cites. Hashing afterwards, or letting the deriver read
+  the day a second time, would have doubled the bytes for a lane like `soil-survey` whose day is
+  ~3,016 parts. `base_table=` is what carries the already-read table into `derive_and_write_day_tiers`.
+- **The source receipt** from `LADDER_REPAIR_ORIGIN`. Nothing was exported, so the claim must not
+  wear `POSTGRES_DAY_EXPORT_ORIGIN`. At index time `_prepare_day` sees that origin and, when the
+  generation already holds the day, REUSES the source evidence it already binds rather than minting a
+  second export-source document for a fetch that never happened — `_PreparedDay.source_object_key` is
+  `None` on that path and nothing new is written. A day the generation does not yet hold gets a fresh
+  repair-shaped source object, which is honest about what produced it.
+
+**When the source evidence is reused, its ceiling is reused with it.** `_verify_source_evidence_receipt`
+refuses a row whose `source_ceiling` disagrees with the source-evidence document it binds, so a
+repair that reused the document while restating the lane's ceiling — `max(allowed_source_ceiling(lane,
+today), day)`, recomputed at repair time and therefore usually a LATER day than the export declared —
+published rows the verifier then refused with `source evidence does not match its availability row`.
+The correction stayed `retry_owed` on every tick while the bucket and the index diverged, and because
+the refusal leaves the held rows in place it read as a no-op rather than as a failure. A repair
+re-derives coarse rungs without observing the source at all, so it has nothing new to say about the
+horizon: `_held_source` now carries the receipt AND the ceiling the generation already holds for the
+day (`_validate_generation_day` guarantees there is exactly one of each), and `_prepared_from_held_source`
+states that ceiling. It cannot lower the lane's published horizon, which is `max` over the generation
+pointer and every row.
+
+`_drain_owed_availability` picks the claim up on the next tick and publishes a CORRECTION generation
+through the existing semantics: the rows differ (new receipts), so `_already_indexed` is false and
+the pointer advances. That also closes the `write_partition` variant of the same hole — a
+re-derivation that dies after `part_index == 0` cleared z9's marker leaves an indexed day whose next
+repair writes new parts and SHAs, and the claim is what turns those into a correction rather than a
+silent divergence.
+
+A claim that cannot be written is `retry_claim_failed` on the lane's tally, not a raised repair: the
+rungs are correct and re-deriving them would not help.
+
+**The stranded coarse absence is healed here too.** `_retract_tier` refuses to declare a rung empty
+over a governed-absence marker, and `write_partition` refuses to write parts under one, so a day
+whose base rung was retracted and republished by a DIRECT writer arrives at the repair with coarse
+rungs still claiming absence. The blanket `except Exception` reported that `raised` on every tick
+forever, because such a day never reaches the export path that knows how to fix it.
+`_derive_repaired_rungs` now catches `GovernedAbsenceConflictError`, calls the SAME
+`_retract_derived_absences` helper `_finalize_written_day` uses, and retries the derivation exactly
+ONCE. It decides nothing: the ladder census selected this day because its base rung holds `data`, so
+the absence claim above it was already retracted by whoever republished the base.
+
+### The availability tally: four counters and two gauges
+
+`extended`, `skipped_unchanged`, `not_bootstrapped`, `ladder_incomplete`, `retry_owed` and
+`retry_claim_failed` are COUNTERS: things that happened during one run. Two fields are GAUGES, and
+their names say so, because summing a gauge across ticks reports a rising loss where the truth is a
+standing one:
+
+- `quarantined_standing` — how many claims are parked right now. Each lane's sweep restates the whole
+  set, so the same parked day is present again next tick.
+- `reindex_owed` — published days whose ladder this tick's scoped census could not reach. Seeded from
+  the census, never incremented.
+
+`_STATE_FIELDS` maps each outcome state to its field rather than using the state name directly, which
+is what lets the `quarantined` state land in `quarantined_standing`.
+
+### `write_completion_marker`: the receipt names its own claim
+
+Nothing is re-listed to check the claim: the caller has the write receipts of every part it just
+uploaded, and a listing here would only re-ask the store a question the export already answered while
+adding a failure mode to the one operation that runs after every single lane-day.
+
+`derived_empty` routes the object to `_complete.empty.json`; everything else goes to `_complete.json`.
+The one refusal is a `derived_empty` receipt at `BASE_ZOOM_TIER`: the base rung IS the rows, so a base
+day holding nothing is a governed absence, and admitting a second vocabulary would put two markers on
+one state. `clear_completion_marker` deletes BOTH names at a derived rung — a rung that derived to
+nothing last time and to rows this time would otherwise keep its empty receipt beside the new parts
+and claim both at once. The base rung pays no second delete, because it can never carry that name.
+
+### `derive_and_write_day_tiers`: all four rungs or none
+
+**All or nothing, by raising.** A partial ladder is the state the completion marker exists to make
+impossible, so a rung that cannot be written must not leave the caller free to mark the base day
+complete. The caller catches this and treats the whole day as unfinished; the next tick redoes it.
+An empty `tiers` is refused for the same reason — a day derived against no rungs is trivially "all
+rungs written".
+
+**`base_table` skips the read-back** for a caller that already holds the day's rows. Two do now: the
+forward API-direct writers of RUNBOOK 0.32.1 decision 1, and `repair_one_lane_day`, which reads the
+base rung itself because it needs the parts' digests for the day's availability claim. It accepts a
+Polars frame or an Arrow table; `_as_frame` normalises.
+
+**The memory risk is real and named:** the read-back materialises the whole base day at once, which
+is exactly what `soil-survey`'s ~3,016-part streaming export avoids on the write side. At its full
+1.5M-delineation universe that table is gigabytes. `MAX_DERIVATION_ROWS` refuses rather than swaps,
+so the failure is loud — but a lane that trips it needs this function taught to fold rung-by-rung
+over batches, which is only correct for associative aggregates (`sum`/`min`/`max`/`all`/`any`) and
+NOT for `mean`.
+
+**`connection` is the reuse `derivation_session` advertises.** A geometry lane opens a DuckDB session
+per rung and `LOAD spatial` on each — three per geometry day, three thousand across a thousand-day
+repair, for one session's worth of work.
+
+### `_retract_tier`: emptiness is asserted, never inferred
+
+`retract_partition_tier` rather than `prune_surplus_parts(written_part_count=0)`: that prune refuses
+zero on purpose, because a prune may only ever trail a completed write. Emptying a rung is a
+different intent and has its own named operation.
+
+The rung is MARKED, not left silent. Deleting the parts and stopping left the rung indistinguishable,
+through a listing, from a rung nobody ever derived — see "The emptied rung" above. The marker is
+written LAST, after the prune has provably succeeded, for the same reason `_write_tier` prunes before
+it marks: a receipt asserting emptiness beside surviving parts would disagree with the bucket at the
+moment it was written. A failed prune raises and leaves the rung unmarked, so the census selects the
+day again. A rung still claiming a governed absence is REFUSED rather than overwritten, because that
+is the error `_derive_repaired_rungs` and `_finalize_written_day` watch for in order to heal it.
+
+### `read_partition`: the one write-path read
+
+Every other reader in this repo scans the bucket through Polars with `polars_storage_options`, which
+is the right shape for serving: predicate pushdown, lazy, no bytes through this process. This method
+exists because the tier derivation runs INSIDE the writer, where there is a `store` and no
+credentials object — and because it must see exactly the parts that were just written, not whatever a
+separately-configured scan resolves.
+
+Parts are read in INDEX ORDER, not listing order: S3 lists lexically, so `part-10` sorts before
+`part-2`, and a table assembled that way holds every row but no longer in the grain order
+`conform_to_stream_schema` sorted it into. A part that vanishes between the listing and the read is
+SKIPPED rather than raised on — only a concurrent prune removes a part, and RUNBOOK 0.33.3 B has the
+bulk drain running alongside the hourly cron by design. `read_partition_with_receipts` is the same
+read plus a digest per part, computed from bytes already in hand.
+
+### One definition of a lane-day, two walks
+
+`drain._derive_one_day` holds no logic: a re-derivation takes the same advisory-lock key, prunes the
+same rungs and writes the same markers `fill_one_lane_day` does, so a second copy of that dance would
+be a second definition of what a lane-day means — and the copy that drifted would let the drain and
+the hourly tick both prune and both mark one rung, the loser's `part_count` describing objects the
+winner had already replaced. Both walks fold the repair's availability verdict into the SAME tally an
+exported day's lands in.
+
+### A malformed claim can never be retried
+
+`_claim_from_marker` is pure, so the next turn parses the identical bytes into the identical refusal.
+Left in the ledger it is not merely useless: the ledger drains OLDEST-FIRST and is bounded at
+`DEFAULT_MAX_RETRIES_PER_LANE` per tick, so one unparseable day permanently occupies a slot and can
+starve every replayable day behind it. Quarantined, the listing walks past it and an operator still
+has the bytes.
+
 ### Quarantined claims are counted, in the walk the retry pass already pays for
 
 `_quarantine_malformed_claim` parks an unparseable claim at `day=<day>.quarantined.json` so one
@@ -708,7 +900,7 @@ counted them, so a lane writing claims it could not read back accumulated perman
 `list_availability_retry_claims` separates both suffixes out of the SINGLE prefix walk
 `retry_pending_availability` already makes — the parked keys were always in those pages — and the
 pass emits one lane-wide `quarantined` outcome carrying `counted_days`, which `to_summary()` reports
-as `availability_quarantined`. The cap is the key budget that walk already had; only the NAMES are
+as `availability_quarantined_standing`. The cap is the key budget that walk already had; only the NAMES are
 sampled (`QUARANTINED_SAMPLE_SIZE`), because a hundred dates in a detail string carry a number a
 tally already holds. Nothing is deleted or retried: reading a malformed claim is an admin's call.
 

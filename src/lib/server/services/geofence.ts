@@ -1,5 +1,4 @@
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import { sql } from "drizzle-orm";
 import { geofences, alerts } from "@/lib/server/db/schema";
 
 interface GeofenceRow {

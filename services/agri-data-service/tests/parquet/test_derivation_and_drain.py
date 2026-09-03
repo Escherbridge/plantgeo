@@ -30,6 +30,7 @@ import pytest
 from agri_data_service.foundation.parquet.completion import PartitionCompletion
 from agri_data_service.foundation.parquet.paths import (
     completion_marker_path,
+    derived_empty_completion_marker_path,
     partition_path,
     try_parse_completion_marker_path,
     try_parse_partition_path,
@@ -180,16 +181,46 @@ def test_a_rung_that_derives_to_nothing_retracts_what_it_held_and_closes_the_run
     assert result.notes
     assert result.emptied == tuple(DERIVED_ZOOM_TIERS)
     for tier in DERIVED_ZOOM_TIERS:
-        receipt = PartitionCompletion.from_json_bytes(
-            backend.objects[store.key_for(completion_marker_path(STREAM, "observed", tier, DAY))]
-        )
+        empty_key = derived_empty_completion_marker_path(STREAM, "observed", tier, DAY)
+        receipt = PartitionCompletion.from_json_bytes(backend.objects[store.key_for(empty_key)])
         assert receipt.derived_empty, (
             f"z{tier} closed with an ordinary receipt, which claims a finished rung that holds rows"
         )
         assert (receipt.part_count, receipt.row_count) == (0, 0)
+        assert completion_marker_path(STREAM, "observed", tier, DAY) not in backend.objects, (
+            f"z{tier} kept its ordinary marker beside the empty one, so a listing reads two claims"
+        )
         assert partition_path(STREAM, "observed", tier, DAY) not in backend.objects, (
             f"z{tier} still serves parts the base day no longer holds"
         )
+
+
+def test_a_rung_that_fills_again_loses_its_empty_receipt() -> None:
+    """Both completion names must never stand at one rung: they make opposite claims about it.
+
+    `ObjectStore.clear_completion_marker` deletes BOTH at a derived rung, and `write_partition` calls
+    it at `part_index == 0`. Without that, a rung that derived to nothing last time and to rows this time
+    would keep `_complete.empty.json` beside its new parts, and a listing would read the rung as
+    published-empty and as published-with-rows at the same time.
+    """
+    store, backend = _store_with_base_day()
+    unlocated = pl.from_arrow(_base_table()).with_columns(
+        pl.lit(None, dtype=pl.Float64).alias("cell_longitude"),
+        pl.lit(None, dtype=pl.Float64).alias("cell_latitude"),
+    )
+    assert isinstance(unlocated, pl.DataFrame)
+    derive_and_write_day_tiers(
+        store, layer=STREAM, kind="observed", day=DAY, run_id=RUN_ID, now=_now, base_table=unlocated
+    )
+    assert derived_empty_completion_marker_path(STREAM, "observed", 0, DAY) in backend.objects
+
+    derive_and_write_day_tiers(store, layer=STREAM, kind="observed", day=DAY, run_id=RUN_ID, now=_now)
+
+    for tier in DERIVED_ZOOM_TIERS:
+        assert derived_empty_completion_marker_path(STREAM, "observed", tier, DAY) not in backend.objects, (
+            f"z{tier} still claims it is empty while holding the parts this derivation just wrote"
+        )
+        assert completion_marker_path(STREAM, "observed", tier, DAY) in backend.objects
 
 
 def test_a_derivation_that_cannot_prune_refuses_rather_than_marking() -> None:

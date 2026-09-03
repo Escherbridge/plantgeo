@@ -131,12 +131,64 @@ Three properties make the zero-part receipt safe to admit:
 - **The base rung may never carry one.** `objectstore.write_completion_marker` refuses a zero-part
   receipt at `BASE_ZOOM_TIER`: an empty base day is a governed absence, and nothing else.
 
-`partition_day_statuses` is deliberately **not** taught about it. That function classifies one tier
-from keys alone and cannot see inside a marker, so a marker with no parts stays `missing` there —
-correct at the base rung, where it is the residue of deleted parts. The derived rungs are classified
-by `pipeline/parquet/drain.py::build_lane_ladder_census` and `gap_fill`'s ladder census, which
-already ask only "did this rung assert it finished", and by `parquet_ops/serving.py::day_status_sets`,
-which serves a completed-but-partless **derived** rung as a published day holding zero rows.
+## Completion is asserted, and emptiness has its own name
+A day prefix holds **four object names**: `part-<n>.parquet`, `absent.json`, `_complete.json`, and
+`_complete.empty.json`. The fourth landed 2026-09-02 and it exists because the third could not carry
+two claims at once.
+
+Completion is *asserted by an object*, never inferred from the parts. A run killed between two part
+uploads leaves a **prefix** of a release behind, every part of it new, so freshness alone reads the
+wreckage as a finished export. `partition_day_statuses` therefore reports parts without a marker as
+`incomplete` — a status distinct from `missing`, so an operator can tell a backlog from a container
+that dies half-way through the same day every hour, and filled exactly like `missing` so the driver
+repairs it either way.
+
+The problem the sibling name solves: `derived_empty` used to live only in the marker's **body**, at
+the ordinary key. So at a derived rung a partless `_complete.json` meant either "this rung
+generalised every base row away and is honestly empty" or "this rung's parts were deleted out from
+under its marker" — and `layer-lanes.md` §4 forbids opening a file to decide a gap, so no reader
+could tell them apart. Serving guessed *published-empty*, which is a **stable lie** for a lost rung:
+the day looks covered at that zoom forever and no census brings it back.
+
+Putting the distinction in the **key space** makes both readable from a listing:
+
+| what the day prefix holds at one tier | status |
+| --- | --- |
+| parts + `_complete.json` | `data` |
+| `_complete.empty.json`, no parts, derived rung | `data` (published, honestly empty) |
+| parts, no marker | `incomplete` |
+| `_complete.json`, no parts | `incomplete` — a **lost rung**, repaired, never served |
+| `absent.json` | `absent` |
+| parts + `absent.json` | `conflict` |
+| nothing | `missing` |
+
+`classify_partition_day` is that table, and it is the **only** implementation of it.
+`partition_day_statuses` (census) and `parquet_ops/serving.py::day_status_sets` (readers) both call
+it, so the two cannot drift — which they had, by one rule, before this. `tier_day_objects` is the
+one parse they share.
+
+`try_parse_completion_marker_path` accepts **both** names and reports which it matched. That is
+deliberate: every "is this key a member of the layout" guard — `warehouse_reader._is_layout_object`,
+`objectstore.list_partition_objects`, `drain.py`'s legacy sweep, `weather_observations_exact` — keeps
+working untouched, and a guard that missed the new name would offer a published rung for deletion.
+
+Two primitives sit above the table and they are **not** interchangeable:
+
+- `completed_partition_days` — days that ASSERTED completion under either name. `planes/` parse part
+  keys themselves and intersect with this, so it must include the derived-empty receipt.
+- `completed_rung_days` — days that are `data`. The ladder censuses ask this one: counting a lost
+  rung as finished is exactly what made it unrepairable by any tick.
+
+**Migration, stated.** Derived-empty receipts written before 2026-09-02 sit at the ordinary key with
+no parts, so they now read `incomplete`. That is self-healing rather than a break: `completed_rung_days`
+does not count them, the ladder census re-selects the day, and `_retract_tier` clears the old marker
+(`clear_completion_marker` deletes *both* names at a derived rung) and writes the receipt at its own
+key. Until that repair runs the rung serves a refusal rather than a false empty, which is the safe
+direction.
+
+**The base rung may never carry the empty name.** `objectstore.write_completion_marker` refuses it,
+and `classify_partition_day` reads one found there as `incomplete`: an empty base day is a governed
+absence, and nothing else.
 
 ## Static layers use the same layout — but their `day=` means something else
 RUNBOOK §0.23.6 assumed static layers (`soil-survey`, `watersheds`, `evacuation-zones`) would get

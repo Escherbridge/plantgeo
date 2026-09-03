@@ -14,6 +14,7 @@ from agri_data_service.pipeline.direct.climate.adapter import (
     CLIMATE_DIRECT_KIND,
     DirectClimateFieldAdapter,
     DirectClimateFieldError,
+    no_mirrored_past_proof,
     refuse_immutable_day,
 )
 from agri_data_service.pipeline.direct.climate.products import (
@@ -58,6 +59,9 @@ LANE_STREAM = "soil-wetness-surface"
 LANE_COLUMN_COUNT = 19
 MEAN_TEMPERATURE_VALUE = 9.5
 PRECIPITATION_VALUE = 2.25
+#: The standing proof most tests here run under: some later settled day of the product is published
+#: with values, so an all-fill answer is POWER's verdict rather than its backlog.
+MIRRORED_PAST_PROOF = "the plane stream is published with values for 2026-08-25, later than this day"
 
 
 class SessionDouble:
@@ -88,13 +92,19 @@ def source_for(
     return climate_day_from_cache(product, day=day, support=support, cache=cache)
 
 
-def adapter_for(product: ClimateFieldProduct, source: ClimateDaySource) -> DirectClimateFieldAdapter:
-    """Bind a pre-parsed source into the adapter so no test opens a socket."""
+def adapter_for(
+    product: ClimateFieldProduct, source: ClimateDaySource, *, mirrored_past: str | None = MIRRORED_PAST_PROOF
+) -> DirectClimateFieldAdapter:
+    """Bind a pre-parsed source into the adapter so no test opens a socket.
+
+    `mirrored_past` defaults to a standing proof, because most tests here are about what a SETTLED
+    day publishes. The tests that pass `None` are the ones about the refusal.
+    """
 
     async def fetch() -> ClimateDaySource:
         return source
 
-    return DirectClimateFieldAdapter(product=product, fetch_source=fetch)
+    return DirectClimateFieldAdapter(product=product, fetch_source=fetch, mirrored_past_proof=lambda: mirrored_past)
 
 
 @pytest.mark.parametrize("stream", [PLANE_STREAM, LINEAGE_STREAM, LANE_STREAM])
@@ -156,6 +166,51 @@ async def test_an_all_fill_value_day_becomes_a_governed_absence_carrying_its_rec
     assert source.receipt.request_url_sha256 in absence.upstream_response
     assert f'"request_count": {NASA_POWER_SUPPORT_CELL_COUNT}' in absence.upstream_response
     assert str(NASA_POWER_SUPPORT_CELL_COUNT) in absence.reason
+    assert MIRRORED_PAST_PROOF in absence.upstream_response, (
+        "the marker must carry WHY the absence was allowed, not only what was fetched"
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_all_fill_day_is_refused_while_nothing_proves_the_release_moved_past_it(
+    support: NasaPowerSupport,
+) -> None:
+    """DO NOT DELETE. An unpublished day is not an empty day, and a governed absence says it is.
+
+    POWER fills a cell whose inputs have not landed, so at the settled edge -- exactly where a
+    forward writer works -- "every value a fill value" is the ordinary shape of a day the release
+    has not reached. The absence marker claims the SOURCE HAD NOTHING, permanently, until some later
+    turn re-selects the day.
+    """
+    store = ObjectStore(RecordingBackend())
+    product = product_for(PLANE_STREAM)
+    source = source_for(product, support, fill_cell_keys=[cell.cell_key for cell in support.cells])
+    adapter = adapter_for(product, source, mirrored_past=None)
+
+    with pytest.raises(ClimateSourceUnsettledError, match="nothing proves the release"):
+        await adapter(SessionDouble(), store, day=DAY, run_id="unsettled-run")
+
+    assert adapter.unsettled_refusal is not None, "the walk reads this to tell a refusal from a failure"
+    for tier in ZOOM_TIERS:
+        assert store.absence_exists(PLANE_STREAM, CLIMATE_DIRECT_KIND, tier, DAY) is False, tier
+
+
+@pytest.mark.asyncio
+async def test_the_proof_defaults_to_absent_so_an_unwired_caller_cannot_fabricate_an_absence(
+    support: NasaPowerSupport,
+) -> None:
+    """Fail-closed: `no_mirrored_past_proof` is the default, and it proves nothing."""
+    product = product_for(PLANE_STREAM)
+    source = source_for(product, support, fill_cell_keys=[cell.cell_key for cell in support.cells])
+
+    async def fetch() -> ClimateDaySource:
+        return source
+
+    adapter = DirectClimateFieldAdapter(product=product, fetch_source=fetch)
+
+    assert adapter.mirrored_past_proof is no_mirrored_past_proof
+    with pytest.raises(ClimateSourceUnsettledError):
+        await adapter(SessionDouble(), ObjectStore(RecordingBackend()), day=DAY, run_id="default-run")
 
 
 @pytest.mark.asyncio

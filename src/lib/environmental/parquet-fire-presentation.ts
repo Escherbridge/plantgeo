@@ -4,6 +4,7 @@ import {
   type ZoomTier,
 } from "@/lib/map/zoom-tiers";
 import {
+  assertFormPermittedForTier,
   assertNotPerimeter,
   supportCellPolygon,
   zoomBandForTier,
@@ -135,7 +136,10 @@ export function servingZoomTierForMapZoom(mapZoom: number): ZoomTier | null {
  *
  * A square is never a perimeter. `assertNotPerimeter` guards the drawn form on every call: if
  * anything ever changes `FIRE_CELL_DRAWN_FORM` to `native_polygon`, this throws instead of
- * publishing a burned extent nobody measured.
+ * publishing a burned extent nobody measured. `assertFormPermittedForTier` is the general form of
+ * the same rule, applied per cell to the form the cell's OWN envelope declares: a rung that
+ * published a form `LAYER_RENDER_CONTRACT` does not permit for `fire` refuses to draw rather than
+ * drawing a shape the contract never licensed.
  *
  * **The rung comes from each cell's own envelope and from nowhere else.** Until 2026-09-02 the
  * caller also passed its LATCHED rung as a fallback -- `useParquetFireDetections` holds the last
@@ -154,6 +158,7 @@ export function presentParquetFireDetections(
     features: result.data.cells.map((cell) => {
       const support = cell.support;
       const zoomTier = support.zoomTier;
+      assertFormPermittedForTier("fire", zoomTier, support.supportKind);
       const declaredPolygon =
         zoomBandForTier(zoomTier) === "detail"
           ? null

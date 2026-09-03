@@ -98,11 +98,6 @@ function requestedUrl(): URL {
   return new URL(String(mocks.fetchBoundedJson.mock.calls.at(-1)?.[0]));
 }
 
-/** The RequestInit the service passed alongside that URL. */
-function requestInit(): RequestInit {
-  return (mocks.fetchBoundedJson.mock.calls.at(-1)?.[1] ?? {}) as RequestInit;
-}
-
 describe("HUC12 watershed acquisition", () => {
   it("queries WBDHU12 (layer 12), not the NHDPoint layer", async () => {
     mocks.fetchBoundedJson.mockResolvedValue({ type: "FeatureCollection", features: [] });

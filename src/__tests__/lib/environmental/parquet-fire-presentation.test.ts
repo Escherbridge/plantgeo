@@ -4,7 +4,10 @@ import {
   presentParquetFireDetections,
   servingZoomTierForMapZoom,
 } from "@/lib/environmental/parquet-fire-presentation";
-import type { AggregateEnvelopeSupport } from "@/lib/map/layer-render-contract";
+import {
+  UnpermittedRenderFormError,
+  type AggregateEnvelopeSupport,
+} from "@/lib/map/layer-render-contract";
 import {
   LANE_BASE_LATTICES,
   latticeCellIndex,
@@ -292,6 +295,168 @@ describe("fireDetectionTotals", () => {
     for (const result of TERMINAL_STATES) {
       expect(fireDetectionTotals(result).cellCount, result.state).toBe(0);
     }
+  });
+});
+
+/**
+ * The contract is a RULE at presentation time, not a description of one.
+ *
+ * `LAYER_RENDER_CONTRACT.fire` permits `aggregate_cell` at every band and nothing else at the
+ * detail one, and until 2026-09-02 nothing in production ever asked it: every permitted-form
+ * lookup was reached only from tests. A cell whose envelope declares a form the rung does not
+ * permit now refuses to draw, because the alternative is a picture that misstates what was
+ * measured, and a picture is not something a reader can audit.
+ */
+describe("the drawn form is checked against the contract", () => {
+  it("refuses a cell whose envelope declares a form the rung does not permit", () => {
+    expect(() =>
+      presentParquetFireDetections(
+        readyWindow([cell({ support: support(13, { supportKind: "raw_point" }) })])
+      )
+    ).toThrow(UnpermittedRenderFormError);
+  });
+
+  it("draws the form the reader really declares, at every rung", () => {
+    for (const zoomTier of [0, 5, 9, 13] as ZoomTier[]) {
+      expect(() =>
+        presentParquetFireDetections(readyWindow([cell({ support: support(zoomTier) })]))
+      ).not.toThrow();
+    }
+  });
+});
+
+/**
+ * NOTHING IS CREATED OR LOST BETWEEN RUNGS.
+ *
+ * A coarse fire cell says "n hotspots were detected in this square", and the only thing that makes
+ * that sentence true is that n is the sum of the detail cells the square covers -- no contributor
+ * counted twice at a shared edge, none dropped between two squares. The fold below is the
+ * producer's own: `floor_to_resolution` in `warehouse/parquet/tiers.py:313-315` is
+ * `(v / r).floor() * r`, NOT `v - v % r`, because the two disagree for the negative longitudes
+ * this warehouse is made of.
+ *
+ * The presenter does not aggregate -- the warehouse does -- so what this pins is the other half:
+ * the square the client DRAWS for a folded row really is the ground its contributors fell in, and
+ * the count it carries is theirs. A phase error in the drawn square shows up here as a detail cell
+ * that is inside no drawn square, or inside two.
+ */
+describe("a coarse cell conserves the detail cells it covers", () => {
+  const COARSE_RESOLUTION_DEGREES = 0.2;
+
+  /** `floor_to_resolution`, tiers.py:313-315. */
+  function flooredToResolution(value: number, resolution: number): number {
+    return Math.floor(value / resolution) * resolution;
+  }
+
+  /** The base rung's own cells: 0.005-degree ORIGINS, the grain `fire_detections_day_export.sql` writes. */
+  const DETAIL_CELLS = [
+    { longitude: -116.25, latitude: 43.5, detectionCount: 4 },
+    { longitude: -116.245, latitude: 43.5, detectionCount: 1 },
+    { longitude: -116.1, latitude: 43.505, detectionCount: 7 },
+    { longitude: -116.055, latitude: 43.695, detectionCount: 2 },
+    { longitude: -115.995, latitude: 43.7, detectionCount: 5 },
+    { longitude: -115.8, latitude: 43.9, detectionCount: 3 },
+  ] as const;
+
+  /** One coarse row, exactly as `cellSupport` builds its envelope at the rung. */
+  function coarseCell(
+    longitude: number,
+    latitude: number,
+    detectionCount: number
+  ): ParquetFireDetectionCell {
+    const lattice = fireLattice(5);
+    return {
+      longitude,
+      latitude,
+      observedDay: "2026-08-28",
+      detectionCount,
+      frpSum: null,
+      frpObservationCount: 0,
+      highConfidenceDetectionCount: 0,
+      newestObservedAt: "2026-08-28T19:12:00Z",
+      support: {
+        zoomTier: 5,
+        supportKind: "aggregate_cell",
+        supportId: mintedSupportId(5, longitude, latitude),
+        origin: lattice.origin,
+        cellWidthDegrees: lattice.cellSizeDegrees,
+        cellHeightDegrees: lattice.cellSizeDegrees,
+        cellOriginDegrees: [
+          latticeCellSpan(latticeCellIndex(longitude, lattice), lattice)[0],
+          latticeCellSpan(latticeCellIndex(latitude, lattice), lattice)[0],
+        ],
+        aggregationMethod: "count",
+        contributorCount: detectionCount,
+        provenance: {
+          sourceLayer: "fire_detections",
+          observedDay: "2026-08-28",
+          newestObservedAt: "2026-08-28T19:12:00Z",
+          attribution: "NASA FIRMS",
+        },
+      },
+    };
+  }
+
+  /** The warehouse's own derivation: fold the detail cells onto the rung's grid and SUM. */
+  function foldedToCoarseRung(): ParquetFireDetectionCell[] {
+    const summed = new Map<string, { longitude: number; latitude: number; count: number }>();
+    for (const detail of DETAIL_CELLS) {
+      const longitude = flooredToResolution(detail.longitude, COARSE_RESOLUTION_DEGREES);
+      const latitude = flooredToResolution(detail.latitude, COARSE_RESOLUTION_DEGREES);
+      const key = `${longitude}:${latitude}`;
+      const existing = summed.get(key) ?? { longitude, latitude, count: 0 };
+      existing.count += detail.detectionCount;
+      summed.set(key, existing);
+    }
+    return [...summed.values()].map((folded) =>
+      coarseCell(folded.longitude, folded.latitude, folded.count)
+    );
+  }
+
+  /** The drawn square's own bounds, read back off the ring the presenter emitted. */
+  function boundsOf(geometry: GeoJSON.Geometry) {
+    if (geometry.type !== "Polygon") throw new Error(`expected a Polygon, got ${geometry.type}`);
+    const ring = geometry.coordinates[0];
+    const longitudes = ring.map(([longitude]) => longitude);
+    const latitudes = ring.map(([, latitude]) => latitude);
+    return {
+      west: Math.min(...longitudes),
+      east: Math.max(...longitudes),
+      south: Math.min(...latitudes),
+      north: Math.max(...latitudes),
+    };
+  }
+
+  it("carries exactly the sum of the detail cells its drawn square covers", () => {
+    const presented = presentParquetFireDetections(readyWindow(foldedToCoarseRung()));
+
+    let coveredDetailCells = 0;
+    for (const feature of presented.features) {
+      const { west, east, south, north } = boundsOf(feature.geometry);
+      const covered = DETAIL_CELLS.filter(
+        (detail) =>
+          detail.longitude >= west &&
+          detail.longitude < east &&
+          detail.latitude >= south &&
+          detail.latitude < north
+      );
+      coveredDetailCells += covered.length;
+      expect(covered.length, `${west},${south} covers no detail cell`).toBeGreaterThan(0);
+      expect(
+        feature.properties?.detectionCount,
+        `${west},${south} does not carry its contributors' sum`
+      ).toBe(covered.reduce((total, detail) => total + detail.detectionCount, 0));
+    }
+
+    // Every detail cell is inside exactly one drawn square: none dropped, none double-counted.
+    expect(coveredDetailCells).toBe(DETAIL_CELLS.length);
+    const drawnTotal = presented.features.reduce(
+      (total, feature) => total + Number(feature.properties?.detectionCount ?? 0),
+      0
+    );
+    expect(drawnTotal).toBe(
+      DETAIL_CELLS.reduce((total, detail) => total + detail.detectionCount, 0)
+    );
   });
 });
 

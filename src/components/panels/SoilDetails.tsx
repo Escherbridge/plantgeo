@@ -170,6 +170,12 @@ function SoilFieldSection({
   // response replayed from IndexedDB was serialized by whatever schema was current when it
   // was written -- and a panel that throws is a worse failure than a missing legend.
   const bands = field?.bands ?? [];
+  // The same rule as `bands`, for the same reason: `support` was added to this response on
+  // 2026-09-02, and `query-persister.ts` replays a soil-field response written before that
+  // straight out of IndexedDB. Dereferencing it there throws inside render and takes the whole
+  // panel down, so the cell size is read optionally and the sentence that names it is only
+  // written when there is a number to write.
+  const servedCellWidthDegrees = field?.support?.cellWidthDegrees ?? null;
 
   return (
     <>
@@ -237,16 +243,16 @@ function SoilFieldSection({
               described a footprint finer than the quarter-degree measurement it was drawn from.
               "Smoothed contours" went with it: every rung is a complete tessellation of cells
               now, not an isoband trace. Shown whenever the response says so, never guessed. */}
-          {aggregated && field && (
+          {aggregated && field && servedCellWidthDegrees !== null && (
             <p
               role="status"
               aria-live="polite"
               className="rounded-md border border-sky-500/40 bg-sky-500/10 p-3 text-xs text-[hsl(var(--foreground))]"
             >
               Zoomed out to the z{field.zoomTier} rung: {field.cellCount}{" "}
-              {field.support.cellWidthDegrees}° cell
+              {servedCellWidthDegrees}° cell
               {field.cellCount === 1 ? "" : "s"} at this zoom.{" "}
-              {(field.support.cellWidthDegrees ?? 0) > SOIL_FIELD_MEASURED_CELL_DEGREES
+              {servedCellWidthDegrees > SOIL_FIELD_MEASURED_CELL_DEGREES
                 ? "Each is the mean of every measured 0.25° reading inside it, not an individual reading."
                 : "Still the measured 0.25° grain, re-floored onto this rung's grid."}{" "}
               Zoom in for the detail rung.

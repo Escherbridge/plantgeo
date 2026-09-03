@@ -18,7 +18,6 @@ import {
   CLIMATE_FIELD_SIGNAL_IDS,
   type ClimateFieldSignalId,
 } from "@/lib/environmental/climate-field";
-import { BASE_ZOOM_TIER } from "@/lib/map/zoom-tiers";
 
 /** Empty rather than null, so a switched-off row has something for `setData` to clear with. */
 const EMPTY_FEATURE_COLLECTION: GeoJSON.FeatureCollection = {
@@ -127,10 +126,12 @@ function ClimateSignalLayer({
   const served = query.data?.signal === signal ? query.data : undefined;
   const servedForm = served?.renderForm ?? renderForm;
   // The rung that ANSWERED, never the rung this row asked for: the two differ for a frame after a
-  // zoom, and the layer sizes its outline off this. The base rung is the standing-in value before
-  // any answer has arrived, which is the one moment there is nothing drawn for it to be wrong
-  // about -- the source is still the empty collection.
-  const servedZoomTier = served?.zoomTier ?? BASE_ZOOM_TIER;
+  // zoom, and the layer sizes its outline off this. NULL until a collection lands, rather than the
+  // base rung it stood in with until 2026-09-02: `BASE_ZOOM_TIER` is the one value that turns the
+  // per-cell outline ON, so standing in with it stroked every seam of whatever first arrived --
+  // including a five-degree z0 tessellation, which is the block-seam mesh this slice removed. The
+  // rung is a property of the ANSWER; before the answer, "not yet known" is the only true value.
+  const servedZoomTier = served?.zoomTier ?? null;
 
   return (
     <ClimateFieldLayer

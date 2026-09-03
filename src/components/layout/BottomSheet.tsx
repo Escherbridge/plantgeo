@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useRef, useCallback, type ReactNode } from "react";
-import { cn } from "@/lib/utils";
 
 interface BottomSheetProps {
   children: ReactNode;

@@ -141,11 +141,11 @@ def _lane_row(
     """The twenty-one-column lane row the four soil-temperature streams are written in.
 
     A DIFFERENT LINEAGE VOCABULARY FROM `_lineage_row`, not a subset of it: this shape leads with
-    `data_source_key`/`source_parameter` and names its selection `selected_observation_id` /
-    `selected_canonical_row_sha256`, because it was frozen by a different snapshot breakdown
-    (`scripts/soil_temperature_snapshot_breakdown.py`). Its `direct:` discriminator therefore rides
-    `selected_source_release_id`, which is the only column in this shape a namespace can be read off.
-    `selected_observation_id` is a SUPPORT ORDINAL here, never an `agri.signal_observation.id`.
+    `data_source_key`/`source_parameter` and was frozen by a different snapshot breakdown
+    (`scripts/soil_temperature_snapshot_breakdown.py`). `selected_observation_id` carries a SUPPORT
+    ORDINAL here, never an `agri.signal_observation.id`, and it stays that way because the contract
+    leaves no alternative -- see `pipeline/direct/AGENTS.md`, "The ordinal has nowhere else to go in
+    the lane shape". The `direct:` discriminator rides `selected_source_release_id`.
     """
     row_sha256 = _direct_row_sha256(product, day=day, value=value)
     return {

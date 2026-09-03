@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Final
 from agri_data_service.foundation.parquet.absence import GovernedAbsence
 from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
 from agri_data_service.pipeline.direct.climate.rows import climate_day_table
-from agri_data_service.pipeline.direct.climate.source import ClimateSourceError
+from agri_data_service.pipeline.direct.climate.source import ClimateSourceError, ClimateSourceUnsettledError
 from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.parquet.lane_registry import normalise_export_outcome
 
@@ -48,13 +48,26 @@ def refuse_immutable_day(product: ClimateFieldProduct, day: date) -> None:
         )
 
 
+def no_mirrored_past_proof() -> str | None:
+    """The fail-closed default: nothing proves the source has published past the day being written."""
+    return None
+
+
 @dataclass(slots=True)
 class DirectClimateFieldAdapter:
     """Fetch and write one product-day while the caller holds that lane-day advisory lock."""
 
     product: ClimateFieldProduct
     fetch_source: Callable[[], Awaitable[ClimateDaySource]]
+    #: What proves POWER has published PAST this day, or `None` when nothing does. An all-fill answer
+    #: is only a governed absence once that is known; see `pipeline/direct/AGENTS.md`,
+    #: "An all-null day is a refusal until the mirror is proven past it".
+    mirrored_past_proof: Callable[[], str | None] = no_mirrored_past_proof
     source: ClimateDaySource | None = field(default=None, init=False)
+    #: The refusal this attempt made instead of governing an unproven all-fill day. Recorded as well
+    #: as raised because `gap_fill._export_one_day` turns every adapter exception into `raised`, and
+    #: the forward walk has to tell "not settled yet, come back next tick" from a real failure.
+    unsettled_refusal: ClimateSourceUnsettledError | None = field(default=None, init=False)
 
     async def __call__(
         self,
@@ -78,9 +91,23 @@ class DirectClimateFieldAdapter:
             )
         self.source = source
         if source.is_governed_absence:
+            proof = self.mirrored_past_proof()
+            if proof is None:
+                # THE SOURCE HAS NOT ANSWERED, IT HAS NOT YET ARRIVED. POWER fills a day with its
+                # sentinel until the inputs land, so "every value a fill value" at the settled edge
+                # is the ordinary shape of a day the release has not reached. A governed absence for
+                # it claims the SOURCE HAD NOTHING -- permanently, until a later turn re-selects the
+                # day -- about a day that simply was not published yet.
+                self.unsettled_refusal = ClimateSourceUnsettledError(
+                    f"{self.product.stream} {day.isoformat()}: POWER answered for all "
+                    f"{source.fill_value_cells} support cells and every {self.product.source_parameter} value was a "
+                    f"fill value, and no later settled day of this product is published with values, so nothing "
+                    f"proves the release has moved past this day. It is refused rather than governed as absent"
+                )
+                raise self.unsettled_refusal
             return normalise_export_outcome(
                 store.write_absence(
-                    self._absence(source, run_id=run_id),
+                    self._absence(source, run_id=run_id, proof=proof),
                     layer=self.product.stream,
                     kind=CLIMATE_DIRECT_KIND,
                     zoom=LANE_BASE_ZOOM_TIER,
@@ -98,15 +125,17 @@ class DirectClimateFieldAdapter:
             )
         )
 
-    def _absence(self, source: ClimateDaySource, *, run_id: str) -> GovernedAbsence:
-        """Carry the exact source receipt into the marker; an absence without one is a silent failure."""
+    def _absence(self, source: ClimateDaySource, *, run_id: str, proof: str) -> GovernedAbsence:
+        """Carry the source receipt AND the published-past proof into the marker; both justify the claim."""
         return GovernedAbsence(
             reason=(
                 f"NASA POWER answered for all {source.fill_value_cells} support cells of "
                 f"{self.product.stream} on {source.day.isoformat()} and every "
                 f"{self.product.source_parameter} value was a fill value"
             ),
-            upstream_response=json.dumps(source.receipt.as_event(), sort_keys=True),
+            upstream_response=json.dumps(
+                {"proof_mirror_moved_past_day": proof, "receipt": source.receipt.as_event()}, sort_keys=True
+            ),
             recorded_at=datetime.now(UTC),
             run_id=run_id,
         )
@@ -151,5 +180,6 @@ __all__ = [
     "CLIMATE_DIRECT_KIND",
     "DirectClimateFieldAdapter",
     "DirectClimateFieldError",
+    "no_mirrored_past_proof",
     "refuse_immutable_day",
 ]

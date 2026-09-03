@@ -806,10 +806,12 @@ export default function LayerManager() {
   // and did nothing but cost: every result it computed was discarded (`void`), so the packing
   // pass and the GPU readback ran on the MAIN thread, synchronously, on every change to fire,
   // drought or vegetation data -- on the same render path this component exists to keep clear.
-  // `@/workers/layer-processor.worker` is a worker module and is never instantiated as one; it
-  // was imported directly, which also installed its module-scope `message` listener on `window`
-  // (on the main thread `self` IS `window`). Nothing here may import it. See
-  // `useActionNetworkFeatures` for the shape a real worker takes in this codebase.
+  // `@/workers/layer-processor.worker` was a worker module never instantiated as one; it was
+  // imported directly, which also installed its module-scope `message` listener on `window`
+  // (on the main thread `self` IS `window`). That module and `@/lib/map/webgpu-accelerator`
+  // were deleted on 2026-09-02 (conformity `c3`), so there is nothing left here to import; a
+  // reintroduction repeats the incident above. See `useActionNetworkFeatures` for the shape a
+  // real worker takes in this codebase.
 
   if (!map) return null;
 

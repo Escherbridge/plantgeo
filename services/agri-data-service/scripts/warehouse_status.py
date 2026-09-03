@@ -26,6 +26,7 @@ import re
 import subprocess
 import sys
 from collections import Counter
+from dataclasses import dataclass
 
 import boto3  # type: ignore[import-untyped]
 
@@ -70,10 +71,29 @@ def supervisor_is_alive() -> bool:
     return LOOP_SCRIPT_NAME in listing
 
 
-def summarise_loop_log() -> dict[str, object]:
+@dataclass(frozen=True, slots=True)
+class LoopSummary:
+    """What the supervisor log says about the drain, or that there is no log to read.
+
+    A dataclass rather than a `dict[str, object]` because every consumer below does arithmetic or
+    numeric formatting on these values, and `object` makes each of those a cast at the call site.
+    `present=False` keeps the zero defaults: an absent log has made no progress, by definition.
+    """
+
+    present: bool
+    written: int = 0
+    absent: int = 0
+    raised: int = 0
+    contended: int = 0
+    verb_failures: int = 0
+    last_day_line: str = ""
+    quiet_minutes: float = 0.0
+
+
+def summarise_loop_log() -> LoopSummary:
     """Days done, failures, and how long since the log last moved."""
     if not LOOP_LOG.exists():
-        return {"present": False}
+        return LoopSummary(present=False)
     text = LOOP_LOG.read_text(encoding="utf-8", errors="replace")
     outcomes: Counter[str] = Counter()
     last_day_line = ""
@@ -83,16 +103,16 @@ def summarise_loop_log() -> dict[str, object]:
             outcomes[matched.group(2)] += 1
             last_day_line = line
     modified = dt.datetime.fromtimestamp(LOOP_LOG.stat().st_mtime, tz=dt.UTC)
-    return {
-        "present": True,
-        "written": outcomes.get("written", 0),
-        "absent": outcomes.get("absent", 0),
-        "raised": outcomes.get("raised", 0),
-        "contended": outcomes.get("contended", 0),
-        "verb_failures": text.count(" EXIT "),
-        "last_day_line": last_day_line[:100],
-        "quiet_minutes": (dt.datetime.now(dt.UTC) - modified).total_seconds() / 60,
-    }
+    return LoopSummary(
+        present=True,
+        written=outcomes.get("written", 0),
+        absent=outcomes.get("absent", 0),
+        raised=outcomes.get("raised", 0),
+        contended=outcomes.get("contended", 0),
+        verb_failures=text.count(" EXIT "),
+        last_day_line=last_day_line[:100],
+        quiet_minutes=(dt.datetime.now(dt.UTC) - modified).total_seconds() / 60,
+    )
 
 
 def census_bucket(values: dict[str, str]) -> dict[str, object]:
@@ -153,16 +173,16 @@ def main() -> int:  # noqa: PLR0912 - one read-only report intentionally owns ev
     problems: list[str] = []
     if not alive:
         problems.append("SUPERVISOR IS NOT RUNNING -- nothing is draining; restart the loop")
-    if not loop.get("present"):
+    if not loop.present:
         problems.append("no loop log found -- the loop has never run from this directory")
     else:
-        if loop["raised"]:
-            problems.append(f"{loop['raised']} lane-day(s) raised")
-        if loop["verb_failures"]:
-            problems.append(f"{loop['verb_failures']} verb exit(s) non-zero")
-        if alive and float(loop["quiet_minutes"]) > QUIET_MINUTES_BEFORE_SUSPICION:
+        if loop.raised:
+            problems.append(f"{loop.raised} lane-day(s) raised")
+        if loop.verb_failures:
+            problems.append(f"{loop.verb_failures} verb exit(s) non-zero")
+        if alive and loop.quiet_minutes > QUIET_MINUTES_BEFORE_SUSPICION:
             problems.append(
-                f"log silent {loop['quiet_minutes']:.0f} min -- cross-check the bucket's newest "
+                f"log silent {loop.quiet_minutes:.0f} min -- cross-check the bucket's newest "
                 "object before calling it stalled; one cold signal day can take ~25 min"
             )
     if isinstance(bucket.get("error"), str):
@@ -170,13 +190,13 @@ def main() -> int:  # noqa: PLR0912 - one read-only report intentionally owns ev
 
     if not quiet_only:
         print(f"supervisor      : {'alive' if alive else 'NOT RUNNING'}")
-        if loop.get("present"):
+        if loop.present:
             print(
-                f"days            : {loop['written']} written, {loop['absent']} absent, "
-                f"{loop['raised']} raised, {loop['contended']} contended"
+                f"days            : {loop.written} written, {loop.absent} absent, "
+                f"{loop.raised} raised, {loop.contended} contended"
             )
-            print(f"last day        : {loop['last_day_line']}")
-            print(f"log last moved  : {float(loop['quiet_minutes']):.1f} min ago")
+            print(f"last day        : {loop.last_day_line}")
+            print(f"log last moved  : {loop.quiet_minutes:.1f} min ago")
         if bucket and "error" not in bucket:
             print(f"bucket objects  : {bucket['objects']:,}")
             print(f"completion marks: {bucket['markers']:,}  by zoom {bucket['markers_by_zoom']}")

@@ -119,7 +119,7 @@ async def status(since: datetime) -> dict[str, object]:
         await session.execute(text("SET TRANSACTION READ ONLY"))
         row = (await session.execute(_STATUS, {"since": since})).mappings().one()
         await session.rollback()
-    return _status_payload(row, since)
+    return _status_payload(dict(row), since)
 
 
 def main() -> None:

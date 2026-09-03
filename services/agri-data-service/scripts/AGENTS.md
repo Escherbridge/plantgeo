@@ -50,6 +50,95 @@ no write method. It ignores verification-marker shortcuts, re-reads every receip
 month from the pinned raw parts, reproduces provenance and z13/z9/z5/z0 bytes, and requires exact lane
 and bundle inventories plus the manifest/completion SHA chain.
 
+# The gate and its locked quality receipt
+
+`check.py` is the single authority for the four Python gates. As of 2026-09-02 it runs
+`ruff format --check src tests scripts`, `ruff check src tests scripts`, **`mypy src scripts`** and
+`pytest -q`, and `Makefile`'s `lint` / `format` / `test` targets name the same three paths.
+
+**Every child runs `uv run --no-sync`, and so must you.** A bare `uv run` re-resolves the
+environment from the lock's default groups, which drops the `dev` extra and takes pytest, ruff and
+mypy with it in the middle of a sweep -- the failure then reads as a code failure, not a tooling
+one. `make install` (`uv sync --locked --all-extras`) is the only sanctioned sync.
+
+## Why `mypy` now covers this directory
+
+It was `mypy src` until 2026-09-02, so every operator script here was unchecked. Turning it on
+surfaced 204 findings in 18 files, including one script that could not import at all:
+`build_soil_moisture_from_canonical_snapshot.py` imported
+`agri_data_service.warehouse.schemas.soil_field_moisture`, a module that was split into three
+per-depth modules without re-homing its `SOIL_FIELD_MOISTURE_STREAMS` mapping. Three AST tests in
+`tests/test_snapshot_builder_contracts.py` assert against that script's constants and never execute
+it, so nothing caught it.
+
+The scripts' JSON documents -- manifests, ledgers, checkpoints, receipts -- are typed
+`Mapping[str, Any]` at the decode boundary and narrowed with explicit guards or a named helper
+(`_require_int`, `_require_frame`) before any value drives a decision. They are deliberately *not*
+`TypedDict`: these documents are mutated in place and their bytes are SHA-256 pinned into published
+receipts, so a restructure that satisfied a `TypedDict` would change the emitted bytes. See
+`conductor/code_styleguides/python.md`, "Baseline", for the reconciled rule.
+
+## `QUALITY_RECEIPT.json`
+
+`uv run --no-sync python scripts/check.py --write-receipt` writes
+`services/agri-data-service/QUALITY_RECEIPT.json` **after** a green run of all four gates. It
+refuses to write from `--only` or from a red sweep. The receipt records:
+
+- `tree_digest` -- one sha256 over every file under `src/**`, `tests/**`, `scripts/**` plus
+  `pyproject.toml` and `uv.lock`, sorted by POSIX-relative path, with the path and the content each
+  length-prefixed so a rename can never digest the same as an edit. `__pycache__`, `*.pyc/pyo/pyd`
+  and the tool cache directories are excluded because they differ between a developer tree and a
+  Docker build context. Domain-separated by a constant prefix. Reproducible across platforms only
+  because `.gitattributes` forces `eol=lf` for the whole tree.
+- `digest_file_count`, `generated_at`, the `python`/`uv`/`ruff`/`mypy`/`pytest` versions that
+  produced the judgement, and each gate's command, status and duration.
+
+Measured 2026-09-02: the digest covers **842** files and `git ls-files` over the same roots returns
+**840** -- the two extra are `quality_receipt.py` and `verify_quality_receipt.py`, still uncommitted
+at that moment. Once they are tracked the two sets are identical, which is what makes a receipt
+written on a developer machine verify inside a Railway build from a fresh checkout. The hazard that
+follows: an **untracked** file left under `src/`, `tests/` or `scripts/` is in your digest and not in
+the checkout, so your green receipt fails the image build. `git status` before `--write-receipt`.
+
+`scripts/verify_quality_receipt.py` recomputes the digest, checks every recorded gate passed, and
+exits non-zero on any mismatch. It is stdlib-only on purpose: the image build runs it on a bare
+interpreter with no virtualenv. Both `services/agri-data-service/Dockerfile` and
+`infra/job-executor/Dockerfile` run it in a dedicated `quality-receipt` stage and then
+`COPY --from=quality-receipt` the verified receipt into the runtime image -- **the copy is what
+forces the stage to build**, because BuildKit prunes an unreferenced stage and a pruned gate is not
+a gate. `tests/` and `scripts/` are digest inputs and stay in that stage; they never reach a runtime
+image, since a deleting `RUN` would not shrink an already-written layer.
+
+Editing source without re-running the sweep therefore fails the **build**, not the first request.
+The practical consequence: any change to `pyproject.toml` or `uv.lock` -- a dependency removal, for
+instance -- must be followed by `--write-receipt` or both images stop building.
+
+This is the 2026-09-01 audit's "locked quality receipt before deployment" row. It is deliberately
+NOT the in-image `checks` stage that the 2026-08-07 owner ruling dropped: it re-runs nothing (a
+Docker build has no disposable PostgreSQL, so `pytest` could never run there), it only proves the
+tree still equals the one a green sweep judged.
+
+### State at the 2026-09-02 handoff -- READ THIS BEFORE THE NEXT IMAGE BUILD
+
+`QUALITY_RECEIPT.json` **does not exist yet**, so both Docker builds fail at the `quality-receipt`
+stage on a missing COPY source. That is the gate working, not a bug: the tree it would have to
+describe was not green when the gate landed. The `c1` sweep on 2026-09-02 recorded
+`mypy src scripts` PASS over 354 files, and `format`/`lint`/`pytest` FAIL entirely inside the
+concurrently-edited `pipeline/direct/**` and `pipeline/parquet/**` surface (2 unformatted files,
+`PLR0912`/`F541`, and 20 failures under `tests/direct/**`, `tests/parquet/**`,
+`tests/parquet_ops/**`). Whoever closes those runs the one command that unblocks every image:
+
+```bash
+cd services/agri-data-service
+uv run --no-sync python scripts/check.py --write-receipt   # refuses unless all four gates are green
+uv run --no-sync python scripts/verify_quality_receipt.py  # must exit 0
+```
+
+**The TypeScript side has no equivalent yet.** There is no receipt over the root `src/**`,
+`package.json` or `package-lock.json`, and the root `Dockerfile` verifies nothing about whether its
+sources were linted or tested. A Python-only receipt is a real gate over a real half of the tree,
+not a whole-repository guarantee; treat it as such until the frontend has its own.
+
 # Canonical snapshots and immutable lane breakdowns
 
 ## Lint boundary for exact offline workflows

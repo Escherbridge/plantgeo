@@ -9,6 +9,8 @@ import ast
 import importlib
 from pathlib import Path
 
+import pytest
+
 # Dependency rules: for each layer, set of forbidden package prefixes / modules
 LAYER_FORBIDDEN_IMPORTS: dict[str, set[str]] = {
     "foundation": {
@@ -381,3 +383,112 @@ def test_domain_isolation_actually_has_domains_to_police() -> None:
     assert "weather_observations" in discovered["execution"], (
         f"the first domain package is missing; discovered {discovered}"
     )
+
+
+# --- interface/cli is an adapter, not an execution layer ------------------------------------------
+#
+# The lattice above lets `interface` import anything, which is right for a Click adapter and useless
+# as a check on what the adapter DEFINES. Track spec `repository_conformity_hardening_20260901`
+# acceptance gate 3: "`interface/cli` contains adapters only; reusable lane/framework/orchestration
+# logic has a domain owner". Two bounded AST rules, chosen because each names a specific ownership
+# decision rather than a style preference:
+#
+# 1. **Transaction ownership.** A `with`/`async with` item calling `.begin()` -- `session.begin()`,
+#    `engine.begin()` -- is the adapter deciding a commit boundary. That is a durability decision
+#    about domain work, and it belongs with the domain that knows what a partial write means. It is
+#    also why these are hard to test: the boundary is only reachable through a Click invocation.
+# 2. **Framework definition.** A class named for a lane, runner, framework, orchestrator or executor
+#    is reusable machinery. Defined here, it can only ever be reused by another CLI command.
+#
+# Deliberately NOT flagged: `async with some_session() as session` without `.begin()`. Opening a
+# read scope to render output is exactly what an adapter does.
+
+CLI_ADAPTER_DIRECTORY = "interface/cli"
+
+#: A class named for execution machinery rather than for Click wiring.
+CLI_FRAMEWORK_CLASS_SUFFIXES: tuple[str, ...] = ("Framework", "Runner", "Lane", "Orchestrator", "Executor")
+
+#: The context-manager method that opens a transaction, whatever it is called on.
+CLI_TRANSACTION_METHOD = "begin"
+
+#: What `c2` still owes, counted at HEAD `ad4e015`: 24 transaction boundaries and 2 framework
+#: classes, all in `commands.py`. Pinned rather than left open-ended so that a PARTIAL extraction is
+#: also loud -- an unpinned xfail would silently accept 25 of 26 moved. `test_cli_is_a_thin_click_
+#: adapter` is `xfail(strict=True)`, so it fails as XPASS the moment the last one lands and the
+#: whole block flips to an enforced rule.
+CLI_ADAPTER_VIOLATION_COUNT = 26
+
+
+def _cli_adapter_violations(pkg_root: Path) -> list[str]:
+    """Return every transaction boundary and framework class defined under `interface/cli`."""
+    adapter_dir = pkg_root / CLI_ADAPTER_DIRECTORY
+    if not adapter_dir.is_dir():
+        return []
+    violations: list[tuple[str, int, str]] = []
+    for py_file in sorted(adapter_dir.rglob("*.py")):
+        relative = py_file.relative_to(pkg_root).as_posix()
+        tree = ast.parse(py_file.read_text(encoding="utf-8"), filename=str(py_file))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef) and node.name.endswith(CLI_FRAMEWORK_CLASS_SUFFIXES):
+                violations.append((relative, node.lineno, f"defines execution machinery 'class {node.name}'"))
+            elif isinstance(node, ast.With | ast.AsyncWith):
+                violations.extend(
+                    (relative, node.lineno, f"owns a transaction boundary '{ast.unparse(item.context_expr)}'")
+                    for item in node.items
+                    if isinstance(item.context_expr, ast.Call)
+                    and isinstance(item.context_expr.func, ast.Attribute)
+                    and item.context_expr.func.attr == CLI_TRANSACTION_METHOD
+                )
+    return [f"{path}:{line} {detail}" for path, line, detail in sorted(violations)]
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        f"{CLI_ADAPTER_VIOLATION_COUNT} known violations await the wave-C2 extraction; "
+        "the count is pinned by test_cli_adapter_violations_stay_pinned"
+    ),
+)
+def test_cli_is_a_thin_click_adapter() -> None:
+    """`interface/cli` may wire Click to a domain; it may not own transactions or lane frameworks."""
+    pkg_root = Path(__file__).resolve().parents[1] / "src" / "agri_data_service"
+    violations = _cli_adapter_violations(pkg_root)
+
+    assert not violations, "CLI thin-adapter violations found:\n" + "\n".join(violations)
+
+
+def test_cli_adapter_violations_stay_pinned() -> None:
+    """The xfail above only proves 'more than zero'. This pins WHICH number, in both directions."""
+    pkg_root = Path(__file__).resolve().parents[1] / "src" / "agri_data_service"
+    violations = _cli_adapter_violations(pkg_root)
+
+    assert len(violations) == CLI_ADAPTER_VIOLATION_COUNT, (
+        f"the CLI adapter debt moved from {CLI_ADAPTER_VIOLATION_COUNT} to {len(violations)}. "
+        "If c2 extracted work, lower the pin; if a command grew a new transaction or framework, "
+        "put it in a domain package instead.\n" + "\n".join(violations)
+    )
+
+
+def test_the_cli_adapter_rule_catches_both_shapes(tmp_path: Path) -> None:
+    """Prove the rule fires, and that a plain read scope is deliberately left alone."""
+    adapter_dir = tmp_path / "interface" / "cli"
+    adapter_dir.mkdir(parents=True)
+    (adapter_dir / "__init__.py").write_text("", encoding="utf-8")
+    (adapter_dir / "commands.py").write_text(
+        "async def persist(loader_session, database_url):\n"
+        "    async with loader_session() as session, session.begin():\n"
+        "        await session.execute('select 1')\n"
+        "    async with loader_session() as read_only:\n"
+        "        await read_only.execute('select 1')\n"
+        "\n"
+        "class ChunkedLane:\n"
+        "    pass\n",
+        encoding="utf-8",
+    )
+
+    violations = _cli_adapter_violations(tmp_path)
+
+    expected_violation_count = 2  # one transaction boundary, one framework class
+    assert len(violations) == expected_violation_count, violations
+    assert any("session.begin()" in violation for violation in violations)
+    assert any("class ChunkedLane" in violation for violation in violations)

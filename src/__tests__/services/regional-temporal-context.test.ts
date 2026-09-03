@@ -516,10 +516,14 @@ describe("assembling regional context at the days the user is viewing", () => {
   });
 
   /**
-   * The reader proved the partition was never written. The capability record still lists this day
-   * as published, and deferring to it would license "no fires here" for a day nobody observed.
+   * A RUNG IS NOT A DAY. The reader proved that the rung THIS assembler reads (z9) has no
+   * partition for the day; the capability record says the day published, and the browser drew it
+   * from another rung. A base-complete day whose derived rungs are still queued for
+   * re-derivation is an ordinary production state (`gap_fill.py:40-44`), so this is reported as
+   * a rung gap -- never as "the warehouse published nothing", and never as the client being
+   * wrong about a rung the client did not read.
    */
-  it("lets an unwritten partition override a capability row that still calls the day published", async () => {
+  it("reports a rung with no partition as a rung gap, not as the day being unpublished", async () => {
     mocks.getParquetFireDetections.mockResolvedValue({
       state: "not_generated",
       requestedDay: DAY_THE_FIRE_LANE_PUBLISHED,
@@ -529,11 +533,32 @@ describe("assembling regional context at the days the user is viewing", () => {
     const result = await assembleRegionalContext(43.6, -116.2, [
       { layer: "fire", date: DAY_THE_FIRE_LANE_PUBLISHED, hasDataOnDate: true },
     ]);
-    expect(result.temporalContext.readings[0].outcome).toBe(
-      "not_published_on_viewed_date"
-    );
+    expect(result.temporalContext.readings[0].outcome).toBe("rung_not_written");
     expect(result.temporalContext.readings[0].reason).toContain(
       DAY_THE_FIRE_LANE_PUBLISHED
+    );
+    // The rung is named, so the sentence cannot be read as a statement about the whole day.
+    expect(result.temporalContext.readings[0].reason).toContain("zoom=09");
+    expect(result.temporalContext.readings[0].clientClaimContradicted).toBe(false);
+  });
+
+  /**
+   * The other side of the same rule: when the coverage record says the day was NOT published, the
+   * reader's rung gap does not upgrade it to a rung question. The day is a real coverage hole and
+   * the coverage record, which speaks about days, decides.
+   */
+  it("still calls an unpublished day a coverage hole when the rung is also missing", async () => {
+    mocks.getParquetFireDetections.mockResolvedValue({
+      state: "not_generated",
+      requestedDay: DAY_INSIDE_THE_FIRE_HOLE,
+      reason: "day_not_written",
+    });
+
+    const result = await assembleRegionalContext(43.6, -116.2, [
+      { layer: "fire", date: DAY_INSIDE_THE_FIRE_HOLE, hasDataOnDate: true },
+    ]);
+    expect(result.temporalContext.readings[0].outcome).toBe(
+      "not_published_on_viewed_date"
     );
     expect(result.temporalContext.readings[0].clientClaimContradicted).toBe(true);
   });
@@ -938,6 +963,33 @@ describe("the prompt section describing what each layer is showing", () => {
     expect(text).toContain(
       "do not report it as published and do not report it as absent"
     );
+  });
+
+  it("tells the agent a rung gap is not a coverage hole and not an empty map", () => {
+    const text = buildTemporalSection(
+      temporalContext({
+        readings: [
+          {
+            layer: "fire",
+            viewedDate: DAY_THE_FIRE_LANE_PUBLISHED,
+            clientReportsDataOnDate: true,
+            evidenceSource: "fireDetections",
+            outcome: "rung_not_written",
+            reason: `fire-detections has no partition written for ${DAY_THE_FIRE_LANE_PUBLISHED} at zoom=09.`,
+            clientClaimContradicted: false,
+            setCorrespondence: "payload_is_the_viewed_day",
+          },
+        ],
+        viewedDates: [DAY_THE_FIRE_LANE_PUBLISHED],
+      })
+    );
+
+    expect(text).toContain("zoom=09");
+    expect(text).toContain("do not call it a coverage hole");
+    expect(text).toContain("do not tell the user their map is empty or wrong");
+    // The two sentences this outcome exists to keep apart.
+    expect(text).not.toContain("PUBLISHED NOTHING");
+    expect(text).not.toContain("you may say there was none here");
   });
 
   it("names the client's contradicted coverage claim instead of silently overriding it", () => {

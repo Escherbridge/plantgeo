@@ -25,7 +25,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
-import asyncpg
+import asyncpg  # type: ignore[import-untyped]
 
 SERVICE_ROOT = Path(__file__).resolve().parent.parent
 LOCAL_RUN_ROOT = SERVICE_ROOT / ".agri-local-runs"

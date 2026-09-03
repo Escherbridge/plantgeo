@@ -111,7 +111,7 @@ def audit_lane(
 
     expected_keys: set[str] = {manifest_key, completion_key}
     consumed_raw: dict[str, Mapping[str, Any]] = {}
-    aggregate = Counter()
+    aggregate: Counter[str] = Counter()
     multiplicities: Counter[int] = Counter()
     all_days: list[str] = []
     input_month_digests: list[str] = []
@@ -137,11 +137,7 @@ def audit_lane(
                 or checkpoint.get("input_manifest_sha256") != contract.manifest_sha256
             ):
                 raise source.BreakdownError(f"audit checkpoint identity mismatch: {product.lane} {month} {phase}")
-            source.validate_checkpoint_objects(
-                store,
-                checkpoint,
-                verify_workers=verify_workers,  # type: ignore[arg-type]
-            )
+            source.validate_checkpoint_objects(store, checkpoint, verify_workers=verify_workers)
             marker_key = source.verification_marker_key(root, phase, month)
             expected_marker = source._json_bytes(
                 source.checkpoint_verification_marker(

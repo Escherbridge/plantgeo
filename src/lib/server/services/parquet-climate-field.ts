@@ -2,6 +2,7 @@ import {
   CLIMATE_FIELD_ATTRIBUTION,
   climateFieldBandFor,
   climateFieldSignalDefinition,
+  climateFieldToggleId,
   resolveClimateRenderForm,
   type AirTemperatureVariant,
   type ClimateFieldSignalId,
@@ -13,7 +14,10 @@ import {
   type ClimateFieldFeatureProperties,
   type PublishedClimateFieldCollection,
 } from "@/lib/server/services/environmental-read-model";
-import type { AggregateEnvelopeSupport } from "@/lib/map/layer-render-contract";
+import {
+  assertFormPermittedForTier,
+  type AggregateEnvelopeSupport,
+} from "@/lib/map/layer-render-contract";
 import {
   BASE_ZOOM_TIER,
   LANE_BASE_LATTICES,
@@ -256,6 +260,21 @@ function cellFeatures(
   rows: readonly ParquetClimateFieldObservation[]
 ): GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon | GeoJSON.Point>[] {
   const definition = climateFieldSignalDefinition(signal);
+  // THE FORM IS CHOSEN HERE, SO IT IS PROVED HERE. `isoline` dissolves rows into bands, which is
+  // an `isoband`; every other form draws each row as the cell its own envelope declares, so that
+  // envelope's `supportKind` IS the form drawn. Both are checked against the rung the row was
+  // read at (`assertFormPermittedForTier` -> `isFormPermittedForTier`), not against the live map
+  // zoom, because a retained frame outlives the zoom it was fetched for. This is what keeps
+  // `tierRenderForm`'s isoline-to-field demotion at the base rung honest: a band asserts the
+  // field varies smoothly between samples, and the detail band permits no such claim.
+  const toggleId = climateFieldToggleId(signal);
+  for (const row of rows) {
+    assertFormPermittedForTier(
+      toggleId,
+      row.support.zoomTier,
+      renderForm === "isoline" ? "isoband" : row.support.supportKind
+    );
+  }
   if (renderForm === "isoline") {
     // Dissolved over the SERVED rung's lattice, never the detail one. Passing the wrong step makes
     // `buildIsobands` read a regular lattice as a scatter -- every square fails its corner test and

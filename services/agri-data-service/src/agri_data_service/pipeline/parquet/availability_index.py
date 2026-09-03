@@ -2035,6 +2035,14 @@ def _verify_completion_object(
         evidence.day,
     ):
         raise AvailabilityConflictError("completion receipt path does not match terminal evidence")
+    if parsed.derived_empty != _is_published_empty_rung(
+        rung=evidence.rung, row_count=evidence.row_count, data_receipts=evidence.data_receipts
+    ):
+        # THE KEY NAME IS ALSO A CLAIM, and it is checked before the body is opened. A row citing
+        # `_complete.json` for an emptied rung binds the receipt of a rung whose parts were deleted
+        # out from under it, and a row citing `_complete.empty.json` for a rung holding parts binds
+        # a receipt that says the opposite of what it points at.
+        raise AvailabilityConflictError("completion receipt key and terminal evidence disagree about an emptied rung")
     stored, snapshot = _read_receipt_snapshot(store, receipt, max_bytes=TYPED_RECEIPT_MAX_BYTES)
     value = _decode_json_object(stored.payload, "completion marker")
     expected_keys = {"schema_version", "part_count", "row_count", "completed_at", "run_id"}

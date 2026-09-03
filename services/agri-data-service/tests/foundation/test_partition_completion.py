@@ -14,6 +14,13 @@ Two properties here are load-bearing and neither is obvious:
     day the warehouse holds.
   * An explicit `false` is REFUSED rather than tolerated, for the same reason: a marker carrying it
     could not be re-serialized to the bytes it came from.
+
+BELT AND BRACES SINCE 2026-09-02: the flag stays in the BODY, and the claim is ALSO in the KEY --
+`objectstore.write_completion_marker` routes a derived-empty receipt to `_complete.empty.json`. The
+body is what a reader that already opened the marker checks; the key is what every reader that may
+only LIST checks, which is the rule `layer-lanes.md` §4 imposes on gap detection. The two must agree,
+and `availability_index._verify_completion_object` refuses a row whose key and body disagree.
+`tests/parquet/test_partition_paths.py` pins the key space; this file pins the payload.
 """
 
 from __future__ import annotations

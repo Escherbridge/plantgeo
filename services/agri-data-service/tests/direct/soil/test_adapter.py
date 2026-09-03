@@ -14,6 +14,7 @@ from agri_data_service.pipeline.direct.soil.adapter import (
     SOIL_DIRECT_KIND,
     DirectSoilFieldAdapter,
     DirectSoilFieldError,
+    no_mirrored_past_proof,
     refuse_immutable_day,
 )
 from agri_data_service.pipeline.direct.soil.products import (
@@ -24,7 +25,7 @@ from agri_data_service.pipeline.direct.soil.products import (
     SOIL_FIELD_PRODUCTS,
 )
 from agri_data_service.pipeline.direct.soil.rows import SoilRowError, soil_day_table
-from agri_data_service.pipeline.direct.soil.source import soil_day_from_cache
+from agri_data_service.pipeline.direct.soil.source import SoilSourceUnsettledError, soil_day_from_cache
 from agri_data_service.pipeline.direct.soil.support import ERA5_LAND_VALUE_CELL_COUNT
 from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.parquet.gap_fill import fill_one_lane_day, unlocked_lane_day
@@ -49,6 +50,9 @@ VPD_STREAM = "soil-field-vpd"
 PLANE_COLUMN_COUNT = 12
 LANE_COLUMN_COUNT = 21
 LINEAGE_COLUMN_COUNT = 33
+#: The standing proof most tests here run under: some later settled day of the product is published
+#: with values, so an all-null answer is the archive's verdict rather than its backlog.
+MIRRORED_PAST_PROOF = "soil-field-vpd is published with values for 2026-08-25, later than this day"
 
 
 class SessionDouble:
@@ -79,13 +83,19 @@ def source_for(
     return soil_day_from_cache(product, day=day, support=support, chunks=chunks, cache=cache)
 
 
-def adapter_for(product: SoilFieldProduct, source: SoilDaySource) -> DirectSoilFieldAdapter:
-    """Bind a pre-parsed source into the adapter so no test opens a socket."""
+def adapter_for(
+    product: SoilFieldProduct, source: SoilDaySource, *, mirrored_past: str | None = MIRRORED_PAST_PROOF
+) -> DirectSoilFieldAdapter:
+    """Bind a pre-parsed source into the adapter so no test opens a socket.
+
+    `mirrored_past` defaults to a standing proof, because most tests here are about what a SETTLED
+    day publishes. The tests that pass `None` are the ones about the refusal.
+    """
 
     async def fetch() -> SoilDaySource:
         return source
 
-    return DirectSoilFieldAdapter(product=product, fetch_source=fetch)
+    return DirectSoilFieldAdapter(product=product, fetch_source=fetch, mirrored_past_proof=lambda: mirrored_past)
 
 
 @pytest.mark.parametrize("stream", [MOISTURE_STREAM, TEMPERATURE_STREAM, VPD_STREAM])
@@ -200,6 +210,54 @@ async def test_an_all_null_day_becomes_a_governed_absence_carrying_its_receipt(
     assert source.receipt.response_sha256 in absence.upstream_response
     assert source.receipt.request_url_sha256 in absence.upstream_response
     assert product.source_parameter in absence.reason
+    assert MIRRORED_PAST_PROOF in absence.upstream_response, (
+        "the marker must carry WHY the absence was allowed, not only what was fetched"
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_all_null_day_is_refused_while_nothing_proves_the_mirror_moved_past_it(
+    support: Era5LandSupport,
+    chunks: tuple[Era5LandChunk, ...],
+) -> None:
+    """DO NOT DELETE. An unmirrored day is not an empty day, and a governed absence says it is.
+
+    ERA5-Land lands a day's cells as the reanalysis is produced, so at the settled edge -- exactly
+    where a forward writer works -- "every value null" is the ordinary shape of a day that has not
+    arrived. The absence marker claims the SOURCE HAD NOTHING, permanently, until some later turn
+    re-selects the day. A refusal costs one tick; the absence cost a false record.
+    """
+    store = ObjectStore(RecordingBackend())
+    product = product_for(VPD_STREAM)
+    source = source_for(product, support, chunks, null_cell_keys=[cell.cell_key for cell in support.cells])
+    adapter = adapter_for(product, source, mirrored_past=None)
+
+    with pytest.raises(SoilSourceUnsettledError, match="nothing proves the mirror"):
+        await adapter(SessionDouble(), store, day=DAY, run_id="unsettled-run")
+
+    assert adapter.unsettled_refusal is not None, "the walk reads this to tell a refusal from a failure"
+    assert store.read_absence(VPD_STREAM, SOIL_DIRECT_KIND, LANE_BASE_ZOOM_TIER, DAY) is None
+    for tier in ZOOM_TIERS:
+        assert store.absence_exists(VPD_STREAM, SOIL_DIRECT_KIND, tier, DAY) is False, tier
+
+
+@pytest.mark.asyncio
+async def test_the_proof_defaults_to_absent_so_an_unwired_caller_cannot_fabricate_an_absence(
+    support: Era5LandSupport,
+    chunks: tuple[Era5LandChunk, ...],
+) -> None:
+    """Fail-closed: `no_mirrored_past_proof` is the default, and it proves nothing."""
+    product = product_for(VPD_STREAM)
+    source = source_for(product, support, chunks, null_cell_keys=[cell.cell_key for cell in support.cells])
+
+    async def fetch() -> SoilDaySource:
+        return source
+
+    adapter = DirectSoilFieldAdapter(product=product, fetch_source=fetch)
+
+    assert adapter.mirrored_past_proof is no_mirrored_past_proof
+    with pytest.raises(SoilSourceUnsettledError):
+        await adapter(SessionDouble(), ObjectStore(RecordingBackend()), day=DAY, run_id="default-run")
 
 
 @pytest.mark.asyncio

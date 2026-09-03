@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import { useState } from "react";
 import { trpc } from "@/lib/trpc/client";
 import { Activity, Play, RefreshCw, Power, Clock, Database, Layers, Info } from "lucide-react";
 
