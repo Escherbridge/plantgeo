@@ -14,11 +14,12 @@ from typing import TYPE_CHECKING
 import pytest
 from pydantic import TypeAdapter
 
+from agri_data_service.foundation.parquet.paths import completion_marker_path
 from agri_data_service.parquet_ops import serving
 from agri_data_service.parquet_ops.faults import ServingRefusalError
 from agri_data_service.parquet_ops.request_params import ReadScope
 from agri_data_service.parquet_ops.serving import resolve_day, resolve_release, resolve_window
-from agri_data_service.parquet_ops.wire import render_row, render_window
+from agri_data_service.parquet_ops.wire import DayNotWritten, PublishedDay, render_row, render_window
 from tests.contract.wire_contract import WireEnvelope, WireWindow
 from tests.parquet_ops.fakes import FakeListing, FakeRowReader, instant
 
@@ -29,6 +30,7 @@ FIXTURES = Path(__file__).resolve().parents[1] / "contract" / "fixtures"
 ENVELOPE_ADAPTER = TypeAdapter(WireEnvelope)
 
 SIGNAL_SCOPE = ReadScope(layer="signal", kind="observed", tier=13, bbox=None)
+COARSE_SIGNAL_SCOPE = ReadScope(layer="signal", kind="observed", tier=0, bbox=None)
 DROUGHT_SCOPE = ReadScope(layer="drought", kind="observed", tier=13, bbox=None)
 
 
@@ -98,6 +100,26 @@ def test_a_gap_day_inside_a_written_lane_serializes_as_day_not_written() -> None
     envelope = resolve_day(listing, FakeRowReader(), scope=SIGNAL_SCOPE, day=date(2026, 8, 11))
 
     assert envelope.to_wire() == fixture("day_not_written.json")
+
+
+def test_a_derived_rung_holding_only_a_completion_marker_is_published_and_empty() -> None:
+    """A rung that generalised every base row away is PUBLISHED, holding nothing at this resolution.
+
+    `derivation._retract_tier` leaves exactly this shape -- no parts, a `derived_empty` receipt -- and
+    the day it belongs to holds rows at z13. Serving it `day_not_written` would tell a z0 caller the
+    warehouse never wrote a day it published. The identical objects at the BASE rung mean the
+    opposite (parts deleted out from under a marker), so that reading must not change with them.
+    """
+    day = date(2026, 8, 9)
+    listing = FakeListing()
+    listing.keys.add(completion_marker_path("signal", "observed", 0, day))
+    listing.keys.add(completion_marker_path("signal", "observed", 13, day))
+
+    coarse = resolve_day(listing, FakeRowReader(), scope=COARSE_SIGNAL_SCOPE, day=day)
+    base = resolve_day(listing, FakeRowReader(), scope=SIGNAL_SCOPE, day=day)
+
+    assert coarse == PublishedDay(requested_day=day, served_day=day, rows=(), truncated=False)
+    assert base == DayNotWritten(requested_day=day)
 
 
 def test_a_tier_that_has_never_been_written_is_never_reported_as_a_gap() -> None:

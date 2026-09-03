@@ -16,6 +16,7 @@
  */
 
 import {
+  FIRE_DETECTION_COUNT_COLOR_STOPS,
   FIRE_DETECTION_FRP_COLOR_STOPS,
   FIRE_DETECTION_HIGH_CONFIDENCE_RING_COLOR,
   FIRE_DETECTION_HIGH_CONFIDENCE_RING_LABEL,
@@ -25,7 +26,11 @@ import {
   FIRE_DETECTION_NO_FRP_LABEL,
 } from "@/components/map/layers/FireLayer";
 import { DROUGHT_DRAWN_CLASSES } from "@/components/map/layers/DroughtLayer";
-import { GAUGE_READING_COLORS, WELL_TREND_COLORS } from "@/components/map/layers/WaterLayer";
+import {
+  GAUGE_READING_COLORS,
+  WATER_CELL_MEAN_FLOW_COLOR_STOPS,
+  WELL_TREND_COLORS,
+} from "@/components/map/layers/WaterLayer";
 import {
   TEMPERATURE_COLOR_STOPS,
   WIND_SPEED_CLASSES,
@@ -70,6 +75,9 @@ import {
   WATERSHED_BOUNDARY_COLOR,
   type StyleClass,
 } from "@/lib/map/layers";
+import { FIRE_CELL_NOT_A_PERIMETER_NOTE } from "@/lib/map/fire-cell-caption";
+import { WATER_CELL_AGGREGATE_NOTE } from "@/lib/map/water-cell-caption";
+import { LAYER_RENDER_CONTRACT } from "@/lib/map/layer-render-contract";
 import { LAYER_TOGGLE_IDS, type LayerToggleId } from "@/lib/map/layer-registry";
 import type { LayerVisibility } from "@/lib/map/layer-toggle-context";
 import type { VegetationMode } from "@/components/map/layers/VegetationLayer";
@@ -261,12 +269,23 @@ const STATIC_LAYER_LEGENDS: Partial<Record<LayerToggleId, LayerLegendSpec>> = {
   // One feed, one encoding, since the 2026-09-01 Parquet cutover. The containment ramp
   // legended here until then described NIFC incidents that only `/api/fires` ever produced,
   // and no map surface calls that route any more.
+  // Two encodings of ONE cell, because the band decides its shape: the declared square at
+  // coarse and middle zoom, whose only channel is its fill, and the dot at detail zoom, which
+  // has a second channel and spends it on radiative power. Both sections show at every zoom
+  // rather than one at a time -- `LegendContext` carries display modes, not the camera, and a
+  // legend that changed under a reader as they zoomed would be harder to read than one that
+  // names which shape each row describes.
   fire: {
     title: "Fire detections",
     blocks: [
       {
         kind: "ramp",
-        caption: "Cell total fire radiative power",
+        caption: "Cell fill (zoomed out): detections in the cell",
+        stops: FIRE_DETECTION_COUNT_COLOR_STOPS,
+      },
+      {
+        kind: "ramp",
+        caption: "Dot colour (zoomed in): cell total fire radiative power",
         stops: FIRE_DETECTION_FRP_COLOR_STOPS,
       },
       {
@@ -289,6 +308,11 @@ const STATIC_LAYER_LEGENDS: Partial<Record<LayerToggleId, LayerLegendSpec>> = {
         kind: "note",
         text: "Dot size: detections aggregated into the cell.",
       },
+      // The one block that is prose rather than an encoding, and the only one the reader
+      // cannot infer from the swatches: read from `fire-cell-caption.ts` so the legend, the
+      // hover tooltip and the click popup say it in the same words. Fire perimeters and burn
+      // severity are the separate layers that publish a real burned extent.
+      { kind: "note", text: `${FIRE_CELL_NOT_A_PERIMETER_NOTE}.` },
     ],
   },
   "fire-perimeters": {
@@ -324,7 +348,16 @@ const STATIC_LAYER_LEGENDS: Partial<Record<LayerToggleId, LayerLegendSpec>> = {
         shape: "dot",
         classes: WELL_TREND_CLASSES,
       },
+      // The coarse rungs' own encoding. Purple against the gauges' blue on purpose: the two
+      // sections are a named observation and an anonymous mean over a square, and a reader who
+      // cannot tell them apart by colour has no other cue that the square is not a gauge.
+      {
+        kind: "ramp",
+        caption: "Cell fill (zoomed out): mean discharge",
+        stops: WATER_CELL_MEAN_FLOW_COLOR_STOPS,
+      },
       { kind: "note", text: "Wells draw smaller than gauges at every zoom." },
+      { kind: "note", text: WATER_CELL_AGGREGATE_NOTE },
     ],
   },
   drought: {
@@ -498,6 +531,19 @@ export function vegetationLegendSpec(
       stops: NDVI_COLOR_RAMP.map(({ color, label }) => ({ color, label })),
     },
   ];
+  // The support, stated because the cells now LOOK like a continuous field and are not one.
+  // Read from the contract's `declaredSupportDegrees` rather than written as "0.25" here: the
+  // number governs what the renderer may draw, and a legend restating it is the first place it
+  // would drift from the one the map is actually held to.
+  const declaredSupportDegrees = LAYER_RENDER_CONTRACT.vegetation.declaredSupportDegrees;
+  if (declaredSupportDegrees !== null) {
+    blocks.push({
+      kind: "note",
+      text:
+        `Each cell is one measured ${declaredSupportDegrees}° sample, not a smoothed surface ` +
+        `between samples.`,
+    });
+  }
   // The measured cells are painted on absolute NDVI whatever the mode says, because the
   // anomaly baseline was never published; saying so is cheaper than a reader concluding
   // the ramp means something it does not.

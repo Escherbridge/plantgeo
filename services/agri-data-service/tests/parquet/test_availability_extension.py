@@ -860,6 +860,90 @@ async def test_an_emptied_rung_names_its_own_gap_kind_and_is_counted_as_a_lost_d
     assert tally.to_summary()["availability_ladder_incomplete"] == 1
 
 
+@pytest.mark.asyncio
+async def test_an_emptied_rung_carrying_its_receipt_closes_the_ladder_and_stays_selectable() -> None:
+    """DO NOT DELETE. This is the whole point of the derived-empty receipt.
+
+    Every base row of this day fell below z0's floor, so `derivation._retract_tier` emptied the rung
+    and marked it. The day is `published` at EVERY rung -- one terminal state, so
+    `_validate_generation_day` is satisfied -- and z0 holds a row with `row_count=0` and no data
+    receipts. Before the receipt this exact day was `ladder_incomplete` forever, on a green tick.
+    """
+    _backend, store, storage, _log = new_lane()
+    bootstrap_lane(store, storage)
+    with store.recording_written_objects() as ledger:
+        for tier in ZOOM_TIERS:
+            if tier == WHOLE_WORLD_TIER:
+                store.write_completion_marker(
+                    PartitionCompletion(part_count=0, row_count=0, completed_at=NOW, run_id=RUN_ID, derived_empty=True),
+                    layer=LANE,
+                    kind=GAP_FILL_PARTITION_KIND,
+                    zoom=tier,
+                    day=DAY,
+                )
+                continue
+            store.write_partition(signal_rows(), layer=LANE, kind=GAP_FILL_PARTITION_KIND, zoom=tier, day=DAY)
+            store.write_completion_marker(
+                PartitionCompletion(part_count=1, row_count=ROWS_PER_RUNG, completed_at=NOW, run_id=RUN_ID),
+                layer=LANE,
+                kind=GAP_FILL_PARTITION_KIND,
+                zoom=tier,
+                day=DAY,
+            )
+
+    outcome = await extend(store, storage, published_outcome(ledger))
+
+    assert outcome.state == "extended"
+    index = read_latest_availability(storage, lane_root=LANE_ROOT)
+    assert tuple(row.rung for row in index.rows if row.day == DAY) == AVAILABILITY_REQUIRED_RUNGS
+    assert DAY in index.selectable_days(), "an emptied rung must not cost the day its whole ladder"
+    empty_rung = next(row for row in index.rows if row.day == DAY and row.rung == WHOLE_WORLD_TIER)
+    assert (empty_rung.terminal_state, empty_rung.row_count, empty_rung.data_receipts) == ("published", 0, ())
+    assert empty_rung.completion_receipt is not None, "the receipt is what makes the empty rung a CLAIM"
+
+
+@pytest.mark.asyncio
+async def test_parked_claims_are_counted_in_the_walk_the_retry_pass_already_pays_for() -> None:
+    """A quarantined claim is a terminal day outside the index that nothing retries; it must be a NUMBER.
+
+    `quarantine_availability_retry` deliberately hides these from the oldest-first ledger so one
+    unreadable day cannot starve a lane's eight retries -- and nothing swept or counted them, so a
+    lane writing claims it could not read back accumulated silent permanent losses.
+    """
+    backend, store, storage, _log = new_lane()
+    bootstrap_lane(store, storage)
+    parked_days = (DAY, DAY + timedelta(days=1))
+    for day in parked_days:
+        store.quarantine_availability_retry(
+            b'{"schema_version": "availability-retry-v0"}',
+            layer=LANE,
+            kind=GAP_FILL_PARTITION_KIND,
+            day=day,
+        )
+
+    outcomes = await retry_pending_availability(
+        cast("AsyncSession", object()),
+        store,
+        lane=LANE,
+        kind=GAP_FILL_PARTITION_KIND,
+        availability=storage,
+        now=lambda: NOW + timedelta(hours=1),
+        publication_barrier=granted_barrier,
+    )
+
+    assert [item.state for item in outcomes] == ["quarantined"]
+    swept = outcomes[0]
+    assert swept.day is None, "the sweep is a lane-wide statement, not a per-day verdict"
+    assert swept.counted_days == len(parked_days)
+    assert all(day.isoformat() in swept.reason for day in parked_days)
+    tally = AvailabilityExtensionTally()
+    tally.record(swept)
+    assert tally.to_summary()["availability_quarantined"] == len(parked_days)
+    for day in parked_days:
+        key = store.key_for(availability_retry_quarantine_path(LANE, GAP_FILL_PARTITION_KIND, day))
+        assert key in backend.objects, "nothing is deleted: reading a malformed claim is an admin's call"
+
+
 def test_the_tally_folds_lane_totals_without_losing_a_verdict() -> None:
     """A tick-wide count is the sum of its lanes; a fold that dropped one would under-report a loss."""
     one = AvailabilityExtensionTally(extended=2, ladder_incomplete=1)
@@ -874,6 +958,7 @@ def test_the_tally_folds_lane_totals_without_losing_a_verdict() -> None:
         "availability_ladder_incomplete": 1,
         "availability_retry_owed": 0,
         "availability_retry_claim_failed": 1,
+        "availability_quarantined": 0,
     }
 
 

@@ -4,7 +4,8 @@
  * requests may be in flight at once (concurrency) and how fast new ones may start (a token-
  * bucket rate limiter), schedules queued work fairly across named "lanes" so one bursty stream
  * can never starve another, and lets any request -- queued or already dispatched -- be dropped
- * for free via the `AbortSignal` idiom this codebase already uses (see `useFireData.ts`).
+ * for free via the `AbortSignal` idiom this codebase already uses (react-query's per-query
+ * controller, threaded through `trpcLinks()` in `src/lib/trpc/client.ts`).
  *
  * Deliberately has no knowledge of fetch, tRPC, or React: `acquireRequestSlot` / `runBudgeted`
  * take a plain async task, so a raw `fetch()` call site and a batched tRPC link can share the
@@ -270,9 +271,9 @@ export async function runBudgeted<T>(
 /**
  * A `fetch`-shaped function bound to one lane -- pass it as `httpBatchLink({ fetch: ... })` to
  * cover every tRPC-routed layer with one lane in one place, or call it directly as a drop-in
- * replacement for a raw `fetch(...)` at a call site like `/api/fires`. Either way the caller's
- * own `init.signal` still cancels the real network call once dispatched; this only ever adds a
- * wait beforehand, and drops that wait for free if the same signal fires first.
+ * replacement for a raw `fetch(...)` at a call site like `useOfflineSync`'s replay loop. Either
+ * way the caller's own `init.signal` still cancels the real network call once dispatched; this
+ * only ever adds a wait beforehand, and drops that wait for free if the same signal fires first.
  */
 export function createBudgetedFetch(lane: RequestLane): typeof fetch {
   const budgetedFetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> =>

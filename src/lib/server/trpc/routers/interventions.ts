@@ -322,7 +322,12 @@ export const interventionsRouter = router({
             type: input.strategyType,
             description: input.description ?? null,
             cellId: input.cellId ?? null,
-            causalTauEst: input.causalTauEst ?? 0.15,
+            // Absent, never defaulted: until 2026-09-02 an omitted estimate was persisted as
+            // 0.15, so a row nobody had estimated was indistinguishable from one somebody had.
+            // The key is simply not written when the submitter supplied nothing.
+            ...(input.causalTauEst === undefined
+              ? {}
+              : { causalTauEst: input.causalTauEst }),
             submittedByUserId: userId,
             publicationConsent: true,
           },

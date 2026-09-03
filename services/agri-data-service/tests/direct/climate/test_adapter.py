@@ -52,6 +52,10 @@ if TYPE_CHECKING:
 DAY = date(2026, 8, 20)
 PLANE_STREAM = "climate-field-air-temperature-mean"
 LINEAGE_STREAM = "climate-field-precipitation"
+#: The third row shape, and the reason the row builders are a table rather than a ternary: the
+#: soil-wetness breakdown froze nineteen columns with their own selection vocabulary.
+LANE_STREAM = "soil-wetness-surface"
+LANE_COLUMN_COUNT = 19
 MEAN_TEMPERATURE_VALUE = 9.5
 PRECIPITATION_VALUE = 2.25
 
@@ -93,7 +97,7 @@ def adapter_for(product: ClimateFieldProduct, source: ClimateDaySource) -> Direc
     return DirectClimateFieldAdapter(product=product, fetch_source=fetch)
 
 
-@pytest.mark.parametrize("stream", [PLANE_STREAM, LINEAGE_STREAM])
+@pytest.mark.parametrize("stream", [PLANE_STREAM, LINEAGE_STREAM, LANE_STREAM])
 @pytest.mark.asyncio
 async def test_a_settled_day_publishes_every_rung_and_marks_the_base_last(
     stream: str,
@@ -229,7 +233,7 @@ def test_a_response_echoing_a_point_the_cell_did_not_ask_for_is_refused(support:
 
 
 def test_a_response_missing_one_requested_parameter_is_refused(support: NasaPowerSupport) -> None:
-    """One response serves eight products, so a parameter that did not arrive refuses the whole cell."""
+    """One response serves eleven streams, so a parameter that did not arrive refuses the whole cell."""
     cell = support.cells[0]
     body = point_body(cell, day=DAY).replace(b'"WS2M"', b'"WS10M"', 1)
 
@@ -348,8 +352,30 @@ def test_the_support_must_be_the_exact_historical_lattice() -> None:
         build_support(plan_cells()[:-1])
 
 
+def test_the_soil_wetness_lane_shape_carries_its_own_selection_vocabulary(support: NasaPowerSupport) -> None:
+    """Nineteen columns, and a `direct:` discriminator on the only column this shape can carry one on.
+
+    `_lineage_row`'s `source_snapshot_id` does not exist here, so a reader that checked only that
+    column would read these rows as canonical PostgreSQL selections. They are not: the id is a
+    RESPONSE ORDINAL and the release is the request that returned it.
+    """
+    product = product_for(LANE_STREAM)
+    source = source_for(product, support)
+
+    table = climate_day_table(product, day=DAY, values=source.values, receipt=source.receipt)
+    row = table.slice(0, 1).to_pylist()[0]
+
+    assert table.num_columns == LANE_COLUMN_COUNT
+    assert table.schema == product.stream_schema.arrow_schema
+    assert "source_snapshot_id" not in row
+    assert row["selected_source_release_id"].startswith(CLIMATE_DIRECT_SNAPSHOT_PREFIX)
+    assert row["selected_observation_id"] == source.values[0].response_ordinal
+    assert row["signal_name"] == "soil_wetness_surface"
+    assert row["normalized_unit"] == "fraction_of_saturation"
+
+
 def test_every_product_maps_to_exactly_one_power_parameter() -> None:
-    """Eight distinct parameters on one request is what lets one cell-day response serve eight streams."""
+    """Eleven distinct parameters on one request is what lets one cell-day response serve eleven streams."""
     parameters = [product.source_parameter for product in CLIMATE_FIELD_PRODUCTS]
 
     assert len(parameters) == len(set(parameters))

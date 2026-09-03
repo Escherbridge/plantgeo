@@ -366,6 +366,10 @@ async function readFireDetectionsOnDay(
 /**
  * Reads bounded fire observations already accepted into the platform store.
  *
+ * The ALERT ENGINE's PostgreSQL read, not a map or agent reader: since 2026-09-02 its only
+ * caller is `alert-engine.ts` (`src/lib/server/AGENTS.md` §slider-day). The map reads
+ * `wildfire.getFireDetections` and the agent reads `getParquetFireDetections`; both are Parquet.
+ *
  * @param date optional YYYY-MM-DD; omitted (or the server's today) reads the live FIRMS
  *   lookback window unchanged, a past day reads that day's own detections, and a future day
  *   returns empty rather than restamping the newest detections.

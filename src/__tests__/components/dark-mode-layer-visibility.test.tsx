@@ -83,6 +83,11 @@ type FakeMap = ReturnType<typeof createFakeMap>;
  * One published fire-detection cell, in the vocabulary `FireLayer` has painted since the
  * 2026-09-01 Parquet cutover. The `brightness`/`confidence` pair this carried before came
  * from `/api/fires`, which no map surface calls any more.
+ *
+ * Kept as the MARKER form on purpose: it declares an aggregate cell but no cell size, which is
+ * the state `presentParquetFireDetections` degrades to a Point for. This test is about the
+ * attach race, and the marker keeps it exercising the same circle layers it always did while
+ * still carrying the envelope keys the property type now requires.
  */
 const FIRE_GEOJSON: FireDetectionCollection = {
   type: "FeatureCollection",
@@ -98,6 +103,10 @@ const FIRE_GEOJSON: FireDetectionCollection = {
         observedDay: "2026-08-28",
         newestObservedAt: "2026-08-28T19:12:00Z",
         zoomTier: 9,
+        supportKind: "aggregate_cell",
+        supportId: "z09:-116.2:43.6",
+        cellWidthDegrees: null,
+        cellHeightDegrees: null,
       },
     },
   ],
@@ -132,6 +141,10 @@ describe("FireLayer dark-mode hard-load race", () => {
     expect(fakeMap.hasSource("published-fire-source")).toBe(true);
     expect(fakeMap.hasLayer("published-fire-circles")).toBe(true);
     expect(fakeMap.hasLayer("published-fire-outlines")).toBe(true);
+    // The cell squares attach on the same race as the dots: they are a third layer on the one
+    // source, and a fill that only appeared after a second style event would leave every zoom
+    // under 13 blank on a dark-mode hard load.
+    expect(fakeMap.hasLayer("published-fire-cells-fill")).toBe(true);
   });
 
   it("re-adds layers across a basemap swap without throwing on duplicates", () => {
@@ -205,6 +218,9 @@ describe("WaterLayer dark-mode hard-load race", () => {
 
     expect(fakeMap.hasSource("water-gauges")).toBe(true);
     expect(fakeMap.hasLayer("water-gauges-circle")).toBe(true);
+    // Both shapes of the coarse cell attach on the same race as the gauges.
+    expect(fakeMap.hasLayer("water-gauge-cells-fill")).toBe(true);
+    expect(fakeMap.hasLayer("water-gauge-cells-circle")).toBe(true);
   });
 
   it("re-adds layers across a basemap swap without throwing on duplicates", () => {

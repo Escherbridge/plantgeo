@@ -10,8 +10,12 @@ resource: ./spec.md
 ## Wave P0 — inventory and contract freeze
 
 - [x] Enumerate the 28 current time-bearing physical product identities and canonical rung set.
-- [ ] Freeze every provider floor, receipt-derived source ceiling, lag and cadence; the offline census
-  records the unresolved measurements explicitly.
+- [x] Freeze every provider floor, receipt-derived source ceiling, lag and cadence — DECLARED-frozen
+  2026-09-02 from `LANE_REGISTRATIONS`/`LANE_SPECS`/`SNAPSHOT_PRODUCTS` source, not MEASURED against a
+  fresh production R2 ladder or provider receipt; see
+  `evidence/product-ownership-census.md` Tables 1b/2/3 and its "Explicit unknowns" section. Measured
+  source ceilings and a fresh R2 re-list remain owed to the acceptance track (item below,
+  "Re-list live coverage and incomplete ladders before authorizing any write," stays unticked).
 - [x] Record current, legacy and proposed executor ownership plus no-overlap handoff state.
 - [ ] Re-list live coverage and incomplete ladders before authorizing any write.
 - [x] Freeze terminal-state, governed-absence and source-settlement rules.
@@ -38,7 +42,14 @@ resource: ./spec.md
   (2026-09-02, `2b4cfef`: NASA POWER point-per-cell writer for all six products, SHADOW, never run live;
   ERA5-Land products remain CDS-credential-blocked).
 - [ ] Build NASA POWER and ERA5-Land soil/product writers in disjoint ownership lanes.
-- [ ] Reconcile existing fire, water, vegetation, weather and sensor writer ownership.
+- [x] Reconcile existing fire, water, vegetation, weather and sensor writer ownership — done by the
+  2026-09-02 executor-only scheduler handoff, not by new work in this wave; see its "Authoritative
+  responsibility matrix" for the full existing-Railway-writer-to-executor-lane mapping:
+  `evidence/scheduler-handoff-20260902.md:51-69` (per-service command/product, cadence and source
+  ceiling, executor registry mapping, checkpoint/concurrency fence, retry/dead-letter and
+  rollback/disposition for `plantgeo-ingest-cron` [fire/water/vegetation/weather/sensor's shared
+  Postgres bridge, drought, evacuation-zones, geometry repair], `plantgeo-fire-detections-forward`
+  and `plantgeo-water-gauges-forward`).
 - [ ] Register each product only after its source-family review passes and its writer extends the
   availability generation after terminal publication.
 

@@ -139,10 +139,11 @@ export function useParquetFireDetections(enabled: boolean): ParquetFireDetection
     ? (landedZoomTier ?? requestedZoomTier)
     : requestedZoomTier;
 
-  const geojson = useMemo(
-    () => presentParquetFireDetections(result, zoomTier),
-    [result, zoomTier]
-  );
+  // The latch is NOT handed to the presenter: since 2026-09-02 every served cell declares its own
+  // `support.zoomTier`, and a cell's own claim about how it was aggregated is stronger than this
+  // hook's bookkeeping about what last landed. What the latch still owns is `zoomTier` below --
+  // the one rung a caption may state for the window as a whole, which no single cell can answer.
+  const geojson = useMemo(() => presentParquetFireDetections(result), [result]);
   const totals = useMemo(() => fireDetectionTotals(result), [result]);
 
   const state: ParquetFireReadState =

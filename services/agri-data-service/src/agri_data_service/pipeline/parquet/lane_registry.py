@@ -4,12 +4,14 @@ Layer L2: may import `foundation`, `warehouse` and `db`; may NOT import method, 
 interface. It lives in `pipeline/parquet/` and deliberately NOT in `pipeline/lanes/` -- a module
 inside that directory importing its siblings would (correctly) fail
 `tests/test_layer_import_contract.py::test_lanes_do_not_import_each_other`. The registry is not a
-lane; it is the one module allowed to know all twenty-one of them -- twelve database-backed, eight
-source-direct NASA POWER climate fields, and the calendar dimension.
+lane; it is the one module allowed to know all thirty-two of them -- twelve database-backed, eleven
+source-direct NASA POWER streams, eight source-direct Open-Meteo ERA5-Land streams, and the calendar
+dimension.
 
-IT IMPORTS `pipeline/direct/climate/products.py` AND NOTHING ELSE FROM THAT PACKAGE. That module
-depends only on `warehouse`, so the edge is one-directional; the package `__init__` is deliberately
-empty of re-exports because pulling in the writer would close a cycle back through this file.
+IT IMPORTS `pipeline/direct/climate/products.py` AND `pipeline/direct/soil/products.py`, AND NOTHING
+ELSE FROM EITHER PACKAGE. Both modules depend only on `warehouse`, so the edge is one-directional;
+each package `__init__` is deliberately empty of re-exports because pulling in a writer would close
+a cycle back through this file.
 
 EVERY LANE DECLARES WHAT ITS PARTITION DAY MEANS. `daily_series` and `release_series` key to a
 publication lag off the calendar; `static_lookup` keys to a SOURCE WATERMARK -- the source's own
@@ -48,6 +50,10 @@ from agri_data_service.pipeline.direct.climate.products import (
     CLIMATE_FIELD_PRODUCTS,
     CLIMATE_METEOROLOGY_PUBLICATION_LAG_DAYS,
     CLIMATE_SHORTWAVE_RADIATION_PUBLICATION_LAG_DAYS,
+)
+from agri_data_service.pipeline.direct.soil.products import (
+    ERA5_LAND_ARCHIVE_PUBLICATION_LAG_DAYS,
+    SOIL_FIELD_PRODUCTS,
 )
 from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.lanes.burn_severity import export_burn_severity_release_day
@@ -94,6 +100,7 @@ if TYPE_CHECKING:
     from sqlalchemy.sql.elements import TextClause
 
     from agri_data_service.pipeline.direct.climate.products import ClimateFieldProduct
+    from agri_data_service.pipeline.direct.soil.products import SoilFieldProduct
     from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 
 _SPATIAL_CELL_IDS_SQL: Final = text(load_query_sql("pipeline/lane_registry_spatial_cell_ids.sql"))
@@ -933,19 +940,33 @@ _DATABASE_BACKED_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = (
 # `pipeline/direct/AGENTS.md`, "Ownership, and why the registered adapter refuses".
 
 
-async def _refuse_source_direct_export(
-    session: AsyncSession,  # noqa: ARG001 - uniform adapter shape; this lane has no query to run
-    store: ObjectStore,  # noqa: ARG001 - uniform adapter shape; the direct writer owns the write
-    *,
-    day: date,
-    run_id: str,  # noqa: ARG001 - uniform adapter shape; the refusal is not a run outcome
-) -> LaneRunResult:
-    """Refuse a generic export of a source-direct lane, naming the writer that actually owns it."""
-    raise LaneRegistryError(
-        f"this lane has no PostgreSQL producer, so the generic gap-fill driver cannot export "
-        f"{day.isoformat()}. Its days are written by "
-        "`python -m agri_data_service.pipeline.direct.climate`, which substitutes its own adapter."
-    )
+def _source_direct_refusal(writer_module: str) -> LaneAdapter:
+    """Build the refusing adapter for one direct writer's lanes, naming THAT writer in the message.
+
+    A factory rather than two copies, and a factory rather than one shared message: there are two
+    direct writers now, and an operator told to run the climate module against an ERA5-Land lane
+    would get a report that publishes nothing and explains nothing.
+    """
+
+    async def refuse(
+        session: AsyncSession,  # noqa: ARG001 - uniform adapter shape; this lane has no query to run
+        store: ObjectStore,  # noqa: ARG001 - uniform adapter shape; the direct writer owns the write
+        *,
+        day: date,
+        run_id: str,  # noqa: ARG001 - uniform adapter shape; the refusal is not a run outcome
+    ) -> LaneRunResult:
+        """Refuse a generic export of a source-direct lane, naming the writer that actually owns it."""
+        raise LaneRegistryError(
+            f"this lane has no PostgreSQL producer, so the generic gap-fill driver cannot export "
+            f"{day.isoformat()}. Its days are written by `python -m {writer_module}`, which "
+            "substitutes its own adapter."
+        )
+
+    return refuse
+
+
+_refuse_climate_direct_export: Final[LaneAdapter] = _source_direct_refusal("agri_data_service.pipeline.direct.climate")
+_refuse_soil_direct_export: Final[LaneAdapter] = _source_direct_refusal("agri_data_service.pipeline.direct.soil")
 
 
 def _climate_floor_basis(product: ClimateFieldProduct) -> str:
@@ -976,16 +997,48 @@ def _climate_floor_basis(product: ClimateFieldProduct) -> str:
     )
 
 
-_SOURCE_DIRECT_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = tuple(
-    LaneRegistration(
-        slug=product.stream,
-        adapter=_refuse_source_direct_export,
-        history_floor=product.history_floor,
-        publication_lag_days=product.publication_lag_days,
-        nature="daily_series",
-        floor_basis=_climate_floor_basis(product),
+def _soil_floor_basis(product: SoilFieldProduct) -> str:
+    """Cite this product's floor and lag from the artifacts they were read off, never from a guess."""
+    return (
+        "NATURE daily_series, NOT forecastable: no method/monte_carlo module projects a soil field, and the lane "
+        "deliberately claims no horizon. SOURCE-DIRECT: there is no PostgreSQL producer, so the registered "
+        "adapter refuses and `pipeline/direct/soil/forward.py` writes every day through this same registration. "
+        f"Floor {product.history_floor.isoformat()} is the day after the immutable history of all eight ERA5-Land "
+        f"streams ends ({product.snapshot_last_day.isoformat()}) -- `scripts/vpd_snapshot_breakdown.py` and "
+        "`scripts/build_soil_moisture_from_canonical_snapshot.py` both pin EXPECTED_LAST_DAY=2026-08-02, and the "
+        "three reviewed plans' window.end_date agrees. Those days are immutable and the adapter refuses to "
+        f"republish them. Lag {ERA5_LAND_ARCHIVE_PUBLICATION_LAG_DAYS} is the MEASURED publication lag of the "
+        "REDISTRIBUTOR this writer reads, `execution/coverage_census.py` "
+        "PUBLICATION_LAG_DAYS['open-meteo-era5-land-archive'], measured against production 2026-08-11. It is "
+        "deliberately not the ~5-day ERA5T latency of the Copernicus product itself: asking for a day "
+        "Open-Meteo has not mirrored returns an all-null series, which this writer would record as a governed "
+        "absence that is simply wrong."
     )
-    for product in CLIMATE_FIELD_PRODUCTS
+
+
+_SOURCE_DIRECT_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = (
+    *(
+        LaneRegistration(
+            slug=product.stream,
+            adapter=_refuse_climate_direct_export,
+            history_floor=product.history_floor,
+            publication_lag_days=product.publication_lag_days,
+            nature="daily_series",
+            floor_basis=_climate_floor_basis(product),
+        )
+        for product in CLIMATE_FIELD_PRODUCTS
+    ),
+    *(
+        LaneRegistration(
+            slug=product.stream,
+            adapter=_refuse_soil_direct_export,
+            history_floor=product.history_floor,
+            publication_lag_days=product.publication_lag_days,
+            nature="daily_series",
+            floor_basis=_soil_floor_basis(product),
+        )
+        for product in SOIL_FIELD_PRODUCTS
+    ),
 )
 
 # --- The conformed calendar dimension -----------------------------------------------------------
@@ -1007,7 +1060,7 @@ CALENDAR_REGISTRATION: Final = LaneRegistration(
     watermark=_calendar_watermark,
     floor_basis=(
         "NATURE static_lookup, WATERMARK-DRIVEN, and the ONE lane with no source system. The floor is DERIVED "
-        f"as min(history_floor) across the twenty source-bearing lanes -- {CALENDAR_HISTORY_FLOOR.isoformat()}, "
+        f"as min(history_floor) across the thirty-one source-bearing lanes -- {CALENDAR_HISTORY_FLOOR.isoformat()}, "
         "which is fire-detections' -- so every day any lane can key to the dimension is in it. Each version "
         f"covers its own day plus {CALENDAR_VERSION_FORWARD_DAYS} days, and must reach today plus "
         f"{CALENDAR_REQUIRED_FORWARD_DAYS}, so a 30-day horizon from any as-of date always resolves and the "

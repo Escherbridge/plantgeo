@@ -90,6 +90,14 @@ failure mode this lane already uses for a truncated response.
 
 ### Soil temperature is deliberately excluded -- measured, not assumed
 
+**SUPERSEDED for the warehouse, kept for the measurement.** The reviewed plan
+`plans/open-meteo-era5-land-pnw-soiltemp-20220802-20260802.json` ran and its four bands are the
+`soil-temperature-*` Parquet products, so this lane DOES carry soil temperature today; the
+`soil_temperature_level_2..4` entries in `OPEN_METEO_ARCHIVE_SIGNAL_SPECIFICATIONS` are the same
+reversal. The elevation-handling difference measured below is still real and still unexplained --
+read it as a caveat on those values, not as a statement that they are not ingested. See
+`pipeline/direct/AGENTS.md`, "ERA5-Land soil fields".
+
 `OPEN_METEO_ARCHIVE_SIGNAL_SPECIFICATIONS` defines `soil_temperature_0_to_7cm_mean`, but no reviewed
 plan requests it. Measured 2026-08-06 against a first-party CDS `derived-era5-land-daily-statistics`
 retrieval on the product's native 0.1-degree grid, over the 16 Boise probe cells:
@@ -1817,23 +1825,29 @@ boundary, after which the parent's bounded kill is still the final fallback.
 
 Every other entry in `_MIGRATION_INPUT_SPECS` replaces an observed legacy Railway writer and must
 acknowledge that service as disabled before it may be activated. This one replaces a GAP. Nothing
-has ever produced a forward NASA POWER climate day: `weather_observations/nasa_power.py` is a
-retired local backfill verb with no scheduler owner, and the Parquet history for the eight
-`climate-field-*` streams was built once from the immutable canonical snapshot by
-`scripts/build_*_from_canonical_snapshot.py`. `legacy_owners=()` is therefore a fact, not a
+has ever produced a forward NASA POWER day: `weather_observations/nasa_power.py` is a
+retired local backfill verb with no scheduler owner, and the Parquet history for the eleven POWER
+streams -- the eight `climate-field-*` plus the three `soil-wetness-*` depths -- was built once from
+the immutable canonical snapshot by `scripts/build_*_from_canonical_snapshot.py` and
+`scripts/soil_wetness_snapshot_breakdown.py`. `legacy_owners=()` is therefore a fact, not a
 shortcut, and `required_handoff_acknowledgements` is empty because there is no service to disable.
 
-The same reasoning removes the eight generic `parquet-climate-field-*` specs from
+The three soil-wetness depths are POWER lanes despite the name: `GWETTOP`/`GWETROOT`/`GWETPROF` on
+the same 397-cell lattice at the same meteorology lag, returned by the same point request. They are
+NOT the ERA5-Land soil products below, which are a different provider on a different lattice with a
+different lag; see `pipeline/direct/AGENTS.md`.
+
+The same reasoning removes the eleven generic POWER `parquet-*` specs from
 `plantgeo-ingest-cron`'s ownership. `_parquet_spec` normally names that service as the legacy owner
 of every Parquet lane, and `_require_atomic_owner_cutovers` then insists its lanes cut over
 together. The ingest cron never produced a climate day, so naming it would invent a dependency: the
-real ingest cutover would be blocked until an operator also activated eight lanes whose registered
-adapter refuses by design (`lane_registry._refuse_source_direct_export`).
+real ingest cutover would be blocked until an operator also activated eleven lanes whose registered
+adapter refuses by design (`lane_registry._refuse_climate_direct_export`).
 
 Its `publication_lag_days` is the LARGER of the two climate lags -- 75, shortwave radiation's -- for
 the same reason the `signal` registration takes the larger of ERA5-Land's and POWER's: at the
 meteorology lag of 5 the solar product's newest ~70 days would report as missing while NASA POWER
-has genuinely not published them. `writer_floor` is the EARLIEST floor across the eight streams
+has genuinely not published them. `writer_floor` is the EARLIEST floor across the eleven streams
 (2026-06-01, shortwave radiation's), because a floor of 2026-08-07 would hide the nine extra weeks
 this writer owns on that product.
 
@@ -1845,14 +1859,20 @@ shadow, so activation stays an explicit operator act.
 ### It conflicts with its own generic specs, from both sides
 
 `climate-nasa-power-direct-forward` declares `conflicts_with=CLIMATE_GENERIC_LANE_IDS` and each of the
-eight `parquet-climate-field-*` specs declares the direct lane in return, so `parse_activation`
+eleven generic POWER specs declares the direct lane in return, so `parse_activation`
 refuses the pairing whichever one an operator names first. Both are true statements about the same
-eight calendars: the generic lane runs `parquet-gap-fill`, whose registered adapter for these streams
+eleven calendars: the generic lane runs `parquet-gap-fill`, whose registered adapter for these streams
 refuses by design, and the direct lane substitutes its own adapter over the same lane-day locks.
 Activating both would schedule two owners for one day -- one of which can only ever fail -- and the
 failure would read as a broken writer rather than as a configuration mistake. Declared on ONE side it
 would still be enforced (the check intersects the union), but stating it once would leave the
-inventory row of the other eight silent about a constraint they are subject to.
+inventory row of the other eleven silent about a constraint they are subject to.
+
+There are TWO direct writers now, so the conflict is resolved per WRITER through
+`_DIRECT_WRITER_BY_SLUG` rather than from a single flag. A generic spec must name the writer that
+would really contend for its lane-day lock: naming the climate lane on `parquet-soil-field-vpd`
+would refuse a pairing that is entirely fine, and naming neither would let two owners of one
+calendar activate together.
 
 ### `command_timeout_seconds` is derived from the CLI default, not chosen
 
@@ -1869,3 +1889,48 @@ An operator override above the default (`--time-budget-seconds`, capped at
 `CLIMATE_MAX_TIME_BUDGET_SECONDS = 3000`) is NOT covered by that derivation: the executor's command
 carries no override, so the default is what runs under the scheduler, and raising the budget for a
 manual drain means raising the spec's timeout in the same change.
+
+## `soil-era5-land-direct-forward`: the second lane with no legacy owner
+
+The ERA5-Land twin of the lane above, and it replaces the same kind of gap: nothing has ever
+produced a forward soil day. The Parquet history for all eight streams -- three moisture depths,
+four temperature bands and VPD -- was built once from the immutable canonical snapshot by
+`scripts/build_soil_moisture_from_canonical_snapshot.py`,
+`scripts/soil_temperature_snapshot_breakdown.py` and `scripts/vpd_snapshot_breakdown.py`, and every
+one of those streams stops at 2026-08-02. `legacy_owners=()` and an empty
+`required_handoff_acknowledgements` are facts here for the same reason: there is no service to
+disable, and naming `plantgeo-ingest-cron` would block the real ingest cutover behind eight lanes
+whose registered adapter refuses by design (`lane_registry._refuse_soil_direct_export`).
+
+**It is a separate lane from the climate writer, not a `--product` of it.** They read different
+providers on different release schedules: NASA POWER at a measured 5-day lag and the Open-Meteo
+ERA5-Land archive at a measured 9 (`coverage_census.py` PUBLICATION_LAG_DAYS). One writer would have
+to hold every stream to the slower of the two, which would delay eleven POWER streams by four days
+each to keep eight ERA5-Land streams in the same process. They also share no support, no request
+shape and no row contract. What they do share is the finalizer, the lane-day lock and the
+availability extension, and those are shared by being the same functions rather than the same lane.
+
+`publication_lag_days` is 9 with no "larger of the two" question to answer: all eight streams come
+off one model on one release schedule, so a turn never straddles two settled edges and
+`SOIL_DISTINCT_PUBLICATION_CLOCKS` is 1. `writer_floor` is 2026-08-03, one day after the shared
+immutable last day, and it is EARLIER than the climate writer's 2026-08-07 -- a different upstream's
+release schedule, not a rounding difference.
+
+Its phase offset is 3000 s (:50), deliberately distinct from the climate writer at :40, the direct
+fire and water writers at :15 and the SoilGrids warmer at :25, so five source-direct lanes never
+contend for the same minute. It ships in SHADOW: it appears in no active lane list, and
+`parse_activation` defaults every lane to shadow, so activation stays an explicit operator act.
+
+`command_timeout_seconds` is derived exactly as the climate lane's is:
+`int(SOIL_DEFAULT_TIME_BUDGET_SECONDS) + COMMAND_CLEANUP_MARGIN_SECONDS` = 900 + 300 = 1200 s, with
+the budget constant living in `pipeline/direct/soil/products.py` so the scheduler can import it
+without dragging the object store and the database engine into its import graph. The executor's
+command carries no `--time-budget-seconds`, so the CLI default is what actually runs.
+
+**Activation preconditions.** Unlike the CDS lane it was almost built on, this writer is NOT
+credential-blocked: the archive host is keyless and `OPEN_METEO_API_KEY` only lifts a quota wall.
+What it does need before activation is the ordinary object-store settings, a
+`LOCAL_SOURCE_LOADER_DATABASE_URL` reaching a database whose `agri.spatial_cell` holds the
+`sentinel2-ndvi-0p25deg` lattice, and -- like every forward writer -- a reader that can see forward
+days, since the five snapshot-rooted soil products now carry a `forward_first_day`.
+

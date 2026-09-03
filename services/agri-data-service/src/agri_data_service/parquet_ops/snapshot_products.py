@@ -1,9 +1,11 @@
 """Bounded reads over manifest-closed immutable snapshot product prefixes.
 
-A PRODUCT MAY HAVE A FORWARD EDGE THE MANIFEST CANNOT SEE. Six climate products were frozen at
-`CLIMATE_DIRECT_WRITER_START_DAY` and every day from that day on is written by the NASA POWER direct
-writer into the ORDINARY lane layout -- `layer=<stream>/kind=observed/zoom=NN/year=/month=/day=/` --
-under a completion marker rather than under this module's receipt chain. `forward_first_day` is the
+A PRODUCT MAY HAVE A FORWARD EDGE THE MANIFEST CANNOT SEE. Six climate products and the three
+soil-wetness lanes were frozen at `CLIMATE_DIRECT_WRITER_START_DAY`, and the five ERA5-Land soil
+products at `SOIL_DIRECT_WRITER_START_DAY` -- two different upstreams, two different release
+schedules, two different edges. Every day from a product's own edge on is written by that upstream's
+direct writer into the ORDINARY lane layout -- `layer=<stream>/kind=observed/zoom=NN/year=/month=/day=/`
+-- under a completion marker rather than under this module's receipt chain. `forward_first_day` is the
 one boundary between the two: below it a day is proven by the closed manifest and served from
 `part_receipts`; at or above it a day is proven exactly as every other lane's day is, by
 `day_status_sets`, and served through the ordinary `DuckDbRowReader`. Without the split the products
@@ -45,6 +47,7 @@ from agri_data_service.parquet_ops.wire import (
     contiguous_ranges,
 )
 from agri_data_service.pipeline.direct.climate.products import CLIMATE_DIRECT_WRITER_START_DAY
+from agri_data_service.pipeline.direct.soil.products import SOIL_DIRECT_WRITER_START_DAY
 from agri_data_service.warehouse.parquet.schema import SIGNAL_PLANE_SCHEMA, get_stream_schema
 from agri_data_service.warehouse.parquet.snapshot_signal_product import SOIL_TEMPERATURE_FIELDS
 
@@ -236,7 +239,12 @@ SNAPSHOT_PRODUCTS: Final[tuple[SnapshotProduct, ...]] = (
         _layer_root("soil-field-vpd"),
         schema_columns=SIGNAL_PRODUCT_COLUMNS,
         contract_version="plantgeo.vpd.snapshot-product.v1",
+        forward_first_day=SOIL_DIRECT_WRITER_START_DAY,
     ),
+    # The three soil-wetness lanes are NASA POWER, not ERA5-Land: GWETTOP/GWETROOT/GWETPROF on the
+    # 397-cell POWER lattice. Their forward edge is therefore the CLIMATE writer's, one day after the
+    # canonical snapshot's 2026-08-06 -- four days later than the ERA5-Land products above, which is
+    # a different upstream's release schedule and not a rounding difference.
     SnapshotProduct(
         "soil-wetness-surface",
         "daily",
@@ -245,6 +253,7 @@ SNAPSHOT_PRODUCTS: Final[tuple[SnapshotProduct, ...]] = (
         expected_manifest_sha256="92f4486e5054495fc46ffc15cac558b03916c60f436c8eac0afcbdf0200d6565",
         schema_columns=SOIL_WETNESS_COLUMNS,
         contract_version="plantgeo.signal-product-breakdown.v1",
+        forward_first_day=CLIMATE_DIRECT_WRITER_START_DAY,
     ),
     SnapshotProduct(
         "soil-wetness-root-zone",
@@ -254,6 +263,7 @@ SNAPSHOT_PRODUCTS: Final[tuple[SnapshotProduct, ...]] = (
         expected_manifest_sha256="0cffc4832438a228d23e6de6fdd16ac038243ed302809b8143f939378ffbe948",
         schema_columns=SOIL_WETNESS_COLUMNS,
         contract_version="plantgeo.signal-product-breakdown.v1",
+        forward_first_day=CLIMATE_DIRECT_WRITER_START_DAY,
     ),
     SnapshotProduct(
         "soil-wetness-profile",
@@ -263,6 +273,7 @@ SNAPSHOT_PRODUCTS: Final[tuple[SnapshotProduct, ...]] = (
         expected_manifest_sha256="8f3a10450716b0fa71548721f245591d5001de35fc2a0a4a7b3d5ea3262f1347",
         schema_columns=SOIL_WETNESS_COLUMNS,
         contract_version="plantgeo.signal-product-breakdown.v1",
+        forward_first_day=CLIMATE_DIRECT_WRITER_START_DAY,
     ),
     SnapshotProduct(
         "soil-temperature-0-to-7cm",
@@ -272,6 +283,7 @@ SNAPSHOT_PRODUCTS: Final[tuple[SnapshotProduct, ...]] = (
         expected_manifest_sha256="67216660bd64f938e883dd51eba0fc9c28afbdd3eaa79351862eb96f4d4e480f",
         schema_columns=SOIL_TEMPERATURE_COLUMNS,
         contract_version="plantgeo.signal-product-breakdown.v1",
+        forward_first_day=SOIL_DIRECT_WRITER_START_DAY,
     ),
     SnapshotProduct(
         "soil-temperature-7-to-28cm",
@@ -281,6 +293,7 @@ SNAPSHOT_PRODUCTS: Final[tuple[SnapshotProduct, ...]] = (
         expected_manifest_sha256="0120ae2a9d6922b67861bf257b8c1b354a97e6cc0e889e146305ccd4e4a835d1",
         schema_columns=SOIL_TEMPERATURE_COLUMNS,
         contract_version="plantgeo.signal-product-breakdown.v1",
+        forward_first_day=SOIL_DIRECT_WRITER_START_DAY,
     ),
     SnapshotProduct(
         "soil-temperature-28-to-100cm",
@@ -290,6 +303,7 @@ SNAPSHOT_PRODUCTS: Final[tuple[SnapshotProduct, ...]] = (
         expected_manifest_sha256="3cacd5856630dc252f4f71d6b7156ec98cb8125270743420c5d7fa692ca2ce34",
         schema_columns=SOIL_TEMPERATURE_COLUMNS,
         contract_version="plantgeo.signal-product-breakdown.v1",
+        forward_first_day=SOIL_DIRECT_WRITER_START_DAY,
     ),
     SnapshotProduct(
         "soil-temperature-100-to-255cm",
@@ -299,6 +313,7 @@ SNAPSHOT_PRODUCTS: Final[tuple[SnapshotProduct, ...]] = (
         expected_manifest_sha256="d40aa7851877f2ab4f85b71b7e8a9ed7bb6c5c4d754e5f54ee8ec6b4237cb82f",
         schema_columns=SOIL_TEMPERATURE_COLUMNS,
         contract_version="plantgeo.signal-product-breakdown.v1",
+        forward_first_day=SOIL_DIRECT_WRITER_START_DAY,
     ),
 )
 

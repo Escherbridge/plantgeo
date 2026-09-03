@@ -53,7 +53,19 @@ SOIL_TEMPERATURE_STREAMS: Final = (
     "soil-temperature-100-to-255cm",
 )
 
-ALL_SNAPSHOT_PRODUCT_STREAMS: Final = SIGNAL_CLONE_STREAMS + SNAPSHOT_LINEAGE_STREAMS + SOIL_TEMPERATURE_STREAMS
+#: The NASA POWER soil-wetness lanes carry the soil-temperature shape WITHOUT its two leading source
+#: columns: they were broken down one source at a time, so there is no `data_source_key` /
+#: `source_parameter` to key on. Every `[2:]` below slices THIS module's own spelt-out 21-field
+#: contract rather than the source's, so the two families drifting apart still fails here.
+SOIL_WETNESS_STREAMS: Final = (
+    "soil-wetness-surface",
+    "soil-wetness-root-zone",
+    "soil-wetness-profile",
+)
+
+ALL_SNAPSHOT_PRODUCT_STREAMS: Final = (
+    SIGNAL_CLONE_STREAMS + SNAPSHOT_LINEAGE_STREAMS + SOIL_TEMPERATURE_STREAMS + SOIL_WETNESS_STREAMS
+)
 
 SNAPSHOT_LINEAGE_GRAIN: Final = (
     "support_key",
@@ -163,6 +175,10 @@ SOIL_TEMPERATURE_BASE_NON_NULL_COLUMNS: Final = (
     "selected_release_retrieved_at",
 )
 
+SOIL_WETNESS_GRAIN: Final = SOIL_TEMPERATURE_GRAIN[2:]
+
+SOIL_WETNESS_KEY_COLUMNS: Final = SOIL_TEMPERATURE_KEY_COLUMNS[2:]
+
 
 def _field_contract(schema: pa.Schema) -> tuple[tuple[str, pa.DataType, bool], ...]:
     return tuple((field.name, field.type, field.nullable) for field in schema)
@@ -236,6 +252,8 @@ EXPECTED_SOIL_TEMPERATURE_FIELDS: Final = _field_contract(
     )
 )
 
+EXPECTED_SOIL_WETNESS_FIELDS: Final = EXPECTED_SOIL_TEMPERATURE_FIELDS[2:]
+
 
 @pytest.mark.parametrize("stream", ALL_SNAPSHOT_PRODUCT_STREAMS)
 def test_every_completed_snapshot_product_autoloads_for_readers(stream: str) -> None:
@@ -300,6 +318,34 @@ def test_soil_temperature_streams_pin_the_completed_grid_derivation(stream: str)
             longitude_column="cell_longitude",
             latitude_column="cell_latitude",
             key_columns=SOIL_TEMPERATURE_KEY_COLUMNS,
+            aggregations=SOIL_TEMPERATURE_AGGREGATIONS,
+        ),
+        base_non_null_columns=SOIL_TEMPERATURE_BASE_NON_NULL_COLUMNS,
+    )
+
+
+@pytest.mark.parametrize("stream", SOIL_WETNESS_STREAMS)
+def test_soil_wetness_streams_pin_the_exact_19_field_contract(stream: str) -> None:
+    schema = get_stream_schema(stream)
+
+    assert _field_contract(schema.arrow_schema) == EXPECTED_SOIL_WETNESS_FIELDS
+    assert len(schema.column_names) == 19
+    assert schema.column_names[:2] != ("data_source_key", "source_parameter"), (
+        "a wetness lane that regains the two source columns is the soil-temperature bundle's shape, "
+        "not the one scripts/soil_wetness_snapshot_breakdown.py wrote"
+    )
+    assert schema.sort_columns == SOIL_WETNESS_GRAIN
+    assert schema.arrow_schema.metadata == {b"plantgeo_contract": b"plantgeo.signal-product-lane.v1"}
+
+
+@pytest.mark.parametrize("stream", SOIL_WETNESS_STREAMS)
+def test_soil_wetness_streams_pin_the_completed_grid_derivation(stream: str) -> None:
+    assert tier_derivation(stream) == TierDerivation(
+        stream=stream,
+        strategy=GridAggregation(
+            longitude_column="cell_longitude",
+            latitude_column="cell_latitude",
+            key_columns=SOIL_WETNESS_KEY_COLUMNS,
             aggregations=SOIL_TEMPERATURE_AGGREGATIONS,
         ),
         base_non_null_columns=SOIL_TEMPERATURE_BASE_NON_NULL_COLUMNS,

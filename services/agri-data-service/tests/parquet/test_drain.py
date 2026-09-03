@@ -24,6 +24,7 @@ from dataclasses import replace
 from typing import TYPE_CHECKING, Final
 
 import duckdb
+import polars as pl
 import pyarrow as pa  # type: ignore[import-untyped]
 import pytest
 
@@ -34,7 +35,11 @@ from agri_data_service.foundation.parquet.paths import (
     partition_path,
 )
 from agri_data_service.pipeline.parquet import drain
-from agri_data_service.pipeline.parquet.derivation import DerivationResult, DerivedTierReport
+from agri_data_service.pipeline.parquet.derivation import (
+    DerivationResult,
+    DerivedTierReport,
+    derive_and_write_day_tiers,
+)
 from agri_data_service.pipeline.parquet.drain import (
     LegacyLayoutRetirement,
     build_lane_ladder_census,
@@ -51,7 +56,7 @@ from agri_data_service.pipeline.parquet.gap_fill import (
     unlocked_lane_day,
 )
 from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRY
-from agri_data_service.pipeline.parquet.objectstore import ObjectStore
+from agri_data_service.pipeline.parquet.objectstore import GovernedAbsenceConflictError, ObjectStore
 from agri_data_service.warehouse.parquet.schema import observed_stream_schema
 from agri_data_service.warehouse.parquet.tiers import BASE_ZOOM_TIER, DERIVED_ZOOM_TIERS
 from tests.parquet.test_objectstore_writer import RecordingBackend
@@ -211,7 +216,7 @@ def test_a_day_complete_at_every_rung_is_not_selected() -> None:
 
 
 def test_a_base_complete_day_missing_a_rung_is_selected() -> None:
-    """DO NOT DELETE. `build_gap_census` walks the base tier alone, so nothing else brings this day back."""
+    """DO NOT DELETE. This is the whole-bucket half of the answer `build_gap_census` gives per window."""
     store, _ = _store()
     _publish_base_day(store, DAY)
 
@@ -219,6 +224,65 @@ def test_a_base_complete_day_missing_a_rung_is_selected() -> None:
 
     assert census.incomplete_days == (DAY,)
     assert census.ladder_complete_day_count == 0
+
+
+def test_a_rung_that_derived_to_nothing_leaves_the_census_rather_than_being_reselected_forever() -> None:
+    """DO NOT DELETE. This is the loop the derived-empty receipt exists to break.
+
+    A rung whose generalisation drops every base row is retracted: no parts, and -- before the
+    receipt -- no marker either, which is indistinguishable through a listing from a rung nobody ever
+    derived. The day was base-complete, so every future ladder census re-selected it, every repair
+    re-derived nothing, and `_rung_objects` counted it `derived_to_zero_rows` on a green tick forever.
+    """
+    store, backend = _store()
+    _publish_base_day(store, DAY)
+    derive_and_write_day_tiers(store, layer=STREAM, kind="observed", day=DAY, run_id=RUN_ID, now=_now)
+
+    unlocated = pl.from_arrow(_base_table(DAY)).with_columns(
+        pl.lit(None, dtype=pl.Float64).alias("cell_longitude"),
+        pl.lit(None, dtype=pl.Float64).alias("cell_latitude"),
+    )
+    assert isinstance(unlocated, pl.DataFrame)
+    result = derive_and_write_day_tiers(
+        store, layer=STREAM, kind="observed", day=DAY, run_id=RUN_ID, now=_now, base_table=unlocated
+    )
+
+    assert set(result.emptied) == set(DERIVED_ZOOM_TIERS), "every rung dropped every row"
+    for tier in DERIVED_ZOOM_TIERS:
+        payload = backend.objects[store.key_for(completion_marker_path(STREAM, "observed", tier, DAY))]
+        receipt = PartitionCompletion.from_json_bytes(payload)
+        assert receipt.derived_empty
+        assert (receipt.part_count, receipt.row_count) == (0, 0)
+        assert store.key_for(partition_path(STREAM, "observed", tier, DAY)) not in backend.objects
+    census = build_lane_ladder_census(LANE_REGISTRY[STREAM], store)
+    assert census.incomplete_days == (), "a rung that is honestly empty has finished, so the day is complete"
+    assert census.ladder_complete_day_count == 1
+
+
+def test_an_emptied_rung_is_refused_while_a_governed_absence_still_claims_it() -> None:
+    """Two markers making different claims about one rung is the state the whole contract prevents.
+
+    The base rung demonstrably holds rows, so a coarse absence above it is the stranded ladder
+    `_finalize_written_day` retracts -- which it can only do if the derivation raises the error it
+    watches for, rather than quietly writing an empty-completion receipt beside the absence.
+    """
+    store, backend = _store()
+    _publish_base_day(store, DAY)
+    backend.put(
+        store.key_for(absence_marker_path(STREAM, "observed", DERIVED_ZOOM_TIERS[-1], DAY)),
+        b'{"reason": "upstream published nothing"}',
+        content_type="application/json",
+    )
+    unlocated = pl.from_arrow(_base_table(DAY)).with_columns(
+        pl.lit(None, dtype=pl.Float64).alias("cell_longitude"),
+        pl.lit(None, dtype=pl.Float64).alias("cell_latitude"),
+    )
+    assert isinstance(unlocated, pl.DataFrame)
+
+    with pytest.raises(GovernedAbsenceConflictError, match="governed-absence marker"):
+        derive_and_write_day_tiers(
+            store, layer=STREAM, kind="observed", day=DAY, run_id=RUN_ID, now=_now, base_table=unlocated
+        )
 
 
 def test_direct_owned_days_are_excluded_from_missing_but_remain_ladder_eligible() -> None:

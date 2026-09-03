@@ -6,7 +6,7 @@ import hashlib
 import json
 import threading
 from dataclasses import dataclass, field, replace
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING, Literal
 
 import duckdb
@@ -28,6 +28,7 @@ from agri_data_service.parquet_ops.snapshot_products import (
     PRODUCT_BY_LAYER,
     SIGNAL_PRODUCT_COLUMNS,
     SNAPSHOT_ID,
+    SNAPSHOT_PRODUCTS,
     SOIL_TEMPERATURE_COLUMNS,
     SOIL_WETNESS_COLUMNS,
     ForwardAvailability,
@@ -47,6 +48,8 @@ from agri_data_service.parquet_ops.wire import (
     GovernedAbsenceDay,
     PublishedDay,
 )
+from agri_data_service.pipeline.direct.climate.products import CLIMATE_DIRECT_WRITER_START_DAY
+from agri_data_service.pipeline.direct.soil.products import SOIL_DIRECT_WRITER_START_DAY
 from agri_data_service.warehouse.parquet.schema import get_stream_schema
 
 if TYPE_CHECKING:
@@ -824,6 +827,52 @@ def test_registered_product_families_pin_their_exact_top_level_schemas() -> None
     assert snapshot_product_columns(temperature) == frozenset(SOIL_TEMPERATURE_COLUMNS)
     assert signal.coverage_cell_grid_name == dew.coverage_cell_grid_name == "nasa-power-0.5-degree"
     assert signal.coverage_cells_per_day == dew.coverage_cells_per_day == NASA_POWER_GRID_CELL_COUNT
+
+
+def test_every_product_with_a_live_writer_declares_that_writer_s_own_forward_edge() -> None:
+    """Two upstreams, two release schedules, two edges -- and a product with none reports a frozen last day.
+
+    The six climate products and the three NASA POWER soil-wetness lanes open one day after the
+    canonical snapshot's 2026-08-06; the five snapshot-rooted ERA5-Land soil products one day after
+    their own 2026-08-02. Borrowing one edge for the other would either hide four real days behind
+    the manifest or route four days at the live lane that the manifest still owns.
+    """
+    power_forward = {
+        "climate-field-air-temperature-mean",
+        "climate-field-air-temperature-max",
+        "climate-field-air-temperature-min",
+        "climate-field-relative-humidity",
+        "climate-field-dew-point",
+        "climate-field-wind-speed",
+        "soil-wetness-surface",
+        "soil-wetness-root-zone",
+        "soil-wetness-profile",
+    }
+    era5_land_forward = {
+        "soil-field-vpd",
+        "soil-temperature-0-to-7cm",
+        "soil-temperature-7-to-28cm",
+        "soil-temperature-28-to-100cm",
+        "soil-temperature-100-to-255cm",
+    }
+
+    for layer in sorted(power_forward):
+        assert PRODUCT_BY_LAYER[layer].forward_first_day == CLIMATE_DIRECT_WRITER_START_DAY, layer
+    for layer in sorted(era5_land_forward):
+        assert PRODUCT_BY_LAYER[layer].forward_first_day == SOIL_DIRECT_WRITER_START_DAY, layer
+    assert CLIMATE_DIRECT_WRITER_START_DAY != SOIL_DIRECT_WRITER_START_DAY
+    assert {
+        product.layer for product in SNAPSHOT_PRODUCTS if product.forward_first_day is not None
+    } == power_forward | era5_land_forward
+
+
+def test_a_forward_day_of_a_soil_product_is_read_through_its_lane_and_not_its_manifest() -> None:
+    """`forward_first_day` is the ONE boundary: below it the closed manifest, at or above it the lane."""
+    product = PRODUCT_BY_LAYER["soil-field-vpd"]
+    assert product.forward_first_day is not None
+
+    assert snapshot_products.serves_from_snapshot(product.layer, product.forward_first_day - timedelta(days=1)) is True
+    assert snapshot_products.serves_from_snapshot(product.layer, product.forward_first_day) is False
 
 
 def test_dew_point_is_registered_only_at_its_pinned_closed_snapshot() -> None:

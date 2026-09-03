@@ -18,6 +18,7 @@ import {
   CLIMATE_FIELD_SIGNAL_IDS,
   type ClimateFieldSignalId,
 } from "@/lib/environmental/climate-field";
+import { BASE_ZOOM_TIER } from "@/lib/map/zoom-tiers";
 
 /** Empty rather than null, so a switched-off row has something for `setData` to clear with. */
 const EMPTY_FEATURE_COLLECTION: GeoJSON.FeatureCollection = {
@@ -125,12 +126,18 @@ function ClimateSignalLayer({
   // frame after a form change and that answer describes a different request.
   const served = query.data?.signal === signal ? query.data : undefined;
   const servedForm = served?.renderForm ?? renderForm;
+  // The rung that ANSWERED, never the rung this row asked for: the two differ for a frame after a
+  // zoom, and the layer sizes its outline off this. The base rung is the standing-in value before
+  // any answer has arrived, which is the one moment there is nothing drawn for it to be wrong
+  // about -- the source is still the empty collection.
+  const servedZoomTier = served?.zoomTier ?? BASE_ZOOM_TIER;
 
   return (
     <ClimateFieldLayer
       map={map}
       signal={signal}
       renderForm={servedForm}
+      zoomTier={servedZoomTier}
       geojson={query.data ?? EMPTY_FEATURE_COLLECTION}
       opacityScale={layerOpacity[toggleId]}
       visible={visible}

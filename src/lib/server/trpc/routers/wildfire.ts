@@ -73,10 +73,10 @@ export const wildfireRouter = router({
    * bbox: "west,south,east,north"
    *
    * `date` narrows to one FIRMS acquisition day; omitting it reads the rolling `dayRange`
-   * lookback ending at the server's today. This is the map's ONLY fire read as of the
-   * 2026-09-01 cutover -- `useParquetFireDetections` calls it for both `LayerManager` and
-   * `FireDetails`, and no map surface calls `/api/fires` any more. See
-   * `src/lib/server/AGENTS.md` §slider-day.
+   * lookback ending at the server's today. This is the ONLY fire read there is:
+   * `useParquetFireDetections` calls it for both `LayerManager` and `FireDetails`, and
+   * `/api/fires` -- the REST route the 2026-09-01 cutover left standing beside it -- was deleted
+   * on 2026-09-02 along with `useFireData`. See `src/lib/server/AGENTS.md` §slider-day.
    */
   getFireDetections: publicProcedure
     .input(

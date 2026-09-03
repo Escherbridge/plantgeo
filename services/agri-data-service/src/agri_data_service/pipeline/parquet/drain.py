@@ -45,12 +45,17 @@ TWO SELECTIONS, ONE WALK
 ------------------------
 `selection="missing"` is the drain above: days with no base rung at all, exported from Postgres.
 
-`selection="ladder"` repairs the days the FUSION ARRIVED TOO LATE FOR. Every day written before the
-coarse rungs shipped is base-complete and therefore invisible to `build_gap_census`, which walks
-`GAP_FILL_ZOOM_TIER` and nothing else -- so nothing would ever bring it back, and it stays empty at
-every zoom under 13 forever on a green tick. `build_ladder_census` is the second question that
-census deliberately refuses to answer: which base-complete days are NOT complete at every rung.
-Measured against production on 2026-08-25, that is ~1,040 lane-days across eleven lanes.
+`selection="ladder"` repairs the days the FUSION ARRIVED TOO LATE FOR: base-complete days that are
+not complete at every rung. Measured against production on 2026-08-25, ~1,040 lane-days across
+eleven lanes -- every one of them invisible below z13 while `build_gap_census` walked
+`GAP_FILL_ZOOM_TIER` alone and therefore reported a green tick over them.
+
+THAT CENSUS IS NOW LADDER-AWARE TOO, and this selection is the BULK form of the same repair rather
+than the only one. `run_gap_fill` drains its own `ladder_repair_days` after its exports, through the
+very function this walk calls (`gap_fill.repair_one_lane_day`), so a backlog no longer needs an
+operator to notice it; what this selection adds is a walk with no 600-second ceiling, one DuckDB
+session across the whole run, and oldest-first order. `build_ladder_census` remains the report an
+operator reads before starting one.
 
 IT DERIVES FROM THE PUBLISHED BASE AND NEVER RE-QUERIES POSTGRES, because the base rung of those
 days is already correct -- the rungs above it are simply absent. Re-exporting them would cost hours
@@ -87,14 +92,9 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, Final, Literal
 
-from agri_data_service.db.vegetation_publication import (
-    try_postgres_vegetation_publication_barrier,
-    unlocked_vegetation_publication_barrier,
-)
 from agri_data_service.foundation.parquet.paths import (
     COVERED_PARTITION_STATUSES,
     PARTITION_KINDS,
-    completed_partition_days,
     layer_prefix,
     partition_day_statuses,
     try_parse_absence_marker_path,
@@ -112,18 +112,15 @@ from agri_data_service.pipeline.parquet.derivation import derive_and_write_day_t
 from agri_data_service.pipeline.parquet.gap_fill import (
     FAILING_LANE_OUTCOMES,
     GAP_FILL_PARTITION_KIND,
-    # Private to `gap_fill`, and imported rather than respelt on purpose: it is the ONE definition
-    # of a lane-day's advisory-lock identity, and `_derive_one_day` must take exactly the lock
-    # `fill_one_lane_day` takes or the two writers do not exclude each other at all.
-    _lane_day_lock_key,
     build_gap_census,
+    derived_rung_completions,
     fill_one_lane_day,
     postgres_lane_day_lock,
+    repair_one_lane_day,
     resolve_lane_watermarks,
 )
 from agri_data_service.pipeline.parquet.objectstore import availability_lane_root
 from agri_data_service.warehouse.parquet.tiers import BASE_ZOOM_TIER, DERIVED_ZOOM_TIERS, derivation_session
-from agri_data_service.warehouse.schemas.vegetation import VEGETATION_PLANE_STREAM
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -247,11 +244,14 @@ class _DayResult:
 class LaneLadderCensus:
     """One lane's ZOOM-LADDER coverage: which published days are not complete at every rung.
 
-    A DIFFERENT QUESTION FROM `LaneGapCensus`, AND IT MUST STAY ONE. That census answers "which days
-    have no base rung", over `GAP_FILL_ZOOM_TIER` alone, and says so in its own docstring: "Auditing
-    a derived tier is a different question with a different mechanism, and it must not borrow this
-    answer." This is that mechanism. Blending the two would let a lane read as fully drained while
-    every zoom under 13 was empty -- which is exactly the state eleven lanes were in on 2026-08-25.
+    A DIFFERENT SHAPE FROM `LaneGapCensus`, AND IT STAYS ONE. That census is now ladder-aware --
+    `ladder_repair_days` names the same days this `incomplete_days` does, from the same
+    `derived_rung_completions` primitive -- but it is scoped to a lane's SETTLED WINDOW and to the
+    export queue it feeds. This one is scoped to the whole bucket, reports the population it is over
+    (`base_day_count`, `base_absent_days`, `base_conflict_days`) and separates a run that died
+    mid-ladder from a day written before the fusion existed. Merging them would give the hourly tick
+    a whole-history walk it has no budget for, and give an operator's repair report a window it does
+    not want.
     """
 
     slug: str
@@ -312,13 +312,14 @@ class DrainLaneProgress:
     seconds: float = 0.0
     stopped_reason: str | None = None
     failures: list[DrainDayFailure] = field(default_factory=list)
-    # Ladder selection only: days whose every coarse rung derived to NO ROWS, so the day now carries
-    # no derived completion marker and the next ladder census will select it again.
+    # Ladder selection only: days at least one of whose coarse rungs derived to NO ROWS.
     #
-    # THIS IS THE ONE PLACE THE BUCKET-AS-CHECKPOINT RULE DOES NOT SELF-TERMINATE, so it is reported
-    # rather than left to be rediscovered. Only a lane with nullable coordinates can reach it --
-    # `water-gauges` and `sensors`, whose rows may have no location at all -- and for such a day the
-    # rungs are honestly empty, which is indistinguishable from never-derived through a listing.
+    # IT NO LONGER MEANS THE DAY WILL BE RE-SELECTED FOREVER -- `derivation._retract_tier` writes a
+    # derived-empty completion receipt as it empties a rung, so the ladder census sees a finished
+    # rung and the bucket-as-checkpoint rule terminates. It is still reported, because "this rung is
+    # legitimately empty" is a fact about the warehouse an operator cannot recover from a listing:
+    # only a lane with nullable coordinates reaches it (`water-gauges`, `sensors`), and a reader
+    # finding nothing at z0 there deserves to know it was derived rather than skipped.
     emptied: list[date] = field(default_factory=list)
     # Export selection only. Which availability verdicts this lane's terminal days produced, so a
     # day that landed in the bucket and NOT in the index is a number in the report rather than a
@@ -363,8 +364,9 @@ class DrainSummary:
             "days_remaining": self.days_remaining,
             "failures": len(self.failures),
             "abandoned_contended": sum(len(lane.abandoned) for lane in self.lanes),
-            # Days a `ladder` selection will keep re-selecting because every rung of them is
-            # honestly empty. Surfaced at the top level so it cannot be mistaken for backlog.
+            # Days holding at least one rung that is honestly empty, now CLOSED by a derived-empty
+            # receipt rather than re-selected forever. Surfaced at the top level because a reader
+            # finding nothing at that zoom cannot otherwise tell derived-empty from never-derived.
             "emptied_ladders": sum(len(lane.emptied) for lane in self.lanes),
             # Terminal days this drain wrote into the bucket and could NOT put into the availability
             # index. Both are permanent: the base-tier census never revisits a completed day, so a
@@ -466,11 +468,12 @@ def build_lane_ladder_census(
     base rows has nothing a coarse rung could be derived FROM.
 
     THE BASE POPULATION IS STRICTER THAN THE RUNG TEST -- parts AND a marker for the base, a marker
-    alone for a rung -- and that asymmetry is deliberate rather than an oversight. A rung marked
-    while holding no parts is unreachable through the two operations that write one: `_write_tier`
-    puts its parts before its marker, and `_retract_tier` clears the marker before deleting the
-    parts. Spelling a stricter rule here would be a SECOND definition of "finished", and the one
-    that eventually drifted would decide a day was done when the shared primitive said it was not.
+    alone for a rung -- and that asymmetry, written here before the receipt that needed it existed,
+    is now load-bearing. A rung that generalised every base row away holds NO parts and a
+    `derived_empty` completion marker, so a rule demanding parts at a rung would re-select such a day
+    on every census forever. `_write_tier` puts its parts before its marker and `_retract_tier`
+    clears the marker before deleting the parts, so a marked rung is either fully written or honestly
+    empty; a stricter rule here would be a SECOND definition of "finished".
 
     AN EMPTY `tiers` IS REFUSED RATHER THAN VACUOUSLY COMPLETE. The rung loop below intersects, so
     with no rungs to intersect over every published day reads as ladder-complete and the census
@@ -505,15 +508,10 @@ def build_lane_ladder_census(
             last_day=max(published),
             keys=base_keys,
         )
-        # `completed_partition_days` rather than a local rule: it is the one primitive every reader
-        # of this warehouse shares for "did this day's export assert that it finished", and a
-        # second spelling of it here is how one of the two eventually gets it wrong.
-        marked_by_tier = {
-            tier: completed_partition_days(
-                store.list_partition_keys(lane.slug, kind, tier), layer=lane.slug, kind=kind, zoom=tier
-            )
-            for tier in tiers
-        }
+        # `gap_fill.derived_rung_completions` rather than a local rule: the hourly tick now takes the
+        # same ladder census this walk does, and two spellings of "which rungs finished" is how the
+        # cron and the drain end up disagreeing about which days are already repaired.
+        marked_by_tier = derived_rung_completions(store, layer=lane.slug, kind=kind, tiers=tiers)
     except Exception as error:  # per-lane isolation: an unreadable listing must never read as "no gaps"
         return LaneLadderCensus(
             slug=lane.slug,
@@ -785,97 +783,34 @@ async def _derive_one_day(  # noqa: PLR0913 - one coordinate of the day being de
     derive_tiers: TierDeriver,
     connection: DuckDBPyConnection | None = None,
 ) -> _DayResult:
-    """Write one already-published day's coarse rungs from its base rung, under the lane-day lock.
+    """Adapt `gap_fill.repair_one_lane_day` to the walk's own result shape. It holds no logic of its own.
 
-    THE SAME LOCK KEY AS THE EXPORT PATH, IMPORTED RATHER THAN RESPELT. `fill_one_lane_day` holds
-    `_lane_day_lock_key(lane, day)` across export, prune, rungs and marker precisely so no second
-    writer can interleave with it -- and this IS a second writer of three of those four objects. A
-    repair sweep that took a different key, or no key, would race the hourly cron on exactly the
-    days it is repairing: the cron's derivation and this one would both prune and both mark, and
-    the loser's `part_count` would describe a rung the winner had already replaced.
-
-    NO STATEMENT TIMEOUT AND NO EXPORT. The only statement this path issues is the advisory lock
-    itself; the base rows come from the object store. That is the whole reason this selection is
-    cheap enough to run over a thousand days: `signal` measured 151 s for ONE cold day of its
-    Postgres export, and none of those seconds buy anything when the base rung is already correct.
-
-    A FAILED DERIVATION CHANGES NOTHING, which is what makes the repair safe to re-run. The base
-    rung and its marker are never touched here, so a day that raises is simply still ladder-
-    incomplete and the next census selects it again.
-
-    THE LOCK ITSELF IS INSIDE THE GUARD, not only the derivation, and that is the difference between
-    a recorded failure and a lost run. `pg_try_advisory_lock` is a real statement against a real
-    session: a connection reset, a statement timeout or a session already in a failed transaction
-    raises THERE, before the derivation is reached, and an unguarded `async with` would carry that
-    out of the whole walk -- every lane's tally, not just this day's, and the module docstring
-    promises the opposite.
-
-    THE SESSION IS ROLLED BACK ON EVERY PATH, exactly as `_export_one_day` does one contract over.
-    SQLAlchemy 2.0's `autobegin` means the lock statement OPENS a transaction that this path would
-    otherwise never end: over a multi-hour repair that is one backend idle-in-transaction from the
-    first day to the last, which `idle_in_transaction_session_timeout` eventually terminates
-    mid-run. The advisory lock is session-scoped, so the rollback does not release it.
+    THE REPAIR ITSELF LIVES IN `gap_fill`, WITH THE EXPORT IT MUST NOT RACE. A re-derivation takes the
+    same advisory-lock key, prunes the same rungs and writes the same markers `fill_one_lane_day`
+    does, so a second copy of that dance here would be a second definition of what a lane-day means --
+    and the copy that drifted would let the drain and the hourly tick both prune and both mark one
+    rung, the loser's `part_count` describing objects the winner had already replaced. `gap_fill` now
+    drains its own ladder backlog through exactly this function, which is what makes the two agree by
+    construction rather than by review.
     """
-    barrier = (
-        try_postgres_vegetation_publication_barrier
-        if registration.slug == VEGETATION_PLANE_STREAM
-        else unlocked_vegetation_publication_barrier
+    repair = await repair_one_lane_day(
+        session,
+        store,
+        registration,
+        day=day,
+        run_id=run_id,
+        now=now,
+        lane_day_lock=lane_day_lock,
+        derive_tiers=derive_tiers,
+        connection=connection,
     )
-    try:
-        async with barrier(session) as publication_granted:
-            if publication_granted is False:
-                return _DayResult(
-                    "contended",
-                    0,
-                    0,
-                    0,
-                    f"{day.isoformat()}: exact vegetation audit holds the publication barrier; derivation deferred",
-                )
-            async with lane_day_lock(session, _lane_day_lock_key(registration, day)) as granted:
-                if not granted:
-                    return _DayResult(
-                        "contended",
-                        0,
-                        0,
-                        0,
-                        f"{day.isoformat()}: another run holds this lane-day, so its coarse rungs were left alone "
-                        "rather than derived beside a base rung being rewritten; a later turn will take it",
-                    )
-                derived = derive_tiers(
-                    store,
-                    layer=registration.slug,
-                    kind=GAP_FILL_PARTITION_KIND,
-                    day=day,
-                    run_id=run_id,
-                    now=now,
-                    connection=connection,
-                )
-    except Exception as error:
-        return _DayResult(
-            "raised",
-            0,
-            0,
-            0,
-            f"{day.isoformat()}: the coarse rungs could not be derived from the published base rung, so this "
-            f"day stays visible only at z{BASE_ZOOM_TIER}. A base rung that no longer matches its lane's schema "
-            f"reads exactly like this and needs retracting and re-exporting, not re-deriving: "
-            f"{type(error).__name__}: {error}",
-        )
-    finally:
-        await _end_lane_day_transaction(session)
-    notes = list(derived.notes)
-    if derived.tiers:
-        rungs = ", ".join(
-            f"z{report.tier} {report.row_count} rows in {report.part_count} part(s)" for report in derived.tiers
-        )
-        notes.append(f"{day.isoformat()}: derived {rungs}")
     return _DayResult(
-        "written",
-        derived.part_count,
-        derived.row_count,
-        derived.byte_count,
-        "; ".join(notes) or None,
-        emptied_tiers=tuple(derived.emptied),
+        repair.outcome,
+        repair.parts,
+        repair.rows,
+        repair.written_bytes,
+        repair.detail,
+        emptied_tiers=repair.emptied_tiers,
     )
 
 

@@ -844,6 +844,25 @@ describe("LayerManager viewport-proxied polygon layers", () => {
             geometryLinked: true,
             dataAvailableAt: null,
             ingestedAt: "2026-07-30T12:05:00Z",
+            // The envelope every served row carries. Spelled here rather than left off because
+            // `presentParquetWater` splits named gauges from anonymous cells on the DECLARED
+            // form: a row with no envelope would silently present as the wave-1 marker, and this
+            // case would then pass for the wrong reason. `raw_point` with no cell size is what
+            // the z13 rung declares for a real gauge.
+            support: {
+              zoomTier: 13,
+              supportKind: "raw_point",
+              supportId: "13172500",
+              origin: "cell_center",
+              aggregationMethod: "none",
+              contributorCount: 1,
+              provenance: {
+                sourceLayer: "water-gauges",
+                observedDay: "2026-07-30",
+                newestObservedAt: "2026-07-30T12:00:00Z",
+                attribution: "U.S. Geological Survey NWIS",
+              },
+            },
           },
         ],
       },
@@ -1091,11 +1110,12 @@ describe("LayerManager gives each warehouse-backed feed its own layer's day", ()
   });
 
   /**
-   * The cutover, stated as one assertion. `/api/fires` and `useFireData` are still on disk
-   * until the acceptance track has parity evidence, so nothing structural stops a future edit
-   * from reaching for them again -- this is what does. It watches `fetch` rather than the hook
-   * module, because the defect it guards against is a REQUEST reaching that route, however it
-   * was issued.
+   * The cutover, stated as one assertion. `/api/fires` and `useFireData` were both deleted on
+   * 2026-09-02, so nothing on disk can reach them -- and this case is kept anyway, because what
+   * it guards is the PATH STRING: a future edit that hand-writes `fetch("/api/fires...")`, or
+   * that restores the route, would be caught here rather than at a code review. It watches
+   * `fetch` rather than the hook module for the same reason: the defect is a REQUEST reaching
+   * that route, however it was issued.
    */
   it("issues no request to /api/fires while the fire layer is visible", () => {
     // `src/test/setup.ts` replaces the global `fetch` with a spy for the whole suite, so this

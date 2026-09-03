@@ -661,6 +661,202 @@ def test_publish_cli_is_offline_by_default(tmp_path: Path) -> None:
     assert "pointer" not in report
 
 
+# --- The published-empty rung: a derived rung that generalised every base row away ---------------
+
+_BASE_RUNG = AVAILABILITY_REQUIRED_RUNGS[-1]
+_EMPTY_RUNG = AVAILABILITY_REQUIRED_RUNGS[0]
+_EMPTY_DAY = date(2026, 8, 30)
+
+
+def _empty_rung_row(rung: int) -> AvailabilityRow:
+    """One published row holding no rows at all, bound to a receipt rather than to data."""
+    return AvailabilityRow(
+        lane="test-lane",
+        product="test-product",
+        nature="daily_series",
+        day=_EMPTY_DAY,
+        rung=rung,
+        terminal_state="published",
+        row_count=0,
+        source_receipt=EvidenceReceipt(key="source/typed.json", sha256="a" * 64),
+        terminal_receipt=EvidenceReceipt(key="terminal/typed.json", sha256="b" * 64),
+        data_receipts=(),
+        completion_receipt=EvidenceReceipt(key=_completion_key(_EMPTY_DAY, rung), sha256="c" * 64),
+        absence_reason=None,
+        source_ceiling=_EMPTY_DAY,
+        published_at=_CREATED_AT - timedelta(hours=1),
+    )
+
+
+def test_a_derived_rung_may_publish_zero_rows_when_it_binds_a_completion_receipt() -> None:
+    """The day is published and holds rows; THIS rung of it kept none of them.
+
+    A governed absence would claim the SOURCE had nothing, which is false -- and would also mix
+    terminal states inside one day, which `_validate_generation_day` refuses and `selectable_days`
+    rests on, so the day would become unselectable at EVERY rung rather than merely unindexed.
+    """
+    row = _empty_rung_row(_EMPTY_RUNG)
+
+    assert (row.row_count, row.data_receipts) == (0, ())
+    assert row.completion_receipt is not None
+
+
+def test_the_base_rung_may_never_publish_zero_rows() -> None:
+    """An empty BASE rung is a governed absence; a second vocabulary for it would record one state twice."""
+    with pytest.raises(ValueError, match="positive row_count"):
+        _empty_rung_row(_BASE_RUNG)
+
+
+def test_a_published_row_without_a_completion_receipt_is_refused() -> None:
+    """The receipt is the whole claim: without it an empty rung is a rung nobody wrote."""
+    row = _empty_rung_row(_EMPTY_RUNG)
+
+    with pytest.raises(ValueError, match="requires a completion receipt"):
+        AvailabilityRow(
+            lane=row.lane,
+            product=row.product,
+            nature=row.nature,
+            day=row.day,
+            rung=row.rung,
+            terminal_state="published",
+            row_count=0,
+            source_receipt=row.source_receipt,
+            terminal_receipt=row.terminal_receipt,
+            data_receipts=(),
+            completion_receipt=None,
+            absence_reason=None,
+            source_ceiling=row.source_ceiling,
+            published_at=row.published_at,
+        )
+
+
+def test_terminal_evidence_admits_the_same_empty_rung_and_refuses_the_same_base_one() -> None:
+    """The evidence and the row must agree about what is sayable, or one refuses what the other wrote."""
+    identity = _identity(EvidenceReceipt(key="evidence/manifest.json", sha256="d" * 64))
+
+    def evidence(rung: int) -> TerminalEvidence:
+        return TerminalEvidence(
+            identity=identity,
+            day=_EMPTY_DAY,
+            rung=rung,
+            terminal_state="published",
+            row_count=0,
+            source_ceiling=_EMPTY_DAY,
+            published_at=_CREATED_AT - timedelta(hours=1),
+            source_receipt=EvidenceReceipt(key="source/typed.json", sha256="a" * 64),
+            data_receipts=(),
+            completion_receipt=EvidenceReceipt(key=_completion_key(_EMPTY_DAY, rung), sha256="c" * 64),
+            absence_receipt=None,
+            absence_reason=None,
+        )
+
+    assert evidence(_EMPTY_RUNG).row_count == 0
+    with pytest.raises(ValueError, match="positive row_count"):
+        evidence(_BASE_RUNG)
+
+
+def test_a_bootstrap_verifies_a_published_empty_rung_against_its_zero_part_marker() -> None:
+    """END TO END through the real verification: the marker's own bytes are re-read and re-hashed.
+
+    `_verify_completion_object` compares the receipt's counts to the evidence AND refuses a marker
+    that does not say the same thing about emptiness as the row binding it.
+    """
+    store = MemoryAvailabilityStorage()
+    manifest = store.seed("evidence/manifest.json", b"manifest")
+    identity = _identity(manifest)
+    bootstrap_input = build_bootstrap_inventory_evidence(
+        BootstrapInventoryEvidence(identity=identity, source_ceiling=_EMPTY_DAY, object_receipts=(manifest,))
+    )
+    store.seed(bootstrap_input.receipt.key, bootstrap_input.payload)
+    source_object = store.seed("source/response.bin", b"source")
+    source_evidence = build_source_evidence(
+        SourceEvidence(
+            identity=identity,
+            day=_EMPTY_DAY,
+            source_ceiling=_EMPTY_DAY,
+            object_receipts=(source_object,),
+        )
+    )
+    source = store.seed(source_evidence.receipt.key, source_evidence.payload)
+    rows = tuple(
+        _empty_published_rung(store, identity=identity, source=source, day=_EMPTY_DAY, rung=rung)
+        if rung == _EMPTY_RUNG
+        else _published_row(store, identity=identity, source=source, day=_EMPTY_DAY, rung=rung)
+        for rung in AVAILABILITY_REQUIRED_RUNGS
+    )
+
+    pointer = bootstrap_availability(
+        store,
+        BootstrapRequest(
+            identity=identity,
+            source_ceiling=_EMPTY_DAY,
+            created_at=_CREATED_AT,
+            input_receipts=(bootstrap_input.receipt,),
+            rows=rows,
+            input_sha256="a" * 64,
+        ),
+    ).pointer
+
+    index = read_latest_availability(store, lane_root=_LANE_ROOT)
+    assert pointer.generation_key == index.pointer.generation_key
+    assert index.selectable_days() == (_EMPTY_DAY,), "an emptied rung must not cost the day its whole ladder"
+
+
+def _empty_published_rung(
+    store: MemoryAvailabilityStorage,
+    *,
+    identity: AvailabilityIdentity,
+    source: EvidenceReceipt,
+    day: date,
+    rung: int,
+) -> AvailabilityRow:
+    """Seed one rung holding NO parts and a derived-empty receipt, as `_retract_tier` leaves it."""
+    published_at = _CREATED_AT - timedelta(hours=1)
+    completion = store.seed(
+        _completion_key(day, rung),
+        PartitionCompletion(
+            part_count=0,
+            row_count=0,
+            completed_at=published_at,
+            run_id=f"test-z{rung}",
+            derived_empty=True,
+        ).to_json_bytes(),
+    )
+    terminal = build_terminal_evidence(
+        TerminalEvidence(
+            identity=identity,
+            day=day,
+            rung=rung,
+            terminal_state="published",
+            row_count=0,
+            source_ceiling=day,
+            published_at=published_at,
+            source_receipt=source,
+            data_receipts=(),
+            completion_receipt=completion,
+            absence_receipt=None,
+            absence_reason=None,
+        )
+    )
+    store.seed(terminal.receipt.key, terminal.payload)
+    return AvailabilityRow(
+        lane=identity.lane,
+        product=identity.product,
+        nature=identity.nature,
+        day=day,
+        rung=rung,
+        terminal_state="published",
+        row_count=0,
+        source_receipt=source,
+        terminal_receipt=terminal.receipt,
+        data_receipts=(),
+        completion_receipt=completion,
+        absence_reason=None,
+        source_ceiling=day,
+        published_at=published_at,
+    )
+
+
 def _identity(manifest: EvidenceReceipt) -> AvailabilityIdentity:
     return AvailabilityIdentity(
         lane_root=_LANE_ROOT,

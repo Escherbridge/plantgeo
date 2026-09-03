@@ -1,4 +1,4 @@
-"""The eight climate registrations: their nature, their floors, their lags and their refusing adapter."""
+"""The eleven POWER registrations: their nature, their floors, their lags and their refusing adapter."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRY, Lane
 from agri_data_service.warehouse.parquet.schema import get_stream_schema
 
 CLIMATE_LANE_ID = "climate-nasa-power-direct-forward"
-CLIMATE_STREAM_COUNT = 8
+CLIMATE_STREAM_COUNT = 11
 EXPECTED_COMMAND = ("python", "-m", "agri_data_service.pipeline.direct.climate")
 EXPECTED_SCHEDULE = "40 * * * *"
 EXPECTED_PHASE_OFFSET_SECONDS = 2400
@@ -128,7 +128,7 @@ def test_each_climate_stream_also_gets_its_generic_parquet_spec_and_it_stays_sha
         assert parse_activation({}).is_active(spec.lane_id) is False, product.stream
 
 
-def test_the_direct_lane_and_its_eight_generic_specs_declare_each_other_as_conflicts() -> None:
+def test_the_direct_lane_and_its_eleven_generic_specs_declare_each_other_as_conflicts() -> None:
     """Two owners of one calendar, one of which can only ever fail; the gate must refuse the pairing."""
     direct = LANE_SPECS[CLIMATE_LANE_ID]
     generic_ids = tuple(f"parquet-{product.stream}" for product in CLIMATE_FIELD_PRODUCTS)
@@ -162,7 +162,7 @@ def test_the_command_timeout_is_the_cli_default_budget_plus_a_stated_grace() -> 
 def test_no_climate_lane_joins_the_ingest_cron_atomic_cutover_group() -> None:
     """`plantgeo-ingest-cron` never produced a climate day, so it cannot be their legacy owner.
 
-    Naming it would make the real ingest cutover drag along eight lanes whose registered adapter
+    Naming it would make the real ingest cutover drag along eleven lanes whose registered adapter
     refuses by design, which is an invented dependency standing in for a handoff that never existed.
     """
     for product in CLIMATE_FIELD_PRODUCTS:

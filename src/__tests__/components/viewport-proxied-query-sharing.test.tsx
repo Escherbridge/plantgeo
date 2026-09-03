@@ -153,6 +153,41 @@ const EMPTY_PROXIED_COLLECTION = {
 /** Procedures that still expose the legacy array/collection shapes in this test. */
 const ARRAY_PROCEDURES = new Set(["environmental.getGroundwater"]);
 
+/**
+ * The two collection reads whose panels caption themselves from a SUPPORT ENVELOPE.
+ *
+ * `SoilDetails` prints `field.support.cellWidthDegrees` on any rung that is not `detail`, and
+ * `granularity` is what selects that branch -- so a stand-in collection with neither field takes
+ * the aggregated branch and dereferences an envelope that is not there, which throws through the
+ * render and leaves every query observer in this tree unregistered. The reader never sends that
+ * shape: `soilFieldSupport` fills an envelope in EVERY arm, the empty ones included, precisely so
+ * a panel can say which rung answered and at what pitch without guessing.
+ *
+ * Answered as the detail rung with no bands, which is the least this test can say and still be a
+ * shape the server could have produced: nothing here is about the legend.
+ */
+const PARQUET_COLLECTION_PROCEDURES = new Set([
+  "environmental.getSoilField",
+  "environmental.getClimateField",
+]);
+
+const DETAIL_RUNG_SUPPORT = {
+  zoomTier: 13,
+  supportKind: "tessellated_cell",
+  supportId: "viewport-sharing-test:2026-08-28:z13",
+  origin: "cell_center",
+  cellWidthDegrees: 0.25,
+  cellHeightDegrees: 0.25,
+  aggregationMethod: "mean",
+  contributorCount: 0,
+  provenance: {
+    sourceLayer: "viewport-sharing-test",
+    observedDay: "2026-08-28",
+    newestObservedAt: null,
+    attribution: "test",
+  },
+};
+
 const PARQUET_ARRAY_PROCEDURES = new Set([
   "environmental.getStreamflow",
   "environmental.getDroughtClassification",
@@ -201,7 +236,20 @@ function recordingLink(): TRPCLink<AppRouter> {
                   }
                 : ARRAY_PROCEDURES.has(op.path)
                   ? []
-                  : EMPTY_PROXIED_COLLECTION;
+                  : PARQUET_COLLECTION_PROCEDURES.has(op.path)
+                    ? {
+                        ...EMPTY_PROXIED_COLLECTION,
+                        granularity: "detail",
+                        zoomTier: 13,
+                        cellCount: 0,
+                        bands: [],
+                        observedDay: null,
+                        requestedDay: "2026-08-28",
+                        newestAvailableDay: null,
+                        maxObservationAgeDays: 0,
+                        support: DETAIL_RUNG_SUPPORT,
+                      }
+                    : EMPTY_PROXIED_COLLECTION;
           observer.next({
             result: {
               data,

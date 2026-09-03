@@ -15,7 +15,6 @@ import {
 } from "@/lib/server/services/strategy-scoring";
 import {
   getPublishedDroughtClassification,
-  getPublishedFireDetections,
   getPublishedStreamflowGauges,
   getPublishedWeatherForBbox,
   getPublishedWeatherForPoint,
@@ -31,6 +30,12 @@ import {
   type InterventionSuitability,
 } from "@/lib/server/services/carbon-potential";
 import type { WaterGauge } from "@/lib/server/services/usgs-water";
+import { firmsDayRange } from "@/lib/server/services/environmental-time";
+import {
+  getParquetFireDetections,
+  type ParquetFireWindow,
+  type ParquetReaderResult,
+} from "@/lib/server/services/parquet-trpc-readers";
 import { getParquetSliderCapabilities } from "@/lib/server/services/parquet-slider-capabilities";
 import { droughtLevelAtPoint } from "@/lib/server/services/alert-engine";
 import {
@@ -49,16 +54,39 @@ import { SLIDER_STREAM_LAYER_NAMES } from "@/types/time-slider";
 /** Half-width of the context window around the requested point, in degrees. */
 const CONTEXT_RADIUS_DEGREES = 0.25;
 const NEAREST_GAUGE_MAX_DEGREES = 0.5;
-const MAX_FIRE_DETECTIONS = 25;
+const MAX_FIRE_DETECTION_CELLS = 25;
 const MAX_FIRE_PERIMETERS = 10;
 const MAX_MTBS_FIRES = 10;
 
+/**
+ * The map zoom this assembler's own window corresponds to, resolved server-side to a rung.
+ *
+ * The Parquet readers take a map zoom rather than a rung so the browser and the writer can never
+ * disagree about which partition serves a view (`resolveZoomTier`, `src/lib/map/zoom-tiers.ts`).
+ * This assembler has no browser and no zoom, so it names the one its window IS: a 0.5-degree box
+ * is a regional view, and z9 is the rung a browser at that span resolves to. Asking for the
+ * detail rung instead would request a finer partition than a regional question needs and read a
+ * lane that has not written it as a hole.
+ */
+const CONTEXT_MAP_ZOOM = 9;
+
+/**
+ * One published fire-detection CELL near the point, at the grain the Parquet lane actually
+ * writes. Not one FIRMS pixel: the lane aggregates detections into a cell per day, so there is
+ * no per-detection confidence string or FRP value to report and none is invented here.
+ */
 export interface NearbyFireDetection {
+  /** Newest FIRMS acquisition instant in the cell. */
   observedAt: string;
+  /** The partition day the cell was written under. */
+  observedDay: string;
   lat: number;
   lon: number;
-  confidence: string | null;
-  frp: number | null;
+  detectionCount: number;
+  /** How many of `detectionCount` cleared FIRMS' high-confidence bar. */
+  highConfidenceDetectionCount: number;
+  /** Fire radiative power summed over the cell; null when no detection in it reported one. */
+  frpSum: number | null;
 }
 
 export interface NearbyFirePerimeter {
@@ -126,7 +154,18 @@ export interface RegionalContextPayload {
     nearestGauge: WaterGauge | null;
   } | null;
   weather: PublishedWeatherObservation | null;
-  fireDetections: { detections: NearbyFireDetection[]; totalCount: number } | null;
+  /** Null whenever the Parquet fire read did not return cells, for ANY reason; `temporalContext` says which. */
+  fireDetections: {
+    cells: NearbyFireDetection[];
+    /** Cells in the served window; `cells` above is capped at `MAX_FIRE_DETECTION_CELLS`. */
+    totalCount: number;
+    /** The reader hit its row budget, so the window is a subset and `totalCount` is a floor. */
+    truncated: boolean;
+    /** The window the cells describe, exactly as the reader served it. */
+    firstDay: string;
+    lastDay: string;
+    servedDay: string;
+  } | null;
   firePerimeters: { perimeters: NearbyFirePerimeter[]; totalCount: number } | null;
   mtbsPerimeters: { fires: GeoJSON.Feature[]; totalCount: number } | null;
   carbonPotential: InterventionSuitability | null;
@@ -348,9 +387,90 @@ function readString(source: Record<string, unknown>, key: string): string | null
   return typeof value === "string" && value.trim() ? value : null;
 }
 
-function readNumber(source: Record<string, unknown>, key: string): number | null {
-  const value = source[key];
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
+/**
+ * What the agent may be told about fire near this point, resolved from the Parquet reader's own
+ * terminal state rather than from an empty array.
+ *
+ * Four different things produce zero cells and only two of them are absences, which is the whole
+ * reason the reader returns a state instead of a collection:
+ *
+ * - `ready` with no cells — the day published and nothing fell in this window. A real absence,
+ *   and the coverage record in `resolveViewedLayerReading` confirms it before anything is said.
+ * - `absent` — the lane looked at the day and the source deliberately had nothing anywhere. Also
+ *   a real absence, left to the same coverage lookup rather than asserted here: a governed
+ *   absence breaks published continuity, so the capability row is the conservative judge.
+ * - `not_generated` — the partition was never written. Stated directly through
+ *   `notPublishedReason`, because a capability row that still lists the day as published would
+ *   otherwise license "no fires here" for a day nobody observed.
+ * - `upstream_unavailable`, or the reader raising (a future or malformed day, a contract fault) —
+ *   a fault, never an absence. Both land on `failed`, which resolves to `read_failed`.
+ */
+interface FireReadOutcome {
+  /** Newest first, capped at `MAX_FIRE_DETECTION_CELLS`. */
+  cells: NearbyFireDetection[];
+  /** Cells in the whole served window, before the cap above. */
+  totalCount: number;
+  truncated: boolean;
+  window: { firstDay: string; lastDay: string; servedDay: string } | null;
+  failed: boolean;
+  notPublishedReason: string | null;
+}
+
+function resolveFireRead(
+  result: PromiseSettledResult<ParquetReaderResult<ParquetFireWindow>>
+): FireReadOutcome {
+  const nothing = {
+    cells: [] as NearbyFireDetection[],
+    totalCount: 0,
+    truncated: false,
+    window: null,
+    notPublishedReason: null,
+  };
+  if (result.status === "rejected") return { ...nothing, failed: true };
+
+  const read = result.value;
+  switch (read.state) {
+    case "ready": {
+      // Newest first, matching the order the PostgreSQL reader this replaced returned rows in,
+      // so the cap below keeps the most recent cells rather than an arbitrary slice of the window.
+      const newestFirst = [...read.data.cells].sort((left, right) =>
+        right.newestObservedAt.localeCompare(left.newestObservedAt)
+      );
+      return {
+        cells: newestFirst.slice(0, MAX_FIRE_DETECTION_CELLS).map((cell) => ({
+          observedAt: cell.newestObservedAt,
+          observedDay: cell.observedDay,
+          lat: cell.latitude,
+          lon: cell.longitude,
+          detectionCount: cell.detectionCount,
+          highConfidenceDetectionCount: cell.highConfidenceDetectionCount,
+          frpSum: cell.frpSum,
+        })),
+        totalCount: read.data.cells.length,
+        truncated: read.truncated,
+        window: {
+          firstDay: read.data.firstDay,
+          lastDay: read.data.lastDay,
+          servedDay: read.servedDay,
+        },
+        failed: false,
+        notPublishedReason: null,
+      };
+    }
+    case "absent":
+      return { ...nothing, failed: false };
+    case "not_generated":
+      return {
+        ...nothing,
+        failed: false,
+        notPublishedReason:
+          read.reason === "lane_never_written"
+            ? "The fire-detections lane has never written any day."
+            : `fire-detections has no partition written for ${read.requestedDay}.`,
+      };
+    case "upstream_unavailable":
+      return { ...nothing, failed: true };
+  }
 }
 
 /**
@@ -715,6 +835,17 @@ function resolveSetCorrespondence(
 interface SourceReadState {
   failed: boolean;
   hasObservations: boolean;
+  /**
+   * Set only when the READER itself proved the day was never written, and then it wins over the
+   * coverage record.
+   *
+   * The PostgreSQL readers cannot say this -- an empty result is all they have -- so they leave
+   * it unset and the coverage lookup decides, exactly as it always has. The Parquet readers CAN:
+   * `not_generated` is a distinct terminal state. Deferring to coverage there would let a
+   * capability row that still lists a day as published license an absence claim for a partition
+   * the warehouse never wrote, which is the one thing this whole vocabulary exists to prevent.
+   */
+  notPublishedReason?: string;
 }
 
 /**
@@ -772,9 +903,17 @@ export async function assembleRegionalContext(
       dateBySource.get("weatherObservations"),
       today
     ),
-    // The middle argument is the FIRMS lookback window; passing undefined takes its default,
-    // which is the same window this call has always used.
-    getPublishedFireDetections(bbox, undefined, dateBySource.get("fireDetections")),
+    // The PARQUET fire reader since 2026-09-02, for the same reason `getParquetSliderCapabilities`
+    // is read below: a request-time PostgreSQL read for a map or agent answer is exactly what the
+    // cutover removed, and the two planes do not agree. `dayRange` is the FIRMS lookback the
+    // PostgreSQL reader defaulted to, so the live-edge window is unchanged; the reader forces it
+    // to 1 whenever a day is named, which is the behaviour the old reader had for a named day.
+    getParquetFireDetections({
+      bbox,
+      date: dateBySource.get("fireDetections"),
+      mapZoom: CONTEXT_MAP_ZOOM,
+      dayRange: firmsDayRange(),
+    }),
     readPublishedFirePerimeters(west, south, east, north),
     getInterventionSuitability(lat, lon),
     // The PARQUET resolver, not the PostgreSQL one the browser stopped reading at the 2026-09-01
@@ -793,10 +932,7 @@ export async function assembleRegionalContext(
   const droughtValue = drought.status === "fulfilled" ? drought.value : null;
   const gaugeValues = settled(gauges, [] as WaterGauge[]);
   const weatherValue = weather.status === "fulfilled" ? weather.value : null;
-  const fireCollection = settled(fires, {
-    type: "FeatureCollection",
-    features: [],
-  } as GeoJSON.FeatureCollection<GeoJSON.Point>);
+  const fireRead = resolveFireRead(fires);
   const perimeterValue = settled(perimeters, {
     perimeters: [] as NearbyFirePerimeter[],
     latestUpdatedAt: null as string | null,
@@ -830,24 +966,7 @@ export async function assembleRegionalContext(
     .sort()
     .at(-1);
 
-  const detections: NearbyFireDetection[] = [];
-  for (const feature of fireCollection.features) {
-    const properties = (feature.properties ?? {}) as Record<string, unknown>;
-    const observedAt = readString(properties, "observedAt");
-    if (!observedAt) continue;
-    detections.push({
-      observedAt,
-      lon: feature.geometry.coordinates[0],
-      lat: feature.geometry.coordinates[1],
-      confidence: readString(properties, "confidence"),
-      frp: readNumber(properties, "frp"),
-    });
-    if (detections.length >= MAX_FIRE_DETECTIONS) break;
-  }
-  const latestDetectionAt = detections
-    .map((detection) => detection.observedAt)
-    .sort()
-    .at(-1);
+  const latestDetectionAt = fireRead.cells.at(0)?.observedAt;
 
   const dataFreshness: Record<string, string> = {
     drought:
@@ -893,9 +1012,15 @@ export async function assembleRegionalContext(
           }
         : null,
     weather: weatherValue,
-    fireDetections: detections.length
-      ? { detections, totalCount: fireCollection.features.length }
-      : null,
+    fireDetections:
+      fireRead.window !== null && fireRead.cells.length > 0
+        ? {
+            cells: fireRead.cells,
+            totalCount: fireRead.totalCount,
+            truncated: fireRead.truncated,
+            ...fireRead.window,
+          }
+        : null,
     firePerimeters: perimeterValue.perimeters.length
       ? {
           perimeters: perimeterValue.perimeters,
@@ -921,9 +1046,15 @@ export async function assembleRegionalContext(
   // rejects with StrategyEvidenceUnavailableError on its ordinary unavailable path, so calling
   // that a failed read would be its own small lie.
   const readState: Partial<Record<RegionalEvidenceSource, SourceReadState>> = {
+    // `failed` is NOT `fires.status === "rejected"` the way its neighbours are: the Parquet
+    // reader returns an outage as DATA (`upstream_unavailable`), so a status check alone would
+    // read a down warehouse as the warehouse having published nothing. See `resolveFireRead`.
     fireDetections: {
-      failed: fires.status === "rejected",
-      hasObservations: detections.length > 0,
+      failed: fireRead.failed,
+      hasObservations: fireRead.cells.length > 0,
+      ...(fireRead.notPublishedReason === null
+        ? {}
+        : { notPublishedReason: fireRead.notPublishedReason }),
     },
     firePerimeters: {
       failed: perimeters.status === "rejected",
@@ -1037,6 +1168,14 @@ function resolveViewedLayerReading(
   }
   if (state.hasObservations) {
     return { ...base, outcome: "observed_on_viewed_date", reason: null };
+  }
+  if (state.notPublishedReason !== undefined) {
+    return {
+      ...base,
+      outcome: "not_published_on_viewed_date",
+      reason: state.notPublishedReason,
+      clientClaimContradicted: row.hasDataOnDate,
+    };
   }
 
   const coverage = coverageOnDay(capabilityLayers, evidenceSource, row.date);

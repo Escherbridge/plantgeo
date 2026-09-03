@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { HOVERABLE_LAYER_IDS, formatHoverContent } from "@/lib/map/hover-fields";
+import {
+  WATER_CELL_AGGREGATE_NOTE,
+  WATER_CELL_CAPTION_TITLE,
+} from "@/lib/map/water-cell-caption";
+import { FIRE_CELL_NOT_A_PERIMETER_NOTE } from "@/lib/map/fire-cell-caption";
 
 /** Fails if any rendered string ever leaks a raw null/undefined/NaN sentinel. */
 function assertNoSentinels(content: { title: string; lines: string[] } | null) {
@@ -15,10 +20,22 @@ describe("HOVERABLE_LAYER_IDS", () => {
   it("includes every layer the shared hover manager must query", () => {
     expect(HOVERABLE_LAYER_IDS).toEqual([
       "published-fire-circles",
+      // The same cells drawn as their declared squares at coarse and middle zoom. A circle
+      // layer cannot hit-test a Polygon, so without this id the detection cells were on the
+      // map and hovered as empty ground at every zoom under 13.
+      "published-fire-cells-fill",
       "water-gauges-circle",
+      // Coarse streamflow cells in both their shapes. Neither was hoverable before 2026-09-02,
+      // so the one feature most needing to say "this is a mean over several gauges" said it
+      // only if you clicked it.
+      "water-gauge-cells-fill",
+      "water-gauge-cells-circle",
       "groundwater-wells-circle",
       "sensors",
       "fire-perimeters",
+      // The two native-polygon products an event aggregate must be distinguishable FROM.
+      "burn-severity",
+      "drought-fill",
       "evacuation-zones",
       "interventions",
       // The interventions toggle draws two geometries from one tile: a fill and its dashed
@@ -58,6 +75,8 @@ describe("formatHoverContent: published-fire-circles", () => {
       observedDay: "2026-07-14",
       newestObservedAt: new Date(Date.now() - 3 * 3600_000).toISOString(),
       zoomTier: 9,
+      cellWidthDegrees: 0.25,
+      cellHeightDegrees: 0.25,
     });
     expect(content?.title).toBe("Fire detection cell");
     expect(content?.lines).toContain("Detections: 1,234");
@@ -65,8 +84,41 @@ describe("formatHoverContent: published-fire-circles", () => {
     expect(content?.lines).toContain("Total FRP: 12.3 MW");
     expect(content?.lines).toContain("Observed: 2026-07-14");
     expect(content?.lines).toContain("Aggregated at z9");
+    // The two lines the polygon rendering added: what the cell covers, and that it is not a
+    // burned extent. Drawn as a filled square, geometry alone cannot carry that difference.
+    expect(content?.lines).toContain("Cell: 0.25° × 0.25°");
+    expect(content?.lines).toContain(FIRE_CELL_NOT_A_PERIMETER_NOTE);
     expect(content?.lines.find((l) => l.startsWith("Newest detection"))).toMatch(/3h ago/);
     assertNoSentinels(content);
+  });
+
+  // Never the rung's nominal size: a cell whose envelope carried no size is drawn as a marker,
+  // and printing a square it does not have would describe a shape nothing rendered.
+  it("states no cell extent when the envelope declared none", () => {
+    const content = formatHoverContent("published-fire-circles", {
+      detectionCount: 6,
+      zoomTier: 13,
+    });
+    expect(content?.lines.some((line) => line.startsWith("Cell:"))).toBe(false);
+    expect(content?.lines).toContain("Aggregated at z13");
+    expect(content?.lines).toContain(FIRE_CELL_NOT_A_PERIMETER_NOTE);
+  });
+
+  // The same formatter serves both shapes of the one cell, so the square and the dot cannot
+  // caption the same aggregate differently.
+  it("captions the square exactly as it captions the dot", () => {
+    const properties = {
+      detectionCount: 4,
+      frpSum: 12.34,
+      frpObservationCount: 4,
+      observedDay: "2026-07-14",
+      zoomTier: 5,
+      cellWidthDegrees: 1,
+      cellHeightDegrees: 1,
+    };
+    expect(formatHoverContent("published-fire-cells-fill", properties)).toEqual(
+      formatHoverContent("published-fire-circles", properties)
+    );
   });
 
   it("shows the newest detection's own timestamp, not only its relative age", () => {
@@ -118,7 +170,11 @@ describe("formatHoverContent: published-fire-circles", () => {
       detectionCount: 6,
       observedDay: "null",
     });
-    expect(counted?.lines).toEqual(["Detections: 6", "Total FRP: Not reported"]);
+    expect(counted?.lines).toEqual([
+      "Detections: 6",
+      "Total FRP: Not reported",
+      FIRE_CELL_NOT_A_PERIMETER_NOTE,
+    ]);
     assertNoSentinels(counted);
   });
 
@@ -559,5 +615,87 @@ describe("formatHoverContent: unknown layers", () => {
     // The wind arrows are drawn but not hoverable; the temperature dot under them is.
     expect(formatHoverContent("weather-wind", { windSpeed: 3 })).toBeNull();
     expect(formatHoverContent("", {})).toBeNull();
+  });
+});
+
+describe("formatHoverContent: water-gauge-cells-fill", () => {
+  it("captions a coarse cell as a mean over gauges, never as a gauge", () => {
+    const content = formatHoverContent("water-gauge-cells-fill", {
+      flowCfs: 1523.456,
+      gaugeCount: 7,
+      cellWidthDegrees: 0.5,
+      cellHeightDegrees: 0.5,
+      observedAt: new Date(Date.now() - 45 * 60_000).toISOString(),
+    });
+
+    expect(content?.title).toBe(WATER_CELL_CAPTION_TITLE);
+    expect(content?.lines).toContain("Mean discharge: 1523.5 cfs");
+    expect(content?.lines).toContain("Gauges: 7");
+    expect(content?.lines).toContain("Cell: 0.5° × 0.5°");
+    expect(content?.lines).toContain(WATER_CELL_AGGREGATE_NOTE);
+    // Nothing a named gauge would show: no site name as the title, no percentile, no condition.
+    expect(content?.title).not.toContain("Boise");
+    assertNoSentinels(content);
+  });
+
+  it("gives the marker and the square the same caption", () => {
+    const properties = { flowCfs: 12, gaugeCount: 2 };
+    expect(formatHoverContent("water-gauge-cells-circle", properties)).toEqual(
+      formatHoverContent("water-gauge-cells-fill", properties)
+    );
+  });
+
+  it("yields no tooltip at all for a cell carrying none of the fields", () => {
+    // The note alone is unconditional prose; it must not turn an empty property bag into a
+    // one-line tooltip that asserts nothing, which is the rule every formatter here follows.
+    expect(formatHoverContent("water-gauge-cells-fill", {})).toBeNull();
+  });
+});
+
+describe("formatHoverContent: native polygons", () => {
+  it("names an MTBS burn scar, its year and its size", () => {
+    const content = formatHoverContent("burn-severity", {
+      fire_name: "Cedar Creek",
+      fire_year: 2022,
+      acres: 127311,
+      fire_type: "wildfire",
+    });
+
+    expect(content?.title).toBe("Cedar Creek");
+    expect(content?.lines).toContain("Burned: 2022");
+    expect(content?.lines).toContain("Size: 127,311 acres");
+    expect(content?.lines).toContain("Fire type: Wildfire");
+    assertNoSentinels(content);
+  });
+
+  // MTBS distributes burn severity as a thematic raster and publishes no polygon-level class,
+  // so `severity_class` is null on all published rows. Read anyway, shown only if it ever lands.
+  it("omits the severity class MTBS does not publish rather than printing an empty one", () => {
+    const content = formatHoverContent("burn-severity", {
+      fire_name: "Cedar Creek",
+      fire_year: 2022,
+      severity_class: null,
+    });
+    expect(content?.lines).toEqual(["Burned: 2022"]);
+    assertNoSentinels(content);
+  });
+
+  it("captions a USDM area by its category and the date it is valid for", () => {
+    const content = formatHoverContent("drought-fill", {
+      DM: 3,
+      label: "D3",
+      observedAt: "2026-08-25T00:00:00Z",
+    });
+
+    expect(content?.title).toBe("Drought (US Drought Monitor)");
+    expect(content?.lines).toContain("Category: D3");
+    // The valid date, not a relative age: USDM publishes one release a week keyed to a Tuesday,
+    // and "3 days ago" would describe when it was read rather than what it states.
+    expect(content?.lines.some((line) => line.startsWith("Valid: "))).toBe(true);
+    assertNoSentinels(content);
+  });
+
+  it("yields no drought tooltip for a feature carrying no category", () => {
+    expect(formatHoverContent("drought-fill", {})).toBeNull();
   });
 });

@@ -28,6 +28,7 @@ import {
 import {
   getParquetDrought,
   getParquetClimateField,
+  type ParquetReaderResult,
   getParquetFireDetections,
   getParquetSoilField,
   getParquetVegetation,
@@ -48,6 +49,19 @@ const evidence = {
 
 function published(day: string, rows: readonly Record<string, unknown>[], servedDay = day) {
   return { state: "published" as const, requestedDay: day, servedDay, rows, truncated: false };
+}
+
+/**
+ * The `ready` arm's payload, or a failed assertion naming the state that came instead.
+ *
+ * Narrowing by hand at each call site would be five lines of `if (result.state !== "ready")` per
+ * support assertion; this keeps the assertion about the support rather than about the union.
+ */
+function readyData<T>(result: ParquetReaderResult<T>): T {
+  if (result.state !== "ready") {
+    throw new Error(`expected a ready result, got ${result.state}`);
+  }
+  return result.data;
 }
 
 function waterRow() {
@@ -275,6 +289,64 @@ describe("Parquet tRPC state adapter", () => {
       state: "ready",
       data: [{ cellId: "nasa-power-001", value: 2.5, observationCount: 2 }],
     });
+    // The envelope, not the nullability of `cellId`: the client is told the rung, the form, the
+    // pitch and the phase outright, so it never re-derives a cell width from a private table.
+    expect(readyData(result)[0].support).toEqual({
+      zoomTier: 13,
+      supportKind: "tessellated_cell",
+      supportId: "nasa-power-001",
+      origin: "cell_center",
+      cellWidthDegrees: 1,
+      cellHeightDegrees: 1,
+      // The corner the serving lattice snapped this centre to. A one-degree lattice of CENTRES
+      // has its edges on the half degrees, so the centre -114.25/43.5 sits in the cell whose
+      // south-west corner is -114.5/43.5 -- and the client draws that square rather than
+      // re-deriving one from a phase it cannot see.
+      cellOriginDegrees: [-114.5, 43.5],
+      aggregationMethod: "mean",
+      contributorCount: 2,
+      provenance: {
+        sourceLayer: "climate-field-precipitation",
+        observedDay: "2026-08-06",
+        newestObservedAt: "2026-08-06T00:00:00Z",
+        attribution: "NASA POWER (NASA LaRC)",
+      },
+    });
+  });
+
+  /**
+   * A coarse climate rung declares the SAME cell size as the detail rung, and that is correct
+   * rather than a bug: 0.01 at z9 and 0.2 at z5 are both finer than this lane's one-degree
+   * sampling lattice, so those rungs re-floor the same measurement instead of merging several.
+   * Only z0's five degrees is a real coarsening.
+   */
+  it.each([
+    [11.4, 9, 1],
+    [7, 5, 1],
+    [3, 0, 5],
+  ])("resolves map zoom %s to a z%s climate cell of %s degrees", async (mapZoom, zoomTier, cellDegrees) => {
+    mockedDay.mockResolvedValue(
+      published("2026-08-06", [{ ...climateLineageRow(), cell_id: null }])
+    );
+
+    const { result } = await getParquetClimateField({
+      bbox: "-125,42,-111,49",
+      date: "2026-08-06",
+      mapZoom,
+      signal: "precipitation",
+      variant: "mean",
+    });
+
+    expect(readyData(result)[0].support).toMatchObject({
+      zoomTier,
+      supportKind: "tessellated_cell",
+      // Minted from the rung and the position, never left null -- a client that had to read
+      // "aggregate" off a missing id could not tell this rung from raw observations.
+      supportId: `${zoomTier}:-114.25:43.5`,
+      origin: "cell_origin",
+      cellWidthDegrees: cellDegrees,
+      cellHeightDegrees: cellDegrees,
+    });
   });
 
   /**
@@ -470,6 +542,47 @@ describe("Parquet tRPC state adapter", () => {
       servedDay: "2026-08-20",
       data: [{ siteNumber: "13042500", flowCfs: 122 }],
     });
+    // Above the base rung the derivation nulls `site_number` and `site_name`, so a row stands for
+    // a CELL of gauges rather than one gauge. `contributorCount` is the two fresh readings this
+    // envelope folded -- measured by the fold, not assumed, because the lane publishes no count.
+    expect(readyData(result)[0].support).toMatchObject({
+      zoomTier: 9,
+      supportKind: "aggregate_cell",
+      origin: "cell_origin",
+      cellWidthDegrees: 0.01,
+      // `mean`, not `count`: the number the row carries is `flowCfs`, the mean discharge over the
+      // gauges this cell folded. How many folded is `contributorCount` on the line below.
+      aggregationMethod: "mean",
+      contributorCount: 2,
+      provenance: { sourceLayer: "water-gauges", attribution: "U.S. Geological Survey NWIS" },
+    });
+  });
+
+  /**
+   * The one lane whose detail rung is genuinely a point. `LAYER_RENDER_CONTRACT` permits
+   * `raw_point` for water at the detail band and nothing else, and a station has no footprint --
+   * publishing a cell size for one would license a renderer to draw a square around a gauge.
+   */
+  it("serves a real gauge as a raw point with no cell size at the detail rung", async () => {
+    mockedDay.mockResolvedValue(published("2026-08-19", [waterRow()]));
+
+    const result = await getParquetWaterGauges({
+      bbox: "-125,42,-111,49",
+      date: "2026-08-19",
+      mapZoom: 13,
+    });
+
+    const support = readyData(result)[0].support;
+    expect(support).toMatchObject({
+      zoomTier: 13,
+      supportKind: "raw_point",
+      supportId: "13042500",
+      origin: "cell_center",
+      aggregationMethod: "none",
+      contributorCount: 1,
+    });
+    expect(support.cellWidthDegrees).toBeUndefined();
+    expect(support.cellHeightDegrees).toBeUndefined();
   });
 
   it("maps governed absence with all of its evidence", async () => {
@@ -817,6 +930,105 @@ describe("lane day and release semantics", () => {
     });
   });
 
+  /**
+   * The weather lane is shaped exactly like the streamflow one -- a sampled point at the base
+   * rung, a `GridAggregation` above it -- and until 2026-09-02 it was the one Parquet lane that
+   * declared no envelope at all. A row with no envelope cannot say whether the dot on the map is
+   * ONE observation or the mean of however many the derivation floored into a coarse cell, which
+   * is the same ambiguity the fire and gauge lanes carry an envelope to end.
+   */
+  it("declares a weather observation as a raw point with no footprint at the detail rung", async () => {
+    mockedWindow.mockResolvedValue([
+      published("2026-08-19", []),
+      published("2026-08-20", [
+        {
+          latitude: 43.5,
+          longitude: -114.25,
+          observed_at: "2026-08-20T18:30:00Z",
+          observed_day: "2026-08-20",
+          external_id: "station-7",
+          temperature_c: 24,
+          relative_humidity_pct: 35,
+          wind_speed_ms: 3,
+          wind_direction_deg: 190,
+          precipitation_mm: 0,
+          source: "open-meteo",
+          feature_id: "new",
+          ingested_at: "2026-08-20T18:35:00Z",
+        },
+      ]),
+    ]);
+
+    const result = await getParquetWeatherObservations({
+      bbox: "-125,42,-111,49",
+      mapZoom: 13,
+      nowMs: Date.parse("2026-08-20T20:00:00Z"),
+    });
+
+    const support = readyData(result)[0].support;
+    expect(support).toMatchObject({
+      zoomTier: 13,
+      supportKind: "raw_point",
+      // The lane's own station identity, not a minted one: `external_id` is what it publishes.
+      supportId: "station-7",
+      origin: "cell_center",
+      aggregationMethod: "none",
+      contributorCount: 1,
+      provenance: { sourceLayer: "weather-observations", attribution: "Open-Meteo" },
+    });
+    // A sampled observation has no footprint. Publishing one would license a renderer to draw a
+    // square around a reading nobody took over that square -- the same rule the gauge lane
+    // follows, and the reason `weather` is an `event_point` layer in LAYER_RENDER_CONTRACT.
+    expect(support.cellWidthDegrees).toBeUndefined();
+    expect(support.cellHeightDegrees).toBeUndefined();
+    expect(support.cellOriginDegrees).toBeUndefined();
+  });
+
+  it("declares a derived weather rung as an aggregate cell on the ladder's own grid", async () => {
+    mockedDay.mockResolvedValue(
+      published("2026-08-19", [
+        {
+          latitude: 43.5,
+          longitude: -114.25,
+          observed_at: "2026-08-19T18:30:00Z",
+          observed_day: "2026-08-19",
+          external_id: null,
+          temperature_c: 21,
+          relative_humidity_pct: 38,
+          wind_speed_ms: 2,
+          wind_direction_deg: 200,
+          precipitation_mm: 0,
+          source: "open-meteo",
+          feature_id: null,
+          ingested_at: "2026-08-19T18:35:00Z",
+        },
+      ])
+    );
+
+    const result = await getParquetWeatherObservations({
+      bbox: "-125,42,-111,49",
+      date: "2026-08-19",
+      mapZoom: 9,
+      nowMs: Date.parse("2026-08-20T20:00:00Z"),
+    });
+
+    expect(readyData(result)[0].support).toMatchObject({
+      zoomTier: 9,
+      supportKind: "aggregate_cell",
+      // Minted from the rung and the position, because a derived row carries neither station id
+      // nor feature id -- the derivation nulls both when it folds several samples into one cell.
+      supportId: "9:-114.25:43.5",
+      origin: "cell_origin",
+      cellWidthDegrees: 0.01,
+      cellHeightDegrees: 0.01,
+      // The corner the serving lattice snapped it to, so the client draws the server's square.
+      cellOriginDegrees: [-114.25, 43.5],
+      // `mean`, not `count`: a derived row carries averaged temperature, humidity and wind, not a
+      // tally of the samples behind them.
+      aggregationMethod: "mean",
+    });
+  });
+
   it("uses the release route and preserves drought's served release day", async () => {
     mockedRelease.mockResolvedValue(
       published(
@@ -966,6 +1178,26 @@ describe("lane day and release semantics", () => {
         days: [{ state: "ready" }, { state: "not_generated" }, { state: "ready" }],
       },
     });
+    // `tessellated_cell` at 0.25 degrees, never `raw_point`: the contract pins this lane's support
+    // at the ground it measured, and a centre dot for a quarter-degree cell is exactly the
+    // fictitious finer footprint `declaredSupportDegrees` exists to forbid. The z5 grid (0.2) is
+    // finer than that, so this rung keeps the base cell rather than shrinking it.
+    expect(readyData(result).observations[0].support).toMatchObject({
+      zoomTier: 5,
+      supportKind: "tessellated_cell",
+      origin: "cell_origin",
+      cellWidthDegrees: 0.25,
+      cellHeightDegrees: 0.25,
+      aggregationMethod: "mean",
+      contributorCount: 1,
+      provenance: {
+        sourceLayer: "vegetation",
+        observedDay: "2026-08-20",
+        // An AVAILABILITY instant is not an observation instant, so the envelope says null rather
+        // than passing off a publication time as a measurement time.
+        newestObservedAt: null,
+      },
+    });
   });
 
   it("fails the whole vegetation read closed when a row is not approved for client exposure", async () => {
@@ -1017,6 +1249,34 @@ describe("lane day and release semantics", () => {
       zoomTier: 0,
     });
     expect(result).toMatchObject({ state: "ready", data: { cells: [{ detectionCount: 4 }] } });
+    // `aggregate_cell` at EVERY rung, the detail one included: FIRMS publishes no raw rung, so
+    // even a z13 row is a 0.005-degree detection-density cell rather than one hotspot.
+    expect(readyData(result).cells[0].support).toEqual({
+      zoomTier: 0,
+      supportKind: "aggregate_cell",
+      supportId: "0:-114.2:43.5",
+      origin: "cell_origin",
+      cellWidthDegrees: 5,
+      cellHeightDegrees: 5,
+      // The corner `servedCellLattice` places this row on, stated by the reader rather than
+      // re-derived by the client -- which is the whole point of the field.
+      //
+      // The latitude is worth reading twice: this fixture's 43.5 is NOT a z0 served coordinate
+      // (the fire export floors onto the 5-degree grid and writes 40 or 45, never 43.5), and
+      // `latticeCellIndex` recovers the index of the cell a SERVED coordinate denotes by adding
+      // back half a grid step -- so it answers 45 here, the cell 43.5 would have been floored
+      // INTO had it been half a step lower. Both sides now agree on that answer, where before
+      // this the client drew [43.5, 48.5] and the server drew [45, 50] for the same row.
+      cellOriginDegrees: [-115, 45],
+      aggregationMethod: "count",
+      contributorCount: 4,
+      provenance: {
+        sourceLayer: "fire-detections",
+        observedDay: "2026-08-18",
+        newestObservedAt: "2026-08-18T22:15:00Z",
+        attribution: "NASA FIRMS (LANCE/ESDIS)",
+      },
+    });
   });
 
   it("serves the requested ERA5-Land moisture depth from its exact Parquet day", async () => {
@@ -1064,6 +1324,25 @@ describe("lane day and release semantics", () => {
         },
       ],
     });
+    // ONE envelope for the whole collection: every cell here shares the rung, the pitch, the
+    // origin semantics and the attribution, and the part that varies is already on each feature
+    // as `cellKey`. `supportId` names the LATTICE -- one lane, one day, one rung.
+    expect(result.support).toEqual({
+      zoomTier: 13,
+      supportKind: "tessellated_cell",
+      supportId: "soil-field-moisture-7-28cm:2026-08-02:z13",
+      origin: "cell_center",
+      cellWidthDegrees: 0.25,
+      cellHeightDegrees: 0.25,
+      aggregationMethod: "mean",
+      contributorCount: 2,
+      provenance: {
+        sourceLayer: "soil-field-moisture-7-28cm",
+        observedDay: "2026-08-02",
+        newestObservedAt: "2026-08-02T00:00:00Z",
+        attribution: "ERA5-Land (Copernicus/ECMWF) via Open-Meteo, CC-BY 4.0",
+      },
+    });
   });
 
   it("serves a VPD aggregate from its selected rung without a PostgreSQL fallback", async () => {
@@ -1086,7 +1365,11 @@ describe("lane day and release semantics", () => {
       measure: "vpd",
       depth: "surface",
       granularity: "coarse-average",
-      latticeDegrees: 0.2,
+      // 0.25, not the ladder's 0.2. The z5 grid is FINER than this lane's quarter-degree cell, so
+      // the rung merged nothing and drawing 0.2-degree cells from it would both shrink the
+      // measurement's footprint and leave one lattice column in five empty -- 0.2 does not divide
+      // 0.25, which is precisely how background showed through the ERA5 field.
+      latticeDegrees: 0.25,
       smoothingSigmaDegrees: null,
       features: [
         {
@@ -1094,17 +1377,24 @@ describe("lane day and release semantics", () => {
             type: "Polygon",
             coordinates: [
               [
-                [-115, 40],
-                [-114.8, 40],
-                [-114.8, 40.2],
-                [-115, 40.2],
-                [-115, 40],
+                [-115.125, 39.875],
+                [-114.875, 39.875],
+                [-114.875, 40.125],
+                [-115.125, 40.125],
+                [-115.125, 39.875],
               ],
             ],
           },
           properties: { value: 1.7, aggregated: true, cellKey: null },
         },
       ],
+    });
+    expect(result.support).toMatchObject({
+      zoomTier: 5,
+      supportKind: "tessellated_cell",
+      origin: "cell_origin",
+      cellWidthDegrees: 0.25,
+      cellHeightDegrees: 0.25,
     });
   });
 

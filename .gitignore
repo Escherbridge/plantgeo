@@ -105,3 +105,7 @@ production/
 playwright-report/
 test-results/
 docs/research/
+
+# Owner-supplied briefs and similar binary artifacts are not source.
+docs/*.pdf
+*.pdf

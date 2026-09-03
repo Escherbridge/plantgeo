@@ -21,12 +21,13 @@ against bytes that were written seconds earlier.
 
 ORDERING, AND WHY THE BASE MARKER MUST BE WRITTEN LAST
 ------------------------------------------------------
-Each tier is its own partition space with its own completion marker, but ONLY the base tier is
-censused: `build_gap_census` walks `GAP_FILL_ZOOM_TIER` and nothing else, so the base marker is the
-only signal that can bring a day back for another attempt. If the base marker were written before
-the coarse rungs, a run that died in between would leave a day that is base-complete -- therefore
-never revisited -- and permanently missing above z13. The map would be empty at every zoom under
-13 for that day, forever, on a green tick.
+Each tier is its own partition space with its own completion marker, and the BASE marker is what
+admits a day to the ladder census at all: `gap_fill` selects ladder repairs from days whose base rung
+holds parts AND asserts it finished. If the base marker were written before the coarse rungs, a run
+that died in between would leave a day that is base-complete and rung-empty -- which the ladder
+census does now catch, but only because it exists; for the year it did not, such a day was empty at
+every zoom under 13 forever, on a green tick. The ordering costs nothing and does not depend on a
+census being right, so it stays.
 
 So the caller must write the coarse rungs FIRST and mark the base LAST. `_finalize_written_day`
 does exactly that, and this module raises rather than half-succeeding so that ordering has
@@ -47,6 +48,7 @@ from typing import TYPE_CHECKING, Final
 import polars as pl
 
 from agri_data_service.foundation.parquet.completion import PartitionCompletion
+from agri_data_service.pipeline.parquet.objectstore import GovernedAbsenceConflictError
 from agri_data_service.warehouse.parquet.tiers import DERIVED_ZOOM_TIERS, derive_tier
 
 if TYPE_CHECKING:
@@ -86,12 +88,15 @@ class DerivationResult:
 
     tiers: tuple[DerivedTierReport, ...]
     notes: tuple[str, ...]
-    # Rungs that derived to NO ROWS, so they were retracted and carry no completion marker.
+    # Rungs that derived to NO ROWS: their parts were retracted and a DERIVED-EMPTY completion marker
+    # was written in their place.
     #
     # NAMED PER RUNG BECAUSE A DAY IS NOT THE UNIT. A day whose z9 holds rows and whose z0 empties
     # wrote parts, so a driver measuring emptiness by the day's total part count sees `written` and
-    # moves on -- while every future ladder census re-selects that day forever, because one rung of
-    # it will never be marked. `pipeline/parquet/drain.py` reports it from here instead.
+    # moves on. It is no longer a day the ladder census re-selects forever -- the zero-part marker
+    # closes the rung -- but it is still the one rung a reader will find honestly empty, and
+    # `pipeline/parquet/drain.py` reports it from here so that emptiness is stated rather than
+    # inferred from a silence.
     emptied: tuple[ZoomTier, ...] = ()
 
     @property
@@ -185,20 +190,53 @@ def derive_and_write_day_tiers(  # noqa: PLR0913 - one coordinate of the day bei
             notes.append(
                 f"{layer} z{tier} {day.isoformat()}: every base row was dropped at this rung, so it holds no parts"
             )
-            _retract_tier(store, layer=layer, kind=kind, tier=tier, day=day)
+            _retract_tier(store, layer=layer, kind=kind, tier=tier, day=day, run_id=run_id, now=now)
             emptied.append(tier)
             continue
         reports.append(_write_tier(store, derived, layer=layer, kind=kind, tier=tier, day=day, run_id=run_id, now=now))
     return DerivationResult(tiers=tuple(reports), notes=tuple(notes), emptied=tuple(emptied))
 
 
-def _retract_tier(store: ObjectStore, *, layer: str, kind: PartitionKind, tier: ZoomTier, day: date) -> None:
-    """Empty one rung: clear its completion claim FIRST, then delete every part it held.
+def _retract_tier(  # noqa: PLR0913 - one coordinate of the rung being emptied per arg
+    store: ObjectStore,
+    *,
+    layer: str,
+    kind: PartitionKind,
+    tier: ZoomTier,
+    day: date,
+    run_id: str,
+    now: Callable[[], datetime],
+) -> None:
+    """Empty one rung: clear its old claim, delete every part it held, then declare it EMPTY.
 
     `retract_partition_tier` rather than `prune_surplus_parts(written_part_count=0)`: that prune
     REFUSES zero on purpose, because a prune may only ever trail a completed write. Emptying a rung
     is a different intent and has its own named operation.
+
+    THE RUNG IS MARKED, NOT LEFT SILENT, and that final write is the whole reason this function is
+    not three lines. Deleting the parts and stopping left the rung with no parts and no marker --
+    indistinguishable, through a listing, from a rung nobody ever derived. The day is base-complete,
+    so no census brought it back; it could never present the exact required-rungs ladder
+    `availability_index` demands; and it was counted `ladder_incomplete` forever on a green tick. A
+    `derived_empty` receipt says the rung finished holding nothing, which is exactly what happened.
+
+    THE MARKER IS WRITTEN LAST, after the prune has provably succeeded, for the same reason
+    `_write_tier` prunes before it marks: a receipt asserting emptiness beside surviving parts would
+    disagree with the bucket at the moment it was written. A failed prune raises and leaves the rung
+    unmarked, so the ladder census selects the day again and the next attempt redoes it.
+
+    A RUNG STILL CLAIMING A GOVERNED ABSENCE IS REFUSED rather than overwritten. The base day
+    demonstrably holds rows, so an absence claim above it is the stranded-ladder state
+    `_finalize_written_day` already knows how to retract -- and it can only do that if this raises
+    the error it watches for. Writing an empty-completion marker beside the absence marker would
+    instead leave two markers making different claims about one rung, which is the conflict the whole
+    contract exists to prevent.
     """
+    if store.absence_exists(layer, kind, tier, day):
+        raise GovernedAbsenceConflictError(
+            f"{layer!r} {kind} z{tier} {day} carries a governed-absence marker while its base rung holds rows; "
+            "this rung's emptiness cannot be declared over a claim only an admin or the base writer may retract"
+        )
     pruned = store.retract_partition_tier(layer, kind, tier, day)
     if pruned.failures:
         raise TierWriteError(
@@ -206,6 +244,13 @@ def _retract_tier(store: ObjectStore, *, layer: str, kind: PartitionKind, tier: 
             f"left there could not be removed, so readers at this zoom would keep being served rows the base day no "
             f"longer holds: {'; '.join(pruned.failures)}"
         )
+    store.write_completion_marker(
+        PartitionCompletion(part_count=0, row_count=0, completed_at=now(), run_id=run_id, derived_empty=True),
+        layer=layer,
+        kind=kind,
+        zoom=tier,
+        day=day,
+    )
 
 
 def _write_tier(  # noqa: PLR0913 - one coordinate of the rung being written per arg

@@ -47,6 +47,11 @@ from agri_data_service.pipeline.direct.climate.products import (
     CLIMATE_FIELD_PRODUCTS,
     CLIMATE_SHORTWAVE_RADIATION_PUBLICATION_LAG_DAYS,
 )
+from agri_data_service.pipeline.direct.soil.products import (
+    ERA5_LAND_ARCHIVE_PUBLICATION_LAG_DAYS,
+    SOIL_DEFAULT_TIME_BUDGET_SECONDS,
+    SOIL_FIELD_PRODUCTS,
+)
 from agri_data_service.pipeline.lanes.fire_detections import FIRE_DETECTIONS_DIRECT_WRITER_START_DAY
 from agri_data_service.pipeline.lanes.water_gauges import WATER_GAUGES_DIRECT_WRITER_START_DAY
 from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRATIONS, LANE_REGISTRY
@@ -314,16 +319,31 @@ def _postgres_spec(  # noqa: PLR0913 - cadence metadata stays beside each source
     )
 
 
-#: The registered streams `plantgeo-ingest-cron` never produced a single day of; see
-#: `execution/AGENTS.md`, "climate-nasa-power-direct-forward", for why it is not their legacy owner.
-_SOURCE_DIRECT_SLUGS: Final[frozenset[str]] = frozenset(product.stream for product in CLIMATE_FIELD_PRODUCTS)
-
-#: The direct climate writer and the eight generic `parquet-climate-field-*` specs are two owners of
-#: one calendar, so `parse_activation` refuses the pairing from either side.
+#: The direct climate writer and its generic `parquet-*` specs are two owners of one calendar, so
+#: `parse_activation` refuses the pairing from either side. Eleven streams, not eight: the three
+#: soil-wetness depths ride the same POWER point request.
 CLIMATE_DIRECT_LANE_ID: Final = "climate-nasa-power-direct-forward"
 CLIMATE_GENERIC_LANE_IDS: Final[tuple[str, ...]] = tuple(
     f"parquet-{product.stream}" for product in CLIMATE_FIELD_PRODUCTS
 )
+
+#: The same pairing for the ERA5-Land writer and its eight generic specs.
+SOIL_DIRECT_LANE_ID: Final = "soil-era5-land-direct-forward"
+SOIL_GENERIC_LANE_IDS: Final[tuple[str, ...]] = tuple(f"parquet-{product.stream}" for product in SOIL_FIELD_PRODUCTS)
+
+#: Which direct writer owns each source-direct stream. A MAPPING rather than a flag, because there
+#: are two writers and a generic spec must conflict with the one that would really contend for its
+#: lane-day lock; declaring the wrong one would let two owners of one calendar activate together.
+_DIRECT_WRITER_BY_SLUG: Final[Mapping[str, str]] = MappingProxyType(
+    {
+        **{product.stream: CLIMATE_DIRECT_LANE_ID for product in CLIMATE_FIELD_PRODUCTS},
+        **{product.stream: SOIL_DIRECT_LANE_ID for product in SOIL_FIELD_PRODUCTS},
+    }
+)
+
+#: The registered streams `plantgeo-ingest-cron` never produced a single day of; see
+#: `execution/AGENTS.md`, "climate-nasa-power-direct-forward", for why it is not their legacy owner.
+_SOURCE_DIRECT_SLUGS: Final[frozenset[str]] = frozenset(_DIRECT_WRITER_BY_SLUG)
 
 
 def _parquet_spec(slug: str) -> LaneExecutionSpec:
@@ -331,7 +351,7 @@ def _parquet_spec(slug: str) -> LaneExecutionSpec:
     source_direct = slug in _SOURCE_DIRECT_SLUGS
     handoffs: tuple[str, ...] = () if source_direct else (_disabled(INGEST_CRON_OWNER),)
     legacy_owners: tuple[str, ...] = () if source_direct else (INGEST_CRON_OWNER,)
-    conflicts: tuple[str, ...] = (CLIMATE_DIRECT_LANE_ID,) if source_direct else ()
+    conflicts: tuple[str, ...] = (_DIRECT_WRITER_BY_SLUG[slug],) if source_direct else ()
     return _spec(
         f"parquet-{slug}",
         conflicts_with=conflicts,
@@ -569,10 +589,33 @@ _MIGRATION_INPUT_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
         selection_policy="newest settled unfilled day first, one product-day per lane-day lock",
         timeout_seconds=int(CLIMATE_DEFAULT_TIME_BUDGET_SECONDS) + COMMAND_CLEANUP_MARGIN_SECONDS,
         description=(
-            "Direct NASA POWER forward writer for the eight climate-field streams; shadow until the "
-            "snapshot readers can see forward days."
+            "Direct NASA POWER forward writer for the eight climate-field streams and the three "
+            "soil-wetness depths; shadow until the snapshot readers can see forward days."
         ),
         writer_floor=min(product.history_floor for product in CLIMATE_FIELD_PRODUCTS).isoformat(),
+    ),
+    _spec(
+        SOIL_DIRECT_LANE_ID,
+        command=("python", "-m", "agri_data_service.pipeline.direct.soil"),
+        # No legacy owner and one shared lag: unlike the climate writer's two publication clocks,
+        # all eight ERA5-Land streams come off one model on one release schedule. The phase offset is
+        # its own so the two direct writers never open their fan-outs in the same minute -- they
+        # share no lane, but they do share this container's CPU and egress.
+        legacy_owners=(),
+        conflicts_with=SOIL_GENERIC_LANE_IDS,
+        disposition="source-specific",
+        phase_offset_seconds=3000,
+        schedule="50 * * * *",
+        publication_lag_days=ERA5_LAND_ARCHIVE_PUBLICATION_LAG_DAYS,
+        publication_cadence_days=1,
+        publication_lag_source="pipeline/parquet/lane_registry.py soil-field-*/soil-temperature-* contracts",
+        selection_policy="newest settled unfilled day first, one product-day per lane-day lock",
+        timeout_seconds=int(SOIL_DEFAULT_TIME_BUDGET_SECONDS) + COMMAND_CLEANUP_MARGIN_SECONDS,
+        description=(
+            "Direct Open-Meteo ERA5-Land forward writer for the three moisture, four temperature and "
+            "one VPD streams; shadow until the snapshot readers can see forward days."
+        ),
+        writer_floor=min(product.history_floor for product in SOIL_FIELD_PRODUCTS).isoformat(),
     ),
     _spec(
         "soil-moisture-parquet-backfill",

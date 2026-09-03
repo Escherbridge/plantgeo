@@ -73,11 +73,31 @@ the ordinary object-store settings, `LOCAL_SOURCE_LOADER_DATABASE_URL` (or its e
 day count, record cap, retry series, and contention timeout. `--force-day YYYY-MM-DD` intentionally
 re-publishes one already-settled day inside that same bounded NRT window for a one-day operational proof.
 
-## NASA POWER climate fields
+## NASA POWER climate fields and soil wetness
 
-`climate/` publishes the eight `climate-field-*` streams the browser draws under six toggles: air
-temperature (three streams: mean, max, min), dew point, precipitation, relative humidity, shortwave
-radiation and wind speed. It exists because nothing produced a forward climate day. The only NASA
+`climate/` publishes ELEVEN streams the browser draws under seven toggles: the eight
+`climate-field-*` streams -- air temperature (three streams: mean, max, min), dew point,
+precipitation, relative humidity, shortwave radiation and wind speed -- and the three
+`soil-wetness-*` depths (surface, root zone, profile). It exists because nothing produced a forward
+POWER day.
+
+**Why soil wetness lives in the climate writer and not beside the ERA5-Land one.** Its name groups
+it with soil, its SOURCE does not: `GWETTOP`/`GWETROOT`/`GWETPROF` are NASA POWER parameters on the
+397-cell POWER lattice at the meteorology lag of 5, and one point request already returns every
+parameter the URL asked for. Publishing them from a second writer would mean a second 397-request
+fan-out over the same lattice on the same day for values the first fan-out could have carried for
+free. They report a DEGREE OF SATURATION, not a volumetric water content, and name their depth in
+the `signal_name` rather than in `support_key`
+(`execution/weather_observations/nasa_power.py` NASA_POWER_SIGNAL_SPECIFICATIONS) -- which is what
+keeps them distinct from the ERA5-Land `soil_water_content_layer_N` series below.
+
+**The eleven-parameter body has no real capture.** `.omc/research/nasa-power-point-response-2026-09-02.json`
+was taken with an eight-parameter request months before the three depths joined the table, and POWER
+returns only what the URL lists. The real capture is still parsed, against the eight parameters it
+was really asked for, and the eleven-parameter shape is covered by
+`tests/direct/climate/fixtures/nasa-power-point-response-soil-wetness-synthetic.json` -- the same
+body with three series added, carrying a `_fixture_provenance` block that says which values are
+invented. Take a live eleven-parameter capture and this fixture can be retired. The only NASA
 POWER ingestion in the tree is `execution/weather_observations/nasa_power.py`, a retired local
 backfill verb with no scheduler owner writing into PostgreSQL `agri.signal_observation`, and the
 Parquet days these streams hold were built ONCE from the immutable canonical snapshot by
@@ -107,7 +127,7 @@ streams and correct-but-not-yet-visible for six. Making the other six visible is
 the generic prefix for days after the product's own last snapshot day. Writing forward days into the
 snapshot root instead would break the manifest binding that makes the history trustworthy.
 
-### Two row shapes, and one of them has a lineage that does not apply
+### Three row shapes, and two of them have a lineage that does not apply
 
 Five streams (air temperature mean/max/min, dew point, wind speed) use the frozen twelve-column
 signal plane. Three (precipitation, relative humidity, shortwave radiation) use the thirty-three
@@ -115,6 +135,21 @@ column snapshot-breakdown contract, whose extra twenty-one columns describe how 
 PostgreSQL row was SELECTED out of a multi-release population. A direct fetch has no such
 population, and `TierDerivation.base_non_null_columns` forbids nulling sixteen of those columns at
 the base rung, so the row cannot simply omit them.
+
+The three soil-wetness depths use a THIRD contract, nineteen columns, frozen by
+`scripts/soil_wetness_snapshot_breakdown.py` LANE_SCHEMA and registered as
+`warehouse/parquet/snapshot_signal_product.py::register_soil_wetness_product`. It is not a subset of
+the thirty-three: it has no `source_snapshot_id` at all and names its selection
+`selected_observation_id` / `selected_canonical_row_sha256`. Three shapes is why `rows.py` dispatches
+through a table keyed on `row_shape` rather than through a ternary -- a fourth shape is one entry,
+and a wrong shape is a write that fails against the registered Arrow schema rather than a silent
+column drift.
+
+**On the nineteen-column shape the discriminator moves.** `source_snapshot_id` does not exist there,
+so the `direct:` token rides `selected_source_release_id` -- the only column in that shape a
+namespace can be read off -- and `selected_observation_id` is a RESPONSE ORDINAL, never an
+`agri.signal_observation.id`. A reader that checks only `source_snapshot_id` will read those rows as
+canonical selections; it must check the release id too.
 
 **Direct lineage namespace.** On a direct row `source_snapshot_id` is `direct:<sha256 over the
 day's responses>`, and THAT IS THE DISCRIMINATOR. Every lineage column on such a row is scoped to
@@ -282,7 +317,7 @@ sides, so the executor refuses to run two owners over one calendar. See `executi
 
 ### Entry point
 
-`python -m agri_data_service.pipeline.direct.climate`, with `--product` naming one of the six
+`python -m agri_data_service.pipeline.direct.climate`, with `--product` naming one of the seven
 browser toggles or `all`, `--max-days` (default 1, max 5) days per product per turn,
 `--time-budget-seconds`, `--run-id`, and the bounded retry and contention knobs. Days are taken
 newest-settled-first and one at a time under the lane-day lock; a day already complete at every rung
@@ -305,3 +340,132 @@ The executor lane is `climate-nasa-power-direct-forward`, hourly at :40 -- disti
 fire and water writers at :15 and the SoilGrids warmer at :25. IT SHIPS IN SHADOW: it is in no
 active lane list, and activation stays an explicit operator act through the executor's allow-list
 variable.
+
+## ERA5-Land soil fields
+
+`soil/` publishes the EIGHT streams the browser draws under three soil toggles: three moisture
+depths (`soil-field-moisture-0-7cm`, `-7-28cm`, `-28-100cm`), four temperature bands
+(`soil-temperature-0-to-7cm`, `-7-to-28cm`, `-28-to-100cm`, `-100-to-255cm`) and one VPD stream
+(`soil-field-vpd`). The production assessment of 2026-09-01 measured 31-day tails on all three
+toggles: every one of those streams stops at 2026-08-02 and nothing in the tree was going to move it.
+
+### The upstream is Open-Meteo, and why it is not the CDS
+
+The obvious writer to build was one over `execution/historical_era5.py`, the Copernicus CDS lane. It
+would have been wrong on all three products, and the evidence is in the artifacts that wrote the
+history:
+
+- **Source identity.** Every historical row of all eight streams carries `data_source_key`
+  `open-meteo-era5-land-archive` and `support_key` `era5-land-0.1deg`
+  (`scripts/build_soil_moisture_from_canonical_snapshot.py` SOURCE_KEY/SUPPORT_KEY,
+  `scripts/soil_temperature_snapshot_breakdown.py` EXPECTED_SOURCE_KEY/EXPECTED_SUPPORT_KEY,
+  `scripts/vpd_snapshot_breakdown.py` ProductContract). The CDS lane never persisted a warehouse row
+  and `agri.data_source` has no `era5-land` key at all -- its own module docstring says so.
+- **Support.** The CDS plan requests a 1.0-degree OUTPUT grid (`ERA5_LAND_REQUESTED_GRID_DEGREES`);
+  the history sits on the 1,568-cell 0.25-degree `sentinel2-ndvi-0p25deg` analysis lattice sampled at
+  ERA5-Land's native 0.1 degrees. A day on the coarser grid is not comparable with the days it would
+  claim to extend.
+- **Coverage.** The CDS lane carries `volumetric_soil_water_layer_1` only -- one of the three moisture
+  depths -- and has no VPD variable at all. VPD is not derived here: Open-Meteo publishes
+  `vapour_pressure_deficit_max` as a daily variable of the same `era5_land` model, and that published
+  series IS the immutable history (kPa in, kPa out). A forward writer that recomputed VPD from
+  temperature and dew point would be a second, different estimator writing under the first one's
+  `signal_name`.
+- **Credentials.** `CDSAPI_*` lives only on the inert `plantgeo-ingest-cron` service, so a CDS writer
+  could not run in production at all. The archive host is keyless; `OPEN_METEO_API_KEY` only lifts
+  the quota wall and is read from the environment at fetch time.
+
+`execution/AGENTS.md` section "Soil temperature is deliberately excluded" predates the reviewed
+soil-temperature plan and describes a decision that was reversed; the plans and the written rows are
+the newer evidence.
+
+### The lattice and the support are two facts
+
+`grid_name` is `sentinel2-ndvi-0p25deg` -- where the cells are -- and `support_key` is
+`era5-land-0.1deg` -- what resolution the source models at. Both are recorded, on every row, exactly
+as the history records them. The lattice is a COMPLETE box: 56 longitudes by 28 latitudes over
+(-125, 42) to (-111, 49), on centroids a half step off the integer degree (42.125, 42.375, ...), and
+all three reviewed plans carry exactly 1,568 cells. This is the opposite of the NASA POWER lattice,
+which is a 397-cell SUBSET of its own bounding box, so the guard here checks the half-step offset an
+integer-degree guard borrowed from the climate writer would reject outright.
+
+### One archive request per support chunk-day
+
+The archive endpoint is multi-location: one request carries fifty cells and every one of the eight
+variables for one day, so a settled day costs `ceil(1568 / 50) = 32` requests TOTAL -- shared by all
+eight products, because the cache is keyed `(chunk_key, day)` and not by product. Fifty is the
+`chunk_cell_count` of all three reviewed plans; the endpoint's own ceiling is 200
+(`ingest/open_meteo.py` MAX_ARCHIVE_LOCATIONS_PER_REQUEST). A larger chunk buys fewer round trips at
+NO quota saving -- Open-Meteo weights a request by locations x variables x timesteps, not by count --
+and costs a four-times larger body to lose on one transport error. One settled day is therefore
+1,568 x 8 x 1 = 12,544 weighted units and roughly one to two megabytes of response, once per turn,
+whatever `--product` selects.
+
+### What is reused, and the one thing that is not
+
+Everything under the historical plan is reused and is public: `archive_daily_request` (the
+credentialed URL), `archive_daily_url` (the keyless one that is RECORDED into every row's
+`selected_source_part_key`), `fetch_archive_daily` (byte and rate-limit bound), `fetch_lane_capture`
+(retry and 429 policy), `canonical_location_document`, `ordered_locations`, `validated_grid_point`,
+`max_grid_offset_degrees`, `nearest_native_grid_point`, `bounded_numeric_series`, and
+`OPEN_METEO_ARCHIVE_SIGNAL_SPECIFICATIONS` for units and acceptance ranges.
+
+What is NOT reused is `parse_open_meteo_archive_payload` itself, and the reason is structural: it is
+reachable only through a `HistoricalOpenMeteoArchivePlan`, whose window is a
+`HistoricalBackfillWindow`, which REFUSES any span that is not exactly four calendar years
+(`execution/backfill_types.py::require_exact_four_calendar_years`). A forward writer asks for one
+day. Re-declaring the window rule to get around it would be a second definition of the historical
+contract; the three checks that module keeps private -- its `daily` block, its named-day axis and its
+provider-unit assertion -- are restated in `source.py`, each beside a comment naming its sibling.
+
+The support's native-grid uniqueness check is likewise the plan validator's own
+(`require_governed_lattice`), restated in `support_chunks` because two cells rounding to one
+0.1-degree box would receive one another's value under `cell_selection=nearest`.
+
+### Null cells, absence and refusal
+
+98 of the 1,568 cells are ocean or out of domain, where ERA5-Land models nothing and the archive
+answers `null` rather than zero. Exactly 1,470 carry a value on every one of the 1,556 immutable
+days -- `scripts/vpd_snapshot_breakdown.py` and
+`scripts/build_soil_moisture_from_canonical_snapshot.py` both pin EXPECTED_CELLS_PER_DAY = 1,470 and
+both refuse a day holding any other number. So:
+
+- **Zero values** is a governed absence with the day's receipt. That is the honest state of a day the
+  archive has not mirrored yet, which is also why the lag is nine and not five.
+- **Exactly 1,470** publishes.
+- **Anything between** is REFUSED, not published thin. A different count is a different land-sea mask,
+  and a thin day would merge invisibly with 1,556 days that are not thin. The count is MEASURED for
+  moisture and VPD and INHERITED for temperature, which rides the same lattice and the same model but
+  was never counted independently -- so the first live temperature day proves or refutes the
+  inheritance loudly. A persistent refusal means the mask really changed: re-measure
+  `ERA5_LAND_VALUE_CELL_COUNT` and re-base the products, do not relax the check.
+- **A failed chunk** refuses the whole day. 31 of 32 chunks would publish a day silently missing fifty
+  cells.
+
+### The turn deadline bounds every wait
+
+`fetch_lane_capture` sleeps 70 s on a minutely quota refusal and 15/30/45 s on transport errors.
+Left to `asyncio.sleep` those waits are unbounded by the turn, so one walled chunk could hold the
+whole budget and the executor's SIGKILL would land on a writer holding a session lock.
+`deadline_bounded_sleep` is passed as its `sleep`, and a backoff that would outlast the turn raises
+`SoilTimeBudgetExhaustedError` -- deliberately NOT a `SoilSourceError`, so the driver reports
+`time_budget_exhausted` for the day instead of turning a clock into a source failure.
+
+### Entry point
+
+`python -m agri_data_service.pipeline.direct.soil`, with `--product` naming one of `moisture`,
+`temperature`, `vpd` or `all`, `--max-days` (default 1, max 5) days per product per turn,
+`--time-budget-seconds`, `--run-id`, and the bounded retry and contention knobs. Days are taken
+newest-settled-first and one at a time under the lane-day lock; a day already complete at every rung
+is an idempotent no-op. Required runtime variables are the ordinary object-store settings and
+`LOCAL_SOURCE_LOADER_DATABASE_URL` (or its existing fallback). The archive needs no key.
+
+The lane extends the availability index the same way the climate writer does, and drains its own owed
+retry claims per product -- activating it deactivates the eight generic
+`parquet-soil-field-*`/`parquet-soil-temperature-*` lanes through `conflicts_with`, so nothing else
+would ever come back for a claim it leaves behind.
+
+The executor lane is `soil-era5-land-direct-forward`, hourly at :50 -- distinct from the climate
+writer at :40, the fire and water writers at :15 and the SoilGrids warmer at :25. IT SHIPS IN
+SHADOW: it is in no active lane list, and activation stays an explicit operator act through the
+executor's allow-list variable.

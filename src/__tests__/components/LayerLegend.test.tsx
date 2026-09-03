@@ -4,7 +4,13 @@ import { renderWithProviders } from "@/test/utils";
 
 import { LayerLegend } from "@/components/map/layer-panel/LayerLegend";
 import { DROUGHT_COLORS } from "@/components/map/layers/DroughtLayer";
-import { GAUGE_READING_COLORS } from "@/components/map/layers/WaterLayer";
+import {
+  GAUGE_READING_COLORS,
+  WATER_CELL_MEAN_FLOW_COLOR_STOPS,
+} from "@/components/map/layers/WaterLayer";
+import { FIRE_CELL_NOT_A_PERIMETER_NOTE } from "@/lib/map/fire-cell-caption";
+import { WATER_CELL_AGGREGATE_NOTE } from "@/lib/map/water-cell-caption";
+import { LAYER_RENDER_CONTRACT } from "@/lib/map/layer-render-contract";
 import {
   DEFAULT_SOIL_FIELD_DEPTHS,
   SOIL_FIELD_MEASURES,
@@ -185,6 +191,48 @@ describe("LayerLegend", () => {
     expect(screen.queryByTestId("legend-entry-drought")).toBeNull();
     expect(screen.getByTestId("legend-chip-water")).toBeTruthy();
     expect(screen.getByTestId("legend-entry-water")).toBeTruthy();
+  });
+
+  // The three sections the polygon rendering added. Each says in words what the shapes cannot:
+  // a filled square under `fire` or `water` is in the same visual language as `fire-perimeters`
+  // and `burn-severity`, and only the caption distinguishes an aggregate from a real extent.
+  it("tells the reader a fire cell is a density, not a perimeter", () => {
+    renderWithProviders(<LayerLegend />);
+    toggleLayerOn("fire");
+    fireEvent.click(chipRow());
+
+    const fire = screen.getByTestId("legend-entry-fire");
+    expect(fire.textContent).toContain(FIRE_CELL_NOT_A_PERIMETER_NOTE);
+    // Both encodings of the one cell are named by the shape each describes, because the legend
+    // has no camera to switch on.
+    expect(fire.textContent).toContain("Cell fill (zoomed out): detections in the cell");
+    expect(fire.textContent).toContain("Dot colour (zoomed in)");
+  });
+
+  it("legends the coarse water cell in its own colours and calls it a mean", () => {
+    renderWithProviders(<LayerLegend />);
+    toggleLayerOn("water");
+    fireEvent.click(chipRow());
+
+    const water = screen.getByTestId("legend-entry-water");
+    expect(water.textContent).toContain("Cell fill (zoomed out): mean discharge");
+    expect(water.textContent).toContain(WATER_CELL_AGGREGATE_NOTE);
+    // A ramp is a gradient bar with captioned ends, not swatches, so the axis is what proves the
+    // legend is reading the renderer's own stops rather than restating a scale.
+    const stops = WATER_CELL_MEAN_FLOW_COLOR_STOPS;
+    expect(water.textContent).toContain(stops[0].label);
+    expect(water.textContent).toContain(stops[stops.length - 1].label);
+  });
+
+  it("states vegetation's measured support from the contract rather than a written 0.25", () => {
+    renderWithProviders(<LayerLegend />);
+    toggleLayerOn("vegetation");
+    fireEvent.click(chipRow());
+
+    const declared = LAYER_RENDER_CONTRACT.vegetation.declaredSupportDegrees;
+    expect(screen.getByTestId("legend-entry-vegetation").textContent).toContain(
+      "Each cell is one measured " + declared + "° sample"
+    );
   });
 
   it("resolves a mode-dependent entry from the manager's selected depth", () => {

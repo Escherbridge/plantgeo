@@ -42,6 +42,13 @@ if TYPE_CHECKING:
 
 _DEFINITION_ID = uuid.UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
 _INGEST_OWNER = "plantgeo-ingest-cron"
+#: Twelve database-backed lanes, eleven source-direct NASA POWER streams, eight source-direct
+#: Open-Meteo ERA5-Land streams and `calendar`. Pinned so a lane added without its spec, or a spec
+#: added without its lane, fails here rather than in production's scheduler.
+_EXPECTED_REGISTRATION_COUNT = 32
+#: The 32 generic `parquet-*` specs plus the 27 non-parquet duties (PostgreSQL ingestion, jobs
+#: maintenance and the migration-input lanes, which now include two direct writers).
+_EXPECTED_SPEC_COUNT = 59
 _DIRECT_FIRE_OWNER = "plantgeo-fire-detections-forward"
 _DIRECT_WATER_OWNER = "plantgeo-water-gauges-forward"
 
@@ -352,8 +359,17 @@ def test_the_climate_forward_lane_is_owned_by_nobody_and_activates_alone() -> No
         if registration.slug.startswith("climate-field-")
     }
     assert len(climate_lanes) == 8
+    # The three soil-wetness depths are POWER lanes too -- same point request, same lattice, same
+    # lag -- so the direct writer owns eleven generic specs, not eight. Reading the count off the
+    # `climate-field-` prefix alone would leave three lanes silently outside the conflict set.
+    power_lanes = climate_lanes | {
+        "parquet-soil-wetness-surface",
+        "parquet-soil-wetness-root-zone",
+        "parquet-soil-wetness-profile",
+    }
+    assert set(spec.conflicts_with) == power_lanes
     ingest_owned = {candidate.lane_id for candidate in LANE_SPECS.values() if _INGEST_OWNER in candidate.legacy_owners}
-    assert not climate_lanes & ingest_owned
+    assert not power_lanes & ingest_owned
     assert lane_id not in ingest_owned
 
 
@@ -374,6 +390,48 @@ def test_the_direct_climate_writer_and_its_generic_specs_refuse_to_run_together(
     with pytest.raises(ExecutorConfigurationError, match="conflicts with active lane"):
         parse_activation({ACTIVE_LANES_VARIABLE: f"{generic},{direct}"})
     assert parse_activation({ACTIVE_LANES_VARIABLE: generic}).is_active(generic) is True
+
+
+def test_the_two_direct_writers_own_disjoint_lane_sets_and_may_run_together() -> None:
+    """Two shadow writers, two upstreams, no shared calendar: nothing may refuse the pairing.
+
+    They are separate lanes rather than one because they read different providers on different
+    release schedules -- POWER at a measured 5-day lag, the Open-Meteo ERA5-Land archive at a
+    measured 9 -- and one writer would have to hold to the slower of the two for every stream.
+    """
+    climate = LANE_SPECS["climate-nasa-power-direct-forward"]
+    soil = LANE_SPECS["soil-era5-land-direct-forward"]
+
+    assert set(climate.conflicts_with).isdisjoint(soil.conflicts_with)
+    assert climate.phase_offset_seconds != soil.phase_offset_seconds
+    assert climate.schedule != soil.schedule
+    assert parse_activation({ACTIVE_LANES_VARIABLE: f"{climate.lane_id},{soil.lane_id}"}).active_lanes == frozenset(
+        {climate.lane_id, soil.lane_id}
+    )
+
+
+def test_the_direct_soil_writer_and_its_generic_specs_refuse_to_run_together() -> None:
+    """Declared on BOTH sides, so `parse_activation` refuses whichever an operator names first."""
+    direct = "soil-era5-land-direct-forward"
+    generic = "parquet-soil-field-vpd"
+
+    assert generic in LANE_SPECS[direct].conflicts_with
+    assert LANE_SPECS[generic].conflicts_with == (direct,)
+    with pytest.raises(ExecutorConfigurationError, match="conflicts with active lane"):
+        parse_activation({ACTIVE_LANES_VARIABLE: f"{direct},{generic}"})
+    with pytest.raises(ExecutorConfigurationError, match="conflicts with active lane"):
+        parse_activation({ACTIVE_LANES_VARIABLE: f"{generic},{direct}"})
+    assert parse_activation({ACTIVE_LANES_VARIABLE: generic}).is_active(generic) is True
+
+
+def test_every_registered_lane_has_exactly_one_generic_parquet_spec() -> None:
+    """The registration table IS the parquet spec table; a drift between them is a lane nothing runs."""
+    expected = {f"parquet-{registration.slug}" for registration in LANE_REGISTRATIONS}
+    parquet_specs = {lane_id for lane_id in LANE_SPECS if lane_id.startswith("parquet-")}
+
+    assert parquet_specs == expected
+    assert len(LANE_REGISTRATIONS) == _EXPECTED_REGISTRATION_COUNT
+    assert len(LANE_SPECS) == _EXPECTED_SPEC_COUNT
 
 
 def test_complete_recurring_railway_responsibility_set_can_activate_together() -> None:

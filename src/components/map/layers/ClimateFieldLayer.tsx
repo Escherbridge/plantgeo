@@ -12,6 +12,7 @@ import {
 } from "@/lib/environmental/climate-field";
 import { useStyleReady } from "@/components/map/layers/use-style-ready";
 import { scaleOpacityValue } from "@/lib/map/layer-opacity";
+import { BASE_ZOOM_TIER, type ZoomTier } from "@/lib/map/zoom-tiers";
 import type { ExpressionSpecification } from "@/types/map";
 
 /**
@@ -25,14 +26,15 @@ import type { ExpressionSpecification } from "@/types/map";
  * Every id below is therefore derived from the signal rather than being a module constant.
  *
  * The instances stay composable because they do not all paint the same way. `renderForm`
- * decides the geometry the server sent and the layers drawn from it -- a filled wash, contours
- * across it, or points above both. Nine fills would be one visible field and eight buried
- * under it; see `ClimateRenderForm` in lib/environmental/climate-field.ts.
+ * decides the geometry the server sent and the layers drawn from it -- a tessellated wash,
+ * dissolved filled bands over it, or points above both. Nine identical washes would be one
+ * visible field and eight buried under it; see `ClimateRenderForm` in
+ * lib/environmental/climate-field.ts.
  *
  * Plain MapLibre `fill`/`line`/`circle`, not deck.gl, for the same reason `SoilFieldLayer` is:
  * what reaches the browser is at most 512 features the server already resolved, and the
- * aggregation layers a `ContourLayer` would need are not a dependency -- the contouring already
- * happened server-side, in `climateFieldIsolineFeatures`.
+ * aggregation layers a `ContourLayer` would need are not a dependency -- both the tessellation
+ * and the dissolve already happened server-side, in `parquet-climate-field.ts`.
  */
 const EMPTY_COLLECTION: GeoJSON.FeatureCollection = {
   type: "FeatureCollection",
@@ -46,6 +48,7 @@ function layerIdsFor(signal: ClimateFieldSignalId) {
     sourceId,
     fillId: `${sourceId}-fill`,
     outlineId: `${sourceId}-outline`,
+    isobandFillId: `${sourceId}-isoband-fill`,
     isolineId: `${sourceId}-isoline`,
     pointId: `${sourceId}-point`,
   };
@@ -89,16 +92,19 @@ function pointRadiusFor(signal: ClimateFieldSignalId): ExpressionSpecification {
 }
 
 /**
- * A scalar, where `SoilFieldLayer`'s is a `case` expression: every feature the FIELD form
- * serves is an unaggregated 0.5-degree cell, so the outline always says something true and
- * there is no isoband contour to suppress. Low, because a lattice outlined at full strength
- * reads as a grid rather than as a field.
+ * The hairline around a filled cell, and DETAIL-RUNG ONLY -- see `zoomTier` below.
+ *
+ * Low even there, because a lattice outlined at full strength reads as a grid rather than as a
+ * field. At a coarse rung it is not drawn at all: a stroke on every cell of a five-degree
+ * tessellation is a mesh of block seams over the whole viewport, which is the second half of the
+ * "nested blocks with visible seams" the 2026-09-01 assessment recorded.
  */
 const OUTLINE_OPACITY = 0.2;
 
 /**
- * Contours are drawn at full weight, unlike the field form's hairline outline: they are the
- * whole of what that form draws, and they have to stay legible over another signal's wash.
+ * Band boundaries are drawn at full weight, unlike the field form's hairline: they separate two
+ * different values rather than two samples of one, and they have to stay legible over the fill
+ * beneath them and over another signal's wash.
  */
 const ISOLINE_WIDTH_PX = 1.6;
 
@@ -123,9 +129,16 @@ interface ClimateFieldLayerProps {
   /**
    * How it is painted. A change tears the layers down and rebuilds them, because the three
    * forms are different MapLibre layer types over different geometry -- the server sends
-   * squares, contours or points depending on this, so a repaint in place is not possible.
+   * squares, dissolved bands or points depending on this, so a repaint in place is not possible.
    */
   renderForm: ClimateRenderForm;
+  /**
+   * The rung the served collection came from. Two things depend on it and neither can be read off
+   * the geometry: the per-cell outline is drawn ONLY at the detail rung, where a stroke separates
+   * two adjacent measurements rather than tiling the viewport with block seams; and a rung change
+   * tears the layers down, so the map can never hold one rung's cells under another's.
+   */
+  zoomTier: ZoomTier;
   /**
    * The served collection. Empty -- never null -- when the layer is switched off or the
    * viewport holds none, so `setData` has something to clear with.
@@ -142,6 +155,7 @@ export function ClimateFieldLayer({
   map,
   signal,
   renderForm,
+  zoomTier,
   geojson = null,
   opacity = 0.7,
   opacityScale = 1,
@@ -169,6 +183,7 @@ export function ClimateFieldLayer({
     outlineOpacity,
     markOpacity,
     renderForm,
+    zoomTier,
     ids,
   });
   propsRef.current = {
@@ -179,6 +194,7 @@ export function ClimateFieldLayer({
     outlineOpacity,
     markOpacity,
     renderForm,
+    zoomTier,
     ids,
   };
   const styleReady = useStyleReady(map);
@@ -192,6 +208,7 @@ export function ClimateFieldLayer({
       outlineOpacity: currentOutlineOpacity,
       markOpacity: currentMarkOpacity,
       renderForm: currentRenderForm,
+      zoomTier: currentZoomTier,
       ids: currentIds,
     } = propsRef.current;
     const beforeId = getFirstSymbolLayer(mapInstance);
@@ -216,7 +233,13 @@ export function ClimateFieldLayer({
           beforeId
         );
       }
-      if (!mapInstance.getLayer(currentIds.outlineId)) {
+      // DETAIL RUNG ONLY. At a coarse rung the tessellation covers the whole viewport, and a
+      // stroke on every cell draws the grid instead of the field -- the block seams this track
+      // exists to remove. The cells still abut exactly; nothing is left showing between them.
+      if (
+        currentZoomTier === BASE_ZOOM_TIER &&
+        !mapInstance.getLayer(currentIds.outlineId)
+      ) {
         mapInstance.addLayer(
           {
             id: currentIds.outlineId,
@@ -235,10 +258,23 @@ export function ClimateFieldLayer({
     }
 
     if (currentRenderForm === "isoline") {
-      // A `line` over POLYGON features, and no `fill` beside it. The server sends dissolved
-      // isobands; stroking their boundaries and filling nothing is what makes this form a
-      // contour map rather than a second wash, and it is the whole reason a contoured signal
-      // composes over a filled one.
+      // A `fill` UNDER the boundary line, where wave 1 stroked the boundaries and filled nothing.
+      // The server sends dissolved isoBANDs -- closed areas, one per value class -- and the
+      // track's acceptance gate is that a continuous field fills polygons rather than drawing
+      // contour strokes only. The fill carries the band's own colour at the same strength the
+      // `field` form uses, so a contoured signal still composes over a filled one at the reader's
+      // opacity rather than at full weight.
+      if (!mapInstance.getLayer(currentIds.isobandFillId)) {
+        mapInstance.addLayer(
+          {
+            id: currentIds.isobandFillId,
+            type: "fill",
+            source: currentIds.sourceId,
+            paint: { "fill-color": currentPaintColor, "fill-opacity": currentFillOpacity },
+          },
+          beforeId
+        );
+      }
       if (!mapInstance.getLayer(currentIds.isolineId)) {
         mapInstance.addLayer(
           {
@@ -285,7 +321,13 @@ export function ClimateFieldLayer({
     // would leave the old wash on the map under the new contours.
     safeRemoveLayerAndSource(
       mapInstance,
-      [currentIds.outlineId, currentIds.fillId, currentIds.isolineId, currentIds.pointId],
+      [
+        currentIds.outlineId,
+        currentIds.fillId,
+        currentIds.isolineId,
+        currentIds.isobandFillId,
+        currentIds.pointId,
+      ],
       currentIds.sourceId
     );
   }, []);
@@ -310,7 +352,10 @@ export function ClimateFieldLayer({
       map.off("style.load", onStyleLoad);
       removeLayers(map);
     };
-  }, [map, visible, renderForm, ids, addLayers, removeLayers]);
+    // `zoomTier` is a dependency for the same reason `renderForm` is: a rung change swaps the
+    // cell size under every feature and whether the outline exists at all, and leaving the old
+    // rung's layers up would draw two rungs of one field at once.
+  }, [map, visible, renderForm, zoomTier, ids, addLayers, removeLayers]);
 
   // The mount-time race the persistent listener above cannot catch: if the current style had
   // already finished loading when this component mounted, no further `style.load` arrives and
@@ -346,6 +391,10 @@ export function ClimateFieldLayer({
     }
     if (map.getLayer(ids.outlineId)) {
       map.setPaintProperty(ids.outlineId, "line-opacity", outlineOpacity);
+    }
+    if (map.getLayer(ids.isobandFillId)) {
+      map.setPaintProperty(ids.isobandFillId, "fill-color", paintColor);
+      map.setPaintProperty(ids.isobandFillId, "fill-opacity", fillOpacity);
     }
     if (map.getLayer(ids.isolineId)) {
       map.setPaintProperty(ids.isolineId, "line-color", paintColor);

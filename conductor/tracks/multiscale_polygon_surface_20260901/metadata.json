@@ -23,7 +23,7 @@
   "note": "Replace coarse raw dots and disconnected blocks with semantically honest support geometry: continuous tessellations/isobands, event aggregate cells or heatmaps, and topology-preserving native polygons.",
   "partitions": {
     "computed_at": "2026-09-02T00:00:00-06:00",
-    "computed_at_commit": "cb12d94e77104a53c76e441f4de7d38d60fa7ae1",
+    "computed_at_commit": "9052998a618a8a8c391958fb4db11024b348dfef",
     "confidence": "verified",
     "shared_writes": [
       "The reader track freezes supportKind, zoomTier and cell extent/resolution before m1 edits shared response types.",
@@ -154,6 +154,69 @@
           "src/lib/map/layer-render-contract.ts",
           "src/lib/map/AGENTS.md",
           "src/__tests__/lib/map/layer-render-contract.test.ts"
+        ]
+      }
+    },
+    "orchestration_wave2_20260902": {
+      "computed_at": "2026-09-02T12:00:00-06:00",
+      "computed_at_commit": "9052998a618a8a8c391958fb4db11024b348dfef",
+      "wave": "wave2-20260902",
+      "rule": "shared tree, disjoint write sets, no tooling inside slices, one sweep at the join; wave 3 (conformity c1/c3) runs solo afterwards",
+      "pre_declared_seams": [
+        "support: AggregateEnvelopeSupport added to every aggregate cell type in parquet-trpc-readers.ts by W2-B, consumed by W2-C",
+        "cellSizeDegreesForTier(tier) added to src/lib/map/zoom-tiers.ts by W2-B, imported by W2-C",
+        "fill_one_lane_day signature frozen for W2-F; W2-E may add optional kwargs only"
+      ],
+      "write_sets": {
+        "W2-B (m1+m2)": [
+          "src/lib/server/services/parquet-trpc-readers.ts",
+          "src/lib/server/services/parquet-climate-field.ts",
+          "src/lib/server/trpc/routers/environmental.ts",
+          "src/lib/geo/isobands.ts",
+          "src/lib/map/zoom-tiers.ts",
+          "src/components/map/layers/ClimateFieldLayer.tsx",
+          "src/components/map/layers/ClimateFieldLayers.tsx",
+          "src/components/map/layers/SoilFieldLayer.tsx",
+          "src/components/panels/ClimateDetails.tsx",
+          "src/components/panels/SoilDetails.tsx",
+          "src/lib/environmental/climate-field.ts",
+          "src/__tests__/services/parquet-trpc-readers.test.ts",
+          "src/__tests__/services/parquet-climate-field.test.ts",
+          "src/__tests__/services/environmental-metric-dispatch.test.ts",
+          "src/__tests__/components/ClimateFieldLayers.test.tsx",
+          "src/__tests__/components/SoilDetails.test.tsx",
+          "src/__tests__/lib/geo/isobands.test.ts",
+          "src/__tests__/lib/map/zoom-tiers.test.ts",
+          "src/lib/server/services/AGENTS.md",
+          "src/lib/environmental/AGENTS.md"
+        ],
+        "W2-C (m3)": [
+          "src/components/map/layers/FireLayer.tsx",
+          "src/components/map/layers/WaterLayer.tsx",
+          "src/components/map/layers/VegetationLayer.tsx",
+          "src/components/map/LayerManager.tsx",
+          "src/lib/environmental/parquet-fire-presentation.ts",
+          "src/lib/environmental/parquet-presentation.ts",
+          "src/lib/map/fire-cell-caption.ts",
+          "src/lib/map/hover-fields.ts",
+          "src/lib/map/layer-legends.ts",
+          "src/lib/map/layer-render-contract.ts",
+          "src/lib/map/AGENTS.md",
+          "src/components/map/AGENTS.md",
+          "src/hooks/useParquetFireDetections.ts (conditional)",
+          "src/__tests__/components/event-aggregation-rendering.test.tsx",
+          "src/__tests__/lib/environmental/parquet-fire-presentation.test.ts",
+          "src/__tests__/lib/environmental/parquet-presentation.test.ts",
+          "src/__tests__/lib/map/hover-fields.test.ts",
+          "src/__tests__/lib/map/layer-render-contract.test.ts",
+          "src/__tests__/components/LayerManager.test.tsx",
+          "src/__tests__/components/dark-mode-layer-visibility.test.tsx",
+          "src/__tests__/components/LayerLegend.test.tsx",
+          "src/__tests__/components/viewport-proxied-query-sharing.test.tsx"
+        ],
+        "W2-D (m4)": [
+          "src/__tests__/components/native-polygon-regression.test.tsx",
+          "conductor/tracks/multiscale_polygon_surface_20260901/evidence/native-polygon-baseline.md"
         ]
       }
     }

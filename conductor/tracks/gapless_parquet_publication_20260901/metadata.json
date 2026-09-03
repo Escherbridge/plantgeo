@@ -21,7 +21,7 @@
   "production_authorization": "Owner directive 2026-09-02 authorizes an executor-only repository release and eventual controlled removal of the six inventoried Railway writer objects. Feature-branch activation/removal remains forbidden. After merge, the exact main executor deployment must reach SUCCESS and the orchestration task must explicitly resume the production handoff before any fencing, activation, or service deletion.",
   "partitions": {
     "computed_at": "2026-09-02T00:00:00-06:00",
-    "computed_at_commit": "cb12d94e77104a53c76e441f4de7d38d60fa7ae1",
+    "computed_at_commit": "9052998a618a8a8c391958fb4db11024b348dfef",
     "confidence": "verified",
     "shared_writes": [
       "pipeline/direct/ and pipeline/parquet/lane_registry.py are serialized registries with one owner at a time; p0a is the sole interface/cli/data.py owner for the availability bootstrap, and p5 depends transitively on p0a without editing that file.",
@@ -304,6 +304,53 @@
           "services/agri-data-service/tests/test_ingest_wfigs.py",
           "services/agri-data-service/tests/test_ingest_arcgis.py",
           "conductor/tracks/gapless_parquet_publication_20260901/evidence/p3-runtime-blockers-repair.md"
+        ]
+      }
+    },
+    "orchestration_wave2_20260902": {
+      "computed_at": "2026-09-02T12:00:00-06:00",
+      "computed_at_commit": "9052998a618a8a8c391958fb4db11024b348dfef",
+      "wave": "wave2-20260902",
+      "rule": "shared tree, disjoint write sets, no tooling inside slices, one sweep at the join; wave 3 (conformity c1/c3) runs solo afterwards",
+      "pre_declared_seams": [
+        "support: AggregateEnvelopeSupport added to every aggregate cell type in parquet-trpc-readers.ts by W2-B, consumed by W2-C",
+        "cellSizeDegreesForTier(tier) added to src/lib/map/zoom-tiers.ts by W2-B, imported by W2-C",
+        "fill_one_lane_day signature frozen for W2-F; W2-E may add optional kwargs only"
+      ],
+      "write_sets": {
+        "W2-E (p4)": [
+          "services/agri-data-service/src/agri_data_service/foundation/parquet/completion.py",
+          "foundation/parquet/AGENTS.md",
+          "pipeline/parquet/derivation.py",
+          "pipeline/parquet/availability_index.py",
+          "pipeline/parquet/availability_extension.py",
+          "pipeline/parquet/gap_fill.py",
+          "pipeline/parquet/objectstore.py",
+          "pipeline/parquet/drain.py",
+          "pipeline/parquet/AGENTS.md",
+          "parquet_ops/serving.py (conditional)",
+          "tests/foundation/",
+          "tests/parquet/{test_availability_index,test_availability_extension,test_availability_publication,test_tier_derivation,test_gap_fill,test_governed_absence,test_drain}.py"
+        ],
+        "W2-F (p2)": [
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/soil/",
+          "pipeline/direct/AGENTS.md",
+          "pipeline/parquet/lane_registry.py",
+          "execution/job_executor_service.py",
+          "execution/historical_era5.py (additive)",
+          "execution/AGENTS.md",
+          "parquet_ops/snapshot_products.py (forward_first_day for three soil products)",
+          "tests/direct/soil/",
+          "tests/parquet/test_lane_registry.py",
+          "tests/test_job_executor_service.py",
+          "tests/parquet_ops/test_snapshot_products.py (additive)",
+          "conductor/tracks/gapless_parquet_publication_20260901/evidence/p2-era5-writer.md"
+        ],
+        "W2-H (p0/p3 evidence)": [
+          "conductor/tracks/gapless_parquet_publication_20260901/evidence/product-ownership-census.md",
+          "docs/reports/data-lane-execution-ownership-2026-09-02.md",
+          "docs/reports/data-lane-execution-ownership-2026-08-28.md (pointer)",
+          "conductor/tracks/gapless_parquet_publication_20260901/plan.md (two ticks)"
         ]
       }
     }

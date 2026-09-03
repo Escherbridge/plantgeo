@@ -300,9 +300,10 @@ nicety, and be very careful about narrowing it.
 **There is no revision/etag short-circuit, because there is no revision signal to read.** One was
 half-built here and removed on 2026-08-16 after a check of every allowlisted procedure:
 `environmental-read-model.ts` emits neither `etag` nor `dataRevision`; `ProxiedFeatureCollection`
-carries a field named `revision` and every producer of it hardcodes `null`; the only real
-producer in the repo is `/api/fires`, a REST route, on HTTP headers, and it is not allowlisted.
-The comparison could therefore never fire, and a green test asserting a hand-built
+carries a field named `revision` and every producer of it hardcodes `null`. The one real producer
+the 2026-08-16 check found -- `/api/fires`, a REST route, on HTTP headers, and not allowlisted --
+was deleted on 2026-09-02, so as of that date **no revision producer exists anywhere in this
+repository**. The comparison could therefore never fire, and a green test asserting a hand-built
 `{ dataRevision: "rev-7" }` response made a mechanism that does nothing look load-bearing.
 
 Adding one is a SERVER change first: a procedure must actually emit a revision that moves when

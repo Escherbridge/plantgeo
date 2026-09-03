@@ -47,7 +47,7 @@ detail for each verdict lives in that track's own `metadata.json` under a
 | Track | Status | Type | Summary |
 |-------|--------|------|---------|
 | [agri_sdk_layering_20260805](retros/agri_sdk_layering_20260805/) | historical | refactor | Phases 0-3 shipped and remain load-bearing. Phases 4-8 were explicitly superseded by the 2026-08-22/23 package-boundary decisions; the track metadata is archived. Current thin-CLI, import-lattice and canonical-core follow-up is owned by `repository_conformity_hardening_20260901`, not by reviving this retrospective. |
-| [soil_survey_lane_shape_20260825](tracks/soil_survey_lane_shape_20260825/) | complete | design-decision | Resolved by `68da7af`: soil survey is a version-stamped static release with bounded streaming parts and z0/z5/z9/z13, and the 200,000-key cap was deleted. Production route/client/browser cutover remains in the pivot track, not this design track. |
+| [soil_survey_lane_shape_20260825](retros/soil_survey_lane_shape_20260825/) | complete | design-decision | Resolved by `68da7af`: soil survey is a version-stamped static release with bounded streaming parts and z0/z5/z9/z13, and the 200,000-key cap was deleted. Production route/client/browser cutover remains in the pivot track, not this design track. |
 | [01-core-map-engine](retros/01-core-map-engine/) | completed | feature | 01-core-map-engine |
 | [02-vector-tile-pipeline](retros/02-vector-tile-pipeline/) | completed | feature | 02-vector-tile-pipeline |
 | [03-deck-gl-visualization](retros/03-deck-gl-visualization/) | completed | feature | 03-deck-gl-visualization |

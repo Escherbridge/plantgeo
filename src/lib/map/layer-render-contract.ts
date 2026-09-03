@@ -14,7 +14,12 @@ import {
   type ClimateFieldToggleId,
 } from "@/lib/environmental/climate-field";
 import type { LayerToggleId } from "@/lib/map/layer-registry";
-import { resolveZoomTier, type ZoomTier } from "@/lib/map/zoom-tiers";
+import {
+  latticeCellSpan,
+  resolveZoomTier,
+  type ServedCellLattice,
+  type ZoomTier,
+} from "@/lib/map/zoom-tiers";
 
 /** The four product classes the spec's render table enumerates. */
 export const RENDER_CLASSES = [
@@ -165,11 +170,142 @@ export interface AggregateEnvelopeSupport {
   cellWidthDegrees?: number;
   /** Cell height in degrees; omitted only for native source geometry. */
   cellHeightDegrees?: number;
+  /**
+   * The cell's SNAPPED SOUTH-WEST CORNER, `[longitude, latitude]`, exactly as the serving side
+   * placed it on the lattice it read the row from.
+   *
+   * The one field that makes the client's square and the server's square the same square. The
+   * serving lattice has a PHASE as well as a pitch (`ServedCellLattice.originOffsetDegrees`:
+   * zero for the ladder's own grids, minus half a cell for the quarter-degree and one-degree
+   * base lattices), and until 2026-09-02 the phase was not on the wire at all -- so
+   * `supportCellPolygon` assumed a lattice anchored at whole multiples of the cell size and
+   * disagreed with `servedCellLattice` by up to half a cell wherever that assumption was wrong.
+   * Vegetation at z9 and z5 is exactly that case: a 0.25-degree base grain kept across the
+   * ladder's 0.01 and 0.2 grids, on a half-offset phase.
+   *
+   * Sent as the corner rather than as the whole footprint because the corner is all the far
+   * edge needs: it carries the phase (`corner - round(corner / size) * size`) and the index
+   * with it, so the client re-derives `latticeCellSpan`'s own `offset + (index + 1) * size` and
+   * lands on the SAME double as the neighbouring cell's west edge. Computing the far edge as
+   * `corner + size` instead disagrees with the neighbour in the last bit for about 30% of cells
+   * on the z13/z9/z5 grids -- measured, not feared -- which is precisely the hairline seam the
+   * spec's "neighboring cells share bit-identical boundaries" gate forbids.
+   *
+   * Absent on an envelope that describes no cell (`raw_point`, native geometry) and on the
+   * COLLECTION-level envelopes (`soilFieldSupport`, climate's `collectionSupport`), which
+   * describe a lane's whole lattice rather than one cell and whose features are already built
+   * server-side by `tessellatedCellPolygon`.
+   */
+  cellOriginDegrees?: readonly [number, number];
   /** How the contributors were combined. */
   aggregationMethod: AggregationMethod;
   /** How many source observations or features this envelope stands for. Never inferred. */
   contributorCount: number;
   provenance: SupportProvenance;
+}
+
+/**
+ * How far a declared corner may sit off the lattice its own cell size defines before the
+ * offset is taken as real rather than as floating-point noise. 1e-9 degrees is about a tenth
+ * of a millimetre on the ground: below it nothing but IEEE-754 rounding can be responsible.
+ */
+const LATTICE_SNAP_TOLERANCE_DEGREES = 1e-9;
+
+/**
+ * The footprint an envelope declares, as a closed GeoJSON ring, or null when it declares none.
+ *
+ * The client's ONE derivation of a cell's extent, and it derives it from the envelope's own
+ * numbers rather than from a private per-layer tier table -- the guess `AggregateEnvelopeSupport`
+ * exists to replace. An envelope carrying no `cellWidthDegrees`/`cellHeightDegrees` (native
+ * geometry, a raw point, or a reader that has not filled them in) yields null, and the caller
+ * draws its marker form rather than inventing a square.
+ *
+ * **Neighbouring cells share bit-identical edges.** Both edges of every cell are one
+ * `latticeCellSpan` call, so cell i's east edge and cell i+1's west edge are the SAME expression
+ * over the same operands and are equal to the bit. Computing east as `west + size` instead leaves
+ * sub-ULP disagreements between neighbours -- for about 30% of cells on the 0.005, 0.01 and 0.2
+ * grids, measured -- which is invisible on screen but is not what the spec's "neighboring cells
+ * share bit-identical boundaries" gate asks for.
+ *
+ * **ONE function computes cell edges, and it lives in `zoom-tiers.ts`.** Every edge below is a
+ * `latticeCellSpan` result -- the same expression the serving side's `tessellatedCellPolygon`
+ * evaluates -- so there is no second piece of arithmetic that can drift from it. What differs
+ * between the two callers is only where the lattice comes from: the serving side knows the LANE
+ * and reads it from `LANE_BASE_LATTICES`, while a renderer holds features rather than a lane id
+ * and reads it off the envelope. Re-deriving the footprint from a per-layer table on this side is
+ * precisely the inference `AggregateEnvelopeSupport` exists to end.
+ *
+ * `cellOriginDegrees` is what closes the gap between them: the serving side states the corner it
+ * actually snapped to, and this builder takes it verbatim. Where an envelope carries none -- a
+ * payload replayed from before 2026-09-02 -- the corner is derived from the anchor and the phase
+ * is read back out of the corner itself, which reproduces the serving lattice exactly for every
+ * grid this platform publishes and keeps a producer's deliberate off-lattice phase where it put it
+ * rather than snapping the cell half a width away.
+ */
+export function supportCellPolygon(
+  anchorLongitude: number,
+  anchorLatitude: number,
+  support: AggregateEnvelopeSupport
+): GeoJSON.Polygon | null {
+  const cellWidth = support.cellWidthDegrees;
+  const cellHeight = support.cellHeightDegrees;
+  if (cellWidth === undefined || cellHeight === undefined) return null;
+  if (!Number.isFinite(cellWidth) || cellWidth <= 0) return null;
+  if (!Number.isFinite(cellHeight) || cellHeight <= 0) return null;
+
+  const declared = support.cellOriginDegrees;
+  // `cell_center` locates the middle of the square, `cell_origin` its south-west corner --
+  // the same half-cell branch the serving side's lattice makes. Skipped entirely when the
+  // envelope declared the corner, because a declared corner is already the south-west one.
+  const cornerLongitude =
+    declared?.[0] ??
+    (support.origin === "cell_center" ? anchorLongitude - cellWidth / 2 : anchorLongitude);
+  const cornerLatitude =
+    declared?.[1] ??
+    (support.origin === "cell_center" ? anchorLatitude - cellHeight / 2 : anchorLatitude);
+  if (!Number.isFinite(cornerLongitude) || !Number.isFinite(cornerLatitude)) return null;
+
+  const [west, east] = declaredCellSpan(cornerLongitude, cellWidth);
+  const [south, north] = declaredCellSpan(cornerLatitude, cellHeight);
+
+  return {
+    type: "Polygon",
+    coordinates: [
+      [
+        [west, south],
+        [east, south],
+        [east, north],
+        [west, north],
+        [west, south],
+      ],
+    ],
+  };
+}
+
+/**
+ * The two edges of the cell whose south-west corner is `corner`, through the one span builder.
+ *
+ * The lattice is read back OUT of the corner: its index is `round(corner / cellSize)` and its
+ * phase is whatever that index leaves over. A corner already on a lattice anchored at whole
+ * multiples of the cell size leaves a residue no larger than IEEE-754 noise and is given a phase
+ * of exactly zero, so neighbouring cells share the identical `offset + index * size` expression
+ * and therefore the identical double. A corner that leaves a real residue was binned by its
+ * producer on some other phase, and that phase is carried rather than snapped away -- snapping
+ * would move the cell by up to half its width, which reads as a registration error rather than
+ * as a bug.
+ */
+function declaredCellSpan(corner: number, cellSize: number): readonly [number, number] {
+  const latticeIndex = Math.round(corner / cellSize);
+  const residue = corner - latticeIndex * cellSize;
+  const lattice: ServedCellLattice = {
+    cellSizeDegrees: cellSize,
+    originOffsetDegrees: Math.abs(residue) <= LATTICE_SNAP_TOLERANCE_DEGREES ? 0 : residue,
+    // Both zero: a corner is not a served coordinate that a derivation floored, so there is no
+    // half-step to add back, and the index above is already the cell's own.
+    snapCorrectionDegrees: 0,
+    origin: "cell_origin",
+  };
+  return latticeCellSpan(latticeIndex, lattice);
 }
 
 /**
@@ -359,7 +495,30 @@ export const LAYER_RENDER_CONTRACT: Readonly<Record<LayerToggleId, LayerRenderCo
   drought: nativePolygonEntry("drought"),
   "evacuation-zones": nativePolygonEntry("evacuation-zones"),
   watersheds: nativePolygonEntry("watersheds"),
-  "soil-survey": nativePolygonEntry("soil-survey"),
+
+  // The one native-polygon product that does NOT draw its own geometry at the default camera.
+  // `readSummaryFeatures` (`server/services/usda-soil.ts`) answers one counted Point per lattice
+  // cell once the viewport exceeds what the polygon-union budget covers, and
+  // `soilSurveySummaryLayer` (`map/layers.ts`) paints those as count-scaled circles -- an
+  // aggregate point summary, drawn under a contract that permits `native_polygon` and nothing
+  // else. Recorded rather than legalised: widening the coarse band would make this the only
+  // native-polygon layer allowed to stop drawing its producer's geometry, and would erase the
+  // record that the two disagree.
+  "soil-survey": {
+    ...nativePolygonEntry("soil-survey"),
+    shippedDeviation: {
+      form: "aggregate_cell",
+      owner: "multiscale_polygon_surface_20260901 m2",
+      recordedOn: "2026-09-02",
+      note:
+        "readSummaryFeatures returns counted Points and soilSurveySummaryLayer draws them as " +
+        "count-scaled circles at the default PNW camera: a ~98 sq deg viewport cannot be " +
+        "unioned honestly against the 0.48 sq deg budget, so the summary is a real answer to a " +
+        "real constraint rather than a rendering slip. Closing it is an owner decision between " +
+        "declaring a tessellated cell for the summary rung and re-classing the layer, not a " +
+        "renderer fix.",
+    },
+  },
 
   // Continuous fields. The three ERA5-Land lanes, aggregated onto a coarser lattice by the
   // reader at every rung below z13 and drawn as cells, isobands or a surface.
@@ -371,23 +530,12 @@ export const LAYER_RENDER_CONTRACT: Readonly<Record<LayerToggleId, LayerRenderCo
   // actually observed. Never drawn finer, and never smoothed into a surface across cells the
   // lane did not fill.
   //
-  // The shipped renderer does NOT yet draw that cell. `presentParquetVegetation` emits Points at
-  // each cell's centre and `VegetationLayer` paints them as circles, which is `raw_point` on this
-  // vocabulary. It is recorded rather than permitted: a centre circle is exactly the claim
-  // `declaredSupportDegrees` exists to forbid -- it draws a 0.25-degree measurement as a
-  // zoom-scaled dot whose size means nothing about the ground -- so legalising it would delete
-  // the only record that the two disagree.
-  vegetation: {
-    ...fixedSupportFieldEntry("vegetation", 0.25),
-    shippedDeviation: {
-      form: "raw_point",
-      owner: "multiscale_polygon_surface_20260901 m2",
-      recordedOn: "2026-09-02",
-      note:
-        "presentParquetVegetation emits centre Points and VegetationLayer draws them as circles; " +
-        "the 0.25-degree tessellated cell is owed by the renderer slice.",
-    },
-  },
+  // Carried a `shippedDeviation` from 2026-09-02 until slice m3 closed it the same day:
+  // `presentParquetVegetation` emitted a Point at each cell's centre and `VegetationLayer`
+  // painted it as a zoom-scaled circle, which is `raw_point` on this vocabulary and exactly the
+  // claim `declaredSupportDegrees` exists to forbid. Both now draw the declared 0.25-degree
+  // tessellated cell, so the contract and the renderer agree and there is nothing to record.
+  vegetation: fixedSupportFieldEntry("vegetation", 0.25),
 
   // Reference or unavailable. `soil` has no published raster release at all; the three
   // community surfaces have no declared spatial support in this contract yet.
@@ -417,6 +565,21 @@ export function permittedFormsFor(layerId: LayerToggleId, zoom: number): readonl
   return LAYER_RENDER_CONTRACT[layerId].permittedForms[resolveZoomBand(zoom)];
 }
 
+/**
+ * The same table keyed by the PUBLISHED RUNG rather than by a live map zoom.
+ *
+ * Presentation code never holds a zoom: it holds features whose envelopes declare the rung they
+ * were read at (`AggregateEnvelopeSupport.zoomTier`), and a retained frame outlives the zoom it
+ * was fetched for. Resolving that frame's forms through the current zoom would ask the contract
+ * about a band the cells in hand were never aggregated for.
+ */
+export function permittedFormsForTier(
+  layerId: LayerToggleId,
+  zoomTier: ZoomTier
+): readonly SupportKind[] {
+  return LAYER_RENDER_CONTRACT[layerId].permittedForms[zoomBandForTier(zoomTier)];
+}
+
 /** True when the layer may be drawn in this form at this zoom. */
 export function isFormPermitted(
   layerId: LayerToggleId,
@@ -424,6 +587,15 @@ export function isFormPermitted(
   supportKind: SupportKind
 ): boolean {
   return permittedFormsFor(layerId, zoom).includes(supportKind);
+}
+
+/** True when the layer may be drawn in this form at this published rung. */
+export function isFormPermittedForTier(
+  layerId: LayerToggleId,
+  zoomTier: ZoomTier,
+  supportKind: SupportKind
+): boolean {
+  return permittedFormsForTier(layerId, zoomTier).includes(supportKind);
 }
 
 /**

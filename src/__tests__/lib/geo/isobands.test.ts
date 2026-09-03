@@ -144,4 +144,59 @@ describe('buildIsobands', () => {
     const shuffled = buildIsobands(samples, 1, [0.6, 0.2])
     expect(shuffled).toEqual(ascending)
   })
+
+  /**
+   * THE DISSOLVE, stated as the property a renderer depends on: no segment of the output is
+   * traversed twice.
+   *
+   * A surviving interior edge is what draws a seam. The clipped triangles are vertex-conforming,
+   * so every edge two of them share is walked once in each direction and cancels exactly; a
+   * duplicate in the output means the cancellation missed a pair, and the band is drawn as its
+   * pieces with hairlines between them -- which on the map is indistinguishable from the
+   * batch-boundary seams this track exists to remove.
+   *
+   * Compared UNORDERED (`a|b` against `b|a`) rather than as directed edges: two adjacent bands
+   * legitimately share a boundary walked in opposite directions, and only a repeat WITHIN one
+   * band's own rings is a failed dissolve.
+   */
+  it('leaves no boundary segment traversed twice within a dissolved band', () => {
+    // A bullseye: one band encloses another, so the low band comes back with a hole and the two
+    // share a boundary -- the case with the most chances for an uncancelled interior edge.
+    const samples = lattice(6, 6, 1, (column, row) =>
+      column >= 2 && column <= 3 && row >= 2 && row <= 3 ? 0.9 : 0.1
+    )
+    const bands = buildIsobands(samples, 1, [0.5])
+
+    expect(bands).toHaveLength(2)
+    for (const band of bands) {
+      const seen = new Set<string>()
+      for (const polygon of band.polygons) {
+        for (const ring of polygon) {
+          for (let position = 0; position < ring.length - 1; position += 1) {
+            const [fromLon, fromLat] = ring[position]
+            const [toLon, toLat] = ring[position + 1]
+            const from = `${fromLon},${fromLat}`
+            const to = `${toLon},${toLat}`
+            const key = from < to ? `${from}|${to}` : `${to}|${from}`
+            expect(seen.has(key)).toBe(false)
+            seen.add(key)
+          }
+        }
+      }
+    }
+  })
+
+  /**
+   * The step is the SERVED rung's pitch, and handing in the wrong one is silent. `buildIsobands`
+   * derives grid indices by dividing by the step, so a lattice read at the wrong pitch has no
+   * complete squares at all: every one fails its four-corner test and the band comes back empty.
+   * That is precisely the failure the presentation avoids by reading the pitch off the tier table
+   * rather than pinning the detail lattice's.
+   */
+  it('finds no square at all when handed a pitch the lattice is not on', () => {
+    const samples = lattice(4, 4, 1, () => 0.3)
+
+    expect(buildIsobands(samples, 1, [0.1])).toHaveLength(1)
+    expect(buildIsobands(samples, 0.25, [0.1])).toEqual([])
+  })
 })

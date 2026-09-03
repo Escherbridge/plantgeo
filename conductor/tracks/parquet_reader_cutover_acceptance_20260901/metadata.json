@@ -26,7 +26,7 @@
   "note": "Hard-cut every eligible live map and tRPC reader to bounded day+bbox+zoom Parquet reads with explicit terminal states. Fire is first because production currently advertises Parquet capability while drawing through the legacy global PostgreSQL route.",
   "partitions": {
     "computed_at": "2026-09-02T00:00:00-06:00",
-    "computed_at_commit": "cb12d94e77104a53c76e441f4de7d38d60fa7ae1",
+    "computed_at_commit": "9052998a618a8a8c391958fb4db11024b348dfef",
     "confidence": "verified",
     "shared_writes": [
       "src/lib/server/services/parquet-plane-client.ts and capability registries are serialized owners; no other track edits them until r2 lands.",
@@ -196,6 +196,35 @@
           "src/__tests__/lib/server/http/",
           "src/__tests__/components/TimeSliderCapabilitiesLoader.test.tsx",
           "src/__tests__/components/LayerTimeSlider.test.tsx"
+        ]
+      }
+    },
+    "orchestration_wave2_20260902": {
+      "computed_at": "2026-09-02T12:00:00-06:00",
+      "computed_at_commit": "9052998a618a8a8c391958fb4db11024b348dfef",
+      "wave": "wave2-20260902",
+      "rule": "shared tree, disjoint write sets, no tooling inside slices, one sweep at the join; wave 3 (conformity c1/c3) runs solo afterwards",
+      "pre_declared_seams": [
+        "support: AggregateEnvelopeSupport added to every aggregate cell type in parquet-trpc-readers.ts by W2-B, consumed by W2-C",
+        "cellSizeDegreesForTier(tier) added to src/lib/map/zoom-tiers.ts by W2-B, imported by W2-C",
+        "fill_one_lane_day signature frozen for W2-F; W2-E may add optional kwargs only"
+      ],
+      "write_sets": {
+        "W2-A (r3+r4)": [
+          "src/hooks/useFireData.ts (delete)",
+          "src/app/api/fires/route.ts (delete)",
+          "src/__tests__/api/fires-route.test.ts (delete)",
+          "src/__tests__/hooks/useFireData.test.ts (delete)",
+          "src/lib/net/request-budget.ts",
+          "src/lib/net/AGENTS.md",
+          "src/lib/server/AGENTS.md",
+          "src/hooks/AGENTS.md",
+          "src/lib/server/services/regional-context.ts",
+          "src/lib/server/services/environmental-read-model.ts (doc line)",
+          "src/lib/server/trpc/routers/interventions.ts",
+          "src/__tests__/services/regional-*.test.ts",
+          "conductor/tracks/parquet_reader_cutover_acceptance_20260901/evidence/",
+          "conductor/tracks/parquet_reader_cutover_acceptance_20260901/plan.md"
         ]
       }
     }

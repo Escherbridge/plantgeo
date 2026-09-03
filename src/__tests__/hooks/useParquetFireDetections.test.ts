@@ -60,16 +60,42 @@ function queryResult(overrides: Record<string, unknown> = {}) {
   };
 }
 
+/**
+ * A cell as the reader serves it at the z9 rung. The envelope is what lets a RETAINED frame
+ * keep saying z9 after the camera has crossed the z13 breakpoint: the cells in hand carry the
+ * rung they were really aggregated at, and the hook's own latch covers only the tier it reports
+ * for a caption.
+ */
 function cell(overrides: Partial<ParquetFireDetectionCell> = {}): ParquetFireDetectionCell {
   return {
-    longitude: -116.2,
-    latitude: 43.6,
+    longitude: -116.25,
+    latitude: 43.5,
     observedDay: "2026-08-28",
     detectionCount: 4,
     frpSum: 120.5,
     frpObservationCount: 4,
     highConfidenceDetectionCount: 2,
     newestObservedAt: "2026-08-28T19:12:00Z",
+    support: {
+      zoomTier: 9,
+      supportKind: "aggregate_cell",
+      // `mintedSupportId`'s real format -- the rung, then the position, unpadded and unprefixed.
+      supportId: "9:-116.25:43.5",
+      origin: "cell_origin",
+      // The ladder's z9 grid, from DERIVED_TIER_CELL_DEGREES. Not 0.25, which is the vegetation
+      // and soil-field base grain and has never been a fire cell size at any rung.
+      cellWidthDegrees: 0.01,
+      cellHeightDegrees: 0.01,
+      cellOriginDegrees: [-116.25, 43.5],
+      aggregationMethod: "count",
+      contributorCount: 4,
+      provenance: {
+        sourceLayer: "fire_detections",
+        observedDay: "2026-08-28",
+        newestObservedAt: "2026-08-28T19:12:00Z",
+        attribution: "NASA FIRMS",
+      },
+    },
     ...overrides,
   };
 }

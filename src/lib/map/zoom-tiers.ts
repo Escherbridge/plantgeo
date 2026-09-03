@@ -82,3 +82,255 @@ export function resolveZoomTier(mapZoom: number): ZoomTier {
 export function zoomTierPathSegment(tier: ZoomTier): string {
   return `zoom=${tier.toString().padStart(ZOOM_SEGMENT_DIGITS, "0")}`;
 }
+
+/**
+ * The rung the warehouse writes from a lane's own source grain. Every other rung is DERIVED from
+ * it, which is why it has no ladder resolution of its own -- see `DERIVED_TIER_CELL_DEGREES`.
+ */
+export const BASE_ZOOM_TIER = 13 satisfies ZoomTier;
+
+/** Every rung derived from the base, finest first. Mirrors `DERIVED_ZOOM_TIERS` in tiers.py. */
+export const DERIVED_ZOOM_TIERS = [9, 5, 0] as const satisfies readonly ZoomTier[];
+
+/** One rung the derivation writes rather than the lane. */
+export type DerivedZoomTier = (typeof DERIVED_ZOOM_TIERS)[number];
+
+/**
+ * THE TIER -> CELL SIZE TABLE. The grid each derived rung re-floors its lane onto, in degrees.
+ *
+ * Mirrors `TIER_RESOLUTION_DEGREES` in
+ * `services/agri-data-service/src/agri_data_service/warehouse/parquet/tiers.py` exactly. That
+ * module sizes each rung at four web-map pixels of the tier's OWN zoom, rounded to a clean
+ * decimal, and states the arithmetic beside the numbers:
+ *
+ *   z9  ->  4 * 360/(256*512)  = 0.0110 deg  ->  0.01
+ *   z5  ->  4 * 360/(256*32)   = 0.1758 deg  ->  0.2
+ *   z0  ->  4 * 360/256        = 5.6250 deg  ->  5.0
+ *
+ * The base rung is absent from that mapping and from this one, deliberately: it is not derived,
+ * so it has no ladder resolution -- its grain is the lane's own (`LANE_BASE_LATTICES`).
+ *
+ * The two implementations must never diverge. A client that draws a rung at a pitch the writer
+ * did not floor onto paints cells that overlap their neighbours or leave the background showing
+ * between them, which is the exact defect the 2026-09-01 production assessment recorded.
+ */
+export const DERIVED_TIER_CELL_DEGREES: Readonly<Record<DerivedZoomTier, number>> = {
+  9: 0.01,
+  5: 0.2,
+  0: 5.0,
+};
+
+/** The grid a rung re-floors onto; null at the base rung, whose grain belongs to the lane. */
+export function cellSizeDegreesForTier(zoomTier: ZoomTier): number | null {
+  return zoomTier === BASE_ZOOM_TIER ? null : DERIVED_TIER_CELL_DEGREES[zoomTier];
+}
+
+/**
+ * How one lane's BASE rung locates a cell -- the grain and the phase every coarser rung inherits.
+ *
+ * `coordinateMeaning` is the difference between a cell drawn from its corner and one drawn around
+ * its centre, and it is a property of the lane's own export SQL rather than of the ladder:
+ * `fire_detections_day_export.sql` floor-snaps to a 0.005-degree grid and writes the ORIGIN, while
+ * `signal_plane_day_export.sql` and `vegetation_day_export.sql` write `ST_X(cell.centroid)` and so
+ * write the CENTRE. Getting it wrong shifts a whole field by half a cell.
+ */
+export interface LaneBaseLattice {
+  /** The base rung's cell pitch in degrees; 0 for a lane whose base rows are genuine points. */
+  cellSizeDegrees: number;
+  /** Whether a base row's coordinates name the cell's south-west corner or its centre. */
+  coordinateMeaning: "cell_origin" | "cell_center";
+}
+
+/**
+ * Each cell-bearing lane's base grain, cited to the producer that fixes it.
+ *
+ * `climate-field` is 1 degree and NOT the 0.5 degrees NASA POWER measures. The lane samples that
+ * product on a one-degree lattice (`CLIMATE_FIELD_LATTICE_ROWS` steps by whole degrees), so a
+ * half-degree cell leaves half the ground blank in each axis -- three quarters of the viewport --
+ * which is the "separated rectangular climate blocks" the production assessment recorded. The
+ * drawn cell is therefore the ground NEAREST its sample, which is what a tessellation of a regular
+ * lattice means, and the measured support is carried in the caption instead of in the geometry.
+ * Permitted because `LAYER_RENDER_CONTRACT` sets `declaredSupportDegrees: null` for these lanes
+ * and already licenses `isoband`, which claims strictly more ground than a nearest-sample cell.
+ * See `src/lib/server/services/AGENTS.md` "Tessellated support geometry".
+ */
+export const LANE_BASE_LATTICES = {
+  /** `floor(longitude / 0.005) * 0.005`, fire_detections_day_export.sql:107. */
+  "fire-detections": { cellSizeDegrees: 0.005, coordinateMeaning: "cell_origin" },
+  /** `agri.spatial_cell` quarter-degree grid, written as its centroid. */
+  vegetation: { cellSizeDegrees: 0.25, coordinateMeaning: "cell_center" },
+  /** The same quarter-degree cells; `soilFieldPolygon` has always offset by half a cell here. */
+  "soil-field": { cellSizeDegrees: 0.25, coordinateMeaning: "cell_center" },
+  /** The one-degree NASA POWER sampling lattice; see the note above. */
+  "climate-field": { cellSizeDegrees: 1, coordinateMeaning: "cell_center" },
+  /**
+   * A gauge is a station, not a cell: it has no base grain at all, so every derived rung's cell is
+   * the ladder's own and the base rung stays a raw point with no cell size.
+   */
+  "water-gauges": { cellSizeDegrees: 0, coordinateMeaning: "cell_origin" },
+  /**
+   * The same shape as the gauges above, for the same reason: an Open-Meteo observation is a
+   * sampled POINT, not a measured cell, so its base rung has no grain and every derived rung's
+   * cell is the ladder's own.
+   *
+   * Whether the sampling lattice behind those points should itself be declared as a support --
+   * the way `climate-field` declares its one-degree lattice -- is the open sampled-grid question
+   * m0 still owes a ruling on. Until it rules, the honest answer is the one the contract already
+   * gives: `weather` is an `event_point` layer, and a point claims no ground.
+   */
+  "weather-observations": { cellSizeDegrees: 0, coordinateMeaning: "cell_origin" },
+} as const satisfies Readonly<Record<string, LaneBaseLattice>>;
+
+/** A lane with a published base grain. */
+export type CellLaneId = keyof typeof LANE_BASE_LATTICES;
+
+/**
+ * The lattice one rung of one lane is actually served on: its pitch, its phase, and how to read a
+ * served coordinate back onto it.
+ */
+export interface ServedCellLattice {
+  /** The drawn cell's width and height in degrees. */
+  cellSizeDegrees: number;
+  /** Where a lattice line falls relative to whole multiples of `cellSizeDegrees`. */
+  originOffsetDegrees: number;
+  /**
+   * Half the pitch of the grid the served coordinate was snapped onto, added back before the
+   * index is taken. Zero when the coordinate is already the cell's centre.
+   */
+  snapCorrectionDegrees: number;
+  /** What the served coordinates name, for the envelope this lattice is declared in. */
+  origin: "cell_origin" | "cell_center";
+}
+
+/**
+ * The lattice a rung is served on, from the one tier table and the lane's own base grain.
+ *
+ * THE CELL IS NEVER FINER THAN THE LANE'S BASE. Below z13 the ladder's grid is 0.01 at z9 and 0.2
+ * at z5, both FINER than the quarter-degree cells the signal, soil-field and vegetation lanes
+ * publish. Re-flooring a quarter-degree measurement onto a 0.01 grid merges nothing, so those rungs
+ * are a relabelling of the base rung, not a coarsening -- and drawing them at the ladder's pitch
+ * would paint a 0.25-degree measurement as a 0.01-degree speck (the fictitious finer footprint the
+ * track's spec forbids) or, at z5, as a 0.2-degree cell on a grid that leaves one lattice column in
+ * five empty (visible background cracks, because 0.2 does not divide 0.25).
+ *
+ * Taking the coarser of the two removes both defects at once and is exactly true: a derived rung
+ * cannot describe ground finer than the rung it was derived from.
+ */
+export function servedCellLattice(
+  zoomTier: ZoomTier,
+  base: LaneBaseLattice
+): ServedCellLattice {
+  const tierCellDegrees = cellSizeDegreesForTier(zoomTier);
+  if (tierCellDegrees === null) {
+    const centred = base.coordinateMeaning === "cell_center";
+    return {
+      cellSizeDegrees: base.cellSizeDegrees,
+      originOffsetDegrees: centred ? -base.cellSizeDegrees / 2 : 0,
+      snapCorrectionDegrees: centred ? 0 : base.cellSizeDegrees / 2,
+      origin: base.coordinateMeaning,
+    };
+  }
+  const keepsBaseGrain = tierCellDegrees < base.cellSizeDegrees;
+  return {
+    cellSizeDegrees: keepsBaseGrain ? base.cellSizeDegrees : tierCellDegrees,
+    // A rung that kept the base grain is still on the BASE lattice, phase included; one that
+    // genuinely coarsened is on the ladder's grid, which is anchored at zero by `floor(x / r) * r`.
+    originOffsetDegrees:
+      keepsBaseGrain && base.coordinateMeaning === "cell_center" ? -base.cellSizeDegrees / 2 : 0,
+    snapCorrectionDegrees: tierCellDegrees / 2,
+    // Every derived rung writes the floored cell origin -- see `GridAggregation` in tiers.py,
+    // "the coordinate written back is the floored cell ORIGIN rather than its centre".
+    origin: "cell_origin",
+  };
+}
+
+/**
+ * The lattice column or row a served coordinate falls in.
+ *
+ * A served coordinate is the cell's own centre, or a point somewhere inside the cell that the
+ * derivation's `floor` moved by less than one tier grid step. Adding back half that step lands
+ * within half a cell of the true centre in every case the ladder produces, so rounding recovers
+ * the index exactly rather than approximately -- the flooring error is at most
+ * `tierCellDegrees / 2`, and the cell is at least `tierCellDegrees` wide whenever the base grain
+ * was kept, so the normalised error is strictly below the half-cell that would tip the rounding.
+ */
+export function latticeCellIndex(coordinate: number, lattice: ServedCellLattice): number {
+  return Math.round(
+    (coordinate + lattice.snapCorrectionDegrees - lattice.originOffsetDegrees) /
+      lattice.cellSizeDegrees -
+      0.5
+  );
+}
+
+/**
+ * The lattice cell that CONTAINS an arbitrary point, half-open on its upper edges.
+ *
+ * Not the same operation as `latticeCellIndex`, and the two must not be swapped. That one recovers
+ * the cell a SERVED coordinate denotes, and it does so by adding back half the grid step the
+ * derivation floored the coordinate by -- which is exactly wrong for a point that was never
+ * floored, and lands it in the next cell up whenever it sits past the cell's midpoint. This one
+ * takes a point that means only itself: a frozen lattice centre being counted against the rung
+ * that would serve it, or any test of "which drawn cell covers here".
+ */
+export function latticeCellIndexContaining(
+  coordinate: number,
+  lattice: ServedCellLattice
+): number {
+  return Math.floor((coordinate - lattice.originOffsetDegrees) / lattice.cellSizeDegrees);
+}
+
+/**
+ * One lattice cell's span, rebuilt from its integer index.
+ *
+ * BIT-IDENTICAL SHARED BOUNDARIES, and this is the whole reason the index exists. Cell `i`'s upper
+ * edge and cell `i + 1`'s lower edge are the SAME expression over the same operands, so they are
+ * the same double to the last bit -- where `coordinate + size` for one row and `coordinate` for its
+ * neighbour are two different computations that agree only to within rounding, which is what draws
+ * a hairline of background between two cells that are supposed to touch.
+ */
+export function latticeCellSpan(
+  index: number,
+  lattice: ServedCellLattice
+): readonly [number, number] {
+  return [
+    lattice.originOffsetDegrees + index * lattice.cellSizeDegrees,
+    lattice.originOffsetDegrees + (index + 1) * lattice.cellSizeDegrees,
+  ];
+}
+
+/** The complete tessellating cell one served coordinate stands for, closed in GeoJSON order. */
+export function tessellatedCellPolygon(
+  longitude: number,
+  latitude: number,
+  lattice: ServedCellLattice
+): GeoJSON.Polygon {
+  const [west, east] = latticeCellSpan(latticeCellIndex(longitude, lattice), lattice);
+  const [south, north] = latticeCellSpan(latticeCellIndex(latitude, lattice), lattice);
+  return {
+    type: "Polygon",
+    coordinates: [
+      [
+        [west, south],
+        [east, south],
+        [east, north],
+        [west, north],
+        [west, south],
+      ],
+    ],
+  };
+}
+
+/**
+ * A stable support id for a row whose rung carries no cell identity of its own.
+ *
+ * Minted from the rung and the position rather than left null: `AggregateEnvelopeSupport.supportId`
+ * is never null, because a client that had to read "aggregate" off a missing id could not tell a
+ * rung whose rows happen to carry ids from raw observations.
+ */
+export function mintedSupportId(
+  zoomTier: ZoomTier,
+  longitude: number,
+  latitude: number
+): string {
+  return `${zoomTier}:${longitude}:${latitude}`;
+}

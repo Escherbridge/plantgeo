@@ -48,12 +48,13 @@ def climate_day_table(
             "and building a zero-row table would let it read as a published day"
         )
     observed_at = datetime(day.year, day.month, day.day, tzinfo=UTC)
-    rows = [
-        _plane_row(product, day=day, observed_at=observed_at, value=value)
-        if product.row_shape == "signal_plane"
-        else _lineage_row(product, day=day, observed_at=observed_at, value=value, receipt=receipt)
-        for value in values
-    ]
+    builders = {
+        "signal_plane": _plane_row,
+        "snapshot_lineage": _lineage_row,
+        "snapshot_lane": _lane_row,
+    }
+    build = builders[product.row_shape]
+    rows = [build(product, day=day, observed_at=observed_at, value=value, receipt=receipt) for value in values]
     return pa.Table.from_pylist(rows, schema=product.stream_schema.arrow_schema)
 
 
@@ -63,6 +64,7 @@ def _plane_row(
     day: date,
     observed_at: datetime,
     value: ClimateCellValue,
+    receipt: ClimateSourceReceipt,  # noqa: ARG001 - uniform builder shape; the plane carries no lineage
 ) -> dict[str, object]:
     """The frozen twelve-column signal-plane row, identical in shape to every historical plane row."""
     return {
@@ -100,7 +102,7 @@ def _lineage_row(
     """
     row_sha256 = _direct_row_sha256(product, day=day, value=value)
     return {
-        **_plane_row(product, day=day, observed_at=observed_at, value=value),
+        **_plane_row(product, day=day, observed_at=observed_at, value=value, receipt=receipt),
         "source_key": NASA_POWER_SOURCE_KEY,
         "source_parameter": product.source_parameter,
         "source_snapshot_id": receipt.snapshot_id,
@@ -122,6 +124,36 @@ def _lineage_row(
         "input_source_part_keys": [value.request_url],
         "input_source_part_sha256s": [value.response_sha256],
         "input_source_row_ordinals": [value.response_ordinal],
+    }
+
+
+def _lane_row(
+    product: ClimateFieldProduct,
+    *,
+    day: date,
+    observed_at: datetime,
+    value: ClimateCellValue,
+    receipt: ClimateSourceReceipt,
+) -> dict[str, object]:
+    """The nineteen-column lane row the three soil-wetness streams are written in.
+
+    A DIFFERENT LINEAGE VOCABULARY FROM `_lineage_row`, not a subset of it: this shape was frozen by
+    `scripts/soil_wetness_snapshot_breakdown.py` LANE_SCHEMA, which names its selection
+    `selected_observation_id` / `selected_canonical_row_sha256` and carries no `source_snapshot_id`
+    at all. The `direct:` discriminator therefore rides `selected_source_release_id`, which is the
+    only column in this shape a namespace can be read off, and `selected_observation_id` is a
+    RESPONSE ORDINAL here, never an `agri.signal_observation.id`.
+    """
+    row_sha256 = _direct_row_sha256(product, day=day, value=value)
+    return {
+        **_plane_row(product, day=day, observed_at=observed_at, value=value, receipt=receipt),
+        "selected_observation_id": value.response_ordinal,
+        "selected_canonical_row_sha256": row_sha256,
+        "selected_source_release_id": receipt.snapshot_id,
+        "selected_release_retrieved_at": receipt.retrieved_at,
+        "physical_candidate_count": CLIMATE_OBSERVATION_COUNT,
+        "lineage_sha256": row_sha256,
+        "input_manifest_sha256": receipt.response_sha256,
     }
 
 

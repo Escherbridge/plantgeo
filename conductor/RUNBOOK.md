@@ -95,8 +95,9 @@ zoom and the map draws the served form (`symbol` below z13). Filled tessellation
 density cells (m1 to m3) are not built.
 
 **Conformity c0 done.** The fabricated moderation tau/interval is gone; a typed `unavailable`
-evidence value renders instead. `interventions.ts` still stamps `causalTauEst ?? 0.15` on every
-submitted proposal — the same fabrication one layer down, owned by conformity, not fixed.
+evidence value renders instead. `interventions.ts` stamped `causalTauEst ?? 0.15` on every
+submitted proposal — the same fabrication one layer down; the default was removed in wave 2
+(2026-09-02); rows carrying exactly `0.15` remain suspect and are owned by conformity.
 
 **Contract holes found by review and left open, in order of consequence.**
 1. A coarse rung that derives to zero rows (`derived_to_zero_rows`) can never close its ladder:

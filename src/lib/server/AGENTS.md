@@ -857,15 +857,20 @@ Closed 2026-09-01: the map's fire layer is dated. Both fire surfaces —
 `LayerManager` and `FireDetails` — read `wildfire.getFireDetections` through
 `useParquetFireDetections`, which sends the `fire` row's settled day, the viewport bbox and the
 viewport zoom, and the procedure serves them from the private Parquet plane at the rung that
-zoom resolves to. No map surface calls `/api/fires`.
+zoom resolves to. `/api/fires` and `useFireData` were deleted on 2026-09-02.
 
 Two earlier statements here were wrong and are corrected rather than deleted, because both were
-cited elsewhere. `/api/fires` was never dateless — it accepts `?date=` and forwards it (see
-`src/__tests__/api/fires-route.test.ts` §"GET /api/fires date handling") — so the client was
-free to send a day long before this cutover; what it could not do was scope the read to a
-viewport, pick a serving rung, or tell an unwritten day from an empty one. Those three are what
-the Parquet procedure adds, and they are the reason for the move. The route and `useFireData`
-remain on disk with no map caller until the acceptance track has parity evidence.
+cited elsewhere. `/api/fires` was never dateless — it accepted `?date=` and forwarded it — so the
+client was free to send a day long before this cutover; what it could not do was scope the read to
+a viewport, pick a serving rung, or tell an unwritten day from an empty one. Those three are what
+the Parquet procedure adds, and they are the reason for the move. (The route's own suite,
+`src/__tests__/api/fires-route.test.ts`, was the citation for the date claim and went with it;
+the claim is preserved here because the deletion evidence packet cites this paragraph.)
+
+`getPublishedFireDetections` in `environmental-read-model.ts` survives the deletion and is NOT a
+map or agent reader. Its one remaining caller is `alert-engine.ts`, a server-side job that reads
+PostgreSQL by design; the agent's own fire read moved to `getParquetFireDetections` on 2026-09-02
+(`regional-context.ts`). Do not add a request-time caller.
 
 ## §vegetation-tiles
 
@@ -1257,3 +1262,21 @@ at `fced1e8`. Production activation at `069ef90` binds the server-only
 missing configuration remains a typed fault, never a PostgreSQL fallback. Per-rung and
 signal-product coverage are required before the withheld slider rows or generic signal reader can
 be enabled.
+
+## §community-submission-tau
+
+`interventions.proposeIntervention` stamped `causalTauEst: input.causalTauEst ?? 0.15` into every
+proposed feature's `properties` until 2026-09-02. The literal was not a prior, a calibration or a
+placeholder anybody could see: it was persisted as data, so a row nobody had ever estimated a
+treatment effect for read back exactly like one somebody had. The default is gone — the key is
+written only when the submitter supplies a number, and an absent estimate is now absent.
+
+**Rows already carrying exactly `0.15` are suspect and must not be read as evidence.** They are
+one of two things and the column cannot tell them apart: a real submitted estimate that happens to
+equal the old default, or a submission that carried none. Anything ranking, aggregating or
+reporting `causalTauEst` has to treat that exact value as unknown until the rows are adjudicated.
+
+Adjudicating them (and any backfill or migration) belongs to
+`conductor/tracks/repository_conformity_hardening_20260901`, not here. No migration ships with
+this change on purpose: rewriting the rows would destroy the only signal that tells the suspect
+population apart from later, honestly-absent ones.

@@ -84,3 +84,48 @@ values it can hold. Domains are the measured p02–p98 of each signal on product
 **The three soil-wetness signals are a pilot and say so in their own labels.** 4 cells of 397.
 They carry a `coverageNote` the panel and the legend both render, because a reader who selects
 a signal and sees four squares must be told that is the coverage rather than an outage.
+
+**`resolveClimateRenderForm` is no longer the last word on the drawn form.** It answers "may this
+SIGNAL be drawn this way", which is a statement about honesty per quantity — no contour across
+daily rainfall, none across a four-cell pilot — and it is still the only place that rule lives.
+Above it now sits `tierRenderForm` (`server/services/parquet-climate-field.ts`), which answers
+"may this RUNG be drawn this way" from `LAYER_RENDER_CONTRACT`: `isoband` is permitted at the
+coarse and middle bands only, so a signal whose own list opens on `isoline` is served filled at
+z13 and reports that back in `renderForm`. Two gates rather than one because they answer different
+questions, and collapsing them would make a per-signal rule depend on the camera.
+
+**The lattice this table calls `nasa-power-0.5-degree` is SAMPLED every whole degree.** The
+`support_key` and the grid name are the source product's resolution; `CLIMATE_FIELD_LATTICE_ROWS`
+steps by one degree, so half the ground in each axis carries no sample. The serving side draws the
+one-degree nearest-sample cell rather than a half-degree square with background between the
+squares — see `src/lib/server/services/AGENTS.md` §tessellated-support for why that is permitted
+here and forbidden for `vegetation`.
+
+## §parquet-presentation
+
+`parquet-presentation.ts` and `parquet-fire-presentation.ts` are the browser mirrors of the
+Parquet readers plus the functions that turn a served window into drawable GeoJSON. They are
+the last place the SHAPE of a feature is decided, so the render contract's rules live here
+rather than in the three layer components.
+
+**`support` is required on the wire and optional in the mirror.** Every aggregate row
+`parquet-trpc-readers.ts` returns declares an `AggregateEnvelopeSupport`. The browser mirrors
+type it `support?:` anyway, so a payload that arrives without one degrades to the marker form
+instead of throwing through a React render — the same rule `servingZoomTierForMapZoom` follows
+for an unservable zoom, and the same reason the readers' four terminal states are values rather
+than exceptions. What the degradation may never do is fill the gap: a missing cell size yields
+a Point, never a nominal square, because a fabricated footprint is the fire-perimeter claim the
+whole track exists to prevent.
+
+**The form each presenter draws is a named exported constant, checked against the contract in
+tests, not a string at a call site.** `FIRE_CELL_DRAWN_FORM` is `aggregate_cell` at every rung
+(FIRMS publishes no raw one), and `VEGETATION_CELL_DRAWN_FORM` is `tessellated_cell`, the only
+form `LAYER_RENDER_CONTRACT.vegetation` permits at any band. The reader may label a vegetation
+envelope with the generic `aggregate_cell`; the DRAWN form is the contract's, and the geometry
+is identical either way — the square the envelope itself declares.
+
+**The envelope's rung beats the caller's.** `presentParquetFireDetections` still takes the
+caller's latched tier, because `useParquetFireDetections` holds the last one that actually
+landed and a retained frame must not be relabelled with a request still in flight. But each
+cell's own `support.zoomTier` wins where present: a retained frame's cells carry the rung they
+were really aggregated at, which is a stronger claim than the latch and needs no bookkeeping.

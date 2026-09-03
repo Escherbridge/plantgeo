@@ -633,12 +633,37 @@ middle, so the ordering survives greyscale too.
 
 **The fire layer draws aggregation CELLS, not detections.** Since the 2026-09-01 Parquet
 cutover, `LayerManager` and `FireDetails` read `wildfire.getFireDetections` through
-`useParquetFireDetections` (day + viewport bbox + viewport zoom) instead of `useFireData` →
-`/api/fires`. Each feature is one warehouse cell at the rung the zoom resolves to, carrying
+`useParquetFireDetections` (day + viewport bbox + viewport zoom). The path that preceded it,
+`useFireData` → `/api/fires`, survived the cutover as dead code and was deleted on 2026-09-02;
+neither the hook nor the route exists any more. Each feature is one warehouse cell at the rung
+the zoom resolves to, carrying
 `detectionCount`, `frpSum`, `frpObservationCount`, `highConfidenceDetectionCount`,
-`observedDay`, `newestObservedAt` and the `zoomTier` it was aggregated at. Nothing else. A
-buffered polygon is deliberately **not** drawn: a cell is where detections were counted, not
-where anything burned, and a square would assert an extent nothing measured.
+`observedDay`, `newestObservedAt`, the `zoomTier` it was aggregated at, and — since
+2026-09-02 — the four envelope fields `supportKind`, `supportId`, `cellWidthDegrees` and
+`cellHeightDegrees`. Nothing else.
+
+**The band decides the shape; the envelope decides the square.** At the coarse and middle
+bands each cell draws as the polygon `supportCellPolygon` builds from its OWN declared origin
+and cell size (`published-fire-cells-fill`, a `fill` layer filtered to `Polygon`), and at the
+detail band it stays the count-scaled dot (`published-fire-circles`, filtered to `Point`). The
+two filters are what deliver the spec's "one physical rung renders at a time" gate without this
+component ever reading the camera: `presentParquetFireDetections` chooses the geometry, and the
+layers just draw whichever arrived.
+
+A *buffered* polygon is still forbidden, and the distinction is the whole point. The square is
+not derived from the point by this client; it is the footprint the reader declared -- since
+2026-09-02 down to the snapped south-west corner (`cellOriginDegrees`), so the client's square and
+the server's are the same square -- and a cell whose envelope declares no size degrades to the dot
+rather than to a nominal one. There is no
+line layer over the fills: neighbouring squares share bit-identical edges, so a stroked
+boundary would reintroduce exactly the seams the 2026-09-01 assessment found on the soil
+blocks. `fill-outline-color` carries the confidence ring on the shared edge instead.
+
+**A filled square under `fire` is in the same visual language as `fire-perimeters` and
+`burn-severity`, so the words carry the difference.** `FIRE_CELL_NOT_A_PERIMETER_NOTE`
+(`lib/map/fire-cell-caption.ts`) appears in the hover tooltip, the click popup and the legend,
+read from one constant. `assertNotPerimeter("fire", …)` runs on every presentation call, so the
+drawn form can never become `native_polygon` quietly.
 
 **Four properties left the vocabulary and must not come back.** `PercentContained`,
 `IncidentSize`, `brightness` and `confidence` were per-incident/per-detection fields that only
@@ -647,16 +672,66 @@ fallback while looking like it was reading data — the failure mode where a map
 wrong and confidently so. The containment ramp went with them, and `layer-legends.ts` legends
 the FRP ramp instead.
 
-**Three channels, three fields, no double-encoding.** Colour is `frpSum` (megawatts) with a
-distinct off-ramp colour for a cell whose `frpObservationCount` is 0 — no reported power is
+**Three channels, three fields, no double-encoding.** Dot colour is `frpSum` (megawatts) with
+a distinct off-ramp colour for a cell whose `frpObservationCount` is 0 — no reported power is
 not zero power, and an `interpolate` over a null would have said otherwise. Dot size is
 `detectionCount`. Ring colour is whether the cell holds any high-confidence detection.
+
+The square has only one channel, and it spends it on `detectionCount`
+(`FIRE_DETECTION_COUNT_COLOR_STOPS`), because "count/intensity" is what the runbook requires a
+coarse-band event aggregate to carry and the count is the quantity the cell *is*. The dot's
+radius ramp is built from those same stops, so a reader crossing the z13 breakpoint sees the
+same five breaks mean the same thing in a different channel. The legend names both shapes
+("Cell fill (zoomed out)", "Dot colour (zoomed in)") rather than switching on the camera, which
+`LegendContext` does not carry.
 
 **What the route could not do is why the read moved.** `/api/fires` was always dated (it
 accepts `?date=` and always has); what it could not do was scope to a viewport, select a
 serving rung, or distinguish a day that was never written from a day with no fires. The
 procedure's four terminal states carry that distinction to the surface, and
 `FireDetails` renders each one rather than a count of zero.
+
+## §water-cells
+
+**The `water` toggle draws two different things, and the DECLARED form is what tells them
+apart.** A z13 row is a real USGS gauge with a site number, drawn as a blue point with its own
+identity. A coarse-rung row is a mean over a square of ground, drawn purple: `water-gauge-cells-fill`
+(a `fill` filtered to `Polygon`) over the square its envelope declares, coloured by mean
+discharge on decade stops, captioned with the envelope's `contributorCount` as a gauge count.
+
+`presentParquetWater` splits on `isAggregateSupportKind(row.support.supportKind)`, not on
+`siteNumber === null`. The old rule was the inference from a missing id that the render
+contract exists to end — a coarse rung whose rows happened to carry site numbers was
+indistinguishable from real gauges under it. The site number is still load-bearing in the other
+direction: a row may only be drawn as a NAMED gauge if it has a name, so a `raw_point` row
+without one falls back to the anonymous cell rather than being captioned with an empty string.
+That fallback is also what keeps a reader that sends no envelope at all on the wave-1 shapes.
+
+`permittedFormsFor("water", zoom)` offers `aggregate_cell`, `heatmap` and `cluster` at the
+coarse and middle bands. The cell is chosen because it is the only one the envelope supports: a
+`cluster` would be the client inventing a grouping the warehouse never performed, and a
+`heatmap` would smear discharge across ground where no gauge reported.
+
+## §vegetation-cells
+
+**The measured NDVI grid draws as the 0.25° squares it measured, and that closed a recorded
+deviation.** Until 2026-09-02 `presentParquetVegetation` emitted a Point at each cell's centre
+and this layer painted a zoom-scaled circle — `raw_point` on the contract's vocabulary, and
+exactly the claim `declaredSupportDegrees` exists to forbid, because a dot's radius says nothing
+about the ground a reading covers. `LAYER_RENDER_CONTRACT.vegetation.shippedDeviation` recorded
+it; both halves now draw `tessellated_cell` and the deviation is gone. It was closed, not
+legalised: `raw_point` is still permitted at no band.
+
+**The cell size comes from `support.cellWidthDegrees`, never from the contract's declared
+0.25.** Reading the number the contract states would be the client inferring support again, one
+indirection further out. An observation with no envelope is drawn as a Point and therefore
+drawn as *nothing*, since both cell layers filter to `Polygon` — deliberate, because a dot for
+an unknown footprint would look identical to a dot for a known one.
+
+**The outline fades out below z9.** It exists to keep the cells legible as discrete samples, and
+at the middle and detail bands it does. Zoomed out, a 0.25° cell is a handful of pixels and a
+stroke on every shared edge is most of the cell, which reads as a grid of seams over the field
+rather than as the field.
 
 ## §soil-survey render shapes
 

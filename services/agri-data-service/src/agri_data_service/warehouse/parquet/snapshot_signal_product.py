@@ -232,6 +232,41 @@ def register_snapshot_lineage_product(stream: str) -> tuple[ParquetStreamSchema,
     return schema, derivation
 
 
+def register_soil_wetness_product(stream: str) -> tuple[ParquetStreamSchema, TierDerivation]:
+    """Register one 19-field lane stream: the soil-temperature shape WITHOUT its two leading columns.
+
+    `SOIL_TEMPERATURE_FIELDS[2:]` is not an approximation of this shape, it IS this shape --
+    `scripts/soil_wetness_snapshot_breakdown.py` LANE_SCHEMA lists exactly these nineteen fields in
+    exactly this order under the same `plantgeo.signal-product-lane.v1` contract, and
+    `parquet_ops/snapshot_products.py` already pins the two together in `_PINNED_ARROW_SCHEMAS`.
+    The three NASA POWER soil-wetness lanes carry no `data_source_key`/`source_parameter` because
+    they were broken down one source at a time; the soil-temperature bundle was not.
+    """
+    schema = register_stream_schema(
+        ParquetStreamSchema(
+            name=stream,
+            arrow_schema=pa.schema(
+                SOIL_TEMPERATURE_FIELDS[2:],
+                metadata={b"plantgeo_contract": b"plantgeo.signal-product-lane.v1"},
+            ),
+            sort_columns=SOIL_TEMPERATURE_GRAIN[2:],
+        )
+    )
+    derivation = register_tier_derivation(
+        TierDerivation(
+            stream=stream,
+            strategy=GridAggregation(
+                longitude_column="cell_longitude",
+                latitude_column="cell_latitude",
+                key_columns=SOIL_TEMPERATURE_KEY_COLUMNS[2:],
+                aggregations=SOIL_TEMPERATURE_AGGREGATIONS,
+            ),
+            base_non_null_columns=SOIL_TEMPERATURE_BASE_NON_NULL_COLUMNS,
+        )
+    )
+    return schema, derivation
+
+
 def register_soil_temperature_product(stream: str) -> tuple[ParquetStreamSchema, TierDerivation]:
     """Register one 21-field soil-temperature stream from the immutable four-lane bundle."""
     schema = register_stream_schema(
@@ -274,4 +309,5 @@ __all__ = [
     "register_signal_plane_product",
     "register_snapshot_lineage_product",
     "register_soil_temperature_product",
+    "register_soil_wetness_product",
 ]

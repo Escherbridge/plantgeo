@@ -48,12 +48,21 @@ export type ClimateFieldToggleId = `climate-${ClimateFieldSignalId}`;
  *
  * Nine filled fields over the same 397 cells is one visible field and eight invisible ones: the
  * topmost opaque fill wins, and the category counter reads "3 of 9" while the map shows one. So
- * a row picks a FORM as well as a day, and the three forms are chosen to layer over each other
- * -- a filled base, contours across it, point symbols above both -- the way a printed weather
- * chart composes a temperature wash, isotherms and station plots.
+ * a row picks a FORM as well as a day, and the forms are chosen to layer over each other -- a
+ * filled base with contours across it -- the way a printed weather chart composes a temperature
+ * wash and its isotherms.
  *
- * Not every form is honest for every signal, which is why the per-signal `renderForms` list
- * exists rather than this union being offered everywhere. See the note on that field.
+ * `symbol` IS STILL IN THIS UNION AND IS OFFERED BY NO SIGNAL. It was the third layer of that
+ * composite, one dot per measured cell, and `LAYER_RENDER_CONTRACT` permits no point form for a
+ * `continuous_field` at any band: a dot's radius says nothing about the ground the value
+ * describes, which is the fictitious footprint the contract exists to forbid. Withdrawing it from
+ * every `renderForms` list is what stops it being CHOSEN; keeping it in the union is what lets a
+ * stale store entry, a replayed cache and a legacy server answer still be NAMED, so
+ * `resolveClimateRenderForm` can map them onto `field` instead of failing to type-check against a
+ * value that demonstrably exists in the wild.
+ *
+ * Not every form is honest for every signal either, which is why the per-signal `renderForms`
+ * list exists rather than this union being offered everywhere. See the note on that field.
  */
 export type ClimateRenderForm = "field" | "isoline" | "symbol";
 
@@ -119,9 +128,13 @@ export interface ClimateFieldSignalDefinition {
    *     same problem. They are a PILOT on part of the lattice, and contouring scattered samples
    *     interpolates a continuous field across ground the lane never measured -- the exact
    *     fabrication `blankGroundMisreading` and the coverage note exist to prevent.
+   *   - `symbol` is absent from ALL NINE since 2026-09-02, and for a different kind of reason:
+   *     not that it is dishonest about this signal, but that the frozen render contract permits
+   *     no point form for a continuous field at any band. See `ClimateRenderForm`.
    *
-   * `field` and `symbol` are honest everywhere: both draw one mark per measured cell and put
-   * nothing at all on a cell the lane has not filled.
+   * `field` is honest everywhere: it draws one cell per measured sample and puts nothing at all
+   * on a cell the lane has not filled. Six of the nine therefore offer exactly one form and draw
+   * no picker at all.
    */
   renderForms: readonly ClimateRenderForm[];
   /** The picker's caption. */
@@ -453,7 +466,7 @@ const CLIMATE_FIELD_SIGNAL_TABLE: Readonly<
     signal: "air-temperature",
     // The lane's natural base wash: the one signal a reader almost always wants painted under
     // whatever else is on, and the only one that defaults to `field` for that reason.
-    renderForms: ["field", "isoline", "symbol"],
+    renderForms: ["field", "isoline"],
     label: "Air temperature",
     quantityLabel: "Air temperature",
     fieldLabel: "air-temperature",
@@ -477,7 +490,7 @@ const CLIMATE_FIELD_SIGNAL_TABLE: Readonly<
   },
   "dew-point": {
     signal: "dew-point",
-    renderForms: ["isoline", "field", "symbol"],
+    renderForms: ["isoline", "field"],
     label: "Dew point",
     quantityLabel: "Dew point temperature",
     fieldLabel: "dew-point",
@@ -500,10 +513,12 @@ const CLIMATE_FIELD_SIGNAL_TABLE: Readonly<
   },
   precipitation: {
     signal: "precipitation",
-    // No `isoline`, and defaults to `symbol` rather than `field`: a graduated drop over another
-    // signal's wash is the classic composite, and a dry cell then draws nothing at all instead
-    // of a pale blue that has to be told apart from a trace shower.
-    renderForms: ["symbol", "field"],
+    // No `isoline`, for the reason on `renderForms` in the interface above. `symbol` was this
+    // signal's DEFAULT until 2026-09-02 -- a graduated drop over another signal's wash is the
+    // classic composite -- and it went with the rest of the point forms when the frozen render
+    // contract turned out to permit none for a continuous field. Nothing is left to pick between,
+    // so the row draws no form picker at all.
+    renderForms: ["field"],
     label: "Precipitation",
     quantityLabel: "Precipitation",
     fieldLabel: "precipitation",
@@ -528,7 +543,7 @@ const CLIMATE_FIELD_SIGNAL_TABLE: Readonly<
   },
   "relative-humidity": {
     signal: "relative-humidity",
-    renderForms: ["isoline", "field", "symbol"],
+    renderForms: ["isoline", "field"],
     label: "Relative humidity",
     quantityLabel: "Relative humidity",
     fieldLabel: "relative-humidity",
@@ -551,7 +566,7 @@ const CLIMATE_FIELD_SIGNAL_TABLE: Readonly<
   },
   "shortwave-radiation": {
     signal: "shortwave-radiation",
-    renderForms: ["isoline", "field", "symbol"],
+    renderForms: ["isoline", "field"],
     label: "Solar radiation",
     quantityLabel: "Surface shortwave radiation",
     fieldLabel: "solar-radiation",
@@ -579,7 +594,7 @@ const CLIMATE_FIELD_SIGNAL_TABLE: Readonly<
     // T2M_MIN, WS2M -- and WD2M is not among them, so the warehouse holds a daily mean SPEED
     // with no bearing anywhere. A barb drawn without a direction would point somewhere, and
     // wherever it pointed would be invented. A speed is a scalar here, and it is drawn as one.
-    renderForms: ["isoline", "field", "symbol"],
+    renderForms: ["isoline", "field"],
     label: "Wind speed",
     quantityLabel: "Wind speed",
     fieldLabel: "wind-speed",
@@ -604,7 +619,7 @@ const CLIMATE_FIELD_SIGNAL_TABLE: Readonly<
     signal: "soil-wetness-surface",
     // No `isoline` on any of the three: see `renderForms` on the interface. Contouring a pilot
     // interpolates a continuous field across ground the lane has never measured.
-    renderForms: ["field", "symbol"],
+    renderForms: ["field"],
     label: "Soil wetness (surface)",
     quantityLabel: "Surface soil wetness",
     fieldLabel: "surface soil-wetness",
@@ -627,7 +642,7 @@ const CLIMATE_FIELD_SIGNAL_TABLE: Readonly<
   },
   "soil-wetness-root-zone": {
     signal: "soil-wetness-root-zone",
-    renderForms: ["field", "symbol"],
+    renderForms: ["field"],
     label: "Soil wetness (root zone)",
     quantityLabel: "Root-zone soil wetness",
     fieldLabel: "root-zone soil-wetness",
@@ -650,7 +665,7 @@ const CLIMATE_FIELD_SIGNAL_TABLE: Readonly<
   },
   "soil-wetness-profile": {
     signal: "soil-wetness-profile",
-    renderForms: ["field", "symbol"],
+    renderForms: ["field"],
     label: "Soil wetness (profile)",
     quantityLabel: "Profile soil wetness",
     fieldLabel: "profile soil-wetness",
@@ -769,6 +784,14 @@ export function defaultClimateRenderForm(signal: ClimateFieldSignalId): ClimateR
  * naming a form the signal no longer offers. Falling back to the signal's own default degrades
  * to a drawn layer; honouring the stale value would draw the one form this signal withholds
  * because it is not honest -- a contour across a pilot, or across daily rainfall.
+ *
+ * A stored `symbol` is mapped onto `field` BY NAME rather than left to the default, and the
+ * difference is visible: `dew-point` opens on `isoline`, so a reader who had explicitly picked
+ * points would have been handed contours by the generic fallback. `field` is the honest successor
+ * to `symbol` for every signal -- both draw one mark per measured cell and neither fills ground
+ * the lane never sampled -- so it is the same choice, drawn at the support it actually describes.
+ * Precipitation is the case this was written for: `symbol` was its default until 2026-09-02, so
+ * every persisted store from before then names it.
  */
 export function resolveClimateRenderForm(
   signal: ClimateFieldSignalId,
@@ -776,6 +799,7 @@ export function resolveClimateRenderForm(
 ): ClimateRenderForm {
   const { renderForms } = CLIMATE_FIELD_SIGNAL_TABLE[signal];
   if (requested !== undefined && renderForms.includes(requested)) return requested;
+  if (requested === "symbol" && renderForms.includes("field")) return "field";
   return renderForms[0];
 }
 

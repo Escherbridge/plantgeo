@@ -61,6 +61,28 @@ describe("interventionsRouter Lifecycle & Moderation", () => {
     });
 
     expect(result.status).toBe("proposed");
+    expect((result.properties as { causalTauEst?: number }).causalTauEst).toBe(0.18);
+  });
+
+  /**
+   * Until 2026-09-02 an omitted estimate was persisted as 0.15, so a row nobody had estimated
+   * read back exactly like one somebody had. The key must now be absent, not defaulted — see
+   * `src/lib/server/AGENTS.md` §community-submission-tau for the suspect existing rows.
+   */
+  it("persists no causal effect estimate at all when the submitter supplies none", async () => {
+    const caller = appRouter.createCaller({
+      session: { user: { id: "user-1", platformRole: "contributor" } },
+      db: (await import("@/lib/server/db")).db,
+    } as unknown as Parameters<typeof appRouter.createCaller>[0]);
+
+    const result = await caller.interventions.proposeIntervention({
+      title: "Riparian Buffer Plot B",
+      strategyType: "riparian_buffer",
+      lat: 44.5,
+      lon: -122.5,
+    });
+
+    expect(Object.keys(result.properties as object)).not.toContain("causalTauEst");
   });
 
   it("requires expert/admin role to cast moderation vote", async () => {

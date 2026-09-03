@@ -108,6 +108,36 @@ classifies each day as one of FIVE statuses:
 `unfilled_partition_days` reports `missing` + `incomplete` (what the driver fills). A `conflict`
 day is never produced by the write path — only a manual admin action can create or resolve one.
 
+## The zero-part receipt: a rung that generalised to nothing
+`PartitionCompletion` refuses `part_count <= 0` **except** when the receipt sets `derived_empty`,
+and that exception exists to close one specific hole. A coarse rung whose derivation drops every
+base row — an unlocated gauge, a feature under the tier's area floor — is retracted by
+`pipeline/parquet/derivation.py::_retract_tier`. Before this field the retraction left the rung with
+no parts and no marker, so the day could never present the complete rungs ladder
+`pipeline/parquet/availability_index.py` demands and was **permanently unindexable** while looking
+perfectly healthy to the base-tier census. See `pipeline/parquet/AGENTS.md`, "Why an emptied rung
+strands its day".
+
+Three properties make the zero-part receipt safe to admit:
+
+- **It says which claim it is making.** `derived_empty: true` means *the source had rows and this
+  rung kept none of them*; `absent.json` means *the source had nothing*. Two different statements
+  keep their two different vocabularies, which was the original refusal's whole point.
+- **It is written only when true**, so every marker already in the bucket re-serializes to the exact
+  bytes it was read from. `availability_index._verify_completion_object` compares those bytes before
+  it will bind a marker to an availability row; an always-emitted `derived_empty: false` would have
+  failed that check for every day the warehouse holds. `from_json_bytes` therefore refuses an
+  explicit `false` rather than tolerating it.
+- **The base rung may never carry one.** `objectstore.write_completion_marker` refuses a zero-part
+  receipt at `BASE_ZOOM_TIER`: an empty base day is a governed absence, and nothing else.
+
+`partition_day_statuses` is deliberately **not** taught about it. That function classifies one tier
+from keys alone and cannot see inside a marker, so a marker with no parts stays `missing` there —
+correct at the base rung, where it is the residue of deleted parts. The derived rungs are classified
+by `pipeline/parquet/drain.py::build_lane_ladder_census` and `gap_fill`'s ladder census, which
+already ask only "did this rung assert it finished", and by `parquet_ops/serving.py::day_status_sets`,
+which serves a completed-but-partless **derived** rung as a published day holding zero rows.
+
 ## Static layers use the same layout — but their `day=` means something else
 RUNBOOK §0.23.6 assumed static layers (`soil-survey`, `watersheds`, `evacuation-zones`) would get
 "one file per layer, no day striation". **They do not.** A static layer writes a single dated

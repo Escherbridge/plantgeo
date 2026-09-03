@@ -1,4 +1,10 @@
-"""The eight NASA POWER climate-field products, their one source parameter each, and their clocks."""
+"""The eleven NASA POWER products, their one source parameter each, and their clocks.
+
+Eleven streams under seven browser toggles: eight climate fields plus the three soil-wetness depths,
+which ride the SAME point request. One POWER response returns every parameter the URL asked for, so
+a product costs a fan-out nothing once its parameter is on the list -- which is why the soil-wetness
+depths belong here and not in a second writer with a second 397-cell fan-out over the same lattice.
+"""
 
 from __future__ import annotations
 
@@ -27,6 +33,9 @@ from agri_data_service.warehouse.schemas.climate_field_shortwave_radiation impor
     CLIMATE_FIELD_SHORTWAVE_RADIATION_STREAM,
 )
 from agri_data_service.warehouse.schemas.climate_field_wind_speed import CLIMATE_FIELD_WIND_SPEED_STREAM
+from agri_data_service.warehouse.schemas.soil_wetness_profile import STREAM as SOIL_WETNESS_PROFILE_STREAM
+from agri_data_service.warehouse.schemas.soil_wetness_root_zone import STREAM as SOIL_WETNESS_ROOT_ZONE_STREAM
+from agri_data_service.warehouse.schemas.soil_wetness_surface import STREAM as SOIL_WETNESS_SURFACE_STREAM
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -34,17 +43,22 @@ if TYPE_CHECKING:
     from agri_data_service.warehouse.parquet.schema import ParquetStreamSchema
 
 #: The row shape of a product base rung. `signal_plane` is the frozen twelve-column plane;
-#: `snapshot_lineage` is that plane plus twenty-one lineage columns. See `pipeline/direct/AGENTS.md`.
-ClimateRowShape = Literal["signal_plane", "snapshot_lineage"]
+#: `snapshot_lineage` is that plane plus twenty-one lineage columns; `snapshot_lane` is that plane
+#: plus the seven-column selection vocabulary the soil-wetness breakdown froze
+#: (`warehouse/parquet/snapshot_signal_product.py` SOIL_TEMPERATURE_FIELDS[2:]).
+#: See `pipeline/direct/AGENTS.md`.
+ClimateRowShape = Literal["signal_plane", "snapshot_lineage", "snapshot_lane"]
 
 #: The browser toggle a stream is drawn under. `--product` names one of these, never a stream slug:
-#: air temperature is ONE product served by three streams, so six toggles cover eight streams.
+#: air temperature is ONE product served by three streams and soil wetness is ONE product served by
+#: three depth lanes, so seven toggles cover eleven streams.
 ClimateProductId = Literal[
     "air-temperature",
     "dew-point",
     "precipitation",
     "relative-humidity",
     "shortwave-radiation",
+    "soil-wetness",
     "wind-speed",
 ]
 
@@ -54,6 +68,7 @@ CLIMATE_PRODUCT_IDS: Final[tuple[ClimateProductId, ...]] = (
     "precipitation",
     "relative-humidity",
     "shortwave-radiation",
+    "soil-wetness",
     "wind-speed",
 )
 
@@ -189,6 +204,40 @@ CLIMATE_FIELD_PRODUCTS: Final[tuple[ClimateFieldProduct, ...]] = (
         publication_lag_days=CLIMATE_SHORTWAVE_RADIATION_PUBLICATION_LAG_DAYS,
         snapshot_last_day=SHORTWAVE_RADIATION_SNAPSHOT_LAST_DAY,
     ),
+    # The three soil-wetness depths. SAME source, SAME support, SAME meteorology lag and SAME
+    # snapshot last day as the seven products above -- one POWER point request already returns every
+    # parameter it was asked for, so these three cost the fan-out nothing beyond three more
+    # parameters on a URL. They report a DEGREE OF SATURATION, not a volumetric water content, and
+    # name their depth in the signal rather than in `support_key`
+    # (`execution/weather_observations/nasa_power.py` NASA_POWER_SIGNAL_SPECIFICATIONS). Their
+    # `snapshot_lane` row shape is a third one, frozen by `scripts/soil_wetness_snapshot_breakdown.py`.
+    ClimateFieldProduct(
+        stream=SOIL_WETNESS_SURFACE_STREAM,
+        product_id="soil-wetness",
+        source_parameter="GWETTOP",
+        signal_name="soil_wetness_surface",
+        normalized_unit="fraction_of_saturation",
+        row_shape="snapshot_lane",
+        publication_lag_days=CLIMATE_METEOROLOGY_PUBLICATION_LAG_DAYS,
+    ),
+    ClimateFieldProduct(
+        stream=SOIL_WETNESS_ROOT_ZONE_STREAM,
+        product_id="soil-wetness",
+        source_parameter="GWETROOT",
+        signal_name="soil_wetness_root_zone",
+        normalized_unit="fraction_of_saturation",
+        row_shape="snapshot_lane",
+        publication_lag_days=CLIMATE_METEOROLOGY_PUBLICATION_LAG_DAYS,
+    ),
+    ClimateFieldProduct(
+        stream=SOIL_WETNESS_PROFILE_STREAM,
+        product_id="soil-wetness",
+        source_parameter="GWETPROF",
+        signal_name="soil_wetness_profile",
+        normalized_unit="fraction_of_saturation",
+        row_shape="snapshot_lane",
+        publication_lag_days=CLIMATE_METEOROLOGY_PUBLICATION_LAG_DAYS,
+    ),
     ClimateFieldProduct(
         stream=CLIMATE_FIELD_WIND_SPEED_STREAM,
         product_id="wind-speed",
@@ -210,7 +259,7 @@ CLIMATE_FIELD_PRODUCT_BY_STREAM: Final[Mapping[str, ClimateFieldProduct]] = Mapp
 #: The executor command passes no override, so this is the budget that actually runs.
 CLIMATE_DEFAULT_TIME_BUDGET_SECONDS: Final = 900.0
 
-#: Every parameter one point request carries, so one cell-day response serves all eight products.
+#: Every parameter one point request carries, so one cell-day response serves all eleven streams.
 CLIMATE_SOURCE_PARAMETERS: Final[tuple[str, ...]] = tuple(
     sorted({product.source_parameter for product in CLIMATE_FIELD_PRODUCTS})
 )

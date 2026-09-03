@@ -87,6 +87,13 @@ type SoilFieldResult = {
         maxObservationAgeDays: number;
         latticeDegrees: number | null;
         bands: { bandIndex: number; color: string; label: string }[];
+        /** The one rung that answered; the caption names it rather than inferring it. */
+        zoomTier: 0 | 5 | 9 | 13;
+        /**
+         * The envelope the reader now attaches to the whole collection. Only the two fields the
+         * caption reads are declared, for the same reason the rest of this type is partial.
+         */
+        support: { supportKind: string; cellWidthDegrees?: number };
       })
     | undefined;
   isLoading: boolean;
@@ -624,8 +631,10 @@ describe("SoilDetails soil-moisture field", () => {
       newestAvailableDay: null,
       cellCount: 12,
       maxObservationAgeDays: 30,
-      latticeDegrees: null,
+      latticeDegrees: 0.25,
       bands: [{ bandIndex: 0, color: "#8c510a", label: "< 0.05" }],
+      zoomTier: 13,
+      support: { supportKind: "tessellated_cell", cellWidthDegrees: 0.25 },
       ...overrides,
     };
   }
@@ -662,20 +671,54 @@ describe("SoilDetails soil-moisture field", () => {
     expect(input.measure).toBe("moisture");
   });
 
-  it("labels a zoomed-out view as a smoothed average over a coarser lattice", () => {
+  /**
+   * The caption names the SERVED rung and the SERVED cell size, both read off the response.
+   * Wave 1 printed `latticeDegrees`, which reported the LADDER's grid -- 0.01 at z9, 0.2 at z5 --
+   * and so described a footprint FINER than the quarter-degree measurement it was drawn from,
+   * beside the words "smoothed contours" for geometry that is a tessellation of cells.
+   */
+  it("names the rung and the cell size when a five-degree rung really did average", () => {
     renderWithMoistureOn(
-      moistureCollection({ granularity: "coarse-average", latticeDegrees: 1, cellCount: 1568 }),
+      moistureCollection({
+        granularity: "coarse-average",
+        zoomTier: 0,
+        latticeDegrees: 5,
+        support: { supportKind: "tessellated_cell", cellWidthDegrees: 5 },
+        cellCount: 1568,
+      }),
+      3
+    );
+
+    expect(screen.getByText(/Zoomed out to the z0 rung/)).toBeTruthy();
+    expect(screen.getByText(/5° cells/)).toBeTruthy();
+    expect(screen.getByText(/not an individual reading/)).toBeTruthy();
+  });
+
+  /**
+   * z5's grid (0.2) is FINER than the quarter-degree measurement, so that rung merged nothing.
+   * Claiming an average there would be a claim about data that never merged, which is why the
+   * caption compares the served cell against the lane's measured grain rather than against the
+   * granularity word.
+   */
+  it("makes no average claim at a rung whose grid is finer than the measurement", () => {
+    renderWithMoistureOn(
+      moistureCollection({
+        granularity: "coarse-average",
+        zoomTier: 5,
+        latticeDegrees: 0.25,
+        support: { supportKind: "tessellated_cell", cellWidthDegrees: 0.25 },
+      }),
       5
     );
 
-    expect(screen.getByText(/smoothed contours over a/)).toBeTruthy();
-    expect(screen.getByText(/not individual/)).toBeTruthy();
+    expect(screen.getByText(/Zoomed out to the z5 rung/)).toBeTruthy();
+    expect(screen.getByText(/Still the measured 0.25° grain/)).toBeTruthy();
   });
 
   it("makes no average claim at the detail tier, where the cells are the measurements", () => {
     renderWithMoistureOn(moistureCollection({ granularity: "detail" }));
 
-    expect(screen.queryByText(/smoothed contours over a/)).toBeNull();
+    expect(screen.queryByText(/Zoomed out to the z/)).toBeNull();
   });
 
   it("names both days when the newest reading predates the day asked for", () => {
@@ -760,8 +803,10 @@ describe("SoilDetails soil-temperature field", () => {
       newestAvailableDay: null,
       cellCount: 9,
       maxObservationAgeDays: 30,
-      latticeDegrees: null,
+      latticeDegrees: 0.25,
       bands: [{ bandIndex: 0, color: "#4575b4", label: "< -5" }],
+      zoomTier: 13,
+      support: { supportKind: "tessellated_cell", cellWidthDegrees: 0.25 },
       ...overrides,
     };
   }

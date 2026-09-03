@@ -157,12 +157,27 @@ def availability_retry_prefix(layer: str, kind: PartitionKind) -> str:
 
 def try_parse_availability_retry_path(path: str) -> date | None:
     """Return the day one availability retry marker owes, or `None` when the key is not one."""
+    return _parse_retry_day(path, suffix=_AVAILABILITY_RETRY_SUFFIX)
+
+
+def try_parse_availability_retry_quarantine_path(path: str) -> date | None:
+    """Return the day one QUARANTINED retry claim named, or `None` when the key is not one.
+
+    The mirror of `try_parse_availability_retry_path`, and the reason a quarantine sweep costs no
+    extra request: both suffixes live under one prefix, so the walk the retry pass already pays for
+    enumerates the parked claims too -- they were simply unnamed until something asked for them.
+    """
+    return _parse_retry_day(path, suffix=_AVAILABILITY_RETRY_QUARANTINE_SUFFIX)
+
+
+def _parse_retry_day(path: str, *, suffix: str) -> date | None:
+    """Read the ISO day out of one retry-claim key with the given suffix, refusing any other shape."""
     marker, separator, tail = path.partition(f"/{_AVAILABILITY_RETRY_SEGMENT}")
     if not separator or not marker or not tail.startswith(_AVAILABILITY_RETRY_DAY_PREFIX):
         return None
-    if not tail.endswith(_AVAILABILITY_RETRY_SUFFIX):
+    if not tail.endswith(suffix):
         return None
-    rendered = tail[len(_AVAILABILITY_RETRY_DAY_PREFIX) : -len(_AVAILABILITY_RETRY_SUFFIX)]
+    rendered = tail[len(_AVAILABILITY_RETRY_DAY_PREFIX) : -len(suffix)]
     try:
         parsed = date_type.fromisoformat(rendered)
     except ValueError:
@@ -275,6 +290,23 @@ class CompletionWriteReceipt:
     row_count: int
     byte_count: int
     sha256: str
+    #: Carried out of the payload so a caller reading this ledger can tell a rung that HONESTLY holds
+    #: nothing from a receipt whose counts are merely zero. See `foundation/parquet/completion.py`.
+    derived_empty: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class AvailabilityRetryClaims:
+    """One lane's pending availability claims, split by whether a retry can still act on them.
+
+    QUARANTINED CLAIMS ARE CARRIED BESIDE THE OWED ONES because nothing else ever looks at them.
+    `quarantine_availability_retry` parks an unparseable claim so it stops starving the eight retries
+    a lane gets per tick -- correct, and it leaves a terminal day outside the index with no sweep and
+    no counter. A count in the retry pass is what keeps that residue visible.
+    """
+
+    owed: tuple[date, ...]
+    quarantined: tuple[date, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -568,7 +600,18 @@ class ObjectStore:
         just uploaded, and a listing taken here would only re-ask the store a question the export
         already answered -- while adding a second failure mode to the one operation that must stay
         cheap enough to run after every single lane-day.
+
+        THE ONE THING IT DOES REFUSE is a zero-part receipt at the BASE rung. `derived_empty` means
+        "this rung generalised the day's rows away", which no base rung can ever say -- the base rung
+        IS the rows. A base day holding nothing is a governed absence, recorded by `absent.json`, and
+        admitting a second vocabulary for it here would put two markers on one state.
         """
+        if completion.derived_empty and zoom == BASE_ZOOM_TIER:
+            raise ValueError(
+                f"refusing a derived-empty completion marker for {layer!r} {kind} z{zoom} {day}: the base rung "
+                "holds the rows a coarse rung generalises, so an empty base day is a governed absence, not a "
+                "rung that dropped every row"
+            )
         payload = completion.to_json_bytes()
         relative_path = completion_marker_path(layer, kind, zoom, day)
         key = self.key_for(relative_path)
@@ -584,6 +627,7 @@ class ObjectStore:
                 row_count=completion.row_count,
                 byte_count=len(payload),
                 sha256=sha256_digest(payload),
+                derived_empty=completion.derived_empty,
             )
         )
 
@@ -625,16 +669,31 @@ class ObjectStore:
             raise ValueError(f"availability retry marker for {layer!r} {kind} {day.isoformat()} exceeds its ceiling")
         return payload
 
+    def list_availability_retry_claims(self, layer: str, kind: PartitionKind) -> AvailabilityRetryClaims:
+        """Return one lane's owed AND quarantined availability claims from a SINGLE prefix walk.
+
+        Both suffixes live under `availability/pending/`, so the parked claims are already in the
+        pages this walk fetches. Separating them here rather than in a second listing is what makes
+        the quarantine sweep free: it reads a walk the retry pass pays for either way.
+        """
+        owed: list[date] = []
+        quarantined: list[date] = []
+        for listed in self._backend.list_objects(self.key_for(availability_retry_prefix(layer, kind))):
+            relative_path = self.relative_key(listed.key)
+            day = try_parse_availability_retry_path(relative_path)
+            if day is not None:
+                owed.append(day)
+            else:
+                parked = try_parse_availability_retry_quarantine_path(relative_path)
+                if parked is not None:
+                    quarantined.append(parked)
+            if len(owed) + len(quarantined) > MAX_LISTED_KEYS:
+                raise ValueError(f"listing {layer!r} {kind} availability retries exceeded the key budget")
+        return AvailabilityRetryClaims(owed=tuple(sorted(owed)), quarantined=tuple(sorted(quarantined)))
+
     def list_availability_retry_days(self, layer: str, kind: PartitionKind) -> tuple[date, ...]:
         """Return every day of one lane whose availability step is owed, oldest first."""
-        days: list[date] = []
-        for listed in self._backend.list_objects(self.key_for(availability_retry_prefix(layer, kind))):
-            day = try_parse_availability_retry_path(self.relative_key(listed.key))
-            if day is not None:
-                days.append(day)
-            if len(days) > MAX_LISTED_KEYS:
-                raise ValueError(f"listing {layer!r} {kind} availability retries exceeded the key budget")
-        return tuple(sorted(days))
+        return self.list_availability_retry_claims(layer, kind).owed
 
     def clear_availability_retry(self, layer: str, kind: PartitionKind, day: date) -> None:
         """Retract one lane-day's availability retry claim once the generation covers it."""

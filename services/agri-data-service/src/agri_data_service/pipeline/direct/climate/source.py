@@ -31,9 +31,10 @@ if TYPE_CHECKING:
     from agri_data_service.pipeline.direct.climate.products import ClimateFieldProduct
     from agri_data_service.pipeline.direct.climate.support import NasaPowerSupport, NasaPowerSupportCell
 
-#: One cell-day carrying all eight parameters measured 1,189 bytes on 2026-08-20 at 46N/119W
-#: (`.omc/research/nasa-power-point-response-2026-09-02.json`). The cap is two hundred times that:
-#: a legitimate response never trips it and a runaway body is refused unread.
+#: One cell-day carrying eight parameters measured 1,189 bytes on 2026-08-20 at 46N/119W
+#: (`.omc/research/nasa-power-point-response-2026-09-02.json`); the three soil-wetness depths add one
+#: short series each to that same body. The cap is two hundred times the measurement: a legitimate
+#: response never trips it and a runaway body is refused unread.
 NASA_POWER_POINT_MAX_BYTES: Final = 262_144
 NASA_POWER_POINT_TIMEOUT_SECONDS: Final = 30.0
 NASA_POWER_POINT_BOUNDS: Final = UpstreamBounds(
@@ -312,17 +313,24 @@ def build_climate_day(
     return ClimateDaySource(product=product, day=day, receipt=receipt, values=tuple(values))
 
 
-def parse_climate_point_body(
+def parse_climate_point_body(  # noqa: PLR0913 - the cell, day, body, url and clock are distinct facts
     cell: NasaPowerSupportCell,
     *,
     day: date,
     body: bytes,
     request_url: str,
     retrieved_at: datetime,
+    required_parameters: Sequence[str] = CLIMATE_SOURCE_PARAMETERS,
 ) -> ClimateCellDayResponse:
     """Narrow one untrusted point body to this cell's day, refusing a body that answers another point.
 
     Bound to a real captured response: `.omc/research/nasa-power-point-response-2026-09-02.json`.
+
+    `required_parameters` exists for ONE caller and it is a test: that capture was taken with an
+    eight-parameter request, months before the three soil-wetness depths joined the product table,
+    so parsing it against today's eleven would refuse the only real response in the tree. Production
+    never passes it -- `_fetch_cell_day` takes the default, and a live response that omits a
+    requested parameter must still refuse.
     """
     decoded = _decoded(body, cell=cell, day=day)
     _require_echoed_point(decoded, cell=cell, day=day)
@@ -334,7 +342,7 @@ def parse_climate_point_body(
         ) from error
     stamp = day.strftime("%Y%m%d")
     values: dict[str, object] = {}
-    for parameter in CLIMATE_SOURCE_PARAMETERS:
+    for parameter in required_parameters:
         series = parameters.get(parameter)
         if series is None:
             raise ClimateSourceUnsettledError(

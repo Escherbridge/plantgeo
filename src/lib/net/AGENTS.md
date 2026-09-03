@@ -166,15 +166,16 @@ carries its own abort listener for its entire lifetime, both phases:
   `src/stores/useMetricAtDate.ts`'s retained fire-perimeter transport) build their link array
   from this one function. The live map layers use their dedicated procedures rather than that
   retained hook, but both paths share the same budget structurally.
-- **Raw `fetch`** (`/api/fires`, the offline-sync replay, the tile-prefetch fallback): each of
+- **Raw `fetch`** (the offline-sync replay, the tile-prefetch fallback): each of
   these gets its own `createBudgetedFetch("<lane>")` (or a `runBudgeted` wrapper around the
-  existing call), a drop-in replacement with the exact same call shape. (`/api/fires` has had no
-  map caller since the 2026-09-01 Parquet cutover; the lane survives only until the route is
-  deleted.)
+  existing call), a drop-in replacement with the exact same call shape. The third raw-fetch call
+  site this list used to name, `/api/fires`, was deleted on 2026-09-02 with the rest of the
+  legacy fire lane; the map's fire read is a tRPC procedure and is covered by the `trpc` lane.
 
-Either way, the caller's own `AbortSignal` (react-query's per-query controller for tRPC;
-`useFireData`'s own `AbortController` for fires) is what the budgeted fetch uses for BOTH queue
-cancellation and, once dispatched, the real network call. React Query already aborts a
+Either way, the caller's own `AbortSignal` — react-query's per-query controller, which reaches
+the transport because `createTRPCReact` is constructed with `abortOnUnmount: true` — is what the
+budgeted fetch uses for BOTH queue cancellation and, once dispatched, the real network call.
+React Query already aborts a
 superseded query's in-flight fetch when its inputs change (a bbox pan, a settled scrub landing
 on a new day) -- so a query that goes stale while still queued in this budget is dropped for
 free, with no code needed beyond the `httpBatchLink` wiring above.
@@ -218,9 +219,11 @@ whoever wires or extends it next:
    case; wire via `createBudgetedFetch("offline-sync")` or a `runBudgeted` wrapper per iteration.
 3. **`tile-cache.ts`'s no-SW `prefetchTiles` fallback** (`:80-104`, fetch at `:90`) -- same
    treatment, lane `"tile-prefetch"`.
-4. **`useFireData.ts`'s raw fetch** (`:66-69`) -- `createBudgetedFetch("fires")`. (`/api/fires` has
-   had no map caller since the 2026-09-01 Parquet cutover; the lane survives only until the route
-   is deleted.)
+4. ~~**`useFireData.ts`'s raw fetch** -- `createBudgetedFetch("fires")`.~~ Closed 2026-09-02 by
+   deletion, not by wiring: the hook and `/api/fires` are gone and the map's fire read is
+   `wildfire.getFireDetections`, which item 5 below already covers. No `"fires"` lane exists or
+   should be reintroduced -- lanes here are plain strings, so nothing in `request-budget.ts`
+   needed removing.
 5. **The ~16 tRPC-routed layer queries** -- one edit, `trpcLinks()` in `src/lib/trpc/client.ts`.
 6. **`useDebounce` / `SCRUB_SETTLE_MS` / `PREFETCH_RADIUS_DAYS` and the SSE/WS reconnect
    backoff** -- explicitly NOT subsumed; see "Non-goals" above. Listed here only because the

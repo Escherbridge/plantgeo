@@ -11,6 +11,7 @@ import {
 } from "@/lib/map/fire-cell-caption";
 import type { FireDetectionCollection } from "@/lib/environmental/parquet-fire-presentation";
 import type { ExpressionSpecification } from "@/types/map";
+import type { FilterSpecification } from "@maplibre/maplibre-gl-style-spec";
 
 const EMPTY_FIRE_DATA: FireDetectionCollection = {
   type: "FeatureCollection",
@@ -39,6 +40,31 @@ export const FIRE_DETECTION_FRP_COLOR_STOPS: readonly FireColorStop[] = [
   { value: 500, color: "#dc2626", label: "500 MW" },
   { value: 2000, color: "#991b1b", label: "2,000 MW" },
 ];
+
+/**
+ * The detection counts the CELL FILL is keyed to at coarse and middle zoom, where a square has
+ * no size channel to carry them in.
+ *
+ * The same five breaks the dot radius uses below, and the radius ramp is built from these stops
+ * rather than restating them: the square a reader sees at z5 and the dot that replaces it at z13
+ * are the same cell, and two hand-kept lists are how they would come to disagree about what
+ * "many detections" means.
+ *
+ * Count rather than radiative power, deliberately. The runbook's coarse-band rule is that an event
+ * aggregate carries "count/intensity/provenance", and the count is the quantity the cell IS: a
+ * detection density over a declared square. FRP keeps the detail-band dot, where the second
+ * channel exists to show it.
+ */
+export const FIRE_DETECTION_COUNT_COLOR_STOPS: readonly FireColorStop[] = [
+  { value: 1, color: "#fde68a", label: "1 detection" },
+  { value: 5, color: "#fbbf24", label: "5" },
+  { value: 25, color: "#f97316", label: "25" },
+  { value: 100, color: "#dc2626", label: "100" },
+  { value: 500, color: "#7f1d1d", label: "500+" },
+];
+
+/** The dot radius at each break above, in the same order. */
+const FIRE_DETECTION_COUNT_RADII = [4, 7, 11, 16, 22] as const;
 
 /**
  * A cell whose detections carried no FRP reading at all. Deliberately off the ramp rather
@@ -91,6 +117,18 @@ const FIRE_RING_COLOR = [
 ] as unknown as ExpressionSpecification;
 
 /**
+ * The cell fill at coarse and middle zoom: how many detections the declared square aggregates.
+ *
+ * Derived from the exported stops for the same reason the FRP ramp above is -- the legend reads
+ * the very array this paints from -- and asserted for the same reason: spreading a mapped array
+ * widens MapLibre's fixed-length expression tuple.
+ */
+const FIRE_CELL_FILL_COLOR = [
+  "interpolate", ["linear"], ["coalesce", ["get", "detectionCount"], 1],
+  ...FIRE_DETECTION_COUNT_COLOR_STOPS.flatMap((stop) => [stop.value, stop.color]),
+] as unknown as ExpressionSpecification;
+
+/**
  * Dot size is how many detections the cell aggregates. Written once and reused at each zoom
  * anchor below rather than restated three times, which is how the containment/acreage pair
  * this replaces came to carry six copies of two ramps.
@@ -98,11 +136,10 @@ const FIRE_RING_COLOR = [
 const FIRE_DETECTION_COUNT_RADIUS = [
   "interpolate", ["linear"],
   ["coalesce", ["get", "detectionCount"], 1],
-  1, 4,
-  5, 7,
-  25, 11,
-  100, 16,
-  500, 22,
+  ...FIRE_DETECTION_COUNT_COLOR_STOPS.flatMap((stop, index) => [
+    stop.value,
+    FIRE_DETECTION_COUNT_RADII[index],
+  ]),
 ];
 
 /** The same detection-count ramp, scaled down as the map zooms out. */
@@ -116,6 +153,17 @@ const FIRE_CIRCLE_RADIUS = [
 const FIRE_SOURCE = "published-fire-source";
 const FIRE_CIRCLES = "published-fire-circles";
 const FIRE_OUTLINES = "published-fire-outlines";
+/** The declared cell squares, drawn at coarse and middle zoom. See `presentParquetFireDetections`. */
+const FIRE_CELLS_FILL = "published-fire-cells-fill";
+
+/**
+ * One geometry per band, told apart by the geometry the presenter chose rather than by a second
+ * source. `presentParquetFireDetections` emits a Polygon for a coarse or middle rung and a Point
+ * for a detail one, so these two filters are what deliver the spec's first acceptance gate --
+ * one physical rung renders at a time -- without this component knowing the zoom at all.
+ */
+const POLYGON_ONLY: FilterSpecification = ["==", ["geometry-type"], "Polygon"];
+const POINT_ONLY: FilterSpecification = ["==", ["geometry-type"], "Point"];
 
 function escapeHtml(val: unknown): string {
   return String(val ?? "")
@@ -167,12 +215,36 @@ export function FireLayer({
     if (!m.getSource(FIRE_SOURCE)) {
       m.addSource(FIRE_SOURCE, { type: "geojson", data: fireData });
     }
+    // The declared squares go on FIRST so the detail-band dots, when both somehow coexist,
+    // draw over them rather than under. Adjacent squares share bit-identical edges
+    // (`supportCellPolygon`), so no map background shows through the seams -- which is why
+    // there is no separate line layer here: a stroked boundary is what would reintroduce the
+    // visible seams the 2026-09-01 assessment found on the soil blocks. `fill-outline-color`
+    // draws its hairline ON the shared boundary instead, and carries the confidence ring the
+    // dots show as a stroke.
+    if (!m.getLayer(FIRE_CELLS_FILL)) {
+      m.addLayer(
+        {
+          id: FIRE_CELLS_FILL,
+          type: "fill",
+          source: FIRE_SOURCE,
+          filter: POLYGON_ONLY,
+          paint: {
+            "fill-color": FIRE_CELL_FILL_COLOR,
+            "fill-outline-color": FIRE_RING_COLOR,
+            "fill-opacity": drawnOpacity,
+          },
+        },
+        beforeId,
+      );
+    }
     if (!m.getLayer(FIRE_CIRCLES)) {
       m.addLayer(
         {
           id: FIRE_CIRCLES,
           type: "circle",
           source: FIRE_SOURCE,
+          filter: POINT_ONLY,
           paint: {
             "circle-color": FIRE_CIRCLE_COLOR,
             "circle-radius": FIRE_CIRCLE_RADIUS,
@@ -190,6 +262,7 @@ export function FireLayer({
           id: FIRE_OUTLINES,
           type: "circle",
           source: FIRE_SOURCE,
+          filter: POINT_ONLY,
           paint: {
             "circle-radius": FIRE_CIRCLE_RADIUS,
             "circle-color": "transparent",
@@ -211,7 +284,7 @@ export function FireLayer({
   const removeAllLayers = useCallback((m: MapLibreMap) => {
     safeRemoveLayerAndSource(
       m,
-      [FIRE_CIRCLES, FIRE_OUTLINES],
+      [FIRE_CELLS_FILL, FIRE_CIRCLES, FIRE_OUTLINES],
       FIRE_SOURCE,
     );
   }, []);
@@ -278,6 +351,9 @@ export function FireLayer({
       return;
     }
 
+    if (map.getLayer(FIRE_CELLS_FILL)) {
+      map.setPaintProperty(FIRE_CELLS_FILL, "fill-opacity", drawnOpacity);
+    }
     if (map.getLayer(FIRE_CIRCLES)) {
       map.setPaintProperty(FIRE_CIRCLES, "circle-opacity", drawnOpacity);
     }
@@ -332,8 +408,14 @@ export function FireLayer({
       });
     }
 
+    // Both renderings of the one cell, because a reader clicks the shape that is there: the
+    // square at coarse and middle zoom, the dot at detail zoom. One handler, because the caption
+    // is the same cell's either way -- including the "not a fire perimeter" line, which the
+    // square needs most and the dot must not contradict.
+    map.on("click", FIRE_CELLS_FILL, handleFireClick);
     map.on("click", FIRE_CIRCLES, handleFireClick);
     return () => {
+      map.off("click", FIRE_CELLS_FILL, handleFireClick);
       map.off("click", FIRE_CIRCLES, handleFireClick);
     };
   }, [map, visible]);

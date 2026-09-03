@@ -15,6 +15,9 @@ not finished no matter how many parts it holds.
 THE MARKER IS A RECEIPT, NOT A LOCK. It says what the export that wrote it uploaded -- how many
 parts, how many rows, when it finished, under which run. Nothing consults it to decide whether a
 write may proceed; the census consults it to decide whether a day may be BELIEVED.
+
+ONE RECEIPT CLAIMS NOTHING WAS WRITTEN, AND IT IS NOT A GOVERNED ABSENCE. See `AGENTS.md` in this
+directory, "The zero-part receipt: a rung that generalised to nothing".
 """
 
 from __future__ import annotations
@@ -27,6 +30,12 @@ from typing import Final
 COMPLETION_SCHEMA_VERSION: Final = 1
 
 _REQUIRED_FIELDS: Final = ("part_count", "row_count", "completed_at", "run_id")
+
+#: The one optional field, and it is SERIALIZED ONLY WHEN TRUE. Every marker written before this
+#: field existed must still round-trip byte-for-byte -- `availability_index._verify_completion_object`
+#: re-serializes a stored marker and refuses any difference -- so a `derived_empty: false` key on
+#: every ordinary marker would have failed verification for every day already in the bucket.
+DERIVED_EMPTY_FIELD: Final = "derived_empty"
 
 
 class PartitionCompletionError(ValueError):
@@ -41,14 +50,25 @@ class PartitionCompletion:
     row_count: int
     completed_at: datetime
     run_id: str
+    #: True ONLY for a derived rung whose generalisation dropped every base row. The day is published
+    #: and holds rows at its base rung; THIS rung of it is honestly empty. `derivation._retract_tier`
+    #: is the only writer, and `objectstore.write_completion_marker` refuses one at the base rung.
+    derived_empty: bool = False
 
     def __post_init__(self) -> None:
-        # A zero-part completion would assert that a day finished while holding no rows, which is a
-        # governed absence's claim and is recorded by `absent.json` instead. Refusing it here keeps
-        # the two markers from ever making the same statement in two different vocabularies.
-        if self.part_count <= 0:
+        # A zero-part completion asserts that a rung finished while holding no rows, which is a
+        # governed absence's claim in every other vocabulary -- so it is admitted ONLY when the
+        # receipt says out loud which claim it is making. `derived_empty` says "the source had rows
+        # and this rung kept none of them"; `absent.json` says "the source had nothing".
+        if self.derived_empty:
+            if self.part_count != 0 or self.row_count != 0:
+                raise PartitionCompletionError(
+                    f"a derived-empty completion marker holds nothing by definition, got "
+                    f"{self.part_count} part(s) and {self.row_count} row(s)"
+                )
+        elif self.part_count <= 0:
             raise PartitionCompletionError(f"a completed day must hold at least one part file, got {self.part_count}")
-        if self.row_count <= 0:
+        elif self.row_count <= 0:
             raise PartitionCompletionError(f"a completed day must hold at least one row, got {self.row_count}")
         if not self.run_id.strip():
             raise PartitionCompletionError("a completion marker requires a non-blank run_id")
@@ -57,13 +77,15 @@ class PartitionCompletion:
 
     def to_json_bytes(self) -> bytes:
         """Serialize the receipt as canonical UTF-8 JSON with sorted keys and a UTC timestamp."""
-        payload = {
+        payload: dict[str, object] = {
             "schema_version": COMPLETION_SCHEMA_VERSION,
             "part_count": self.part_count,
             "row_count": self.row_count,
             "completed_at": self.completed_at.astimezone(UTC).isoformat(),
             "run_id": self.run_id,
         }
+        if self.derived_empty:
+            payload[DERIVED_EMPTY_FIELD] = True
         return json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
 
     @classmethod
@@ -97,4 +119,22 @@ class PartitionCompletion:
             row_count=row_count,
             completed_at=completed_at,
             run_id=str(decoded["run_id"]),
+            derived_empty=_decode_derived_empty(decoded),
         )
+
+
+def _decode_derived_empty(decoded: dict[str, object]) -> bool:
+    """Read the optional derived-empty flag, refusing any spelling `to_json_bytes` would not write.
+
+    An explicit `false` is REFUSED rather than read as absent: this field is omitted when false, so a
+    marker carrying it could not be re-serialized to the bytes it was read from -- and the
+    availability contract verifies exactly that round trip before it will bind a marker to a row.
+    """
+    if DERIVED_EMPTY_FIELD not in decoded:
+        return False
+    flag = decoded[DERIVED_EMPTY_FIELD]
+    if flag is not True:
+        raise PartitionCompletionError(
+            f"completion marker {DERIVED_EMPTY_FIELD} is written only when true, got {flag!r}"
+        )
+    return True

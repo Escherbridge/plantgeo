@@ -11,14 +11,35 @@ import {
   formatTimestampWithRelative,
   toIsoTimestamp,
 } from "@/lib/map/time-format";
+import {
+  formatSupportCellSize,
+  WATER_CELL_AGGREGATE_NOTE,
+  WATER_CELL_CAPTION_TITLE,
+} from "@/lib/map/water-cell-caption";
 
 /** Style layer ids the shared hover manager queries via queryRenderedFeatures. */
 export const HOVERABLE_LAYER_IDS: string[] = [
   "published-fire-circles",
+  // The same cells at coarse and middle zoom, where they draw as their declared squares rather
+  // than as dots. A circle layer cannot hit-test a Polygon -- the same reason
+  // "interventions-points" and "soil-survey-summary" are listed below -- so without this id the
+  // detection cells were on the map and hovered as empty ground at every zoom under 13.
+  "published-fire-cells-fill",
   "water-gauges-circle",
+  // Coarse streamflow cells, in both their shapes. Neither was hoverable before 2026-09-02:
+  // the cell had a click popup and no tooltip, so the one feature on the map that most needs
+  // saying "this is a mean over several gauges" said it only if you clicked it.
+  "water-gauge-cells-fill",
+  "water-gauge-cells-circle",
   "groundwater-wells-circle",
   "sensors",
   "fire-perimeters",
+  // MTBS burn scars and USDM drought areas: the two native-polygon products whose identity
+  // reached no tooltip at all before 2026-09-02. They are the shapes an event aggregate must be
+  // distinguishable FROM, and a reader who cannot hover a real perimeter to see whose it is has
+  // no way to check that the fire cell beside it is a different kind of thing.
+  "burn-severity",
+  "drought-fill",
   "evacuation-zones",
   "interventions",
   "interventions-points",
@@ -101,6 +122,37 @@ function formatFireDetection(props: Properties): HoverContent | null {
   );
 }
 
+/**
+ * One anonymous coarse-rung streamflow cell -- a MEAN over however many gauges the envelope
+ * counted, drawn over the square the envelope declared.
+ *
+ * Deliberately not `formatWaterGauge`. That formatter titles itself from `siteName` and prints a
+ * condition, a trend and a percentile, none of which an aggregate has; borrowing it would caption
+ * a summary as an observation, which is the confusion the whole render contract exists to end.
+ */
+function formatWaterAggregateCell(props: Properties): HoverContent | null {
+  const flow = formatFixed(props.flowCfs, 1, " cfs");
+  const gaugeCount = toFiniteNumber(props.gaugeCount);
+  const cellWidth = toFiniteNumber(props.cellWidthDegrees);
+  const cellHeight = toFiniteNumber(props.cellHeightDegrees);
+  const measured = formatTimestampWithRelative(toIsoTimestamp(props.observedAt));
+
+  const measurements = [
+    flow ? `Mean discharge: ${flow}` : null,
+    gaugeCount === null ? null : `Gauges: ${gaugeCount.toLocaleString()}`,
+    measured ? `Newest reading: ${measured}` : null,
+    cellWidth === null || cellHeight === null
+      ? null
+      : `Cell: ${formatSupportCellSize(cellWidth, cellHeight)}`,
+  ];
+  // The note is appended only once something real survived, never listed beside the others:
+  // it is unconditional prose, so including it in the array would make `buildContent` treat a
+  // property bag carrying nothing at all as a one-line tooltip -- the shell of empty labels
+  // this module refuses everywhere else.
+  if (measurements.every((line) => line === null)) return null;
+  return buildContent(WATER_CELL_CAPTION_TITLE, [...measurements, WATER_CELL_AGGREGATE_NOTE]);
+}
+
 function formatWaterGauge(props: Properties): HoverContent | null {
   const title = stringField(props.siteName) ?? "Water gauge";
   const flow = formatFixed(props.flowCfs, 1, " cfs");
@@ -164,6 +216,49 @@ function formatFirePerimeter(props: Properties): HoverContent | null {
     state ? `State: ${state}` : null,
     discovered ? `Discovered: ${discovered}` : null,
     perimeterUpdated ? `Perimeter updated: ${perimeterUpdated}` : null,
+  ]);
+}
+
+/**
+ * One MTBS burned-area boundary. Field names are the MVT attributes
+ * `geo.burn_severity_tiles()` emits (snake_case: `fire_name`, `fire_year`, `severity_class`),
+ * not the camelCase keys the `geo.features` JSONB holds them under.
+ *
+ * `severity_class` is read but is null on every published row -- MTBS distributes burn severity
+ * as a thematic raster and publishes no polygon-level class, which is why `burnSeverityLayer`
+ * paints on `acres` instead. It is read anyway rather than omitted, because the day the source
+ * starts publishing it, the tooltip should show it; `stringField` means an absent one produces
+ * no line rather than an empty label.
+ */
+function formatBurnSeverity(props: Properties): HoverContent | null {
+  const fireName = stringField(props.fire_name);
+  const fireYear = toFiniteNumber(props.fire_year);
+  const severityClass = stringField(props.severity_class);
+  const acres = formatLocaleNumber(props.acres, " acres");
+  const fireType = stringField(props.fire_type);
+
+  return buildContent(fireName ?? "Burn scar (MTBS)", [
+    fireYear === null ? null : `Burned: ${fireYear}`,
+    acres ? `Size: ${acres}` : null,
+    severityClass ? `Severity class: ${humanizeSnakeCase(severityClass)}` : null,
+    fireType ? `Fire type: ${humanizeSnakeCase(fireType)}` : null,
+  ]);
+}
+
+/**
+ * One US Drought Monitor area. The properties are `presentParquetDrought`'s own -- `DM` is the
+ * numeric category and `label` its "D2" rendering -- and the caption states the VALID DATE
+ * rather than a relative timestamp: USDM publishes one release a week keyed to a Tuesday, and
+ * "3 days ago" would describe when it was read, not what it is a statement about.
+ */
+function formatDroughtArea(props: Properties): HoverContent | null {
+  const category = toFiniteNumber(props.DM);
+  const label = stringField(props.label);
+  const validDate = formatAbsoluteDate(toIsoTimestamp(props.observedAt));
+
+  return buildContent("Drought (US Drought Monitor)", [
+    category === null ? null : `Category: ${label ?? `D${category}`}`,
+    validDate ? `Valid: ${validDate}` : null,
   ]);
 }
 
@@ -360,10 +455,18 @@ function formatWaterway(props: Properties): HoverContent | null {
 
 const FORMATTERS: Record<string, (props: Properties) => HoverContent | null> = {
   "published-fire-circles": formatFireDetection,
+  // The same formatter for both of the cell's shapes: the square at coarse and middle zoom and
+  // the dot at detail zoom are one cell, and `fireDetectionCellLines` already says which rung it
+  // was aggregated at and that it is not a perimeter.
+  "published-fire-cells-fill": formatFireDetection,
   "water-gauges-circle": formatWaterGauge,
+  "water-gauge-cells-fill": formatWaterAggregateCell,
+  "water-gauge-cells-circle": formatWaterAggregateCell,
   "groundwater-wells-circle": formatGroundwaterWell,
   sensors: formatSensorStation,
   "fire-perimeters": formatFirePerimeter,
+  "burn-severity": formatBurnSeverity,
+  "drought-fill": formatDroughtArea,
   "evacuation-zones": formatEvacuationZone,
   interventions: formatIntervention,
   "interventions-points": formatIntervention,

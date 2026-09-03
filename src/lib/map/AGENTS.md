@@ -70,8 +70,8 @@ quietly corrected one would ship the calling bug to the next renderer.
 is the ground this platform actually observed; an isoband or a raster surface across it asserts
 smooth variation between samples the lane never took. That is the same argument
 `src/lib/environmental/climate-field.ts:114` makes when it withholds `isoline` from precipitation
-and from the soil-wetness pilot, and the reason `VegetationLayer.tsx:283` draws a deliberate
-outline: to keep the cells legible as discrete samples. An envelope for this layer may never
+and from the soil-wetness pilot, and the reason `VegetationLayer` draws a deliberate outline from
+z9 up: to keep the cells legible as discrete samples. An envelope for this layer may never
 declare a `cellWidthDegrees` or `cellHeightDegrees` finer than the declared support.
 
 **Fire's detail band is cells, not raw points.** The spec's `event_point` row reads "raw source
@@ -87,23 +87,91 @@ one about `heatmap`/`cluster`. The invariant is the thing that keeps an aggregat
 captioned as an observation, so the contract narrowed instead of the rule.
 
 **A deviation is recorded, never legalised.** `shippedDeviation` on a contract entry names a form
-the renderer draws today that `permittedForms` still excludes, with an owner and a date.
-Vegetation carries the only one: `presentParquetVegetation` emits a Point at each cell's centre
-and `VegetationLayer` paints it as a zoom-scaled circle — `raw_point` on this vocabulary, owned by
-`multiscale_polygon_surface_20260901 m2`, recorded 2026-09-02. Widening the band to match would
-have made the contract describe the code instead of governing it, and would have erased the one
-artefact that makes the gap findable. The test asserts every deviation names an owner and a date,
-because an anonymous undated one is just a second contract.
+the renderer draws today that `permittedForms` still excludes, with an owner and a date. Widening
+the band to match would make the contract describe the code instead of governing it, and would
+erase the one artefact that makes the gap findable. The test asserts every deviation names an
+owner and a date, because an anonymous undated one is just a second contract.
+
+*Closed 2026-09-02:* vegetation carried one for a few hours. `presentParquetVegetation` emitted a
+Point at each cell's centre and `VegetationLayer` painted it as a zoom-scaled circle — `raw_point`
+on this vocabulary. Slice m3 made both draw the declared 0.25° square, so the entry is gone
+because the gap is, not because the band was widened; `raw_point` is still permitted at no
+vegetation band, and the test asserts the entry has no `shippedDeviation` at all.
+
+*Open:* `soil-survey`. It is a `native_polygon` product that stops drawing its producer's geometry
+at the default PNW camera: `readSummaryFeatures` (`server/services/usda-soil.ts`) answers one
+counted Point per lattice cell once the viewport exceeds the polygon-union budget, and
+`soilSurveySummaryLayer` (`map/layers.ts`) paints those as count-scaled circles — an aggregate
+point summary, recorded as `aggregate_cell`. It is a real answer to a real constraint: a ~98
+sq deg viewport cannot be unioned honestly against a 0.48 sq deg budget, and the union path's
+`LIMIT` would otherwise pick an arbitrary subset of delineations to merge. Closing it is an owner
+decision between declaring a tessellated cell for the summary rung and re-classing the layer, not
+a renderer fix, which is why it is recorded rather than patched. `burn-severity` is the
+counter-example and must stay deviation-free: it draws MTBS's own geometry at every band.
+
+**The contract also builds the square.** `supportCellPolygon(longitude, latitude, support)` is the
+client's ONE derivation of a cell's extent, and it derives it from the envelope's own numbers
+rather than from a private per-layer tier table — the guess `AggregateEnvelopeSupport` exists to
+replace. It lives here because the envelope does: a footprint derived anywhere else would be a
+second place a renderer could disagree about what a cell covers.
+
+**There is exactly ONE function that computes a cell edge, and it is `latticeCellSpan` in
+`zoom-tiers.ts`.** Both edges of every square — on the serving side through
+`tessellatedCellPolygon`, on the client side through `supportCellPolygon` — are
+`offset + index * size` evaluated by that one helper, so cell *i*'s east edge and cell *i+1*'s west
+edge are the SAME expression over the same operands and are equal to the bit. That is the spec's
+"neighbouring cells share bit-identical boundaries" gate. Computing east as `west + size` instead
+disagrees with the neighbour in the last bit for about 30% of cells on the 0.005°, 0.01° and 0.2°
+grids — measured, not feared — and those sub-ULP disagreements are the hairline cracks of map
+background the gate forbids. The contract's own `latticeEdges`, a second implementation of the
+same arithmetic, was deleted on 2026-09-02.
+
+**What made the two agree is `cellOriginDegrees`, closed 2026-09-02.** The serving lattice has a
+PHASE as well as a pitch (`ServedCellLattice.originOffsetDegrees`: zero for the ladder's own grids,
+minus half a cell for the quarter-degree and one-degree base lattices), and the phase was not on
+the wire — so `supportCellPolygon` assumed a lattice anchored at whole multiples of the cell size
+and disagreed with `servedCellLattice` by up to half a cell wherever that assumption was wrong.
+**Vegetation at z9 and z5 was exactly that case**: a 0.25° base grain KEPT across the ladder's 0.01
+and 0.2 grids, on a half-offset phase. `cellSupport` (`parquet-trpc-readers.ts`) now states the
+snapped south-west corner on every per-cell envelope, and `supportCellPolygon` takes it verbatim.
+
+The corner is enough, and the far edge is not `corner + size`: the phase and the index are both
+recoverable from the corner (`round(corner / size)`, and whatever residue that leaves), so the
+client re-evaluates `latticeCellSpan`'s own expression and lands on the same double the neighbour's
+west edge did. An envelope carrying no corner — a payload replayed from before 2026-09-02 — derives
+one from the anchor and reads the phase back the same way, which keeps a producer's deliberate
+off-lattice phase where it put it rather than snapping the cell half a width away.
+
+The collection-level envelopes (`soilFieldSupport`, climate's `collectionSupport`) carry no corner
+and must not: they describe a lane's whole lattice rather than one cell, and their features are
+built server-side by `tessellatedCellPolygon` already.
+
+**`permittedFormsForTier` is for presentation code; `permittedFormsFor` is for a live camera.**
+Presentation never holds a zoom — it holds features whose envelopes declare the rung they were
+read at, and a retained frame outlives the zoom it was fetched for. Resolving that frame's forms
+through the current zoom would ask the contract about a band its cells were never aggregated for.
 
 **Who may import it.** Anything that decides how a layer is *drawn* or *served*: map layer
-components under `src/components/map/layers/`, the tRPC readers in
+components under `src/components/map/layers/`, the presentation modules in
+`src/lib/environmental/` that choose a feature's geometry, the tRPC readers in
 `src/lib/server/services/parquet-trpc-readers.ts` that build serving envelopes, and panels that
-caption an aggregate. The **committed** consumers, as of 2026-09-02, are the reader slice m1
-(`parquet-trpc-readers.ts`, the serving envelope) and the renderer slices m2 and m3 — no other
-module imports this file yet, and that is the expected state for a contract landed one slice ahead
-of the code it governs, not evidence it is dead. It imports only `layer-registry.ts` (for the
-toggle-id type), `zoom-tiers.ts` and `climate-field.ts`, so it stays browser-safe and stays free
-of a cycle back into the registry.
+caption an aggregate. It imports only `layer-registry.ts` (for the toggle-id type),
+`zoom-tiers.ts` and `climate-field.ts`, so it stays browser-safe and stays free of a cycle back
+into the registry. **`zoom-tiers.ts` imports nothing at all** — it is the tree's one true leaf
+here — which is why the contract may take `latticeCellSpan` from it without closing a cycle. If
+`zoom-tiers.ts` ever needs a name from this module, the lattice helpers move to a third leaf
+rather than the import being added.
+
+**`weather` is an `event_point` layer, and that is a live question rather than a settled one.**
+The lane is shaped like the streamflow one — a sampled point at z13, a `GridAggregation` cell on
+every rung above — and since 2026-09-02 it declares an envelope saying exactly that: `raw_point`
+with no footprint at the detail rung, `aggregate_cell` on the ladder's own grid above it. What the
+contract does NOT say is whether the sampling LATTICE behind those points is itself a support the
+way `climate-field`'s one-degree lattice is. Treating it as one would let the layer fill ground
+rather than dot it; treating it as it stands keeps every weather mark a point that claims no ground
+at all. **That ruling is m0's and is still open**; nothing in the reader, the presenter or this
+contract anticipates it, and a slice that decides it changes `LANE_BASE_LATTICES`, the contract
+entry and `WeatherLayer` together or not at all.
 
 **Removed.** `time-format.ts`'s `resolveObservationIso` (deleted 2026-09-02) resolved a
 per-detection FIRMS `acqDate`/`acqTime` pair; the 2026-09-01 Parquet cutover removed the last
@@ -114,3 +182,52 @@ directly.
 edits this module and its test, never its own call site — an unlisted form drawn locally is
 exactly the drift the contract exists to end. The registry is a total `Record<LayerToggleId, …>`,
 so a new toggle fails to compile here rather than reaching the map with no declared form.
+
+## Two facts about `layers.ts` that a zoom measurement must not be taken without
+
+Recorded, not changed — both are statements about the shipped renderer that an acceptance
+measurement will otherwise mis-read.
+
+**Three native-polygon layers carry `minzoom: 4`, so z0–z3.99 draws nothing at all.**
+`firePerimetersLayer` (`layers.ts:175`), `evacuationZonesLayer` (`:255`) and `burnSeverityLayer`
+(`:313`) each set it, as do their outline twins (`:192`, `:272`, `:333`) and `sensorsLayer`
+(`:224`). At the coarse band's lower half the map is not showing a generalized
+perimeter, an empty tile or a failed request: it is showing a layer MapLibre was told not to draw.
+This is owed to the acceptance track's z2 tile-byte measurement, which cannot distinguish "the
+tile is small because the geometry generalizes well" from "the tile is never requested" without
+it. Whether 4 is the right floor is a separate question from knowing that it is the floor.
+
+**`getMetricAtDate` simplifies polygons; the tile path does not.** The two ways the same
+native-polygon product reaches the screen therefore differ in vertex count and in edge position,
+and a comparison of one against the other is measuring the simplification and not the product. Say
+which path a number came from whenever one is quoted.
+
+## The hover tooltip and the caption modules
+
+`hover-fields.ts` is the pure per-layer field selection for the shared hover manager, and
+`fire-cell-caption.ts` and `water-cell-caption.ts` are the one caption a fire cell and a coarse
+streamflow cell get in BOTH the tooltip and their layer's click popup — and, for water, in the
+legend as well.
+
+The direction of the dependency matters: `hover-fields.ts` imports both caption modules and
+neither imports back. `water-cell-caption.ts` was extracted on 2026-09-02 for exactly that reason.
+Its three exports — `WATER_CELL_CAPTION_TITLE`, `WATER_CELL_AGGREGATE_NOTE` and the degree
+formatter `formatSupportCellSize` — had lived in `hover-fields.ts`, so `WaterLayer.tsx` and
+`layer-legends.ts` each imported a *tooltip* module to caption a popup and a legend. A leaf module
+lets all three read the same words from a module that owns nothing else. `fire-cell-caption.ts`
+still keeps its own degree formatter: merging the two is a tidy-up rather than a correctness
+question, and both format identically (`Number(value.toFixed(4))`).
+
+**A polygon needs a polygon hit-test.** `HOVERABLE_LAYER_IDS` lists a layer per *shape*, not per
+toggle: `published-fire-cells-fill` and `water-gauge-cells-fill` are there beside their circle
+counterparts because a circle layer cannot hit-test a Polygon — the same reason
+`interventions-points` and `soil-survey-summary` are listed. Both shapes of one aggregate share a
+formatter, so the square and the dot can never caption the same cell differently.
+
+`burn-severity` and `drought-fill` joined the list on 2026-09-02. They are the native-polygon
+products an event aggregate must be distinguishable *from*, and a reader who cannot hover a real
+burn scar to see whose it is has no way to check that the fire cell beside it is a different kind
+of thing. `formatBurnSeverity` reads the MVT's snake_case attributes (`fire_name`, `fire_year`,
+`severity_class`), not the camelCase keys the `geo.features` JSONB holds; `severity_class` is null
+on every published row because MTBS distributes severity as a raster, so it is read and simply
+produces no line until the source starts publishing it.

@@ -24,6 +24,7 @@ from agri_data_service.parquet_ops.wire import (
     PublishedDay,
     ServedRow,
 )
+from agri_data_service.warehouse.parquet.tiers import BASE_ZOOM_TIER
 
 if TYPE_CHECKING:
     from agri_data_service.foundation.parquet.paths import PartitionKind
@@ -68,7 +69,19 @@ class DayStatusSets:
 
 
 def day_status_sets(keys: tuple[str, ...], *, layer: str, kind: PartitionKind, tier: ZoomTier) -> DayStatusSets:
-    """Classify every day one listing mentions, applying `partition_day_statuses`' own rules to a whole tier."""
+    """Classify every day one listing mentions, applying `partition_day_statuses`' own rules to a whole tier.
+
+    ONE RULE DIVERGES FROM `partition_day_statuses`, AND ONLY BELOW THE BASE RUNG. A completion
+    marker with no parts beside it is `missing` there, because at the base rung it is the residue of
+    a day whose parts were deleted out from under it. At a DERIVED rung it is the opposite: a rung
+    that generalised every base row away is retracted and re-marked `derived_empty`
+    (`pipeline/parquet/derivation.py::_retract_tier`), and the day IS published -- it simply holds
+    nothing at this resolution. Serving that as `day_not_written` would tell a z0 caller the
+    warehouse never wrote a day it published, and would hand the four-state resolver a fifth state.
+
+    It stays a listing, and no marker is opened to decide it: at a derived rung both readings mean
+    "no rows here", so the only thing at stake is which TRUE sentence the reader is told.
+    """
     part_days: set[date] = set()
     absent_days: set[date] = set()
     for key in keys:
@@ -80,9 +93,12 @@ def day_status_sets(keys: tuple[str, ...], *, layer: str, kind: PartitionKind, t
         if marker is not None and (marker.layer, marker.kind, marker.zoom) == (layer, kind, tier):
             absent_days.add(marker.day)
     complete_days = completed_partition_days(keys, layer=layer, kind=kind, zoom=tier)
+    published_empty: frozenset[date] = (
+        frozenset() if tier == BASE_ZOOM_TIER else frozenset(complete_days - part_days - absent_days)
+    )
     conflict = part_days & absent_days
     return DayStatusSets(
-        data=frozenset((part_days & complete_days) - conflict),
+        data=frozenset((part_days & complete_days) - conflict) | published_empty,
         absent=frozenset(absent_days - conflict),
         conflict=frozenset(conflict),
         incomplete=frozenset(part_days - complete_days - conflict),

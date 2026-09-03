@@ -24,6 +24,15 @@ import {
   soilFieldMeasureDefinition,
   type SoilFieldMeasure,
 } from "@/lib/environmental/soil-field";
+import { LANE_BASE_LATTICES } from "@/lib/map/zoom-tiers";
+
+/**
+ * The ground ERA5-Land actually measures, from the one lane table. The caption compares the
+ * SERVED cell against it to say whether a rung really aggregated anything: below z0 the ladder's
+ * grid is finer than this, so those rungs re-floor the same measurement rather than averaging
+ * several, and claiming an average there would be a claim about data that never merged.
+ */
+const SOIL_FIELD_MEASURED_CELL_DEGREES = LANE_BASE_LATTICES["soil-field"].cellSizeDegrees;
 
 interface SoilDetailsProps {
   /** Point to query for soil + intervention suitability */
@@ -222,19 +231,25 @@ function SoilFieldSection({
             </p>
           )}
 
-          {/* Zoomed out past the detail tier: these are contours through a smoothed
-              average over a coarser lattice, not individual 0.25-degree readings. Shown
-              whenever the response says so, never guessed ahead of it. */}
+          {/* Zoomed out past the detail tier. Captioned from the SERVED support -- the rung
+              and the cell size the response declares -- rather than from the old
+              `latticeDegrees`, which reported the LADDER's grid (0.01 at z9, 0.2 at z5) and so
+              described a footprint finer than the quarter-degree measurement it was drawn from.
+              "Smoothed contours" went with it: every rung is a complete tessellation of cells
+              now, not an isoband trace. Shown whenever the response says so, never guessed. */}
           {aggregated && field && (
             <p
               role="status"
               aria-live="polite"
               className="rounded-md border border-sky-500/40 bg-sky-500/10 p-3 text-xs text-[hsl(var(--foreground))]"
             >
-              Zoomed out: showing smoothed contours over a {field.latticeDegrees}° lattice,
-              averaged from {field.cellCount} measured 0.25° cell
-              {field.cellCount === 1 ? "" : "s"}. These are not individual readings — zoom in
-              past z{9} for the measured cells.
+              Zoomed out to the z{field.zoomTier} rung: {field.cellCount}{" "}
+              {field.support.cellWidthDegrees}° cell
+              {field.cellCount === 1 ? "" : "s"} at this zoom.{" "}
+              {(field.support.cellWidthDegrees ?? 0) > SOIL_FIELD_MEASURED_CELL_DEGREES
+                ? "Each is the mean of every measured 0.25° reading inside it, not an individual reading."
+                : "Still the measured 0.25° grain, re-floored onto this rung's grid."}{" "}
+              Zoom in for the detail rung.
             </p>
           )}
 

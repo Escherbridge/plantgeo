@@ -86,8 +86,9 @@ and the `if (evidence.kind === "unavailable")` branch stops being the only one; 
 wired for that yet, so nothing here reads server state it cannot justify.
 
 Do not re-add a number, a bar, a range or a percentage to this panel from any source that cannot
-name the evaluation that produced it. `interventions.proposeIntervention` defaults
-`causalTauEst: input.causalTauEst ?? 0.15` on submission
-(`src/lib/server/trpc/routers/interventions.ts:325`) — that default is the same class of invention
-and is tracked by the conformity track; it is not a source this panel may render.
+name the evaluation that produced it. `interventions.proposeIntervention` used to default
+`causalTauEst: input.causalTauEst ?? 0.15` on submission; that default was removed on 2026-09-02,
+so a proposal now carries an estimate only when a caller supplied one. **Rows already written with
+the invented `0.15` are still in the table and are still suspect** -- the removal stops new ones,
+it does not clean up old ones, and this panel may render neither.
 Pinned by `src/__tests__/components/ModerationPanel.test.tsx`.

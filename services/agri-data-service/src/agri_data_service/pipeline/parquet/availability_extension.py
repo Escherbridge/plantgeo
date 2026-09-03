@@ -84,7 +84,13 @@ AvailabilityExtensionState = Literal[
     "ladder_incomplete",
     "retry_owed",
     "retry_claim_failed",
+    "quarantined",
 ]
+
+# How many parked claims one lane's sweep NAMES in its reason. Every one it finds is counted; the
+# names are sampled, because a lane with a hundred parked days would otherwise render a hundred dates
+# into a detail string that an operator reads as one line.
+QUARANTINED_SAMPLE_SIZE: Final = 5
 
 #: The gap kind for a rung that DERIVED TO NO ROWS and was therefore retracted. Named apart from a
 #: generically broken ladder because it is not a fault: the base rung genuinely holds rows and every
@@ -138,6 +144,10 @@ class AvailabilityExtensionOutcome:
     generation_key: str | None = None
     attempts: int = 0
     retry_marker: str | None = None
+    #: How many lane-days this one outcome speaks for. Always 1 except for the QUARANTINE SWEEP,
+    #: which is a lane-wide statement about a set of parked claims: one outcome per parked day would
+    #: put a hundred sentences into a detail string to carry a number a tally already holds.
+    counted_days: int = 1
 
     @property
     def note(self) -> str:
@@ -150,9 +160,9 @@ class AvailabilityExtensionOutcome:
 class AvailabilityExtensionTally:
     """Every availability verdict one driver saw, counted so a summary can state them as numbers.
 
-    `ladder_incomplete` and `retry_claim_failed` are the two that MUST be visible: both leave a
-    terminal day out of the index for good, and a driver that reported them only inside a per-day
-    detail string would present that loss as a green tick.
+    `ladder_incomplete`, `retry_claim_failed` and `quarantined` are the three that MUST be visible:
+    each leaves a terminal day out of the index for good, and a driver that reported them only inside
+    a per-day detail string would present that loss as a green tick.
     """
 
     extended: int = 0
@@ -161,10 +171,13 @@ class AvailabilityExtensionTally:
     ladder_incomplete: int = 0
     retry_owed: int = 0
     retry_claim_failed: int = 0
+    #: Claims parked by `_quarantine_malformed_claim` and never swept since. Nothing retries them, so
+    #: a lane whose count only grows is a lane writing claims it cannot read back.
+    quarantined: int = 0
 
     def record(self, outcome: AvailabilityExtensionOutcome) -> None:
-        """Fold one outcome into the tally by its own state name."""
-        setattr(self, outcome.state, getattr(self, outcome.state) + 1)
+        """Fold one outcome into the tally by its own state name, and by how many days it speaks for."""
+        setattr(self, outcome.state, getattr(self, outcome.state) + outcome.counted_days)
 
     def add(self, other: AvailabilityExtensionTally) -> None:
         """Fold another tally into this one, field by field."""
@@ -183,6 +196,7 @@ _TALLY_FIELDS: Final[tuple[str, ...]] = (
     "ladder_incomplete",
     "retry_owed",
     "retry_claim_failed",
+    "quarantined",
 )
 
 
@@ -315,12 +329,21 @@ async def retry_pending_availability(  # noqa: PLR0913 - one lane coordinate or 
     max_days: int = DEFAULT_MAX_RETRIES_PER_LANE,
     publication_barrier: AvailabilityPublicationBarrier = postgres_lane_publication_barrier,
 ) -> tuple[AvailabilityExtensionOutcome, ...]:
-    """Retry the AVAILABILITY STEP ALONE for every day one lane owes, never re-exporting the data."""
+    """Retry the AVAILABILITY STEP ALONE for every day one lane owes, never re-exporting the data.
+
+    THE QUARANTINE SWEEP RIDES ON THIS PASS'S OWN LISTING. A parked claim
+    (`day=<day>.quarantined.json`) is deliberately invisible to the retry walk -- that is what stops
+    one unreadable day starving the eight retries a lane gets -- and until now nothing counted them
+    either, so a lane writing claims it could not read back accumulated silent permanent losses. Both
+    suffixes live under `availability/pending/`, so `list_availability_retry_claims` separates them
+    out of the SAME walk: the count costs no extra request, and the cap it obeys is the key budget
+    that walk already had.
+    """
     if availability is None or max_days <= 0:
         return ()
     lane_root = availability_lane_root(lane, kind)
     try:
-        owed = store.list_availability_retry_days(lane, kind)[:max_days]
+        claims = store.list_availability_retry_claims(lane, kind)
     except Exception as error:  # an unreadable retry ledger must never end a tick
         return (
             AvailabilityExtensionOutcome(
@@ -332,7 +355,9 @@ async def retry_pending_availability(  # noqa: PLR0913 - one lane coordinate or 
             ),
         )
     outcomes: list[AvailabilityExtensionOutcome] = []
-    for day in owed:
+    if claims.quarantined:
+        outcomes.append(_quarantine_sweep(lane_root, claims.quarantined))
+    for day in claims.owed[:max_days]:
         outcomes.append(  # noqa: PERF401 - each turn awaits, so no comprehension can build this
             await _retry_one_day(
                 session,
@@ -621,17 +646,29 @@ def _rung_objects(  # noqa: PLR0911 - one named ladder gap per exit; folding the
     parts = ledger.parts_for(kind=kind, zoom=tier, day=day)
     completion = ledger.completion_for(kind=kind, zoom=tier, day=day)
     if not parts and completion is None:
-        # THE EMPTIED RUNG. `derivation._retract_tier` deletes this rung's parts and its completion
-        # claim when every base row falls below the rung's floor, which is correct for the bucket and
-        # fatal for the ladder: the day is base-complete, so no census brings it back, and it can
-        # never form the exact required-rungs set the generation demands. Named so a summary can
-        # count it apart from a genuinely broken export -- see `AGENTS.md`.
+        # THE UNMARKED EMPTIED RUNG, which is now only a LEGACY shape. `derivation._retract_tier`
+        # writes a derived-empty completion marker as it empties a rung, so a run that reaches this
+        # branch either predates that receipt or died between the prune and the mark. Either way the
+        # day cannot form the exact required-rungs set the generation demands, and it is named so a
+        # summary counts it apart from a genuinely broken export -- see `AGENTS.md`. A ladder repair
+        # (`gap_fill`'s `derive_missing_rungs`) re-derives the rung and closes it.
         return _LadderGap(
             reason=(
-                f"z{rung} holds neither parts nor a completion marker: every base row was dropped at this rung, "
-                f"so it was retracted and the required ladder cannot be formed"
+                f"z{rung} holds neither parts nor a completion marker: every base row was dropped at this rung "
+                f"and it was retracted without the derived-empty receipt that would close it"
             ),
             kind=DERIVED_TO_ZERO_ROWS,
+        )
+    if not parts and completion is not None and completion.derived_empty:
+        # THE EMPTIED RUNG, CLOSED. The base rung holds rows and every one of them fell below this
+        # rung's floor, so the rung is published and empty -- a statement the day can make at every
+        # rung without mixing terminal states, which a governed absence at one rung could not.
+        return _RungObjects(
+            rung=rung,
+            row_count=0,
+            data_receipts=(),
+            completion_receipt=EvidenceReceipt(key=completion.relative_path, sha256=completion.sha256),
+            absence_receipt=None,
         )
     if not parts or completion is None:
         return _LadderGap(
@@ -1027,6 +1064,29 @@ def _quarantine_malformed_claim(  # noqa: PLR0913 - one lane-day coordinate per 
     )
 
 
+def _quarantine_sweep(lane_root: str, quarantined: Sequence[date]) -> AvailabilityExtensionOutcome:
+    """State how many parked claims one lane is carrying, naming a bounded sample of the oldest.
+
+    ONE OUTCOME FOR THE WHOLE SET, carrying its own `counted_days`. Every parked day is a terminal
+    day the index does not hold and nothing will retry -- a fact worth a number in the tally, not one
+    sentence per day in a detail string a driver folds into a single line.
+    """
+    named = ", ".join(day.isoformat() for day in quarantined[:QUARANTINED_SAMPLE_SIZE])
+    remainder = len(quarantined) - min(len(quarantined), QUARANTINED_SAMPLE_SIZE)
+    return AvailabilityExtensionOutcome(
+        state="quarantined",
+        lane_root=lane_root,
+        day=None,
+        reason=(
+            f"{len(quarantined)} availability claim(s) are parked as unreadable and nothing retries them, so those "
+            f"terminal days stay outside the index until an admin reads them: {named}"
+            f"{f' and {remainder} more' if remainder else ''}"
+        ),
+        error_kind="retry_claim_quarantined",
+        counted_days=len(quarantined),
+    )
+
+
 def _retry_failure(lane_root: str, day: date, error_kind: str, error: Exception) -> AvailabilityExtensionOutcome:
     """Report an owed day that stays owed, keeping its claim for the next turn."""
     return AvailabilityExtensionOutcome(
@@ -1052,6 +1112,7 @@ __all__ = [
     "DERIVED_TO_ZERO_ROWS",
     "LANE_EXPORT_SOURCE_SCHEMA_VERSION",
     "POSTGRES_DAY_EXPORT_ORIGIN",
+    "QUARANTINED_SAMPLE_SIZE",
     "AvailabilityExtensionOutcome",
     "AvailabilityExtensionState",
     "AvailabilityExtensionTally",

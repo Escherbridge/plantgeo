@@ -179,7 +179,7 @@ def test_the_newest_owed_day_is_taken_first() -> None:
         ("time_budget_seconds", float("inf")),
         ("time_budget_seconds", forward.CLIMATE_MAX_TIME_BUDGET_SECONDS + 1),
         ("contention_timeout_seconds", 0.0),
-        ("product_id", "soil-wetness"),
+        ("product_id", "soil-moisture"),
     ],
 )
 def test_every_operator_knob_is_bounded_before_a_socket_or_a_session_opens(field: str, value: object) -> None:
@@ -436,7 +436,7 @@ async def test_the_climate_writer_drains_its_own_owed_availability_claims(
     """DO NOT DELETE. Nothing else retries a climate lane's claims, so without this they are never read.
 
     `retry_pending_availability` is otherwise reached only from `run_gap_fill`, and activating
-    `climate-nasa-power-direct-forward` DEACTIVATES the eight generic lanes through `conflicts_with`.
+    `climate-nasa-power-direct-forward` DEACTIVATES the eleven generic lanes through `conflicts_with`.
     A climate day whose pointer read failed therefore wrote a claim that no driver in this service
     would ever come back for -- and the base-tier census never revisits a completed day.
     """

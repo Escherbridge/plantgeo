@@ -226,6 +226,11 @@ still allowed there because it reads the published base rung and never invokes t
   so one ordering serves the incremental tick and the backfill with no second job to keep in sync.
 - **Round-robin across lanes, one day per lane per round.** Sequential order would let
   `fire-detections`' ~9,400-day window eat a whole tick before `signal` wrote anything.
+- **Two queues per lane: exports, then ladder repairs.** `missing_days` owes a Postgres export;
+  `ladder_repair_days` owes only a re-derivation of coarse rungs from base parts already published.
+  A lane takes from the second only once the first is empty, so a repair backlog can never delay a
+  day that is absent from the map at every zoom. See "The census walks the whole ladder" below for
+  what the extra listing costs.
 - **A governed-absence marker counts as covered.** `unfilled_partition_days` excludes it; that is
   what stops a genuinely empty day being re-attempted every hour forever. **An incomplete day
   (parts but no completion marker) counts as unfilled** and is re-exported — which is how a killed
@@ -275,17 +280,25 @@ Reading is otherwise S18/S20's concern; this module writes and lists, and delibe
 `drain.py` walks a backlog; `--selection` says WHAT a lane-day owes.
 
 - **`missing`** (default) — days with no base rung at all, exported from Postgres. Its census is
-  `build_gap_census`, which walks `GAP_FILL_ZOOM_TIER` **and nothing else** and says so in its own
-  docstring.
+  `build_gap_census`, over each lane's settled window.
 - **`ladder`** — days whose base rung is already published and correct but which are missing one or
   more coarse rungs. Derived FROM THE BUCKET; it opens no source query at all, which is what makes a
   thousand-day repair affordable (`signal` measured 151 s for ONE cold Postgres day).
 
-**The two censuses answer different questions and neither may borrow the other's answer.** A day
-written before the zoom fusion shipped is base-complete, therefore invisible to the missing census,
-therefore empty at every zoom under 13 **forever, on a green tick**. Measured 2026-08-25: ~1,040
-lane-days across eleven lanes. So `parquet-drain --dry-run` reports the census OF THE SELECTION
-ASKED FOR — a ladder repair audited through the base census reads as "nothing to do".
+**The two censuses report differently and neither may borrow the other's answer.** Both are over the
+whole bucket and both ask `gap_fill.derived_rung_completions`, so they cannot disagree about which
+rungs are finished. `build_ladder_census` orders oldest-first (it is building a history) and reports
+the population it walked — `base_day_count`, `base_absent_days`, `base_conflict_days`, and a run that
+died mid-ladder apart from a day written before the fusion existed. `build_gap_census`'s
+`ladder_repair_days` orders newest-first (a repair is most valuable where a user is looking) and
+carries only what the tick's queue needs. `parquet-drain --dry-run` still reports the census OF THE
+SELECTION ASKED FOR.
+
+**The hourly tick repairs its own ladder now.** Until 2026-09-02 `build_gap_census` walked
+`GAP_FILL_ZOOM_TIER` and nothing else, so a base-complete day with no coarse rungs was invisible to
+it — ~1,040 lane-days across eleven lanes, empty below z13 forever, on a green tick, unless an
+operator happened to run this selection. That is the failure this selection was built to clean up
+and is no longer the only thing that can.
 
 **Every entry point is reachable from a verb, and that is a correctness property.** The ladder walk
 is `parquet-drain --selection ladder`; the pre-zoom sweep is `parquet-retire-legacy-layout`. A
@@ -297,15 +310,17 @@ and threads it through `derive_and_write_day_tiers(connection=...)`; otherwise a
 a session and pays `LOAD spatial` per rung — three per day, ~3,000 across the measured repair. See
 `warehouse/parquet/AGENTS.md` for what that session does to a connection it is handed.
 
-**A ladder day is re-selected forever if ANY rung emptied.** An emptied rung is retracted and carries
-no completion marker, and the census intersects markers across every rung — so a day whose z9 wrote
-and whose z0 emptied looks `written` by part count and is selected again by every future census.
-`DerivationResult.emptied` names the rungs, and the summary's `emptied_ladders` reports the days.
-This is the one place the bucket-as-checkpoint rule does not self-terminate; only lanes with
-nullable coordinates (`water-gauges`, `sensors`) can reach it.
+**An emptied rung is CLOSED, not silent.** `_retract_tier` deletes the rung's parts and writes a
+`derived_empty` completion receipt in their place, so the census — which intersects markers across
+every rung — sees a finished rung and the bucket-as-checkpoint rule terminates. Before that receipt,
+a day whose z9 wrote and whose z0 emptied looked `written` by part count and was re-selected by every
+future census. `DerivationResult.emptied` still names the rungs and `emptied_ladders` still reports
+the days, because "this rung is legitimately empty" cannot be recovered from a listing; only lanes
+with nullable coordinates (`water-gauges`, `sensors`) reach it.
 
-**Nothing raises out of one lane-day.** `_drain_one_day` guards `_run_one_day`, and `_derive_one_day`
-guards the advisory lock itself — `pg_try_advisory_lock` is a real statement, and a session left in
+**Nothing raises out of one lane-day.** `_drain_one_day` guards `_run_one_day`, and
+`gap_fill.repair_one_lane_day` — which `_derive_one_day` is now a two-line adapter over, so the drain
+and the hourly tick repair a rung identically or not at all — guards the advisory lock itself — `pg_try_advisory_lock` is a real statement, and a session left in
 a failed transaction raises THERE, before any derivation. Unguarded, one such day took the whole walk
 down and lost every lane's tally. Each lane-day also rolls back: SQLAlchemy 2.0 autobegins on the
 lock statement, so a walk that never rolled back would hold ONE transaction open for hours, which
@@ -559,7 +574,7 @@ the generic ceiling, because a lane cannot have a ceiling below a day it demonst
 the SOURCE has published, and folding it in would make every lane a forward writer owns declare a
 ceiling below the days it publishes.
 
-### Six typed outcomes, and which of them lose the day
+### Seven typed outcomes, and which of them lose the day
 
 - `extended` - the generation now covers the day at every required rung, pointer advanced last.
 - `skipped_unchanged` - the generation already carries these exact grains and receipts. A replay,
@@ -575,6 +590,9 @@ ceiling below the days it publishes.
 - `retry_claim_failed` - the day is terminal and its retry claim could not be written, so nothing
   will ever bring it back. Counted for the same reason and separately, because it is a store fault
   rather than a data one.
+- `quarantined` - the LANE-WIDE sweep: how many claims are parked as unreadable. The only outcome
+  that names no day and speaks for more than one (`counted_days`), because a claim per parked day
+  would put a hundred sentences into a detail string to carry a number the tally already holds.
 - `retry_owed` - the availability step alone failed: pointer CAS exhausted its bounded attempts,
   the lane publication barrier was contended, the head could not be read, or the evidence objects
   could not be written. The prior generation stays valid, the claim stands, and the DATA DAY IS
@@ -582,9 +600,11 @@ ceiling below the days it publishes.
 
 ### The retry claim is written BEFORE the head is read
 
-`build_gap_census` walks the base tier and never revisits a completed day, so any exit that leaves a
+`build_gap_census` never revisits a day that is complete at every rung, so any exit that leaves a
 terminal day out of BOTH the index and the retry ledger loses it permanently - silently, on a green
-tick. The claim at `<lane-root>/availability/pending/day=<day>.json` is therefore written first,
+tick. (The ladder census re-selects a day missing a RUNG, and a repair rewrites that rung - but it
+re-derives objects, never the index entry, so the claim is still the only thing that carries a day
+back into the generation.) The claim at `<lane-root>/availability/pending/day=<day>.json` is therefore written first,
 from LEDGER FACTS ALONE: the day's physical part, completion and absence receipts, its terminal
 state, its absence reason, its source ceiling, and the exporting process's own `LaneDaySource`. None
 of that needs the pointer, which is exactly the read that has to be survivable.
@@ -608,32 +628,89 @@ lane-day, which is the price of never losing one.
 being published. Hashing a request's own rows and shipping the digest alongside them proved nothing;
 the source evidence document is an object outside the request that every row of the day cites.
 
-### Why an emptied rung strands its day, and what would unstrand it
+### The emptied rung, and the receipt that stopped it stranding its day
 
 A derived rung that generalises to zero rows is RETRACTED by `derivation._retract_tier`: its parts
-and its completion marker are deleted, because a rung that still claimed to be finished would go on
-serving rows the base day no longer contains. Correct for the bucket, and fatal for the ladder - the
-day is base-complete, so no census brings it back, and it can never present the exact required-rungs
-set a generation demands. `_rung_objects` names that case `derived_to_zero_rows` so a summary counts
-it apart from a genuinely broken export.
+and its old completion marker are deleted, because a rung that still claimed to be finished would go
+on serving rows the base day no longer contains. Correct for the bucket — and, until 2026-09-02,
+fatal for the ladder. The day was base-complete, so no census brought it back; it could never present
+the exact required-rungs set a generation demands; and `_rung_objects` counted it
+`derived_to_zero_rows` forever on a green tick.
 
-NEITHER OBVIOUS ENCODING IS REACHABLE FROM THIS DIRECTORY, and the exact constraint chain is worth
-writing down rather than rediscovering:
+Neither obvious encoding was available, and the constraint chain is worth keeping:
 
-1. A governed absence at the emptied rung alone would MIX terminal states inside one day, which
+1. A governed absence at the emptied rung ALONE would mix terminal states inside one day, which
    `availability_index._validate_generation_day` refuses outright ("mixes terminal states across its
-   ladder") - and `AvailabilityIndex.selectable_days` rests on that same rule, so relaxing it would
-   make such a day unselectable at every rung rather than merely unindexed. It is also a false
-   claim: a governed absence says the SOURCE had nothing, and the base rung demonstrably holds rows.
-2. A `published` row with `row_count=0` and a completion receipt is refused twice over.
-   `_validate_terminal_payload` requires a positive `row_count` and non-empty data receipts, and -
-   decisively - `foundation/parquet/completion.py::PartitionCompletion` refuses `part_count <= 0`
-   with its own stated rationale, so there is no zero-part completion marker for such a row to bind.
+   ladder") — and `AvailabilityIndex.selectable_days` rests on that same rule, so relaxing it would
+   make such a day unselectable at every rung rather than merely unindexed. It is also a false claim:
+   a governed absence says the SOURCE had nothing, and the base rung demonstrably holds rows.
+2. A `published` row with `row_count=0` was refused twice over — by the two terminal validators, and
+   decisively by `PartitionCompletion`, which refused `part_count <= 0`, so there was no zero-part
+   completion marker for such a row to bind.
 
-Closing the ladder therefore needs a `foundation` change (permit a zero-part completion marker for a
-DERIVED rung, then relax the two availability validators to accept a published row that binds one).
-Until that lands the day stays unindexed - and counting `ladder_incomplete` as a named summary field
-is precisely what keeps that loss visible while it does.
+**The fix was to make (2) sayable, and only for a derived rung.** `PartitionCompletion` now takes
+`derived_empty`, serialized only when true (`foundation/parquet/AGENTS.md` has the byte-compatibility
+argument); `objectstore.write_completion_marker` refuses one at `BASE_ZOOM_TIER`, where an empty day
+is a governed absence and nothing else; `_retract_tier` writes one after its prune succeeds, so the
+rung is CLOSED rather than silent; `_validate_terminal_payload` and `_validate_terminal_evidence_payload`
+admit exactly one zero-row published shape through `_is_published_empty_rung` (derived rung, no data
+receipts, completion receipt present); and `_verify_completion_object` refuses a row and a marker
+that disagree about whether the rung is empty. The day is `published` at EVERY rung — one terminal
+state, so `_validate_generation_day` is untouched and `selectable_days` includes the day.
+
+`parquet_ops/serving.py::day_status_sets` closes the read side: below the base rung a completion
+marker with no parts is `data` holding zero rows, not `day_not_written`. `DuckDbRowReader.read_rows`
+already returns an empty result for an empty key set, so no reader needed teaching.
+
+`DERIVED_TO_ZERO_ROWS` survives as the LEGACY reading: a rung retracted before this receipt existed,
+or a run that died between the prune and the mark. Those days are repaired, not lost — `gap_fill`'s
+ladder census selects them and a re-derivation writes the receipt.
+
+### The census walks the whole ladder, and what that costs
+
+`build_gap_census` walked `GAP_FILL_ZOOM_TIER` alone, so a base-complete day whose coarse rungs were
+never written read as finished and nothing ever selected it again — 1,040 lane-days invisible below
+z13 on a green tick, found only by a `drain --selection ladder` census nobody ran hourly.
+
+`LaneGapCensus` now carries `ladder_repair_days`: base-complete days that at least one derived rung
+has not marked, **over the whole bucket rather than the settled window**. `lane_window` clamps to
+`writer_ceiling`, so a direct writer's days sit outside it — correct for exports, which this driver
+must not attempt there, and wrong for rungs, which are derived from published base parts and invoke
+no writer at all. It is a SECOND QUEUE, never folded into `missing_days`, because the two owe
+different work — a missing day owes a Postgres export, a ladder gap owes only a re-derivation from base parts
+that are already correct. `run_gap_fill` drains a lane's exports first and its repairs after, one per
+lane per round, under the same wall-clock budget; `repair_one_lane_day` takes the same advisory-lock
+key the export path takes and is the same function the drain's ladder selection calls.
+
+**The cost, stated: `len(DERIVED_ZOOM_TIERS)` extra `list_partition_keys` per lane per census —
+three today — and not one object GET.** Nothing scales with the backlog: the day sets are arithmetic
+over keys already in hand, and a coarse rung holds far fewer parts than the base rung it came from
+(usually one per day), so the three listings together are smaller than the base listing the census
+already pays for. `derived_rung_completions` is the one primitive both censuses ask, and it is
+strictly a listing — `build_lane_census` still never opens a file, which is what
+`layer-lanes.md` §4 requires. A rung counts as finished on its MARKER alone, which is also what makes
+a `derived_empty` rung terminate: it has no parts by construction.
+
+A failure on the rung half sets `ladder_error` and leaves the base census standing — failing the
+export census over a question about coarse rungs would stop a lane from writing days it can write.
+An empty repair set means "every rung is whole", which is the one thing an unreadable listing cannot
+say. **A `stopped` lane still drains its repairs**: `current`, `no_window` and an unread watermark
+are all statements about EXPORTS, and the three `static_lookup` lanes are `current` almost every
+tick, so a queue gated on `stopped` would never once be drained for them. A lane whose export RAISED
+is the exception and drops its repair queue, because something about that lane is wrong and the next
+census re-selects every one of those days anyway.
+
+### Quarantined claims are counted, in the walk the retry pass already pays for
+
+`_quarantine_malformed_claim` parks an unparseable claim at `day=<day>.quarantined.json` so one
+unreadable day cannot starve the eight retries a lane gets per tick. Nothing swept them and nothing
+counted them, so a lane writing claims it could not read back accumulated permanent, silent losses.
+`list_availability_retry_claims` separates both suffixes out of the SINGLE prefix walk
+`retry_pending_availability` already makes — the parked keys were always in those pages — and the
+pass emits one lane-wide `quarantined` outcome carrying `counted_days`, which `to_summary()` reports
+as `availability_quarantined`. The cap is the key budget that walk already had; only the NAMES are
+sampled (`QUARANTINED_SAMPLE_SIZE`), because a hundred dates in a detail string carry a number a
+tally already holds. Nothing is deleted or retried: reading a malformed claim is an admin's call.
 
 LOCK ORDER. `postgres_lane_day_lock` already holds the lane's SHARED publication barrier for the
 whole lane-day, and `publish_availability` takes the EXCLUSIVE one. Same session, so its own shared

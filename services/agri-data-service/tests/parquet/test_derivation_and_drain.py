@@ -6,9 +6,12 @@ them:
   * `test_the_base_marker_is_written_after_every_coarse_rung` -- only the base tier is censused, so
     the base marker is the one signal that can bring a day back. Reverse the order and a run that
     dies in between strands the day base-complete and permanently empty above z13, on a green tick.
-  * `test_a_rung_that_derives_to_nothing_retracts_what_it_held` -- a rung that empties must delete
-    its old parts AND clear its old completion marker, or readers at that zoom keep being served
-    rows the base day no longer contains, from a rung still claiming to be finished.
+  * `test_a_rung_that_derives_to_nothing_retracts_what_it_held_and_closes_the_rung` -- a rung that
+    empties must delete its old parts and replace its old completion marker with a `derived_empty`
+    receipt. Leave the old marker and readers at that zoom keep being served rows the base day no
+    longer contains, from a rung still claiming to be finished; leave NO marker and the rung is
+    indistinguishable from one nobody derived, so the base-complete day is never revisited and
+    counts `ladder_incomplete` forever. The receipt is the only state that is neither lie.
 
 And one that keeps the drain terminating: a day the hourly cron holds is requeued, but only so many
 times. The drain fills oldest-first and the cron newest-first, so the last day of every lane is
@@ -24,6 +27,7 @@ import polars as pl
 import pyarrow as pa  # type: ignore[import-untyped]
 import pytest
 
+from agri_data_service.foundation.parquet.completion import PartitionCompletion
 from agri_data_service.foundation.parquet.paths import (
     completion_marker_path,
     partition_path,
@@ -156,8 +160,8 @@ def test_a_derivation_failure_leaves_the_base_day_unmarked() -> None:
     assert completion_marker_path(STREAM, "observed", BASE_ZOOM_TIER, DAY) not in backend.objects
 
 
-def test_a_rung_that_derives_to_nothing_retracts_what_it_held() -> None:
-    """An emptied rung must delete its parts AND clear its marker, or it serves a stale population."""
+def test_a_rung_that_derives_to_nothing_retracts_what_it_held_and_closes_the_rung() -> None:
+    """An emptied rung must delete its parts AND say so in a receipt, not fall silent or stay stale."""
     store, backend = _store_with_base_day()
     derive_and_write_day_tiers(store, layer=STREAM, kind="observed", day=DAY, run_id=RUN_ID, now=_now)
     assert completion_marker_path(STREAM, "observed", 0, DAY) in backend.objects
@@ -174,10 +178,15 @@ def test_a_rung_that_derives_to_nothing_retracts_what_it_held() -> None:
 
     assert result.tiers == ()
     assert result.notes
+    assert result.emptied == tuple(DERIVED_ZOOM_TIERS)
     for tier in DERIVED_ZOOM_TIERS:
-        assert completion_marker_path(STREAM, "observed", tier, DAY) not in backend.objects, (
-            f"z{tier} still claims to be finished after deriving to nothing"
+        receipt = PartitionCompletion.from_json_bytes(
+            backend.objects[store.key_for(completion_marker_path(STREAM, "observed", tier, DAY))]
         )
+        assert receipt.derived_empty, (
+            f"z{tier} closed with an ordinary receipt, which claims a finished rung that holds rows"
+        )
+        assert (receipt.part_count, receipt.row_count) == (0, 0)
         assert partition_path(STREAM, "observed", tier, DAY) not in backend.objects, (
             f"z{tier} still serves parts the base day no longer holds"
         )

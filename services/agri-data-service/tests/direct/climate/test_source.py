@@ -41,6 +41,27 @@ if TYPE_CHECKING:
 #: gitignored; the header and the provenance are in the sibling `.md` there.
 CAPTURE_PATH: Final = Path(__file__).resolve().parent / "fixtures" / "nasa-power-point-response-2026-09-02.json"
 CAPTURE_SHA256: Final = "09d87119b5c156f756601eae92d673c19550ce476a2197b4b9d4eaeac3fd0d50"
+
+#: The same capture with the three soil-wetness series added, CLEARLY SYNTHETIC and labelled as such
+#: in its own `_fixture_provenance` block. The real capture was taken with an eight-parameter request
+#: months before those depths joined the product table, and POWER returns only what the URL asked
+#: for -- so nothing in the tree carries a real eleven-parameter body, and inventing one wholesale
+#: would have been a worse fixture than extending the one real response by three series.
+SYNTHETIC_PATH: Final = (
+    Path(__file__).resolve().parent / "fixtures" / "nasa-power-point-response-soil-wetness-synthetic.json"
+)
+SYNTHETIC_SHA256: Final = "dfe140f59d94a04404c5626d68401b482b1392248262e786c3e414b52d2c8a5a"
+SYNTHETIC_SURFACE_WETNESS: Final = 0.128
+CAPTURED_PARAMETERS: Final = (
+    "ALLSKY_SFC_SW_DWN",
+    "PRECTOTCORR",
+    "RH2M",
+    "T2M",
+    "T2MDEW",
+    "T2M_MAX",
+    "T2M_MIN",
+    "WS2M",
+)
 CAPTURE_DAY: Final = date(2026, 8, 20)
 CAPTURE_LONGITUDE: Final = -119.0
 CAPTURE_LATITUDE: Final = 46.0
@@ -50,7 +71,9 @@ CAPTURE_PRECIPITATION: Final = 0.0
 DAY: Final = date(2026, 8, 20)
 PLANE_STREAM: Final = "climate-field-air-temperature-mean"
 SHORTWAVE_STREAM: Final = "climate-field-shortwave-radiation"
-EXPECTED_PARAMETER_COUNT: Final = 8
+SOIL_WETNESS_STREAM: Final = "soil-wetness-surface"
+EXPECTED_PARAMETER_COUNT: Final = 11
+EXPECTED_CAPTURED_PARAMETER_COUNT: Final = 8
 EXPECTED_LONGITUDE_COUNT: Final = 22
 EXPECTED_LATITUDE_COUNT: Final = 21
 
@@ -119,8 +142,14 @@ def test_a_cell_outside_the_measured_extent_is_refused() -> None:
         require_pinned_lattice_cell(outside)
 
 
-def test_the_real_captured_point_response_carries_every_product_in_one_request() -> None:
-    """One request, eight parameters: the fact the per-cell-day cache and the budget rest on."""
+def test_the_real_captured_point_response_carries_every_product_it_was_asked_for() -> None:
+    """One request, every requested parameter: the fact the per-cell-day cache and the budget rest on.
+
+    Parsed against the EIGHT parameters that request actually named. Today's product table asks for
+    eleven, and POWER returns only what the URL lists, so parsing this body against the current
+    default would refuse the only real response in the tree for a reason that says nothing about the
+    parser. The eleven-parameter shape is covered by the labelled synthetic fixture below.
+    """
     body = CAPTURE_PATH.read_bytes()
     assert hashlib.sha256(body).hexdigest() == CAPTURE_SHA256, "the capture is a fixture; it must not be edited"
 
@@ -130,13 +159,52 @@ def test_the_real_captured_point_response_carries_every_product_in_one_request()
         body=body,
         request_url="https://power.larc.nasa.gov/api/temporal/daily/point",
         retrieved_at=FETCHED_AT,
+        required_parameters=CAPTURED_PARAMETERS,
     )
 
-    assert set(response.parameters) == set(CLIMATE_SOURCE_PARAMETERS)
+    assert set(response.parameters) == set(CAPTURED_PARAMETERS)
+    assert len(CAPTURED_PARAMETERS) == EXPECTED_CAPTURED_PARAMETER_COUNT
+    assert set(CAPTURED_PARAMETERS) < set(CLIMATE_SOURCE_PARAMETERS)
     assert len(CLIMATE_SOURCE_PARAMETERS) == EXPECTED_PARAMETER_COUNT
     assert response.parameters["T2M"] == CAPTURE_AIR_TEMPERATURE_MEAN
     assert response.parameters["PRECTOTCORR"] == CAPTURE_PRECIPITATION
     assert response.response_bytes == len(body)
+
+
+def test_the_capture_is_refused_against_today_s_eleven_parameter_request() -> None:
+    """A body that omits a requested parameter must refuse the cell, whatever else it carries right."""
+    with pytest.raises(ClimateSourceUnsettledError, match="omits GWET"):
+        parse_climate_point_body(
+            capture_cell(),
+            day=CAPTURE_DAY,
+            body=CAPTURE_PATH.read_bytes(),
+            request_url="https://power.larc.nasa.gov/api/temporal/daily/point",
+            retrieved_at=FETCHED_AT,
+        )
+
+
+def test_the_synthetic_eleven_parameter_body_serves_the_three_soil_wetness_depths() -> None:
+    """The depths ride the same response, so one request really does serve all eleven streams.
+
+    Its values are INVENTED and its provenance block says so; what is asserted here is the shape and
+    the routing, never the number.
+    """
+    body = SYNTHETIC_PATH.read_bytes()
+    assert hashlib.sha256(body).hexdigest() == SYNTHETIC_SHA256, "regenerate the fixture, do not edit it"
+
+    response = parse_climate_point_body(
+        capture_cell(),
+        day=CAPTURE_DAY,
+        body=body,
+        request_url="https://power.larc.nasa.gov/api/temporal/daily/point",
+        retrieved_at=FETCHED_AT,
+    )
+    surface = build_climate_day(product_for(SOIL_WETNESS_STREAM), day=CAPTURE_DAY, responses=[response])
+
+    assert set(response.parameters) == set(CLIMATE_SOURCE_PARAMETERS)
+    assert response.parameters["T2M"] == CAPTURE_AIR_TEMPERATURE_MEAN
+    assert surface.is_governed_absence is False
+    assert [value.value for value in surface.values] == [SYNTHETIC_SURFACE_WETNESS]
 
 
 def test_the_captured_solar_value_is_a_fill_and_the_meteorology_values_are_not() -> None:
@@ -147,6 +215,7 @@ def test_the_captured_solar_value_is_a_fill_and_the_meteorology_values_are_not()
         body=CAPTURE_PATH.read_bytes(),
         request_url="https://power.larc.nasa.gov/api/temporal/daily/point",
         retrieved_at=FETCHED_AT,
+        required_parameters=CAPTURED_PARAMETERS,
     )
 
     solar = build_climate_day(product_for(SHORTWAVE_STREAM), day=CAPTURE_DAY, responses=[response])

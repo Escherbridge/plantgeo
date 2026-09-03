@@ -187,11 +187,12 @@ interface ParquetReadBase {
   /**
    * `"west,south,east,north"`, omitted for an unbounded read.
    *
-   * Optional per call rather than required, because the layers do not agree today and this client
-   * must not change what any of them asks for: drought, vegetation and soil all take a viewport
-   * bbox, while the live fire-detections path (`GET /api/fires?date=`, src/app/api/fires/route.ts)
-   * takes none at all. A bbox added to a read whose current equivalent has none would silently
-   * shrink that layer's answer.
+   * Optional per call rather than required, because the layers did not agree when this client was
+   * written and it must not change what any of them asks for: drought, vegetation and soil all
+   * take a viewport bbox, while the fire-detections path INHERITED a bbox-less wire shape from
+   * `GET /api/fires?date=` (`src/app/api/fires/route.ts`), the REST route it replaced and which
+   * was deleted on 2026-09-02. A bbox added to a read whose current equivalent has none would
+   * silently shrink that layer's answer, so the shape outlives the route that set it.
    */
   bbox?: string;
   /**

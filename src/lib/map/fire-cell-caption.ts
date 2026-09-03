@@ -10,6 +10,19 @@ export const FIRE_CELL_CAPTION_TITLE = "Fire detection cell";
 export const FIRE_CELL_NO_FRP_VALUE = "Not reported";
 
 /**
+ * The sentence every drawn fire cell carries, in the caption and in the legend alike.
+ *
+ * From 2026-09-02 the coarse and middle bands draw each cell as its declared square, which puts a
+ * filled polygon under the `fire` toggle for the first time -- in the same visual language as
+ * `fire-perimeters` and `burn-severity`, the two layers that legitimately publish a burned extent.
+ * A cell says "n hotspots were detected in this square"; it does not say "this square burned". The
+ * geometry alone cannot carry that difference, so the words do, and both surfaces read them from
+ * here rather than each writing their own.
+ */
+export const FIRE_CELL_NOT_A_PERIMETER_NOTE =
+  "Detection-density cell, not a fire perimeter";
+
+/**
  * One rendered line of the caption, kept as label + value rather than as finished text so the
  * popup can bold the value and the tooltip can flatten it, without either owning the wording.
  */
@@ -29,6 +42,15 @@ export function fireCellCaptionText(line: FireCellCaptionLine): string {
 function toFiniteNumber(value: unknown): number | null {
   const num = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
   return Number.isFinite(num) ? num : null;
+}
+
+/**
+ * A cell dimension as degrees of arc. Up to four decimals with the trailing zeros dropped, so
+ * 0.25 reads "0.25°" and not "0.2500°", and a rung whose size is 0.1 does not print the
+ * 0.1000000000000000055 that a raw `String()` of the double would.
+ */
+function formatDegrees(degrees: number): string {
+  return `${Number(degrees.toFixed(4))}°`;
 }
 
 function stringField(value: unknown): string | null {
@@ -52,6 +74,9 @@ function stringField(value: unknown): string | null {
  * - **The FRP line is conditional on `detectionCount`.** It is the only line with a value for an
  *   absent field, so an unconditional one would turn a property bag carrying nothing at all into
  *   a one-line tooltip. Keyed on the count because a cell that exists always has one.
+ * - **The not-a-perimeter line is conditional on the same count**, so it appears on every real
+ *   cell and on nothing else, and it sits directly under the measurements rather than at the end:
+ *   it qualifies the numbers above it, and a disclaimer below the provenance reads as a footnote.
  */
 export function fireDetectionCellLines(props: Record<string, unknown>): FireCellCaptionLine[] {
   const detections = toFiniteNumber(props.detectionCount);
@@ -61,6 +86,8 @@ export function fireDetectionCellLines(props: Record<string, unknown>): FireCell
   const observedDay = stringField(props.observedDay);
   const newest = formatTimestampWithRelative(toIsoTimestamp(props.newestObservedAt));
   const tier = toFiniteNumber(props.zoomTier);
+  const cellWidth = toFiniteNumber(props.cellWidthDegrees);
+  const cellHeight = toFiniteNumber(props.cellHeightDegrees);
 
   const lines: FireCellCaptionLine[] = [];
 
@@ -81,6 +108,19 @@ export function fireDetectionCellLines(props: Record<string, unknown>): FireCell
           })} MW`
         : FIRE_CELL_NO_FRP_VALUE,
       meta: false,
+    });
+  }
+  if (detections !== null) {
+    lines.push({ label: null, value: FIRE_CELL_NOT_A_PERIMETER_NOTE, meta: true });
+  }
+  // The declared footprint, stated only when the envelope declared one. Never the tier's nominal
+  // size: a cell whose envelope carried no size is drawn as a marker, and printing a square it
+  // does not have would describe a shape nothing rendered.
+  if (cellWidth !== null && cellHeight !== null) {
+    lines.push({
+      label: "Cell",
+      value: `${formatDegrees(cellWidth)} × ${formatDegrees(cellHeight)}`,
+      meta: true,
     });
   }
   if (observedDay !== null) {

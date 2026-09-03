@@ -58,9 +58,14 @@ function ndviEncodingVisibility(
 interface VegetationLayerProps {
   map: MapLibreMap | null;
   /**
-   * Measured NDVI supports read from the warehouse. The private Parquet plane currently
-   * supplies honest point supports; legacy polygon supports remain renderable without
-   * manufacturing a footprint for either representation.
+   * Measured NDVI supports read from the warehouse, as the 0.25-degree cells the platform
+   * actually observed.
+   *
+   * `presentParquetVegetation` builds each square from the observation's own declared envelope
+   * and emits a Point only where no envelope arrived. Until 2026-09-02 it emitted a centre Point
+   * for EVERY observation and this component drew it as a zoom-scaled circle -- the `raw_point`
+   * deviation `LAYER_RENDER_CONTRACT.vegetation` recorded, whose radius said nothing about the
+   * ground the reading covers.
    */
   geojson?: GeoJSON.FeatureCollection | null;
   mode?: VegetationMode;
@@ -95,10 +100,26 @@ const NBR_LAYER_ID = "nbr-recovery-layer";
 const NDVI_CELL_SOURCE_ID = "vegetation-ndvi-cells";
 const NDVI_CELL_FILL_LAYER_ID = "vegetation-ndvi-cells-fill";
 const NDVI_CELL_OUTLINE_LAYER_ID = "vegetation-ndvi-cells-outline";
-const NDVI_CELL_POINT_LAYER_ID = "vegetation-ndvi-cells-point";
 
 /** Cell-boundary cue, deliberately independent of the reader's opacity. */
 const CELL_OUTLINE_OPACITY = 0.35;
+
+/**
+ * The outline fades out below the middle band and is fully off across the coarse one.
+ *
+ * It exists to keep the cells legible as discrete 0.25-degree samples, and at z9 and above that
+ * is what it does. Zoomed out, a 0.25-degree cell is a handful of pixels wide, so a stroke on
+ * every shared edge is most of the cell: the lattice reads as a grid of seams over the field
+ * rather than as the field, which is the "nested blocks with visible seams" artefact the
+ * 2026-09-01 assessment found on the ERA5 soil layers. Neighbouring cells share bit-identical
+ * boundaries (`supportCellPolygon`), so removing the stroke opens no cracks.
+ */
+const NDVI_CELL_OUTLINE_OPACITY = [
+  "interpolate", ["linear"], ["zoom"],
+  0, 0,
+  8, 0,
+  9, CELL_OUTLINE_OPACITY,
+] as unknown as ExpressionSpecification;
 
 const EMPTY_CELL_COLLECTION: GeoJSON.FeatureCollection = {
   type: "FeatureCollection",
@@ -159,7 +180,6 @@ export function VegetationLayer({
   // The one value every paint below is written from: the authored strength times the reader's
   // multiplier. Computed once here so the attach path and the update effect cannot drift.
   const drawnOpacity = opacity * opacityScale;
-  const pointStrokeOpacity = CELL_OUTLINE_OPACITY * opacityScale;
 
   // Keep latest prop values in refs so the style.load handler always uses current values
   const propsRef = useRef({
@@ -171,7 +191,6 @@ export function VegetationLayer({
     ndviMode,
     showNDWI,
     drawnOpacity,
-    pointStrokeOpacity,
     visible,
   });
   propsRef.current = {
@@ -183,7 +202,6 @@ export function VegetationLayer({
     ndviMode,
     showNDWI,
     drawnOpacity,
-    pointStrokeOpacity,
     visible,
   };
 
@@ -197,9 +215,7 @@ export function VegetationLayer({
       ndviMode,
       showNDWI,
       drawnOpacity,
-      pointStrokeOpacity,
-    } =
-      propsRef.current;
+    } = propsRef.current;
     const beforeId = getFirstSymbolLayer(m);
     const { satelliteRaster, measuredCells } = ndviEncodingVisibility(mode, source);
     const ndviTileUrl = ndviTemplateFor(year, month, ndviMode);
@@ -281,7 +297,15 @@ export function VegetationLayer({
     // a reader sees. It is kept last only so that a future "both" option -- if one is ever
     // justified -- would still put the measurements above the composite rather than under it.
     // The outline is deliberate: it keeps the cells legible as discrete 0.25-degree samples
-    // rather than as a continuous surface the sampling never produced.
+    // rather than as a continuous surface the sampling never produced -- but only from the
+    // middle band up; see NDVI_CELL_OUTLINE_OPACITY for why it fades out below that.
+    //
+    // Fill and outline both filter to Polygon, and there is no longer a circle layer beside
+    // them: `presentParquetVegetation` draws every observation as the square its envelope
+    // declares. A Point survives only where no envelope arrived at all, and such an observation
+    // is deliberately left UNDRAWN rather than shown as a dot -- a dot is the `raw_point`
+    // deviation this slice closed, and one drawn at a coarser rung would look exactly like a
+    // measurement whose footprint the platform knows.
     if (!m.getSource(NDVI_CELL_SOURCE_ID)) {
       m.addSource(NDVI_CELL_SOURCE_ID, {
         type: "geojson",
@@ -311,31 +335,11 @@ export function VegetationLayer({
         paint: {
           "line-color": "#1b3a1b",
           "line-width": 0.5,
-          // Fixed, not tied to the slider: the outline is a cell-boundary cue, so it has to
-          // stay readable at the low end of the opacity range the fill follows.
-          "line-opacity": CELL_OUTLINE_OPACITY,
+          // Zoom-gated, never tied to the slider: the outline is a cell-boundary cue, so it has
+          // to stay readable at the low end of the opacity range the fill follows.
+          "line-opacity": NDVI_CELL_OUTLINE_OPACITY,
         },
       }, beforeId);
-    }
-    if (!m.getLayer(NDVI_CELL_POINT_LAYER_ID)) {
-      m.addLayer(
-        {
-          id: NDVI_CELL_POINT_LAYER_ID,
-          type: "circle",
-          source: NDVI_CELL_SOURCE_ID,
-          filter: ["==", ["geometry-type"], "Point"],
-          layout: { visibility: measuredCells },
-          paint: {
-            "circle-color": NDVI_CELL_FILL_COLOR,
-            "circle-radius": ["interpolate", ["linear"], ["zoom"], 0, 3, 9, 6, 13, 9],
-            "circle-opacity": drawnOpacity,
-            "circle-stroke-width": 1,
-            "circle-stroke-color": "#1b3a1b",
-            "circle-stroke-opacity": pointStrokeOpacity,
-          },
-        },
-        beforeId
-      );
     }
   }, []);
 
@@ -345,7 +349,7 @@ export function VegetationLayer({
     safeRemoveLayerAndSource(m, [NBR_LAYER_ID], "nbr-recovery");
     safeRemoveLayerAndSource(
       m,
-      [NDVI_CELL_FILL_LAYER_ID, NDVI_CELL_OUTLINE_LAYER_ID, NDVI_CELL_POINT_LAYER_ID],
+      [NDVI_CELL_FILL_LAYER_ID, NDVI_CELL_OUTLINE_LAYER_ID],
       NDVI_CELL_SOURCE_ID
     );
   }, []);
@@ -438,16 +442,7 @@ export function VegetationLayer({
     }
     if (map.getLayer(NDVI_CELL_OUTLINE_LAYER_ID)) {
       map.setLayoutProperty(NDVI_CELL_OUTLINE_LAYER_ID, "visibility", measuredCells);
-      map.setPaintProperty(NDVI_CELL_OUTLINE_LAYER_ID, "line-opacity", CELL_OUTLINE_OPACITY);
-    }
-    if (map.getLayer(NDVI_CELL_POINT_LAYER_ID)) {
-      map.setLayoutProperty(NDVI_CELL_POINT_LAYER_ID, "visibility", measuredCells);
-      map.setPaintProperty(NDVI_CELL_POINT_LAYER_ID, "circle-opacity", drawnOpacity);
-      map.setPaintProperty(
-        NDVI_CELL_POINT_LAYER_ID,
-        "circle-stroke-opacity",
-        pointStrokeOpacity
-      );
+      map.setPaintProperty(NDVI_CELL_OUTLINE_LAYER_ID, "line-opacity", NDVI_CELL_OUTLINE_OPACITY);
     }
   }, [
     map,
@@ -459,7 +454,6 @@ export function VegetationLayer({
     source,
     showNDWI,
     drawnOpacity,
-    pointStrokeOpacity,
     visible,
   ]);
 

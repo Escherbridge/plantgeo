@@ -14,12 +14,12 @@ import type { ExpressionSpecification } from "@/types/map";
 
 /**
  * One ERA5-Land soil field -- volumetric water or temperature -- drawn from whatever
- * `environmental.getSoilField` served: the stored 0.25-degree cells at high zoom, or
- * dissolved isobands over a coarser aggregation lattice below it. One source and one fill
- * either way, because every served feature carries a `value` -- see
+ * `environmental.getSoilField` served: a COMPLETE tessellation of the rung's own lattice at
+ * every zoom, quarter-degree cells at z13/z9/z5 and five-degree cells at z0. One source and one
+ * fill either way, because every served feature carries a `value` -- see
  * `src/components/map/AGENTS.md` §soil-field.
  *
- * Plain MapLibre `fill`, not deck.gl. The aggregation and the contouring already happened on
+ * Plain MapLibre `fill`, not deck.gl. The aggregation and the tessellation already happened on
  * the server, so what reaches the browser is a handful of polygons; a `ContourLayer` would
  * mean re-deriving them client-side from data the server deliberately does not ship.
  *
@@ -61,9 +61,14 @@ function fillColorFor(measure: SoilFieldMeasure): ExpressionSpecification {
 }
 
 /**
- * Outlines are drawn ONLY on unaggregated cells, where they say something true: these are
- * discrete 0.25-degree samples. An isoband boundary is a contour through interpolated space,
- * and outlining it would draw a hard edge the data does not have.
+ * Outlines are drawn ONLY on unaggregated cells, and `aggregated` is now read straight off the
+ * server's declared rung rather than off a null cell id (`getParquetSoilField`).
+ *
+ * The rule survives the move from isobands to a complete tessellation, and for a sharper reason
+ * than before: every rung now fills the whole viewport, so a stroke on every cell of a coarse
+ * rung draws a mesh of block seams across it -- the defect the 2026-09-01 assessment recorded as
+ * "nested ERA5 soil blocks with visible seams". At the detail rung the stroke still says
+ * something true, that these are discrete quarter-degree samples.
  */
 const OUTLINE_OPACITY = [
   "case",

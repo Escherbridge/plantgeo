@@ -121,8 +121,9 @@ describe("getParquetLayerDay", () => {
   it("omits bbox entirely for a layer whose live path has none", async () => {
     mockedFetch.mockResolvedValue(wirePublished("2026-08-20"));
 
-    // fire-detections is served today by `GET /api/fires?date=` with no bbox at all; adding one
-    // here would silently shrink that layer's answer.
+    // Inherited from the deleted `GET /api/fires?date=`, which took no bbox at all: the wire
+    // still omits the parameter for this layer rather than defaulting one, so a caller that
+    // wants a viewport must pass it. Adding one here would silently shrink the layer's answer.
     await getParquetLayerDay({ layer: "fire-detections", day: "2026-08-20", zoomTier: 13 });
 
     expect(requestedUrl().searchParams.has("bbox")).toBe(false);

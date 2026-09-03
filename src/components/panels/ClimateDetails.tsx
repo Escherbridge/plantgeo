@@ -6,6 +6,7 @@ import {
   useDebouncedLayerDay,
   useLayerVisibility,
 } from "@/lib/map/layer-toggle-context";
+import { BASE_ZOOM_TIER } from "@/lib/map/zoom-tiers";
 import { useClimateStore } from "@/stores/climate-store";
 import {
   CLIMATE_FIELD_SIGNALS,
@@ -146,9 +147,11 @@ function ClimateSignalReport({
     <section className="flex flex-col gap-1.5">
       <p className="text-xs font-semibold text-[hsl(var(--foreground))]">{definition.label}</p>
 
-      {/* Offered only where the signal has more than one honest form. Precipitation and the
-          three soil-wetness pilots withhold `isoline`, so their lists are shorter -- and a
-          one-entry list would render a picker with nothing to pick. */}
+      {/* Offered only where the signal has more than one honest form, and since 2026-09-02 six of
+          the nine have exactly one. Precipitation and the three soil-wetness pilots withhold
+          `isoline` (see `renderForms` in climate-field.ts), and `symbol` was withdrawn from all
+          nine because the frozen render contract permits no point form for a continuous field --
+          which leaves those six with nothing to pick between and no picker to draw. */}
       {definition.renderForms.length > 1 && (
         <div className="flex flex-wrap gap-1.5">
           {definition.renderForms.map((form) => (
@@ -251,14 +254,17 @@ function ClimateSignalReport({
         </p>
       )}
 
-      {/* The coarse rungs serve points whatever form was asked for (`tierRenderForm`,
-          parquet-climate-field.ts), and the map draws what arrived. Said here because the
-          picker above still shows the requested chip selected: without this line the control
+      {/* One degrade is left, and it now runs the other way. Wave 1 served POINTS for every form
+          below z13; every rung is a filled tessellation now, and the only form the server may
+          refuse is a contour at the DETAIL rung -- `LAYER_RENDER_CONTRACT` permits `isoband` at
+          the coarse and middle bands only, because a band asserts the field varies smoothly
+          between samples and the detail rung serves those samples themselves. Said here because
+          the picker above still shows the requested chip selected: without this line the control
           reads as broken rather than as outranked by the zoom. */}
       {field !== undefined && field.renderForm !== renderForm && (
         <p role="status" aria-live="polite" className={NOTICE_CLASS_NAME}>
           Drawn as {CLIMATE_RENDER_FORM_LABELS[field.renderForm].toLowerCase()} at this zoom;
-          zoom in for the requested {CLIMATE_RENDER_FORM_LABELS[renderForm].toLowerCase()} form.
+          zoom out for the requested {CLIMATE_RENDER_FORM_LABELS[renderForm].toLowerCase()} form.
         </p>
       )}
 
@@ -290,24 +296,21 @@ function ClimateSignalReport({
                 screen. A denominator that is not measured beside its numerator will always
                 eventually lie.
 
-                And it is published for the DETAIL rung only: `latticeCellCount` is the
-                half-degree lattice's own count, which a z9/z5/z0 answer is not drawn from, so
-                the reader sends 0 there rather than a number measured against a lattice it did
-                not use. Rendering it anyway would put "of the 0 half-degree cells" on screen
-                and call an aggregate a half-degree cell in the same breath. */}
-            {field.zoomTier === 13 ? (
-              <p className="text-[10px] mb-2 text-[hsl(var(--muted-foreground))]">
-                {field.cellCount} of the {field.latticeCellCount} half-degree cells in this view
-                carry a measurement for {field.observedDay}.
-                {field.renderForm === "isoline" &&
-                  " Contours are interpolated between those cells; read values from the filled form."}
-              </p>
-            ) : (
-              <p className="text-[10px] mb-2 text-[hsl(var(--muted-foreground))]">
-                {field.cellCount} aggregated cell{field.cellCount === 1 ? "" : "s"} in this view
-                carry a measurement for {field.observedDay}. Zoom in for the half-degree lattice.
-              </p>
-            )}
+                The CELL SIZE comes from the response too, off `support.cellWidthDegrees`, and is
+                named rather than left to be inferred: one degree at z13/z9/z5 and five degrees at
+                z0 are the same sentence with a hundredfold difference in what it claims about the
+                ground. Wave 1 had no number to print below z13 -- it drew those rungs as points --
+                and said "zoom in for the half-degree lattice", which described neither the lattice
+                (one degree) nor what was drawn (dots). */}
+            <p className="text-[10px] mb-2 text-[hsl(var(--muted-foreground))]">
+              {field.cellCount} of the {field.latticeCellCount}{" "}
+              {field.support.cellWidthDegrees}° cells in this view carry a measurement for{" "}
+              {field.observedDay}.
+              {field.renderForm === "isoline" &&
+                " Bands are dissolved across those cells; read values from the filled form."}
+              {field.zoomTier !== BASE_ZOOM_TIER &&
+                ` Served from the z${field.zoomTier} rung, which averages every measurement that fell in one cell.`}
+            </p>
             <div className="flex flex-col gap-1">
               {bands.map((band) => (
                 <ColorLegendRow key={band.bandIndex} color={band.color} label={band.label} />

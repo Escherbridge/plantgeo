@@ -22,6 +22,7 @@ from agri_data_service.foundation.parquet.absence import (
 )
 from agri_data_service.foundation.parquet.completion import (
     COMPLETION_SCHEMA_VERSION,
+    DERIVED_EMPTY_FIELD,
     PartitionCompletion,
     PartitionCompletionError,
 )
@@ -32,6 +33,7 @@ from agri_data_service.foundation.parquet.paths import (
 )
 from agri_data_service.pipeline.parquet.objectstore import BotoObjectStoreBackend
 from agri_data_service.pipeline.parquet.publication_barrier import postgres_lane_publication_barrier
+from agri_data_service.warehouse.parquet.tiers import BASE_ZOOM_TIER
 from agri_data_service.warehouse.schemas.availability_index import (
     AVAILABILITY_INDEX_SCHEMA,
     AVAILABILITY_METADATA_KEYS,
@@ -438,12 +440,16 @@ def _validate_data_receipt_collection(receipts: tuple[EvidenceReceipt, ...]) -> 
 
 def _validate_terminal_payload(row: AvailabilityRow) -> None:
     if row.terminal_state == "published":
-        if row.row_count <= 0:
-            raise ValueError("a published availability row must carry a positive row_count")
-        if not row.data_receipts or row.completion_receipt is None:
-            raise ValueError("a published availability row requires data and completion receipts")
         if row.absence_reason is not None:
             raise ValueError("a published availability row cannot carry an absence reason")
+        if row.completion_receipt is None:
+            raise ValueError("a published availability row requires a completion receipt")
+        if _is_published_empty_rung(rung=row.rung, row_count=row.row_count, data_receipts=row.data_receipts):
+            return
+        if row.row_count <= 0:
+            raise ValueError("a published availability row must carry a positive row_count")
+        if not row.data_receipts:
+            raise ValueError("a published availability row requires data and completion receipts")
         return
     if row.row_count != 0:
         raise ValueError("a governed absence must carry row_count=0")
@@ -453,6 +459,23 @@ def _validate_terminal_payload(row: AvailabilityRow) -> None:
         raise ValueError("a governed absence requires a non-blank reason")
     if row.absence_reason != row.absence_reason.strip():
         raise ValueError("absence_reason must use canonical trimmed spelling")
+
+
+def _is_published_empty_rung(*, rung: int, row_count: int, data_receipts: tuple[EvidenceReceipt, ...]) -> bool:
+    """True for the one published shape that carries no rows: a DERIVED rung that generalised to none.
+
+    THE DAY IS PUBLISHED AT EVERY RUNG, and this rung of it is empty -- not absent. A governed
+    absence claims the SOURCE had nothing, which is false here: the base rung demonstrably holds the
+    rows this rung dropped, and a day whose ladder mixed the two terminal states would be refused by
+    `_validate_generation_day` and unselectable at every rung rather than merely unindexed.
+
+    THE BASE RUNG IS EXCLUDED, and that exclusion is what keeps the two vocabularies apart. A base
+    rung holding no rows is a governed absence and has its own marker; only a rung DERIVED from a
+    non-empty base can honestly say "the rows existed and none of them survived my resolution".
+    `foundation/parquet/completion.py::PartitionCompletion` refuses the receipt this row binds unless
+    it says the same thing, and `objectstore.write_completion_marker` refuses one at the base rung.
+    """
+    return rung != BASE_ZOOM_TIER and row_count == 0 and not data_receipts
 
 
 @dataclass(frozen=True, slots=True)
@@ -1963,6 +1986,9 @@ def _verify_terminal_physical_objects(
     if evidence.terminal_state == "governed_absence":
         return _verify_absence_object(store, evidence)
     layer, kind = _physical_lane_identity(evidence.identity.lane_root)
+    # NO DATA RECEIPTS IS A REACHABLE, VERIFIED STATE HERE -- an emptied derived rung. The loop runs
+    # zero times, the contiguity check passes over an empty range, and the row count matches at zero;
+    # `_verify_completion_object` then proves the marker says the same thing. Nothing is waved past.
     snapshots: list[EvidenceSnapshot] = []
     part_indexes: list[int] = []
     physical_rows = 0
@@ -2011,11 +2037,13 @@ def _verify_completion_object(
         raise AvailabilityConflictError("completion receipt path does not match terminal evidence")
     stored, snapshot = _read_receipt_snapshot(store, receipt, max_bytes=TYPED_RECEIPT_MAX_BYTES)
     value = _decode_json_object(stored.payload, "completion marker")
-    _require_exact_keys(
-        value,
-        {"schema_version", "part_count", "row_count", "completed_at", "run_id"},
-        "completion marker",
-    )
+    expected_keys = {"schema_version", "part_count", "row_count", "completed_at", "run_id"}
+    if DERIVED_EMPTY_FIELD in value:
+        # Admitted as a key, never as a value: `PartitionCompletion.from_json_bytes` refuses any
+        # spelling but `true`, and the byte-for-byte re-serialization below refuses anything else the
+        # payload could be hiding. Widening the key set costs nothing that those two do not re-check.
+        expected_keys.add(DERIVED_EMPTY_FIELD)
+    _require_exact_keys(value, expected_keys, "completion marker")
     if value["schema_version"] != COMPLETION_SCHEMA_VERSION:
         raise AvailabilityMalformedError("unknown completion marker schema")
     try:
@@ -2026,6 +2054,13 @@ def _verify_completion_object(
         raise AvailabilityMalformedError("completion marker does not use its authoritative serialization")
     if completion.part_count != len(evidence.data_receipts) or completion.row_count != evidence.row_count:
         raise AvailabilityConflictError("completion counts do not match terminal evidence")
+    if completion.derived_empty != _is_published_empty_rung(
+        rung=evidence.rung, row_count=evidence.row_count, data_receipts=evidence.data_receipts
+    ):
+        # The two statements must be the same statement. A row claiming an empty rung over an
+        # ordinary receipt would bind evidence that never said the rung generalised to nothing, and
+        # an ordinary row over a derived-empty receipt would serve a rung the receipt calls empty.
+        raise AvailabilityConflictError("completion marker and terminal evidence disagree about an emptied rung")
     if completion.completed_at > evidence.published_at:
         raise AvailabilityConflictError("completion marker postdates terminal publication")
     return (snapshot,)
@@ -2165,12 +2200,18 @@ def _require_sorted_nonempty_receipts(receipts: Sequence[EvidenceReceipt], label
 def _validate_terminal_evidence_payload(evidence: TerminalEvidence) -> None:
     _validate_data_receipt_collection(evidence.data_receipts)
     if evidence.terminal_state == "published":
-        if evidence.row_count <= 0:
-            raise ValueError("published terminal evidence requires a positive row_count")
-        if not evidence.data_receipts or evidence.completion_receipt is None:
-            raise ValueError("published terminal evidence requires data and completion receipts")
         if evidence.absence_receipt is not None or evidence.absence_reason is not None:
             raise ValueError("published terminal evidence cannot carry absence evidence")
+        if evidence.completion_receipt is None:
+            raise ValueError("published terminal evidence requires a completion receipt")
+        if _is_published_empty_rung(
+            rung=evidence.rung, row_count=evidence.row_count, data_receipts=evidence.data_receipts
+        ):
+            return
+        if evidence.row_count <= 0:
+            raise ValueError("published terminal evidence requires a positive row_count")
+        if not evidence.data_receipts:
+            raise ValueError("published terminal evidence requires data and completion receipts")
         return
     if evidence.row_count != 0 or evidence.data_receipts or evidence.completion_receipt is not None:
         raise ValueError("governed absence terminal evidence cannot carry published data")

@@ -1,4 +1,4 @@
-"""The lane registry: twenty-one streams, three natures, four return shapes folded into one, cited floors.
+"""The lane registry: thirty-two streams, three natures, four return shapes folded into one, cited floors.
 
 The exporters themselves are exercised by their own lane tests; what is pinned here is the
 integration surface -- that every registered slug has a schema the writer can autoload, that the
@@ -8,6 +8,7 @@ actually ships, and that no floor is uncited.
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -44,16 +45,20 @@ from tests.parquet.test_soil_survey_lane import soil_survey_row
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-# Twelve database-backed lanes, the eight source-direct NASA POWER climate fields, and `calendar`.
-EXPECTED_LANE_COUNT = 21
+# Twelve database-backed lanes, the eleven source-direct NASA POWER streams, the eight source-direct
+# Open-Meteo ERA5-Land streams, and `calendar`.
+EXPECTED_LANE_COUNT = 32
 AUGUST_SIXTH = date(2026, 8, 6)
 
 # RUNBOOK section 0.26.6's table -- the wave-2 join's own record of what landed -- plus `calendar`,
 # the conformed date dimension, which is a registered stream with no source system.
-# The eight NASA POWER climate fields have NO PostgreSQL producer and never had one: their registry
+# The nineteen source-direct streams have NO PostgreSQL producer and never had one: their registry
 # entry exists so the streams get a floor, a lag, a nature and a census, while their days are written
-# by `pipeline/direct/climate/forward.py`. Their registered adapter refuses a generic export.
-SOURCE_DIRECT_SLUGS = frozenset(
+# by a direct writer. Their registered adapter refuses a generic export, naming the writer that owns
+# it -- `pipeline/direct/climate/forward.py` for the eleven POWER streams (the eight climate fields
+# plus the three soil-wetness depths, which ride the same point request) and
+# `pipeline/direct/soil/forward.py` for the eight Open-Meteo ERA5-Land streams.
+NASA_POWER_DIRECT_SLUGS = frozenset(
     {
         "climate-field-air-temperature-max",
         "climate-field-air-temperature-mean",
@@ -63,8 +68,26 @@ SOURCE_DIRECT_SLUGS = frozenset(
         "climate-field-relative-humidity",
         "climate-field-shortwave-radiation",
         "climate-field-wind-speed",
+        "soil-wetness-profile",
+        "soil-wetness-root-zone",
+        "soil-wetness-surface",
     }
 )
+
+ERA5_LAND_DIRECT_SLUGS = frozenset(
+    {
+        "soil-field-moisture-0-7cm",
+        "soil-field-moisture-7-28cm",
+        "soil-field-moisture-28-100cm",
+        "soil-field-vpd",
+        "soil-temperature-0-to-7cm",
+        "soil-temperature-7-to-28cm",
+        "soil-temperature-28-to-100cm",
+        "soil-temperature-100-to-255cm",
+    }
+)
+
+SOURCE_DIRECT_SLUGS = NASA_POWER_DIRECT_SLUGS | ERA5_LAND_DIRECT_SLUGS
 
 EXPECTED_SLUGS = SOURCE_DIRECT_SLUGS | frozenset(
     {
@@ -210,6 +233,25 @@ def test_every_registered_slug_has_a_schema_get_stream_schema_can_autoload() -> 
 def test_the_registry_is_keyed_by_slug_and_ordered_deterministically() -> None:
     assert tuple(LANE_REGISTRY) == registered_lane_slugs()
     assert registered_lane_slugs() == tuple(sorted(registered_lane_slugs()))
+
+
+@pytest.mark.asyncio
+async def test_every_source_direct_lane_refuses_and_names_its_own_writer() -> None:
+    """Nineteen lanes, two writers. A shared message would send an operator to the wrong module.
+
+    The generic gap-fill driver can reach any registered lane, so the refusal is the only thing
+    standing between a `parquet-soil-field-vpd` tick and a run that reports success having exported
+    nothing. It must also be SPECIFIC: `pipeline.direct.climate` cannot publish an ERA5-Land day.
+    """
+    expected_writer = {
+        **dict.fromkeys(NASA_POWER_DIRECT_SLUGS, "pipeline.direct.climate"),
+        **dict.fromkeys(ERA5_LAND_DIRECT_SLUGS, "pipeline.direct.soil"),
+    }
+
+    assert set(expected_writer) == SOURCE_DIRECT_SLUGS
+    for slug, writer in sorted(expected_writer.items()):
+        with pytest.raises(LaneRegistryError, match=re.escape(writer)):
+            await LANE_REGISTRY[slug].adapter(None, None, day=AUGUST_SIXTH, run_id="generic")
 
 
 def test_every_floor_is_cited_and_every_lag_is_declared() -> None:

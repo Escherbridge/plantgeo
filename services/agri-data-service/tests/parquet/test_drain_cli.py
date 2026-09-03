@@ -87,10 +87,15 @@ def _pin_store(monkeypatch: pytest.MonkeyPatch, store: ObjectStore) -> None:
 
 
 def test_a_ladder_dry_run_reports_the_ladder_census_not_the_base_one(monkeypatch: pytest.MonkeyPatch) -> None:
-    """DO NOT DELETE. The base census CANNOT see this day: it is base-complete, so it has no gap.
+    """DO NOT DELETE. The base census CANNOT see this day AS A GAP: it is base-complete.
 
     Auditing a ladder repair through the missing census is how ~1,037 days would be reported as
     "nothing to do" while every zoom under 13 stayed empty for them forever.
+
+    The default report now NAMES the day, because that census became ladder-aware (`drain.py`, "Two
+    selections, one walk") -- but it names it under the ladder fields, never under the missing ones.
+    Which set holds it is the whole assertion: a base-complete day counted `missing` would be sent
+    back through a Postgres export it does not owe.
     """
     store, backend = _store_with_one_base_complete_day()
     published = dict(backend.objects)
@@ -107,7 +112,11 @@ def test_a_ladder_dry_run_reports_the_ladder_census_not_the_base_one(monkeypatch
     assert missing.exit_code == 0, missing.output
     missing_report = json.loads(missing.output)
     assert "incomplete_ladder_days" not in missing_report, "the default dry run is still the BASE census"
-    assert DAY.isoformat() not in json.dumps(missing_report), "the base census cannot see a base-complete day"
+    lane_report = missing_report["lanes"][0]
+    missing_fields = {name: value for name, value in lane_report.items() if "missing" in name}
+    assert DAY.isoformat() not in json.dumps(missing_fields), "the base census cannot see a base-complete day"
+    assert lane_report["newest_ladder_repair_days"] == [DAY.isoformat()]
+    assert missing_report["lanes_with_ladder_repairs"] == [STREAM]
 
     assert backend.objects == published, "--dry-run must not write a single object"
 

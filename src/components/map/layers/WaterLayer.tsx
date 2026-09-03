@@ -7,6 +7,18 @@ import type { WaterGaugeCell } from "@/lib/environmental/parquet-presentation";
 import { getFirstSymbolLayer, safeRemoveLayerAndSource } from "@/lib/map/layer-utils";
 import { useStyleReady } from "@/components/map/layers/use-style-ready";
 import { formatTimestampWithRelative, toIsoTimestamp } from "@/lib/map/time-format";
+import {
+  formatSupportCellSize,
+  WATER_CELL_AGGREGATE_NOTE,
+  WATER_CELL_CAPTION_TITLE,
+} from "@/lib/map/water-cell-caption";
+import {
+  assertNotPerimeter,
+  supportCellPolygon,
+  type SupportKind,
+} from "@/lib/map/layer-render-contract";
+import type { ExpressionSpecification } from "@/types/map";
+import type { FilterSpecification } from "@maplibre/maplibre-gl-style-spec";
 
 function escapeHtml(val: unknown): string {
   return String(val ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
@@ -68,6 +80,60 @@ const WELL_CIRCLE_OPACITY = 0.85;
 
 /** Anonymous coarse-rung means are purple so they cannot be mistaken for named gauges. */
 const AGGREGATE_CELL_COLOR = "#7c3aed";
+
+/**
+ * The one form a coarse-rung streamflow cell is drawn in.
+ *
+ * `permittedFormsFor("water", zoom)` offers `aggregate_cell`, `heatmap` and `cluster` in the
+ * coarse and middle bands. The cell is the only one of the three the reader's envelope actually
+ * supports: it declares an origin and a cell size, so the square is a DECLARED footprint rather
+ * than a client-side re-binning. A `cluster` would be this component inventing a grouping the
+ * warehouse did not perform, and a `heatmap` would smear discharge across ground between cells
+ * where no gauge reported -- the fictitious finer footprint the spec forbids.
+ */
+const WATER_CELL_DRAWN_FORM: SupportKind = "aggregate_cell";
+
+/**
+ * Mean discharge over a coarse-rung cell, in cubic feet per second.
+ *
+ * Decade stops interpolated linearly, which is the same treatment the burn-acreage ramp gets and
+ * for the same reason: discharge spans four orders of magnitude across the gauge network, and
+ * evenly-spaced value stops would paint every cell but the largest rivers the same colour. Purple
+ * throughout, so an aggregate can never be mistaken for the blue of a named reporting gauge.
+ */
+export const WATER_CELL_MEAN_FLOW_COLOR_STOPS: readonly {
+  value: number;
+  color: string;
+  label: string;
+}[] = [
+  { value: 1, color: "#ede9fe", label: "1 cfs" },
+  { value: 10, color: "#c4b5fd", label: "10" },
+  { value: 100, color: "#a78bfa", label: "100" },
+  { value: 1000, color: "#7c3aed", label: "1,000" },
+  { value: 10000, color: "#4c1d95", label: "10,000 cfs" },
+];
+
+/**
+ * Cells that reported no discharge at all take the gauge palette's no-reading grey rather than
+ * the ramp's lightest purple: an unreported mean is not a small one.
+ */
+const WATER_CELL_FILL_COLOR = [
+  "case",
+  ["==", ["typeof", ["get", "flowCfs"]], "null"],
+  GAUGE_READING_COLORS.no_reading,
+  [
+    "interpolate", ["linear"], ["coalesce", ["get", "flowCfs"], 0],
+    ...WATER_CELL_MEAN_FLOW_COLOR_STOPS.flatMap((stop) => [stop.value, stop.color]),
+  ],
+] as unknown as ExpressionSpecification;
+
+/**
+ * One geometry per band from one source: the presenter emits a Polygon for a cell whose envelope
+ * declared a footprint and leaves everything else a Point, so the square and the marker can never
+ * both draw for the same cell.
+ */
+const POLYGON_ONLY: FilterSpecification = ["==", ["geometry-type"], "Polygon"];
+const POINT_ONLY: FilterSpecification = ["==", ["geometry-type"], "Point"];
 
 interface WaterLayerProps {
   map: MapLibreMap | null;
@@ -134,24 +200,44 @@ function buildWellGeoJSON(wells: GroundwaterWell[]): GeoJSON.FeatureCollection {
   };
 }
 
+/**
+ * Coarse-rung cells as the squares their envelopes declare, or as markers where the envelope
+ * declares no footprint.
+ *
+ * The square is never buffered from the centroid: `supportCellPolygon` builds it from the
+ * envelope's own corner and cell size, and returns null rather than guessing when the envelope
+ * carries no size -- which is what an unlocated or raw-point row presents as. `assertNotPerimeter`
+ * guards the drawn form because `water` is an `event_point` layer: a mean over a square of ground
+ * is no more a watershed boundary than a fire cell is a perimeter.
+ */
 function buildAggregateCellGeoJSON(cells: WaterGaugeCell[]): GeoJSON.FeatureCollection {
+  assertNotPerimeter("water", WATER_CELL_DRAWN_FORM);
   return {
     type: "FeatureCollection",
-    features: cells.map((cell, index) => ({
-      type: "Feature" as const,
-      id: `${cell.longitude}:${cell.latitude}:${cell.observedDay}:${index}`,
-      geometry: {
-        type: "Point" as const,
-        coordinates: [cell.longitude, cell.latitude],
-      },
-      properties: {
-        flowCfs: cell.flowCfs,
-        observedAt: cell.observedAt,
-        observedDay: cell.observedDay,
-        source: cell.source,
-        color: cell.flowCfs === null ? GAUGE_READING_COLORS.no_reading : AGGREGATE_CELL_COLOR,
-      },
-    })),
+    features: cells.map((cell) => {
+      const support = cell.support;
+      const declaredCell = supportCellPolygon(cell.longitude, cell.latitude, support);
+      return {
+        type: "Feature" as const,
+        id: support.supportId,
+        geometry:
+          declaredCell ?? { type: "Point" as const, coordinates: [cell.longitude, cell.latitude] },
+        properties: {
+          flowCfs: cell.flowCfs,
+          observedAt: cell.observedAt,
+          observedDay: cell.observedDay,
+          source: cell.source,
+          color: cell.flowCfs === null ? GAUGE_READING_COLORS.no_reading : AGGREGATE_CELL_COLOR,
+          supportKind: declaredCell === null ? null : WATER_CELL_DRAWN_FORM,
+          supportId: support.supportId,
+          cellWidthDegrees: support.cellWidthDegrees ?? null,
+          cellHeightDegrees: support.cellHeightDegrees ?? null,
+          // The number that makes the cell readable as an aggregate: how many gauges the mean
+          // was taken over. Never inferred from the feature count, which is one per cell.
+          gaugeCount: support.contributorCount,
+        },
+      };
+    }),
   };
 }
 
@@ -207,12 +293,32 @@ export function WaterLayer({
     } else {
       (m.getSource("water-gauge-cells") as GeoJSONSource).setData(aggregateData);
     }
+    // The declared squares. No line layer, deliberately: neighbouring cells share bit-identical
+    // edges, and a stroked boundary over them is what would reintroduce the visible seams the
+    // 2026-09-01 assessment found. `fill-outline-color` puts a hairline ON the shared edge.
+    if (!m.getLayer("water-gauge-cells-fill")) {
+      m.addLayer(
+        {
+          id: "water-gauge-cells-fill",
+          type: "fill",
+          source: "water-gauge-cells",
+          filter: POLYGON_ONLY,
+          paint: {
+            "fill-color": WATER_CELL_FILL_COLOR,
+            "fill-outline-color": "#ffffff",
+            "fill-opacity": gaugeOpacity,
+          },
+        },
+        beforeId
+      );
+    }
     if (!m.getLayer("water-gauge-cells-circle")) {
       m.addLayer(
         {
           id: "water-gauge-cells-circle",
           type: "circle",
           source: "water-gauge-cells",
+          filter: POINT_ONLY,
           paint: {
             "circle-radius": ["interpolate", ["linear"], ["zoom"], 0, 4, 9, 8, 13, 11],
             "circle-color": ["get", "color"],
@@ -250,7 +356,11 @@ export function WaterLayer({
 
   const removePointLayers = useCallback((m: MapLibreMap) => {
     safeRemoveLayerAndSource(m, ["water-gauges-circle"], "water-gauges");
-    safeRemoveLayerAndSource(m, ["water-gauge-cells-circle"], "water-gauge-cells");
+    safeRemoveLayerAndSource(
+      m,
+      ["water-gauge-cells-fill", "water-gauge-cells-circle"],
+      "water-gauge-cells"
+    );
     safeRemoveLayerAndSource(m, ["groundwater-wells-circle"], "groundwater-wells");
   }, []);
 
@@ -334,6 +444,9 @@ export function WaterLayer({
     if (map.getLayer("water-gauges-circle")) {
       map.setPaintProperty("water-gauges-circle", "circle-opacity", gaugeOpacity);
     }
+    if (map.getLayer("water-gauge-cells-fill")) {
+      map.setPaintProperty("water-gauge-cells-fill", "fill-opacity", gaugeOpacity);
+    }
     if (map.getLayer("water-gauge-cells-circle")) {
       map.setPaintProperty("water-gauge-cells-circle", "circle-opacity", gaugeOpacity);
     }
@@ -400,12 +513,21 @@ export function WaterLayer({
         if (popupRef.current) popupRef.current.remove();
         const flow = finiteNumber(props.flowCfs);
         const measured = formatTimestampWithRelative(toIsoTimestamp(props.observedAt));
+        // How many gauges the mean was taken over, and how much ground it covers -- the two
+        // things that make a filled square readable as an aggregate rather than as a boundary
+        // somebody surveyed. Both are the envelope's own declarations, printed only when it
+        // made them.
+        const gaugeCount = finiteNumber(props.gaugeCount);
+        const cellWidth = finiteNumber(props.cellWidthDegrees);
+        const cellHeight = finiteNumber(props.cellHeightDegrees);
         const html = `
           <div style="font-size:12px;min-width:180px">
-            <strong style="display:block;margin-bottom:4px">Coarse streamflow cell</strong>
+            <strong style="display:block;margin-bottom:4px">${escapeHtml(WATER_CELL_CAPTION_TITLE)}</strong>
             <div>Mean discharge: <strong>${flow !== null ? `${escapeHtml(flow.toFixed(1))} cfs` : "not reported"}</strong></div>
+            ${gaugeCount !== null ? `<div>Gauges: <strong>${escapeHtml(gaugeCount.toLocaleString())}</strong></div>` : ""}
             ${measured ? `<div class="map-popup-meta">Newest reading: ${escapeHtml(measured)}</div>` : ""}
-            <div class="map-popup-meta">Several gauges may contribute; no single gauge identity applies.</div>
+            ${cellWidth !== null && cellHeight !== null ? `<div class="map-popup-meta">Cell: ${escapeHtml(formatSupportCellSize(cellWidth, cellHeight))}</div>` : ""}
+            <div class="map-popup-meta">${escapeHtml(WATER_CELL_AGGREGATE_NOTE)}</div>
           </div>
         `;
         popupRef.current = new Popup({ closeButton: true, maxWidth: "260px" })
@@ -415,8 +537,10 @@ export function WaterLayer({
       });
     }
 
+    map.on("click", "water-gauge-cells-fill", handleAggregateClick);
     map.on("click", "water-gauge-cells-circle", handleAggregateClick);
     return () => {
+      map.off("click", "water-gauge-cells-fill", handleAggregateClick);
       map.off("click", "water-gauge-cells-circle", handleAggregateClick);
     };
   }, [map, visible]);

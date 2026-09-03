@@ -1,5 +1,7 @@
 # PlantGeo data-lane execution ownership — 2026-08-28
 
+**Superseded by [`docs/reports/data-lane-execution-ownership-2026-09-02.md`](./data-lane-execution-ownership-2026-09-02.md)** — the executor described here as a not-yet-merged proposal is now the sole production scheduler; see that report's "What the 2026-08-28 report said that is no longer true" for itemized corrections.
+
 ## Executive conclusion
 
 PlantGeo does not yet have one durable owner for the complete path from publisher to PostgreSQL to

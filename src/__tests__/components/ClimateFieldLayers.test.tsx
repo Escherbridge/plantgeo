@@ -13,6 +13,7 @@ import {
   type ClimateFieldSignalId,
   type ClimateRenderForm,
 } from "@/lib/environmental/climate-field";
+import type { ZoomTier } from "@/lib/map/zoom-tiers";
 import type { SliderCapabilities, SliderLayerCapability } from "@/types/time-slider";
 
 /**
@@ -224,19 +225,45 @@ describe("the nine climate rows read and draw independently", () => {
   it("opens each signal on its own default form, so the drawn set composes", () => {
     renderWithDrawn(CLIMATE_FIELD_SIGNAL_IDS);
 
-    // Exactly one signal defaults to a filled wash. Nine fills over the same 397 cells is one
-    // visible field and eight buried under it, which is what the forms exist to prevent.
+    // Six of the nine default to a filled wash and three to contours, since `symbol` was
+    // withdrawn from every signal on 2026-09-02 -- the frozen render contract permits no point
+    // form for a continuous field, and precipitation's old `symbol` default went with it. The
+    // composite is thinner than it was; what it is not is dishonest about the ground each mark
+    // covers.
     const filled = CLIMATE_FIELD_SIGNAL_IDS.filter(
       (signal) => inputFor(signal)?.renderForm === "field"
     );
     expect(filled).toEqual([
       "air-temperature",
+      "precipitation",
       "soil-wetness-surface",
       "soil-wetness-root-zone",
       "soil-wetness-profile",
     ]);
     expect(inputFor("dew-point")?.renderForm).toBe("isoline");
-    expect(inputFor("precipitation")?.renderForm).toBe("symbol");
+  });
+
+  it("offers no signal the point form the render contract forbids for a continuous field", () => {
+    // Asserted over the whole table rather than on the one signal that used to default to it: a
+    // dot's radius says nothing about the ground a value describes, which is exactly the
+    // fictitious footprint `LAYER_RENDER_CONTRACT` withholds every point form for here.
+    for (const signal of CLIMATE_FIELD_SIGNAL_IDS) {
+      expect(CLIMATE_FIELD_SIGNALS[signal].renderForms, signal).not.toContain("symbol");
+    }
+  });
+
+  it("draws a stored points preference as the filled field rather than as another signal's default", () => {
+    // The store outlives the vocabulary: every persisted precipitation row written before
+    // 2026-09-02 names `symbol`. Falling through to each signal's own head would hand a reader
+    // who explicitly chose points the CONTOURS that `dew-point` opens on, so `symbol` maps onto
+    // `field` by name -- the honest successor, one mark per measured cell either way.
+    useClimateStore.setState({
+      renderForms: { precipitation: "symbol", "dew-point": "symbol" },
+    });
+    renderWithDrawn(["precipitation", "dew-point"]);
+
+    expect(inputFor("precipitation")?.renderForm).toBe("field");
+    expect(inputFor("dew-point")?.renderForm).toBe("field");
   });
 
   /**
@@ -258,7 +285,7 @@ describe("the nine climate rows read and draw independently", () => {
     });
     renderWithDrawn(["precipitation", "soil-wetness-profile", "dew-point"]);
 
-    expect(inputFor("precipitation")?.renderForm).toBe("symbol");
+    expect(inputFor("precipitation")?.renderForm).toBe("field");
     expect(inputFor("soil-wetness-profile")?.renderForm).toBe("field");
     // The signal that DOES offer contours still honours the same stored value.
     expect(inputFor("dew-point")?.renderForm).toBe("isoline");
@@ -284,17 +311,26 @@ describe("the nine climate rows read and draw independently", () => {
  *
  * Only the z13 rung may answer in the requested form: a coarse rung has neither the lattice
  * pitch a square needs nor the regular lattice a contour needs, so `tierRenderForm`
- * (parquet-climate-field.ts) serves `symbol` -- Point geometry -- for every form below it. A row
+ * (parquet-climate-field.ts) served `symbol` -- Point geometry -- for every form below it. A row
  * that kept painting the REQUESTED form then built `fill`/`line` layers over Points, which
  * MapLibre draws as nothing at all while `ClimateDetails` went on reporting aggregated cells:
  * an empty canvas that reads as missing coverage rather than as a zoom-out.
+ *
+ * The coarse rungs are tessellated fills now (the pitch comes from the shared tier table), so the
+ * degrade the cases below exercise is a legacy or replayed answer rather than the live one -- and
+ * the rule they pin is unchanged and still load-bearing: paint what ARRIVED, never what was asked
+ * for. The `zoomTier` the answer declares travels the same way, for the same reason.
  */
 describe("each climate row draws the form the server actually served", () => {
   /** A landed collection that declares which signal it answered for and in which form. */
-  function servedAs(signal: ClimateFieldSignalId, renderForm: ClimateRenderForm) {
+  function servedAs(
+    signal: ClimateFieldSignalId,
+    renderForm: ClimateRenderForm,
+    zoomTier = 13
+  ) {
     return {
       ...landed(),
-      data: { type: "FeatureCollection", features: [], signal, renderForm },
+      data: { type: "FeatureCollection", features: [], signal, renderForm, zoomTier },
     };
   }
 
@@ -325,6 +361,24 @@ describe("each climate row draws the form the server actually served", () => {
 
     expect(inputFor("air-temperature")?.renderForm).toBe("field");
     expect(lastDrawnFor("air-temperature")?.renderForm).toBe("field");
+  });
+
+  /**
+   * The rung that ANSWERED, never the rung the row asked for. The layer sizes its outline off
+   * this, and the two differ for a frame after every zoom -- adopting the requested one would
+   * stroke a coarse tessellation as though it were the detail lattice.
+   */
+  it("passes the rung the collection declares, not the one this row asked for", () => {
+    climateQuery.resultBySignal.set("air-temperature", servedAs("air-temperature", "field", 9));
+    renderWithDrawn(["air-temperature"], 9);
+
+    expect(lastDrawnFor("air-temperature")?.zoomTier).toBe(9);
+  });
+
+  it("stands in with the base rung until an answer has arrived, when nothing is drawn yet", () => {
+    renderWithDrawn(["air-temperature"], 9);
+
+    expect(lastDrawnFor("air-temperature")?.zoomTier).toBe(13);
   });
 
   /**
@@ -379,13 +433,18 @@ describe("each climate row draws the form the server actually served", () => {
       return { map: recorder as unknown as MapLibreMap, added };
     }
 
-    async function renderRealLayer(renderForm: ClimateRenderForm) {
+    async function renderRealLayer(renderForm: ClimateRenderForm, zoomTier: ZoomTier = 13) {
       const { ClimateFieldLayer } = await vi.importActual<
         typeof import("@/components/map/layers/ClimateFieldLayer")
       >("@/components/map/layers/ClimateFieldLayer");
       const { map, added } = createRecordingMap();
       render(
-        <ClimateFieldLayer map={map} signal="air-temperature" renderForm={renderForm} />
+        <ClimateFieldLayer
+          map={map}
+          signal="air-temperature"
+          renderForm={renderForm}
+          zoomTier={zoomTier}
+        />
       );
       return added.map((layer) => layer.type);
     }
@@ -396,6 +455,34 @@ describe("each climate row draws the form the server actually served", () => {
 
     it("builds the fill and its outline only when the served form is the filled one", async () => {
       expect(await renderRealLayer("field")).toEqual(["fill", "line"]);
+    });
+
+    /**
+     * The coarse rungs are FILLED now, where wave 1 drew nothing at all below z13 unless the
+     * server had degraded them to points. The fill is what closes the acceptance gate
+     * "continuous fields fill polygons rather than drawing contour strokes only".
+     */
+    it("builds the fill for the served form at a coarse rung", async () => {
+      expect(await renderRealLayer("field", 9)).toEqual(["fill"]);
+    });
+
+    /**
+     * And no per-cell outline there. Every rung tessellates the whole viewport now, so a stroke on
+     * every cell draws a mesh of block seams across it -- the defect this track exists to remove.
+     * At the detail rung the same stroke still says something true, which the case above pins.
+     */
+    it("draws no per-cell outline at a coarse rung, where it would read as block seams", async () => {
+      expect(await renderRealLayer("field", 5)).not.toContain("line");
+      expect(await renderRealLayer("field", 0)).not.toContain("line");
+    });
+
+    /**
+     * `isoband` on the render contract's vocabulary: a dissolved BAND is a closed area, and the
+     * spec's gate is that a continuous field fills it. Wave 1 stroked the boundary and filled
+     * nothing, which drew a contour map where a filled field was owed.
+     */
+    it("fills a dissolved band and draws its boundary over the fill", async () => {
+      expect(await renderRealLayer("isoline", 9)).toEqual(["fill", "line"]);
     });
   });
 });

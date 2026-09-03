@@ -67,9 +67,10 @@ export function firmsDayRange(): number {
   const raw = process.env.FIRMS_DAY_RANGE?.trim() ?? "";
   if (!STRICT_NONNEGATIVE_INTEGER.test(raw)) return 2;
   // 5, not 10: measured against the live API 2026-08-05, day ranges 6/7/10 each answer
-  // `400 Invalid day range. Expects [1..5].`. Must stay equal to firms.py's MAX_FIRMS_DAY_RANGE --
-  // this function feeds the SERVING window via src/app/api/fires/route.ts, so a divergence means
-  // the map asks for a window the ingester never filled.
+  // `400 Invalid day range. Expects [1..5].`. Must stay equal to firms.py's MAX_FIRMS_DAY_RANGE.
+  // The route this used to feed (`src/app/api/fires/route.ts`) was deleted on 2026-09-02; what
+  // reads it now is the alert engine's lookback and the agent tool's Parquet window, so a
+  // divergence means those ask for a window the ingester never filled.
   return Math.min(5, Math.max(1, Number.parseInt(raw, 10)));
 }
 

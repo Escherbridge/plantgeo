@@ -87,25 +87,105 @@ arm, because every state needs it — an empty collection built from `day_not_wr
 declare which rung was asked, or the renderer cannot say whether it is looking at stored cells or
 at an aggregate.
 
-Two consequences the renderer must respect, both enforced in `parquet-climate-field.ts`:
+Two consequences the renderer had to respect while the support geometry was missing, **both now
+superseded** by §tessellated-support below. They are kept here because the reasoning that produced
+them is right and only its premise changed — the module was not *told* the coarse pitch, so it
+refused to guess one:
 
-- **No coarse cell polygons yet.** `CELL_DEGREES = 0.5` is the *detail* rung's lattice pitch. The
-  coarse rungs aggregate onto their own lattices whose pitch this module is not told, so drawing a
-  z0 aggregate as a 0.5-degree square would paint a continent-wide mean as one stored cell. Until
-  the support geometry lands, coarse rungs draw as **points** at the aggregate's own centre:
-  honest, self-locating, and needing no pitch. `tierRenderForm` degrades to `"symbol"` below z13
-  and reports it back in `renderForm`, so a client cannot mistake the geometry it got for the one
-  it asked for.
-- **`latticeCellCount` is a detail-rung denominator.** It counts the frozen 397-cell NASA POWER
-  lattice, which a coarse rung's cells are not drawn from. Publishing it there would put a
-  numerator and a denominator measured on different lattices next to each other in the panel's
-  "N of 397 cells in view" sentence.
+- ~~**No coarse cell polygons yet.**~~ `CELL_DEGREES = 0.5` was the detail rung's pitch, and
+  `tierRenderForm` degraded every rung below z13 to `"symbol"` — points at the aggregate's own
+  centre, honest and needing no pitch. The pitch now comes from `servedCellLattice`, so every rung
+  is a filled tessellation and the only degrade left runs the other way (a contour at the detail
+  rung, which the render contract does not permit).
+- ~~**`latticeCellCount` is a detail-rung denominator.**~~ It published 0 below z13 rather than a
+  number measured against a lattice the answer was not drawn from. It is now measured on the
+  SERVED rung: frozen lattice centres are folded onto that rung's cells and the distinct cells are
+  counted, so the numerator and the denominator are again on one lattice.
 
 Cell identity follows the rule `decodeSoilFieldRows` already enforces: only z13 carries `cell_id`,
-coarse rungs carry an anonymous aggregate, and `(zoomTier === 13) !== (row.cell_id !== null)` is a
-contract error. The duplicate check keys on the coordinate pair where there is no identity, so it
-survives the coarse rungs instead of silently passing over a set of nulls. `aggregated` is read off
-`cellId === null` rather than off the tier, so the flag and the identity can never disagree.
+coarse rungs carry an anonymous aggregate, and `(zoomTier === BASE_ZOOM_TIER) !== (row.cell_id !==
+null)` is a contract error. The duplicate check keys on the coordinate pair where there is no
+identity, so it survives the coarse rungs instead of silently passing over a set of nulls. That
+guard is now a READER-SIDE integrity check and nothing more: `aggregated` is read off the declared
+`support.zoomTier`, so a lane that one day publishes ids on every rung relaxes the guard and
+changes no renderer.
+
+## §tessellated-support — the cell a served row stands for
+
+Every reader in this directory that returns cells now attaches an `AggregateEnvelopeSupport`
+(`src/lib/map/layer-render-contract.ts`): the rung, the form, the stable id, origin-versus-centre
+semantics, cell width and height, the aggregation method, the contributor count and provenance.
+The client never infers support from a null cell id or from a layer name again.
+
+**One tier -> cell-size table, and it lives in `src/lib/map/zoom-tiers.ts`.**
+`DERIVED_TIER_CELL_DEGREES` mirrors `TIER_RESOLUTION_DEGREES` in
+`services/agri-data-service/src/agri_data_service/warehouse/parquet/tiers.py` — `{9: 0.01, 5: 0.2,
+0: 5.0}`, four web-map pixels of each tier's own zoom — and `LANE_BASE_LATTICES` carries each
+lane's own base grain beside it. `src/__tests__/lib/map/zoom-tiers.test.ts` pins both against the
+Python literals. The base rung is deliberately absent from the tier table: it is not derived, so it
+has no ladder resolution.
+
+**The served cell is `max(tier grid, lane base grain)`, and that single rule fixes two defects.**
+0.01 at z9 and 0.2 at z5 are both FINER than the quarter-degree cells the signal, soil-field and
+vegetation lanes publish, so those rungs merge nothing — they are a relabelling of the base rung.
+Drawing them at the ladder's pitch painted a quarter-degree measurement as a 0.01-degree speck at
+z9, and at z5 as a 0.2-degree cell on a grid 0.25 does not divide, which leaves one lattice column
+in five empty — roughly a third of the viewport showing map background. That is the "separated
+rectangular climate blocks and nested ERA5 soil blocks with visible seams" the 2026-09-01
+production assessment recorded. Taking the coarser of the two is exactly true: **a derived rung
+cannot describe ground finer than the rung it was derived from.**
+
+**Corners come from an integer lattice index, never from the row's own float.** `latticeCellIndex`
+adds back half the grid step the derivation's `floor` moved the coordinate by, then rounds — the
+error is at most `tierCellDegrees / 2` against a cell at least that wide, so the recovery is exact
+rather than approximate. `latticeCellSpan` then rebuilds both edges from the index, so cell `i`'s
+upper edge and cell `i+1`'s lower edge are the SAME expression over the same operands and therefore
+the same double to the last bit. `coordinate + size` for one row against `coordinate` for its
+neighbour are two different computations that agree only to within rounding, and that difference is
+the hairline of background between two cells that should touch.
+
+**`origin` is not decoration.** `fire_detections_day_export.sql` floor-snaps to 0.005 and writes the
+cell ORIGIN; `signal_plane_day_export.sql` and `vegetation_day_export.sql` write
+`ST_X(cell.centroid)` and so write the CENTRE. Every derived rung writes the floored origin
+(`GridAggregation` in tiers.py). Reading one as the other shifts a whole field by half a cell,
+which looks like a registration error rather than a bug.
+
+**The climate lane's base grain is 1 degree, not the 0.5 degrees NASA POWER measures.** The lane
+samples that product on a one-degree lattice (`CLIMATE_FIELD_LATTICE_ROWS` steps by whole degrees),
+so a half-degree cell leaves three quarters of the viewport blank. The drawn cell is the ground
+NEAREST its sample — what a tessellation of a regular lattice means — and the measured support is
+carried in the panel caption rather than in the geometry. Permitted because `LAYER_RENDER_CONTRACT`
+sets `declaredSupportDegrees: null` for these lanes and already licenses `isoband`, which claims
+strictly more ground than a nearest-sample cell. Contrast `vegetation`, whose
+`declaredSupportDegrees` IS 0.25 — and whose lattice pitch is also 0.25, so nothing is claimed
+beyond what was measured. That lane is served as `tessellated_cell` at every rung for exactly that
+reason; `raw_point` there would be the fictitious finer footprint the contract forbids.
+
+**Form follows the contract, not the zoom.** `isoband` is permitted at the coarse and middle bands
+only, because a band asserts the field varies smoothly BETWEEN samples and the detail rung serves
+those samples. A contoured signal at z13 is therefore served filled, and `renderForm` reports it.
+Isobands are dissolved over the SERVED rung's lattice: handing `buildIsobands` the detail pitch for
+a coarse answer makes it read a regular lattice as a scatter, every square fails its corner test,
+and the band comes back empty or in pieces — a seam wherever one batch of rows met the next.
+
+**Attribution lives in `LANE_ATTRIBUTIONS`** (`parquet-trpc-readers.ts`) because neither
+`layer-registry.ts` nor `layer-legends.ts` carries an attribution field. Two of the five reuse the
+constant published beside their value vocabulary; a registry that grows one should read from this
+table rather than adding a second copy.
+
+**Where support is per-row and where it is per-collection.** Fire, water, vegetation and climate
+readers return arrays of rows and attach support to each, because `supportId` and
+`contributorCount` genuinely vary per row. The soil-field and climate-field *presentations* return
+one collection whose features all share the rung, the pitch, the origin semantics and the
+attribution, so those carry ONE envelope — `supportId` there names the lattice (`lane:day:zN`) —
+and the per-feature part that varies is already on each feature as `cellKey`. A copy of the
+envelope per cell would repeat five constant fields up to `SOIL_FIELD_MAX_CELLS` times for no
+reader.
+
+**Water's contributor count is measured by the fold, not read off a column.** The lane publishes no
+observation count and its derivation nulls `site_number`, so the only defensible number is the one
+`newestWaterRows` can see: the readings that shared this envelope's key, summed onto the row that
+survives. Reporting 1 for a cell that answered for six gauges would be a fabricated count.
 
 ## §request-cancellation — an abort is not an outage
 

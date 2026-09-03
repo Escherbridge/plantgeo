@@ -5,7 +5,7 @@ const mocks = vi.hoisted(() => ({
   getPublishedStreamflowGauges: vi.fn(),
   getPublishedWeatherForPoint: vi.fn(),
   getPublishedWeatherForBbox: vi.fn(),
-  getPublishedFireDetections: vi.fn(),
+  getParquetFireDetections: vi.fn(),
   getParquetSliderCapabilities: vi.fn(),
   getStrategyRecommendations: vi.fn(),
   getInterventionSuitability: vi.fn(),
@@ -74,8 +74,19 @@ vi.mock("@/lib/server/services/environmental-read-model", async () => {
     getPublishedStreamflowGauges: mocks.getPublishedStreamflowGauges,
     getPublishedWeatherForPoint: mocks.getPublishedWeatherForPoint,
     getPublishedWeatherForBbox: mocks.getPublishedWeatherForBbox,
-    getPublishedFireDetections: mocks.getPublishedFireDetections,
   };
+});
+
+/**
+ * The agent's fire read moved off PostgreSQL on 2026-09-02, for the same reason the capability
+ * read did: `getPublishedFireDetections` answers an unwritten day and an empty day with the same
+ * empty collection, so the assembler could not tell a coverage hole from an observed absence
+ * without leaning entirely on the capability record. The Parquet reader states which it is.
+ */
+vi.mock("@/lib/server/services/parquet-trpc-readers", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/lib/server/services/parquet-trpc-readers")>();
+  return { ...actual, getParquetFireDetections: mocks.getParquetFireDetections };
 });
 
 /**
@@ -179,6 +190,39 @@ function emptyDrought() {
   return { type: "FeatureCollection", features: [], availability: "unavailable", observedAt: null };
 }
 
+/**
+ * A `ready` fire window carrying whatever cells a case needs — empty by default, which is the
+ * shape every pre-existing case in this file was written against: the day published and nothing
+ * fell in the assembler's own box, so the coverage record decides what may be said about it.
+ */
+function readyFireWindow(
+  day: string,
+  cells: ReturnType<typeof fireCell>[] = [],
+  truncated = false
+) {
+  return {
+    state: "ready",
+    requestedDay: day,
+    servedDay: day,
+    truncated,
+    data: { firstDay: day, lastDay: day, cells, days: [] },
+  };
+}
+
+function fireCell(day: string, observedAt: string, overrides: Record<string, unknown> = {}) {
+  return {
+    longitude: -116.21,
+    latitude: 43.61,
+    observedDay: day,
+    detectionCount: 3,
+    frpSum: 12.5,
+    frpObservationCount: 3,
+    highConfidenceDetectionCount: 2,
+    newestObservedAt: observedAt,
+    ...overrides,
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.dbSelectResults.length = 0;
@@ -196,10 +240,7 @@ beforeEach(() => {
   mocks.getPublishedStreamflowGauges.mockResolvedValue([]);
   mocks.getPublishedWeatherForPoint.mockResolvedValue(null);
   mocks.getPublishedWeatherForBbox.mockResolvedValue([]);
-  mocks.getPublishedFireDetections.mockResolvedValue({
-    type: "FeatureCollection",
-    features: [],
-  });
+  mocks.getParquetFireDetections.mockResolvedValue(readyFireWindow(SERVER_TODAY));
   mocks.getParquetSliderCapabilities.mockResolvedValue(sliderCapabilities());
   // Unconfigured by default, same as the pre-2026-08-14 hardcoded nulls this replaced: no test
   // in this file exercises soil/MTBS content unless it explicitly overrides these.
@@ -215,11 +256,12 @@ describe("assembling regional context at the days the user is viewing", () => {
       { layer: "drought", date: "2026-01-07", hasDataOnDate: false },
     ]);
 
-    expect(mocks.getPublishedFireDetections).toHaveBeenCalledWith(
-      expect.any(String),
-      undefined,
-      "2025-08-14"
-    );
+    expect(mocks.getParquetFireDetections).toHaveBeenCalledWith({
+      bbox: expect.any(String),
+      date: "2025-08-14",
+      mapZoom: 9,
+      dayRange: expect.any(Number),
+    });
     expect(mocks.getPublishedStreamflowGauges).toHaveBeenCalledWith(
       expect.any(String),
       "2026-03-02"
@@ -230,16 +272,33 @@ describe("assembling regional context at the days the user is viewing", () => {
     );
   });
 
+  /**
+   * The read the agent gets is bbox-scoped and rung-resolved, which the PostgreSQL reader it
+   * replaced could not be: it took no zoom at all and its bbox was optional. A regression that
+   * dropped either would answer a point question with a global collection.
+   */
+  it("scopes the agent's fire read to its own window and to one published rung", async () => {
+    await assembleRegionalContext(43.6, -116.2, [
+      { layer: "fire", date: "2025-08-14", hasDataOnDate: true },
+    ]);
+
+    const [request] = mocks.getParquetFireDetections.mock.calls[0];
+    const [west, south, east, north] = request.bbox.split(",").map(Number);
+    expect(west).toBeCloseTo(-116.45, 6);
+    expect(south).toBeCloseTo(43.35, 6);
+    expect(east).toBeCloseTo(-115.95, 6);
+    expect(north).toBeCloseTo(43.85, 6);
+    expect(request.mapZoom).toBe(9);
+  });
+
   it("accepts a layer row named by its geo.layers name as well as by its toggle id", async () => {
     await assembleRegionalContext(43.6, -116.2, [
       { layer: "fire-detections", date: "2025-08-14", hasDataOnDate: true },
       { layer: "water-gauges", date: "2026-03-02", hasDataOnDate: true },
     ]);
 
-    expect(mocks.getPublishedFireDetections).toHaveBeenCalledWith(
-      expect.any(String),
-      undefined,
-      "2025-08-14"
+    expect(mocks.getParquetFireDetections).toHaveBeenCalledWith(
+      expect.objectContaining({ date: "2025-08-14" })
     );
     expect(mocks.getPublishedStreamflowGauges).toHaveBeenCalledWith(
       expect.any(String),
@@ -250,10 +309,8 @@ describe("assembling regional context at the days the user is viewing", () => {
   it("still assembles a context when the client reports no viewed layers at all", async () => {
     const result = await assembleRegionalContext(43.6, -116.2);
 
-    expect(mocks.getPublishedFireDetections).toHaveBeenCalledWith(
-      expect.any(String),
-      undefined,
-      undefined
+    expect(mocks.getParquetFireDetections).toHaveBeenCalledWith(
+      expect.objectContaining({ date: undefined })
     );
     expect(mocks.getPublishedStreamflowGauges).toHaveBeenCalledWith(
       expect.any(String),
@@ -276,10 +333,7 @@ describe("assembling regional context at the days the user is viewing", () => {
     mocks.getParquetSliderCapabilities.mockResolvedValue(sliderCapabilities());
     mocks.getPublishedDroughtClassification.mockResolvedValue(emptyDrought());
     mocks.getPublishedStreamflowGauges.mockResolvedValue([]);
-    mocks.getPublishedFireDetections.mockResolvedValue({
-      type: "FeatureCollection",
-      features: [],
-    });
+    mocks.getParquetFireDetections.mockResolvedValue(readyFireWindow(SERVER_TODAY));
     mocks.getStrategyRecommendations.mockResolvedValue([]);
     mocks.getInterventionSuitability.mockResolvedValue({ availability: "unavailable" });
     mocks.getPublishedWeatherForBbox.mockResolvedValue([
@@ -434,12 +488,88 @@ describe("assembling regional context at the days the user is viewing", () => {
   });
 
   it("never reports a failed read as the warehouse having published nothing", async () => {
-    mocks.getPublishedFireDetections.mockRejectedValue(new Error("connection reset"));
+    mocks.getParquetFireDetections.mockRejectedValue(new Error("connection reset"));
 
     const result = await assembleRegionalContext(43.6, -116.2, [
       { layer: "fire", date: DAY_INSIDE_THE_FIRE_HOLE, hasDataOnDate: false },
     ]);
     expect(result.temporalContext.readings[0].outcome).toBe("read_failed");
+  });
+
+  /**
+   * The Parquet readers return an outage as DATA, not as a rejection, so the `status === "rejected"`
+   * check every neighbouring source uses would read a down warehouse as a published-and-empty day.
+   * This is the case that would regress silently if `resolveFireRead` were ever simplified back.
+   */
+  it("treats an outage returned as a state, not a rejection, as a failed read", async () => {
+    mocks.getParquetFireDetections.mockResolvedValue({
+      state: "upstream_unavailable",
+      fault: { kind: "http", message: "warehouse returned 503", status: 503 },
+    });
+
+    const result = await assembleRegionalContext(43.6, -116.2, [
+      { layer: "fire", date: DAY_THE_FIRE_LANE_PUBLISHED, hasDataOnDate: true },
+    ]);
+    expect(result.temporalContext.readings[0].outcome).toBe("read_failed");
+    expect(result.payload.fireDetections).toBeNull();
+    expect(result.dataFreshness.fireDetections).toBe("unavailable");
+  });
+
+  /**
+   * The reader proved the partition was never written. The capability record still lists this day
+   * as published, and deferring to it would license "no fires here" for a day nobody observed.
+   */
+  it("lets an unwritten partition override a capability row that still calls the day published", async () => {
+    mocks.getParquetFireDetections.mockResolvedValue({
+      state: "not_generated",
+      requestedDay: DAY_THE_FIRE_LANE_PUBLISHED,
+      reason: "day_not_written",
+    });
+
+    const result = await assembleRegionalContext(43.6, -116.2, [
+      { layer: "fire", date: DAY_THE_FIRE_LANE_PUBLISHED, hasDataOnDate: true },
+    ]);
+    expect(result.temporalContext.readings[0].outcome).toBe(
+      "not_published_on_viewed_date"
+    );
+    expect(result.temporalContext.readings[0].reason).toContain(
+      DAY_THE_FIRE_LANE_PUBLISHED
+    );
+    expect(result.temporalContext.readings[0].clientClaimContradicted).toBe(true);
+  });
+
+  it("reports published cells at the grain the lane writes, newest first and never as pixels", async () => {
+    mocks.getParquetFireDetections.mockResolvedValue(
+      readyFireWindow(
+        DAY_THE_FIRE_LANE_PUBLISHED,
+        [
+          fireCell(DAY_THE_FIRE_LANE_PUBLISHED, "2026-02-14T04:00:00Z"),
+          fireCell(DAY_THE_FIRE_LANE_PUBLISHED, "2026-02-14T19:30:00Z", {
+            frpSum: null,
+            frpObservationCount: 0,
+          }),
+        ],
+        true
+      )
+    );
+
+    const result = await assembleRegionalContext(43.6, -116.2, [
+      { layer: "fire", date: DAY_THE_FIRE_LANE_PUBLISHED, hasDataOnDate: true },
+    ]);
+
+    expect(result.temporalContext.readings[0].outcome).toBe("observed_on_viewed_date");
+    expect(result.payload.fireDetections?.cells.map((cell) => cell.observedAt)).toEqual([
+      "2026-02-14T19:30:00Z",
+      "2026-02-14T04:00:00Z",
+    ]);
+    // The cell grain has no per-detection confidence or FRP, and none is invented for the agent.
+    expect(result.payload.fireDetections?.cells[0]).toMatchObject({
+      detectionCount: 3,
+      highConfidenceDetectionCount: 2,
+      frpSum: null,
+    });
+    expect(result.payload.fireDetections?.truncated).toBe(true);
+    expect(result.dataFreshness.fireDetections).toBe("2026-02-14T19:30:00Z");
   });
 
   it("reports coverage as unknown when the coverage record itself could not be read", async () => {

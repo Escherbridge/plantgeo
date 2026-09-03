@@ -1,0 +1,111 @@
+{
+  "type": "Feature",
+  "geometry": {
+    "type": "Point",
+    "coordinates": [
+      -119.0,
+      46.0,
+      385.68
+    ]
+  },
+  "properties": {
+    "parameter": {
+      "ALLSKY_SFC_SW_DWN": {
+        "20260820": -999.0
+      },
+      "GWETPROF": {
+        "20260820": 0.489
+      },
+      "GWETROOT": {
+        "20260820": 0.311
+      },
+      "GWETTOP": {
+        "20260820": 0.128
+      },
+      "PRECTOTCORR": {
+        "20260820": 0.0
+      },
+      "RH2M": {
+        "20260820": 27.0
+      },
+      "T2M": {
+        "20260820": 27.35
+      },
+      "T2MDEW": {
+        "20260820": 6.02
+      },
+      "T2M_MAX": {
+        "20260820": 35.09
+      },
+      "T2M_MIN": {
+        "20260820": 20.13
+      },
+      "WS2M": {
+        "20260820": 1.23
+      }
+    }
+  },
+  "header": {
+    "title": "NASA/POWER Source Native Resolution Daily Data",
+    "api": {
+      "version": "v2.9.7",
+      "name": "POWER Daily API"
+    },
+    "sources": [
+      "GEOSIT",
+      "POWER"
+    ],
+    "fill_value": -999.0,
+    "time_standard": "UTC",
+    "start": "20260820",
+    "end": "20260820"
+  },
+  "messages": [],
+  "parameters": {
+    "ALLSKY_SFC_SW_DWN": {
+      "units": "MJ/m^2/day",
+      "longname": "All Sky Surface Shortwave Downward Irradiance"
+    },
+    "PRECTOTCORR": {
+      "units": "mm/day",
+      "longname": "Precipitation Corrected"
+    },
+    "RH2M": {
+      "units": "%",
+      "longname": "Relative Humidity at 2 Meters"
+    },
+    "T2M": {
+      "units": "C",
+      "longname": "Temperature at 2 Meters"
+    },
+    "T2MDEW": {
+      "units": "C",
+      "longname": "Dew/Frost Point at 2 Meters"
+    },
+    "T2M_MAX": {
+      "units": "C",
+      "longname": "Temperature at 2 Meters Maximum"
+    },
+    "T2M_MIN": {
+      "units": "C",
+      "longname": "Temperature at 2 Meters Minimum"
+    },
+    "WS2M": {
+      "units": "m/s",
+      "longname": "Wind Speed at 2 Meters"
+    }
+  },
+  "times": {
+    "data": 0.624,
+    "process": 0.02
+  },
+  "_fixture_provenance": {
+    "derived_from": "nasa-power-point-response-2026-09-02.json",
+    "source_sha256": "09d87119b5c156f756601eae92d673c19550ce476a2197b4b9d4eaeac3fd0d50",
+    "synthetic": true,
+    "what_was_added": "properties.parameter.GWETTOP / GWETROOT / GWETPROF, one value each for 20260820",
+    "why": "the real capture was taken with an eight-parameter request, months before the three soil-wetness depths joined the product table; POWER returns only what the URL asks for",
+    "values_are_invented": "GWETTOP 0.128, GWETROOT 0.311, GWETPROF 0.489 are NOT measured. They are inside the fraction-of-saturation range and distinct, which is all any test here asserts. Never cite them as observations.",
+    "unchanged": "geometry, header, times, messages, parameters metadata and the eight real series"
+  }
+}

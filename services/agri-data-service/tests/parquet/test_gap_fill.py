@@ -33,6 +33,7 @@ from agri_data_service.foundation.parquet.paths import (
 )
 from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
 from agri_data_service.interface.cli import cli
+from agri_data_service.pipeline.parquet.derivation import DerivationResult
 from agri_data_service.pipeline.parquet.gap_fill import (
     GAP_FILL_ZOOM_TIER,
     GapFillContractError,
@@ -1323,3 +1324,213 @@ async def test_a_source_with_no_rows_carries_neither_a_day_nor_an_instant() -> N
     watermark = await lane.watermark(session, ObjectStore(RecordingBackend()), today=TODAY)  # type: ignore[arg-type]
 
     assert (watermark.day, watermark.instant) == (None, None)
+
+
+# --- The ladder queue: published days that are invisible below z13 -------------------------------
+
+
+class DerivedRungListingFails(RecordingBackend):
+    """A backend whose DERIVED-rung listings fail while the base rung still lists cleanly.
+
+    The half-readable bucket is the case worth pinning: an empty repair set means "every rung is
+    whole", which is the one thing an unreadable listing cannot say.
+    """
+
+    def list_objects(self, prefix: str) -> Iterator[ListedObject]:
+        if f"zoom={GAP_FILL_ZOOM_TIER}" not in prefix and "availability/" not in prefix:
+            raise OSError(f"bucket unreachable while listing {prefix}")
+        return super().list_objects(prefix)
+
+
+def recording_deriver(derived: list[tuple[str, date]]) -> TierDeriver:
+    """A tier deriver that records the lane-days it was asked for and writes nothing."""
+
+    def derive(store: ObjectStore, **kwargs: Any) -> DerivationResult:  # noqa: ARG001
+        derived.append((str(kwargs["layer"]), kwargs["day"]))
+        return DerivationResult(tiers=(), notes=())
+
+    return derive
+
+
+def one_day_lane(calls: list[LaneCall], day: date) -> LaneRegistration:
+    """A lane whose settled window is exactly `day`, so its only work is whatever that day owes."""
+    return stub_lane("signal", calls, floor=day, lag=(TODAY - day).days)
+
+
+def test_a_base_complete_day_missing_a_coarse_rung_owes_a_repair_and_not_an_export() -> None:
+    """DO NOT DELETE. Censusing the base rung alone hid 1,040 published lane-days below z13.
+
+    The day has parts and a completion marker at z13, so no export is owed and the old census called
+    it finished. Every zoom under 13 held nothing for it, forever, on a green tick.
+    """
+    calls: list[LaneCall] = []
+    backend = RecordingBackend()
+    newest = days_newest_first(1)[0]
+    seed_partition(backend, "signal", newest)
+    seed_completion(backend, "signal", newest)
+
+    entry = build_gap_census([one_day_lane(calls, newest)], ObjectStore(backend), today=TODAY)[0]
+
+    assert entry.missing_days == (), "the base rung is published, so nothing is exported"
+    assert entry.ladder_repair_days == (newest,)
+    assert entry.ladder_error is None
+    report = gap_census_report([entry])
+    assert report["ladder_repair_days"] == 1
+    assert report["lanes_with_ladder_repairs"] == ["signal"]
+
+
+def test_a_day_marked_at_every_rung_owes_nothing_at_all() -> None:
+    calls: list[LaneCall] = []
+    backend = RecordingBackend()
+    newest = days_newest_first(1)[0]
+    seed_partition(backend, "signal", newest)
+    for tier in ZOOM_TIERS:
+        seed_completion(backend, "signal", newest, zoom=tier)
+
+    entry = build_gap_census([one_day_lane(calls, newest)], ObjectStore(backend), today=TODAY)[0]
+
+    assert (entry.missing_days, entry.ladder_repair_days) == ((), ())
+
+
+def test_a_rung_marked_without_parts_still_counts_as_finished() -> None:
+    """A rung that generalised every base row away holds NO parts and a derived-empty receipt.
+
+    Demanding parts at a derived rung would re-select such a day on every tick forever, which is the
+    loop `derivation._retract_tier`'s receipt exists to break.
+    """
+    calls: list[LaneCall] = []
+    backend = RecordingBackend()
+    newest = days_newest_first(1)[0]
+    seed_partition(backend, "signal", newest)
+    seed_completion(backend, "signal", newest)
+    for tier in ZOOM_TIERS:
+        if tier != GAP_FILL_ZOOM_TIER:
+            backend.put(
+                completion_marker_path("signal", "observed", tier, newest),
+                PartitionCompletion(
+                    part_count=0, row_count=0, completed_at=FROZEN_NOW, run_id="seed", derived_empty=True
+                ).to_json_bytes(),
+                content_type=COMPLETION_CONTENT_TYPE,
+            )
+
+    entry = build_gap_census([one_day_lane(calls, newest)], ObjectStore(backend), today=TODAY)[0]
+
+    assert entry.ladder_repair_days == ()
+
+
+def test_an_unreadable_rung_listing_is_reported_rather_than_read_as_a_whole_ladder() -> None:
+    calls: list[LaneCall] = []
+    backend = DerivedRungListingFails()
+    newest = days_newest_first(1)[0]
+    seed_partition(backend, "signal", newest)
+    seed_completion(backend, "signal", newest)
+
+    entry = build_gap_census([one_day_lane(calls, newest)], ObjectStore(backend), today=TODAY)[0]
+
+    assert entry.error is None, "the base census is still good"
+    assert entry.ladder_repair_days == ()
+    assert entry.ladder_error is not None
+    assert "derived rungs" in entry.ladder_error
+    assert gap_census_report([entry])["lanes_with_ladder_errors"] == ["signal"]
+
+
+@pytest.mark.asyncio
+async def test_a_repair_re_derives_the_day_without_ever_calling_the_lane_adapter() -> None:
+    """The base rows are already correct; re-exporting them would cost a source query for nothing."""
+    calls: list[LaneCall] = []
+    derived: list[tuple[str, date]] = []
+    backend = RecordingBackend()
+    newest = days_newest_first(1)[0]
+    seed_partition(backend, "signal", newest)
+    seed_completion(backend, "signal", newest)
+
+    summary = await drive([one_day_lane(calls, newest)], ObjectStore(backend), derive_tiers=recording_deriver(derived))
+
+    assert calls == [], "a ladder repair opens no source query at all"
+    assert derived == [("signal", newest)]
+    verdict = summary.lanes[0]
+    assert (verdict.repaired, verdict.written, verdict.ladder_remaining) == (1, 0, 0)
+    assert verdict.outcome == "filled", "a tick that repaired is not a tick with nothing to do"
+    assert summary.to_summary()["repaired"] == 1
+
+
+@pytest.mark.asyncio
+async def test_exports_are_taken_before_repairs() -> None:
+    """A missing day is absent from the map at every zoom; a ladder gap is a published day gone coarse."""
+    calls: list[LaneCall] = []
+    derived: list[tuple[str, date]] = []
+    backend = RecordingBackend()
+    newest, second = days_newest_first(2)
+    seed_partition(backend, "signal", second)
+    seed_completion(backend, "signal", second)
+    lane = stub_lane("signal", calls, floor=second, lag=0)
+
+    await drive([lane], ObjectStore(backend), derive_tiers=recording_deriver(derived))
+
+    assert [call.day for call in calls] == [newest], "only the missing day reaches the lane adapter"
+    # The first derivation is the EXPORT's own ladder, written before its base marker; the second is
+    # the repair. Their order is the claim: a published-but-coarse day never delays a missing one.
+    assert [day for _lane, day in derived] == [newest, second]
+
+
+@pytest.mark.asyncio
+async def test_a_repair_that_raises_leaves_the_lane_working() -> None:
+    """A derivation failure is a property of ONE published day, not of the lane's source or schema."""
+    calls: list[LaneCall] = []
+    backend = RecordingBackend()
+    newest = days_newest_first(1)[0]
+    seed_partition(backend, "signal", newest)
+    seed_completion(backend, "signal", newest)
+
+    def refuse(*_args: object, **_kwargs: object) -> DerivationResult:
+        raise ValueError("the base table does not carry cell_longitude")
+
+    summary = await drive([one_day_lane(calls, newest)], ObjectStore(backend), derive_tiers=refuse)
+
+    verdict = summary.lanes[0]
+    assert verdict.outcome != "raised", "one poisoned day must not hide every other lane's ladder gap"
+    assert verdict.repaired == 0
+    assert "retracting and re-exporting" in (verdict.detail or "")
+
+
+@pytest.mark.asyncio
+async def test_a_current_static_lane_still_repairs_its_ladder() -> None:
+    """DO NOT DELETE. The three `static_lookup` lanes are `current` almost every tick.
+
+    `current` says the reference set matches its source, which is a statement about EXPORTS. Gating
+    the repair queue on it would mean no hourly tick ever derived a coarse rung for `watersheds`,
+    `soil-survey` or `evacuation-zones` -- the exact silence the ladder census exists to end.
+    """
+    calls: list[LaneCall] = []
+    derived: list[tuple[str, date]] = []
+    backend = RecordingBackend()
+    version_day = date(2026, 8, 7)
+    seed_partition(backend, "watersheds", version_day)
+    seed_completion(backend, "watersheds", version_day)
+    lane = stub_lane("watersheds", calls, nature="static_lookup", watermark_day=version_day)
+
+    summary = await drive([lane], ObjectStore(backend), derive_tiers=recording_deriver(derived))
+
+    verdict = summary.lanes[0]
+    assert verdict.outcome == "current", "repairing must not reword what the lane's EXPORT verdict was"
+    assert calls == [], "a current reference set is never re-exported"
+    assert derived == [("watersheds", version_day)]
+    assert verdict.repaired == 1
+
+
+@pytest.mark.asyncio
+async def test_a_lane_whose_export_raised_drops_its_ladder_repairs_too() -> None:
+    """Something about that lane is wrong; re-deriving its published days is the driver guessing."""
+    calls: list[LaneCall] = []
+    derived: list[tuple[str, date]] = []
+    backend = RecordingBackend()
+    newest, second = days_newest_first(2)
+    seed_partition(backend, "signal", second)
+    seed_completion(backend, "signal", second)
+    lane = stub_lane("signal", calls, floor=second, lag=0, raises_on={newest})
+
+    summary = await drive([lane], ObjectStore(backend), derive_tiers=recording_deriver(derived))
+
+    assert summary.lanes[0].outcome == "raised"
+    assert derived == [], "the next tick's census re-selects every one of them"
+    assert summary.lanes[0].ladder_remaining == 0, "a dropped queue is not a deferred one"

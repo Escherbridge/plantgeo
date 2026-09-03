@@ -435,7 +435,9 @@ def test_the_census_covers_all_direct_lanes_and_every_schema_backed_slider_produ
     for layer in DEDICATED_SLIDER_PRODUCT_LAYERS:
         assert get_stream_schema(layer, "observed").name == layer
     assert len(lanes) == EXPECTED_REGISTERED_CENSUS_LANES, (
-        "11 direct lanes plus 5 mutable dedicated products; immutable products use snapshot coverage"
+        "every lane registration except calendar/signal and the immutable snapshot products, which "
+        "are censused through build_snapshot_coverage instead; the five DEDICATED_SLIDER_PRODUCT_LAYERS "
+        "are registrations themselves today, so the derived fallback adds no further row"
     )
 
 

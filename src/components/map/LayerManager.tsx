@@ -312,6 +312,11 @@ export default function LayerManager() {
       placeholderData: keepPreviousData,
     }
   );
+  // No zoom or tier is threaded into the three aggregate layers below. Each served feature
+  // declares the rung it was read at and the square it covers (`AggregateEnvelopeSupport`), so
+  // the presenters choose the form from the data in hand rather than from the camera -- which
+  // is what keeps a retained frame drawn as the rung it was actually aggregated at instead of
+  // being reshaped by a zoom whose answer has not landed. See src/lib/map/AGENTS.md.
   const vegetationGeoJSON = useMemo(
     () => presentParquetVegetation(vegetationQuery.data),
     [vegetationQuery.data]

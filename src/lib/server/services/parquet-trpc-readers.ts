@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   climateFieldSignalDefinition,
   climateFieldSignalName,
+  CLIMATE_FIELD_ATTRIBUTION,
   type AirTemperatureVariant,
   type ClimateFieldSignalId,
 } from "@/lib/environmental/climate-field";
@@ -16,7 +17,24 @@ import {
   type SoilFieldDepth,
   type SoilFieldMeasure,
 } from "@/lib/environmental/soil-field";
-import { resolveZoomTier, type ZoomTier } from "@/lib/map/zoom-tiers";
+import type {
+  AggregateEnvelopeSupport,
+  AggregationMethod,
+  SupportKind,
+} from "@/lib/map/layer-render-contract";
+import {
+  BASE_ZOOM_TIER,
+  LANE_BASE_LATTICES,
+  latticeCellIndex,
+  latticeCellSpan,
+  mintedSupportId,
+  resolveZoomTier,
+  servedCellLattice,
+  tessellatedCellPolygon,
+  type CellLaneId,
+  type ServedCellLattice,
+  type ZoomTier,
+} from "@/lib/map/zoom-tiers";
 import { granularityForZoomTier } from "@/lib/server/services/zoom-granularity";
 import { isFreshObservation } from "@/lib/server/services/environmental-time";
 import {
@@ -53,9 +71,7 @@ const DROUGHT_RELEASE_INTERVAL_DAYS = 7;
 const DROUGHT_MAX_CARRY_FORWARD_DAYS = 14;
 export const VEGETATION_TRAILING_DAYS = 30;
 
-const SOIL_FIELD_BASE_CELL_DEGREES = 0.25;
 const SOIL_FIELD_PARQUET_MAX_OBSERVATION_AGE_DAYS = 0;
-const SOIL_FIELD_TIER_RESOLUTION = { 0: 5, 5: 0.2, 9: 0.01, 13: null } as const;
 const SNAPSHOT_SOURCE_MANIFEST_SHA256 =
   "465abc4e813bf28c78acd7f97a4da9d19ad959e525de3eb1f422ca2f6e73e94f";
 
@@ -86,6 +102,92 @@ const SOIL_MOISTURE_SOURCE_PARAMETERS = {
   "root-zone": "soil_moisture_7_to_28cm_mean",
   deep: "soil_moisture_28_to_100cm_mean",
 } as const satisfies Readonly<Record<Exclude<SoilFieldDepth, "substratum">, string>>;
+
+/**
+ * What must be shown wherever each lane's values are drawn.
+ *
+ * Two of the five already have a published constant beside their value vocabulary and are reused
+ * from there rather than restated. The other three had none anywhere in the tree -- neither
+ * `layer-registry.ts` nor `layer-legends.ts` carries an attribution field -- so they are stated
+ * here, next to the reader that puts them on the wire, and a registry that grows one should read
+ * from this table rather than adding a second copy. See `src/lib/server/services/AGENTS.md`
+ * "Tessellated support geometry".
+ */
+const LANE_ATTRIBUTIONS = {
+  "fire-detections": "NASA FIRMS (LANCE/ESDIS)",
+  "water-gauges": "U.S. Geological Survey NWIS",
+  "weather-observations": "Open-Meteo",
+  vegetation: "Copernicus Sentinel-2 surface reflectance",
+  "climate-field": CLIMATE_FIELD_ATTRIBUTION,
+  "soil-field": SOIL_FIELD_ATTRIBUTION,
+} as const satisfies Readonly<Record<CellLaneId, string>>;
+
+/** Everything one row knows about itself that the envelope cannot derive from the ladder. */
+interface CellSupportInput {
+  lane: CellLaneId;
+  /** The exact Parquet product read, when the lane publishes several; defaults to the lane. */
+  sourceLayer?: string;
+  zoomTier: ZoomTier;
+  supportKind: SupportKind;
+  aggregationMethod: AggregationMethod;
+  /** Source observations or features behind this envelope. Read off a column, never inferred. */
+  contributorCount: number;
+  /** The warehouse's own identity for the cell, or null on a rung that publishes none. */
+  cellId: string | null;
+  longitude: number;
+  latitude: number;
+  observedDay: string;
+  newestObservedAt: string | null;
+}
+
+/**
+ * The support envelope one served row declares about itself.
+ *
+ * ONE builder for every lane, so the cell size can only come from the shared tier table
+ * (`servedCellLattice`) and the identity can only come from the row or from `mintedSupportId`.
+ * Before this, the client re-derived cell width from a private tier table and read "this is an
+ * aggregate" off `cellId === null`, which made a rung whose rows happen to carry ids
+ * indistinguishable from raw observations.
+ *
+ * A `raw_point` carries no cell size at all: a genuine station has no footprint, and publishing
+ * one would license a renderer to draw a square around a gauge.
+ */
+function cellSupport(input: CellSupportInput): AggregateEnvelopeSupport {
+  const lattice = servedCellLattice(input.zoomTier, LANE_BASE_LATTICES[input.lane]);
+  const cellSize =
+    input.supportKind === "raw_point"
+      ? {}
+      : {
+          cellWidthDegrees: lattice.cellSizeDegrees,
+          cellHeightDegrees: lattice.cellSizeDegrees,
+          // The corner this row's cell was actually snapped to, so the client draws the SAME
+          // square rather than re-deriving one from a lattice whose phase it cannot see. Both
+          // sides now run `latticeCellSpan`; see `cellOriginDegrees` on the envelope.
+          cellOriginDegrees: [
+            latticeCellSpan(latticeCellIndex(input.longitude, lattice), lattice)[0],
+            latticeCellSpan(latticeCellIndex(input.latitude, lattice), lattice)[0],
+          ] as const,
+        };
+  return {
+    zoomTier: input.zoomTier,
+    supportKind: input.supportKind,
+    supportId:
+      input.cellId ?? mintedSupportId(input.zoomTier, input.longitude, input.latitude),
+    // A raw point is centred on its own coordinate. `cell_center` rather than `cell_origin`
+    // because the one thing a renderer must not do with a station is offset it by half a cell,
+    // which naming a corner would invite.
+    origin: input.supportKind === "raw_point" ? "cell_center" : lattice.origin,
+    ...cellSize,
+    aggregationMethod: input.aggregationMethod,
+    contributorCount: input.contributorCount,
+    provenance: {
+      sourceLayer: input.sourceLayer ?? input.lane,
+      observedDay: input.observedDay,
+      newestObservedAt: input.newestObservedAt,
+      attribution: LANE_ATTRIBUTIONS[input.lane],
+    },
+  };
+}
 
 /**
  * `aborted` is the odd one out and deliberately so: the other six describe the UPSTREAM, while an
@@ -206,6 +308,12 @@ export interface ParquetWaterGauge {
   geometryLinked: boolean;
   dataAvailableAt: string | null;
   ingestedAt: string;
+  /**
+   * What this row stands for on the ground. `raw_point` at the detail rung, where a row IS one
+   * USGS gauge, and `aggregate_cell` on every derived rung, where `site_number` and `site_name`
+   * were nulled by the derivation because a cell of several gauges has no one identity.
+   */
+  support: AggregateEnvelopeSupport;
 }
 
 const weatherRowSchema = z
@@ -240,6 +348,16 @@ export interface ParquetWeatherObservation {
   source: string;
   featureId: string | null;
   ingestedAt: string;
+  /**
+   * What this row stands for on the ground, on the same rule as the gauges: `raw_point` at the
+   * detail rung, where a row IS one sampled Open-Meteo observation, and `aggregate_cell` on every
+   * derived rung, where the derivation floored several samples into one of the ladder's cells.
+   *
+   * `weather` is an `event_point` layer in `LAYER_RENDER_CONTRACT`, so the base rung declares no
+   * cell size at all -- see `LANE_BASE_LATTICES["weather-observations"]` for the sampled-grid
+   * question that classification leaves open.
+   */
+  support: AggregateEnvelopeSupport;
 }
 
 const vegetationRowSchema = z
@@ -272,6 +390,8 @@ export interface ParquetVegetationObservation {
   allowedClientExposure: true;
   longitude: number;
   latitude: number;
+  /** The quarter-degree cell this NDVI mean describes, at every rung. */
+  support: AggregateEnvelopeSupport;
 }
 
 const positionSchema = z.tuple([finiteNumberSchema, finiteNumberSchema]).rest(finiteNumberSchema);
@@ -412,6 +532,8 @@ type SoilServingRow = Pick<
   | "cell_id"
   | "observed_day"
   | "normalized_value"
+  | "observation_count"
+  | "newest_observed_at"
   | "coverage_fraction"
   | "allowed_client_exposure"
   | "cell_longitude"
@@ -503,6 +625,12 @@ export interface ParquetClimateFieldObservation {
   allowedClientExposure: boolean | null;
   longitude: number;
   latitude: number;
+  /**
+   * The lattice cell this value describes. `tessellated_cell` at every rung -- the value is a
+   * continuous field's sample, and the presentation decides whether it is drawn as that cell, as a
+   * dissolved band across several of them, or as a mark at its centre.
+   */
+  support: AggregateEnvelopeSupport;
 }
 
 export interface ParquetFireDetectionCell {
@@ -514,6 +642,12 @@ export interface ParquetFireDetectionCell {
   frpObservationCount: number;
   highConfidenceDetectionCount: number;
   newestObservedAt: string;
+  /**
+   * `aggregate_cell` at EVERY rung, including the detail one: FIRMS publishes no raw rung, so a
+   * z13 row is already a 0.005-degree detection-density cell rather than one hotspot. See
+   * `FIRE_DETECTION_DETAIL_FORMS` in the render contract.
+   */
+  support: AggregateEnvelopeSupport;
 }
 
 export interface ParquetVegetationWindow {
@@ -712,7 +846,10 @@ function commonRequest(input: ParquetViewportRead, layer: string) {
   };
 }
 
-function decodeWaterRows(rows: readonly Record<string, unknown>[]): ParquetWaterGauge[] {
+function decodeWaterRows(
+  rows: readonly Record<string, unknown>[],
+  zoomTier: ZoomTier
+): ParquetWaterGauge[] {
   return parseRows(rows, waterGaugeRowSchema, "water-gauges").map((row) => ({
     siteNumber: row.site_number,
     observedAt: row.observed_at,
@@ -728,18 +865,64 @@ function decodeWaterRows(rows: readonly Record<string, unknown>[]): ParquetWater
     geometryLinked: row.geometry_linked,
     dataAvailableAt: row.data_available_at,
     ingestedAt: row.ingested_at,
+    support: cellSupport({
+      lane: "water-gauges",
+      zoomTier,
+      supportKind: zoomTier === BASE_ZOOM_TIER ? "raw_point" : "aggregate_cell",
+      // `none` at the raw rung, where nothing was combined at all. `mean` above it, and NOT
+      // `count`: the number a coarse cell carries is `flow_cfs`, the mean discharge over the
+      // gauges the derivation floored into that cell -- which is what `WaterLayer` colours by
+      // and what the caption calls "Mean discharge". `count` would name a different quantity
+      // from the one on the row, and how many gauges contributed is already `contributorCount`.
+      aggregationMethod: zoomTier === BASE_ZOOM_TIER ? "none" : "mean",
+      // One row is one reading; `newestWaterRows` sums these as it folds a cell's readings
+      // together, so the published figure is measured rather than assumed.
+      contributorCount: 1,
+      // The site number where there is one. An UNLOCATED gauge -- this lane's coordinates are
+      // nullable, and the derivation drops those rows from every rung above the base -- has no
+      // position to mint an id from either, so its own reading instant is the identity.
+      cellId:
+        row.site_number ??
+        (row.longitude === null || row.latitude === null
+          ? `water-gauges:${row.observed_day}:${row.observed_at}`
+          : null),
+      longitude: row.longitude ?? 0,
+      latitude: row.latitude ?? 0,
+      observedDay: row.observed_day,
+      newestObservedAt: row.observed_at,
+    }),
   }));
 }
 
+/**
+ * The newest reading per gauge or per cell, carrying the COUNT of everything folded into it.
+ *
+ * The fold is what makes `contributorCount` honest here: this lane publishes no observation-count
+ * column, so the only defensible number is the one this function can see -- the readings that
+ * shared this envelope's key. Summing them onto the winner keeps the count with the row that
+ * survives, rather than reporting 1 for a cell that answered for six gauges.
+ */
 function newestWaterRows(rows: readonly ParquetWaterGauge[]): ParquetWaterGauge[] {
-  return newestByKey(
-    rows,
-    (row) => row.siteNumber ?? `${row.longitude}:${row.latitude}`,
-    (row) => row.observedAt
-  );
+  const keyFor = (row: ParquetWaterGauge) =>
+    row.siteNumber ?? `${row.longitude}:${row.latitude}`;
+  const foldedCounts = new Map<string, number>();
+  for (const row of rows) {
+    const key = keyFor(row);
+    foldedCounts.set(key, (foldedCounts.get(key) ?? 0) + row.support.contributorCount);
+  }
+  return newestByKey(rows, keyFor, (row) => row.observedAt).map((row) => ({
+    ...row,
+    support: {
+      ...row.support,
+      contributorCount: foldedCounts.get(keyFor(row)) ?? row.support.contributorCount,
+    },
+  }));
 }
 
-function decodeWeatherRows(rows: readonly Record<string, unknown>[]): ParquetWeatherObservation[] {
+function decodeWeatherRows(
+  rows: readonly Record<string, unknown>[],
+  zoomTier: ZoomTier
+): ParquetWeatherObservation[] {
   return parseRows(rows, weatherRowSchema, "weather-observations").map((row) => ({
     latitude: row.latitude,
     longitude: row.longitude,
@@ -754,6 +937,26 @@ function decodeWeatherRows(rows: readonly Record<string, unknown>[]): ParquetWea
     source: row.source,
     featureId: row.feature_id,
     ingestedAt: row.ingested_at,
+    support: cellSupport({
+      lane: "weather-observations",
+      zoomTier,
+      supportKind: zoomTier === BASE_ZOOM_TIER ? "raw_point" : "aggregate_cell",
+      // `none` at the raw rung, where nothing was combined. `mean` above it, on the same reading
+      // as the gauges: what a derived row carries is the averaged temperature, humidity and wind
+      // of the samples that fell in its cell, not a tally of them.
+      aggregationMethod: zoomTier === BASE_ZOOM_TIER ? "none" : "mean",
+      // One row is one observation. The lane publishes no observation-count column, and
+      // `newestWeatherRows` keeps the newest row per position rather than folding several, so
+      // there is no measured number larger than this to report.
+      contributorCount: 1,
+      // The station identity where the lane published one; otherwise the rung and the position,
+      // minted by `cellSupport`.
+      cellId: row.external_id ?? row.feature_id,
+      longitude: row.longitude,
+      latitude: row.latitude,
+      observedDay: row.observed_day,
+      newestObservedAt: row.observed_at,
+    }),
   }));
 }
 
@@ -819,7 +1022,11 @@ function decodeClimateFieldRows(
     // The same rule `decodeSoilFieldRows` enforces: only the detail rung carries a stored cell
     // identity, and the coarse rungs carry an anonymous aggregate. A z13 row with no `cell_id`,
     // or a coarse row that kept one, means the reader is reading a rung it did not ask for.
-    if ((zoomTier === 13) !== (row.cell_id !== null)) {
+    //
+    // It stays a READER-SIDE integrity check and nothing more. The client no longer reads support
+    // off this nullability -- `support` says the rung, the form and the cell size outright -- so a
+    // lane that one day publishes ids on every rung would relax this guard and change no renderer.
+    if ((zoomTier === BASE_ZOOM_TIER) !== (row.cell_id !== null)) {
       throw contractError(`${layer} returned invalid cell identity nullability at z${zoomTier}`);
     }
     if (
@@ -866,6 +1073,19 @@ function decodeClimateFieldRows(
       allowedClientExposure: row.allowed_client_exposure,
       longitude: row.cell_longitude,
       latitude: row.cell_latitude,
+      support: cellSupport({
+        lane: "climate-field",
+        sourceLayer: layer,
+        zoomTier,
+        supportKind: "tessellated_cell",
+        aggregationMethod: "mean",
+        contributorCount: row.observation_count,
+        cellId: row.cell_id,
+        longitude: row.cell_longitude,
+        latitude: row.cell_latitude,
+        observedDay: row.observed_day,
+        newestObservedAt: row.newest_observed_at,
+      }),
     };
   });
 }
@@ -934,6 +1154,67 @@ export async function getParquetClimateField(
   return { zoomTier, result };
 }
 
+/**
+ * A soil-field collection that also declares WHICH rung answered it and what its cells stand for.
+ *
+ * Declared here rather than added to `PublishedSoilFieldCollection`: that interface is the
+ * PostgreSQL read model's own vocabulary and is shared with a reader that has no zoom ladder.
+ * Extending it locally keeps the rung and its support on every Parquet answer without asserting
+ * the older reader publishes either. The same trade `ZoomedClimateFieldCollection` makes.
+ */
+export interface ZoomedSoilFieldCollection extends PublishedSoilFieldCollection {
+  /** The one physical rung the rows came from; exactly one per request. */
+  zoomTier: ZoomTier;
+  /**
+   * ONE envelope for the whole collection, not one per feature.
+   *
+   * Every feature in a soil-field answer shares the rung, the cell size, the origin semantics and
+   * the attribution, and the per-feature part that does vary -- the cell's own identity -- is
+   * already on each feature as `cellKey`. A copy of this object per cell would repeat five
+   * constant fields up to `SOIL_FIELD_MAX_CELLS` times for no reader.
+   */
+  support: AggregateEnvelopeSupport;
+}
+
+/**
+ * What a whole soil-field answer's cells stand for.
+ *
+ * `supportId` names the LATTICE rather than a cell, because that is the support unit this envelope
+ * describes: one lane, one day, one rung. It is stable across pans of the same request, which is
+ * what makes it usable as a cache identity.
+ */
+function soilFieldSupport(
+  layer: string,
+  zoomTier: ZoomTier,
+  observedDay: string,
+  rows: readonly SoilServingRow[]
+): AggregateEnvelopeSupport {
+  const lattice = servedCellLattice(zoomTier, LANE_BASE_LATTICES["soil-field"]);
+  const newestObservedAt = rows.reduce<string | null>(
+    (newest, row) =>
+      newest === null || Date.parse(row.newest_observed_at) > Date.parse(newest)
+        ? row.newest_observed_at
+        : newest,
+    null
+  );
+  return {
+    zoomTier,
+    supportKind: "tessellated_cell",
+    supportId: `${layer}:${observedDay}:z${zoomTier}`,
+    origin: lattice.origin,
+    cellWidthDegrees: lattice.cellSizeDegrees,
+    cellHeightDegrees: lattice.cellSizeDegrees,
+    aggregationMethod: "mean",
+    contributorCount: rows.reduce((total, row) => total + row.observation_count, 0),
+    provenance: {
+      sourceLayer: layer,
+      observedDay,
+      newestObservedAt,
+      attribution: LANE_ATTRIBUTIONS["soil-field"],
+    },
+  };
+}
+
 function soilFieldLane(measure: SoilFieldMeasure, depth: SoilFieldDepth): string {
   if (measure === "moisture") {
     if (depth === "root-zone") return SOIL_FIELD_LANES.moisture["root-zone"];
@@ -950,10 +1231,11 @@ function emptyParquetSoilField(
   reason: NonNullable<PublishedSoilFieldCollection["reason"]>,
   measure: SoilFieldMeasure,
   depth: SoilFieldDepth,
+  layer: string,
   requestedDay: string,
-  zoomTier: 0 | 5 | 9 | 13,
+  zoomTier: ZoomTier,
   newestAvailableDay: string | null
-): PublishedSoilFieldCollection {
+): ZoomedSoilFieldCollection {
   const definition = soilFieldMeasureDefinition(measure);
   return {
     type: "FeatureCollection",
@@ -972,10 +1254,14 @@ function emptyParquetSoilField(
     truncated: false,
     maxCellCount: SOIL_FIELD_MAX_CELLS,
     maxObservationAgeDays: SOIL_FIELD_PARQUET_MAX_OBSERVATION_AGE_DAYS,
-    latticeDegrees: SOIL_FIELD_TIER_RESOLUTION[zoomTier],
+    latticeDegrees: servedCellLattice(zoomTier, LANE_BASE_LATTICES["soil-field"]).cellSizeDegrees,
     smoothingSigmaDegrees: null,
     bands: definition.bands,
     sourceClientExposureApproved: false,
+    zoomTier,
+    // Declared even when nothing was drawn: an empty collection still has to say which rung was
+    // asked and at what pitch, or the panel cannot tell "no cells here" from "no rung answered".
+    support: soilFieldSupport(layer, zoomTier, requestedDay, []),
   };
 }
 
@@ -987,7 +1273,7 @@ function decodeSoilFieldRows(
   unit: string,
   layer: string,
   servedDay: string,
-  zoomTier: 0 | 5 | 9 | 13
+  zoomTier: ZoomTier
 ): SoilServingRow[] {
   const parsed =
     measure === "moisture"
@@ -1020,7 +1306,7 @@ function decodeSoilFieldRows(
     ) {
       throw contractError(`${layer} returned a row outside its registered soil-field contract`);
     }
-    if ((zoomTier === 13) !== (row.cell_id !== null)) {
+    if ((zoomTier === BASE_ZOOM_TIER) !== (row.cell_id !== null)) {
       throw contractError(`${layer} returned invalid cell identity nullability at z${zoomTier}`);
     }
     if (
@@ -1040,32 +1326,19 @@ function decodeSoilFieldRows(
   });
 }
 
-function soilFieldPolygon(
-  row: SoilServingRow,
-  zoomTier: 0 | 5 | 9 | 13
-): GeoJSON.Polygon {
-  const resolution = SOIL_FIELD_TIER_RESOLUTION[zoomTier];
-  const west =
-    resolution === null
-      ? row.cell_longitude - SOIL_FIELD_BASE_CELL_DEGREES / 2
-      : row.cell_longitude;
-  const south =
-    resolution === null ? row.cell_latitude - SOIL_FIELD_BASE_CELL_DEGREES / 2 : row.cell_latitude;
-  const size = resolution ?? SOIL_FIELD_BASE_CELL_DEGREES;
-  const east = west + size;
-  const north = south + size;
-  return {
-    type: "Polygon",
-    coordinates: [
-      [
-        [west, south],
-        [east, south],
-        [east, north],
-        [west, north],
-        [west, south],
-      ],
-    ],
-  };
+/**
+ * The complete tessellating cell one served soil row stands for.
+ *
+ * Two defects this replaces, both from re-deriving the footprint out of the ladder's own grid:
+ * z9 drew a 0.01-degree speck for a quarter-degree measurement, and z5 drew 0.2-degree cells on a
+ * grid that 0.25 does not divide, leaving roughly a third of the viewport as background between
+ * them. `servedCellLattice` takes the coarser of the ladder's grid and the lane's base grain, so
+ * both rungs now draw the quarter-degree cell the row actually describes, and the corners come
+ * from the lattice index rather than from this row's own float -- which is what makes two
+ * neighbours' shared edge the same double rather than merely a close one.
+ */
+function soilFieldPolygon(row: SoilServingRow, lattice: ServedCellLattice): GeoJSON.Polygon {
+  return tessellatedCellPolygon(row.cell_longitude, row.cell_latitude, lattice);
 }
 
 /**
@@ -1078,24 +1351,25 @@ function soilFieldPolygon(
 export async function getParquetSoilField(
   bbox: string,
   options: SoilFieldReadOptions & { signal?: AbortSignal } = {}
-): Promise<PublishedSoilFieldCollection> {
+): Promise<ZoomedSoilFieldCollection> {
   const measure = options.measure ?? "moisture";
   const definition = soilFieldMeasureDefinition(measure);
   const requestedDepth = options.depth ?? definition.defaultDepth;
   const { depth, signalName } = soilFieldDepthDefinition(measure, requestedDepth);
   const requestedDay = selectedDay(options.date, undefined);
-  const zoomTier = resolveZoomTier(options.zoom ?? 13);
+  const zoomTier = resolveZoomTier(options.zoom ?? BASE_ZOOM_TIER);
+  const layer = soilFieldLane(measure, depth);
   if (requestedDay > currentUtcDay()) {
     return emptyParquetSoilField(
       "not_forecastable",
       measure,
       depth,
+      layer,
       requestedDay,
       zoomTier,
       null
     );
   }
-  const layer = soilFieldLane(measure, depth);
   const envelope = await getParquetLayerDay({
     layer,
     day: requestedDay,
@@ -1108,6 +1382,7 @@ export async function getParquetSoilField(
       "not_published",
       measure,
       depth,
+      layer,
       requestedDay,
       zoomTier,
       null
@@ -1128,20 +1403,21 @@ export async function getParquetSoilField(
     zoomTier
   );
   const drawable = rows.slice(0, SOIL_FIELD_MAX_CELLS);
+  const lattice = servedCellLattice(zoomTier, LANE_BASE_LATTICES["soil-field"]);
   const features = drawable.map((row): GeoJSON.Feature<GeoJSON.Polygon> => {
     const band = soilFieldBandFor(measure, row.normalized_value);
     const properties: SoilFieldFeatureProperties = {
       value: row.normalized_value,
       bandIndex: band.bandIndex,
       bandLabel: band.label,
-      aggregated: zoomTier !== 13,
+      aggregated: zoomTier !== BASE_ZOOM_TIER,
       cellKey: row.cell_id,
       coverageFraction: row.coverage_fraction,
     };
     return {
       type: "Feature",
       id: row.cell_id ?? `${layer}:${envelope.servedDay}:${row.cell_longitude}:${row.cell_latitude}`,
-      geometry: soilFieldPolygon(row, zoomTier),
+      geometry: soilFieldPolygon(row, lattice),
       properties,
     };
   });
@@ -1150,6 +1426,7 @@ export async function getParquetSoilField(
       "not_published",
       measure,
       depth,
+      layer,
       requestedDay,
       zoomTier,
       envelope.servedDay
@@ -1172,12 +1449,14 @@ export async function getParquetSoilField(
     truncated: envelope.truncated || rows.length > SOIL_FIELD_MAX_CELLS,
     maxCellCount: SOIL_FIELD_MAX_CELLS,
     maxObservationAgeDays: SOIL_FIELD_PARQUET_MAX_OBSERVATION_AGE_DAYS,
-    latticeDegrees: SOIL_FIELD_TIER_RESOLUTION[zoomTier],
+    latticeDegrees: lattice.cellSizeDegrees,
     smoothingSigmaDegrees: null,
     bands: definition.bands,
     sourceClientExposureApproved: rows.every(
       (row) => row.allowed_client_exposure === true
     ),
+    zoomTier,
+    support: soilFieldSupport(layer, zoomTier, envelope.servedDay, drawable),
   };
 }
 
@@ -1188,7 +1467,9 @@ export async function getParquetWaterGauges(
   const { day, request } = commonRequest({ ...input, nowMs }, "water-gauges");
   if (day !== currentUtcDay(nowMs)) {
     return boundedResult(async () =>
-      mapEnvelope(await getParquetLayerDay(request), (rows) => newestWaterRows(decodeWaterRows(rows)))
+      mapEnvelope(await getParquetLayerDay(request), (rows) =>
+        newestWaterRows(decodeWaterRows(rows, request.zoomTier))
+      )
     );
   }
 
@@ -1202,7 +1483,9 @@ export async function getParquetWaterGauges(
       bbox: input.bbox,
       ...(input.signal === undefined ? {} : { signal: input.signal }),
     });
-    const days = envelopes.map((envelope) => mapEnvelope(envelope, decodeWaterRows));
+    const days = envelopes.map((envelope) =>
+      mapEnvelope(envelope, (rows) => decodeWaterRows(rows, request.zoomTier))
+    );
     const published = days.filter(
       (entry): entry is Extract<(typeof days)[number], { state: "ready" }> => entry.state === "ready"
     );
@@ -1251,7 +1534,9 @@ export async function getParquetWeatherObservations(
   const { day, request } = commonRequest({ ...input, nowMs }, "weather-observations");
   if (day !== currentUtcDay(nowMs)) {
     return boundedResult(async () =>
-      mapEnvelope(await getParquetLayerDay(request), (rows) => newestWeatherRows(decodeWeatherRows(rows)))
+      mapEnvelope(await getParquetLayerDay(request), (rows) =>
+        newestWeatherRows(decodeWeatherRows(rows, request.zoomTier))
+      )
     );
   }
 
@@ -1265,7 +1550,9 @@ export async function getParquetWeatherObservations(
       bbox: input.bbox,
       ...(input.signal === undefined ? {} : { signal: input.signal }),
     });
-    const days = envelopes.map((envelope) => mapEnvelope(envelope, decodeWeatherRows));
+    const days = envelopes.map((envelope) =>
+      mapEnvelope(envelope, (rows) => decodeWeatherRows(rows, request.zoomTier))
+    );
     const published = days.filter(
       (entry): entry is Extract<(typeof days)[number], { state: "ready" }> => entry.state === "ready"
     );
@@ -1426,6 +1713,24 @@ export async function getParquetVegetation(
           allowedClientExposure: row.allowed_client_exposure,
           longitude: row.cell_longitude,
           latitude: row.cell_latitude,
+          support: cellSupport({
+            lane: "vegetation",
+            zoomTier,
+            // `tessellated_cell`, never `raw_point`: `LAYER_RENDER_CONTRACT` pins this lane's
+            // support at 0.25 degrees and permits only the cell at every band. A centre dot for a
+            // quarter-degree measurement is the fictitious footprint that entry exists to forbid.
+            supportKind: "tessellated_cell",
+            aggregationMethod: "mean",
+            contributorCount: row.release_count,
+            cellId: row.cell_id,
+            longitude: row.cell_longitude,
+            latitude: row.cell_latitude,
+            observedDay: row.observed_day,
+            // The lane publishes an AVAILABILITY instant (`data_available_at`), never an
+            // observation one, and the two are not interchangeable -- so the envelope says null
+            // rather than passing off a publication time as a measurement time.
+            newestObservedAt: null,
+          }),
         }))
       )
     );
@@ -1482,6 +1787,20 @@ export async function getParquetFireDetections(
           frpObservationCount: row.frp_observation_count,
           highConfidenceDetectionCount: row.high_confidence_detection_count,
           newestObservedAt: row.newest_observed_at,
+          support: cellSupport({
+            lane: "fire-detections",
+            zoomTier,
+            supportKind: "aggregate_cell",
+            aggregationMethod: "count",
+            contributorCount: row.detection_count,
+            // The lane publishes no cell identity at any rung: its grain IS the snapped
+            // coordinate pair, so the id is minted from the rung and that pair.
+            cellId: null,
+            longitude: row.cell_longitude,
+            latitude: row.cell_latitude,
+            observedDay: row.observed_day,
+            newestObservedAt: row.newest_observed_at,
+          }),
         }))
       )
     );

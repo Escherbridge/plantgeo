@@ -52,8 +52,9 @@ describe("firmsDayRange", () => {
   // 5, not the 10 this asserted until 2026-08-05. Measured against the live FIRMS API that day:
   // day ranges 1-5 answer HTTP 200, while 6, 7 and 10 each answer `400 Invalid day range.
   // Expects [1..5].` This value must stay equal to MAX_FIRMS_DAY_RANGE in the Python ingester --
-  // firmsDayRange feeds the SERVING window through src/app/api/fires/route.ts, so a divergence
-  // means the map asks for days the ingester never filled.
+  // firmsDayRange feeds the SERVING window through getPublishedFireDetections (the alert
+  // engine's read) and the agent's Parquet fire window in regional-context.ts, so a divergence
+  // means a reader asks for days the ingester never filled.
   it("clamps out-of-range integers to the API's real 1-5 range", () => {
     vi.stubEnv("FIRMS_DAY_RANGE", "0");
     expect(firmsDayRange()).toBe(1);
