@@ -209,3 +209,24 @@ verifies the digests against R2 (`:1038`). No compiler exists and completion mar
 producing the document means listing and hashing the whole ladder per lane. Step 4 therefore starts with a
 tooling slice (charter under this track) and must wait for the new executor to be live. Recorded in the
 RUNBOOK progress block.
+
+## Executor deployed - 18:13 UTC
+
+`update-service railwayConfigFile` was rejected ("Config as Code is deprecated. Use Infrastructure as Code
+(.railway/railway.ts)"). Fix `fd79875`: main's settings moved onto the service, root `railway.json` deleted.
+`railway service redeploy --from-source` -> `c3ffa03d`: `load build definition from infra/job-executor/Dockerfile`
+(18:11:37), `quality receipt verified: sha256:5ad493c5... over 1124 files` (18:11:48), SUCCESS 18:13:55. Push
+`ac9ec00` (dependency removals) -> `4f2502a0` SUCCESS 18:19:17 unaided; `3b6de19b` (API) and `34ad922c` (main)
+rolling out at 18:22.
+
+### First new-code ticks (deployment `c3ffa03d`, 18:14-18:17 UTC)
+
+`plantgeo_job_executor_tick_started active_lane_count=37` every ~30 s, leader acquired; `jobs-strategy-mv-refresh`
+`succeeded`; `water-gauges-direct-forward` 18:15 bucket: `water_gauges_forward_failed` `UpstreamHttpError`
+"upstream request failed with status 503" -> `job_work_item_failed attempt_number=1 disposition=retry_wait
+max_attempts=5` (expected transient). The lane table shows every other active lane `not_due` with its 18:00
+bucket `succeeded`, the eleven shadow lanes `would_be_due_if_activated`, and TEN lanes in state `failed` with
+detail `latest run remains failed; clear its dead-lettered work before another bucket opens`, still at their
+2026-09-02 buckets - including the two blocker lanes this observation was meant to prove. See the RUNBOOK progress
+block ("NEW BLOCKER"): the executor gate at `job_executor_service.py:1282` never reopens a lane after a dead
+letter and no verb clears one, so the wave-1 matview/WFIGS repairs have not executed in production.

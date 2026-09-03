@@ -2,7 +2,7 @@
   "active": false,
   "mode": "ultrapilot",
   "task": "Finish the 2026-09-01 repair order: observe deploy (RED: both Python images failed to build), fix, re-push, continue the continuation plan",
-  "phase": "handed_off: steps 1-3 done (executor half of step 1 blocked on owner config); steps 4-12 next",
+  "phase": "handed_off: executor deployed (fd79875), step 11 done (ac9ec00); blockers: frozen-lane gate (code decision), step-4 bootstrap compiler lane",
   "workers": [
     {
       "id": "w1",
@@ -153,6 +153,8 @@
   "join_plan": "after P3: git add + Python sweep -> receipt -> index-tree verify; after R3 verdict: commit all, git-archive verify, push, observe parquet-api build, RUNBOOK ledger + handoff",
   "commits": [
     "1da1a28 receipt CRLF fix (pushed 12:39 UTC)",
-    "4a679d2 wave-3 closure + gate hardening (pushed ~14:15 UTC)"
+    "4a679d2 wave-3 closure + gate hardening (pushed ~14:15 UTC)",
+    "fd79875 root railway.json removed; main settings on the service",
+    "ac9ec00 dependency removals"
   ]
 }

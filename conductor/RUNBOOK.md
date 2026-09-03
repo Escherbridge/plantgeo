@@ -34,11 +34,12 @@ zooms. No browser console error explained the failures.
 
 ### HANDOFF — 2026-09-03 03:10 MDT, for continued execution. START HERE.
 
-**Branch** `main` · **Last commit** `4a679d2 fix: close the wave-3 review and harden the quality-receipt gate` · tree clean, level with
-`origin/main` · pushed 2026-09-03 (after `e4a101f`: `1da1a28` receipt CRLF fix, `4a679d2` wave-3 closure).
-Production: `plantgeo-main` and `plantgeo-parquet-api` redeploy from every push (the API first succeeded at
-`1da1a28`, deployment `3a3430bf`, 12:41 UTC); **`plantgeo-job-executor` still runs `e4490c3`** and cannot
-deploy until its Config-as-code path is set (see "Progress 2026-09-03" below).
+**Branch** `main` · **Last commit** `ac9ec00 chore: remove the five removal-ready dependencies` (plus this
+docs commit) · tree clean, level with `origin/main` · pushed 2026-09-03: `1da1a28` receipt CRLF fix, `4a679d2`
+wave-3 closure, `fd79875` root `railway.json` removed, `ac9ec00` dependency removals. Production: **all three
+services run `ac9ec00`** - `plantgeo-job-executor` `4f2502a0` (the first new-code executor was `c3ffa03d`,
+18:13 UTC), `plantgeo-parquet-api` `3b6de19b`, `plantgeo-main` `34ad922c` (both still rolling out at 18:22 UTC
+when this was written; verify).
 
 #### Goal
 Finish the 2026-09-01 repair order (this LIVE section, "Repair order and production gates") through a
@@ -109,6 +110,37 @@ conformity c2, dependency removals). PostgreSQL retirement stays UNAUTHORIZED un
   Set it in the dashboard (or run the MCP `update-service` with `railwayConfigFile:
   services/agri-data-service/railway.job-executor.json` in an interactive session), then push or
   `railway service redeploy --from-source`.
+- **Executor deployed (18:13 UTC) - the real cause and the fix.** Railway REJECTS `railwayConfigFile` on the
+  executor: config-as-code is deprecated (repo files stop being read 2026-12-01; new services cannot opt in), yet
+  the legacy root `railway.json` was still discovered on every push. Fix (`fd79875`): `plantgeo-main`'s exact
+  settings moved onto the service via `update-service` (Dockerfile `Dockerfile`, pre-deploy `node
+  scripts/migrate.mjs`, start `node server.js`, healthcheck `/api/ready` 60 s, `ON_FAILURE`/5) and the root file
+  deleted, so root discovery finds nothing. `railway service redeploy --from-source` then built
+  `infra/job-executor/Dockerfile` (`c3ffa03d`, receipt verified over 1,124 files, SUCCESS 18:13); the next push
+  (`ac9ec00`) built it again unaided (`4f2502a0`, SUCCESS 18:19). `plantgeo-main` rebuilt from its dashboard
+  settings (`7e542cfb`, SUCCESS 18:15, pre-deploy migrate and healthcheck passed). Follow-up: `railway config
+  migrate` to `.railway/railway.ts` for the remaining legacy files (`services/agri-data-service/railway.json`,
+  `railway.job-executor.json`, `infra/railway/martin.railway.json`); the project is shared with `aevani-web`, so
+  `railway config plan` must show zero unrelated changes before `apply`.
+- **Step 11 done (`ac9ec00`).** `@deck.gl/mapbox`, `@deck.gl/react`, `jotai` (lock -155/+0; `preact` kept at its
+  exact pin under `@auth/core`; `@deck.gl/core` intact) and `s3fs`, `redis` (`uv remove --no-sync`; lock -526/+0;
+  Polars reads via native `object_store`, DuckDB via `httpfs`, writes via boto3). Stack claims in
+  `AGENTS.md`/`.claude/CLAUDE.md` say Zustand only. Sweeps green; receipt `b1d66658...` over 1,124 files.
+- **NEW BLOCKER for step 1's tick evidence - lanes freeze after a dead letter.**
+  `execution/job_executor_service.py:1282-1291` refuses to open a new bucket while a lane's latest run is
+  `failed`/`partial` ("latest run remains failed; clear its dead-lettered work before another bucket opens"), and
+  no operator verb exists to clear one. Under the NEW executor the same ten lanes are still frozen at their
+  2026-09-02 buckets: `jobs-matview-refresh` (17:00), `postgres-fire-perimeters`, `parquet-drought`,
+  `parquet-evacuation-zones`, `parquet-fire-perimeters`, `parquet-soil-survey`, `postgres-vegetation`,
+  `vegetation-catch-up`, `maintenance-validate-streams` (18:00/19:00), `soilgrids-cache-warm` (17:25). The p3
+  procedure's premise ("both lanes mint fresh work on their own schedule") is false for the executor path, so the
+  wave-1 repairs to matview refresh and WFIGS paging have never executed in production. Decision needed
+  (reviewed code, not a ledger mutation): (a) let a refresh-class lane (matview, fire-perimeters, sensors,
+  cache-warm) open a new bucket when the failed run is older than the current bucket - the failure record stays,
+  the lane resumes; and/or (b) an `ops` verb that marks one named dead-lettered run superseded with an evidence
+  note, for windowed lanes. Until one lands, no `jobs-matview-refresh`/`postgres-fire-perimeters` green tick can
+  exist. `water-gauges-direct-forward` failed its 18:15 bucket with an upstream 503 and is in retry backoff
+  (expected, five attempts); everything else settled `succeeded` at the 18:00 buckets.
 - **Left open from the reviews (small):** `src/hooks/useRegionalIntelligence.ts:93-99` header still claims
   the hook subscribes to nothing; `RegionalIntelligencePanel` still re-renders on a layer toggle while open;
   `MapView.tsx` commits as an LF rewrite (it was CRLF in HEAD).
@@ -193,11 +225,9 @@ conformity c2, dependency removals). PostgreSQL retirement stays UNAUTHORIZED un
 - `conductor/tracks/parquet_production_acceptance_20260901/{spec,plan}.md` — the evidence matrix the tooling must feed.
 
 #### Continuation plan
-1. **Observe the deploy** - DONE for the web app and the API (see Progress). For the executor: FIRST set the
-   Config-as-code path (owner), then push any commit or run `railway service redeploy --service
-   plantgeo-job-executor --environment production --from-source --yes`, confirm the build log says `load
-   build definition from infra/job-executor/Dockerfile` and `quality receipt verified ... over 1124 files`,
-   then read one tick as specified here. Original text: With the Railway MCP: confirm the active deployments of `plantgeo-main`, the
+1. **Observe the deploy** - DONE for all three services (see Progress; executor live since 18:13 UTC). The tick
+   evidence for `jobs-matview-refresh` and `postgres-fire-perimeters` is BLOCKED by the frozen-lane gate
+   (Progress, "NEW BLOCKER"); resolve that first, then read one tick as specified here. Original text: With the Railway MCP: confirm the active deployments of `plantgeo-main`, the
    agri service and `plantgeo-job-executor` are at `e4a101f` and `SUCCESS`; if a build failed at the
    `quality-receipt` stage, the receipt is stale — do not bypass the stage; re-run the sweep and
    `--write-receipt`. Then read one full executor tick: `jobs-matview-refresh` must close `succeeded`
