@@ -95,70 +95,7 @@ in the tick summary); browser-check fire, climate at z8, vegetation and water at
 PNW camera; then bootstrap availability lane by lane, flip `PARQUET_COVERAGE_AUTHORITY`, and
 activate the two direct writer lanes only after one live `--max-days 1` proving run each.
 
-### Waves 2 and 3 landed — 2026-09-02, through commit `12fa189` on `main`, PUSHED
-
-Seven wave-2 executors (reader r3/r4, multiscale m1–m4, gapless p2/p4, ownership evidence) and
-two wave-3 conformity executors (c1/c3/c4 plus a c2 render-performance slice) ran on disjoint write
-sets, each followed by a join sweep, an adversarial review, a fix pass and a final sweep. Final
-state: `tsc` clean under `noUnusedLocals`/`noUnusedParameters`, eslint 0 errors with
-`no-unused-vars` at error, vitest 1743 passed; ruff/mypy (now over `src` and `scripts`) clean,
-pytest 4941 passed, and `services/agri-data-service/QUALITY_RECEIPT.json` written and verified.
-This push redeploys `plantgeo-main`, the agri service and the executor. Production behaviour that
-changes on deploy: the fire map reads Parquet; climate/soil/vegetation/fire/water render as
-tessellated or density cells at coarse rungs; the matview and WFIGS blockers stop failing ticks;
-gap-fill ticks now also repair one missing coarse rung per lane; the coverage authority stays
-`census_until_bootstrap`; every new writer lane stays shadow.
-
-**Repair order 1 — done in code.** `useFireData` and `/api/fires` are deleted; the agent's regional
-context reads fire through the Parquet reader (z9, rung-named refusals, never a coverage
-contradiction from a rung the user did not read); the `causalTauEst ?? 0.15` default is gone.
-Verdict packet: `tracks/parquet_reader_cutover_acceptance_20260901/evidence/reader-cutover-verdict.md`
-(gates 7 and 9 need production timing — acceptance track).
-
-**Repair order 4 — built.** Every aggregate envelope carries `AggregateEnvelopeSupport` with the
-resolved cell corner; one lattice builder serves every edge; the 0.25° lanes' phase is declared
-from the producers (centroids at odd multiples of 0.125, edges on multiples of 0.25 — the first
-cut had it inverted and a domain sweep over all 1,568 cells now pins zero collisions and zero gaps
-at z13/z9/z5). Climate and soil tessellate at the served rung with dissolved isobands; fire draws
-density cells labelled not-perimeters above z13; water gauges become declared mean-flow cells above
-z13; vegetation draws its 0.25° cells; the `symbol` form is withdrawn for continuous fields; MTBS
-and drought reach the hover tooltip; a native-polygon regression test and baseline exist. Owed:
-production screenshots (m5), the soil-survey coarse summary (recorded `shippedDeviation`), the
-`isoband`/`weather` rulings, and the fact that z9/z5 coarsen nothing for the 0.25° lanes.
-
-**Repair order 2 — extended, still shadow.** Derived rungs that drop every row close with a
-zero-part `derived_empty` receipt at its own marker path, so listings alone distinguish "computed
-empty" from "parts lost"; the gap census walks the whole ladder (three key listings per lane per
-tick, scoped to the lane window) and repairs missing rungs, and a repaired day writes an
-availability retry claim so it is re-indexed next tick; stranded coarse absences heal on the repair
-path too. New writers: ERA5-Land soil (moisture, temperature, VPD) on the Open-Meteo archive —
-**keyless, not CDS-blocked as earlier text said** — 1,568-cell lattice, 1,470-of-1,568 completeness
-pin (measured for moisture/VPD, inherited for temperature, refuses loudly otherwise), lag 9; and
-the three NASA soil-wetness products in the climate writer. An all-null archive day is a refusal,
-not an absence, until the archive is proven mirrored past it. 32 lane registrations, 59 executor
-specs; the two direct lanes (`climate-nasa-power-direct-forward` at :40,
-`soil-era5-land-direct-forward` at :50) conflict both ways with their generic lanes and are absent
-from `PLANTGEO_JOB_EXECUTOR_ACTIVE_LANES`. Ownership census refreshed:
-`tracks/gapless_parquet_publication_20260901/evidence/product-ownership-census.md` and
-`docs/reports/data-lane-execution-ownership-2026-09-02.md`.
-
-**Conformity — c0, c1, c3 and part of c4 done.** Unused-symbol policy executable on both sides;
-Python mypy covers operator scripts; `scripts/check.py` never re-syncs; a locked quality receipt is
-verified by the runtime Dockerfiles; `webgpu-accelerator`, the worker, six UI orphans and
-`whichnull.py` deleted with proof packets; `preact` refuted as removable (exact pin held by
-`@auth/core`); `@deck.gl/mapbox`, `@deck.gl/react`, `jotai`, `s3fs`, `redis` recorded removal-ready
-pending lock regeneration and an image build; `inviteMember` retained with sunset 2026-10-01; the
-invitation `returnLink` TODO implemented; dormant Drizzle 0030–0038 typed (eight files, not seven;
-0037 never existed); `MapView` no longer re-renders per streaming token. Left for c2: the CLI
-extraction and snapshot-builder consolidation (violation list in the conformity evidence).
-
-**Deployment order (this push):** watch one unassisted tick each of `jobs-matview-refresh`,
-`postgres-fire-perimeters` and any `parquet-*` lane (expect `repaired` and `availability_*` counters
-in the tick summary); browser-check fire, climate at z8, vegetation and water at z5 on the default
-PNW camera; then bootstrap availability lane by lane, flip `PARQUET_COVERAGE_AUTHORITY`, and
-activate the two direct writer lanes only after one live `--max-days 1` proving run each.
-
-### Wave 1 landed — 2026-09-02, commit `2b4cfef` on `main`, NOT pushed, nothing deployed
+### Wave 1 landed — 2026-09-02, commit `2b4cfef` on `main` (pushed together with waves 2 and 3; written before the push)
 
 Eight opus executors ran on disjoint write sets (partition recorded in each track's `metadata.json`
 → `partitions.orchestration_wave1_20260902`), followed by one TypeScript sweep, one Python sweep,
