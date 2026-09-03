@@ -4,7 +4,7 @@ type: runbook
 
 # PlantGeo — Runbook
 
-**Current status (2026-09-02, after waves 1–3 through `12fa189`, pushed): production redeploys from this push; the repository now carries the fire reader cutover, availability-backed coverage behind a default-off switch, claim-first availability extension, a shadow NASA POWER climate writer and both scheduler blocker repairs — see "Wave 1 landed" in the LIVE section. In production, browser
+**Current status (2026-09-03, waves 1–3 pushed through `e4a101f`; production redeployed and NOT yet observed — see HANDOFF at the top of the LIVE section): the repository now carries the fire reader cutover, availability-backed coverage behind a default-off switch, claim-first availability extension, a shadow NASA POWER climate writer and both scheduler blocker repairs — see "Wave 1 landed" in the LIVE section. In production, browser
 acceptance remains RED. Fire still renders through the legacy PostgreSQL `/api/fires` path; several
 climate and soil products have contiguous unpublished tails; the stateful executor is the sole
 scheduler with 37 active executable lanes; and coarse continuous fields render with visible holes
@@ -31,6 +31,164 @@ This is the current operational handoff. It supersedes the 2026-08-29 cutover ch
 which is now historical. The assessment used a fresh anonymous production browser session at
 `https://plantgeo.aevani.com/`, the default Pacific Northwest camera, and progressively coarser
 zooms. No browser console error explained the failures.
+
+### HANDOFF — 2026-09-03 03:10 MDT, for continued execution. START HERE.
+
+**Branch** `main` · **Last commit** `e4a101f docs: dedupe the wave-2/3 runbook section` · tree clean, level
+with `origin/main` · six commits pushed 2026-09-03 (`2b4cfef..e4a101f`), so production has redeployed
+`plantgeo-main`, the agri service and `plantgeo-job-executor` from this range. Nothing in this section
+has been observed in production yet.
+
+#### Goal
+Finish the 2026-09-01 repair order (this LIVE section, "Repair order and production gates") through a
+GREEN verdict from `parquet_production_acceptance_20260901`: verify the deployed waves in production,
+bootstrap availability and flip the coverage authority, prove and activate the two shadow writer lanes
+so the climate/soil tails close, then run the remaining code lanes (acceptance evidence tooling,
+conformity c2, dependency removals). PostgreSQL retirement stays UNAUTHORIZED until that verdict.
+
+#### State
+- **Verified (code, tests, reviews):** waves 1–3 as described in "Waves 2 and 3 landed" and "Wave 1
+  landed" below. Final sweeps on `12fa189`: tsc clean, eslint 0 errors, vitest 1,743; ruff/mypy/format
+  clean, pytest 4,941, `QUALITY_RECEIPT.json` verified over 842 files.
+- **Believed, not observed:** production behaviour after the push — fire reads Parquet, coarse rungs
+  render as cells, `jobs-matview-refresh` and `postgres-fire-perimeters` tick green, gap-fill ticks
+  report `repaired`/`availability_*` counters. Nobody has looked at Railway logs or the browser since
+  the push.
+- **Not started:** production availability bootstrap (no lane has a receipt), writer-lane proving
+  runs, acceptance-track evidence, conformity c2, dependency removals.
+
+##### Review ledger (2026-09-02/03)
+| phase | reviewer context | findings | verdict |
+|---|---|---|---|
+| wave 1 TS (r1, m0, c0) | adversarial, separate | 1 blocker (aborted reads cached), 4 major | CHANGES-REQUIRED → fixed → verified |
+| wave 1 TS (r2b) | adversarial, separate | 1 blocker (clamped tail read dense), 3 major | CHANGES-REQUIRED → fixed → verified |
+| wave 1 PY (r2a, p4a, join) | adversarial, separate | 3 blockers (ceiling ratchet, droppable day, request LISTs), 5 major | CHANGES-REQUIRED → fixed → verified (1 new blocker: drain never indexed → fixed) |
+| wave 1 PY (p1, p5) | adversarial, separate | 1 blocker (climate writer could not publish), 3 major | CHANGES-REQUIRED → fixed → verified |
+| wave 2 TS (A–D) | adversarial, separate | 2 blockers (inverted 0.25° phase; test pinned it), 2 major | CHANGES-REQUIRED → fixed, swept green |
+| wave 2 PY (E, F) | adversarial, separate | 1 blocker (repair never re-indexed), 3 major | CHANGES-REQUIRED → fixed, swept green (1 live defect found in the fix: reused source ceiling → fixed) |
+| wave 3 (c1/c3/c4, both sides) | none — no separate review | — | **UNREVIEWED**: the unused-symbol clearance, orphan deletions, quality receipt, MapView selectors and topology docs have only their own sweeps |
+| production after the push | none | — | **UNOBSERVED** |
+
+#### Decisions (owner, 2026-09-03)
+- Verify the deployment before any further code work, because the push changed production behaviour
+  and a RED finding must route back to its track first.
+- Production availability bootstrap and the `PARQUET_COVERAGE_AUTHORITY=availability` flip are
+  authorized once the deployment checks pass (lane by lane, receipts recorded), not before.
+- Both shadow writer lanes may be proven live with one `--max-days 1` run each and activated on
+  success, after the deployment checks — climate first, then soil.
+- After the production work, run ALL three remaining code lanes: acceptance-track evidence tooling,
+  conformity c2, dependency removals (in that order unless they can be partitioned; see §9).
+
+#### Assumptions (unasked; highest reversal cost first)
+- Wave 3 does not need its own adversarial review before production relies on it · default taken:
+  shipped on its sweeps · to reverse: run `/code-review high` on `12fa189`'s wave-3 files (cheap; do
+  it during step 1 while watching ticks).
+- The quality receipt stays a build gate (the 2026-09-01 audit outranks the 2026-08-07 "ad hoc" ruling)
+  · default taken: dedicated Docker stage in both images · to reverse: delete the stage and the COPY;
+  one commit.
+- `census_until_bootstrap` remains the default until every lane has a receipt · default taken: flip
+  only after all lanes · to reverse: per-lane authority is not implemented; flipping early withholds
+  unbootstrapped lanes.
+- The soil-survey coarse summary stays a recorded `shippedDeviation` rather than a re-classing ·
+  default taken: deviation recorded · to reverse: owner ruling plus a renderer change in m2.
+- `isoband` stays withheld for the four `isoline`-withheld signals and `weather` stays `event_point` ·
+  default taken: as the contract encodes · to reverse: one entry each in `layer-render-contract.ts`.
+- ERA5 temperature's 1,470-cell completeness pin is inherited, not measured · default taken: refuse
+  loudly on the first live day that differs · to reverse: update the pin from that day's receipt.
+
+#### Environment
+- Production: Railway project "Aevani", sole scheduler `plantgeo-job-executor`
+  (`565ecaad-9946-48f1-8a0b-28fa60494a16`); six legacy writer objects fenced (see the scheduler
+  handoff evidence). Railway MCP + CLI available; the MCP cannot delete services.
+- Coverage authority variable `PARQUET_COVERAGE_AUTHORITY` (agri service), activation allow-list
+  `PLANTGEO_JOB_EXECUTOR_ACTIVE_LANES` and `PLANTGEO_JOB_EXECUTOR_HANDOFF_ACKNOWLEDGEMENTS`
+  (executor). Values live only in Railway; never paste them here.
+- Python: every command is `UV_NO_SYNC=1 uv run --no-sync …`; a bare `uv sync`/`uv run` strips pytest.
+  After ANY Python change: `scripts/check.py` green, then `scripts/check.py --write-receipt`, or both
+  images fail at the `quality-receipt` stage. `uv.lock` is a digest input.
+- TypeScript: `npm run type-check`, `npm run lint`, `npm test` — run vitest alone (overlapping runs
+  fail with "No test suite found"). Never run PlantGeo locally (`next dev`/`build`, docker).
+- No background processes were left running by this session.
+
+#### Key files
+- `conductor/tracks/gapless_parquet_publication_20260901/evidence/scheduler-handoff-20260902.md` — service ids, fence receipt, lane matrix.
+- `services/agri-data-service/src/agri_data_service/interface/cli/data.py` — `availability-bootstrap --apply` and `availability-publish` verbs (bootstrap input document + sha pinned by the operator).
+- `services/agri-data-service/src/agri_data_service/parquet_ops/availability_coverage.py` — authority policy, sentinel probe, staleness tolerance.
+- `services/agri-data-service/src/agri_data_service/execution/job_executor_service.py` — `LANE_SPECS` (59), `_DIRECT_WRITER_BY_SLUG` conflicts, activation parsing.
+- `services/agri-data-service/src/agri_data_service/pipeline/direct/{climate,soil}/forward.py` — the two proving-run entry points (`python -m …direct.climate --product all --max-days 1`, `…direct.soil --product all --max-days 1`).
+- `services/agri-data-service/scripts/{check,quality_receipt,verify_quality_receipt}.py` — the gate.
+- `conductor/tracks/repository_conformity_hardening_20260901/evidence/removal-proof-packet*.md` — c2 violation list (26, pinned by `tests/test_layer_import_contract.py`) and the dependency removal commands.
+- `conductor/tracks/parquet_production_acceptance_20260901/{spec,plan}.md` — the evidence matrix the tooling must feed.
+
+#### Continuation plan
+1. **Observe the deploy.** With the Railway MCP: confirm the active deployments of `plantgeo-main`, the
+   agri service and `plantgeo-job-executor` are at `e4a101f` and `SUCCESS`; if a build failed at the
+   `quality-receipt` stage, the receipt is stale — do not bypass the stage; re-run the sweep and
+   `--write-receipt`. Then read one full executor tick: `jobs-matview-refresh` must close `succeeded`
+   with `relations_absent` present; `postgres-fire-perimeters` must return `ingested` with
+   `oversized_records`/`bytes_read`; a `parquet-*` lane must print `repaired` and `availability_*`
+   counters (expect `availability_not_bootstrapped` everywhere). Record the tick in
+   `conductor/tracks/gapless_parquet_publication_20260901/evidence/post-deploy-tick-2026-09-03.md`.
+2. **Browser check** in a fresh anonymous session at the default PNW camera: fire (cells above z13 with
+   the not-a-perimeter caption; no `/api/fires` request), climate air temperature at z8 (filled
+   tessellation, one rung, no cracks), vegetation and water at z5 (cells), soil moisture at z5 (no
+   nested blocks). Any RED → its track (reader / multiscale), fix, re-push, back to step 1.
+3. **Review wave 3** while ticks are observed: `/code-review high` scoped to the wave-3 files in
+   `12fa189` (tsconfig/eslint policy clearance, orphan deletions, `MapView`/`useRegionalIntelligence`
+   selectors, `scripts/check.py`, `quality_receipt.py`, both Dockerfiles, `docs/deployment.md`).
+   Record the verdict in the ledger above.
+4. **Bootstrap availability**, one lane at a time, starting with `fire-detections` then `water-gauges`:
+   build the bootstrap input from the lane's verified manifests/checkpoints per `data.py`'s verb
+   contract (offline validation first, then `--apply`), confirm the pointer, generation and
+   `_BOOTSTRAPPED.json` sentinel exist, and record the receipt key/sha in
+   `…/gapless_parquet_publication_20260901/evidence/availability-bootstrap-receipts.md`. Then the
+   `climate-field-*` and `soil-field-*` products, then the remaining time-bearing lanes.
+5. **Flip** `PARQUET_COVERAGE_AUTHORITY=availability` on the agri service only when every time-bearing
+   lane has a receipt; confirm `/api/v1/parquet/coverage` answers with `coverage_authority:
+   "availability"` for all of them and the tripwire (zero LIST) holds by reading the service logs.
+6. **Prove the climate writer**: run `python -m agri_data_service.pipeline.direct.climate --product all
+   --max-days 1` once against production (object store + `LOCAL_SOURCE_LOADER_DATABASE_URL`, no
+   `INGEST_BBOX` needed); expect one settled day per product published at all rungs, the availability
+   claim indexed on the next gap-fill tick, and `source_unsettled` for shortwave (lag 75). Then add
+   `climate-nasa-power-direct-forward` to `PLANTGEO_JOB_EXECUTOR_ACTIVE_LANES` (it conflicts with the
+   eight `parquet-climate-field-*` generic lanes — remove those from the list in the same edit) and
+   observe one tick.
+7. **Prove the soil writer** the same way (`…direct.soil --product all --max-days 1`); the first
+   temperature day must publish exactly 1,470 cells or refuse loudly; then activate
+   `soil-era5-land-direct-forward` (removing the `parquet-soil-field-*` generic lanes) and observe.
+8. **Burn-in**: three consecutive advances per activated lane, one retry/restart/lease-expiry exercise,
+   reconcile coverage; record in `evidence/forward-burn-in.md` (gapless P4).
+9. **Acceptance-track evidence tooling** (all three code lanes are authorized; this one first): scripts
+   under `services/agri-data-service/scripts/` that probe the private R2 routes per product/rung, and
+   a browser timing/screenshot capture for the default camera; feed
+   `parquet_production_acceptance_20260901` A0–A2. Python changes → receipt refresh.
+10. **Conformity c2**: extract the 26 pinned transaction/framework sites (plus the four `Lane*`
+    protocols) from `interface/cli/commands.py` one command group at a time into `execution/` or
+    `pipeline/`, preserving names, help and exit codes; when the count reaches zero the strict xfail in
+    `tests/test_layer_import_contract.py` XPASSes — delete the marker. Then consolidate the four
+    `build_*_from_canonical_snapshot.py` builders behind one typed core with golden byte/SHA fixtures.
+11. **Dependency removals**: `@deck.gl/mapbox`, `@deck.gl/react`, `jotai` (root; regenerate the lock;
+    fix the "Jotai" claims in `AGENTS.md`/`CLAUDE.md` in the same commit) and `s3fs`, `redis` (agri
+    service; `uv remove`, lock, `--write-receipt`). `preact` stays (exact pin held by `@auth/core`).
+    Push and confirm the image builds.
+12. **Verdict**: hand every packet to `parquet_production_acceptance_20260901` A3–A4 and state GREEN
+    or RED; retirement authority remains with `postgres_shrink_ingest_repoint_20260825`.
+
+#### Open questions (deferred, with triggers)
+- Soil-survey coarse form (declared tessellated cell vs re-class) — live when m5 pixels are captured.
+- `isoband` for the four `isoline`-withheld signals; `weather` as stations vs sampled grid — live when
+  the acceptance browser pass looks at those layers.
+- Whether historically unindexed whole-ladder days need an index-vs-bucket census — live after step 5
+  if `availability_reindex_owed` is non-zero on any lane.
+
+#### Recommended invocations
+- Steps 1–2: inline with the Railway MCP and a browser session — known commands, no discovery.
+- Step 3: `/code-review high` on the wave-3 files — wave 3 has no separate reviewer verdict.
+- Steps 9–11: `/slice` — three code lanes with disjoint trees (`scripts/` + acceptance evidence;
+  `interface/cli/` + `execution/`; `package.json`/`pyproject.toml` + locks), each ending in its own
+  receipt refresh; the pre-launch grilling settles ordering.
+- Step 10's extraction: `oh-my-claudecode:critic` on the proposed package boundaries before moving
+  code — the CLI monolith is 4,900 lines and the boundary is contested.
 
 ### Waves 2 and 3 landed — 2026-09-02, through commit `12fa189` on `main`, PUSHED
 
@@ -8089,6 +8247,21 @@ unchanged and still correct, but is no longer the top of the queue.**
 ---
 
 ## 8. Session log
+
+### 2026-09-03 03:10 — waves 1–3 of the repair order, pushed; handoff written
+- Done: six commits `2b4cfef..e4a101f` pushed (fire reader cutover and legacy route deletion;
+  availability-backed coverage behind `PARQUET_COVERAGE_AUTHORITY`; claim-first availability
+  extension, atomic absence ladders, derived-empty receipts, ladder-aware census and repair;
+  multiscale support envelopes and tessellated/density rendering; NASA POWER and ERA5-Land shadow
+  writers; matview/WFIGS repairs; conformity c0/c1/c3/c4 with the quality receipt).
+- Reviewed: nine adversarial passes + three closure verifications, all CHANGES-REQUIRED, all fixed
+  and re-swept; wave 3 unreviewed (ledger above).
+- In flight: nothing uncommitted; production unobserved since the push.
+- Blocked: retirement (P5/P6) on the acceptance verdict; bootstrap and lane activation on the
+  deployment checks (owner authorized both, 2026-09-03).
+- Next: inline Railway MCP tick observation + browser check, then `/code-review high` on wave 3,
+  then bootstrap → flip → proving runs; `/slice` for the three remaining code lanes.
+
 
 ### 2026-08-21 — the map got fixed; three changes, and a great deal of scaffolding around them
 
