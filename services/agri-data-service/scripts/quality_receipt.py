@@ -18,8 +18,9 @@ RECEIPT_PATH: Final = SERVICE_ROOT / RECEIPT_FILE_NAME
 RECEIPT_SCHEMA_VERSION: Final = 1
 
 #: Domain-separation prefix so a digest of this tree can never be replayed as a digest of anything
-#: else that happens to length-prefix paths and bytes the same way.
-DIGEST_DOMAIN: Final = b"plantgeo.agri-data-service.quality-receipt.v1"
+#: else that happens to length-prefix paths and bytes the same way. Bumped to v2 because the digest
+#: now hashes CRLF-normalized content instead of raw disk bytes; see scripts/AGENTS.md.
+DIGEST_DOMAIN: Final = b"plantgeo.agri-data-service.quality-receipt.v2"
 
 #: Everything a green sweep actually reads. `src` and `tests` are what pytest and mypy judge,
 #: `scripts` is the operator surface the extended mypy scope now covers, and the two lock files
@@ -62,14 +63,16 @@ def compute_tree_digest(root: Path = SERVICE_ROOT) -> tuple[str, int]:
     """Return the sha256 over every covered path and its bytes, plus how many files were covered.
 
     Both the path and the content are length-prefixed so that renaming a file can never produce the
-    same digest as editing one -- concatenation alone is ambiguous about where a path stops.
+    same digest as editing one -- concatenation alone is ambiguous about where a path stops. Content
+    is CRLF-normalized to LF before hashing and length-prefixing, so the digest describes the bytes
+    as committed rather than the bytes a given checkout's line endings happen to carry.
     """
     digest = hashlib.sha256()
     digest.update(DIGEST_DOMAIN)
     paths = digest_input_paths(root)
     for path in paths:
         relative = path.relative_to(root).as_posix().encode("utf-8")
-        content = path.read_bytes()
+        content = path.read_bytes().replace(b"\r\n", b"\n")
         digest.update(len(relative).to_bytes(8, "big"))
         digest.update(relative)
         digest.update(len(content).to_bytes(8, "big"))

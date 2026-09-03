@@ -20,6 +20,9 @@ WORKDIR /app
 # `scripts/check.py --write-receipt` recorded after its last all-green run. Editing source without
 # re-running the sweep therefore fails the BUILD instead of shipping unjudged code.
 #
+# The digest is computed over CRLF-normalized (LF) content, not raw disk bytes, so a receipt written
+# on a Windows checkout still verifies here against this Linux build context.
+#
 # `tests/` and `scripts/` are digest inputs, so they are copied HERE and never into `runtime` --
 # a deleting `RUN` would not shrink an already-written layer, so the only way to keep tests out of
 # the production image is to keep them out of its stage. `runtime` copies the verified receipt back

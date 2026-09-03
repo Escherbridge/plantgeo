@@ -12,7 +12,9 @@ RUN npm ci --omit=dev --ignore-scripts \
 # `scripts/**`, `pyproject.toml` and `uv.lock` still equals the digest the last all-green
 # `scripts/check.py --write-receipt` sweep recorded, so an image cannot be built from an unjudged
 # tree. `tests/` and `scripts/` are digest inputs and stay in THIS stage; the final stage copies the
-# verified receipt out, which is also what stops BuildKit pruning the gate as unreferenced.
+# verified receipt out, which is also what stops BuildKit pruning the gate as unreferenced. The
+# digest hashes CRLF-normalized (LF) content, not raw disk bytes, so a receipt written on a Windows
+# checkout still verifies against this Linux build context.
 FROM python:3.12.12-slim-bookworm@sha256:593bd06efe90efa80dc4eee3948be7c0fde4134606dd40d8dd8dbcade98e669c AS quality-receipt
 
 WORKDIR /app/agri-service

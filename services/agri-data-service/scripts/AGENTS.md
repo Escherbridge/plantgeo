@@ -88,8 +88,19 @@ refuses to write from `--only` or from a red sweep. The receipt records:
   `pyproject.toml` and `uv.lock`, sorted by POSIX-relative path, with the path and the content each
   length-prefixed so a rename can never digest the same as an edit. `__pycache__`, `*.pyc/pyo/pyd`
   and the tool cache directories are excluded because they differ between a developer tree and a
-  Docker build context. Domain-separated by a constant prefix. Reproducible across platforms only
-  because `.gitattributes` forces `eol=lf` for the whole tree.
+  Docker build context. Domain-separated by a constant prefix (`DIGEST_DOMAIN`, currently `v2`).
+
+  Content is CRLF-normalized to LF before it is length-prefixed and hashed. A Windows working tree
+  may carry CRLF that `.gitattributes`' `* text=auto eol=lf` only normalizes away *on commit*; the
+  Linux Docker build context is always LF. Hashing raw disk bytes therefore made a receipt written on
+  a Windows checkout un-verifiable inside the Railway build, which reads a fresh Linux checkout of the
+  same commit -- measured 2026-09-03: 181 of 842 digest-input files differed only by line ending, and
+  the two trees' digests disagreed even though `git diff` showed no changes. Normalizing means the
+  digest describes the bytes as committed, not the bytes a given checkout's line endings happen to
+  carry. The trade-off: two files differing only in CR bytes now digest equal -- but git already
+  refuses to store that difference for a `text=auto` file, so no real file pair can exercise it.
+  A receipt written before this change was domain-separated as `v1` and can never verify against the
+  `v2` digest function; it must be rewritten by a green sweep (`--write-receipt`), not hand-edited.
 - `digest_file_count`, `generated_at`, the `python`/`uv`/`ruff`/`mypy`/`pytest` versions that
   produced the judgement, and each gate's command, status and duration.
 
