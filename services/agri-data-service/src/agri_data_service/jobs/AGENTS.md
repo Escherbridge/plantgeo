@@ -975,6 +975,66 @@ ledger table, not a JSONB blob three hops away. Three fixes close the gap:
    D1 drops the relation — at which point it is simply false, in the one place an operator reading a
    green tick is most likely to read it.
 
+### 6b. Two views retired for ZERO CONSUMPTION rather than for cost — 2026-09-04
+
+`geo.mv_soil_survey_grid` and `geo.mv_soil_survey_union` left `MATVIEW_REFRESH_SPECS` on 2026-09-04
+and joined `MATVIEW_REFRESH_RETIRED_VIEWS`. **Every retirement above this one was triggered by a view
+that could not finish. This one is the opposite case and it matters that the two are not confused:**
+the grid refreshes and populates correctly today (`drizzle/0035_soil_survey_union_collection_extract.sql:4`),
+and it was retired anyway, because *nothing in the repository reads it*. A REFRESH nobody consumes is
+not a cheap REFRESH — it is production statement time bought for an answer no caller ever asks for,
+and the lane's whole justification ("the application never runs an analytical query") is about where
+that time goes.
+
+**The zero-consumption proof, measured against the tree rather than asserted.** This is the inventory
+a drop-packet author reads, the same role the reader list in section "6." plays for
+`geo.mv_signal_observation_day`; it is maintained here rather than in the `_RetiredView.reason`
+string, which is reprinted verbatim on every tick and must not carry citations that can go stale.
+
+1. **The soil-survey serving path never adopted either view, and refused them on the merits.**
+   `src/lib/server/services/usda-soil.ts` says so twice in its own words:
+   - `:1057` — *"NOT REPOINTED at `geo.mv_soil_survey_union` in the 2026-08-15 pre-aggregation pass,
+     and the reason is a real mismatch rather than an omission."* The union is grained
+     `(zoom_tier, drainage_class)` — a global dissolve per tier — while the served answer is the
+     union of the delineations inside **one viewport**, simplified at a tolerance the caller chose.
+   - `:1159` — *"NOT REPOINTED at `geo.mv_soil_survey_grid`."* The grid is grained
+     `(zoom_tier, cell_col, cell_row)` over at most three tiers, while `soilSummaryCellDegrees`
+     picks its step off an **unbounded** doubling ladder (`SOIL_SURVEY_CELL_DEGREES * 2^k`).
+
+   A repoint was therefore considered and rejected, which is a different state from a repoint that is
+   merely pending: nothing is waiting on these views.
+2. **The Parquet warehouse refuses them by design.** `warehouse/parquet/tiers.py`'s header names
+   `geo.mv_soil_survey_grid` among "the PostGIS era's own per-layer tiers" and gives the rule that
+   excludes it: *"Reading them would make the warehouse depend on the database it is replacing."*
+   So the successor read path will not adopt them either.
+3. **The only other repository hits are prose or DDL.** `src/lib/map/layer-registry.ts:309` mentions
+   both inside a comment explaining an unrelated `warehouseLayerName` repair; `drizzle/0029`
+   creates them and lists them on `geo.refresh_preaggregate`'s allow-list, which is a manual operator
+   function, not a lane; `sql/jobs/matview_refresh_watermark_soil_survey_coverage.sql` names them
+   only in its `Purpose:` header. No `SELECT` anywhere, in any surface, in any language.
+4. **The A3 retirement inventory independently classes both `drop now`**
+   (`conductor/tracks/environmental_postgres_retirement_20260904/evidence/retirement-inventory.md`).
+
+**Why `out_of_spec` and not `relation_absent`.** Both relations still exist in production —
+`to_regclass` finds them — so stall 5's preflight would answer "yes, it is there" and routing them
+through `relation_absent` would assert something false about the catalog, exactly as it would for
+`geo.mv_signal_observation_day` in section "6.". Contrast `geo.mv_feature_observation_day_axis` and
+`geo.mv_signal_cell_daily`, which are **absent** and therefore stay out of the retired registry: an
+`out_of_spec` entry for them would be the same false statement in the other direction.
+
+**What the retirement does NOT claim.** It does not claim either relation is empty, wrong, or safe to
+drop. `geo.mv_soil_survey_union` has never once produced a row in production across four consecutive
+attempts, because of the `ST_CollectionExtract` omission at `drizzle/0029:918` that `drizzle/0035`
+exists to fix and that has not landed; landing that fix is **not** on its own grounds to restore the
+spec, because a working REFRESH of a relation nobody reads is still time spent for nothing. A restore
+needs a named reader, and both entries' `review_trigger` says so.
+
+**One consequence for the lane's own settings.** `MATVIEW_REFRESH_NO_PARALLEL_WORKERS` (0) is now
+carried by no spec: these two were the only views ever measured to fault on `/dev/shm`'s resizable
+`Parallel Hash` segment (section "2." above). The constant stays. It is the vocabulary for a real
+finding, and deleting it would leave the next author to rediscover the fault in production rather
+than to apply the classification rule the module already states.
+
 ## Metrics
 
 `job_attempt.metrics` is written on **every** attempt-closing path, not just the successful one.

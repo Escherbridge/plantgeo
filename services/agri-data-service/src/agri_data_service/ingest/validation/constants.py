@@ -125,7 +125,10 @@ DEAD_LETTER_WORK_ITEM_STATE: Final = "dead_letter"
 NO_DETAIL: Final[Mapping[str, object]] = MappingProxyType({})
 
 StreamKind = Literal["time_series", "snapshot", "reference"]
-StreamStore = Literal["features", "drought_areas", "historical_table"]
+# `historical_table` was a third member until 2026-09-04. It named a store no `StreamDefinition` had
+# declared since 2026-08-15 and that no statement reads any more; keeping it would leave the type
+# advertising a store the report cannot produce. See models.py above `DEFAULT_STREAM_DEFINITIONS`.
+StreamStore = Literal["features", "drought_areas"]
 StreamVerdict = Literal["complete", "incomplete", "invalid"]
 ExpectedFirstDaySource = Literal["declared", "lane_floor", "first_observed", "none"]
 
@@ -199,8 +202,11 @@ VALIDITY_CHECK_CONSEQUENCES: Final[Mapping[str, str]] = MappingProxyType(
     }
 )
 
-# `historical_*` rows have no status, no properties, no external id and no geometry link, so those checks
-# cannot be answered there and are reported as unevaluated rather than as a reassuring zero.
+# `geo.drought_areas` rows have no status, no properties, no external id and no geometry link, so these
+# checks cannot be answered there and are reported as unevaluated rather than as a reassuring zero. (The
+# three `geo.historical_*` tables were the other store this covered, until their statements were deleted
+# on 2026-09-04 -- see models.py above `DEFAULT_STREAM_DEFINITIONS`. `drought_areas` is the sole
+# remaining caller, in `_read_observations`.)
 _FEATURE_ONLY_CHECKS: Final[frozenset[str]] = frozenset(
     {UNLINKED_GEOMETRY_CHECK, MISSING_EXTERNAL_ID_CHECK, MALFORMED_IDENTITY_CHECK, DUPLICATE_IDENTITY_CHECK}
 )

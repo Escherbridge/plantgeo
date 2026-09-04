@@ -24,6 +24,8 @@ exist to tell apart.
 
 from __future__ import annotations
 
+import re
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
@@ -69,12 +71,12 @@ from agri_data_service.jobs.registry import JOB_HANDLERS, JobInvocation
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-# The hand-spelled 9-name list this lane must cover -- asserted against, never generated from, the
-# module's own MATVIEW_REFRESH_SPECS, so the two cannot drift together and still pass. Seven of the
+# The hand-spelled 7-name list this lane must cover -- asserted against, never generated from, the
+# module's own MATVIEW_REFRESH_SPECS, so the two cannot drift together and still pass. Five of the
 # nine matviews drizzle/0029 creates, plus two adopted (geo.watershed_rollup,
-# agri.mv_forecast_ml_daily_serving). `geo.mv_signal_observation_day` is NOT here -- see
-# MATVIEW_REFRESH_RETIRED_VIEWS below, not REMOVED_MATVIEW_NAMES: the relation is not absent, only
-# retired.
+# agri.mv_forecast_ml_daily_serving). `geo.mv_signal_observation_day`, `geo.mv_soil_survey_grid` and
+# `geo.mv_soil_survey_union` are NOT here -- see MATVIEW_REFRESH_RETIRED_VIEWS below, not
+# REMOVED_MATVIEW_NAMES: none of those three relations is absent, all three are only retired.
 EXPECTED_MATVIEW_NAMES: frozenset[str] = frozenset(
     {
         "geo.mv_feature_observation_day",
@@ -82,8 +84,6 @@ EXPECTED_MATVIEW_NAMES: frozenset[str] = frozenset(
         "geo.mv_drought_release_index",
         "geo.mv_layer_feature_stats",
         "geo.mv_layer_hourly_activity",
-        "geo.mv_soil_survey_grid",
-        "geo.mv_soil_survey_union",
         "geo.watershed_rollup",
         "agri.mv_forecast_ml_daily_serving",
     }
@@ -95,9 +95,11 @@ EXPECTED_MATVIEW_NAMES: frozenset[str] = frozenset(
 # never applied against production and, under the same pivot, will not be. Both were absent, both
 # were therefore eligible on every tick, and between them they dead-lettered 200 shards.
 #
-# `geo.mv_signal_observation_day` (removed 2026-09-04) belongs in MATVIEW_REFRESH_RETIRED_VIEWS, not
-# here: unlike the two below, its relation is NOT absent -- its REFRESH timed out at 302.14s against
-# its own 300s cap. Folding it into this set would assert something false about the database.
+# The three views removed on 2026-09-04 -- `geo.mv_signal_observation_day` (its REFRESH timed out at
+# 302.14s against its own 300s cap) and the two `geo.mv_soil_survey_*` views (retired for zero
+# consumption) -- belong in MATVIEW_REFRESH_RETIRED_VIEWS, not here: unlike the two below, NONE of
+# those relations is absent. Folding any of them into this set would assert something false about the
+# database, which is the same defect in the opposite direction from the one this set prevents.
 REMOVED_MATVIEW_NAMES: frozenset[str] = frozenset(
     {
         "geo.mv_signal_cell_daily",
@@ -105,6 +107,17 @@ REMOVED_MATVIEW_NAMES: frozenset[str] = frozenset(
     }
 )
 
+# Derived, not hand-spelled, and deliberately so: the tests below assert that EVERY retired view is
+# reported on a tick, which is a rule about the registry rather than about three particular names.
+# `test_the_three_retired_relations_are_not_on_this_lane_either` is the one place the names
+# themselves are pinned, so a fourth retirement cannot slip in unnamed.
+_RETIRED_VIEW_NAMES: frozenset[str] = frozenset(view.qualified_name for view in MATVIEW_REFRESH_RETIRED_VIEWS)
+
+# One entry per watermark statement a SURVIVING spec issues, and no entry for the two constants the
+# module still loads but no spec references any more (`..._source_release`, `..._soil_survey_coverage`
+# -- see the ORPHANED WATERMARKS note in matview_refresh.py). That is deliberate, not an omission:
+# `FakeSession.execute` raises on a statement it has no scripted answer for, so restoring a spec
+# without restoring its marker row fails loudly here instead of being answered by a stale default.
 _WATERMARK_MARKERS: dict[str, Mapping[str, object]] = {
     "matview_refresh_watermark_features_updated_at": {"watermark": "2026-08-01T00:00:00+00:00"},
     "matview_refresh_watermark_features_updated_at_hourly": {
@@ -117,11 +130,21 @@ _WATERMARK_MARKERS: dict[str, Mapping[str, object]] = {
         "row_count": 10,
         "current_utc_day": "2026-08-15",
     },
-    "matview_refresh_watermark_source_release": {"watermark": "2026-08-01T00:00:00+00:00"},
-    "matview_refresh_watermark_soil_survey_coverage": {"watermark": "2026-08-01T00:00:00+00:00"},
     "matview_refresh_watermark_watershed_features": {"watermark": "2026-08-01T00:00:00+00:00"},
     "matview_refresh_watermark_forecast_publication": {"watermark": "2026-08-01T00:00:00+00:00"},
 }
+
+
+def _opening_marker(sql: str) -> str:
+    """The `-- <name>` dispatch marker one loaded statement opens with, or "" for a built statement.
+
+    Marker EQUALITY, not containment. Two of this lane's watermark files have names that prefix
+    another's (`..._features_updated_at` inside `..._features_updated_at_hourly`), so a containment
+    test attributes one statement to two files -- the same collision `_watermark_markers_longest_first`
+    works around when it is answering rather than counting.
+    """
+    first = sql.lstrip().splitlines()[0] if sql.strip() else ""
+    return first.removeprefix("--").strip() if first.startswith("--") else ""
 
 
 def _watermark_markers_longest_first() -> list[tuple[str, Mapping[str, object]]]:
@@ -340,9 +363,9 @@ def _fake_invocation(
 # --- The spec table itself: the denominator this lane must cover, hand-spelled against it. ---
 
 
-def test_the_spec_table_covers_exactly_the_hand_spelled_nine_views() -> None:
+def test_the_spec_table_covers_exactly_the_hand_spelled_seven_views() -> None:
     assert MATVIEW_REFRESH_QUALIFIED_NAMES == EXPECTED_MATVIEW_NAMES
-    assert len(MATVIEW_REFRESH_SPECS) == len(EXPECTED_MATVIEW_NAMES) == 9
+    assert len(MATVIEW_REFRESH_SPECS) == len(EXPECTED_MATVIEW_NAMES) == 7
 
 
 def test_the_two_relations_the_parquet_pivot_dropped_are_not_on_this_lane() -> None:
@@ -355,16 +378,22 @@ def test_the_two_relations_the_parquet_pivot_dropped_are_not_on_this_lane() -> N
     assert MATVIEW_REFRESH_QUALIFIED_NAMES.isdisjoint(REMOVED_MATVIEW_NAMES)
 
 
-def test_the_retired_signal_relation_is_not_on_this_lane_either() -> None:
-    """`geo.mv_signal_observation_day` is retired, not absent: the relation still exists, only its
-    REFRESH -- 302.14s against a 300s cap -- was removed from this lane's job. Kept apart from
-    REMOVED_MATVIEW_NAMES/`relation_absent` for that reason -- see MATVIEW_REFRESH_RETIRED_VIEWS and
-    jobs/AGENTS.md "6. A retired view still needs a name on the tick". The disjointness asserted here
+def test_the_three_retired_relations_are_not_on_this_lane_either() -> None:
+    """All three are retired, not absent: every one of these relations still exists, only its REFRESH
+    was removed from this lane's job. `geo.mv_signal_observation_day` for cost (302.14s against a
+    300s cap); the two `geo.mv_soil_survey_*` views for ZERO CONSUMPTION -- nothing in the repository
+    selects from either, so the time their REFRESH spends buys an answer no caller asks for. Kept
+    apart from REMOVED_MATVIEW_NAMES/`relation_absent` for that reason -- see
+    MATVIEW_REFRESH_RETIRED_VIEWS and jobs/AGENTS.md "6." and "6b.". The disjointness asserted here
     is ALSO checked at import time now (a module-level `assert` beside MATVIEW_REFRESH_RETIRED_VIEWS,
     jobs/AGENTS.md "6a."); this test stays as the object-level pin of the same invariant.
     """
     retired_names = {view.qualified_name for view in MATVIEW_REFRESH_RETIRED_VIEWS}
-    assert retired_names == {"geo.mv_signal_observation_day"}
+    assert retired_names == {
+        "geo.mv_signal_observation_day",
+        "geo.mv_soil_survey_grid",
+        "geo.mv_soil_survey_union",
+    }
     assert MATVIEW_REFRESH_QUALIFIED_NAMES.isdisjoint(retired_names)
     assert REMOVED_MATVIEW_NAMES.isdisjoint(retired_names)
     # retired_at/review_trigger exist so the entry cannot be a permanent silencer with no expiry and
@@ -372,6 +401,20 @@ def test_the_retired_signal_relation_is_not_on_this_lane_either() -> None:
     for view in MATVIEW_REFRESH_RETIRED_VIEWS:
         assert view.retired_at
         assert view.review_trigger
+
+
+def test_no_retired_view_reason_cites_a_line_number_that_can_go_stale() -> None:
+    """`_RetiredView.reason` is reprinted VERBATIM on every tick a view stays retired, so it may not
+    carry the one kind of claim that rots silently: a `path:line` citation. The reader inventories
+    live in jobs/AGENTS.md "6." and "6b.", which a human maintains; an operator-facing string that
+    keeps naming a reader after the reader is deleted is false in the one place a green tick is most
+    likely to be read. See jobs/AGENTS.md "6a." point 3, which established the rule for the first
+    entry -- this pins it for every entry added since.
+    """
+    for view in MATVIEW_REFRESH_RETIRED_VIEWS:
+        assert not re.search(r"\.(ts|py|sql):\d", view.reason), (
+            f"{view.qualified_name}'s reason cites a source line; move the citation to jobs/AGENTS.md"
+        )
 
 
 def test_every_spec_name_is_unique() -> None:
@@ -689,7 +732,7 @@ async def test_a_steady_state_tick_with_everything_fresh_skips_every_view(monkey
     real_views = [entry for entry in views if entry["status"] != OUT_OF_SPEC_OUTCOME]
     assert len(real_views) == len(MATVIEW_REFRESH_QUALIFIED_NAMES)
     assert all(entry["status"] == "skipped_unchanged" for entry in real_views)
-    assert outcome.metrics["views_out_of_spec"] == ["geo.mv_signal_observation_day"]
+    assert set(outcome.metrics["views_out_of_spec"]) == _RETIRED_VIEW_NAMES
 
 
 @pytest.mark.asyncio
@@ -806,16 +849,16 @@ async def test_an_absent_relation_is_governed_not_failed_and_costs_no_refresh() 
     real_statuses = {name: status for name, status in statuses.items() if name in MATVIEW_REFRESH_QUALIFIED_NAMES}
     assert set(real_statuses) == MATVIEW_REFRESH_QUALIFIED_NAMES
     assert set(real_statuses.values()) == {"relation_absent"}
-    assert statuses["geo.mv_signal_observation_day"] == "out_of_spec"
+    assert {name for name, status in statuses.items() if status == "out_of_spec"} == _RETIRED_VIEW_NAMES
     # Lifted to the top level of the metrics, not only buried in the per-view array: a governed
     # non-failure nobody can see on a green tick is a governed non-failure nobody reads.
     assert set(outcome.metrics["relations_absent"]) == MATVIEW_REFRESH_QUALIFIED_NAMES
-    assert outcome.metrics["views_out_of_spec"] == ["geo.mv_signal_observation_day"]
+    assert set(outcome.metrics["views_out_of_spec"]) == _RETIRED_VIEW_NAMES
 
 
 @pytest.mark.asyncio
 async def test_one_absent_relation_does_not_stop_the_others_refreshing() -> None:
-    absent = "geo.mv_soil_survey_union"
+    absent = "geo.mv_drought_observation_day"
     session = FakeSession(existing_views=MATVIEW_REFRESH_QUALIFIED_NAMES - {absent})
 
     async with matview_refresh_context(MatviewRefreshLaneContext(session=session)):
@@ -842,7 +885,7 @@ async def test_an_absent_relation_reads_no_watermark_and_carries_its_last_one_fo
     now = datetime(2026, 9, 2, 12, 0, 0, tzinfo=UTC)
     monkeypatch.setattr(_FrozenDateTime, "fixed_now", now)
     monkeypatch.setattr(mv_module, "datetime", _FrozenDateTime)
-    absent = "geo.mv_soil_survey_union"
+    absent = "geo.mv_feature_observation_day"
     prior_rows = _fresh_prior_state_rows(now)
     stored_watermark = next(row["source_watermark"] for row in prior_rows if row["view_name"] == absent)
     session = FakeSession(
@@ -853,7 +896,13 @@ async def test_an_absent_relation_reads_no_watermark_and_carries_its_last_one_fo
     async with matview_refresh_context(MatviewRefreshLaneContext(session=session)):
         await matview_refresh_handler(_fake_invocation())
 
-    absent_watermark_reads = [sql for sql, _ in session.statements if "soil_survey_coverage" in sql]
+    # Matched on the marker LINE, not on a substring of the statement: the clock-bearing variant
+    # `..._features_updated_at_hourly` contains this marker's whole name, so a substring test would
+    # count `geo.mv_layer_hourly_activity`'s read here too and the assertion below would pass for the
+    # wrong reason. `_watermark_markers_longest_first` exists for the same collision.
+    absent_watermark_reads = [
+        sql for sql, _ in session.statements if _opening_marker(sql) == "matview_refresh_watermark_features_updated_at"
+    ]
     written = [write for write in session.state_writes() if write["view_name"] == absent]
     assert written == [
         {
@@ -868,15 +917,15 @@ async def test_an_absent_relation_reads_no_watermark_and_carries_its_last_one_fo
             "outcome": "relation_absent",
         }
     ]
-    # `geo.mv_soil_survey_grid` shares this watermark query and IS present, so the query still runs --
-    # what must not happen is the absent spec adding a read of its own.
+    # `geo.mv_layer_feature_stats` shares this watermark query and IS present, so the query still
+    # runs -- what must not happen is the absent spec adding a read of its own.
     assert len(absent_watermark_reads) == 1
 
 
 @pytest.mark.asyncio
 async def test_a_relation_that_reappears_is_refreshed_on_the_very_next_tick() -> None:
     """`relation_absent` must self-heal: it records a fact about now, never a decision about later."""
-    reborn = "geo.mv_soil_survey_union"
+    reborn = "geo.mv_drought_observation_day"
     session = FakeSession(existing_views=MATVIEW_REFRESH_QUALIFIED_NAMES)
 
     async with matview_refresh_context(MatviewRefreshLaneContext(session=session)):
@@ -984,6 +1033,13 @@ async def test_the_retired_views_reported_detail_names_its_retirement_date_and_r
     # jobs/AGENTS.md "6.", not reprinted verbatim on every tick this view stays retired.
     assert ":3198" not in detail
     assert "SIGNAL_CENSUS_RELATION" not in detail
+    # EVERY retired view earns the same treatment, not just the first one. A registry entry whose
+    # detail omits its own date is a permanent silencer with no expiry, which is the defect
+    # `retired_at` was added to close (jobs/AGENTS.md "6a." point 3).
+    details = {entry["view"]: entry["detail"] or "" for entry in outcome.metrics["views"]}
+    for view in MATVIEW_REFRESH_RETIRED_VIEWS:
+        assert f"retired {view.retired_at}" in details[view.qualified_name]
+        assert view.review_trigger in details[view.qualified_name]
 
 
 @pytest.mark.asyncio
@@ -1051,13 +1107,18 @@ async def test_trigger_reuses_the_same_persistent_run_across_calls(monkeypatch: 
 # geo.mv_soil_survey_union all carried refreshed_at NULL with a real failure duration beside them, so
 # `_eligibility`'s "never successfully refreshed" branch re-admitted all three on every hourly tick --
 # ~449 s of guaranteed-doomed REFRESH per tick, 47 failed attempts against 2 succeeded over 48 hours.
-# `geo.mv_signal_observation_day` was later removed from MATVIEW_REFRESH_SPECS on 2026-09-04 (see
-# MATVIEW_REFRESH_RETIRED_VIEWS); the test below now exercises the backoff math against
-# `geo.mv_soil_survey_union`, its sibling from the same incident, which is still on the spec table.
+# ALL THREE have since left MATVIEW_REFRESH_SPECS for MATVIEW_REFRESH_RETIRED_VIEWS (2026-09-04), so
+# no view from that incident is available to exercise the math it produced. The tests below therefore
+# run against `geo.mv_drought_observation_day` and `geo.mv_feature_observation_day`, whose specs
+# carry the same shape (a min_interval well under a max_staleness, a real statement timeout). The
+# subject is interchangeable ON PURPOSE: `_backoff_seconds` and `_eligibility` are functions of a
+# spec's own numbers, so pinning them to the view that happened to fail would be pinning the
+# incident, not the rule -- and the rule has to survive every view in the incident being retired,
+# which is exactly what just happened.
 
 
 def test_backoff_doubles_from_the_min_interval_and_caps_at_the_views_own_max_staleness() -> None:
-    spec = next(s for s in MATVIEW_REFRESH_SPECS if s.qualified_name == "geo.mv_soil_survey_union")
+    spec = next(s for s in MATVIEW_REFRESH_SPECS if s.qualified_name == "geo.mv_drought_observation_day")
     assert _backoff_seconds(spec, 0) == 0.0
     assert _backoff_seconds(spec, 1) == float(spec.min_interval_seconds)
     assert _backoff_seconds(spec, 2) == float(spec.min_interval_seconds * 2)
@@ -1072,7 +1133,7 @@ def test_no_backoff_can_exceed_the_interval_its_view_is_contractually_due_within
 
 
 def test_a_view_failing_every_attempt_is_withheld_instead_of_retried_on_every_tick() -> None:
-    spec = next(s for s in MATVIEW_REFRESH_SPECS if s.qualified_name == "geo.mv_soil_survey_grid")
+    spec = next(s for s in MATVIEW_REFRESH_SPECS if s.qualified_name == "geo.mv_drought_observation_day")
     now = datetime(2026, 8, 17, 12, 0, 0, tzinfo=UTC)
     prior = _PriorRefreshState(
         source_watermark="w1",
@@ -1091,7 +1152,7 @@ def test_a_view_failing_every_attempt_is_withheld_instead_of_retried_on_every_ti
 
 
 def test_a_standing_failure_becomes_eligible_again_once_its_backoff_elapses() -> None:
-    spec = next(s for s in MATVIEW_REFRESH_SPECS if s.qualified_name == "geo.mv_soil_survey_grid")
+    spec = next(s for s in MATVIEW_REFRESH_SPECS if s.qualified_name == "geo.mv_drought_observation_day")
     now = datetime(2026, 8, 17, 12, 0, 0, tzinfo=UTC)
     backoff = _backoff_seconds(spec, 3)
     prior = _PriorRefreshState(
@@ -1111,7 +1172,7 @@ def test_a_standing_failure_becomes_eligible_again_once_its_backoff_elapses() ->
 def test_a_row_written_before_the_backoff_columns_existed_is_attempted_rather_than_withheld() -> None:
     """A pre-20260817_0025 row has no last_attempt_at; withholding it against a clock that does not
     exist would silence a view on the strength of missing data."""
-    spec = next(s for s in MATVIEW_REFRESH_SPECS if s.qualified_name == "geo.mv_soil_survey_grid")
+    spec = next(s for s in MATVIEW_REFRESH_SPECS if s.qualified_name == "geo.mv_drought_observation_day")
     now = datetime(2026, 8, 17, 12, 0, 0, tzinfo=UTC)
     prior = _PriorRefreshState(
         source_watermark="w1", refreshed_at=None, duration_ms=80_125, last_attempt_at=None, consecutive_failures=4
@@ -1175,34 +1236,54 @@ def test_a_backed_off_view_does_not_make_an_all_missing_tick_read_as_missing() -
 # --- Parallel workers are per view, not per lane ---
 
 
-def test_only_the_two_views_measured_to_fault_on_dev_shm_disable_their_parallel_workers() -> None:
+def test_no_surviving_spec_disables_its_parallel_workers_now_the_two_measured_views_are_retired() -> None:
     """Per-spec, and the discriminator is `Parallel Hash` -- not "is the plan parallel".
 
     Every plan in this lane allocates a DSM segment, so a default of 1 removes no exposure; only the
-    soil views carry a shared RESIZABLE hash table, which is what "could not resize shared memory
-    segment" reports. See jobs/AGENTS.md "The real discriminator is Parallel Hash, not parallelism".
+    two soil-survey views carried a shared RESIZABLE hash table, which is what "could not resize
+    shared memory segment" reports. BOTH were retired on 2026-09-04 for zero consumption
+    (jobs/AGENTS.md "6b."), so the correct expectation today is that NO spec carries the 0 -- and an
+    empty-set assertion alone would keep passing if the whole field were deleted, so the pin that
+    makes this test mean something is `test_each_refresh_pins_its_own_spec_worker_count_not_a_lane_wide_one`
+    below, which still proves a non-default value reaches the SET LOCAL. The retired views' own names
+    are pinned once, in `test_the_three_retired_relations_are_not_on_this_lane_either`, and not
+    respelled here. See jobs/AGENTS.md "2. The real discriminator is Parallel Hash, not parallelism".
     """
     disabled = {
         spec.qualified_name
         for spec in MATVIEW_REFRESH_SPECS
         if spec.max_parallel_workers_per_gather == mv_module.MATVIEW_REFRESH_NO_PARALLEL_WORKERS
     }
-    assert disabled == {"geo.mv_soil_survey_grid", "geo.mv_soil_survey_union"}
+    assert disabled == set()
     for spec in MATVIEW_REFRESH_SPECS:
-        if spec.qualified_name not in disabled:
-            assert (
-                spec.max_parallel_workers_per_gather
-                == mv_module.MATVIEW_REFRESH_DEFAULT_MAX_PARALLEL_WORKERS_PER_GATHER
-            )
+        assert spec.max_parallel_workers_per_gather == mv_module.MATVIEW_REFRESH_DEFAULT_MAX_PARALLEL_WORKERS_PER_GATHER
 
 
 @pytest.mark.asyncio
 async def test_each_refresh_pins_its_own_spec_worker_count_not_a_lane_wide_one() -> None:
-    spec = next(s for s in MATVIEW_REFRESH_SPECS if s.qualified_name == "geo.mv_soil_survey_grid")
+    """The setting is read off the SPEC, never off a module constant.
+
+    Exercised against a spec built with `replace(...)` rather than a real one, because no shipping
+    spec carries a non-default worker count any more: asserting the default against a table where
+    every entry holds the default would pass even if this code read the module constant directly,
+    which is the exact bug the test exists to catch.
+    """
+    real = next(s for s in MATVIEW_REFRESH_SPECS if s.qualified_name == "geo.mv_drought_observation_day")
+    spec = replace(real, max_parallel_workers_per_gather=mv_module.MATVIEW_REFRESH_NO_PARALLEL_WORKERS)
     session = FakeSession()
     await _refresh_one_matview(session, spec)
     settings = [sql for sql, _ in session.statements if "max_parallel_workers_per_gather" in sql]
     assert settings == ["SET LOCAL max_parallel_workers_per_gather = 0"]
+
+
+@pytest.mark.asyncio
+async def test_a_default_worker_count_spec_pins_its_own_value_too() -> None:
+    """The other half of the same rule: a default-carrying spec emits 1, not "nothing"."""
+    spec = next(s for s in MATVIEW_REFRESH_SPECS if s.qualified_name == "geo.mv_drought_observation_day")
+    session = FakeSession()
+    await _refresh_one_matview(session, spec)
+    settings = [sql for sql, _ in session.statements if "max_parallel_workers_per_gather" in sql]
+    assert settings == ["SET LOCAL max_parallel_workers_per_gather = 1"]
 
 
 # --- The budget gate must be satisfiable by the view it guards ---
@@ -1239,7 +1320,7 @@ async def test_a_backed_off_view_costs_no_refresh_and_still_reds_the_tick(
     monkeypatch.setattr(_FrozenDateTime, "fixed_now", now)
     monkeypatch.setattr(mv_module, "datetime", _FrozenDateTime)
 
-    doomed = "geo.mv_soil_survey_grid"
+    doomed = "geo.mv_drought_observation_day"
     prior_rows = [
         dict(row)
         if row["view_name"] != doomed
@@ -1272,7 +1353,7 @@ async def test_a_standing_failure_past_its_backoff_is_attempted_again(monkeypatc
     monkeypatch.setattr(_FrozenDateTime, "fixed_now", now)
     monkeypatch.setattr(mv_module, "datetime", _FrozenDateTime)
 
-    doomed = "geo.mv_soil_survey_grid"
+    doomed = "geo.mv_drought_observation_day"
     spec = next(s for s in MATVIEW_REFRESH_SPECS if s.qualified_name == doomed)
     prior_rows = [
         dict(row)
@@ -1311,7 +1392,7 @@ async def test_budget_exhaustion_never_hides_a_standing_failure(monkeypatch: pyt
     monkeypatch.setattr(_FrozenDateTime, "fixed_now", now)
     monkeypatch.setattr(mv_module, "datetime", _FrozenDateTime)
 
-    doomed = "geo.mv_soil_survey_grid"
+    doomed = "geo.mv_drought_observation_day"
     stale = "agri.mv_forecast_ml_daily_serving"
     stale_spec = next(s for s in MATVIEW_REFRESH_SPECS if s.qualified_name == stale)
     prior_rows = []

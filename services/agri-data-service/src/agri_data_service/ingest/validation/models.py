@@ -150,12 +150,33 @@ DEFAULT_STREAM_DEFINITIONS: Final[tuple[StreamDefinition, ...]] = (
         publication_cadence_days=7,
         cadence_basis="USDM publishes one release every Tuesday, so a weekly rhythm is complete, not sparse",
     ),
-    # historical_vegetation / historical_fire_data / historical_water_drought deregistered 2026-08-15:
-    # owner directive "if there is no planned track to populate the table then remove the layer". The
-    # three geo.historical_* tables they named have no producer anywhere in the tree, and every
-    # validate-streams tick scanned them anyway (historical_observed_days.sql, historical_validity_counts.sql)
-    # for a `store="historical_table"` catalog entry that could never report anything but empty. See
-    # docs/pending-migrations/0029-pre-aggregation.md for the ordered apply sequence this sits inside.
+    # DEREGISTERED 2026-08-15, AND THE SCAN THEY LEFT BEHIND WAS DELETED 2026-09-04.
+    #
+    # historical_vegetation / historical_fire_data / historical_water_drought lost their
+    # `StreamDefinition`s on 2026-08-15, on the owner directive "if there is no planned track to
+    # populate the table then remove the layer": the three `geo.historical_*` tables they named have
+    # no producer anywhere in the tree. Deregistering the CATALOG ENTRY did not stop the SCAN, and
+    # the half that was left behind did not merely waste time -- it asserted something false on every
+    # tick:
+    #
+    #   * `historical_validity_counts.sql` was an aggregate with no GROUP BY per branch, so its own
+    #     header promised "exactly three rows, one per historical stream, WHATEVER THE TABLES
+    #     CONTAIN". `_read_observations` therefore wrote three entries into `totals` on every run,
+    #     empty tables or not.
+    #   * `build_validation_report` then computes `unknown_streams` as every observed stream not in
+    #     `declared`, and after the deregistration none of the three was declared. So every scheduled
+    #     `validate-streams` tick since 2026-08-15 has emitted three permanent unknown streams under
+    #     the heading "These hold rows but have no `StreamDefinition`" -- in a report whose entire job
+    #     is telling an operator which anomalies are real.
+    #   * The suite could not see it, because the fixture had been emptied rather than the query
+    #     removed: `tests/test_ingest_validation.py` scripted `historical_validity_counts: []` for a
+    #     statement that cannot return `[]` against a real database.
+    #
+    # Both statements, both `.sql` files, the `store="historical_table"` member of `StreamStore` and
+    # the fixture keys are gone as of 2026-09-04, under the environmental-Postgres retirement track's
+    # criterion "legacy code DELETED, not merely unused". Nothing reads the three tables from this
+    # service any more. See docs/pending-migrations/0029-pre-aggregation.md for the ordered apply
+    # sequence the original deregistration sits inside.
 )
 
 

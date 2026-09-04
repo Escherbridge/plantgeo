@@ -89,13 +89,117 @@ def test_prose_is_recorded_and_never_blocks(tmp_path: Path) -> None:
 
 
 def test_one_line_yields_one_hit_even_when_several_terms_match(tmp_path: Path) -> None:
-    """`geo.mv_reader_probe` and the bare `mv_reader_probe` on one line is one reference, not two."""
-    root = build_checkout(tmp_path, files={"src/a.ts": "// geo.mv_reader_probe and mv_reader_probe on one line\n"})
+    """`geo.mv_reader_probe` and the bare `mv_reader_probe` on one line is one reference, not two.
+
+    The line must be actual code, not a comment -- a `//`-prefixed line is exactly the comment-only
+    case `test_a_comment_only_reference_is_documentation_not_a_consumer` pins, and would no longer
+    land in `scan.consumers` at all.
+    """
+    root = build_checkout(
+        tmp_path, files={"src/a.ts": "const ref = 'geo.mv_reader_probe and mv_reader_probe on one line';\n"}
+    )
 
     scan = _scan(root)
 
     assert len(scan.consumers) == 1
     assert scan.consumers[0].term == "geo.mv_reader_probe"
+
+
+def test_a_comment_only_reference_is_documentation_not_a_consumer(tmp_path: Path) -> None:
+    """The defect this heuristic fixes: a `//` comment naming the relation is not a read of it.
+
+    This is the real-world shape -- `src/lib/server/db/schema.ts` had `public.drought_data`'s Drizzle
+    declaration removed and replaced with a comment naming the table, and the scan matched the
+    comment's own mention of the name as if it were the reference it was announcing the absence of.
+    """
+    root = build_checkout(
+        tmp_path,
+        files={
+            "src/lib/server/db/schema.ts": (
+                "// `geo.mv_reader_probe` had its Drizzle declaration removed here -- zero readers left.\n"
+            )
+        },
+    )
+
+    scan = _scan(root)
+
+    assert scan.zero_readers is True
+    assert scan.consumers == ()
+    assert len(scan.documentation) == 1
+    assert scan.documentation[0].path == "src/lib/server/db/schema.ts"
+    assert scan.documentation[0].surface == "nextjs_app"
+
+
+def test_a_code_line_with_a_trailing_comment_is_still_a_consumer(tmp_path: Path) -> None:
+    """A reference in the code portion of a line still blocks, whatever a trailing comment adds."""
+    root = build_checkout(
+        tmp_path,
+        files={"src/a.ts": "const rows = db.query('geo.mv_reader_probe'); // legacy path, remove after wave D\n"},
+    )
+
+    scan = _scan(root)
+
+    assert scan.zero_readers is False
+    assert scan.consumers[0].path == "src/a.ts"
+    assert scan.consumers[0].disposition is ReaderDisposition.CONSUMER
+
+
+def test_a_comment_only_reference_in_python_is_documentation(tmp_path: Path) -> None:
+    """The `#` marker required for Python and YAML, on the service's own Python surface."""
+    root = build_checkout(
+        tmp_path,
+        files={
+            "services/agri-data-service/src/agri_data_service/pipeline/note.py": (
+                "# geo.mv_reader_probe was dropped in wave D; see the retirement track.\n"
+            )
+        },
+    )
+
+    scan = _scan(root)
+
+    assert scan.zero_readers is True
+    assert len(scan.documentation) == 1
+
+
+def test_a_comment_only_reference_in_sql_is_documentation(tmp_path: Path) -> None:
+    """The `--` marker required for SQL, on the agent-SQL surface D1 item 2 names by hand."""
+    root = build_checkout(
+        tmp_path,
+        files={
+            "services/agri-data-service/src/agri_data_service/sql/agent/note.sql": (
+                "-- geo.mv_reader_probe: dropped in wave D, kept here as a pointer\nSELECT 1;\n"
+            )
+        },
+    )
+
+    scan = _scan(root)
+
+    assert scan.zero_readers is True
+    assert len(scan.documentation) == 1
+
+
+def test_a_same_line_block_comment_reference_is_documentation(tmp_path: Path) -> None:
+    """The `/* */` marker required for TypeScript/JavaScript, closed on the same line as it opens."""
+    root = build_checkout(tmp_path, files={"src/a.ts": "/* geo.mv_reader_probe: removed, see track */\n"})
+
+    scan = _scan(root)
+
+    assert scan.zero_readers is True
+    assert len(scan.documentation) == 1
+
+
+def test_a_block_comment_left_open_on_its_line_is_not_stripped(tmp_path: Path) -> None:
+    """A blind spot the docstring names: a comment spanning lines looks, from one line, unclosed.
+
+    The heuristic keeps the rest of the line as code rather than guess where such a comment ends, so
+    a reference on the opening line still blocks -- a false block, never a false clear.
+    """
+    root = build_checkout(tmp_path, files={"src/a.ts": "/* start of a long comment about geo.mv_reader_probe\n"})
+
+    scan = _scan(root)
+
+    assert scan.zero_readers is False
+    assert scan.consumers[0].disposition is ReaderDisposition.CONSUMER
 
 
 def test_an_exemption_marks_a_hit_exempt_only_for_the_form_it_names(tmp_path: Path) -> None:

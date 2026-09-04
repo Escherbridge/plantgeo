@@ -23,6 +23,15 @@ AN EXEMPTION IS ASSERTED, NEVER ABSENT. `sql/agent/feature_value_near_point.sql`
 The wave-C adversarial review's complaint about the existing guard test was precisely that it passed
 by NOT listing the relation. Here the exemption names the path, the reason and the drop forms it
 applies to, and an exemption that matches no hit is reported as stale rather than silently carried.
+
+A COMMENT NAMING A RELATION IS NOT A READ OF IT. `src/lib/server/db/schema.ts` had its Drizzle
+declaration of `public.drought_data` removed and replaced with a `//` comment explaining the removal
+-- correct practice that this scan used to punish, by counting the comment's own mention of the table
+name as the very reference it was announcing the absence of. `_match_lines` now re-tests a match
+against `_code_only_line`'s comment-stripped view of the same line; a match that survives only in the
+stripped-away portion is DOCUMENTATION regardless of which surface it landed on, and a match that
+still appears in what is left is whatever the surface says, so `const x = droughtData; // legacy`
+still blocks. It is a line-level heuristic, not a parser, and says so at `_code_only_line`.
 """
 
 from __future__ import annotations
@@ -425,19 +434,102 @@ def _iter_surface_files(root: Path, surface: ReaderSurface, claimed: set[Path]) 
         yield path
 
 
-def _match_lines(text: str, terms: Sequence[SearchTerm]) -> Iterator[tuple[int, SearchTerm, str]]:
-    """Yield `(line number, term, excerpt)` ONCE per matching line, naming the most specific term.
+@dataclass(frozen=True, slots=True)
+class _CommentSyntax:
+    """The comment markers one file suffix uses, for the line-level heuristic below.
+
+    `line_markers` are checked in the order given; the EARLIEST one found on a line wins, because a
+    line can only ever be commented from its first marker onward. `block` is `None` for languages this
+    repository scans that have no block-comment form (Python's `#` has no paired closer).
+    """
+
+    line_markers: tuple[str, ...]
+    block: tuple[str, str] | None
+
+
+#: Comment syntax by file suffix, for the surfaces this repository actually scans. A suffix absent
+#: from this mapping gets no comment awareness at all -- every match on it is still counted as code,
+#: which is the safe default `_code_only_line` falls back to.
+_COMMENT_SYNTAX_BY_SUFFIX: Final[dict[str, _CommentSyntax]] = {
+    ".ts": _CommentSyntax(line_markers=("//",), block=("/*", "*/")),
+    ".tsx": _CommentSyntax(line_markers=("//",), block=("/*", "*/")),
+    ".js": _CommentSyntax(line_markers=("//",), block=("/*", "*/")),
+    ".jsx": _CommentSyntax(line_markers=("//",), block=("/*", "*/")),
+    ".mjs": _CommentSyntax(line_markers=("//",), block=("/*", "*/")),
+    ".cjs": _CommentSyntax(line_markers=("//",), block=("/*", "*/")),
+    ".py": _CommentSyntax(line_markers=("#",), block=None),
+    ".yaml": _CommentSyntax(line_markers=("#",), block=None),
+    ".yml": _CommentSyntax(line_markers=("#",), block=None),
+    ".sql": _CommentSyntax(line_markers=("--",), block=("/*", "*/")),
+}
+
+
+def _code_only_line(line: str, syntax: _CommentSyntax | None) -> str:
+    """Return the prefix of one line that is NOT inside a comment, per a line-level heuristic.
+
+    This is deliberately not a parser. It knows nothing about string literals, so a line comment
+    marker or block-comment opener that appears inside a same-line string (a URL's `//`, a SQL
+    literal's `--`) is still treated as the start of a comment; no hit in this repository currently
+    falls inside such a literal, but a future one could be misclassified this way.
+
+    What it genuinely cannot see, because a single line carries no memory of the lines around it:
+    a match inside a multi-line string, or inside a block comment that OPENED on an earlier line.
+    Both are handled the safe way rather than the clever way -- a `/*` with no `*/` on the same line
+    is left completely alone (the text after it is still "code" as far as this function is concerned),
+    so a match hiding in either blind spot is still counted as a consumer. A false block costs a human
+    one line to read; a false clear costs a table nobody rechecks, so every case this function cannot
+    resolve resolves toward "code".
+    """
+    if syntax is None:
+        return line
+    working = line
+    if syntax.block is not None:
+        start_marker, end_marker = syntax.block
+        pieces: list[str] = []
+        rest = working
+        while True:
+            start = rest.find(start_marker)
+            if start == -1:
+                pieces.append(rest)
+                break
+            end = rest.find(end_marker, start + len(start_marker))
+            if end == -1:
+                # Unclosed on this line: a block comment spanning lines, or just an unmatched
+                # opener. Keep the rest of the line as code rather than guess where it ends.
+                pieces.append(rest)
+                break
+            pieces.append(rest[:start])
+            rest = rest[end + len(end_marker) :]
+        working = "".join(pieces)
+    earliest = min(
+        (index for marker in syntax.line_markers if (index := working.find(marker)) != -1),
+        default=None,
+    )
+    return working if earliest is None else working[:earliest]
+
+
+def _match_lines(
+    text: str, terms: Sequence[SearchTerm], syntax: _CommentSyntax | None
+) -> Iterator[tuple[int, SearchTerm, str, bool]]:
+    """Yield `(line number, term, excerpt, comment_only)` ONCE per matching line, most-specific term first.
 
     One hit per line, not one per term: `geo.mv_soil_survey_grid` and the bare `mv_soil_survey_grid`
     both match the same line, and counting it twice doubles every consumer figure a reader is asked
     to act on. `default_search_terms` orders qualified before bare, so the first match is the most
     specific spelling present.
+
+    `comment_only` is true when the matched term appears in the full line but NOT in
+    `_code_only_line`'s view of it -- the match exists only inside a comment. A line that carries the
+    term in both code and a trailing comment (`const x = droughtData; // legacy`) matches in the code
+    portion too, so `comment_only` is false and the hit still counts as whatever the surface says.
     """
     for index, line in enumerate(text.splitlines(), start=1):
         lowered = line.lower()
         for term in terms:
-            if term.pattern.lower() in lowered:
-                yield index, term, line.strip()[:MATCH_EXCERPT_LIMIT]
+            pattern = term.pattern.lower()
+            if pattern in lowered:
+                comment_only = pattern not in _code_only_line(line, syntax).lower()
+                yield index, term, line.strip()[:MATCH_EXCERPT_LIMIT], comment_only
                 break
 
 
@@ -490,7 +582,25 @@ def scan_for_readers(  # noqa: PLR0913 - each argument is one independent coordi
                 if surface.disposition is ReaderDisposition.CONSUMER
                 else None
             )
-            for line, term, excerpt in _match_lines(text, terms):
+            syntax = _COMMENT_SYNTAX_BY_SUFFIX.get(path.suffix)
+            for line, term, excerpt, comment_only in _match_lines(text, terms, syntax):
+                # A match that exists only inside a comment is prose about the relation, not a
+                # reference to it, whatever the surface it landed on would otherwise say -- so it
+                # is reported and never blocks, exactly like every other documentation hit, and it
+                # never reaches the exemption check below (there is no consumer reference here to
+                # exempt).
+                if comment_only and surface.disposition is not ReaderDisposition.DOCUMENTATION:
+                    hits.append(
+                        ReaderHit(
+                            path=relative,
+                            line=line,
+                            surface=surface.name,
+                            disposition=ReaderDisposition.DOCUMENTATION,
+                            term=term.pattern,
+                            excerpt=excerpt,
+                        )
+                    )
+                    continue
                 if exemption is not None:
                     exempted_paths.add(relative)
                 hits.append(

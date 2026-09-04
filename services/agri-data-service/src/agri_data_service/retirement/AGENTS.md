@@ -70,6 +70,15 @@ the drop forms it applies to, and an exemption matching nothing is reported as s
 wave-C review's complaint about the existing guard test was precisely that it passed by NOT listing
 the relation.
 
+Nor can a grep tell a read from a comment ABOUT a read. `readers.py::_match_lines` re-tests every hit
+against a line-level, comment-stripped view of the same line (`_code_only_line`): a match that
+survives only in the stripped-away portion is DOCUMENTATION regardless of which surface it landed on,
+never blocking. This is what let `public.drought_data`'s Drizzle declaration be correctly deleted and
+replaced with a `//` comment naming the table without the scan reading that comment as the very
+reference it announced the removal of. It is a heuristic, not a parser — it cannot see a match inside
+a multi-line string or a block comment that opened on an earlier line, and in both blind spots it
+resolves toward "code" rather than guess, so the false is a block, never a clear.
+
 ## Order matters in `assess_shortfall`
 
 The rewrite epoch is checked BEFORE any verdict is believed. `fire-perimeters` moved from

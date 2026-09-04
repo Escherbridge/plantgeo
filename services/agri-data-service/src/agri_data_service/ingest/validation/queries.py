@@ -102,21 +102,25 @@ FEATURE_VALIDITY_COUNTS_FOR_UNDATED_ROWS: Final[TextClause] = text(
 
 _FEATURE_DUPLICATE_IDENTITIES: Final[TextClause] = text(load_query_sql("ingest/feature_duplicate_identities.sql"))
 
-# _DROUGHT_AREA_OBSERVED_DAYS and _HISTORICAL_OBSERVED_DAYS build the same class of full-table scan
-# observed_days.sql did before its day scope slot landed. They are NOT sharded here: their .sql files
-# carry no `{day_scope}` slot to fill, and adding one is a change to files this module does not own in
-# this pass (drought_area_observed_days.sql scans geo.drought_areas keyed on a VARCHAR valid_date;
-# historical_observed_days.sql UNIONs three geo.historical_* tables). Whoever adds that slot should shape
-# it the way `_DAY_RANGE_SCOPE` above is shaped -- an inclusive range over the statement's own day
-# expression, cast to date, filled at import time from a closed constant. There is no shared day-cutting
-# helper to reuse for the fan-out (see the note above `FEATURE_VALIDITY_COUNTS_FOR_DAY_RANGE`); whoever
-# needs one writes it once and points both callers at it.
+# _DROUGHT_AREA_OBSERVED_DAYS builds the same class of full-table scan observed_days.sql did before its
+# day scope slot landed. It is NOT sharded here: its .sql file carries no `{day_scope}` slot to fill, and
+# adding one is a change to a file this module does not own in this pass (drought_area_observed_days.sql
+# scans geo.drought_areas keyed on a VARCHAR valid_date). Whoever adds that slot should shape it the way
+# `_DAY_RANGE_SCOPE` above is shaped -- an inclusive range over the statement's own day expression, cast
+# to date, filled at import time from a closed constant. There is no shared day-cutting helper to reuse
+# for the fan-out (see the note above `FEATURE_VALIDITY_COUNTS_FOR_DAY_RANGE`); whoever needs one writes
+# it once and points both callers at it.
+#
+# DELETED 2026-09-04: `_HISTORICAL_OBSERVED_DAYS` and `_HISTORICAL_VALIDITY_COUNTS`, together with
+# `sql/ingest/historical_observed_days.sql` and `sql/ingest/historical_validity_counts.sql`. Both
+# statements scanned the three producerless `geo.historical_*` tables on every scheduled tick for a
+# catalog entry that had been deregistered on 2026-08-15, and the validity statement returned three
+# rows unconditionally, so it MANUFACTURED three permanent `unknown_streams` in every report. See
+# models.py above `DEFAULT_STREAM_DEFINITIONS` for the whole account. The .sql files went with the
+# constants because tests/test_sql_tree_conventions.py's LOADED rule requires exactly one
+# `load_query_sql` call site per file -- keeping either half alone reds that suite.
 _DROUGHT_AREA_OBSERVED_DAYS: Final[TextClause] = text(load_query_sql("ingest/drought_area_observed_days.sql"))
 
 _DROUGHT_AREA_VALIDITY_COUNTS: Final[TextClause] = text(load_query_sql("ingest/drought_area_validity_counts.sql"))
-
-_HISTORICAL_OBSERVED_DAYS: Final[TextClause] = text(load_query_sql("ingest/historical_observed_days.sql"))
-
-_HISTORICAL_VALIDITY_COUNTS: Final[TextClause] = text(load_query_sql("ingest/historical_validity_counts.sql"))
 
 _JOB_LANE_STATE: Final[TextClause] = text(load_query_sql("ingest/job_lane_state.sql"))

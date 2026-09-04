@@ -343,12 +343,10 @@ export const waterGauges = pgTable("water_gauges", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
 });
 
-export const droughtData = pgTable("drought_data", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  weekDate: varchar("week_date", { length: 20 }).notNull().unique(),
-  geojson: jsonb("geojson").notNull(),
-  fetchedAt: timestamp("fetched_at", { withTimezone: true }).defaultNow(),
-});
+// `public.drought_data` (legacy blob table, superseded by `geo.drought_areas` below) had its
+// Drizzle declaration removed here — zero readers/writers left in src/, table row still exists
+// in Postgres pending a wave-D drop migration. See src/lib/server/AGENTS.md §"Geometry lives in
+// PostGIS, not in a JSON column" and conductor/tracks/environmental_postgres_retirement_20260904/.
 
 /** One USDM D0-D4 classification polygon per weekly release; see `src/lib/server/AGENTS.md` §drought-ingestion. */
 export const droughtAreas = geoSchema.table(
@@ -583,45 +581,14 @@ export const aiMessages = pgTable("ai_messages", {
 });
 
 // ============================================
-// Historical Data Service (geo schema)
-// Note: geom geometry(POINT,4326) column to be added via migration
+// Historical Data Service (geo schema) -- retired
 // ============================================
-
-export const historicalFireData = geoSchema.table("historical_fire_data", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  date_bucket: timestamp("date_bucket", { withTimezone: true }).notNull(),
-  lat: doublePrecision("lat").notNull(),
-  lon: doublePrecision("lon").notNull(),
-  geom: spatialPoint("geom"),
-  fire_risk_score: doublePrecision("fire_risk_score"),
-  detected_anomalies: integer("detected_anomalies").default(0),
-  metadata: jsonb("metadata").default({}),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
-});
-
-export const historicalWaterDrought = geoSchema.table("historical_water_drought", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  date_bucket: timestamp("date_bucket", { withTimezone: true }).notNull(),
-  lat: doublePrecision("lat").notNull(),
-  lon: doublePrecision("lon").notNull(),
-  geom: spatialPoint("geom"),
-  water_scarcity_index: doublePrecision("water_scarcity_index"),
-  streamflow_cfs: doublePrecision("streamflow_cfs"),
-  metadata: jsonb("metadata").default({}),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
-});
-
-export const historicalVegetation = geoSchema.table("historical_vegetation", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  date_bucket: timestamp("date_bucket", { withTimezone: true }).notNull(),
-  lat: doublePrecision("lat").notNull(),
-  lon: doublePrecision("lon").notNull(),
-  geom: spatialPoint("geom"),
-  ndvi_value: doublePrecision("ndvi_value"),
-  ecological_health_index: doublePrecision("ecological_health_index"),
-  metadata: jsonb("metadata").default({}),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
-});
+// `geo.historical_fire_data`, `geo.historical_water_drought`, and `geo.historical_vegetation`
+// had their Drizzle declarations removed here -- zero readers/writers left in src/, table rows
+// still exist in Postgres pending a wave-D drop migration. Their last reader was the
+// ingest.validation StreamDefinition scan (agri-data-service), which had already lost these
+// three tables' StreamDefinitions on 2026-08-15 and has since been deleted itself. See
+// conductor/tracks/environmental_postgres_retirement_20260904/.
 
 // ============================================
 // Agent Knowledge Bases (public schema)

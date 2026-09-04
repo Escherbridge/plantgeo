@@ -607,8 +607,24 @@ USGS sentinel, the published status), the scan bounds and the validity vocabular
 typed refusals; `models.py` the stream catalog and every `to_summary()`; `completeness.py` the pure day
 algebra (gap walk, continuity clustering, density floor, verdict) with no I/O and no SQLAlchemy import at
 all, which is what makes it the most reusable code in `ingest/`; `report.py` the assembly of one stream's
-row; `queries.py` the nine `sql/ingest/*.sql` bindings plus the two inline `SET LOCAL` statements;
+row; `queries.py` the seven `sql/ingest/*.sql` bindings plus the two inline `SET LOCAL` statements;
 `rows.py` the typed column readers; `markdown.py` the renderer.
+
+**The `geo.historical_*` scan is gone, and the way it survived is the lesson.** `historical_vegetation`,
+`historical_fire_data` and `historical_water_drought` lost their `StreamDefinition`s on 2026-08-15,
+because the three tables they named have no producer anywhere in the tree. The two statements that read
+them were left in place, and one of them — `historical_validity_counts.sql`, an aggregate with no
+`GROUP BY` per branch — returned *three rows whatever the tables contained*, by its own documented
+design. `build_validation_report` computes `unknown_streams` as every observed stream not in `declared`,
+so from that day every scheduled `validate-streams` tick reported three streams under the heading
+"These hold rows but have no `StreamDefinition`" — a standing false anomaly inside the report whose one
+job is separating real anomalies from noise. **The suite could not see it because the repair had been
+applied to the fixture instead of the query**: `tests/test_ingest_validation.py` scripted
+`historical_validity_counts: []` for a statement that cannot return `[]`. Both constants, both `.sql`
+files, the `store="historical_table"` member of `StreamStore` and the fixture keys were deleted on
+2026-09-04, and `test_no_statement_the_report_issues_names_a_geo_historical_table` now asserts against
+the statements the report actually issues rather than against a fixture key — the only shape of guard
+that could have caught the original defect.
 
 **The async scan band stays in `__init__.py` on purpose, and moving it is a silent test defeat.**
 `tests/test_ingest_validation.py` rebinds `MAX_OBSERVED_DAY_ROWS` with `monkeypatch.setattr` on the

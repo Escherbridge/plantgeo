@@ -1,4 +1,4 @@
-"""The uniform matview refresh lane: nine views, one watermark-gated pass, one ledger row each.
+"""The uniform matview refresh lane: seven views, one watermark-gated pass, one ledger row each.
 
 Owner directive, 2026-08-15: "all 21 layers need to match to reduce memory usage as much as
 possible" and "the application never runs an analytical query". Every aggregate the serving read
@@ -14,13 +14,15 @@ carries an explicit guardrail: it refreshes exactly the three `geo.mv_strategy_r
 views and nothing else, and forbids widening. Respecting that means every other matview needs a
 different lane, not a longer tuple passed into the same one.
 
-Five deliberate departures from that lane's template, all required by the scale here -- nine views
-instead of three, and until 2026-09-02 one of them (`geo.mv_signal_cell_daily`) rebuilt a ~3.2 GB
-rollup off a 26 GB source on every REFRESH. That relation and `geo.mv_feature_observation_day_axis`
-are gone from the table now; `geo.mv_signal_observation_day` -- the pivoted signal rollup over the
-same 26 GB source -- joined them on 2026-09-04 after a REFRESH failed at 302.14s against its own 300s
-statement_timeout; see the removal note above `MATVIEW_REFRESH_SPECS`. The departures outlive them
-because `geo.mv_feature_observation_day` inherits the same shape at a smaller scale:
+Five deliberate departures from that lane's template, all required by the scale here -- eleven views
+at its widest, and until 2026-09-02 one of them (`geo.mv_signal_cell_daily`) rebuilt a ~3.2 GB
+rollup off a 26 GB source on every REFRESH. FOUR relations have left the spec table since: two whose
+REFRESH could not be paid for, and two that nothing read. Each departure is recorded by name in its
+own removal note above `MATVIEW_REFRESH_SPECS`, and every one whose relation still EXISTS is named
+again in `MATVIEW_REFRESH_RETIRED_VIEWS` so it cannot go silent on a tick. The names are deliberately
+not repeated here: a roster in an opening docstring is a roster that rots, and this paragraph is
+about the departures rather than about which views triggered them. They outlive all four because
+`geo.mv_feature_observation_day` inherits the same shape at a smaller scale:
 
 1. **No bucketed `logical_run_key`.** `strategy_mv_refresh.py::_run_bucket_key` mints a NEW
    `job_run_id` every `STRATEGY_MV_REFRESH_POLL_INTERVAL_SECONDS`, and `.omc/RUNBOOK.md`'s "Traps
@@ -80,7 +82,7 @@ because `geo.mv_feature_observation_day` inherits the same shape at a smaller sc
    moving rather than infer the retirement from a JSONB blob or a log line. See jobs/AGENTS.md "6. A
    retired view still needs a name on the tick".
 
-ONE WORK ITEM, NINE VIEWS, BUDGET-AWARE -- WITH A DELIBERATE DEPARTURE FROM `has_budget_for`'S
+ONE WORK ITEM, SEVEN VIEWS, BUDGET-AWARE -- WITH A DELIBERATE DEPARTURE FROM `has_budget_for`'S
 USUAL USE. Unlike `strategy_mv_refresh`'s three views (which always finish inside one bounded call),
 an unlucky tick here could need to refresh several stale views in a row, including the ~287-second
 `mv_feature_observation_day` rebuild. `JobInvocation.seconds_remaining` is a SNAPSHOT taken once when the
@@ -89,7 +91,7 @@ is explicit: "one bounded step per call... a handler that wants a live clock is 
 much in one call"). Calling `invocation.has_budget_for(...)` naively before each of several REFRESH
 statements in the SAME call would therefore never notice time this very call already spent refreshing
 an earlier view -- the frozen snapshot would keep saying yes. This handler is deliberately the "doing
-too much in one call" case the docs warn about, on purpose, because nine small watermark checks and
+too much in one call" case the docs warn about, on purpose, because seven small watermark checks and
 zero-to-a-few real refreshes is still one bounded unit of work; the fix is to track this call's own
 elapsed wall-clock time explicitly (`_remaining_budget_seconds`) and subtract it from the snapshot
 before every comparison, rather than to split each view into its own call. Once the adjusted
@@ -215,8 +217,14 @@ MATVIEW_REFRESH_WORK_MEM: Final = "32MB"
 # discriminator is Parallel Hash, not parallelism" carries the plans this was read off.
 #
 # So 1 is simply what shipped, kept unchanged so no currently-succeeding view has its plan disturbed
-# (three of them sit at 96%, 94% and 71% of their own statement timeouts), and 0 is set on exactly
-# the two views measured to fault.
+# (three of them sit at 96%, 94% and 71% of their own statement timeouts).
+#
+# NO SPEC CARRIES `MATVIEW_REFRESH_NO_PARALLEL_WORKERS` AS OF 2026-09-04, and the constant stays
+# anyway. The only two that ever did were geo.mv_soil_survey_grid and geo.mv_soil_survey_union,
+# retired that day for zero consumption (see MATVIEW_REFRESH_RETIRED_VIEWS); the measurement that
+# earned them the 0 is still true of those two plans, and the classification rule above still has to
+# be appliable to the next view added. Deleting the constant would delete the vocabulary for the
+# finding, leaving the next author to rediscover `Parallel Hash` from a fault in production.
 MATVIEW_REFRESH_DEFAULT_MAX_PARALLEL_WORKERS_PER_GATHER: Final = 1
 MATVIEW_REFRESH_NO_PARALLEL_WORKERS: Final = 0
 
@@ -277,11 +285,15 @@ _WATERMARK_DROUGHT_AREAS_LIVE_EDGE: Final = text(
     load_query_sql("jobs/matview_refresh_watermark_drought_areas_live_edge.sql")
 )
 
-# No spec references this watermark as of 2026-09-04 (geo.mv_signal_cell_daily was removed
-# 2026-09-02, geo.mv_signal_observation_day joined it below). The constant and its load_query_sql()
-# call stay anyway: tests/test_sql_tree_conventions.py's LOADED rule fails
-# sql/jobs/matview_refresh_watermark_source_release.sql with zero call sites, and deleting that file
-# is a sql/ change outside this lane's ownership.
+# ORPHANED WATERMARKS -- kept loaded ON PURPOSE, and this is not dead code left lying around.
+# No spec references either of the next two as of 2026-09-04: geo.mv_signal_cell_daily was removed
+# 2026-09-02 and geo.mv_signal_observation_day joined it below (source_release), and both soil-survey
+# views were retired the same day for zero consumption (soil_survey_coverage). The constants and
+# their load_query_sql() calls stay anyway, because tests/test_sql_tree_conventions.py's LOADED rule
+# fails any sql/ file with zero call sites under src/ -- so deleting the constant without deleting
+# the .sql file reds the suite, and deleting the .sql file is a sql/ change outside this lane's
+# ownership. Whoever owns that tree deletes both together; until then a loaded-but-unreferenced
+# constant is the honest state, not an oversight.
 _WATERMARK_SOURCE_RELEASE: Final = text(load_query_sql("jobs/matview_refresh_watermark_source_release.sql"))
 
 _WATERMARK_SOIL_SURVEY_COVERAGE: Final = text(load_query_sql("jobs/matview_refresh_watermark_soil_survey_coverage.sql"))
@@ -300,8 +312,10 @@ class MatviewRefreshSpec:
     min_interval_seconds: int
     max_staleness_seconds: int
     # Lower runs first among eligible views on a budget-truncated tick: 0 = the small dictionaries,
-    # 1 = the census/rollup matviews, 2 = geo.mv_signal_cell_daily alone, the one relation whose
-    # REFRESH is heavy enough that starving the other ten behind it would be the wrong trade.
+    # 1 = the census/rollup matviews, 2 = geo.mv_feature_observation_day alone, the one relation left
+    # whose REFRESH is heavy enough that starving the other six behind it would be the wrong trade.
+    # (Tier 2 was minted for geo.mv_signal_cell_daily, removed 2026-09-02; the wide feature census
+    # inherited both the tier and the reason for it.)
     priority: int
     statement_timeout_seconds: int
     # Used only when no prior duration is on record (a view's first-ever refresh); every later tick
@@ -315,10 +329,10 @@ class MatviewRefreshSpec:
 
 # Design doc section 14's MATVIEWS block, minus the three geo.mv_strategy_recommendations_* views
 # (which strategy_mv_refresh.py keeps under its own guardrail) and their own watermark/interval
-# table in section 5.2. Seven of the nine matviews drizzle/0029 creates (geo.mv_signal_cell_daily and
-# geo.mv_signal_observation_day are no longer among them -- see the removal note below), plus two
-# pre-existing ones adopted under this lane's discipline (geo.watershed_rollup,
-# agri.mv_forecast_ml_daily_serving) = nine.
+# table in section 5.2. Five of the nine matviews drizzle/0029 creates -- geo.mv_signal_cell_daily,
+# geo.mv_signal_observation_day, geo.mv_soil_survey_grid and geo.mv_soil_survey_union are no longer
+# among them, see the two removal notes below -- plus two pre-existing ones adopted under this lane's
+# discipline (geo.watershed_rollup, agri.mv_forecast_ml_daily_serving) = seven.
 MATVIEW_REFRESH_SPECS: Final[tuple[MatviewRefreshSpec, ...]] = (
     MatviewRefreshSpec(
         qualified_name="geo.mv_layer_feature_stats",
@@ -436,37 +450,51 @@ MATVIEW_REFRESH_SPECS: Final[tuple[MatviewRefreshSpec, ...]] = (
     # not absent -- `to_regclass` still finds it, only the REFRESH times out -- so it is reported
     # every tick as `out_of_spec`, not `relation_absent`. See MATVIEW_REFRESH_RETIRED_VIEWS and
     # jobs/AGENTS.md "6. A retired view still needs a name on the tick".
-    MatviewRefreshSpec(
-        qualified_name="geo.mv_soil_survey_grid",
-        watermark_sql=_WATERMARK_SOIL_SURVEY_COVERAGE,
-        min_interval_seconds=21_600,
-        max_staleness_seconds=604_800,
-        priority=1,
-        statement_timeout_seconds=300,
-        default_estimate_seconds=20.0,
-        # This view does not fail on time and does not fail in GEOS: reproducing its defining query
-        # read-only raised `could not resize shared memory segment ... to 16777216 bytes: No space
-        # left on device` after 55.05 s, and the identical query with workers disabled ran past
-        # 280 s with no failure. `dynamic_shared_memory_type = posix` puts every Gather's segment in
-        # /dev/shm, which is tmpfs -- RAM, counted inside the 3 GB cgroup. Disabling parallelism here
-        # is the fix that most directly removes RAM the box does not have.
-        max_parallel_workers_per_gather=MATVIEW_REFRESH_NO_PARALLEL_WORKERS,
-    ),
-    MatviewRefreshSpec(
-        qualified_name="geo.mv_soil_survey_union",
-        watermark_sql=_WATERMARK_SOIL_SURVEY_COVERAGE,
-        min_interval_seconds=21_600,
-        max_staleness_seconds=604_800,
-        priority=1,
-        statement_timeout_seconds=300,
-        default_estimate_seconds=20.0,
-        # Same source, same Gather Merge plan, same /dev/shm exposure as its sibling above. This
-        # view ALSO carries the known `ST_CollectionExtract` omission at drizzle/0029:918, which is
-        # a separate defect with a separate fix -- so removing the memory fault here is expected to
-        # change WHICH error it reports, not to make it succeed. Both are real; neither hides the
-        # other, because the backoff below reports the standing failure by name either way.
-        max_parallel_workers_per_gather=MATVIEW_REFRESH_NO_PARALLEL_WORKERS,
-    ),
+    # REMOVED 2026-09-04: geo.mv_soil_survey_grid and geo.mv_soil_survey_union. NOT a cost decision
+    # and not a failure decision -- both were removed because NOTHING READS THEM, which makes every
+    # second of REFRESH they cost production a second spent on an answer no caller ever asks for.
+    # The zero-consumption proof, measured against the tree rather than asserted:
+    #
+    #   * The soil-survey serving path never adopted them. `src/lib/server/services/usda-soil.ts`
+    #     says so twice in its own words -- ":1057 NOT REPOINTED at geo.mv_soil_survey_union" and
+    #     ":1159 NOT REPOINTED at geo.mv_soil_survey_grid" -- and gives a GRAIN MISMATCH as the
+    #     reason, not an omission: the union is grained (zoom_tier, drainage_class), a global
+    #     dissolve per tier, while the served answer is the union of the delineations inside ONE
+    #     VIEWPORT at a caller-chosen tolerance; the grid is grained (zoom_tier, cell_col, cell_row)
+    #     over at most three tiers, while `soilSummaryCellDegrees` picks its step off an UNBOUNDED
+    #     doubling ladder. A repoint was considered and refused on the merits, so it is not pending.
+    #   * The Parquet warehouse refuses them BY DESIGN. `warehouse/parquet/tiers.py`'s header names
+    #     geo.mv_soil_survey_grid as a PostGIS-era per-layer tier and states the rule that excludes
+    #     it: "Reading them would make the warehouse depend on the database it is replacing".
+    #   * The A3 retirement inventory classes both `drop now`
+    #     (conductor/tracks/environmental_postgres_retirement_20260904/evidence/retirement-inventory.md).
+    #
+    # WHAT THAT COST, PER TICK, WHILE NOBODY READ IT -- stated carefully, because the two numbers on
+    # record are from different dates and mean different things. On 2026-08-17 both views were
+    # FAILING, not timing out: 86,320 ms and 104,269 ms against a 300 s cap, aborted by the
+    # /dev/shm `Parallel Hash` fault (jobs/AGENTS.md "The matview-refresh lane's six self-inflicted
+    # stalls" and "2. The real discriminator is Parallel Hash"). The
+    # `max_parallel_workers_per_gather=0` fix that followed left the two in different states, and
+    # this lane has no post-fix duration on record for either:
+    #
+    #   grid   drizzle/0035_soil_survey_union_collection_extract.sql:4 records it as refreshing and
+    #          populating correctly today -- so the ~86 s of 2026-08-17 is the ORDER OF MAGNITUDE of
+    #          work it does, not a measured success duration. Whatever the current figure is, it is
+    #          time spent on a relation nothing reads.
+    #   union  has NEVER ONCE produced a row in production across four consecutive attempts
+    #          (drizzle/0035:1-4), because of an ST_CollectionExtract omission at drizzle/0029:918
+    #          that 0035 exists to fix and that has not landed. Its share bought nothing even in
+    #          principle.
+    #
+    # BOTH RELATIONS STILL EXIST in production, so `_absent_relations` cannot govern them and
+    # `relation_absent` would be a false statement about the catalog. They are reported every tick as
+    # `out_of_spec` instead -- see MATVIEW_REFRESH_RETIRED_VIEWS and jobs/AGENTS.md "6b. Two views
+    # retired for zero consumption rather than for cost". Their shared watermark constant
+    # (_WATERMARK_SOIL_SURVEY_COVERAGE) is now orphaned and deliberately still loaded; see the
+    # ORPHANED WATERMARKS note above it. The per-spec `max_parallel_workers_per_gather=0` both
+    # carried leaves the lane with them: it was measured for THESE two plans' `Parallel Hash` shared
+    # hash table (jobs/AGENTS.md "2. The real discriminator is Parallel Hash, not parallelism") and
+    # is not a lane-wide default in disguise, so no surviving spec inherits it.
     MatviewRefreshSpec(
         qualified_name="geo.watershed_rollup",
         watermark_sql=_WATERMARK_WATERSHED_FEATURES,
@@ -513,13 +541,18 @@ class _RetiredView:
 # Every view this lane has deliberately stopped refreshing, kept here ONLY so a tick can name the
 # removal instead of going silent about it -- see OUT_OF_SPEC_OUTCOME and jobs/AGENTS.md "6. A
 # retired view still needs a name on the tick". geo.mv_signal_cell_daily and
-# geo.mv_feature_observation_day_axis are NOT here: both were confirmed absent from production, and
-# `relation_absent` already names them truthfully every tick. geo.mv_signal_observation_day is
-# different -- the relation is still there and only refreshing it was retired. It had a live
-# production reader when it was retired; it has none since later the same day (see the "REMOVED
-# 2026-09-04" note inside MATVIEW_REFRESH_SPECS, and jobs/AGENTS.md "6."), which is why it stays
-# named here rather than being restored to a spec: an entry that is silent is an entry that lets a
-# still-present, still-frozen relation disappear from every tick until someone happens to look.
+# geo.mv_feature_observation_day_axis are NOT here: both were confirmed absent from production
+# (drizzle/0031, which creates the axis, was never applied), so an `out_of_spec` entry would assert
+# that a relation the catalog does not have is merely un-refreshed -- the same false statement in the
+# opposite direction. All three entries below are the other case: the relation IS still there and
+# only refreshing it was retired.
+#
+# geo.mv_signal_observation_day had a live production reader when it was retired and has none since
+# later the same day (see the "REMOVED 2026-09-04" note inside MATVIEW_REFRESH_SPECS, and
+# jobs/AGENTS.md "6."). The two soil-survey views never had one at all (jobs/AGENTS.md "6b."). All
+# three stay named here rather than being restored to a spec: an entry that is silent is an entry
+# that lets a still-present, still-frozen relation disappear from every tick until someone happens to
+# look, which is exactly how the last four unread matviews stayed unnoticed for weeks.
 MATVIEW_REFRESH_RETIRED_VIEWS: Final[tuple[_RetiredView, ...]] = (
     _RetiredView(
         qualified_name="geo.mv_signal_observation_day",
@@ -539,6 +572,43 @@ MATVIEW_REFRESH_RETIRED_VIEWS: Final[tuple[_RetiredView, ...]] = (
             "also redefine the census view that still names this relation as its signal leg"
         ),
     ),
+    _RetiredView(
+        qualified_name="geo.mv_soil_survey_grid",
+        retired_at="2026-09-04",
+        reason=(
+            "retired for ZERO CONSUMPTION, not for cost and not for failure: this view refreshes and "
+            "populates correctly, and no read path in the repository has ever selected from it. "
+            "This lane stopped refreshing it, so its contents are frozen at the last successful "
+            "REFRESH -- which changes nothing for any caller, because there is no caller"
+        ),
+        review_trigger=(
+            "a repoint or a drop, and only a repoint can restore a spec. The soil-survey serving "
+            "path refused this view on a GRAIN MISMATCH rather than by omission, so a restore is "
+            "earned only by a reader that wants this grain -- name it here if one appears. "
+            "Otherwise the trigger is decision D1 dropping the relation, and this entry is deleted "
+            "in that same migration, never before it: while the relation is still there, deleting "
+            "the entry is what makes it vanish from every tick"
+        ),
+    ),
+    _RetiredView(
+        qualified_name="geo.mv_soil_survey_union",
+        retired_at="2026-09-04",
+        reason=(
+            "retired for ZERO CONSUMPTION alongside its sibling, and it is the stronger case of the "
+            "two: this view has NEVER ONCE produced a row in production across four consecutive "
+            "attempts, so every second it spent was bought for an empty relation nothing reads. "
+            "Retiring it stops the attempts; it does not make any served answer staler, because no "
+            "served answer was ever computed from it"
+        ),
+        review_trigger=(
+            "the same two events as its sibling, plus one this view has of its own: a fix for the "
+            "ST_CollectionExtract omission that keeps its REFRESH from ever succeeding "
+            "(drizzle/0035_soil_survey_union_collection_extract.sql). Landing that fix is NOT on "
+            "its own a reason to restore the spec -- a working REFRESH of a relation nobody reads "
+            "is still production time spent for nothing -- so a restore still needs a named reader. "
+            "Otherwise: deleted in the D1 drop migration, not before"
+        ),
+    ),
 )
 
 # Disjointness is an invariant, not a hope: re-adding a retired name to MATVIEW_REFRESH_SPECS without
@@ -552,10 +622,10 @@ assert MATVIEW_REFRESH_QUALIFIED_NAMES.isdisjoint(view.qualified_name for view i
 
 # The shared ledger this lane and jobs/strategy_mv_refresh.py both read/write through
 # _read_prior_refresh_state / _write_refresh_state / _write_observability_state. Deliberately the
-# ONLY entry in this lane's *definition-level* preflight, not the nine views above: a single view
+# ONLY entry in this lane's *definition-level* preflight, not the seven views above: a single view
 # being absent is handled gracefully per-spec by `_absent_relations` -> `relation_absent`, inside the
 # handler, self-healing the moment the relation appears -- refusing the whole TICK because one view
-# is missing would turn "eight of nine views are ready, refresh them" into "refresh nothing", a real
+# is missing would turn "six of seven views are ready, refresh them" into "refresh nothing", a real
 # regression. This table missing is different: it is not handled anywhere at all -- every read and
 # write against it raises before a single view is considered, and that raise
 # is what dead-lettered ten matview-refresh shards and thirteen strategy-mv-refresh ones in prod on

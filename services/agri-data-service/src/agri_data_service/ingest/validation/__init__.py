@@ -100,8 +100,6 @@ from agri_data_service.ingest.validation.queries import (
     _FEATURE_DUPLICATE_IDENTITIES,
     _FEATURE_OBSERVED_DAYS,
     _FEATURE_VALIDITY_COUNTS,
-    _HISTORICAL_OBSERVED_DAYS,
-    _HISTORICAL_VALIDITY_COUNTS,
     _JOB_LANE_STATE,
     _SERVER_DAY,
     _SET_READ_ONLY_SNAPSHOT,
@@ -196,20 +194,21 @@ def _bbox_parameters(bbox: str | None) -> Mapping[str, object]:
 async def _read_day_series(session: AsyncSession) -> Mapping[str, tuple[ObservedDay, ...]]:
     """Read every stream's observed-day series, refusing a result that hit the row cap rather than truncating."""
     series: dict[str, list[ObservedDay]] = {}
-    for statement, label in (
-        (_FEATURE_OBSERVED_DAYS, "observed_days"),
-        (_HISTORICAL_OBSERVED_DAYS, "historical_observed_days"),
-    ):
-        rows = await _fetch_rows(
-            session,
-            statement,
-            {"published_status": PUBLISHED_FEATURE_STATUS, "row_limit": MAX_OBSERVED_DAY_ROWS + 1},
-        )
-        _refuse_truncated_scan(rows, label)
-        for row in rows:
-            stream = _required_text(row, "stream")
-            entry = ObservedDay(_required_day(row, "observed_day"), _required_count(row, "observation_count"))
-            series.setdefault(stream, []).append(entry)
+    # ONE stream-keyed statement, where this was a loop over two until 2026-09-04:
+    # `historical_observed_days.sql` and the three producerless `geo.historical_*` tables it UNIONed
+    # were deleted (models.py, above DEFAULT_STREAM_DEFINITIONS, carries the account). The drought
+    # read below stays a separate branch rather than joining a loop, because its statement carries no
+    # `stream` column to key on -- the relation IS the stream there.
+    feature_rows = await _fetch_rows(
+        session,
+        _FEATURE_OBSERVED_DAYS,
+        {"published_status": PUBLISHED_FEATURE_STATUS, "row_limit": MAX_OBSERVED_DAY_ROWS + 1},
+    )
+    _refuse_truncated_scan(feature_rows, "observed_days")
+    for row in feature_rows:
+        stream = _required_text(row, "stream")
+        entry = ObservedDay(_required_day(row, "observed_day"), _required_count(row, "observation_count"))
+        series.setdefault(stream, []).append(entry)
 
     drought_rows = await _fetch_rows(session, _DROUGHT_AREA_OBSERVED_DAYS, {"row_limit": MAX_OBSERVED_DAY_ROWS + 1})
     _refuse_truncated_scan(drought_rows, "drought_area_observed_days")
@@ -276,15 +275,6 @@ async def _read_observations(
         unsupported["drought_areas"] = (
             _FEATURE_ONLY_CHECKS | {MISSING_VALUE_SENTINEL_CHECK},
             "geo.drought_areas holds no properties, no external id and no geometry link",
-        )
-
-    for row in await _fetch_rows(session, _HISTORICAL_VALIDITY_COUNTS, dict(shared)):
-        stream = _required_text(row, "stream")
-        totals[stream] = _required_count(row, "total_rows")
-        counts[stream] = {check: _required_count(row, check) for check in VALIDITY_CHECK_ORDER if check in row}
-        unsupported[stream] = (
-            _FEATURE_ONLY_CHECKS | {MISSING_VALUE_SENTINEL_CHECK},
-            "the geo.historical_* tables hold no properties, no external id and no geometry link",
         )
 
     streams = set(totals) | set(day_series)
@@ -389,8 +379,6 @@ __all__ = [
     "_FEATURE_OBSERVED_DAYS",
     "_FEATURE_ONLY_CHECKS",
     "_FEATURE_VALIDITY_COUNTS",
-    "_HISTORICAL_OBSERVED_DAYS",
-    "_HISTORICAL_VALIDITY_COUNTS",
     "_ISO_DAY_IN_SHARD_KEY",
     "_JOB_LANE_STATE",
     "_SERVER_DAY",

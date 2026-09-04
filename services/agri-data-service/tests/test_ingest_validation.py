@@ -1301,9 +1301,15 @@ class StubSession:
         self._rows_by_marker = dict(rows_by_marker)
         self.markers: list[str] = []
         self.parameters: dict[str, Mapping[str, object]] = {}
+        # The raw SQL of every statement issued, kept alongside the markers because a marker only
+        # tells you WHICH statement ran, never what it reads. A guard that has to prove a RELATION is
+        # no longer touched (see the geo.historical_* test) needs the text, and a marker-only record
+        # would let an unmarked or renamed statement walk straight past it.
+        self.statements: list[str] = []
 
     async def execute(self, statement: object, parameters: Mapping[str, object] | None = None) -> StubResult:
         """Look the statement's marker up and answer with its canned rows."""
+        self.statements.append(str(statement))
         marker = next(
             (line.removeprefix("-- ").strip() for line in str(statement).splitlines() if line.startswith("-- ")),
             "",
@@ -1354,14 +1360,16 @@ def stub_rows() -> dict[str, list[Mapping[str, object]]]:
         "drought_area_validity_counts": [
             {"total_rows": 1_035, "null_geom": 0, "undated_day": 0, "future_day": 0, "outside_bbox": 0}
         ],
-        # Both empty since the three geo.historical_* StreamDefinitions were deregistered. The
-        # fixture used to carry a `historical_vegetation` row here; with no catalog entry left to
-        # match it, it became an UNKNOWN stream and started showing up in every report's
-        # unknown_streams tuple -- masking the one deliberate unknown ("mystery-layer") the suite
-        # exists to pin. A retired stream must leave the fixture, not sit in it as a permanent
-        # unknown.
-        "historical_observed_days": [],
-        "historical_validity_counts": [],
+        # `historical_observed_days` and `historical_validity_counts` used to be scripted here as
+        # empty lists, and that was the bug rather than the fix. Emptying the FIXTURE hid what the
+        # statement really did: `historical_validity_counts.sql` was an aggregate with no GROUP BY,
+        # so its own header promised "exactly three rows ... whatever the tables contain" and it
+        # could never return `[]` against a real database. Production therefore emitted three
+        # permanent `unknown_streams` on every tick while this suite saw none. Both statements and
+        # both .sql files were deleted on 2026-09-04; the keys are gone with them, and
+        # `test_no_statement_the_report_issues_names_a_geo_historical_table` below is what keeps them
+        # gone. `StubSession` answers an unscripted marker with `()`, so a stray reintroduction would
+        # NOT fail here -- which is precisely why that guard reads the statements, not the fixture.
         "job_lane_state": [
             {
                 "lane": STREAMFLOW_LANE_NAME,
@@ -1616,8 +1624,6 @@ async def test_every_statement_the_report_issues_is_read_only() -> None:
         validation._FEATURE_DUPLICATE_IDENTITIES,
         validation._DROUGHT_AREA_OBSERVED_DAYS,
         validation._DROUGHT_AREA_VALIDITY_COUNTS,
-        validation._HISTORICAL_OBSERVED_DAYS,
-        validation._HISTORICAL_VALIDITY_COUNTS,
         validation._JOB_LANE_STATE,
     ):
         text_body = str(statement).lower()
@@ -1626,6 +1632,31 @@ async def test_every_statement_the_report_issues_is_read_only() -> None:
         # `server_day` reads no table at all, which is why the check is on the statements that do.
         if " from " in text_body:
             assert "geo." in text_body or "agri." in text_body
+
+
+async def test_no_statement_the_report_issues_names_a_geo_historical_table() -> None:
+    """The zero-reader guard for the three producerless `geo.historical_*` tables.
+
+    None of the three is spelled out in this suite, on purpose: the environmental-Postgres retirement
+    track's drop-packet builder counts a NAME anywhere in the tree as a reference, so a test that
+    proves a relation is unread must not itself be the last thing referencing it. The prefix below
+    covers all three and is what the assertion actually matches on.
+
+    Those three tables have no producer anywhere in the tree and lost their `StreamDefinition`s on
+    2026-08-15, but the SCAN outlived the catalog entry until 2026-09-04 -- and because
+    `historical_validity_counts.sql` returned three rows unconditionally, every scheduled tick in
+    between reported three permanent `unknown_streams` that did not exist. This asserts against the
+    STATEMENTS THE REPORT ACTUALLY ISSUES rather than against a fixture key, because the previous
+    attempt to close this emptied the fixture and left the query running -- a suite that scripts a
+    statement's answer can never notice that the statement should not be there at all.
+    """
+    session = StubSession(stub_rows())
+
+    await build_validation_report(session, bbox="-125,42,-111,49")  # type: ignore[arg-type]
+
+    offenders = [sql.splitlines()[0] for sql in session.statements if "geo.historical_" in sql.lower()]
+    assert offenders == [], f"the report still reads a producerless geo.historical_* table: {offenders}"
+    assert not any(marker.startswith("historical_") for marker in session.markers)
 
 
 def test_the_duplicate_identity_finding_carries_the_group_count_beside_the_excess_row_count() -> None:
