@@ -24,4 +24,4 @@ ALTER TABLE ONLY agri.vegetation_publication_day
     ADD CONSTRAINT vegetation_publication_day_pkey PRIMARY KEY (observed_day);
 
 -- INDEX: ix_vegetation_publication_day_pending
-CREATE INDEX ix_vegetation_publication_day_pending ON agri.vegetation_publication_day USING btree (last_attempted_at, first_enqueued_at, observed_day) WHERE (published_fingerprint IS DISTINCT FROM source_fingerprint);
+CREATE INDEX ix_vegetation_publication_day_pending ON agri.vegetation_publication_day USING btree (last_attempted_at, first_enqueued_at, observed_day) WHERE ((published_fingerprint)::text IS DISTINCT FROM (source_fingerprint)::text);

@@ -49,6 +49,51 @@ so the climate/soil tails close, then run the remaining code lanes (acceptance e
 conformity c2, dependency removals). PostgreSQL retirement stays UNAUTHORIZED until that verdict.
 
 #### State
+##### Progress 2026-09-04 (step 0 built and pushed; owner grill answered; Postgres lane stop decided)
+- **Step 0 - frozen-lane gate, decided and built.** `_plan_active_lanes` now rules on a failed/partial
+  checkpoint through ONE predicate, `judge_failed_checkpoint`: the clock releases a lane while its failure
+  streak is below `CLOCK_RELEASE_STREAK_LIMIT` (coalesce_latest 3, replay_oldest 1); a held lane is released
+  only by `agri-service ops jobs-supersede-run --lane <lane> --run-id <run> --evidence "<why>" --operator
+  <who> --apply`, which writes ONE resolved `agri.job_incident` row (fingerprint
+  `plantgeo.executor.run-superseded:<run id>`) and nothing else - the run, its dead letter and its attempts
+  are never written; every released lane resumes at the CURRENT bucket, never the failed one and never the
+  buckets the hold cost. `select_latest_run.sql` gained `superseded_by_operator` and `consecutive_failures`,
+  both short-circuited unless the checkpoint settled failed/partial. A held lane names the exact verb in
+  `handoff_blockers`. Rationale and the rejected alternatives (job_event, cancelled status, new run
+  columns): `execution/AGENTS.md`, "Failed checkpoints are superseded by the clock or by an operator".
+  After this deploy the five coalesce lanes (matview, fire-perimeters, vegetation, validate-streams,
+  cache-warm) reopen unassisted (streak 1 < 3); the five replay lanes stay held until superseded.
+- **Three of the five replay freezes had one root cause, fixed in the same push.** `parquet-drought`,
+  `parquet-evacuation-zones` and `parquet-fire-perimeters` died on 2026-09-02 in the z9 derivation with
+  `IOException: Can't find the home directory at '/nonexistent'`: `warehouse/parquet/tiers.py::_load_spatial`
+  opened DuckDB without the image's extension directory and both runtime images give the user home
+  `/nonexistent`. `foundation/parquet/duckdb_extensions.py` is now the one definition of
+  `/opt/duckdb-extensions`, set before the first `LOAD spatial`. Every geometry lane's coarse rung was
+  failing in production; point lanes derive with Polars and never were. Evidence and the per-lane causes:
+  `tracks/gapless_parquet_publication_20260901/evidence/p3-runtime-blockers-repair.md`, "Premise correction".
+- **`vegetation-catch-up`** exited 1 on a bounded `day_limit` turn (25 days written, 1,026 remaining) by
+  contract; owner decision 2026-09-04 flips it (exit 1 only on a contended day), in this push.
+- **`parquet-soil-survey`:** the 200,000-key cap the 2026-08-23 memory blames is GONE (the export pages keys);
+  it timed out at 1200 s under the old code. "Fix the cap now" therefore resolves to one measured
+  supersession after the deploy (step 1c).
+- **Reviews:** eight-angle `/code-review high` (21 findings; CHANGES-REQUIRED) then a separate closure review
+  (1 blocker, 1 major, 4 minor; CHANGES-REQUIRED); all fixed (ledger). UNREVIEWED by a separate context, at
+  the owner's request to push: the catch-up exit change, the removal of the atomic legacy-owner cutover
+  rule, and the post-closure receipt fixes (`write_failed` outcome, activation/pause refusals, DSN refusal).
+  Next reviewer: start there.
+- **Sweep caveat:** the receipt sweep ran WITHOUT `AGRI_TEST_DATABASE_URL` (DB tests skipped with the allowed
+  notice) because `tests/test_declarative_schema_parity.py::test_declarative_tree_matches_migrations` fails
+  on the shared disposable database once other DB tests have run (two files: `vegetation_publication_day.sql`
+  and `manifest.sql`; the live table carries only an extra `OWNER TO` line) while `db/tools/regenerate.py`
+  against a fresh head-migrated database shows ZERO drift in the committed tree. Test-state problem;
+  follow-up owed (which earlier test mutates `agri_sweep`). This change's own DB-gated suite
+  (`test_job_run_supersession_agri_db.py`: streak window, breaker, planner release) PASSED with the gate.
+  Local gate recipe used: container `agri-baseline-db`, database `agri_sweep` created and migrated to head
+  this session (`db/AGENTS.md`, "Provisioning the disposable database").
+- **Postgres lanes:** owner decision 2026-09-04 - stop ALL TEN `postgres-*` lanes. The atomic legacy-owner
+  cutover rule that refused partial deactivation is removed in this push; the variable edit happens only
+  AFTER the executor runs this code (step 1b), because the old code crash-loops on a partial allow-list.
+
 ##### Progress 2026-09-03 (continuation session, steps 1-3 executed)
 - **Step 1 - observed, RED, half repaired.** Both Python images failed to build from `e4a101f`. (a) The agri
   service died at the `quality-receipt` stage: the receipt was written on this Windows checkout, where 181 of
@@ -126,7 +171,8 @@ conformity c2, dependency removals). PostgreSQL retirement stays UNAUTHORIZED un
   exact pin under `@auth/core`; `@deck.gl/core` intact) and `s3fs`, `redis` (`uv remove --no-sync`; lock -526/+0;
   Polars reads via native `object_store`, DuckDB via `httpfs`, writes via boto3). Stack claims in
   `AGENTS.md`/`.claude/CLAUDE.md` say Zustand only. Sweeps green; receipt `b1d66658...` over 1,124 files.
-- **NEW BLOCKER for step 1's tick evidence - lanes freeze after a dead letter.**
+- **RESOLVED 2026-09-04 in code (see "Progress 2026-09-04"; production observation is step 1). Was: NEW
+  BLOCKER for step 1's tick evidence - lanes freeze after a dead letter.**
   `execution/job_executor_service.py:1282-1291` refuses to open a new bucket while a lane's latest run is
   `failed`/`partial` ("latest run remains failed; clear its dead-lettered work before another bucket opens"), and
   no operator verb exists to clear one. Under the NEW executor the same ten lanes are still frozen at their
@@ -169,6 +215,8 @@ conformity c2, dependency removals). PostgreSQL retirement stays UNAUTHORIZED un
 | wave-3 closure, TypeScript | adversarial, separate (opus, then sonnet re-review) | 3 major (`geo.poi` unpopulated; `nearby` not index-backed; bbox extent unbounded), 5 minor | CHANGES-REQUIRED -> fixed -> re-review: all closed; one test-walker defect fixed before the green sweep |
 | wave-3 closure, Python gate | adversarial, separate (sonnet, after two opus 529 terminations) | 1 major (git plumbing untested), 2 minor | CHANGES-REQUIRED -> fixed (real-git tests, unmerged-stage refusal, census) -> swept green |
 | production after the push | observed (Railway API, logs, browser) | agri build RED (receipt) -> fixed `1da1a28` -> live; executor RED (config) -> **owner action**; browser gates GREEN | recorded in `post-deploy-tick-2026-09-03.md` |
+| step 0 frozen-lane gate + `jobs-supersede-run` | eight-angle `/code-review high`, separate contexts | 1 confirmed test failure (structlog on stdout corrupted the JSON receipt), no breaker (per-bucket dead-letter pile-up), resolved-only incident probe could freeze a lane for good, superseded replay lane starved the backlog class, verb/planner next-bucket drift, second operator's evidence echoed as recorded, error text lied after commit, core function committed the caller's session, 13 more | CHANGES-REQUIRED -> all fixed (breaker, shared verdict, fingerprint-only probe, resume at current bucket, once-only log, outcome enum, ledger named in receipt) |
+| step 0 closure (fixed tree + DuckDB extension-directory fix) | adversarial, separate (opus) | 1 blocker (two SQL headings matched the bare-marker rule; reproduced sweep failure), 1 major (receipt said `recorded` when COMMIT itself failed), 4 minor (probe/breaker limit invariant, activation and pause unchecked by the verb, DSN error as traceback, unreadable re-read reported as an outcome); tiers fix APPROVED as minimal | CHANGES-REQUIRED -> all fixed (`write_failed` outcome, import-time invariant, activation/pause refusals, one-line DSN refusal, refusal instead of invented outcome); the post-closure fixes and the two owner-decision changes are unreviewed |
 
 #### Decisions (owner, 2026-09-03)
 - Verify the deployment before any further code work, because the push changed production behaviour
@@ -179,6 +227,20 @@ conformity c2, dependency removals). PostgreSQL retirement stays UNAUTHORIZED un
   success, after the deployment checks — climate first, then soil.
 - After the production work, run ALL three remaining code lanes: acceptance-track evidence tooling,
   conformity c2, dependency removals (in that order unless they can be partitioned; see §9).
+
+#### Decisions (owner, 2026-09-04 - one-round grill; settled, implement do not re-open)
+- `parquet-catch-up-vegetation`: a bounded turn that stopped on its day or time limit exits 0 (the queue
+  state stays in the JSON); only a contended day exits 1. The "fails closed on remaining work" test was
+  flipped deliberately.
+- `parquet-soil-survey`: "fix the key cap now" - the cap no longer exists; the resolution is one measured
+  supersession after this deploy (step 1c). If the paged export cannot finish inside 1200 s, the decision
+  becomes timeout vs sharded release, not a cap.
+- Availability bootstrap: ALL time-bearing lanes in ONE pass, then one authority flip (step 4).
+- Stop ALL TEN `postgres-*` executor lanes now, accepting that vegetation, weather-observations and drought
+  stop advancing on the map until direct-to-Parquet writers exist and that fire-perimeters, sensors,
+  watersheds and evacuation-zones freeze (step 1b). Postgres keeps only community features.
+- Process: push one step per session; one separate closure review for changes under ~500 lines; RUNBOOK
+  and track updates before the final sweep; grill once, early.
 
 #### Assumptions (unasked; highest reversal cost first)
 - Wave 3 does not need its own adversarial review before production relies on it · default taken:
@@ -225,9 +287,32 @@ conformity c2, dependency removals). PostgreSQL retirement stays UNAUTHORIZED un
 - `conductor/tracks/parquet_production_acceptance_20260901/{spec,plan}.md` — the evidence matrix the tooling must feed.
 
 #### Continuation plan
-1. **Observe the deploy** - DONE for all three services (see Progress; executor live since 18:13 UTC). The tick
-   evidence for `jobs-matview-refresh` and `postgres-fire-perimeters` is BLOCKED by the frozen-lane gate
-   (Progress, "NEW BLOCKER"); resolve that first, then read one tick as specified here. Original text: With the Railway MCP: confirm the active deployments of `plantgeo-main`, the
+1. **Observe the step-0 deploy** (the push recorded in "Progress 2026-09-04"): confirm `plantgeo-job-executor`
+   SUCCESS at that commit, then read ticks: the five coalesce lanes must open their current bucket with
+   detail `supersedes run <id> by clock`; `jobs-matview-refresh` must close `succeeded` with
+   `relations_absent`; `postgres-fire-perimeters` must return `ingested` with `bytes_read`/`oversized_records`
+   (do this BEFORE step 1b stops it); the five replay lanes must report `failed` with the verb in
+   `handoff_blockers`. Record in `evidence/post-deploy-tick-2026-09-03.md` ("Frozen-lane gate" section).
+   1a. **Supersede the three geometry lanes** citing the extension-directory fix (dry run, then `--apply`,
+   via `railway run --service plantgeo-job-executor --environment production -- agri-service ops
+   jobs-supersede-run ...`): `parquet-drought` `c2b0980a-6c99-44c4-b921-9d341a7c0073`,
+   `parquet-evacuation-zones` `71325cac-0a27-46e5-b58b-1ad8320897f5`, `parquet-fire-perimeters`
+   `3aa01c5a-b4d1-4dff-8ed5-42dd0d2d3633`; then `vegetation-catch-up` `85e5a27d-00ab-4d65-98d1-ef39a3c1442a`
+   citing the exit-rule change. Watch each open its current bucket and, for the geometry lanes, write a z9
+   rung (the tick's gap-fill summary shows `repaired`/`written` instead of `raised`).
+   1b. **Stop the ten `postgres-*` lanes** (owner 2026-09-04), only once the executor runs this code: remove
+   `postgres-drought, postgres-evacuation-zones, postgres-fire-perimeters, postgres-firms,
+   postgres-geometry-repair, postgres-sensors, postgres-streamflow, postgres-vegetation, postgres-watersheds,
+   postgres-weather` from `PLANTGEO_JOB_EXECUTOR_ACTIVE_LANES` AND their nine `postgres-*=plantgeo-ingest-cron:
+   disabled-and-no-run-in-flight` tokens from `PLANTGEO_JOB_EXECUTOR_HANDOFF_ACKNOWLEDGEMENTS` in the same
+   edit (`parse_activation` refuses an acknowledgement for an inactive lane). Railway redeploys the executor
+   on the variable change; confirm the inventory prints the ten as `shadow`. Record the last ingested day of
+   each Postgres-fed layer in the evidence file - that is the day those layers freeze at.
+   1c. **Measure `parquet-soil-survey`** once: supersede `d4896a98-5e41-4fad-b31b-6c265375db19` with the
+   evidence "cap removed, measuring the paged export under the 1200 s budget", then watch ONE bucket. If it
+   dead-letters on the budget again, do not supersede again; the next decision is the timeout or a sharded
+   release (gapless track).
+   Original text of step 1: With the Railway MCP: confirm the active deployments of `plantgeo-main`, the
    agri service and `plantgeo-job-executor` are at `e4a101f` and `SUCCESS`; if a build failed at the
    `quality-receipt` stage, the receipt is stale — do not bypass the stage; re-run the sweep and
    `--write-receipt`. Then read one full executor tick: `jobs-matview-refresh` must close `succeeded`
@@ -243,7 +328,12 @@ conformity c2, dependency removals). PostgreSQL retirement stays UNAUTHORIZED un
    `12fa189` (tsconfig/eslint policy clearance, orphan deletions, `MapView`/`useRegionalIntelligence`
    selectors, `scripts/check.py`, `quality_receipt.py`, both Dockerfiles, `docs/deployment.md`).
    Record the verdict in the ledger above.
-4. **Bootstrap availability**, one lane at a time, starting with `fire-detections` then `water-gauges`:
+4. **Bootstrap availability** - owner 2026-09-04: ALL time-bearing lanes in ONE pass, then step 5. First
+   build `scripts/compile_availability_bootstrap.py` (charter under the gapless track: per lane list the
+   ladder, read manifests and completion markers, download-and-hash every part, emit the
+   `availability-bootstrap-input-v1` document plus its sha256, run offline validation, record the receipt;
+   contract `pipeline/parquet/availability_index.py:937-985` and `:2409-2466`); run it through `railway run`
+   so it uses the executor's R2 credentials. Original per-lane text:
    build the bootstrap input from the lane's verified manifests/checkpoints per `data.py`'s verb
    contract (offline validation first, then `--apply`), confirm the pointer, generation and
    `_BOOTSTRAPPED.json` sentinel exist, and record the receipt key/sha in

@@ -4537,7 +4537,11 @@ def parquet_catch_up_vegetation(  # noqa: PLR0913
     except (OSError, ParquetWriteError, ValueError, VegetationForwardError) as exc:
         raise click.ClickException(str(exc)) from exc
     click.echo(json.dumps(summary.to_details(), sort_keys=True))
-    if not summary.is_complete:
+    # Owner decision 2026-09-03: a bounded turn that stopped on its day or time limit is a yield, not a
+    # failure -- under the executor a non-zero exit here dead-lettered every hourly drain of a 1,026-day
+    # backlog. Only a contended day (another writer held the lock) fails the turn; `forward_complete`
+    # in the JSON still says whether the queue is drained.
+    if summary.contended_day_count:
         context.exit(_GAP_FILL_FAILED_EXIT_CODE)
 
 

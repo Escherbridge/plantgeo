@@ -12,6 +12,9 @@ from typing import TYPE_CHECKING, Final
 
 import duckdb
 
+from agri_data_service.foundation.parquet.duckdb_extensions import (
+    SERVING_EXTENSION_DIRECTORY as _SERVING_EXTENSION_DIRECTORY,
+)
 from agri_data_service.parquet_ops import faults
 
 if TYPE_CHECKING:
@@ -57,11 +60,9 @@ OBJECT_STORE_URL_STYLE: Final = "vhost"
 # path, and in the image that home is `/nonexistent`. The image pre-installs them; see `AGENTS.md`.
 SERVING_EXTENSIONS: Final[tuple[str, ...]] = ("httpfs", "spatial")
 
-# Where the image pre-installs them. Applied only when it EXISTS, so a developer machine falls back
-# to DuckDB's own `$HOME/.duckdb`. `DUCKDB_EXTENSION_DIRECTORY` as an environment variable is NOT
-# honoured by DuckDB 1.5.4 -- measured in a container 2026-08-25, it still resolved `$HOME/.duckdb` --
-# so the directory has to arrive as this SETTING or not at all.
-SERVING_EXTENSION_DIRECTORY: Final = "/opt/duckdb-extensions"
+# Where the image pre-installs them; one definition, shared with the derivation session that must point
+# at the same directory (foundation/parquet/duckdb_extensions.py explains the `/nonexistent` home).
+SERVING_EXTENSION_DIRECTORY: Final = _SERVING_EXTENSION_DIRECTORY
 
 # A day is a calendar day everywhere in this plane. Pinned rather than inherited: the review machine
 # defaulted to `America/Denver`, and a session zone is one edit away from moving a timestamp's date.

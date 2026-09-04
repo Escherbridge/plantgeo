@@ -1728,10 +1728,11 @@ both are executable, independently acknowledged duties and the single elected ex
 while its generic historical lane carries the registry's writer ceiling so their date windows cannot
 overlap.
 
-The roles actually chained by `plantgeo-ingest-cron` form one atomic cutover group: every executable
-replacement for its per-source PostgreSQL ingestion, maintenance, durable job, and per-stream Parquet
-publication must activate together. The previously unscheduled watershed source is visible and safely
-activatable outside that legacy-owner group. SoilGrids is executable in the combined Python/Node image
+The roles once chained by `plantgeo-ingest-cron` were an atomic cutover group (every replacement lane
+had to activate together so the legacy cron was never half replaced). Every legacy writer object has
+been fenced since 2026-09-02, so that rule protected nothing, and it was removed on 2026-09-03 under the
+owner decision that PostgreSQL keeps only community features: `postgres-*` ingestion lanes now retire
+one at a time by removal from the allow-list, each with its Parquet consumer named in the RUNBOOK. SoilGrids is executable in the combined Python/Node image
 at its original hourly `:25` phase; its database cache census is the domain checkpoint. The completed
 soil-moisture one-shot remains visible but non-executable with an explicit terminal disposition, so the
 executor never invents a recurrence or recreates its service.
@@ -1740,8 +1741,9 @@ Restart catch-up is explicit per lane. Source polls and maintenance checks coale
 bucket because their bounded commands inspect current source or ledger state. Durable archive workers
 and Parquet backlog lanes replay the oldest missed bucket first. The logical key is stable by lane and
 scheduled bucket, and an open work item
-is resumed after restart, and failed/partial work blocks a later bucket until retry or dead-letter
-remediation. Rollback removes only the affected lane from `PLANTGEO_JOB_EXECUTOR_ACTIVE_LANES`; it never
+is resumed after restart. A run that settles `failed`/`partial` blocks the lane's next bucket until its
+catch-up policy or a recorded operator supersession releases it (see "Failed checkpoints are superseded
+by the clock or by an operator" below). Rollback removes only the affected lane from `PLANTGEO_JOB_EXECUTOR_ACTIVE_LANES`; it never
 restores a Railway cron schedule or service.
 
 Active registration is insert-only: definition version `2` carries the executor-only cadence,
@@ -1780,13 +1782,14 @@ without allowing a newer bucket to overlap its older run. The command is resolve
 again from the code registry inside the handler, never from a stored shell string, and it runs without a
 shell. A pre-command `ready` checkpoint makes the outer shard resumable across a crash before launch; a
 heartbeat then holds the fenced lease. Non-zero exit and timeout use the ledger's bounded exponential
-retry and dead-letter paths, and a standing failed run blocks new cadence buckets for that lane until an
-operator clears its dead-lettered item. `jobs-pulse` is never invoked as an unfiltered macro: matview
+retry and dead-letter paths; a standing failed run blocks the lane's next bucket until the lane's
+`coalesce_latest` clock or, for `replay_oldest`, a recorded operator supersession releases it -- never a
+ledger edit. `jobs-pulse` is never invoked as an unfiltered macro: matview
 refresh, strategy-MV refresh, both archive workers, reconciliation, gap planning, and validation are
 distinct scheduler definitions, so a known matview dead letter cannot consume another lane's retries.
 PostgreSQL `ingest-all` is likewise split into one source or geometry command per definition. The former
 vegetation catch-up is an independent replayable backlog `vegetation-catch-up` command, which drains and
-acknowledges the fingerprinted pending queue under its publication barrier. It sits beside raw
+acknowledges the fingerprinted pending queue under its publication barrier. Its bounded turn is a yield, not a failure: since 2026-09-03 (owner decision) the command exits non-zero only on a contended day, because exiting 1 on remaining work dead-lettered every hourly drain of a 1,026-day backlog under the executor. It sits beside raw
 `postgres-vegetation`/`ingest-ndvi`; generic `parquet-vegetation` remains responsible for history and
 does not pretend to satisfy the pending-queue contract. Drought forward ingestion polls daily at 12Z:
 the registry's four-day publication lag means a Tuesday-only poll can run before a release settles and
@@ -1820,6 +1823,62 @@ timeouts exceed each inner definition's maximum slice budget by a cleanup margin
 not killed merely because its parent used the old 900-second default. The inner signal remains
 cooperative: a handler already inside one unit releases only when it returns to a transaction-safe
 boundary, after which the parent's bounded kill is still the final fallback.
+
+### Failed checkpoints are superseded by the clock or by an operator
+
+Observed 2026-09-03: under the new executor, ten active lanes sat frozen at their 2026-09-02 buckets.
+`_plan_active_lanes` refused to open any bucket while a lane's latest checkpoint run was `failed`/`partial`,
+and no verb could release one, so the wave-1 matview and WFIGS repairs never ran in production and the
+availability bootstrap could not be trusted to advance. The gate's purpose is kept -- a failing lane must
+not mint a fresh dead letter on every trigger forever, as the legacy matview cron did 200 times -- but the
+lane's own declared `catch_up_policy` now decides what releases it, because that policy is already the
+lane's statement about whether a bucket it did not complete is owed.
+
+- **The clock releases a lane while its failure streak is below its policy's limit**
+  (`CLOCK_RELEASE_STREAK_LIMIT`: three for `coalesce_latest`, one for `replay_oldest`). A `coalesce_latest`
+  lane declares a missed bucket not owed, so one or two failed buckets are superseded by the next bucket
+  (`judge_failed_checkpoint` rules `release="clock"`); the third in a row trips the breaker, because a lane
+  that fails every bucket is broken rather than unlucky, and the legacy matview cron minted 200 dead
+  letters for want of exactly that bound. A `replay_oldest` lane owes every bucket, so its first failure
+  already holds it. The streak is `select_latest_run.sql`'s `consecutive_failures`: one bounded backward
+  probe of `ix_job_run_definition_created`, computed only for a checkpoint that settled without success.
+- **A held lane is released only by a recorded operator supersession**: `agri-service ops
+  jobs-supersede-run --lane <lane> --run-id <run> --evidence "<why>" --operator <who> --apply`
+  (`job_run_supersession.py`; a dry run without `--apply`). The tick reports the held lane `failed` with the
+  exact invocation in `handoff_blockers` -- the structured channel monitors already read for "a human must
+  act" -- while `detail` stays prose. The verb rules by the planner's own `judge_failed_checkpoint`, so it
+  refuses what the clock will release and names the bucket the scheduler will actually open. Do not
+  supersede a lane whose command re-fails deterministically (`parquet-soil-survey` under its 200,001-key
+  export cap, 2026-09-03): it would spend five attempts of its 1200 s budget at the head of the backlog
+  class and be held again.
+- **Whatever releases it, the lane resumes at the current bucket, never at the buckets the hold cost.** A
+  `coalesce_latest` lane never owed them; an operator's supersession forgives them for a `replay_oldest`
+  lane, whose command re-censuses its own backlog anyway. Replaying them instead would hand one lane --
+  carrying the oldest checkpoint, which `fair_due_order` favours -- the backlog class's single turn for as
+  many ticks as buckets were missed. The failed bucket itself is never reopened: its logical run key is
+  spent, `open_job_run` would hand the dead run straight back, and its dead letter stays as the record. The
+  result that opens the new bucket says `supersedes run <id> by clock|operator` once, in the tick summary.
+
+The operator marker is one resolved `agri.job_incident` row (`incident_type`
+`plantgeo.executor.run_superseded`, fingerprint `plantgeo.executor.run-superseded:<run id>`, the evidence
+in `summary`, the operator in `owner`/`acknowledged_by`, the dead letters it leaves standing in `detail`),
+read by `select_latest_run.sql` as `superseded_by_operator` through `uq_job_incident_fingerprint`. The
+fingerprint alone is the marker: the verb is the only writer of that namespace and always writes a
+resolved row, and a status predicate would let a reopened incident freeze a lane with no verb able to
+release it. The alternatives and why not: a `job_event` is dropped with its 30-day partition while the
+evidence must outlive the run it explains; flipping the run to `cancelled` with `cancellation_reason`
+would erase the `failed` status that *is* the failure record and contradict `jobs/worker.py`'s documented
+invariant that nothing writes `cancelled` to `job_run.status`; new `job_run` columns would need an Alembic
+migration ordered against the executor deploy. The cost accepted: `job_incident.job_run_id` does not
+cascade and no retention job touches the table, so any future `job_run` retention must delete a run's
+incidents first (the DB test's teardown already does). The run, its work item and its attempts are never
+written. A recording is idempotent (`ON CONFLICT (fingerprint) DO NOTHING`; a repeat reports the FIRST
+recording's evidence, not the caller's), refuses a run that is not the lane's checkpoint, is still open or
+did not fail, and the receipt names the ledger it wrote because `ingest_session` falls back to
+`DATABASE_URL` when the loader variable is unset. Owed: once the next bucket succeeds, a dead letter the
+clock released is counted by nothing -- `jobs-pulse`'s census covers only archive definitions -- so a
+standing executor dead-letter census is a follow-up; the ledger (`agri.job_work_item status =
+'dead_letter'`) remains the record.
 
 ## `climate-nasa-power-direct-forward`: the one lane with no legacy owner
 

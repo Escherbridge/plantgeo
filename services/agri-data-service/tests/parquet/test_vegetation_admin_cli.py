@@ -76,9 +76,10 @@ def test_forward_command_uses_the_pinned_change_window(monkeypatch: pytest.Monke
     assert '"selected_cell_days": 1' in result.output
 
 
-def test_catch_up_command_needs_no_since_window_and_fails_closed_on_remaining_work(
+def test_catch_up_command_needs_no_since_window_and_yields_on_a_bounded_turn_with_remaining_work(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Owner decision 2026-09-03: a day-limit stop with a backlog left is a yield (exit 0), not a failure."""
     seen: dict[str, object] = {}
 
     async def incomplete(**kwargs: object) -> VegetationPublicationDrainSummary:
@@ -99,11 +100,31 @@ def test_catch_up_command_needs_no_since_window_and_fails_closed_on_remaining_wo
         ["data", "parquet-catch-up-vegetation", "--through-day", "2026-08-27", "--max-days", "25"],
     )
 
-    assert result.exit_code == 1
+    assert result.exit_code == 0
     assert seen["through_day"] == date(2026, 8, 27)
     assert "since" not in seen
     assert '"defensive_days": 46' in result.output
     assert '"remaining_days": 20' in result.output
+    assert '"forward_complete": 0' in result.output
+
+
+def test_catch_up_command_fails_only_on_a_contended_day(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def contended(**kwargs: object) -> VegetationPublicationDrainSummary:
+        return VegetationPublicationDrainSummary(
+            through_day=cast("date", kwargs["through_day"]),
+            defensive_day_count=46,
+            pending_day_count=1,
+            remaining_day_count=1,
+            source_revision=185_244,
+            stop_reason="complete",
+            days=(VegetationForwardDayResult(day=date(2026, 8, 27), outcome="contended", attempt_count=3),),
+        )
+
+    monkeypatch.setattr(cli_module, "_parquet_catch_up_vegetation", contended)
+    result = CliRunner().invoke(cli, ["data", "parquet-catch-up-vegetation", "--through-day", "2026-08-27"])
+
+    assert result.exit_code == 1
+    assert '"contended_days": 1' in result.output
 
 
 def test_absence_command_refuses_unsettled_last_day(monkeypatch: pytest.MonkeyPatch) -> None:

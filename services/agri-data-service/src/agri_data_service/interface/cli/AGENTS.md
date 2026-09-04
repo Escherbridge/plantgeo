@@ -26,3 +26,12 @@ local JSON document offline by default. Only explicit `--apply` constructs a buc
 every referenced object digest and attempts conditional publication. The commands do not discover
 history, activate schedulers or grant production authorization; bootstrap inputs must already name
 the exact verified manifest/checkpoint receipts.
+
+## Executor operator inputs
+
+`ops jobs-supersede-run` records an operator's evidence that the failed or partial checkpoint run holding
+an executor lane may be superseded, so the scheduler resumes the lane at the current bucket. It is a dry
+run without `--apply`, writes one resolved `agri.job_incident` row and nothing else, refuses a lane the
+clock will release by itself (a `coalesce_latest` lane below its three-failure breaker), and prints one
+JSON receipt that names the ledger it wrote. The body lives in `execution/job_run_supersession.py`; see
+`execution/AGENTS.md`, "Failed checkpoints are superseded by the clock or by an operator".

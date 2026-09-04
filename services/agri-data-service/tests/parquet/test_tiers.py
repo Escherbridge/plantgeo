@@ -27,6 +27,9 @@ import duckdb
 import polars as pl
 import pytest
 
+from agri_data_service.foundation.parquet import duckdb_extensions
+from agri_data_service.parquet_ops import duckdb_session
+from agri_data_service.warehouse.parquet import tiers
 from agri_data_service.warehouse.parquet.schema import observed_stream_schema
 from agri_data_service.warehouse.parquet.tiers import (
     DERIVATION_MEMORY_LIMIT,
@@ -42,6 +45,7 @@ from agri_data_service.warehouse.parquet.tiers import (
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+    from pathlib import Path
 
 DAY: Final = dt.date(2026, 8, 1)
 NOON: Final = dt.datetime(2026, 8, 1, 12, tzinfo=dt.UTC)
@@ -289,3 +293,42 @@ def test_the_grid_path_never_opens_duckdb_at_all(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(duckdb, "connect", refuse)
 
     assert derive_tier(_fire_detections_frame(), stream=GRID_STREAM, tier=0).height == 1
+
+
+# --- The derivation session and the image's extension directory ---
+
+
+def test_extension_directory_setting_is_absent_off_image_and_a_quoted_set_on_it(tmp_path: Path) -> None:
+    assert duckdb_extensions.extension_directory_setting(str(tmp_path / "missing")) is None
+    quoted = tmp_path / "it's here"
+    quoted.mkdir()
+    setting = duckdb_extensions.extension_directory_setting(str(quoted))
+    assert setting is not None
+    assert setting.startswith("SET extension_directory = '")
+    assert "it''s here" in setting
+
+
+def test_load_spatial_points_duckdb_at_the_image_directory_before_its_first_load(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The runtime user's home is /nonexistent, so LOAD without this SET is how every z9 rung died on 2026-09-02."""
+    executed: list[str] = []
+
+    class _Session:
+        def execute(self, statement: str) -> None:
+            executed.append(statement)
+
+    monkeypatch.setattr(
+        tiers, "extension_directory_setting", lambda: "SET extension_directory = '/opt/duckdb-extensions'"
+    )
+    tiers._load_spatial(_Session())  # type: ignore[arg-type]
+    assert executed == ["SET extension_directory = '/opt/duckdb-extensions'", "LOAD spatial"]
+
+    executed.clear()
+    monkeypatch.setattr(tiers, "extension_directory_setting", lambda: None)
+    tiers._load_spatial(_Session())  # type: ignore[arg-type]
+    assert executed == ["LOAD spatial"]
+
+
+def test_the_serving_and_derivation_sessions_share_one_extension_directory() -> None:
+    assert duckdb_session.SERVING_EXTENSION_DIRECTORY == duckdb_extensions.SERVING_EXTENSION_DIRECTORY

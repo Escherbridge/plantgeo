@@ -68,6 +68,18 @@ EXECUTOR_WORK_ITEM_KIND: Final = "scheduled-command"
 EXECUTOR_LEADER_LOCK_KEY: Final = "plantgeo:unified-job-executor:v1"
 EXECUTOR_REQUESTED_BY: Final = "agri-service ops jobs-executor"
 
+#: A failed or partial checkpoint run an operator has superseded is one resolved `agri.job_incident` row
+#: keyed by this prefix plus the run id; `select_latest_run.sql` reads it as `superseded_by_operator`.
+#: See execution/AGENTS.md, "Failed checkpoints are superseded by the clock or by an operator".
+RUN_SUPERSESSION_INCIDENT_TYPE: Final = "plantgeo.executor.run_superseded"
+RUN_SUPERSESSION_FINGERPRINT_PREFIX: Final = "plantgeo.executor.run-superseded:"
+SUPERSEDE_RUN_COMMAND: Final = "agri-service ops jobs-supersede-run"
+#: The two run statuses that settle a checkpoint without success and block the lane behind it.
+SETTLED_WITHOUT_SUCCESS: Final[frozenset[str]] = frozenset({"failed", "partial"})
+#: How many of a lane's newest terminal runs the checkpoint query inspects for its failure streak. One
+#: bounded backward index probe; no policy below ever needs a longer streak than this.
+FAILURE_STREAK_PROBE_LIMIT: Final = 3
+
 ACTIVE_LANES_VARIABLE: Final = "PLANTGEO_JOB_EXECUTOR_ACTIVE_LANES"
 HANDOFF_ACKNOWLEDGEMENTS_VARIABLE: Final = "PLANTGEO_JOB_EXECUTOR_HANDOFF_ACKNOWLEDGEMENTS"
 POLL_SECONDS_VARIABLE: Final = "PLANTGEO_JOB_EXECUTOR_POLL_SECONDS"
@@ -87,6 +99,13 @@ WORKER_ID_MAX_LENGTH: Final = 255
 LaneWorkClass = Literal["incremental", "backlog"]
 MigrationDisposition = Literal["consolidatable", "source-specific", "snapshot-only"]
 CatchUpPolicy = Literal["coalesce_latest", "replay_oldest"]
+ReleaseMechanism = Literal["clock", "operator"]
+#: The failure streak at which the clock stops releasing a lane and an operator must record a supersession.
+#: A coalesce_latest lane tolerates two transient failed buckets (the third in a row is a broken lane); a
+#: replay_oldest lane tolerates none, because every one of its buckets is owed.
+CLOCK_RELEASE_STREAK_LIMIT: Final[Mapping[CatchUpPolicy, int]] = MappingProxyType(
+    {"coalesce_latest": 3, "replay_oldest": 1}
+)
 LaneTickState = Literal[
     "shadow",
     "source_specific",
@@ -105,6 +124,12 @@ class ExecutorConfigurationError(ValueError):
 
 class ExecutorLeaderUnlockError(RuntimeError):
     """Raised when the pinned PostgreSQL backend cannot confirm leader-lock release."""
+
+
+if max(CLOCK_RELEASE_STREAK_LIMIT.values()) > FAILURE_STREAK_PROBE_LIMIT:
+    # The query caps the streak at the probe limit, so a limit above it could never be reached and the
+    # breaker would be silently disarmed: a broken lane would mint one dead letter per bucket forever.
+    raise ExecutorConfigurationError("FAILURE_STREAK_PROBE_LIMIT must cover every CLOCK_RELEASE_STREAK_LIMIT")
 
 
 @dataclass(frozen=True, slots=True)
@@ -765,27 +790,10 @@ def parse_activation(environment: Mapping[str, str] | None = None) -> Activation
         if conflicts:
             raise ExecutorConfigurationError(f"lane {lane_id!r} conflicts with active lane(s): {', '.join(conflicts)}")
 
-    _require_atomic_owner_cutovers(active)
     frozen_acknowledgements = MappingProxyType(
         {lane_id: frozenset(values) for lane_id, values in acknowledgements.items()}
     )
     return ActivationConfig(active_lanes=active, handoff_acknowledgements=frozen_acknowledgements)
-
-
-def _require_atomic_owner_cutovers(active: frozenset[str]) -> None:
-    """Keep one multi-role legacy service from being only partly replaced."""
-    executable_by_owner: dict[str, set[str]] = {}
-    for spec in LANE_SPECS.values():
-        if spec.executable:
-            for owner in spec.legacy_owners:
-                executable_by_owner.setdefault(owner, set()).add(spec.lane_id)
-    for owner, owned_lanes in executable_by_owner.items():
-        activated = owned_lanes & active
-        if activated and activated != owned_lanes:
-            missing = ", ".join(sorted(owned_lanes - activated))
-            raise ExecutorConfigurationError(
-                f"legacy owner {owner!r} must cut over atomically; also activate {missing}"
-            )
 
 
 def scheduled_bucket(spec: LaneExecutionSpec, now: datetime) -> datetime:
@@ -812,12 +820,14 @@ def next_scheduled_bucket(
         return current
     if spec.catch_up_policy == "coalesce_latest":
         return current
-    assert spec.cadence_seconds is not None
-    next_oldest = datetime.fromtimestamp(
-        int(latest_scheduled_for.timestamp()) + spec.cadence_seconds,
-        tz=UTC,
-    )
-    return min(next_oldest, current)
+    return min(bucket_after(spec, latest_scheduled_for), current)
+
+
+def bucket_after(spec: LaneExecutionSpec, scheduled_for: datetime) -> datetime:
+    """Return the cadence bucket immediately after `scheduled_for`: the one a replayed lane opens next."""
+    if spec.cadence_seconds is None:
+        raise ExecutorConfigurationError(f"lane {spec.lane_id!r} has no recurring cadence")
+    return datetime.fromtimestamp(int(scheduled_for.timestamp()) + spec.cadence_seconds, tz=UTC)
 
 
 @dataclass(frozen=True, slots=True)
@@ -831,6 +841,8 @@ class LatestRun:
     definition_id: uuid.UUID | None = None
     definition_version: str = EXECUTOR_DEFINITION_VERSION
     definition_enabled: bool = True
+    superseded_by_operator: bool = False
+    consecutive_failures: int = 0
 
     @property
     def open(self) -> bool:
@@ -844,6 +856,9 @@ class DueLane:
     scheduled_for: datetime
     existing_run_id: uuid.UUID | None
     last_scheduled_for: datetime | None
+    #: The failed or partial checkpoint this bucket supersedes, and what released it; None for an ordinary bucket.
+    superseded_run_id: uuid.UUID | None = None
+    supersession: ReleaseMechanism | None = None
 
 
 def fair_due_order(candidates: Sequence[DueLane]) -> tuple[DueLane, ...]:
@@ -1020,11 +1035,17 @@ async def _load_or_register_definition(
     return definition
 
 
-async def _latest_run(session: AsyncSession, spec: LaneExecutionSpec) -> LatestRun | None:
+async def read_lane_checkpoint(session: AsyncSession, spec: LaneExecutionSpec) -> LatestRun | None:
+    """Read the lane's scheduler checkpoint: the run a tick plans from, with its supersession and failure streak."""
     row = await fetch_row(
         session,
         _SELECT_LATEST_RUN,
-        {"name": spec.definition_name, "current_version": EXECUTOR_DEFINITION_VERSION},
+        {
+            "name": spec.definition_name,
+            "current_version": EXECUTOR_DEFINITION_VERSION,
+            "supersession_fingerprint_prefix": RUN_SUPERSESSION_FINGERPRINT_PREFIX,
+            "failure_streak_limit": FAILURE_STREAK_PROBE_LIMIT,
+        },
     )
     if row is None:
         return None
@@ -1038,6 +1059,88 @@ async def _latest_run(session: AsyncSession, spec: LaneExecutionSpec) -> LatestR
         definition_id=required_column(row, "job_definition_id", uuid.UUID),
         definition_version=required_column(row, "definition_version", str),
         definition_enabled=required_column(row, "definition_enabled", bool),
+        superseded_by_operator=required_column(row, "superseded_by_operator", bool),
+        consecutive_failures=required_column(row, "consecutive_failures", int),
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class CheckpointVerdict:
+    """The planner's ruling on a checkpoint that settled without success; the operator verb rules by it too."""
+
+    #: The bucket that opens once the checkpoint is released. Never the failed bucket itself.
+    next_bucket: datetime
+    #: Whether `next_bucket` is already reachable on the clock, or is the bucket after a failed current one.
+    newer_bucket_exists: bool
+    #: What releases the lane: the clock (the next bucket supersedes the failure) or a recorded supersession.
+    release: ReleaseMechanism
+    #: Whether the planner opens `next_bucket` on this tick.
+    released: bool
+    #: The unbroken run of settled-without-success checkpoints ending in this one, at least 1.
+    consecutive_failures: int
+
+
+def judge_failed_checkpoint(spec: LaneExecutionSpec, latest: LatestRun, now: datetime) -> CheckpointVerdict:
+    """Rule on a failed or partial checkpoint: the bucket that opens next, what releases it, and whether that is now.
+
+    The clock releases a lane while its failure streak is below its policy's limit. A coalesce_latest lane
+    declares a missed bucket not owed, so a transient failure is superseded by the next bucket -- but three
+    in a row is a broken lane, and the breaker holds it until an operator records a supersession; the
+    legacy matview cron minted 200 dead letters for want of exactly that. A replay_oldest lane owes every
+    bucket, so its limit is one and only a recorded supersession ever releases it.
+
+    Whatever releases it, the lane resumes at the CURRENT bucket, never at the buckets the hold cost: a
+    coalesce_latest lane never owed them, and an operator's supersession forgives them for a replay_oldest
+    lane -- its command re-censuses its own backlog, and `fair_due_order` favours the oldest checkpoint, so
+    replaying a day of buckets would hand one lane the backlog class's single turn for hours. Nothing
+    reopens the failed bucket itself: its logical run key is spent and its dead letter stays as the record.
+    See execution/AGENTS.md, "Failed checkpoints are superseded by the clock or by an operator".
+    """
+    current = scheduled_bucket(spec, now)
+    newer_bucket_exists = current > latest.scheduled_for
+    next_bucket = current if newer_bucket_exists else bucket_after(spec, latest.scheduled_for)
+    streak = max(latest.consecutive_failures, 1)
+    release: ReleaseMechanism = "clock" if streak < CLOCK_RELEASE_STREAK_LIMIT[spec.catch_up_policy] else "operator"
+    released = newer_bucket_exists and (release == "clock" or latest.superseded_by_operator)
+    return CheckpointVerdict(
+        next_bucket=next_bucket,
+        newer_bucket_exists=newer_bucket_exists,
+        release=release,
+        released=released,
+        consecutive_failures=streak,
+    )
+
+
+def supersession_command(spec: LaneExecutionSpec, run_id: uuid.UUID) -> str:
+    """The exact operator invocation that records this checkpoint's supersession."""
+    return f"{SUPERSEDE_RUN_COMMAND} --lane {spec.lane_id} --run-id {run_id}"
+
+
+def _held_checkpoint_result(spec: LaneExecutionSpec, latest: LatestRun, verdict: CheckpointVerdict) -> LaneTickResult:
+    """Report a checkpoint that settled without success and still holds its lane, naming what releases it."""
+    needs_operator = verdict.release == "operator" and not latest.superseded_by_operator
+    if not verdict.newer_bucket_exists:
+        opens = "only after a recorded supersession" if needs_operator else "by itself"
+        detail = (
+            f"current bucket settled {latest.status}; its logical run is spent, and bucket "
+            f"{verdict.next_bucket.isoformat()} opens {opens}"
+        )
+    else:
+        detail = (
+            f"{verdict.consecutive_failures} consecutive bucket(s) settled without success; the clock no longer "
+            f"releases this {spec.catch_up_policy} lane, so bucket {verdict.next_bucket.isoformat()} waits for a "
+            "recorded operator supersession"
+        )
+    return LaneTickResult(
+        lane_id=spec.lane_id,
+        state="failed",
+        scheduled_for=latest.scheduled_for,
+        run_id=latest.run_id,
+        run_status=latest.status,
+        detail=detail,
+        handoff_blockers=(
+            (f"operator supersession required: {supersession_command(spec, latest.run_id)}",) if needs_operator else ()
+        ),
     )
 
 
@@ -1086,6 +1189,15 @@ async def _execute_due_lane(
     if stop is not None and stop.requested:
         return _deferred_shutdown_result(candidate)
     run_id = candidate.existing_run_id or await _open_scheduled_run(session, candidate)
+    if candidate.superseded_run_id is not None:
+        logger.info(
+            "plantgeo_job_executor_failed_run_superseded",
+            lane_id=candidate.spec.lane_id,
+            superseded_run_id=str(candidate.superseded_run_id),
+            release=candidate.supersession,
+            bucket=candidate.scheduled_for.isoformat(),
+            run_id=str(run_id),
+        )
     summary = await run_job_slice(
         session,
         definition_name=candidate.spec.definition_name,
@@ -1099,23 +1211,26 @@ async def _execute_due_lane(
         summary.retried > 0
         or summary.dead_lettered > 0
         or summary.abandoned > 0
-        or summary.run_status in {"failed", "partial"}
+        or summary.run_status in SETTLED_WITHOUT_SUCCESS
     )
+    detail: str = (
+        "work item dead-lettered"
+        if summary.dead_lettered
+        else "work item abandoned after losing its fenced lease"
+        if summary.abandoned
+        else "work item entered retry backoff"
+        if summary.retried
+        else summary.stop_reason
+    )
+    if candidate.superseded_run_id is not None:
+        detail = f"supersedes run {candidate.superseded_run_id} by {candidate.supersession}; {detail}"
     return LaneTickResult(
         lane_id=candidate.spec.lane_id,
         state="failed" if failed else "ran",
         scheduled_for=candidate.scheduled_for,
         run_id=run_id,
         run_status=summary.run_status,
-        detail=(
-            "work item dead-lettered"
-            if summary.dead_lettered
-            else "work item abandoned after losing its fenced lease"
-            if summary.abandoned
-            else "work item entered retry backoff"
-            if summary.retried
-            else summary.stop_reason
-        ),
+        detail=detail,
         slice_summary=summary.to_summary(),
     )
 
@@ -1260,7 +1375,7 @@ async def _plan_active_lanes(
             continue
 
         definition = await _load_or_register_definition(session, spec)
-        latest = await _latest_run(session, spec)
+        latest = await read_lane_checkpoint(session, spec)
         prior_result, prior_due = await _plan_prior_version_run(session, spec, latest)
         await _rollback_planning_transaction(session)
         if prior_result is not None:
@@ -1279,15 +1394,20 @@ async def _plan_active_lanes(
             )
             continue
         current_bucket = scheduled_bucket(spec, now)
-        if latest is not None and latest.status in {"failed", "partial"}:
-            results.append(
-                LaneTickResult(
-                    lane_id=spec.lane_id,
-                    state="failed",
-                    scheduled_for=latest.scheduled_for,
-                    run_id=latest.run_id,
-                    run_status=latest.status,
-                    detail="latest run remains failed; clear its dead-lettered work before another bucket opens",
+        if latest is not None and latest.status in SETTLED_WITHOUT_SUCCESS:
+            verdict = judge_failed_checkpoint(spec, latest, now)
+            if not verdict.released:
+                results.append(_held_checkpoint_result(spec, latest, verdict))
+                continue
+            due.append(
+                DueLane(
+                    spec=spec,
+                    definition=definition,
+                    scheduled_for=verdict.next_bucket,
+                    existing_run_id=None,
+                    last_scheduled_for=latest.scheduled_for,
+                    superseded_run_id=latest.run_id,
+                    supersession=verdict.release,
                 )
             )
             continue
@@ -1719,24 +1839,36 @@ def jobs_executor(once: bool, inventory_only: bool) -> None:
 
 __all__ = [
     "ACTIVE_LANES_VARIABLE",
+    "CLOCK_RELEASE_STREAK_LIMIT",
+    "FAILURE_STREAK_PROBE_LIMIT",
     "HANDOFF_ACKNOWLEDGEMENTS_VARIABLE",
     "LANE_SPECS",
     "LEGACY_RAILWAY_RESPONSIBILITIES",
     "LEGACY_RAILWAY_SERVICE_IDS",
+    "RUN_SUPERSESSION_FINGERPRINT_PREFIX",
+    "RUN_SUPERSESSION_INCIDENT_TYPE",
+    "SETTLED_WITHOUT_SUCCESS",
+    "SUPERSEDE_RUN_COMMAND",
     "ActivationConfig",
+    "CheckpointVerdict",
     "DueLane",
     "ExecutorConfigurationError",
     "ExecutorLeaderUnlockError",
     "ExecutorTickSummary",
     "LaneExecutionSpec",
     "LaneTickResult",
+    "LatestRun",
     "LegacyRailwayResponsibility",
+    "bucket_after",
     "executor_inventory",
     "fair_due_order",
     "jobs_executor",
+    "judge_failed_checkpoint",
     "next_scheduled_bucket",
     "parse_activation",
+    "read_lane_checkpoint",
     "run_executor_tick",
     "run_scheduled_command",
     "scheduled_bucket",
+    "supersession_command",
 ]

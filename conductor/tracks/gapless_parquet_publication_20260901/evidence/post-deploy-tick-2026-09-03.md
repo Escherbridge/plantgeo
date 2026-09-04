@@ -230,3 +230,19 @@ detail `latest run remains failed; clear its dead-lettered work before another b
 2026-09-02 buckets - including the two blocker lanes this observation was meant to prove. See the RUNBOOK progress
 block ("NEW BLOCKER"): the executor gate at `job_executor_service.py:1282` never reopens a lane after a dead
 letter and no verb clears one, so the wave-1 matview/WFIGS repairs have not executed in production.
+
+
+## Frozen-lane gate - 2026-09-04, built and pushed (observation below once deployed)
+
+Under deployment `4f2502a0` the ten lanes were still held at 02:02 UTC on 2026-09-04
+(`tick_unhealthy failing_lanes=[...]`, ten names, unchanged since 18:14 UTC). What was built, why, and
+what the first ticks after the next deploy must show is in `conductor/RUNBOOK.md`, "Progress 2026-09-04"
+and continuation steps 1-1c; the per-lane 2026-09-02 causes are in `p3-runtime-blockers-repair.md`,
+"Premise correction".
+
+Expected on the first ticks at the new code: `jobs-matview-refresh`, `postgres-fire-perimeters`,
+`postgres-vegetation`, `maintenance-validate-streams` and `soilgrids-cache-warm` open their current
+bucket with `supersedes run <id> by clock` in the lane detail; `parquet-drought`,
+`parquet-evacuation-zones`, `parquet-fire-perimeters`, `parquet-soil-survey` and `vegetation-catch-up`
+report `failed` with `operator supersession required: agri-service ops jobs-supersede-run ...` in
+`handoff_blockers`.

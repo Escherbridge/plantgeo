@@ -102,3 +102,16 @@ across a thousand days.
 connection=...)` → `derive_tier(connection=...)`; `pipeline/parquet/drain.py` opens exactly one for a
 whole `--selection ladder` walk. Before that chain existed, the docstring offered a capability whose
 only driver had no parameter for it, and every geometry rung of every day re-ran `LOAD spatial`.
+
+**The derivation session and the extension directory (2026-09-03).** Every geometry lane's z9 rung
+failed in production on 2026-09-02 (`parquet-drought`, `parquet-evacuation-zones`,
+`parquet-fire-perimeters`) with `TierWriteError ... IOException: Can't find the home directory at
+'/nonexistent'`. Both runtime images create the `plantgeo` user with `--home-dir /nonexistent`, so
+DuckDB's default extension directory (`$HOME/.duckdb`) can never exist; the serving session
+(`parquet_ops/duckdb_session.py`) always pointed at the image's `/opt/duckdb-extensions` before its first
+`LOAD`, but `_load_spatial` here did not, so on the executor both `LOAD spatial` and the `INSTALL`
+fallback died before touching the network. `_load_spatial` now runs
+`foundation/parquet/duckdb_extensions.extension_directory_setting()` first -- the one definition of the
+directory both sessions share -- and only when that directory exists, so a developer machine still falls
+back to `$HOME/.duckdb`. Point lanes never saw this: their coarse rungs are Polars aggregations and never
+open DuckDB.

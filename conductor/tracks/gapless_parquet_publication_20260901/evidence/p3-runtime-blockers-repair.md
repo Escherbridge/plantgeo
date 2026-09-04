@@ -303,3 +303,52 @@ service at that scale — the concurrency cap is a politeness choice, not a meas
 in SHADOW; activation is `PLANTGEO_JOB_EXECUTOR_ACTIVE_LANES` naming `climate-nasa-power-direct-forward`,
 which is now mutually exclusive with any `parquet-climate-field-*` lane in the same list.
 
+
+---
+
+## Premise correction (2026-09-03): "both lanes mint fresh work on their own schedule" was false under the executor
+
+Observed on the first new-code executor ticks (deployment `c3ffa03d`, 18:14 UTC): `jobs-matview-refresh`
+and `postgres-fire-perimeters` -- and eight other active lanes -- were still frozen at their 2026-09-02
+buckets, each with one run `failed` (5/5 attempts, "command exited with status 1" under the OLD code;
+`parquet-soil-survey` exceeded its 1200 s budget instead). `job_executor_service.py::_plan_active_lanes`
+refused to open any bucket while a lane's latest checkpoint was `failed`/`partial` ("clear its
+dead-lettered work before another bucket opens") and no verb existed to clear one, so step 1 of this
+procedure could never happen. The ten frozen runs, read from production on 2026-09-03 (read-only):
+
+| lane | catch-up policy | failed bucket (UTC) | run |
+|---|---|---|---|
+| jobs-matview-refresh | coalesce_latest | 2026-09-02 17:00 | 1de3f897-5287-41cb-9fcc-134ec9c97dfb |
+| postgres-fire-perimeters | coalesce_latest | 2026-09-02 18:00 | e43b3ab9-ca7c-48d2-a157-b24dfa8445c9 |
+| postgres-vegetation | coalesce_latest | 2026-09-02 18:00 | 099ce3ad-b49c-4652-b80c-6193fe679e2d |
+| maintenance-validate-streams | coalesce_latest | 2026-09-02 18:00 | 8b613442-4161-4e54-b13a-c48b0a12a8d0 |
+| soilgrids-cache-warm | coalesce_latest | 2026-09-02 17:25 | f6688630-f2a5-4711-a94d-be7ccc15897f |
+| parquet-drought | replay_oldest | 2026-09-02 18:00 | c2b0980a-6c99-44c4-b921-9d341a7c0073 |
+| parquet-evacuation-zones | replay_oldest | 2026-09-02 18:00 | 71325cac-0a27-46e5-b58b-1ad8320897f5 |
+| parquet-fire-perimeters | replay_oldest | 2026-09-02 18:00 | 3aa01c5a-b4d1-4dff-8ed5-42dd0d2d3633 |
+| parquet-soil-survey | replay_oldest | 2026-09-02 18:00 (budget exceeded) | d4896a98-5e41-4fad-b31b-6c265375db19 |
+| vegetation-catch-up | replay_oldest | 2026-09-02 19:00 | 85e5a27d-00ab-4d65-98d1-ef39a3c1442a |
+
+Repair (code, 2026-09-03; rationale in `execution/AGENTS.md`, "Failed checkpoints are superseded by the
+clock or by an operator"): a `coalesce_latest` lane's failed bucket is superseded by the next bucket on
+its own until three consecutive failures trip the breaker; a `replay_oldest` lane is held by its first
+failure; a held lane is released only when `agri-service ops jobs-supersede-run --lane <lane>
+--run-id <run> --evidence "<why>" --operator <who> --apply` records one resolved `agri.job_incident` row,
+and it then resumes at the current bucket rather than replaying the buckets the hold cost. No run, work
+item or attempt is written on either path; every dead letter above stays standing, exactly as this
+procedure requires.
+
+Consequence for step 1: once the release containing the rule is deployed, the five coalesce lanes open
+their current bucket unassisted on the first tick -- that IS the unassisted tick this procedure asks
+for. The four replay `parquet-*`/`vegetation-catch-up` lanes wait for a recorded supersession each, with
+the 2026-09-02 failure cause as evidence. Their causes, read from the old executor's logs on 2026-09-03:
+`parquet-drought`, `parquet-evacuation-zones` and `parquet-fire-perimeters` all raised
+`TierWriteError ... IOException: Can't find the home directory at '/nonexistent'` from the z9 coarse
+derivation (DuckDB's `LOAD spatial` without the image's extension directory; fixed in
+`warehouse/parquet/tiers.py` in the same release, see `warehouse/parquet/AGENTS.md`);
+`vegetation-catch-up` exited 1 after a bounded `day_limit` turn that wrote 25 days with 1,026 pending
+(`parquet-catch-up-vegetation` fails closed on remaining work by contract -- `tests/parquet/
+test_vegetation_admin_cli.py` -- which under the executor turns every bounded backlog turn into a dead
+letter; an owner decision is needed before that lane is superseded). `parquet-soil-survey` must NOT be
+superseded until its 200,001-key export cap is fixed (it would spend 5 x 1200 s in one bucket and be
+held again).

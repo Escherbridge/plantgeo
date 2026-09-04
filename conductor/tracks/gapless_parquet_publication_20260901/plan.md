@@ -87,6 +87,22 @@ resource: ./spec.md
       bound that placed `postgres-fire-perimeters` in retry backoff (code repaired 2026-09-02,
       `2b4cfef`; dead letters left standing; first unassisted tick not yet observed —
       `evidence/p3-runtime-blockers-repair.md`).
+- [x] Decide how a lane frozen by a dead letter is released (code 2026-09-03): a `coalesce_latest`
+      lane reopens at the next bucket by itself until three consecutive failures trip the breaker; a
+      `replay_oldest` lane is held by its first failure; a held lane waits for `ops jobs-supersede-run`
+      with evidence (one resolved `agri.job_incident` row; no run, work item or attempt is written) and
+      resumes at the current bucket. Adversarial review verdict in the RUNBOOK ledger; premise
+      correction and the four replay lanes' 2026-09-02 causes in `evidence/p3-runtime-blockers-repair.md`.
+- [x] Repair the geometry lanes' coarse-rung derivation (2026-09-03): `_load_spatial` now points DuckDB
+      at the image's extension directory before its first LOAD, which is why every z9 rung of
+      `parquet-drought`, `parquet-evacuation-zones` and `parquet-fire-perimeters` died on 2026-09-02
+      (`warehouse/parquet/AGENTS.md`, "The derivation session and the extension directory").
+- [ ] Observe the five frozen `coalesce_latest` lanes reopen unassisted after the deploy; record the
+      `jobs-matview-refresh` (`relations_absent`) and `postgres-fire-perimeters` (`bytes_read`,
+      `oversized_records`) ticks; then supersede `parquet-drought`, `parquet-evacuation-zones` and
+      `parquet-fire-perimeters` citing the extension-directory fix. Leave `parquet-soil-survey` frozen
+      until its 200,001-key export cap is fixed, and `vegetation-catch-up` until the owner rules on its
+      fail-closed exit under bounded executor turns.
 - [ ] Close the bounded observed tails without rewriting valid immutable days.
 - [ ] Publish governed absences only with source receipts.
 - [ ] Observe retry, restart and expired-lease recovery.

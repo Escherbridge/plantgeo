@@ -448,13 +448,14 @@ def test_complete_recurring_railway_responsibility_set_can_activate_together() -
     assert "soil-moisture-parquet-backfill" not in activation.active_lanes
 
 
-def test_multi_role_ingest_owner_must_cut_over_atomically() -> None:
+def test_one_ingest_owner_lane_activates_alone_now_that_the_legacy_cron_is_fenced() -> None:
+    """Owner decision 2026-09-03: Postgres ingestion retires lane by lane, so no atomic-owner rule remains."""
     lane_id = "postgres-weather"
-    with pytest.raises(ExecutorConfigurationError, match="must cut over atomically"):
-        parse_activation(_activation_environment(lane_id))
+    activation = parse_activation(_activation_environment(lane_id))
+    assert activation.active_lanes == frozenset({lane_id})
 
 
-def test_complete_ingest_owner_cutover_is_accepted() -> None:
+def test_complete_ingest_owner_cutover_is_still_accepted() -> None:
     lanes = _owned_executable_lanes(_INGEST_OWNER)
     activation = parse_activation(_activation_environment(*lanes))
     assert activation.active_lanes == frozenset(lanes)
@@ -603,7 +604,7 @@ async def test_retry_backoff_lane_cannot_starve_same_class_peer(
     monkeypatch.setattr(job_executor_service, "_try_leader_lock", _leader)
     monkeypatch.setattr(job_executor_service, "_release_leader_lock", _unlock)
     monkeypatch.setattr(job_executor_service, "_load_or_register_definition", _load)
-    monkeypatch.setattr(job_executor_service, "_latest_run", _latest)
+    monkeypatch.setattr(job_executor_service, "read_lane_checkpoint", _latest)
     monkeypatch.setattr(job_executor_service, "_execute_due_lane", _execute)
 
     summary = await run_executor_tick(
@@ -678,7 +679,7 @@ async def test_exhausted_expired_lease_reaches_the_reaper_boundary(
     monkeypatch.setattr(job_executor_service, "_try_leader_lock", _leader)
     monkeypatch.setattr(job_executor_service, "_release_leader_lock", _unlock)
     monkeypatch.setattr(job_executor_service, "_load_or_register_definition", _load)
-    monkeypatch.setattr(job_executor_service, "_latest_run", _latest)
+    monkeypatch.setattr(job_executor_service, "read_lane_checkpoint", _latest)
     monkeypatch.setattr(job_executor_service, "_execute_due_lane", _execute)
 
     summary = await run_executor_tick(
@@ -726,7 +727,7 @@ async def test_restart_resumes_the_exact_open_logical_bucket(
 
     monkeypatch.setattr(job_executor_service, "LANE_SPECS", MappingProxyType({lane_id: spec}))
     monkeypatch.setattr(job_executor_service, "_load_or_register_definition", _load)
-    monkeypatch.setattr(job_executor_service, "_latest_run", _latest)
+    monkeypatch.setattr(job_executor_service, "read_lane_checkpoint", _latest)
 
     results, due = await job_executor_service._plan_active_lanes(
         session,  # type: ignore[arg-type]
@@ -769,7 +770,7 @@ async def test_missed_tick_policy_is_applied_when_the_latest_run_settled(
 
     monkeypatch.setattr(job_executor_service, "LANE_SPECS", MappingProxyType({lane_id: spec}))
     monkeypatch.setattr(job_executor_service, "_load_or_register_definition", _load)
-    monkeypatch.setattr(job_executor_service, "_latest_run", _latest)
+    monkeypatch.setattr(job_executor_service, "read_lane_checkpoint", _latest)
 
     results, due = await job_executor_service._plan_active_lanes(
         session,  # type: ignore[arg-type]
@@ -811,7 +812,7 @@ async def test_nonterminal_prior_version_run_resumes_through_its_exact_definitio
 
     monkeypatch.setattr(job_executor_service, "LANE_SPECS", MappingProxyType({lane_id: spec}))
     monkeypatch.setattr(job_executor_service, "_load_or_register_definition", _load_current)
-    monkeypatch.setattr(job_executor_service, "_latest_run", _latest)
+    monkeypatch.setattr(job_executor_service, "read_lane_checkpoint", _latest)
     monkeypatch.setattr(job_executor_service, "load_job_definition", _load_prior)
 
     results, due = await job_executor_service._plan_active_lanes(
@@ -870,7 +871,7 @@ async def test_prior_version_terminal_child_crash_repairs_the_parent_rollup(
 
     monkeypatch.setattr(job_executor_service, "LANE_SPECS", MappingProxyType({lane_id: spec}))
     monkeypatch.setattr(job_executor_service, "_load_or_register_definition", _load_current)
-    monkeypatch.setattr(job_executor_service, "_latest_run", _latest)
+    monkeypatch.setattr(job_executor_service, "read_lane_checkpoint", _latest)
     monkeypatch.setattr(job_executor_service, "load_job_definition", _load_prior)
     monkeypatch.setattr(job_executor_service, "run_job_slice", _run_slice)
 
@@ -918,7 +919,7 @@ async def test_current_version_terminal_child_crash_is_due_for_parent_rollup(
 
     monkeypatch.setattr(job_executor_service, "LANE_SPECS", MappingProxyType({lane_id: spec}))
     monkeypatch.setattr(job_executor_service, "_load_or_register_definition", _load_current)
-    monkeypatch.setattr(job_executor_service, "_latest_run", _latest)
+    monkeypatch.setattr(job_executor_service, "read_lane_checkpoint", _latest)
 
     results, due = await job_executor_service._plan_active_lanes(
         session,  # type: ignore[arg-type]
@@ -981,7 +982,7 @@ async def test_live_prior_version_lease_blocks_current_version_without_overlap(
 
     monkeypatch.setattr(job_executor_service, "LANE_SPECS", MappingProxyType({lane_id: spec}))
     monkeypatch.setattr(job_executor_service, "_load_or_register_definition", _load_current)
-    monkeypatch.setattr(job_executor_service, "_latest_run", _latest)
+    monkeypatch.setattr(job_executor_service, "read_lane_checkpoint", _latest)
     monkeypatch.setattr(job_executor_service, "load_job_definition", _unexpected)
     monkeypatch.setattr(job_executor_service, "open_job_run", _unexpected)
 
@@ -1026,7 +1027,7 @@ async def test_disabled_prior_version_open_run_refuses_current_version_work(
 
     monkeypatch.setattr(job_executor_service, "LANE_SPECS", MappingProxyType({lane_id: spec}))
     monkeypatch.setattr(job_executor_service, "_load_or_register_definition", _load_current)
-    monkeypatch.setattr(job_executor_service, "_latest_run", _latest)
+    monkeypatch.setattr(job_executor_service, "read_lane_checkpoint", _latest)
     monkeypatch.setattr(job_executor_service, "load_job_definition", _unexpected)
     monkeypatch.setattr(job_executor_service, "open_job_run", _unexpected)
 
@@ -1068,7 +1069,7 @@ async def test_terminal_prior_version_run_remains_the_catch_up_checkpoint(
 
     monkeypatch.setattr(job_executor_service, "LANE_SPECS", MappingProxyType({lane_id: spec}))
     monkeypatch.setattr(job_executor_service, "_load_or_register_definition", _load_current)
-    monkeypatch.setattr(job_executor_service, "_latest_run", _latest)
+    monkeypatch.setattr(job_executor_service, "read_lane_checkpoint", _latest)
 
     results, due = await job_executor_service._plan_active_lanes(
         session,  # type: ignore[arg-type]
@@ -1284,7 +1285,7 @@ async def test_planning_reapplies_statement_timeout_after_every_transaction_boun
     monkeypatch.setattr(job_executor_service, "_definition_state", _definition_state)
     monkeypatch.setattr(job_executor_service, "fetch_row", _insert)
     monkeypatch.setattr(job_executor_service, "load_job_definition", _load_definition)
-    monkeypatch.setattr(job_executor_service, "_latest_run", _latest)
+    monkeypatch.setattr(job_executor_service, "read_lane_checkpoint", _latest)
     monkeypatch.setattr(job_executor_service, "_release_leader_lock", _unlock)
 
     summary = await run_executor_tick(
@@ -1963,3 +1964,267 @@ def test_tracked_railway_configs_cannot_resurrect_cron_scheduling() -> None:
         "services/agri-data-service/railway.water-gauges-forward.json",
     )
     assert all(not (repo_root / relative).exists() for relative in obsolete)
+
+
+# --- Failed checkpoints: released by the clock, held by the breaker, or superseded by an operator ---
+
+
+async def _plan_from_checkpoint(
+    monkeypatch: pytest.MonkeyPatch,
+    lane_id: str,
+    latest: job_executor_service.LatestRun,
+    *,
+    now: datetime = datetime(2026, 8, 28, 18, 30, tzinfo=UTC),
+) -> tuple[list[job_executor_service.LaneTickResult], list[DueLane]]:
+    spec = LANE_SPECS[lane_id]
+    definition = _definition(spec.definition_name)
+
+    async def _load(_session: object, _spec: object) -> JobDefinitionRecord:
+        return definition
+
+    async def _latest(_session: object, _spec: object) -> job_executor_service.LatestRun:
+        return latest
+
+    monkeypatch.setattr(job_executor_service, "LANE_SPECS", MappingProxyType({lane_id: spec}))
+    monkeypatch.setattr(job_executor_service, "_load_or_register_definition", _load)
+    monkeypatch.setattr(job_executor_service, "read_lane_checkpoint", _latest)
+    return await job_executor_service._plan_active_lanes(
+        _ShadowSession(),  # type: ignore[arg-type]
+        ActivationConfig(frozenset({lane_id})),
+        now,
+    )
+
+
+def _settled(
+    status: str,
+    bucket: datetime,
+    *,
+    superseded: bool = False,
+    streak: int = 1,
+) -> job_executor_service.LatestRun:
+    return job_executor_service.LatestRun(
+        run_id=uuid.uuid4(),
+        scheduled_for=bucket,
+        status=status,
+        work_claimable=False,
+        superseded_by_operator=superseded,
+        consecutive_failures=streak,
+    )
+
+
+def _due_rows(
+    due: list[DueLane],
+) -> list[tuple[datetime, uuid.UUID | None, datetime | None, uuid.UUID | None, str | None]]:
+    return [
+        (
+            candidate.scheduled_for,
+            candidate.existing_run_id,
+            candidate.last_scheduled_for,
+            candidate.superseded_run_id,
+            candidate.supersession,
+        )
+        for candidate in due
+    ]
+
+
+_OLDER_BUCKET = datetime(2026, 8, 28, 12, tzinfo=UTC)
+_CURRENT_BUCKET = datetime(2026, 8, 28, 18, tzinfo=UTC)
+_BUCKET_AFTER_OLDER = datetime(2026, 8, 28, 13, tzinfo=UTC)
+_BUCKET_AFTER_CURRENT = datetime(2026, 8, 28, 19, tzinfo=UTC)
+_COALESCE = "postgres-fire-perimeters"
+_REPLAY = "parquet-drought"
+
+
+@pytest.mark.parametrize("run_status", ["failed", "partial"])
+async def test_the_clock_releases_a_coalesce_lane_at_the_current_bucket_after_an_older_failed_run(
+    monkeypatch: pytest.MonkeyPatch,
+    run_status: str,
+) -> None:
+    latest = _settled(run_status, _OLDER_BUCKET)
+
+    results, due = await _plan_from_checkpoint(monkeypatch, _COALESCE, latest)
+
+    assert results == []
+    assert _due_rows(due) == [(_CURRENT_BUCKET, None, _OLDER_BUCKET, latest.run_id, "clock")]
+
+
+async def test_a_failed_current_bucket_holds_until_the_next_bucket_exists(monkeypatch: pytest.MonkeyPatch) -> None:
+    latest = _settled("failed", _CURRENT_BUCKET)
+
+    results, due = await _plan_from_checkpoint(monkeypatch, _COALESCE, latest)
+
+    assert due == []
+    assert [result.state for result in results] == ["failed"]
+    assert results[0].run_id == latest.run_id
+    assert results[0].handoff_blockers == ()
+    assert results[0].detail is not None
+    assert "logical run is spent" in results[0].detail
+    assert f"bucket {_BUCKET_AFTER_CURRENT.isoformat()} opens by itself" in results[0].detail
+
+
+async def test_three_consecutive_failures_trip_the_breaker_on_a_coalesce_lane(monkeypatch: pytest.MonkeyPatch) -> None:
+    latest = _settled("failed", _OLDER_BUCKET, streak=3)
+
+    results, due = await _plan_from_checkpoint(monkeypatch, _COALESCE, latest)
+
+    assert due == []
+    assert [result.state for result in results] == ["failed"]
+    assert results[0].handoff_blockers == (
+        "operator supersession required: agri-service ops jobs-supersede-run "
+        f"--lane {_COALESCE} --run-id {latest.run_id}",
+    )
+    assert results[0].detail is not None
+    assert "3 consecutive bucket(s) settled without success" in results[0].detail
+
+
+async def test_a_replay_lane_is_held_by_its_first_failure_until_an_operator_records_a_supersession(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    latest = _settled("failed", _OLDER_BUCKET)
+
+    results, due = await _plan_from_checkpoint(monkeypatch, _REPLAY, latest)
+
+    assert due == []
+    assert [result.state for result in results] == ["failed"]
+    assert results[0].handoff_blockers == (
+        "operator supersession required: agri-service ops jobs-supersede-run "
+        f"--lane {_REPLAY} --run-id {latest.run_id}",
+    )
+
+
+async def test_a_replay_lane_resumes_at_the_current_bucket_after_an_operator_superseded_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    latest = _settled("failed", _OLDER_BUCKET, superseded=True)
+
+    results, due = await _plan_from_checkpoint(monkeypatch, _REPLAY, latest)
+
+    # Not the six buckets the hold cost: one bucket, then ordinary fairness against its siblings.
+    assert results == []
+    assert _due_rows(due) == [(_CURRENT_BUCKET, None, _OLDER_BUCKET, latest.run_id, "operator")]
+
+
+async def test_an_operator_supersession_never_reopens_the_failed_bucket_itself(monkeypatch: pytest.MonkeyPatch) -> None:
+    latest = _settled("failed", _CURRENT_BUCKET, superseded=True)
+
+    results, due = await _plan_from_checkpoint(monkeypatch, _REPLAY, latest)
+
+    assert due == []
+    assert [result.state for result in results] == ["failed"]
+    assert results[0].handoff_blockers == ()
+    assert results[0].detail is not None
+    assert f"bucket {_BUCKET_AFTER_CURRENT.isoformat()} opens by itself" in results[0].detail
+
+
+async def test_a_replay_lane_failed_in_the_current_bucket_names_the_supersession_it_will_need(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    latest = _settled("failed", _CURRENT_BUCKET)
+
+    results, _due = await _plan_from_checkpoint(monkeypatch, _REPLAY, latest)
+
+    assert len(results[0].handoff_blockers) == 1
+    assert results[0].detail is not None
+    assert "opens only after a recorded supersession" in results[0].detail
+
+
+def test_judge_failed_checkpoint_follows_the_declared_catch_up_policy_and_the_breaker() -> None:
+    now = datetime(2026, 8, 28, 18, 30, tzinfo=UTC)
+    coalesce = LANE_SPECS[_COALESCE]
+    replay = LANE_SPECS[_REPLAY]
+    assert coalesce.catch_up_policy == "coalesce_latest"
+    assert replay.catch_up_policy == "replay_oldest"
+    judge = job_executor_service.judge_failed_checkpoint
+
+    by_clock = judge(coalesce, _settled("failed", _OLDER_BUCKET, streak=2), now)
+    assert by_clock == job_executor_service.CheckpointVerdict(
+        next_bucket=_CURRENT_BUCKET, newer_bucket_exists=True, release="clock", released=True, consecutive_failures=2
+    )
+    tripped = judge(coalesce, _settled("failed", _OLDER_BUCKET, streak=3), now)
+    assert (tripped.release, tripped.released) == ("operator", False)
+    assert judge(coalesce, _settled("failed", _OLDER_BUCKET, streak=3, superseded=True), now).released is True
+
+    held = judge(replay, _settled("failed", _OLDER_BUCKET), now)
+    assert held == job_executor_service.CheckpointVerdict(
+        next_bucket=_CURRENT_BUCKET,
+        newer_bucket_exists=True,
+        release="operator",
+        released=False,
+        consecutive_failures=1,
+    )
+    assert judge(replay, _settled("failed", _OLDER_BUCKET, superseded=True), now).released is True
+
+    # A streak the query did not report still counts the failed checkpoint itself.
+    assert judge(coalesce, _settled("failed", _OLDER_BUCKET, streak=0), now).consecutive_failures == 1
+
+    # The failed bucket itself is never reopened, whatever releases it; the next one is named instead.
+    current = judge(coalesce, _settled("failed", _CURRENT_BUCKET), now)
+    assert (current.newer_bucket_exists, current.released, current.next_bucket) == (False, False, _BUCKET_AFTER_CURRENT)
+    assert judge(replay, _settled("failed", _CURRENT_BUCKET, superseded=True), now).released is False
+
+
+def test_the_streak_probe_covers_every_breaker_limit_so_the_breaker_can_trip() -> None:
+    # The query caps consecutive_failures at the probe limit; a breaker above it could never fire.
+    limits = job_executor_service.CLOCK_RELEASE_STREAK_LIMIT
+    assert max(limits.values()) <= job_executor_service.FAILURE_STREAK_PROBE_LIMIT
+    assert set(limits) == {"coalesce_latest", "replay_oldest"}
+
+
+def test_bucket_after_is_one_cadence_later_and_refuses_a_lane_without_cadence() -> None:
+    assert job_executor_service.bucket_after(LANE_SPECS[_REPLAY], _OLDER_BUCKET) == _BUCKET_AFTER_OLDER
+    with pytest.raises(ExecutorConfigurationError):
+        job_executor_service.bucket_after(LANE_SPECS["soil-moisture-parquet-backfill"], _OLDER_BUCKET)
+
+
+def test_latest_run_query_reads_operator_supersession_and_the_failure_streak() -> None:
+    query = str(job_executor_service._SELECT_LATEST_RUN)
+    assert "FROM agri.job_incident AS incident" in query
+    assert "CAST(:supersession_fingerprint_prefix AS text) || CAST(run.id AS text)" in query
+    assert "incident.status" not in query
+    assert "AS superseded_by_operator" in query
+    assert "LIMIT CAST(:failure_streak_limit AS integer)" in query
+    assert "AS consecutive_failures" in query
+    # Both are short-circuited for every checkpoint that did not settle without success.
+    assert query.count("run.status IN ('failed', 'partial')") == 2
+
+
+async def test_read_lane_checkpoint_binds_the_probe_limits_and_reads_both_columns() -> None:
+    spec = LANE_SPECS[_REPLAY]
+    captured: dict[str, object] = {}
+    row = {
+        "id": uuid.uuid4(),
+        "job_definition_id": _DEFINITION_ID,
+        "definition_version": job_executor_service.EXECUTOR_DEFINITION_VERSION,
+        "definition_enabled": True,
+        "scheduled_for": _OLDER_BUCKET,
+        "status": "failed",
+        "has_work_items": True,
+        "work_claimable": False,
+        "terminal_items_need_rollup": False,
+        "superseded_by_operator": True,
+        "consecutive_failures": 2,
+    }
+
+    class _Result:
+        def mappings(self) -> _Result:
+            return self
+
+        def first(self) -> dict[str, object]:
+            return row
+
+    class _Session:
+        async def execute(self, _statement: object, parameters: dict[str, object]) -> _Result:
+            captured.update(parameters)
+            return _Result()
+
+    latest = await job_executor_service.read_lane_checkpoint(_Session(), spec)  # type: ignore[arg-type]
+
+    assert latest is not None
+    assert latest.superseded_by_operator is True
+    assert latest.consecutive_failures == 2
+    assert captured == {
+        "name": spec.definition_name,
+        "current_version": job_executor_service.EXECUTOR_DEFINITION_VERSION,
+        "supersession_fingerprint_prefix": job_executor_service.RUN_SUPERSESSION_FINGERPRINT_PREFIX,
+        "failure_streak_limit": job_executor_service.FAILURE_STREAK_PROBE_LIMIT,
+    }

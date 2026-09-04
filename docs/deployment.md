@@ -63,6 +63,28 @@ affected work items; do not clear the dead-letter census merely to make a tick g
 `UpstreamPayloadError: upstream response exceeded the byte limit`; fix or bound the WFIGS payload
 before forcing another run.
 
+**Both of those were repaired in code on 2026-09-02** (`2b4cfef`;
+`conductor/tracks/gapless_parquet_publication_20260901/evidence/p3-runtime-blockers-repair.md`), and on
+2026-09-03 the executor gained the rule that decides how a lane frozen by a dead letter is released --
+never by editing the ledger. A lane whose latest checkpoint run settled `failed`/`partial` follows its
+declared catch-up policy: `coalesce_latest` lanes (source polls, maintenance, matview refresh, cache
+warming) reopen by themselves at the next cadence bucket, the dead letter staying as the record, until
+three consecutive buckets fail and the breaker holds the lane; `replay_oldest` lanes (`parquet-*` gap
+fill, `vegetation-catch-up`, the archive workers) are held by their first failure. The tick reports a
+held lane `failed` with the exact release invocation in its `handoff_blockers`:
+
+```
+agri-service ops jobs-supersede-run --lane <lane> --run-id <run> --evidence "<why>" --operator <who> --apply
+```
+
+It is a dry run without `--apply`, writes exactly one resolved `agri.job_incident` row and nothing else,
+refuses a run that is not the lane's checkpoint or a lane the clock will release by itself, and the
+released lane resumes at the current bucket. Run it from an operator machine as
+`railway run --service plantgeo-job-executor --environment production -- agri-service ops
+jobs-supersede-run …` so the executor's own loader DSN is used. Never `UPDATE agri.job_*` by hand.
+Rationale: `services/agri-data-service/src/agri_data_service/execution/AGENTS.md`, "Failed checkpoints
+are superseded by the clock or by an operator".
+
 ## Phase-one compute boundary
 
 Training, 30-day Monte Carlo forecasts, inference, and long preaggregations run

@@ -1,6 +1,7 @@
 -- Purpose: select the bounded lane-wide run candidate a versioned executor must settle or continue.
 -- Loaded by: agri_data_service.execution.job_executor_service
--- Params: name/current_version (text)
+-- Params: name/current_version (text), supersession_fingerprint_prefix (text),
+--         failure_streak_limit (integer)
 --
 -- The three candidate branches are deliberately index-bounded instead of ranking the complete run
 -- lifetime on every scheduler poll:
@@ -26,6 +27,28 @@
 -- worker's claim/reaper contract. terminal_items_need_rollup identifies the crash boundary where the
 -- child reached succeeded/dead_letter/cancelled but the process died before refreshing its parent run;
 -- the planner must drive the exact definition once more so run_job_slice repairs the authoritative rollup.
+--
+-- The last two columns exist only for a checkpoint that settled 'failed' or 'partial'; both are
+-- short-circuited to a constant for every other status, so the common healthy-lane poll touches
+-- neither job_incident nor a second job_run range.
+--
+--   superseded_by_operator / the operator's release
+--     One agri.job_incident row whose fingerprint is the executor's supersession prefix followed by
+--     this run's id -- a probe of uq_job_incident_fingerprint, never a scan. The fingerprint alone is
+--     the marker: that namespace is written only by `ops jobs-supersede-run`, always as a resolved
+--     incident, so a status predicate here would let an operator "reopening" the incident freeze the
+--     lane with no verb able to release it. The marker is an incident rather than a job_event because
+--     job_event partitions are dropped after 30 days while the evidence must outlive the run it
+--     explains (see execution/AGENTS.md, "Failed checkpoints are superseded by the clock or by an
+--     operator").
+--
+--   consecutive_failures / the clock's breaker
+--     How many of this definition's most recent terminal runs, newest first, settled without success
+--     before one that did not -- the failure streak the planner's breaker reads. Bounded by
+--     failure_streak_limit so it is one backward probe of ix_job_run_definition_created, never a walk
+--     of the run history: the inner query takes the newest N terminal runs, the window function marks
+--     each row whose predecessors (in that newest-first order) all failed too, and the count of marked
+--     rows is the unbroken streak, capped at N.
 WITH prior_version_open AS (
     SELECT run.id,
            run.job_definition_id,
@@ -140,5 +163,32 @@ SELECT run.id,
            FROM agri.job_work_item AS item
            WHERE item.job_run_id = run.id
              AND item.status NOT IN ('succeeded', 'dead_letter', 'cancelled')
-       ) AS terminal_items_need_rollup
+       ) AS terminal_items_need_rollup,
+       run.status IN ('failed', 'partial')
+       AND EXISTS (
+           SELECT 1
+           FROM agri.job_incident AS incident
+           WHERE incident.fingerprint = CAST(:supersession_fingerprint_prefix AS text) || CAST(run.id AS text)
+       ) AS superseded_by_operator,
+       CASE
+           WHEN run.status IN ('failed', 'partial') THEN (
+               SELECT count(*)
+               FROM (
+                   SELECT bool_and(recent.status IN ('failed', 'partial')) OVER (
+                              ORDER BY recent.created_at DESC, recent.id DESC
+                              ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+                          ) AS unbroken
+                   FROM (
+                       SELECT newest.status, newest.created_at, newest.id
+                       FROM agri.job_run AS newest
+                       WHERE newest.job_definition_id = run.job_definition_id
+                         AND newest.status NOT IN ('queued', 'running')
+                       ORDER BY newest.created_at DESC, newest.id DESC
+                       LIMIT CAST(:failure_streak_limit AS integer)
+                   ) AS recent
+               ) AS streak
+               WHERE streak.unbroken
+           )
+           ELSE 0
+       END AS consecutive_failures
 FROM selected_run AS run

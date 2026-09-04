@@ -647,3 +647,17 @@ with a real grep once HEAD has moved; only a consumer may upgrade this to
   ]
 }
 ```
+
+
+## Owner decision 2026-09-04: stop every `postgres-*` executor lane now
+
+- [x] Remove the atomic legacy-owner cutover rule from `parse_activation` (code, 2026-09-04) so the
+      `postgres-*` lanes can leave the allow-list one by one; the legacy writer objects have been fenced
+      since 2026-09-02, so the rule protected nothing.
+- [ ] Once the executor runs that code, remove the ten `postgres-*` lanes and their nine
+      `plantgeo-ingest-cron` acknowledgement tokens from the two executor variables (RUNBOOK step 1b) and
+      record the last ingested day per Postgres-fed layer. Accepted consequence: vegetation,
+      weather-observations and drought stop advancing on the map until their direct writers exist;
+      fire-perimeters, sensors, watersheds and evacuation-zones freeze. Postgres keeps community features.
+- [ ] Charter direct-to-Parquet writers for vegetation (NDVI), weather-observations and drought first (the
+      three map layers the stop freezes), then fire-perimeters, sensors, watersheds, evacuation-zones.

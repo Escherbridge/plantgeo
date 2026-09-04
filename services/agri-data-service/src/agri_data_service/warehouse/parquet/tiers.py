@@ -62,6 +62,7 @@ from typing import TYPE_CHECKING, Final, Literal
 import duckdb
 import polars as pl
 
+from agri_data_service.foundation.parquet.duckdb_extensions import extension_directory_setting
 from agri_data_service.foundation.parquet.paths import validate_layer_slug
 from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS, ZoomTier, validate_zoom_tier
 
@@ -497,7 +498,16 @@ def _restore_resource_guards(session: DuckDBPyConnection, snapshot: Mapping[str,
 
 
 def _load_spatial(session: DuckDBPyConnection) -> None:
-    """Load DuckDB's spatial extension, installing it once on a machine that has never had it."""
+    """Load DuckDB's spatial extension from the image's directory, installing it once on a machine that lacks it.
+
+    The extension directory is set FIRST when the image directory exists: the runtime user's home is
+    `/nonexistent`, so without it both LOAD and INSTALL die on "Can't find the home directory" -- which is
+    exactly how every geometry lane's z9 derivation failed in production on 2026-09-02. See
+    warehouse/parquet/AGENTS.md, "The derivation session and the extension directory".
+    """
+    setting = extension_directory_setting()
+    if setting is not None:
+        session.execute(setting)
     try:
         session.execute("LOAD spatial")
     except duckdb.Error:
