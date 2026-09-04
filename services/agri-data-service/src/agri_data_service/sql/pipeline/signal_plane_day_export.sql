@@ -135,6 +135,11 @@ SELECT
     aggregated.allowed_client_exposure,
     -- The representative point of the CELL, never the location of any individual observation. A
     -- reader must not treat these as where a measurement was taken.
+    --
+    -- Added in commit 8ce71fd (2026-08-24), the same commit that added these two fields to
+    -- `warehouse/parquet/schema.py::SIGNAL_PLANE_SCHEMA`. Base-rung objects this query wrote BEFORE
+    -- that commit do not have these columns and are not retroactively patched by anything -- see
+    -- `warehouse/parquet/AGENTS.md`, "The signal plane" addendum 2026-09-04, for the owed re-export.
     ST_X(cell.centroid) AS cell_longitude,
     ST_Y(cell.centroid) AS cell_latitude
 FROM aggregated

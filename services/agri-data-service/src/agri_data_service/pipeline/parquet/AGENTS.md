@@ -131,16 +131,25 @@ It imports all thirteen lane modules. A module *inside* `pipeline/lanes/` that d
 registry is not a lane** — it is the one module allowed to know all of them, and it lives beside the
 writer they all publish through.
 
-### Four return shapes, one result
+### Three return shapes, one result
 The eleven exporters landed concurrently with divergent signatures. `normalise_export_outcome` folds
 them into `LaneRunResult(part_count, row_count, byte_count, absence_recorded)`:
 
 | exporter shape | lanes | folded by |
 |---|---|---|
 | `ParquetWriteReceipt` | signal, vegetation, weather-observations, water-gauges, sensors | `_from_parts((receipt,))` |
-| `tuple[ParquetWriteReceipt, ...]` | watersheds, evacuation-zones, soil-survey | `_from_parts(receipts)` |
+| `tuple[ParquetWriteReceipt, ...]` | watersheds, evacuation-zones, soil-survey, fire-perimeters | `_from_parts(receipts)` |
 | `ParquetWriteReceipt \| AbsenceWriteReceipt` | fire-detections, burn-severity | `isinstance` dispatch |
-| `FirePerimetersExportOutcome` | fire-perimeters | its own `parts`/`absence` fields |
+
+There was a fourth: `FirePerimetersExportOutcome`, a `parts`-or-`absence` pair unique to
+fire-perimeters. It is **gone as of 2026-09-04**, with the shape that needed it. That lane was
+registered `daily_series` over `geo.features`, which holds one row per WFIGS incident refreshed in
+place, so most calendar days genuinely had no incident dated to them and the exporter recorded a
+governed absence for each — 287 of them beside 45 data days. Re-registered `static_lookup`, its
+partition day is a version stamp its own watermark names, that watermark only names a day it counted
+rows for, and an empty read therefore contradicts the thing that scheduled it. It now returns a plain
+receipt tuple and lets `write_partition`'s `EmptyPartitionError` surface, exactly like its
+current-state sibling `evacuation-zones`.
 
 An **empty** tuple is refused rather than folded: a day that produced no object is a gap, and
 reporting it as a completed export would hide one.
@@ -763,8 +772,11 @@ A failure on the rung half sets `ladder_error` and leaves the base census standi
 export census over a question about coarse rungs would stop a lane from writing days it can write.
 An empty repair set means "every rung is whole", which is the one thing an unreadable listing cannot
 say. **A `stopped` lane still drains its repairs**: `current`, `no_window` and an unread watermark
-are all statements about EXPORTS, and the three `static_lookup` lanes are `current` almost every
-tick, so a queue gated on `stopped` would never once be drained for them. A lane whose export RAISED
+are all statements about EXPORTS, and most `static_lookup` lanes are `current` almost every tick, so
+a queue gated on `stopped` would never once be drained for them. (`fire-perimeters`, static since
+2026-09-04, is the exception that proves the rule is about the DRAIN and not about churn: WFIGS is
+polled hourly, so during fire season its watermark moves most days and it owes a fresh ~23 MB
+snapshot on each of them.) A lane whose export RAISED
 is the exception and drops its repair queue, because something about that lane is wrong and the next
 census re-selects every one of those days anyway.
 

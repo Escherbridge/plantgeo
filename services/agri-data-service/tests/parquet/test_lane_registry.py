@@ -110,7 +110,13 @@ EXPECTED_SLUGS = SOURCE_DIRECT_SLUGS | frozenset(
 
 # Reference data with a VERSION and no time axis: the partition day is a version stamp, so these
 # lanes are watermark-driven rather than schedule-driven and are never forecastable.
-STATIC_LOOKUP_SLUGS = frozenset({"calendar", "evacuation-zones", "soil-survey", "watersheds"})
+#
+# `fire-perimeters` joined this set on 2026-09-04. It had been registered `daily_series` over
+# `geo.features`, which holds one row per WFIGS incident refreshed IN PLACE -- so its partitions were
+# slices of a snapshot along an axis the source does not have: 177 published perimeters spread over
+# 45 partition days, near-empty on any one of them (`conductor/layer-sessions/fire-perimeters.md`,
+# measured 2026-08-25). `evacuation-zones` reads the same table the same way and was always static.
+STATIC_LOOKUP_SLUGS = frozenset({"calendar", "evacuation-zones", "fire-perimeters", "soil-survey", "watersheds"})
 
 # Discrete dated publications: each release IS a dated fact, so the partition day is its own
 # valid/issue date rather than a day anyone observed.

@@ -13,13 +13,19 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 import pyarrow as pa  # type: ignore[import-untyped]
+import pytest
 
 from agri_data_service.config import ObjectStoreCredentials
 from agri_data_service.foundation.parquet.absence import GovernedAbsence
 from agri_data_service.foundation.parquet.completion import PartitionCompletion
-from agri_data_service.foundation.parquet.paths import completion_marker_path
-from agri_data_service.pipeline.parquet.objectstore import ObjectStore
-from agri_data_service.planes.fire_perimeters import fire_perimeters_base_uri, read_fire_perimeters_day
+from agri_data_service.foundation.parquet.paths import absence_marker_path, completion_marker_path, partition_path
+from agri_data_service.pipeline.parquet.objectstore import ABSENCE_CONTENT_TYPE, PARQUET_CONTENT_TYPE, ObjectStore
+from agri_data_service.planes.fire_perimeters import (
+    FirePerimetersServingError,
+    fire_perimeters_base_uri,
+    read_fire_perimeters_day,
+    resolve_fire_perimeters_as_of,
+)
 from agri_data_service.warehouse.schemas.fire_perimeters import FIRE_PERIMETERS_SCHEMA, FIRE_PERIMETERS_STREAM
 from tests.parquet.test_objectstore_writer import (
     BASE_TIER,
@@ -34,8 +40,11 @@ if TYPE_CHECKING:
 # The rung a lane export lands on, and the zoom a viewport asks for to be served it.
 BASE_TIER_REQUEST = BASE_TIER
 
+HISTORY_FLOOR = date(2026, 7, 1)
+AUGUST_FIRST = date(2026, 8, 1)
 AUGUST_SIXTH = date(2026, 8, 6)
 AUGUST_SEVENTH = date(2026, 8, 7)
+AUGUST_TENTH = date(2026, 8, 10)
 FAR_FUTURE_DAY = date(2099, 1, 1)
 EXPECTED_MULTI_PART_ROW_COUNT = 3
 
@@ -43,13 +52,17 @@ EXPECTED_MULTI_PART_ROW_COUNT = 3
 def fire_perimeter_row(
     *,
     unique_fire_identifier: str,
-    observed_day: date = AUGUST_SIXTH,
+    snapshot_day: date = AUGUST_SIXTH,
+    observed_day: date | None = AUGUST_SIXTH,
     geometry_wkb: bytes = b"\x01\x02\x03",
 ) -> dict[str, object]:
     """One row shaped exactly as `FIRE_PERIMETERS_SCHEMA` expects it, mirroring `test_fire_perimeters_lane.py`."""
     return {
         "feature_id": "11111111-1111-1111-1111-111111111111",
         "unique_fire_identifier": unique_fire_identifier,
+        # The version stamp the partition path carries; `observed_day` beside it is the INCIDENT's
+        # own date, which the map's slider filters on and which may legitimately be null.
+        "snapshot_day": snapshot_day,
         "observed_day": observed_day,
         "incident_name": "Example Fire",
         "irwin_id": "irwin-1",
@@ -223,7 +236,7 @@ def test_a_different_day_never_leaks_into_the_answer(tmp_path: Path) -> None:
     store = ObjectStore(backend)
     _write_complete_partition(
         store,
-        fire_perimeters_table([fire_perimeter_row(unique_fire_identifier="2026-CA-000001", observed_day=AUGUST_SIXTH)]),
+        fire_perimeters_table([fire_perimeter_row(unique_fire_identifier="2026-CA-000001", snapshot_day=AUGUST_SIXTH)]),
         kind="observed",
         zoom=BASE_TIER,
         day=AUGUST_SIXTH,
@@ -231,7 +244,7 @@ def test_a_different_day_never_leaks_into_the_answer(tmp_path: Path) -> None:
     _write_complete_partition(
         store,
         fire_perimeters_table(
-            [fire_perimeter_row(unique_fire_identifier="2026-CA-000099", observed_day=AUGUST_SEVENTH)]
+            [fire_perimeter_row(unique_fire_identifier="2026-CA-000099", snapshot_day=AUGUST_SEVENTH)]
         ),
         kind="observed",
         zoom=BASE_TIER,
@@ -338,3 +351,233 @@ def test_a_day_with_parts_but_no_completion_marker_reads_as_zero_rows(tmp_path: 
 
     assert frame.height == 0
     assert frame.columns == list(FIRE_PERIMETERS_SCHEMA.column_names)
+
+
+# --- `resolve_fire_perimeters_as_of`: the newest-at-or-before-D fallback and the observed_day in-frame filter -----
+
+
+def test_not_yet_observed_when_nothing_exists_before_as_of(tmp_path: Path) -> None:
+    store = ObjectStore(RecordingBackend())
+
+    answer = resolve_fire_perimeters_as_of(
+        store,
+        base_uri=str(tmp_path),
+        requested_zoom=BASE_TIER_REQUEST,
+        as_of=AUGUST_SIXTH,
+        history_floor=HISTORY_FLOOR,
+    )
+
+    assert answer.status == "not_yet_observed"
+    assert answer.answered_by_snapshot_day is None
+    assert answer.perimeter_count == 0
+
+
+def test_resolves_to_the_newest_snapshot_at_or_before_as_of_and_names_it(tmp_path: Path) -> None:
+    backend = RecordingBackend()
+    store = ObjectStore(backend)
+    _write_complete_partition(
+        store,
+        fire_perimeters_table(
+            [
+                fire_perimeter_row(
+                    unique_fire_identifier="2026-CA-000001", snapshot_day=AUGUST_FIRST, observed_day=AUGUST_FIRST
+                )
+            ]
+        ),
+        zoom=BASE_TIER,
+        day=AUGUST_FIRST,
+    )
+    materialize_backend(backend, tmp_path)
+
+    answer = resolve_fire_perimeters_as_of(
+        store,
+        base_uri=str(tmp_path),
+        requested_zoom=BASE_TIER_REQUEST,
+        as_of=AUGUST_TENTH,
+        history_floor=HISTORY_FLOOR,
+    )
+
+    assert answer.status == "observed"
+    assert answer.answered_by_snapshot_day == AUGUST_FIRST
+    assert answer.perimeter_count == 1
+    assert str(AUGUST_TENTH) in answer.note
+
+
+def test_an_absence_marker_reads_as_a_quiet_day_not_a_defect(tmp_path: Path) -> None:
+    store = ObjectStore(RecordingBackend())
+    absence = GovernedAbsence(
+        reason="no incident's geo.feature_observation_day fell on this UTC day",
+        upstream_response="0 rows",
+        recorded_at=datetime(2026, 8, 6, 12, tzinfo=UTC),
+        run_id="test-run",
+    )
+    store.write_absence(absence, layer=FIRE_PERIMETERS_STREAM, kind="observed", zoom=BASE_TIER, day=AUGUST_SIXTH)
+
+    answer = resolve_fire_perimeters_as_of(
+        store,
+        base_uri=str(tmp_path),
+        requested_zoom=BASE_TIER_REQUEST,
+        as_of=AUGUST_SIXTH,
+        history_floor=HISTORY_FLOOR,
+    )
+
+    assert answer.status == "observed"
+    assert answer.answered_by_snapshot_day == AUGUST_SIXTH
+    assert answer.perimeter_count == 0
+    assert "quiet-fire-season" in answer.note
+
+
+def test_a_conflict_day_is_refused_rather_than_guessed(tmp_path: Path) -> None:
+    """Only a manual admin action can create this state (layer-lanes.md section 4); the reader
+    must still handle it without silently picking a side.
+    """
+    backend = RecordingBackend()
+    store = ObjectStore(backend)
+    data_key = store.key_for(partition_path(FIRE_PERIMETERS_STREAM, "observed", BASE_TIER, AUGUST_SIXTH))
+    absence_key = store.key_for(absence_marker_path(FIRE_PERIMETERS_STREAM, "observed", BASE_TIER, AUGUST_SIXTH))
+    backend.put(data_key, b"not-real-parquet-bytes", content_type=PARQUET_CONTENT_TYPE)
+    absence = GovernedAbsence(
+        reason="manufactured for the conflict test",
+        upstream_response="n/a",
+        recorded_at=datetime(2026, 8, 6, 12, tzinfo=UTC),
+        run_id="test-run",
+    )
+    backend.put(absence_key, absence.to_json_bytes(), content_type=ABSENCE_CONTENT_TYPE)
+
+    answer = resolve_fire_perimeters_as_of(
+        store,
+        base_uri=str(tmp_path),
+        requested_zoom=BASE_TIER_REQUEST,
+        as_of=AUGUST_SIXTH,
+        history_floor=HISTORY_FLOOR,
+    )
+
+    assert answer.status == "conflicted"
+    assert answer.answered_by_snapshot_day == AUGUST_SIXTH
+    assert answer.perimeter_count == 0
+
+
+def test_history_floor_after_as_of_is_rejected() -> None:
+    store = ObjectStore(RecordingBackend())
+
+    with pytest.raises(FirePerimetersServingError, match="history_floor"):
+        resolve_fire_perimeters_as_of(
+            store,
+            base_uri="unused",
+            requested_zoom=BASE_TIER_REQUEST,
+            as_of=HISTORY_FLOOR,
+            history_floor=AUGUST_SIXTH,
+        )
+
+
+def test_an_incomplete_snapshot_is_not_the_newest_answerable_day(tmp_path: Path) -> None:
+    """A day holding part files without a completion marker was killed mid-upload; its parts are a
+    prefix of the day, not the day, and must never be counted as the newest answerable snapshot.
+    """
+    backend = RecordingBackend()
+    store = ObjectStore(backend)
+    _write_complete_partition(
+        store,
+        fire_perimeters_table(
+            [
+                fire_perimeter_row(
+                    unique_fire_identifier="2026-CA-000001", snapshot_day=AUGUST_FIRST, observed_day=AUGUST_FIRST
+                )
+            ]
+        ),
+        zoom=BASE_TIER,
+        day=AUGUST_FIRST,
+    )
+    # A later day's part file with no completion marker: a killed upload, not a published snapshot.
+    incomplete_table = fire_perimeters_table(
+        [
+            fire_perimeter_row(
+                unique_fire_identifier="2026-CA-000099", snapshot_day=AUGUST_SIXTH, observed_day=AUGUST_SIXTH
+            )
+        ]
+    )
+    store.write_partition(
+        incomplete_table, layer=FIRE_PERIMETERS_STREAM, kind="observed", zoom=BASE_TIER, day=AUGUST_SIXTH
+    )
+    materialize_backend(backend, tmp_path)
+
+    answer = resolve_fire_perimeters_as_of(
+        store,
+        base_uri=str(tmp_path),
+        requested_zoom=BASE_TIER_REQUEST,
+        as_of=AUGUST_TENTH,
+        history_floor=HISTORY_FLOOR,
+    )
+
+    assert answer.status == "observed"
+    assert answer.answered_by_snapshot_day == AUGUST_FIRST  # not AUGUST_SIXTH
+
+
+def test_an_undated_incident_is_kept_at_every_date_while_a_future_dated_one_is_hidden(tmp_path: Path) -> None:
+    """Reproduces `src/lib/map/tile-layer-date-filter.ts`'s "at or before, plus every undated row" rule
+    server-side, which is the whole reason the old `= :observed_day` equality filter was retired.
+    """
+    backend = RecordingBackend()
+    store = ObjectStore(backend)
+    _write_complete_partition(
+        store,
+        fire_perimeters_table(
+            [
+                fire_perimeter_row(
+                    unique_fire_identifier="past-dated", snapshot_day=AUGUST_FIRST, observed_day=AUGUST_FIRST
+                ),
+                fire_perimeter_row(
+                    unique_fire_identifier="future-dated", snapshot_day=AUGUST_FIRST, observed_day=FAR_FUTURE_DAY
+                ),
+                fire_perimeter_row(unique_fire_identifier="undated", snapshot_day=AUGUST_FIRST, observed_day=None),
+            ]
+        ),
+        zoom=BASE_TIER,
+        day=AUGUST_FIRST,
+    )
+    materialize_backend(backend, tmp_path)
+
+    answer = resolve_fire_perimeters_as_of(
+        store,
+        base_uri=str(tmp_path),
+        requested_zoom=BASE_TIER_REQUEST,
+        as_of=AUGUST_TENTH,
+        history_floor=HISTORY_FLOOR,
+    )
+
+    assert sorted(answer.perimeters["unique_fire_identifier"].to_list()) == ["past-dated", "undated"]
+
+
+def test_the_in_frame_filter_uses_the_requested_as_of_not_the_answering_snapshot_day(tmp_path: Path) -> None:
+    """A snapshot answering an earlier day than requested still filters against the CALLER's slider
+    date, not the day the snapshot happened to be captured on.
+    """
+    backend = RecordingBackend()
+    store = ObjectStore(backend)
+    _write_complete_partition(
+        store,
+        fire_perimeters_table(
+            [
+                fire_perimeter_row(
+                    unique_fire_identifier="2026-CA-000001", snapshot_day=AUGUST_FIRST, observed_day=AUGUST_SIXTH
+                )
+            ]
+        ),
+        zoom=BASE_TIER,
+        day=AUGUST_FIRST,
+    )
+    materialize_backend(backend, tmp_path)
+
+    before_the_observed_day = resolve_fire_perimeters_as_of(
+        store, base_uri=str(tmp_path), requested_zoom=BASE_TIER_REQUEST, as_of=AUGUST_FIRST, history_floor=HISTORY_FLOOR
+    )
+    at_or_after_the_observed_day = resolve_fire_perimeters_as_of(
+        store, base_uri=str(tmp_path), requested_zoom=BASE_TIER_REQUEST, as_of=AUGUST_TENTH, history_floor=HISTORY_FLOOR
+    )
+
+    # Both calls resolve to the SAME snapshot (it is the only one written); only `as_of` differs,
+    # and that alone is what flips the incident from hidden to visible.
+    assert before_the_observed_day.answered_by_snapshot_day == AUGUST_FIRST
+    assert before_the_observed_day.perimeter_count == 0
+    assert at_or_after_the_observed_day.answered_by_snapshot_day == AUGUST_FIRST
+    assert at_or_after_the_observed_day.perimeter_count == 1

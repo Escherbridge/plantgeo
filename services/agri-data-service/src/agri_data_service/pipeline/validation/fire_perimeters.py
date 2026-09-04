@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 
 from agri_data_service.ingest.http import upstream_client
 from agri_data_service.ingest.wfigs import WFIGS_BOUNDS, fetch_fire_perimeters
-from agri_data_service.pipeline.lanes.fire_perimeters import read_fire_perimeters_day
+from agri_data_service.pipeline.lanes.fire_perimeters import read_fire_perimeters_snapshot
 from agri_data_service.warehouse.schemas.fire_perimeters import FIRE_PERIMETERS_STREAM
 
 if TYPE_CHECKING:
@@ -105,17 +105,22 @@ async def reconcile_fire_perimeters_day(
 ) -> FirePerimetersReconciliation:
     """Compare one day's export against a fresh WFIGS `_Current` fetch for the same bbox.
 
-    The written side reuses `pipeline.lanes.fire_perimeters.read_fire_perimeters_day` -- the exact
-    `geo.feature_observation_day` scoping the exporter itself writes with -- rather than a second,
-    independently-scoped query. `geo.features` holds one row per incident refreshed in place, not
-    one row per (incident, day); recomputing the day any other way reports the same snapshot as
-    "today" on every run and is a phantom agreement, not a validation
-    (`docs/lanes/fire-perimeters.md` #4). The source side reuses
+    The written side reuses `pipeline.lanes.fire_perimeters.read_fire_perimeters_snapshot` -- the
+    exact population the exporter itself writes -- rather than a second, independently-scoped query.
+
+    THE COMPARISON WIDENED ON 2026-09-04 AND ITS EXPECTED ANSWER CHANGED WITH IT. The lane was
+    re-registered `static_lookup`, so the written side is now the whole standing set rather than the
+    incidents whose own `geo.feature_observation_day` named `day`. Because closed incidents are
+    never deleted from `geo.features` (`docs/lanes/fire-perimeters.md` #5), that set legitimately
+    contains perimeters WFIGS `_Current` no longer reports, and `missing_from_source` is therefore
+    expected to be non-empty by construction -- the properties below still describe the old,
+    same-day reading and are owed a rewrite by this module's owner before it is wired to anything.
+    Nothing calls `reconcile_fire_perimeters_day` today. The source side reuses
     `agri_data_service.ingest.wfigs.fetch_fire_perimeters`, the exact paged, bounded, retrying fetch
     the ingest job itself runs, so this reconciliation issues the request production already trusts
     rather than a second, possibly-drifted one.
     """
-    exported = await read_fire_perimeters_day(session, day=day)
+    exported = await read_fire_perimeters_snapshot(session, snapshot_day=day)
     written_ids: frozenset[str] = frozenset(exported.column("unique_fire_identifier").to_pylist())
     if client is None:
         async with upstream_client(WFIGS_BOUNDS) as owned_client:

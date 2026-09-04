@@ -88,7 +88,7 @@ interface ParquetCapabilityContract {
 const DIRECT_PARQUET_CAPABILITIES = [
   { layerName: SLIDER_STREAM_LAYER_NAMES.drought, temporalKind: "daily_series", parquetNature: "release_series", servingReader: "parquet", parquetLanes: ["drought"] },
   { layerName: "fire-detections", temporalKind: "event", parquetNature: "daily_series", servingReader: "parquet", parquetLanes: ["fire-detections"] },
-  { layerName: "fire-perimeters", temporalKind: "event", parquetNature: "daily_series", servingReader: "postgresql", parquetLanes: ["fire-perimeters"] },
+  { layerName: "fire-perimeters", temporalKind: "event", parquetNature: "static_lookup", servingReader: "parquet", parquetLanes: ["fire-perimeters"] },
   {
     layerName: "water-gauges",
     temporalKind: "daily_series",

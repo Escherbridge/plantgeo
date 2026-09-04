@@ -274,6 +274,12 @@ function createFakeMap() {
     isStyleLoaded: () => true,
     getLayer: () => true,
     setLayoutProperty: () => {},
+    // The four Parquet-fed GeoJSON sources LayerManager fills for the style-baked layers that
+    // left Martin in wave C. `undefined` is the honest answer from a map with no style spec
+    // behind it, and `applyParquetFeatureData` skips a missing source rather than erroring --
+    // the same guard `applyVisibility` gets from `getLayer`. Without the method at all the fake
+    // throws before any query runs, which is what these cases exist to observe.
+    getSource: () => undefined,
     // LayerManager's opacity applier writes every style-baked layer on style.load and again
     // once the style settles; without this the fake map throws before any query runs.
     setPaintProperty: () => {},

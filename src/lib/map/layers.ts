@@ -65,12 +65,25 @@ function interpolateStops(
 // answered (fire_risk_tiles, measured against production 2026-08-20) blanked all six
 // layers rather than only its own. Each id must exist in DYNAMIC_TILE_SOURCE_IDS
 // (src/lib/map/sources.ts), which is what actually declares the source in the style.
-const FIRE_RISK_SOURCE = "fire_risk_tiles";
-const SENSOR_SOURCE = "sensor_tiles";
-const EVACUATION_ZONE_SOURCE = "evacuation_zone_tiles";
-const BURN_SEVERITY_SOURCE = "burn_severity_tiles";
+//
+// ONE of these is left. Sensors, evacuation zones, burn severity and watersheds moved to the
+// Parquet-fed GeoJSON sources below in wave C of environmental_postgres_retirement_20260904, and
+// fire perimeters followed once its lane was re-registered as the snapshot it is -- so their
+// layers carry NO `source-layer`: that key is required for a vector source and PROHIBITED for
+// every other kind, and MapLibre rejects the layer outright when it is present on a geojson
+// source. That rejection is silent -- a blank layer with nothing in the console -- which is why
+// removing the key is part of the repoint and not a tidy-up afterwards. The paint, the layer ids,
+// the legends and the hover formatters are all unchanged -- only the bytes' origin moved.
 const INTERVENTION_SOURCE = "intervention_tiles";
-const WATERSHED_SOURCE = "watershed_tiles";
+
+// The Parquet-fed GeoJSON sources, declared empty in styles.ts and filled by LayerManager.
+// Named for the features they hold rather than for a tile function, because there is no longer a
+// tile function behind them; see PARQUET_FEATURE_SOURCE_IDS in src/lib/map/sources.ts.
+const SENSOR_SOURCE = "sensor-station-features";
+const EVACUATION_ZONE_SOURCE = "evacuation-zone-features";
+const BURN_SEVERITY_SOURCE = "burn-severity-features";
+const WATERSHED_SOURCE = "watershed-features";
+const FIRE_PERIMETER_SOURCE = "fire-perimeter-features";
 // Table-backed OSM tiles live in a separate composite: mixing them with the
 // function sources makes Martin declare vector_layers, which MapLibre then
 // validates against and rejects every function-backed layer. See sources.ts.
@@ -89,12 +102,7 @@ const OSM_SOURCE = "martin-osm";
  * several style layers (fill + outline + points) that all share a single source.
  */
 export const MARTIN_SOURCE_BY_LAYER_TOGGLE: Readonly<Partial<Record<LayerToggleId, string>>> = {
-  "fire-perimeters": FIRE_RISK_SOURCE,
-  sensors: SENSOR_SOURCE,
-  "evacuation-zones": EVACUATION_ZONE_SOURCE,
-  "burn-severity": BURN_SEVERITY_SOURCE,
   interventions: INTERVENTION_SOURCE,
-  watersheds: WATERSHED_SOURCE,
 };
 
 // GeoJSON source for the tRPC-fed layer at the bottom of this file. It is not declared in
@@ -170,8 +178,7 @@ export const FIRE_PERIMETER_OUTLINE_COLOR = "#dc2626";
 export const firePerimetersLayer: LayerSpecification = {
   id: "fire-perimeters",
   type: "fill",
-  source: FIRE_RISK_SOURCE,
-  "source-layer": "fire_risk",
+  source: FIRE_PERIMETER_SOURCE,
   minzoom: 4,
   layout: { visibility: "none" },
   paint: {
@@ -187,8 +194,7 @@ export const firePerimetersLayer: LayerSpecification = {
 export const firePerimetersOutlineLayer: LayerSpecification = {
   id: "fire-perimeters-outline",
   type: "line",
-  source: FIRE_RISK_SOURCE,
-  "source-layer": "fire_risk",
+  source: FIRE_PERIMETER_SOURCE,
   minzoom: 4,
   layout: { visibility: "none" },
   paint: {
@@ -200,12 +206,13 @@ export const firePerimetersOutlineLayer: LayerSpecification = {
 // "network" is the only sensor property the producer guarantees on every row:
 // sensors.py._matches_networks rejects a station before collection unless its
 // network matches the configured roster (ASOS/ASOS-HFM/RAWS/NonFedAWOS), so it
-// is never optional the way station_name is. The fix to geo.sensor_tiles()'s
-// SELECT list is written (drizzle/0010_sensor_tile_properties.sql), but not yet
-// applied to production -- prod is migrated only through 0008 -- so until that
-// migration runs, the live function still emits sensor_type/status/name, none
-// of which any producer populates, and this layer keeps rendering every
-// station in the neutral grey fallback. See src/components/map/AGENTS.md.
+// is never optional the way station_name is.
+//
+// It is populated now. The tile function this layer read until wave C projected
+// sensor_type/status/name -- none of which any producer writes -- so every station drew in
+// the neutral grey fallback, and drizzle/0010_sensor_tile_properties.sql's fix sat unapplied.
+// `presentParquetSensorStations` emits `network` off the lane's own column, so the fallback
+// below is now what it says it is: a station whose network the producer really did not report.
 export const SENSOR_NETWORK_CLASSES: readonly StyleClass[] = [
   { value: "ASOS", color: "#0ea5e9", label: "ASOS" },
   { value: "ASOS-HFM", color: "#0284c7", label: "ASOS-HFM" },
@@ -213,14 +220,13 @@ export const SENSOR_NETWORK_CLASSES: readonly StyleClass[] = [
   { value: "NonFedAWOS", color: "#22c55e", label: "NonFedAWOS" },
 ];
 
-/** Every station reads this until 0010 reaches production -- see the note above. */
+/** The caption for a station whose network the roster filter let through unnamed. */
 export const SENSOR_UNCLASSIFIED_LABEL = "Network not reported";
 
 export const sensorsLayer: LayerSpecification = {
   id: "sensors",
   type: "circle",
   source: SENSOR_SOURCE,
-  "source-layer": "sensors",
   minzoom: 4,
   layout: { visibility: "none" },
   paint: {
@@ -251,7 +257,6 @@ export const evacuationZonesLayer: LayerSpecification = {
   id: "evacuation-zones",
   type: "fill",
   source: EVACUATION_ZONE_SOURCE,
-  "source-layer": "evacuation_zones",
   minzoom: 4,
   layout: { visibility: "none" },
   paint: {
@@ -268,7 +273,6 @@ export const evacuationZonesOutlineLayer: LayerSpecification = {
   id: "evacuation-zones-outline",
   type: "line",
   source: EVACUATION_ZONE_SOURCE,
-  "source-layer": "evacuation_zones",
   minzoom: 4,
   layout: { visibility: "none" },
   paint: {
@@ -277,8 +281,10 @@ export const evacuationZonesOutlineLayer: LayerSpecification = {
   },
 };
 
-// MTBS burned-area boundaries, served by geo.burn_severity_tiles()
-// (drizzle/0012_burn_severity_tiles.sql). Painted on "acres" and deliberately NOT on
+// MTBS burned-area boundaries, read from the `burn-severity` Parquet lane through
+// `environmental.getBurnSeverity` since wave C; `geo.burn_severity_tiles()`
+// (drizzle/0012_burn_severity_tiles.sql) drew them until then, at 2,341,323 vertices / 37.5 MB /
+// 28.4 s cold for one unsimplified read of the whole layer. Painted on "acres" and NOT on
 // "severity_class": that column is null on all 478 published rows, because MTBS
 // distributes burn severity as a thematic raster and publishes no polygon-level class
 // (see mtbs.py MtbsBurnSeverityRecord.severity_class -- null there means "the source
@@ -309,7 +315,6 @@ export const burnSeverityLayer: LayerSpecification = {
   id: "burn-severity",
   type: "fill",
   source: BURN_SEVERITY_SOURCE,
-  "source-layer": "burn_severity",
   minzoom: 4,
   layout: { visibility: "none" },
   paint: {
@@ -329,7 +334,6 @@ export const burnSeverityOutlineLayer: LayerSpecification = {
   id: "burn-severity-outline",
   type: "line",
   source: BURN_SEVERITY_SOURCE,
-  "source-layer": "burn_severity",
   minzoom: 4,
   layout: { visibility: "none" },
   paint: {
@@ -431,10 +435,10 @@ export const interventionsPointsLayer: LayerSpecification = {
   },
 };
 
-// USGS WBD HUC12 boundaries, served by geo.watershed_tiles()
-// (drizzle/0017_watershed_persistence.sql), whose ST_AsMVT tag -- and so the
-// `source-layer` below -- is exactly "watersheds"; a mismatch renders nothing and reports
-// no error. Painted flat rather than data-driven: a basin boundary carries no measurement,
+// USGS WBD HUC12 boundaries, read from the `watersheds` Parquet lane through
+// `environmental.getWatershedBoundaries` since wave C; geo.watershed_tiles()
+// (drizzle/0017_watershed_persistence.sql, generalized by 0023) drew them until then.
+// Painted flat rather than data-driven: a basin boundary carries no measurement,
 // only identity (huc12/name/areasqkm/tohuc/states/hutype), so there is no class or ramp to
 // key a colour to the way "severity" keys evacuation zones.
 //
@@ -448,17 +452,18 @@ export const interventionsPointsLayer: LayerSpecification = {
 // was not. A layer that vanishes below a zoom is indistinguishable from a layer with no data,
 // and that is the confusion this platform keeps having to correct.
 //
-// The tile function now answers each zoom with the rung of the HUC hierarchy that zoom can
-// legibly draw — HUC4 far out through HUC12 close in, each level the exact union of its
-// members — so a low-zoom tile carries tens of polygons instead of thousands and the layer is
-// visible everywhere. Payload is bounded by the generalization, not by hiding the layer.
+// The remedy survives the cutover, one rung coarser at the extremes. geo.watershed_tiles routed
+// z>=10 to HUC12, z>=8 to HUC10, z>=6 to HUC8, z>=4 to HUC6 and below that HUC4; the Parquet
+// ladder publishes four rungs -- z13=HUC12, z9=HUC10, z5=HUC8, z0=HUC6 -- so z10-z12 now draws
+// HUC10 where it drew HUC12, and z0-z3 draws HUC6 where it drew HUC4. Payload is still bounded by
+// the generalization rather than by hiding the layer, and the reader states the rung it served
+// (`hucLevel`) so a rollup can never be captioned as a basin.
 export const WATERSHED_BOUNDARY_COLOR = "#1565c0";
 
 export const watershedsLayer: LayerSpecification = {
   id: "watersheds-fill",
   type: "fill",
   source: WATERSHED_SOURCE,
-  "source-layer": "watersheds",
   layout: { visibility: "none" },
   paint: {
     "fill-color": WATERSHED_BOUNDARY_COLOR,
@@ -473,7 +478,6 @@ export const watershedsOutlineLayer: LayerSpecification = {
   id: "watersheds-outline",
   type: "line",
   source: WATERSHED_SOURCE,
-  "source-layer": "watersheds",
   layout: { visibility: "none" },
   paint: {
     "line-color": WATERSHED_BOUNDARY_COLOR,

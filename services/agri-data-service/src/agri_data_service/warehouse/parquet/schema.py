@@ -192,9 +192,15 @@ SIGNAL_PLANE_SCHEMA: Final = register_stream_schema(
                 pa.field("coverage_fraction", pa.float64(), nullable=True),
                 pa.field("allowed_client_exposure", pa.bool_(), nullable=True),
                 # Cell position from `agri.spatial_cell.centroid`, the representative point of the
-                # grid this cell belongs to. Populated on 1,965 of 1,965 production rows (enrichment
-                # reference, measured 2026-08-23). Holds the cell ORIGIN's centroid, not any single
-                # observation's location.
+                # grid this cell belongs to. Holds the cell ORIGIN's centroid, not any single
+                # observation's location. The 2026-08-23 "1,965 of 1,965 production rows" figure this
+                # comment used to cite was a pre-deploy reference measurement, not a claim about
+                # already-published Parquet objects, and got mis-read as one -- CORRECTED 2026-09-04:
+                # every `layer=signal/kind=observed` base-rung object written before commit `8ce71fd`
+                # (2026-08-24, the commit that added these two fields to both this schema and
+                # `sql/pipeline/signal_plane_day_export.sql` in the same change) structurally lacks
+                # both columns and needs re-export. See `AGENTS.md`, "The signal plane", for the full
+                # mechanism, the owed re-export, and the `agri.spatial_cell` dependency this join adds.
                 pa.field("cell_longitude", pa.float64(), nullable=False),
                 pa.field("cell_latitude", pa.float64(), nullable=False),
             ]

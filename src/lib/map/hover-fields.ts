@@ -221,8 +221,10 @@ function formatFirePerimeter(props: Properties): HoverContent | null {
 
 /**
  * One MTBS burned-area boundary. Field names are the MVT attributes
- * `geo.burn_severity_tiles()` emits (snake_case: `fire_name`, `fire_year`, `severity_class`),
- * not the camelCase keys the `geo.features` JSONB holds them under.
+ * `geo.burn_severity_tiles()` emitted (snake_case: `fire_name`, `fire_year`, `severity_class`),
+ * not the camelCase keys the `geo.features` JSONB holds them under. The tile function is gone from
+ * this layer's path as of wave C; `presentParquetBurnSeverity` rebuilds exactly that vocabulary
+ * from the Parquet lane, which is why this formatter is unchanged.
  *
  * `severity_class` is read but is null on every published row -- MTBS distributes burn severity
  * as a thematic raster and publishes no polygon-level class, which is why `burnSeverityLayer`

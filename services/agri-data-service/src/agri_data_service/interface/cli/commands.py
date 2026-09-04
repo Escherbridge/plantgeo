@@ -339,6 +339,16 @@ from agri_data_service.pipeline.parquet.objectstore import (
     ObjectStoreBackend,
     ParquetWriteError,
 )
+from agri_data_service.pipeline.parquet.signal_rewrite import (
+    SIGNAL_REWRITE_MAX_ATTEMPTS,
+    SIGNAL_REWRITE_MAX_DAYS,
+    SIGNAL_REWRITE_MAX_RETRY_SECONDS,
+    SignalRewriteDayResult,
+    SignalRewriteManifest,
+    SignalRewriteSummary,
+    load_signal_rewrite_manifest,
+    rewrite_signal_manifest,
+)
 from agri_data_service.pipeline.parquet.vegetation_absence import (
     ABSENCE_WRITE_ATTEMPTS,
     VegetationAbsenceLadderReport,
@@ -4047,6 +4057,44 @@ async def _parquet_rewrite_vegetation(  # noqa: PLR0913 - explicit operator cont
         )
 
 
+async def _parquet_rewrite_signal(  # noqa: PLR0913 - explicit operator controls
+    manifest: SignalRewriteManifest,
+    *,
+    run_id: str,
+    dry_run: bool,
+    max_attempts: int,
+    retry_base_seconds: float,
+    stream_progress: bool,
+) -> SignalRewriteSummary:
+    """Open one pinned loader session and hold each existing lane-day lock around its rewrite.
+
+    No publication barrier here, unlike `_parquet_rewrite_vegetation`: the signal plane has no
+    `pipeline/direct/` writer, so there is no concurrent publication queue for this rewrite to be
+    serialized against -- the lane-day advisory lock `rewrite_signal_manifest` takes per day is the
+    whole of the coordination this destructive operation needs.
+    """
+    loader_database_url = settings.require_local_source_loader_database_url()
+    store = ObjectStore.from_settings()
+
+    def announce(result: SignalRewriteDayResult) -> None:
+        click.echo(
+            json.dumps({"event": "signal_rewrite_day", **result.to_report()}, sort_keys=True),
+            err=True,
+        )
+
+    async with local_source_loader_session(loader_database_url) as session:
+        return await rewrite_signal_manifest(
+            session,
+            store,
+            manifest=manifest,
+            run_id=run_id,
+            dry_run=dry_run,
+            max_attempts=max_attempts,
+            retry_base_seconds=retry_base_seconds,
+            on_day=announce if stream_progress else None,
+        )
+
+
 async def _parquet_forward_changed_vegetation(  # noqa: PLR0913 - explicit operator controls
     *,
     since: datetime,
@@ -4631,6 +4679,104 @@ def parquet_rewrite_vegetation(  # noqa: PLR0913 - the six flags are the destruc
         )
     except SQLAlchemyError as exc:
         raise click.ClickException("vegetation rewrite could not reach the loader database") from exc
+    except (OSError, ParquetWriteError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(json.dumps(summary.to_report(), sort_keys=True))
+    if summary.failed:
+        context.exit(_GAP_FILL_FAILED_EXIT_CODE)
+
+
+@click.command("parquet-rewrite-signal")
+@click.option(
+    "--manifest",
+    "manifest_path",
+    type=click.Path(path_type=Path, exists=True, dir_okay=False, readable=True),
+    required=True,
+    help="Pinned JSON manifest containing only schema_version, layer=signal, kind=observed, and a sorted "
+    "unique days array.",
+)
+@click.option(
+    "--expected-day-count",
+    type=click.IntRange(min=1, max=SIGNAL_REWRITE_MAX_DAYS),
+    required=True,
+    help="Independent exact count of manifest days. A mismatch refuses the operation before any lock or listing.",
+)
+@click.option(
+    "--manifest-sha256",
+    required=True,
+    help="Independent lowercase SHA-256 of the manifest's raw bytes. The file is read once and must match exactly.",
+)
+@click.option(
+    "--apply",
+    is_flag=True,
+    help="Retract the approved partitions. Without this flag the command locks and preflights every day but deletes "
+    "nothing.",
+)
+@click.option(
+    "--max-attempts",
+    type=click.IntRange(min=1, max=SIGNAL_REWRITE_MAX_ATTEMPTS),
+    default=3,
+    show_default=True,
+    help="Bounded attempts for each object-store preflight or tier retraction.",
+)
+@click.option(
+    "--retry-base-seconds",
+    type=click.FloatRange(min=0.0, max=SIGNAL_REWRITE_MAX_RETRY_SECONDS),
+    default=1.0,
+    show_default=True,
+    help="Base exponential retry delay, capped at 30 seconds. Zero keeps the retry count but omits sleeping.",
+)
+@click.option(
+    "--progress/--no-progress",
+    default=True,
+    show_default=True,
+    help="Write one structured JSON result per manifest day to STDERR; the final JSON summary stays on STDOUT.",
+)
+@click.pass_context
+def parquet_rewrite_signal(  # noqa: PLR0913 - the six flags are the destructive operation's guard set
+    context: click.Context,
+    manifest_path: Path,
+    expected_day_count: int,
+    manifest_sha256: str,
+    apply: bool,
+    max_attempts: int,
+    retry_base_seconds: float,
+    progress: bool,
+) -> None:
+    """Retract only pinned legacy signal days so the missing drain can rewrite them.
+
+    The command is restricted to signal/observed and the complete z13/z9/z5/z0 ladder. It accepts a
+    completed z13 partition only when its schema is the exact legacy shape missing both cell
+    coordinate fields (and carrying the old non-null `cell_id`). A cleanly missing z13 day is
+    accepted as a resumable checkpoint; a current-schema, absent, conflicted, incomplete, or
+    marker-only day is refused.
+
+    Dry-run is the default. `--apply` is the only path that removes objects. Rerun the same pinned
+    manifest after interruption: tiers already removed are no-ops, and remaining tiers are retired
+    under the same advisory lock the exporter and ladder repair use.
+
+    Operator sequence: this command, then `parquet-drain --layer signal --selection missing` to
+    re-export the base rung with positions, then `parquet-drain --layer signal --selection ladder`
+    to derive z9/z5/z0.
+    """
+    try:
+        manifest = load_signal_rewrite_manifest(
+            manifest_path,
+            expected_day_count=expected_day_count,
+            expected_sha256=manifest_sha256,
+        )
+        summary = asyncio.run(
+            _parquet_rewrite_signal(
+                manifest,
+                run_id=f"parquet-rewrite-signal:{uuid.uuid4()}",
+                dry_run=not apply,
+                max_attempts=max_attempts,
+                retry_base_seconds=retry_base_seconds,
+                stream_progress=progress,
+            )
+        )
+    except SQLAlchemyError as exc:
+        raise click.ClickException("signal rewrite could not reach the loader database") from exc
     except (OSError, ParquetWriteError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
     click.echo(json.dumps(summary.to_report(), sort_keys=True))

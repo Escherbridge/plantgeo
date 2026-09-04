@@ -375,7 +375,7 @@ async def _build_coverage_payload(generated_at: datetime) -> dict[str, object]:
 
     TWO KINDS OF LISTING SURVIVE UNDER `availability`, AND BOTH ARE NAMED HERE RATHER THAN GLOSSED.
     A `static_lookup` lane has no time axis, therefore owns no index (`layer-lanes.md` 4a), and stays
-    on the listing census under both policies: three lanes, three prefixes. Beside them,
+    on the listing census under both policies: four lanes, four prefixes. Beside them,
     `snapshot_products._verified_lane_daily_receipts` lists `<data-root>/_verification/` once per
     `daily`-layout forward product on a snapshot-coverage cache MISS -- two products, two bounded
     listings, over a manifest-declared marker count rather than a day range. Every other daily and

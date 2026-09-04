@@ -404,12 +404,17 @@ const STATIC_LAYER_LEGENDS: Partial<Record<LayerToggleId, LayerLegendSpec>> = {
         outlineColor: WATERSHED_BOUNDARY_COLOR,
       },
       { kind: "note", text: "Boundaries only: the fill carries no measurement." },
-      // Said here because the toggle is reachable at every zoom while the layer is not, and
-      // a switched-on layer drawing nothing is otherwise indistinguishable from a broken
-      // one. The floor is a measured tile-weight bound -- see watershedsLayer in layers.ts.
+      // Corrected 2026-09-04. This note claimed "Drawn from zoom 7 in; below that the HUC12
+      // outlines are too heavy to serve", which had been false since
+      // drizzle/0023_watershed_zoom_generalization removed the minzoom: `watershedsLayer` and
+      // `watershedsOutlineLayer` carry none, and payload is bounded by drawing a coarser HUC rung
+      // rather than by hiding the layer. A legend that reports a floor the map does not have is
+      // the same confusion the floor's removal existed to end -- a reader zooms out, sees basins,
+      // and stops trusting the legend. What the note says now is what the reader is looking at:
+      // the shape changes with the zoom, and it is a real parent basin rather than a grouping.
       {
         kind: "note",
-        text: "Drawn from zoom 7 in; below that the HUC12 outlines are too heavy to serve.",
+        text: "Zoomed out, basins merge into their parent HUC10, HUC8 and HUC6 boundaries.",
       },
     ],
   },

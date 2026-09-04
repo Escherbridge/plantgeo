@@ -99,8 +99,9 @@ describe('layer registry derivations', () => {
     // nothing. Row counts stay out of here deliberately -- ingestion moves them.
     expect(toggleIdForWarehouseLayerName('evacuation-zones')).toBe('evacuation-zones')
     expect(toggleIdForWarehouseLayerName('sensors')).toBe('sensors')
-    // Claimed only once the render path moved off the tRPC proxy and onto
-    // geo.watershed_tiles(): the name is a claim about what the toggle DRAWS.
+    // Claimed only once the render path moved off the tRPC proxy and onto the published
+    // boundary set -- geo.watershed_tiles() until wave C, the Parquet lane since: the name is a
+    // claim about what the toggle DRAWS.
     expect(toggleIdForWarehouseLayerName('watersheds')).toBe('watersheds')
   })
 

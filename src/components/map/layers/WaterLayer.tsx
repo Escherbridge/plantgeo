@@ -147,7 +147,9 @@ interface WaterLayerProps {
    * The reader's MULTIPLIER over both authored strengths above, from
    * `layer-store.layerOpacity.water`. Both circle layers belong to the one `water` toggle, so
    * they take one scalar; watersheds is a separate toggle and is no longer drawn here at all
-   * (it moved onto the baked `geo.watershed_tiles()` style layers).
+   * (it moved onto the baked `watersheds-fill`/`watersheds-outline` style layers, which read the
+   * Parquet lane through `environmental.getWatershedBoundaries` since wave C and read
+   * `geo.watershed_tiles()` before that).
    */
   opacityScale?: number;
 }

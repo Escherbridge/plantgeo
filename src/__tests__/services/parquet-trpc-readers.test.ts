@@ -26,13 +26,18 @@ import {
   ParquetPlaneRequestError,
 } from "@/lib/server/services/parquet-plane-client";
 import {
+  getParquetBurnSeverity,
   getParquetDrought,
   getParquetClimateField,
+  getParquetEvacuationZones,
+  getParquetFirePerimeters,
+  getParquetSensorStations,
   type ParquetReaderResult,
   getParquetFireDetections,
   getParquetSoilField,
   getParquetVegetation,
   getParquetWaterGauges,
+  getParquetWatersheds,
   getParquetWeatherObservations,
 } from "@/lib/server/services/parquet-trpc-readers";
 
@@ -1545,5 +1550,611 @@ describe("lane day and release semantics", () => {
     });
     expect(mockedRelease).not.toHaveBeenCalled();
     expect(mockedDay).not.toHaveBeenCalled();
+  });
+});
+
+/*
+ * The environmental_postgres_retirement_20260904 track: the five layers that moved off Martin's
+ * tile functions. Each case below is a PARITY claim about what the retired function returned,
+ * stated against the fake Parquet plane above rather than against a live database:
+ *
+ *   - geo.sensor_tiles()          DISTINCT ON (sensor_id, geom, observation_day), four attributes
+ *   - geo.evacuation_zone_tiles() every published Oregon OEM row, unconditionally
+ *   - geo.burn_severity_tiles()   every published MTBS scar, at every zoom, unsimplified
+ *   - geo.watershed_tiles()       HUC12 at z>=10, the rollup below it, huc_level naming the rung
+ *   - geo.fire_risk_tiles()       every published WFIGS incident, plus the `observed_day <= day`
+ *                                 style filter the client applied on top of it -- undated rows
+ *                                 INCLUDED, because ST_AsMVT emitted no attribute for them and
+ *                                 `["!", ["has", "observed_day"]]` keeps them at every date
+ *
+ * The last of the five arrived with lane FP3, once its lane was re-registered `static_lookup`.
+ * While it was `daily_series` on a per-incident observation day its 177 perimeters sat across 45
+ * partition days and no bounded read reproduced their union; that is history now, and the two
+ * in-frame cases below are what stops it being rebuilt by accident.
+ */
+
+function evacuationZoneRow(overrides: Record<string, unknown> = {}) {
+  return {
+    global_id: "{9E0C-1}",
+    natural_key: "or-oem:9E0C-1",
+    producer: "or-oem-evacuation-areas",
+    snapshot_day: "2026-08-25",
+    evacuation_area_name: "Camp Creek Zone 3",
+    fire_name: "Camp Creek Fire",
+    county: "Lane",
+    hazard_type: "wildfire",
+    evacuation_level: 3,
+    evacuation_level_label: "Level 3 - Go Now",
+    severity: "critical",
+    structures_within: 412,
+    addresses_within: 388,
+    population_within: 1104,
+    editor_name: "OEM GIS",
+    observed_at: "2026-08-24T19:02:00Z",
+    source: "or-oem",
+    geometry_wkb: JSON.stringify({
+      type: "Polygon",
+      coordinates: [
+        [
+          [-122.4, 43.9],
+          [-122.3, 43.9],
+          [-122.3, 44.0],
+          [-122.4, 43.9],
+        ],
+      ],
+    }),
+    geometry_version_id: "geom-1",
+    geometry_version_valid_from: "2026-08-01T00:00:00Z",
+    geometry_last_confirmed_at: "2026-08-24T19:02:00Z",
+    data_available_at: "2026-08-24T19:05:00Z",
+    feature_updated_at: "2026-08-24T19:05:00Z",
+    ...overrides,
+  };
+}
+
+function burnScarRow(overrides: Record<string, unknown> = {}) {
+  return {
+    feature_id: "feat-1",
+    fire_id: "OR4318712201820180722",
+    natural_key: "mtbs:OR4318712201820180722",
+    release_identifier: "mtbs-2024",
+    mapping_revision: "1",
+    fire_year: 2018,
+    ignition_date: "2018-07-22",
+    observed_day: "2024-03-01",
+    data_available_at: "2024-03-01T00:00:00Z",
+    fire_name: "Terwilliger",
+    fire_type: "Wildfire",
+    assessment_type: "Extended",
+    acres: 11419,
+    severity_class: null,
+    dnbr_offset: 12,
+    dnbr_standard_deviation: 30,
+    nodata_threshold: -970,
+    greenness_threshold: -150,
+    low_threshold: 90,
+    moderate_threshold: 320,
+    high_threshold: 670,
+    allowed_client_exposure: false,
+    geom: JSON.stringify({
+      type: "Polygon",
+      coordinates: [
+        [
+          [-122.2, 44.0],
+          [-122.1, 44.0],
+          [-122.1, 44.1],
+          [-122.2, 44.0],
+        ],
+      ],
+    }),
+    ...overrides,
+  };
+}
+
+function watershedRow(overrides: Record<string, unknown> = {}) {
+  return {
+    huc12: "170501220201",
+    name: "Cottonwood Creek-Shafer Creek",
+    areasqkm: 118.4,
+    tohuc: "170501220202",
+    states: "ID",
+    hutype: "S",
+    source: "USGS NHDPlus HR WBDHU12",
+    observed_at: "2013-01-01T00:00:00Z",
+    data_available_at: "2026-08-07T00:00:00Z",
+    release_day: "2026-08-07",
+    feature_id: "feat-w1",
+    geom: JSON.stringify({
+      type: "Polygon",
+      coordinates: [
+        [
+          [-116.3, 43.5],
+          [-116.2, 43.5],
+          [-116.2, 43.6],
+          [-116.3, 43.5],
+        ],
+      ],
+    }),
+    ...overrides,
+  };
+}
+
+function sensorRow(overrides: Record<string, unknown> = {}) {
+  return {
+    sensor_id: "KBOI",
+    station_name: "Boise Air Terminal",
+    network: "ASOS",
+    observed_day: "2026-08-25",
+    observed_at: "2026-08-25T18:53:00Z",
+    measurement_name: "temperature",
+    value: 31.1,
+    unit_code: "wmoUnit:degC",
+    quality_control: "V",
+    feature_id: "feat-s1",
+    data_available_at: "2026-08-25T19:00:00Z",
+    station_longitude: -116.22,
+    station_latitude: 43.56,
+    ...overrides,
+  };
+}
+
+/**
+ * One WFIGS incident as the re-registered `static_lookup` lane publishes it.
+ *
+ * Every registered arrow column (`warehouse/schemas/fire_perimeters.py`), because the reader's
+ * schema is `.strict()`: a fixture short of one column would pass for the wrong reason, and one
+ * carrying an extra column is what the strictness case below asserts is rejected. `snapshot_day`
+ * is the VERSION stamp and `observed_day` the incident's own date -- deliberately different values
+ * here, since a fixture where the two agree cannot tell them apart.
+ */
+function firePerimeterRow(overrides: Record<string, unknown> = {}) {
+  return {
+    feature_id: "3f1c9a52-0d1e-4a2c-9c0f-2f6d5b8a7e11",
+    unique_fire_identifier: "2026-ORWIF-000412",
+    snapshot_day: "2026-08-25",
+    observed_day: "2026-08-24",
+    incident_name: "Camp Creek",
+    irwin_id: "{2C7A-9F}",
+    fire_discovery_at: "2026-08-18T14:20:00Z",
+    polygon_at: "2026-08-24T09:05:00Z",
+    gis_acres: 8412.5,
+    fire_cause: "Natural",
+    incident_type_category: "WF",
+    poo_state: "US-OR",
+    percent_contained: 35,
+    severity: "high",
+    status: "published",
+    data_available_at: null,
+    updated_at: "2026-08-24T09:30:00Z",
+    geometry_wkb: JSON.stringify({
+      type: "Polygon",
+      coordinates: [
+        [
+          [-122.5, 43.8],
+          [-122.4, 43.8],
+          [-122.4, 43.9],
+          [-122.5, 43.8],
+        ],
+      ],
+    }),
+    ...overrides,
+  };
+}
+
+describe("the five layers that left Martin's tile functions", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("reads evacuation zones as one release at the camera's rung, geometry decoded", async () => {
+    mockedRelease.mockResolvedValue(
+      published("2026-08-26", [evacuationZoneRow()], "2026-08-25")
+    );
+
+    const result = await getParquetEvacuationZones({
+      bbox: "-125,42,-111,49",
+      date: "2026-08-26",
+      mapZoom: 7,
+      nowMs: Date.parse("2026-08-26T12:00:00Z"),
+    });
+
+    // z7 resolves to the z5 rung, which is the point of the cutover: the tile function served
+    // identical unsimplified geometry at every zoom.
+    expect(mockedRelease).toHaveBeenCalledWith({
+      layer: "evacuation-zones",
+      asOfDay: "2026-08-26",
+      zoomTier: 5,
+      bbox: "-125,42,-111,49",
+    });
+    expect(result).toMatchObject({
+      state: "ready",
+      requestedDay: "2026-08-26",
+      servedDay: "2026-08-25",
+      data: [
+        {
+          naturalKey: "or-oem:9E0C-1",
+          severity: "critical",
+          evacuationLevelLabel: "Level 3 - Go Now",
+          structuresWithin: 412,
+          geometry: { type: "Polygon" },
+        },
+      ],
+    });
+  });
+
+  it("reads fire perimeters as the newest snapshot at or before the day, at the camera's rung", async () => {
+    mockedRelease.mockResolvedValue(
+      published("2026-08-26", [firePerimeterRow()], "2026-08-25")
+    );
+
+    const result = await getParquetFirePerimeters({
+      bbox: "-125,42,-111,49",
+      date: "2026-08-26",
+      mapZoom: 7,
+      nowMs: Date.parse("2026-08-26T12:00:00Z"),
+    });
+
+    // The RELEASE route, not the day route: a `static_lookup` snapshot resolves as "newest at or
+    // before", the same rule `resolve_fire_perimeters_as_of` states for the Polars path. z7
+    // resolves to the z5 rung -- the retired tile function served identical unsimplified geometry
+    // at every zoom.
+    expect(mockedRelease).toHaveBeenCalledWith({
+      layer: "fire-perimeters",
+      asOfDay: "2026-08-26",
+      zoomTier: 5,
+      bbox: "-125,42,-111,49",
+    });
+    expect(mockedDay).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      state: "ready",
+      // The day asked for and the day that answered are different values and stay different: one
+      // is the slider date, the other the snapshot's capture day.
+      requestedDay: "2026-08-26",
+      servedDay: "2026-08-25",
+      data: [
+        {
+          featureId: "3f1c9a52-0d1e-4a2c-9c0f-2f6d5b8a7e11",
+          uniqueFireIdentifier: "2026-ORWIF-000412",
+          snapshotDay: "2026-08-25",
+          observedDay: "2026-08-24",
+          severity: "high",
+          geometry: { type: "Polygon" },
+        },
+      ],
+    });
+  });
+
+  it("keeps an incident WFIGS never dated, and drops one whose day is still ahead", async () => {
+    mockedRelease.mockResolvedValue(
+      published(
+        "2026-08-01",
+        [
+          firePerimeterRow({
+            unique_fire_identifier: "undated",
+            snapshot_day: "2026-08-01",
+            observed_day: null,
+          }),
+          firePerimeterRow({
+            unique_fire_identifier: "later",
+            snapshot_day: "2026-08-01",
+            observed_day: "2026-08-06",
+          }),
+        ],
+        "2026-08-01"
+      )
+    );
+
+    const result = await getParquetFirePerimeters({
+      date: "2026-08-01",
+      mapZoom: 13,
+      nowMs: Date.parse("2026-08-10T12:00:00Z"),
+    });
+
+    // `observed_day IS NULL` is never excluded. `geo.feature_observation_day` returns NULL for a
+    // row it cannot date, and `tileLayerDateFilter` keeps such a row at EVERY date with
+    // `["!", ["has", "observed_day"]]`; the retired daily_series export deleted them outright,
+    // because its `= :observed_day` predicate can never match NULL.
+    expect(readyData(result).map((row) => row.uniqueFireIdentifier)).toEqual(["undated"]);
+    expect(readyData(result)[0]?.observedDay).toBeNull();
+  });
+
+  it("filters in frame against the REQUESTED day, never the snapshot day that answered", async () => {
+    // The TypeScript twin of `test_the_in_frame_filter_uses_the_requested_as_of_not_the_answering
+    // _snapshot_day` (tests/parquet/test_fire_perimeters_serving.py:541). ONE snapshot, captured
+    // on the 1st, holding one incident dated the 6th. Both requests resolve to that same snapshot,
+    // so the only thing differing between them is the requested day -- and that alone flips the
+    // incident from out of frame to in frame. A filter comparing against the snapshot's own
+    // capture day would answer zero both times, which is the retired `== observed_day` equality
+    // bug wearing a new hat.
+    mockedRelease.mockResolvedValue(
+      published(
+        "2026-08-10",
+        [firePerimeterRow({ snapshot_day: "2026-08-01", observed_day: "2026-08-06" })],
+        "2026-08-01"
+      )
+    );
+
+    const beforeTheObservedDay = await getParquetFirePerimeters({
+      date: "2026-08-01",
+      mapZoom: 13,
+      nowMs: Date.parse("2026-08-10T12:00:00Z"),
+    });
+    const atOrAfterTheObservedDay = await getParquetFirePerimeters({
+      date: "2026-08-10",
+      mapZoom: 13,
+      nowMs: Date.parse("2026-08-10T12:00:00Z"),
+    });
+
+    expect(readyData(beforeTheObservedDay)).toHaveLength(0);
+    expect(readyData(atOrAfterTheObservedDay)).toHaveLength(1);
+    // The SAME answering snapshot in both, stated rather than assumed: without this the case
+    // could pass because the two requests happened to resolve to different releases.
+    expect(beforeTheObservedDay).toMatchObject({ servedDay: "2026-08-01" });
+    expect(atOrAfterTheObservedDay).toMatchObject({ servedDay: "2026-08-01" });
+  });
+
+  it("fails a fire-perimeter row carrying an unregistered column closed", async () => {
+    mockedRelease.mockResolvedValue(
+      published("2026-08-26", [firePerimeterRow({ risk_level: "extreme" })], "2026-08-25")
+    );
+
+    // `risk_level` is precisely the attribute `geo.fire_risk_tiles()` projected from a JSONB key
+    // no producer has ever written. A column appearing upstream must fail this reader loudly
+    // rather than arrive unread.
+    await expect(
+      getParquetFirePerimeters({
+        date: "2026-08-26",
+        mapZoom: 13,
+        nowMs: Date.parse("2026-08-26T12:00:00Z"),
+      })
+    ).resolves.toMatchObject({
+      state: "upstream_unavailable",
+      fault: { kind: "contract" },
+    });
+  });
+
+  it("unions every burn-severity release at or before the day, walking back by served day", async () => {
+    mockedRelease
+      .mockResolvedValueOnce(
+        published("2026-08-26", [burnScarRow({ fire_id: "newest" })], "2024-03-01")
+      )
+      .mockResolvedValueOnce(
+        published("2024-02-29", [burnScarRow({ fire_id: "older" })], "2022-05-10")
+      )
+      .mockResolvedValueOnce({
+        state: "day_not_written" as const,
+        requestedDay: "2022-05-09",
+      });
+
+    const result = await getParquetBurnSeverity({
+      date: "2026-08-26",
+      mapZoom: 13,
+      nowMs: Date.parse("2026-08-26T12:00:00Z"),
+    });
+
+    // Each step asks for the day BEFORE the release just served. Asking for requestedDay minus a
+    // day would re-serve the newest release forever.
+    expect(mockedRelease).toHaveBeenNthCalledWith(2, {
+      layer: "burn-severity",
+      asOfDay: "2024-02-29",
+      zoomTier: 13,
+    });
+    expect(mockedRelease).toHaveBeenCalledTimes(3);
+    expect(result).toMatchObject({
+      state: "ready",
+      requestedDay: "2026-08-26",
+      // The freshest release in the union names the day; an older member does not age the answer.
+      servedDay: "2024-03-01",
+      truncated: false,
+    });
+    expect(readyData(result).map((scar) => scar.fireId)).toEqual(["newest", "older"]);
+  });
+
+  it("reports the plane's own refusal when no burn-severity release precedes the day", async () => {
+    mockedRelease.mockResolvedValue({
+      state: "lane_never_written" as const,
+      requestedDay: "2026-08-26",
+    });
+
+    await expect(
+      getParquetBurnSeverity({
+        date: "2026-08-26",
+        mapZoom: 13,
+        nowMs: Date.parse("2026-08-26T12:00:00Z"),
+      })
+    ).resolves.toEqual({
+      state: "not_generated",
+      requestedDay: "2026-08-26",
+      reason: "lane_never_written",
+    });
+  });
+
+  it("bounds the burn-severity walk and says so rather than dropping the oldest releases", async () => {
+    // Every call answers with a release one day older, so the walk can only end at its ceiling.
+    let servedDay = "2026-08-20";
+    mockedRelease.mockImplementation(async () => {
+      const answer = published("2026-08-26", [burnScarRow({ fire_id: servedDay })], servedDay);
+      servedDay = new Date(Date.parse(servedDay + "T00:00:00Z") - 86_400_000)
+        .toISOString()
+        .slice(0, 10);
+      return answer;
+    });
+
+    const result = await getParquetBurnSeverity({
+      date: "2026-08-26",
+      mapZoom: 13,
+      nowMs: Date.parse("2026-08-26T12:00:00Z"),
+    });
+
+    expect(mockedRelease).toHaveBeenCalledTimes(12);
+    expect(result).toMatchObject({ state: "ready", truncated: true });
+    expect(readyData(result)).toHaveLength(12);
+  });
+
+  it("names the HUC rung from the code's own length, never from the zoom asked for", async () => {
+    mockedRelease.mockResolvedValue(
+      published(
+        "2026-08-26",
+        [
+          watershedRow({
+            huc12: "1705012202",
+            name: null,
+            tohuc: null,
+            states: null,
+            feature_id: null,
+          }),
+        ],
+        "2026-08-07"
+      )
+    );
+
+    const result = await getParquetWatersheds({
+      bbox: "-125,42,-111,49",
+      date: "2026-08-26",
+      mapZoom: 10,
+      nowMs: Date.parse("2026-08-26T12:00:00Z"),
+    });
+
+    expect(mockedRelease).toHaveBeenCalledWith({
+      layer: "watersheds",
+      asOfDay: "2026-08-26",
+      zoomTier: 9,
+      bbox: "-125,42,-111,49",
+    });
+    expect(readyData(result)).toEqual([
+      expect.objectContaining({ huc: "1705012202", hucLevel: 10, name: null, toHuc: null }),
+    ]);
+  });
+
+  it("collapses the tall sensor grain to one station, keeping its newest reading", async () => {
+    mockedDay.mockResolvedValue(
+      published("2026-08-25", [
+        sensorRow({ measurement_name: "temperature", observed_at: "2026-08-25T17:53:00Z" }),
+        sensorRow({
+          measurement_name: "relative_humidity",
+          value: 24,
+          observed_at: "2026-08-25T18:53:00Z",
+        }),
+        sensorRow({
+          sensor_id: "KTWF",
+          station_name: "Twin Falls",
+          station_longitude: -114.48,
+          station_latitude: 42.48,
+        }),
+      ])
+    );
+
+    const result = await getParquetSensorStations({
+      bbox: "-125,42,-111,49",
+      date: "2026-08-25",
+      mapZoom: 13,
+      nowMs: Date.parse("2026-08-25T20:00:00Z"),
+    });
+
+    const stations = readyData(result);
+    expect(stations.map((station) => station.sensorId)).toEqual(["KBOI", "KTWF"]);
+    // One dot per station, exactly as DISTINCT ON (sensor_id, geom, observation_day) gave, and
+    // the station's own timestamp is its newest reading of the day.
+    expect(stations[0]?.measurements).toHaveLength(2);
+    expect(stations[0]?.observedAt).toBe("2026-08-25T18:53:00Z");
+  });
+
+  it("merges a coarse sensor rung on its cell, because no station identity survives there", async () => {
+    mockedDay.mockResolvedValue(
+      published("2026-08-25", [
+        sensorRow({ sensor_id: null, station_name: null, measurement_name: "temperature" }),
+        sensorRow({
+          sensor_id: null,
+          station_name: null,
+          measurement_name: "wind_speed",
+          value: 3.4,
+        }),
+      ])
+    );
+
+    const result = await getParquetSensorStations({
+      bbox: "-125,42,-111,49",
+      date: "2026-08-25",
+      mapZoom: 5,
+      nowMs: Date.parse("2026-08-25T20:00:00Z"),
+    });
+
+    expect(mockedDay).toHaveBeenCalledWith({
+      layer: "sensors",
+      day: "2026-08-25",
+      zoomTier: 5,
+      bbox: "-125,42,-111,49",
+    });
+    const stations = readyData(result);
+    expect(stations).toHaveLength(1);
+    expect(stations[0]?.sensorId).toBeNull();
+    expect(stations[0]?.measurements.map((measurement) => measurement.name)).toEqual([
+      "temperature",
+      "wind_speed",
+    ]);
+  });
+
+  it("drops a sensor row with no coordinates rather than plotting a fabricated origin", async () => {
+    mockedDay.mockResolvedValue(
+      published("2026-08-25", [
+        sensorRow({ sensor_id: "KNOWHERE", station_longitude: null, station_latitude: null }),
+      ])
+    );
+
+    await expect(
+      getParquetSensorStations({
+        date: "2026-08-25",
+        mapZoom: 13,
+        nowMs: Date.parse("2026-08-25T20:00:00Z"),
+      })
+    ).resolves.toMatchObject({ state: "ready", data: [] });
+  });
+
+  it("fails closed on a lane column the registered schema does not declare", async () => {
+    mockedRelease.mockResolvedValue(
+      published("2026-08-26", [watershedRow({ unexpected_column: 1 })], "2026-08-07")
+    );
+
+    await expect(
+      getParquetWatersheds({
+        date: "2026-08-26",
+        mapZoom: 13,
+        nowMs: Date.parse("2026-08-26T12:00:00Z"),
+      })
+    ).resolves.toMatchObject({ state: "upstream_unavailable", fault: { kind: "contract" } });
+  });
+
+  it("rejects a future day for all four before calling the Parquet plane", async () => {
+    const nowMs = Date.parse("2026-08-26T12:00:00Z");
+
+    await expect(
+      getParquetEvacuationZones({ date: "2026-08-27", mapZoom: 13, nowMs })
+    ).rejects.toBeInstanceOf(ParquetPlaneRequestError);
+    await expect(
+      getParquetBurnSeverity({ date: "2026-08-27", mapZoom: 13, nowMs })
+    ).rejects.toBeInstanceOf(ParquetPlaneRequestError);
+    await expect(
+      getParquetWatersheds({ date: "2026-08-27", mapZoom: 13, nowMs })
+    ).rejects.toBeInstanceOf(ParquetPlaneRequestError);
+    await expect(
+      getParquetSensorStations({ date: "2026-08-27", mapZoom: 13, nowMs })
+    ).rejects.toBeInstanceOf(ParquetPlaneRequestError);
+    expect(mockedRelease).not.toHaveBeenCalled();
+    expect(mockedDay).not.toHaveBeenCalled();
+  });
+
+  it("reports an upstream outage as data, so the map can caption it instead of blanking", async () => {
+    mockedRelease.mockRejectedValue(new UpstreamTimeoutError("burn-severity read timed out"));
+
+    await expect(
+      getParquetBurnSeverity({
+        date: "2026-08-26",
+        mapZoom: 13,
+        nowMs: Date.parse("2026-08-26T12:00:00Z"),
+      })
+    ).resolves.toMatchObject({
+      state: "upstream_unavailable",
+      fault: { kind: "timeout" },
+    });
   });
 });

@@ -170,7 +170,7 @@ export async function getStorageEstimateMB(): Promise<{ usageMB: number; quotaMB
  * published), NOT when the time slider moves -- tile bytes do not vary by date, since day
  * filtering is a client-side style filter over the `observed_day` MVT attribute.
  *
- * @param sourceId Martin source id (e.g. `sensor_tiles`) to drop one layer; omit for all
+ * @param sourceId Martin source id (e.g. `intervention_tiles`) to drop one layer; omit for all
  *   dynamic tiles. Prefetched basemap tiles and the app shell are left intact either way.
  * @returns entries dropped, or 0 when no service worker is controlling the page.
  */

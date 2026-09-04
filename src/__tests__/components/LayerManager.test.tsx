@@ -138,6 +138,15 @@ const viewportQueries = vi.hoisted(() => ({
   getDroughtClassification: vi.fn((): ViewportQueryResult => ({ data: undefined })),
   getWeatherForBbox: vi.fn((): StreamflowQueryResult => ({ data: [] })),
   getFireDetections: vi.fn((): ViewportQueryResult => ({ data: undefined })),
+  // The five layers that moved off Martin's tile functions across
+  // environmental_postgres_retirement_20260904 -- four in wave C, fire perimeters last. They are
+  // read here for the same reason drought is: LayerManager now owns their source DATA, not only
+  // their visibility and filter.
+  getSensorStations: vi.fn((): ViewportQueryResult => ({ data: undefined })),
+  getEvacuationZones: vi.fn((): ViewportQueryResult => ({ data: undefined })),
+  getBurnSeverity: vi.fn((): ViewportQueryResult => ({ data: undefined })),
+  getWatershedBoundaries: vi.fn((): ViewportQueryResult => ({ data: undefined })),
+  getFirePerimeters: vi.fn((): ViewportQueryResult => ({ data: undefined })),
 }));
 
 vi.mock("@/lib/trpc/client", () => ({
@@ -147,6 +156,11 @@ vi.mock("@/lib/trpc/client", () => ({
       getStreamflow: { useQuery: viewportQueries.getStreamflow },
       getGroundwater: { useQuery: viewportQueries.getGroundwater },
       getWatersheds: { useQuery: viewportQueries.getWatersheds },
+      getSensorStations: { useQuery: viewportQueries.getSensorStations },
+      getEvacuationZones: { useQuery: viewportQueries.getEvacuationZones },
+      getBurnSeverity: { useQuery: viewportQueries.getBurnSeverity },
+      getWatershedBoundaries: { useQuery: viewportQueries.getWatershedBoundaries },
+      getFirePerimeters: { useQuery: viewportQueries.getFirePerimeters },
       getSoilSurvey: { useQuery: viewportQueries.getSoilSurvey },
       getSoilField: { useQuery: viewportQueries.getSoilField },
       getClimateField: { useQuery: viewportQueries.getClimateField },
@@ -229,6 +243,7 @@ function createFakeMap() {
   // registered ONCE per map and keeps its place in the queue, so an off/on pair is exactly
   // the regression to catch, not an even trade.
   const registrations = new Map<string, number>();
+  const geojsonSources = new Map<string, { setData: ReturnType<typeof vi.fn> }>();
   let styleLoaded = false;
   // Whether the style has BUILT its layers yet, which is a different question from whether it
   // has finished loading: every applier guards its writes with getLayer(), so a style mid-build
@@ -248,6 +263,25 @@ function createFakeMap() {
     },
     isStyleLoaded: () => styleLoaded,
     getLayer: () => (styleLayersExist ? true : undefined),
+    // The GeoJSON sources styles.ts declares empty for the four layers that left Martin's tile
+    // functions in wave C. Minted on demand and REMEMBERED, so a case can ask what actually
+    // reached a source: "the layer is switched on and its read landed" and "the collection
+    // reached the map" are different claims, and only the second is what a reader sees. Gated on
+    // `styleLayersExist` for the same reason `getLayer` is -- a style mid-build has no sources
+    // either, and the convergence cases need both halves to disappear together.
+    getSource: (sourceId: string) => {
+      if (!styleLayersExist) return undefined;
+      const existing = geojsonSources.get(sourceId);
+      if (existing !== undefined) return existing;
+      const source = { setData: vi.fn() };
+      geojsonSources.set(sourceId, source);
+      return source;
+    },
+    /** Every collection written to one source, oldest first. */
+    collectionsWrittenTo: (sourceId: string): GeoJSON.FeatureCollection[] =>
+      (geojsonSources.get(sourceId)?.setData.mock.calls ?? []).map(
+        (call) => call[0] as GeoJSON.FeatureCollection
+      ),
     setStyleLayersExist(value: boolean) {
       styleLayersExist = value;
     },
@@ -467,6 +501,10 @@ beforeEach(() => {
   // it. A landed empty window rather than `undefined`, because several cases below assert the
   // fire row publishes a DRAWN day, which only a landed answer produces.
   viewportQueries.getFireDetections.mockReturnValue(landed(fireDetectionWindow()));
+  // Same reason as the line above, for the fire-perimeters read: the case that hands it a landed
+  // collection would otherwise keep handing one to every case after it, since `clearAllMocks`
+  // clears calls and not implementations.
+  viewportQueries.getFirePerimeters.mockReturnValue({ data: undefined });
 });
 
 afterEach(() => {
@@ -896,6 +934,56 @@ describe("LayerManager viewport-proxied polygon layers", () => {
     expect(soilSurveyProps?.visible).toBe(true);
     expect(soilSurveyProps?.geojson).toBe(collection);
     expect(enabledFlagOf(viewportQueries.getSoilSurvey)).toBe(true);
+  });
+
+  it("writes the fire perimeters it read onto the layer's own GeoJSON source", () => {
+    // The end-to-end claim of the last tile-function cutover: the read is enabled, the presenter
+    // rebuilds the tile's attribute table, and the collection reaches the source styles.ts
+    // declares. Until 2026-09-04 these polygons arrived as Martin MVT bytes and nothing was ever
+    // written to a source here, so "the toggle is on" and "the map has the geometry" were
+    // different claims with nothing connecting them.
+    viewportQueries.getFirePerimeters.mockReturnValue(
+      landed({
+        state: "ready",
+        requestedDay: "2026-08-04",
+        servedDay: "2026-08-02",
+        truncated: false,
+        data: [
+          {
+            featureId: "feat-1",
+            uniqueFireIdentifier: "2026-ORWIF-000412",
+            snapshotDay: "2026-08-02",
+            observedDay: "2026-08-01",
+            severity: "high",
+            geometry: {
+              type: "Polygon",
+              coordinates: [
+                [
+                  [-122.5, 43.8],
+                  [-122.4, 43.8],
+                  [-122.4, 43.9],
+                  [-122.5, 43.8],
+                ],
+              ],
+            },
+          },
+        ],
+      })
+    );
+    useMapStore.setState({ activeLayers: ["fire-perimeters"] });
+
+    const fakeMap = createFakeMap();
+    fakeMap.setStyleLoaded(true);
+    renderLayerManager(fakeMap);
+
+    expect(enabledFlagOf(viewportQueries.getFirePerimeters)).toBe(true);
+    const written = fakeMap.collectionsWrittenTo("fire-perimeter-features").at(-1);
+    expect(written?.features).toHaveLength(1);
+    // The vocabulary the shipped paint expression and date filter read, and nothing else.
+    expect(written?.features[0].properties).toEqual({
+      severity: "high",
+      observed_day: "2026-08-01",
+    });
   });
 
   it("neither queries nor draws the polygon feed while every toggle is off", () => {

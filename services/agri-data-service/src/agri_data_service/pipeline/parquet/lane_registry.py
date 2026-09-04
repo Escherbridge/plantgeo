@@ -109,10 +109,14 @@ _LAYER_ID_SQL: Final = text(load_query_sql("pipeline/lane_registry_layer_id.sql"
 _SENSOR_STATION_IDS_SQL: Final = text(load_query_sql("pipeline/lane_registry_sensor_station_ids.sql"))
 _SOIL_SURVEY_POLYGON_KEYS_SQL: Final = text(load_query_sql("pipeline/lane_registry_soil_survey_polygon_keys.sql"))
 
-# The three static lanes with a Postgres source. Each query is transcribed from its own lane's day
+# The four static lanes with a Postgres source. Each query is transcribed from its own lane's day
 # export so the watermark and the snapshot describe exactly one population; see the file headers.
+# `fire-perimeters` joined them on 2026-09-04 -- it had been registered `daily_series` over a table
+# that holds one row per WFIGS incident refreshed in place, so its partitions sliced a snapshot
+# along an axis the source does not have; see its export SQL header.
 _WATERSHEDS_WATERMARK_SQL: Final = text(load_query_sql("pipeline/lane_watermark_watersheds.sql"))
 _EVACUATION_ZONES_WATERMARK_SQL: Final = text(load_query_sql("pipeline/lane_watermark_evacuation_zones.sql"))
+_FIRE_PERIMETERS_WATERMARK_SQL: Final = text(load_query_sql("pipeline/lane_watermark_fire_perimeters.sql"))
 _SOIL_SURVEY_WATERMARK_SQL: Final = text(load_query_sql("pipeline/lane_watermark_soil_survey.sql"))
 
 
@@ -455,6 +459,21 @@ async def _evacuation_zones_watermark(
     )
 
 
+async def _fire_perimeters_watermark(
+    session: AsyncSession,
+    store: ObjectStore,  # noqa: ARG001 - uniform resolver shape; this lane's clock is in Postgres
+    *,
+    today: date,  # noqa: ARG001 - the source's own change time, never this run's date
+) -> SourceWatermark:
+    """When the published WFIGS incident-perimeter set last changed."""
+    return await _read_source_watermark(
+        session,
+        _FIRE_PERIMETERS_WATERMARK_SQL,
+        slug=FIRE_PERIMETERS_STREAM,
+        evidence_columns=("feature_updated_at", "feature_created_at", "geometry_version_valid_from"),
+    )
+
+
 async def _soil_survey_watermark(
     session: AsyncSession,
     store: ObjectStore,  # noqa: ARG001 - uniform resolver shape; this lane's clock is in Postgres
@@ -613,13 +632,10 @@ async def _fill_fire_perimeters(
     store: ObjectStore,
     *,
     day: date,
-    run_id: str,
+    run_id: str,  # noqa: ARG001 - uniform adapter shape; the driver records this lane's absences
 ) -> LaneRunResult:
-    """Export one day of WFIGS incident perimeters, or record the lane's own absence."""
-    outcome = await export_fire_perimeters_day(session, store, day=day, run_id=run_id)
-    if outcome.absence is not None:
-        return _from_absence(outcome.absence)
-    return _from_parts(outcome.parts)
+    """Snapshot every published WFIGS incident perimeter under `day`, its source watermark's version date."""
+    return normalise_export_outcome(await export_fire_perimeters_day(session, store, day=day))
 
 
 async def _fill_burn_severity(
@@ -835,17 +851,34 @@ _DATABASE_BACKED_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = (
         slug=FIRE_PERIMETERS_STREAM,
         adapter=_fill_fire_perimeters,
         history_floor=date(2025, 7, 28),
-        publication_lag_days=1,
-        nature="daily_series",
+        publication_lag_days=0,
+        nature="static_lookup",
+        watermark=_fire_perimeters_watermark,
         floor_basis=(
-            "NATURE daily_series, NOT forecastable: docs/lanes/fire-perimeters.md section 7 declares "
-            "horizon: none for the polygon geometry, and no method/monte_carlo/fire_perimeters.py exists. "
-            "A daily series is ALLOWED to decline a forecast -- the nature is the ceiling, the shipped "
-            "forecaster is the claim, and here the claim is deliberately absent. "
-            "docs/lanes/fire-perimeters.md section 3: what is actually held is the residue of the hourly "
-            "_Current poller, whose oldest isolated row is 2025-07-28. The declared 2020-01-01 floor "
-            "(WFIGS_PERIMETER_HISTORY_EARLIEST) is documentation-derived, has NO fetcher wired, and would "
-            "invent ~2,000 phantom gap-days, so it is deliberately not used. Lag 1: the poll is hourly."
+            "NATURE static_lookup, WATERMARK-DRIVEN. RE-REGISTERED 2026-09-04 from daily_series, and the "
+            "measurement is the whole argument. docs/lanes/fire-perimeters.md section 4: geo.features holds "
+            "ONE ROW PER WFIGS INCIDENT refreshed in place -- 'NOT one row per (incident, day)' -- because "
+            "build_fire_perimeter_identity keys on the bare uniqueFireIdentifier with no date component. "
+            "Registered as a daily series on geo.feature_observation_day, that put 177 published perimeters "
+            "across 45 partition days with 287 governed-absence days beside them "
+            "(conductor/layer-sessions/fire-perimeters.md, measured 2026-08-25), so ONE day read returned "
+            "only the incidents redrawn that day and reproducing what geo.fire_risk_tiles draws needed the "
+            "union of a 404-day window. Section 6 refuses release_series too: WFIGS _Current is 'a live "
+            "mutable snapshot, not a versioned release' and 'does not retain what it reported yesterday', "
+            "unlike MTBS's quarterly or USDM's weekly publications. What is left is what it always was -- a "
+            "current-state reference set with a version -- which is the identical shape evacuation-zones "
+            "already publishes off the identical table. "
+            "The floor stays section 3's oldest isolated row (2025-07-28, the residue of the hourly _Current "
+            "poller) and is now INERT: the partition day comes from "
+            "sql/pipeline/lane_watermark_fire_perimeters.sql, not from the floor and not from the cron's run "
+            "date. NOTHING IS DISCARDED BY THE CHANGE -- there was no per-day history to lose. geo.features "
+            "keeps no past state, and geo.geometry's Type-2 chain is not a substitute: only 6 of thousands "
+            "of dimension entries across every producer ever reached a second WFIGS version, and its "
+            "forward path has a known silent-freeze failure mode (section 4), which is why this lane reads "
+            "features.geom and never the dimension. Lag 0 because a version stamp is not settled by "
+            "waiting. NOT forecastable is now structural rather than declared: section 7's horizon: none "
+            "matched a nature that merely permitted a forecaster, and a static_lookup may not name one at "
+            "all."
         ),
     ),
     LaneRegistration(

@@ -46,6 +46,64 @@ columns that admit NULL — even though §0.22.3 measured them constant at `1.0`
 is *not* permitted while the map paints the data (§0.22.7). Do not build an exposure gate on this
 column until that is settled.
 
+### ADDENDUM 2026-09-04 — historical base rungs predate the position columns, and a re-export is owed
+
+A production probe of `layer=signal/kind=observed/zoom=13/year=2026/month=08/day=06/part-0.parquet`
+(`environmental_postgres_retirement_20260904/evidence/rung-coverage-census.md:154-174`) found only
+ten columns — no `cell_longitude`, no `cell_latitude` — although both are declared `nullable=False`
+above. **This refuted a recorded project note that the signal base already carries positions and
+that no re-export is owed.**
+
+**The mechanism is schema evolution, not a live bug.** Commit `8ce71fd` (2026-08-24 06:18:47 -0600)
+is the FIRST commit where `cell_longitude`/`cell_latitude` exist anywhere in the signal lane: it
+added them to `SIGNAL_PLANE_SCHEMA` here AND to `sql/pipeline/signal_plane_day_export.sql`'s SELECT
+list in the same change (`git show 8ce71fd -- .../signal_plane_day_export.sql`). Before that commit
+the query never selected them and `pipeline/lanes/signal.py::read_signal_day` never built an Arrow
+table containing them — there was no non-nullable declaration to violate yet. Every base-rung object
+written by an earlier deploy of the exporter structurally lacks both columns, and Parquet objects are
+immutable: nothing in the forward pipeline retroactively adds a column to an already-written file.
+`day=2026-08-06` is one such object.
+
+**The forward path needs no code change.** As of `8ce71fd` (perf-optimized in `ae63b02`, which moved
+the join out of the per-observation hot path without changing what it selects), the schema, the SQL,
+and `read_signal_day`'s column-name-driven table build all agree on the same twelve columns, and
+`conform_to_stream_schema` (`pipeline/parquet/objectstore.py:1039-1045`) does `table.select(...)`,
+which raises `ParquetSchemaMismatchError` rather than silently dropping a column the current query
+failed to produce — so a live regression of this kind fails loudly at write time, not silently. The
+existing mocked-session test `tests/parquet/test_signal_lane_export.py::test_the_read_conforms_to_the_registered_schema`
+already pins this via `table.schema.equals(SIGNAL_PLANE_SCHEMA.arrow_schema)`.
+
+**Where the positions come from, and a dependency this adds.** `signal_plane_day_export.sql` resolves
+them with `INNER JOIN agri.spatial_cell AS cell ON cell.id = aggregated.cell_id` then
+`ST_X/ST_Y(cell.centroid)` — the identical pattern `pipeline/direct/soil/support.py` uses for the soil
+lattice. `agri.spatial_cell.centroid` is declared `NOT NULL` (`db/agri/tables/spatial_cell.sql:13`)
+and the join is INNER because `cell_id` is a foreign key, so a resolvable cell always yields a
+position — the `nullable=False` declaration above is honest for any row the query can produce at all.
+This makes **signal-plane a code-level dependent of `agri.spatial_cell`**, the same table
+`retirement-inventory.md:37` lists "drop now" and already records as a live dependency for vegetation
+and soil. `retirement-inventory.md:37,94` separately flags that the table's absence from production is
+*asserted, not verified* — if that assertion is correct, every signal export since `8ce71fd` (not only
+the pre-fix historical objects) has been failing outright at the database level with
+`relation "agri.spatial_cell" does not exist`, which would itself explain why so much of the
+signal-plane history remains on the pre-fix schema: nothing has been able to re-export it since.
+
+**A re-export is owed, not fired.** No lane-scoped rewrite tool exists for `signal` yet — only
+vegetation has one (`parquet-rewrite-vegetation`, `pipeline/parquet/vegetation_rewrite.py`), which
+retracts *only* z13 partitions matching "the exact legacy shape missing both cell coordinate fields"
+so `parquet-drain --selection missing` can rewrite them. Neither `--selection missing` nor
+`--selection ladder` alone can touch a day that already carries a base completion marker — both are
+additive, never destructive — so building a `parquet-rewrite-signal` (generalizing the vegetation
+tool) is itself part of the owed work. Once that exists, the sequence is: retract the affected
+`signal/observed` days (`--apply`) → `parquet-drain --layer signal --selection missing` (re-exports
+the base rung with positions, via the already-correct SQL) → `parquet-drain --layer signal --selection
+ladder` (derives z9/z5/z0, which could never complete against a base rung missing the coordinate
+columns `GridAggregation` reads). The 222-of-1,560 "ladder INCOMPLETE" population measured for
+`signal-plane` (`rung-coverage-census.md:61`) is the best current estimate of the affected day count —
+stated as inference, since no schema-fingerprint census across all 1,560 published z13 objects has
+been run — putting the owed rewrite at roughly 222 lane-days × 4 objects (one retracted+rewritten z13,
+three new coarse rungs) ≈ **~888 objects**, a lower bound if any of the other 1,338 "complete" days
+also predate `8ce71fd`.
+
 ## Sorting and codec
 `sort_columns` is the grain from §0.22.1, matching `uq_mv_signal_cell_daily`:
 `(support_key, signal_name, normalized_unit, cell_id, observed_day)`. Inside a day partition

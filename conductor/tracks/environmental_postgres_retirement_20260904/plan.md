@@ -209,3 +209,41 @@ backfilled and any upstream-never-served days recorded in the gap census; and th
   then verify against a `git archive` extraction the way the image will.
 - Every Python command is `UV_NO_SYNC=1 uv run --no-sync …`. A bare `uv sync` strips pytest.
 - One step per push; RUNBOOK and track updates before the final sweep.
+
+## C1 outcome, 2026-09-04 — four of five moved; fire-perimeters blocked upstream
+
+**Moved to Parquet:** `sensor_tiles`, `evacuation_zone_tiles`, `burn_severity_tiles`, `watershed_tiles`.
+No PMTiles proposal is owed — no layer needed vector tiles rather than GeoJSON.
+
+**NOT moved: `fire_risk_tiles`. This is a GRAIN mismatch, not a coverage gap, and the fix is upstream.**
+The lane is registered `daily_series` on a per-incident `observed_day` (`lane_registry.py:835-839`), while
+`geo.features` holds WFIGS's current-incident set **refreshed in place** — "one row per WFIGS incident …
+NOT one row per (incident, day)" (`warehouse/schemas/fire_perimeters.py`). So 177 perimeters sit across
+45 partition days and the map draws their UNION via the tile plus an `observed_day <= day` filter. A day
+read returns only incidents redrawn that day (empty on most days); a release read returns the same; a
+full-history window is 404 days of envelopes. A trailing N-day window would mean "perimeters redrawn in
+the last N days" — a different product.
+**Fix: re-register the lane as the `static_lookup` snapshot it actually is** — the shape
+`evacuation-zones` already uses for an identical current-state feed. That is a
+`services/agri-data-service` change, which lane C1 was forbidden to touch. **Criterion 2 cannot close
+until this lands.**
+
+**Holes shipped deliberately, named rather than hidden:**
+- `sensors` below z13 — 25 of 26 base days lacked a coarse ladder at the 2026-08-25 measurement. Those
+  days now answer `not_generated` with a dock caption, where `sensor_tiles` drew dots. Repair is
+  `parquet-drain --selection ladder` against production: built, dry-run verified, **zero production runs**.
+- `evacuation-zones` at z9 — confirmed 2026-09-02 DuckDB casualty, dead-lettered, unverified since `152feca`.
+- **`basin_count` is gone**, omitted rather than approximated: the tile function got it from a `count(*)`
+  while building `geo.watershed_rollup` (`drizzle/0023:52`), and the lane's `HierarchicalDissolve`
+  declares no counting aggregation. Restoring it is a `ColumnAggregation` on the watersheds lane.
+- **Watershed rung mapping shifts at the extremes** — z10-z12 now draws HUC10 where the function drew
+  HUC12, and z0-z3 draws HUC6 where it drew HUC4 (there is no HUC4 rung).
+
+**The drop migration is written and DORMANT:** `drizzle/0039_drop_environmental_tile_functions.sql`,
+unjournalled so `scripts/migrate.mjs` cannot run it by accident (matching `0034`'s convention). Four
+idempotent `DROP FUNCTION IF EXISTS`, no CASCADE. `geo.fire_risk_tiles` is deliberately absent and must
+not be added. Each object still owes its three-part packet. The drop also turns `geo.watershed_rollup`
+into a zero-reader relation with a zero-value hourly refresh in `jobs/matview_refresh.py`.
+
+**Deploy order is load-bearing: app first, then Martin.** `auto_publish: false` means an already-loaded
+tab still asks for the four unpublished ids and would 404 until reload.

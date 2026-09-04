@@ -14,6 +14,7 @@ import {
   getLayers,
   soilSurveySummaryLayer,
 } from "@/lib/map/layers";
+import { PARQUET_FEATURE_SOURCE_IDS } from "@/lib/map/sources";
 import {
   LAYER_RENDER_CONTRACT,
   PerimeterMisrepresentationError,
@@ -71,8 +72,31 @@ const NATIVE_POLYGON_LAYER_IDS: readonly LayerToggleId[] = layerRenderContractEn
   .filter((entry) => entry.renderClass === "native_polygon")
   .map((entry) => entry.layerId);
 
-/** The four that reach the map as Martin function tiles baked into the style. */
+/**
+ * The four that reach the map as style-baked layers rather than React-mounted ones.
+ *
+ * ALL FOUR stopped being Martin function tiles across
+ * `environmental_postgres_retirement_20260904` -- three in wave C, `fire-perimeters` last -- and
+ * now draw from GeoJSON sources fed by the Parquet plane. They stayed style-baked deliberately --
+ * LayerManager's visibility, opacity and date-filter appliers all walk
+ * `LAYER_REGISTRY.styleLayerIds` -- so the claim this file pins is unchanged: the drawn shape is
+ * the producer's own geometry, generalized only server-side.
+ */
 const STYLE_BACKED_NATIVE_LAYER_IDS: readonly LayerToggleId[] = [
+  "fire-perimeters",
+  "evacuation-zones",
+  "burn-severity",
+  "watersheds",
+];
+
+/**
+ * The style-baked native layers whose geometry arrives as GeoJSON from the Parquet plane.
+ *
+ * The same four, and that is the point of keeping two lists: this one is what the source-binding
+ * cases below sweep, and a layer added to the style-baked list without arriving here would be one
+ * reading tiles again.
+ */
+const PARQUET_BACKED_NATIVE_LAYER_IDS: readonly LayerToggleId[] = [
   "fire-perimeters",
   "evacuation-zones",
   "burn-severity",
@@ -86,7 +110,16 @@ const ZOOM_BY_BAND: Readonly<Record<ZoomBand, number>> = {
   detail: 14,
 };
 
-/** The Martin tile functions behind the four style-backed native layers, newest definition wins. */
+/**
+ * The tile functions that ever backed a native polygon layer, newest definition wins.
+ *
+ * NONE of the four has a reader any more -- all four layers moved to the Parquet plane and all
+ * four functions were unpublished from `infra/martin/martin.yaml` -- but the SQL still EXISTS in
+ * production until wave D fires `drizzle/0039_drop_environmental_tile_functions.sql` with its
+ * three-part packet. The generalization cases below therefore still govern them: a function live
+ * in the database is a function a rollback or a hand-run can put back in front of a reader.
+ * Delete these four names in the same commit that lands the drop, and not before.
+ */
 const NATIVE_TILE_FUNCTION_NAMES = [
   "fire_risk_tiles",
   "burn_severity_tiles",
@@ -410,8 +443,8 @@ describe("assertNotPerimeter separates real perimeters from detection density", 
   });
 });
 
-describe("the four tile-backed native layers draw a fill from their source geometry", () => {
-  it("gives each one a fill and a line over one Martin function source", () => {
+describe("the four style-baked native layers draw a fill from their source geometry", () => {
+  it("gives each one a fill and a line over one source", () => {
     const formsByLayer = Object.fromEntries(
       STYLE_BACKED_NATIVE_LAYER_IDS.map((layerId): [string, string[]] => [
         layerId,
@@ -427,16 +460,27 @@ describe("the four tile-backed native layers draw a fill from their source geome
     });
   });
 
-  it("binds every one of their style layers to the toggle's own tile source", () => {
-    for (const layerId of STYLE_BACKED_NATIVE_LAYER_IDS) {
-      const martinSource = MARTIN_SOURCE_BY_LAYER_TOGGLE[layerId];
-      expect(martinSource).toBeDefined();
+  it("leaves fire-perimeters bound to no Martin source at all", () => {
+    // It was `fire_risk_tiles` until 2026-09-04 and was the last environmental layer reading
+    // PostgreSQL. A source id reappearing here would mean the map went back to the tile function
+    // -- which still EXISTS in the database until wave D fires 0039, so this is a live regression
+    // rather than an impossible one.
+    expect(MARTIN_SOURCE_BY_LAYER_TOGGLE["fire-perimeters"]).toBeUndefined();
+    expect(Object.keys(MARTIN_SOURCE_BY_LAYER_TOGGLE)).toEqual(["interventions"]);
+  });
+
+  it("binds the four Parquet-fed layers to a declared GeoJSON source and no source-layer", () => {
+    for (const layerId of PARQUET_BACKED_NATIVE_LAYER_IDS) {
+      // A layer still naming a Martin source here would still be reading PostgreSQL, which is
+      // exactly what wave C removed.
+      expect(MARTIN_SOURCE_BY_LAYER_TOGGLE[layerId]).toBeUndefined();
       for (const styleLayerId of LAYER_REGISTRY[layerId].styleLayerIds) {
         const facts = styleLayerFacts(styleLayerId);
-        expect(facts.source).toBe(martinSource);
-        // A `source-layer` is what makes the drawn shape the tile's own geometry rather than
-        // anything the client assembled: an MVT layer tag, resolved inside the tile.
-        expect(facts.sourceLayer).not.toBe("");
+        expect(PARQUET_FEATURE_SOURCE_IDS).toContain(facts.source);
+        // `source-layer` is REQUIRED for a vector source and PROHIBITED for every other kind.
+        // Leaving it on after the repoint makes MapLibre reject the layer outright -- a blank
+        // layer with nothing in the console, which is the failure this line exists to catch.
+        expect(facts.sourceLayer).toBe("");
       }
     }
   });
@@ -449,7 +493,7 @@ describe("the four tile-backed native layers draw a fill from their source geome
     }
   });
 
-  it("keeps all four on the style-baked tile path, not on a client-assembled source", () => {
+  it("keeps all four style-baked, so LayerManager's three appliers still reach them", () => {
     for (const layerId of STYLE_BACKED_NATIVE_LAYER_IDS) {
       expect(LAYER_REGISTRY[layerId].renderKind).toBe("style");
     }
@@ -577,16 +621,19 @@ describe("MTBS is the production continuity reference", () => {
     }
   });
 
-  it("reads its fill and outline from the burn_severity tile layer", () => {
+  it("reads its fill and outline from the Parquet-fed burn-severity source", () => {
     const fill = styleLayerFacts("burn-severity");
     const outline = styleLayerFacts("burn-severity-outline");
 
     expect(fill.type).toBe("fill");
     expect(outline.type).toBe("line");
-    expect(fill.source).toBe("burn_severity_tiles");
-    expect(outline.source).toBe("burn_severity_tiles");
-    expect(fill.sourceLayer).toBe("burn_severity");
-    expect(outline.sourceLayer).toBe("burn_severity");
+    // Was `burn_severity_tiles` until 2026-09-04. That function did no simplification at any
+    // zoom -- 541 rows, 2,341,323 vertices, 37.5 MB, 28.4 s cold for one read of the whole layer
+    // -- while the lane publishes the same polygons at z13/z9/z5/z0.
+    expect(fill.source).toBe("burn-severity-features");
+    expect(outline.source).toBe("burn-severity-features");
+    expect(fill.sourceLayer).toBe("");
+    expect(outline.sourceLayer).toBe("");
   });
 
   it("scrubs the time slider by re-filtering tiles in place, never by refetching other geometry", () => {

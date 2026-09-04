@@ -74,6 +74,86 @@ export interface ParquetBrowserDroughtArea {
   geometry: GeoJSON.Polygon | GeoJSON.MultiPolygon;
 }
 
+/** Browser mirror of one published Oregon OEM evacuation area. */
+export interface ParquetBrowserEvacuationZone {
+  naturalKey: string;
+  snapshotDay: string;
+  evacuationAreaName: string | null;
+  fireName: string | null;
+  county: string | null;
+  hazardType: string | null;
+  evacuationLevel: number | null;
+  evacuationLevelLabel: string | null;
+  severity: string | null;
+  structuresWithin: number | null;
+  populationWithin: number | null;
+  observedAt: string | null;
+  geometry: GeoJSON.Polygon | GeoJSON.MultiPolygon;
+}
+
+/**
+ * Browser mirror of one WFIGS incident, as of the snapshot that answered the request.
+ *
+ * `observedDay` is nullable here because it is nullable in the warehouse, and that nullability is
+ * the whole subtlety of this layer: an incident WFIGS gave no parseable timestamp is drawn at
+ * every slider date rather than hidden. `snapshotDay` is the version that answered and is never
+ * confused for it -- one says when the population was captured, the other when the fire was seen.
+ */
+export interface ParquetBrowserFirePerimeter {
+  featureId: string;
+  uniqueFireIdentifier: string;
+  snapshotDay: string;
+  observedDay: string | null;
+  severity: string | null;
+  geometry: GeoJSON.Polygon | GeoJSON.MultiPolygon;
+}
+
+/** Browser mirror of one MTBS burned-area boundary. */
+export interface ParquetBrowserBurnScar {
+  fireId: string;
+  fireName: string | null;
+  fireYear: number | null;
+  fireType: string | null;
+  assessmentType: string | null;
+  ignitionDate: string;
+  observedDay: string;
+  acres: number | null;
+  severityClass: string | null;
+  dataAvailableAt: string;
+  geometry: GeoJSON.Polygon | GeoJSON.MultiPolygon;
+}
+
+/** Browser mirror of one basin, at whichever rung of the HUC hierarchy served the camera. */
+export interface ParquetBrowserWatershed {
+  huc: string;
+  hucLevel: number;
+  name: string | null;
+  areaSquareKm: number | null;
+  toHuc: string | null;
+  states: string | null;
+  huType: string | null;
+  releaseDay: string;
+  observedAt: string | null;
+  geometry: GeoJSON.Polygon | GeoJSON.MultiPolygon;
+}
+
+/** Browser mirror of one station-day, collapsed from the lane's tall measurement grain. */
+export interface ParquetBrowserSensorStation {
+  sensorId: string | null;
+  stationName: string | null;
+  network: string | null;
+  observedDay: string;
+  observedAt: string;
+  longitude: number;
+  latitude: number;
+  measurements: readonly {
+    name: string;
+    value: number;
+    unitCode: string | null;
+    observedAt: string;
+  }[];
+}
+
 /**
  * Browser mirror of one measured NDVI observation.
  *
@@ -247,6 +327,217 @@ export function presentParquetDrought(
         source: "US Drought Monitor",
         sourceUrl: area.sourceUrl,
       },
+    })),
+  };
+}
+
+const EMPTY_COLLECTION: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
+
+/**
+ * An MVT attribute table, built the way `ST_AsMVT` built one: a null-valued attribute is ABSENT,
+ * never present-and-null.
+ *
+ * This is the whole reason the four presenters below do not just spread their rows. The style
+ * expressions these features feed were written against Martin tiles and read absence with `has`:
+ * `burnSeverityLayer`'s fill is `["case", ["has", "acres"], <ramp>, <grey>]`, and
+ * `tileLayerDateFilter` keeps an undated feature alive with `["!", ["has", "observed_day"]]`. A
+ * GeoJSON `properties` object carrying `acres: null` answers `has` with TRUE, so a scar with no
+ * reported acreage would be interpolated against `null` instead of painted the neutral grey, and
+ * an undated feature would be compared against a date instead of kept. Dropping the key is what
+ * keeps every one of those expressions meaning what it meant against the tiles.
+ */
+function mvtProperties(
+  entries: Readonly<Record<string, string | number | boolean | null | undefined>>
+): Record<string, string | number | boolean> {
+  const properties: Record<string, string | number | boolean> = {};
+  for (const [key, value] of Object.entries(entries)) {
+    if (value === null || value === undefined) continue;
+    properties[key] = value;
+  }
+  return properties;
+}
+
+/** The UTC calendar day of an instant, or null when the producer published none. */
+function observationDay(observedAt: string | null): string | null {
+  if (observedAt === null) return null;
+  const parsedMs = Date.parse(observedAt);
+  return Number.isNaN(parsedMs) ? null : new Date(parsedMs).toISOString().slice(0, 10);
+}
+
+/**
+ * Published evacuation areas as the exact attribute table `geo.evacuation_zone_tiles()` emitted.
+ *
+ * Every key below is one that migration's `SELECT` list named, spelled the same way, because
+ * `evacuationZonesLayer`'s `severity` match and `formatEvacuationZone`'s six fields were written
+ * against those names and are unchanged by this cutover -- the SOURCE moved, the vocabulary did
+ * not. `observed_day` is the date part of the producer's own `observedAt`, which is what
+ * `geo.feature_observation_day` returned and so what the row's slider has always filtered on.
+ */
+export function presentParquetEvacuationZones(
+  result: ParquetBrowserReaderResult<readonly ParquetBrowserEvacuationZone[]> | undefined
+): GeoJSON.FeatureCollection {
+  if (result?.state !== "ready") return EMPTY_COLLECTION;
+  return {
+    type: "FeatureCollection",
+    features: result.data.map((zone) => ({
+      type: "Feature" as const,
+      id: zone.naturalKey,
+      geometry: zone.geometry,
+      properties: mvtProperties({
+        evacuation_area_name: zone.evacuationAreaName,
+        fire_name: zone.fireName,
+        county: zone.county,
+        hazard_type: zone.hazardType,
+        severity: zone.severity,
+        evacuation_level: zone.evacuationLevel,
+        evacuation_level_label: zone.evacuationLevelLabel,
+        structures_within: zone.structuresWithin,
+        population_within: zone.populationWithin,
+        observed_day: observationDay(zone.observedAt),
+      }),
+    })),
+  };
+}
+
+/**
+ * Active fire perimeters as the exact attribute table `geo.fire_risk_tiles()` emitted.
+ *
+ * That function's SELECT list named four attributes -- `risk_level`, `severity`, `name`,
+ * `observed_day` (`drizzle/0038_tile_low_zoom_routing.sql:466-472`) -- and EMITTED two. It read
+ * `risk_level` and `name` out of the `geo.features` JSONB under keys no producer has ever written:
+ * `ingest/wfigs.py:234` writes `incidentName`, never `name`, and nothing anywhere writes
+ * `risk_level`. `ST_AsMVT` omits a NULL attribute, so both were absent from every tile this
+ * platform has ever served, and no paint expression, legend or hover formatter reads either one.
+ * They are named here and not emitted, because emitting `incident_name` under the key `name` would
+ * be inventing an attribute the layer never had rather than rebuilding the one it did.
+ *
+ * `observed_day` MUST stay absent rather than null on an incident WFIGS could not date. It is the
+ * `mvtProperties` rule at its sharpest: `tileLayerDateFilter` keeps such a row with
+ * `["!", ["has", "observed_day"]]`, and a `properties` object carrying `observed_day: null`
+ * answers `has` with TRUE -- which would flip the filter from KEEPING every undated perimeter to
+ * comparing it against a date it does not have, and hiding it. The server-side in-frame filter
+ * (`firePerimetersInFrame`) already kept those rows; dropping the key here is what stops the
+ * client throwing them away again.
+ */
+export function presentParquetFirePerimeters(
+  result: ParquetBrowserReaderResult<readonly ParquetBrowserFirePerimeter[]> | undefined
+): GeoJSON.FeatureCollection {
+  if (result?.state !== "ready") return EMPTY_COLLECTION;
+  return {
+    type: "FeatureCollection",
+    features: result.data.map((perimeter) => ({
+      type: "Feature" as const,
+      // `geo.features.id`, which is what the tile function put on `f.id`: the same feature keeps
+      // the same identity across the cutover.
+      id: perimeter.featureId,
+      geometry: perimeter.geometry,
+      properties: mvtProperties({
+        severity: perimeter.severity,
+        observed_day: perimeter.observedDay,
+      }),
+    })),
+  };
+}
+
+/**
+ * MTBS burn scars as the attribute table `geo.burn_severity_tiles()` emitted.
+ *
+ * `acres` is deliberately absent rather than null when the source reported none: the fill's
+ * `["case", ["has", "acres"], ...]` arm is what paints those scars the neutral grey, and a null
+ * would send them through the log ramp instead. `severity_class` is carried even though it is null
+ * on every published row, for the same reason `formatBurnSeverity` still reads it -- the day MTBS
+ * starts publishing a polygon-level class, the tooltip shows it with no code change.
+ */
+export function presentParquetBurnSeverity(
+  result: ParquetBrowserReaderResult<readonly ParquetBrowserBurnScar[]> | undefined
+): GeoJSON.FeatureCollection {
+  if (result?.state !== "ready") return EMPTY_COLLECTION;
+  return {
+    type: "FeatureCollection",
+    features: result.data.map((scar) => ({
+      type: "Feature" as const,
+      id: scar.fireId,
+      geometry: scar.geometry,
+      properties: mvtProperties({
+        fire_id: scar.fireId,
+        fire_name: scar.fireName,
+        fire_year: scar.fireYear,
+        ignition_date: scar.ignitionDate,
+        fire_type: scar.fireType,
+        assessment_type: scar.assessmentType,
+        acres: scar.acres,
+        severity_class: scar.severityClass,
+        observed_day: scar.observedDay,
+      }),
+    })),
+  };
+}
+
+/**
+ * Watershed boundaries as the attribute table `geo.watershed_tiles()` emitted, with one field
+ * missing and named rather than faked.
+ *
+ * `basin_count` -- how many HUC12s a coarse feature merges -- has NO Parquet source. The tile
+ * function computed it with `count(*)` while building `geo.watershed_rollup`
+ * (`drizzle/0023_watershed_zoom_generalization.sql:52`), whereas the lane's `HierarchicalDissolve`
+ * declares no counting aggregation, so the number does not exist to publish. Omitted, which makes
+ * `formatWatershed` drop that one line; inventing it would be the fabricated-field bug this
+ * project has already paid for three times. Restoring it is a `ColumnAggregation` on the
+ * watersheds lane, not a renderer change.
+ *
+ * `huc12` is emitted ONLY at the base rung, exactly as the tile function did (`NULL::text AS huc12`
+ * on the rollup branch): a HUC10 code under a `huc12` key would present a rollup as a basin.
+ */
+export function presentParquetWatersheds(
+  result: ParquetBrowserReaderResult<readonly ParquetBrowserWatershed[]> | undefined
+): GeoJSON.FeatureCollection {
+  if (result?.state !== "ready") return EMPTY_COLLECTION;
+  return {
+    type: "FeatureCollection",
+    features: result.data.map((basin) => ({
+      type: "Feature" as const,
+      id: basin.huc,
+      geometry: basin.geometry,
+      properties: mvtProperties({
+        huc: basin.huc,
+        huc_level: basin.hucLevel,
+        huc12: basin.hucLevel === 12 ? basin.huc : null,
+        name: basin.name,
+        areasqkm: basin.areaSquareKm,
+        tohuc: basin.toHuc,
+        states: basin.states,
+        hutype: basin.huType,
+      }),
+    })),
+  };
+}
+
+/**
+ * Sensor stations as the attribute table `geo.sensor_tiles()` emitted, one Point per station.
+ *
+ * Four attributes and not sixteen, deliberately: the reader collapses the lane's tall
+ * measurement grain to one station per feature, and the sixteen captured NWS values stay on the
+ * row rather than being flattened into a property table no style expression or tooltip reads.
+ * Widening the tooltip to show them is a hover-fields change with its own review, not something a
+ * presenter should decide by quietly shipping the columns.
+ */
+export function presentParquetSensorStations(
+  result: ParquetBrowserReaderResult<readonly ParquetBrowserSensorStation[]> | undefined
+): GeoJSON.FeatureCollection {
+  if (result?.state !== "ready") return EMPTY_COLLECTION;
+  return {
+    type: "FeatureCollection",
+    features: result.data.map((station, index) => ({
+      type: "Feature" as const,
+      id: station.sensorId ?? `${station.longitude}:${station.latitude}:${index}`,
+      geometry: { type: "Point" as const, coordinates: [station.longitude, station.latitude] },
+      properties: mvtProperties({
+        network: station.network,
+        sensor_id: station.sensorId,
+        station_name: station.stationName,
+        observed_at: station.observedAt,
+        observed_day: station.observedDay,
+      }),
     })),
   };
 }

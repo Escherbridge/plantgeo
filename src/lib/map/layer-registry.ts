@@ -231,8 +231,12 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
     panelId: "water",
     permanentlyUnavailableReason: null,
   },
-  // Published rows served by geo.sensor_tiles(), live in martin.yaml. See sensorsLayer in
-  // layers.ts; the switch that reaches it is WaterDetails', added later than the style layer.
+  // Published rows read from the `sensors` Parquet lane through `environmental.getSensorStations`
+  // since wave C of environmental_postgres_retirement_20260904; geo.sensor_tiles() served them
+  // until then. Still `renderKind: "style"` -- the layer is baked into every style and its
+  // visibility, opacity and date filter are written by LayerManager's appliers exactly as before;
+  // only the source behind it changed, from a Martin vector source to a GeoJSON one. See
+  // sensorsLayer in layers.ts; the switch that reaches it is WaterDetails'.
   sensors: {
     toggleId: "sensors",
     label: "Sensor Stations",
@@ -243,19 +247,20 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
     panelId: "water",
     permanentlyUnavailableReason: null,
   },
-  // USGS WBD HUC12 boundaries, drawn from geo.watershed_tiles() rather than by proxying
-  // environmental.getWatersheds per viewport. 0017_watershed_persistence gave them a geo.layers
-  // row and the tile function, and `agri-service data ingest-watersheds` persists 9,396 PNW basins keyed
-  // by HUC12 code, so the name claimed here is the layer this toggle actually draws.
+  // USGS WBD HUC12 boundaries, drawn from the `watersheds` Parquet lane through
+  // `environmental.getWatershedBoundaries` rather than by proxying environmental.getWatersheds per
+  // viewport. 0017_watershed_persistence gave them a geo.layers row and a tile function, and
+  // `agri-service data ingest-watersheds` persists 9,396 PNW basins keyed by HUC12 code; the lane
+  // exports that same set as one full snapshot per release day, so the name claimed here is still
+  // the layer this toggle actually draws.
   //
   // The proxy could never draw at an ordinary zoom: it caps a request at 1 square degree
   // (MAX_WATERSHED_BBOX_SQUARE_DEGREES in src/lib/server/services/hydrosheds.ts) while the
   // viewport bbox is ~767 at the default zoom, so every request was rejected and the layer fell
-  // back to an empty collection. The tile path has no bbox ceiling and, since
-  // 0023_watershed_zoom_generalization, no minzoom either: payload is bounded by drawing the
-  // HUC rung the zoom can carry rather than by hiding the layer. The panel's basin LIST still
-  // comes from the capped proxy, so it can be empty while the map draws — which is why the
-  // Watersheds tab explains the ceiling instead of reporting an outage.
+  // back to an empty collection. The published path has no bbox ceiling and no minzoom: payload is
+  // bounded by drawing the HUC rung the zoom can carry rather than by hiding the layer. The
+  // panel's basin LIST still comes from the capped proxy, so it can be empty while the map draws
+  // — which is why the Watersheds tab explains the ceiling instead of reporting an outage.
   //
   // Its 2013 WBD loaddate does not drag the slider axis: sliderDomain excludes snapshot layers
   // from the axis start.
@@ -424,8 +429,11 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
     panelId: "community",
     permanentlyUnavailableReason: null,
   },
-  // Published Oregon OEM rows, previously with no tile function at all -- see
-  // evacuationZonesLayer/evacuationZonesOutlineLayer in layers.ts; FireDetails owns the switch.
+  // Published Oregon OEM rows, read from the `evacuation-zones` Parquet lane through
+  // `environmental.getEvacuationZones` since wave C; geo.evacuation_zone_tiles() served them
+  // between 0009 and then. The lane is a full re-snapshot per release day, so one release answers
+  // the whole standing set -- see evacuationZonesLayer/evacuationZonesOutlineLayer in layers.ts;
+  // FireDetails owns the switch.
   "evacuation-zones": {
     toggleId: "evacuation-zones",
     label: "Evacuation Zones",
@@ -436,9 +444,11 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
     panelId: "fire",
     permanentlyUnavailableReason: null,
   },
-  // MTBS burned-area boundaries. 0011 gave them a geo.layers row and 0012 the tile
-  // function; before that the layer had no path to the map at any level, so it was
-  // invisible by construction rather than switched off. See burnSeverityLayer in layers.ts.
+  // MTBS burned-area boundaries. 0011 gave them a geo.layers row and 0012 a tile function; before
+  // that the layer had no path to the map at any level. Read from the `burn-severity` Parquet lane
+  // through `environmental.getBurnSeverity` since wave C, which unions every release at or before
+  // the day because that lane exports one release day at a time. See burnSeverityLayer in
+  // layers.ts.
   "burn-severity": {
     toggleId: "burn-severity",
     // "Burn History", not "Burn Severity": the published rows carry burned area and no

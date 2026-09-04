@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
+import type { GeoJSONSource } from "maplibre-gl";
 import { keepPreviousData } from "@tanstack/react-query";
 import { useMap } from "@/lib/map/map-context";
 import {
@@ -39,11 +40,20 @@ import {
 } from "@/stores/useMetricAtDate";
 import type { WeatherPoint } from "@/components/map/layers/WeatherLayer";
 import {
+  presentParquetBurnSeverity,
   presentParquetDrought,
+  presentParquetEvacuationZones,
+  presentParquetFirePerimeters,
+  presentParquetSensorStations,
   presentParquetVegetation,
   presentParquetWater,
+  presentParquetWatersheds,
   presentParquetWeather,
 } from "@/lib/environmental/parquet-presentation";
+import {
+  PARQUET_FEATURE_SOURCE_IDS,
+  type ParquetFeatureSourceId,
+} from "@/lib/map/sources";
 
 const EMPTY_FEATURE_COLLECTION: GeoJSON.FeatureCollection = {
   type: "FeatureCollection",
@@ -271,6 +281,84 @@ export default function LayerManager() {
     () => presentParquetDrought(droughtQuery.data),
     [droughtQuery.data]
   );
+  // The four style-baked layers that moved off Martin's tile functions in wave C of
+  // environmental_postgres_retirement_20260904. They are read here, beside drought and vegetation,
+  // rather than inside a component of their own, because they are still STYLE-BAKED: their layers
+  // live in styles.ts and their visibility, opacity and date filter are written by the three
+  // appliers below. What this component now owns for them is a fifth thing -- their source DATA --
+  // which `applyParquetFeatureData` writes onto the empty GeoJSON sources styles.ts declares.
+  //
+  // Each takes the viewport bbox and the viewport ZOOM, and the zoom is not a hint: it selects the
+  // published rung. That is the whole point of the cutover -- `geo.burn_severity_tiles()` did no
+  // simplification at any zoom and cost 2,341,323 vertices / 37.5 MB / 28.4 s cold for one read of
+  // the whole layer, while the ladder publishes z13/z9/z5/z0 rungs of the same polygons.
+  //
+  // `keepPreviousData` on the three dated feeds, with the matching `liveLayerDayReports` entries
+  // below, for the same reason every dated feed here carries both: a settled scrub or a pan would
+  // otherwise blank the layer for a full round trip. Never one without the other.
+  const sensorsEnabled = layerVisibility.sensors;
+  const sensorsQuery = trpc.environmental.getSensorStations.useQuery(
+    { bbox: bbox ?? undefined, date: sensorsDay.requestDate, zoom },
+    { enabled: sensorsEnabled && bbox !== null, placeholderData: keepPreviousData }
+  );
+  const sensorsGeoJSON = useMemo(
+    () => presentParquetSensorStations(sensorsQuery.data),
+    [sensorsQuery.data]
+  );
+
+  const evacuationZonesEnabled = layerVisibility["evacuation-zones"];
+  const evacuationZonesQuery = trpc.environmental.getEvacuationZones.useQuery(
+    { bbox: bbox ?? undefined, date: evacuationZonesDay.requestDate, zoom },
+    { enabled: evacuationZonesEnabled && bbox !== null, placeholderData: keepPreviousData }
+  );
+  const evacuationZonesGeoJSON = useMemo(
+    () => presentParquetEvacuationZones(evacuationZonesQuery.data),
+    [evacuationZonesQuery.data]
+  );
+
+  const burnSeverityEnabled = layerVisibility["burn-severity"];
+  const burnSeverityQuery = trpc.environmental.getBurnSeverity.useQuery(
+    { bbox: bbox ?? undefined, date: burnSeverityDay.requestDate, zoom },
+    { enabled: burnSeverityEnabled && bbox !== null, placeholderData: keepPreviousData }
+  );
+  const burnSeverityGeoJSON = useMemo(
+    () => presentParquetBurnSeverity(burnSeverityQuery.data),
+    [burnSeverityQuery.data]
+  );
+
+  // The fifth and last of them, and the one whose day means something slightly different from
+  // the others': `fire-perimeters` is a `static_lookup` SNAPSHOT lane, so the day asks "which
+  // incidents were current as of this date" and the reader answers from the newest snapshot at or
+  // before it. A day between snapshots is therefore answered by an older capture rather than
+  // blanked -- which is what `geo.fire_risk_tiles()` plus the style filter always did, and why
+  // this layer, unlike watersheds, does take a date.
+  const firePerimetersEnabled = layerVisibility["fire-perimeters"];
+  const firePerimetersQuery = trpc.environmental.getFirePerimeters.useQuery(
+    { bbox: bbox ?? undefined, date: firePerimetersDay.requestDate, zoom },
+    { enabled: firePerimetersEnabled && bbox !== null, placeholderData: keepPreviousData }
+  );
+  const firePerimetersGeoJSON = useMemo(
+    () => presentParquetFirePerimeters(firePerimetersQuery.data),
+    [firePerimetersQuery.data]
+  );
+
+  // NO DAY IS PASSED HERE, and it is not an oversight. Watersheds is the one of the four that
+  // carries no date filter (`DATE_FILTERABLE_TILE_LAYER_TOGGLE_IDS` omits it) because a WBD
+  // boundary set is a snapshot, not an observation series: `geo.watershed_tiles()` drew the same
+  // 9,396 basins at every point on every axis. The lane holds exactly ONE release day, so asking
+  // for a historical day would return `not_generated` and blank a layer that has always drawn --
+  // scrubbing to 2024 would delete the continent's watersheds. The live edge is the only honest
+  // ask for a static lookup.
+  const watershedsEnabled = layerVisibility.watersheds;
+  const watershedsQuery = trpc.environmental.getWatershedBoundaries.useQuery(
+    { bbox: bbox ?? undefined, zoom },
+    { enabled: watershedsEnabled && bbox !== null, placeholderData: keepPreviousData }
+  );
+  const watershedsGeoJSON = useMemo(
+    () => presentParquetWatersheds(watershedsQuery.data),
+    [watershedsQuery.data]
+  );
+
   const waterEnabled = layerVisibility.water;
   // Both feeds take `water`'s day, because both are drawn by the one `water` toggle and so by
   // the one row that carries a slider for them. Gauges and wells sharing a day is a property of
@@ -411,6 +499,41 @@ export default function LayerManager() {
   // statement ABOUT what is drawn -- a truncated read paints real cells that stop short of the
   // viewport, which must be said rather than left to look like the edge of the fire.
   const parquetLayerFaults = [
+    // The four wave-C layers, folded rather than written out four times: it is one sentence about
+    // four lanes, and four copies is four places for one wording to drift. They earn a notice for
+    // the same reason drought and vegetation do -- until 2026-09-04 these drew from Martin, where
+    // an outage arrived as an empty tile and read on the map as "nothing burned here".
+    ...(
+      [
+        { layerId: "sensors", isDrawn: sensorsEnabled, state: sensorsQuery.data?.state, subject: "Sensor station readings" },
+        {
+          layerId: "evacuation-zones",
+          isDrawn: evacuationZonesEnabled,
+          state: evacuationZonesQuery.data?.state,
+          subject: "Evacuation zones",
+        },
+        {
+          layerId: "burn-severity",
+          isDrawn: burnSeverityEnabled,
+          state: burnSeverityQuery.data?.state,
+          subject: "Burn history boundaries",
+        },
+        {
+          layerId: "watersheds",
+          isDrawn: watershedsEnabled,
+          state: watershedsQuery.data?.state,
+          subject: "Watershed boundaries",
+        },
+      ] as const
+    ).map((lane) =>
+      lane.isDrawn && lane.state === "upstream_unavailable"
+        ? {
+            layerId: lane.layerId,
+            tone: "fault" as const,
+            message: `${lane.subject} are temporarily unavailable from the data service.`,
+          }
+        : null
+    ),
     vegetationEnabled && vegetationQuery.data?.state === "upstream_unavailable"
       ? {
           layerId: "vegetation",
@@ -559,13 +682,109 @@ export default function LayerManager() {
       requestedDate: weatherDay.settledDate,
       ...parquetDrawnDayFlags(weatherQuery),
     },
+    // The four wave-C layers. They had no entry here while they were Martin tiles, because a tile
+    // layer's day was applied as a style filter over bytes already in the browser -- there was no
+    // request to be in flight and nothing to caption. Each now keys a real read on a day, so each
+    // owes the same statement about what it is drawing; without it `keepPreviousData` above would
+    // retain a previous day's frame with nothing saying so.
+    {
+      layerId: "sensors",
+      isDrawn: sensorsEnabled,
+      requestedDate: sensorsDay.settledDate,
+      ...parquetDrawnDayFlags(sensorsQuery),
+    },
+    {
+      layerId: "evacuation-zones",
+      isDrawn: evacuationZonesEnabled,
+      requestedDate: evacuationZonesDay.settledDate,
+      ...parquetDrawnDayFlags(evacuationZonesQuery),
+    },
+    {
+      layerId: "burn-severity",
+      isDrawn: burnSeverityEnabled,
+      requestedDate: burnSeverityDay.settledDate,
+      ...parquetDrawnDayFlags(burnSeverityQuery),
+    },
+    {
+      // The fifth wave layer, on the same rule as the three dated ones above: it now keys a real
+      // read on a day, so it owes a statement about what it is drawing. `settledDate` is the day
+      // ASKED for; the snapshot that answered it may be older, and that gap is the reader's
+      // `servedDay` rather than anything a caption may restate as the drawn day.
+      layerId: "fire-perimeters",
+      isDrawn: firePerimetersEnabled,
+      requestedDate: firePerimetersDay.settledDate,
+      ...parquetDrawnDayFlags(firePerimetersQuery),
+    },
+    {
+      // No day, for the same reason soil-survey has none: the read carries no date, so a retained
+      // frame here is a different VIEWPORT and never a different day.
+      layerId: "watersheds",
+      isDrawn: watershedsEnabled,
+      requestedDate: null,
+      ...parquetDrawnDayFlags(watershedsQuery),
+      isShowingPreviousDay: false,
+    },
   ];
   usePublishedDrawnLayerDays("layer-manager", liveLayerDayReports);
 
-  // Sync visibility of style-baked Martin layers (fire-perimeters/interventions/
-  // watersheds) with activeLayers -- these are static layers added via getStyle(),
-  // not React-mounted components, so they need setLayoutProperty instead of an
-  // unmount/remount cycle.
+  /**
+   * Every Parquet-fed style source's current collection, keyed by the source id styles.ts declares.
+   *
+   * One record rather than five `setData` calls scattered through the component, so the style.load
+   * safety net below can re-apply all five from one ref -- a basemap swap rebuilds each source from
+   * its (empty) spec, so without that pass the four layers would silently blank on every swap.
+   */
+  const parquetFeatureCollections = useMemo<
+    Record<ParquetFeatureSourceId, GeoJSON.FeatureCollection>
+  >(
+    () => ({
+      "sensor-station-features": sensorsGeoJSON,
+      "evacuation-zone-features": evacuationZonesGeoJSON,
+      "burn-severity-features": burnSeverityGeoJSON,
+      "watershed-features": watershedsGeoJSON,
+      "fire-perimeter-features": firePerimetersGeoJSON,
+    }),
+    [
+      sensorsGeoJSON,
+      evacuationZonesGeoJSON,
+      burnSeverityGeoJSON,
+      watershedsGeoJSON,
+      firePerimetersGeoJSON,
+    ]
+  );
+
+  /**
+   * The fourth applier, and the one the other three would be useless without: it writes the DATA a
+   * style-baked layer has no component to hold for it.
+   *
+   * Guarded with `getSource` for the same reason `applyVisibility` guards with `getLayer`: running
+   * against a half-built style must be a no-op per missing source rather than an error, and the
+   * `styleReady` dependency on the effect below is what makes the pass repeat once the style
+   * catches up. Deliberately NOT in the `styledata` handler's frame with the filter and the
+   * opacity: those rebuild an expression per layer, while this re-serializes up to 9,396 basins,
+   * and `styledata` fires as every tile lands.
+   */
+  const applyParquetFeatureData = useCallback(
+    (
+      mapInstance: NonNullable<typeof map>,
+      collections: Record<ParquetFeatureSourceId, GeoJSON.FeatureCollection>
+    ) => {
+      for (const sourceId of PARQUET_FEATURE_SOURCE_IDS) {
+        const source = mapInstance.getSource(sourceId);
+        // Structural, not `instanceof`: a basemap swap can leave a same-named source of another
+        // kind mid-rebuild, and calling setData on one would throw inside a style event handler.
+        if (typeof (source as { setData?: unknown } | undefined)?.setData !== "function") continue;
+        (source as GeoJSONSource).setData(collections[sourceId]);
+      }
+    },
+    []
+  );
+
+  // Sync visibility of every style-baked layer (fire-perimeters, interventions, sensors,
+  // evacuation-zones, burn-severity, watersheds) with activeLayers -- these are declared in the
+  // style rather than mounted as React components, so they need setLayoutProperty instead of an
+  // unmount/remount cycle. Whether the layer's source is a Martin tile source or one of the
+  // Parquet-fed GeoJSON sources makes no difference here: this walks the registry.
   const applyVisibility = useCallback(
     (mapInstance: NonNullable<typeof map>, currentVisibility: LayerVisibility) => {
       for (const entry of styleBackedLayerEntries()) {
@@ -705,6 +924,14 @@ export default function LayerManager() {
     layerOpacityRef.current = layerOpacity;
   }, [layerOpacity]);
 
+  // Same discipline again, for the source data: a basemap swap must re-fill the five Parquet-fed
+  // sources from whatever the readers currently hold, without the collections entering the
+  // style.load handler's dependency list and re-registering it behind ServiceAreaLayer's.
+  const parquetFeatureCollectionsRef = useRef(parquetFeatureCollections);
+  useEffect(() => {
+    parquetFeatureCollectionsRef.current = parquetFeatureCollections;
+  }, [parquetFeatureCollections]);
+
   // True once the CURRENT style has actually finished loading, per isStyleLoaded() --
   // not merely "style.load fired". isStyleLoaded() also requires every source's tiles
   // to be in, so it can still read false the instant style.load fires; styledata fires
@@ -731,6 +958,9 @@ export default function LayerManager() {
     // coalescing load-bearing.
     let convergenceFrame: number | null = null;
     const onStyleLoad = () => {
+      // Data first: the filter and the opacity pass below both write onto layers whose source was
+      // just rebuilt empty by the swap, and a layer with no features has nothing to filter.
+      applyParquetFeatureData(mapInstance, parquetFeatureCollectionsRef.current);
       applyVisibility(mapInstance, layerVisibilityRef.current);
       applyDateFilter(mapInstance, filterDaysRef.current);
       // A basemap swap rebuilds every style layer from its authored paint, so the multiplier
@@ -765,7 +995,16 @@ export default function LayerManager() {
       mapInstance.off("styledata", onStyleData);
     };
     // applyOpacity is a stable useCallback; the opacity RECORD must never appear here.
-  }, [map, applyVisibility, applyDateFilter, applyOpacity]);
+  }, [map, applyVisibility, applyDateFilter, applyOpacity, applyParquetFeatureData]);
+
+  // The data sibling of the filter effect below, and ungated for the same reason: a read that has
+  // landed must reach the map even while `isStyleLoaded()` is false, and `applyParquetFeatureData`
+  // already no-ops per missing source. `styleReady` stays in the deps so the write repeats once
+  // the style settles, which is what covers the first paint.
+  useEffect(() => {
+    if (!map) return;
+    applyParquetFeatureData(map, parquetFeatureCollections);
+  }, [map, parquetFeatureCollections, applyParquetFeatureData, styleReady]);
 
   // Apply toggles once the style is actually ready, and again whenever styleReady
   // flips true -- without styleReady in the deps, this ran once on first paint while

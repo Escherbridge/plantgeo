@@ -156,6 +156,17 @@ export const CACHEABLE_LAYER_QUERIES: readonly string[] = [
   "environmental.getClimateField",
   "environmental.getSoilSurvey",
   "environmental.getWatersheds",
+  // The five layers that moved off Martin's tile functions in the
+  // environmental_postgres_retirement_20260904 track -- four in wave C, fire perimeters last.
+  // They are listed for a reason this allowlist has not had before: they used to be cached as
+  // TILES by the service worker (`src/lib/offline/tile-cache.ts`), and repointing them at the
+  // Parquet plane takes that away. Without these five entries the cutover would silently cost
+  // five layers their offline story.
+  "environmental.getSensorStations",
+  "environmental.getEvacuationZones",
+  "environmental.getBurnSeverity",
+  "environmental.getWatershedBoundaries",
+  "environmental.getFirePerimeters",
   "wildfire.getWeatherForBbox",
 ];
 
@@ -173,7 +184,20 @@ const TOGGLE_ID_BY_ROUTER_PATH: Readonly<Record<string, LayerToggleId>> = {
   "environmental.getVegetationIndex": "vegetation",
   "environmental.getDroughtClassification": "drought",
   "environmental.getSoilSurvey": "soil-survey",
+  // Two paths, one toggle, on the same rule the water pair states above: the panel's basin LIST
+  // is proxied live from USGS under a one-square-degree ceiling, while the MAP's basins come from
+  // the Parquet lane. Both are the `watersheds` row, and neither carries a date, so neither
+  // contributes a synced DAY -- they contribute stored bytes for that row.
   "environmental.getWatersheds": "watersheds",
+  "environmental.getWatershedBoundaries": "watersheds",
+  "environmental.getSensorStations": "sensors",
+  "environmental.getEvacuationZones": "evacuation-zones",
+  "environmental.getBurnSeverity": "burn-severity",
+  // The day recorded for an entry here is `input.date` -- the day the CALLER asked for, never the
+  // snapshot day that answered it. That is the right key for this lane and worth stating, because
+  // the two genuinely differ: "as of" resolves to the newest capture at or before the request, so
+  // several requested days can be served by one capture and each is stored under its own day.
+  "environmental.getFirePerimeters": "fire-perimeters",
   "wildfire.getWeatherForBbox": "weather",
 };
 

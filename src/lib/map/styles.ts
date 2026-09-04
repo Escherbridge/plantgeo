@@ -1,6 +1,12 @@
 import type { StyleSpecification } from "maplibre-gl";
 import type { MapStyle } from "@/types/map";
-import { martinDynamicSources, martinOsmSource, terrainSource, pmtilesSource } from "./sources";
+import {
+  martinDynamicSources,
+  martinOsmSource,
+  parquetFeatureSources,
+  terrainSource,
+  pmtilesSource,
+} from "./sources";
 import { buildings3dLayer, getLayers } from "./layers";
 
 export type { MapStyle };
@@ -63,6 +69,10 @@ export const darkStyle: StyleSpecification = {
     // "martin-dynamic" composite any more: one source shared by six layers made every
     // layer wait on the slowest member, so one unanswered tile function blanked all six.
     ...martinDynamicSources,
+    // The four style-baked layers that moved off Martin in wave C. Empty here; LayerManager
+    // sets their data from the Parquet readers and re-sets it on every style.load, because a
+    // basemap swap rebuilds each source from this spec and would otherwise blank them.
+    ...parquetFeatureSources,
     "martin-osm": martinOsmSource,
     "terrain-dem": terrainSource,
   },
@@ -138,7 +148,10 @@ export const darkStyle: StyleSpecification = {
     },
     hillshadeLayer,
     buildings3dLayer("#334155", "#10b981"),
-    // Martin dynamic-source layers (fire/sensors/interventions/buildings/roads/waterways) — below labels.
+    // The style-baked overlay stack — below labels. Two origins now, not one: `interventions`
+    // is the last Martin function source, and fire perimeters, sensors, evacuation zones,
+    // burn severity and watersheds draw from the Parquet-fed GeoJSON sources LayerManager
+    // fills (PARQUET_FEATURE_SOURCE_IDS in sources.ts). Ordering is unchanged by either move.
     ...getLayers(),
     {
       id: "places-label",
@@ -170,6 +183,10 @@ export const lightStyle: StyleSpecification = {
     // "martin-dynamic" composite any more: one source shared by six layers made every
     // layer wait on the slowest member, so one unanswered tile function blanked all six.
     ...martinDynamicSources,
+    // The four style-baked layers that moved off Martin in wave C. Empty here; LayerManager
+    // sets their data from the Parquet readers and re-sets it on every style.load, because a
+    // basemap swap rebuilds each source from this spec and would otherwise blank them.
+    ...parquetFeatureSources,
     "martin-osm": martinOsmSource,
     "terrain-dem": terrainSource,
   },
@@ -252,7 +269,10 @@ export const lightStyle: StyleSpecification = {
       },
     },
     buildings3dLayer("#94a3b8", "#059669"),
-    // Martin dynamic-source layers (fire/sensors/interventions/buildings/roads/waterways) — below labels.
+    // The style-baked overlay stack — below labels. Two origins now, not one: `interventions`
+    // is the last Martin function source, and fire perimeters, sensors, evacuation zones,
+    // burn severity and watersheds draw from the Parquet-fed GeoJSON sources LayerManager
+    // fills (PARQUET_FEATURE_SOURCE_IDS in sources.ts). Ordering is unchanged by either move.
     ...getLayers(),
     {
       id: "places-label",
@@ -293,6 +313,10 @@ export const satelliteStyle: StyleSpecification = {
     // "martin-dynamic" composite any more: one source shared by six layers made every
     // layer wait on the slowest member, so one unanswered tile function blanked all six.
     ...martinDynamicSources,
+    // The four style-baked layers that moved off Martin in wave C. Empty here; LayerManager
+    // sets their data from the Parquet readers and re-sets it on every style.load, because a
+    // basemap swap rebuilds each source from this spec and would otherwise blank them.
+    ...parquetFeatureSources,
     "martin-osm": martinOsmSource,
   },
   // terrain enabled on-demand via MapView controls
@@ -306,7 +330,10 @@ export const satelliteStyle: StyleSpecification = {
     },
     hillshadeLayer,
     buildings3dLayer("#64748b", "#06b6d4"),
-    // Martin dynamic-source layers (fire/sensors/interventions/buildings/roads/waterways) — below labels.
+    // The style-baked overlay stack — below labels. Two origins now, not one: `interventions`
+    // is the last Martin function source, and fire perimeters, sensors, evacuation zones,
+    // burn severity and watersheds draw from the Parquet-fed GeoJSON sources LayerManager
+    // fills (PARQUET_FEATURE_SOURCE_IDS in sources.ts). Ordering is unchanged by either move.
     ...getLayers(),
     {
       id: "places-label",

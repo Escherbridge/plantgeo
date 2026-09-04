@@ -397,12 +397,23 @@ export interface ParquetVegetationObservation {
 const positionSchema = z.tuple([finiteNumberSchema, finiteNumberSchema]).rest(finiteNumberSchema);
 const ringSchema = z.array(positionSchema).min(4);
 const polygonCoordinatesSchema = z.array(ringSchema).min(1);
-const droughtGeometrySchema = z.discriminatedUnion("type", [
+/**
+ * The two geometry types every native-polygon lane serves.
+ *
+ * Shared by drought, fire-perimeters, burn-severity, evacuation-zones and watersheds rather than
+ * restated per lane: the Parquet API renders EVERY WKB column the same way -- `ST_AsGeoJSON` over
+ * `geom`/`geometry_wkb` (`parquet_ops/warehouse_reader.py:335-340`) -- so one decoder is the whole
+ * of what those five readers need, and five copies would be five chances to accept a shape the
+ * `native_polygon` render contract forbids.
+ */
+const polygonGeometrySchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("Polygon"), coordinates: polygonCoordinatesSchema }).strict(),
   z
     .object({ type: z.literal("MultiPolygon"), coordinates: z.array(polygonCoordinatesSchema).min(1) })
     .strict(),
 ]);
+
+export type ParquetPolygonGeometry = z.infer<typeof polygonGeometrySchema>;
 
 const droughtRowSchema = z
   .object({
@@ -415,15 +426,15 @@ const droughtRowSchema = z
   })
   .strict();
 
-function decodeDroughtGeometry(geojson: string): z.infer<typeof droughtGeometrySchema> {
+function decodePolygonGeometry(geojson: string, lane: string): ParquetPolygonGeometry {
   let rawGeometry: unknown;
   try {
     rawGeometry = JSON.parse(geojson);
   } catch {
-    throw contractError("drought geom is not GeoJSON text");
+    throw contractError(`${lane} geom is not GeoJSON text`);
   }
-  const geometry = droughtGeometrySchema.safeParse(rawGeometry);
-  if (!geometry.success) throw contractError("drought geom is not a Polygon or MultiPolygon");
+  const geometry = polygonGeometrySchema.safeParse(rawGeometry);
+  if (!geometry.success) throw contractError(`${lane} geom is not a Polygon or MultiPolygon`);
   return geometry.data;
 }
 
@@ -433,7 +444,241 @@ export interface ParquetDroughtArea {
   droughtCategory: 0 | 1 | 2 | 3 | 4;
   sourceUrl: string;
   ingestedAt: string;
-  geometry: z.infer<typeof droughtGeometrySchema>;
+  geometry: ParquetPolygonGeometry;
+}
+
+/**
+ * The four `geo.features` polygon lanes and the one point lane that left Martin across the
+ * environmental_postgres_retirement_20260904 track, as the Parquet warehouse publishes them.
+ * Four moved in wave C; `fire-perimeters` moved last, once its lane became a `static_lookup`.
+ *
+ * Every schema below is `.strict()` over the lane's REGISTERED arrow columns
+ * (`warehouse/schemas/<lane>.py`) with the one substitution the serving path makes: a `geom` or
+ * `geometry_wkb` binary column reaches the wire as GeoJSON text, and `_serving_source_key` is
+ * popped off the row before it is serialized (`warehouse_reader.py:297`). A column added upstream
+ * therefore fails these readers loudly instead of arriving unread -- which is the point, because
+ * the Martin tile functions these replace projected a hand-written SELECT list that had already
+ * drifted from its producer twice (`fire_risk_tiles` emitted `risk_level`/`name`, which WFIGS has
+ * never written; `sensor_tiles` emitted `sensor_type`/`status` for the same reason).
+ */
+const firePerimeterRowSchema = z
+  .object({
+    feature_id: z.string().min(1),
+    unique_fire_identifier: z.string().min(1),
+    // The VERSION STAMP this whole partition shares, not an observation day.
+    snapshot_day: daySchema,
+    // NULLABLE BY CONTRACT, and the one nullability in this file that a renderer depends on:
+    // `geo.feature_observation_day` returns NULL for a row it cannot date
+    // (`drizzle/0018_fire_discovery_observation_day.sql:39-40`) and such a row is drawn at EVERY
+    // slider date. See `firePerimetersInFrame`.
+    observed_day: daySchema.nullable(),
+    incident_name: z.string().nullable(),
+    irwin_id: z.string().nullable(),
+    fire_discovery_at: instantSchema.nullable(),
+    polygon_at: instantSchema.nullable(),
+    gis_acres: finiteNumberSchema.nullable(),
+    fire_cause: z.string().nullable(),
+    incident_type_category: z.string().nullable(),
+    poo_state: z.string().nullable(),
+    percent_contained: finiteNumberSchema.nullable(),
+    severity: z.string().nullable(),
+    status: z.string().min(1),
+    data_available_at: instantSchema.nullable(),
+    updated_at: instantSchema,
+    geometry_wkb: z.string().min(1),
+  })
+  .strict();
+
+/**
+ * One WFIGS incident, as of whichever snapshot answered the request.
+ *
+ * Six projected fields out of the eighteen validated above, on `getParquetEvacuationZones`'s own
+ * rule: a reader projects what the presenter draws plus the identity of the version that answered.
+ * The other twelve are validated so an upstream column change fails this reader loudly, and are
+ * deliberately not put on the wire -- `incident_name`, `gis_acres`, `percent_contained`,
+ * `fire_cause`, `poo_state`, `fire_discovery_at` and `polygon_at` would widen the tooltip, which
+ * `geo.fire_risk_tiles()` never did and which is a `hover-fields.ts` change with its own review,
+ * not something this cutover should decide by quietly shipping the columns. `status` is
+ * `'published'` by construction of the export's WHERE clause and `data_available_at` is 100% NULL
+ * in production, so neither has anything to say to a client.
+ */
+export interface ParquetFirePerimeter {
+  featureId: string;
+  uniqueFireIdentifier: string;
+  /** The day this population was CAPTURED -- never the day an incident was observed. */
+  snapshotDay: string;
+  /** The incident's own date, or null for a row WFIGS gave no parseable timestamp. */
+  observedDay: string | null;
+  severity: string | null;
+  geometry: ParquetPolygonGeometry;
+}
+
+const burnSeverityRowSchema = z
+  .object({
+    feature_id: z.string().min(1),
+    fire_id: z.string().min(1),
+    natural_key: z.string().min(1),
+    release_identifier: z.string().min(1),
+    mapping_revision: z.string().min(1),
+    fire_year: z.number().int().nullable(),
+    ignition_date: daySchema,
+    observed_day: daySchema,
+    data_available_at: instantSchema,
+    fire_name: z.string().nullable(),
+    fire_type: z.string().nullable(),
+    assessment_type: z.string().nullable(),
+    acres: finiteNumberSchema.nullable(),
+    severity_class: z.string().nullable(),
+    dnbr_offset: z.number().int().nullable(),
+    dnbr_standard_deviation: z.number().int().nullable(),
+    nodata_threshold: z.number().int().nullable(),
+    greenness_threshold: z.number().int().nullable(),
+    low_threshold: z.number().int().nullable(),
+    moderate_threshold: z.number().int().nullable(),
+    high_threshold: z.number().int().nullable(),
+    allowed_client_exposure: z.boolean(),
+    geom: z.string().min(1),
+  })
+  .strict();
+
+export interface ParquetBurnScar {
+  fireId: string;
+  fireName: string | null;
+  fireYear: number | null;
+  fireType: string | null;
+  assessmentType: string | null;
+  ignitionDate: string;
+  observedDay: string;
+  acres: number | null;
+  severityClass: string | null;
+  dataAvailableAt: string;
+  geometry: ParquetPolygonGeometry;
+}
+
+const evacuationZoneRowSchema = z
+  .object({
+    global_id: z.string().min(1),
+    natural_key: z.string().min(1),
+    producer: z.string().min(1),
+    snapshot_day: daySchema,
+    evacuation_area_name: z.string().nullable(),
+    fire_name: z.string().nullable(),
+    county: z.string().nullable(),
+    hazard_type: z.string().nullable(),
+    evacuation_level: z.number().int().nullable(),
+    evacuation_level_label: z.string().nullable(),
+    severity: z.string().nullable(),
+    structures_within: finiteNumberSchema.nullable(),
+    addresses_within: finiteNumberSchema.nullable(),
+    population_within: finiteNumberSchema.nullable(),
+    editor_name: z.string().nullable(),
+    observed_at: instantSchema.nullable(),
+    source: z.string().min(1),
+    geometry_wkb: z.string().min(1),
+    geometry_version_id: z.string().nullable(),
+    geometry_version_valid_from: instantSchema.nullable(),
+    geometry_last_confirmed_at: instantSchema.nullable(),
+    data_available_at: instantSchema.nullable(),
+    feature_updated_at: instantSchema.nullable(),
+  })
+  .strict();
+
+export interface ParquetEvacuationZone {
+  naturalKey: string;
+  snapshotDay: string;
+  evacuationAreaName: string | null;
+  fireName: string | null;
+  county: string | null;
+  hazardType: string | null;
+  evacuationLevel: number | null;
+  evacuationLevelLabel: string | null;
+  severity: string | null;
+  structuresWithin: number | null;
+  populationWithin: number | null;
+  observedAt: string | null;
+  geometry: ParquetPolygonGeometry;
+}
+
+const watershedRowSchema = z
+  .object({
+    huc12: z.string().min(1),
+    name: z.string().nullable(),
+    areasqkm: finiteNumberSchema.nullable(),
+    tohuc: z.string().nullable(),
+    states: z.string().nullable(),
+    hutype: z.string().nullable(),
+    source: z.string().min(1),
+    observed_at: instantSchema.nullable(),
+    data_available_at: instantSchema.nullable(),
+    release_day: daySchema,
+    feature_id: z.string().nullable(),
+    geom: z.string().min(1),
+  })
+  .strict();
+
+/**
+ * One published basin, at whatever rung of the HUC hierarchy served the request.
+ *
+ * `hucLevel` is the LENGTH of the code and never an assumption: `HierarchicalDissolve` truncates
+ * `huc12` to ten digits at z9, eight at z5 and six at z0 (`warehouse/schemas/watersheds.py:101-104`),
+ * so the code itself is the only honest statement of which rung a feature came from -- exactly the
+ * guarantee `geo.watershed_rollup`'s `huc_level` column made, derived rather than stored.
+ */
+export interface ParquetWatershed {
+  huc: string;
+  hucLevel: number;
+  name: string | null;
+  areaSquareKm: number | null;
+  toHuc: string | null;
+  states: string | null;
+  huType: string | null;
+  releaseDay: string;
+  observedAt: string | null;
+  geometry: ParquetPolygonGeometry;
+}
+
+const sensorRowSchema = z
+  .object({
+    sensor_id: z.string().nullable(),
+    station_name: z.string().nullable(),
+    network: z.string().nullable(),
+    observed_day: daySchema,
+    observed_at: instantSchema,
+    measurement_name: z.string().min(1),
+    value: finiteNumberSchema,
+    unit_code: z.string().nullable(),
+    quality_control: z.string().nullable(),
+    feature_id: z.string().nullable(),
+    data_available_at: instantSchema.nullable(),
+    station_longitude: finiteNumberSchema.nullable(),
+    station_latitude: finiteNumberSchema.nullable(),
+  })
+  .strict();
+
+/**
+ * One station-day, collapsed from the lane's tall one-row-per-measurement grain.
+ *
+ * `geo.sensor_tiles()` emitted one MVT point per `(sensor_id, geom, observed_day)` and projected
+ * four attributes; the Parquet lane keeps all sixteen captured measurements as separate rows
+ * (`warehouse/schemas/sensors.py` header). Collapsing here rather than in the presenter is what
+ * keeps the map's station count equal to the tile function's: without it a station reporting
+ * sixteen fields would draw sixteen coincident dots.
+ */
+export interface ParquetSensorStation {
+  sensorId: string | null;
+  stationName: string | null;
+  network: string | null;
+  observedDay: string;
+  observedAt: string;
+  longitude: number;
+  latitude: number;
+  /** Every measurement this station reported on the served day, newest reading per name. */
+  measurements: readonly {
+    name: string;
+    value: number;
+    unitCode: string | null;
+    observedAt: string;
+  }[];
 }
 
 const fireDetectionRowSchema = z
@@ -1622,7 +1867,7 @@ export async function getParquetDrought(
           droughtCategory: row.dm_category as 0 | 1 | 2 | 3 | 4,
           sourceUrl: row.source_url,
           ingestedAt: row.ingested_at,
-          geometry: decodeDroughtGeometry(row.geom),
+          geometry: decodePolygonGeometry(row.geom, "drought"),
         }))
     );
     if (result.state !== "ready" && result.state !== "absent") return result;
@@ -1663,6 +1908,350 @@ export async function getParquetDrought(
     }
     return result;
   });
+}
+
+/**
+ * Every published Oregon OEM evacuation area as of the requested day.
+ *
+ * `static_lookup`, and the export is a FULL re-snapshot per release day with no date predicate
+ * (`sql/pipeline/evacuation_zones_day_export.sql:14-22`), so the newest release at or before the
+ * day IS the standing set -- the same population `geo.evacuation_zone_tiles()` served, which that
+ * export transcribes clause for clause. Nothing is carried forward and nothing is unioned: one
+ * release answers the whole layer.
+ */
+export async function getParquetEvacuationZones(
+  input: ParquetViewportRead
+): Promise<ParquetReaderResult<readonly ParquetEvacuationZone[]>> {
+  const nowMs = input.nowMs ?? Date.now();
+  const day = selectedDay(input.date, nowMs);
+  rejectFutureDay(day, nowMs, "evacuation-zones");
+  const zoomTier = resolveZoomTier(input.mapZoom);
+  return boundedResult(async () =>
+    mapEnvelope(
+      await getParquetLatestRelease({
+        layer: "evacuation-zones",
+        asOfDay: day,
+        zoomTier,
+        ...(input.bbox === undefined ? {} : { bbox: input.bbox }),
+        ...(input.signal === undefined ? {} : { signal: input.signal }),
+      }),
+      (rows) =>
+        parseRows(rows, evacuationZoneRowSchema, "evacuation-zones").map((row) => ({
+          naturalKey: row.natural_key,
+          snapshotDay: row.snapshot_day,
+          evacuationAreaName: row.evacuation_area_name,
+          fireName: row.fire_name,
+          county: row.county,
+          hazardType: row.hazard_type,
+          evacuationLevel: row.evacuation_level,
+          evacuationLevelLabel: row.evacuation_level_label,
+          severity: row.severity,
+          structuresWithin: row.structures_within,
+          populationWithin: row.population_within,
+          observedAt: row.observed_at,
+          geometry: decodePolygonGeometry(row.geometry_wkb, "evacuation-zones"),
+        }))
+    )
+  );
+}
+
+/**
+ * The rows of one resolved snapshot that are IN FRAME at the day a caller asked for.
+ *
+ * Two properties, both load-bearing, both transcribed from
+ * `planes/fire_perimeters.py:269`'s `observed_day IS NULL OR observed_day <= as_of`:
+ *
+ * 1. AN UNDATED INCIDENT IS NEVER EXCLUDED. It matches `tile-layer-date-filter.ts:44-53` --
+ *    `["any", ["!", ["has", "observed_day"]], ["<=", ["get", "observed_day"], selectedDate]]` --
+ *    which keeps a row `geo.feature_observation_day` could not date at every slider date. The
+ *    retired `daily_series` export deleted those rows outright, because its `= :observed_day`
+ *    predicate can never match NULL, so it served strictly fewer perimeters than Martin drew.
+ * 2. THE COMPARISON IS AGAINST `asOfDay`, THE DAY THE CALLER ASKED FOR -- never against the
+ *    served snapshot's own capture day. The two differ whenever the newest snapshot at or before
+ *    the request is older than the request, which is the normal case for a lane written by a
+ *    cron. `asOfDay` is the value `tileLayerDateFilter` would have compared client-side, so
+ *    comparing against the capture day instead would quietly answer a different question -- and
+ *    an `=== observedDay` equality would be the retired lane's bug, restored.
+ *
+ * A pure day-string comparison, never `Date.parse`: `YYYY-MM-DD` sorts lexicographically, and the
+ * named-day rule (`parquet-plane-client.ts` header) forbids turning a published day into an
+ * instant anywhere on this path.
+ */
+function firePerimetersInFrame<T extends { observed_day: string | null }>(
+  rows: readonly T[],
+  asOfDay: string
+): T[] {
+  return rows.filter((row) => row.observed_day === null || row.observed_day <= asOfDay);
+}
+
+/**
+ * Every WFIGS incident that was current as of the requested day, from the newest snapshot the
+ * lane captured at or before it.
+ *
+ * `static_lookup` since the lane's 2026-09-04 re-registration
+ * (`warehouse/schemas/fire_perimeters.py`), and that re-registration is what made this reader
+ * possible at all: `geo.features` holds one row per incident refreshed IN PLACE, so one published
+ * snapshot IS the standing set that `geo.fire_risk_tiles()` drew. While the lane was registered
+ * `daily_series` on a per-incident `observed_day`, its 177 perimeters sat across 45 partition
+ * days and no bounded read reproduced their union.
+ *
+ * THE SNAPSHOT-RESOLUTION RULE IS NOT RE-IMPLEMENTED HERE. `getParquetLatestRelease` reaches
+ * `resolve_release` (`parquet_ops/serving.py:154`), whose "newest day at or before `as_of`,
+ * reported at the release's OWN day" is the same rule `resolve_fire_perimeters_as_of` states for
+ * the Polars path, down to treating a conflict day as a refusal rather than falling back to an
+ * older clean one. What this reader owes on top of it is the IN-FRAME filter, which the wire's
+ * generic release route does not apply -- see `firePerimetersInFrame` for the two properties that
+ * filter must have.
+ *
+ * `servedDay` is therefore the SNAPSHOT day and `requestedDay` the slider day, exactly as they are
+ * for evacuation zones; a gap between them means the map is drawing the newest capture at or
+ * before the requested day, not a same-day reading, which is the only honest answer a snapshot
+ * source can give about the past.
+ */
+export async function getParquetFirePerimeters(
+  input: ParquetViewportRead
+): Promise<ParquetReaderResult<readonly ParquetFirePerimeter[]>> {
+  const nowMs = input.nowMs ?? Date.now();
+  const day = selectedDay(input.date, nowMs);
+  rejectFutureDay(day, nowMs, "fire-perimeters");
+  const zoomTier = resolveZoomTier(input.mapZoom);
+  return boundedResult(async () =>
+    mapEnvelope(
+      await getParquetLatestRelease({
+        layer: "fire-perimeters",
+        asOfDay: day,
+        zoomTier,
+        ...(input.bbox === undefined ? {} : { bbox: input.bbox }),
+        ...(input.signal === undefined ? {} : { signal: input.signal }),
+      }),
+      (rows) =>
+        // `day`, the REQUESTED day, is the only date this filter may read. The served snapshot day
+        // is deliberately out of scope here -- it is not in this closure's argument list at all.
+        firePerimetersInFrame(
+          parseRows(rows, firePerimeterRowSchema, "fire-perimeters"),
+          day
+        ).map((row) => ({
+          featureId: row.feature_id,
+          uniqueFireIdentifier: row.unique_fire_identifier,
+          snapshotDay: row.snapshot_day,
+          observedDay: row.observed_day,
+          severity: row.severity,
+          geometry: decodePolygonGeometry(row.geometry_wkb, "fire-perimeters"),
+        }))
+    )
+  );
+}
+
+/**
+ * The USGS WBD basin set at the rung the camera can draw, as of the requested day.
+ *
+ * `static_lookup` and a full snapshot for the same reason evacuation zones are: the export carries
+ * no date predicate at all, because a HUC12 boundary is re-keyed in place rather than resampled
+ * (`sql/pipeline/watersheds_day_export.sql:13-22`). `hucLevel` is the code's own length, so a HUC6
+ * rollup can never be captioned as a HUC12 -- the guarantee `geo.watershed_rollup.huc_level` made
+ * as a stored column, made instead from the value it described.
+ *
+ * The rung mapping is NOT identical to the retired tile function's, and the difference is a
+ * property of the ladder rather than of this reader: `geo.watershed_tiles()` routed z>=10 to HUC12,
+ * z>=8 to HUC10, z>=6 to HUC8, z>=4 to HUC6 and below that HUC4
+ * (`drizzle/0023_watershed_zoom_generalization.sql:150-153`), while the four published rungs are
+ * z13=HUC12, z9=HUC10, z5=HUC8, z0=HUC6. So z10-z12 now draws HUC10 where it drew HUC12, and z0-z3
+ * draws HUC6 where it drew HUC4. There is no HUC4 rung to ask for; the ladder's floor is HUC6.
+ */
+export async function getParquetWatersheds(
+  input: ParquetViewportRead
+): Promise<ParquetReaderResult<readonly ParquetWatershed[]>> {
+  const nowMs = input.nowMs ?? Date.now();
+  const day = selectedDay(input.date, nowMs);
+  rejectFutureDay(day, nowMs, "watersheds");
+  const zoomTier = resolveZoomTier(input.mapZoom);
+  return boundedResult(async () =>
+    mapEnvelope(
+      await getParquetLatestRelease({
+        layer: "watersheds",
+        asOfDay: day,
+        zoomTier,
+        ...(input.bbox === undefined ? {} : { bbox: input.bbox }),
+        ...(input.signal === undefined ? {} : { signal: input.signal }),
+      }),
+      (rows) =>
+        parseRows(rows, watershedRowSchema, "watersheds").map((row) => ({
+          huc: row.huc12,
+          hucLevel: row.huc12.length,
+          name: row.name,
+          areaSquareKm: row.areasqkm,
+          toHuc: row.tohuc,
+          states: row.states,
+          huType: row.hutype,
+          releaseDay: row.release_day,
+          observedAt: row.observed_at,
+          geometry: decodePolygonGeometry(row.geom, "watersheds"),
+        }))
+    )
+  );
+}
+
+/**
+ * How many MTBS releases one burn-severity answer may union before it reports itself truncated.
+ *
+ * MTBS publishes roughly one release a year and the warehouse holds four of them, so twelve is
+ * several times the standing history rather than a guess at it. It is a CEILING on round trips,
+ * not a retention rule: the walk stops at the lane's floor long before it, and a lane that ever
+ * grows past it answers `truncated` rather than silently dropping its oldest scars.
+ */
+const BURN_SEVERITY_MAX_RELEASES = 12;
+
+/**
+ * Every MTBS burned-area boundary published at or before the requested day.
+ *
+ * This is the one reader here that unions several releases, and it does so because the export is
+ * SCOPED TO ONE RELEASE DAY -- "the tile function serves the whole layer at every zoom; this query
+ * answers only the rows dated to `release_day`"
+ * (`sql/pipeline/burn_severity_day_export.sql:20-21`). The 541 published scars are therefore spread
+ * across the lane's release days, and a single `getParquetLatestRelease` would draw only the newest
+ * release: last year's fire scars would vanish from a map that has always drawn them.
+ *
+ * The walk is the release resolver used as designed rather than a new path: each answer reports its
+ * own `servedDay`, and asking again for the day before it yields the previous release, terminating
+ * at `day_not_written` once the lane's floor is passed. It reproduces exactly the set
+ * `geo.burn_severity_tiles()` plus the `observed_day <= day` style filter drew, at a bounded number
+ * of round trips instead of one 37.5 MB, 28.4-second unsimplified read.
+ */
+export async function getParquetBurnSeverity(
+  input: ParquetViewportRead
+): Promise<ParquetReaderResult<readonly ParquetBurnScar[]>> {
+  const nowMs = input.nowMs ?? Date.now();
+  const day = selectedDay(input.date, nowMs);
+  rejectFutureDay(day, nowMs, "burn-severity");
+  const zoomTier = resolveZoomTier(input.mapZoom);
+  const releaseRequest = {
+    layer: "burn-severity",
+    zoomTier,
+    ...(input.bbox === undefined ? {} : { bbox: input.bbox }),
+    ...(input.signal === undefined ? {} : { signal: input.signal }),
+  } as const;
+
+  return boundedResult(async () => {
+    const scars: ParquetBurnScar[] = [];
+    let newestServedDay: string | null = null;
+    let firstAnswer: ParquetReaderResult<ParquetBurnScar[]> | null = null;
+    let asOfDay = day;
+    let truncated = false;
+
+    for (let release = 0; release < BURN_SEVERITY_MAX_RELEASES; release += 1) {
+      const answer = mapEnvelope(
+        await getParquetLatestRelease({ ...releaseRequest, asOfDay }),
+        (rows) =>
+          parseRows(rows, burnSeverityRowSchema, "burn-severity").map((row) => ({
+            fireId: row.fire_id,
+            fireName: row.fire_name,
+            fireYear: row.fire_year,
+            fireType: row.fire_type,
+            assessmentType: row.assessment_type,
+            ignitionDate: row.ignition_date,
+            observedDay: row.observed_day,
+            acres: row.acres,
+            severityClass: row.severity_class,
+            dataAvailableAt: row.data_available_at,
+            geometry: decodePolygonGeometry(row.geom, "burn-severity"),
+          }))
+      );
+      firstAnswer ??= answer;
+      // A governed absence or an unwritten day ENDS the walk rather than failing it: the releases
+      // already collected are a true statement about the day, and the older ones simply stop.
+      if (answer.state !== "ready") break;
+      newestServedDay ??= answer.servedDay;
+      scars.push(...answer.data);
+      truncated ||= answer.truncated;
+      // The release before this one. Day arithmetic on the SERVED day, never the requested one:
+      // asking `requestedDay - 1` again would re-serve the release just read, forever. The walk
+      // needs no floor of its own -- once `asOfDay` drops below the lane's first release the plane
+      // answers `day_not_written` in one call and the loop above ends.
+      asOfDay = addUtcDays(answer.servedDay, -1);
+      if (release === BURN_SEVERITY_MAX_RELEASES - 1) truncated = true;
+    }
+
+    // Nothing published at or before the day: report the plane's own first answer, whatever it
+    // said, so an absence stays an absence and an unwritten lane stays unwritten.
+    if (newestServedDay === null) {
+      return firstAnswer ?? { state: "not_generated", requestedDay: day, reason: "day_not_written" };
+    }
+    // The served day is the NEWEST release in the union, which is the day the map is drawing: an
+    // older member does not make the answer older than its freshest release.
+    return { state: "ready", requestedDay: day, servedDay: newestServedDay, data: scars, truncated };
+  });
+}
+
+/**
+ * The published sensor roster for one day, one feature per station rather than per measurement.
+ *
+ * The lane is tall by design -- one row per `(sensor_id, observed_day, measurement_name)`, sixteen
+ * NWS fields where `geo.sensor_tiles()` projected four -- so the collapse here is what keeps the
+ * station COUNT equal to the tile function's `DISTINCT ON (sensor_id, geom, observation_day)`
+ * rather than drawing sixteen coincident dots per station.
+ *
+ * At a coarse rung `sensor_id` and `station_name` are null by construction (`GridAggregation` nulls
+ * what no single station can claim), so the merge key falls back to the cell's own coordinates.
+ * That is the honest key there: the row IS a cell of several stations, and giving it a station
+ * identity would be the fabricated-identity bug this lane's aggregations exist to avoid.
+ */
+export async function getParquetSensorStations(
+  input: ParquetViewportRead
+): Promise<ParquetReaderResult<readonly ParquetSensorStation[]>> {
+  const nowMs = input.nowMs ?? Date.now();
+  const { day, request } = commonRequest({ ...input, nowMs }, "sensors");
+  rejectFutureDay(day, nowMs, "sensors");
+  return boundedResult(async () =>
+    mapEnvelope(await getParquetLayerDay(request), (rows) =>
+      collapseSensorRows(parseRows(rows, sensorRowSchema, "sensors"))
+    )
+  );
+}
+
+/** One station per merge key, carrying every measurement it reported and its newest reading. */
+function collapseSensorRows(
+  rows: readonly z.infer<typeof sensorRowSchema>[]
+): ParquetSensorStation[] {
+  const stations = new Map<string, ParquetSensorStation>();
+  for (const row of rows) {
+    // A row with no coordinates cannot be drawn, and never was: `geo.sensor_tiles()` required
+    // `f.geom IS NOT NULL`. Dropped rather than plotted at a fabricated origin.
+    if (row.station_longitude === null || row.station_latitude === null) continue;
+    const key = row.sensor_id ?? `${row.station_longitude}:${row.station_latitude}`;
+    const existing = stations.get(key);
+    const measurement = {
+      name: row.measurement_name,
+      value: row.value,
+      unitCode: row.unit_code,
+      observedAt: row.observed_at,
+    };
+    if (existing === undefined) {
+      stations.set(key, {
+        sensorId: row.sensor_id,
+        stationName: row.station_name,
+        network: row.network,
+        observedDay: row.observed_day,
+        observedAt: row.observed_at,
+        longitude: row.station_longitude,
+        latitude: row.station_latitude,
+        measurements: [measurement],
+      });
+      continue;
+    }
+    stations.set(key, {
+      ...existing,
+      // The station's own timestamp is the NEWEST reading it filed that day, matching the
+      // `observedAt DESC` tie-break `geo.sensor_tiles()` used to pick its winning row.
+      observedAt:
+        Date.parse(row.observed_at) > Date.parse(existing.observedAt)
+          ? row.observed_at
+          : existing.observedAt,
+      network: existing.network ?? row.network,
+      stationName: existing.stationName ?? row.station_name,
+      measurements: [...existing.measurements, measurement],
+    });
+  }
+  return [...stations.values()];
 }
 
 function windowTerminal<T>(

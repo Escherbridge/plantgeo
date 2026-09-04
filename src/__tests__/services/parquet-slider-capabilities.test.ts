@@ -112,7 +112,7 @@ function withLane(
 
 function natureFor(layer: string): CoverageRow["nature"] {
   if (layer === "drought" || layer === "burn-severity") return "release_series";
-  if (["watersheds", "soil-survey", "evacuation-zones"].includes(layer)) {
+  if (["watersheds", "soil-survey", "evacuation-zones", "fire-perimeters"].includes(layer)) {
     return "static_lookup";
   }
   return "daily_series";
@@ -261,12 +261,6 @@ describe("getParquetSliderCapabilities", () => {
         .filter((entry) => entry.reason === "reader_not_parquet")
         .map((entry) => entry.layerName)
     ).toEqual(nonParquetReaders.filter((layerName) => layerName !== "burn-severity"));
-    expect(result.withheldParquetCapabilities).toContainEqual({
-      layerName: "fire-perimeters",
-      parquetLanes: ["fire-perimeters"],
-      reason: "reader_not_parquet",
-      missingEvidence: [],
-    });
     expect(result.parquetCoverageGeneratedAt).toBe("2026-08-28T12:00:00Z");
     expect(result.parquetCoverageEvaluatedThroughDay).toBe("2026-08-28");
     expect(result.parquetCoverageUnavailable).toBe(false);

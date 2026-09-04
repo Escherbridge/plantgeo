@@ -11,11 +11,16 @@ import {
 import { parquetClimateFieldCollection } from "@/lib/server/services/parquet-climate-field";
 import { getParquetSliderCapabilities } from "@/lib/server/services/parquet-slider-capabilities";
 import {
+  getParquetBurnSeverity,
   getParquetDrought,
   getParquetClimateField,
+  getParquetEvacuationZones,
+  getParquetFirePerimeters,
+  getParquetSensorStations,
   getParquetSoilField,
   getParquetVegetation,
   getParquetWaterGauges,
+  getParquetWatersheds,
   parquetUpstreamFailure,
   rejectAborted,
 } from "@/lib/server/services/parquet-trpc-readers";
@@ -342,6 +347,130 @@ export const environmentalRouter = router({
     .query(async ({ input, signal }) =>
       rejectAborted(
         await getParquetDrought({
+          bbox: input.bbox,
+          date: input.date,
+          mapZoom: input.zoom,
+          signal,
+        })
+      )
+    ),
+
+  /**
+   * The five `geo.features` layers that drew from Martin tile functions until the
+   * environmental_postgres_retirement_20260904 track, now read from the private Parquet plane
+   * exactly as drought is. Four moved in wave C; `getFirePerimeters` followed once its lane was
+   * re-registered `static_lookup`, and with it the last environmental read left PostgreSQL.
+   *
+   * All five take the same `(bbox, date, zoom)` triple every other Parquet viewport read takes,
+   * and for the same reasons: `bbox` clips the geometry server-side (`_clipped_scan` in
+   * `parquet_ops/warehouse_reader.py`), and `zoom` SELECTS the published rung rather than hinting
+   * at one -- which is the whole point of the cutover, because the tile functions they replace did
+   * no simplification at any zoom. `geo.burn_severity_tiles()` was measured at 2,341,323 vertices
+   * / 37.5 MB / 28.4 s cold for one read of the whole layer.
+   *
+   * Deliberately NOT wrapped in `areaBoundedBbox`: that ceiling exists for the two procedures that
+   * proxy a third-party API per request. These read the local warehouse at a rung chosen for the
+   * camera, so a whole-world bbox at z0 is cheaper than a city block at z13, not more expensive.
+   */
+  getEvacuationZones: publicProcedure
+    .input(
+      z.object({
+        bbox: bboxSchema.optional(),
+        date: observationDateSchema.optional(),
+        zoom: mapZoomSchema,
+      })
+    )
+    .query(async ({ input, signal }) =>
+      rejectAborted(
+        await getParquetEvacuationZones({
+          bbox: input.bbox,
+          date: input.date,
+          mapZoom: input.zoom,
+          signal,
+        })
+      )
+    ),
+
+  /**
+   * `date` is the slider day the caller wants the incident set AS OF, and it is not optional
+   * decoration: the reader resolves it to the newest snapshot at or before it and then filters
+   * that snapshot in frame on the same day. An omitted date means the live edge, as everywhere
+   * else here.
+   */
+  getFirePerimeters: publicProcedure
+    .input(
+      z.object({
+        bbox: bboxSchema.optional(),
+        date: observationDateSchema.optional(),
+        zoom: mapZoomSchema,
+      })
+    )
+    .query(async ({ input, signal }) =>
+      rejectAborted(
+        await getParquetFirePerimeters({
+          bbox: input.bbox,
+          date: input.date,
+          mapZoom: input.zoom,
+          signal,
+        })
+      )
+    ),
+
+  getBurnSeverity: publicProcedure
+    .input(
+      z.object({
+        bbox: bboxSchema.optional(),
+        date: observationDateSchema.optional(),
+        zoom: mapZoomSchema,
+      })
+    )
+    .query(async ({ input, signal }) =>
+      rejectAborted(
+        await getParquetBurnSeverity({
+          bbox: input.bbox,
+          date: input.date,
+          mapZoom: input.zoom,
+          signal,
+        })
+      )
+    ),
+
+  getSensorStations: publicProcedure
+    .input(
+      z.object({
+        bbox: bboxSchema.optional(),
+        date: observationDateSchema.optional(),
+        zoom: mapZoomSchema,
+      })
+    )
+    .query(async ({ input, signal }) =>
+      rejectAborted(
+        await getParquetSensorStations({
+          bbox: input.bbox,
+          date: input.date,
+          mapZoom: input.zoom,
+          signal,
+        })
+      )
+    ),
+
+  /**
+   * The DRAWN basin set, distinct from `getWatersheds` below, which answers the Watersheds panel's
+   * basin LIST by proxying USGS live under a one-square-degree ceiling. Two procedures because
+   * they answer two questions: the map needs every basin the camera covers at the rung it can
+   * draw, and the panel needs the handful of basins a reader is looking at, named by the upstream.
+   */
+  getWatershedBoundaries: publicProcedure
+    .input(
+      z.object({
+        bbox: bboxSchema.optional(),
+        date: observationDateSchema.optional(),
+        zoom: mapZoomSchema,
+      })
+    )
+    .query(async ({ input, signal }) =>
+      rejectAborted(
+        await getParquetWatersheds({
           bbox: input.bbox,
           date: input.date,
           mapZoom: input.zoom,

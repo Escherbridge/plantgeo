@@ -96,6 +96,31 @@ async def test_the_read_conforms_to_the_registered_schema() -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_row_missing_position_columns_fails_loudly_not_silently() -> None:
+    """Regression for the 2026-08-24 schema change (commit 8ce71fd).
+
+    Before that commit `signal_plane_day_export.sql` never selected `cell_longitude`/`cell_latitude`
+    at all, and every base-rung object it wrote before it structurally lacks both columns forever --
+    see `warehouse/parquet/AGENTS.md`, "The signal plane" addendum 2026-09-04, for the historical
+    mismatch this pins and the re-export it leaves owed. If a future change to the query ever drops
+    these columns again, `read_signal_day` must fail here rather than silently building a narrower
+    table than `SIGNAL_PLANE_SCHEMA` declares.
+    """
+
+    class _LegacyShapeSession:
+        """Answers with the pre-`8ce71fd` row shape: no `cell_longitude`, no `cell_latitude`."""
+
+        async def execute(self, _statement: Any, params: dict[str, Any]) -> _Result:
+            legacy_row = signal_row(str(params["cell_ids"][0]))
+            del legacy_row["cell_longitude"]
+            del legacy_row["cell_latitude"]
+            return _Result([legacy_row])
+
+    with pytest.raises(KeyError, match="cell_longitude"):
+        await read_signal_day(_LegacyShapeSession(), day=AUGUST_SIXTH, cell_ids=[1])  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
 async def test_an_empty_cell_list_is_refused_rather_than_scanning_nothing() -> None:
     """Zero cells returns zero rows, which would otherwise surface as a confusing empty-write error."""
     session = RecordingSession()

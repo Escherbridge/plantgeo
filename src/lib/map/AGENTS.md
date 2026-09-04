@@ -252,3 +252,98 @@ of thing. `formatBurnSeverity` reads the MVT's snake_case attributes (`fire_name
 `severity_class`), not the camelCase keys the `geo.features` JSONB holds; `severity_class` is null
 on every published row because MTBS distributes severity as a raster, so it is read and simply
 produces no line until the source starts publishing it.
+
+## Which environmental layers read Parquet (all of them, since 2026-09-04)
+
+Wave C (lane C1) of `conductor/tracks/environmental_postgres_retirement_20260904` moved four of the
+five environmental tile functions off PostgreSQL, and lane FP3 moved the fifth. **No environmental
+layer reads Martin any more**; Martin's remaining function sources are `intervention_tiles` and
+`building_tiles`. The table is the whole answer; the paragraphs below it are the things that are
+easy to get wrong afterwards.
+
+| layer | drawn from | read through | rung mapping |
+| --- | --- | --- | --- |
+| `sensors` | `sensor-station-features` (GeoJSON) | `environmental.getSensorStations` | z13 stations; z9/z5/z0 are `GridAggregation` cells with no station identity |
+| `evacuation-zones` | `evacuation-zone-features` (GeoJSON) | `environmental.getEvacuationZones` | one full re-snapshot per release day, simplified per rung |
+| `burn-severity` | `burn-severity-features` (GeoJSON) | `environmental.getBurnSeverity` | union of every release at or before the day, simplified per rung |
+| `watersheds` | `watershed-features` (GeoJSON) | `environmental.getWatershedBoundaries` | z13 HUC12, z9 HUC10, z5 HUC8, z0 HUC6 |
+| `fire-perimeters` | `fire-perimeter-features` (GeoJSON) | `environmental.getFirePerimeters` | newest snapshot at or before the day, simplified per rung; `GeometrySimplification` only, no dissolve |
+
+**These five layers are still `renderKind: "style"`, and that is not a leftover.** They are baked
+into all three styles in `styles.ts`, and `LayerManager`'s appliers write their visibility, their
+opacity multiplier and their date filter by walking `LAYER_REGISTRY[toggleId].styleLayerIds`. Moving
+them into React components would have meant emptying `styleLayerIds`, which silently disarms all
+three appliers and `styleLayerOpacityTargets()` with them. What changed is the source behind the
+layer — a Martin vector source became a GeoJSON source that `LayerManager` fills — so the paint
+expressions, the layer ids, the legends and the `hover-fields.ts` formatters are all untouched.
+Two consequences worth stating: a layer on a GeoJSON source must carry **no `source-layer`** (that
+key is required for vector sources and prohibited for every other kind, and MapLibre rejects the
+layer outright when it is present), and `LayerManager` must re-`setData` on every `style.load`,
+because a basemap swap rebuilds each source from the empty spec `styles.ts` declares.
+
+**The presenters rebuild an MVT attribute table, absences included.** `ST_AsMVT` omits an attribute
+whose value is NULL, and the style expressions were written against that: `burnSeverityLayer`'s fill
+is `["case", ["has", "acres"], <ramp>, <grey>]` and `tileLayerDateFilter` keeps an undated feature
+with `["!", ["has", "observed_day"]]`. A GeoJSON `properties` object carrying `acres: null` answers
+`has` with **true**, so `mvtProperties` in `parquet-presentation.ts` drops null keys rather than
+writing them. Deleting that helper would repaint every unacreaged scar through the log ramp and
+start filtering features that have no date to be filtered on.
+
+**One field is genuinely gone: `basin_count`.** `geo.watershed_tiles()` computed how many HUC12s a
+coarse feature merged with a `count(*)` while building `geo.watershed_rollup`; the lane's
+`HierarchicalDissolve` declares no counting aggregation, so no such number is published. It is
+omitted rather than approximated, which costs `formatWatershed` one line on rollup features.
+Restoring it is a `ColumnAggregation` on the watersheds lane in `services/agri-data-service`.
+
+**`fire-perimeters` moved last, and its date handling is the one thing to read before touching
+it.** The lane was registered `daily_series` on a per-incident `observed_day` (`polygonDateTime`,
+falling back to `fireDiscoveryDateTime`) while `geo.features` holds WFIGS's current-incident set
+refreshed *in place* — one row per incident, never one per incident-day — so its 177 perimeters
+sat across 45 partition days and no bounded read reproduced the union the map draws. It is now
+registered `static_lookup` on `("snapshot_day", "unique_fire_identifier")`: one published snapshot
+IS the standing set, and `observed_day` survives as a nullable per-row column.
+
+`getParquetFirePerimeters` therefore answers in two steps, and BOTH matter:
+
+1. **Resolve** the newest snapshot at or before the requested day. This is the generic release
+   route (`resolve_release`), the same rule `planes/fire_perimeters.py::resolve_fire_perimeters_as_of`
+   states for the Polars path; the reader does not re-implement it. `servedDay` is the snapshot's
+   capture day, `requestedDay` the slider day, and a gap between them means the map is drawing the
+   newest capture at or before the request rather than a same-day reading.
+2. **Filter in frame** on `observed_day IS NULL OR observed_day <= as_of`, where `as_of` is the
+   **requested** day and never the answering snapshot's day. An undated incident is kept at every
+   date — the identical rule `tileLayerDateFilter` applies client-side — and the retired
+   `daily_series` export's `= :observed_day` predicate, which silently deleted every undated row,
+   is the regression to avoid re-introducing. `presentParquetFirePerimeters` then has to DROP the
+   `observed_day` key for those rows rather than write `null`, or the client-side filter starts
+   excluding exactly the rows step 2 kept.
+
+**Checking the fire-perimeters cutover in a browser, at the default PNW camera.** The map opens on
+the coverage bbox (`DEFAULT_VIEWPORT`, `src/stores/map-store.ts`), which `resolveZoomBand` puts in
+the **coarse** band — so the first request is for a DERIVED rung (z5 or z0, whatever
+`resolveZoomTier` returns for that camera), never z13. What to look at, in order:
+
+1. **Network.** One `environmental.getFirePerimeters` tRPC call carrying `bbox`, `zoom` and the
+   row's day. There must be **no** request to `.../fire_risk_tiles/{z}/{x}/{y}` and no
+   `fire_risk_tiles` entry in the style's sources — that Martin id is gone from
+   `DYNAMIC_TILE_SOURCE_IDS`, and a request for it after this change means a stale tab.
+2. **Style.** `map.getSource("fire-perimeter-features")` exists and
+   `map.getLayer("fire-perimeters").source` names it. A layer that silently fails to appear with
+   nothing in the console is the `source-layer` trap: that key is prohibited on a GeoJSON source
+   and MapLibre rejects the whole layer for it.
+3. **Canvas.** Perimeters fill in the severity palette with a red outline, and the Fire Perimeters
+   row's slider still moves them. Scrub to a day before the newest snapshot: the layer must not
+   blank — an older snapshot answers, and any undated incident stays drawn at every date.
+4. **Today, expect empty and say so.** The lane's 45 pre-re-registration partition days are
+   structurally unreadable on purpose, so until one ordinary tick writes a snapshot the read
+   answers `not_generated` and the layer draws nothing. That is the honest state, not a broken
+   cutover; the discriminator is the network call in step 1 succeeding with a `not_generated`
+   state rather than failing.
+
+The presenter rebuilds the tile's vocabulary exactly: `severity` and `observed_day`. The SELECT
+list also named `risk_level` and `name`, but no producer has ever written either key
+(`ingest/wfigs.py` writes `incidentName`), so `ST_AsMVT` omitted both from every tile ever served
+and nothing reads them. `hover-fields.ts`'s `formatFirePerimeter` reads camelCase keys
+(`incidentName`, `gisAcres`, `percentContained`, ...) that the tile never emitted either, so today
+it shows a title and a severity line; widening it is a hover-fields change with its own review, not
+something the cutover should have decided by shipping extra columns.

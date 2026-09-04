@@ -5,6 +5,15 @@ Columns are derived from `geo.features`/`geo.layers` exactly as read by
 `sql/pipeline/fire_perimeters_day_export.sql` -- see `docs/lanes/fire-perimeters.md` for the
 source system, cadence, and grain evidence, and `AGENTS.md` in this package for the registration
 convention this module follows.
+
+THIS LANE IS A `static_lookup` SNAPSHOT, RE-REGISTERED 2026-09-04, and the two dates below are the
+whole reason the change was needed. It was registered `daily_series` keyed on `observed_day`, which
+made a partition hold only the incidents whose OWN publisher timestamp named that day -- 177
+perimeters scattered across 45 partition days, so a single-day read returned near-empty and
+reconstructing what `geo.fire_risk_tiles` draws needed the union of a 404-day window. `geo.features`
+was never a daily series to slice: it holds one row per WFIGS incident refreshed in place
+(`docs/lanes/fire-perimeters.md` #4), which is the same current-state shape `evacuation-zones`
+already publishes as a watermark-driven snapshot. One partition now holds the whole standing set.
 """
 
 from __future__ import annotations
@@ -22,16 +31,19 @@ from agri_data_service.warehouse.parquet.tiers import (
 
 FIRE_PERIMETERS_STREAM: Final = "fire-perimeters"
 
-# `docs/lanes/fire-perimeters.md` #4: `geo.features` holds one row per WFIGS incident, refreshed
-# in place -- NOT one row per (incident, day). `observed_day` here is
-# `geo.feature_observation_day(properties)`, THE SAME function the map's date slider and
-# `sql/ingest/observed_days.sql`'s completeness census already read, so a row lands on the single
-# day its own publisher-dated timestamp names, never on every day the export job happens to run --
-# the exact trap the lane doc's #4/#5 name. `horizon: none` per the lane doc #7: only 6 of
-# thousands of Type-2 dimension entries across every producer ever reached a second WFIGS version,
-# so there is no per-incident growth trajectory to calibrate a forecast against. No
+# ONE ROW PER WFIGS INCIDENT PER SNAPSHOT -- never one row per (incident, day), and this tuple is
+# where that is enforced rather than described. `docs/lanes/fire-perimeters.md` #4: `geo.features`
+# holds one row per incident, refreshed in place, so a snapshot's population is keyed by
+# `unique_fire_identifier` alone (`identity.py`'s `build_fire_perimeter_identity`, which carries no
+# date component) and `snapshot_day` is the constant version stamp every row in one partition
+# shares. Leading on `snapshot_day` also keeps the sort key NON-NULL: `observed_day` is nullable
+# below and a nullable leading sort column orders undated rows by database convention rather than
+# by contract. `horizon: none` per the lane doc #7: only 6 of thousands of Type-2 dimension entries
+# across every producer ever reached a second WFIGS version, so there is no per-incident growth
+# trajectory to calibrate a forecast against -- and a `static_lookup` may not declare one at all
+# (`foundation/parquet/lane_contract.py`'s `nature_permits_forecast`). No
 # `method/monte_carlo/fire-perimeters.py` exists, by design.
-FIRE_PERIMETERS_GRAIN: Final[tuple[str, ...]] = ("observed_day", "unique_fire_identifier")
+FIRE_PERIMETERS_GRAIN: Final[tuple[str, ...]] = ("snapshot_day", "unique_fire_identifier")
 
 FIRE_PERIMETERS_SCHEMA: Final = register_stream_schema(
     ParquetStreamSchema(
@@ -43,7 +55,20 @@ FIRE_PERIMETERS_SCHEMA: Final = register_stream_schema(
                 # properties->>'uniqueFireIdentifier' -- the WFIGS native key (ingest/wfigs.py:196-198),
                 # required and never blank (identity.py's build_fire_perimeter_identity).
                 pa.field("unique_fire_identifier", pa.string(), nullable=False),
-                pa.field("observed_day", pa.date32(), nullable=False),
+                # The VERSION STAMP: the day this whole population was captured, stamped on by the
+                # export and identical to the `year=/month=/day=` the partition is written to.
+                # `foundation/parquet/lane_contract.py`: a static lane's partition day is a version,
+                # not an observation, and re-exporting day D IS how that version is corrected.
+                pa.field("snapshot_day", pa.date32(), nullable=False),
+                # The INCIDENT's own date: `geo.feature_observation_day(properties)`, the same
+                # function `geo.fire_risk_tiles` emits as an MVT attribute and the map's date slider
+                # filters on. NULLABLE, and that is a contract, not slack. The function returns NULL
+                # for a row it cannot date (`drizzle/0018_fire_discovery_observation_day.sql:39-40`)
+                # and the client keeps such a row at EVERY slider date via
+                # `src/lib/map/tile-layer-date-filter.ts`'s `["!", ["has", "observed_day"]]`. The old
+                # `daily_series` export dropped those rows outright -- its `= :observed_day` filter
+                # can never match NULL -- so it served strictly fewer perimeters than Martin drew.
+                pa.field("observed_day", pa.date32(), nullable=True),
                 pa.field("incident_name", pa.string(), nullable=True),
                 pa.field("irwin_id", pa.string(), nullable=True),
                 # properties->>'fireDiscoveryDateTime' / 'polygonDateTime' -- both can be null on the
