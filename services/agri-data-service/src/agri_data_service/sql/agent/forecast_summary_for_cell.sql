@@ -3,12 +3,25 @@
 --          from the pre-aggregated serving matview rather than from the eight-table join beneath
 --          it.
 -- Loaded by: agri_data_service.agent.tools
--- Params: longitude/latitude (double precision), radius_meters (double precision),
---         valid_day_from (timestamptz -- the UTC midnight the earliest wanted day opens on),
---         metric_names (text[], empty array means "every metric"), row_limit (int)
+-- Params: cell_id (text -- the analysis cell nearest the probe, resolved from the Parquet signal
+--         plane), cell_distance_m (double precision -- how far that cell's centroid sits from the
+--         probe, in metres), valid_day_from (timestamptz -- the UTC midnight the earliest wanted
+--         day opens on), metric_names (text[], empty array means "every metric"), row_limit (int)
 --
 -- Parameter names appear above WITHOUT a leading colon -- see "Header/bind-param trap" in
 -- sql/AGENTS.md.
+--
+-- THE CELL ARRIVES AS A PARAMETER NOW. This statement used to resolve the nearest analysis cell
+-- itself, from agri.spatial_cell -- a relation in the retirement track's "drop now" class that is
+-- already absent from production, so that CTE could no longer run. The cell is resolved instead
+-- from the Parquet signal plane, which carries cell_longitude/cell_latitude beside every row, and
+-- bound here by id. The forecast plane it joins to is NOT environmental data and stays in
+-- PostgreSQL: agri.mv_forecast_ml_daily_serving is the governed ML serving plane, which the
+-- retirement inventory classes "keep -- out of D4 scope".
+--
+-- One consequence names itself in the projection: agri.spatial_cell carried a human-readable
+-- cell_key and the Parquet plane carries only the cell's id, so the answer reports cell_id. A
+-- column named cell_key holding a uuid would be a worse answer than a renamed one.
 --
 -- THE SOURCE IS agri.mv_forecast_ml_daily_serving. That matview is built ON TOP OF
 -- agri.v_forecast_series_serving, the view that already encodes what "published" means --
@@ -37,19 +50,19 @@
 --
 -- How this query works, clause by clause:
 --
---   WITH nearest_cell AS (... LIMIT 1)
+--   WITH nearest_cell AS (SELECT CAST(cell_id AS uuid) ...)
 --     A CTE ("common table expression") -- a named subquery defined up front and referenced below
 --     like a table. Forecast series are attached to analysis cells, not to arbitrary coordinates,
---     so the first job is turning the caller's point into exactly one cell. LIMIT 1 makes that
---     "exactly one": the nearest cell whose centroid falls inside the radius, and no rows at all
---     when the point is outside every cell's radius.
+--     so the caller's point has already been turned into exactly one cell, before this statement
+--     runs, by a bounded read of the Parquet signal plane. This CTE is that one cell, lifted into
+--     a one-row relation so the join below reads exactly as it did when the cell was resolved here.
+--     The caller issues NO query at all when no cell falls inside the radius, which is the same
+--     answer the old LIMIT 1 gave by returning no rows.
 --
---   ST_SetSRID(ST_MakePoint(longitude, latitude), 4326) / ::geography / ST_DWithin
---     Builds the caller's coordinate into a PostGIS point stamped with SRID 4326 (WGS84 -- ordinary
---     GPS longitude/latitude), then casts to geography so distance is measured in metres on the
---     curved earth rather than in degrees, whose real length varies with latitude. ST_DWithin is
---     the index-friendly "within radius metres" test. agri.spatial_cell is about 2,000 rows, so
---     this whole CTE is a trivially resident lookup.
+--   CAST(cell_id AS uuid)
+--     Parquet has no uuid type, so the plane stores the cell's id as text. The cast happens once,
+--     here, rather than on every row of the join -- and a value that is not a uuid fails loudly at
+--     the cast instead of silently matching no forecast.
 --
 --   INNER JOIN nearest_cell ON nearest_cell.cell_id = daily.spatial_cell_id
 --     Restricts the matview to that one cell. INNER, so a cell with no published forecast returns
@@ -84,23 +97,11 @@
 --     because the database is otherwise free to return equal rows in any order.
 WITH nearest_cell AS (
     SELECT
-        cell.id AS cell_id,
-        cell.cell_key,
-        ST_Distance(
-            cell.centroid::geography,
-            ST_SetSRID(ST_MakePoint(:longitude, :latitude), 4326)::geography
-        ) AS distance_m
-    FROM agri.spatial_cell AS cell
-    WHERE ST_DWithin(
-        cell.centroid::geography,
-        ST_SetSRID(ST_MakePoint(:longitude, :latitude), 4326)::geography,
-        :radius_meters
-    )
-    ORDER BY distance_m
-    LIMIT 1
+        CAST(:cell_id AS uuid) AS cell_id,
+        CAST(:cell_distance_m AS double precision) AS distance_m
 )
 SELECT
-    nearest_cell.cell_key,
+    nearest_cell.cell_id,
     nearest_cell.distance_m,
     daily.series_key,
     daily.entity_type,

@@ -522,7 +522,7 @@ async function readStreamflowGaugesOnDay(
  *   per gauge inside the live freshness window, unchanged. A past day returns that day's
  *   newest reading per gauge. A future day returns empty -- `WaterGauge[]` has no slot to
  *   explain itself in, and the layer's own capability is what captions an empty day (see
- *   `getSliderCapabilities` and `useLayerRenderState`).
+ *   `getGeoFeatureSliderCapabilities` and `useLayerRenderState`).
  */
 export async function getPublishedStreamflowGauges(
   bbox: string,
@@ -2915,7 +2915,7 @@ type ObservationWindowRow = {
  *
  * Reads every layer in one pass. Do NOT reintroduce a per-layer parameter -- getMetricAtDate
  * used to call this once per request just to range-check a date, which made every metric read
- * two whole-layer scans; it now shares one cached payload with getSliderCapabilities.
+ * two whole-layer scans; it now shares one cached payload with getGeoFeatureSliderCapabilities.
  */
 /**
  * The axis pipeline, over any relation of (layer_name, observed_day, observation_count).
@@ -3138,82 +3138,25 @@ async function readObservationWindows(): Promise<Map<string, ObservationWindowRo
 }
 
 /**
- * The same axis, for the thirteen streams that are not backed by `geo.features`.
- *
- * Drought lives in `geo.drought_areas` as weekly releases; the three soil measures and the
- * climate field live in `agri.signal_observation` behind the two governed views. None of them
- * has a `geo.layers` row, which is the ONLY reason they carried no capability -- and with no
- * capability they had no axis, so `resolveLayerDate` fell through to the server's today and
- * five of roughly ten dated layers were pinned to the live edge with no control and no account
- * of why. Every one of their readers accepts a historical day.
- *
- * Runs the identical pipeline as `readObservationWindows`, so a gap here means exactly what a
- * gap there means. Two things are worth knowing about what the pipeline does to these lanes:
- *
- * - Drought days are the days a release COVERS, not the Tuesdays it was valid on. Feeding the
- *   valid dates raw would report six days in seven as unpublished, which is precisely the false
- *   observed-absence this whole review is about. That expansion now lives in
- *   `geo.mv_drought_observation_day`'s own DDL, under the same bounded carry-forward
- *   `resolveDroughtRelease` applies, so a week the record skips is a gap on the axis and a gap
- *   in the reader, and neither invents the other.
- * - Nothing is ever thin on these lanes in practice, and that is a true report rather than a
- *   default. A USDM release arrives as a whole set of category polygons, so its per-day count
- *   is 1-6 and the 1% floor bottoms out at 1; the model-plane lanes are written as whole-day
- *   lattice slabs, so a day carries the whole grid or is absent. A partially written slab
- *   still lands under the floor and IS reported thin.
- *
- * The observation half was executed against a real PostgreSQL 16 over stub relations when it
- * still grouped the base relations, because nothing tsc or a mocked db.execute can see would
- * catch what this file has been bitten by twice (`invalid input syntax for type bigint`,
- * `character varying = date`). Those three shapes now live in the census matviews' DDL and are
- * exercised at REFRESH time instead; what remains here is a two-predicate read of a plain view,
- * and a stream with no rows at all still returns a row, of nulls, rather than disappearing from
- * the catalogue.
+ * DEAD CODE, REMOVED 2026-09-04 (wave-C lane C3): `readStreamObservationWindows` used to read
+ * `geo.mv_signal_observation_day` and `geo.mv_drought_observation_day` through
+ * `geo.v_observation_day_census` for the thirteen streams that are not backed by
+ * `geo.features` (drought, the three soil measures, the nine climate-field signals). It had
+ * ZERO live callers: the tRPC `getSliderCapabilities` procedure
+ * (`src/lib/server/trpc/routers/environmental.ts:629`) has read `getParquetSliderCapabilities`
+ * (`src/lib/server/services/parquet-slider-capabilities.ts`) since `069ef90` (2026-08-28), and
+ * that module already proves every one of these thirteen layer names from
+ * `getParquetWarehouseCoverage()` in `parquet-plane-client.ts` -- see
+ * `PARQUET_CAPABILITY_CONTRACTS`. The matview this function read is frozen (its REFRESH times
+ * out at 302 s against a 300 s statement_timeout; see `evidence/` in
+ * `conductor/tracks/environmental_postgres_retirement_20260904/`), so the only effect of
+ * keeping this function around was a working-looking query over data that could never change
+ * again. Reproducing its continuity+density-floor axis rule against Parquet coverage would also
+ * have duplicated `parquet-slider-capabilities.ts`'s `synthesizeCapability`/`proveCapability` a
+ * second time in a second file -- exactly the "two hopeful copies" drift hazard
+ * `parquet-plane-client.ts`'s own header warns against -- for a function nothing calls. See
+ * `src/lib/server/AGENTS.md` "## Parquet tRPC cutover" (2026-09-04 update).
  */
-async function readStreamObservationWindows(): Promise<Map<string, ObservationWindowRow>> {
-  // The catalogue is the OUTER relation of the LEFT JOIN below, so a stream missing from here is
-  // dropped even when the observation subquery emits rows for it -- which is exactly how the nine
-  // climate streams reported "no history" while still painting tiles. Built from the same
-  // CLIMATE_FIELD_SIGNAL_IDS the observation side uses, so the two halves cannot drift again.
-  const streamNames = [
-    ...Object.values(SLIDER_STREAM_LAYER_NAMES),
-    ...CLIMATE_FIELD_SIGNAL_IDS.map(climateFieldStreamName),
-  ];
-  return indexWindowRows(
-    await db.execute<ObservationWindowRow>(
-      observationWindowStatement(
-        sql`
-          SELECT stream.name AS name
-          FROM (VALUES ${sql.join(
-            streamNames.map((name) => sql`(${name}::text)`),
-            sql`, `
-          )}) AS stream(name)
-        `,
-        /* THE QUERY THAT CAUSED THE 2026-08-15 CLOUDFLARE 524 IS GONE. It grouped
-           `geo.soil_field_observation` and `geo.climate_field_observation` -- two views over
-           `agri.signal_observation`, ~17M accepted rows, with no index that could serve the
-           grouping -- plus a LEAD/generate_series expansion of every USDM release, on a
-           publicProcedure. All three unions are now precomputed:
-
-           - `geo.mv_signal_observation_day` carries the twelve signal-backed streams
-             (surface_kind = 'signal'), grouped from the SAME governed views under the SAME
-             support keys, so a day this axis offers is a day the field readers can answer.
-           - `geo.mv_drought_observation_day` carries `drought-areas` (surface_kind =
-             'polygon'), with the weekly valid_date already expanded to the days a release
-             COVERS under the same bounded carry-forward `resolveDroughtRelease` applies --
-             so a release week the record skips is still a gap here and a gap there.
-
-           `geo.v_observation_day_census` unions the two matviews with the feature-backed one;
-           it is a plain view over ~35,000 total rows, which is a sort, not a scan. */
-        sql`
-          SELECT surface_name AS layer_name, observed_day, observation_count
-          FROM geo.v_observation_day_census
-          WHERE surface_kind IN ('signal', 'polygon')
-        `
-      )
-    )
-  );
-}
 
 /** Normalizes a DATE column, which the driver may hand back as a Date or a string. */
 function toCalendarDate(value: unknown): string | null {
@@ -3335,8 +3278,9 @@ function buildCapability(row: ObservationWindowRow): ResolvedSliderLayerCapabili
   const hasAxis = denseEarliest !== null;
   // Both lists are capped HERE, against the same limit and by the same helper. The gap list
   // was previously left uncapped with its flag hardcoded false and only re-capped inside
-  // closeCoverageGapsAtLiveEdge, so every caller that did not go through getSliderCapabilities
-  // -- and every future one -- received a flag that said "nothing was dropped" without anyone
+  // closeCoverageGapsAtLiveEdge, so every caller that did not go through
+  // getGeoFeatureSliderCapabilities -- and every future one -- received a flag that said
+  // "nothing was dropped" without anyone
   // having checked. A truncation boundary that is only sometimes computed is worse than none,
   // because it reads as a fact.
   const coverageGaps = capDayRanges(
@@ -3447,59 +3391,31 @@ function closeCoverageGapsAtLiveEdge(
  * precomputed into `geo.mv_feature_observation_day` anyway (~16,000 rows against 4.97M).
  *
  * The memo is KEPT, at the same TTL, for a different reason than the one it was written for.
- * The read is now cheap, but `getSliderCapabilities` is a publicProcedure anyone can call in a
- * loop and every caller runs the five-window-function axis pipeline over the census; the
- * single-flight guard collapses a scrub prefetch's fan-out onto one evaluation. The payload
+ * The read is now cheap, but `getGeoFeatureSliderCapabilities` feeds the `getSliderCapabilities`
+ * tRPC procedure (via `getParquetSliderCapabilities`) and can be called in a loop by a scrub
+ * prefetch; the single-flight guard collapses that fan-out onto one evaluation. The payload
  * still only changes when the refresh lane lands a new day.
  */
 const CAPABILITIES_CACHE_TTL_MS = 5 * 60_000;
 
 /**
- * How long the STREAM capability list is reused, and why it is still not the same number.
- *
- * This constant used to be sized against an unbounded risk: the thirteen non-geo.features
- * streams were read by grouping the two governed views, i.e. an aggregate over roughly 17
- * million accepted rows of `agri.signal_observation` with no index that could serve it. That
- * whole-table pass spent the entire Cloudflare origin budget on 2026-08-15 and returned a 524.
- * It is gone: both halves are now indexed reads of `geo.mv_signal_observation_day` and
- * `geo.mv_drought_observation_day` through `geo.v_observation_day_census`.
- *
- * Thirty minutes is kept rather than lowered to the feature lane's five, because the refresh
- * cadence upstream of it is the real staleness floor: the signal census refreshes on a
- * source-release watermark at a 6-hour minimum interval / 24-hour maximum staleness (see
- * `agri.matview_refresh_state`). A shorter TTL here would re-evaluate the axis pipeline more
- * often without ever seeing a newer day.
+ * STREAM_CAPABILITIES_CACHE_TTL_MS / STREAM_CAPABILITIES_COLD_WAIT_MS, readStreamCapabilities,
+ * mergeStreamCapabilities and the exported getSliderCapabilities wrapper that composed them
+ * were REMOVED 2026-09-04 (wave-C lane C3) as dead code: see the note above
+ * `toCalendarDate` for why, and `src/lib/server/AGENTS.md` "## Parquet tRPC cutover" for the
+ * pointer a future stream-capability caller should follow instead of reintroducing this shape.
  */
-const STREAM_CAPABILITIES_CACHE_TTL_MS = 30 * 60_000;
-
-/**
- * How long a COLD caller waits for the stream scan before answering without it.
- *
- * Sized against the edge, not against the database: Cloudflare cuts the origin off at 100s with
- * a 524, and a 524 costs the client every capability including `serverCurrentDate`, so the whole
- * map goes dateless. Answering short at 15s is strictly better than answering nothing at 100s,
- * and it only ever applies to the first caller after a boot -- the scan it raced keeps running
- * and fills the cache regardless of who won.
- */
-const STREAM_CAPABILITIES_COLD_WAIT_MS = 15_000;
 
 let cachedLayerCapabilities: {
   expiresAtMs: number;
   layers: ResolvedSliderLayerCapability[];
 } | null = null;
 let layerCapabilitiesInFlight: Promise<ResolvedSliderLayerCapability[]> | null = null;
-let cachedStreamCapabilities: {
-  expiresAtMs: number;
-  layers: ResolvedSliderLayerCapability[];
-} | null = null;
-let streamCapabilitiesInFlight: Promise<ResolvedSliderLayerCapability[]> | null = null;
 
-/** Drops the memoized capability lists. Exists so tests never inherit another test's payload. */
+/** Drops the memoized capability list. Exists so tests never inherit another test's payload. */
 export function clearSliderCapabilitiesCache(): void {
   cachedLayerCapabilities = null;
   layerCapabilitiesInFlight = null;
-  cachedStreamCapabilities = null;
-  streamCapabilitiesInFlight = null;
 }
 
 /** The per-layer capability list, computed at most once per TTL across all callers. */
@@ -3524,127 +3440,17 @@ async function readLayerCapabilities(): Promise<ResolvedSliderLayerCapability[]>
 }
 
 /**
- * The stream capability list: never blocking, stale-while-revalidate, short-and-flagged when cold.
+ * PostgreSQL `geo.features` capability rows: one per `geo.layers` row, day-axis, gaps and thin
+ * ranges all resolved from `geo.v_observation_day_census WHERE surface_kind = 'feature'`.
  *
- * Serving the previous list while a refresh runs is what keeps a whole-table pass off the
- * request path. The alternative -- expiring the entry and making the unlucky caller wait, as
- * the geo.features memo does -- turns a slow scan into a slow tRPC call every TTL, on a
- * publicProcedure.
- *
- * A REJECTED read yields NO stream capabilities and is not cached, so the next call retries.
- * Omission is deliberately the failure mode: a capability with a null `earliestObservedDate`
- * would have the client tell a reader that drought "has no observations this far back", which
- * is a claim about the warehouse made out of a failed query. Absence of a capability makes no
- * claim at all -- it is the state these thirteen streams were already in -- so a broken stream read
- * costs the sliders and lies about nothing.
+ * `streamsUnavailable` is always `false` here: this reader never touched the thirteen
+ * non-geo.features streams (drought, the three soil measures, the nine climate-field signals)
+ * even before the removal above -- see `src/lib/server/AGENTS.md`. Their capability comes from
+ * `getParquetSliderCapabilities` (`parquet-slider-capabilities.ts`), which is what the live
+ * `getSliderCapabilities` tRPC procedure actually serves
+ * (`src/lib/server/trpc/routers/environmental.ts:629`); this function is that procedure's OTHER
+ * input, awaited via `Promise.allSettled` alongside the Parquet coverage census.
  */
-async function readStreamCapabilities(): Promise<{
-  layers: ResolvedSliderLayerCapability[];
-  unavailable: boolean;
-}> {
-  const cached = cachedStreamCapabilities;
-  const isFresh = cached !== null && cached.expiresAtMs > Date.now();
-  if (isFresh) return { layers: cached.layers, unavailable: false };
-
-  if (streamCapabilitiesInFlight === null) {
-    streamCapabilitiesInFlight = readStreamObservationWindows()
-      .then((windows) => {
-        const layers = [...windows.values()].map(buildCapability);
-        cachedStreamCapabilities = {
-          expiresAtMs: Date.now() + STREAM_CAPABILITIES_CACHE_TTL_MS,
-          layers,
-        };
-        return layers;
-      })
-      .finally(() => {
-        streamCapabilitiesInFlight = null;
-      });
-  }
-
-  // Nothing on THIS path awaits the refresh, so its rejection has to be absorbed here or it
-  // surfaces as an unhandled rejection and, under Next.js, can take the worker down.
-  void streamCapabilitiesInFlight.catch(() => undefined);
-
-  // A stale list is served immediately and the refresh above finishes on its own.
-  if (cached !== null) return { layers: cached.layers, unavailable: false };
-
-  // COLD START: a BOUNDED wait, which is neither of the two things it used to be.
-  //
-  // It used to await the scan outright. That scan WAS a whole-table pass over ~17M rows of
-  // agri.signal_observation with no index that helps, so on a memory-throttled warehouse
-  // (2026-08-15) it spent the entire Cloudflare origin budget and the request returned 524 --
-  // taking the WHOLE slider system down, streams and geo.features layers alike, because this
-  // payload is the only definition of "today" the client is allowed to read.
-  //
-  // The scan is now an indexed read of the census matviews, so the bound below should never
-  // fire again. It is KEPT rather than deleted because it is the only thing that stopped a
-  // sick warehouse from taking the map's date with it, and a stalled REFRESH holding a lock
-  // is a new way for this read to become slow that the old shape did not have.
-  //
-  // Not waiting at all is the opposite error: a healthy cold start would report every stream
-  // as unreadable for a full poll interval when the answer was a second away.
-  //
-  // So: whoever wins. A healthy scan lands well inside the bound and the caller gets the real
-  // list; a sick one leaves the caller with a short list it KNOWS is short, in time to answer
-  // the request, while the scan keeps running and populates the cache for the next caller.
-  // Losing the race is never an error and never poisons the cache.
-  return Promise.race([
-    streamCapabilitiesInFlight.then((layers) => ({ layers, unavailable: false })),
-    new Promise<{ layers: ResolvedSliderLayerCapability[]; unavailable: boolean }>((resolve) =>
-      setTimeout(
-        () => resolve({ layers: [], unavailable: true }),
-        STREAM_CAPABILITIES_COLD_WAIT_MS
-      ).unref?.()
-    ),
-  ]).catch(() => ({ layers: [], unavailable: true }));
-}
-
-/**
- * Every capability, with the streams that have no `geo.layers` row appended.
- *
- * A stream name that a `geo.layers` row already published is DROPPED rather than appended:
- * `findLayerCapability` resolves a name to the first match, so two rows sharing one name would
- * make which axis a layer draws depend on array order. `SLIDER_STREAM_LAYER_NAMES` is chosen to
- * make this unreachable; the guard is here so that a future `geo.layers` row taking one of
- * those names degrades to "the warehouse layer wins" instead of to an ambiguous payload.
- */
-function mergeStreamCapabilities(
-  layers: ResolvedSliderLayerCapability[],
-  streams: ResolvedSliderLayerCapability[]
-): ResolvedSliderLayerCapability[] {
-  const published = new Set(layers.map((layer) => layer.layerName));
-  return [...layers, ...streams.filter((stream) => !published.has(stream.layerName))];
-}
-
-/**
- * What the slider may offer, and what day the server thinks it is.
- * One capability per geo.layers row plus one per non-geo.features stream; a stream with no
- * mappable observation reports a null earliestObservedDate rather than being omitted, so the
- * UI can distinguish "this layer exists but has no history" from "this layer does not exist".
- *
- * serverCurrentDate is stamped on every call, never cached with the layers: a payload held
- * across UTC midnight would otherwise keep reporting yesterday as today. `coverageGaps` is
- * closed against that same fresh day for the same reason -- see closeCoverageGapsAtLiveEdge.
- *
- * The two reads are sequenced, not raced: the geo.features scan is the one every layer depends
- * on, and it must not queue behind the far heavier stream pass on a cold connection pool.
- */
-export async function getSliderCapabilities(): Promise<ResolvedSliderCapabilities> {
-  const base = await getGeoFeatureSliderCapabilities();
-  const streams = await readStreamCapabilities();
-  return {
-    ...base,
-    streamsUnavailable: streams.unavailable,
-    layers: mergeStreamCapabilities(
-      base.layers,
-      streams.layers.map((layer) =>
-        closeCoverageGapsAtLiveEdge(layer, base.serverCurrentDate)
-      )
-    ),
-  };
-}
-
-/** PostgreSQL `geo.features` capability rows without model streams; see `src/lib/server/AGENTS.md`. */
 export async function getGeoFeatureSliderCapabilities(): Promise<ResolvedSliderCapabilities> {
   const today = serverCurrentDate();
   const layers = await readLayerCapabilities();
@@ -4004,7 +3810,8 @@ type DroughtMetricRow = {
  * never the requested one, so a value is never dressed up as fresher than it is.
  *
  * geo.drought_areas has no geo.layers row and no geometry_id, so this metric is
- * absent from getSliderCapabilities. geometryId falls back to the release identity
+ * absent from getGeoFeatureSliderCapabilities (drought's slider capability comes from
+ * getParquetSliderCapabilities instead). geometryId falls back to the release identity
  * (`usdm:<valid_date>:<category>`), matching the ingest natural key.
  */
 async function getDroughtMetricAtDate(

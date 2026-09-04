@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from agri_data_service.foundation.parquet.paths import absence_marker_path, partition_path, validate_layer_slug
+from agri_data_service.pipeline.direct.vegetation.products import VEGETATION_DIRECT_WRITER_START_DAY
 from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.lanes import soil_survey as soil_survey_lane
 from agri_data_service.pipeline.lanes.fire_detections import FIRE_DETECTIONS_DIRECT_WRITER_START_DAY
@@ -254,6 +255,54 @@ async def test_every_source_direct_lane_refuses_and_names_its_own_writer() -> No
             await LANE_REGISTRY[slug].adapter(None, None, day=AUGUST_SIXTH, run_id="generic")
 
 
+def test_drought_registry_adapter_is_deliberately_still_postgres_reading() -> None:
+    """`drought-direct-forward` exists but is SHADOW; `parquet-drought` is the ACTIVE production writer.
+
+    Routing this adapter to a source-direct refusal before an owner activates the direct lane leaves
+    the layer with NO writer: `gap_fill._export_one_day` catches every adapter exception and records
+    outcome `"raised"` (`FAILING_LANE_OUTCOMES`, `gap_fill.py:230`) on that tick and on every tick
+    after it. No `writer_ceiling` can bridge the two either, unlike vegetation/fire/water: the direct
+    writer claims the SAME full floor-to-settled window this registration covers
+    (`pipeline/direct/drought/forward.py:125`, `backfill.py:72` -- both start at
+    `lane.history_floor`), so the two are total substitutes with no boundary day between them, and
+    `conflicts_with` on the two executor specs is what keeps one of them off.
+    """
+    drought = LANE_REGISTRY["drought"]
+
+    assert drought.adapter.__name__ == "_fill_drought"
+    assert drought.writer_ceiling is None
+
+
+def test_vegetation_registry_adapter_is_deliberately_still_postgres_reading() -> None:
+    """The one lane the 2026-09-04 join did NOT route to a source-direct refusal, and why.
+
+    `pipeline/direct/vegetation/backfill.py` republishes every day at or before
+    `VEGETATION_DIRECT_WRITER_START_DAY` through this SAME adapter to reach D2 parity; swapping it for
+    a refusal would make `refuse_pre_ownership_day` reject the entire backfill window by construction.
+    Calling the adapter with a null session/store would therefore raise an `AttributeError` reaching
+    into Postgres, not the `LaneRegistryError` a source-direct refusal raises -- which is exactly the
+    signal `test_every_direct_package_is_either_registered_or_named_pending`
+    (`tests/direct/test_direct_package_registration.py`) reads to keep `vegetation` PENDING.
+    """
+    vegetation = LANE_REGISTRY["vegetation"]
+
+    assert vegetation.adapter.__name__ == "_fill_vegetation"
+    assert vegetation.writer_ceiling == VEGETATION_DIRECT_WRITER_START_DAY
+
+
+def test_weather_observations_registry_adapter_is_also_still_postgres_reading() -> None:
+    """No cited `*_DIRECT_WRITER_START_DAY`-equivalent exists yet for this lane -- see
+    `pipeline/direct/weather_observations/__init__.py`, which only says the registry "may come to
+    import a submodule ... for its floor and lag", not that one is ready. Routing it to a refusal
+    without that citation would risk the same silent wedge `vegetation.py::backfill.py` warns about,
+    for a lane with no backfill.py to even raise the alarm.
+    """
+    weather_observations = LANE_REGISTRY["weather-observations"]
+
+    assert weather_observations.adapter.__name__ == "_fill_weather_observations"
+    assert weather_observations.writer_ceiling is None
+
+
 def test_every_floor_is_cited_and_every_lag_is_declared() -> None:
     """An uncited floor is a guess that reads as a measurement; the citation is the guard."""
     for registration in LANE_REGISTRATIONS:
@@ -379,6 +428,21 @@ def test_water_generic_writer_stops_exactly_before_the_direct_cutover() -> None:
     assert date(2026, 9, 2) == WATER_GAUGES_DIRECT_WRITER_START_DAY
     assert water.writer_ceiling == WATER_GAUGES_DIRECT_WRITER_START_DAY - timedelta(days=1)
     assert lane_window(water, today=date(2026, 9, 8)) == (water.history_floor, date(2026, 9, 1))
+
+
+def test_vegetation_generic_writer_stops_exactly_at_the_direct_cutover_not_before_it() -> None:
+    """Ceiling equals the start day itself here, unlike fire/water's `start day - 1` above.
+
+    `pipeline/direct/vegetation/backfill.py::backfill_ceiling()` owns the start day itself, and
+    `forward.py::history_floor()` begins the day after -- the two windows abut with no gap and no
+    overlap (`backfill_ceiling() + 1 day == forward.history_floor()`, asserted directly in
+    `tests/direct/test_vegetation_adapter.py`).
+    """
+    vegetation = LANE_REGISTRY["vegetation"]
+
+    assert date(2026, 9, 5) == VEGETATION_DIRECT_WRITER_START_DAY
+    assert vegetation.writer_ceiling == VEGETATION_DIRECT_WRITER_START_DAY
+    assert lane_window(vegetation, today=date(2026, 9, 20)) == (vegetation.history_floor, date(2026, 9, 5))
 
 
 def test_writer_ceiling_requires_a_time_axis_and_cannot_precede_the_floor() -> None:

@@ -71,13 +71,19 @@ the runner keeps its own copy of the conversation and does not expose it.
 Every tool in `tools.py` is **read-only and bounded**, and both properties are enforced in
 Python and SQL rather than requested in the prompt.
 
-- **Read-only.** Every statement is a `SELECT` issued on a `published_reader` session. A
-  writer session is never used. `test_every_tool_statement_is_read_only` asserts no mutating
-  verb appears in any executable line of any agent statement.
-- **Least privilege.** The session comes from `published_reader_session()`, which already
-  falls back to the combined-local session in the local profile the way the other routes do.
-  A different provider can be injected for one run through `tools.run_context(...)`; that is
-  how the unit suite stubs the database.
+- **Read-only, in both dialects.** Every statement is a `SELECT` — the DuckDB reads over Parquet
+  and the two PostgreSQL statements alike. A writer session is never used.
+  `test_every_tool_statement_is_read_only` scans every executable line of both sets, and
+  `test_agent_parquet_reads.py` repeats the scan over the DuckDB half so a statement added there
+  cannot ship unscanned.
+- **Least privilege.** The PostgreSQL session comes from `published_reader_session()`, which
+  already falls back to the combined-local session in the local profile the way the other routes
+  do. The Parquet reads take one of three process-wide serving slots and open a memory-capped
+  DuckDB session inside it — the same admission gate the map's own `/api/v1/parquet` routes pass
+  through, so an agent run cannot starve the map. Both are injectable for one run through
+  `tools.run_context(session_provider=..., warehouse_source=...)`; that is how the unit suite
+  stubs them, and `tests/agent_fakes.py` binds a REFUSING warehouse for the whole module so a test
+  that forgets cannot silently read the production bucket.
 - **Bounded, with the bound reported back.** Radius (50 km), lookback (10 years of signals,
   10 years of drought weeks, 45 years of fire), row caps, and pre-aggregation fan-out caps
   are constants in `tools.py`. An over-large argument is **clamped, not rejected**, and the
@@ -95,94 +101,173 @@ Ambient state (the session provider, the per-run tool ledger, the per-run plane-
 travels in `ContextVar`s because a tool function's signature *is* its model-facing schema — a
 `session` parameter would become something the model is asked to supply.
 
-## Reading the pre-aggregated planes
+## Reading the Parquet warehouse
 
-Every tool that used to read a raw observation table now reads the matview the **map** reads.
-That is not primarily a cost decision, though it is that too: it is the only structural
-guarantee that **the agent cannot contradict the screen**. If the agent answered from
-`agri.signal_observation` while the map painted from `geo.mv_signal_cell_daily`, the two could
-disagree about the same cell on the same day — different quality filters, different day
-derivation, different refresh moment — and the agent would state something the user can see is
-false.
+**Repointed 2026-09-04** by the `environmental_postgres_retirement_20260904` track, lane C2. Every
+environmental answer now comes from the day-partitioned Parquet warehouse the map itself reads.
+The reason is unchanged from the previous repoint and is not primarily cost: it is the only
+structural guarantee that **the agent cannot contradict the screen**. If the agent answered from
+one plane while the map painted from another, the two could disagree about the same cell on the
+same day — different quality filters, different day derivation, different refresh moment — and the
+agent would state something the user can see is false.
+
+The move was also forced. `geo.mv_signal_cell_daily` was DROPPED against production on 2026-08-18
+(6,349 MB, 24,958,092 rows, a 29-minute rebuild) and `agri.spatial_cell` is in the retirement
+track's "drop now" class and already absent. Four signal tools were hard-erroring and three more
+joined a relation that no longer exists.
 
 | tool | reads |
 |---|---|
-| `signals_near_point`, `signal_value_on_day`, `signal_neighbors_in_time`, `nearest_signal_cells` | `geo.mv_signal_cell_daily` ⋈ `agri.spatial_cell` |
-| `signal_coverage_on_day` | `agri.signal_coverage_audit` (unchanged — see below) |
-| `drought_history_at_point` | `geo.mv_drought_release_index` ⋈ `geo.drought_areas` |
-| `fire_history_near_point` | `geo.features` + `geo.mv_feature_observation_day` |
-| `forecast_summary_for_cell` | `agri.mv_forecast_ml_daily_serving` |
-| `observation_coverage_on_day`, `observation_temporal_neighbors` | `geo.v_observation_day_census` |
-| `feature_value_near_point` | `geo.features`, via `ix_features_layer_observation_day` |
+| `signals_near_point`, `signal_value_on_day`, `signal_neighbors_in_time`, `nearest_signal_cells` | Parquet lane `signal`, `kind=observed`, `zoom=13` |
+| `signal_value_on_day`'s second half | `agri.signal_coverage_audit` — **PostgreSQL**, see below |
+| `drought_history_at_point` | Parquet lane `drought` (a `release_series`) |
+| `fire_history_near_point` | Parquet lanes `fire-detections` and `burn-severity`, plus both availability indexes |
+| `forecast_summary_for_cell` | `agri.mv_forecast_ml_daily_serving` — **PostgreSQL**, keyed by a cell resolved from Parquet |
+| `observation_coverage_on_day`, `observation_temporal_neighbors` | each surface's published **availability index** |
+| `feature_value_near_point` | the surface's own Parquet lane; `interventions` alone stays in `geo.features` |
 
-Four consequences, each of which shows up in a payload and therefore in a note:
+Three seams carry all of it, and none of them re-implements anything `parquet_ops` already owns:
 
-- **Quality, lane, unit and scope are all inherited, not filtered.** `geo.mv_signal_cell_daily`
-  keeps only rows that are observed and quality-accepted, and it joins the **19 governed
-  `(signal_name, normalized_unit, lane)` triples** — not the 19 signal names alone
-  (`execution/coverage_contract.py`, verified against `agri.data_source` 2026-08-11). Both halves
-  of that triple matter and neither is visible from this service:
-  - the **unit** is pinned because `geo.soil_field_observation` (drizzle/0016, 0019) and
-    `geo.climate_field_observation` (drizzle/0020) join signal name to an exact
-    `normalized_unit`, and every app reader pins it too. Without it, one off-contract unit for a
-    governed name gives the agent two rows per (cell, day) — a second, differently-scaled value
-    for a signal the map serves in exactly one unit — because these tools `DISTINCT ON` /
-    `GROUP BY (signal_name, support_key, normalized_unit)` rather than pinning the unit;
-  - the **lane** is pinned because `geo.climate_field_observation` gates
-    `source.key = 'nasa-power-daily'`, and drizzle/0020's own header records that `support_key`
-    cannot substitute for it ("`surface` is a generic support the ERA5-Land writer also emits").
-    `precipitation`, `wind_speed` and `relative_humidity` are shared names; without the lane gate
-    a non-NASA row is in the rollup the agent reads and absent from the view the map draws.
+- `agent/surfaces.py` — the hand-spelled catalogue and the surface→lane table, copied from
+  `parquet-slider-capabilities.ts` rather than re-derived.
+- `agent/warehouse.py` — day resolution through `parquet_ops.serving.day_status_sets`, bounded row
+  reads through `run_serving_read`, coverage through `resolve_availability_lanes`.
+- `agent/parquet_reads.py` — the DuckDB statements. They live in Python, not under `sql/agent/`,
+  following the convention `parquet_ops/warehouse_reader.py` set: `sql/AGENTS.md` describes a
+  PostgreSQL tree loaded through `text()`, and a second dialect in it would be read with the wrong
+  grammar.
 
-  No `is_observed`, `quality_flag`, unit, lane or signal-scope predicate remains in any tool
-  statement, because there is no column left to write one against. **If the rollup's defining
-  query ever stops applying those filters, every signal tool silently starts reporting imputed,
-  off-lane or off-unit values**, and no test in this service can see it. That coupling is the
-  price of the repoint and it is stated here rather than buried.
-- **`source_parameter` is gone.** The rollup's grain is
+Consequences that show up in a payload, and therefore in a note:
+
+- **The day is the PARTITION, never a predicate.** `warehouse.scan` is handed exactly the part
+  files of the requested day, so no row from a neighbouring day can reach a statement and no
+  timestamp is ever cast to a date to keep that true. That is the whole of the named-day rule —
+  the one that once moved 6,279 of 16,743 water-gauge rows onto the following calendar day.
+- **`min_value` / `max_value` / `avg_value` are reproduced from `normalized_value`, exactly.** The
+  Parquet signal schema deliberately omits them: they equalled `normalized_value` on 100% of
+  701,257 measured rows and cost 3.81x in file size (RUNBOOK section 0.22.4). `minimum_value`,
+  `maximum_value` and `mean_value` therefore mean what they always meant.
+  `test_agent_parquet_reads.py::test_the_window_summary_answers_exactly_what_the_dropped_matview_answered`
+  compares column by column against a reference written from the deleted statement.
+- **`source_parameter` is still gone**, for the same reason as before: the plane's grain is
   `(support_key, signal_name, normalized_unit, cell_id, observed_day)` and carries no upstream
-  parameter column. Under the governed contract a signal name resolves to one parameter within
-  one support key anyway; emitting a parameter the rollup cannot distinguish would be inventing
-  one. Answers are grained `(signal, support, unit)`.
-- **Days are dates, not midnight pairs.** The rollup's grain *is* the calendar day, derived once
-  where it is built. The old half-open `day_start`/`day_end` bracket existed to keep an index on
-  a raw `observed_at` usable; there is no `observed_at` left to bracket. `signal_coverage_on_day`
-  is the one exception and still binds both, because `agri.signal_coverage_audit` is grained by
-  the *window a lane fetched* rather than by a day.
-- **`forecast_summary_for_cell` narrowed.** `agri.mv_forecast_ml_daily_serving` covers ML-method
-  forecasts on series flagged `allow_ml_daily_aggregate`, aggregated to one row per valid **day**
-  — so `horizon_step` is gone and a published non-ML forecast is out of scope rather than absent.
-  There is deliberately **no fallback** to `agri.v_forecast_series_serving`: falling back would
-  reintroduce the eight-table join precisely when the box can least afford it.
+  parameter column. Answers are grained `(signal, support, unit)`.
+- **The grid a cell belongs to has no source at all.** `agri.spatial_cell` carried `cell_key`,
+  `grid_name` and `resolution_m`; the Parquet plane carries the cell's id and its centroid. Those
+  three columns are OMITTED rather than returned null — a permanently null field invites the model
+  to reason about it, which is the `impact_type` lesson below — and `nearest_signal_cells` REFUSES
+  a `grid_names` filter rather than silently answering unfiltered.
+- **`forecast_summary_for_cell` narrowed** exactly as before: ML-method forecasts on series flagged
+  `allow_ml_daily_aggregate`, one row per valid day, and deliberately **no fallback** to
+  `agri.v_forecast_series_serving`. What changed is only where the cell comes from.
 
-### Why `signal_coverage_on_day` still reads a raw table
+### The two PostgreSQL statements that stay, and why
 
-The rule is not "no aggregates"; it is that no request may read far more rows than it returns.
-That read is bounded on both sides already — capped at `MAX_CELL_FANOUT` cells before the audit
-is touched, then to the audit rows overlapping one day. It is also the one question the census
-**cannot** answer: `geo.mv_signal_observation_day` is grained by catalogue surface and day and
-says *how much landed*; `agri.signal_coverage_audit` is grained by signal, cell and fetched
-window and says *why nothing did*. Folding a reason-for-absence ledger into a how-much-landed
-census would destroy the column that makes an empty day explainable.
+Neither is environmental data, and the retirement inventory classes both "keep".
 
-### Refusing an unbuilt plane
+`agri.signal_coverage_audit` is the ingest lane's record of what an upstream was asked for and what
+it answered. It is the one question Parquet **cannot** answer: a governed-absence marker settles a
+whole lane-day, while this ledger is grained by signal, cell and fetched window and says *why*
+nothing landed for one of them. It used to resolve "cells near the point" from `agri.spatial_cell`;
+the cells now arrive as two positionally-paired arrays resolved from the Parquet plane by the same
+call that read the values, which is STRICTER than the join it replaces — the audit is read over
+exactly the cells the answer came from rather than every cell the radius admitted.
 
-A matview can exist while holding nothing: PostgreSQL creates it `WITH NO DATA` and **raises**
-rather than returning zero rows until a `REFRESH` has run. `agri.mv_forecast_ml_daily_serving`
-shipped in exactly that state — created, indexed, never refreshed, its refresher reading an
-environment variable nobody set.
+`agri.mv_forecast_ml_daily_serving` is the governed ML serving plane, built on
+`agri.v_forecast_series_serving` and inheriting its published/finalized/validated gate. It keeps
+its `pg_class` probe (below) because that gate is the reason an agent cannot quote a draft.
 
-That leaves two bad options and one good one. Letting the raise escape surfaces to the model as
-an unexplained tool error. Catching it and returning `[]` is **far worse**, because "no drought
-here" and "the drought plane was never built" become the same answer. So every tool probes the
-relations it is about to read (`sql/agent/materialized_plane_populated.sql`, a `pg_class`
-lookup touching no user data) and returns a **typed refusal naming the relation**. Silence about
-a relation counts as unbuilt: fail closed, not open.
+`geo.features` keeps exactly one agent reader: `interventions`. RUNBOOK section 0.26.1 keeps that
+lane in PostgreSQL because it is community data a user writes rather than environmental data an
+upstream publishes, so it has no registered Parquet lane and inventing one would be a fiction.
 
-The probe's answers are cached per `run_context`, because a matview cannot become unpopulated
-again once refreshed. `geo.v_observation_day_census` is a plain **view** and reports itself
-populated regardless of the matviews beneath it, so the probe always names
-`CENSUS_RELATIONS` — the three matviews — and never the view that unions them.
+### Refusing: two states became four
+
+The refusal discipline did not soften in the move; it gained states. A PostgreSQL matview could
+only be built or unbuilt. A Parquet lane-day is in one of four states, and three of them are things
+a model must never collapse into "nothing is here":
+
+| state | what it means | what the model may conclude |
+|---|---|---|
+| `published` | the day holds rows and they were served | the rows, and nothing beyond them |
+| `governed_absence` | the lane looked and the SOURCE had nothing; the marker says why | a measured absence, quoting the recorded reason |
+| `day_not_written` | nobody has ever written this day | **nothing at all** |
+| `lane_never_written` | the lane has written nothing at this rung, ever | **nothing at all** — this is the old "unbuilt plane" |
+
+`day_state` travels in every day-scoped payload and the notes tell the model to read it BEFORE the
+rows. Above those four sit the SERVING refusals (`parquet_ops.faults`), which are statements about
+this process and never about the warehouse: a half-written export, a read past its memory ceiling,
+every serving slot busy. Each carries its own `refusal_code` so it cannot be folded into an absence.
+
+Two refusals this module adds on top:
+
+- **`lane_columns_absent`.** MEASURED 2026-09-04: the newest published z13 signal part
+  (`year=2026/month=08/day=06/part-0.parquet`) carries eleven columns and NEITHER `cell_longitude`
+  NOR `cell_latitude`, although `warehouse/parquet/schema.py` declares both non-nullable. The lane
+  was exported before the positions were added and the `postgres-*` lanes are stopped, so no
+  re-export has followed. Without a probe every signal tool answers a `duckdb.BinderException` —
+  an unexplained tool error, exactly what this discipline exists to prevent. `warehouse.scan_all`
+  therefore checks the required columns once per read and refuses by name, saying the lane owes a
+  re-export. **Until that re-export lands the four signal tools refuse rather than answer**, which
+  is the honest state and is strictly better than the hard error they returned before.
+- **`parquet_availability_withheld`.** Coverage is answered from each lane's published availability
+  index — one pointer GET plus one bounded generation GET. A lane that cannot prove itself is
+  REFUSED rather than filled in from an object listing: that listing is the whole-stream LIST the
+  track's A4 tripwire forbids on a request path, and a lane answered from different evidence than
+  the map used could disagree with the slider about the same day. While
+  `PARQUET_COVERAGE_AUTHORITY` is `census_until_bootstrap` these two tools refuse for every lane;
+  they light up as each lane's index is published.
+
+The `pg_class` probe survives for the one relation left that needs it, and its answers are still
+cached per `run_context`. It is **not** a freshness test and nothing may read it as one: a matview
+refreshed once and then frozen reports `relispopulated = true`. That gap is why
+`geo.mv_signal_observation_day` was removed from the probe list rather than left in it — its
+refresh was dropped from the spec in `f5510a1` after timing out at 302 s against a 300 s
+`statement_timeout`, so it is populated AND frozen, and a probe that passed it would have let
+`observation_coverage_on_day` and `observation_temporal_neighbors` serve stale census answers with
+no refusal at all. The census question moved to the availability index, which carries a
+`source_ceiling_day` and can therefore say how current it is.
+
+### Window caps are scan budgets, and they fell
+
+Against an index range a decade-deep window was a longer contiguous scan. Against Parquet it is one
+object-store GET per written day per lane, so `MAX_DAYS_BACK` fell from 3,650 to 92,
+`MAX_WEEKS_BACK` from 520 to 52 and `MAX_FIRE_YEARS_BACK` from 45 to 2. **These numbers are chosen,
+not measured**, and every note that reports one says it is a scan budget rather than the depth of
+the record — the depth question moved to `observation_coverage_on_day`, which answers it for a
+lane's whole history from two small GETs.
+
+A second guard sits under them: `MAX_SCANNED_DAY_PARTITIONS` (120). Where a window still holds more
+written days than that, the read is narrowed to the NEWEST ones and the narrowed span is echoed as
+`scanned_from` / `scanned_through` beside the requested one. Answering two years from four months
+of it, silently, is the fabricated-absence bug in another costume.
+
+### Two ordinate conventions, and one of them lies
+
+Recorded here because it is the single most dangerous thing in `parquet_reads.py`. DuckDB's
+GEOMETRY functions take `ST_Point(longitude, latitude)`; its GEODESIC DISTANCE functions take the
+first ordinate as the LATITUDE. Measured against DuckDB 1.5.4 on 2026-09-04:
+
+```
+ST_Distance_Spheroid(ST_Point(43.6, -116.2), ST_Point(43.62, -116.25)) = 4607.70 m   correct
+ST_Distance_Spheroid(ST_Point(-116.2, 43.6), ST_Point(-116.25, 43.62)) = NaN         refused
+ST_Distance_Sphere(  ST_Point(-116.2, 43.6), ST_Point(-116.25, 43.62)) = 5645.93 m   WRONG
+```
+
+Every distance therefore uses `ST_Distance_Spheroid` and `ST_Distance_Sphere` is banned outright:
+fed the ordinates backwards the spheroidal function answers NaN, while the spherical one answers a
+plausible number 23% too large. A distance the model quotes beside a reading has to be wrong loudly
+or not at all. `ST_Distance_Spheroid` is also the exact analogue of the retired statements'
+`::geography` distance — both are WGS84 ellipsoidal — so this is a reproduction, not an
+approximation. `test_agent_parquet_reads.py::test_the_probe_point_is_bound_latitude_first` pins all
+three numbers.
+
+DuckDB has **no geodesic distance to a polygon edge** — both geodesic functions accept POINTs only
+— so there is no `ST_DWithin(geography)` to reproduce for a polygon lane. Two honest departures
+follow, both visible in the payload: membership is decided by the metre-accurate BOX rather than the
+circle inside it (a corner feature up to √2 × radius away can appear, and `search_shape` says so),
+and the distance reported is to the feature's CENTROID (`distance_basis: "centroid"`).
+`covers_probe_point` is exact and answers the question a polygon is usually asked.
 
 ## The generic surface triad
 
@@ -193,9 +278,16 @@ are three tools parameterised by `surface_name`, reading the same relations the 
 
 | tool | question | source |
 |---|---|---|
-| `observation_coverage_on_day` | is this day covered at all, and where does it sit in the surface's history | `geo.v_observation_day_census` |
-| `observation_temporal_neighbors` | nearest covered day each side, with `distance_days` | same census, two one-row index probes |
-| `feature_value_near_point` | nearest published features on that day, with `distance_meters` | `geo.features` |
+| `observation_coverage_on_day` | is this day covered at all, and where does it sit in the surface's history | the surface's published availability indexes |
+| `observation_temporal_neighbors` | nearest covered day each side, with `distance_days` | the same indexes, already in memory |
+| `feature_value_near_point` | nearest published features on that day, with `distance_meters` | the surface's own Parquet lane |
+
+A surface backed by SEVERAL lanes is covered only on days EVERY one of them published — air
+temperature is three lanes (mean/max/min), soil moisture three depths, soil temperature four — for
+the same reason `parquet-slider-capabilities.ts::commonPublishedRanges` intersects rather than
+unions. A day one depth is missing is a day the map cannot draw, and reporting it covered would put
+the agent one step ahead of the screen. `lane_states` names each lane's own verdict so the missing
+one can be pointed at.
 
 `AGENT_SURFACE_NAMES` holds **24 hand-spelled names** — 11 `geo.layers` rows, 4
 `SLIDER_STREAM_LAYER_NAMES`, 9 `climate-field-<signal>` streams — for the same reason
@@ -207,26 +299,27 @@ vanished from the database would vanish from the agent's vocabulary too, and the
 Two design points that are load-bearing rather than incidental:
 
 - **An uncovered day is answered three ways, not one.** `observation_coverage_on_day` returns
-  the surface's earliest and latest served days beside the verdict, so the model can say *before
-  this lane's horizon* / *past its live edge* / *a real hole in the middle* rather than merely
-  "empty". Those are three different facts and only one of them is a bug.
-- **Refusals name the gap.** An unknown surface, a stream handed to `feature_value_near_point`,
-  or an unbuilt matview all produce a typed refusal listing what *is* answerable — never an
-  empty result, which the model reads as an absence.
+  the surface's earliest and latest published days beside the verdict, and the lane's own
+  `source_ceiling_day`, so the model can say *before this lane's published history* / *past what
+  the source could have published* / *a real hole in the middle* rather than merely "empty". Those
+  are three different facts and only one of them is a bug.
+- **Refusals name the gap.** An unknown surface, a stream handed to `feature_value_near_point`, a
+  surface with no Parquet lane, a lane that cannot prove its coverage and a lane that never wrote
+  anything all produce a typed refusal listing what *is* answerable — never an empty result, which
+  the model reads as an absence.
 
 ### The bounding-box prefilter
 
-`ST_DWithin(geom::geography, …)` is exact and correct, and the cast makes it unusable by
-`idx_features_geom` / `drought_areas_geom_gist`, which are GiST indexes over the **geometry**
-column — and no geography index exists on either table. The planner's only option was a scan
-that detoasted every published feature's `properties` on the way past. Every distance query now
-puts `geom && ST_Expand(point, bbox_degrees)` in front of the exact test; `&&` is a strict
-superset, so it changes how many rows are examined and never which rows come back.
+A metre radius has to become a degree box before it can be a range predicate DuckDB pushes into a
+Parquet row group. The exact geodesic test runs on the survivors, so the box changes how many rows
+are measured and never which rows survive — the same relationship `geom && ST_Expand(...)` had to
+`ST_DWithin(geography)` on the PostgreSQL side, for the same reason.
 
-`bbox_degrees` is computed **per latitude** (`_bbox_degrees`). A degree of latitude is a fixed
-110,574 m; a degree of longitude is 111,320 m only at the equator and shrinks by `cos(latitude)`.
-Sizing the box on the latitude figure alone clips its east–west edges away from the equator and
-silently drops real features — which is exactly the failure a prefilter must not introduce.
+The box is sized **per axis** (`_bbox_bounds`). A degree of latitude is a fixed 110,574 m; a degree
+of longitude is 111,320 m only at the equator and shrinks by `cos(latitude)`. Sizing the box on the
+latitude figure alone clips its east–west edges away from the equator and silently drops real rows,
+which is exactly the failure a prefilter must not introduce. `_bbox_degrees` — the square form,
+sized on the wider axis — survives for the one PostgreSQL statement that still takes one.
 
 ## Answering at the selected day
 
@@ -237,9 +330,9 @@ day the map is showing**.
 
 | tool | question | statements |
 |---|---|---|
-| `signal_value_on_day` | what was measured on this exact day | `signal_value_on_day.sql` + `signal_coverage_on_day.sql` |
-| `signal_neighbors_in_time` | what is the nearest reading each side of it | `signal_neighbors_in_time.sql` |
-| `nearest_signal_cells` | where are the measurements, and how far | `nearest_signal_cells.sql` |
+| `signal_value_on_day` | what was measured on this exact day | `SIGNAL_DAY_VALUES` + `SIGNAL_ADMITTED_CELLS` + `signal_coverage_on_day.sql` |
+| `signal_neighbors_in_time` | what is the nearest reading each side of it | `SIGNAL_TIME_NEIGHBORS` |
+| `nearest_signal_cells` | where are the measurements, and how far | `SIGNAL_CELL_DAY_COUNTS` |
 
 Design rules, each of which has a test:
 
@@ -248,8 +341,11 @@ Design rules, each of which has a test:
   `str` rather than `date` because the signature *is* the published JSON schema; it is parsed
   with `date.fromisoformat` and an unparseable value is **refused**, never replaced with today.
   Substituting a date is the same refusal MTBS makes for a fire year with no dated release.
-- **The day filter is a half-open pair of UTC midnights**, computed in Python and bound as two
-  timestamps. Not a per-row `::date` cast, which would defeat the index on `observed_at`.
+- **The day is the partition, not a filter.** The read is handed exactly the part files of the
+  requested day, so a neighbouring day's rows cannot reach the statement and no timestamp is cast
+  to a date to keep that true. The half-open pair of UTC midnights survives in exactly one place —
+  `signal_coverage_on_day.sql` — because `agri.signal_coverage_audit` is grained by the *window a
+  lane fetched* rather than by a day, and overlap is the only honest test for that.
 - **Every proximity answer carries its distance and the observation's own date.** Temporal rows
   carry `observed_day`, `nearest_cell_observed_at`, signed `day_offset` and magnitude
   `distance_days`; spatial rows carry `distance_meters` and the centroid coordinates. A
@@ -258,6 +354,11 @@ Design rules, each of which has a test:
 - **`nearest_signal_cells` LEFT JOINs its day counts.** An INNER join would drop cells holding
   nothing, and "the nearest cells" would silently mean "the nearest cells that had data" — the
   substitution the tool exists to expose. A cell with nothing comes back with a count of `0`.
+  **The cell list is OBSERVED, not declared.** `agri.spatial_cell` was the registry that answered
+  "which cells exist here" and it is gone, so the universe is now the cells that reported at least
+  once in `CELL_UNIVERSE_DAYS` (30) before the requested day. A cell silent longer than that is
+  missing from the list, and the note says so outright rather than letting an observed set read as
+  a grid.
 - **Absence is explained from the table that already records it.** `signal_value_on_day` reads
   `agri.signal_coverage_audit` over *exactly* the cells the value came from, so a `no_data`
   verdict can only explain the point it was recorded for. Nothing new is written anywhere; the
@@ -271,13 +372,18 @@ in the position of implying a past reading is current.
 
 ### Deviations
 
-- `signal_value_on_day` issues **two** statements for one tool call. Every other tool is one
-  statement, so `test_every_tool_statement_is_read_only` drives all ten published tools and
-  asserts `len(WAREHOUSE_TOOLS) == 10` beside the statement count. Both halves must be edited to
-  add a tool, which is the point: the tripwire scans every statement the model can reach, and a
-  count alone would let an eleventh tool ship unscanned. The plane probe is excluded from that
-  count and asserted separately — it fires at most a few times per run, not once per tool, and
-  pinning its exact count would make the assertion depend on tool ordering.
+- `signal_value_on_day` issues **three** statements for one tool call — two DuckDB reads inside
+  ONE admitted session (the values and the admitted cells) and one PostgreSQL read (the absence
+  ledger). One session, because a tool asking two questions of one day should not queue twice
+  behind the three-slot serving gate, and because the second statement then reads part files this
+  process has already opened. `test_every_tool_statement_is_read_only` drives all ten published
+  tools and asserts `len(WAREHOUSE_TOOLS) == 10` beside the statement set: the tripwire scans every
+  statement the model can reach in either dialect, and a count alone would let an eleventh tool
+  ship unscanned. The plane probe is excluded and asserted separately, because it is cached per run
+  rather than issued per tool.
+- `fire_history_near_point` and `observation_coverage_on_day` issue **one read per lane**, because
+  a surface can be several lanes. `fire_history_near_point` also asks each lane's availability
+  index for its whole-lane history, which is two small GETs and not a scan.
 - `observation_coverage_on_day` and `observation_temporal_neighbors` take **no coordinate**. They
   ask about a whole map surface on a day, so a longitude would be a parameter they had nothing to
   do with. Every tool is still keyed by something the service validates — a range-checked
@@ -293,29 +399,30 @@ declarative views under `db/agri/`. `forecast_summary_for_cell` reads
 inherits its "published, finalized, validated" gate — the agent must not be able to quote a draft
 forecast, and reading the matview rather than re-deriving the join keeps that true.
 
-`geo.*` columns come from a different source of truth: the Next.js Drizzle schema
-(`src/lib/server/db/schema.ts`) and the `drizzle/` migrations, not this service's ORM. Tools that
-read `geo.features` reference only columns that schema declares (`id`, `layer_id`, `geom`,
-`properties`, `status`, `geometry_id`, `data_available_at`); `geo.drought_areas` contributes only
-`valid_date`, `dm_category`, `ingested_at` and `geom` — the last as a filter, never a projection,
-because that table hides about 495 MB of TOAST behind 1,040 rows. The pre-aggregated `geo.mv_*`
-relations are created by the drizzle tree, which is why they can be referenced here without a
-cross-migration ordering hazard.
+Parquet columns come from the REGISTERED Arrow schemas under `warehouse/schemas/`, and which
+column carries a lane's position is decided by `parquet_ops.warehouse_reader.spatial_support` —
+imported, never re-derived — so the agent and the map agree about where a lane's coordinates live.
+A lane declaring neither a coordinate pair nor a WKB column is refused rather than answered for the
+whole world. `feature_value_near_point` returns the lane's own typed columns under `properties`;
+there is no JSON allow-list any more because there is no JSON blob to guard — the ~1,467 MB of
+TOAST across 4.97 million `geo.features` rows that made `FEATURE_PROPERTY_KEYS` necessary is not a
+property of a Parquet lane. That allow-list survives, trimmed, for `interventions` alone.
 
-`fire_history_near_point`'s layer names come from `ingest/firms.py` and `ingest/mtbs.py` via
-their existing call-time resolvers rather than being re-spelled here, so a renamed layer moves
-in one place. `feature_value_near_point` takes its layer name from the caller and checks it
-against `FEATURE_SURFACE_NAMES`, so an unknown name is a refusal rather than an empty result.
+`fire_history_near_point`'s lanes are spelled in `surfaces.py::FIRE_LANE_NAMES` rather than
+resolved through `ingest/firms.py` and `ingest/mtbs.py` as the PostgreSQL statement did: those
+resolvers answer with a `geo.layers` row name, and a Parquet lane slug is a different namespace
+that happens to agree today. `FIRE_LANE_FEATURE_COUNT_COLUMN` is hand-spelled beside it, because
+the two lanes have genuinely different grains — `fire-detections` publishes one row per CELL-DAY
+carrying `detection_count`, `burn-severity` one row per mapped perimeter — and guessing from a
+column name would be a rule nobody wrote down.
 
-`feature_value_near_point` projects `properties` through a fixed `FEATURE_PROPERTY_KEYS`
-allow-list, harvested 2026-08-15 from the eight `geo.*_tiles` functions in `drizzle/` and the
-`properties->>` reads in `src/lib/server/services/`. `SELECT properties` on that table is how a
-bounded row count becomes an unbounded byte count — roughly 1,467 MB of TOAST across 4.97 million
-rows — so a fifty-row answer would otherwise be tens of megabytes.
-
-Non-trivial SQL lives in `sql/agent/*.sql` behind `load_query_sql`, with the beginner-doc
-header standard from `sql/AGENTS.md` — including its bind-param trap: parameter names in
-comments carry no leading colon, because `text()` scans comments too.
+The four PostgreSQL statements that remain live in `sql/agent/*.sql` behind `load_query_sql`, with
+the beginner-doc header standard from `sql/AGENTS.md` — including its bind-param trap: parameter
+names in comments carry no leading colon, because `text()` scans comments too. The eight that
+moved were DELETED, not left orphaned: a `.sql` file with no call site fails
+`test_sql_tree_conventions.py::test_loaded_exactly_once`, and
+`test_agent_parquet_tools.py::test_the_agent_sql_tree_holds_only_the_four_statements_that_stay`
+asserts the surviving set by name.
 
 ## Report vocabulary
 
@@ -432,12 +539,13 @@ nothing.
 
 ### `nearest_signal_cells` counts one plane, and says so
 
-`observation_count_on_day` is a census over `agri.signal_observation` only, while the tool returns
-cells from every grid -- including `sentinel2-ndvi-0p25deg`, whose NDVI lands on
-`agri.forecast_observation`. The note previously read "0 is an answer, not an omission", which is
-section 3's named failure: a census over one plane reporting healthy lanes as dead. Both the note and
-the model-facing docstring now name the plane, and `test_nearest_cells_...` asserts the wording rather
-than the old phrase.
+`observation_count_on_day` counts rows on the GOVERNED SIGNAL plane only, while the tool returns
+cells from every grid that plane knows -- including `sentinel2-ndvi-0p25deg`, whose NDVI lands
+elsewhere. The note previously read "0 is an answer, not an omission", which is section 3's named
+failure: a census over one plane reporting healthy lanes as dead. Both the note and the
+model-facing docstring name the plane. The 2026-09-04 repoint added a second thing a 0 can mean and
+the note names that too: on a `governed_absence` or `day_not_written` day EVERY count is 0 for a
+reason that has nothing to do with the cells, which is why `day_state` must be read first.
 
 ### `MAX_NEAREST_CELLS` arithmetic, corrected
 
@@ -459,21 +567,57 @@ never implied" rule exists to prevent, arriving through the one door that rule d
 tool pointed at the wrong plane.
 
 The fix is to read the plane the map reads, and the test asserts **the plane, not a row** —
-`test_the_drought_tool_reads_the_plane_the_map_serves_and_not_the_empty_one`. Sameness of
-relation is what makes disagreement impossible rather than merely unlikely; an assertion about
-returned values would pass again the next time the source drifted.
+`test_the_drought_tool_reads_the_lane_the_map_serves_and_not_the_empty_one`. Sameness of source is
+what makes disagreement impossible rather than merely unlikely; an assertion about returned values
+would pass again the next time the source drifted. The test survived the 2026-09-04 repoint
+unchanged in intent: the map now serves drought from the Parquet `drought` lane, so the tool reads
+that, and the assertion still names the source rather than a value.
 
-Two shape changes came with it, both in the payload and both named in the note:
+Three shape decisions came with it, all in the payload and all named in the note:
 
-- **A release that published no drought class over the point is now a row**, with
-  `severity_class` null and `covering_class_count` 0. That is a measured "this release existed
-  and found no drought here" — a fact. An **empty** `weekly_severity` list is a different claim
-  entirely: no release was published in the window at all, so nothing is known either way. The
-  old shape collapsed the two.
-- **`impact_type` is gone.** `geo.drought_areas` has no such column, and returning a permanently
-  null field labelled `impact_type` invites the model to reason about it. `prev_valid_date` and
-  `next_valid_date` arrive in its place, from `geo.mv_drought_release_index`, so a day falling
-  between two Tuesday releases can be answered with the real gap stated.
+- **A release that published no drought class over the point is a row**, with `severity_class`
+  null and `covering_class_count` 0. That is a measured "this release existed and found no drought
+  here" — a fact. An **empty** `weekly_severity` list is a different claim entirely: no release was
+  published in the span at all, so nothing is known either way. The old shape collapsed the two.
+  Against Parquet the two halves come from one pass: `count(*)` over the release's rows gives
+  `published_class_count`, and three `FILTER (WHERE covers_probe)` aggregates describe only the
+  polygons over the point.
+- **`impact_type` is gone.** Neither source has such a column, and returning a permanently null
+  field labelled `impact_type` invites the model to reason about it. That lesson is why the retired
+  cell registry's `grid_name` and `resolution_m` are omitted from `nearest_signal_cells` rather
+  than nulled.
+- **`prev_valid_date` and `next_valid_date`** arrive in its place, so a day falling between two
+  Tuesday releases can be answered with the real gap stated. They came from
+  `geo.mv_drought_release_index` and now come from the LISTING — which is why the lane is listed
+  one year below the requested window, so the OLDEST release in the answer can still name the one
+  before it.
+
+### What the 2026-09-04 repoint could NOT move, and what that costs
+
+Recorded here rather than discovered later. None of these is a defect in the port; each is a state
+of the warehouse the port made visible.
+
+- **The signal lane owes a re-export.** Its published z13 parts carry no `cell_longitude` /
+  `cell_latitude`, so the four signal tools cannot resolve a cell spatially and refuse with
+  `lane_columns_absent`. They answer the moment the lane is re-exported through the current
+  schema; nothing in this package needs to change.
+- **Coverage is withheld until the availability indexes are bootstrapped.** Under
+  `PARQUET_COVERAGE_AUTHORITY=census_until_bootstrap` no lane publishes one, so
+  `observation_coverage_on_day` and `observation_temporal_neighbors` refuse. The alternative — a
+  whole-stream object listing on a request path — is what the track's A4 tripwire forbids.
+- **`cell_key`, `grid_name` and `resolution_m` are gone for good.** They were `agri.spatial_cell`
+  columns and that relation is dropped. `nearest_signal_cells` reports `cell_id` and refuses a
+  `grid_names` filter; `forecast_summary_for_cell` reports `cell_id` where it reported `cell_key`.
+- **`observation_coverage_on_day`'s census-specific columns have no twin.** `unlinked_count`,
+  `distinct_key_count` and `metric_counts` were properties of `geo.v_observation_day_census`.
+  `surface_kind` became `lane_nature` (`daily_series` / `release_series` / `static_lookup`), and
+  `newest_observed_at` became `published_at` — a publication instant, which is a different fact
+  from an observation instant and is named differently for that reason.
+- **A polygon lane's `distance_meters` is to its centroid**, because DuckDB has no geodesic
+  distance to an edge. `distance_basis` says which measurement it is, on every row.
+- **`interventions` still reads `geo.features`.** It is community data, it is empty, and RUNBOOK
+  section 0.26.1 keeps it in PostgreSQL. It does not block the `geo.features` drop packet any more
+  than the layer itself already does.
 
 ## What the agent owes every layer
 

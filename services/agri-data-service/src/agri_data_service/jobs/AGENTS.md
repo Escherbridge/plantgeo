@@ -885,41 +885,47 @@ the same reason: no REFRESH was issued, so the tick learned nothing about whethe
 worked, and it must never contribute to `has_failures`' all-attempted-missing rule. It is kept a
 DIFFERENT literal from `relation_absent`, never folded in, because the two answer different questions
 about the database and collapsing them would make a future reader believe `geo.mv_signal_observation_day`
-is gone when it is not — `agent/tools.py`'s `SIGNAL_CENSUS_RELATION` still points at it and still
-serves it (see below).
+is gone when it is not — the relation is still in the catalog, still frozen, and still named as the
+signal leg of `geo.v_observation_day_census` (see below).
 
 **`views_out_of_spec` is lifted to the top level of `job_attempt.metrics`, exactly like
 `relations_absent`.** The same non-negotiable applies: a governed fact readable only by scanning a
 per-view array is a governed fact nobody reads. An operator scanning a green tick now sees, without
 opening a single row, both what is missing and what was deliberately dropped.
 
-**This retirement is scoped to the refresh lane only, and it has at least two downstream readers that
-are not.** `geo.mv_signal_observation_day` is NOT an unreferenced view — do not read its removal from
-this spec table as "nothing reads this any more":
+**Both of the downstream readers this section originally inventoried were REMOVED later the same day,
+2026-09-04, by wave C.** The paragraph below used to say the retirement "is scoped to the refresh lane
+only, and it has at least two downstream readers that are not", and listed them. That was true when
+written and is false now. The list is corrected in place rather than deleted, because this inventory
+is what a future drop-packet author reads to decide whether the drop is safe:
 
-1. **`src/lib/server/services/environmental-read-model.ts:3198` and `:3464-3465`** (the main Next.js
-   app, a different service tree from this one) read it in PRODUCTION through
-   `geo.v_observation_day_census`, the plain view that unions it with `geo.mv_drought_observation_day`
-   and the feature census. This is the exact query that replaced the aggregate join blamed for the
-   2026-08-15 Cloudflare 524 (`:3192-3207`'s own comment), and it backs `getSliderCapabilities`, a
-   `publicProcedure` cached 30 minutes (`STREAM_CAPABILITIES_CACHE_TTL_MS`, `:3458-3473`) precisely
-   because — per that constant's own comment — "the refresh cadence upstream of it is the real
-   staleness floor". That assumption is now false for this one relation: there is no more refresh
-   cadence upstream of it, only whatever the last successful REFRESH left behind. Repointing this
-   consumer to the Parquet API is chartered as track lane C3; it is not done here, and this file's
-   ownership does not extend to `src/lib/server/**`.
-2. **`agent/tools.py:229-234`** still names `geo.mv_signal_observation_day` as `SIGNAL_CENSUS_RELATION`,
-   folded into `CENSUS_RELATIONS` and probed by `_unbuilt_planes` from
-   `query_observation_coverage_on_day` and `query_observation_temporal_neighbors`
-   (`agent/tools.py:959`, `:1001`). `_unbuilt_planes` only checks `relispopulated`, which this relation
-   already satisfies from its last successful refresh — so neither tool will refuse, and neither will
-   notice that this lane has stopped keeping the relation current. The same description also appears in
-   `agent/AGENTS.md` and `sql/agent/signal_coverage_on_day.sql`, both of which describe
-   `geo.mv_signal_observation_day` as the authority for "how much landed" without knowing this lane no
-   longer refreshes it.
+1. ~~`src/lib/server/services/environmental-read-model.ts:3198` and `:3464-3465`~~ — **GONE (lane C3).**
+   `readStreamObservationWindows`, `readStreamCapabilities` and `mergeStreamCapabilities` were deleted;
+   the removal notes left in their place record that the tRPC `getSliderCapabilities` procedure has
+   read `getParquetSliderCapabilities` (`src/lib/server/services/parquet-slider-capabilities.ts`)
+   since `069ef90` (2026-08-28), so the deleted functions had zero live callers by then anyway. What
+   still reads `geo.v_observation_day_census` in that file is `readObservationWindows`, and it filters
+   `WHERE surface_kind = 'feature'` — the `geo.mv_feature_observation_day` leg, not this relation.
+2. ~~`agent/tools.py:229-234`'s `SIGNAL_CENSUS_RELATION`~~ — **GONE (lane C2).** `SIGNAL_CENSUS_RELATION`
+   and the `CENSUS_RELATIONS` tuple it was folded into were both removed; neither symbol exists in the
+   tree. The tools that probed it (`query_observation_coverage_on_day`,
+   `query_observation_temporal_neighbors`) went with them.
 
-Both gaps are facts about their own files, not this lane, and are intentionally left for the
-retirement inventory rather than patched here.
+**So `geo.mv_signal_observation_day` now has ZERO readers.** Do not restore its `MatviewRefreshSpec`:
+a completable `statement_timeout` would spend production time keeping current a relation nothing
+reads. What is left is a drop, decision D1, and two facts that drop needs:
+
+* The relation still EXISTS and is still populated from its last successful REFRESH, so
+  `_absent_relations` still cannot govern it and `out_of_spec` is still the honest tick outcome. Its
+  `MATVIEW_REFRESH_RETIRED_VIEWS` entry therefore stays until the drop lands — delete it in the same
+  migration, not before, or the relation goes unnamed on every tick while it is still there.
+* `geo.v_observation_day_census` still names this relation as its signal leg
+  (`drizzle/0032_observation_day_census_repoint.sql:92-111`). The drop migration must redefine that
+  view in the same transaction; a bare `DROP ... CASCADE` would take the view down with it, and the
+  feature leg of that view IS live production traffic (`readObservationWindows`, above).
+
+This file's ownership does not extend to `src/lib/server/**` or to `drizzle/**`; the citations above
+are the handoff, not a claim that this lane will make the change.
 
 ### 6a. The retired-view registry needed a ledger row, a disjointness guard, and an expiry — governance follow-up, 2026-09-04
 
@@ -956,7 +962,12 @@ ledger table, not a JSONB blob three hops away. Three fixes close the gap:
    mechanism: track lane C3 repointing `environmental-read-model.ts` off
    `geo.v_observation_day_census`, and this relation's own drop under decision D1 (C3 first, D1
    follows) — at that point the entry should be restored with a completable `statement_timeout` or
-   deleted outright, not left standing. `reason` was also rewritten to drop its specific reader
+   deleted outright, not left standing. **The C3 half fired the same day** (see section "6." above,
+   which now records both readers gone), and it resolved the fork rather than leaving it open: with
+   zero readers, "restore a spec" is refuted outright, so the entry's `review_trigger` was rewritten
+   to say so and to pin its own deletion to the D1 drop migration. That is the trigger working as
+   designed — an entry whose premise went stale sent a human back to it — not a second stale premise.
+   `reason` was also rewritten to drop its specific reader
    citations (`environmental-read-model.ts:3198,3464-3465`, `agent/tools.py`'s
    `SIGNAL_CENSUS_RELATION`): that inventory is real and current in section "6." above, which is a
    document a human maintains, not an operator-facing string reprinted verbatim on every tick this

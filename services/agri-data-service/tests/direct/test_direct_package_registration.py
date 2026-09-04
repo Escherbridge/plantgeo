@@ -31,22 +31,47 @@ DIRECT_PACKAGE_DIRECTORY = _SOURCE_ROOT / "pipeline" / "direct"
 #: with a null session and store.
 PROBE_DAY = date(2026, 8, 6)
 
-# Packages under `pipeline/direct/` whose source-direct writer is built but not yet routed to by
-# LANE_REGISTRY -- each stream is still owned by the OLD Postgres-reading adapter in `pipeline/lanes/`
-# (`_fill_vegetation`, `_fill_weather_observations`, `_fill_drought`,
-# `pipeline/parquet/lane_registry.py`). Naively checking "is the package name a registered slug"
-# would wrongly call all three registered today, since `vegetation`, `weather-observations` and
-# `drought` are already registered slugs -- just not routed to THESE packages yet.
+# Packages under `pipeline/direct/` whose source-direct writer is built but still not routed to by
+# LANE_REGISTRY's own adapter. All three survived the 2026-09-04 join: each writer got its own
+# EXECUTOR lane (`execution/job_executor_service.py`), but every one of those lanes ships SHADOW, and
+# a shadow writer cannot be the registration's adapter while the generic `parquet-*` lane beside it
+# is the one production actually runs. Each entry cites its OWN reason -- these are three different
+# reasons, not one shared "owed at the join step".
 #
 # DEFAULT-DENY, the same convention as `test_lane_registry.py::UNREGISTERED_LANE_MODULES`: a package
 # added later is policed the day it lands, with nothing to remember to register.
 PENDING_REGISTRATION: dict[str, str] = {
-    "vegetation": "environmental_postgres_retirement_20260904 F-B3: writer built "
-    "(pipeline/direct/vegetation/), not yet routed to by LANE_REGISTRY -- owed at the join step.",
-    "weather_observations": "environmental_postgres_retirement_20260904 F-B3: writer built "
-    "(pipeline/direct/weather_observations/), not yet routed to by LANE_REGISTRY -- owed at the join step.",
-    "drought": "environmental_postgres_retirement_20260904 F-B3: writer built "
-    "(pipeline/direct/drought/), not yet routed to by LANE_REGISTRY -- owed at the join step.",
+    "vegetation": "environmental_postgres_retirement_20260904 F-B3/join: writer built "
+    "(pipeline/direct/vegetation/) and its executor lane IS registered "
+    "(vegetation-sentinel2-ndvi-direct-forward, execution/job_executor_service.py), but "
+    "LANE_REGISTRY['vegetation'].adapter deliberately still reads Postgres via _fill_vegetation. "
+    "pipeline/direct/vegetation/backfill.py:149-155 depends on that exact, unchanged adapter to reach "
+    "D2 parity for every day at or before VEGETATION_DIRECT_WRITER_START_DAY; routing the registration "
+    "to a source-direct refusal before that backfill discharges would make "
+    "adapter.py::refuse_pre_ownership_day reject the entire backfill window by construction. Remove "
+    "this entry only once backfill.py reports the window closed.",
+    "weather_observations": "environmental_postgres_retirement_20260904 F-B3/join: writer built "
+    "(pipeline/direct/weather_observations/) and its executor lane IS registered "
+    "(weather-observations-direct-forward, execution/job_executor_service.py), but "
+    "LANE_REGISTRY['weather-observations'].adapter deliberately still reads Postgres via "
+    "_fill_weather_observations. Unlike vegetation/fire-detections/water-gauges, this package ships no "
+    "*_DIRECT_WRITER_START_DAY-equivalent constant and no backfill.py -- "
+    "pipeline/direct/weather_observations/__init__.py only says the registry 'may come to import a "
+    "submodule ... for its floor and lag', not that one exists yet -- and parity.py still frames "
+    "Postgres as the ground list D2 must cover. Routing the registration to a refusal without a cited "
+    "ownership-boundary day would risk the same silent wedge vegetation's backfill.py warns about, for "
+    "a lane with no backfill.py to even raise the alarm. Remove this entry once that boundary is "
+    "measured and cited.",
+    "drought": "environmental_postgres_retirement_20260904 F-B3/join: writer built "
+    "(pipeline/direct/drought/) and its executor lane IS registered (drought-direct-forward, "
+    "execution/job_executor_service.py), but that lane is SHADOW -- it runs only once an owner adds it "
+    "to PLANTGEO_JOB_EXECUTOR_ACTIVE_LANES -- while parquet-drought is ACTIVE in production and is the "
+    "only writer this layer has. Routing LANE_REGISTRY['drought'].adapter to a source-direct refusal "
+    "before that activation gives the layer NO writer at all: gap_fill._export_one_day catches the "
+    "LaneRegistryError as outcome 'raised' (a FAILING_LANE_OUTCOMES member) every tick, forever. "
+    "Unlike vegetation there is also no boundary day to abut -- forward.py and backfill.py claim the "
+    "same full floor-to-settled window the generic lane covers -- so no writer_ceiling can bridge the "
+    "gap either. Remove this entry in the SAME push that activates drought-direct-forward.",
 }
 
 

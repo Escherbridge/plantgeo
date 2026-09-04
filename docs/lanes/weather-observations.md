@@ -166,11 +166,14 @@ Overall measured extent across the whole plane (both producers, all 19 signals):
 
 ## 4. Grain
 
-**`(support_key, signal_name, normalized_unit, cell_id, observed_day)`** — confirmed identically
-across four independent SQL statements
-(`services/agri-data-service/src/agri_data_service/sql/agent/signal_value_on_day.sql:22`,
-`signal_neighbors_in_time.sql:21`, `signals_near_point.sql:18`, `nearest_signal_cells.sql:20`) and the
-dropped rollup's own `GROUP BY`/unique constraint (`drizzle/0029:533`). ~24.5M rows at this grain
+**`(support_key, signal_name, normalized_unit, cell_id, observed_day)`** — this is `SIGNAL_PLANE_GRAIN`,
+declared beside `SIGNAL_PLANE_STREAM` in
+`services/agri-data-service/src/agri_data_service/warehouse/parquet/schema.py:169-175`. It used to be
+confirmed identically across four independent SQL statements (`signal_value_on_day.sql`,
+`signal_neighbors_in_time.sql`, `signals_near_point.sql`, `nearest_signal_cells.sql`); this wave
+deleted all four when the agent moved off PostgreSQL onto the Parquet schema above (`drizzle/0034_…sql`
+still names them, an immutable historical record, left as-is). The dropped rollup's own `GROUP
+BY`/unique constraint (`drizzle/0029:533`) agreed with the same grain. ~24.5M rows at this grain
 across the whole 46,068,872-row plane.
 
 **Every row is a point sample, never an areal average — even though it renders as a filled cell.**

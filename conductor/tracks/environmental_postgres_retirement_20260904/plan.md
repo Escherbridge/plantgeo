@@ -128,8 +128,26 @@ backfilled and any upstream-never-served days recorded in the gap census; and th
 - [ ] **C2 — agent signal queries** (`src/agri_data_service/sql/agent/*.sql`, `agent/tools.py`) served
       from the Parquet API, with agent parity evidence per tool. Includes the four agent tools that
       still hard-error against the already-dropped `geo.mv_signal_cell_daily`.
-- [ ] **C3 — the observation-day census consumer. ON THE TIME SLIDER'S CRITICAL PATH — raise its
-      priority accordingly.** `src/lib/server/services/environmental-read-model.ts:3198` and
+- [x] **C3 — DONE, and the premise below was WRONG. The slider was never served from the frozen
+      matview.** Corrected 2026-09-04 by the C3 lane, which traced the caller before changing anything.
+      `src/lib/server/trpc/routers/environmental.ts:629` has read
+      `getSliderCapabilities: publicProcedure.query(() => getParquetSliderCapabilities())` since
+      commit `069ef90` ("cut over tRPC readers to Parquet", 2026-08-28), and
+      `parquet-slider-capabilities.ts:771` awaits only `getGeoFeatureSliderCapabilities()` +
+      `getParquetWarehouseCoverage()` — it never calls `readStreamCapabilities` or
+      `readStreamObservationWindows`. `src/lib/server/AGENTS.md:1186-1191` already said so in writing.
+      The Postgres path was **dead code with zero production callers**, reachable only from its own
+      unit tests. Its real hazard was that it still worked: anyone who found and called it would get
+      silently-stale-forever data with no error. Deleted rather than reimplemented — repointing a
+      function nothing calls would have duplicated `PARQUET_CAPABILITY_CONTRACTS`' proof of the same
+      13 layers, the "two hopeful copies" drift `parquet-plane-client.ts` warns against.
+
+      **Three agents asserted this path was live** (the retirement inventory, the matview lane, and the
+      wave-A adversarial reviewer). All three read the function and none traced the caller — the same
+      error class as the `write_absence` phantom. Two occurrences in one day: **before recording a
+      defect, trace the caller.**
+
+- [ ] ~~C3 (superseded — original text kept for the record)~~ **the observation-day census consumer.** `src/lib/server/services/environmental-read-model.ts:3198` and
       `:3464-3465` read `geo.mv_signal_observation_day` live through `geo.v_observation_day_census`,
       and they back **`getSliderCapabilities`** — a `publicProcedure` cached 30 min via
       `STREAM_CAPABILITIES_CACHE_TTL_MS`, introduced as the fix for the 2026-08-15 Cloudflare 524. Its
@@ -150,7 +168,23 @@ backfilled and any upstream-never-served days recorded in the gap census; and th
       three-part packet to `evidence/drop-packets/<relation>.md` (parity receipt, zero-reader proof,
       `pg_dump` key + sha256 on R2), then one small Alembic migration rehearsed on `agri_sweep` and
       applied with owner confirmation. Regenerate the declarative tree; refresh the quality receipt.
-- [ ] **D-shared — `geo.features` is the exception to per-layer drops.** A3 proved it is one shared
+- [ ] **D-shared — `geo.features` CANNOT BE DROPPED AT ALL. Corrected 2026-09-04 by the wave-C
+      adversarial review.** The earlier reading below was wrong in a way that would have wasted a wave:
+      it said the last of seven layers gates the table. There is an **eighth, permanent resident**.
+      `sql/agent/feature_value_near_point.sql` keeps a live PostgreSQL read of `geo.features` for
+      `interventions`, which RUNBOOK section 0.26.1 keeps in PostgreSQL **permanently** — a community
+      feature, not environmental data, and correctly out of scope for this track. So `interventions`
+      never clears, and the relation never drops.
+      **D-shared therefore becomes: drop the seven environmental layers' ROWS, keep the table** — or
+      move `interventions` to its own table first and then drop `geo.features`. Owner call at the next
+      touchpoint; the row-delete form is cheaper and reversible from the archived `pg_dump`.
+      The new guard test (`tests/test_agent_parquet_tools.py:770-798`) that claims to be "the c2-style
+      removal proof, executable" does **not** list `geo.features` or `geo.layers` among its forbidden
+      relations, so it passes while the surviving statement reads the largest environmental table in
+      the schema. Add both, with an explicit `feature_value_near_point.sql` exemption, so the exception
+      is asserted rather than merely absent.
+
+- [ ] ~~D-shared, original text (superseded):~~ **`geo.features` is the exception to per-layer drops.** A3 proved it is one shared
       polymorphic table serving SEVEN of the eight D4 layers (only drought owns its own table), so it
       cannot be dropped layer by layer. Each layer still earns its own parity receipt for its own rows;
       the table itself is gated on the LAST of the seven clearing waves B and C. Sequence its drop

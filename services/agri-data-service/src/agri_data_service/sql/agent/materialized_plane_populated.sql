@@ -3,7 +3,8 @@
 --          populated, so a tool can refuse honestly instead of raising or returning an empty
 --          result that reads as an absence.
 -- Loaded by: agri_data_service.agent.tools
--- Params: relation_names (text[] -- schema-qualified relation names, e.g. geo.mv_signal_cell_daily)
+-- Params: relation_names (text[] -- schema-qualified relation names, e.g.
+--         agri.mv_forecast_ml_daily_serving)
 --
 -- Parameter names appear above WITHOUT a leading colon -- see "Header/bind-param trap" in
 -- sql/AGENTS.md.
@@ -24,6 +25,22 @@
 --
 -- The check is deliberately cheap enough to run before every read: it is a lookup in the system
 -- catalog, touching no user data at all, over an array that is never longer than three entries.
+--
+-- ONE RELATION IS LEFT TO PROBE, AND IT IS THE ONE THIS PROBE WAS WRITTEN FOR. As of 2026-09-04
+-- every environmental plane the agent read has moved to Parquet, where an unbuilt plane is not a
+-- catalog state but one of the four warehouse states (`lane_never_written` above all), so nothing
+-- environmental asks this question any more. What remains is agri.mv_forecast_ml_daily_serving --
+-- the governed ML serving plane, which the retirement inventory classes "keep" and which really
+-- did ship unpopulated. The probe stays parameterised by array rather than hard-coded to that one
+-- name, because narrowing a general check to its last caller is how the next plane ships unprobed.
+--
+-- The probe answers `relispopulated`, WHICH IS NOT A FRESHNESS TEST, and nothing may read it as
+-- one. A matview refreshed once and then frozen for a month reports true. That gap is why
+-- geo.mv_signal_observation_day was removed from the probe list rather than left in it: its
+-- refresh was dropped from the spec in f5510a1 after timing out at 302 s against a 300 s
+-- statement_timeout, so it is populated AND frozen, and a probe that passes it would have let two
+-- tools serve stale census answers with no refusal. The census question moved to the Parquet
+-- availability index, which carries a source ceiling and can say how current it is.
 --
 -- How this query works, clause by clause:
 --

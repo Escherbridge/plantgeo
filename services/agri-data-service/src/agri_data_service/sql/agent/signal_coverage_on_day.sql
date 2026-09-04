@@ -3,13 +3,23 @@
 --          point -- complete, partial, no_data or failed -- so an empty value answer can be
 --          explained instead of merely reported.
 -- Loaded by: agri_data_service.agent.tools
--- Params: longitude/latitude (double precision), radius_meters (double precision),
---         cell_limit (int), day_start/day_end (timestamptz -- the UTC midnight the day opens on
---         and the UTC midnight the next day opens on), signal_names (text[], empty array means
---         "every signal"), row_limit (int)
+-- Params: cell_ids (text[] -- the spatial-cell ids the value answer came from, resolved from the
+--         Parquet signal plane), cell_distances (double precision[] -- each cell's distance from
+--         the probe point in metres, positionally paired with cell_ids), day_start/day_end
+--         (timestamptz -- the UTC midnight the day opens on and the UTC midnight the next day
+--         opens on), signal_names (text[], empty array means "every signal"), row_limit (int)
 --
 -- Parameter names appear above WITHOUT a leading colon -- see "Header/bind-param trap" in
 -- sql/AGENTS.md.
+--
+-- THE CELLS ARRIVE AS A PARAMETER NOW, AND THAT IS THE WHOLE OF THE 2026-09-04 CHANGE. This
+-- statement used to resolve "cells near the point" itself, from agri.spatial_cell. That table is
+-- in the retirement track's "drop now" class and is already absent from production, so the CTE
+-- that read it could no longer run at all. The cells are instead resolved from the Parquet signal
+-- plane -- which carries cell_longitude/cell_latitude beside every row -- by the same call that
+-- read the day's values, and handed here as two positionally-paired arrays. That is STRICTER than
+-- the join it replaces: the audit is now read over exactly the cells the value answer came from,
+-- rather than over every cell the radius admitted whether it contributed or not.
 --
 -- agri.signal_coverage_audit is the warehouse's existing record of what we asked an upstream for
 -- and what it answered. A day the provider genuinely never published carries a no_data row there,
@@ -18,33 +28,40 @@
 -- so the agent can tell those two apart. Nothing new is recorded anywhere -- this reads the table
 -- the lanes already fill.
 --
--- WHY THIS ONE STATEMENT STILL READS A RAW TABLE while its siblings were repointed at the
--- pre-aggregated rollups. The pre-aggregation design's rule is not "no aggregates"; it is that no
--- request may make the database read far more rows than it returns. This read is already bounded
--- on both sides: the cell CTE caps it at cell_limit cells before the audit is touched, and the
--- window overlap caps it to the audit rows spanning one day. It is an indexed range read over a
--- governance ledger, not a scan of an observation plane, so there is nothing here for a rollup to
--- remove.
+-- WHY THIS ONE STATEMENT STILL READS POSTGRESQL while its siblings moved to Parquet. It is not
+-- environmental data: agri.signal_coverage_audit is a GOVERNANCE record of what an upstream was
+-- asked for and what it answered, and the retirement track's inventory classes it "keep". The read
+-- is also bounded on both sides -- the cell array is capped upstream at MAX_CELL_FANOUT cells
+-- before the audit is touched, and the window overlap caps it to the audit rows spanning one day.
+-- An indexed range read over a governance ledger is not the whole-plane scan the retirement exists
+-- to remove.
 --
--- It is also the one question the census cannot answer. geo.mv_signal_observation_day is grained
--- by catalogue SURFACE and day and says how much landed; this table is grained by signal, cell and
--- fetched window and says WHY nothing did. Folding a reason-for-absence ledger into a
--- how-much-landed census would lose exactly the column that makes an empty day explainable. The
--- census half of the question is answered instead by observation_coverage_on_day.sql, which reads
--- the rollup, and the two are reported side by side.
+-- It is also the one question the Parquet warehouse cannot answer. A governed-absence marker
+-- settles a whole LANE-DAY and says the source had nothing; this table is grained by signal, cell
+-- and fetched window and says WHY nothing landed for one of them. Folding a reason-for-absence
+-- ledger into a day-level marker would lose exactly the column that makes an empty day
+-- explainable. The day-level half of the question is answered instead by the four warehouse
+-- states, which travel in the same payload as `day_state`, and the two are reported side by side.
 --
 -- How this query works, clause by clause:
 --
 --   WITH nearby_cells AS (...)
---     The same bounded "cells near this point" CTE the value statement uses, so the audit is read
---     over exactly the cells the value came from. Reading the audit over a wider set of cells than
---     the value would let an absence recorded somewhere else appear to explain this point.
+--     The cells the value answer came from, unpacked from the two arrays the caller bound. Reading
+--     the audit over a wider set of cells than the value would let an absence recorded somewhere
+--     else appear to explain this point.
 --
---   ST_SetSRID / ST_MakePoint / ::geography / ST_DWithin
---     Builds the caller's coordinate into a PostGIS point stamped with SRID 4326 (WGS84 -- ordinary
---     GPS longitude/latitude), casts it to geography so distance is measured in metres on the
---     curved earth rather than in degrees, and tests "within radius metres" in the index-friendly
---     form.
+--   unnest(cell_ids, cell_distances) AS entry(cell_id, distance_m)
+--     unnest() with two arguments walks two arrays IN STEP, emitting one row per position with a
+--     value from each. The two arrays are built together in Python from one ordered list of cells,
+--     so position i is the same cell in both; the alias list after AS names the two columns that
+--     come out. A single-argument unnest per array plus a join would need a position key the caller
+--     does not have.
+--
+--   CAST(cell_ids AS uuid[])
+--     The Parquet signal plane stores cell_id as text, because Parquet has no uuid type. The audit
+--     table's cell_id is a real uuid, so the array is cast once here rather than every row being
+--     cast on the way past -- and a value that is not a uuid fails loudly at the cast instead of
+--     silently matching nothing.
 --
 --   audit.window_start < day_end AND audit.window_end >= day_start
 --     The overlap test. An audit row describes a WINDOW a lane fetched, not a single day, so the
@@ -74,19 +91,12 @@
 --     no_data verdict may have been recorded for a whole month rather than for this day alone.
 WITH nearby_cells AS (
     SELECT
-        cell.id AS cell_id,
-        ST_Distance(
-            cell.centroid::geography,
-            ST_SetSRID(ST_MakePoint(:longitude, :latitude), 4326)::geography
-        ) AS distance_m
-    FROM agri.spatial_cell AS cell
-    WHERE ST_DWithin(
-        cell.centroid::geography,
-        ST_SetSRID(ST_MakePoint(:longitude, :latitude), 4326)::geography,
-        :radius_meters
-    )
-    ORDER BY distance_m
-    LIMIT :cell_limit
+        entry.cell_id,
+        entry.distance_m
+    FROM unnest(
+        CAST(:cell_ids AS uuid[]),
+        CAST(:cell_distances AS double precision[])
+    ) AS entry(cell_id, distance_m)
 )
 SELECT
     audit.signal_name,

@@ -55,6 +55,7 @@ from agri_data_service.pipeline.direct.soil.products import (
     ERA5_LAND_ARCHIVE_PUBLICATION_LAG_DAYS,
     SOIL_FIELD_PRODUCTS,
 )
+from agri_data_service.pipeline.direct.vegetation.products import VEGETATION_DIRECT_WRITER_START_DAY
 from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.lanes.burn_severity import export_burn_severity_release_day
 from agri_data_service.pipeline.lanes.calendar import export_calendar_version
@@ -750,6 +751,30 @@ _DATABASE_BACKED_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = (
     ),
     LaneRegistration(
         slug=DROUGHT_STREAM,
+        # DELIBERATELY STILL `_fill_drought` (Postgres-reading), and DELIBERATELY WITHOUT a
+        # `writer_ceiling`. `drought-direct-forward` (execution/job_executor_service.py) ships SHADOW
+        # and can only run once an owner adds it to PLANTGEO_JOB_EXECUTOR_ACTIVE_LANES, while
+        # `parquet-drought` is ACTIVE in production today -- so routing this adapter to a
+        # source-direct refusal now would leave the lane with NO writer at all: `gap_fill.py`'s
+        # `_export_one_day` (`:1177-1179`) catches EVERY adapter exception for per-lane isolation and
+        # records outcome `"raised"`, a `FAILING_LANE_OUTCOMES` member (`gap_fill.py:230`), on this
+        # tick and identically on every tick after it.
+        #
+        # WHY NO CEILING, unlike vegetation/fire-detections/water-gauges: those three have a cited
+        # ownership-boundary day, so the generic and direct writers abut. Drought has none, and there
+        # is no honest one to derive. `pipeline/direct/drought/forward.py:125` starts its own scan at
+        # `max(lane.history_floor, settled_through - DROUGHT_BACKLOG_SCAN_WEEKS)` and
+        # `backfill.py:72` walks `release_weeks(lane.history_floor, settled_through)` -- both floors
+        # ARE this registration's `history_floor`, because the direct writer claims the FULL
+        # floor-to-settled window (forward.py module docstring: "this module owns the FULL
+        # floor-to-settled window"). A ceiling separating the two would therefore have to sit at or
+        # below `history_floor`: below it `__post_init__` rejects outright ("before its history
+        # floor"), and AT it would be an invented boundary handing the generic writer exactly one
+        # day, cited to nothing. Neither is a measurement, so this lane declares none. The two
+        # writers are total substitutes, not neighbours, so their mutual exclusion is enforced where
+        # substitutes are enforced -- `conflicts_with` on both specs -- and the swap of THIS adapter
+        # to `_source_direct_refusal("agri_data_service.pipeline.direct.drought")` belongs in the
+        # same owner-confirmed push that activates `drought-direct-forward`, never before it.
         adapter=_fill_drought,
         history_floor=date(2022, 8, 9),
         publication_lag_days=4,
@@ -765,7 +790,13 @@ _DATABASE_BACKED_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = (
             "capability, NOT what production holds -- using it would invent ~1,100 phantom weeks. "
             "cadence 7: USDM publishes weekly, valid_date always a Tuesday, and 2022-08-09 is a "
             "Tuesday so the step lands on real release days. Lag 4: released Thursday for the "
-            "preceding Tuesday, plus slack."
+            "preceding Tuesday, plus slack. "
+            "THE 2026-09-04 join registered a direct writer BESIDE this lane, not in place of it: "
+            "pipeline/direct/drought/forward.py (newest-first) and backfill.py (oldest-first) claim the "
+            "same full floor-to-settled window this registration describes, so the two are total "
+            "substitutes with no boundary day between them and this lane carries NO writer_ceiling. Its "
+            "adapter keeps reading Postgres until an owner activates drought-direct-forward, which is "
+            "shadow today while parquet-drought is the ACTIVE writer in production."
         ),
     ),
     LaneRegistration(
@@ -865,6 +896,13 @@ _DATABASE_BACKED_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = (
     ),
     LaneRegistration(
         slug=VEGETATION_PLANE_STREAM,
+        # DELIBERATELY STILL `_fill_vegetation` (Postgres-reading), NOT a source-direct refusal.
+        # `pipeline/direct/vegetation/backfill.py` republishes every day at or before
+        # `VEGETATION_DIRECT_WRITER_START_DAY` through THIS SAME, UNCHANGED adapter to reach D2 parity
+        # (`backfill.py:149-155`); swapping it for a refusal makes `refuse_pre_ownership_day` reject the
+        # entire backfill window by construction, and vegetation could never reach parity or drop. Route
+        # it only once that backfill is discharged -- see the `writer_ceiling` note below for what IS
+        # safe to register now.
         adapter=_fill_vegetation,
         history_floor=date(2022, 8, 5),
         publication_lag_days=7,
@@ -873,12 +911,27 @@ _DATABASE_BACKED_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = (
         # says bring it into conformance rather than writing a second one beside it), so the
         # registration records the real filename instead of the convention it breaks.
         forecast_module="vegetation_ndvi_forecast",
+        # The generic Postgres-reading exporter stops at `VEGETATION_DIRECT_WRITER_START_DAY` itself
+        # (2026-09-05), one day BEFORE fire-detections/water-gauges' convention of ceiling-minus-one:
+        # `pipeline/direct/vegetation/backfill.py::backfill_ceiling()` is the start day itself, and
+        # `forward.py::history_floor()` begins at `start day + 1`, so the two windows abut with no gap
+        # and no overlap (`backfill_ceiling() + 1 day == forward.history_floor()`, asserted in
+        # `tests/direct/test_vegetation_adapter.py`). This clamps the generic gap-fill driver
+        # (`gap_fill.lane_window`) out of the direct writer's days even though the adapter above is
+        # unchanged -- the SAME Postgres-reading path just never gets asked for a day past the boundary.
+        writer_ceiling=VEGETATION_DIRECT_WRITER_START_DAY,
         floor_basis=(
             "NATURE daily_series, forecastable (method/monte_carlo/vegetation_ndvi_forecast.py, horizon 30d). "
             "docs/lanes/vegetation.md section 3: the governed forecastable plane holds 2022-08-05 to "
             "2026-08-04, the deepest record of any lane. Lag 7 from section 2's MEASURED median 7-day gap "
             "between observation days, which is worse than the nominal 5-day Sentinel-2 revisit because cloud "
-            "screening removes scenes. Most days in this window are correctly a governed absence."
+            "screening removes scenes. Most days in this window are correctly a governed absence. "
+            "The generic exporter stops at 2026-09-05, the direct-writer ownership handoff boundary "
+            "(`pipeline/direct/vegetation/products.py::VEGETATION_DIRECT_WRITER_START_DAY`, "
+            "OPERATOR-VERIFY BEFORE ACTIVATION per that module's own comment): "
+            "`pipeline/direct/vegetation/forward.py` owns every day after it, and `backfill.py` -- through "
+            "this SAME unchanged adapter -- owns every day at or before it. The adapter itself must not be "
+            "swapped to a source-direct refusal before that backfill discharges."
         ),
     ),
     LaneRegistration(
@@ -938,6 +991,10 @@ _DATABASE_BACKED_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = (
 # Source-direct lanes: registered so they have a floor, a lag, a nature and a census, but with no
 # PostgreSQL producer behind them, so the registered adapter refuses. See
 # `pipeline/direct/AGENTS.md`, "Ownership, and why the registered adapter refuses".
+#
+# Only `climate` and `soil` are here, and the 2026-09-04 join did not add a third: `drought`'s direct
+# writer is real but SHADOW, and its generic lane is the one production actually runs, so
+# `DROUGHT_STREAM` above keeps a Postgres-reading adapter -- see that registration's own comment.
 
 
 def _source_direct_refusal(writer_module: str) -> LaneAdapter:

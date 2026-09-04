@@ -12,10 +12,21 @@
 -- Parameter names appear above WITHOUT a leading colon -- see "Header/bind-param trap" in
 -- sql/AGENTS.md.
 --
--- This is the spatial-proximity leg of section 11 of docs/layer-lane-standard.md for every
--- feature-backed surface, in one statement parameterised by layer name rather than eleven bespoke
--- ones. Its counterparts are observation_coverage_on_day.sql (is the day covered at all) and
--- observation_temporal_neighbors.sql (what is the nearest covered day each side).
+-- This is the spatial-proximity leg of section 11 of docs/layer-lane-standard.md, in one statement
+-- parameterised by layer name rather than a bespoke one per layer.
+--
+-- IT NOW SERVES EXACTLY ONE LAYER, AND THE CALLER ENFORCES THAT. As of 2026-09-04 the ten
+-- environmental feature layers are answered from their own Parquet lanes, and `interventions` is
+-- the only surface still routed here. RUNBOOK section 0.26.1 keeps that lane in PostgreSQL on
+-- purpose: an intervention is community data a user writes, not environmental data an upstream
+-- publishes, so it has no registered Parquet lane and inventing one for it would be a fiction.
+-- The statement stays parameterised because the surface still arrives from the caller and is still
+-- checked against the catalogue there; it is not hard-coded here, so a second PostgreSQL-resident
+-- community layer needs no new statement.
+--
+-- Its counterparts moved with the data: `observation_coverage_on_day` and
+-- `observation_temporal_neighbors` are answered from the Parquet availability index in
+-- `agent/warehouse.py`, and their two `.sql` files were deleted rather than left orphaned.
 --
 -- TWO INDEX DECISIONS CARRY THIS QUERY, and both are the reason it can run on a 3 GB box at all.
 --

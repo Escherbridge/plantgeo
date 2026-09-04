@@ -1184,11 +1184,21 @@ sort order. A missing interior envelope is a contract fault even when the first 
 correct; adjacency is computed from ISO fields without converting publisher days to instants.
 
 The slider adapter may retain only the PostgreSQL-backed `geo.features` catalogue rows that have
-not crossed that boundary. It reads them through `getGeoFeatureSliderCapabilities()`, never the
-full `getSliderCapabilities()` path: the latter also waits for model-stream capabilities, and all
-of those streams are Parquet-owned and discarded by the adapter. On a cold worker that redundant
-scan can consume its entire 15-second bounded wait before the client receives any slider, even
-though the resulting stream rows cannot survive the Parquet ownership filter.
+not crossed that boundary. It reads them through `getGeoFeatureSliderCapabilities()`.
+
+**2026-09-04 (wave-C lane C3):** the merged `getSliderCapabilities()` this paragraph used to warn
+against calling -- the one that also waited on a `readStreamCapabilities()` scan of
+`geo.mv_signal_observation_day`/`geo.mv_drought_observation_day` through
+`geo.v_observation_day_census`, whose thirteen stream rows the Parquet ownership filter discarded
+anyway -- is DELETED from `environmental-read-model.ts`, not merely avoided. Two things made this
+safe rather than merely tidy: it had zero callers outside its own direct unit tests (the tRPC
+`getSliderCapabilities` procedure has called `getParquetSliderCapabilities` since this same
+`069ef90` cutover, never the same-named function in this file), and the matview it read had
+independently gone frozen -- its `REFRESH` now times out at 302 s against a 300 s
+`statement_timeout` and was dropped from the refresh spec, so the function was one call away from
+serving silently-stale-forever data to anyone who found it. See the dead-code note above
+`toCalendarDate` in `environmental-read-model.ts` for the full removal rationale, and
+`conductor/tracks/environmental_postgres_retirement_20260904/plan.md` lane C3.
 
 Burn History is the one explicit mixed-plane exception. Its live map is the public cumulative
 Martin/PostgreSQL MTBS reader, so the adapter preserves the authoritative `burn-severity`

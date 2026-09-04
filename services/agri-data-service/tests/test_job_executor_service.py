@@ -46,9 +46,11 @@ _INGEST_OWNER = "plantgeo-ingest-cron"
 #: Open-Meteo ERA5-Land streams and `calendar`. Pinned so a lane added without its spec, or a spec
 #: added without its lane, fails here rather than in production's scheduler.
 _EXPECTED_REGISTRATION_COUNT = 32
-#: The 32 generic `parquet-*` specs plus the 27 non-parquet duties (PostgreSQL ingestion, jobs
-#: maintenance and the migration-input lanes, which now include two direct writers).
-_EXPECTED_SPEC_COUNT = 59
+#: The 32 generic `parquet-*` specs plus the 30 non-parquet duties (PostgreSQL ingestion, jobs
+#: maintenance and the migration-input lanes, which now include seven direct/source-specific
+#: writers: fire, water, climate, soil, plus the 2026-09-04 join's vegetation, weather-observations
+#: and drought forward lanes).
+_EXPECTED_SPEC_COUNT = 62
 _DIRECT_FIRE_OWNER = "plantgeo-fire-detections-forward"
 _DIRECT_WATER_OWNER = "plantgeo-water-gauges-forward"
 
@@ -422,6 +424,144 @@ def test_the_direct_soil_writer_and_its_generic_specs_refuse_to_run_together() -
     with pytest.raises(ExecutorConfigurationError, match="conflicts with active lane"):
         parse_activation({ACTIVE_LANES_VARIABLE: f"{generic},{direct}"})
     assert parse_activation({ACTIVE_LANES_VARIABLE: generic}).is_active(generic) is True
+
+
+def test_the_vegetation_direct_writer_and_its_generic_spec_refuse_to_run_together() -> None:
+    """2026-09-04 join: unlike climate/soil, vegetation keeps a REAL legacy owner on the generic side.
+
+    `_FORWARD_SIBLING_LANE_BY_SLUG` wires the conflict without routing through `_DIRECT_WRITER_BY_SLUG`
+    (which would have also erased `legacy_owners`), so both facts must hold at once.
+    """
+    direct = "vegetation-sentinel2-ndvi-direct-forward"
+    generic = "parquet-vegetation"
+
+    assert generic in LANE_SPECS[direct].conflicts_with
+    assert LANE_SPECS[generic].conflicts_with == (direct,)
+    assert LANE_SPECS[generic].legacy_owners == (_INGEST_OWNER,)
+    assert LANE_SPECS[direct].legacy_owners == ()
+    with pytest.raises(ExecutorConfigurationError, match="conflicts with active lane"):
+        parse_activation({ACTIVE_LANES_VARIABLE: f"{direct},{generic}"})
+    with pytest.raises(ExecutorConfigurationError, match="conflicts with active lane"):
+        parse_activation({ACTIVE_LANES_VARIABLE: f"{generic},{direct}"})
+
+
+def test_vegetation_generic_writer_stops_exactly_at_the_direct_cutover() -> None:
+    """The one boundary in this join where ceiling and floor are one day apart, not adjacent.
+
+    `backfill_ceiling()` (`pipeline/direct/vegetation/backfill.py`) is the start day ITSELF, so the
+    generic writer's own `writer_ceiling` must be the start day too -- unlike fire/water, which
+    ceiling at `start day - 1` because their direct writer's floor IS the start day.
+    """
+    vegetation = LANE_REGISTRY["vegetation"]
+    direct = LANE_SPECS["vegetation-sentinel2-ndvi-direct-forward"]
+
+    assert vegetation.writer_ceiling == job_executor_service.VEGETATION_DIRECT_WRITER_START_DAY
+    assert LANE_SPECS["parquet-vegetation"].writer_ceiling == vegetation.writer_ceiling.isoformat()
+    assert (
+        direct.writer_floor
+        == (
+            job_executor_service.VEGETATION_DIRECT_WRITER_START_DAY + job_executor_service.timedelta(days=1)
+        ).isoformat()
+    )
+
+
+def test_the_weather_observations_direct_writer_and_its_generic_spec_refuse_to_run_together() -> None:
+    """No cited ownership-boundary constant exists yet for this lane, so no writer_floor is guessed."""
+    direct = "weather-observations-direct-forward"
+    generic = "parquet-weather-observations"
+
+    assert generic in LANE_SPECS[direct].conflicts_with
+    assert LANE_SPECS[generic].conflicts_with == (direct,)
+    assert LANE_SPECS[generic].legacy_owners == (_INGEST_OWNER,)
+    assert LANE_SPECS[direct].legacy_owners == ()
+    assert LANE_SPECS[direct].writer_floor is None
+    assert LANE_REGISTRY["weather-observations"].writer_ceiling is None
+    with pytest.raises(ExecutorConfigurationError, match="conflicts with active lane"):
+        parse_activation({ACTIVE_LANES_VARIABLE: f"{direct},{generic}"})
+    with pytest.raises(ExecutorConfigurationError, match="conflicts with active lane"):
+        parse_activation({ACTIVE_LANES_VARIABLE: f"{generic},{direct}"})
+
+
+def test_the_drought_direct_writer_and_its_generic_spec_refuse_to_run_together() -> None:
+    """The same wiring as vegetation/weather-observations, and the same shadow status -- no distinction.
+
+    An earlier docstring here claimed drought exercised a design distinction (a registry adapter that
+    refuses, "like climate/soil"). It did not, and could not: `parquet-drought` is the ACTIVE
+    production writer while `drought-direct-forward` is shadow, so `LANE_REGISTRY['drought'].adapter`
+    still reads Postgres via `_fill_drought` -- see
+    `tests/parquet/test_lane_registry.py::test_drought_registry_adapter_is_deliberately_still_postgres_reading`.
+    What this test actually asserts is the `_FORWARD_SIBLING_LANE_BY_SLUG` wiring: a two-sided
+    `conflicts_with` that does NOT strip the generic lane's real `plantgeo-ingest-cron` legacy owner
+    (which `_DIRECT_WRITER_BY_SLUG` would have), and a `writer_floor` that is the direct writer's own
+    floor rather than a boundary between two windows.
+    """
+    direct = "drought-direct-forward"
+    generic = "parquet-drought"
+
+    assert generic in LANE_SPECS[direct].conflicts_with
+    assert LANE_SPECS[generic].conflicts_with == (direct,)
+    assert LANE_SPECS[generic].legacy_owners == (_INGEST_OWNER,), (
+        "drought's generic parquet lane keeps its real ingest-cron history -- unlike climate/soil, "
+        "which never had a legacy owner at all"
+    )
+    assert LANE_SPECS[direct].legacy_owners == ()
+    assert LANE_SPECS[generic].writer_ceiling is None, (
+        "no boundary day exists between these two: forward.py and backfill.py claim the same full "
+        "floor-to-settled window the generic lane covers, so conflicts_with is the whole guard"
+    )
+    assert LANE_SPECS[direct].writer_floor == LANE_REGISTRY["drought"].history_floor.isoformat()
+    with pytest.raises(ExecutorConfigurationError, match="conflicts with active lane"):
+        parse_activation({ACTIVE_LANES_VARIABLE: f"{direct},{generic}"})
+    with pytest.raises(ExecutorConfigurationError, match="conflicts with active lane"):
+        parse_activation({ACTIVE_LANES_VARIABLE: f"{generic},{direct}"})
+
+
+def test_mutual_exclusion_is_reported_before_any_handoff_acknowledgement_complaint() -> None:
+    """The reported error must not be chosen by alphabetical lane-id sort.
+
+    `parse_activation` used to run both checks inside one `sorted(active)` loop with the
+    acknowledgement check first, so the FIRST lane failing EITHER check decided the diagnosis:
+    `'drought-direct-forward' < 'parquet-drought'` reported the conflict, while
+    `'parquet-vegetation' < 'vegetation-...'` and `'parquet-weather-observations' < 'weather-...'`
+    reported an acknowledgement mismatch -- three structurally identical pairings, three different
+    errors. Every pairing below activates the generic lane WITHOUT its required
+    `plantgeo-ingest-cron:disabled-and-no-run-in-flight` acknowledgement, so both invariants are
+    violated at once and only the check order can decide which is named. Two active owners of one
+    lane-day lock is the more severe fault, so it is the one reported, for every pairing and in
+    either spelling order.
+    """
+    pairings = (
+        ("drought-direct-forward", "parquet-drought"),
+        ("vegetation-sentinel2-ndvi-direct-forward", "parquet-vegetation"),
+        ("weather-observations-direct-forward", "parquet-weather-observations"),
+    )
+
+    for direct, generic in pairings:
+        assert LANE_SPECS[generic].required_handoff_acknowledgements, (
+            f"{generic} must still require an acknowledgement, or this test proves nothing"
+        )
+        for active in (f"{direct},{generic}", f"{generic},{direct}"):
+            with pytest.raises(ExecutorConfigurationError, match="conflicts with active lane") as raised:
+                parse_activation({ACTIVE_LANES_VARIABLE: active})
+            assert "handoff acknowledgements" not in str(raised.value)
+
+
+def test_the_three_2026_09_04_direct_writers_use_distinct_hourly_minutes() -> None:
+    """Distinct from each other and from the four pre-existing direct-writer slots (15/25/40/50)."""
+    new_lanes = (
+        "vegetation-sentinel2-ndvi-direct-forward",
+        "weather-observations-direct-forward",
+        "drought-direct-forward",
+    )
+    existing_minutes = {900, 1500, 2400, 3000}  # fire/water, soilgrids, climate, soil
+    new_offsets = [LANE_SPECS[lane_id].phase_offset_seconds for lane_id in new_lanes]
+
+    assert len(set(new_offsets)) == len(new_offsets)
+    assert existing_minutes.isdisjoint(new_offsets)
+    for lane_id in new_lanes:
+        assert LANE_SPECS[lane_id].cadence_seconds == 3600
+        assert LANE_SPECS[lane_id].migration_disposition == "source-specific"
+        assert LANE_SPECS[lane_id].executable
 
 
 def test_every_registered_lane_has_exactly_one_generic_parquet_spec() -> None:

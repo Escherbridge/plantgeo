@@ -10,7 +10,7 @@ import time
 import uuid
 from contextlib import suppress
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Final, Literal
 
@@ -47,10 +47,16 @@ from agri_data_service.pipeline.direct.climate.products import (
     CLIMATE_FIELD_PRODUCTS,
     CLIMATE_SHORTWAVE_RADIATION_PUBLICATION_LAG_DAYS,
 )
+from agri_data_service.pipeline.direct.drought.forward import DROUGHT_DEFAULT_TIME_BUDGET_SECONDS
 from agri_data_service.pipeline.direct.soil.products import (
     ERA5_LAND_ARCHIVE_PUBLICATION_LAG_DAYS,
     SOIL_DEFAULT_TIME_BUDGET_SECONDS,
     SOIL_FIELD_PRODUCTS,
+)
+from agri_data_service.pipeline.direct.vegetation.forward import VEGETATION_DEFAULT_TIME_BUDGET_SECONDS
+from agri_data_service.pipeline.direct.vegetation.products import VEGETATION_DIRECT_WRITER_START_DAY
+from agri_data_service.pipeline.direct.weather_observations.forward import (
+    WEATHER_OBSERVATIONS_DEFAULT_TIME_BUDGET_SECONDS,
 )
 from agri_data_service.pipeline.lanes.fire_detections import FIRE_DETECTIONS_DIRECT_WRITER_START_DAY
 from agri_data_service.pipeline.lanes.water_gauges import WATER_GAUGES_DIRECT_WRITER_START_DAY
@@ -370,6 +376,36 @@ _DIRECT_WRITER_BY_SLUG: Final[Mapping[str, str]] = MappingProxyType(
 #: `execution/AGENTS.md`, "climate-nasa-power-direct-forward", for why it is not their legacy owner.
 _SOURCE_DIRECT_SLUGS: Final[frozenset[str]] = frozenset(_DIRECT_WRITER_BY_SLUG)
 
+#: The vegetation, weather-observations and drought forward writers. Unlike the pairing above, each
+#: of these three slugs DID have a real `plantgeo-ingest-cron` producer, so they must NOT join
+#: `_DIRECT_WRITER_BY_SLUG`: that set also drives `source_direct` below, and marking them source-direct
+#: would silently strip `legacy_owners=(INGEST_CRON_OWNER,)` from their generic `parquet-*` siblings --
+#: `test_every_observed_legacy_railway_writer_has_a_complete_terminal_mapping` would then disagree with
+#: `LEGACY_RAILWAY_RESPONSIBILITIES`, which still (correctly) claims them. This mapping wires ONLY
+#: `conflicts_with`, leaving every other `_parquet_spec` computation untouched.
+VEGETATION_DIRECT_LANE_ID: Final = "vegetation-sentinel2-ndvi-direct-forward"
+WEATHER_OBSERVATIONS_DIRECT_LANE_ID: Final = "weather-observations-direct-forward"
+DROUGHT_DIRECT_LANE_ID: Final = "drought-direct-forward"
+_FORWARD_SIBLING_LANE_BY_SLUG: Final[Mapping[str, str]] = MappingProxyType(
+    {
+        "vegetation": VEGETATION_DIRECT_LANE_ID,
+        "weather-observations": WEATHER_OBSERVATIONS_DIRECT_LANE_ID,
+        "drought": DROUGHT_DIRECT_LANE_ID,
+    }
+)
+
+# The VALUES above cannot drift -- they are the same `Final` lane-id constants the specs are built
+# from -- but the KEYS are bare literals, and `_parquet_spec` reads them through `if slug in ...`,
+# which silently produces NO conflict for a key that matches no registration. Renaming a slug in
+# `pipeline/parquet/lane_registry.py` would therefore drop a mutual-exclusion guard without failing
+# anything, and `parse_activation` cannot catch it either: it only intersects `conflicts_with` with
+# the active set. Checked at import instead of by hand-written per-lane tests, the same module-level
+# invariant pattern as `jobs/matview_refresh.py`'s retired-view disjointness assert.
+assert set(_FORWARD_SIBLING_LANE_BY_SLUG) <= {registration.slug for registration in LANE_REGISTRATIONS}, (
+    "_FORWARD_SIBLING_LANE_BY_SLUG names a slug that no LaneRegistration declares; its conflict guard "
+    "would be silently dropped"
+)
+
 
 def _parquet_spec(slug: str) -> LaneExecutionSpec:
     lag, publication_cadence, writer_ceiling = _registration(slug)
@@ -377,6 +413,11 @@ def _parquet_spec(slug: str) -> LaneExecutionSpec:
     handoffs: tuple[str, ...] = () if source_direct else (_disabled(INGEST_CRON_OWNER),)
     legacy_owners: tuple[str, ...] = () if source_direct else (INGEST_CRON_OWNER,)
     conflicts: tuple[str, ...] = (_DIRECT_WRITER_BY_SLUG[slug],) if source_direct else ()
+    if slug in _FORWARD_SIBLING_LANE_BY_SLUG:
+        # Not `source_direct` -- ingest-cron really did produce this layer -- but a new direct-forward
+        # sibling now targets the same object stream, so the two must never both be active, matching
+        # what `_DIRECT_WRITER_BY_SLUG` enforces for climate/soil above.
+        conflicts = (*conflicts, _FORWARD_SIBLING_LANE_BY_SLUG[slug])
     return _spec(
         f"parquet-{slug}",
         conflicts_with=conflicts,
@@ -646,6 +687,85 @@ _MIGRATION_INPUT_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
         writer_floor=min(product.history_floor for product in SOIL_FIELD_PRODUCTS).isoformat(),
     ),
     _spec(
+        VEGETATION_DIRECT_LANE_ID,
+        command=("python", "-m", "agri_data_service.pipeline.direct.vegetation"),
+        # No legacy owner: unlike fire/water, this writer never ran as its own standalone Railway
+        # service -- it only ever competes with the generic `parquet-vegetation` gap-fill lane, wired
+        # via `_FORWARD_SIBLING_LANE_BY_SLUG` above rather than `_DIRECT_WRITER_BY_SLUG`, because
+        # `postgres-vegetation` really DID produce this layer, unlike climate/soil.
+        legacy_owners=(),
+        conflicts_with=("parquet-vegetation",),
+        disposition="source-specific",
+        phase_offset_seconds=300,
+        schedule="5 * * * *",
+        publication_lag_days=_registration("vegetation")[0],
+        publication_cadence_days=_registration("vegetation")[1],
+        publication_lag_source="pipeline/parquet/lane_registry.py vegetation contract",
+        selection_policy="newest unfilled settled day first, one product-day per lane-day lock",
+        timeout_seconds=int(VEGETATION_DEFAULT_TIME_BUDGET_SECONDS) + COMMAND_CLEANUP_MARGIN_SECONDS,
+        description=(
+            "Direct Sentinel-2 NDVI forward writer for vegetation days above the ownership handoff "
+            "boundary. LANE_REGISTRY['vegetation'].adapter deliberately still reads Postgres via "
+            "_fill_vegetation -- pipeline/direct/vegetation/backfill.py depends on that unchanged "
+            "adapter to reach D2 parity for the window at or below the boundary -- so backfill.py and "
+            "parity.py stay manual operator commands, never scheduled lanes. Shadow until activated."
+        ),
+        # forward.py::history_floor() == max(registered floor, START_DAY + 1 day): the boundary day
+        # itself belongs to backfill.py, not to this lane. See VEGETATION_PLANE_STREAM's writer_ceiling
+        # in pipeline/parquet/lane_registry.py for the other side of the same boundary.
+        writer_floor=(VEGETATION_DIRECT_WRITER_START_DAY + timedelta(days=1)).isoformat(),
+    ),
+    _spec(
+        WEATHER_OBSERVATIONS_DIRECT_LANE_ID,
+        command=("python", "-m", "agri_data_service.pipeline.direct.weather_observations"),
+        legacy_owners=(),
+        conflicts_with=("parquet-weather-observations",),
+        disposition="source-specific",
+        phase_offset_seconds=1800,
+        schedule="30 * * * *",
+        publication_lag_days=_registration("weather-observations")[0],
+        publication_cadence_days=_registration("weather-observations")[1],
+        publication_lag_source="pipeline/parquet/lane_registry.py weather-observations contract",
+        selection_policy="one current-conditions poll merged into the (at most two) day buckets it touched",
+        timeout_seconds=int(WEATHER_OBSERVATIONS_DEFAULT_TIME_BUDGET_SECONDS) + COMMAND_CLEANUP_MARGIN_SECONDS,
+        description=(
+            "Direct Open-Meteo current-conditions forward writer for weather-observations. Unlike "
+            "vegetation/fire-detections/water-gauges, no cited ownership-boundary constant exists yet "
+            "in pipeline/direct/weather_observations/ (no backfill.py, no *_DIRECT_WRITER_START_DAY), "
+            "so LANE_REGISTRY['weather-observations'].adapter is left unchanged reading Postgres via "
+            "_fill_weather_observations, and no writer_ceiling/writer_floor is guessed here without one "
+            "to cite. Shadow until activated and until that boundary is measured and recorded."
+        ),
+    ),
+    _spec(
+        DROUGHT_DIRECT_LANE_ID,
+        command=("python", "-m", "agri_data_service.pipeline.direct.drought"),
+        legacy_owners=(),
+        conflicts_with=("parquet-drought",),
+        disposition="source-specific",
+        phase_offset_seconds=2700,
+        schedule="45 * * * *",
+        publication_lag_days=_registration("drought")[0],
+        publication_cadence_days=_registration("drought")[1],
+        publication_lag_source="pipeline/parquet/lane_registry.py drought contract",
+        selection_policy="newest settled USDM release Tuesday first, one release per lane-day lock",
+        timeout_seconds=int(DROUGHT_DEFAULT_TIME_BUDGET_SECONDS) + COMMAND_CLEANUP_MARGIN_SECONDS,
+        description=(
+            "Direct USDM forward writer for drought. Unlike vegetation/fire-detections/water-gauges "
+            "there is no ownership-boundary day to abut: forward.py and backfill.py between them claim "
+            "the SAME full floor-to-settled window the generic parquet-drought lane covers, so the two "
+            "are total substitutes and conflicts_with -- not a writer_ceiling on the registration -- is "
+            "what keeps one of them off. LANE_REGISTRY['drought'].adapter therefore still reads Postgres "
+            "via _fill_drought and MUST keep doing so while parquet-drought is the ACTIVE production "
+            "writer; swap it to a source-direct refusal in the same owner-confirmed push that adds this "
+            "lane to PLANTGEO_JOB_EXECUTOR_ACTIVE_LANES, never earlier. Shadow until activated."
+        ),
+        # The direct writer's own floor, not a boundary: `forward.py:125` scans from
+        # `max(lane.history_floor, ...)` and `backfill.py:72` walks `release_weeks(lane.history_floor,
+        # ...)`, so both halves start at exactly this registration's floor.
+        writer_floor=LANE_REGISTRY["drought"].history_floor.isoformat(),
+    ),
+    _spec(
         "soil-moisture-parquet-backfill",
         command=None,
         legacy_owners=(SOIL_MOISTURE_SNAPSHOT_OWNER,),
@@ -666,6 +786,15 @@ _LANE_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
 )
 
 LANE_SPECS: Final[Mapping[str, LaneExecutionSpec]] = MappingProxyType({spec.lane_id: spec for spec in _LANE_SPECS})
+
+# Every conflict must name a lane that exists. `parse_activation` intersects `conflicts_with` with the
+# ACTIVE set, so a misspelled or renamed target is not merely unenforced there -- it is invisible: the
+# intersection is empty and the pairing activates. This is the other half of the
+# `_FORWARD_SIBLING_LANE_BY_SLUG` guard above, and it covers every hand-written `conflicts_with=`
+# (climate's eleven, soil's eight, the three 2026-09-04 forward writers) rather than three named ones.
+assert not {target for spec in _LANE_SPECS for target in spec.conflicts_with} - LANE_SPECS.keys(), (
+    "a lane declares conflicts_with against a lane id that is not in LANE_SPECS"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -772,6 +901,21 @@ def parse_activation(environment: Mapping[str, str] | None = None) -> Activation
             f"handoff acknowledgement supplied for inactive lane(s): {', '.join(inactive_acknowledgements)}"
         )
 
+    # MUTUAL EXCLUSION IS CHECKED FOR EVERY ACTIVE LANE BEFORE ANY OTHER PER-LANE ERROR CAN FIRE, and
+    # that ordering is the whole point of the separate pass. Folded into the loop below, the error an
+    # operator saw was decided by ALPHABETICAL LANE-ID SORT: 'drought-direct-forward' sorts before
+    # 'parquet-drought' and reported the conflict, while 'parquet-vegetation' sorts before
+    # 'vegetation-sentinel2-ndvi-direct-forward' (and 'parquet-weather-observations' before
+    # 'weather-observations-direct-forward') and reported a handoff-acknowledgement mismatch instead --
+    # three structurally IDENTICAL pairings, three different diagnoses, none of them chosen. Two active
+    # owners of one lane-day lock is the more severe invariant -- it is a data-corruption risk, where a
+    # missing acknowledgement is only unfinished paperwork -- so it is reported first, for every lane,
+    # regardless of how the lanes happen to be spelled.
+    for lane_id in sorted(active):
+        conflicts = sorted(set(LANE_SPECS[lane_id].conflicts_with) & active)
+        if conflicts:
+            raise ExecutorConfigurationError(f"lane {lane_id!r} conflicts with active lane(s): {', '.join(conflicts)}")
+
     for lane_id in sorted(active):
         spec = LANE_SPECS[lane_id]
         if not spec.executable:
@@ -786,9 +930,6 @@ def parse_activation(environment: Mapping[str, str] | None = None) -> Activation
             raise ExecutorConfigurationError(
                 f"lane {lane_id!r} handoff acknowledgements do not match; missing={missing}, extra={extra}"
             )
-        conflicts = sorted(set(spec.conflicts_with) & active)
-        if conflicts:
-            raise ExecutorConfigurationError(f"lane {lane_id!r} conflicts with active lane(s): {', '.join(conflicts)}")
 
     frozen_acknowledgements = MappingProxyType(
         {lane_id: frozenset(values) for lane_id, values in acknowledgements.items()}

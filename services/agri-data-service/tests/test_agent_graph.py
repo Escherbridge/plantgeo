@@ -1,19 +1,21 @@
 """The agent graph walks deterministic edges, stays bounded, and keeps the stream contract."""
 
+# ruff: noqa: PLR2004 - the literals here are fixture day/row counts and naming each one hides the assertion.
+
 from __future__ import annotations
 
 import asyncio
 import json
 import os
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 import pytest
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncIterator, Sequence
 
 from agri_data_service.agent import graph as agent_graph
 from agri_data_service.agent import tools as agent_tools
@@ -26,11 +28,24 @@ from agri_data_service.agent.report import (
 )
 from agri_data_service.config import settings
 from agri_data_service.routes import agent_analysis as agent_route
+from tests.agent_fakes import FakeAgentWarehouse, published_lane
 
 _HTTP_SERVICE_UNAVAILABLE = 503
 _HTTP_BAD_REQUEST = 400
 _EXPECTED_SEARCHES_WHEN_SINGLE_SOURCE = 2
 _EXPECTED_MODEL_PASSES_WITH_WEB = 2
+
+# One day inside every contracted lane's horizon, and the instant the window tools are asked at.
+_SELECTED_DATE = date(2026, 3, 14)
+_AS_OF = datetime(2026, 3, 14, tzinfo=UTC)
+
+
+def _warehouse(*, published: Sequence[date] = ()) -> FakeAgentWarehouse:
+    """An in-memory Parquet warehouse whose signal lane published the named days."""
+    source = FakeAgentWarehouse()
+    for day in published:
+        source.listing_store.write_day("signal", "observed", 13, day)
+    return source
 
 
 # --- Database stubs ----------------------------------------------------------------
@@ -100,6 +115,12 @@ class _Session:
             bound
             for sql, bound in zip(self.statements, self.parameters, strict=True)
             if not sql.lstrip().startswith(_PLANE_PROBE_MARKER)
+        ]
+
+    def markers_excluding_plane_probes(self) -> list[str]:
+        """Each non-probe statement's line-one marker, in execution order."""
+        return [
+            sql.lstrip().splitlines()[0].removeprefix("-- ").strip() for sql in self.statements_excluding_plane_probes()
         ]
 
 
@@ -448,52 +469,69 @@ async def test_system_prefix_carries_one_cache_breakpoint() -> None:
 
 async def test_signal_tool_clamps_radius_and_window() -> None:
     """Over-large arguments are clamped by the service, and the clamp is reported back."""
-    session = _Session([])
-    async with agent_tools.run_context(session_provider=_session_provider(session)):
+    source = _warehouse(published=[_SELECTED_DATE])
+    source.answer("agent_signal_window_summary", [])
+    async with agent_tools.run_context(session_provider=_session_provider(_Session([])), warehouse_source=source):
         raw = await agent_tools.query_signals_near_point(
             longitude=-116.2,
             latitude=43.6,
             radius_meters=10_000_000.0,
             days_back=999_999,
+            as_of=_AS_OF,
         )
     payload = json.loads(raw)
     assert payload["applied_bounds"]["radius_meters"] == agent_tools.MAX_RADIUS_METERS
     assert payload["applied_bounds"]["days_back"] == agent_tools.MAX_DAYS_BACK
-    bound = session.parameters_excluding_plane_probes()[0]
-    assert bound["radius_meters"] == agent_tools.MAX_RADIUS_METERS
-    assert bound["cell_limit"] == agent_tools.MAX_CELL_FANOUT
-    # The rollup, not the 26 GB raw plane -- and the same relation the map paints from, so the
-    # agent cannot contradict the screen.
-    statement = session.statements_excluding_plane_probes()[0]
-    assert "geo.mv_signal_cell_daily" in statement
-    assert "agri.signal_observation" not in executable_sql(statement)
+    # The eight shared scope parameters, in DuckDB bind order: the box, then the probe LATITUDE
+    # FIRST, then the exact radius, then the cell cap.
+    west, east, south, north, latitude, longitude, radius, cell_limit = source.arguments_for(
+        "agent_signal_window_summary"
+    )
+    assert radius == agent_tools.MAX_RADIUS_METERS
+    assert cell_limit == agent_tools.MAX_CELL_FANOUT
+    assert (latitude, longitude) == (43.6, -116.2), "the geodesic probe is bound latitude first"
+    assert west < -116.2 < east
+    assert south < 43.6 < north
+    # The lane the map paints from, and never a PostgreSQL relation.
+    statement = source.statement_for("agent_signal_window_summary")
+    assert "read_parquet" in statement
+    assert "geo.mv_signal_cell_daily" not in statement
+    assert "agri.signal_observation" not in statement
 
 
 async def test_tools_reject_an_out_of_range_coordinate_without_querying() -> None:
-    """A bad coordinate must never reach the database."""
+    """A bad coordinate must never reach the warehouse."""
     session = _Session([])
-    async with agent_tools.run_context(session_provider=_session_provider(session)):
+    source = _warehouse()
+    async with agent_tools.run_context(session_provider=_session_provider(session), warehouse_source=source):
         raw = await agent_tools.query_drought_history_at_point(longitude=999.0, latitude=43.6)
     assert "error" in json.loads(raw)
     assert not session.statements
+    assert source.markers() == []
 
 
 async def test_forecast_tool_reads_only_the_published_serving_matview() -> None:
     """The agent must not be able to see a draft or unvalidated forecast.
 
-    The source moved from agri.v_forecast_series_serving to the matview built on top of it, which
-    inherits the view's published/finalized/validated gate while replacing an eight-table join per
-    request with one indexed lookup. There is deliberately NO fallback to the view when the matview
-    is unpopulated -- falling back would reintroduce the join exactly when the box can least afford
-    it, so the tool refuses by name instead.
+    The ML forecast plane is NOT environmental data -- the retirement inventory classes it "keep" --
+    so it is the one plane that stayed in PostgreSQL when everything else moved to Parquet. What
+    moved out of this statement is the `agri.spatial_cell` lookup that used to resolve the point to
+    a cell; that relation is already gone from production, and the cell now comes from the Parquet
+    signal plane. There is deliberately still NO fallback to `agri.v_forecast_series_serving`.
     """
+    source = _warehouse(published=[_SELECTED_DATE])
+    source.answer(
+        "agent_signal_admitted_cells",
+        [{"cell_id": "aaaaaaaa-0000-0000-0000-000000000001", "distance_meters": 4210.5}],
+    )
     session = _Session([])
-    async with agent_tools.run_context(session_provider=_session_provider(session)):
-        await agent_tools.query_forecast_summary_for_cell(longitude=-116.2, latitude=43.6)
+    async with agent_tools.run_context(session_provider=_session_provider(session), warehouse_source=source):
+        await agent_tools.query_forecast_summary_for_cell(longitude=-116.2, latitude=43.6, as_of=_AS_OF)
     statement = session.statements_excluding_plane_probes()[0]
     assert "agri.mv_forecast_ml_daily_serving" in statement
     assert "agri.v_forecast_series_serving" not in executable_sql(statement)
     assert "agri.forecast_value" not in executable_sql(statement)
+    assert "agri.spatial_cell" not in executable_sql(statement)
 
 
 async def test_the_forecast_tool_refuses_an_unbuilt_plane_instead_of_falling_back() -> None:
@@ -512,64 +550,67 @@ async def test_the_forecast_tool_refuses_an_unbuilt_plane_instead_of_falling_bac
             )
 
     session = _UnpopulatedSession([])
-    async with agent_tools.run_context(session_provider=_session_provider(session)):
+    source = _warehouse(published=[_SELECTED_DATE])
+    async with agent_tools.run_context(session_provider=_session_provider(session), warehouse_source=source):
         raw = await agent_tools.query_forecast_summary_for_cell(longitude=-116.2, latitude=43.6)
 
     assert session.statements_excluding_plane_probes() == []
+    assert source.markers() == [], "the probe fails before any warehouse read is attempted"
     payload = json.loads(raw)
     assert payload["error"] == "pre_aggregated_plane_unbuilt"
     assert payload["unbuilt_relations"] == [agent_tools.FORECAST_DAILY_RELATION]
 
 
-async def test_the_drought_tool_reads_the_plane_the_map_serves_and_not_the_empty_one() -> None:
-    """The live truthfulness bug, pinned.
+async def test_the_drought_tool_reads_the_lane_the_map_serves_and_not_the_empty_one() -> None:
+    """The live truthfulness bug, pinned through its second repoint.
 
-    `agri.drought_polygon_snapshot` holds zero rows and has no forward producer anywhere in the
-    tree, while the map serves drought from `geo.drought_areas` -- 1,040 rows across 208 weekly
-    releases, 2022-08-09 to 2026-08-11 (measured 2026-08-15). The old statement therefore SUCCEEDED
-    and returned nothing on every call, which the agent could only read as "no drought was recorded
-    here". It would state there was no drought on days the map paints drought.
-
-    The assertion is deliberately about the PLANE, not about a row: the agent plane and the serving
-    plane must be the same relation, because that is the only property that makes disagreement
-    impossible rather than merely unlikely.
+    `agri.drought_polygon_snapshot` held zero rows and had no forward producer, so the original
+    statement SUCCEEDED and returned nothing on every call -- which the agent could only read as
+    "no drought was recorded here", on days the map paints drought. The fix then was to read
+    `geo.drought_areas`, the plane the map served. The map now serves drought from the Parquet
+    `drought` lane, so this tool reads that, and the assertion is still deliberately about the
+    PLANE rather than about a row: sameness of source is what makes disagreement impossible rather
+    than merely unlikely.
     """
+    source = _warehouse()
+    source.listing_store.write_day("drought", "observed", 13, date(2026, 3, 10))
     session = _Session([])
-    async with agent_tools.run_context(session_provider=_session_provider(session)):
-        await agent_tools.query_drought_history_at_point(longitude=-116.2, latitude=43.6)
+    async with agent_tools.run_context(session_provider=_session_provider(session), warehouse_source=source):
+        await agent_tools.query_drought_history_at_point(longitude=-116.2, latitude=43.6, as_of=_AS_OF)
 
-    statement = session.statements_excluding_plane_probes()[0]
-    assert "geo.drought_areas" in statement
-    assert "agri.drought_polygon_snapshot" not in executable_sql(statement)
-    # Releases are resolved through the small index, not by scanning the polygon table for dates.
-    assert "geo.mv_drought_release_index" in statement
-    # And the 495 MB of TOAST behind 1,040 rows is never projected -- geom is a filter only.
-    assert "area.geom &&" in statement
-    assert "ST_Intersects(area.geom" in statement
-    # `, area.geom` and not `area.geom,`: the latter matches ST_Intersects(area.geom, probe.geom),
-    # which is the FILTER this test wants to see, while a select-list projection always arrives
-    # with the comma on its left.
-    for projection in ("area.geom AS", ", area.geom", "SELECT area.geom"):
-        assert projection not in executable_sql(statement)
+    addressed = source.part_uris_for("agent_drought_release_severity")
+    assert addressed
+    assert all("layer=drought/" in uri for uri in addressed)
+    statement = source.statement_for("agent_drought_release_severity")
+    assert "agri.drought_polygon_snapshot" not in statement
+    assert "geo.drought_areas" not in statement
+    # The polygon column is decoded for the containment test and never projected: on the PostgreSQL
+    # side that column hid about 495 MB of TOAST behind 1,040 rows, and the reason survives the move.
+    assert "ST_Intersects(ST_GeomFromWKB(geom), ST_Point(?, ?))" in statement
+    assert "SELECT geom" not in executable_sql(statement)
 
 
 async def test_the_drought_tool_reports_a_release_that_found_no_drought_as_a_fact() -> None:
     """A published release with no covering polygon is evidence; an empty list is not."""
-    session = _Session(
+    source = _warehouse()
+    for day in (date(2026, 3, 3), date(2026, 3, 10), date(2026, 3, 17)):
+        source.listing_store.write_day("drought", "observed", 13, day)
+    source.answer(
+        "agent_drought_release_severity",
         [
             {
-                "valid_date": "2026-03-10",
-                "prev_valid_date": "2026-03-03",
-                "next_valid_date": "2026-03-17",
+                "valid_date": date(2026, 3, 10),
                 "published_class_count": 5,
                 "severity_class": None,
                 "covering_class_count": 0,
                 "published_at": None,
             }
-        ]
+        ],
     )
-    async with agent_tools.run_context(session_provider=_session_provider(session)):
-        raw = await agent_tools.query_drought_history_at_point(longitude=-116.2, latitude=43.6)
+    async with agent_tools.run_context(session_provider=_session_provider(_Session([])), warehouse_source=source):
+        raw = await agent_tools.query_drought_history_at_point(
+            longitude=-116.2, latitude=43.6, as_of=datetime(2026, 3, 20, tzinfo=UTC)
+        )
 
     payload = json.loads(raw)
     assert payload["releases_returned"] == 1
@@ -577,37 +618,54 @@ async def test_the_drought_tool_reports_a_release_that_found_no_drought_as_a_fac
     only = payload["weekly_severity"][0]
     assert only["severity_class"] is None
     assert only["covering_class_count"] == 0
-    # The neighbouring releases travel with it, so a day between two Tuesdays gets a real gap.
+    # The neighbouring releases travel with it, so a day between two Tuesdays gets a real gap. They
+    # come from the LISTING now rather than from `geo.mv_drought_release_index`.
     assert only["prev_valid_date"] == "2026-03-03"
     assert only["next_valid_date"] == "2026-03-17"
     # The note has to separate the two absences or the model will collapse them.
     assert "existed and found no drought here" in payload["note"]
-    assert "no release was published in the window at all" in payload["note"]
+    assert "no release was published in the span at all" in payload["note"]
 
 
-async def test_the_fire_tool_prefilters_on_the_geometry_index_before_the_geography_cast() -> None:
-    """The ::geography cast defeats idx_features_geom; without a box prefilter this seq-scans."""
-    session = _Session([])
-    async with agent_tools.run_context(session_provider=_session_provider(session)):
-        await agent_tools.query_fire_history_near_point(longitude=-116.2, latitude=43.6)
+async def test_the_fire_tool_prefilters_on_a_degree_box_before_the_exact_geodesic_test() -> None:
+    """A per-row geodesic distance over a year of partitions is the read that must not be issued."""
+    source = _warehouse()
+    source.listing_store.write_day("fire-detections", "observed", 13, _SELECTED_DATE)
+    source.listing_store.write_day("burn-severity", "observed", 13, _SELECTED_DATE)
+    async with agent_tools.run_context(session_provider=_session_provider(_Session([])), warehouse_source=source):
+        await agent_tools.query_fire_history_near_point(longitude=-116.2, latitude=43.6, as_of=_AS_OF)
 
-    statement = session.statements_excluding_plane_probes()[0]
-    assert "feature.geom && ST_Expand" in statement
-    assert "ST_DWithin" in statement
-    bound = session.parameters_excluding_plane_probes()[0]
-    # The box is sized for this latitude; a fixed metres-per-degree figure clips its east-west edges.
-    assert bound["bbox_degrees"] > bound["radius_meters"] / 110_574.0
+    point_statement = source.statement_for("agent_point_lane_rows")
+    assert "BETWEEN ? AND ?" in point_statement, "the degree box runs before the geodesic test"
+    assert "ST_Distance_Spheroid" in point_statement
+    west, east, south, north = source.arguments_for("agent_point_lane_rows")[:4]
+    # The box is sized per axis for this latitude; a fixed metres-per-degree figure clips its
+    # east-west edges away from the equator.
+    assert (east - west) > (north - south)
+    assert (north - south) / 2 >= agent_tools.DEFAULT_RADIUS_METERS / 110_574.0
+    # A polygon lane cannot be narrowed the same way, so it is clipped by an envelope instead.
+    assert "ST_MakeEnvelope(?, ?, ?, ?)" in source.statement_for("agent_geometry_lane_rows")
 
 
 async def test_every_tool_statement_is_read_only() -> None:
-    """No agent-facing statement may mutate the warehouse, and every published tool is scanned."""
+    """No agent-facing statement may mutate the warehouse, in EITHER dialect, and all ten are driven."""
     selected_day = "2026-03-14"
     session = _Session([])
-    async with agent_tools.run_context(session_provider=_session_provider(session)):
-        await agent_tools.query_signals_near_point(longitude=-116.2, latitude=43.6)
-        await agent_tools.query_drought_history_at_point(longitude=-116.2, latitude=43.6)
-        await agent_tools.query_fire_history_near_point(longitude=-116.2, latitude=43.6)
-        await agent_tools.query_forecast_summary_for_cell(longitude=-116.2, latitude=43.6)
+    source = _warehouse(published=[_SELECTED_DATE])
+    source.listing_store.write_day("drought", "observed", 13, date(2026, 3, 10))
+    source.listing_store.write_day("fire-detections", "observed", 13, _SELECTED_DATE)
+    source.listing_store.write_day("burn-severity", "observed", 13, _SELECTED_DATE)
+    source.listing_store.write_day("water-gauges", "observed", 13, _SELECTED_DATE)
+    source.answer(
+        "agent_signal_admitted_cells",
+        [{"cell_id": "aaaaaaaa-0000-0000-0000-000000000001", "distance_meters": 4210.5}],
+    )
+    source.evidence["vegetation"] = published_lane("vegetation", [_SELECTED_DATE])
+    async with agent_tools.run_context(session_provider=_session_provider(session), warehouse_source=source):
+        await agent_tools.query_signals_near_point(longitude=-116.2, latitude=43.6, as_of=_AS_OF)
+        await agent_tools.query_drought_history_at_point(longitude=-116.2, latitude=43.6, as_of=_AS_OF)
+        await agent_tools.query_fire_history_near_point(longitude=-116.2, latitude=43.6, as_of=_AS_OF)
+        await agent_tools.query_forecast_summary_for_cell(longitude=-116.2, latitude=43.6, as_of=_AS_OF)
         await agent_tools.query_signal_value_on_day(longitude=-116.2, latitude=43.6, day=selected_day)
         await agent_tools.query_signal_neighbors_in_time(longitude=-116.2, latitude=43.6, day=selected_day)
         await agent_tools.query_nearest_signal_cells(longitude=-116.2, latitude=43.6, day=selected_day)
@@ -617,19 +675,20 @@ async def test_every_tool_statement_is_read_only() -> None:
             surface_name="water-gauges", day=selected_day, longitude=-116.2, latitude=43.6
         )
     # Every published tool is driven above, so a tool added to WAREHOUSE_TOOLS without a call here
-    # breaks this assertion rather than slipping through unscanned. One statement per tool, plus one
-    # extra: `signal_value_on_day` reads its coverage audit in a second statement.
+    # breaks this assertion rather than slipping through unscanned.
     published_tool_count = 10
-    extra_statements = 1
     assert len(agent_tools.WAREHOUSE_TOOLS) == published_tool_count
-    assert len(session.statements_excluding_plane_probes()) == published_tool_count + extra_statements
+    # The two PostgreSQL statements that survive, and nothing else: the ML forecast plane and the
+    # ingest lane's absence ledger. Both are governance relations the retirement inventory keeps.
+    assert session.markers_excluding_plane_probes() == [
+        "agent_forecast_summary_for_cell",
+        "agent_signal_coverage_on_day",
+    ]
     # The catalog probe is answered once for the whole run and then remembered, because a matview
-    # never becomes unpopulated again once refreshed. Two probes here: the signal rollup and the
-    # forecast matview resolve on the first tools that need them, the drought index and the feature
-    # census on theirs, and the three census matviews on the first surface tool -- all cached after.
+    # never becomes unpopulated again once refreshed.
     probe_count = len(session.statements) - len(session.statements_excluding_plane_probes())
-    assert probe_count < published_tool_count, "the plane probe must be cached, not re-asked per tool"
-    for statement in session.statements:
+    assert probe_count == 1, "the plane probe must be cached, not re-asked per tool"
+    for statement in [sql for sql, _ in source.executed] + session.statements:
         # The beginner-doc headers are prose and legitimately contain English words that
         # collide with SQL verbs ("drops the rest"); only executable lines are scanned.
         executable = "\n".join(line for line in statement.splitlines() if not line.lstrip().startswith("--")).upper()

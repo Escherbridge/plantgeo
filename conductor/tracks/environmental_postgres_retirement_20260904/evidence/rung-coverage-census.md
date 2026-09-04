@@ -150,3 +150,44 @@ the default PNW camera. No new infrastructure; one added assertion on a run that
 - **`layer-legends.ts:412`** ("Drawn from zoom 7 in; below that the HUC12 outlines are too heavy to
   serve") appears to conflict with `watersheds-fill` having no `minzoom`. Unresolved whether it is
   stale legend copy or a different code path.
+
+## ADDENDUM 2026-09-04 — the published signal lane has NO position columns (refutes a recorded fact)
+
+Found by wave-C lane C2 with one bounded read-only probe of production, not by inspection:
+
+```
+layer=signal/kind=observed/zoom=13/year=2026/month=08/day=06/part-0.parquet
+columns: support_key, signal_name, normalized_unit, cell_id, observed_day,
+         normalized_value, observation_count, newest_observed_at,
+         coverage_fraction, allowed_client_exposure
+```
+
+No `cell_longitude`, no `cell_latitude` — although `warehouse/parquet/schema.py:180-190` declares
+both NON-NULLABLE. This **refutes the recorded note that the signal base carries positions and that
+no re-export is owed.** A re-export IS owed, and until it lands the four spatial signal tools cannot
+answer: raw, they raise `duckdb.BinderException`. C2 made them refuse `lane_columns_absent` instead,
+naming the missing columns and the owed re-export, so the failure is typed rather than a stack trace.
+
+Consequence for this track: `signal-plane` was already flagged as a D4 scope gap (it has live
+PostgreSQL relations and no renderer contract). It now also has a **broken published lane**, so it
+cannot be counted toward acceptance criterion 2 on any reading. Sequence the re-export before any
+signal-plane drop packet.
+
+## ADDENDUM 2026-09-04 — DuckDB geodesic functions take (latitude, longitude), and one lies
+
+Also from C2, measured against DuckDB 1.5.4 rather than reasoned about:
+
+```
+ST_Distance_Spheroid(ST_Point(43.6, -116.2), ST_Point(43.62, -116.25)) = 4607.70 m   correct
+ST_Distance_Spheroid(ST_Point(-116.2, 43.6), ST_Point(-116.25, 43.62)) = NaN         refused
+ST_Distance_Sphere(  ST_Point(-116.2, 43.6), ST_Point(-116.25, 43.62)) = 5645.93 m   WRONG
+```
+
+C2's first draft used `ST_Distance_Sphere` in the ordinary `(lon, lat)` order and every distance came
+back **23% too large, silently**. `ST_Distance_Spheroid` at least refuses with `NaN`; `_Sphere`
+returns a plausible number. `ST_Distance_Sphere` is now banned outright in the agent reads
+(`agent/parquet_reads.py:26-47`, pinned by `test_the_probe_point_is_bound_latitude_first`), and
+`_Spheroid` is also the exact analogue of the retired PostGIS `::geography` distance.
+
+**Every future Parquet lane doing spatial distance must bind latitude first.** This is the single
+cheapest way to ship a wrong answer that looks right.

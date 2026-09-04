@@ -1,12 +1,20 @@
-"""The three selected-day agent tools: exact day, temporal neighbours, spatial neighbours.
+"""The selected-day agent contract: exact day, temporal neighbours, spatial neighbours, surfaces.
 
 The whole file exists to hold one line of the layer-lane standard, section 11: a proximity answer
 that arrives without its distance and without the observation's own date is indistinguishable from
 an exact answer, and is the same class of bug as a lane reporting success having written nothing.
 
-No database. `RecordingSession` answers `AsyncSession.execute` by the bare `-- <marker>` comment
-each statement opens with, the same seam `test_ingest_reconcile.py` and `test_jobs_lease.py` use,
-so every statement is asserted on its real text and its real bound parameters.
+REPOINTED 2026-09-04. The eight PostgreSQL statements these tools used to issue were deleted with
+`geo.mv_signal_cell_daily` and `agri.spatial_cell`; the tools now read the day-partitioned Parquet
+warehouse. What that changed for this suite is the SEAM, not the contract: `FakeAgentWarehouse`
+holds an in-memory object layout that real day classification walks and scripts the row reads by
+their line-one marker, and `RecordingSession` still stands in for the two PostgreSQL statements that
+remain -- the ingest lane's absence ledger and the governed ML forecast plane, neither of which is
+environmental data.
+
+The statement-level parity evidence lives in `test_agent_parquet_reads.py`, which runs the real
+DuckDB statements over real Parquet; the four-state and refusal behaviour lives in
+`test_agent_parquet_tools.py`. This file keeps the day contract itself.
 """
 
 # ruff: noqa: PLR2004 - the literals here are fixture values, and naming each one hides the assertion.
@@ -14,9 +22,8 @@ so every statement is asserted on its real text and its real bound parameters.
 from __future__ import annotations
 
 import json
-import re
 from contextlib import asynccontextmanager
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -25,41 +32,33 @@ from agri_data_service.agent import tools as agent_tools
 from agri_data_service.agent.graph import AgentRequest
 from agri_data_service.agent.prompts import build_location_context
 from agri_data_service.routes.agent_analysis import AgentAnalyzeRequest
+from tests.agent_fakes import FakeAgentWarehouse, published_lane
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping, Sequence
 
-_MARKER = re.compile(r"^--\s+(\w+)\s*$", re.MULTILINE)
-
-VALUE_MARKER = "agent_signal_value_on_day"
-COVERAGE_MARKER = "agent_signal_coverage_on_day"
-NEIGHBORS_MARKER = "agent_signal_neighbors_in_time"
-CELLS_MARKER = "agent_nearest_signal_cells"
 PLANE_MARKER = "agent_materialized_plane_populated"
-SURFACE_COVERAGE_MARKER = "agent_observation_coverage_on_day"
-SURFACE_NEIGHBORS_MARKER = "agent_observation_temporal_neighbors"
-FEATURE_NEAR_MARKER = "agent_feature_value_near_point"
+AUDIT_MARKER = "agent_signal_coverage_on_day"
+FEATURE_MARKER = "agent_feature_value_near_point"
+
+VALUE_MARKER = "agent_signal_day_values"
+CELLS_MARKER = "agent_signal_cell_day_counts"
+ADMITTED_MARKER = "agent_signal_admitted_cells"
+NEIGHBORS_MARKER = "agent_signal_time_neighbors"
+POINT_LANE_MARKER = "agent_point_lane_rows"
 
 BOISE_LONGITUDE = -116.2
 BOISE_LATITUDE = 43.6
 # A day inside every contracted lane's horizon (execution/coverage_contract.py, verified 2026-08-11).
 SELECTED_DAY = "2026-03-14"
+SELECTED_DATE = date(2026, 3, 14)
 
-
-def executable_sql(statement: str) -> str:
-    """`statement` with every `--` comment line blanked out.
-
-    Every `.sql` file in this service opens with a walkthrough that NAMES the relation the query
-    was repointed away from, because "reads X, not the 26 GB Y" is the single most useful thing a
-    reader can learn from the header. A bare `"Y" not in statement` therefore fails on the
-    explanation rather than on the query. Assertions about what a statement READS are made against
-    the executable text; assertions about what it SAYS can still use the raw string.
-    """
-    return "\n".join("" if line.lstrip().startswith("--") else line for line in statement.splitlines())
+SIGNAL_LANE = "signal"
+NEAR_CELL = "aaaaaaaa-0000-0000-0000-000000000001"
 
 
 class FakeResult:
-    """The narrow slice of SQLAlchemy's Result the agent tools actually use."""
+    """The narrow slice of SQLAlchemy's Result the PostgreSQL half of a tool uses."""
 
     def __init__(self, rows: Sequence[Mapping[str, object]]) -> None:
         self._rows = list(rows)
@@ -74,7 +73,7 @@ class FakeResult:
 
 
 class RecordingSession:
-    """An AsyncSession stand-in that records every statement and answers it by its marker comment."""
+    """An AsyncSession stand-in that records every PostgreSQL read and answers it by its marker."""
 
     def __init__(self) -> None:
         """Start with no scripted answers; an unscripted statement returns no rows."""
@@ -93,8 +92,7 @@ class RecordingSession:
         marker = self.marker_of(sql) or ""
         if marker == PLANE_MARKER and marker not in self._answers:
             # Default the plane probe to "every named relation is built", so a test that is about
-            # something else does not have to script it. A test that IS about an unbuilt plane
-            # calls answer(PLANE_MARKER, ...) and overrides this.
+            # something else does not have to script it.
             requested = bound.get("relation_names")
             names = list(requested) if isinstance(requested, list) else []
             return FakeResult(
@@ -108,8 +106,8 @@ class RecordingSession:
     @staticmethod
     def marker_of(sql: str) -> str | None:
         """The bare `-- <name>` marker a statement opens with."""
-        found = _MARKER.search(sql)
-        return None if found is None else found.group(1)
+        first_line = sql.lstrip().splitlines()[0] if sql.strip() else ""
+        return first_line.removeprefix("-- ").strip() if first_line.startswith("-- ") else None
 
     def markers(self) -> list[str]:
         """Every statement's marker, in execution order."""
@@ -138,28 +136,35 @@ def _session_provider(session: RecordingSession) -> Any:
     return provider
 
 
-def _value_row(**overrides: object) -> dict[str, object]:
-    """One row shaped like signal_value_on_day.sql returns.
+def _signal_warehouse(*, published: Sequence[date] = (SELECTED_DATE,)) -> FakeAgentWarehouse:
+    """A warehouse whose signal lane published the named days, with nothing scripted yet."""
+    source = FakeAgentWarehouse()
+    for day in published:
+        source.listing_store.write_day(SIGNAL_LANE, "observed", 13, day)
+    return source
 
-    No `source_parameter`. geo.mv_signal_cell_daily is grained by
-    (support key, signal, unit, cell, day) and carries no upstream parameter column, so the
-    statement no longer groups by one -- reporting a parameter the rollup cannot distinguish
-    would be inventing it. See agent/AGENTS.md, "Reading the pre-aggregated planes".
+
+def _value_row(**overrides: object) -> dict[str, object]:
+    """One row shaped like `parquet_reads.SIGNAL_DAY_VALUES` returns.
+
+    No `source_parameter` and no `nearest_cell_grid_name`. The Parquet signal plane is grained by
+    (support key, signal, unit, cell, day) and carries neither an upstream parameter column nor the
+    grid a cell belongs to -- `agri.spatial_cell` held that and has been retired -- so reporting
+    either would be inventing it. See agent/AGENTS.md, "Reading the Parquet warehouse".
     """
     row: dict[str, object] = {
         "signal_name": "air_temperature_mean",
         "support_key": "surface",
         "normalized_unit": "degC",
-        "observed_day": date(2026, 3, 14),
+        "observed_day": SELECTED_DATE,
         "observation_count": 3,
         "cell_count": 3,
         "nearest_cell_distance_m": 4210.5,
-        "nearest_cell_key": "nasa-power-0.5-degree/43.5/-116.5",
-        "nearest_cell_grid_name": "nasa-power-0.5-degree",
+        "nearest_cell_id": NEAR_CELL,
         "nearest_cell_value": 11.4,
         "nearest_cell_observed_at": datetime(2026, 3, 14, tzinfo=UTC),
         "nearest_cell_coverage_fraction": 1.0,
-        "nearest_cell_allowed_client_exposure": "public",
+        "nearest_cell_allowed_client_exposure": True,
         "minimum_value": 10.1,
         "maximum_value": 12.9,
         "mean_value": 11.5,
@@ -170,7 +175,7 @@ def _value_row(**overrides: object) -> dict[str, object]:
 
 
 def _neighbor_row(side: str, observed_day: date, offset: int, **overrides: object) -> dict[str, object]:
-    """One row shaped like signal_neighbors_in_time.sql returns."""
+    """One row shaped like `parquet_reads.SIGNAL_TIME_NEIGHBORS` returns."""
     row: dict[str, object] = {
         "side": side,
         "signal_name": "soil_wetness_root_zone",
@@ -181,8 +186,7 @@ def _neighbor_row(side: str, observed_day: date, offset: int, **overrides: objec
         "day_offset": offset,
         "distance_days": abs(offset),
         "nearest_cell_value": 0.42,
-        "nearest_cell_key": "nasa-power-0.5-degree/43.5/-116.5",
-        "nearest_cell_grid_name": "nasa-power-0.5-degree",
+        "nearest_cell_id": NEAR_CELL,
         "nearest_cell_distance_m": 4210.5,
     }
     row.update(overrides)
@@ -192,96 +196,76 @@ def _neighbor_row(side: str, observed_day: date, offset: int, **overrides: objec
 # --- 1. Value at the caller's day --------------------------------------------------
 
 
-async def test_value_on_day_asks_for_the_caller_day_and_never_the_live_edge() -> None:
-    """The bound day is the selected one, not a lookback from now, and it reads the served rollup."""
+async def test_value_on_day_reads_the_caller_day_partition_and_never_the_live_edge() -> None:
+    """The day is the PART FILE, not a lookback from now and not a predicate over a timestamp."""
+    source = _signal_warehouse(published=[SELECTED_DATE, SELECTED_DATE - timedelta(days=1)])
+    source.answer(VALUE_MARKER, [_value_row()])
     session = RecordingSession()
-    session.answer(VALUE_MARKER, [_value_row()])
-    async with agent_tools.run_context(session_provider=_session_provider(session)):
+    async with agent_tools.run_context(session_provider=_session_provider(session), warehouse_source=source):
         raw = await agent_tools.query_signal_value_on_day(
-            longitude=BOISE_LONGITUDE,
-            latitude=BOISE_LATITUDE,
-            day=SELECTED_DAY,
+            longitude=BOISE_LONGITUDE, latitude=BOISE_LATITUDE, day=SELECTED_DAY
         )
 
-    bound = session.parameters_for(VALUE_MARKER)
-    assert bound["day"] == date(2026, 3, 14)
-    # The agent and the map must read the same relation, or the agent can contradict the screen.
-    statement = session.sql_for(VALUE_MARKER)
-    assert "geo.mv_signal_cell_daily" in statement
-    assert "agri.signal_observation" not in executable_sql(statement)
+    addressed = source.part_uris_for(VALUE_MARKER)
+    assert len(addressed) == 1
+    assert "day=14" in addressed[0]
+    assert "month=03" in addressed[0]
+    assert "year=2026" in addressed[0]
     payload = json.loads(raw)
     assert payload["requested_day"] == SELECTED_DAY
-    assert payload["applied_bounds"]["requested_day"] == SELECTED_DAY
-    # The row's own recorded time survives to the model, so the answer is not merely the day asked for.
-    assert payload["signals_on_day"][0]["nearest_cell_observed_at"].startswith(SELECTED_DAY)
-    assert payload["signals_on_day"][0]["nearest_cell_distance_m"] == 4210.5
+    assert payload["signals_on_day"][0]["observed_day"] == SELECTED_DAY
 
 
 async def test_value_on_day_reads_the_existing_coverage_audit_for_the_same_day() -> None:
-    """An empty day is explained from agri.signal_coverage_audit rather than left ambiguous."""
+    """The audit is a PostgreSQL governance ledger and is read over the day's two UTC midnights."""
+    source = _signal_warehouse()
+    source.answer(VALUE_MARKER, [_value_row()])
+    source.answer(ADMITTED_MARKER, [{"cell_id": NEAR_CELL, "distance_meters": 4210.5}])
     session = RecordingSession()
-    session.answer(
-        COVERAGE_MARKER,
-        [
-            {
-                "signal_name": "vapor_pressure_deficit",
-                "source_parameter": "vpd",
-                "support_key": "era5-land-0.1deg",
-                "status": "no_data",
-                "audit_row_count": 4,
-                "cell_count": 4,
-                "expected_observation_count": 4,
-                "received_observation_count": 0,
-                "earliest_window_start": datetime(2026, 3, 1, tzinfo=UTC),
-                "latest_window_end": datetime(2026, 3, 31, 23, 59, 59, tzinfo=UTC),
-                "nearest_cell_distance_m": 4210.5,
-            }
-        ],
-    )
-    async with agent_tools.run_context(session_provider=_session_provider(session)):
+    session.answer(AUDIT_MARKER, [{"signal_name": "air_temperature_mean", "status": "no_data"}])
+
+    async with agent_tools.run_context(session_provider=_session_provider(session), warehouse_source=source):
         raw = await agent_tools.query_signal_value_on_day(
-            longitude=BOISE_LONGITUDE,
-            latitude=BOISE_LATITUDE,
-            day=SELECTED_DAY,
+            longitude=BOISE_LONGITUDE, latitude=BOISE_LATITUDE, day=SELECTED_DAY
         )
 
-    assert session.markers() == [PLANE_MARKER, VALUE_MARKER, COVERAGE_MARKER]
-    assert "agri.signal_coverage_audit" in session.sql_for(COVERAGE_MARKER)
-    payload = json.loads(raw)
-    assert payload["signals_on_day"] == []
-    governed = payload["coverage_audit_on_day"][0]
-    assert governed["status"] == "no_data"
-    assert governed["received_observation_count"] == 0
-    assert "no_data" in payload["note"]
+    bound = session.parameters_for(AUDIT_MARKER)
+    assert bound["day_start"] == datetime(2026, 3, 14, tzinfo=UTC)
+    assert bound["day_end"] == datetime(2026, 3, 15, tzinfo=UTC)
+    assert json.loads(raw)["coverage_audit_on_day"][0]["status"] == "no_data"
 
 
 async def test_value_on_day_reads_the_audit_over_exactly_the_cells_the_value_came_from() -> None:
-    """A wider audit scope would let an absence recorded elsewhere appear to explain this point."""
+    """An absence recorded somewhere else must not be able to explain this point."""
+    source = _signal_warehouse()
+    source.answer(VALUE_MARKER, [_value_row()])
+    source.answer(
+        ADMITTED_MARKER,
+        [
+            {"cell_id": NEAR_CELL, "distance_meters": 4210.5},
+            {"cell_id": "bbbbbbbb-0000-0000-0000-000000000002", "distance_meters": 16857.9},
+        ],
+    )
     session = RecordingSession()
-    async with agent_tools.run_context(session_provider=_session_provider(session)):
+
+    async with agent_tools.run_context(session_provider=_session_provider(session), warehouse_source=source):
         await agent_tools.query_signal_value_on_day(
-            longitude=BOISE_LONGITUDE,
-            latitude=BOISE_LATITUDE,
-            day=SELECTED_DAY,
-            radius_meters=25_000.0,
-            signal_names=["precipitation"],
+            longitude=BOISE_LONGITUDE, latitude=BOISE_LATITUDE, day=SELECTED_DAY
         )
 
-    value_bound = session.parameters_for(VALUE_MARKER)
-    audit_bound = session.parameters_for(COVERAGE_MARKER)
-    for shared in ("longitude", "latitude", "radius_meters", "cell_limit", "signal_names"):
-        assert value_bound[shared] == audit_bound[shared], f"{shared} must be scoped identically"
-    # The day is the one thing the two cannot spell alike: the rollup is grained by calendar day,
-    # the audit by the window a lane fetched. Same day either way, and that is what is asserted.
-    assert value_bound["day"] == date(2026, 3, 14)
-    assert audit_bound["day_start"] == datetime(2026, 3, 14, tzinfo=UTC)
-    assert audit_bound["day_end"] == datetime(2026, 3, 15, tzinfo=UTC)
+    bound = session.parameters_for(AUDIT_MARKER)
+    assert bound["cell_ids"] == [NEAR_CELL, "bbbbbbbb-0000-0000-0000-000000000002"]
+    assert bound["cell_distances"] == [4210.5, 16857.9]
+    # The value read and the cell read share one admitted session, so they cannot disagree about
+    # which cells were in range.
+    assert source.markers() == [VALUE_MARKER, ADMITTED_MARKER]
 
 
 async def test_value_on_day_refuses_an_unparseable_day_without_querying() -> None:
     """A day we cannot read is refused, never replaced with today -- that is a fabricated date."""
+    source = _signal_warehouse()
     session = RecordingSession()
-    async with agent_tools.run_context(session_provider=_session_provider(session)) as ledger:
+    async with agent_tools.run_context(session_provider=_session_provider(session), warehouse_source=source) as ledger:
         raw = await agent_tools.query_signal_value_on_day(
             longitude=BOISE_LONGITUDE,
             latitude=BOISE_LATITUDE,
@@ -289,6 +273,7 @@ async def test_value_on_day_refuses_an_unparseable_day_without_querying() -> Non
         )
 
     assert not session.statements
+    assert source.markers() == []
     payload = json.loads(raw)
     assert payload["received_day"] == "last tuesday"
     assert "ISO calendar day" in payload["error"]
@@ -299,189 +284,156 @@ async def test_value_on_day_refuses_an_unparseable_day_without_querying() -> Non
 
 
 async def test_temporal_neighbors_carry_their_own_date_and_their_real_gap() -> None:
-    """A neighbour without its distance and its date is indistinguishable from an exact answer."""
-    session = RecordingSession()
-    session.answer(
+    """A neighbour handed back without its gap is indistinguishable from an exact match."""
+    source = _signal_warehouse(
+        published=[SELECTED_DATE - timedelta(days=6), SELECTED_DATE, SELECTED_DATE + timedelta(days=2)]
+    )
+    source.answer(
         NEIGHBORS_MARKER,
         [
-            _neighbor_row("before", date(2026, 3, 8), -6),
-            _neighbor_row("after", date(2026, 3, 19), 5),
+            _neighbor_row("before", SELECTED_DATE - timedelta(days=6), -6),
+            _neighbor_row("after", SELECTED_DATE + timedelta(days=2), 2),
         ],
     )
-    async with agent_tools.run_context(session_provider=_session_provider(session)):
+    session = RecordingSession()
+
+    async with agent_tools.run_context(session_provider=_session_provider(session), warehouse_source=source):
         raw = await agent_tools.query_signal_neighbors_in_time(
-            longitude=BOISE_LONGITUDE,
-            latitude=BOISE_LATITUDE,
-            day=SELECTED_DAY,
+            longitude=BOISE_LONGITUDE, latitude=BOISE_LATITUDE, day=SELECTED_DAY
         )
 
     payload = json.loads(raw)
-    before, after = payload["temporal_neighbors"]
-    assert (before["side"], before["observed_day"], before["distance_days"], before["day_offset"]) == (
-        "before",
-        "2026-03-08",
-        6,
-        -6,
-    )
-    assert (after["side"], after["observed_day"], after["distance_days"], after["day_offset"]) == (
-        "after",
-        "2026-03-19",
-        5,
-        5,
-    )
-    for row in payload["temporal_neighbors"]:
-        assert row["nearest_cell_distance_m"] == 4210.5
-        assert row["observed_day"] != payload["requested_day"]
+    rows = {row["side"]: row for row in payload["temporal_neighbors"]}
+    assert rows["before"]["observed_day"] == "2026-03-08"
+    assert rows["before"]["distance_days"] == 6
+    assert rows["before"]["day_offset"] == -6
+    assert rows["after"]["day_offset"] == 2
+    assert all(row["observed_day"] != payload["requested_day"] for row in payload["temporal_neighbors"])
+    assert "never quote one of those as this day's value" not in payload["note"]
+    assert "Never report one of these as the value on requested_day" in payload["note"]
 
 
 async def test_temporal_neighbors_bind_the_selected_day_and_a_bounded_search_span() -> None:
-    """The day drives the split; the span is what makes 'no neighbour' a claim about the window."""
+    """The day travels four times because DuckDB counts positional parameters by appearance."""
+    source = _signal_warehouse(published=[SELECTED_DATE - timedelta(days=1)])
     session = RecordingSession()
-    async with agent_tools.run_context(session_provider=_session_provider(session)):
+
+    async with agent_tools.run_context(session_provider=_session_provider(session), warehouse_source=source):
         raw = await agent_tools.query_signal_neighbors_in_time(
-            longitude=BOISE_LONGITUDE,
-            latitude=BOISE_LATITUDE,
-            day=SELECTED_DAY,
-            neighbor_days=10,
+            longitude=BOISE_LONGITUDE, latitude=BOISE_LATITUDE, day=SELECTED_DAY, neighbor_days=20
         )
 
-    bound = session.parameters_for(NEIGHBORS_MARKER)
-    assert bound["day"] == date(2026, 3, 14)
-    # Whole calendar days now, because the rollup's grain IS a calendar day; the old half-open
-    # pair of timestamps existed only to bracket a raw observed_at column that is no longer read.
-    assert bound["search_from"] == date(2026, 3, 4)
-    assert bound["search_through"] == date(2026, 3, 24)
+    bound = source.parameters_for(NEIGHBORS_MARKER)
+    assert bound[-4:] == [SELECTED_DATE, SELECTED_DATE, SELECTED_DATE, SELECTED_DATE]
     bounds = json.loads(raw)["applied_bounds"]
-    assert bounds["neighbor_days"] == 10
-    assert bounds["searched_from"] == "2026-03-04"
-    assert bounds["searched_through"] == "2026-03-24"
+    assert bounds["searched_from"] == "2026-02-22"
+    assert bounds["searched_through"] == "2026-04-03"
 
 
 async def test_temporal_neighbors_report_a_one_sided_result_without_inventing_the_other() -> None:
-    """A signal with no reading after the day gets no 'after' row, and the note says what that means."""
+    """A missing side is a statement about the days scanned, and the state census says which."""
+    source = _signal_warehouse(published=[SELECTED_DATE - timedelta(days=6)])
+    source.answer(NEIGHBORS_MARKER, [_neighbor_row("before", SELECTED_DATE - timedelta(days=6), -6)])
     session = RecordingSession()
-    session.answer(NEIGHBORS_MARKER, [_neighbor_row("before", date(2026, 3, 13), -1)])
-    async with agent_tools.run_context(session_provider=_session_provider(session)):
+
+    async with agent_tools.run_context(session_provider=_session_provider(session), warehouse_source=source):
         raw = await agent_tools.query_signal_neighbors_in_time(
-            longitude=BOISE_LONGITUDE,
-            latitude=BOISE_LATITUDE,
-            day=SELECTED_DAY,
+            longitude=BOISE_LONGITUDE, latitude=BOISE_LATITUDE, day=SELECTED_DAY
         )
 
     payload = json.loads(raw)
     assert [row["side"] for row in payload["temporal_neighbors"]] == ["before"]
-    assert "not about all of history" in payload["note"]
+    assert payload["window_day_states"]["published"] == 1
+    assert payload["window_day_states"]["day_not_written"] > 0
 
 
 async def test_temporal_neighbors_clamp_an_over_wide_search_and_report_the_clamp() -> None:
-    """An over-large window is clamped by the service, and the clamp is echoed back."""
+    source = _signal_warehouse()
     session = RecordingSession()
-    async with agent_tools.run_context(session_provider=_session_provider(session)):
+
+    async with agent_tools.run_context(session_provider=_session_provider(session), warehouse_source=source):
         raw = await agent_tools.query_signal_neighbors_in_time(
-            longitude=BOISE_LONGITUDE,
-            latitude=BOISE_LATITUDE,
-            day=SELECTED_DAY,
-            radius_meters=10_000_000.0,
-            neighbor_days=99_999,
+            longitude=BOISE_LONGITUDE, latitude=BOISE_LATITUDE, day=SELECTED_DAY, neighbor_days=99_999
         )
 
     bounds = json.loads(raw)["applied_bounds"]
     assert bounds["neighbor_days"] == agent_tools.MAX_NEIGHBOR_DAYS
-    assert bounds["radius_meters"] == agent_tools.MAX_RADIUS_METERS
-    assert session.parameters_for(NEIGHBORS_MARKER)["radius_meters"] == agent_tools.MAX_RADIUS_METERS
 
 
 # --- 3. Spatial proximity ----------------------------------------------------------
 
 
 async def test_nearest_cells_carry_their_real_distance_and_list_empty_cells_too() -> None:
-    """A nearer cell holding nothing must stay visible, or 'nearest' silently means 'nearest with data'."""
-    session = RecordingSession()
-    session.answer(
+    """An INNER join would make "the nearest cells" quietly mean "the ones that had data"."""
+    source = _signal_warehouse(published=[SELECTED_DATE])
+    source.answer(
         CELLS_MARKER,
         [
             {
-                "cell_key": "nasa-power-0.5-degree/43.5/-116.5",
-                "grid_name": "nasa-power-0.5-degree",
-                "resolution_m": 55_000,
-                "centroid_longitude": -116.5,
-                "centroid_latitude": 43.5,
+                "cell_id": NEAR_CELL,
+                "centroid_longitude": -116.25,
+                "centroid_latitude": 43.62,
                 "distance_meters": 4210.5,
+                "observation_count_on_day": 4,
+                "signal_count_on_day": 2,
+                "last_observed_at": datetime(2026, 3, 14, tzinfo=UTC),
+            },
+            {
+                "cell_id": "bbbbbbbb-0000-0000-0000-000000000002",
+                "centroid_longitude": -116.05,
+                "centroid_latitude": 43.55,
+                "distance_meters": 16857.9,
                 "observation_count_on_day": 0,
                 "signal_count_on_day": 0,
                 "last_observed_at": None,
             },
-            {
-                "cell_key": "nasa-power-0.5-degree/44.0/-116.5",
-                "grid_name": "nasa-power-0.5-degree",
-                "resolution_m": 55_000,
-                "centroid_longitude": -116.5,
-                "centroid_latitude": 44.0,
-                "distance_meters": 44_800.0,
-                "observation_count_on_day": 11,
-                "signal_count_on_day": 11,
-                "last_observed_at": datetime(2026, 3, 14, tzinfo=UTC),
-            },
         ],
     )
-    async with agent_tools.run_context(session_provider=_session_provider(session)):
+    session = RecordingSession()
+
+    async with agent_tools.run_context(session_provider=_session_provider(session), warehouse_source=source):
         raw = await agent_tools.query_nearest_signal_cells(
-            longitude=BOISE_LONGITUDE,
-            latitude=BOISE_LATITUDE,
-            day=SELECTED_DAY,
+            longitude=BOISE_LONGITUDE, latitude=BOISE_LATITUDE, day=SELECTED_DAY
         )
 
-    payload = json.loads(raw)
-    nearest, populated = payload["nearest_cells"]
-    assert nearest["observation_count_on_day"] == 0
-    assert nearest["distance_meters"] < populated["distance_meters"]
-    assert populated["observation_count_on_day"] == 11
-    # The count is a census over ONE write plane. Saying "0 is an answer" without naming the plane
-    # is the failure the layer lane standard calls out: NDVI lands on the forecast plane and is not
-    # counted here, so an unqualified zero reads to the model as "this cell holds nothing".
-    assert "GOVERNED SIGNAL" in payload["note"]
-    assert "not a claim that the cell is empty" in payload["note"]
-    # LEFT JOIN is what keeps the empty cell in the answer; an INNER join would drop it.
-    assert "LEFT JOIN day_observations" in session.sql_for(CELLS_MARKER)
+    cells = json.loads(raw)["nearest_cells"]
+    assert [cell["observation_count_on_day"] for cell in cells] == [4, 0]
+    assert cells[0]["distance_meters"] < cells[1]["distance_meters"]
+    assert all("cell_id" in cell for cell in cells)
+    # The grid name and resolution the retired registry carried are omitted, never nulled.
+    assert all("grid_name" not in cell and "resolution_m" not in cell for cell in cells)
 
 
 async def test_nearest_cells_bind_the_day_and_clamp_the_requested_count() -> None:
-    """The count is capped by the service and the cap is reported, matching the other tools."""
+    source = _signal_warehouse(published=[SELECTED_DATE])
     session = RecordingSession()
-    async with agent_tools.run_context(session_provider=_session_provider(session)):
+
+    async with agent_tools.run_context(session_provider=_session_provider(session), warehouse_source=source):
         raw = await agent_tools.query_nearest_signal_cells(
-            longitude=BOISE_LONGITUDE,
-            latitude=BOISE_LATITUDE,
-            day=SELECTED_DAY,
-            cell_count=5_000,
-            grid_names=["nasa-power-0.5-degree", "nasa-power-0.5-degree", " "],
+            longitude=BOISE_LONGITUDE, latitude=BOISE_LATITUDE, day=SELECTED_DAY, cell_count=9_999
         )
 
-    bound = session.parameters_for(CELLS_MARKER)
-    assert bound["row_limit"] == agent_tools.MAX_NEAREST_CELLS
-    assert bound["cell_limit"] == agent_tools.MAX_CELL_FANOUT
-    assert bound["day"] == date(2026, 3, 14)
-    # Duplicates and blanks are dropped, so the grid filter matches agri.spatial_cell.grid_name exactly.
-    assert bound["grid_names"] == ["nasa-power-0.5-degree"]
+    bound = source.parameters_for(CELLS_MARKER)
+    assert bound[-2] == SELECTED_DATE
+    assert bound[-1] == agent_tools.MAX_NEAREST_CELLS
     assert json.loads(raw)["applied_bounds"]["cell_count"] == agent_tools.MAX_NEAREST_CELLS
 
 
 async def test_nearest_cells_returns_an_empty_list_rather_than_widening_the_radius() -> None:
-    """No cell in range is an answer; a tool that quietly widened its radius would be lying."""
+    """No cell inside the radius is an answer about the radius, and the day state explains it."""
+    source = _signal_warehouse(published=[SELECTED_DATE])
+    source.answer(CELLS_MARKER, [])
     session = RecordingSession()
-    async with agent_tools.run_context(session_provider=_session_provider(session)) as ledger:
+
+    async with agent_tools.run_context(session_provider=_session_provider(session), warehouse_source=source):
         raw = await agent_tools.query_nearest_signal_cells(
-            longitude=0.0,
-            latitude=0.0,
-            day=SELECTED_DAY,
-            radius_meters=100.0,
+            longitude=BOISE_LONGITUDE, latitude=BOISE_LATITUDE, day=SELECTED_DAY, radius_meters=100.0
         )
 
-    # The plane probe, then the read. Nothing widened, nothing retried.
-    assert session.markers() == [PLANE_MARKER, CELLS_MARKER]
-    assert json.loads(raw)["nearest_cells"] == []
-    assert ledger[0]["row_count"] == 0
-    assert ledger[0]["radius_meters"] == agent_tools.MIN_RADIUS_METERS
+    payload = json.loads(raw)
+    assert payload["nearest_cells"] == []
+    assert payload["day_state"]["state"] == "published"
+    assert payload["applied_bounds"]["radius_meters"] == agent_tools.MIN_RADIUS_METERS
 
 
 # --- Shared guarantees -------------------------------------------------------------
@@ -492,21 +444,27 @@ async def test_nearest_cells_returns_an_empty_list_rather_than_widening_the_radi
     ["signal_value_on_day", "signal_neighbors_in_time", "nearest_signal_cells"],
 )
 async def test_selected_day_tools_reject_a_bad_coordinate_without_querying(tool_name: str) -> None:
-    """A bad coordinate must never reach the database, on any of the three."""
+    """A bad coordinate must never reach the warehouse, on any of the three."""
+    source = _signal_warehouse()
     session = RecordingSession()
     call = getattr(agent_tools, f"query_{tool_name}")
-    async with agent_tools.run_context(session_provider=_session_provider(session)) as ledger:
+    async with agent_tools.run_context(session_provider=_session_provider(session), warehouse_source=source) as ledger:
         raw = await call(longitude=999.0, latitude=BOISE_LATITUDE, day=SELECTED_DAY)
 
     assert not session.statements
+    assert source.markers() == []
     assert "error" in json.loads(raw)
     assert ledger == [{"tool": tool_name, "row_count": 0, "error": "invalid_coordinate"}]
 
 
 async def test_selected_day_statements_are_read_only_and_named_by_a_line_one_marker() -> None:
-    """Every new statement is a SELECT, and dispatchable by the marker this suite matches on."""
+    """Every statement the three tools issue, in EITHER dialect, is a SELECT and carries a marker."""
+    source = _signal_warehouse(published=[SELECTED_DATE - timedelta(days=1), SELECTED_DATE])
+    source.answer(VALUE_MARKER, [_value_row()])
+    source.answer(ADMITTED_MARKER, [{"cell_id": NEAR_CELL, "distance_meters": 4210.5}])
     session = RecordingSession()
-    async with agent_tools.run_context(session_provider=_session_provider(session)):
+
+    async with agent_tools.run_context(session_provider=_session_provider(session), warehouse_source=source):
         await agent_tools.query_signal_value_on_day(
             longitude=BOISE_LONGITUDE, latitude=BOISE_LATITUDE, day=SELECTED_DAY
         )
@@ -517,14 +475,14 @@ async def test_selected_day_statements_are_read_only_and_named_by_a_line_one_mar
             longitude=BOISE_LONGITUDE, latitude=BOISE_LATITUDE, day=SELECTED_DAY
         )
 
-    # One plane probe for the whole run -- a matview cannot become unpopulated again once it has
-    # been refreshed, so the answer is cached for the run rather than re-asked per tool.
-    assert session.markers() == [PLANE_MARKER, VALUE_MARKER, COVERAGE_MARKER, NEIGHBORS_MARKER, CELLS_MARKER]
-    for sql, _ in session.statements:
-        assert sql.splitlines()[0].strip().startswith("-- agent_")
+    assert source.markers() == [VALUE_MARKER, ADMITTED_MARKER, NEIGHBORS_MARKER, CELLS_MARKER]
+    # The only PostgreSQL statement any of the three still issues is the absence ledger.
+    assert session.markers() == [AUDIT_MARKER]
+    for statement, _ in [*source.executed, *session.statements]:
+        assert statement.splitlines()[0].strip().startswith("-- agent_")
         # The beginner-doc headers are prose and legitimately contain English words that collide
         # with SQL verbs ("drops the rest"); only executable lines are scanned.
-        executable = "\n".join(line for line in sql.splitlines() if not line.lstrip().startswith("--")).upper()
+        executable = "\n".join(line for line in statement.splitlines() if not line.lstrip().startswith("--")).upper()
         for verb in ("INSERT", "UPDATE", "DELETE", "MERGE", "TRUNCATE", "CREATE ", "DROP", "ALTER"):
             assert verb not in executable, f"{verb} must not appear in an agent tool statement"
 
@@ -555,7 +513,7 @@ def test_location_context_states_the_selected_day() -> None:
         precision="exact",
         as_of=datetime(2026, 8, 11, 12, 0, tzinfo=UTC),
         question=None,
-        selected_day=date(2026, 3, 14),
+        selected_day=SELECTED_DATE,
     )
     assert "## Selected day (the day the map is showing)" in context
     assert "2026-03-14" in context
@@ -586,7 +544,7 @@ def test_the_analyze_route_accepts_the_selected_day_and_carries_it_into_the_requ
         {"longitude": BOISE_LONGITUDE, "latitude": BOISE_LATITUDE, "selected_day": SELECTED_DAY}
     )
 
-    assert payload.selected_day == date(2026, 3, 14)
+    assert payload.selected_day == SELECTED_DATE
     assert (
         AgentAnalyzeRequest.model_validate({"longitude": BOISE_LONGITUDE, "latitude": BOISE_LATITUDE}).selected_day
         is None
@@ -603,15 +561,17 @@ async def test_a_list_that_hit_its_row_cap_says_so_rather_than_reading_as_an_abs
     Both notes tell the model that a missing signal or a missing side is a statement about the data.
     That is only true while the list is complete, so the completeness has to travel with it.
     """
-    session = RecordingSession()
-    session.answer(
+    source = _signal_warehouse(published=[SELECTED_DATE - timedelta(days=6)])
+    source.answer(
         NEIGHBORS_MARKER,
         [
-            _neighbor_row("before", date(2026, 3, 8), -6, signal_name=f"signal_{index:03d}")
-            for index in range(agent_tools.MAX_TEMPORAL_NEIGHBOR_ROWS)
+            _neighbor_row("before", SELECTED_DATE - timedelta(days=6), -6, signal_name=f"signal_{index:03d}")
+            for index in range(agent_tools.MAX_TEMPORAL_NEIGHBOR_ROWS + 5)
         ],
     )
-    async with agent_tools.run_context(session_provider=_session_provider(session)):
+    session = RecordingSession()
+
+    async with agent_tools.run_context(session_provider=_session_provider(session), warehouse_source=source):
         raw = await agent_tools.query_signal_neighbors_in_time(
             longitude=BOISE_LONGITUDE, latitude=BOISE_LATITUDE, day=SELECTED_DAY
         )
@@ -623,9 +583,11 @@ async def test_a_list_that_hit_its_row_cap_says_so_rather_than_reading_as_an_abs
 
 
 async def test_an_untruncated_answer_states_its_completeness_too() -> None:
+    source = _signal_warehouse()
+    source.answer(VALUE_MARKER, [_value_row()])
     session = RecordingSession()
-    session.answer(VALUE_MARKER, [_value_row()])
-    async with agent_tools.run_context(session_provider=_session_provider(session)):
+
+    async with agent_tools.run_context(session_provider=_session_provider(session), warehouse_source=source):
         raw = await agent_tools.query_signal_value_on_day(
             longitude=BOISE_LONGITUDE, latitude=BOISE_LATITUDE, day=SELECTED_DAY
         )
@@ -635,54 +597,51 @@ async def test_an_untruncated_answer_states_its_completeness_too() -> None:
     assert payload["coverage_audit_on_day_truncated"] is False
 
 
-# --- 4. An unbuilt pre-aggregated plane is refused, never answered as an absence ----
+# --- 4. An unbuilt plane is refused, never answered as an absence -------------------
 
 
-async def test_an_unpopulated_rollup_is_refused_by_name_rather_than_answered_empty() -> None:
-    """The bug class this guard exists for: a matview created WITH NO DATA and never refreshed.
+async def test_an_unwritten_signal_lane_is_refused_by_name_rather_than_answered_empty() -> None:
+    """The bug class this guard exists for, in its Parquet spelling.
 
-    agri.mv_forecast_ml_daily_serving shipped in exactly that state. Reading an unpopulated
-    matview raises rather than returning zero rows, so the two available failures were "the tool
-    errored" and "the tool returned nothing" -- and the second is far worse, because "no drought
-    here" and "the drought plane was never built" become the same answer to the model.
+    Against PostgreSQL it was a matview created WITH NO DATA and never refreshed. Against Parquet it
+    is a lane that has written nothing at the rung the agent reads. The two available failures are
+    still "the tool errored" and "the tool returned nothing", and the second is still far worse,
+    because "no signal here" and "the lane was never published" become one answer to the model.
     """
+    source = FakeAgentWarehouse()
     session = RecordingSession()
-    session.answer(
-        PLANE_MARKER,
-        [
-            {
-                "relation_name": agent_tools.SIGNAL_ROLLUP_RELATION,
-                "relation_exists": True,
-                "relation_kind": "m",
-                "is_populated": False,
-            }
-        ],
-    )
-    async with agent_tools.run_context(session_provider=_session_provider(session)) as ledger:
+
+    async with agent_tools.run_context(session_provider=_session_provider(session), warehouse_source=source) as ledger:
         raw = await agent_tools.query_signal_value_on_day(
             longitude=BOISE_LONGITUDE, latitude=BOISE_LATITUDE, day=SELECTED_DAY
         )
 
-    # The probe ran and nothing else did: an unbuilt plane is never read from.
-    assert session.markers() == [PLANE_MARKER]
+    assert source.markers() == [], "an unwritten lane is never read from"
     payload = json.loads(raw)
-    assert payload["error"] == "pre_aggregated_plane_unbuilt"
-    assert payload["unbuilt_relations"] == [agent_tools.SIGNAL_ROLLUP_RELATION]
+    assert payload["error"] == "parquet_lane_never_written"
+    assert payload["unwritten_lanes"] == [SIGNAL_LANE]
     assert "REFUSAL, not an absence" in payload["note"]
-    assert ledger[0]["error"] == "plane_unbuilt"
+    assert ledger[0]["error"] == "parquet_lane_never_written"
 
 
 async def test_a_relation_the_probe_never_mentions_counts_as_unbuilt() -> None:
-    """Silence about a plane is not evidence that the plane is fine -- fail closed, not open."""
+    """Silence about a plane is not evidence that the plane is fine -- fail closed, not open.
+
+    The probe now guards ONE relation, the governed ML forecast plane, because every environmental
+    plane moved to Parquet where "never built" is a state the warehouse reports rather than a
+    catalog fact to be inferred.
+    """
+    source = _signal_warehouse()
     session = RecordingSession()
     session.answer(PLANE_MARKER, [])
-    async with agent_tools.run_context(session_provider=_session_provider(session)):
-        raw = await agent_tools.query_nearest_signal_cells(
-            longitude=BOISE_LONGITUDE, latitude=BOISE_LATITUDE, day=SELECTED_DAY
-        )
+
+    async with agent_tools.run_context(session_provider=_session_provider(session), warehouse_source=source):
+        raw = await agent_tools.query_forecast_summary_for_cell(longitude=BOISE_LONGITUDE, latitude=BOISE_LATITUDE)
 
     assert session.markers() == [PLANE_MARKER]
-    assert json.loads(raw)["error"] == "pre_aggregated_plane_unbuilt"
+    payload = json.loads(raw)
+    assert payload["error"] == "pre_aggregated_plane_unbuilt"
+    assert payload["unbuilt_relations"] == [agent_tools.FORECAST_DAILY_RELATION]
 
 
 # --- 5. The generic surface triad, for the layers that are not signal grids ---------
@@ -691,14 +650,14 @@ async def test_a_relation_the_probe_never_mentions_counts_as_unbuilt() -> None:
 def test_the_agent_catalogue_is_the_map_catalogue_hand_spelled() -> None:
     """24 names, spelled out here so a surface silently dropped from the map is caught, not copied.
 
-    Deliberately NOT derived from geo.layers or from the TypeScript constants. A generated list
-    drifts with the thing it is meant to check: a layer that vanished would vanish from the agent's
-    vocabulary too, and the agent would say "I do not know that surface" instead of "that surface
-    stopped being served". Same reasoning as the hand-spelled assertion docs/layer-lane-standard.md
-    section 9 requires of the slider capability catalogue.
+    Deliberately NOT derived from geo.layers, from the lane registry or from the TypeScript
+    constants. A generated list drifts with the thing it is meant to check: a layer that vanished
+    would vanish from the agent's vocabulary too, and the agent would say "I do not know that
+    surface" instead of "that surface stopped being served". Same reasoning as the hand-spelled
+    assertion docs/layer-lane-standard.md section 9 requires of the slider capability catalogue.
     """
     expected = {
-        # The 11 geo.layers rows (drizzle 0001, 0011, 0013, 0017).
+        # The 11 feature-backed surfaces (drizzle 0001, 0011, 0013, 0017).
         "burn-severity",
         "evacuation-zones",
         "fire-detections",
@@ -728,92 +687,53 @@ def test_the_agent_catalogue_is_the_map_catalogue_hand_spelled() -> None:
     }
     assert set(agent_tools.AGENT_SURFACE_NAMES) == expected
     assert len(agent_tools.AGENT_SURFACE_NAMES) == len(expected)
-    # The feature-backed subset is exactly the geo.layers half, and disjoint from the streams.
+    # The feature-backed subset is exactly the eleven, and disjoint from the streams.
     assert set(agent_tools.FEATURE_SURFACE_NAMES) < set(agent_tools.AGENT_SURFACE_NAMES)
     assert not set(agent_tools.FEATURE_SURFACE_NAMES) & set(agent_tools.STREAM_SURFACE_NAMES)
 
 
-async def test_surface_coverage_reads_the_census_the_slider_reads() -> None:
-    """The agent and the slider must agree about which days exist, so they read one relation."""
-    session = RecordingSession()
-    session.answer(
-        SURFACE_COVERAGE_MARKER,
-        [
-            {
-                "surface_name": "vegetation",
-                "surface_kind": "feature",
-                "requested_day": date(2026, 3, 14),
-                "is_covered": False,
-                "observation_count": 0,
-                "unlinked_count": 0,
-                "distinct_key_count": 0,
-                "day_newest_observed_at": None,
-                "metric_counts": None,
-                "earliest_observed_day": date(2022, 8, 6),
-                "latest_observed_day": date(2026, 8, 2),
-                "observed_day_count": 1_460,
-                "total_observation_count": 44_000,
-                "surface_newest_observed_at": datetime(2026, 8, 2, tzinfo=UTC),
-            }
-        ],
+async def test_surface_coverage_reads_the_index_the_slider_reads() -> None:
+    """The agent and the slider must agree about which days exist, so they read one evidence source."""
+    source = FakeAgentWarehouse()
+    source.evidence["vegetation"] = published_lane(
+        "vegetation",
+        [date(2022, 8, 6), date(2026, 8, 2)],
+        source_ceiling_day=date(2026, 8, 2),
     )
-    async with agent_tools.run_context(session_provider=_session_provider(session)):
+    session = RecordingSession()
+
+    async with agent_tools.run_context(session_provider=_session_provider(session), warehouse_source=source):
         raw = await agent_tools.query_observation_coverage_on_day(surface_name="vegetation", day=SELECTED_DAY)
 
-    assert "geo.v_observation_day_census" in session.sql_for(SURFACE_COVERAGE_MARKER)
-    bound = session.parameters_for(SURFACE_COVERAGE_MARKER)
-    assert bound == {"surface_name": "vegetation", "day": date(2026, 3, 14)}
     payload = json.loads(raw)
     coverage = payload["coverage"]
     assert coverage["is_covered"] is False
+    assert coverage["coverage_authority"] == "availability"
     # An uncovered day is not the end of the answer: the history bounds say WHICH kind of absence.
     assert coverage["earliest_observed_day"] == "2022-08-06"
     assert coverage["latest_observed_day"] == "2026-08-02"
-    assert "past its live edge" in payload["note"]
-
-
-async def test_surface_coverage_probes_all_three_census_matviews_and_not_the_view() -> None:
-    """A plain view over matviews reports itself populated even when they are not."""
-    session = RecordingSession()
-    async with agent_tools.run_context(session_provider=_session_provider(session)):
-        await agent_tools.query_observation_coverage_on_day(surface_name="drought-areas", day=SELECTED_DAY)
-
-    probed = session.parameters_for(PLANE_MARKER)["relation_names"]
-    assert probed == list(agent_tools.CENSUS_RELATIONS)
-    assert "geo.v_observation_day_census" not in probed
+    assert coverage["source_ceiling_day"] == "2026-08-02"
+    assert "past what the source itself could have published" in payload["note"]
+    assert session.statements == [], "coverage is a Parquet question and touches no database"
 
 
 async def test_surface_temporal_neighbors_carry_their_real_gap() -> None:
     """A neighbour without its gap is indistinguishable from an exact answer, on every surface."""
+    source = FakeAgentWarehouse()
+    source.evidence["vegetation"] = published_lane("vegetation", [date(2026, 3, 3)], row_count=412)
     session = RecordingSession()
-    session.answer(
-        SURFACE_NEIGHBORS_MARKER,
-        [
-            {
-                "side": "before",
-                "surface_name": "vegetation",
-                "surface_kind": "feature",
-                "observed_day": date(2026, 3, 3),
-                "day_offset": -11,
-                "distance_days": 11,
-                "observation_count": 412,
-                "distinct_key_count": 412,
-                "newest_observed_at": datetime(2026, 3, 3, tzinfo=UTC),
-            }
-        ],
-    )
-    async with agent_tools.run_context(session_provider=_session_provider(session)):
+
+    async with agent_tools.run_context(session_provider=_session_provider(session), warehouse_source=source):
         raw = await agent_tools.query_observation_temporal_neighbors(
             surface_name="vegetation",
             day=SELECTED_DAY,
             neighbor_days=20,
         )
 
-    bound = session.parameters_for(SURFACE_NEIGHBORS_MARKER)
-    assert bound["day"] == date(2026, 3, 14)
-    assert bound["search_from"] == date(2026, 2, 22)
-    assert bound["search_through"] == date(2026, 4, 3)
     payload = json.loads(raw)
+    bounds = payload["applied_bounds"]
+    assert bounds["searched_from"] == "2026-02-22"
+    assert bounds["searched_through"] == "2026-04-03"
     only = payload["temporal_neighbors"][0]
     assert (only["side"], only["observed_day"], only["distance_days"], only["day_offset"]) == (
         "before",
@@ -821,13 +741,17 @@ async def test_surface_temporal_neighbors_carry_their_real_gap() -> None:
         11,
         -11,
     )
+    assert only["observation_count"] == 412
     assert only["observed_day"] != payload["requested_day"]
     assert "never quote one as the value on requested_day" in payload["note"]
 
 
 async def test_surface_temporal_neighbors_clamp_an_over_wide_window_and_report_it() -> None:
+    source = FakeAgentWarehouse()
+    source.evidence["fire-detections"] = published_lane("fire-detections", [date(2026, 3, 3)])
     session = RecordingSession()
-    async with agent_tools.run_context(session_provider=_session_provider(session)):
+
+    async with agent_tools.run_context(session_provider=_session_provider(session), warehouse_source=source):
         raw = await agent_tools.query_observation_temporal_neighbors(
             surface_name="fire-detections",
             day=SELECTED_DAY,
@@ -838,25 +762,27 @@ async def test_surface_temporal_neighbors_clamp_an_over_wide_window_and_report_i
     assert bounds["neighbor_days"] == agent_tools.MAX_SURFACE_NEIGHBOR_DAYS
 
 
-async def test_feature_value_near_point_dates_features_the_way_the_map_does() -> None:
-    """One day rule, called not re-derived, or the agent dates a feature differently from the tiles."""
-    session = RecordingSession()
-    session.answer(
-        FEATURE_NEAR_MARKER,
+async def test_feature_value_near_point_dates_features_by_the_partition_the_map_asks_for() -> None:
+    """One day rule, shared not re-derived, or the agent dates a feature differently from the tiles."""
+    source = FakeAgentWarehouse()
+    source.listing_store.write_day("water-gauges", "observed", 13, SELECTED_DATE)
+    source.answer(
+        POINT_LANE_MARKER,
         [
             {
-                "feature_id": "6f1f0a2e-0000-4000-8000-000000000001",
-                "observed_day": date(2026, 3, 14),
+                "site_number": "13206000",
+                "site_name": "Boise River",
+                "observed_day": SELECTED_DATE,
+                "flow_cfs": 1420.0,
+                "longitude": -116.19,
+                "latitude": 43.61,
                 "distance_meters": 812.4,
-                "centroid_longitude": -116.19,
-                "centroid_latitude": 43.61,
-                "has_geometry_link": True,
-                "data_available_at": datetime(2026, 3, 15, tzinfo=UTC),
-                "properties": {"id": "USGS-13206000", "observedAt": "2026-03-14T18:00:00Z"},
             }
         ],
     )
-    async with agent_tools.run_context(session_provider=_session_provider(session)):
+    session = RecordingSession()
+
+    async with agent_tools.run_context(session_provider=_session_provider(session), warehouse_source=source):
         raw = await agent_tools.query_feature_value_near_point(
             surface_name="water-gauges",
             day=SELECTED_DAY,
@@ -864,18 +790,17 @@ async def test_feature_value_near_point_dates_features_the_way_the_map_does() ->
             latitude=BOISE_LATITUDE,
         )
 
-    statement = session.sql_for(FEATURE_NEAR_MARKER)
-    assert "geo.feature_observation_day(feature.properties)" in statement
-    # The bounding-box prefilter is what keeps the GiST index usable in front of the geography cast.
-    assert "feature.geom && ST_Expand" in statement
-    bound = session.parameters_for(FEATURE_NEAR_MARKER)
-    assert bound["surface_name"] == "water-gauges"
-    assert bound["day"] == date(2026, 3, 14)
-    assert bound["property_keys"] == list(agent_tools.FEATURE_PROPERTY_KEYS)
+    addressed = source.part_uris_for(POINT_LANE_MARKER)
+    assert len(addressed) == 1
+    assert "layer=water-gauges" in addressed[0]
+    assert "year=2026/month=03/day=14" in addressed[0]
     payload = json.loads(raw)
     nearest = payload["features"][0]
     assert nearest["distance_meters"] == 812.4
-    assert nearest["observed_day"] == SELECTED_DAY
+    assert nearest["distance_basis"] == "point"
+    assert nearest["served_day"] == SELECTED_DAY
+    assert nearest["properties"]["site_number"] == "13206000"
+    assert session.statements == [], "a Parquet-served layer touches no database"
 
 
 def test_the_bounding_box_widens_with_latitude_rather_than_clipping() -> None:
@@ -888,10 +813,24 @@ def test_the_bounding_box_widens_with_latitude_rather_than_clipping() -> None:
     assert at_equator >= 50_000.0 / 110_574.0
 
 
+def test_the_per_axis_box_is_wider_east_west_than_north_south_away_from_the_equator() -> None:
+    """The Parquet predicate compares each axis on its own, so each axis is sized on its own figure."""
+    west, south, east, north = agent_tools._bbox_bounds(BOISE_LONGITUDE, BOISE_LATITUDE, 50_000.0)
+    longitude_half_width = east - BOISE_LONGITUDE
+    latitude_half_width = north - BOISE_LATITUDE
+    assert longitude_half_width > latitude_half_width
+    assert BOISE_LONGITUDE - west == pytest.approx(longitude_half_width)
+    assert BOISE_LATITUDE - south == pytest.approx(latitude_half_width)
+    # Both half-widths must still contain the radius they stand in for.
+    assert latitude_half_width >= 50_000.0 / 110_574.0
+
+
 async def test_feature_value_near_point_refuses_a_stream_surface_by_name() -> None:
     """A cell-grid stream has no features; answering it with an empty list would read as absence."""
+    source = FakeAgentWarehouse()
     session = RecordingSession()
-    async with agent_tools.run_context(session_provider=_session_provider(session)) as ledger:
+
+    async with agent_tools.run_context(session_provider=_session_provider(session), warehouse_source=source) as ledger:
         raw = await agent_tools.query_feature_value_near_point(
             surface_name="climate-field-air-temperature",
             day=SELECTED_DAY,
@@ -900,6 +839,7 @@ async def test_feature_value_near_point_refuses_a_stream_surface_by_name() -> No
         )
 
     assert not session.statements
+    assert source.markers() == []
     payload = json.loads(raw)
     assert payload["received_surface_name"] == "climate-field-air-temperature"
     assert "refusal, not an absence" in payload["note"]
@@ -919,12 +859,14 @@ async def test_feature_value_near_point_refuses_a_stream_surface_by_name() -> No
 )
 async def test_surface_tools_refuse_a_name_outside_the_catalogue(tool_name: str, arguments: dict[str, object]) -> None:
     """An unknown surface is refused with the catalogue listed, never answered as empty."""
+    source = FakeAgentWarehouse()
     session = RecordingSession()
     call = getattr(agent_tools, f"query_{tool_name}")
-    async with agent_tools.run_context(session_provider=_session_provider(session)):
+    async with agent_tools.run_context(session_provider=_session_provider(session), warehouse_source=source):
         raw = await call(surface_name="space-lasers", day=SELECTED_DAY, **arguments)
 
     assert not session.statements
+    assert source.markers() == []
     payload = json.loads(raw)
     assert payload["received_surface_name"] == "space-lasers"
     assert "refusal, not an absence" in payload["note"]

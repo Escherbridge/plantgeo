@@ -415,16 +415,27 @@ MATVIEW_REFRESH_SPECS: Final[tuple[MatviewRefreshSpec, ...]] = (
     ),
     # REMOVED 2026-09-04: geo.mv_signal_observation_day. Its REFRESH failed after 302.14s against its
     # own 300s statement_timeout in production (2026-09-04 02:08 UTC). The Parquet pivot replaced this
-    # relation's PRODUCER (the agri.signal_observation ingest this REFRESH aggregates), NOT its
-    # CONSUMER -- this relation has a LIVE production reader through geo.v_observation_day_census at
-    # src/lib/server/services/environmental-read-model.ts:3198,3464-3465 (the main app, a different
-    # service tree) and is also named by agent/tools.py:229-234's SIGNAL_CENSUS_RELATION. Removing
-    # this spec freezes its contents at the last successful refresh rather than making them any
-    # staler -- the REFRESH was already failing at the 300s cap before this removal. Unlike the two
-    # relations removed 2026-09-02, this one is NOT absent -- `to_regclass` still finds it, only the
-    # REFRESH times out -- so it is reported every tick as `out_of_spec`, not `relation_absent`. See
-    # MATVIEW_REFRESH_RETIRED_VIEWS and jobs/AGENTS.md "6. A retired view still needs a name on the
-    # tick".
+    # relation's PRODUCER (the agri.signal_observation ingest this REFRESH aggregates) first, and the
+    # SAME DAY it replaced both of its consumers as well:
+    #
+    #   * lane C3 deleted `readStreamObservationWindows`, `readStreamCapabilities` and
+    #     `mergeStreamCapabilities` from the main app's environmental-read-model.ts. What is left
+    #     there reads `geo.v_observation_day_census WHERE surface_kind = 'feature'`, which is the
+    #     `geo.mv_feature_observation_day` leg -- not this relation.
+    #   * lane C2 deleted `SIGNAL_CENSUS_RELATION` and `CENSUS_RELATIONS` from agent/tools.py; neither
+    #     symbol exists any more.
+    #
+    # So this relation now has ZERO readers, and the two line-number citations that stood here (the
+    # read model's `:3198,:3464-3465`, tools.py's `:229-234`) were correct when written and are dead
+    # references today -- do not reinstate them from an older copy of this comment. What is NOT zero
+    # is its footprint: the relation itself still exists in production, frozen at its last successful
+    # refresh, and `geo.v_observation_day_census` still names it as the view's signal leg
+    # (drizzle/0032_observation_day_census_repoint.sql:92-111), so a drop under decision D1 must
+    # redefine that view in the same migration rather than DROP ... CASCADE it out from under the
+    # feature leg the app does still read. Unlike the two relations removed 2026-09-02, this one is
+    # not absent -- `to_regclass` still finds it, only the REFRESH times out -- so it is reported
+    # every tick as `out_of_spec`, not `relation_absent`. See MATVIEW_REFRESH_RETIRED_VIEWS and
+    # jobs/AGENTS.md "6. A retired view still needs a name on the tick".
     MatviewRefreshSpec(
         qualified_name="geo.mv_soil_survey_grid",
         watermark_sql=_WATERMARK_SOIL_SURVEY_COVERAGE,
@@ -504,8 +515,11 @@ class _RetiredView:
 # retired view still needs a name on the tick". geo.mv_signal_cell_daily and
 # geo.mv_feature_observation_day_axis are NOT here: both were confirmed absent from production, and
 # `relation_absent` already names them truthfully every tick. geo.mv_signal_observation_day is
-# different -- the relation is still there, still had a LIVE production reader at the time of
-# retirement (current inventory: jobs/AGENTS.md "6."), and only refreshing it was retired.
+# different -- the relation is still there and only refreshing it was retired. It had a live
+# production reader when it was retired; it has none since later the same day (see the "REMOVED
+# 2026-09-04" note inside MATVIEW_REFRESH_SPECS, and jobs/AGENTS.md "6."), which is why it stays
+# named here rather than being restored to a spec: an entry that is silent is an entry that lets a
+# still-present, still-frozen relation disappear from every tick until someone happens to look.
 MATVIEW_REFRESH_RETIRED_VIEWS: Final[tuple[_RetiredView, ...]] = (
     _RetiredView(
         qualified_name="geo.mv_signal_observation_day",
@@ -513,13 +527,16 @@ MATVIEW_REFRESH_RETIRED_VIEWS: Final[tuple[_RetiredView, ...]] = (
         reason=(
             "REFRESH failed after 302.14s against its own 300s statement_timeout (prod, "
             "2026-09-04 02:08 UTC); this lane stopped refreshing it, freezing its contents at "
-            "whatever the last successful REFRESH produced rather than keeping them current"
+            "whatever the last successful REFRESH produced rather than keeping them current. Both of "
+            "its readers were removed later the same day (wave-C lanes C2 and C3), so the frozen "
+            "contents are now served to nobody"
         ),
         review_trigger=(
-            "re-review when track lane C3 repoints environmental-read-model.ts off "
-            "geo.v_observation_day_census, or when this relation is dropped outright under decision "
-            "D1 (C3 first, D1 follows) -- at that point either restore a spec with a completable "
-            "statement_timeout or delete this entry"
+            "the C3 half of the original trigger has fired: restoring a spec is refuted, because "
+            "there is no reader left to serve and a completable statement_timeout would spend "
+            "production time keeping an unread relation current. The remaining half is decision D1, "
+            "dropping the relation outright -- delete this entry in that same migration, which must "
+            "also redefine the census view that still names this relation as its signal leg"
         ),
     ),
 )
