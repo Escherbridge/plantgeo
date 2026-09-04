@@ -573,3 +573,66 @@ completed destination never skips revalidation of its source receipts.
 Coarse z09/z05/z00 rows derive directly from each z13 day. Row-level winner provenance becomes null
 after aggregation because a coarse cell has no single physical source row; each day checkpoint
 instead binds every derived object to the exact z13 part key and SHA-256 from which it was derived.
+
+# Drop-packet builder
+
+`build_drop_packet.py` produces decision D1's three-part proof for one environmental relation
+(track `environmental_postgres_retirement_20260904`): a counted parity receipt, a repository-wide
+zero-reader proof in the c2 removal-packet form, and an archive record whose sha256 is explicitly
+owed. It is the tool that turns "we believe nothing reads this" into a re-runnable measurement, and
+its exit code is the gate -- 0 `ready`, 1 `blocked`, 2 refused-and-no-packet-emitted -- matching the
+per-layer parity modules it cites.
+
+It fires nothing. There is no `--apply`; a literal `--apply` in argv is refused before parsing so the
+refusal teaches rather than reading as an argparse typo. No database connection, no bucket listing,
+no `pg_dump`, no migration. That is a design constraint, not a phase: production was unreachable when
+the tool was built, and a packet builder that needed production in order to answer "blocked" would be
+useless in exactly the situation where a blocked answer matters most. The whole engine lives in
+`src/agri_data_service/retirement/` and imports no database, HTTP or object-store client at all --
+`tests/retirement/test_readers.py` asserts that against the imports, because it is what earns the
+package the right to exempt itself from its own reader scans.
+
+The two seams where evidence enters are files, not connections. A parity receipt is the JSON an
+operator captured by running the layer's own command (`pipeline/direct/{vegetation,
+weather_observations,drought}/parity.py`), passed with `--parity-receipt` or `--layer-parity-receipt
+<layer>=<path>` and recognised by STRUCTURE rather than by a declared name, so a receipt captured
+from the wrong layer cannot be filed under the layer whose packet is being built. An unrecognised
+shape is refused; it never normalises into a permissive default. The second seam is
+`--twin-newest-completion-at <lane>=<iso8601>`, the only thing that can prove a lane carrying a
+rewrite epoch has actually been rewritten.
+
+Four recorded facts are enforced by code here rather than described in prose, and each is worth
+knowing before editing anything in the package:
+
+* **`geo.features` has no table drop, ever.** `sql/agent/feature_value_near_point.sql` keeps a live
+  read for `interventions`, which RUNBOOK 0.26.1 keeps in PostgreSQL permanently. Asking for
+  `--form table_drop` raises `DropFormRefusedError` and emits NO packet, because a blocked packet implies
+  a condition that could clear and this one cannot. Its only form is a row-delete, and the DELETE and
+  the archive share ONE predicate scoped to the layers the packet actually covers -- a one-layer proof
+  must never authorise a seven-layer delete.
+* **A live reader is a refusal whatever the ledger says.** The A3 inventory is PARSED, not
+  transcribed, so the tool cannot drift from the evidence file; but it is an input, never an
+  authority. `agri.spatial_cell` is classed "drop now" there and the tree holds 302 references across
+  88 files, so the scan blocks and a second, louder `inventory_contradicted` names the ledger row that
+  is wrong. A recorded `SurvivalDependency` keeps that refusal alive even if a later edit narrows a
+  scan surface.
+* **An unrewritten Parquet twin is never called under-coverage.** `fire-perimeters` was re-registered
+  from `daily_series` to `static_lookup` on 2026-09-04, which makes its 45 pre-existing partition days
+  unreadable as coverage; a receipt taken before the first fresh snapshot compares a live PostgreSQL
+  population against an empty lane. `parity.assess_shortfall` checks the epoch BEFORE it reads any
+  verdict, so the answer is `twin_not_rewritten` or `twin_rewrite_unproven` -- both blocking, neither a
+  claim that the twin is short. "Nobody counted" is a third class, `unmeasured`, for the same reason.
+* **Nothing is dropped with `CASCADE`.** `geo.mv_signal_observation_day` is genuinely zero-reader now,
+  but `geo.v_observation_day_census` unions it with a feature leg the app still reads, so the drop owes
+  a same-migration redefinition. The packet demands a `--co-migration` file that exists and names the
+  dependent object, and refuses one containing `CASCADE`. `_drop_statement` raises if a generated
+  statement ever contains the word at all.
+
+Two limits are stated in the packet rather than smoothed over. `pg_dump` does not dump a materialized
+view's ROWS -- it writes the definition and a `REFRESH` whose base relations this track is deleting --
+so every matview archives as a definition dump PLUS a `\copy`, and the note says why both exist. And a
+name-level grep cannot separate "reads the fire-perimeters rows from PostgreSQL" from "publishes the
+fire-perimeters Parquet lane", because the layer name and the lane slug are the same string; the
+per-layer scan narrows to the SQL string-literal spelling and the packet still demands a named
+`--layer-reader-proof` citation per layer. An honest limit that forces a human citation beats a grep
+that reads as a proof.

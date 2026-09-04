@@ -2,32 +2,32 @@
   "checks": [
     {
       "command": "ruff format --check src tests scripts",
-      "duration_seconds": 0.076,
+      "duration_seconds": 0.068,
       "name": "format",
       "status": "pass"
     },
     {
       "command": "ruff check src tests scripts",
-      "duration_seconds": 0.063,
+      "duration_seconds": 0.094,
       "name": "lint",
       "status": "pass"
     },
     {
       "command": "mypy src scripts",
-      "duration_seconds": 1.466,
+      "duration_seconds": 1.394,
       "name": "mypy",
       "status": "pass"
     },
     {
       "command": "pytest -q",
-      "duration_seconds": 119.907,
+      "duration_seconds": 117.886,
       "name": "pytest",
       "status": "pass"
     }
   ],
   "digest_domain": "plantgeo.agri-data-service.quality-receipt.v2",
-  "digest_file_count": 1182,
-  "generated_at": "2026-09-04T16:55:11.228817Z",
+  "digest_file_count": 1197,
+  "generated_at": "2026-09-04T18:15:35.121466Z",
   "schema_version": 2,
   "tools": {
     "mypy": "mypy 2.3.0 (compiled: yes)",
@@ -36,5 +36,5 @@
     "ruff": "ruff 0.15.22",
     "uv": "uv 0.9.18 (0cee76417 2025-12-16)"
   },
-  "tree_digest": "sha256:ac63e662c13239fda9d6fade8f09415aad68b5325c87f3fd2eb72b1c9357f62e"
+  "tree_digest": "sha256:2d851c68d4943064ef8011823e93f486790d23d5d0be16ebc73c1a3dd53adbc8"
 }
