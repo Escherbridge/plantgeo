@@ -43,28 +43,32 @@ postgres:
   auto_publish: false
   # Source ids are bare (no schema prefix) to match what the deployed Martin
   # auto-publishes today; the client composes them in src/lib/map/sources.ts.
+  # FIVE FUNCTIONS WERE UNPUBLISHED HERE ON 2026-09-04 -- sensor_tiles, evacuation_zone_tiles,
+  # burn_severity_tiles and watershed_tiles in wave C of
+  # environmental_postgres_retirement_20260904, and fire_risk_tiles last, once the
+  # `fire-perimeters` lane was re-registered as the `static_lookup` snapshot it actually is. All
+  # five layers read the Parquet plane now (src/lib/map/sources.ts, PARQUET_FEATURE_SOURCE_IDS),
+  # so Martin opens NO PostgreSQL read for any environmental layer: what is left below is the
+  # interventions/buildings pair and the two OSM tables. The SQL functions still EXIST in the
+  # database: dropping them needs the three-part packet -- parity receipt, zero-reader proof,
+  # archived pg_dump -- and an owner-confirmed migration, which is wave D.
+  # `drizzle/0039_drop_environmental_tile_functions.sql` is written, now names all five, and is
+  # deliberately unjournalled.
+  #
+  # DEPLOY THE APP BEFORE THIS FILE, AND MARTIN AFTER IT. `auto_publish: false` means Martin
+  # serves exactly what is listed here, so once this config is live an already-loaded browser tab
+  # holding the previous style still asks for the unpublished ids and gets a 404 for each. Since
+  # 2026-08-21 every function has its own MapLibre source, so that 404 blanks only the layer it
+  # belongs to rather than all six -- but it is still a blank layer until that tab reloads, and
+  # the app deploy is what stops the ask. The reverse order costs fire perimeters a visible
+  # outage; this order costs nothing, because a Martin source no style names is simply unrequested.
   functions:
-    fire_risk_tiles:
-      schema: geo
-      function: fire_risk_tiles
-    sensor_tiles:
-      schema: geo
-      function: sensor_tiles
     intervention_tiles:
       schema: geo
       function: intervention_tiles
     building_tiles:
       schema: geo
       function: building_tiles
-    evacuation_zone_tiles:
-      schema: geo
-      function: evacuation_zone_tiles
-    burn_severity_tiles:
-      schema: geo
-      function: burn_severity_tiles
-    watershed_tiles:
-      schema: geo
-      function: watershed_tiles
   tables:
     osm_roads:
       schema: geo

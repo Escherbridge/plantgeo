@@ -247,3 +247,31 @@ into a zero-reader relation with a zero-value hourly refresh in `jobs/matview_re
 
 **Deploy order is load-bearing: app first, then Martin.** `auto_publish: false` means an already-loaded
 tab still asks for the four unpublished ids and would 404 until reload.
+
+## A5 IS INVALIDATED AS WRITTEN — measured 2026-09-04 by the drop-packet builder
+
+A5 says: drop the relations A3 marked zero-reader/no-filler in one Alembic migration. **The first real run of
+`scripts/build_drop_packet.py` refutes that premise for ALL NINE of them.** Every `drop_now` row returns
+`inventory_contradicted`: the A3 inventory's "read by NONE" counted only `SELECT`s, and missed refreshers,
+schema declarations and test pins.
+
+Measured, per relation:
+- `agri.spatial_cell` — **302 references across 85 files**, plus a recorded survival dependency with five
+  cited readers. The inventory's drop-now classification is not merely stale, it is dangerous: dropping it
+  re-freezes vegetation, which is what wave B exists to prevent.
+- `public.drought_data` — closest to ready, and still blocked by exactly ONE consumer:
+  `src/lib/server/db/schema.ts:346` (`export const droughtData = pgTable("drought_data", {`). Criterion 4's
+  wording — legacy code DELETED, not merely unused — makes that a real blocker, not noise.
+- `geo.mv_soil_survey_grid`, `geo.mv_soil_survey_union`, `geo.mv_feature_observation_day_axis` — still
+  refreshed by `jobs/matview_refresh.py` and pinned by `test_matview_refresh.py`.
+- `geo.historical_fire_data`, `geo.historical_water_drought`, `geo.historical_vegetation` — 4-5 files each,
+  including the `ingest.validation` branch the inventory itself flagged as a caveat.
+- `geo.features` (323 files) and `geo.geometry` (314 files) — both far from a zero-reader proof.
+
+**A5 therefore becomes: discharge each relation's blockers first, then drop what clears.** The nine are not
+a batch. Re-run `build_drop_packet.py --relation <name>` after each blocker is cleared; a relation is ready
+only when its packet says so, never because the inventory said so.
+
+**Keep the inventory as a map, not a warrant.** It remains the right index of what exists and what gates
+what — it was wrong only about reader counts, which is exactly the thing a grep-backed tool measures better
+than a reading pass. This is the three-part proof doing its job on its first run.
