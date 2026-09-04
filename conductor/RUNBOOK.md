@@ -295,6 +295,59 @@ conformity c2, dependency removals). PostgreSQL retirement stays UNAUTHORIZED un
   API / PMTiles, then one Alembic migration dropping the objects with proof packets, then the fill code
   removed the c2 way (zero imports, removal packets). Plan: continuation step 2b; shrink track plan.
 
+##### Progress 2026-09-04 — retirement lane, waves A and B (session `plantgeo-1c`)
+Track: `tracks/environmental_postgres_retirement_20260904/`. Five other sessions were live on this repo
+while this ran; this block is appended, nothing above it was rewritten.
+
+- **Pushed and LIVE in production.** `62cd987` (charter + RUNBOOK prune) and `f5510a1` (wave-A code).
+  All four code services SUCCESS at `f5510a1`: `plantgeo-main`, `plantgeo-parquet-api`,
+  `plantgeo-job-executor`, `plantgeo-martin`. First fully green board since the cutover began.
+- **Wave A shipped:** `scripts/compile_availability_bootstrap.py` (the availability bootstrap compiler
+  that A4 needs to end the ~28 s startup census), manifest-trusted provenance as a checkable SHAPE,
+  per-part digests on completion markers, and `geo.mv_signal_observation_day` retired from the matview
+  refresh spec behind a new `out_of_spec` outcome. Receipt `sha256:69b3ecf0…` over 1,134 files,
+  verified identically against a `git archive` extraction — **domain-v2 CRLF normalization is now
+  proven, not assumed.**
+- **Three review findings fixed before the push**, two of which were pre-existing production bugs: the
+  trusted-row guard sat only on the CLI path while the primary in-memory writer bypassed it; and a
+  base-rung repair of a day with ≥11 parts would build a claim, raise at the drain one tick later, have
+  the claim CLEARED, and drop the day from the index permanently while every tick reported success.
+- **Three retired Railway cron services deleted** (`plantgeo-ingest-cron`, `plantgeo-cron-soilgrids`,
+  `plantgeo-cron-mtbs`), owner-authorized. All three carried
+  `startCommand: sh -c 'echo retired-to-plantgeo-job-executor; exit 0'` and pointed at
+  `infra/cron-*/railway.json` files that no longer exist — so they failed in 4 s on every push since
+  `fd79875` and made the board unreadable. Their work already lives in executor lanes. `aevani-web`
+  untouched.
+- **Wave B GREEN and pushed.** Direct-to-Parquet writer packages for vegetation NDVI,
+  weather-observations and drought (~3,000 lines, deliberately unregistered — the join agent lands
+  `lane_registry.py` / `LANE_SPECS`, and a new guard `tests/direct/test_direct_package_registration.py`
+  fails if a package leaves its `PENDING_REGISTRATION` allow-list without actually being registered).
+  Receipt `sha256:7d0da69d…` over 1,181 files, archive-verified identical; `5196 passed, 0 failed`.
+  Three sweeps and one adversarial review to get there: sweep 1 CHANGES-REQUIRED (format, lint 63,
+  mypy 16, pytest 5), review CHANGES-REQUIRED (3 blockers, 3 majors, 6 minors, all three blockers in
+  vegetation), sweep 2 logic-green with 31 lint findings, sweep 3 GREEN.
+- **Two real defects found by review, neither in the code under review's own diff.**
+  `vegetation/source.py` sorted a checksummed record set by `cellKey` alone — not a total order,
+  because Sentinel-2 revisits give one cell several records a day, which is exactly why
+  `_select_clearest` exists. Caught by the author's OWN pinned test, which the author never ran. And
+  `float(record.get("cloudCover", 100.0) or 100.0)` folded a genuine `0.0` into the missing-value
+  default through falsiness, so **a perfectly cloud-free scene ranked last** — the precise inversion of
+  what the selector is for. Both fixed and pinned.
+- **Two findings that change the drop order**, both recorded in the track plan: weather-observations
+  has NO archive endpoint (Open-Meteo `current` only), so **Postgres is its only historical archive**
+  and its drop is gated on a republish completing, not on the forward writer working; and
+  `pipeline/lanes/vegetation.py::export_vegetation_day` documents a governed absence it never writes —
+  an empty day RAISES instead — which is a live lead for some of vegetation's 205 ladder-incomplete days.
+- **Rung census corrected a stale premise.** `build_gap_census` became ladder-aware on 2026-09-02, so
+  "it walks only `GAP_FILL_ZOOM_TIER`" is withdrawn. But its ladder half is SCOPED, not whole-bucket:
+  out-of-scope days are counted and never repaired, and `parquet-drain --selection ladder` — the only
+  tool that walks the whole bucket — has never run against production.
+- **Observability chartered, not started:** `tracks/observability_log_capture_20260903/`. Deliberately
+  build-gated behind this cutover because `QUALITY_RECEIPT.json` digests the whole service tree, so any
+  new module there entangles the two. Resolved on the way: `/ops` is unauthenticated and mounts on every
+  profile, but **neither the agri service nor the executor has any domain**, so it is private-network
+  only — a prerequisite to gate, not an incident.
+
 #### Decisions (owner, 2026-09-04 second grill — the retirement lane; settled, implement do not re-open)
 Chartered as `conductor/tracks/environmental_postgres_retirement_20260904/` (spec, plan, metadata),
 which supersedes `postgres_shrink_ingest_repoint_20260825` P5/P6 and absorbs step 2b.

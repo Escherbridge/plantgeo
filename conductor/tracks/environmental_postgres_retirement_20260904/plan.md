@@ -62,6 +62,49 @@ One agent per layer, each owning `src/agri_data_service/pipeline/direct/<layer>/
 Ordered by map impact: the first three are the layers the lane stop froze.
 
 - [ ] **B1 vegetation NDVI** · **B2 weather-observations** · **B3 drought**
+
+**B1 finding, 2026-09-04 — a latent defect in `pipeline/lanes/vegetation.py`, found not fixed.**
+`export_vegetation_day`'s docstring (`:82`) claims a source-empty day "is a governed absence …
+recorded with `store.write_absence`", but the function body only ever calls `store.write_partition`,
+which by its own contract (`:83`) **refuses a zero-row table**. So a Postgres-empty day RAISES instead
+of governing an absence. B1 worked around it with a read-only pre-check rather than editing a file it
+did not own.
+
+**WITHDRAWN IN FULL — there is no defect. Corrected 2026-09-04 by the F-B1 fix lane, which traced the
+caller instead of stopping at the function.** Two passes confirmed the code reading (the body calls
+`write_partition`; `objectstore.py:551` raises `EmptyPartitionError` on zero rows) and both drew the
+wrong conclusion from it. **The raise is the signal:** `gap_fill.py:1174` catches exactly that class
+and calls `_govern_absent_day`, which marks all four rungs absent coarse-first/base-last and rolls the
+ladder back as a unit if any rung refuses; `gap_fill.py:1704` then extends the availability index with
+`terminal_state="governed_absence"`. The canonical path already produces a durable, indexed, four-rung
+governed absence carrying the exporter's own zero-row result as proof. Only the docstring is loose —
+it misattributes the write to the function rather than its caller.
+
+Two earlier claims recorded here are therefore both dead: the link to vegetation's 205
+ladder-incomplete days (those are days whose BASE rung exists and whose derived rungs do not, so a day
+that never wrote a base rung cannot be among them), and the underlying defect itself.
+
+**The workaround was the real bug.** `backfill.py::_postgres_has_rows` intercepted zero-row days
+*before* the mechanism that would have settled them, so each one wrote nothing durable and the walker
+re-selected the same oldest days every turn, forever. Deleted; every day now goes through
+`fill_one_lane_day`. Lesson recorded in `pipeline/direct/AGENTS.md`: a docstring that misattributes a
+responsibility reads exactly like a missing implementation — trace the caller before building around it.
+
+**B1 note — the ownership boundary is a guess and must be verified before activation.**
+`pipeline/direct/vegetation/products.py:49` pins `VEGETATION_DIRECT_WRITER_START_DAY = date(2026, 9, 5)`,
+the split between the source-direct forward writer and the Postgres-reading backfill. `parity.py`
+reports the real newest Postgres day; read it and correct the constant before the lane is registered.
+A boundary set too early double-writes; too late leaves a hole neither driver owns.
+
+**B2 finding, 2026-09-04 — weather-observations has NO archive endpoint, so its drop sequences
+differently from every other layer.** Its Postgres producer (`ingest/open_meteo.py`'s `WEATHER_LAYER`)
+polls Open-Meteo's `current` endpoint, which takes no `start_date`/`end_date` and answers only "now",
+gated by a 3-hour `MAX_OBSERVATION_AGE`. There is no settled day to fetch, so the writer accumulates a
+day incrementally across many polls — water-gauges' shape, not climate/soil's. Consequence for D1:
+**for this layer the Postgres table IS the only historical archive.** Nothing upstream can reproduce
+it. Its drop is therefore gated on the existing Postgres-reading adapter republishing history into
+Parquet to completion (`parquet-drain --selection missing --layer weather-observations`), not merely
+on the forward writer working. Verify that republish finished before writing this layer's drop packet.
 - [ ] **B4 fire-perimeters** · **B5 sensors** · **B6 watersheds** · **B7 evacuation-zones**
 - [ ] **B8 burn-severity**
 
