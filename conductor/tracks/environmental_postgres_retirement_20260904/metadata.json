@@ -1,0 +1,81 @@
+{
+  "slug": "environmental_postgres_retirement_20260904",
+  "title": "Environmental Postgres retirement — backfill, cut over, drop",
+  "type": "infrastructure",
+  "status": "active",
+  "created_on": "2026-09-04",
+  "depends_on": [
+    "gapless_parquet_publication_20260901",
+    "parquet_production_acceptance_20260901"
+  ],
+  "runbook_section": "LIVE / Environmental Postgres retirement (2026-09-04 second grill)",
+  "supersedes": {
+    "postgres_shrink_ingest_repoint_20260825:p5-p6": "The PostgreSQL retirement scope moves here in full, with the expanded 2026-09-04 charter (feed and social features only) and the per-layer drop gate."
+  },
+  "note": "Owner direction 2026-09-04: PostgreSQL keeps feed and social features only. Refined by the same-night second grill into four settled decisions (D1 per-layer drop on a three-part proof, D2 parity-with-Postgres backfill bar, D3 manifest-trust availability bootstrap, D4 full cutover scope). The time-slider startup cost dies at A4.",
+  "production_authorization": "Agents prepare, dry-run and record every production action. Railway variable edits, --apply operator verbs, pg_dump archival and every Alembic migration against production are owner-confirmed before they fire. Retirement of an individual relation no longer waits for the global GREEN acceptance verdict, but does require its complete three-part packet.",
+  "partitions": {
+    "computed_at": "2026-09-04T00:00:00-06:00",
+    "computed_at_commit": "8188539fe6715249cfad4a5794c1e0456141308e",
+    "confidence": "hypothesis",
+    "note": "Derived from the RUNBOOK key-files list and a directory read of pipeline/direct, jobs and sql/agent at this commit. The per-layer owns lists under pipeline/direct/<layer>/ are predicted paths — six of the eight directories do not exist yet. Re-verify with a real grep before any agent claims a boundary.",
+    "lanes": [
+      {
+        "id": "A1",
+        "owns": [
+          "services/agri-data-service/scripts/compile_availability_bootstrap.py",
+          "services/agri-data-service/src/agri_data_service/pipeline/parquet/availability_index.py",
+          "services/agri-data-service/src/agri_data_service/foundation/parquet/completion.py"
+        ]
+      },
+      {
+        "id": "A2",
+        "owns": [
+          "services/agri-data-service/src/agri_data_service/jobs/matview_refresh.py"
+        ]
+      },
+      {
+        "id": "A3",
+        "owns": [
+          "conductor/tracks/environmental_postgres_retirement_20260904/evidence/retirement-inventory.md"
+        ],
+        "reads_only": true
+      },
+      {
+        "id": "B1-B8",
+        "owns": [
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/<layer>/"
+        ],
+        "note": "One agent per layer. Existing siblings climate/ and soil/ are the shape to copy; fire_detections.py and water_gauges.py are single-module examples."
+      },
+      {
+        "id": "C1",
+        "owns": [
+          "drizzle/",
+          "infra/martin/"
+        ]
+      },
+      {
+        "id": "C2",
+        "owns": [
+          "services/agri-data-service/src/agri_data_service/sql/agent/",
+          "services/agri-data-service/src/agri_data_service/agent/tools.py"
+        ]
+      }
+    ],
+    "shared_writes": [
+      "pipeline/parquet/lane_registry.py, execution/job_executor_service.py (LANE_SPECS) and interface/cli/data.py are serialized registries with exactly one owner at a time. A join agent lands every registration after the layer work is reviewed; no B-lane agent edits them.",
+      "The quality receipt (QUALITY_RECEIPT.json) is rewritten by exactly one sweep at the end of a wave, never by a lane agent.",
+      "conductor/RUNBOOK.md is shared with concurrent sessions: append a named section, never rewrite the header, never git add conductor/ wholesale."
+    ],
+    "tripwires": [
+      "No relation is dropped without its three-part packet; a missing archived pg_dump is a hard stop.",
+      "A parity comparison that under-covers is a blocker, never waived by a note.",
+      "A manifest-trusted availability row is labelled as such; never emit a digest not computed from the object it describes.",
+      "Railway variable edits, --apply operator verbs and production migrations are owner-confirmed.",
+      "Restart Martin after any tile migration; a missing tile function 404s the whole composite.",
+      "Never run PlantGeo locally (next dev/build, docker). Prod DSN and live Martin only.",
+      "Implementation agents run no tests; a separate reviewer context runs the single end-of-wave sweep."
+    ]
+  }
+}
