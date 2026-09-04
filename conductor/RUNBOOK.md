@@ -34,7 +34,9 @@ zooms. No browser console error explained the failures.
 
 ### HANDOFF — 2026-09-03 03:10 MDT, for continued execution. START HERE.
 
-**Branch** `main` · **Last commit** `ac9ec00 chore: remove the five removal-ready dependencies` (plus this
+**Branch** `main` · **Last commit** `152feca fix(executor): release lanes held by a dead letter; add ops
+jobs-supersede-run; fix geometry-lane DuckDB extension directory` (pushed 2026-09-04 ~02:00 UTC; see
+"Progress 2026-09-04") · previously `ac9ec00 chore: remove the five removal-ready dependencies` (plus this
 docs commit) · tree clean, level with `origin/main` · pushed 2026-09-03: `1da1a28` receipt CRLF fix, `4a679d2`
 wave-3 closure, `fd79875` root `railway.json` removed, `ac9ec00` dependency removals. Production: **all three
 services run `ac9ec00`** - `plantgeo-job-executor` `4f2502a0` (the first new-code executor was `c3ffa03d`,
@@ -241,6 +243,22 @@ conformity c2, dependency removals). PostgreSQL retirement stays UNAUTHORIZED un
   watersheds and evacuation-zones freeze (step 1b). Postgres keeps only community features.
 - Process: push one step per session; one separate closure review for changes under ~500 lines; RUNBOOK
   and track updates before the final sweep; grill once, early.
+- **Later the same night (owner, verbatim intent): PostgreSQL is for the feed and social features only;
+  remove the objects for the environmental data and drop support for any job fills entirely.** Recorded
+  interpretation, to be confirmed at the next grill: (a) every environmental relation in Postgres goes
+  once its Parquet equivalent is proven - the `geo.*` environmental features/geometry/layers, every
+  `geo.mv_*` and `agri.mv_*` matview, the `agri` signal/observation planes and their refresh state, the
+  vegetation publication queue, the archive-walk ledgers; (b) every Postgres-filling lane retires - the ten
+  `postgres-*` lanes (stopped in step 1b), `jobs-firms-archive`, `jobs-streamflow-archive`, the four
+  `maintenance-*` lanes, `jobs-matview-refresh`, `jobs-strategy-mv-refresh`, `mtbs-forward`,
+  `soilgrids-cache-warm`, `vegetation-catch-up` (its queue is Postgres), and the archive/coverage/historical
+  fill commands behind them; (c) the executor keeps its own `agri.job_*` checkpoint ledger until an
+  object-store scheduler ledger replaces it - that is the one job table the Parquet lanes still need;
+  (d) prerequisites before any drop: direct-to-Parquet writers for the ingest-first layers (drought,
+  weather-observations, vegetation NDVI, fire-perimeters, sensors, watersheds, evacuation-zones,
+  burn-severity), the agent tools' signal queries and Martin's four tile functions moved to the Parquet
+  API / PMTiles, then one Alembic migration dropping the objects with proof packets, then the fill code
+  removed the c2 way (zero imports, removal packets). Plan: continuation step 2b; shrink track plan.
 
 #### Assumptions (unasked; highest reversal cost first)
 - Wave 3 does not need its own adversarial review before production relies on it · default taken:
@@ -308,6 +326,13 @@ conformity c2, dependency removals). PostgreSQL retirement stays UNAUTHORIZED un
    edit (`parse_activation` refuses an acknowledgement for an inactive lane). Railway redeploys the executor
    on the variable change; confirm the inventory prints the ten as `shadow`. Record the last ingested day of
    each Postgres-fed layer in the evidence file - that is the day those layers freeze at.
+   1d. **Drop `geo.mv_signal_observation_day` from the matview refresh spec** (next small push, its own
+   review): observed 2026-09-04 02:08 UTC, the refresh of that pivoted signal rollup fails after 302 s on
+   the per-view statement timeout and dead-letters the `matview-refresh` shard, so `jobs-matview-refresh`
+   stays red for a view the Parquet pivot replaced. Same shape as the two absent relations removed in p3.
+   1e. `soilgrids-cache-warm` reads `agri.spatial_cell`, which left with the greenfield baseline
+   (`PostgresError: relation "agri.spatial_cell" does not exist`, 02:03 UTC); it is deactivated with the ten
+   `postgres-*` lanes in step 1b and its legacy service `plantgeo-cron-soilgrids` can be removed with them.
    1c. **Measure `parquet-soil-survey`** once: supersede `d4896a98-5e41-4fad-b31b-6c265375db19` with the
    evidence "cap removed, measuring the paged export under the 1200 s budget", then watch ONE bucket. If it
    dead-letters on the budget again, do not supersede again; the next decision is the timeout or a sharded
@@ -320,6 +345,15 @@ conformity c2, dependency removals). PostgreSQL retirement stays UNAUTHORIZED un
    `oversized_records`/`bytes_read`; a `parquet-*` lane must print `repaired` and `availability_*`
    counters (expect `availability_not_bootstrapped` everywhere). Record the tick in
    `conductor/tracks/gapless_parquet_publication_20260901/evidence/post-deploy-tick-2026-09-03.md`.
+2b. **Postgres environmental retirement (owner direction 2026-09-04, see Decisions)** - charter under
+   `postgres_shrink_ingest_repoint_20260825` as the successor to P5/P6 and run it after steps 4-5 unless the
+   owner reorders: (i) inventory every Postgres environmental relation and every lane/command that fills
+   it (start from `LANE_SPECS`, `jobs/dispatch.py`, `ingest/lanes.py`, `db/agri/**`, `sql/**`); (ii) build
+   direct-to-Parquet writers for the eight ingest-first layers, one proving run each; (iii) move the agent
+   signal queries and Martin's four tile functions off Postgres; (iv) deactivate the remaining fill lanes;
+   (v) one Alembic migration dropping the environmental objects, receipt-verified, rehearsed on
+   `agri_sweep`; (vi) delete the fill commands and their tests with removal packets. The feed/social
+   tables (Drizzle side) are untouched throughout.
 2. **Browser check** - DONE, GREEN (see Progress). Original text: in a fresh anonymous session at the default PNW camera: fire (cells above z13 with
    the not-a-perimeter caption; no `/api/fires` request), climate air temperature at z8 (filled
    tessellation, one rung, no cracks), vegetation and water at z5 (cells), soil moisture at z5 (no

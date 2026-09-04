@@ -661,3 +661,23 @@ with a real grep once HEAD has moved; only a consumer may upgrade this to
       fire-perimeters, sensors, watersheds and evacuation-zones freeze. Postgres keeps community features.
 - [ ] Charter direct-to-Parquet writers for vegetation (NDVI), weather-observations and drought first (the
       three map layers the stop freezes), then fire-perimeters, sensors, watersheds, evacuation-zones.
+
+## Owner direction 2026-09-04 (later): Postgres keeps feed and social features only
+
+Verbatim intent: remove the objects for the environmental data and drop support for any job fills
+entirely. This supersedes the per-lane P5 pacing: the end state is a database with community tables
+only and an executor whose lanes are all Parquet writers. Sequence (RUNBOOK 2026-09-04 step 2b):
+
+- [ ] Inventory: every environmental relation in `db/agri/**` and `geo.*`, and every lane/command that
+      fills one (executor `LANE_SPECS`, `jobs/dispatch.py`, `ingest/lanes.py`, archive/coverage/historical
+      fill verbs). Mark each as: drop after Parquet proof / keep (executor `agri.job_*` ledger only).
+- [ ] Direct-to-Parquet writers for the eight ingest-first layers (drought, weather-observations,
+      vegetation NDVI, fire-perimeters, sensors, watersheds, evacuation-zones, burn-severity), one proving
+      run each, then activation and the matching `parquet-*` generic lane retired.
+- [ ] Agent signal queries (`sql/agent/*.sql`) and Martin's four tile functions served from the Parquet
+      API / PMTiles; browser and agent parity evidence.
+- [ ] Deactivate the remaining Postgres fill lanes (`jobs-*-archive`, `maintenance-*`,
+      `jobs-matview-refresh`, `jobs-strategy-mv-refresh`, `mtbs-forward`, `vegetation-catch-up`).
+- [ ] One Alembic migration dropping the environmental objects, rehearsed on `agri_sweep`, receipt
+      verified; declarative tree regenerated.
+- [ ] Delete the fill commands, their SQL and tests with removal packets (zero imports proof).

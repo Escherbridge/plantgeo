@@ -246,3 +246,64 @@ bucket with `supersedes run <id> by clock` in the lane detail; `parquet-drought`
 `parquet-evacuation-zones`, `parquet-fire-perimeters`, `parquet-soil-survey` and `vegetation-catch-up`
 report `failed` with `operator supersession required: agri-service ops jobs-supersede-run ...` in
 `handoff_blockers`.
+
+### Observed at `152feca` - deployment `b2353e15`, SUCCESS 02:02:10 UTC 2026-09-04
+
+- Image build: `quality receipt verified: sha256:ef0d738a... over 1131 files` (01:53:43 UTC), the same
+  digest verified locally on a `git archive` of the index tree before the push.
+- First ticks (02:03 UTC): `plantgeo_job_executor_failed_run_superseded release=clock` for
+  `soilgrids-cache-warm` (bucket 01:25, superseded `f6688630-f2a5-4711-a94d-be7ccc15897f`) and
+  `jobs-matview-refresh` (bucket 02:00, superseded `1de3f897-5287-41cb-9fcc-134ec9c97dfb`). The frozen-lane
+  rule is live: two of the five coalesce lanes opened their current bucket on the first tick that reached
+  them; the others follow as fairness gives them a turn.
+- `soilgrids-cache-warm` failed its first new attempt at 02:03:14 (`scheduled_command_exit`, retry_wait 1/5):
+  the warmer's own command exits non-zero, exactly as on 2026-09-02. It is not a scheduler defect; under
+  the breaker it will dead-letter this bucket, reopen twice more by the clock, then be held on the third
+  consecutive failure with the verb named. Its cause belongs to the lane (`scripts/warm-soilgrids.mjs`).
+- Operator supersessions recorded 02:1x UTC through `railway run` (dry runs first, all four printed one
+  receipt each without writing; ledger `switchback.proxy.rlwy.net:37967/plantgeo`):
+  `parquet-drought` incident `75392a52-28fa-4520-80d9-fcaf916e0e36`, `parquet-evacuation-zones`
+  `c654b9fd-996b-402b-a7f2-5d97d40d54e7`, `parquet-fire-perimeters` `be044fde-c268-49af-8e36-71dd3abc9fb4`,
+  `vegetation-catch-up` `cd03bc41-be1c-4050-870f-ff2eff8d43ea`; each `opens_no_earlier_than
+  2026-09-04T02:00:00+00:00`. The four runs, their dead letters and attempts were not written.
+
+### Ticks 02:03-02:13 UTC at `152feca`
+
+- Tick 1 (02:03:08-02:11:18): `soilgrids-cache-warm` and `jobs-matview-refresh` released by the clock and
+  run. The tick closed `tick_unhealthy` with SEVEN failing lanes, down from ten: `jobs-matview-refresh`,
+  `parquet-drought`, `parquet-evacuation-zones`, `parquet-fire-perimeters`, `parquet-soil-survey`,
+  `soilgrids-cache-warm`, `vegetation-catch-up`. The four operator supersessions were recorded after this
+  tick had planned, so its held verdicts for the replay lanes predate them.
+- `jobs-matview-refresh` (new run `0d15eced-9d27-4101-a1ed-92f285064724`): the wave-1 preflight worked
+  (no `matview_refresh_failed` for the two absent relations), every small view refreshed concurrently
+  (`geo.mv_layer_hourly_activity` 343 rows, `geo.mv_drought_observation_day` 1,455 rows,
+  `agri.mv_forecast_ml_daily_serving` 0 rows, ...), but `geo.mv_signal_observation_day` failed after
+  302.14 s with `DBAPIError` (the per-view statement timeout on the pivoted signal rollup). The inner
+  `jobs-pulse` lane dead-lettered 1 of 3 claimed shards (`standing_dead_letters=205`) and exited 1, so the
+  outer run's shard entered `retry_wait` 1/5 at 02:11:16. Verdict: the scheduler repair is proven (the lane
+  opened, ran and reported); the lane is red on a view that belongs to the plane the Parquet pivot
+  replaced. Owed: remove `geo.mv_signal_observation_day` from the refresh spec (next push).
+- `soilgrids-cache-warm` (new run `ef235765-44f5-4ec9-82a9-ba705c583eb7`): failed attempt 1 at 02:03:14 with
+  `PostgresError: relation "agri.spatial_cell" does not exist` from `scripts/warm-soilgrids.mjs:80`. The
+  warmer's target table left with the greenfield baseline; the lane can never succeed and is deactivated
+  together with the ten `postgres-*` lanes (step 1b), which the owner's "Postgres keeps only community
+  features" decision covers.
+- Tick 2 (02:11:49-): `postgres-fire-perimeters` released by the clock at 02:12:39 (new run
+  `1460dd2c-27f5-4534-b588-9266e450fed0`, superseding `e43b3ab9-ca7c-48d2-a157-b24dfa8445c9`) and reached the
+  geometry stage by 02:13:03 (`geometry_version_undatable` for 63 WFIGS identifiers), which the 2026-09-02
+  runs never reached: the wave-1 adaptive WFIGS paging is walking the feed. `maintenance-validate-streams`
+  released by the clock at 02:13:11 (new run `cb220f06-de72-4990-b1f4-637362651cb4`).
+
+### Step 1b applied - 02:2x UTC 2026-09-04
+
+`PLANTGEO_JOB_EXECUTOR_ACTIVE_LANES` and `PLANTGEO_JOB_EXECUTOR_HANDOFF_ACKNOWLEDGEMENTS` on
+`plantgeo-job-executor` set through the Railway MCP (`set-variables`, redeploy not skipped): 37 -> 26 lanes
+and 36 -> 26 acknowledgement tokens. Removed: the ten `postgres-*` lanes (owner decision 2026-09-04) and
+`soilgrids-cache-warm` (its target `agri.spatial_cell` no longer exists). The 26 that remain:
+`fire-detections-direct-forward`, `jobs-firms-archive`, `jobs-matview-refresh`, `jobs-strategy-mv-refresh`,
+`jobs-streamflow-archive`, the four `maintenance-*-archive-*`, `maintenance-validate-streams`,
+`mtbs-forward`, thirteen `parquet-*` generic lanes, `vegetation-catch-up`, `water-gauges-direct-forward`.
+The in-flight `postgres-fire-perimeters` run (`1460dd2c`, WFIGS walk past the geometry stage) was cut by
+the redeploy and its lane is now shadow, so its ledger run stays open and harmless. Verification owed at
+the next session: the executor's inventory line prints `active_lane_count=26`, the ten `postgres-*` rows
+read `shadow`, and the last ingested day of each Postgres-fed layer is recorded here as its freeze day.
