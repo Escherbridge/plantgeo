@@ -32,14 +32,20 @@ from typing import Final
 import pytest
 
 from agri_data_service.foundation.parquet.completion import (
+    COMPLETION_PARTS_SCHEMA_VERSION,
     COMPLETION_SCHEMA_VERSION,
     DERIVED_EMPTY_FIELD,
+    PARTS_FIELD,
+    CompletedPart,
     PartitionCompletion,
     PartitionCompletionError,
 )
 
 NOW: Final = datetime(2026, 9, 2, 12, 0, tzinfo=UTC)
 RUN_ID: Final = "run-completion"
+DAY_PREFIX: Final = "layer=test-lane/kind=observed/zoom=13/year=2026/month=09/day=02"
+FIRST_DIGEST: Final = "a" * 64
+SECOND_DIGEST: Final = "b" * 64
 
 
 def _ordinary() -> PartitionCompletion:
@@ -123,3 +129,98 @@ def test_a_stored_zero_part_marker_decodes_only_with_the_flag() -> None:
 
     with pytest.raises(PartitionCompletionError, match="at least one part file"):
         PartitionCompletion.from_json_bytes(payload)
+
+
+def _recorded_parts() -> tuple[CompletedPart, ...]:
+    return (
+        CompletedPart(relative_path=f"{DAY_PREFIX}/part-0.parquet", row_count=25, byte_count=900, sha256=FIRST_DIGEST),
+        CompletedPart(relative_path=f"{DAY_PREFIX}/part-1.parquet", row_count=15, byte_count=700, sha256=SECOND_DIGEST),
+    )
+
+
+def _with_parts() -> PartitionCompletion:
+    return PartitionCompletion(
+        part_count=2,
+        row_count=40,
+        completed_at=NOW,
+        run_id=RUN_ID,
+        parts=_recorded_parts(),
+    )
+
+
+def test_a_marker_recording_its_parts_declares_the_second_version_and_round_trips() -> None:
+    """The version is DERIVED from the field, so a recorded marker re-serializes to its own bytes."""
+    payload = _with_parts().to_json_bytes()
+    decoded = json.loads(payload)
+
+    assert decoded["schema_version"] == COMPLETION_PARTS_SCHEMA_VERSION
+    assert [part["sha256"] for part in decoded[PARTS_FIELD]] == [FIRST_DIGEST, SECOND_DIGEST]
+    assert PartitionCompletion.from_json_bytes(payload) == _with_parts()
+    assert PartitionCompletion.from_json_bytes(payload).to_json_bytes() == payload
+
+
+def test_the_two_versions_are_bound_to_the_presence_of_the_field() -> None:
+    """A version and a field that disagree could not re-serialize, so neither spelling is admitted."""
+    v1_with_parts = json.dumps(
+        {
+            "schema_version": COMPLETION_SCHEMA_VERSION,
+            "part_count": 2,
+            "row_count": 40,
+            "completed_at": NOW.isoformat(),
+            "run_id": RUN_ID,
+            PARTS_FIELD: [part.to_wire() for part in _recorded_parts()],
+        },
+        sort_keys=True,
+    ).encode("utf-8")
+    v2_without_parts = json.dumps(
+        {
+            "schema_version": COMPLETION_PARTS_SCHEMA_VERSION,
+            "part_count": 2,
+            "row_count": 40,
+            "completed_at": NOW.isoformat(),
+            "run_id": RUN_ID,
+        },
+        sort_keys=True,
+    ).encode("utf-8")
+
+    with pytest.raises(PartitionCompletionError, match=f"declares schema_version {COMPLETION_PARTS_SCHEMA_VERSION}"):
+        PartitionCompletion.from_json_bytes(v1_with_parts)
+    with pytest.raises(PartitionCompletionError, match="records its parts"):
+        PartitionCompletion.from_json_bytes(v2_without_parts)
+
+
+def test_a_recorded_part_list_must_describe_every_part_the_marker_counts() -> None:
+    """A PARTIAL list would let a bootstrap bind a day by digest while one of its parts went unproven."""
+    with pytest.raises(PartitionCompletionError, match="must record all 2 of them"):
+        PartitionCompletion(part_count=2, row_count=25, completed_at=NOW, run_id=RUN_ID, parts=_recorded_parts()[:1])
+
+
+def test_recorded_parts_must_be_sorted_unique_and_add_up() -> None:
+    first, second = _recorded_parts()
+    with pytest.raises(PartitionCompletionError, match="sorted unique relative paths"):
+        PartitionCompletion(part_count=2, row_count=40, completed_at=NOW, run_id=RUN_ID, parts=(second, first))
+    with pytest.raises(PartitionCompletionError, match="while the marker claims"):
+        PartitionCompletion(part_count=2, row_count=41, completed_at=NOW, run_id=RUN_ID, parts=_recorded_parts())
+
+
+def test_a_recorded_part_requires_a_real_digest_and_real_counts() -> None:
+    """Nothing enters this field that was not measured from an object: no short digest, no empty part."""
+    with pytest.raises(PartitionCompletionError, match="lowercase SHA-256"):
+        CompletedPart(relative_path=f"{DAY_PREFIX}/part-0.parquet", row_count=1, byte_count=1, sha256="a" * 63)
+    with pytest.raises(PartitionCompletionError, match="at least one row"):
+        CompletedPart(relative_path=f"{DAY_PREFIX}/part-0.parquet", row_count=0, byte_count=1, sha256=FIRST_DIGEST)
+    with pytest.raises(PartitionCompletionError, match="at least one byte"):
+        CompletedPart(relative_path=f"{DAY_PREFIX}/part-0.parquet", row_count=1, byte_count=0, sha256=FIRST_DIGEST)
+
+
+def test_a_derived_empty_receipt_can_record_no_parts() -> None:
+    """It holds nothing by definition, so there is nothing for it to have hashed."""
+    with pytest.raises(PartitionCompletionError, match="must record all 0 of them"):
+        PartitionCompletion(
+            part_count=0,
+            row_count=0,
+            completed_at=NOW,
+            run_id=RUN_ID,
+            derived_empty=True,
+            parts=_recorded_parts(),
+        )

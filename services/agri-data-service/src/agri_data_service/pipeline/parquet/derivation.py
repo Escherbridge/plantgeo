@@ -47,7 +47,7 @@ from typing import TYPE_CHECKING, Final
 
 import polars as pl
 
-from agri_data_service.foundation.parquet.completion import PartitionCompletion
+from agri_data_service.foundation.parquet.completion import CompletedPart, PartitionCompletion
 from agri_data_service.pipeline.parquet.objectstore import GovernedAbsenceConflictError
 from agri_data_service.warehouse.parquet.tiers import DERIVED_ZOOM_TIERS, derive_tier
 
@@ -268,7 +268,26 @@ def _write_tier(  # noqa: PLR0913 - one coordinate of the rung being written per
         )
     row_count = derived.height
     store.write_completion_marker(
-        PartitionCompletion(part_count=part_count, row_count=row_count, completed_at=now(), run_id=run_id),
+        PartitionCompletion(
+            part_count=part_count,
+            row_count=row_count,
+            completed_at=now(),
+            run_id=run_id,
+            # SORTED BY relative_path, NOT BY part_index: `partition_path` mints unpadded part
+            # numbers ("part-2.parquet", "part-10.parquet"), so lexical and numeric order diverge
+            # past nine parts. `_validate_parts` refuses anything that is not already in that
+            # sorted order, and this write is single-pass with no retry, so `receipts` is exactly
+            # and only this rung's current parts -- nothing stale to filter out.
+            parts=tuple(
+                CompletedPart(
+                    relative_path=receipt.relative_path,
+                    row_count=receipt.row_count,
+                    byte_count=receipt.byte_count,
+                    sha256=receipt.sha256,
+                )
+                for receipt in sorted(receipts, key=lambda receipt: receipt.relative_path)
+            ),
+        ),
         layer=layer,
         kind=kind,
         zoom=tier,

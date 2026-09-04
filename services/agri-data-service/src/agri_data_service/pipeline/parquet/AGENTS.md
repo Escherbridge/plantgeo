@@ -534,6 +534,39 @@ the lock protocol. The full lock order is vegetation-wide barrier where applicab
 publication barrier, exclusive lane-day lock, then object mutations; availability takes only the
 exclusive lane publication barrier.
 
+### Provenance is a SHAPE, not a column — `AVAILABILITY_INDEX_SCHEMA` is frozen at v1
+
+A `MANIFEST_TRUSTED_PROVENANCE` row (owner decision D3) is exactly the one shape an ordinary
+`digested` row can never take: `terminal_state == "published"`, `row_count > 0`, and `data_receipts
+== ()`. `availability_row_provenance` reads that shape off the row and nothing else — `provenance` is
+a `@property`, derived, the same discipline `PartitionCompletion.schema_version` uses for the marker
+it is bound to. A provenance COLUMN was the alternative and it does not survive: `_write_generation`
+re-reads the Arrow file it just wrote and compares it byte-for-byte against what it built, and
+`AVAILABILITY_INDEX_SCHEMA` is pinned at version 1 — widening it is a migration this contract does
+not have. `PROVENANCE_FIELD` exists anyway, but only on the JSON evidence documents that flow INTO a
+row (bootstrap-input, terminal evidence) as a DECLARATION the shape must agree with;
+`_require_declared_provenance` and `_parse_declared_row_provenance` both re-derive the class from the
+same shape rule and refuse a document that names one class while looking like the other. Nothing
+downstream of the Arrow file ever reads the word, because the row already says it silently.
+
+**The forward-path guard belongs on the CHOKEPOINT, not on the document loader.**
+`_refuse_trusted_publication_rows` shipped 2026-09-04 wired only into `load_publication_request`,
+which serves exactly one caller — the `data.py` CLI. The primary forward writer is
+`availability_extension._publish_rows`: it builds a `PublicationRequest` in memory and calls
+`publish_availability` directly, so it loaded no document and passed no guard, and
+`_publish_availability_owned` ran `_validate_generation_rows` alone. Owner decision D4 makes that
+urgent rather than theoretical — eight direct-to-Parquet writers are being built against a template
+(`compile_availability_bootstrap._bind_rung`) that DOES pass `provenance=`, so an author who
+copies it gets evidence that declares `manifest_trusted`, satisfies `_require_declared_provenance`
+(the declaration matches the shape), reaches the publisher unguarded, and lands a row whose part
+count is never compared and whose parts are never fetched. The call now sits beside
+`_validate_generation_rows` inside `_publish_availability_owned`, which is the one function both
+callers pass through; the loader keeps its copy because refusing at load time names the offending
+document before an object is read. `_validate_terminal_payload`'s own comment used to claim the
+loader was the forward-path guard — it was half false, and the half that held was
+`_require_declared_provenance`, a construction-time check on the evidence document rather than on the
+row.
+
 ## `availability_extension.py` — the terminal day joins the index, and only after it is terminal
 
 Every lane-day that `gap_fill.fill_one_lane_day` makes TERMINAL — published parts plus derived rungs
@@ -784,6 +817,29 @@ silent divergence.
 A claim that cannot be written is `retry_claim_failed` on the lane's tally, not a raised repair: the
 rungs are correct and re-deriving them would not help.
 
+**The base rung's receipts are re-sorted BY OBJECT KEY before the claim cites them, and forgetting
+that stalls the repair path forever at eleven parts.** `read_partition_with_receipts` returns parts
+in numeric `part_index` order — it must, because that is the order their rows are concatenated in —
+while `availability_index._validate_data_receipt_collection` demands LEXICOGRAPHIC key order, the
+same rule `WrittenObjectLedger.parts_for` and `derivation._write_tier` already follow.
+`foundation/parquet/paths.py::partition_path` mints unpadded names, so the two orders agree up to
+`part-9.parquet` and diverge the moment `part-10.parquet` exists.
+
+**The failure was a single silent drop, not a spin, and that is worse.** Nothing on the claim path
+validates receipt order — neither `_RungObjects` nor `_rung_wire` — so the unsorted claim was written
+happily and the repair reported `retry_owed`. It died a tick later at the DRAIN: `_prepare_day` builds
+`TerminalEvidence`, `_validate_data_receipt_collection` raises `ValueError`, and `_index_claimed_day`
+catches exactly that, CLEARS the claim and returns `ladder_incomplete` /
+`error_kind="evidence_unbuildable"` — correct behaviour for its stated case (a receipt key outside the
+layout would be refused identically forever) and catastrophic for this one. The day is complete at
+every rung so `derived_rung_completions` never reselects it, and its claim is gone, so it never
+rejoins the generation: the "permanent and green" loss the claim mechanism exists to stop, delivered
+through the claim mechanism. Any lane whose base day exceeds ten parts reaches it —
+`DERIVED_ROWS_PER_PART` is 10,000, and `fire_detections`, `climate` and `soil` all write parts in a
+loop. `RepairedBaseRung.__post_init__` separately restates the local half of the neighbouring
+invariant — rows with no named receipts is the bootstrap-only manifest-trusted shape — rather than
+leaning silently on `read_partition_with_receipts` raising on an empty listing two files away.
+
 **The stranded coarse absence is healed here too.** `_retract_tier` refuses to declare a rung empty
 over a governed-absence marker, and `write_partition` refuses to write parts under one, so a day
 whose base rung was retracted and republished by a DIRECT writer arrives at the repair with coarse
@@ -821,6 +877,36 @@ day holding nothing is a governed absence, and admitting a second vocabulary wou
 one state. `clear_completion_marker` deletes BOTH names at a derived rung — a rung that derived to
 nothing last time and to rows this time would otherwise keep its empty receipt beside the new parts
 and claim both at once. The base rung pays no second delete, because it can never carry that name.
+
+### Per-part digests: `_write_tier` wired, `_finalize_written_day` stays v1 (D3)
+
+`derivation.py::_write_tier` builds `PartitionCompletion.parts` from the SAME `receipts` list it
+already collects to prune surplus parts and to sum `byte_count` — one write, no retry, no second
+read, so the sha256 each receipt carries is exactly the digest of the bytes just uploaded. It has to
+be SORTED by `relative_path`, not left in `part_index` order: `foundation/parquet/paths.py`'s
+`partition_path` mints unpadded names (`part-2.parquet`, `part-10.parquet`), so lexical and upload
+order diverge past nine parts, and `foundation/parquet/completion.py::_validate_parts` refuses
+anything not already in that sorted order.
+
+`gap_fill.py::_finalize_written_day` (the BASE rung's marker) does NOT get the same treatment, and
+that is a stated gap, not an oversight. What reaches it is `LaneRunResult` — three summed integers
+(`part_count`, `row_count`, `byte_count`) that `lane_registry._from_parts` folds from the thirteen
+lane adapters' `ParquetWriteReceipt` sequences and then discards; no `relative_path` or `sha256`
+survives that fold. The one thing in scope that DOES hold them is the `WrittenObjectLedger`
+`fill_one_lane_day` already opens around this whole call (`with store.recording_written_objects() as
+written:`) for the availability step — but `written` is not threaded into `_finalize_written_day`,
+and `_fill_static_day` retries the SAME day through that one ledger up to
+`MAX_STATIC_EXPORT_ATTEMPTS` times, so a stale entry from an earlier attempt is a real possibility,
+not a hypothetical one. `availability_extension._rung_objects_from_ledger` already guards exactly
+this case — it treats a `len(parts) != part_count` or a row-sum mismatch as a reportable
+`_LadderGap`, not a raise. Wiring `written.parts_for(...)` into `PartitionCompletion` without the
+same guard would instead let `_validate_parts` raise `PartitionCompletionError` INSIDE the marker
+write, turning a correctly finished export into `raised` — the exact regression
+`_finalize_written_day`'s own docstring warns against (an unmarked day silently re-exporting forever
+while reporting success is what `raised` exists to surface; failing the mark itself on a ledger
+mismatch would recreate that failure mode from the other direction). Threading `written` through with
+the same guard `_rung_objects_from_ledger` applies is future work, named here rather than done
+unsafely.
 
 ### `derive_and_write_day_tiers`: all four rungs or none
 

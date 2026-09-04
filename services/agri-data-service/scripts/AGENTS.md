@@ -16,6 +16,96 @@ closed: only the exact current schema and the pinned coordinate-less predecessor
 anything else is `unknown`, and unknown/read-error state exits nonzero so its day cannot become a
 destructive rewrite manifest by implication.
 
+# Availability bootstrap compiler
+
+`compile_availability_bootstrap.py` is read-only (see its module docstring for the full contract);
+this note's boundary is the digest-window boundary and why one day falls on either side of it (owner
+decision D3, track `environmental_postgres_retirement_20260904`).
+
+`_part_receipts` binds one rung's parts in three tiers, cheapest-and-strongest first:
+
+1. **No parts at all** — an emptied derived rung. `digested`, proven by its own marker.
+2. **`completion.parts` is populated, or the day is inside `--digest-window-days`** — real digests,
+   `digested`. A recorded digest (`foundation/parquet/completion.py`'s `parts` field, now written by
+   `pipeline/parquet/derivation.py::_write_tier`) costs nothing to bind: the compiler reads the
+   marker it already fetches and keys `EvidenceReceipt`s straight off
+   `{part.relative_path: part.sha256 for part in completion.parts}` — no bucket read of the part
+   itself. A day inside the window instead pays for its digests by downloading and hashing every
+   part.
+3. **Otherwise** — `manifest_trusted`. No part receipt at all; the completion marker's own counts are
+   the whole claim, and the compiler never opens the parts.
+
+The window exists because computing digests for every historical day means downloading every part of
+every lane-day — for `fire-detections`, every day since 2000-11-01 at four rungs — which would put
+the startup fix behind the whole cutover. Every day written WITH recorded parts (branch 2's first
+clause) skips the digest-window trade-off entirely: it was never going to be `manifest_trusted`
+regardless of its age, because the write already proved it. That is the whole mechanism by which the
+manifest-trusted region stops growing — every day `derivation.py` wires parts into today is one more
+day this compiler will never need to trust from a manifest or download to prove, however the digest
+window's own boundary moves later. `_finalize_written_day`'s base-rung markers do not yet carry
+`parts` (see `src/agri_data_service/pipeline/parquet/AGENTS.md`, "Per-part digests"), so base rungs
+still fall through to branch 2's second clause or branch 3 exactly as before this change.
+
+Excluded-day reasons live in `receipt.json` under `excluded_days_by_reason` and, per-day, under
+`excluded_days`; `EXCLUSION_PART_ROWS_DISAGREE` (a downloaded part's row total disagreeing with the
+marker) and `EXCLUSION_RECORDED_PARTS_DISAGREE` (a marker's recorded part paths disagreeing with what
+the bucket actually lists for that day) are the two a bad `parts` write would surface here first.
+
+## Wave-A fixes (2026-09-03, F1)
+
+A prior pass built the compiler with `identity = _identity(...)` left as a local -- it never reached
+`compilation.identity`, so `_bootstrap_document` raised `cannot render a document for a lane that
+produced no identity` on every non-`--dry-run` invocation (`--dry-run` never calls
+`_write_lane_output`, which is why it hid). Fixing the assignment alone would still have been wrong,
+so the compile was restructured in the same pass:
+
+* **Identity is computed AFTER binding, not before.** `_compile_lane` now runs a two-phase
+  `_bind_day`/`_bind_rung` walk that collects `_BoundDay`/`_BoundRung` binding facts with NO identity
+  attached, THEN computes `verified_source_inventory_root` from exactly the days that survived
+  binding, THEN renders `SourceEvidence`/`TerminalEvidence` from those facts. Binding a day can still
+  fail after the terminal-day check (`EXCLUSION_PART_COUNT_DISAGREES`,
+  `EXCLUSION_RECORDED_PARTS_DISAGREE`, `EXCLUSION_PART_ROWS_DISAGREE`, `EXCLUSION_PART_MISSING`,
+  `EXCLUSION_MARKER_IN_FUTURE`), and before this fix the inventory and identity were built from the
+  pre-binding terminal-day set, so a day dropped by one of those five reasons left its markers cited
+  by `verified_source_inventory_root` and `--apply` paid a GET proving a marker no row cites. The
+  two-phase split costs no extra network I/O: every part is still downloaded and hashed exactly once,
+  because `_bind_rung`'s exclusion decisions never read `identity` at all -- only the FINAL wire
+  rendering (`TerminalEvidence.to_wire()` embeds `verified_source_inventory_root`) needs it.
+* **Per-day cost accounting is staged, not direct.** `hashed_part_count`/`hashed_part_bytes`/
+  `marker_recorded_rung_days`/`digested_part_count`/`digested_part_bytes` accumulate into a local
+  `_DayCost` inside `_bind_day` and are folded into `LaneCompilation` only once every rung of that day
+  binds. A day whose later rung fails no longer leaves its earlier rungs' download cost priced in the
+  receipt for a day that produced zero rows.
+* **The receipt now prices `--apply`, not just the compile.** D3 bounds R2 GET volume for the
+  *compile*; nothing priced the *apply*. `--apply` re-downloads every DIGESTED part once to verify
+  (`availability_index.py::_verify_terminal_physical_objects`) and once more to revalidate before the
+  pointer swap (`_revalidate_snapshots`), and the revalidation GET sits inside the publication retry
+  loop, replaying up to `MAX_PUBLICATION_ATTEMPTS` times under contention. `receipt["apply_projected_cost"]`
+  reports `get_count_minimum`/`get_bytes_minimum` as `digested_part_count`/`digested_part_bytes * 2` --
+  a MINIMUM for one successful attempt, named as such, with the retry multiplier in `note`.
+  `digested_part_bytes` counts every DIGESTED part's size regardless of how the compiler learned it:
+  downloaded-and-measured inside the digest window, or read off `CompletedPart.byte_count` on a marker
+  that already recorded its parts (branch 2 of `_part_receipts`, which never downloads).
+* **A lane with a ladder problem now refuses instead of shipping quietly.** `_require_refusal_budget`
+  splits `excluded_days` into FILTERED (`--since`/source-ceiling -- expected by construction) and
+  REFUSED (everything else -- the ladder itself could not be indexed). Checked right after
+  `_terminal_days`, before the expensive per-day binding walk, because every reason it sees at that
+  point is already known from listings and markers alone. Above `REFUSED_DAY_FRACTION_CEILING` (10%)
+  of days considered, the whole lane's compile raises `CompilationError` naming the count; `--accept-
+  exclusions N` is the explicit override an operator who reviewed a `--dry-run` receipt passes to
+  proceed anyway. This is D2's "a looser bar silently shortens the time slider" warning, arriving
+  through the bootstrap instead of through `gap_fill`/`derivation`. **The gate is skipped under
+  `--dry-run`** -- it must always finish and print `excluded_days`/`refused_day_count`, or an operator
+  could never see the lane's problem well enough to choose the `--accept-exclusions` value a real
+  compile needs.
+* **`_day_refusal` was split, not `noqa`'d, to clear PLR0911.** `_absence_rung_refusal` and
+  `_published_rung_refusal` each judge one rung's terminal-state claim; `_day_refusal` now only routes
+  between them and folds the mixed-state/mixed-absence-reason checks that need the whole day's rungs.
+* **The wall clock is a seam now.** `_compile_lane` stamps `created_at` from module-level `_now()`
+  rather than an inline `datetime.now(tz=UTC)`, so `tests/scripts/test_compile_availability_bootstrap.py`
+  can freeze it with `monkeypatch.setattr(COMPILER, "_now", ...)` instead of depending on the suite
+  happening to run after every fixture marker's timestamp.
+
 # Weather observations exact audit
 
 `audit_weather_observations_exact.py` is the credential-free current-weather completion proof. Run

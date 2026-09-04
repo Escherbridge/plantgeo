@@ -131,6 +131,39 @@ Three properties make the zero-part receipt safe to admit:
 - **The base rung may never carry one.** `objectstore.write_completion_marker` refuses a zero-part
   receipt at `BASE_ZOOM_TIER`: an empty base day is a governed absence, and nothing else.
 
+## Per-part digests: the version is derived, and a partial list is refused (D3)
+
+`PartitionCompletion.schema_version` is a `@property`, computed from whether `parts` is populated —
+`COMPLETION_PARTS_SCHEMA_VERSION` (2) when it is, `COMPLETION_SCHEMA_VERSION` (1) otherwise — never a
+field a caller sets. Owner decision D3 (track `environmental_postgres_retirement_20260904`) needed a
+marker written today to prove its own parts by digest so `scripts/compile_availability_bootstrap.py`
+can stop trusting a manifest for it, and a version stamped independently of the body would let a v2
+marker declare digests it does not carry, or a v1 marker carry digests nobody reads — either one
+breaks the byte-for-byte round trip `availability_index._verify_completion_object` already enforces
+on every marker before it will bind one to an availability row, the same discipline that makes
+`derived_empty` serialize only when true. Deriving the version from content instead makes "stamp the
+wrong version" impossible: there is no version to stamp, only a body to build correctly.
+
+`_validate_parts` refuses a PARTIAL part list outright — `len(parts) < part_count` is not a weaker
+claim, it is a wrong one. The one thing this field exists to let a reader do is bind a day to its
+bytes without downloading them; a marker naming eight of a day's nine parts would let a bootstrap
+compiler trust the ninth by silence, which is the exact unproven region D3 exists to shrink. Absent
+is a fine, honest answer — an ordinary v1 marker, still readable forever. Partial reads as complete
+to every caller that does not re-count it, which is worse than absent, so `PartitionCompletionError`
+refuses it at construction rather than at read time. See `pipeline/parquet/AGENTS.md`, "Per-part
+digests: `_write_tier` wired, `_finalize_written_day` stays v1 (D3)", for which of this repo's three
+marker-construction sites can and cannot supply that complete list today.
+
+**The region that is shrinking is the DERIVED rungs', and saying otherwise is the easy mistake.**
+`completion.py`'s module docstring said flatly that "every day written with it stops that trusted
+region from growing" until 2026-09-04; that is true of `derivation._write_tier` and false of
+`gap_fill._finalize_written_day`, which writes the BASE rung and will keep writing version 1 until
+the ledger is threaded into it with the mismatch guard. A future bootstrap recompile therefore still
+finds a v1 base marker under every v2 coarse one, and will still bind those base rungs as
+manifest-trusted. Nothing about FORWARD publication changes either way — `_rung_objects_from_ledger`
+builds `data_receipts` from `WrittenObjectLedger.parts_for`, which carries real digests at every
+rung, base included, so the live path never depends on the marker's optional field.
+
 ## Completion is asserted, and emptiness has its own name
 A day prefix holds **four object names**: `part-<n>.parquet`, `absent.json`, `_complete.json`, and
 `_complete.empty.json`. The fourth landed 2026-09-02 and it exists because the third could not carry

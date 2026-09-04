@@ -234,6 +234,55 @@ def write_published_day(store: ObjectStore, *, day: date, completed_at: datetime
     return ledger
 
 
+#: ELEVEN, not ten. `foundation/parquet/paths.py::partition_path` mints UNPADDED part names, so
+#: numeric and lexicographic key order agree all the way through `part-9.parquet` and disagree the
+#: moment `part-10.parquet` exists. Every other fixture in this file writes one part per rung and
+#: therefore cannot tell the two orders apart.
+PARTS_PAST_THE_UNPADDED_BREAK = 11
+
+
+def write_published_day_split_across_parts(
+    store: ObjectStore,
+    *,
+    day: date,
+    base_parts: int = PARTS_PAST_THE_UNPADDED_BREAK,
+) -> WrittenObjectLedger:
+    """Write one published ladder whose BASE rung is split across `base_parts` real part files.
+
+    One row per part, so the marker's `row_count` is the part count and every part is a genuine
+    Parquet object the availability contract will open and re-hash.
+    """
+    with store.recording_written_objects() as ledger:
+        for index in range(base_parts):
+            store.write_partition(
+                signal_rows(cell_ids=(f"base-{index}",)),
+                layer=LANE,
+                kind=GAP_FILL_PARTITION_KIND,
+                zoom=GAP_FILL_ZOOM_TIER,
+                day=day,
+                part_index=index,
+            )
+        store.write_completion_marker(
+            PartitionCompletion(part_count=base_parts, row_count=base_parts, completed_at=NOW, run_id=RUN_ID),
+            layer=LANE,
+            kind=GAP_FILL_PARTITION_KIND,
+            zoom=GAP_FILL_ZOOM_TIER,
+            day=day,
+        )
+        for tier in ZOOM_TIERS:
+            if tier == GAP_FILL_ZOOM_TIER:
+                continue
+            store.write_partition(signal_rows(), layer=LANE, kind=GAP_FILL_PARTITION_KIND, zoom=tier, day=day)
+            store.write_completion_marker(
+                PartitionCompletion(part_count=1, row_count=ROWS_PER_RUNG, completed_at=NOW, run_id=RUN_ID),
+                layer=LANE,
+                kind=GAP_FILL_PARTITION_KIND,
+                zoom=tier,
+                day=day,
+            )
+    return ledger
+
+
 def write_absent_day(store: ObjectStore, *, day: date, recorded_at: datetime = NOW) -> WrittenObjectLedger:
     """Write one governed-absence ladder, coarse rungs first and the censused base rung last."""
     with store.recording_written_objects() as ledger:
@@ -1165,6 +1214,51 @@ async def test_the_next_turn_indexes_the_repaired_day_without_re_exporting_a_row
     for row in added:
         for receipt in row.data_receipts:
             assert sha256_digest(backend.objects[receipt.key]) == receipt.sha256
+
+
+@pytest.mark.asyncio
+async def test_a_repaired_day_of_eleven_base_parts_still_reaches_the_index() -> None:
+    """DO NOT DELETE. Unpadded part names make numeric and lexicographic order disagree past `part-9`.
+
+    `ObjectStore.read_partition_with_receipts` hands the base rung's parts back in NUMERIC
+    `part_index` order -- it must, because that is the order their rows are concatenated in -- while
+    `availability_index._validate_data_receipt_collection` demands LEXICOGRAPHIC object-key order.
+    Below eleven parts the two orders are identical and every other fixture here passes over the
+    difference. At eleven, numeric order puts `part-10.parquet` after `part-9.parquet` and the claim
+    is no longer sorted, so `TerminalEvidence` raised inside `_prepare_day` -- where
+    `_index_claimed_day` catches `ValueError`, DELETES the claim and reports `evidence_unbuildable`.
+    The repaired day then left the index permanently and silently, complete at every rung so no
+    census would ever select it again: the exact loss the claim mechanism exists to prevent, arriving
+    through the mechanism itself. `DERIVED_ROWS_PER_PART` is 10,000, so any lane day past ~90k rows
+    is in this range.
+    """
+    backend, store, storage, _log = new_lane()
+    bootstrap_lane(store, storage)
+    write_published_day_split_across_parts(store, day=DAY)
+
+    repaired = await repair(store, storage)
+    outcomes = await retry_pending_availability(
+        cast("AsyncSession", object()),
+        store,
+        lane=LANE,
+        kind=GAP_FILL_PARTITION_KIND,
+        availability=storage,
+        now=lambda: NOW,
+        publication_barrier=granted_barrier,
+    )
+
+    assert repaired.availability is not None
+    assert repaired.availability.state == "retry_owed", repaired.availability.reason
+    assert [outcome.state for outcome in outcomes] == ["extended"], [outcome.reason for outcome in outcomes]
+    index = read_latest_availability(storage, lane_root=LANE_ROOT)
+    base = next(row for row in index.rows if row.day == DAY and row.rung == GAP_FILL_ZOOM_TIER)
+    keys = tuple(receipt.key for receipt in base.data_receipts)
+    assert len(keys) == PARTS_PAST_THE_UNPADDED_BREAK
+    assert any(key.endswith("part-10.parquet") for key in keys), "the fixture never crossed the unpadded break"
+    assert keys == tuple(sorted(keys)), "the claim cited its parts in upload order rather than object-key order"
+    for receipt in base.data_receipts:
+        assert sha256_digest(backend.objects[receipt.key]) == receipt.sha256
+    assert DAY in index.selectable_days()
 
 
 @pytest.mark.asyncio

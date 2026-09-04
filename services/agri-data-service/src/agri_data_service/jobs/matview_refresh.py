@@ -1,4 +1,4 @@
-"""The uniform matview refresh lane: ten views, one watermark-gated pass, one ledger row each.
+"""The uniform matview refresh lane: nine views, one watermark-gated pass, one ledger row each.
 
 Owner directive, 2026-08-15: "all 21 layers need to match to reduce memory usage as much as
 possible" and "the application never runs an analytical query". Every aggregate the serving read
@@ -14,11 +14,13 @@ carries an explicit guardrail: it refreshes exactly the three `geo.mv_strategy_r
 views and nothing else, and forbids widening. Respecting that means every other matview needs a
 different lane, not a longer tuple passed into the same one.
 
-Three deliberate departures from that lane's template, all required by the scale here -- ten views
+Five deliberate departures from that lane's template, all required by the scale here -- nine views
 instead of three, and until 2026-09-02 one of them (`geo.mv_signal_cell_daily`) rebuilt a ~3.2 GB
 rollup off a 26 GB source on every REFRESH. That relation and `geo.mv_feature_observation_day_axis`
-are gone from the table now; see the removal note above `MATVIEW_REFRESH_SPECS`. The departures
-outlive them because `geo.mv_feature_observation_day` inherits the same shape at a smaller scale:
+are gone from the table now; `geo.mv_signal_observation_day` -- the pivoted signal rollup over the
+same 26 GB source -- joined them on 2026-09-04 after a REFRESH failed at 302.14s against its own 300s
+statement_timeout; see the removal note above `MATVIEW_REFRESH_SPECS`. The departures outlive them
+because `geo.mv_feature_observation_day` inherits the same shape at a smaller scale:
 
 1. **No bucketed `logical_run_key`.** `strategy_mv_refresh.py::_run_bucket_key` mints a NEW
    `job_run_id` every `STRATEGY_MV_REFRESH_POLL_INTERVAL_SECONDS`, and `.omc/RUNBOOK.md`'s "Traps
@@ -52,7 +54,7 @@ outlive them because `geo.mv_feature_observation_day` inherits the same shape at
    "never refreshed, try it" on every tick, forever. `_backoff_seconds` and `_EligibilityVerdict`
    close that; `MatviewRefreshSpec.max_parallel_workers_per_gather` is per-view for a related
    reason -- one view's fix is another view's regression. jobs/AGENTS.md, "The matview-refresh
-   lane's five self-inflicted stalls", carries the production measurements behind both.
+   lane's six self-inflicted stalls", carries the production measurements behind both.
 4. **A per-spec relation preflight, added 2026-09-02.** The backoff above answers "can this view
    succeed?"; it had no answer for "does this relation exist at all?", because
    `upsert_matview_refresh_state.sql` deliberately does not count a non-`failed` outcome toward
@@ -63,8 +65,22 @@ outlive them because `geo.mv_feature_observation_day` inherits the same shape at
    the REFRESH, and the answer is the governed outcome `relation_absent` -- see the block comment
    above `_absent_relations` for the three mechanisms that had to compound to reach 200 dead
    letters.
+5. **A static retired-view registry, added 2026-09-04, answering a DIFFERENT question from #4's.**
+   `_absent_relations` answers "does the catalog have this relation at all", and for
+   `geo.mv_signal_observation_day` the answer was YES -- the relation exists, the REFRESH itself
+   timed out at 302.14s against its own 300s cap. Removing its spec (the same removal-from-the-table
+   idiom departure #4 already established for the two genuinely absent relations) stops the lane
+   asking for a refresh nobody wants, but a removed spec is invisible to a tick reading only
+   `MATVIEW_REFRESH_SPECS` -- exactly the silent-drop failure mode #4 exists to prevent for absence.
+   `MATVIEW_REFRESH_RETIRED_VIEWS` and the governed outcome `OUT_OF_SPEC_OUTCOME` name the removal on
+   every tick instead, off a static list rather than a catalog round trip -- and, since 2026-09-04's
+   governance follow-up, write to `agri.matview_refresh_state` on the same tick, through the same
+   `_write_refresh_state` path `relation_absent` already used: an operator reading the LEDGER TABLE,
+   not only a tick's `job_attempt.metrics`, must be able to see `geo.mv_signal_observation_day` stop
+   moving rather than infer the retirement from a JSONB blob or a log line. See jobs/AGENTS.md "6. A
+   retired view still needs a name on the tick".
 
-ONE WORK ITEM, TEN VIEWS, BUDGET-AWARE -- WITH A DELIBERATE DEPARTURE FROM `has_budget_for`'S
+ONE WORK ITEM, NINE VIEWS, BUDGET-AWARE -- WITH A DELIBERATE DEPARTURE FROM `has_budget_for`'S
 USUAL USE. Unlike `strategy_mv_refresh`'s three views (which always finish inside one bounded call),
 an unlucky tick here could need to refresh several stale views in a row, including the ~287-second
 `mv_feature_observation_day` rebuild. `JobInvocation.seconds_remaining` is a SNAPSHOT taken once when the
@@ -73,7 +89,7 @@ is explicit: "one bounded step per call... a handler that wants a live clock is 
 much in one call"). Calling `invocation.has_budget_for(...)` naively before each of several REFRESH
 statements in the SAME call would therefore never notice time this very call already spent refreshing
 an earlier view -- the frozen snapshot would keep saying yes. This handler is deliberately the "doing
-too much in one call" case the docs warn about, on purpose, because ten small watermark checks and
+too much in one call" case the docs warn about, on purpose, because nine small watermark checks and
 zero-to-a-few real refreshes is still one bounded unit of work; the fix is to track this call's own
 elapsed wall-clock time explicitly (`_remaining_budget_seconds`) and subtract it from the snapshot
 before every comparison, rather than to split each view into its own call. Once the adjusted
@@ -213,6 +229,7 @@ MatviewRefreshOutcome = Literal[
     "self_healed_unpopulated",
     "skipped_unchanged",
     "relation_absent",
+    "out_of_spec",
     "skipped_missing",
     "skipped_budget",
     "deferred_failing",
@@ -228,6 +245,16 @@ MatviewRefreshOutcome = Literal[
 # deliberate drop fail the lane (which is what dead-lettered 200 shards) or make a mid-tick DDL
 # surprise invisible.
 RELATION_ABSENT_OUTCOME: Final[MatviewRefreshOutcome] = "relation_absent"
+
+# `out_of_spec` is a THIRD "not there" outcome and must not collapse into `relation_absent`:
+# `_absent_relations` answers "does the catalog have this relation at all", and for a retired view
+# like geo.mv_signal_observation_day the answer is YES -- the REFRESH times out, it does not 404.
+# This one instead answers "did we choose to stop refreshing it", off the static
+# MATVIEW_REFRESH_RETIRED_VIEWS list rather than a catalog round trip, and it is reported every tick
+# for the same reason `relation_absent` is lifted to the top of `to_metrics()`: a spec removed from
+# MATVIEW_REFRESH_SPECS is otherwise invisible -- one fewer entry in a tuple nobody diffs on a green
+# tick. See jobs/AGENTS.md "6. A retired view still needs a name on the tick".
+OUT_OF_SPEC_OUTCOME: Final[MatviewRefreshOutcome] = "out_of_spec"
 
 # --- Watermark queries, one per source relation a spec below points at, not one per view: several
 # views share a source and therefore share a watermark. Static SQL, no interpolation, and every one
@@ -250,6 +277,11 @@ _WATERMARK_DROUGHT_AREAS_LIVE_EDGE: Final = text(
     load_query_sql("jobs/matview_refresh_watermark_drought_areas_live_edge.sql")
 )
 
+# No spec references this watermark as of 2026-09-04 (geo.mv_signal_cell_daily was removed
+# 2026-09-02, geo.mv_signal_observation_day joined it below). The constant and its load_query_sql()
+# call stay anyway: tests/test_sql_tree_conventions.py's LOADED rule fails
+# sql/jobs/matview_refresh_watermark_source_release.sql with zero call sites, and deleting that file
+# is a sql/ change outside this lane's ownership.
 _WATERMARK_SOURCE_RELEASE: Final = text(load_query_sql("jobs/matview_refresh_watermark_source_release.sql"))
 
 _WATERMARK_SOIL_SURVEY_COVERAGE: Final = text(load_query_sql("jobs/matview_refresh_watermark_soil_survey_coverage.sql"))
@@ -283,9 +315,10 @@ class MatviewRefreshSpec:
 
 # Design doc section 14's MATVIEWS block, minus the three geo.mv_strategy_recommendations_* views
 # (which strategy_mv_refresh.py keeps under its own guardrail) and their own watermark/interval
-# table in section 5.2. Eight of the nine matviews drizzle/0029 creates (geo.mv_signal_cell_daily is
-# no longer among them -- see the removal note below), plus two pre-existing ones adopted under this
-# lane's discipline (geo.watershed_rollup, agri.mv_forecast_ml_daily_serving) = ten.
+# table in section 5.2. Seven of the nine matviews drizzle/0029 creates (geo.mv_signal_cell_daily and
+# geo.mv_signal_observation_day are no longer among them -- see the removal note below), plus two
+# pre-existing ones adopted under this lane's discipline (geo.watershed_rollup,
+# agri.mv_forecast_ml_daily_serving) = nine.
 MATVIEW_REFRESH_SPECS: Final[tuple[MatviewRefreshSpec, ...]] = (
     MatviewRefreshSpec(
         qualified_name="geo.mv_layer_feature_stats",
@@ -380,15 +413,18 @@ MATVIEW_REFRESH_SPECS: Final[tuple[MatviewRefreshSpec, ...]] = (
         statement_timeout_seconds=300,
         default_estimate_seconds=20.0,
     ),
-    MatviewRefreshSpec(
-        qualified_name="geo.mv_signal_observation_day",
-        watermark_sql=_WATERMARK_SOURCE_RELEASE,
-        min_interval_seconds=21_600,
-        max_staleness_seconds=86_400,
-        priority=1,
-        statement_timeout_seconds=300,
-        default_estimate_seconds=20.0,
-    ),
+    # REMOVED 2026-09-04: geo.mv_signal_observation_day. Its REFRESH failed after 302.14s against its
+    # own 300s statement_timeout in production (2026-09-04 02:08 UTC). The Parquet pivot replaced this
+    # relation's PRODUCER (the agri.signal_observation ingest this REFRESH aggregates), NOT its
+    # CONSUMER -- this relation has a LIVE production reader through geo.v_observation_day_census at
+    # src/lib/server/services/environmental-read-model.ts:3198,3464-3465 (the main app, a different
+    # service tree) and is also named by agent/tools.py:229-234's SIGNAL_CENSUS_RELATION. Removing
+    # this spec freezes its contents at the last successful refresh rather than making them any
+    # staler -- the REFRESH was already failing at the 300s cap before this removal. Unlike the two
+    # relations removed 2026-09-02, this one is NOT absent -- `to_regclass` still finds it, only the
+    # REFRESH times out -- so it is reported every tick as `out_of_spec`, not `relation_absent`. See
+    # MATVIEW_REFRESH_RETIRED_VIEWS and jobs/AGENTS.md "6. A retired view still needs a name on the
+    # tick".
     MatviewRefreshSpec(
         qualified_name="geo.mv_soil_survey_grid",
         watermark_sql=_WATERMARK_SOIL_SURVEY_COVERAGE,
@@ -444,12 +480,65 @@ MATVIEW_REFRESH_QUALIFIED_NAMES: Final[frozenset[str]] = frozenset(
     spec.qualified_name for spec in MATVIEW_REFRESH_SPECS
 )
 
+
+@dataclass(frozen=True, slots=True)
+class _RetiredView:
+    """One view removed from MATVIEW_REFRESH_SPECS whose relation may still exist in the database.
+
+    `retired_at` and `review_trigger` exist because this registry is a permanent silencer reachable
+    by a one-line edit -- `_UNATTEMPTED_STATUSES` keeps it from ever failing the lane, so nothing else
+    forces a human back to this entry. `reason` deliberately names no SPECIFIC downstream reader: the
+    reader inventory lives in jobs/AGENTS.md "6. A retired view still needs a name on the tick" and is
+    kept current there, so this operator-facing string -- reprinted verbatim on every tick this view
+    stays retired -- cannot go stale the moment a reader is repointed or the relation is dropped.
+    """
+
+    qualified_name: str
+    retired_at: str
+    reason: str
+    review_trigger: str
+
+
+# Every view this lane has deliberately stopped refreshing, kept here ONLY so a tick can name the
+# removal instead of going silent about it -- see OUT_OF_SPEC_OUTCOME and jobs/AGENTS.md "6. A
+# retired view still needs a name on the tick". geo.mv_signal_cell_daily and
+# geo.mv_feature_observation_day_axis are NOT here: both were confirmed absent from production, and
+# `relation_absent` already names them truthfully every tick. geo.mv_signal_observation_day is
+# different -- the relation is still there, still had a LIVE production reader at the time of
+# retirement (current inventory: jobs/AGENTS.md "6."), and only refreshing it was retired.
+MATVIEW_REFRESH_RETIRED_VIEWS: Final[tuple[_RetiredView, ...]] = (
+    _RetiredView(
+        qualified_name="geo.mv_signal_observation_day",
+        retired_at="2026-09-04",
+        reason=(
+            "REFRESH failed after 302.14s against its own 300s statement_timeout (prod, "
+            "2026-09-04 02:08 UTC); this lane stopped refreshing it, freezing its contents at "
+            "whatever the last successful REFRESH produced rather than keeping them current"
+        ),
+        review_trigger=(
+            "re-review when track lane C3 repoints environmental-read-model.ts off "
+            "geo.v_observation_day_census, or when this relation is dropped outright under decision "
+            "D1 (C3 first, D1 follows) -- at that point either restore a spec with a completable "
+            "statement_timeout or delete this entry"
+        ),
+    ),
+)
+
+# Disjointness is an invariant, not a hope: re-adding a retired name to MATVIEW_REFRESH_SPECS without
+# deleting its MATVIEW_REFRESH_RETIRED_VIEWS entry would mint TWO MatviewRefreshResults for one
+# qualified_name in one tick's `results`, and both `views_out_of_spec` and the view's real outcome
+# would appear side by side in `to_metrics()`. Checked at import so the mistake cannot ship, following
+# this repo's own `assert isinstance(...)` module-level invariant pattern (planes/weather_observations.py).
+assert MATVIEW_REFRESH_QUALIFIED_NAMES.isdisjoint(view.qualified_name for view in MATVIEW_REFRESH_RETIRED_VIEWS), (
+    "a view cannot be both an active MatviewRefreshSpec and a MATVIEW_REFRESH_RETIRED_VIEWS entry"
+)
+
 # The shared ledger this lane and jobs/strategy_mv_refresh.py both read/write through
 # _read_prior_refresh_state / _write_refresh_state / _write_observability_state. Deliberately the
-# ONLY entry in this lane's *definition-level* preflight, not the ten views above: a single view
+# ONLY entry in this lane's *definition-level* preflight, not the nine views above: a single view
 # being absent is handled gracefully per-spec by `_absent_relations` -> `relation_absent`, inside the
 # handler, self-healing the moment the relation appears -- refusing the whole TICK because one view
-# is missing would turn "nine of ten views are ready, refresh them" into "refresh nothing", a real
+# is missing would turn "eight of nine views are ready, refresh them" into "refresh nothing", a real
 # regression. This table missing is different: it is not handled anywhere at all -- every read and
 # write against it raises before a single view is considered, and that raise
 # is what dead-lettered ten matview-refresh shards and thirteen strategy-mv-refresh ones in prod on
@@ -480,9 +569,11 @@ class MatviewRefreshResult:
 # whether a REFRESH works -- only about the gate, the clock, the backoff, or the preflight having
 # done their jobs. `relation_absent` belongs here for the same reason `skipped_budget` does: no
 # REFRESH was issued, so the tick learned nothing about whether one would have worked. That is what
-# keeps a deliberately-dropped relation from failing the lane forever.
+# keeps a deliberately-dropped relation from failing the lane forever. `out_of_spec` belongs here for
+# the same reason: a retired view is never read from MATVIEW_REFRESH_SPECS at all, so it can carry no
+# evidence about a REFRESH that was never even considered.
 _UNATTEMPTED_STATUSES: Final[frozenset[str]] = frozenset(
-    {"skipped_unchanged", "skipped_budget", "deferred_failing", "relation_absent"}
+    {"skipped_unchanged", "skipped_budget", "deferred_failing", "relation_absent", "out_of_spec"}
 )
 
 # `deferred_failing` sits in BOTH sets on purpose: the backoff suppresses the WORK, never the
@@ -548,14 +639,20 @@ class MatviewRefreshReport:
         """Every view the preflight found absent this tick, in the order the spec table declares them."""
         return tuple(result.qualified_name for result in self.results if result.status == RELATION_ABSENT_OUTCOME)
 
+    @property
+    def views_out_of_spec(self) -> tuple[str, ...]:
+        """Every view this lane has deliberately stopped refreshing, in MATVIEW_REFRESH_RETIRED_VIEWS order."""
+        return tuple(result.qualified_name for result in self.results if result.status == OUT_OF_SPEC_OUTCOME)
+
     def to_metrics(self) -> dict[str, object]:
         """Render this report as the JSONB `job_attempt.metrics` shape -- the per-view cost detail
         the non-negotiable asks for, matching the census shard timings' own visibility.
 
-        `relations_absent` is lifted to the TOP LEVEL as well as sitting inside `views`, because a
-        governed non-failure that is only readable by scanning a ten-entry array is a governed
-        non-failure nobody reads. It is the one thing an operator must be able to see on a green
-        tick: the lane is healthy AND these relations are not there.
+        `relations_absent` and `views_out_of_spec` are both lifted to the TOP LEVEL as well as
+        sitting inside `views`, because a governed non-failure that is only readable by scanning a
+        ten-entry array is a governed non-failure nobody reads. Between them they are the two things
+        an operator must be able to see on a green tick: the lane is healthy AND these relations are
+        not there / not refreshed on purpose.
         """
         return {
             "views": [
@@ -570,6 +667,7 @@ class MatviewRefreshReport:
                 for result in self.results
             ],
             "relations_absent": list(self.relations_absent),
+            "views_out_of_spec": list(self.views_out_of_spec),
         }
 
 
@@ -665,6 +763,18 @@ def _relation_absent_result(spec: MatviewRefreshSpec) -> MatviewRefreshResult:
         elapsed_seconds=0.0,
         row_count=None,
         detail="relation does not exist; nothing was attempted and nothing failed",
+    )
+
+
+def _retired_view_result(retired: _RetiredView) -> MatviewRefreshResult:
+    """This view was deliberately removed from MATVIEW_REFRESH_SPECS; its relation may still exist."""
+    return MatviewRefreshResult(
+        qualified_name=retired.qualified_name,
+        status=OUT_OF_SPEC_OUTCOME,
+        used_concurrently=False,
+        elapsed_seconds=0.0,
+        row_count=None,
+        detail=f"retired {retired.retired_at}: {retired.reason} ({retired.review_trigger})",
     )
 
 
@@ -876,19 +986,26 @@ _SUCCESSFUL_REFRESH_OUTCOMES: Final = SUCCESSFUL_REFRESH_OUTCOMES
 
 async def _write_refresh_state(
     session: AsyncSession,
-    spec: MatviewRefreshSpec,
+    qualified_name: str,
     result: MatviewRefreshResult,
     *,
     current_watermark: str,
 ) -> None:
-    """Persist one attempted view's outcome; see upsert_matview_refresh_state.sql for the NULL/COALESCE rule."""
+    """Persist one considered view's outcome; see upsert_matview_refresh_state.sql for the NULL/COALESCE rule.
+
+    Takes `qualified_name` rather than a `MatviewRefreshSpec` on purpose: a retired view (see
+    OUT_OF_SPEC_OUTCOME) has no spec left in MATVIEW_REFRESH_SPECS to hand in, only a
+    `_RetiredView.qualified_name`, and this is the ONE ledger-writing path both a live spec and a
+    retired one go through -- inventing a second `_write_retired_view_state`-shaped function was
+    considered and rejected, since a second path is a second place for the two to drift.
+    """
     await apply_statement_timeout(session)
     refreshed_at = datetime.now(UTC) if result.status in _SUCCESSFUL_REFRESH_OUTCOMES else None
     await fetch_row(
         session,
         _UPSERT_MATVIEW_REFRESH_STATE,
         {
-            "view_name": spec.qualified_name,
+            "view_name": qualified_name,
             "source_watermark": current_watermark,
             "refreshed_at": refreshed_at,
             "duration_ms": round(result.elapsed_seconds * 1000),
@@ -1172,10 +1289,33 @@ async def matview_refresh_handler(invocation: JobInvocation) -> JobHandlerOutcom
     prior_by_view = await _read_prior_refresh_state(session)
     now = datetime.now(UTC)
 
+    # Named before any REFRESH is considered: a retired view costs nothing to report, and reporting
+    # it here (rather than only in a code comment) is the whole fix for a spec removal that would
+    # otherwise be invisible on every green tick. See OUT_OF_SPEC_OUTCOME and jobs/AGENTS.md "6. A
+    # retired view still needs a name on the tick".
+    results: list[MatviewRefreshResult] = []
+    for retired in MATVIEW_REFRESH_RETIRED_VIEWS:
+        result = _retired_view_result(retired)
+        logger.info("matview_refresh_view_out_of_spec", view=retired.qualified_name, reason=retired.reason)
+        # Recorded in the ledger, not only in the log or in job_attempt.metrics: the same
+        # `relation_absent` idiom below, on the same _write_refresh_state path (see its own
+        # docstring), so an operator reading agri.matview_refresh_state directly -- the natural place
+        # to ask "what is this lane doing" -- sees last_attempt_at move and outcome read
+        # 'out_of_spec' instead of finding the view simply frozen with no explanation in the row
+        # itself. No watermark was read for a retired view (there is no watermark_sql on a
+        # _RetiredView), so the watermark carried forward is the one this view was LAST seen at,
+        # exactly as _relation_absent_result's write does -- never a fabricated fresh read.
+        await _write_refresh_state(
+            session,
+            retired.qualified_name,
+            result,
+            current_watermark=_last_observed_watermark(prior_by_view.get(retired.qualified_name)),
+        )
+        results.append(result)
+
     absent = await _absent_relations(session, MATVIEW_REFRESH_SPECS)
     absent_specs = [spec for spec in MATVIEW_REFRESH_SPECS if spec.qualified_name in absent]
     present = [spec for spec in MATVIEW_REFRESH_SPECS if spec.qualified_name not in absent]
-    results: list[MatviewRefreshResult] = []
     for spec in absent_specs:
         result = _relation_absent_result(spec)
         logger.warning("matview_refresh_relation_absent", view=spec.qualified_name, outcome=result.status)
@@ -1186,7 +1326,7 @@ async def matview_refresh_handler(invocation: JobInvocation) -> JobHandlerOutcom
         # empty read -- nothing was queried, so nothing new may be claimed to have been observed.
         await _write_refresh_state(
             session,
-            spec,
+            spec.qualified_name,
             result,
             current_watermark=_last_observed_watermark(prior_by_view.get(spec.qualified_name)),
         )
@@ -1238,7 +1378,7 @@ async def matview_refresh_handler(invocation: JobInvocation) -> JobHandlerOutcom
             results.append(_budget_skipped_result(plan.spec))
             continue
         result = await _refresh_one_matview(session, plan.spec)
-        await _write_refresh_state(session, plan.spec, result, current_watermark=plan.current_watermark)
+        await _write_refresh_state(session, plan.spec.qualified_name, result, current_watermark=plan.current_watermark)
         results.append(result)
         completed_now.append(plan.spec.qualified_name)
 

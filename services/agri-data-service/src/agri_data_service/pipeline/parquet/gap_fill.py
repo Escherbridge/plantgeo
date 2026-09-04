@@ -1377,6 +1377,13 @@ def _finalize_written_day(  # noqa: PLR0913 - one coordinate of the day being cl
     # The marker's counts describe the BASE rung alone. The derived rungs carry their own markers
     # with their own counts, written as each landed; folding them together here would make this
     # marker claim a population no single prefix holds.
+    #
+    # NO `parts=` HERE (unlike `derivation.py::_write_tier`): `parts`/`rows` above are
+    # `LaneRunResult`'s folded totals, not receipts, and the ledger that DOES hold per-part digests
+    # (`written`, opened by `fill_one_lane_day`) is not threaded this deep, nor safely reusable
+    # across `_fill_static_day`'s retries without the mismatch guard `_rung_objects_from_ledger`
+    # applies. See `pipeline/parquet/AGENTS.md`, "Per-part digests: `_write_tier` wired,
+    # `_finalize_written_day` stays v1 (D3)".
     try:
         store.write_completion_marker(
             PartitionCompletion(part_count=parts, row_count=rows, completed_at=now(), run_id=run_id),
@@ -2056,7 +2063,24 @@ def _claim_repaired_day(  # noqa: PLR0913 - one coordinate of the repaired day p
             written=written,
             base_rung=RepairedBaseRung(
                 rung=GAP_FILL_ZOOM_TIER,
-                data_receipts=tuple(EvidenceReceipt(key=part.relative_path, sha256=part.sha256) for part in base.parts),
+                # SORTED BY OBJECT KEY, NOT BY PART INDEX. `read_partition_with_receipts` hands its
+                # parts back in NUMERIC `part_index` order because that is the order the rows must be
+                # concatenated in, while `availability_index._validate_data_receipt_collection`
+                # demands LEXICOGRAPHIC key order. `paths.partition_path` mints unpadded names, so
+                # the two agree only up to `part-9` and diverge the moment `part-10` exists.
+                #
+                # THE CLAIM ITSELF NEVER NOTICED. Nothing on this path validates receipt order -- not
+                # `_RungObjects`, not `_rung_wire` -- so an unsorted claim was written, returned
+                # `retry_owed`, and died one tick later in `_prepare_day`, where `TerminalEvidence`
+                # refuses it. `_index_claimed_day` catches that `ValueError`, CLEARS the claim and
+                # reports `evidence_unbuildable`, so the day was dropped ONCE and permanently: it is
+                # complete at every rung, no census reselects it, and it never rejoins the index --
+                # the "permanent and green" loss the claim exists to stop, arriving through the claim.
+                # `objectstore.WrittenObjectLedger.parts_for` already sorts for the same reason.
+                data_receipts=tuple(
+                    EvidenceReceipt(key=part.relative_path, sha256=part.sha256)
+                    for part in sorted(base.parts, key=lambda read: read.relative_path)
+                ),
                 completion_receipt=EvidenceReceipt(key=marker.relative_path, sha256=marker.sha256),
                 row_count=marker.completion.row_count,
                 part_count=marker.completion.part_count,

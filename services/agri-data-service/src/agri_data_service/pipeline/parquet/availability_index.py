@@ -21,10 +21,13 @@ from agri_data_service.foundation.parquet.absence import (
     GovernedAbsenceError,
 )
 from agri_data_service.foundation.parquet.completion import (
-    COMPLETION_SCHEMA_VERSION,
+    COMPLETION_SCHEMA_VERSIONS,
     DERIVED_EMPTY_FIELD,
     PartitionCompletion,
     PartitionCompletionError,
+)
+from agri_data_service.foundation.parquet.completion import (
+    PARTS_FIELD as COMPLETION_PARTS_FIELD,
 )
 from agri_data_service.foundation.parquet.paths import (
     try_parse_absence_marker_path,
@@ -52,6 +55,29 @@ if TYPE_CHECKING:
 
 AvailabilityNature = Literal["daily_series", "release_series"]
 TerminalState = Literal["published", "governed_absence"]
+
+#: HOW WELL ONE ROW'S PARTS ARE PROVEN, and the only two answers there are.
+#:
+#: `digested` is the ordinary class: the row names every part it publishes and each name carries a
+#: SHA-256 that was computed from that object's bytes, so `--apply` re-downloads and re-hashes them.
+#:
+#: `manifest_trusted` is the bootstrap-only class introduced by owner decision D3
+#: (`environmental_postgres_retirement_20260904`): the row names NO parts and its proof is the
+#: completion marker, which is itself fetched and digested. It exists because the contract as written
+#: requires hashing every part of every lane-day -- for `fire-detections`, every day since
+#: 2000-11-01 at every rung -- and that cost would push the time slider's startup fix behind the
+#: whole cutover. A trusted row states a WEAKER claim; it never states a false one, because a digest
+#: that was not computed from the object it describes is never emitted.
+AvailabilityProvenance = Literal["digested", "manifest_trusted"]
+
+DIGESTED_PROVENANCE: Final[AvailabilityProvenance] = "digested"
+MANIFEST_TRUSTED_PROVENANCE: Final[AvailabilityProvenance] = "manifest_trusted"
+
+#: The optional provenance key, SERIALIZED ONLY WHEN MANIFEST-TRUSTED -- the same rule
+#: `foundation/parquet/completion.py::DERIVED_EMPTY_FIELD` follows, and for the same reason: a
+#: `provenance: "digested"` key on every ordinary terminal document would change the content address
+#: of evidence already written and re-verified byte-for-byte.
+PROVENANCE_FIELD: Final = "provenance"
 
 JSON_CONTENT_TYPE: Final = "application/json"
 PARQUET_CONTENT_TYPE: Final = "application/vnd.apache.parquet"
@@ -125,6 +151,7 @@ _SYSTEM_BOOTSTRAP_FIELDS: Final = _IDENTITY_FIELDS | {
     "created_at",
     "input_receipts",
     "outcome_sha256",
+    "provenance",
     "row_count",
     "schema_version",
     "source_ceiling",
@@ -280,6 +307,10 @@ class TerminalEvidence:
     completion_receipt: EvidenceReceipt | None
     absence_receipt: EvidenceReceipt | None
     absence_reason: str | None
+    #: DECLARED here, derived on the row. Defaulted so every existing caller keeps building the
+    #: ordinary class, and so a forward-path bug that dropped `data_receipts` is still refused
+    #: instead of silently becoming a trusted row.
+    provenance: AvailabilityProvenance = DIGESTED_PROVENANCE
 
     def __post_init__(self) -> None:
         _require_rung(self.rung)
@@ -295,7 +326,7 @@ class TerminalEvidence:
         _validate_terminal_evidence_payload(self)
 
     def to_wire(self) -> dict[str, object]:
-        return {
+        wire: dict[str, object] = {
             **_identity_wire(self.identity),
             "absence_reason": self.absence_reason,
             "absence_receipt": None if self.absence_receipt is None else self.absence_receipt.to_wire(),
@@ -310,6 +341,9 @@ class TerminalEvidence:
             "source_receipt": self.source_receipt.to_wire(),
             "terminal_state": self.terminal_state,
         }
+        if self.provenance == MANIFEST_TRUSTED_PROVENANCE:
+            wire[PROVENANCE_FIELD] = self.provenance
+        return wire
 
 
 def build_bootstrap_inventory_evidence(value: BootstrapInventoryEvidence) -> TypedEvidenceArtifact:
@@ -394,6 +428,15 @@ class AvailabilityRow:
         """Return the unique generation grain."""
         return self.day, self.rung
 
+    @property
+    def provenance(self) -> AvailabilityProvenance:
+        """Return how well this row's parts are proven, DERIVED from the row's own shape."""
+        return availability_row_provenance(
+            terminal_state=self.terminal_state,
+            row_count=self.row_count,
+            data_receipts=self.data_receipts,
+        )
+
     def evidence_receipts(self) -> tuple[EvidenceReceipt, ...]:
         """Return every object the row binds."""
         completion = () if self.completion_receipt is None else (self.completion_receipt,)
@@ -448,8 +491,16 @@ def _validate_terminal_payload(row: AvailabilityRow) -> None:
             return
         if row.row_count <= 0:
             raise ValueError("a published availability row must carry a positive row_count")
-        if not row.data_receipts:
-            raise ValueError("a published availability row requires data and completion receipts")
+        # NO PART RECEIPTS AND ROWS TO SHOW IS THE MANIFEST-TRUSTED SHAPE, and it is admitted HERE
+        # rather than refused because the row asserts nothing about parts it did not hash. The
+        # completion receipt proven above is the whole of its claim.
+        #
+        # WHAT KEEPS IT OFF THE FORWARD PATH IS NOT THIS FUNCTION. Two guards do, and neither is
+        # here: `_refuse_trusted_publication_rows`, called from `_publish_availability_owned` -- the
+        # chokepoint the CLI and `availability_extension` both pass through -- refuses the class on
+        # any publication; and `_require_declared_provenance` refuses a `TerminalEvidence` whose
+        # declared class disagrees with its shape, so a forward writer that dropped its
+        # `data_receipts` dies at construction rather than becoming trusted by accident.
         return
     if row.row_count != 0:
         raise ValueError("a governed absence must carry row_count=0")
@@ -476,6 +527,61 @@ def _is_published_empty_rung(*, rung: int, row_count: int, data_receipts: tuple[
     it says the same thing, and `objectstore.write_completion_marker` refuses one at the base rung.
     """
     return rung != BASE_ZOOM_TIER and row_count == 0 and not data_receipts
+
+
+def availability_row_provenance(
+    *,
+    terminal_state: TerminalState,
+    row_count: int,
+    data_receipts: tuple[EvidenceReceipt, ...],
+) -> AvailabilityProvenance:
+    """Classify how well one terminal outcome's parts are proven, FROM ITS SHAPE ALONE.
+
+    THE SHAPE IS THE DECLARATION, and it has to be, because `AVAILABILITY_INDEX_SCHEMA` is frozen at
+    version 1: a provenance COLUMN would not survive the generation round trip that `_write_generation`
+    re-reads and compares. Published, holding rows, and naming no part is a claim only a
+    manifest-trusted row can make -- an ordinary published row always names the parts it counted, and
+    a rung that generalised to nothing carries `row_count == 0` and is classified `digested` because
+    its emptiness is proven outright by its own marker.
+
+    The bootstrap-input document and the terminal evidence may DECLARE the class in words; both are
+    checked against this function, so the two can never disagree.
+    """
+    if terminal_state == "published" and row_count > 0 and not data_receipts:
+        return MANIFEST_TRUSTED_PROVENANCE
+    return DIGESTED_PROVENANCE
+
+
+def availability_provenance_summary(rows: Sequence[AvailabilityRow]) -> dict[str, object]:
+    """Return the per-class row count and day range a receipt must carry, in canonical spelling."""
+    summary: dict[str, object] = {}
+    for provenance in (DIGESTED_PROVENANCE, MANIFEST_TRUSTED_PROVENANCE):
+        days = sorted({row.day for row in rows if row.provenance == provenance})
+        summary[provenance] = {
+            "earliest_day": days[0].isoformat() if days else None,
+            "latest_day": days[-1].isoformat() if days else None,
+            "row_count": sum(1 for row in rows if row.provenance == provenance),
+        }
+    return summary
+
+
+def _parse_provenance_summary(value: object, label: str) -> dict[str, int]:
+    """Validate a receipt's provenance summary and return its per-class row counts."""
+    mapping = _require_mapping(value, label)
+    _require_exact_keys(mapping, {DIGESTED_PROVENANCE, MANIFEST_TRUSTED_PROVENANCE}, label)
+    counts: dict[str, int] = {}
+    for provenance in (DIGESTED_PROVENANCE, MANIFEST_TRUSTED_PROVENANCE):
+        entry = _require_mapping(mapping[provenance], f"{label} {provenance}")
+        _require_exact_keys(entry, {"earliest_day", "latest_day", "row_count"}, f"{label} {provenance}")
+        row_count = _parse_nonnegative_int(entry["row_count"], f"{label} {provenance} row_count")
+        earliest = entry["earliest_day"]
+        latest = entry["latest_day"]
+        if (earliest is None) != (latest is None) or (row_count == 0) != (earliest is None):
+            raise ValueError(f"{label} {provenance} must carry a day range exactly when it counts rows")
+        if earliest is not None and _parse_date(earliest, "earliest_day") > _parse_date(latest, "latest_day"):
+            raise ValueError(f"{label} {provenance} day range is inverted")
+        counts[provenance] = row_count
+    return counts
 
 
 @dataclass(frozen=True, slots=True)
@@ -778,6 +884,11 @@ class BootstrapRequest:
     rows: tuple[AvailabilityRow, ...]
     input_sha256: str
 
+    @property
+    def provenance_summary(self) -> dict[str, object]:
+        """Return the per-class row count and day range this input will record in its receipt."""
+        return availability_provenance_summary(self.rows)
+
 
 @dataclass(frozen=True, slots=True)
 class PublicationRequest:
@@ -1019,6 +1130,7 @@ def load_publication_request(
     source_ceiling = _parse_date(value["source_ceiling"], "source_ceiling")
     created_at = _parse_datetime(value["created_at"], "created_at")
     _validate_generation_rows(rows, identity=identity, source_ceiling=source_ceiling)
+    _refuse_trusted_publication_rows(rows)
     _require_rows_published_by(rows, created_at)
     return PublicationRequest(
         config=AvailabilityConfig(
@@ -1033,6 +1145,30 @@ def load_publication_request(
         rows=rows,
         input_sha256=actual_sha256,
     )
+
+
+def _refuse_trusted_publication_rows(rows: Sequence[AvailabilityRow]) -> None:
+    """Keep the manifest-trusted class to the BOOTSTRAP, which is the only thing that made it necessary.
+
+    A forward publication writes the day it is publishing, so it holds every part's digest already --
+    `objectstore.WrittenObjectLedger` recorded them as it uploaded. A trusted row arriving here is
+    therefore never a saved download; it is a lost one, and admitting it would let the region owner
+    decision D3 bounded to history grow forward one tick at a time.
+
+    CALLED FROM THE CHOKEPOINT, `_publish_availability_owned`, and not only from the document loader.
+    The loader serves ONE caller (`interface/cli/data.py`); the PRIMARY forward writer is
+    `availability_extension._publish_rows`, which builds its `PublicationRequest` in memory and never
+    loads a document at all. A guard on the loader alone would be bypassed by every direct-to-Parquet
+    writer owner decision D4 mandates. `load_publication_request` keeps its own call because refusing
+    at load time names the offending document before a single object is fetched.
+    """
+    trusted = [row.grain for row in rows if row.provenance == MANIFEST_TRUSTED_PROVENANCE]
+    if trusted:
+        rendered = ", ".join(f"{day.isoformat()}/z{rung}" for day, rung in trusted[:5])
+        raise ValueError(
+            f"publication input carries {len(trusted)} manifest-trusted row(s) ({rendered}); only a bootstrap "
+            "may bind a day it did not hash, and a forward publication holds every part digest it wrote"
+        )
 
 
 async def bootstrap_availability(
@@ -1159,6 +1295,7 @@ def _publish_availability_owned(store: AvailabilityStorage, request: Publication
         identity=request.config.identity,
         source_ceiling=request.config.source_ceiling,
     )
+    _refuse_trusted_publication_rows(request.rows)
     _require_rows_published_by(request.rows, request.created_at)
     snapshots: tuple[EvidenceSnapshot, ...] | None = None
     for attempt in range(1, MAX_PUBLICATION_ATTEMPTS + 1):
@@ -1727,6 +1864,10 @@ def _bootstrap_receipt_payload(request: BootstrapRequest) -> bytes:
         "nature": request.identity.nature,
         "outcome_sha256": outcome_sha256,
         "product": request.identity.product,
+        # THE WEAKER PROVENANCE, RECORDED WHERE IT CANNOT BE MISSED (spec tripwire, D3): how many
+        # rows of this lane were bound by digest, how many by manifest trust, and the day range of
+        # each. Derived from the rows themselves, so a replayed bootstrap re-writes identical bytes.
+        "provenance": availability_provenance_summary(request.rows),
         "required_rungs": list(request.identity.required_rungs),
         "row_count": len(request.rows),
         "schema_version": SYSTEM_BOOTSTRAP_SCHEMA_VERSION,
@@ -1927,7 +2068,13 @@ def _verify_terminal_evidence_receipt(
         purpose="terminal",
         max_bytes=TYPED_RECEIPT_MAX_BYTES,
     )
-    _require_exact_keys(value, _TERMINAL_EVIDENCE_FIELDS, "terminal evidence")
+    expected_fields = _TERMINAL_EVIDENCE_FIELDS
+    if PROVENANCE_FIELD in value:
+        # Admitted as a key, never as a value: `_require_declared_provenance` refuses any spelling
+        # but `manifest_trusted`, and the canonical re-serialization already performed on this
+        # payload refuses a document that says it and does not mean it.
+        expected_fields = expected_fields | {PROVENANCE_FIELD}
+    _require_exact_keys(value, expected_fields, "terminal evidence")
     if value["schema_version"] != TERMINAL_EVIDENCE_SCHEMA_VERSION:
         raise AvailabilityMalformedError("unknown terminal evidence schema")
     evidence = TerminalEvidence(
@@ -1943,6 +2090,7 @@ def _verify_terminal_evidence_receipt(
         completion_receipt=_parse_optional_receipt_value(value["completion_receipt"], "completion_receipt"),
         absence_receipt=_parse_optional_receipt_value(value["absence_receipt"], "absence_receipt"),
         absence_reason=_optional_string(value["absence_reason"], "absence_reason"),
+        provenance=_parse_provenance(value.get(PROVENANCE_FIELD)),
     )
     if evidence.identity != expected_identity:
         raise AvailabilityConflictError("terminal evidence identity does not match its lane")
@@ -1962,6 +2110,7 @@ def _cross_bind_terminal_row(row: AvailabilityRow, evidence: TerminalEvidence) -
         row.data_receipts,
         row.completion_receipt,
         row.absence_reason,
+        row.provenance,
     )
     actual = (
         evidence.day,
@@ -1974,6 +2123,7 @@ def _cross_bind_terminal_row(row: AvailabilityRow, evidence: TerminalEvidence) -
         evidence.data_receipts,
         evidence.completion_receipt,
         evidence.absence_reason,
+        evidence.provenance,
     )
     if actual != expected:
         raise AvailabilityConflictError("terminal evidence does not exactly bind its availability row")
@@ -2011,7 +2161,11 @@ def _verify_terminal_physical_objects(
         snapshots.append(snapshot)
     if sorted(part_indexes) != list(range(len(part_indexes))):
         raise AvailabilityConflictError("data receipt part indexes must be contiguous and ordered")
-    if physical_rows != evidence.row_count:
+    if evidence.provenance != MANIFEST_TRUSTED_PROVENANCE and physical_rows != evidence.row_count:
+        # A MANIFEST-TRUSTED ROW HAS NO PARTS TO COUNT, so this comparison would read 0 against its
+        # row_count and refuse the one class it was built to admit. What that row owes instead is
+        # proven in `_verify_completion_object`: the marker is fetched, digested against the receipt
+        # the row binds, and made to say the same number.
         raise AvailabilityConflictError("data Parquet row counts do not match terminal row_count")
     snapshots.extend(_verify_completion_object(store, evidence, layer=layer, kind=kind))
     return tuple(snapshots)
@@ -2051,8 +2205,13 @@ def _verify_completion_object(
         # spelling but `true`, and the byte-for-byte re-serialization below refuses anything else the
         # payload could be hiding. Widening the key set costs nothing that those two do not re-check.
         expected_keys.add(DERIVED_EMPTY_FIELD)
+    if COMPLETION_PARTS_FIELD in value:
+        # Same admission, same reason: the marker's own decoder binds this field to schema version 2
+        # and refuses a partial list, and `_require_recorded_parts_agree` below makes it answer to the
+        # row that cites it.
+        expected_keys.add(COMPLETION_PARTS_FIELD)
     _require_exact_keys(value, expected_keys, "completion marker")
-    if value["schema_version"] != COMPLETION_SCHEMA_VERSION:
+    if value["schema_version"] not in COMPLETION_SCHEMA_VERSIONS:
         raise AvailabilityMalformedError("unknown completion marker schema")
     try:
         completion = PartitionCompletion.from_json_bytes(stored.payload)
@@ -2060,8 +2219,10 @@ def _verify_completion_object(
         raise AvailabilityMalformedError("invalid completion marker") from exc
     if completion.to_json_bytes() != stored.payload:
         raise AvailabilityMalformedError("completion marker does not use its authoritative serialization")
-    if completion.part_count != len(evidence.data_receipts) or completion.row_count != evidence.row_count:
+    if completion.row_count != evidence.row_count:
         raise AvailabilityConflictError("completion counts do not match terminal evidence")
+    _require_part_count_agrees(completion, evidence)
+    _require_recorded_parts_agree(completion, evidence, layer=layer, kind=kind)
     if completion.derived_empty != _is_published_empty_rung(
         rung=evidence.rung, row_count=evidence.row_count, data_receipts=evidence.data_receipts
     ):
@@ -2072,6 +2233,57 @@ def _verify_completion_object(
     if completion.completed_at > evidence.published_at:
         raise AvailabilityConflictError("completion marker postdates terminal publication")
     return (snapshot,)
+
+
+def _require_part_count_agrees(completion: PartitionCompletion, evidence: TerminalEvidence) -> None:
+    """Make the marker's part count answer to the row, in the two different ways the classes allow."""
+    if evidence.provenance != MANIFEST_TRUSTED_PROVENANCE:
+        if completion.part_count != len(evidence.data_receipts):
+            raise AvailabilityConflictError("completion counts do not match terminal evidence")
+        return
+    # THE WHOLE OF WHAT A TRUSTED ROW CLAIMS ABOUT PARTS: that the export said it finished holding
+    # some. Nothing here re-counts the objects, because that is the download this class exists to
+    # avoid; a marker claiming zero parts over a row claiming rows is still a contradiction and dies.
+    if completion.part_count <= 0:
+        raise AvailabilityConflictError("a manifest-trusted row binds a completion marker claiming at least one part")
+
+
+def _require_recorded_parts_agree(
+    completion: PartitionCompletion,
+    evidence: TerminalEvidence,
+    *,
+    layer: str,
+    kind: str,
+) -> None:
+    """Bind a marker that RECORDED its parts to the row citing it, so the newer receipt is not decorative.
+
+    A marker written with per-part digests is the artifact that lets a later compile bind a day
+    without downloading it, so the moment it is cited it must describe this exact rung-day: real
+    partition paths, contiguous indexes, and -- for a digested row -- the same (key, sha256) set the
+    row published. A marker without recorded parts is the legacy shape and states nothing to check.
+    """
+    if not completion.parts:
+        return
+    recorded: dict[str, str] = {}
+    part_indexes: list[int] = []
+    for part in completion.parts:
+        parsed = try_parse_partition_path(part.relative_path)
+        if parsed is None or (parsed.layer, parsed.kind, parsed.zoom, parsed.day) != (
+            layer,
+            kind,
+            evidence.rung,
+            evidence.day,
+        ):
+            raise AvailabilityConflictError("completion marker records a part outside the rung-day it closes")
+        recorded[part.relative_path] = part.sha256
+        part_indexes.append(parsed.part_index)
+    if sorted(part_indexes) != list(range(len(part_indexes))):
+        raise AvailabilityConflictError("completion marker part indexes must be contiguous and ordered")
+    if evidence.provenance == MANIFEST_TRUSTED_PROVENANCE:
+        return
+    published = {receipt.key: receipt.sha256 for receipt in evidence.data_receipts}
+    if recorded != published:
+        raise AvailabilityConflictError("completion marker parts and terminal data receipts disagree")
 
 
 def _verify_absence_object(
@@ -2172,6 +2384,9 @@ def _verify_system_bootstrap_receipt(
     row_count = _parse_positive_int(value["row_count"], "row_count")
     if row_count > min(MAX_AVAILABILITY_ROWS, maximum_row_count):
         raise AvailabilityMalformedError("system bootstrap receipt row_count exceeds the generation bound")
+    provenance = _parse_provenance_summary(value["provenance"], "system bootstrap provenance")
+    if sum(provenance.values()) != row_count:
+        raise AvailabilityMalformedError("system bootstrap provenance classes do not account for every row")
     return snapshot
 
 
@@ -2207,6 +2422,7 @@ def _require_sorted_nonempty_receipts(receipts: Sequence[EvidenceReceipt], label
 
 def _validate_terminal_evidence_payload(evidence: TerminalEvidence) -> None:
     _validate_data_receipt_collection(evidence.data_receipts)
+    _require_declared_provenance(evidence)
     if evidence.terminal_state == "published":
         if evidence.absence_receipt is not None or evidence.absence_reason is not None:
             raise ValueError("published terminal evidence cannot carry absence evidence")
@@ -2218,7 +2434,7 @@ def _validate_terminal_evidence_payload(evidence: TerminalEvidence) -> None:
             return
         if evidence.row_count <= 0:
             raise ValueError("published terminal evidence requires a positive row_count")
-        if not evidence.data_receipts:
+        if not evidence.data_receipts and evidence.provenance != MANIFEST_TRUSTED_PROVENANCE:
             raise ValueError("published terminal evidence requires data and completion receipts")
         return
     if evidence.row_count != 0 or evidence.data_receipts or evidence.completion_receipt is not None:
@@ -2227,6 +2443,22 @@ def _validate_terminal_evidence_payload(evidence: TerminalEvidence) -> None:
         raise ValueError("governed absence terminal evidence requires an absence receipt and reason")
     if evidence.absence_reason != evidence.absence_reason.strip():
         raise ValueError("terminal absence reason must use canonical trimmed spelling")
+
+
+def _require_declared_provenance(evidence: TerminalEvidence) -> None:
+    """Bind the DECLARED class to the shape, so a document can never claim one and carry the other."""
+    if evidence.provenance not in (DIGESTED_PROVENANCE, MANIFEST_TRUSTED_PROVENANCE):
+        raise ValueError(f"{PROVENANCE_FIELD} must be {DIGESTED_PROVENANCE} or {MANIFEST_TRUSTED_PROVENANCE}")
+    derived = availability_row_provenance(
+        terminal_state=evidence.terminal_state,
+        row_count=evidence.row_count,
+        data_receipts=evidence.data_receipts,
+    )
+    if derived != evidence.provenance:
+        raise ValueError(
+            f"terminal evidence declares {evidence.provenance} and has the shape of {derived}; a manifest-trusted "
+            "outcome publishes rows and names no part digest, and nothing else may claim that class"
+        )
 
 
 def _physical_lane_identity(lane_root: str) -> tuple[str, str]:
@@ -2407,29 +2639,55 @@ def _parse_rows(value: object, *, identity: AvailabilityIdentity) -> tuple[Avail
 
 
 def _row_from_mapping(value: Mapping[str, object]) -> AvailabilityRow:
-    _require_exact_keys(
-        value,
-        {
-            "absence_reason",
-            "completion_receipt_key",
-            "completion_receipt_sha256",
-            "data_receipts",
-            "day",
-            "lane",
-            "nature",
-            "product",
-            "published_at",
-            "row_count",
-            "rung",
-            "source_ceiling",
-            "source_receipt_key",
-            "source_receipt_sha256",
-            "terminal_receipt_key",
-            "terminal_receipt_sha256",
-            "terminal_state",
-        },
-        "availability row",
-    )
+    # ONE PARSER, TWO CALLERS: the offline input document, where a row MAY declare its provenance
+    # class in words, and the Arrow generation, where it never can -- `AVAILABILITY_INDEX_SCHEMA` is
+    # frozen at version 1 and holds no such column. The declaration is therefore optional, and it is
+    # checked against the shape rather than believed; the shape is what survives the round trip.
+    declared = value.get(PROVENANCE_FIELD)
+    expected_keys = set(_AVAILABILITY_ROW_FIELDS)
+    if PROVENANCE_FIELD in value:
+        expected_keys.add(PROVENANCE_FIELD)
+    _require_exact_keys(value, expected_keys, "availability row")
+    row = _row_fields(value)
+    if declared is not None and _parse_declared_row_provenance(declared) != row.provenance:
+        raise ValueError(
+            f"availability row declares {declared!r} and has the shape of {row.provenance}; a manifest-trusted "
+            "row publishes rows and names no part digest, and nothing else may claim that class"
+        )
+    return row
+
+
+def _parse_declared_row_provenance(value: object) -> AvailabilityProvenance:
+    """Read a row's DECLARED class. Both spellings are admitted: the input document is compiled, not derived."""
+    if value == DIGESTED_PROVENANCE:
+        return DIGESTED_PROVENANCE
+    if value == MANIFEST_TRUSTED_PROVENANCE:
+        return MANIFEST_TRUSTED_PROVENANCE
+    raise ValueError(f"{PROVENANCE_FIELD} must be {DIGESTED_PROVENANCE} or {MANIFEST_TRUSTED_PROVENANCE}")
+
+
+_AVAILABILITY_ROW_FIELDS: Final = {
+    "absence_reason",
+    "completion_receipt_key",
+    "completion_receipt_sha256",
+    "data_receipts",
+    "day",
+    "lane",
+    "nature",
+    "product",
+    "published_at",
+    "row_count",
+    "rung",
+    "source_ceiling",
+    "source_receipt_key",
+    "source_receipt_sha256",
+    "terminal_receipt_key",
+    "terminal_receipt_sha256",
+    "terminal_state",
+}
+
+
+def _row_fields(value: Mapping[str, object]) -> AvailabilityRow:
     terminal_state = _parse_terminal_state(value["terminal_state"])
     return AvailabilityRow(
         lane=_require_string(value["lane"], "lane"),
@@ -2563,6 +2821,15 @@ def _parse_nature(value: object) -> AvailabilityNature:
 
 def _require_nature(value: str) -> None:
     _parse_nature(value)
+
+
+def _parse_provenance(value: object) -> AvailabilityProvenance:
+    """Read a declared provenance class; absent means the ordinary one, and `digested` is never written."""
+    if value is None:
+        return DIGESTED_PROVENANCE
+    if value == MANIFEST_TRUSTED_PROVENANCE:
+        return MANIFEST_TRUSTED_PROVENANCE
+    raise ValueError(f"{PROVENANCE_FIELD} is written only as {MANIFEST_TRUSTED_PROVENANCE}, got {value!r}")
 
 
 def _parse_terminal_state(value: object) -> TerminalState:

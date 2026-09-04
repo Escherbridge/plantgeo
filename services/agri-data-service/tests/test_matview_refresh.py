@@ -38,9 +38,11 @@ from agri_data_service.jobs.matview_refresh import (
     MATVIEW_REFRESH_HANDLER_TOKEN,
     MATVIEW_REFRESH_LEASE_SECONDS,
     MATVIEW_REFRESH_QUALIFIED_NAMES,
+    MATVIEW_REFRESH_RETIRED_VIEWS,
     MATVIEW_REFRESH_RUN_KEY,
     MATVIEW_REFRESH_SPECS,
     MATVIEW_REFRESH_TIME_BUDGET_SECONDS,
+    OUT_OF_SPEC_OUTCOME,
     MatviewRefreshContextError,
     MatviewRefreshLaneContext,
     MatviewRefreshReport,
@@ -67,14 +69,15 @@ from agri_data_service.jobs.registry import JOB_HANDLERS, JobInvocation
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-# The hand-spelled 10-name list this lane must cover -- asserted against, never generated from, the
-# module's own MATVIEW_REFRESH_SPECS, so the two cannot drift together and still pass. Eight of the
+# The hand-spelled 9-name list this lane must cover -- asserted against, never generated from, the
+# module's own MATVIEW_REFRESH_SPECS, so the two cannot drift together and still pass. Seven of the
 # nine matviews drizzle/0029 creates, plus two adopted (geo.watershed_rollup,
-# agri.mv_forecast_ml_daily_serving).
+# agri.mv_forecast_ml_daily_serving). `geo.mv_signal_observation_day` is NOT here -- see
+# MATVIEW_REFRESH_RETIRED_VIEWS below, not REMOVED_MATVIEW_NAMES: the relation is not absent, only
+# retired.
 EXPECTED_MATVIEW_NAMES: frozenset[str] = frozenset(
     {
         "geo.mv_feature_observation_day",
-        "geo.mv_signal_observation_day",
         "geo.mv_drought_observation_day",
         "geo.mv_drought_release_index",
         "geo.mv_layer_feature_stats",
@@ -91,6 +94,10 @@ EXPECTED_MATVIEW_NAMES: frozenset[str] = frozenset(
 # 2026-08-18 under the Parquet/DuckDB pivot; `geo.mv_feature_observation_day_axis` (drizzle/0031) was
 # never applied against production and, under the same pivot, will not be. Both were absent, both
 # were therefore eligible on every tick, and between them they dead-lettered 200 shards.
+#
+# `geo.mv_signal_observation_day` (removed 2026-09-04) belongs in MATVIEW_REFRESH_RETIRED_VIEWS, not
+# here: unlike the two below, its relation is NOT absent -- its REFRESH timed out at 302.14s against
+# its own 300s cap. Folding it into this set would assert something false about the database.
 REMOVED_MATVIEW_NAMES: frozenset[str] = frozenset(
     {
         "geo.mv_signal_cell_daily",
@@ -333,9 +340,9 @@ def _fake_invocation(
 # --- The spec table itself: the denominator this lane must cover, hand-spelled against it. ---
 
 
-def test_the_spec_table_covers_exactly_the_hand_spelled_ten_views() -> None:
+def test_the_spec_table_covers_exactly_the_hand_spelled_nine_views() -> None:
     assert MATVIEW_REFRESH_QUALIFIED_NAMES == EXPECTED_MATVIEW_NAMES
-    assert len(MATVIEW_REFRESH_SPECS) == len(EXPECTED_MATVIEW_NAMES) == 10
+    assert len(MATVIEW_REFRESH_SPECS) == len(EXPECTED_MATVIEW_NAMES) == 9
 
 
 def test_the_two_relations_the_parquet_pivot_dropped_are_not_on_this_lane() -> None:
@@ -346,6 +353,25 @@ def test_the_two_relations_the_parquet_pivot_dropped_are_not_on_this_lane() -> N
     lane, while this assertion stops the lane from asking for a relation nobody intends to have.
     """
     assert MATVIEW_REFRESH_QUALIFIED_NAMES.isdisjoint(REMOVED_MATVIEW_NAMES)
+
+
+def test_the_retired_signal_relation_is_not_on_this_lane_either() -> None:
+    """`geo.mv_signal_observation_day` is retired, not absent: the relation still exists, only its
+    REFRESH -- 302.14s against a 300s cap -- was removed from this lane's job. Kept apart from
+    REMOVED_MATVIEW_NAMES/`relation_absent` for that reason -- see MATVIEW_REFRESH_RETIRED_VIEWS and
+    jobs/AGENTS.md "6. A retired view still needs a name on the tick". The disjointness asserted here
+    is ALSO checked at import time now (a module-level `assert` beside MATVIEW_REFRESH_RETIRED_VIEWS,
+    jobs/AGENTS.md "6a."); this test stays as the object-level pin of the same invariant.
+    """
+    retired_names = {view.qualified_name for view in MATVIEW_REFRESH_RETIRED_VIEWS}
+    assert retired_names == {"geo.mv_signal_observation_day"}
+    assert MATVIEW_REFRESH_QUALIFIED_NAMES.isdisjoint(retired_names)
+    assert REMOVED_MATVIEW_NAMES.isdisjoint(retired_names)
+    # retired_at/review_trigger exist so the entry cannot be a permanent silencer with no expiry and
+    # no path back to a human -- MINOR 7 point 2.
+    for view in MATVIEW_REFRESH_RETIRED_VIEWS:
+        assert view.retired_at
+        assert view.review_trigger
 
 
 def test_every_spec_name_is_unique() -> None:
@@ -363,7 +389,7 @@ def test_the_heaviest_view_carries_the_highest_priority_number_and_widest_waterm
 
     Its 286,800 ms measured rebuild is what "heaviest" now means on this lane, and it must keep the
     highest priority NUMBER -- which runs it LAST on a budget-truncated tick -- so that one expensive
-    relation can never starve the nine cheap ones behind it.
+    relation can never starve the eight cheap ones behind it.
     """
     by_name = {spec.qualified_name: spec for spec in MATVIEW_REFRESH_SPECS}
     heavy = by_name["geo.mv_feature_observation_day"]
@@ -564,6 +590,14 @@ def test_report_to_metrics_carries_every_view_and_its_detail() -> None:
         }
     ]
     assert metrics["relations_absent"] == []
+    assert metrics["views_out_of_spec"] == []
+
+
+def test_report_to_metrics_lifts_out_of_spec_views_to_the_top_level() -> None:
+    retired = MatviewRefreshResult("v", OUT_OF_SPEC_OUTCOME, False, 0.0, None, detail="removed on purpose")
+    metrics = MatviewRefreshReport(results=(retired,)).to_metrics()
+    assert metrics["views_out_of_spec"] == ["v"]
+    assert metrics["relations_absent"] == []
 
 
 # --- _refresh_one_matview: existence, self-heal, unique-index fallback, failure ---
@@ -650,8 +684,12 @@ async def test_a_steady_state_tick_with_everything_fresh_skips_every_view(monkey
     assert outcome.kind == "completed"
     assert session.refresh_statements() == []
     views = outcome.metrics["views"]
-    assert len(views) == 10
-    assert all(entry["status"] == "skipped_unchanged" for entry in views)
+    # Every real spec (skipped_unchanged) plus every retired view (out_of_spec, reported unconditionally).
+    assert len(views) == len(MATVIEW_REFRESH_QUALIFIED_NAMES) + len(MATVIEW_REFRESH_RETIRED_VIEWS)
+    real_views = [entry for entry in views if entry["status"] != OUT_OF_SPEC_OUTCOME]
+    assert len(real_views) == len(MATVIEW_REFRESH_QUALIFIED_NAMES)
+    assert all(entry["status"] == "skipped_unchanged" for entry in real_views)
+    assert outcome.metrics["views_out_of_spec"] == ["geo.mv_signal_observation_day"]
 
 
 @pytest.mark.asyncio
@@ -761,11 +799,18 @@ async def test_an_absent_relation_is_governed_not_failed_and_costs_no_refresh() 
     assert outcome.kind == "completed"
     assert session.refresh_statements() == []
     statuses = {entry["view"]: entry["status"] for entry in outcome.metrics["views"]}
-    assert set(statuses) == MATVIEW_REFRESH_QUALIFIED_NAMES
-    assert set(statuses.values()) == {"relation_absent"}
+    # The retired view is reported unconditionally, regardless of what `existing_views` scripts --
+    # it never reaches `_absent_relations` at all. Isolated from the real specs below so this test
+    # still pins "every ABSENT relation reads relation_absent" without the retired view's different
+    # status folding into either set.
+    real_statuses = {name: status for name, status in statuses.items() if name in MATVIEW_REFRESH_QUALIFIED_NAMES}
+    assert set(real_statuses) == MATVIEW_REFRESH_QUALIFIED_NAMES
+    assert set(real_statuses.values()) == {"relation_absent"}
+    assert statuses["geo.mv_signal_observation_day"] == "out_of_spec"
     # Lifted to the top level of the metrics, not only buried in the per-view array: a governed
     # non-failure nobody can see on a green tick is a governed non-failure nobody reads.
     assert set(outcome.metrics["relations_absent"]) == MATVIEW_REFRESH_QUALIFIED_NAMES
+    assert outcome.metrics["views_out_of_spec"] == ["geo.mv_signal_observation_day"]
 
 
 @pytest.mark.asyncio
@@ -857,7 +902,88 @@ async def test_a_relation_that_vanishes_after_preflight_is_still_the_loud_missin
     assert outcome.kind == "failed"
     assert outcome.failure_class == "matview_refresh_failed"
     statuses = {entry["status"] for entry in outcome.metrics["views"]}
-    assert statuses == {"skipped_missing"}
+    # `out_of_spec` is the retired view, reported every tick regardless of this scenario's DDL race
+    # among the real specs; it is unattempted and must not join the all-attempted-missing set below.
+    assert statuses == {"skipped_missing", "out_of_spec"}
+
+
+# --- Retired views: `out_of_spec` is reported AND recorded (MEDIUM 6 governance fix) ---
+
+
+@pytest.mark.asyncio
+async def test_a_retired_view_writes_its_ledger_row_and_carries_its_last_watermark_forward(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`out_of_spec` now follows the SAME ledger idiom `relation_absent` established: recorded in
+    `agri.matview_refresh_state`, not only in the tick's own `job_attempt.metrics`, with the
+    last-observed watermark carried forward rather than a fabricated fresh read -- a retired view has
+    no `watermark_sql` to query in the first place. See jobs/AGENTS.md "6a.".
+    """
+    now = datetime(2026, 9, 4, 12, 0, 0, tzinfo=UTC)
+    monkeypatch.setattr(_FrozenDateTime, "fixed_now", now)
+    monkeypatch.setattr(mv_module, "datetime", _FrozenDateTime)
+    retired_name = "geo.mv_signal_observation_day"
+    stored_watermark = "some-prior-signal-watermark"
+    prior_rows = [
+        *_fresh_prior_state_rows(now),
+        {
+            "view_name": retired_name,
+            "source_watermark": stored_watermark,
+            # NULL, matching the real production shape jobs/AGENTS.md's ledger table records for
+            # this view: it never succeeded before retirement, only ever timed out.
+            "refreshed_at": None,
+            "duration_ms": 300_238,
+            "row_count": 1_000,
+            "outcome": "failed",
+            "last_attempt_at": now - timedelta(hours=6),
+            "consecutive_failures": 5,
+        },
+    ]
+    session = FakeSession(prior_state_rows=prior_rows)
+
+    async with matview_refresh_context(MatviewRefreshLaneContext(session=session)):
+        await matview_refresh_handler(_fake_invocation())
+
+    written = [write for write in session.state_writes() if write["view_name"] == retired_name]
+    assert written == [
+        {
+            "view_name": retired_name,
+            "source_watermark": stored_watermark,
+            # NULL: `out_of_spec` sits in `_UNATTEMPTED_STATUSES`, so the upsert's COALESCE keeps
+            # whatever refreshed_at was already stored and its CASE leaves consecutive_failures
+            # alone -- no backoff is earned by, or owed to, a view no REFRESH was ever issued for.
+            "refreshed_at": None,
+            "duration_ms": 0,
+            "row_count": None,
+            "outcome": "out_of_spec",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_the_retired_views_reported_detail_names_its_retirement_date_and_review_trigger() -> None:
+    """MINOR 7's third gap: the string must not assert a fact -- a SPECIFIC live reader at a SPECIFIC
+    line number -- that a later repoint (track lane C3) or drop (decision D1) would make false on
+    every subsequent tick. It states `retired_at` plus the two events that should trigger a
+    re-review, and points the reader inventory itself at jobs/AGENTS.md "6." rather than restating
+    it inline.
+    """
+    session = FakeSession()
+
+    async with matview_refresh_context(MatviewRefreshLaneContext(session=session)):
+        outcome = await matview_refresh_handler(_fake_invocation())
+
+    retired_entry = next(
+        entry for entry in outcome.metrics["views"] if entry["view"] == "geo.mv_signal_observation_day"
+    )
+    detail = retired_entry["detail"] or ""
+    assert "retired 2026-09-04" in detail
+    assert "C3" in detail
+    assert "D1" in detail
+    # No stale line-number citation of a downstream reader -- that inventory is maintained in
+    # jobs/AGENTS.md "6.", not reprinted verbatim on every tick this view stays retired.
+    assert ":3198" not in detail
+    assert "SIGNAL_CENSUS_RELATION" not in detail
 
 
 @pytest.mark.asyncio
@@ -925,10 +1051,13 @@ async def test_trigger_reuses_the_same_persistent_run_across_calls(monkeypatch: 
 # geo.mv_soil_survey_union all carried refreshed_at NULL with a real failure duration beside them, so
 # `_eligibility`'s "never successfully refreshed" branch re-admitted all three on every hourly tick --
 # ~449 s of guaranteed-doomed REFRESH per tick, 47 failed attempts against 2 succeeded over 48 hours.
+# `geo.mv_signal_observation_day` was later removed from MATVIEW_REFRESH_SPECS on 2026-09-04 (see
+# MATVIEW_REFRESH_RETIRED_VIEWS); the test below now exercises the backoff math against
+# `geo.mv_soil_survey_union`, its sibling from the same incident, which is still on the spec table.
 
 
 def test_backoff_doubles_from_the_min_interval_and_caps_at_the_views_own_max_staleness() -> None:
-    spec = next(s for s in MATVIEW_REFRESH_SPECS if s.qualified_name == "geo.mv_signal_observation_day")
+    spec = next(s for s in MATVIEW_REFRESH_SPECS if s.qualified_name == "geo.mv_soil_survey_union")
     assert _backoff_seconds(spec, 0) == 0.0
     assert _backoff_seconds(spec, 1) == float(spec.min_interval_seconds)
     assert _backoff_seconds(spec, 2) == float(spec.min_interval_seconds * 2)

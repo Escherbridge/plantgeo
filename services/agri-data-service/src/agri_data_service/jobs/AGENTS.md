@@ -601,14 +601,16 @@ shape, so the ten and thirteen stale rows stay exactly what this file's "Why max
 is `dead_letter` and never silent success" already says they should be: a truthful record that a
 specific tick failed, not a gap anything downstream is missing data because of.
 
-## The matview-refresh lane's five self-inflicted stalls
+## The matview-refresh lane's six self-inflicted stalls
 
 The first four were found by measuring production on 2026-08-17 rather than by reading the code; the
 fifth surfaced on 2026-09-02 when `plantgeo-job-executor` became the sole scheduler and started
-ticking the lane against a database the Parquet pivot had reshaped underneath it. All five share one
-shape: a view that cannot make progress is indistinguishable, to some gate, from a view that
-is fine. The numbers are here because the code that acts on them is terse by house convention, and
-because a first pass got several of them wrong — every figure below is a live read.
+ticking the lane against a database the Parquet pivot had reshaped underneath it; the sixth surfaced
+on 2026-09-04 when the fifth stall's own fix (the per-spec relation preflight) turned out to answer
+the wrong question for one specific view. All six share one shape: a view that cannot make progress
+is indistinguishable, to some gate, from a view that is fine. The numbers are here because the code
+that acts on them is terse by house convention, and because a first pass got several of them wrong —
+every figure below is a live read.
 
 The ledger, `agri.matview_refresh_state`:
 
@@ -843,6 +845,124 @@ pivot rather than serve it. **The 200 dead letters were left standing**, per thi
 irreplaceable window, so each row is a truthful record that a specific tick failed and nothing
 downstream is missing data because of it. Erasing them to make the scheduler look green is the one
 thing the RUNBOOK explicitly forbids.
+
+### 6. A retired view still needs a name on the tick
+
+**Observed in production 2026-09-04 02:08 UTC.** `jobs-matview-refresh` opened its bucket, the wave-1
+preflight worked (no `matview_refresh_failed` for the two absent relations stall 5 already governs),
+and every small view refreshed concurrently — but `geo.mv_signal_observation_day` failed after
+**302.14 s** against its own 300 s `statement_timeout`, the same shape the ledger table above already
+showed on 2026-08-17 (`mv_signal_observation_day | NULL | 300,238 | 300s | failed`). The Parquet pivot
+has already replaced this relation's PRODUCER — the upstream ingest into `agri.signal_observation`
+this REFRESH aggregates — the same way it already emptied `mv_signal_cell_daily` and
+`mv_feature_observation_day_axis`. **It has NOT replaced the CONSUMER, and that is the whole reason
+this stall differs from stall 5's.** `to_regclass` still finds the relation; only the REFRESH itself
+cannot complete inside its cap, and `getSliderCapabilities` in the main app still reads its frozen
+contents on every cache miss — see "one downstream reader is not" below. Removing this lane's REFRESH
+does not make that read any staler than it already was: the REFRESH has been failing at the 300 s cap,
+so the relation was already frozen at whatever its last SUCCESSFUL refresh produced before this lane
+ever noticed. What removing the spec changes is the LANE's own health, not the served data's
+freshness — the red tick and the `jobs-pulse` dead-lettered shard go away; the frozen data does not
+get any fresher, and does not get any staler either.
+
+**Why `_absent_relations` cannot govern this one.** Stall 5's preflight answers exactly one question —
+does the catalog have this relation right now — and for this relation the honest answer is yes.
+Routing it through `relation_absent` anyway would be a fabricated fact of the same shape this lane
+refuses elsewhere (see stall 4's "ghost day" and the `relation_absent` watermark-carry-forward note):
+a governed outcome is only honest when it answers the question it claims to.
+
+**The fix is the SAME removal idiom stall 5 already established, not a second mechanism.**
+`geo.mv_signal_observation_day`'s `MatviewRefreshSpec` is removed from `MATVIEW_REFRESH_SPECS`
+outright — a spec naming a relation this lane no longer wants to touch is a standing instruction to
+keep touching it, absent or not. What stall 5's removal did NOT need, because both relations it
+removed were genuinely gone, is a way to tell an operator the removal happened at all: a tuple with
+one fewer entry is invisible on a tick that only reads `MATVIEW_REFRESH_SPECS`. `MATVIEW_REFRESH_RETIRED_VIEWS`
+closes that gap with the smallest addition that still reports every tick: a static `(qualified_name,
+reason)` registry, read with no catalog round trip, that the handler turns into one
+`MatviewRefreshResult` per retired view before it ever touches the database. Its outcome,
+`OUT_OF_SPEC_OUTCOME = "out_of_spec"`, sits in `_UNATTEMPTED_STATUSES` beside `relation_absent` for
+the same reason: no REFRESH was issued, so the tick learned nothing about whether one would have
+worked, and it must never contribute to `has_failures`' all-attempted-missing rule. It is kept a
+DIFFERENT literal from `relation_absent`, never folded in, because the two answer different questions
+about the database and collapsing them would make a future reader believe `geo.mv_signal_observation_day`
+is gone when it is not — `agent/tools.py`'s `SIGNAL_CENSUS_RELATION` still points at it and still
+serves it (see below).
+
+**`views_out_of_spec` is lifted to the top level of `job_attempt.metrics`, exactly like
+`relations_absent`.** The same non-negotiable applies: a governed fact readable only by scanning a
+per-view array is a governed fact nobody reads. An operator scanning a green tick now sees, without
+opening a single row, both what is missing and what was deliberately dropped.
+
+**This retirement is scoped to the refresh lane only, and it has at least two downstream readers that
+are not.** `geo.mv_signal_observation_day` is NOT an unreferenced view — do not read its removal from
+this spec table as "nothing reads this any more":
+
+1. **`src/lib/server/services/environmental-read-model.ts:3198` and `:3464-3465`** (the main Next.js
+   app, a different service tree from this one) read it in PRODUCTION through
+   `geo.v_observation_day_census`, the plain view that unions it with `geo.mv_drought_observation_day`
+   and the feature census. This is the exact query that replaced the aggregate join blamed for the
+   2026-08-15 Cloudflare 524 (`:3192-3207`'s own comment), and it backs `getSliderCapabilities`, a
+   `publicProcedure` cached 30 minutes (`STREAM_CAPABILITIES_CACHE_TTL_MS`, `:3458-3473`) precisely
+   because — per that constant's own comment — "the refresh cadence upstream of it is the real
+   staleness floor". That assumption is now false for this one relation: there is no more refresh
+   cadence upstream of it, only whatever the last successful REFRESH left behind. Repointing this
+   consumer to the Parquet API is chartered as track lane C3; it is not done here, and this file's
+   ownership does not extend to `src/lib/server/**`.
+2. **`agent/tools.py:229-234`** still names `geo.mv_signal_observation_day` as `SIGNAL_CENSUS_RELATION`,
+   folded into `CENSUS_RELATIONS` and probed by `_unbuilt_planes` from
+   `query_observation_coverage_on_day` and `query_observation_temporal_neighbors`
+   (`agent/tools.py:959`, `:1001`). `_unbuilt_planes` only checks `relispopulated`, which this relation
+   already satisfies from its last successful refresh — so neither tool will refuse, and neither will
+   notice that this lane has stopped keeping the relation current. The same description also appears in
+   `agent/AGENTS.md` and `sql/agent/signal_coverage_on_day.sql`, both of which describe
+   `geo.mv_signal_observation_day` as the authority for "how much landed" without knowing this lane no
+   longer refreshes it.
+
+Both gaps are facts about their own files, not this lane, and are intentionally left for the
+retirement inventory rather than patched here.
+
+### 6a. The retired-view registry needed a ledger row, a disjointness guard, and an expiry — governance follow-up, 2026-09-04
+
+Section "6." above claims `out_of_spec` follows "the same removal-from-the-table idiom" section "5."
+established for `relation_absent`. `OUT_OF_SPEC_OUTCOME` delivered the FIRST half of that parity —
+reported on the tick's own `job_attempt.metrics` — and silently dropped the second: `relation_absent`'s
+own `_write_refresh_state`
+call was never mirrored for a retired view, so `agri.matview_refresh_state` itself kept showing
+`geo.mv_signal_observation_day`'s last real refresh outcome forever, with no row-level trace that the
+lane had stopped touching it at all. An operator's first instinct on "what is this lane doing" is the
+ledger table, not a JSONB blob three hops away. Three fixes close the gap:
+
+1. **The ledger write.** The retired-view loop in `matview_refresh_handler` now calls
+   `_write_refresh_state` exactly the way the `relation_absent` loop beside it always has, including
+   the same "carry forward the last-observed watermark, never fabricate a fresh one" rule from #5,
+   since a retired view has no `watermark_sql` to read either. `_write_refresh_state` was widened to
+   take a bare `qualified_name: str` rather than a `MatviewRefreshSpec`, because a retired view has no
+   spec left in `MATVIEW_REFRESH_SPECS` to hand in — only a `_RetiredView.qualified_name`. One
+   state-writing path, not two: a second `_write_retired_view_state` function was considered and
+   rejected, because a second path is a second place for the two to drift out from under the upsert's
+   own COALESCE/CASE rules.
+2. **A module-level disjointness assertion.** `MATVIEW_REFRESH_QUALIFIED_NAMES.isdisjoint(...)`
+   against `MATVIEW_REFRESH_RETIRED_VIEWS` now runs at IMPORT, following the `assert isinstance(...)`
+   module-level-invariant pattern already established in `planes/weather_observations.py`,
+   `planes/water_gauges.py` and `planes/evacuation_zones.py`. Re-adding a retired name to
+   `MATVIEW_REFRESH_SPECS` without deleting its retirement entry would otherwise mint TWO
+   `MatviewRefreshResult`s for one `qualified_name` inside one tick's `results`, with both
+   `views_out_of_spec` and the view's real outcome sitting side by side in `to_metrics()`.
+3. **`retired_at` and `review_trigger`, and a reason string that survives its own premise going
+   stale.** The registry carried no date and nothing pointed a human back at an entry that
+   `_UNATTEMPTED_STATUSES` guarantees can never fail the lane on its own — a permanent silencer
+   reachable by a one-line edit, with no expiry and no review trigger. `review_trigger` now names the
+   two events that make an entry stale instead of leaving "someone eventually notices" as the only
+   mechanism: track lane C3 repointing `environmental-read-model.ts` off
+   `geo.v_observation_day_census`, and this relation's own drop under decision D1 (C3 first, D1
+   follows) — at that point the entry should be restored with a completable `statement_timeout` or
+   deleted outright, not left standing. `reason` was also rewritten to drop its specific reader
+   citations (`environmental-read-model.ts:3198,3464-3465`, `agent/tools.py`'s
+   `SIGNAL_CENSUS_RELATION`): that inventory is real and current in section "6." above, which is a
+   document a human maintains, not an operator-facing string reprinted verbatim on every tick this
+   view stays retired. The prior wording would keep asserting a "live reader" after C3 repoints it and
+   D1 drops the relation — at which point it is simply false, in the one place an operator reading a
+   green tick is most likely to read it.
 
 ## Metrics
 

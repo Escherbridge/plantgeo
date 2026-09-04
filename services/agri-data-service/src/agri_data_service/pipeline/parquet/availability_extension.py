@@ -285,6 +285,19 @@ class RepairedBaseRung:
     row_count: int
     part_count: int
 
+    def __post_init__(self) -> None:
+        # A REPAIR MAY NEVER MINT THE MANIFEST-TRUSTED SHAPE. Rows plus no named part is the one
+        # claim `availability_index.availability_row_provenance` reads as trusted, and that class is
+        # bounded to the bootstrap by owner decision D3. Today the shape is unreachable only because
+        # `objectstore.read_partition_with_receipts` raises on an empty listing -- a guarantee two
+        # files away, stated nowhere near the boundary that leans on it. Restated here, where it is
+        # cheap: the repair read the parts, so it has their receipts or it has no claim to make.
+        if self.row_count > 0 and not self.data_receipts:
+            raise ValueError(
+                f"a repaired base rung holding {self.row_count} row(s) must name the parts the repair read; "
+                "a claim with rows and no receipts is the bootstrap-only manifest-trusted shape"
+            )
+
 
 @dataclass(frozen=True, slots=True)
 class _LadderGap:
