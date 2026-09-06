@@ -1001,3 +1001,77 @@ independent review. The evidence packet lists both removals and retained candida
 Everything dated before 2026-08-29 moved to `RUNBOOK-archive-2026-08.md` on 2026-09-04 (8,861 lines,
 verbatim). It is evidence, not instruction; three of its recurring claims are reversed and the archive
 header names them.
+
+---
+
+## HANDOFF — 2026-09-05, session `plantgeo-1c`. Environmental Postgres retirement, waves A-D.
+
+Track: `tracks/environmental_postgres_retirement_20260904/` (spec, plan, evidence). Read its plan first —
+it carries four corrections that invalidate earlier text, each marked in place.
+
+### THE BLOCKER — production, unresolved, and it is the only thing stopping criteria 1, 3 and 4
+
+**`plantgeo-job-executor` has failed every tick since 2026-09-04 11:54 UTC** —
+`plantgeo_job_executor_tick_failed error_type=ProgrammingError`, 300 s backoff, 30+ consecutive.
+The Railway board reads SUCCESS; the service is up and doing nothing.
+
+Measured from inside the container (`railway ssh --service plantgeo-job-executor`):
+
+| service | DSN target |
+|---|---|
+| `plantgeo-main` (healthy) | `plantgeo-spatiotemporal-db.railway.internal:5432/**plantgeo**` |
+| `plantgeo-job-executor` (failing) | `postgres.railway.internal:5432/**railway**` |
+
+That database holds **only the `public` schema** — no `agri`, no `geo`. `RECEIVER_WRITER_DATABASE_URL`
+and `LOCAL_SOURCE_LOADER_DATABASE_URL` are set but EMPTY. And **`plantgeo-spatiotemporal-db` is
+SLEEPING**: the executor is its principal writer, so with the executor aimed elsewhere nothing wakes it.
+Self-sustaining.
+
+The fix is one variable — point it at `plantgeo-spatiotemporal-db`, matching `plantgeo-main`. NOT applied:
+it is production infrastructure, six other sessions were live on this repo, and the variable changed
+between 02:2x and 11:54 UTC by an unknown hand. Worth also checking whether sleep should be enabled on a
+scheduler's database at all.
+
+**Two corrections this causes.** The inventory's note that `agri.spatial_cell` is "absent in production"
+was measured against the WRONG database — do not trust it until re-probed. And every signal export since
+`8ce71fd` may have been failing at the database level, which would explain why so much signal history sits
+on the pre-fix schema.
+
+### Shipped — nine increments, all green in production
+
+`62cd987` charter + RUNBOOK prune (9,771 -> 950 lines) · `f5510a1` wave A, availability bootstrap compiler ·
+`df1f323` wave B, three direct-to-Parquet writers · `7da98d0` wave C, agent tools off Postgres + the join ·
+`e7e5ae3` all five layers read Parquet, fire-perimeters re-registered `static_lookup` · `c4a77f7` Martin
+unpublishes the retired tile functions · `b5c375a` the drop-packet builder · `02db760` code-side blockers
+discharged on four relations · `df1a089` reader scan sees multi-line comments, retired-view exemption.
+
+### Criteria
+
+1. **Postgres social-only** — NOT met. Six relations are code-clear (`public.drought_data`, three
+   `geo.historical_*`, both `geo.mv_soil_survey_*`): their packets show only `parity_unavailable` and
+   `archive_snapshot_owed`, both production-dependent. No drop has been applied.
+2. **Every layer serves from Parquet** — **MET.** Five tile functions retired, Martin publishes none.
+3. **Coverage + right rungs** — NOT met. `parquet-rewrite-signal` exists; its dry run is the census that
+   turns the ~222-day estimate into a measurement. Needs the scheduler.
+4. **Legacy code deleted** — partial. Eight `sql/agent/*.sql`, two `sql/ingest/*.sql`, a scheduled
+   diagnostic, two matview refreshes and three Railway cron services are gone. The drops themselves wait.
+
+### Uncommitted at handoff
+`services/agri-data-service/tests/retirement/test_readers.py` and `retirement/AGENTS.md` — the false-clear
+tripwire (verified firing AND passing) plus a corrected limitation section. A lane correcting the same
+inverted claim in `readers.py`'s own docstring was in flight and may be incomplete. **Sweep before
+committing**: `git add services/agri-data-service`, `scripts/check.py --write-receipt`, re-stage the
+receipt, then verify on a `git archive` extraction.
+
+### The four claims overturned today — the pattern is one rule
+`export_vegetation_day`'s "missing `write_absence`" (the raise IS the signal; `gap_fill.py:1174` catches
+it) · its supposed link to vegetation's 205 incomplete days (they are a different population) · the slider
+"served from a frozen matview" (cut over 2026-08-28, `AGENTS.md` already said so) · the inventory's
+zero-reader claim (wrong for all nine drop-now relations; it counted only `SELECT`s).
+
+**Before recording a defect, trace the caller. Before trusting a ledger, grep the tree.**
+
+### Owner decisions still owed
+The DSN. Whether `signal-plane` and `soil-survey` join wave B or are recorded out of scope. The
+fire-history cap (45 years -> 2, and the tool it redirects to refuses until A4). The six observability
+decisions in `tracks/observability_log_capture_20260903/`.
