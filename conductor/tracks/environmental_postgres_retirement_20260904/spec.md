@@ -110,7 +110,9 @@ Verbatim: *full cut over to parquet and only social features data and objects in
 coverage in parquet set up and performant by having the right rungs in place; all layers should be
 serving from parquet; legacy code used in the postgres environment should be removed.*
 
-Four acceptance criteria, each needing evidence before this track closes:
+Six acceptance criteria, each needing evidence before this track closes. Criteria 1-4 are the
+2026-09-04 grill; 5 and 6 were folded in on 2026-09-06 when the owner consolidated the mobile and
+agent passes into this one goal rather than opening parallel tracks.
 
 1. **Postgres holds feed and social objects only.** No environmental relation, matview, plane or fill
    ledger survives except the executor's `agri.job_*` checkpoint family (until an object-store
@@ -126,6 +128,26 @@ Four acceptance criteria, each needing evidence before this track closes:
 4. **The legacy code is deleted, not merely unused.** Every Postgres fill command, its SQL, its lane
    spec and its tests are removed with a c2-style removal packet proving zero imports. An orphaned
    module that nothing calls is not done; it is the next reader's trap.
+
+5. **Every layer renders on a small screen, and every hoverable layer answers a tap.** Geometry and
+   point data draw correctly at phone widths and the tooltip opens on touch, not only on `mousemove`.
+   Added 2026-09-06 on owner direction, consolidating the mobile pass into this track rather than
+   splitting it. Proven on the staging site at a phone viewport, per layer, with the rung actually
+   requested recorded — the 2026-09-06 investigation refuted every rendering hypothesis it started
+   with (rung selection, bbox bounds and applier cost were already correct; a smaller container
+   correctly requests a SMALLER bbox), and found the real defect elsewhere: 13 of 19 hoverable layers
+   were dead to touch because `HoverTooltip` listened only to `mousemove` and `MapView`'s click
+   handler swallowed taps landing on features. Fixed in `e1837d1` with a coarse-pointer-only handler
+   and a 12 px padded hit box. Re-verify on staging; do not assume the fix generalised to all 19.
+6. **The agent can prove a layer's coverage over MCP, and refuses honestly when it cannot.** The agent
+   surface (`agent/llm.py`, `agent/mcp_server.py`, `interface/cli/agent.py`, shipped `e1837d1`) reads
+   the Parquet planes over stdio JSON-RPC and is the second, independent check on criterion 2 — if the
+   agent cannot answer a layer from Parquet, that layer is not served from Parquet no matter what the
+   map shows. Added 2026-09-06 on owner direction. The contract that matters is the refusal: a live
+   session had the model report *"cannot currently prove its coverage"* rather than *"no data"*, and
+   that distinction must survive every future model and prompt change. Credential contract: the key
+   lives only in the gitignored `services/agri-data-service/.env` (`AGENT_LLM_*`); it is never echoed,
+   never committed, never placed in a fixture.
 
 ## Non-goals
 
