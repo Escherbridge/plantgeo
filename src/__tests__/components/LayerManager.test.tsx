@@ -2023,6 +2023,97 @@ describe("LayerManager holds the previous day while the next one loads", () => {
   });
 
   /**
+   * The other four wave-C layers never got the fire lane's own truncation notice, and
+   * fire-perimeters never got EITHER of the fire lane's two overlay entries -- `mapEnvelope` and
+   * `getParquetBurnSeverity` compute `truncated` server-side for every one of the five, and
+   * `presentParquet*` in `parquet-presentation.ts` reads only `.data` off the same result, so a
+   * capped read painted a partial shape with nothing on the map saying so.
+   */
+  describe("the other four wave-C layers get the fire lane's truncation notice, and fire-perimeters gets both", () => {
+    it.each([
+      ["sensors" as const, viewportQueries.getSensorStations, "sensor station readings"],
+      ["evacuation-zones" as const, viewportQueries.getEvacuationZones, "evacuation zones"],
+      ["burn-severity" as const, viewportQueries.getBurnSeverity, "burn history boundaries"],
+      ["watersheds" as const, viewportQueries.getWatershedBoundaries, "watershed boundaries"],
+      ["fire-perimeters" as const, viewportQueries.getFirePerimeters, "fire perimeters"],
+    ])("says a truncated %s read is a subset of the viewport", (layerId, mock, subjectLower) => {
+      useMapStore.setState({ activeLayers: [layerId] });
+      mock.mockReturnValue(
+        landed({
+          state: "ready",
+          requestedDay: "2026-09-05",
+          servedDay: "2026-09-05",
+          truncated: true,
+          data: [],
+        })
+      );
+      const fakeMap = createFakeMap();
+      fakeMap.setStyleLoaded(true);
+      const rendered = renderLayerManager(fakeMap);
+
+      const notice = rendered.getByTestId(
+        `parquet-layer-unavailable-${layerId}-truncated`
+      ).textContent;
+      expect(notice).toContain("The Parquet row budget was reached");
+      expect(notice?.toLowerCase()).toContain(subjectLower);
+    });
+
+    it("says nothing for an un-truncated wave-C read", () => {
+      useMapStore.setState({
+        activeLayers: ["sensors", "evacuation-zones", "burn-severity", "watersheds", "fire-perimeters"],
+      });
+      for (const mock of [
+        viewportQueries.getSensorStations,
+        viewportQueries.getEvacuationZones,
+        viewportQueries.getBurnSeverity,
+        viewportQueries.getWatershedBoundaries,
+        viewportQueries.getFirePerimeters,
+      ]) {
+        mock.mockReturnValue(
+          landed({
+            state: "ready",
+            requestedDay: "2026-09-05",
+            servedDay: "2026-09-05",
+            truncated: false,
+            data: [],
+          })
+        );
+      }
+      const fakeMap = createFakeMap();
+      fakeMap.setStyleLoaded(true);
+      const rendered = renderLayerManager(fakeMap);
+
+      for (const layerId of ["sensors", "evacuation-zones", "burn-severity", "watersheds", "fire-perimeters"]) {
+        expect(
+          rendered.queryByTestId(`parquet-layer-unavailable-${layerId}-truncated`),
+          layerId
+        ).toBeNull();
+      }
+    });
+
+    // Fire perimeters is the fifth wave-C layer, and until now it was absent from the wave-C
+    // upstream-fault list entirely (only sensors/evacuation-zones/burn-severity/watersheds were
+    // named "the four wave-C layers"), so a failed perimeter read looked exactly like an
+    // ordinary quiet fire season.
+    it("says the data service is unavailable when the fire-perimeters read fails upstream", () => {
+      useMapStore.setState({ activeLayers: ["fire-perimeters"] });
+      viewportQueries.getFirePerimeters.mockReturnValue(
+        landed({
+          state: "upstream_unavailable",
+          fault: { kind: "http", message: "upstream 503", status: 503 },
+        })
+      );
+      const fakeMap = createFakeMap();
+      fakeMap.setStyleLoaded(true);
+      const rendered = renderLayerManager(fakeMap);
+
+      expect(
+        rendered.getByTestId("parquet-layer-unavailable-fire-perimeters").textContent
+      ).toContain("Fire perimeters are temporarily unavailable");
+    });
+  });
+
+  /**
    * The whole of D4/D5, as one case. The row has moved to a new day and the collection on screen
    * is still the old one -- so what the map is DRAWING is the old day, and any surface that says
    * otherwise turns an ordinary fetch into what reads as a data bug.

@@ -100,12 +100,28 @@ line-at-a-time version was built on survives it, because state is entered only o
   key, or an `r`/`f` prefix it is DATA, and data that names a relation reads it, so
   `COVERAGE_SQL = (\n    """\n    SELECT … FROM geo.x` still blocks.
 
-Everything the heuristic cannot resolve resolves toward "code": a match inside a multi-line string, a
-`/*` that owns its line but sits inside a template literal, a docstring written in a position this
-module will not admit. Each of those is a FALSE BLOCK — one cited line for a human to dismiss —
-whereas a false clear authorises dropping a relation something still reads. `_code_only_lines`' own
-docstring is the maintained list; the tests in `tests/retirement/test_readers.py` pin both directions
-of every rule above.
+Everything the heuristic cannot resolve resolves toward "code" — **except one shape, and that one
+resolves the wrong way.** A match inside a multi-line string in a language with no comment awareness,
+and a docstring written in a position this module will not admit, are both FALSE BLOCKS — one cited
+line for a human to dismiss. But a `/*` that owns its line and genuinely sits inside a multi-line
+backtick template literal is the opposite: `_appears_after` proves only that a `*/` exists somewhere
+below it, never that the closer belongs to the same string, so `_code_only_lines` reads the opener as
+a real comment and strips everything up to that `*/` — including a genuine `SELECT … FROM <relation>`
+sitting right below it. That is a FALSE CLEAR: the one direction that can wrongly authorise a drop.
+
+**This is watched, not merely documented.** `tests/retirement/test_readers.py::
+test_no_unacknowledged_scanned_js_surface_carries_a_line_initial_single_star_block_opener` walks every
+TS/JS-family file `SCAN_SURFACES` scans, flags any line-initial `/*` (never `/**`, which is JSDoc and
+ubiquitous) that a whole-file backtick-parity count places inside an open template literal, and fails
+the build the day one appears with no entry in that test's `_ACKNOWLEDGED_TEMPLATE_LITERAL_COMMENTS`
+— the same asserted-and-staleness-checked shape `ReaderExemption` already uses for reader hits, held
+to four lines in `LayerTimeSlider.tsx` today (real CSS comments inside a plain CSS-in-JS template
+literal, individually read and confirmed to name no relation). Backtick-parity counting has its own
+blind spot — an unpaired backtick trapped in a string or an earlier comment would flip the count for
+every line after it — which is exactly why it is only ever used to ADD scope to the guard, never to
+clear a hit unilaterally. `_code_only_lines`' own docstring is the maintained list of what the
+stripper itself cannot see; the tests in `tests/retirement/test_readers.py` pin both directions of
+every rule above, this one included.
 
 ## A retired-view entry is not a reader of what it retires
 

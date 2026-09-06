@@ -114,6 +114,13 @@ _SOIL_SURVEY_POLYGON_KEYS_SQL: Final = text(load_query_sql("pipeline/lane_regist
 # `fire-perimeters` joined them on 2026-09-04 -- it had been registered `daily_series` over a table
 # that holds one row per WFIGS incident refreshed in place, so its partitions sliced a snapshot
 # along an axis the source does not have; see its export SQL header.
+#
+# THREE OF THE FOUR NOW HAVE A SOURCE-DIRECT REPLACEMENT THAT READS NO POSTGRES AT ALL -- watersheds,
+# evacuation-zones and fire-perimeters, registered as SHADOW executor lanes on 2026-09-06. Each of
+# those writers computes its own version stamp (from NHDPlus_HR's `loaddate`, from a content digest of
+# the captured population, and from a source-side reproduction of the query below, respectively) and
+# substitutes it onto its registration at runtime. These four queries stay until each lane is
+# activated, because until then they are the clock the GENERIC gap-fill driver reads.
 _WATERSHEDS_WATERMARK_SQL: Final = text(load_query_sql("pipeline/lane_watermark_watersheds.sql"))
 _EVACUATION_ZONES_WATERMARK_SQL: Final = text(load_query_sql("pipeline/lane_watermark_evacuation_zones.sql"))
 _FIRE_PERIMETERS_WATERMARK_SQL: Final = text(load_query_sql("pipeline/lane_watermark_fire_perimeters.sql"))
@@ -746,6 +753,22 @@ async def _fill_calendar(
 
 _DATABASE_BACKED_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = (
     LaneRegistration(
+        # DELIBERATELY STILL `_fill_burn_severity` (Postgres-reading) after the 2026-09-06 wave-B join,
+        # and for a STRONGER reason than drought's: `mtbs-forward`/`ingest-mtbs` is not merely one of
+        # two writers here, it is the SOLE ACTIVE writer this layer has, and nothing in that join stops
+        # it -- doing so is an owner-confirmed Railway variable edit. `burn-severity-direct-forward`
+        # (execution/job_executor_service.py) ships SHADOW beside it. Two conditions gate the swap to
+        # `_source_direct_refusal("agri_data_service.pipeline.direct.burn_severity")`: (1)
+        # `pipeline/direct/burn_severity/parity.py` proves D1 parity against what `geo.features` holds
+        # in production, and (2) the owner stops `mtbs-forward`. Swapping before both leaves the layer
+        # served by neither -- `gap_fill._export_one_day` (`:1177-1179`) catches the refusal as outcome
+        # `"raised"` on every tick forever.
+        #
+        # NO `writer_ceiling`, for drought's reason exactly: `forward.py` (newest-first) and
+        # `backfill.py` (oldest-first) walk ONE candidate set, `products.governed_release_days()`, and
+        # that set is the whole window this registration covers -- there is no boundary day between the
+        # two writers to declare, so their mutual exclusion lives in `conflicts_with` on the two
+        # executor specs instead.
         slug=BURN_SEVERITY_STREAM,
         adapter=_fill_burn_severity,
         history_floor=date(2020, 11, 24),
@@ -816,6 +839,23 @@ _DATABASE_BACKED_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = (
         ),
     ),
     LaneRegistration(
+        # DELIBERATELY STILL `_fill_evacuation_zones` AND `_evacuation_zones_watermark`, both
+        # Postgres-reading, after the 2026-09-06 wave-B join registered
+        # `evacuation-zones-direct-forward` (execution/job_executor_service.py) beside them in SHADOW.
+        # A `static_lookup` CANNOT carry a `writer_ceiling` (`__post_init__` refuses one: a
+        # version-stamped lane has no calendar window to divide between two writers), so `conflicts_with`
+        # on the two executor specs is the ENTIRE mutual-exclusion guard here -- the same argument
+        # drought's registration makes for a different reason.
+        #
+        # THE WATERMARK IS THE HARDER HALF OF THE SWAP, and it is not a like-for-like SQL edit.
+        # `sql/pipeline/lane_watermark_evacuation_zones.sql` reads `geo.features` AND `geo.geometry`;
+        # both are tables this track deletes, and Oregon OEM publishes no replacement column
+        # (`created_date` never moves when a level is raised, `last_edited_date` is re-stamped on
+        # unchanged areas every few minutes). The direct writer answers the question a different way --
+        # it digests the captured population's content and publishes when THAT differs
+        # (`pipeline/direct/evacuation_zones/forward.py`) -- so the replacement resolver is a design
+        # decision, not a transcription. Replace adapter and watermark in the SAME push that drops those
+        # tables: a Postgres watermark over a dropped table fails the census at `watermark_unread`.
         slug=EVACUATION_ZONES_STREAM,
         adapter=_fill_evacuation_zones,
         history_floor=date(2025, 4, 14),
@@ -848,6 +888,18 @@ _DATABASE_BACKED_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = (
         ),
     ),
     LaneRegistration(
+        # DELIBERATELY STILL `_fill_fire_perimeters` AND `_fire_perimeters_watermark`, both
+        # Postgres-reading, after the 2026-09-06 wave-B join registered `fire-perimeters-direct-forward`
+        # (execution/job_executor_service.py) beside them in SHADOW. The direct writer substitutes BOTH
+        # of them onto this registration at runtime before calling the shared driver
+        # (`pipeline/direct/fire_perimeters/forward.py`), so the registered pair is the FALLBACK the
+        # generic gap-fill lane still uses, never this lane's only clock.
+        #
+        # NO `writer_ceiling`, and none is possible: `__post_init__` refuses one on a version-stamped
+        # lane outright. Nor is there a backfill to bound one against -- WFIGS `_Current` is a live
+        # mutable snapshot that "does not retain what it reported yesterday", so no past version is
+        # re-fetchable and a backfill could only re-stamp TODAY's population under a past day. The swap
+        # of both fields belongs in the same push that drops `geo.features`.
         slug=FIRE_PERIMETERS_STREAM,
         adapter=_fill_fire_perimeters,
         history_floor=date(2025, 7, 28),
@@ -882,6 +934,19 @@ _DATABASE_BACKED_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = (
         ),
     ),
     LaneRegistration(
+        # DELIBERATELY STILL `_fill_sensors` (Postgres-reading) after the 2026-09-06 wave-B join
+        # registered `sensors-direct-forward` (execution/job_executor_service.py) beside it in SHADOW.
+        # This lane mirrors `weather-observations` almost exactly: the direct package ships NO
+        # `*_DIRECT_WRITER_START_DAY`-equivalent constant and no `backfill.py`, so there is no cited
+        # ownership-boundary day to put in a `writer_ceiling`, and routing this adapter to a
+        # source-direct refusal without one would wedge the whole window for a lane with no backfill to
+        # raise the alarm.
+        #
+        # The rolling window makes that worse than it is for weather-observations, not better: NWS keeps
+        # only ~6 days (`pipeline/direct/sensors/forward.py`, SENSORS_MAX_DAYS =
+        # NWS_OBSERVATION_RETENTION.days + 1), so every day older than that is unreachable from the
+        # SOURCE, and this Postgres-reading adapter over the append-only `geo.features` record is the
+        # only path to those days for as long as the table holds them.
         slug=SENSORS_STREAM,
         adapter=_fill_sensors,
         history_floor=date(2026, 7, 29),
@@ -986,6 +1051,20 @@ _DATABASE_BACKED_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = (
         ),
     ),
     LaneRegistration(
+        # DELIBERATELY STILL `_fill_watersheds` AND `_watersheds_watermark`, both Postgres-reading,
+        # after the 2026-09-06 wave-B join registered `watersheds-direct-forward`
+        # (execution/job_executor_service.py) beside them in SHADOW.
+        #
+        # THIS IS THE ONE LANE WHERE BOTH FIELDS MUST MOVE TOGETHER, and the coupling is not symmetric
+        # with the other static lanes' merely-owed swap. `_watersheds_watermark` reads `geo.features`,
+        # which `postgres-watersheds` is the only writer of; the moment that lane stops, this watermark
+        # stops advancing and reports a version that never changes again -- so a swap of the adapter
+        # alone leaves a source-direct writer keyed to a frozen clock, and a swap of the watermark alone
+        # leaves the Postgres export publishing under a version day it did not produce. The direct
+        # writer computes its own watermark from the source's `loaddate`
+        # (`pipeline/direct/watersheds/source.py`) precisely so neither half depends on Postgres.
+        # `writer_ceiling` is refused here as on every `static_lookup`, so `conflicts_with` is again the
+        # whole mutual-exclusion guard.
         slug=WATERSHEDS_STREAM,
         adapter=_fill_watersheds,
         history_floor=date(2026, 8, 7),
@@ -1028,6 +1107,13 @@ _DATABASE_BACKED_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = (
 # Only `climate` and `soil` are here, and the 2026-09-04 join did not add a third: `drought`'s direct
 # writer is real but SHADOW, and its generic lane is the one production actually runs, so
 # `DROUGHT_STREAM` above keeps a Postgres-reading adapter -- see that registration's own comment.
+#
+# THE 2026-09-06 WAVE-B JOIN DID NOT ADD A THIRD EITHER, and for the same reason five more times over:
+# fire-perimeters, sensors, watersheds, evacuation-zones and burn-severity all gained a direct writer
+# and an executor lane, every one of those lanes ships SHADOW, and a shadow writer cannot be a
+# registration's adapter while the generic `parquet-*` lane beside it is the writer the object stream
+# actually has. Registered-but-inactive is the intended end state of that join; each swap is owed at
+# its own lane's activation and is recorded on that lane's registration above.
 
 
 def _source_direct_refusal(writer_module: str) -> LaneAdapter:

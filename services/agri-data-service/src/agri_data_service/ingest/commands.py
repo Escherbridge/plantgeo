@@ -44,37 +44,23 @@ from agri_data_service.ingest.backfill import (
     subtract_years,
 )
 from agri_data_service.ingest.evacuation_zones import EVACUATION_ZONES_SOURCE, run_evacuation_zones_ingestion_job
-from agri_data_service.ingest.firms import FIRMS_SOURCE, firms_archive_source, run_fire_ingestion_job
+from agri_data_service.ingest.firms import firms_archive_source
 from agri_data_service.ingest.http import upstream_client
 from agri_data_service.ingest.lanes import LaneSpecificationError, UnknownBackfillLaneError, resolve_lane
 from agri_data_service.ingest.mtbs import MTBS_SOURCE, run_mtbs_ingestion_job
-from agri_data_service.ingest.ndvi import NDVI_SOURCE, run_vegetation_ingestion_job
-from agri_data_service.ingest.open_meteo import OPEN_METEO_SOURCE, run_weather_ingestion_job
 from agri_data_service.ingest.realtime import RealtimePublisher
 from agri_data_service.ingest.reconcile import ReconciliationError, plan_lane_gaps, reconcile_lane
 from agri_data_service.ingest.results import any_job_failed, run_isolated_job
 from agri_data_service.ingest.runner import run_all_ingestion_jobs
 from agri_data_service.ingest.sensors import NWS_SENSOR_SOURCE, nws_sensor_source, run_sensor_ingestion_job
 from agri_data_service.ingest.source import HistoryWindow
-from agri_data_service.ingest.usdm import USDM_SOURCE, PostgresDroughtStore, run_drought_ingestion_job
-from agri_data_service.ingest.usdm_history import (
-    USDM_HISTORY_SOURCE,
-    PostgresStoredReleaseIndex,
-    default_history_plan,
-    merge_week_outcomes,
-    run_usdm_history_backfill,
-)
-from agri_data_service.ingest.usgs_nwis import (
-    USGS_STREAMFLOW_SOURCE,
-    run_water_ingestion_job,
-    usgs_streamflow_archive_source,
-)
+from agri_data_service.ingest.usgs_nwis import usgs_streamflow_archive_source
 from agri_data_service.ingest.validation import (
     ObservedDayScanTooLargeError,
     ValidationRowError,
     build_validation_report,
 )
-from agri_data_service.ingest.vegetation import COG_BOUNDS, build_vegetation_source
+from agri_data_service.ingest.vegetation import COG_BOUNDS
 from agri_data_service.ingest.watersheds import WATERSHEDS_SOURCE, run_watersheds_ingestion_job
 from agri_data_service.ingest.wfigs import WFIGS_SOURCE, run_fire_perimeters_ingestion_job
 from agri_data_service.ingest.writer import MissingIngestionLayerError, bind_feature_writer
@@ -88,7 +74,6 @@ from agri_data_service.jobs import (
     shutdown_signal,
 )
 from agri_data_service.jobs.lease import apply_statement_timeout, fetch_rows, optional_column, required_column
-from agri_data_service.pipeline.parquet.vegetation_forward import bind_vegetation_forward_writer
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping, Sequence
@@ -97,7 +82,6 @@ if TYPE_CHECKING:
     from agri_data_service.ingest.reconcile import LaneGapPlan, LaneReconciliation
     from agri_data_service.ingest.results import IngestionJobResult
     from agri_data_service.ingest.source import IngestionSource
-    from agri_data_service.ingest.usdm_history import HistoryBackfillPlan
     from agri_data_service.ingest.validation import ValidationReport
     from agri_data_service.ingest.writer import FeatureWriter
     from agri_data_service.jobs import JobSliceSummary, ShutdownSignal
@@ -131,54 +115,6 @@ async def _run_with_feature_writer(
         return await run_isolated_job(source, lambda: build(write_features))
 
 
-@click.command("ingest-firms")
-@click.option("--bbox", default=None, help="Override INGEST_BBOX as west,south,east,north.")
-@click.pass_context
-def ingest_firms(context: click.Context, bbox: str | None) -> None:
-    """Ingest bounded NASA FIRMS active-fire detections."""
-    results = [
-        asyncio.run(
-            _run_with_feature_writer(
-                FIRMS_SOURCE,
-                lambda write_features: run_fire_ingestion_job(write_features, bbox=bbox),
-            )
-        )
-    ]
-    finish(context, results)
-
-
-@click.command("ingest-streamflow")
-@click.option("--bbox", default=None, help="Override INGEST_BBOX as west,south,east,north.")
-@click.pass_context
-def ingest_streamflow(context: click.Context, bbox: str | None) -> None:
-    """Ingest bounded USGS NWIS streamflow gauges."""
-    results = [
-        asyncio.run(
-            _run_with_feature_writer(
-                USGS_STREAMFLOW_SOURCE,
-                lambda write_features: run_water_ingestion_job(write_features, bbox=bbox),
-            )
-        )
-    ]
-    finish(context, results)
-
-
-@click.command("ingest-weather")
-@click.option("--bbox", default=None, help="Override INGEST_BBOX as west,south,east,north.")
-@click.pass_context
-def ingest_weather(context: click.Context, bbox: str | None) -> None:
-    """Ingest current Open-Meteo conditions across the bounded sample grid."""
-    results = [
-        asyncio.run(
-            _run_with_feature_writer(
-                OPEN_METEO_SOURCE,
-                lambda write_features: run_weather_ingestion_job(write_features, bbox=bbox),
-            )
-        )
-    ]
-    finish(context, results)
-
-
 @click.command("ingest-fire-perimeters")
 @click.option("--bbox", default=None, help="Override INGEST_BBOX as west,south,east,north.")
 @click.pass_context
@@ -193,50 +129,6 @@ def ingest_fire_perimeters(context: click.Context, bbox: str | None) -> None:
         )
     ]
     finish(context, results)
-
-
-@click.command("ingest-drought")
-@click.option("--valid-date", default=None, help="An explicit USDM Tuesday; omit for the newest published release.")
-@click.option("--replace", is_flag=True, default=False, help="Overwrite a release that is already stored.")
-@click.pass_context
-def ingest_drought(context: click.Context, valid_date: str | None, replace: bool) -> None:
-    """Ingest the newest published US Drought Monitor release, then prune old releases."""
-    results = [asyncio.run(_run_drought(valid_date=valid_date, replace=replace))]
-    finish(context, results)
-
-
-async def _run_drought(valid_date: str | None, replace: bool) -> IngestionJobResult:
-    """Open one ingest session for the drought store and isolate the job's failure."""
-    async with ingest_session() as session:
-        store = PostgresDroughtStore(session)
-        return await run_isolated_job(
-            USDM_SOURCE,
-            lambda: run_drought_ingestion_job(store, valid_date=valid_date, replace=replace),
-        )
-
-
-@click.command("ingest-ndvi")
-@click.option("--bbox", default=None, help="Override INGEST_BBOX as west,south,east,north.")
-@click.pass_context
-def ingest_ndvi(context: click.Context, bbox: str | None) -> None:
-    """Ingest Sentinel-2 L2A NDVI sampled onto the bounded warehouse grid."""
-    results = [asyncio.run(_run_ndvi(bbox))]
-    finish(context, results)
-
-
-async def _run_ndvi(bbox: str | None) -> IngestionJobResult:
-    """Keep raw persistence and governed Parquet publication on the same isolated job boundary."""
-    async with ingest_session() as session, RealtimePublisher() as publisher:
-        write_features = bind_feature_writer(session, publisher)
-        forward_vegetation = bind_vegetation_forward_writer(session)
-        return await run_isolated_job(
-            NDVI_SOURCE,
-            lambda: run_vegetation_ingestion_job(
-                write_features,
-                bbox=bbox,
-                on_persisted=forward_vegetation,
-            ),
-        )
 
 
 @click.command("ingest-sensors")
@@ -334,20 +226,24 @@ def _build_backfillable_sources() -> Mapping[str, IngestionSource]:
     Built on demand rather than at import: `nws_sensor_source` stamps its own `earliest` from the
     run clock, so a module-level instance would freeze the NWS retention window at import time.
 
-    `nasa-firms-archive` is a second source token over the same producer, layer and identity contract
-    as `nasa-firms`, not a second producer: FIRMS' archive is the same endpoint with a start date, and
-    which product answers for a past day is read from the live availability table per chunk. It is a
-    separate token so `ingest-backfill` cannot ask the forward job for a past window, nor this walk for
-    the current one -- only `ingest-firms` reports a partial-constellation outage as a reason.
+    `nasa-firms-archive` reads the same endpoint with a start date and reads which product answers for
+    a past day from the live availability table per chunk. Its forward twin `nasa-firms` was deleted
+    with `ingest-firms` (2026-09-06); this archive token survives because `jobs-firms-archive` is still
+    an ACTIVE durable lane and is the only producer of fire-detections days below
+    `FIRE_DETECTIONS_DIRECT_WRITER_START_DAY`, which is where the generic `parquet-fire-detections`
+    exporter reads from.
 
-    `usgs-streamflow-archive` is the same arrangement over USGS NWIS, and for a sharper reason: it reads
-    the DAILY-values service while `ingest-streamflow` reads the instantaneous one. The instantaneous
-    feed retains roughly 120 days and answers an older window with a well-formed, empty response rather
-    than an error, so a walk pointed at it would report years of successful empty chunks.
+    `usgs-streamflow-archive` is the same arrangement over USGS NWIS: it reads the DAILY-values service
+    while the deleted `ingest-streamflow` read the instantaneous one, whose ~120-day retention answers
+    an older window with a well-formed empty response rather than an error, so a walk pointed at it
+    would report years of successful empty chunks. `jobs-streamflow-archive` is likewise still active.
+
+    `sentinel2-ndvi` WAS HERE AND IS DELETED with `ingest-ndvi`: `pipeline/direct/vegetation/` owns both
+    halves of that layer now, and its backfill republishes what Postgres already holds rather than
+    deepening it.
     """
     sources = (
         nws_sensor_source(),
-        build_vegetation_source(),
         firms_archive_source(),
         usgs_streamflow_archive_source(),
     )
@@ -456,39 +352,6 @@ async def _run_geometry_repair(batch_size: int, max_features: int | None) -> Ing
             GEOMETRY_REPAIR_SOURCE,
             lambda: run_geometry_repair(session, batch_size=batch_size, max_features=max_features),
         )
-
-
-@click.command("ingest-drought-history")
-@click.option("--years", type=int, default=DEFAULT_HISTORY_YEARS, help="Years of USDM release Tuesdays to walk.")
-@click.option("--replace", is_flag=True, default=False, help="Rewrite a release week that is already stored.")
-@click.pass_context
-def ingest_drought_history(context: click.Context, years: int, replace: bool) -> None:
-    """Walk the USDM archive week by week into geo.drought_areas, recording every unpublished week as a gap."""
-    if years <= 0:
-        raise click.BadParameter("--years must be positive")
-    results = [asyncio.run(_run_drought_history(years, replace))]
-    finish(context, results)
-
-
-async def _run_drought_history(years: int, replace: bool) -> IngestionJobResult:
-    """Open one ingest session for the archive walk and fold its per-week ledger into one summary."""
-    async with ingest_session() as session:
-        store = PostgresDroughtStore(session)
-        stored = PostgresStoredReleaseIndex(session)
-        plan = default_history_plan(years=years, replace=replace)
-        return await run_isolated_job(
-            USDM_HISTORY_SOURCE,
-            lambda: _fold_drought_history(store, plan, stored),
-        )
-
-
-async def _fold_drought_history(
-    store: PostgresDroughtStore,
-    plan: HistoryBackfillPlan,
-    stored: PostgresStoredReleaseIndex,
-) -> IngestionJobResult:
-    """Run the archive walk and fold its per-week outcomes, so the verb prints one summary like every other."""
-    return merge_week_outcomes(await run_usdm_history_backfill(store, plan, stored))
 
 
 @click.command("ingest-all")
@@ -1304,19 +1167,13 @@ async def plan_archive_lane_gaps(
 
 
 INGEST_COMMANDS: tuple[click.Command, ...] = (
-    ingest_firms,
-    ingest_streamflow,
-    ingest_weather,
     ingest_fire_perimeters,
-    ingest_drought,
-    ingest_ndvi,
     ingest_sensors,
     ingest_evacuation_zones,
     ingest_watersheds,
     ingest_mtbs,
     ingest_backfill,
     ingest_geometry_repair,
-    ingest_drought_history,
     ingest_all,
     jobs_plan_lane,
     jobs_plan_gaps,

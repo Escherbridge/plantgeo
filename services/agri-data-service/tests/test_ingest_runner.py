@@ -26,20 +26,19 @@ from agri_data_service.ingest.results import (
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+# `ingest-firms`, `ingest-streamflow`, `ingest-weather`, `ingest-drought`, `ingest-ndvi` and
+# `ingest-drought-history` WERE HERE AND ARE DELETED (2026-09-06). Each of those six layers has a
+# direct-to-Parquet writer under `pipeline/direct/`, so its PostgreSQL producer was the removable half
+# of a pair. This tuple is the executable half of the removal proof: it and `INGEST_COMMANDS` are
+# asserted equal below, so a verb that came back would fail here.
 EXPECTED_VERBS = (
-    "ingest-firms",
-    "ingest-streamflow",
     "ingest-watersheds",
-    "ingest-weather",
     "ingest-fire-perimeters",
-    "ingest-drought",
-    "ingest-ndvi",
     "ingest-sensors",
     "ingest-evacuation-zones",
     "ingest-mtbs",
     "ingest-backfill",
     "ingest-geometry-repair",
-    "ingest-drought-history",
     "ingest-all",
     # The durable archive lanes. They ride the same registration function but not the same exit rule:
     # `emit`/`finish` fail a run when any source failed, which is wrong for a slice that legitimately
@@ -126,9 +125,9 @@ def test_ingest_all_exits_non_zero_when_any_job_failed(monkeypatch: pytest.Monke
     # any job had run, so a thrown job went to console.error and nothing anywhere went red.
     async def failing_run(_bbox: str | None) -> Sequence[IngestionJobResult]:
         return [
-            _result("nasa-firms", "failed"),
-            _result("usgs-streamflow", "ingested"),
-            _result("ndvi", "skipped"),
+            _result("wfigs-fire-perimeters", "failed"),
+            _result("nws-sensors", "ingested"),
+            _result("oregon-oem-evacuation-zones", "skipped"),
         ]
 
     monkeypatch.setattr(commands_module, "_run_all", failing_run)
@@ -137,13 +136,13 @@ def test_ingest_all_exits_non_zero_when_any_job_failed(monkeypatch: pytest.Monke
     invocation = CliRunner().invoke(group, ["ingest-all"])
 
     assert invocation.exit_code == 1
-    # Every job is still reported: one failure must not erase the other five's progress.
+    # Every job is still reported: one failure must not erase the others' progress.
     assert len(invocation.output.strip().splitlines()) == 3
 
 
 def test_ingest_all_exits_zero_when_every_job_merely_skipped(monkeypatch: pytest.MonkeyPatch) -> None:
     async def skipping_run(_bbox: str | None) -> Sequence[IngestionJobResult]:
-        return [_result("nasa-firms", "skipped"), _result("ndvi", "skipped")]
+        return [_result("wfigs-fire-perimeters", "skipped"), _result("nws-sensors", "skipped")]
 
     monkeypatch.setattr(commands_module, "_run_all", skipping_run)
     group = click.Group("agri-service")
@@ -155,17 +154,17 @@ def test_ingest_all_exits_zero_when_every_job_merely_skipped(monkeypatch: pytest
 # --- runner.run_all_ingestion_jobs: the orchestration itself, not the CLI layer above it ---
 #
 # The tests above exercise commands.py by replacing `_run_all` wholesale, which proves the CLI's
-# exit-code contract but never calls `runner.run_all_ingestion_jobs`. These tests replace the eight
-# job callables instead, so the sequential order, the bbox plumbing and the per-job isolation that
+# exit-code contract but never calls `runner.run_all_ingestion_jobs`. These tests replace the job
+# callables instead, so the sequential order, the bbox plumbing and the per-job isolation that
 # `run_all_ingestion_jobs` itself is responsible for are pinned directly.
+#
+# FIVE JOBS LEFT THIS SEQUENCE ON 2026-09-06 -- firms, streamflow, weather, drought and NDVI -- with
+# their verbs and their `postgres-*` lanes. The three that remain are the layers with NO Parquet
+# writer yet, whose `parquet-*` exporters still read `geo.features`; the drought store fake and the
+# `on_persisted` forward-vegetation seam went with their subjects.
 
 EXPECTED_SOURCE_ORDER = (
-    runner.FIRMS_SOURCE,
-    runner.USGS_STREAMFLOW_SOURCE,
-    runner.OPEN_METEO_SOURCE,
     runner.WFIGS_SOURCE,
-    runner.USDM_SOURCE,
-    runner.NDVI_SOURCE,
     runner.NWS_SENSOR_SOURCE,
     runner.EVACUATION_ZONES_SOURCE,
     # The geometry repair is the last job of every tick, not a hand-run script. `geo.features`
@@ -177,12 +176,7 @@ EXPECTED_SOURCE_ORDER = (
 )
 
 EXPECTED_JOB_ORDER = [
-    "firms",
-    "usgs",
-    "weather",
     "wfigs",
-    "usdm",
-    "ndvi",
     "sensors",
     "evacuation-zones",
     "geometry-repair",
@@ -193,70 +187,25 @@ _TEST_BBOX = "-125,42,-111,49"
 _SENTINEL_SESSION = object()
 _SENTINEL_PUBLISHER = object()
 _SENTINEL_WRITE_FEATURES = object()
-_SENTINEL_FORWARD_VEGETATION = object()
-
-
-class _FakeDroughtStore:
-    """Stands in for PostgresDroughtStore so the test never touches SQLAlchemy or a real session."""
-
-    def __init__(self, session: object) -> None:
-        self.session = session
 
 
 @pytest.fixture
 def job_call_log(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[object]]:
-    """Replace bind_feature_writer, PostgresDroughtStore and all eight jobs with recording fakes.
+    """Replace bind_feature_writer and the surviving jobs with recording fakes.
 
     `log["bind"]` records the (session, publisher) pair bind_feature_writer was given; `log["order"]`
     records each job's name and the argument it was called with, in call order.
     """
-    log: dict[str, list[object]] = {"bind": [], "forward_bind": [], "order": []}
+    log: dict[str, list[object]] = {"bind": [], "order": []}
 
     def fake_bind_feature_writer(session: object, publisher: object | None = None) -> object:
         log["bind"].append((session, publisher))
         return _SENTINEL_WRITE_FEATURES
 
-    def fake_bind_vegetation_forward_writer(session: object) -> object:
-        log["forward_bind"].append(session)
-        return _SENTINEL_FORWARD_VEGETATION
-
-    async def fake_firms(write_features: object, *, bbox: str | None = None) -> IngestionJobResult:
-        assert write_features is _SENTINEL_WRITE_FEATURES
-        log["order"].append(("firms", bbox))
-        return _result(runner.FIRMS_SOURCE, "ingested")
-
-    async def fake_usgs(write_features: object, *, bbox: str | None = None) -> IngestionJobResult:
-        assert write_features is _SENTINEL_WRITE_FEATURES
-        log["order"].append(("usgs", bbox))
-        return _result(runner.USGS_STREAMFLOW_SOURCE, "ingested")
-
-    async def fake_weather(write_features: object, *, bbox: str | None = None) -> IngestionJobResult:
-        assert write_features is _SENTINEL_WRITE_FEATURES
-        log["order"].append(("weather", bbox))
-        return _result(runner.OPEN_METEO_SOURCE, "ingested")
-
     async def fake_wfigs(write_features: object, *, bbox: str | None = None) -> IngestionJobResult:
         assert write_features is _SENTINEL_WRITE_FEATURES
         log["order"].append(("wfigs", bbox))
         return _result(runner.WFIGS_SOURCE, "ingested")
-
-    async def fake_usdm(store: _FakeDroughtStore) -> IngestionJobResult:
-        # Deliberately no bbox parameter: USDM is not bbox-scoped (T6). If the runner ever tried to
-        # thread bbox through here it would raise TypeError instead of silently passing it along.
-        assert isinstance(store, _FakeDroughtStore)
-        log["order"].append(("usdm", store.session))
-        return _result(runner.USDM_SOURCE, "ingested")
-
-    async def fake_ndvi(
-        write_features: object,
-        *,
-        bbox: str | None = None,
-        on_persisted: object | None = None,
-    ) -> IngestionJobResult:
-        assert write_features is _SENTINEL_WRITE_FEATURES
-        assert on_persisted is _SENTINEL_FORWARD_VEGETATION
-        log["order"].append(("ndvi", bbox))
-        return _result(runner.NDVI_SOURCE, "ingested")
 
     async def fake_sensors(write_features: object, *, bbox: str | None = None) -> IngestionJobResult:
         assert write_features is _SENTINEL_WRITE_FEATURES
@@ -275,26 +224,42 @@ def job_call_log(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[object]]:
         return _result(runner.GEOMETRY_REPAIR_SOURCE, "ingested")
 
     monkeypatch.setattr(runner, "bind_feature_writer", fake_bind_feature_writer)
-    monkeypatch.setattr(runner, "bind_vegetation_forward_writer", fake_bind_vegetation_forward_writer)
-    monkeypatch.setattr(runner, "PostgresDroughtStore", _FakeDroughtStore)
-    monkeypatch.setattr(runner, "run_fire_ingestion_job", fake_firms)
-    monkeypatch.setattr(runner, "run_water_ingestion_job", fake_usgs)
-    monkeypatch.setattr(runner, "run_weather_ingestion_job", fake_weather)
     monkeypatch.setattr(runner, "run_fire_perimeters_ingestion_job", fake_wfigs)
-    monkeypatch.setattr(runner, "run_drought_ingestion_job", fake_usdm)
-    monkeypatch.setattr(runner, "run_vegetation_ingestion_job", fake_ndvi)
     monkeypatch.setattr(runner, "run_sensor_ingestion_job", fake_sensors)
     monkeypatch.setattr(runner, "run_evacuation_zones_ingestion_job", fake_evacuation_zones)
     monkeypatch.setattr(runner, "run_geometry_repair", fake_geometry_repair)
     return log
 
 
-async def test_runner_runs_the_eight_sources_then_the_geometry_repair_in_a_fixed_order(
+async def test_runner_runs_the_surviving_sources_then_the_geometry_repair_in_a_fixed_order(
     job_call_log: dict[str, list[object]],
 ) -> None:
     results = await runner.run_all_ingestion_jobs(_SENTINEL_SESSION, _SENTINEL_PUBLISHER, bbox=_TEST_BBOX)
     assert [result.source for result in results] == list(EXPECTED_SOURCE_ORDER)
     assert [name for name, _ in job_call_log["order"]] == EXPECTED_JOB_ORDER
+
+
+async def test_runner_never_runs_a_source_whose_layer_has_a_parquet_writer(
+    job_call_log: dict[str, list[object]],
+) -> None:
+    """The executable removal proof for the runner: the five deleted jobs cannot come back silently.
+
+    `run_all_ingestion_jobs` resolves its callables at module scope, so a re-added import would show up
+    as an extra entry in this log rather than as a name this test could only assert the absence of.
+    """
+    await runner.run_all_ingestion_jobs(_SENTINEL_SESSION, _SENTINEL_PUBLISHER, bbox=_TEST_BBOX)
+    ran = {name for name, _ in job_call_log["order"]}
+    assert ran.isdisjoint({"firms", "usgs", "weather", "usdm", "ndvi"})
+    for deleted in (
+        "run_fire_ingestion_job",
+        "run_water_ingestion_job",
+        "run_weather_ingestion_job",
+        "run_drought_ingestion_job",
+        "run_vegetation_ingestion_job",
+        "PostgresDroughtStore",
+        "bind_vegetation_forward_writer",
+    ):
+        assert not hasattr(runner, deleted), deleted
 
 
 async def test_runner_builds_exactly_one_feature_writer_shared_by_the_bbox_scoped_jobs(
@@ -304,7 +269,6 @@ async def test_runner_builds_exactly_one_feature_writer_shared_by_the_bbox_scope
     # bind_feature_writer is called exactly once per run, not once per job: the same writer closure
     # backs every bbox-scoped job, matching ingest.ts's single shared write path.
     assert job_call_log["bind"] == [(_SENTINEL_SESSION, _SENTINEL_PUBLISHER)]
-    assert job_call_log["forward_bind"] == [_SENTINEL_SESSION]
 
 
 async def test_runner_threads_the_bbox_into_every_bbox_scoped_job(
@@ -312,17 +276,15 @@ async def test_runner_threads_the_bbox_into_every_bbox_scoped_job(
 ) -> None:
     await runner.run_all_ingestion_jobs(_SENTINEL_SESSION, _SENTINEL_PUBLISHER, bbox=_TEST_BBOX)
     bbox_by_name = dict(job_call_log["order"])
-    # Every feature-writing source is bbox-scoped; only USDM (a national release) is not.
-    for name in ("firms", "usgs", "weather", "wfigs", "ndvi", "sensors", "evacuation-zones"):
+    for name in ("wfigs", "sensors", "evacuation-zones"):
         assert bbox_by_name[name] == _TEST_BBOX
 
 
-async def test_runner_binds_the_drought_store_to_the_same_session_it_was_given(
+async def test_runner_runs_the_geometry_repair_on_the_session_it_was_given(
     job_call_log: dict[str, list[object]],
 ) -> None:
     await runner.run_all_ingestion_jobs(_SENTINEL_SESSION, _SENTINEL_PUBLISHER)
     bbox_by_name = dict(job_call_log["order"])
-    assert bbox_by_name["usdm"] is _SENTINEL_SESSION
     # The repair reaches the warehouse through the very same session, so one `ingest-all` run is
     # one connection for the sources and their clean-up alike.
     assert bbox_by_name["geometry-repair"] is _SENTINEL_SESSION
@@ -339,25 +301,21 @@ async def test_runner_a_single_job_failure_does_not_erase_the_other_results(
     monkeypatch: pytest.MonkeyPatch,
     job_call_log: dict[str, list[object]],
 ) -> None:
-    """Per-job isolation is the entire reliability motivation for this lane: one exception, seven survivors."""
+    """Per-job isolation is the entire reliability motivation for this lane: one exception, the rest survive."""
 
-    async def fake_weather_that_explodes(_write_features: object, *, bbox: str | None = None) -> IngestionJobResult:
-        job_call_log["order"].append(("weather", bbox))
-        raise RuntimeError("open-meteo upstream exploded")
+    async def fake_sensors_that_explodes(_write_features: object, *, bbox: str | None = None) -> IngestionJobResult:
+        job_call_log["order"].append(("sensors", bbox))
+        raise RuntimeError("NWS upstream exploded")
 
-    monkeypatch.setattr(runner, "run_weather_ingestion_job", fake_weather_that_explodes)
+    monkeypatch.setattr(runner, "run_sensor_ingestion_job", fake_sensors_that_explodes)
 
     results = await runner.run_all_ingestion_jobs(_SENTINEL_SESSION, _SENTINEL_PUBLISHER, bbox=_TEST_BBOX)
 
     status_by_source = {result.source: result.status for result in results}
-    assert status_by_source[runner.OPEN_METEO_SOURCE] == "failed"
-    assert status_by_source[runner.FIRMS_SOURCE] == "ingested"
-    assert status_by_source[runner.USGS_STREAMFLOW_SOURCE] == "ingested"
+    assert status_by_source[runner.NWS_SENSOR_SOURCE] == "failed"
     assert status_by_source[runner.WFIGS_SOURCE] == "ingested"
-    assert status_by_source[runner.USDM_SOURCE] == "ingested"
-    assert status_by_source[runner.NDVI_SOURCE] == "ingested"
-    assert status_by_source[runner.NWS_SENSOR_SOURCE] == "ingested"
     assert status_by_source[runner.EVACUATION_ZONES_SOURCE] == "ingested"
+    assert status_by_source[runner.GEOMETRY_REPAIR_SOURCE] == "ingested"
     # Every source still ran, in order, despite the failure landing in the middle of the sequence.
     assert [name for name, _ in job_call_log["order"]] == EXPECTED_JOB_ORDER
     assert [result.source for result in results] == list(EXPECTED_SOURCE_ORDER)
@@ -367,17 +325,17 @@ async def test_runner_a_failure_in_the_first_job_still_lets_the_remaining_jobs_r
     monkeypatch: pytest.MonkeyPatch,
     job_call_log: dict[str, list[object]],
 ) -> None:
-    async def fake_firms_that_explodes(_write_features: object, *, bbox: str | None = None) -> IngestionJobResult:
-        job_call_log["order"].append(("firms", bbox))
-        raise RuntimeError("FIRMS upstream exploded")
+    async def fake_wfigs_that_explodes(_write_features: object, *, bbox: str | None = None) -> IngestionJobResult:
+        job_call_log["order"].append(("wfigs", bbox))
+        raise RuntimeError("WFIGS upstream exploded")
 
-    monkeypatch.setattr(runner, "run_fire_ingestion_job", fake_firms_that_explodes)
+    monkeypatch.setattr(runner, "run_fire_perimeters_ingestion_job", fake_wfigs_that_explodes)
 
     results = await runner.run_all_ingestion_jobs(_SENTINEL_SESSION, _SENTINEL_PUBLISHER, bbox=_TEST_BBOX)
 
     status_by_source = {result.source: result.status for result in results}
-    assert status_by_source[runner.FIRMS_SOURCE] == "failed"
+    assert status_by_source[runner.WFIGS_SOURCE] == "failed"
     assert all(
-        status_by_source[source] == "ingested" for source in EXPECTED_SOURCE_ORDER if source != runner.FIRMS_SOURCE
+        status_by_source[source] == "ingested" for source in EXPECTED_SOURCE_ORDER if source != runner.WFIGS_SOURCE
     )
     assert [name for name, _ in job_call_log["order"]] == EXPECTED_JOB_ORDER

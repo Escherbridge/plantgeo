@@ -96,7 +96,11 @@ DEFAULT_STREAM_DEFINITIONS: Final[tuple[StreamDefinition, ...]] = (
         kind="time_series",
         store="features",
         publication_cadence_days=1,
-        cadence_basis="job-executor lane postgres-firms runs hourly, so a day with no detection row is a gap",
+        cadence_basis=(
+            "durable lane jobs-firms-archive walks whole days; the forward postgres-firms lane and its "
+            "ingest-firms verb were deleted 2026-09-06, so a day with no detection row is a gap only "
+            "below the archive walk's reach"
+        ),
         lane_names=(archive_lane_definition_name(FIRMS_ARCHIVE_LANE),),
     ),
     StreamDefinition(
@@ -104,7 +108,10 @@ DEFAULT_STREAM_DEFINITIONS: Final[tuple[StreamDefinition, ...]] = (
         kind="time_series",
         store="features",
         publication_cadence_days=1,
-        cadence_basis="job-executor lane postgres-streamflow runs hourly",
+        cadence_basis=(
+            "durable lane jobs-streamflow-archive walks whole days; the forward postgres-streamflow lane "
+            "and its ingest-streamflow verb were deleted 2026-09-06"
+        ),
         lane_names=(archive_lane_definition_name(STREAMFLOW_ARCHIVE_LANE),),
     ),
     StreamDefinition(
@@ -112,7 +119,11 @@ DEFAULT_STREAM_DEFINITIONS: Final[tuple[StreamDefinition, ...]] = (
         kind="time_series",
         store="features",
         publication_cadence_days=1,
-        cadence_basis="job-executor lane postgres-weather runs hourly",
+        cadence_basis=(
+            "FROZEN: postgres-weather and its ingest-weather verb were deleted 2026-09-06 and "
+            "weather-observations-direct-forward is still shadow, so this stream has NO live producer and "
+            "every day after the freeze is a gap by construction, not by upstream silence"
+        ),
     ),
     StreamDefinition(
         stream="vegetation",
@@ -120,8 +131,10 @@ DEFAULT_STREAM_DEFINITIONS: Final[tuple[StreamDefinition, ...]] = (
         store="features",
         publication_cadence_days=5,
         cadence_basis=(
-            "job-executor lane postgres-vegetation runs hourly, but Sentinel-2 L2A revisits mid-latitudes about "
-            "every five days, so five days is the shortest cadence the upstream can actually honour"
+            "FROZEN: postgres-vegetation and its ingest-ndvi verb were deleted 2026-09-06 and "
+            "vegetation-sentinel2-ndvi-direct-forward is still shadow. Sentinel-2 L2A revisits mid-latitudes "
+            "about every five days, which is the shortest cadence the upstream could honour if a producer "
+            "were running"
         ),
     ),
     StreamDefinition(

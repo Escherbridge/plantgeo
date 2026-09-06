@@ -2,8 +2,12 @@
 
 `test_ingest_runner.py` already covers `ingest-all`'s exit-code contract and the
 `run_all_ingestion_jobs` orchestration it delegates to. This file covers the other verbs' own
-option wiring (`--bbox`, `--valid-date`, `--replace`, `--since`/`--until`) and confirms every verb
-opens exactly one `ingest_session()` and never touches a real database or Redis connection to do it.
+option wiring (`--bbox`, `--since`/`--until`) and confirms every verb opens exactly one
+`ingest_session()` and never touches a real database or Redis connection to do it.
+
+Six verbs left this file on 2026-09-06 with the code behind them -- see the removal note beside
+`_BBOX_SCOPED_VERBS` and the deleted-verb assertion in
+`test_every_registered_verb_is_reachable_from_the_group`.
 
 The `ingest_session` fixture below is a monkeypatch, so nothing in this file exercises the DSN the
 real one resolves. `test_config.py` covers that separately, through the real
@@ -63,15 +67,16 @@ def _failed(source: str, reason: str) -> IngestionJobResult:
 
 
 # --- Every feature-writing verb shares one shape: a single bbox-scoped job run through the shared
-#     feature writer. Table-driven over all seven of them. Only ingest-drought differs (it is a
-#     national release, not a bbox query) and only ingest-all runs more than one source. ---
+#     feature writer. Table-driven over the three that survive. ---
+#
+# `ingest-firms`, `ingest-streamflow`, `ingest-weather` and `ingest-ndvi` WERE IN THIS TABLE AND ARE
+# DELETED (2026-09-06), together with the `on_persisted` forward-vegetation seam that only
+# `ingest-ndvi` used. Each of those four layers has a direct-to-Parquet writer under
+# `pipeline/direct/`; the three left are the ones whose `parquet-*` exporters still read
+# `geo.features`, so their producers stay until wave B gives each a replacement.
 
 _BBOX_SCOPED_VERBS = [
-    ("ingest-firms", "run_fire_ingestion_job", "FIRMS_SOURCE"),
-    ("ingest-streamflow", "run_water_ingestion_job", "USGS_STREAMFLOW_SOURCE"),
-    ("ingest-weather", "run_weather_ingestion_job", "OPEN_METEO_SOURCE"),
     ("ingest-fire-perimeters", "run_fire_perimeters_ingestion_job", "WFIGS_SOURCE"),
-    ("ingest-ndvi", "run_vegetation_ingestion_job", "NDVI_SOURCE"),
     ("ingest-sensors", "run_sensor_ingestion_job", "NWS_SENSOR_SOURCE"),
     ("ingest-evacuation-zones", "run_evacuation_zones_ingestion_job", "EVACUATION_ZONES_SOURCE"),
 ]
@@ -87,15 +92,9 @@ def test_bbox_scoped_verb_passes_the_bbox_option_through_to_its_job(
     source = getattr(commands_module, source_attribute)
     captured: dict[str, object] = {}
 
-    async def fake_job(
-        write_features: object,
-        *,
-        bbox: str | None = None,
-        on_persisted: object | None = None,
-    ) -> IngestionJobResult:
+    async def fake_job(write_features: object, *, bbox: str | None = None) -> IngestionJobResult:
         captured["bbox"] = bbox
         captured["write_features"] = write_features
-        captured["on_persisted"] = on_persisted
         return _ingested(source)
 
     monkeypatch.setattr(commands_module, job_attribute, fake_job)
@@ -104,7 +103,6 @@ def test_bbox_scoped_verb_passes_the_bbox_option_through_to_its_job(
     assert invocation.exit_code == 0, invocation.output
     assert captured["bbox"] == "-125,42,-111,49"
     assert captured["write_features"] is not None
-    assert (captured["on_persisted"] is not None) is (verb == "ingest-ndvi")
     assert json.loads(invocation.output.strip()) == {
         "source": source,
         "status": "ingested",
@@ -123,12 +121,7 @@ def test_bbox_scoped_verb_omits_bbox_when_the_option_is_not_given(
     source = getattr(commands_module, source_attribute)
     captured: dict[str, object] = {}
 
-    async def fake_job(
-        _write_features: object,
-        *,
-        bbox: str | None = None,
-        on_persisted: object | None = None,  # noqa: ARG001
-    ) -> IngestionJobResult:
+    async def fake_job(_write_features: object, *, bbox: str | None = None) -> IngestionJobResult:
         captured["bbox"] = bbox
         return _ingested(source)
 
@@ -148,12 +141,11 @@ def test_bbox_scoped_verb_exits_non_zero_when_its_job_reports_failed(
 ) -> None:
     source = getattr(commands_module, source_attribute)
 
-    # Both parameters keep the real job's names so the keyword call in commands.py still binds.
+    # The parameter keeps the real job's name so the keyword call in commands.py still binds.
     async def fake_job(
         _write_features: object,
         *,
         bbox: str | None = None,  # noqa: ARG001
-        on_persisted: object | None = None,  # noqa: ARG001
     ) -> IngestionJobResult:
         return _failed(source, "upstream request failed with status 500")
 
@@ -166,60 +158,6 @@ def test_bbox_scoped_verb_exits_non_zero_when_its_job_reports_failed(
     summary = json.loads(invocation.output.strip())
     assert summary["source"] == source
     assert summary["status"] == "failed"
-
-
-# --- ingest-drought: its own two options, and the store is bound to the session ingest_session yields ---
-
-
-def test_ingest_drought_passes_valid_date_and_replace_through_to_the_job(monkeypatch: pytest.MonkeyPatch) -> None:
-    captured: dict[str, object] = {}
-
-    async def fake_job(store: object, *, valid_date: str | None = None, replace: bool = False) -> IngestionJobResult:
-        # PostgresDroughtStore exposes no public accessor; reach in to confirm the session it was bound to.
-        captured["session"] = store._session
-        captured["valid_date"] = valid_date
-        captured["replace"] = replace
-        return _ingested(commands_module.USDM_SOURCE)
-
-    monkeypatch.setattr(commands_module, "run_drought_ingestion_job", fake_job)
-    invocation = CliRunner().invoke(_group(), ["ingest-drought", "--valid-date", "2026-07-28", "--replace"])
-
-    assert invocation.exit_code == 0, invocation.output
-    assert captured["session"] is _SENTINEL_SESSION
-    assert captured["valid_date"] == "2026-07-28"
-    assert captured["replace"] is True
-
-
-def test_ingest_drought_defaults_to_no_explicit_date_and_no_replace(monkeypatch: pytest.MonkeyPatch) -> None:
-    captured: dict[str, object] = {}
-
-    async def fake_job(_store: object, *, valid_date: str | None = None, replace: bool = False) -> IngestionJobResult:
-        captured["valid_date"] = valid_date
-        captured["replace"] = replace
-        return _ingested(commands_module.USDM_SOURCE)
-
-    monkeypatch.setattr(commands_module, "run_drought_ingestion_job", fake_job)
-    invocation = CliRunner().invoke(_group(), ["ingest-drought"])
-
-    assert invocation.exit_code == 0, invocation.output
-    assert captured["valid_date"] is None
-    assert captured["replace"] is False
-
-
-def test_ingest_drought_exits_non_zero_when_the_job_reports_failed(monkeypatch: pytest.MonkeyPatch) -> None:
-    # The keyword parameters keep the real job's names so the call in commands.py still binds.
-    async def fake_job(
-        _store: object,
-        *,
-        valid_date: str | None = None,  # noqa: ARG001
-        replace: bool = False,  # noqa: ARG001
-    ) -> IngestionJobResult:
-        return _failed(commands_module.USDM_SOURCE, "USDM release fetch failed")
-
-    monkeypatch.setattr(commands_module, "run_drought_ingestion_job", fake_job)
-    invocation = CliRunner().invoke(_group(), ["ingest-drought"])
-
-    assert invocation.exit_code == 1
 
 
 # --- ingest-all: confirm commands.py wires ingest_session's session and a real publisher into
@@ -239,7 +177,7 @@ def test_ingest_all_hands_ingest_sessions_session_and_the_bbox_to_run_all_ingest
         captured["session"] = session
         captured["publisher"] = publisher
         captured["bbox"] = bbox
-        return [_ingested("nasa-firms"), _ingested("ndvi")]
+        return [_ingested("wfigs-fire-perimeters"), _ingested("nws-sensors")]
 
     monkeypatch.setattr(commands_module, "run_all_ingestion_jobs", fake_run_all_ingestion_jobs)
     invocation = CliRunner().invoke(_group(), ["ingest-all", "--bbox", "-125,42,-111,49"])
@@ -251,16 +189,28 @@ def test_ingest_all_hands_ingest_sessions_session_and_the_bbox_to_run_all_ingest
     assert len(invocation.output.strip().splitlines()) == 2
 
 
-# --- The verbs that were unreachable before 2026-08-04: the geometry repair, the date-ranged
-#     backfill driver, and the USDM archive walk all shipped with no CLI entry point at all. ---
+# --- The verbs that were unreachable before 2026-08-04: the geometry repair and the date-ranged
+#     backfill driver both shipped with no CLI entry point at all. (The third, the USDM archive walk,
+#     was deleted on 2026-09-06 with the rest of the drought write path.) ---
 
 
 def test_every_registered_verb_is_reachable_from_the_group() -> None:
     # A module-level function with no command wrapper is dead code in the shipped image. Assert the
     # registry itself, so adding a runner without a verb fails here rather than in production.
     assert {command.name for command in commands_module.INGEST_COMMANDS} == set(_group().commands)
-    for required in ("ingest-geometry-repair", "ingest-backfill", "ingest-drought-history"):
+    for required in ("ingest-geometry-repair", "ingest-backfill"):
         assert required in _group().commands
+    # The executable half of the 2026-09-06 removal proof: six verbs were deleted, not disabled, so a
+    # re-added `@click.command` would fail here rather than quietly re-opening a PostgreSQL write path.
+    for deleted in (
+        "ingest-firms",
+        "ingest-streamflow",
+        "ingest-weather",
+        "ingest-drought",
+        "ingest-ndvi",
+        "ingest-drought-history",
+    ):
+        assert deleted not in _group().commands, deleted
 
 
 def test_ingest_geometry_repair_runs_the_repair_against_the_ingest_session(
@@ -359,23 +309,7 @@ def test_ingest_backfill_refuses_an_inverted_window() -> None:
     assert "--since must precede --until" in invocation.output
 
 
-def test_ingest_drought_history_folds_the_per_week_ledger_into_one_summary(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    captured: dict[str, object] = {}
-
-    async def fake_walk(_store: object, plan: object, _stored: object) -> list[object]:
-        captured["weeks"] = len(plan.weeks)  # type: ignore[attr-defined]
-        captured["replace"] = plan.replace  # type: ignore[attr-defined]
-        return []
-
-    monkeypatch.setattr(commands_module, "run_usdm_history_backfill", fake_walk)
-    invocation = CliRunner().invoke(_group(), ["ingest-drought-history", "--years", "1", "--replace"])
-
-    assert invocation.exit_code == 0, invocation.output
-    assert captured["replace"] is True
-    weeks = captured["weeks"]
-    assert isinstance(weeks, int)
-    assert weeks > 0
-    # An empty ledger is a skip, never a silent success claim.
-    assert json.loads(invocation.output.strip())["status"] == "skipped"
+# `test_ingest_drought_history_folds_the_per_week_ledger_into_one_summary` STOOD HERE AND IS DELETED
+# WITH ITS VERB (2026-09-06). `ingest-drought-history` walked USDM archive files into
+# `geo.drought_areas`; `pipeline/direct/drought/backfill.py` walks the same release-week calendar
+# (`tests/test_ingest_usdm_history.py` still pins it) and writes Parquet instead.

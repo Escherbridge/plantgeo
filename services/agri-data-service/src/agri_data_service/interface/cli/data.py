@@ -183,6 +183,7 @@ register_commands(
         ("parquet-catch-up-vegetation", commands.parquet_catch_up_vegetation),
         ("parquet-rewrite-vegetation", commands.parquet_rewrite_vegetation),
         ("parquet-rewrite-signal", commands.parquet_rewrite_signal),
+        ("parquet-rewrite-signal-census", commands.parquet_rewrite_signal_census),
         ("parquet-vegetation-absence-ladders", commands.parquet_vegetation_absence_ladders),
         ("parquet-retract-vegetation-absences", commands.parquet_retract_vegetation_absences),
         ("parquet-reconcile-vegetation-exact", commands.parquet_reconcile_vegetation_exact),

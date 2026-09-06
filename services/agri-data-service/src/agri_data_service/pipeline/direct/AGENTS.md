@@ -692,14 +692,15 @@ export as evidence.
 - `python -m agri_data_service.pipeline.direct.drought.parity` -- the read-only receipt; exits 1 when
   `parity_achieved` is false, so an operator or a CI gate can use the exit code directly.
 
-Suggested executor lane slugs for the join agent (not registered here -- `pipeline/parquet/lane_registry.py`
-and `execution/job_executor_service.py` are both this worker's forbidden files): `drought-direct-forward`
-alongside the climate writer's :40 and the fire/water writers' :15 pattern, and a separate
-`drought-direct-backfill` lane run at low frequency (backfill's own census walks ~48 months of listings
-per turn -- `DROUGHT_BACKLOG_SCAN_WEEKS` bounds the FORWARD writer's scan to the newest 60 weeks
-specifically so the hourly forward tick never pays that cost). Both should ship SHADOW, matching every
-other direct writer in this directory, with `conflicts_with` declared against the retired `drought`
-generic spec exactly as the NASA POWER writer declares it against its eight generic specs.
+The 2026-09-04 join registered `drought-direct-forward`, hourly at **:45**, alongside the climate writer's
+:40 and the fire/water writers' :15, SHADOW, with `conflicts_with` declared against the generic
+`parquet-drought` spec exactly as the NASA POWER writer declares it against its eight. The separate
+low-frequency `drought-direct-backfill` lane this paragraph once proposed was NOT registered: backfill's
+own census walks ~48 months of listings per turn (`DROUGHT_BACKLOG_SCAN_WEEKS` bounds the FORWARD writer's
+scan to the newest 60 weeks specifically so the hourly tick never pays that cost), and a scheduled walker
+going oldest-first beside a forward walker going newest-first contends for the same lane-day lock, so
+`backfill.py` stays a manual operator command. The 2026-09-06 wave-B join made the same call for
+`burn_severity`.
 
 ### Known simplifications, recorded rather than hidden
 
@@ -712,6 +713,159 @@ generic spec exactly as the NASA POWER writer declares it against its eight gene
 - **`backfill.py`'s per-turn R2 census lists the FULL 209-week window every turn** (`release_weeks(lane.history_floor,
   settled_through)`), unlike `forward.py`'s `DROUGHT_BACKLOG_SCAN_WEEKS`-bounded scan. Acceptable for a
   low-frequency backfill utility; would need its own bounding if ever scheduled hourly.
+
+## Burn severity
+
+`burn_severity/` is the SECOND geometry-lane direct writer, built the same shape as `drought/`
+(DuckDB spatial repair before the base rung, no `TerminalEvidence`/`provenance=`, an adapter substituted
+via `replace(lane, adapter=...)`) but adapted to a source with no "not yet published" state at all.
+`mtbs-forward`/`ingest-mtbs` (`_fill_burn_severity` in `pipeline/parquet/lane_registry.py`, reading
+`geo.features` through `pipeline/lanes/burn_severity.py::export_burn_severity_release_day`) is **STILL
+the sole ACTIVE writer of this layer today** -- unlike drought's `postgres-drought`, nothing here stops
+it, and stopping it is an owner-confirmed Railway variable edit outside this package's ownership.
+
+### The grain: a release day is a UNION across ignition-year cohorts, not one fetch
+
+MTBS is queried by ignition year (`where=year=YYYY`), never by publication date, but the lane's own
+grain is the publication date (`docs/lanes/burn-severity.md` #4, `sql/pipeline/burn_severity_day_export.sql`
+#20-21: "SCOPED TO ONE RELEASE DAY"). `products.py::release_days_by_ignition_year` inverts
+`ingest/mtbs.py::MTBS_ANNUAL_RELEASE_DATES` (year -> date) into (date -> years) so a release day's
+publish fetches and unions EVERY ignition-year cohort that resolves to it, not just one. Today's five
+governed years happen to land on five distinct dates, but nothing in `MTBS_ANNUAL_RELEASE_DATES`
+forbids two cohorts sharing one release day -- a single physical MTBS release could close two fire
+years at once -- so `source.py::fetch_burn_severity_release_day` was built against the general case
+from the start rather than assuming a 1:1 day-to-year mapping and silently dropping a second cohort
+the day that assumption stopped holding.
+
+### There is no settlement to poll for, unlike drought's weekly Tuesday
+
+`adapter.py`'s `DirectBurnSeverityAdapter` carries no `mirrored_past_proof`/`unsettled_refusal`
+machinery and `products.py::governed_release_days` has no `newest_settled_*` computation the way
+`drought/products.py::newest_settled_tuesday` does. Every entry in `MTBS_ANNUAL_RELEASE_DATES` is
+already a real, past release (`docs/lanes/burn-severity.md` #3) -- a fire year is a candidate at all
+only once a human dates its completion in that table, which is a CODE CHANGE (a governance action,
+landed at deploy time), never something that becomes true by the calendar advancing. So a fetch that
+returns zero fires for a release day is a real, permanent fact about the bounding box (a cohort with
+no fires inside it), never a "come back later" signal -- there is no equivalent of USDM's 404-until-
+Thursday state for this source. `forward.py`/`backfill.py` therefore share ONE `_pending_days` function
+(`newest_first=True`/`False`) rather than drought's two separately-bounded selectors, because the
+whole candidate set is small enough (a handful of days today, growing only through governance) that
+the recheck-window bound `DROUGHT_ABSENCE_RECHECK_WEEKS` exists to avoid is not a cost worth paying
+for here -- both walkers always re-examine every governed absence, unbounded, matching what drought's
+OWN `backfill.py::_owed_weeks_oldest_first` already does for its full-history walk.
+
+### The part-splitting trap this lane was explicitly built to survive
+
+The retired MVT tile function for this layer did zero simplification at any zoom -- 541 rows,
+2,341,323 vertices, 37.5 MB, a measured 28.4s cold TOAST read (`docs/lanes/burn-severity.md` #5) --
+which is why `adapter.py::MAX_ROWS_PER_PART = 100` chunks a release day's sorted table into `part-N`
+files rather than writing one part regardless of size, restating (not importing)
+`pipeline/lanes/burn_severity.py::MAX_ROWS_PER_PART`'s identical value and rationale: 100 is the same
+row count MTBS's OWN host proved safe to move in one response (a 50-row page is already ~10.7 MB and
+the host 500s above ~100 rows, `ingest/mtbs.py` #180-187). The GLOBAL sort happens once, in
+`adapter.py`, before slicing -- `objectstore.py::write_partition` sorts again internally, but only
+WITHIN whatever slice it is handed, so skipping the pre-sort would scatter one release's fires across
+parts in fetch order rather than in grain order. `test_burn_severity_direct_adapter.py`'s
+`test_a_cohort_over_the_row_ceiling_splits_across_multiple_parts` proves the chunking loop directly
+with 101 synthetic fires, rather than trusting the constant alone. Every place this package or a
+future reader of it needs an ORDERED list of a day's parts must go through
+`foundation/parquet/paths.py::partition_day_statuses`/`completed_partition_days` -- which parse and
+order `part-N` keys correctly -- and never re-sort `list_partition_keys()` output as raw strings: an
+unpadded `part-10` sorts before `part-9` lexically (`plantgeo-parquet-coarse-rungs-unbuilt`).
+
+### Geometry repair is Fire_ID-keyed, not class-keyed, and a duplicate is refused rather than collapsed
+
+`support.py::repair_burn_severity_geometries_to_wkb` restates the identical
+`ST_MakeValid` -> `ST_CollectionExtract(..., 3)` -> `ST_Multi` chain `drought/support.py` runs, itself a
+restatement of `geo.sync_feature_geom_from_properties`'s repair
+(`drizzle/0004_repair_ingested_geometries.sql`). The one structural difference: drought's five drought
+classes are a KNOWN small enum where Postgres's own `ON CONFLICT (valid_date, dm_category) DO UPDATE`
+already collapses a duplicate key, so the DuckDB repair collapses one too, on purpose. A duplicate
+`fire_id` across this lane's unioned cohorts has no such precedent -- `ingest/mtbs.py::MtbsDuplicateFeatureError`
+already proves `fire_id` unique WITHIN one cohort's paged fetch, so a cross-cohort repeat would mean
+two different ignition years reused one MTBS Fire_ID, a data-shape error worth surfacing loudly rather
+than silently keeping whichever geometry sorted last.
+
+### No `ST_Distance_Spheroid`/`ST_Distance_Sphere` anywhere in this package
+
+Flagged here because a prior geometry-lane trap named it explicitly: this lane repairs and simplifies
+polygons but never computes a geodesic distance or area at the base rung -- `min_area_tier_squares`
+is deliberately `None` on `BURN_SEVERITY_DERIVATION` (`warehouse/schemas/burn_severity.py`, "THE AREA
+FLOOR IS DELIBERATELY UNSET"), so no distance/area function of either name appears in `support.py`,
+`rows.py`, or the shared coarse-rung derivation this package invokes but never opens directly. Recorded
+so a future edit that DOES add a distance computation here knows to reach for `ST_Distance_Spheroid`
+with latitude first, never `ST_Distance_Sphere` in ordinary `(lon, lat)` order (measured 23% wrong).
+
+### `acres` stays honestly nullable; a downstream GeoJSON/MVT conversion must not silently fabricate it
+
+`BURN_SEVERITY_SCHEMA.acres` is nullable and this package writes MTBS's real value, including `None`,
+without ever substituting zero or dropping the row. A DIFFERENT trap already cost this project real
+time on the retired tile function: `ST_AsMVT` omits a null attribute entirely, so the layer's paint
+expression (`["case", ["has","acres"], <ramp>, <grey>]`) relies on ABSENCE, not on a null value. A
+GeoJSON reader that later converts this Parquet lane into GeoJSON/PMTiles and emits a literal
+`"acres": null` key (rather than omitting the key) would make `["has","acres"]` answer `true` and
+interpolate the colour ramp against null. This package cannot fix that at the source -- omitting a
+row or fabricating `0` would each be a worse lie than a faithful null -- so it is recorded here as a
+handoff note for whichever component builds this lane's PMTiles/tippecanoe conversion: preserve
+null-as-absence, never null-as-present, when re-serialising to GeoJSON.
+
+### `allowed_client_exposure` is a hardcoded policy literal, restated from `mtbs.py`, never a column
+
+Matches `sql/pipeline/burn_severity_day_export.sql`'s own header exactly: MTBS's ingest path bypasses
+`agri.source_release`/`agri.data_source` entirely, so there is no governed database row this restriction
+could be read off. `rows.py::burn_severity_release_day_table` hardcodes `False` on every row, carrying
+forward `ingest/mtbs.py`'s `MTBS_PURPOSE` policy ("nothing MTBS-derived may reach a public CDN without
+a fresh licensing review") rather than inventing a new value or defaulting to `True`.
+
+### Entry points
+
+- `python -m agri_data_service.pipeline.direct.burn_severity` -- the forward writer, matching the
+  drought/climate/soil `__main__.py` contract exactly (`main`, `parser`, `parse_args`, one JSON report
+  on stdout). No `--product`: this lane publishes exactly one stream. `--max-days` (default 1, max 5) is
+  a RELEASE-DAY count, taken newest-governed-first. `--bbox` overrides `INGEST_BBOX`; an unconfigured
+  bbox is a no-op turn (`ingest/policy.py::UNCONFIGURED_BBOX_REASON`), matching the Postgres-era job's
+  own `resolve_bounded_bbox` refusal rather than silently defaulting to `PACIFIC_NORTHWEST_BBOX`.
+- `python -m agri_data_service.pipeline.direct.burn_severity.backfill` -- the oldest-governed-first
+  walker over the WHOLE candidate set (there is no bounded recent-window scan to configure, unlike
+  drought's `DROUGHT_BACKLOG_SCAN_WEEKS`); shares every locked publish-and-verify function `forward.py`
+  defines, differing only in selection order.
+- `python -m agri_data_service.pipeline.direct.burn_severity.parity` -- the read-only receipt; exits 1
+  when `parity_achieved` is false, so an operator or a CI gate can use the exit code directly. Compares
+  written Parquet against `geo.features` (layer='burn-severity'), never against MTBS's own live service
+  -- that reconciliation already exists at `pipeline/validation/burn_severity.py::reconcile_burn_severity_release`.
+
+The 2026-09-06 join registered `burn-severity-direct-forward`, **weekly on Tuesday 08:55 UTC** -- the same
+weekly rhythm `mtbs-forward` already runs (07:55), one hour later so the two never open a fetch in the same
+minute while both are running. Weekly, not hourly, because MTBS publishes quarterly and its governed set
+grows only through a governance code change, and because `forward.py`'s per-turn R2 census is explicitly
+sized for that cadence (see "Known simplifications" below). IT SHIPS SHADOW and stays inactive until BOTH:
+(1) `parity.py` proves D1 parity against whatever `geo.features` holds in production, and (2) the owner
+explicitly stops `mtbs-forward`/`ingest-mtbs` -- unlike drought, that Postgres lane is still the layer's
+only active writer today, so routing `_fill_burn_severity` to a source-direct refusal before both conditions
+hold would leave the layer briefly served by neither, or double-fetch MTBS from two writers racing the same
+lane-day lock. The registration carries no `writer_ceiling`, because `forward.py` and `backfill.py` between
+them claim the whole governed release set the generic lane covers; `conflicts_with` against
+`parquet-burn-severity` is the whole guard.
+
+No `burn-severity-direct-backfill` LANE was registered, deliberately, matching what the 2026-09-04 join did
+with `drought`'s and `vegetation`'s backfills: a one-time historical catch-up has no cadence bucket to
+coalesce or replay, and a scheduled backfill walking oldest-first beside a forward writer walking
+newest-first would put two of this package's own walkers on one lane-day lock. `backfill.py` and `parity.py`
+stay manual operator commands.
+
+### Known simplifications, recorded rather than hidden
+
+- **No `mirrored_past_proof`/settlement polling exists to simplify away** -- see "There is no
+  settlement to poll for" above; this is a structural fact of the source, not an omission.
+- **`forward.py`'s R2 census walks every calendar month between the oldest and newest governed release
+  day**, even across the multi-year gaps between MTBS's quarterly cohorts (2020-11 to 2024-08 today is
+  45 months of `list_partition_keys` calls per tier). Cheap at this lane's total history size and this
+  lane's weekly cadence; would need month-list narrowing if the governed set ever grew enough to matter.
+- **`fetch_burn_severity_release_day` retries the WHOLE union of a release day's cohorts as one unit**,
+  never per-cohort: a release day with two ignition-year cohorts publishes both or neither on any given
+  attempt, which is simpler and safer than partial-cohort accounting but means one flaky cohort's
+  transport error re-fetches an already-succeeded sibling cohort too. Acceptable given MTBS's per-cohort
+  page count is small and `ingest/mtbs.py`'s own paging already retries transient 429/5xx internally.
 
 ## Weather observations
 
@@ -850,11 +1004,11 @@ source at all, so it surfaces through the ordinary gap census as `missing` -- wh
 governed gap census D2 asks for, not a silent hole and not a failure this writer should paper over with
 a fabricated absence marker.
 
-**Proposed executor lane** (not wired -- `pipeline/parquet/lane_registry.py` and
-`execution/job_executor_service.py` are outside this package's ownership): `weather-observations-direct-forward`,
-on a schedule distinct from the climate writer at :40, the fire and water writers at :15, the SoilGrids
-warmer at :25 and the soil writer at :50 -- :20 or :35 are both free. Should ship in shadow, activated
-only through the executor's allow-list variable, matching every sibling in this file.
+**Executor lane** `weather-observations-direct-forward`, wired by the 2026-09-04 join at **:30** -- distinct
+from the climate writer at :40, the fire and water writers at :15, the SoilGrids warmer at :25 and the soil
+writer at :50. (The `:20`/`:35` slots this paragraph once proposed were taken by the 2026-09-06 wave-B join,
+for `sensors` and `evacuation-zones`.) It ships in shadow, activated only through the executor's allow-list
+variable, matching every sibling in this file.
 
 ## Vegetation NDVI
 
@@ -965,9 +1119,241 @@ a table or a `GovernedAbsence`, and the shared finalizer builds every `TerminalE
 written-object ledger, so provenance defaults to `digested` by construction -- see this track's brief,
 "CRITICAL TRAP", and D3 above.
 
-The forward lane is unregistered with the executor as of this writing (`execution/job_executor_service.py`
-is out of this package's ownership); a join agent registers it, e.g. as
-`vegetation-sentinel2-ndvi-direct-forward`, distinct from `climate`'s `:40`, `soil`'s `:50` and the
-fire/water writers' `:15`. IT SHIPS IN SHADOW like its siblings: activation stays an explicit operator
-act through the executor's allow-list variable, and only after `parity.py` confirms
-`VEGETATION_DIRECT_WRITER_START_DAY` (2026-09-05) is correctly placed against the real handoff.
+The forward lane was registered by the 2026-09-04 join as `vegetation-sentinel2-ndvi-direct-forward`,
+hourly at `:05`, distinct from `climate`'s `:40`, `soil`'s `:50` and the fire/water writers' `:15`. IT
+SHIPS IN SHADOW like its siblings: activation stays an explicit operator act through the executor's
+allow-list variable, and only after `parity.py` confirms `VEGETATION_DIRECT_WRITER_START_DAY`
+(2026-09-05) is correctly placed against the real handoff. `backfill.py` and `parity.py` are deliberately
+NOT lanes: they are manual operator commands.
+
+## The 2026-09-06 wave-B join: fire perimeters, sensors, watersheds, evacuation zones
+
+Four more writers landed in parallel and were registered together with `burn_severity` (above), as five
+SHADOW executor lanes. **Registered is not activated**, and the distinction is the whole shape of this
+step: every one of these packages replaces a `LANE_REGISTRY` adapter that is STILL the only writer its
+object stream has, so the registrations added lanes and swapped nothing. Three facts hold for all five
+and are stated once here rather than five times below:
+
+- **No `writer_ceiling` divides these lanes, and for three of them none can exist.** `fire-perimeters`,
+  `evacuation-zones` and `watersheds` are `static_lookup`, and `LaneRegistration.__post_init__` refuses a
+  ceiling on a version-stamped lane outright -- there is no calendar window to divide between two
+  writers. `sensors` ships no cited ownership-boundary day (no `*_DIRECT_WRITER_START_DAY`, no
+  `backfill.py`), and `burn_severity`'s forward and backfill walkers claim one candidate set that IS the
+  generic lane's whole window. So `conflicts_with` on the two executor specs is the ENTIRE mutual
+  exclusion, exactly as `drought`'s registration argues for its own reason.
+- **No direct lane conflicts with the `postgres-*` lane it will eventually retire.** `parity.py` proves a
+  direct writer's output AGAINST what PostgreSQL holds, so the Postgres producer must be allowed to run
+  beside the direct writer for the whole bake. Stopping it is an owner-confirmed Railway variable edit at
+  the END of a cutover, never a precondition the executor invents.
+- **Each activation owes its own swap, and they are not the same swap.** `sensors` and `burn-severity`
+  owe an adapter. `fire-perimeters`, `evacuation-zones` and `watersheds` owe an adapter AND a watermark
+  resolver, because their registered watermark reads `geo.features` too. Each registration in
+  `pipeline/parquet/lane_registry.py` carries its own note; `tests/direct/test_direct_package_registration.py`
+  carries the matching default-deny exemption.
+
+## Fire perimeters
+
+`fire_perimeters/` is what makes `ingest-fire-perimeters`, `ingest/wfigs.py`'s Postgres write path and the
+`postgres-fire-perimeters` executor lane DELETABLE. Until it existed, deleting them stopped the layer
+rather than finishing its cutover -- which is why the 2026-09-06 lane that deleted five siblings' ingestion
+left this one standing.
+
+### A `static_lookup`, so there is no day loop at all
+
+Its partition day is a VERSION STAMP driven by a source watermark
+(`sql/pipeline/lane_watermark_fire_perimeters.sql`, reproduced source-side in `watermark.py`).
+`drought/forward.py` walks a 60-week backlog newest-first because a `release_series` owes one partition per
+release Tuesday; `resolve_static_lane` instead answers `current` / `stale` / `source_empty` for the WHOLE
+lane in one shot, and `stale` names exactly one version day. A turn therefore does one of two things --
+publish one version, or publish nothing -- and a tick the cron skipped costs nothing, because no day ever
+carried an obligation.
+
+### The turn's shape, and why the fetch comes first
+
+    fetch -> conform -> read the ladder -> read the watermark -> resolve -> publish?
+
+The fetch is FIRST because this lane's version day is derived from the fetched population, not from the
+calendar: there is no day to lock on until the source has answered. That inverts `drought/forward.py`,
+which locks the day and then fetches under the lock. The consequence is that the population is captured
+OUTSIDE the lane-day lock and is deliberately NOT refetched inside it -- a refetch would move the content
+out from under the version day already derived from it. Two concurrent turns are still safe: the lock is
+taken before anything is written, and the loser finds the winner's version already published on its next
+tick. The cost of this shape is honest and worth stating: every turn pays the full fetch and conform even
+when nothing has changed.
+
+### There is no backfill module, and there cannot be one
+
+The sibling packages ship `backfill.py` because their upstreams keep a dated archive: USDM publishes one
+map per Tuesday forever, ERA5-Land answers for any past day. WFIGS publishes `_Current` -- "a live mutable
+snapshot, not a versioned release", which "does not retain what it reported yesterday"
+(`docs/lanes/fire-perimeters.md` #6, quoted in this lane's own `floor_basis`). There is no past version to
+re-fetch, so a backfill could only re-stamp TODAY's population under a past day, manufacturing a version
+that never existed -- the exact fabrication `_static_lane_census` refuses when it declines to re-export a
+stranded old version. `geo.features` cannot supply one either: it refreshes one row per incident in place
+and keeps no past state, and `geo.geometry`'s Type-2 chain is not a substitute (only 6 of thousands of
+dimension entries across every producer ever reached a second WFIGS version, and its forward path has a
+known silent-freeze failure mode). The history this lane has is the 45 partition days the retired
+`daily_series` shape already wrote; nothing here adds to it and nothing can.
+
+### Entry point
+
+`python -m agri_data_service.pipeline.direct.fire_perimeters`, with `--max-days` (validated to be exactly
+1 -- a `static_lookup` owes at most one version at any instant, and a `--max-days 5` that silently
+published one would be a lie about what the turn did), `--time-budget-seconds` (default 900, max 3600),
+`--run-id` and the bounded retry/contention knobs. The 900 s default is sized for one ~11 MB WFIGS walk,
+one ~23 MB read-back, a DuckDB conversion of ~23 MB of polygon and a four-rung ladder write -- generous
+against drought's 300 s because this lane moves roughly twenty times drought's bytes per version.
+
+Executor lane `fire-perimeters-direct-forward`, **hourly at `:10`**: the cadence the `_Current` poller it
+replaces already ran at, so this is the status quo rather than a new cost, and WFIGS retains nothing, so a
+change missed between ticks is lost permanently. SHADOW. Its activation swaps BOTH
+`LANE_REGISTRY['fire-perimeters'].adapter` and `.watermark` -- `forward.py` already substitutes both at
+runtime -- and belongs in the same push that drops `geo.features` for this layer.
+
+## Sensors
+
+`sensors/` polls NOAA NWS ground stations once and durably merges every day the rolling window touched.
+The acquisition model is `weather_observations`' shape, not `climate`'s: NWS keeps only a ROLLING ~6-day
+window, recomputed relative to the run clock, never a fixed archive floor (`source.py`).
+
+### `--max-days` is a publish cap, not a backlog depth
+
+The CLI shape follows `climate`/`soil`/`weather_observations` because that is the contract a reviewer
+expects of every lane here, but the MEANING follows `weather_observations`: there is no settled-day backlog
+to walk by date, so `--max-days` caps how many of the day buckets ONE poll produced are actually published.
+`SENSORS_MAX_DAYS = NWS_OBSERVATION_RETENTION.days + 1` -- SEVEN, derived rather than guessed: a half-open
+`[now - 6 days, now)` window can straddle at most seven distinct calendar dates, and the `+ 1` comes off the
+SAME constant `source.py` builds the fetch window from, so the two cannot silently drift. The default equals
+the ceiling for `weather_observations`' reasoning: a day that ages out of NWS's rolling retention before the
+next poll is gone from the source forever (`ingest/sensors.py:94-96`), and asking for the whole window costs
+no extra HTTP -- `observation_url` issues ONE request per station whether `window` is set or not.
+
+### The merge unit is a whole station-day block, not one grain
+
+`weather_observations`' grain `(latitude, longitude, observed_at)` names one row per repeat poll of one fixed
+sample point, so "refresh the source columns on a grain match" is correct there. Here the registered grain is
+`(sensor_id, observed_day, measurement_name)` and one station-day is published as ALL OF a single winning
+report's (at most sixteen) measurement rows at once. If a later report for the same station-day reports a
+DIFFERENT set of measurements -- a station that stopped sending `windGust`, say -- a per-grain refresh would
+leave the stale `windGust` row behind forever, because that name is simply absent from the new report and
+never revisits the grain to delete it. So a later report replaces every row of the block at once. "Later" is
+`observed_at`, mirroring the SQL export's `observedAt DESC` winner-take-all, with `>=` so a repeat poll of the
+identical winning instant is an idempotent refresh rather than a no-op skip; an OLDER incoming block is
+discarded, because NWS's sliding window resurfaces the same historical instant across many consecutive polls.
+
+That discard is why `forward.py::_verify_actual_z13` checks physical z13 against `adapter.merge.table` (the
+intended merge) ALONE, unlike `weather_observations/forward.py`, which checks against every field of the raw
+incoming poll. That check is valid there because that lane's merge always accepts every incoming grain;
+asserting it here would fail on exactly the rows the merge was correct to drop. Byte-for-byte
+`actual == adapter.merge.table` is the equally strong honest claim.
+
+### Entry point
+
+`python -m agri_data_service.pipeline.direct.sensors`, with `--bbox` (defaults to `INGEST_BBOX`),
+`--max-days` (default 7 = the ceiling), `--max-records`, `--time-budget-seconds` (default 300, max 900),
+`--run-id` and the bounded retry/contention knobs. No `products.py`: this lane exports one stream at one row
+shape, so the module was omitted rather than shipped empty, exactly as `weather_observations` argues.
+
+Executor lane `sensors-direct-forward`, **hourly at `:20`**. The writer flagged this as a real trade and the
+join decided it: one run fetches the full 6-day window, which self-heals across a missed tick at no extra
+HTTP cost, so the only thing frequency buys is freshness. Roughly hourly is NWS's own publication cadence, so
+a `:15`/`:30`-style sub-hourly slot would re-transfer the same mostly-unchanged six days several times an
+hour for no new readings, while a slower slot risks a day ageing out of retention unseen -- and that day is
+then unrecoverable. SHADOW. Its activation swaps `LANE_REGISTRY['sensors'].adapter` only, and only once a
+boundary day is measured and cited: the rolling window means every day older than ~6 is unreachable from the
+SOURCE, so `_fill_sensors` over the append-only `geo.features` record is the only path to those days while
+the table holds them.
+
+## Watersheds
+
+`watersheds/` fetches NHDPlus_HR WBDHU12 directly and writes Parquet without ever staging a row in
+PostgreSQL. It bypasses `pipeline/lanes/watersheds.py::export_watersheds_release` AND
+`pipeline/parquet/lane_registry.py::_watersheds_watermark`, both of which read `geo.features` -- which is
+what makes `ingest/watersheds.py::run_watersheds_ingestion_job` and the `postgres-watersheds` lane deletable
+once its own lane is activated. The watermark comes from the source's own `loaddate` (`source.py`), never
+from Postgres, precisely because a Postgres-backed watermark reads stale or empty forever the moment nothing
+writes `geo.features` for this layer.
+
+### One fetch, not three
+
+`pipeline/parquet/gap_fill.py::_fill_static_day` brackets a static lane's export -- reading the watermark
+before AND after the write, to catch a source change landing between SELECT and PUT -- and pays for that with
+two extra reads of whatever the resolver reads. For every other static lane that is one bounded SQL query.
+Here it is the EXACT SAME ~9,400-basin, ~47-request NHDPlus_HR walk the export itself performs: WBD's id-only
+query never returns `loaddate`, so there is no cheaper attribute-only probe. Paying for that walk three times
+a turn -- against a national reference layer measured to hold exactly ONE load day in its whole history --
+would triple a genuinely expensive fetch to close a race window this source has never been observed to open.
+
+`_WatershedsSnapshotCache` therefore fetches ONCE and hands the same `WatershedsSnapshotSource` to both
+watermark reads and to the write adapter. `_fill_static_day`'s bracket check then compares an instant against
+itself and completes in exactly one attempt: correct on the interface's own contract (it really did check
+whether the watermark moved between the two reads it took), just cheap, because both reads are the same read.
+A genuinely independent second fetch belongs here the day an owner decides this source's cadence justifies
+its cost.
+
+### Entry point
+
+`python -m agri_data_service.pipeline.direct.watersheds`, with `--max-days` (validated to be exactly 1 --
+`--max-days 2` asks for a shape this lane's nature cannot support), `--bbox` and `--run-id`. There is NO
+`--time-budget-seconds` knob, so the executor lane's command timeout (1800 s) is the only bound on a turn.
+
+Executor lane `watersheds-direct-forward`, **daily at 03:00 UTC** -- the cadence of the `postgres-watersheds`
+lane it mirrors (02:00), offset an hour so the two never open the same fetch minute during the parity bake,
+when both are meant to be running. Hourly would pay that ~47-request walk 24 times a day to detect a change
+that has happened once in the layer's measured history. SHADOW. THIS IS THE ONE LANE WHOSE ACTIVATION MUST
+SWAP BOTH FIELDS IN ONE EDIT: swap the adapter alone and a source-direct writer is keyed to a clock that
+froze when `postgres-watersheds` stopped; swap the watermark alone and the Postgres export publishes under a
+version day it did not produce.
+
+## Evacuation zones
+
+`evacuation_zones/` publishes one version of Oregon OEM's evacuation areas directly, when and only when it has
+changed. It replaces both `pipeline/lanes/evacuation_zones.py::export_evacuation_zones_day` (the registered
+`_fill_evacuation_zones` adapter, which reads `geo.features` and LEFT JOINs `geo.geometry`) and
+`ingest/evacuation_zones.py::run_evacuation_zones_ingestion_job` (which filled them). PostgreSQL is still
+opened for ONE thing -- the shared session-scoped lane-day advisory lock -- which is coordination, not a data
+sink.
+
+### How a version stamp is decided without a Postgres watermark
+
+`sql/pipeline/lane_watermark_evacuation_zones.sql` answered "when did the published set last change" with
+`GREATEST(max(features.updated_at), max(features.created_at), max(geometry.version_valid_from))`. Every one
+of those three is a column this track deletes, and two of them are PlantGeo's own change-detection clock
+rather than anything Oregon publishes. The upstream offers no replacement: `created_date` never moves when a
+level is raised, and `last_edited_date` is re-stamped on unchanged areas every few minutes, so a watermark
+built on it would re-snapshot the whole layer every tick -- "exactly the behaviour being removed", in that
+file's own words.
+
+So the change test moves INTO the writer, where a direct fetch makes it cheaper than it ever was in SQL:
+capture the statewide set, digest its source-determined content (`rows.content_digest`), and compare against
+the newest snapshot this lane has already published. Equal means nothing is owed. Different means THIS
+capture is the first to see the new state, so the version day is the UTC date of the capture and the whole
+population is re-exported under it. Three consequences, all improvements rather than compromises:
+
+- The instant race `gap_fill.py::_fill_static_day` brackets against cannot arise. Currency is decided by
+  CONTENT, not by comparing two instants, so a change landing mid-export is simply seen by the next tick.
+- A shape-only revision is seen. The Postgres pair provably could not see one (`rows.py`, two independent
+  reasons) and `content_digest` includes `geometry_wkb`.
+- A version is never stamped from the cron's calendar: a tick that finds nothing changed writes nothing.
+
+### Oregon-only coverage is structural, and the unset-bbox skip is preserved verbatim
+
+`COVERED_STATE` is not a row filter -- Oregon OEM's `Fire_Evacuation_Areas_Public` is a single state agency's
+feed and no equivalent government-run aggregator exists for Washington, Idaho or western Montana, so a writer
+widens coverage only by fetching a DIFFERENT endpoint, which is why `source.py` accepts no caller-supplied
+URL. `resolve_coverage_bbox` delegates to `ingest/policy.py::resolve_bounded_bbox`, so an unconfigured bbox is
+a no-op turn exactly as the Postgres job's own refusal was, rather than silently querying a wider population
+than the retired lane ever did. `MAX_ROWS_PER_PART = 200` is restated rather than imported from the module
+being deleted; the number and its reasoning are unchanged.
+
+### Entry point
+
+`python -m agri_data_service.pipeline.direct.evacuation_zones`, with `--max-days` (default 1, and 1 is also
+the validated ceiling -- a `static_lookup` owes at most one version at any instant), `--time-budget-seconds`
+(default 300, max 1800), `--run-id` and the bounded retry/contention knobs.
+
+Executor lane `evacuation-zones-direct-forward`, **hourly at `:35`** -- the cadence of the
+`postgres-evacuation-zones` poller it replaces, for a life-safety layer whose whole value is currency, and a
+tick that finds nothing changed writes nothing. SHADOW. Its activation swaps the adapter AND the watermark
+resolver, and the watermark replacement is a DESIGN DECISION rather than a transcription: this package offers
+a store-only resolver on request, and nobody has asked for one yet.

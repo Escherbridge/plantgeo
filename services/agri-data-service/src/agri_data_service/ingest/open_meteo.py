@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import math
 import os
@@ -21,13 +20,8 @@ from agri_data_service.ingest.http import (
     UpstreamPayloadError,
     fetch_bounded,
     fetch_bounded_json,
-    upstream_client,
 )
-from agri_data_service.ingest.identity import (
-    MissingNativeKeyError,
-    build_weather_observation_identity,
-    format_javascript_timestamp,
-)
+from agri_data_service.ingest.identity import format_javascript_timestamp
 from agri_data_service.ingest.layer_binding import LayerBinding
 from agri_data_service.ingest.policy import (
     MAX_LATITUDE,
@@ -35,16 +29,11 @@ from agri_data_service.ingest.policy import (
     MAX_WEATHER_SAMPLE_POINTS,
     MIN_LATITUDE,
     MIN_LONGITUDE,
-    UNCONFIGURED_BBOX_REASON,
     format_javascript_number,
     is_fresh_observation,
     parse_bbox,
-    resolve_bounded_bbox,
-    resolve_weather_sample_spacing_degrees,
 )
-from agri_data_service.ingest.results import IngestionJobResult, skipped_result
 from agri_data_service.ingest.source import HistoryCapability
-from agri_data_service.ingest.writer import FeatureWrite
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -52,11 +41,13 @@ if TYPE_CHECKING:
 
     import httpx
 
-    from agri_data_service.ingest.writer import FeatureWriter
 
 logger = structlog.get_logger()
 
-OPEN_METEO_SOURCE: Final = "open-meteo"
+# The forward token `open-meteo` and its `run_weather_ingestion_job` were DELETED 2026-09-06:
+# weather-observations forward polls belong to `pipeline/direct/weather_observations/forward.py`,
+# which writes Parquet. The fetch/parse code below stays -- that writer, the ERA5-Land soil writer
+# and the historical archive lanes all read it.
 OPEN_METEO_PROPERTY_SOURCE: Final = "Open-Meteo"
 
 WEATHER_LAYER: Final = LayerBinding(
@@ -394,81 +385,3 @@ async def get_current_weather(
         raise ValueError("weather coordinates are outside WGS84 bounds")
     payload = await fetch_bounded_json(client, current_weather_url(latitude, longitude), OPEN_METEO_BOUNDS)
     return parse_current_weather(payload, now)
-
-
-def build_weather_write(
-    latitude: float,
-    longitude: float,
-    observation: Mapping[str, object],
-    layer_name: str,
-) -> FeatureWrite | None:
-    """Build one observation's write, returning None when the upstream supplied no instant to key it by."""
-    try:
-        identity = build_weather_observation_identity(latitude, longitude, observation)
-    except (MissingNativeKeyError, ValueError):
-        return None
-    return FeatureWrite(
-        layer_reference=layer_name,
-        identity=identity,
-        properties={
-            **observation,
-            "source": OPEN_METEO_PROPERTY_SOURCE,
-            "geometry": {"type": "Point", "coordinates": [longitude, latitude]},
-        },
-        channel=OPEN_METEO_CHANNEL,
-    )
-
-
-async def run_weather_ingestion_job(
-    write_features: FeatureWriter,
-    *,
-    bbox: str | None = None,
-    client: httpx.AsyncClient | None = None,
-    now: datetime | None = None,
-) -> IngestionJobResult:
-    """Fetch current weather for a bounded sample grid and write the points that answered."""
-    area = resolve_bounded_bbox(bbox)
-    if area is None:
-        return skipped_result(OPEN_METEO_SOURCE, UNCONFIGURED_BBOX_REASON)
-
-    points = bounded_sample_points(area, resolve_weather_sample_spacing_degrees())
-    if client is None:
-        async with upstream_client(OPEN_METEO_BOUNDS) as owned_client:
-            observations = await _gather_observations(owned_client, points, now)
-    else:
-        observations = await _gather_observations(client, points, now)
-
-    layer_name = resolve_weather_layer_name()
-    writes: list[FeatureWrite] = []
-    unavailable_points = 0
-    for (latitude, longitude), observation in zip(points, observations, strict=True):
-        if isinstance(observation, BaseException):
-            unavailable_points += 1
-            continue
-        write = build_weather_write(latitude, longitude, observation, layer_name)
-        if write is None:
-            unavailable_points += 1
-            continue
-        writes.append(write)
-    if unavailable_points:
-        logger.info("weather_sample_points_unavailable", points=unavailable_points, sampled=len(points))
-
-    return IngestionJobResult(
-        source=OPEN_METEO_SOURCE,
-        status="ingested",
-        records_seen=len(points),
-        records_written=await write_features(writes),
-        details={"unavailable_points": unavailable_points},
-    )
-
-
-async def _gather_observations(
-    client: httpx.AsyncClient,
-    points: list[tuple[float, float]],
-    now: datetime | None,
-) -> list[dict[str, object] | BaseException]:
-    """Fetch every sample point, keeping one point's failure from discarding the rest of the grid."""
-    return await asyncio.gather(
-        *(get_current_weather(client, latitude, longitude, now) for latitude, longitude in points),
-        return_exceptions=True,
-    )

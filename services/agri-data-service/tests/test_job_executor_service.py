@@ -34,6 +34,7 @@ from agri_data_service.execution.job_executor_service import (
     scheduled_bucket,
 )
 from agri_data_service.jobs import JobDefinitionRecord, JobInvocation, RetryPolicy, ShutdownSignal
+from agri_data_service.pipeline.direct.burn_severity.products import governed_release_days
 from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRATIONS, LANE_REGISTRY
 
 if TYPE_CHECKING:
@@ -50,6 +51,17 @@ _EXPECTED_REGISTRATION_COUNT = 32
 #: maintenance and the migration-input lanes, which now include seven direct/source-specific
 #: writers: fire, water, climate, soil, plus the 2026-09-04 join's vegetation, weather-observations
 #: and drought forward lanes).
+# 57 on 2026-09-06 when `postgres-firms`, `postgres-streamflow`, `postgres-weather`,
+# `postgres-drought` and `postgres-vegetation` were DELETED with the CLI verbs and job functions
+# behind them. Each of those five layers has a direct-to-Parquet writer registered in
+# `_MIGRATION_INPUT_SPECS`, so its PostgreSQL producer was the removable half of a pair; the five
+# `postgres-*` lanes that remain still have an ACTIVE-writer dependency, plus the geometry repair
+# their exporters' `geo.geometry` join depends on.
+#
+# 62 after the 2026-09-06 wave-B join added five more direct writers -- fire-perimeters, sensors,
+# watersheds, evacuation-zones and burn-severity -- every one of them SHADOW. The count went up and the
+# `postgres-*` count did NOT go down, and that is the correct shape of this step: registering a writer
+# and retiring the producer it replaces are two different pushes, and the second needs an owner.
 _EXPECTED_SPEC_COUNT = 62
 _DIRECT_FIRE_OWNER = "plantgeo-fire-detections-forward"
 _DIRECT_WATER_OWNER = "plantgeo-water-gauges-forward"
@@ -112,7 +124,15 @@ def test_registry_splits_ingest_parquet_and_jobs_pulse_failure_domains() -> None
     assert "durable-jobs-pulse" not in LANE_SPECS
     assert "parquet-gap-fill" not in LANE_SPECS
 
-    assert LANE_SPECS["postgres-vegetation"].command == ("agri-service", "data", "ingest-ndvi")
+    # `postgres-vegetation` -> `ingest-ndvi` was asserted here until 2026-09-06. Both are deleted; the
+    # vegetation forward writer is `vegetation-sentinel2-ndvi-direct-forward` and it runs a module, not
+    # a `data` verb, which is what makes it write Parquet instead of `geo.features`.
+    assert "postgres-vegetation" not in LANE_SPECS
+    assert LANE_SPECS["vegetation-sentinel2-ndvi-direct-forward"].command == (
+        "python",
+        "-m",
+        "agri_data_service.pipeline.direct.vegetation",
+    )
     assert LANE_SPECS["vegetation-catch-up"].command == (
         "agri-service",
         "data",
@@ -229,12 +249,20 @@ def test_every_observed_legacy_railway_writer_has_a_complete_terminal_mapping() 
     assert all("checkpoint" in row and "retry_policy" in row for row in lane_rows)
 
 
-def test_drought_poll_runs_daily_after_each_publication_lag_day() -> None:
-    drought = LANE_SPECS["postgres-drought"]
-    assert drought.publication_lag_days == 4
-    assert drought.cadence_seconds == 86400
-    assert drought.phase_offset_seconds == 43200
-    assert drought.schedule == "0 12 * * *"
+def test_the_drought_publication_contract_survived_the_postgres_lane_that_carried_it() -> None:
+    """`postgres-drought`'s daily 12:00 poll was deleted 2026-09-06; the lag it was sized from was not.
+
+    The old lane polled once a day at 12:00 UTC because USDM publishes Thursday for the preceding
+    Tuesday. That schedule was a property of the PostgreSQL producer, not of the layer, and it went with
+    `ingest-drought`. What must NOT go is the publication contract itself -- lag 4, cadence 7 -- which
+    `pipeline/parquet/lane_registry.py` owns and both surviving drought lanes read from it, so a
+    regression there would silently move which day the layer believes is settled.
+    """
+    assert "postgres-drought" not in LANE_SPECS
+    for lane_id in ("parquet-drought", "drought-direct-forward"):
+        spec = LANE_SPECS[lane_id]
+        assert spec.publication_lag_days == 4, lane_id
+        assert spec.publication_cadence_days == 7, lane_id
 
 
 def test_empty_activation_is_shadow() -> None:
@@ -534,6 +562,14 @@ def test_mutual_exclusion_is_reported_before_any_handoff_acknowledgement_complai
         ("drought-direct-forward", "parquet-drought"),
         ("vegetation-sentinel2-ndvi-direct-forward", "parquet-vegetation"),
         ("weather-observations-direct-forward", "parquet-weather-observations"),
+        # The 2026-09-06 wave-B five. Three of them sort BEFORE their generic sibling and two AFTER
+        # (`parquet-sensors` < `sensors-direct-forward`, `parquet-watersheds` < `watersheds-...`), so
+        # this set exercises both sides of the sort that used to decide the diagnosis.
+        ("fire-perimeters-direct-forward", "parquet-fire-perimeters"),
+        ("sensors-direct-forward", "parquet-sensors"),
+        ("watersheds-direct-forward", "parquet-watersheds"),
+        ("evacuation-zones-direct-forward", "parquet-evacuation-zones"),
+        ("burn-severity-direct-forward", "parquet-burn-severity"),
     )
 
     for direct, generic in pairings:
@@ -564,6 +600,112 @@ def test_the_three_2026_09_04_direct_writers_use_distinct_hourly_minutes() -> No
         assert LANE_SPECS[lane_id].executable
 
 
+#: The 2026-09-06 wave-B join: five direct writers, each paired with the generic exporter it replaces.
+_WAVE_B_PAIRINGS = (
+    ("fire-perimeters-direct-forward", "parquet-fire-perimeters", "fire-perimeters"),
+    ("sensors-direct-forward", "parquet-sensors", "sensors"),
+    ("watersheds-direct-forward", "parquet-watersheds", "watersheds"),
+    ("evacuation-zones-direct-forward", "parquet-evacuation-zones", "evacuation-zones"),
+    ("burn-severity-direct-forward", "parquet-burn-severity", "burn-severity"),
+)
+
+
+@pytest.mark.parametrize(("direct", "generic", "slug"), _WAVE_B_PAIRINGS)
+def test_each_wave_b_writer_is_registered_shadow_and_mutually_exclusive(direct: str, generic: str, slug: str) -> None:
+    """Registered, not activated -- and with `conflicts_with` as the whole guard, since no ceiling can exist.
+
+    Three of these lanes are `static_lookup`, where `LaneRegistration.__post_init__` refuses a
+    `writer_ceiling` outright; `sensors` ships no cited ownership-boundary day and `burn-severity`'s two
+    walkers claim the same governed release set the generic lane covers. So unlike
+    fire-detections/water-gauges/vegetation, none of these five has a calendar boundary to divide, and
+    the ONLY thing keeping two writers off one object stream is the two-sided `conflicts_with` below.
+    """
+    assert generic in LANE_SPECS[direct].conflicts_with
+    assert LANE_SPECS[generic].conflicts_with == (direct,)
+    assert LANE_SPECS[direct].legacy_owners == (), "a direct writer never inherits a Railway service"
+    assert LANE_SPECS[generic].legacy_owners == (_INGEST_OWNER,), (
+        "the generic lane keeps its real ingest-cron history: these five slugs went through "
+        "_FORWARD_SIBLING_LANE_BY_SLUG, not _DIRECT_WRITER_BY_SLUG, which would have erased it"
+    )
+    assert LANE_SPECS[direct].migration_disposition == "source-specific"
+    assert LANE_SPECS[direct].executable
+    assert LANE_REGISTRY[slug].writer_ceiling is None
+    assert LANE_SPECS[generic].writer_ceiling is None
+    assert not parse_activation({}).is_active(direct), "every wave-B lane ships shadow"
+
+
+def test_no_direct_writer_refuses_to_run_beside_the_postgres_producer_it_replaces() -> None:
+    """Deliberate: `parity.py` proves a direct writer AGAINST Postgres, so both must run during the bake.
+
+    `conflicts_with` in this table means "two writers of one object stream", never "an upstream this
+    lane will eventually make redundant". A `postgres-*` lane (or `mtbs-forward`) writes `geo.features`;
+    it takes no Parquet lane-day lock, and stopping it is an owner-confirmed Railway variable edit that
+    belongs at the END of a cutover, after parity is proven -- not a precondition the executor invents.
+    """
+    postgres_lanes = {lane_id for lane_id in LANE_SPECS if lane_id.startswith("postgres-")} | {"mtbs-forward"}
+    for direct, _generic, _slug in _WAVE_B_PAIRINGS:
+        assert set(LANE_SPECS[direct].conflicts_with).isdisjoint(postgres_lanes), direct
+
+
+def test_the_five_wave_b_direct_writers_take_distinct_slots_sized_to_their_own_sources() -> None:
+    """Three hourly, one daily, one weekly -- and the differences are the measurements, not a template.
+
+    The four pre-existing direct-writer minutes are :15 (fire/water), :25 (soilgrids), :40 (climate) and
+    :50 (soil); the 2026-09-04 join took :05, :30 and :45. The three hourly lanes here take the three
+    free five-minute slots that remain below the hour, and the other two are not hourly at all.
+    """
+    hourly = {
+        "fire-perimeters-direct-forward": 600,
+        "sensors-direct-forward": 1200,
+        "evacuation-zones-direct-forward": 2100,
+    }
+    taken = {300, 900, 1500, 1800, 2400, 2700, 3000}
+
+    assert taken.isdisjoint(hourly.values())
+    for lane_id, offset in hourly.items():
+        spec = LANE_SPECS[lane_id]
+        assert (spec.cadence_seconds, spec.phase_offset_seconds) == (3600, offset), lane_id
+
+    watersheds = LANE_SPECS["watersheds-direct-forward"]
+    postgres_watersheds = LANE_SPECS["postgres-watersheds"]
+    assert (watersheds.cadence_seconds, watersheds.schedule) == (86400, "0 3 * * *"), (
+        "one turn is the same ~9,400-basin NHDPlus_HR walk the export performs, against a layer measured "
+        "to hold exactly one load day in its history: hourly would pay it 24 times a day for nothing"
+    )
+    assert watersheds.cadence_seconds == postgres_watersheds.cadence_seconds
+    assert watersheds.phase_offset_seconds == postgres_watersheds.phase_offset_seconds + 3600, (
+        "one hour after the Postgres lane it mirrors, so the two never open the same fetch minute "
+        "during the parity bake, when both are meant to be running"
+    )
+
+    burn_severity = LANE_SPECS["burn-severity-direct-forward"]
+    mtbs = LANE_SPECS["mtbs-forward"]
+    assert burn_severity.cadence_seconds == mtbs.cadence_seconds == 604800, (
+        "MTBS publishes quarterly and its governed release set grows only through a code change, so the "
+        "weekly rhythm mtbs-forward already runs is the honest cadence -- and forward.py's per-turn R2 "
+        "census is explicitly sized for it"
+    )
+    assert burn_severity.phase_offset_seconds == mtbs.phase_offset_seconds + 3600
+    assert scheduled_bucket(burn_severity, datetime(2026, 9, 10, 12, tzinfo=UTC)) == datetime(
+        2026, 9, 8, 8, 55, tzinfo=UTC
+    )
+
+
+def test_burn_severity_writer_floor_is_the_writers_own_governed_release_set() -> None:
+    """The declared floor is a claim about what the writer walks, so it is checked against what it walks.
+
+    `products.governed_release_days()` inverts `ingest/mtbs.py::MTBS_ANNUAL_RELEASE_DATES`, which a
+    future governance action edits. If someone dates an older fire year's completion, this lane's real
+    floor moves and the registration's stops being true -- which is exactly the drift a pinned constant
+    hides and this assertion surfaces.
+    """
+    spec = LANE_SPECS["burn-severity-direct-forward"]
+
+    assert spec.writer_floor is not None
+    assert min(governed_release_days()).isoformat() == spec.writer_floor
+    assert spec.writer_floor == LANE_REGISTRY["burn-severity"].history_floor.isoformat()
+
+
 def test_every_registered_lane_has_exactly_one_generic_parquet_spec() -> None:
     """The registration table IS the parquet spec table; a drift between them is a lane nothing runs."""
     expected = {f"parquet-{registration.slug}" for registration in LANE_REGISTRATIONS}
@@ -590,7 +732,7 @@ def test_complete_recurring_railway_responsibility_set_can_activate_together() -
 
 def test_one_ingest_owner_lane_activates_alone_now_that_the_legacy_cron_is_fenced() -> None:
     """Owner decision 2026-09-03: Postgres ingestion retires lane by lane, so no atomic-owner rule remains."""
-    lane_id = "postgres-weather"
+    lane_id = "postgres-sensors"
     activation = parse_activation(_activation_environment(lane_id))
     assert activation.active_lanes == frozenset({lane_id})
 
@@ -636,7 +778,7 @@ def test_mtbs_weekly_and_soilgrids_hourly_phases_are_exact() -> None:
 def test_restart_catch_up_coalesces_source_polls_and_replays_oldest_durable_bucket() -> None:
     now = datetime(2026, 8, 28, 18, 30, tzinfo=UTC)
     previous = datetime(2026, 8, 28, 12, tzinfo=UTC)
-    source = LANE_SPECS["postgres-weather"]
+    source = LANE_SPECS["postgres-sensors"]
     durable = LANE_SPECS["parquet-weather-observations"]
     assert source.catch_up_policy == "coalesce_latest"
     assert next_scheduled_bucket(source, now, previous) == datetime(2026, 8, 28, 18, tzinfo=UTC)
@@ -664,13 +806,13 @@ def test_fair_order_interleaves_incremental_and_backlog_and_rotates_oldest() -> 
     ordered = fair_due_order(
         (
             _due("fire-detections-direct-forward", newer),
-            _due("postgres-weather", older),
+            _due("postgres-sensors", older),
             _due("parquet-water-gauges", newer),
             _due("jobs-firms-archive", older),
         )
     )
     assert [entry.spec.lane_id for entry in ordered] == [
-        "postgres-weather",
+        "postgres-sensors",
         "jobs-firms-archive",
         "fire-detections-direct-forward",
         "parquet-water-gauges",
@@ -884,7 +1026,7 @@ async def test_restart_resumes_the_exact_open_logical_bucket(
 @pytest.mark.parametrize(
     ("lane_id", "expected_bucket"),
     [
-        ("postgres-weather", datetime(2026, 8, 28, 18, tzinfo=UTC)),
+        ("postgres-sensors", datetime(2026, 8, 28, 18, tzinfo=UTC)),
         ("parquet-weather-observations", datetime(2026, 8, 28, 13, tzinfo=UTC)),
     ],
 )
@@ -1543,7 +1685,7 @@ async def test_invalidated_pinned_connection_aborts_before_a_second_candidate(
 ) -> None:
     session = _ShadowSession()
     session.bind = SimpleNamespace(invalidated=False)  # type: ignore[attr-defined]
-    candidates = [_due("postgres-weather", None), _due("jobs-firms-archive", None)]
+    candidates = [_due("postgres-sensors", None), _due("jobs-firms-archive", None)]
     attempted: list[str] = []
 
     async def _noop_timeout(_session: object) -> None:
@@ -1577,7 +1719,7 @@ async def test_invalidated_pinned_connection_aborts_before_a_second_candidate(
             max_lanes_per_tick=2,
         )
 
-    assert attempted == ["postgres-weather"]
+    assert attempted == ["postgres-sensors"]
 
 
 async def test_service_loop_binds_each_tick_session_to_one_external_connection(
@@ -1812,7 +1954,7 @@ async def test_one_executor_tick_never_overlaps_source_writer_processes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     session = _ShadowSession()
-    candidates = [_due("postgres-weather", None), _due("fire-detections-direct-forward", None)]
+    candidates = [_due("postgres-sensors", None), _due("fire-detections-direct-forward", None)]
     active = 0
     maximum_active = 0
     order: list[str] = []
@@ -1860,8 +2002,8 @@ async def test_one_executor_tick_never_overlaps_source_writer_processes(
     assert order == [
         "start:fire-detections-direct-forward",
         "stop:fire-detections-direct-forward",
-        "start:postgres-weather",
-        "stop:postgres-weather",
+        "start:postgres-sensors",
+        "stop:postgres-sensors",
     ]
 
 

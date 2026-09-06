@@ -1,0 +1,208 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render } from "@testing-library/react";
+import type { Map as MapLibreMap } from "maplibre-gl";
+import HoverTooltip from "@/components/map/HoverTooltip";
+
+/**
+ * Touch fires no `mousemove` at all, so every `TOOLTIP_TAP_LAYER_IDS` layer was uninspectable on
+ * a phone before the tap handler this file covers -- a tap on one of them did nothing whatsoever,
+ * not even the empty-ground "ask AI about this location" prompt, because `MapView`'s own click
+ * handler already swallows any click that landed on a rendered feature. These tests hold the
+ * three properties that handler owes: it is a no-op on a fine pointer (hover already works
+ * there), it widens the hit test for a coarse one, and a pinned tooltip is dismissed by a second
+ * tap rather than requiring a hover-out that touch cannot produce.
+ */
+
+interface FakeFeature {
+  layer: { id: string };
+  properties: Record<string, unknown>;
+}
+
+function createFakeMap(initialFeatures: FakeFeature[]) {
+  const listeners = new Map<string, Set<(event: unknown) => void>>();
+  const canvas = { style: { cursor: "" } };
+  // A `let`, not a closed-over constant: "tap empty ground" is simulated by clearing this
+  // between two emits on the SAME map/component, exactly as a real second tap landing off every
+  // feature would query and find nothing.
+  let features = initialFeatures;
+  const queryRenderedFeatures = vi.fn((_geometry: unknown, options: { layers: string[] }) =>
+    features.filter((feature) => options.layers.includes(feature.layer.id))
+  );
+
+  return {
+    on(type: string, handler: (event: unknown) => void) {
+      if (!listeners.has(type)) listeners.set(type, new Set());
+      listeners.get(type)!.add(handler);
+    },
+    off(type: string, handler: (event: unknown) => void) {
+      listeners.get(type)?.delete(handler);
+    },
+    emit(type: string, event: unknown) {
+      for (const handler of Array.from(listeners.get(type) ?? [])) handler(event);
+    },
+    setFeatures(next: FakeFeature[]) {
+      features = next;
+    },
+    getStyle: () => ({ layers: [] }),
+    getLayer: () => ({}),
+    queryRenderedFeatures,
+    getCanvas: () => canvas,
+    getContainer: () => ({ clientWidth: 800, clientHeight: 600 }),
+  };
+}
+
+type FakeMap = ReturnType<typeof createFakeMap>;
+
+function asMap(fakeMap: FakeMap): MapLibreMap {
+  return fakeMap as unknown as MapLibreMap;
+}
+
+function setCoarsePointer(isCoarse: boolean) {
+  window.matchMedia = vi.fn().mockReturnValue({ matches: isCoarse }) as unknown as typeof window.matchMedia;
+}
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  // @ts-expect-error -- jsdom implements no matchMedia by default; undo the per-test stub.
+  delete window.matchMedia;
+});
+
+describe("HoverTooltip: mousemove (fine pointer, unchanged)", () => {
+  it("shows a tooltip for a hovered feature", () => {
+    setCoarsePointer(false);
+    const fakeMap = createFakeMap([
+      // `network` is the only field `formatSensorStation` renders from this fixture's fields;
+      // an all-empty bag makes `buildContent` return null and no tooltip would ever appear,
+      // for any scenario in this file, including this "unchanged" baseline.
+      { layer: { id: "sensors" }, properties: { network: "TEST" } },
+    ]);
+    const { getByText } = render(<HoverTooltip map={asMap(fakeMap)} />);
+
+    act(() => {
+      fakeMap.emit("mousemove", { point: { x: 100, y: 120 } });
+    });
+
+    expect(getByText("Weather station")).toBeTruthy();
+    // The event's own point, never a padded box: a mouse cursor needs no tolerance.
+    expect(fakeMap.queryRenderedFeatures).toHaveBeenLastCalledWith(
+      { x: 100, y: 120 },
+      expect.objectContaining({ layers: expect.arrayContaining(["sensors"]) })
+    );
+  });
+});
+
+describe("HoverTooltip: click (coarse pointer only)", () => {
+  it("does nothing on a fine pointer -- hover already covers a mouse", () => {
+    setCoarsePointer(false);
+    const fakeMap = createFakeMap([{ layer: { id: "sensors" }, properties: {} }]);
+    const { queryByText } = render(<HoverTooltip map={asMap(fakeMap)} />);
+
+    act(() => {
+      fakeMap.emit("click", { point: { x: 100, y: 120 } });
+    });
+
+    expect(queryByText("Weather station")).toBeNull();
+  });
+
+  it("pins a tooltip open for a layer with no dedicated click popup", () => {
+    setCoarsePointer(true);
+    const fakeMap = createFakeMap([
+      { layer: { id: "sensors" }, properties: { network: "TEST" } },
+    ]);
+    const { getByText, getByLabelText } = render(<HoverTooltip map={asMap(fakeMap)} />);
+
+    act(() => {
+      fakeMap.emit("click", { point: { x: 100, y: 120 } });
+    });
+
+    expect(getByText("Weather station")).toBeTruthy();
+    // Pinned tooltips carry a close affordance a hover-only one never needs.
+    expect(getByLabelText("Close")).toBeTruthy();
+  });
+
+  it("widens the hit test to a padded box on a coarse pointer", () => {
+    setCoarsePointer(true);
+    const fakeMap = createFakeMap([{ layer: { id: "sensors" }, properties: {} }]);
+    render(<HoverTooltip map={asMap(fakeMap)} />);
+
+    act(() => {
+      fakeMap.emit("click", { point: { x: 100, y: 120 } });
+    });
+
+    expect(fakeMap.queryRenderedFeatures).toHaveBeenLastCalledWith(
+      [
+        [88, 108],
+        [112, 132],
+      ],
+      expect.objectContaining({ layers: expect.arrayContaining(["sensors"]) })
+    );
+  });
+
+  it("never reaches published-fire-circles or the other five ids FireLayer/WaterLayer already own", () => {
+    setCoarsePointer(true);
+    const fakeMap = createFakeMap([
+      { layer: { id: "published-fire-circles" }, properties: {} },
+    ]);
+    render(<HoverTooltip map={asMap(fakeMap)} />);
+
+    act(() => {
+      fakeMap.emit("click", { point: { x: 100, y: 120 } });
+    });
+
+    const [, options] = fakeMap.queryRenderedFeatures.mock.calls.at(-1)!;
+    expect((options as { layers: string[] }).layers).not.toContain("published-fire-circles");
+  });
+
+  it("dismisses a pinned tooltip on a second tap of the same feature", () => {
+    setCoarsePointer(true);
+    const fakeMap = createFakeMap([
+      { layer: { id: "sensors" }, properties: { network: "TEST" } },
+    ]);
+    const { queryByText } = render(<HoverTooltip map={asMap(fakeMap)} />);
+
+    act(() => {
+      fakeMap.emit("click", { point: { x: 100, y: 120 } });
+    });
+    expect(queryByText("Weather station")).toBeTruthy();
+
+    act(() => {
+      fakeMap.emit("click", { point: { x: 100, y: 120 } });
+    });
+    expect(queryByText("Weather station")).toBeNull();
+  });
+
+  it("dismisses a pinned tooltip on a tap that lands on empty ground", () => {
+    setCoarsePointer(true);
+    const fakeMap = createFakeMap([
+      { layer: { id: "sensors" }, properties: { network: "TEST" } },
+    ]);
+    const { queryByText } = render(<HoverTooltip map={asMap(fakeMap)} />);
+
+    act(() => {
+      fakeMap.emit("click", { point: { x: 100, y: 120 } });
+    });
+    expect(queryByText("Weather station")).toBeTruthy();
+
+    // The second tap lands where nothing is rendered.
+    fakeMap.setFeatures([]);
+    act(() => {
+      fakeMap.emit("click", { point: { x: 500, y: 500 } });
+    });
+    expect(queryByText("Weather station")).toBeNull();
+  });
+
+  it("dismisses a pinned tooltip through its own close button", () => {
+    setCoarsePointer(true);
+    const fakeMap = createFakeMap([
+      { layer: { id: "sensors" }, properties: { network: "TEST" } },
+    ]);
+    const { getByLabelText, queryByText } = render(<HoverTooltip map={asMap(fakeMap)} />);
+
+    act(() => {
+      fakeMap.emit("click", { point: { x: 100, y: 120 } });
+    });
+    fireEvent.click(getByLabelText("Close"));
+
+    expect(queryByText("Weather station")).toBeNull();
+  });
+});

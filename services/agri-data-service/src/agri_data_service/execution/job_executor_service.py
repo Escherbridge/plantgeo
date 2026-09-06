@@ -42,12 +42,16 @@ from agri_data_service.jobs import (
 from agri_data_service.jobs.lease import apply_statement_timeout, canonical_json, fetch_row, required_column
 from agri_data_service.jobs.matview_refresh import MATVIEW_REFRESH_TIME_BUDGET_SECONDS
 from agri_data_service.jobs.strategy_mv_refresh import STRATEGY_MV_REFRESH_TIME_BUDGET_SECONDS
+from agri_data_service.pipeline.direct.burn_severity.forward import BURN_SEVERITY_DEFAULT_TIME_BUDGET_SECONDS
 from agri_data_service.pipeline.direct.climate.products import (
     CLIMATE_DEFAULT_TIME_BUDGET_SECONDS,
     CLIMATE_FIELD_PRODUCTS,
     CLIMATE_SHORTWAVE_RADIATION_PUBLICATION_LAG_DAYS,
 )
 from agri_data_service.pipeline.direct.drought.forward import DROUGHT_DEFAULT_TIME_BUDGET_SECONDS
+from agri_data_service.pipeline.direct.evacuation_zones.forward import EVACUATION_ZONES_DEFAULT_TIME_BUDGET_SECONDS
+from agri_data_service.pipeline.direct.fire_perimeters.forward import FIRE_PERIMETERS_DEFAULT_TIME_BUDGET_SECONDS
+from agri_data_service.pipeline.direct.sensors.forward import SENSORS_DEFAULT_TIME_BUDGET_SECONDS
 from agri_data_service.pipeline.direct.soil.products import (
     ERA5_LAND_ARCHIVE_PUBLICATION_LAG_DAYS,
     SOIL_DEFAULT_TIME_BUDGET_SECONDS,
@@ -383,14 +387,34 @@ _SOURCE_DIRECT_SLUGS: Final[frozenset[str]] = frozenset(_DIRECT_WRITER_BY_SLUG)
 #: `test_every_observed_legacy_railway_writer_has_a_complete_terminal_mapping` would then disagree with
 #: `LEGACY_RAILWAY_RESPONSIBILITIES`, which still (correctly) claims them. This mapping wires ONLY
 #: `conflicts_with`, leaving every other `_parquet_spec` computation untouched.
+#:
+#: The 2026-09-06 wave-B join adds five more of exactly that shape -- fire-perimeters, sensors,
+#: watersheds, evacuation-zones and burn-severity. Every one of them ALSO had a real
+#: `plantgeo-ingest-cron` (or, for watersheds, a legacy-owner-free `postgres-watersheds`) producer, so
+#: they belong here and not in `_DIRECT_WRITER_BY_SLUG` for the identical reason. NONE of them carries
+#: a `writer_ceiling` on its registration and none can: three are `static_lookup` (a version-stamped
+#: lane has no calendar window to divide between two writers -- `LaneRegistration.__post_init__`
+#: refuses one outright), `sensors` ships no cited ownership-boundary day, and `burn-severity`'s
+#: forward and backfill walkers between them claim the whole governed release set the generic lane
+#: covers. So for all five, as for drought, `conflicts_with` IS the entire mutual-exclusion guard.
 VEGETATION_DIRECT_LANE_ID: Final = "vegetation-sentinel2-ndvi-direct-forward"
 WEATHER_OBSERVATIONS_DIRECT_LANE_ID: Final = "weather-observations-direct-forward"
 DROUGHT_DIRECT_LANE_ID: Final = "drought-direct-forward"
+FIRE_PERIMETERS_DIRECT_LANE_ID: Final = "fire-perimeters-direct-forward"
+SENSORS_DIRECT_LANE_ID: Final = "sensors-direct-forward"
+WATERSHEDS_DIRECT_LANE_ID: Final = "watersheds-direct-forward"
+EVACUATION_ZONES_DIRECT_LANE_ID: Final = "evacuation-zones-direct-forward"
+BURN_SEVERITY_DIRECT_LANE_ID: Final = "burn-severity-direct-forward"
 _FORWARD_SIBLING_LANE_BY_SLUG: Final[Mapping[str, str]] = MappingProxyType(
     {
         "vegetation": VEGETATION_DIRECT_LANE_ID,
         "weather-observations": WEATHER_OBSERVATIONS_DIRECT_LANE_ID,
         "drought": DROUGHT_DIRECT_LANE_ID,
+        "fire-perimeters": FIRE_PERIMETERS_DIRECT_LANE_ID,
+        "sensors": SENSORS_DIRECT_LANE_ID,
+        "watersheds": WATERSHEDS_DIRECT_LANE_ID,
+        "evacuation-zones": EVACUATION_ZONES_DIRECT_LANE_ID,
+        "burn-severity": BURN_SEVERITY_DIRECT_LANE_ID,
     }
 )
 
@@ -448,20 +472,27 @@ def _parquet_spec(slug: str) -> LaneExecutionSpec:
     )
 
 
+#: The FIVE surviving PostgreSQL forward-ingestion lanes, and why exactly five.
+#:
+#: `postgres-firms`, `postgres-streamflow`, `postgres-weather`, `postgres-drought` and
+#: `postgres-vegetation` WERE HERE AND ARE DELETED (owner directive 2026-09-06, "the ingestion should
+#: be going to parquet, remove the code for ingestion into the DB"). Each of those five layers has a
+#: direct-to-Parquet writer registered below in `_MIGRATION_INPUT_SPECS`, so its PostgreSQL producer
+#: was the removable half of a pair, not the only half. Their CLI verbs (`ingest-firms`,
+#: `ingest-streamflow`, `ingest-weather`, `ingest-drought`, `ingest-ndvi`) and the job functions
+#: behind them are deleted with them; see `ingest/AGENTS.md`.
+#:
+#: The five below stay because deleting them would STOP a layer rather than finish its cutover.
+#: fire-perimeters, sensors, evacuation-zones and watersheds DID get a direct-to-Parquet writer in the
+#: 2026-09-06 wave-B join (`_MIGRATION_INPUT_SPECS` below), but every one of those lanes ships SHADOW,
+#: so the generic `parquet-*` exporter -- which reads `geo.features` -- is still the only writer each
+#: of those object streams actually has, and `postgres-geometry-repair` still links the `geo.geometry`
+#: rows those same exporters join through. There is a second reason beyond that: `parity.py` proves a
+#: direct writer's output AGAINST what PostgreSQL holds, so the Postgres producer has to keep running
+#: through the whole parity bake, which is why no direct lane declares `conflicts_with` against one.
+#: All five are `shadow` today; the code goes when its layer's direct lane is activated and proven.
 _POSTGRES_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
-    _postgres_spec("postgres-firms", "ingest-firms", "fire-detections"),
-    _postgres_spec("postgres-streamflow", "ingest-streamflow", "water-gauges"),
-    _postgres_spec("postgres-weather", "ingest-weather", "weather-observations"),
     _postgres_spec("postgres-fire-perimeters", "ingest-fire-perimeters", "fire-perimeters"),
-    _postgres_spec(
-        "postgres-drought",
-        "ingest-drought",
-        "drought",
-        cadence_seconds=86400,
-        phase_offset_seconds=43200,
-        schedule="0 12 * * *",
-    ),
-    _postgres_spec("postgres-vegetation", "ingest-ndvi", "vegetation"),
     _spec(
         "vegetation-catch-up",
         command=("agri-service", "data", "parquet-catch-up-vegetation"),
@@ -692,7 +723,7 @@ _MIGRATION_INPUT_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
         # No legacy owner: unlike fire/water, this writer never ran as its own standalone Railway
         # service -- it only ever competes with the generic `parquet-vegetation` gap-fill lane, wired
         # via `_FORWARD_SIBLING_LANE_BY_SLUG` above rather than `_DIRECT_WRITER_BY_SLUG`, because
-        # `postgres-vegetation` really DID produce this layer, unlike climate/soil.
+        # the now-deleted `postgres-vegetation` really DID produce this layer, unlike climate/soil.
         legacy_owners=(),
         conflicts_with=("parquet-vegetation",),
         disposition="source-specific",
@@ -764,6 +795,164 @@ _MIGRATION_INPUT_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
         # `max(lane.history_floor, ...)` and `backfill.py:72` walks `release_weeks(lane.history_floor,
         # ...)`, so both halves start at exactly this registration's floor.
         writer_floor=LANE_REGISTRY["drought"].history_floor.isoformat(),
+    ),
+    # --- The 2026-09-06 wave-B join: five direct writers, five schedules, all shadow ---------------
+    #
+    # None of the five declares a `writer_floor`/`writer_ceiling` pair that DIVIDES a calendar between
+    # two writers, because none of them has one to divide (see `_FORWARD_SIBLING_LANE_BY_SLUG` above).
+    # None of them conflicts with the `postgres-*` lane that still feeds its layer either, and that is
+    # deliberate rather than an omission: `parity.py` proves a direct writer's output against what
+    # PostgreSQL holds, so the Postgres producer must be ALLOWED to run beside the direct writer for
+    # the whole bake. The one thing that may never happen twice is two writers of one object stream.
+    _spec(
+        FIRE_PERIMETERS_DIRECT_LANE_ID,
+        command=("python", "-m", "agri_data_service.pipeline.direct.fire_perimeters"),
+        legacy_owners=(),
+        conflicts_with=("parquet-fire-perimeters",),
+        disposition="source-specific",
+        phase_offset_seconds=600,
+        schedule="10 * * * *",
+        publication_lag_days=_registration("fire-perimeters")[0],
+        publication_cadence_days=_registration("fire-perimeters")[1],
+        publication_lag_source="pipeline/parquet/lane_registry.py fire-perimeters contract",
+        selection_policy="one source-watermark resolution per turn; at most one version published, or none at all",
+        timeout_seconds=int(FIRE_PERIMETERS_DEFAULT_TIME_BUDGET_SECONDS) + COMMAND_CLEANUP_MARGIN_SECONDS,
+        description=(
+            "Direct WFIGS _Current forward writer for fire-perimeters, a static_lookup lane. It "
+            "substitutes BOTH the registration's adapter and its watermark at runtime "
+            "(pipeline/direct/fire_perimeters/forward.py), because the registered pair -- "
+            "_fill_fire_perimeters and _fire_perimeters_watermark -- both read geo.features; the "
+            "registered pair is the fallback the generic driver still uses, not this lane's clock. NO "
+            "writer_ceiling is declared on the registration and none is possible: "
+            "LaneRegistration.__post_init__ refuses a ceiling on a version-stamped lane. There is no "
+            "backfill module and there cannot be one -- WFIGS _Current retains nothing, so no past "
+            "version is re-fetchable and the 45 days the retired daily_series shape wrote are all the "
+            "history this lane will ever have. Hourly at :10, the cadence of the _Current poller it "
+            "replaces. Shadow until activated; the adapter AND watermark swap belongs in the same push "
+            "that drops geo.features."
+        ),
+    ),
+    _spec(
+        SENSORS_DIRECT_LANE_ID,
+        command=("python", "-m", "agri_data_service.pipeline.direct.sensors"),
+        legacy_owners=(),
+        conflicts_with=("parquet-sensors",),
+        disposition="source-specific",
+        phase_offset_seconds=1200,
+        schedule="20 * * * *",
+        publication_lag_days=_registration("sensors")[0],
+        publication_cadence_days=_registration("sensors")[1],
+        publication_lag_source="pipeline/parquet/lane_registry.py sensors contract",
+        selection_policy="one rolling-window poll, merge-published into every day bucket it touched, newest first",
+        timeout_seconds=int(SENSORS_DEFAULT_TIME_BUDGET_SECONDS) + COMMAND_CLEANUP_MARGIN_SECONDS,
+        description=(
+            "Direct NOAA NWS forward writer for sensors. One poll fetches the FULL rolling window every "
+            "run (SENSORS_MAX_DAYS = NWS_OBSERVATION_RETENTION.days + 1, seven buckets), which "
+            "self-heals across a missed tick at no extra HTTP cost: observation_url issues one request "
+            "per station whether a window is asked for or not. HOURLY AT :20 IS A DECIDED TRADE, not a "
+            "default -- roughly hourly is NWS's own publication cadence, so a :15/:30-style sub-hourly "
+            "slot would re-transfer the same mostly-unchanged six days several times an hour for no new "
+            "readings, while a slower slot risks a day ageing out of NWS's rolling retention unseen, "
+            "which loses it from the source forever. Like weather-observations, this package ships no "
+            "*_DIRECT_WRITER_START_DAY and no backfill.py, so LANE_REGISTRY['sensors'].adapter is left "
+            "reading Postgres via _fill_sensors and no writer_floor is guessed without a boundary day "
+            "to cite. Shadow until activated."
+        ),
+    ),
+    _spec(
+        WATERSHEDS_DIRECT_LANE_ID,
+        command=("python", "-m", "agri_data_service.pipeline.direct.watersheds"),
+        legacy_owners=(),
+        conflicts_with=("parquet-watersheds",),
+        disposition="source-specific",
+        cadence_seconds=86400,
+        phase_offset_seconds=10800,
+        schedule="0 3 * * *",
+        publication_lag_days=_registration("watersheds")[0],
+        publication_cadence_days=_registration("watersheds")[1],
+        publication_lag_source="pipeline/parquet/lane_registry.py watersheds contract",
+        selection_policy="one source-derived version per turn, published only when NHDPlus_HR's own loaddate has moved",
+        # `pipeline/direct/watersheds/forward.py` exposes no `--time-budget-seconds` -- its CLI is
+        # `--max-days/--bbox/--run-id` -- so this command timeout is the ONLY bound on a turn, and it
+        # is sized for the whole walk rather than copied from the 300 s siblings that move small JSON.
+        timeout_seconds=1800,
+        description=(
+            "Direct NHDPlus_HR WBDHU12 forward writer for watersheds, and the ONE lane in this table "
+            "whose activation must swap BOTH LANE_REGISTRY['watersheds'].adapter AND its watermark: "
+            "_watersheds_watermark reads geo.features, so the moment postgres-watersheds stops writing "
+            "that table a Postgres-backed watermark reads stale or empty forever and this lane's census "
+            "freezes. DAILY at 03:00, one hour after the postgres-watersheds lane whose cadence it "
+            "mirrors: one turn is the same ~9,400-basin, ~47-request NHDPlus_HR walk the export itself "
+            "performs, against a national reference layer measured to hold exactly ONE load day in its "
+            "whole history, so an hourly slot would pay that walk 24 times a day to detect a change "
+            "that has happened once. Shadow until activated."
+        ),
+    ),
+    _spec(
+        EVACUATION_ZONES_DIRECT_LANE_ID,
+        command=("python", "-m", "agri_data_service.pipeline.direct.evacuation_zones"),
+        legacy_owners=(),
+        conflicts_with=("parquet-evacuation-zones",),
+        disposition="source-specific",
+        phase_offset_seconds=2100,
+        schedule="35 * * * *",
+        publication_lag_days=_registration("evacuation-zones")[0],
+        publication_cadence_days=_registration("evacuation-zones")[1],
+        publication_lag_source="pipeline/parquet/lane_registry.py evacuation-zones contract",
+        selection_policy=(
+            "one statewide capture per turn, published only when its content digest differs from the "
+            "newest already-published version"
+        ),
+        timeout_seconds=int(EVACUATION_ZONES_DEFAULT_TIME_BUDGET_SECONDS) + COMMAND_CLEANUP_MARGIN_SECONDS,
+        description=(
+            "Direct Oregon OEM forward writer for evacuation-zones, a static_lookup lane whose change "
+            "test moved INTO the writer: it digests the captured population (rows.content_digest) and "
+            "publishes only when that differs from the newest version already published, so a tick that "
+            "finds nothing changed writes nothing and a skipped tick costs nothing. No writer_ceiling is "
+            "possible here either -- a version-stamped lane has no calendar window to divide -- so "
+            "conflicts_with on both specs is the entire mutual-exclusion guard, exactly as drought's "
+            "registration argues. The registered watermark _evacuation_zones_watermark reads geo.features "
+            "AND geo.geometry, and must be replaced in the same push that drops those tables or the "
+            "census dies at watermark_unread. Hourly at :35, the cadence of the postgres-evacuation-zones "
+            "poller it replaces. Shadow until activated."
+        ),
+    ),
+    _spec(
+        BURN_SEVERITY_DIRECT_LANE_ID,
+        command=("python", "-m", "agri_data_service.pipeline.direct.burn_severity"),
+        legacy_owners=(),
+        conflicts_with=("parquet-burn-severity",),
+        disposition="source-specific",
+        cadence_seconds=604800,
+        # Tuesday 08:55 UTC: the same weekly rhythm as `mtbs-forward` (460500, Tuesday 07:55), one hour
+        # later so the two never open a fetch in the same minute during the parity bake, when BOTH are
+        # meant to be running -- one filling geo.features for parity.py to read, one publishing Parquet.
+        phase_offset_seconds=464100,
+        schedule="55 8 * * 2",
+        publication_lag_days=_registration("burn-severity")[0],
+        publication_cadence_days=_registration("burn-severity")[1],
+        publication_lag_source="pipeline/parquet/lane_registry.py burn-severity contract",
+        selection_policy="newest unpublished governed MTBS release day first, one release day per lane-day lock",
+        timeout_seconds=int(BURN_SEVERITY_DEFAULT_TIME_BUDGET_SECONDS) + COMMAND_CLEANUP_MARGIN_SECONDS,
+        description=(
+            "Direct MTBS forward writer for burn-severity. UNLIKE every other lane in this join, "
+            "mtbs-forward/ingest-mtbs is STILL the sole ACTIVE writer of this layer and nothing here "
+            "stops it -- that is an owner-confirmed Railway variable edit -- so "
+            "LANE_REGISTRY['burn-severity'].adapter must keep reading Postgres via _fill_burn_severity "
+            "until BOTH conditions hold: parity.py proves D1 parity against what geo.features holds in "
+            "production, and the owner stops mtbs-forward. WEEKLY on Tuesday 08:55 UTC because MTBS "
+            "publishes quarterly and its governed release set grows only through a code change, never "
+            "through the calendar advancing; forward.py's per-turn R2 census is explicitly sized for "
+            "that weekly cadence. There is no boundary day to abut -- forward.py and backfill.py claim "
+            "the same governed release set the generic lane covers -- so no writer_ceiling can bridge "
+            "them and conflicts_with is the whole guard. backfill.py stays a manual operator command "
+            "and is deliberately not a scheduled lane, matching drought and vegetation. Shadow until "
+            "activated."
+        ),
+        # The direct writer's own floor, not a boundary: `products.governed_release_days()` opens at
+        # 2020-11-24, which is exactly the day this registration's floor cites (measured 2026-09-06,
+        # pinned by `tests/test_job_executor_service.py`).
+        writer_floor=LANE_REGISTRY["burn-severity"].history_floor.isoformat(),
     ),
     _spec(
         "soil-moisture-parquet-backfill",

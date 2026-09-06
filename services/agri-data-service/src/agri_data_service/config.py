@@ -13,6 +13,8 @@ _MIN_TOKEN_LENGTH = 32
 _MIN_TOKEN_DIVERSITY = 10
 _BUCKET_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9.\-]{1,61}[a-z0-9]$")
 _PRODUCTION_DATABASE_NAME = "plantgeo"
+#: The only hosts an API key may be sent to over plaintext http; see the base-URL validator.
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
 #: Which evidence the slider census is allowed to be built from. `census_until_bootstrap` is
 #: TRANSITIONAL and is deleted once every lane's production bootstrap receipt is recorded; see
@@ -30,6 +32,24 @@ class ObjectStoreCredentials(BaseModel):
     bucket: str
     access_key_id: SecretStr
     secret_access_key: SecretStr
+
+
+class AgentLlmCredentials(BaseModel):
+    """Complete, validated coordinates for one OpenAI-completions-compatible chat provider."""
+
+    model_config = ConfigDict(frozen=True)
+
+    base_url: str
+    model: str
+    api_key: SecretStr
+    auth_header: Literal["bearer", "none"]
+    timeout_seconds: float
+
+    def authorization_headers(self) -> dict[str, str]:
+        """Return the request headers this provider is addressed with; empty when it takes no key."""
+        if self.auth_header == "none":
+            return {}
+        return {"Authorization": f"Bearer {self.api_key.get_secret_value()}"}
 
 
 class Settings(BaseSettings):
@@ -290,6 +310,64 @@ class Settings(BaseSettings):
     # The location-analysis agent is opt-in: absent this key /agent/analyze answers 503 and
     # every other route is unaffected. See agent/AGENTS.md for the deploy note.
     anthropic_api_key: SecretStr | None = None
+
+    # The OpenAI-completions provider the MCP tool surface and its CLI probe are driven by. This is
+    # DELIBERATELY NOT ANTHROPIC_API_KEY and cannot substitute for it: `/agent/analyze` runs the
+    # four-node graph on the Anthropic beta tool runner and structured outputs, neither of which an
+    # OpenAI chat-completions endpoint implements. Absent these, `agri-service agent probe/ask`
+    # refuse by name and `agent mcp-serve` still serves every tool, because the MCP surface is the
+    # tools and does not need a model of its own. See agent/AGENTS.md, "The MCP tool surface".
+    agent_llm_base_url: str | None = None
+    agent_llm_api_key: SecretStr | None = None
+    agent_llm_model: str | None = None
+    #: `none` is for a local, unauthenticated endpoint (LM Studio); anything reachable sends Bearer.
+    agent_llm_auth_header: Literal["bearer", "none"] = "bearer"
+    agent_llm_timeout_seconds: float = 60.0
+
+    @field_validator("agent_llm_base_url")
+    @classmethod
+    def require_credential_free_agent_llm_base_url(cls, value: str | None) -> str | None:
+        """Reject an embedded credential, and plaintext HTTP anywhere but the loopback interface."""
+        if value is None or not value.strip():
+            return None
+        parsed = urlsplit(value.strip())
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
+            raise ValueError("AGENT_LLM_BASE_URL must be a credential-free http(s) URL")
+        if parsed.scheme == "http" and parsed.hostname not in _LOOPBACK_HOSTS:
+            raise ValueError("AGENT_LLM_BASE_URL may only use plaintext http on localhost")
+        return value.strip().rstrip("/")
+
+    @field_validator("agent_llm_model")
+    @classmethod
+    def normalize_agent_llm_model(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+        return value.strip()
+
+    def require_agent_llm(self) -> AgentLlmCredentials:
+        """Return complete provider coordinates, naming every variable still missing."""
+        missing = [
+            name
+            for name, value in (
+                ("AGENT_LLM_BASE_URL", self.agent_llm_base_url),
+                ("AGENT_LLM_MODEL", self.agent_llm_model),
+                # An unauthenticated local endpoint still needs a placeholder, so one absent key is
+                # always a misconfiguration and never a silently anonymous request.
+                ("AGENT_LLM_API_KEY", self.agent_llm_api_key),
+            )
+            if value is None
+        ]
+        if self.agent_llm_base_url is None or self.agent_llm_model is None or self.agent_llm_api_key is None:
+            raise ValueError(f"the agent LLM provider is not configured; set {', '.join(missing)}")
+        if self.agent_llm_timeout_seconds <= 0:
+            raise ValueError("AGENT_LLM_TIMEOUT_SECONDS must be positive")
+        return AgentLlmCredentials(
+            base_url=self.agent_llm_base_url,
+            model=self.agent_llm_model,
+            api_key=self.agent_llm_api_key,
+            auth_header=self.agent_llm_auth_header,
+            timeout_seconds=self.agent_llm_timeout_seconds,
+        )
 
     # Typed historical promotion is a distinct, private receiver from phase-one publication.
     historical_promotion_api_url: str | None = None

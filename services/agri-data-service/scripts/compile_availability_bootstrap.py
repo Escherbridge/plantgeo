@@ -1063,7 +1063,7 @@ def _parse_arguments(argv: Sequence[str] | None) -> argparse.Namespace:
         help=(
             "The number of REFUSED days (a ladder problem, not --since/source-ceiling filtering) this "
             f"operator has reviewed and accepts. Required once refused days exceed "
-            f"{REFUSED_DAY_FRACTION_CEILING:.0%} of the days considered."
+            f"{REFUSED_DAY_FRACTION_CEILING:.0%} of the days considered.".replace("%", "%%")
         ),
     )
     parser.add_argument(

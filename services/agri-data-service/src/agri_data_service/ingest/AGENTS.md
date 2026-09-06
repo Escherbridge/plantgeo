@@ -1,5 +1,46 @@
 # Ingest modules
 
+## 2026-09-06 — five PostgreSQL producers were DELETED. Read this before trusting anything below.
+
+Owner directive: *"the ingestion should be going to parquet, remove the code for ingestion into the
+DB."* Track `environmental_postgres_retirement_20260904`, acceptance criterion 4 ("legacy code is
+DELETED, not merely unused"), applied to the ingestion path.
+
+**Gone, with their CLI verbs, their `postgres-*` executor lanes and their tests:**
+
+| Deleted | Layer | What owns the layer now |
+|---|---|---|
+| `ingest-firms`, `firms.py::run_fire_ingestion_job`, `FIRMS_SOURCE`, `firms_day_range()` + `FIRMS_DAY_RANGE` | fire-detections | `pipeline/direct/fire_detections.py` (forward); `jobs-firms-archive` still fills history **into Postgres** |
+| `ingest-streamflow`, `usgs_nwis.py::run_water_ingestion_job`, `USGS_STREAMFLOW_SOURCE` | water-gauges | `pipeline/parquet/water_gauges_forward.py`; `jobs-streamflow-archive` still fills history **into Postgres** |
+| `ingest-weather`, `open_meteo.py::run_weather_ingestion_job`, `build_weather_write`, `OPEN_METEO_SOURCE` | weather-observations | `pipeline/direct/weather_observations/` |
+| `ingest-drought` + `ingest-drought-history`, `usdm.py::PostgresDroughtStore`/`run_drought_ingestion_job`/`DroughtStore`/retention, the whole `usdm_history.py` walk, `sql/ingest/store_drought_area.sql`, `sql/ingest/prune_drought_releases.sql` | drought | `pipeline/direct/drought/` |
+| `ingest-ndvi` (`ndvi.py`, whole module), `vegetation.py::build_vegetation_source` + its `IngestionSource` composition, `VEGETATION_SOURCE` | vegetation | `pipeline/direct/vegetation/` |
+
+**Kept, and why — this is the load-bearing half.** The four `ingest-*` verbs that remain
+(`ingest-fire-perimeters`, `ingest-sensors`, `ingest-evacuation-zones`, `ingest-watersheds`, plus
+`ingest-mtbs` and `ingest-geometry-repair`) are NOT survivors of an oversight. Their layers have **no**
+direct-to-Parquet writer at all — track waves B4-B8 are unstarted — and their generic `parquet-*`
+exporters read `geo.features` (`sql/pipeline/{fire_perimeters,sensors,evacuation_zones,watersheds,
+burn_severity}_day_export.sql`). Deleting their producers would not finish the cutover; it would stop
+the layer. `ingest-geometry-repair` stays for the same reason: those exporters join `geo.geometry`,
+which nothing else maintains.
+
+**What did NOT get deleted from the shared modules, and why.** `firms.py`, `usgs_nwis.py`,
+`open_meteo.py`, `usdm.py`, `usdm_history.py` and `vegetation.py` are all still here, because the
+direct-to-Parquet writers import their fetch/parse/identity code verbatim — that reuse is what makes a
+direct-written row and a Postgres-written row identical. What was removed from each is only the part
+that took a `FeatureWriter` or a session: the `run_*_ingestion_job` entry point, the `*_SOURCE` job
+token, and any private helper or environment tunable that had no other reader. A module that now looks
+thin is a module whose write half is gone, not one that lost its contract.
+
+**Still owed after this pass** (recorded, not fixed here — outside this lane's ownership):
+`pipeline/parquet/vegetation_forward.py::bind_vegetation_forward_writer` lost both of its call sites
+with `ingest-ndvi` and now has ZERO src callers; it retires with `parquet-forward-vegetation` and
+`vegetation-catch-up` under the track's D-fills item. `jobs-firms-archive` and `jobs-streamflow-archive`
+are still ACTIVE lanes writing `geo.features` — the same D-fills item covers them, and they must be
+deactivated before they are deleted, because they are the only producers of fire-detections and
+water-gauges days below their direct writers' floors.
+
 `identity.py` is the single definition of a warehouse identity string: it maps one upstream record to a `FeatureIdentity` carrying a producer token, a producer-local id byte-identical to the `featureId` the TypeScript job writes into `geo.features.properties->>'id'`, and the observation timestamp that dates that feature's first geometry version. It is deliberately not a fetcher, a payload validator, a change-detection or circuit-breaker rule, or a database writer; it imports no SQLAlchemy, no config, and no `agri_data_service.db`, so its golden test runs before any lane owns a database connection. The namespace is the producer token (`firms`, `usgs-nwis`, `open-meteo`, `wfigs`, `usdm`, `mtbs`), never the layer name, and `PRODUCER_BY_LAYER_NAME` exists so the backfill substitutes a producer for `l.name` rather than namespacing by a renameable presentation label. Under a Type-2 dimension that namespace is a correctness requirement rather than hygiene: `natural_key` no longer means "this row is unique" but "these rows are the same place over time", so two producers colliding on an unnamespaced id are interleaved into one version chain and fabricate a plausible history, which is strictly harder to detect than a duplicate row. For the same reason the module rejects rather than synthesises — `MissingNativeKeyError` is raised whenever an upstream record supplies no stable native key, and it never falls back to coordinates, a payload hash, a UUID, or the wall clock, because a degenerate key is a synthesised key wearing a real one's shape. `observed_at is None` is a different thing entirely and is legal: it is the contract's representation of `'-infinity'::timestamptz` for `geo.geometry.version_valid_from`, so a consumer writing SQL emits that literal and never a sentinel datetime, `datetime.min`, or `now()`.
 
 Know what the golden test does and does not prove. The `TYPESCRIPT_*` tables in `tests/test_ingest_identity.py` were **derived from the TypeScript, not captured from a database**: the lane brief's §4.2 preferred route — reading `geo.features.properties->>'id'` back out of production — was unavailable because `PLANTGEO_READONLY_URL` is unset and no populated database is reachable, so §4.2's fallback route was used. Each expected id was produced by executing a character-for-character transcription of `firmsObservationId` (`ingestion-jobs.ts:100-115`), `ingestion-jobs.ts:189`, `:294`, `:334` and `environmental-time.ts:6-50` under Node v24.13.0, then cross-checked against `Number.prototype.toFixed(4)` and `Date.prototype.toISOString()` directly. That pins the port against the *current* TypeScript's logic, not against stored history, and the upstream string shapes the fixtures assume — the NWIS `updatedAt` millisecond-and-offset spelling, the `boundedSamplePoints` grid coordinates — are assumptions the test cannot falsify. **A real §4.2 production capture is still outstanding**; run it once a populated database is reachable, and until then treat stored history as the authority whenever a downstream key mismatch appears. Two of the FIRMS rows are exact ties at the fifth decimal that round in *opposite* directions — `-113.26495` toward zero, `-113.26685` away — because the double nearest each literal falls on a different side of the tie. That is why `format_javascript_fixed` must build its `Decimal` from the `float` (the exact binary value ECMA-262 rounds) and never from `repr(value)`, which re-rounds the shortest round-trip string and so re-keys every coordinate whose double sits just below its midpoint; it is also why a regex or prefix assertion is useless here and every test pins the whole `natural_key` string. FIRMS honours an explicitly zoned `observedAt` before deriving one from `acqDate`/`acqTime`, matching `parseFirmsObservationTime`, so re-reading a stored feature and re-ingesting a fresh payload date the same version identically; an `observedAt` carrying no zone is ignored rather than trusted, exactly as `parseZonedObservationTime` returns null and the caller falls through.

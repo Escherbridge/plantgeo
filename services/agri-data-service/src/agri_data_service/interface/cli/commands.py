@@ -340,12 +340,15 @@ from agri_data_service.pipeline.parquet.objectstore import (
     ParquetWriteError,
 )
 from agri_data_service.pipeline.parquet.signal_rewrite import (
+    SIGNAL_CENSUS_MAX_DAYS,
     SIGNAL_REWRITE_MAX_ATTEMPTS,
     SIGNAL_REWRITE_MAX_DAYS,
     SIGNAL_REWRITE_MAX_RETRY_SECONDS,
+    SignalCensusSummary,
     SignalRewriteDayResult,
     SignalRewriteManifest,
     SignalRewriteSummary,
+    census_signal_rewrite_days,
     load_signal_rewrite_manifest,
     rewrite_signal_manifest,
 )
@@ -4782,6 +4785,86 @@ def parquet_rewrite_signal(  # noqa: PLR0913 - the six flags are the destructive
     click.echo(json.dumps(summary.to_report(), sort_keys=True))
     if summary.failed:
         context.exit(_GAP_FILL_FAILED_EXIT_CODE)
+
+
+def _parquet_rewrite_signal_census(
+    *,
+    first_day: date,
+    last_day: date,
+    max_days: int | None,
+) -> SignalCensusSummary:
+    """Classify every day in a window against the object store alone; no database session at all.
+
+    Unlike `_parquet_rewrite_signal`, this never opens `local_source_loader_session`: discovery
+    takes no lane-day lock and performs no write, so the loader database the destructive verb needs
+    for its advisory lock is not part of this verb's contract.
+    """
+    store = ObjectStore.from_settings()
+    return census_signal_rewrite_days(
+        store,
+        run_id=f"parquet-rewrite-signal-census:{uuid.uuid4()}",
+        first_day=first_day,
+        last_day=last_day,
+        max_days=max_days,
+    )
+
+
+@click.command("parquet-rewrite-signal-census")
+@click.option("--first-day", required=True, help="First UTC day of the signal z13 ladder to inspect, inclusive.")
+@click.option("--last-day", required=True, help="Last UTC day of the signal z13 ladder to inspect, inclusive.")
+@click.option(
+    "--max-days",
+    type=click.IntRange(min=1, max=SIGNAL_CENSUS_MAX_DAYS),
+    default=None,
+    help=f"Bound this pass to the oldest N days for a resumable partial census (at most {SIGNAL_CENSUS_MAX_DAYS}). "
+    "Omit to walk the whole window, itself capped at the same limit.",
+)
+@click.option(
+    "--manifest-out",
+    "manifest_out_path",
+    type=click.Path(path_type=Path, dir_okay=False, writable=True),
+    required=True,
+    help="Where to write the JSON manifest of every `legacy` day found. Not written when none are found.",
+)
+def parquet_rewrite_signal_census(
+    first_day: str,
+    last_day: str,
+    max_days: int | None,
+    manifest_out_path: Path,
+) -> None:
+    """Discover `parquet-rewrite-signal`'s manifest: a read-only shape census over the z13 ladder.
+
+    Classifies every day in `[--first-day, --last-day]` by calling the same shape detector the
+    destructive rewrite preflights with, into exactly three buckets: `legacy` (missing both
+    coordinate columns, rewritable), `current` (already has them), or `refused` (a named reason --
+    unreadable, unexpected schema, an absent/incomplete/conflicted tier, or no z13 marker at all).
+    Never locks, retracts, or writes to the signal lane; safe to run repeatedly against production.
+
+    `complete: false` in the JSON summary means `--max-days` or the window's own cap cut the walk
+    short of `--last-day` -- re-invoke with `--first-day` advanced past `walked_last_day` for the
+    next chunk. When at least one `legacy` day is found, writes `--manifest-out` and echoes the
+    exact `parquet-rewrite-signal` invocation that consumes it, unedited, to STDERR.
+    """
+    try:
+        parsed_first_day = _forecast_cli_day(first_day, "first-day")
+        parsed_last_day = _forecast_cli_day(last_day, "last-day")
+        summary = _parquet_rewrite_signal_census(
+            first_day=parsed_first_day,
+            last_day=parsed_last_day,
+            max_days=max_days,
+        )
+    except (OSError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    report = summary.to_report()
+    emission = summary.manifest_emission()
+    if emission is None:
+        report["manifest"] = None
+    else:
+        manifest_out_path.write_bytes(emission.payload)
+        ready_command = emission.ready_command(manifest_path=str(manifest_out_path))
+        report["manifest"] = {**emission.to_report(), "path": str(manifest_out_path), "ready_command": ready_command}
+        click.echo(ready_command, err=True)
+    click.echo(json.dumps(report, sort_keys=True))
 
 
 @click.command("parquet-vegetation-absence-ladders")

@@ -8,7 +8,7 @@ import math
 import struct
 import zlib
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Final
 from urllib.parse import urlencode
 
@@ -25,7 +25,6 @@ from agri_data_service.ingest.http import (
     UpstreamTimeoutError,
     UpstreamTransportError,
     fetch_bounded_json,
-    upstream_client,
 )
 from agri_data_service.ingest.identity import (
     FeatureIdentity,
@@ -35,7 +34,6 @@ from agri_data_service.ingest.identity import (
 )
 from agri_data_service.ingest.layer_binding import LayerBinding
 from agri_data_service.ingest.policy import BBOX_ORDINATE_COUNT, parse_bbox
-from agri_data_service.ingest.source import FreshnessRule, FunctionSource, HistoryCapability
 from agri_data_service.ingest.writer import FeatureWrite
 
 if TYPE_CHECKING:
@@ -43,11 +41,9 @@ if TYPE_CHECKING:
 
     from numpy.typing import NDArray
 
-    from agri_data_service.ingest.source import FetchRequest, HistoryWindow, UpstreamRecord
 
 logger = structlog.get_logger()
 
-VEGETATION_SOURCE: Final = "sentinel2-ndvi"
 VEGETATION_PROPERTY_SOURCE: Final = "Sentinel-2 L2A"
 
 VEGETATION_LAYER: Final = LayerBinding(
@@ -74,9 +70,6 @@ NDVI_CELL_RESOLUTION_METRES: Final = 27_830
 
 EARTH_SEARCH_URL: Final = "https://earth-search.aws.element84.com/v1/search"
 SENTINEL2_L2A_COLLECTION: Final = "sentinel-2-l2a"
-# Declared by the collection itself at earth-search.aws.element84.com/v1/collections/sentinel-2-l2a.
-SENTINEL2_L2A_EARLIEST_OBSERVATION: Final = datetime(2015, 6, 27, 10, 25, 31, 456_000, tzinfo=UTC)
-
 RED_ASSET_NAME: Final = "red"
 NEAR_INFRARED_ASSET_NAME: Final = "nir"
 SCENE_CLASSIFICATION_ASSET_NAME: Final = "scl"
@@ -84,7 +77,6 @@ SCENE_CLASSIFICATION_ASSET_NAME: Final = "scl"
 STAC_BOUNDS: Final = UpstreamBounds(max_bytes=24 * 1024 * 1024, timeout_seconds=60.0)
 COG_BOUNDS: Final = UpstreamBounds(max_bytes=8 * 1024 * 1024, timeout_seconds=30.0)
 
-CURRENT_OBSERVATION_WINDOW: Final = timedelta(days=45)
 MAX_SCENE_CLOUD_COVER_PERCENT: Final = 20
 SEARCH_PAGE_SIZE: Final = 100
 # The catalogue is walked clearest-first and paging stops as soon as the grid is full, so these ceilings
@@ -979,67 +971,10 @@ def build_ndvi_write(record: Mapping[str, object], layer_name: str) -> FeatureWr
     )
 
 
-async def _sample_grid(request: FetchRequest, window: GridSampleWindow) -> Sequence[UpstreamRecord]:
-    """Sample the grid over one window, owning a bounded client only when the caller supplied none.
-
-    The caller's client is preferred, so a multi-chunk backfill pools its connections across the
-    whole walk instead of reopening one per chunk. Owning one as a fallback is what makes the
-    source usable by any caller that holds a FetchRequest but no client -- `run_source_backfill`
-    builds exactly that request, so refusing here made `ingest-backfill --source sentinel2-ndvi`
-    fail every chunk before it read a single scene. `sensors.py` resolves the same choice the same
-    way; this is that idiom, not a second one.
-    """
-    if request.client is not None:
-        return (await collect_ndvi_grid_records(request.client, window)).records
-    async with upstream_client(COG_BOUNDS) as owned_client:
-        return (await collect_ndvi_grid_records(owned_client, window)).records
-
-
-async def fetch_current_ndvi_records(request: FetchRequest) -> Sequence[UpstreamRecord]:
-    """Fetch the current window: the clearest Sentinel-2 scenes of the most recent observation window."""
-    end = request.now if request.now is not None else datetime.now(UTC)
-    return await _sample_grid(
-        request,
-        GridSampleWindow(
-            bbox=request.bbox,
-            start=end - CURRENT_OBSERVATION_WINDOW,
-            end=end,
-            max_cells=request.max_records,
-        ),
-    )
-
-
-async def fetch_history_ndvi_records(request: FetchRequest, window: HistoryWindow) -> Sequence[UpstreamRecord]:
-    """Fetch one past window from the same archive; the catalogue serves any past date the collection covers."""
-    return await _sample_grid(
-        request,
-        GridSampleWindow(
-            bbox=request.bbox,
-            start=window.start,
-            end=window.end,
-            max_cells=request.max_records,
-        ),
-    )
-
-
-def build_vegetation_write(record: UpstreamRecord, _request: FetchRequest) -> FeatureWrite | None:
-    """Map one sampled cell to a write, resolving the target layer at call time."""
-    return build_ndvi_write(record, resolve_vegetation_layer_name())
-
-
-def build_vegetation_source() -> FunctionSource:
-    """Compose this module's callables into the IngestionSource contract a runner or backfill consumes."""
-    return FunctionSource(
-        source_name=VEGETATION_SOURCE,
-        producer=SENTINEL2_NDVI_PRODUCER,
-        channel=VEGETATION_CHANNEL,
-        # Every record is dated by its own scene and the search window already bounds how old that can be,
-        # so an extra age rule would only reject the backfill's own honest history.
-        freshness=FreshnessRule(max_observation_age=None, accepts_undated_records=False),
-        resolve_layer_reference=resolve_vegetation_layer_name,
-        fetch_current_records=fetch_current_ndvi_records,
-        build_feature_write=build_vegetation_write,
-        history=HistoryCapability(supported=True, earliest=SENTINEL2_L2A_EARLIEST_OBSERVATION),
-        fetch_history_records=fetch_history_ndvi_records,
-        shape="grid_cell",
-    )
+# `_sample_grid`, `fetch_current_ndvi_records`, `fetch_history_ndvi_records`, `build_vegetation_write`,
+# `build_vegetation_source` and the `sentinel2-ndvi` source token WERE HERE AND ARE DELETED 2026-09-06.
+# They composed this module's pure sampling code into an `IngestionSource` that `ingest-ndvi` and
+# `ingest-backfill --source sentinel2-ndvi` drove into `geo.features`. `pipeline/direct/vegetation/`
+# owns both halves of the layer now -- `source.py` calls `collect_ndvi_grid_records` above directly and
+# writes Parquet, and `backfill.py` republishes what Postgres already holds through the unchanged
+# `LANE_REGISTRY['vegetation']` adapter. Nothing below the sampling layer changed.

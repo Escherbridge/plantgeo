@@ -19,14 +19,10 @@ from agri_data_service.ingest.identity import (
 )
 from agri_data_service.ingest.layer_binding import LayerBinding
 from agri_data_service.ingest.policy import (
-    UNCONFIGURED_BBOX_REASON,
     format_javascript_number,
     javascript_parse_float,
     parse_bbox,
-    resolve_bounded_bbox,
-    resolve_max_source_records,
 )
-from agri_data_service.ingest.results import IngestionJobResult, skipped_result
 from agri_data_service.ingest.source import (
     FetchRequest,
     FreshnessRule,
@@ -42,11 +38,12 @@ if TYPE_CHECKING:
     import httpx
 
     from agri_data_service.ingest.source import UpstreamRecord
-    from agri_data_service.ingest.writer import FeatureWriter
 
 logger = structlog.get_logger()
 
-USGS_STREAMFLOW_SOURCE: Final = "usgs-streamflow"
+# The forward token `usgs-streamflow` and its `run_water_ingestion_job` were DELETED 2026-09-06:
+# water-gauges forward days belong to `pipeline/parquet/water_gauges_forward.py`, which writes
+# Parquet through the same `fetch_streamflow_gauges`/`build_gauge_write` pair kept below.
 USGS_PROPERTY_SOURCE: Final = "USGS NWIS"
 
 WATER_GAUGES_LAYER: Final = LayerBinding(
@@ -539,55 +536,8 @@ def usgs_streamflow_archive_source() -> FunctionSource:
 
 
 async def _refuse_current_window(_request: FetchRequest) -> Sequence[UpstreamRecord]:
-    """Refuse a current-window fetch: `ingest-streamflow` owns that path and reads the live IV feed."""
+    """Refuse a current-window fetch: the direct Parquet forward writer owns that path and reads the live IV feed."""
     raise NotImplementedError(
-        "usgs-streamflow-archive serves history only; use ingest-streamflow for the current window"
-    )
-
-
-async def run_water_ingestion_job(
-    write_features: FeatureWriter,
-    *,
-    bbox: str | None = None,
-    client: httpx.AsyncClient | None = None,
-    now: datetime | None = None,
-) -> IngestionJobResult:
-    """Fetch bounded USGS gauges and write them as timestamped source observations."""
-    area = resolve_bounded_bbox(bbox)
-    if area is None:
-        return skipped_result(USGS_STREAMFLOW_SOURCE, UNCONFIGURED_BBOX_REASON)
-
-    if client is None:
-        async with upstream_client(NWIS_BOUNDS) as owned_client:
-            fetched = await fetch_streamflow_gauges(owned_client, area, now)
-    else:
-        fetched = await fetch_streamflow_gauges(client, area, now)
-
-    gauges = fetched.gauges
-    selected = gauges[: resolve_max_source_records()]
-    layer_name = resolve_water_gauges_layer_name()
-    writes = [write for write in (build_gauge_write(gauge, layer_name) for gauge in selected) if write is not None]
-    wall_clock_gauges = sum(1 for gauge in selected if gauge.get("updatedAtIsWallClock"))
-    if wall_clock_gauges:
-        logger.info("streamflow_wall_clock_identities", gauges=wall_clock_gauges, selected=len(selected))
-    # The metric that would have caught this in a day rather than in six. It sits next to
-    # `wall_clock_identities` because it answers the opposite half of the same question: how many
-    # gauges NWIS named but did not measure.
-    if fetched.sentinel_sites:
-        logger.info("streamflow_sentinel_gauges_dropped", sites=fetched.sentinel_sites, kept=len(gauges))
-
-    return IngestionJobResult(
-        source=USGS_STREAMFLOW_SOURCE,
-        status="ingested",
-        # Counts only the gauges that reported a discharge, which is what `truncated` and
-        # `resolve_max_source_records` are both measured against. A sentinel-only gauge was never a
-        # writable record, so it is reported on its own axis rather than inflating this one.
-        records_seen=len(gauges),
-        records_written=await write_features(writes),
-        truncated=len(gauges) > len(selected),
-        details={
-            "rejected": len(selected) - len(writes),
-            "wall_clock_identities": wall_clock_gauges,
-            "sentinel_gauges": fetched.sentinel_sites,
-        },
+        "usgs-streamflow-archive serves history only; the current window belongs to "
+        "agri_data_service.pipeline.parquet.water_gauges_forward"
     )

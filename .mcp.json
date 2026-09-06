@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "plantgeo-warehouse": {
+      "command": "uv",
+      "args": ["run", "--no-sync", "agri-service", "agent", "mcp-serve"],
+      "cwd": "services/agri-data-service",
+      "env": {
+        "UV_NO_SYNC": "1"
+      }
+    }
+  }
+}

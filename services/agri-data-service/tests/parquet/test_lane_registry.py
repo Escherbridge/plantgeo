@@ -309,6 +309,52 @@ def test_weather_observations_registry_adapter_is_also_still_postgres_reading() 
     assert weather_observations.writer_ceiling is None
 
 
+#: The 2026-09-06 wave-B join, mapped to the Postgres-reading adapter each registration must STILL
+#: carry. Every one of these five has a built direct writer and a registered executor lane, and every
+#: one of those lanes is shadow -- so the registered adapter is the writer the object stream actually
+#: has, and swapping it now would leave the layer with none.
+WAVE_B_UNSWAPPED_ADAPTERS = {
+    "burn-severity": "_fill_burn_severity",
+    "evacuation-zones": "_fill_evacuation_zones",
+    "fire-perimeters": "_fill_fire_perimeters",
+    "sensors": "_fill_sensors",
+    "watersheds": "_fill_watersheds",
+}
+
+
+@pytest.mark.parametrize("slug", sorted(WAVE_B_UNSWAPPED_ADAPTERS))
+def test_the_wave_b_registrations_are_deliberately_still_postgres_reading(slug: str) -> None:
+    """Registered, not activated: the join added executor lanes and changed no adapter, on purpose.
+
+    None of these five can be bridged by a `writer_ceiling` the way fire-detections/water-gauges are:
+    three are `static_lookup`, where a ceiling is refused outright; `sensors` ships no cited
+    ownership-boundary day and no backfill; and `burn-severity`'s forward and backfill walkers claim
+    one candidate set that IS the generic lane's whole window. So `conflicts_with` on the executor
+    specs is the only mutual exclusion these lanes have, and it only means anything while the adapter
+    below still points at Postgres.
+    """
+    registration = LANE_REGISTRY[slug]
+
+    assert registration.adapter.__name__ == WAVE_B_UNSWAPPED_ADAPTERS[slug]
+    assert registration.writer_ceiling is None
+
+
+@pytest.mark.parametrize("slug", ["evacuation-zones", "fire-perimeters", "watersheds"])
+def test_the_static_wave_b_lanes_still_read_their_watermark_from_postgres(slug: str) -> None:
+    """The watermark is the half of the swap that is easy to forget, and the census dies without it.
+
+    A direct writer substitutes BOTH fields at runtime, so a half-done join -- adapter swapped, resolver
+    left behind -- fails only in production, and quietly: the generic driver would key a source-direct
+    lane to a `geo.features` clock that stops advancing the moment its Postgres producer does. Pinning
+    the resolver BY NAME is what makes that half visible here rather than there.
+    """
+    registration = LANE_REGISTRY[slug]
+
+    assert registration.nature == "static_lookup"
+    assert registration.watermark is not None
+    assert registration.watermark.__name__ == f"_{slug.replace('-', '_')}_watermark"
+
+
 def test_every_floor_is_cited_and_every_lag_is_declared() -> None:
     """An uncited floor is a guess that reads as a measurement; the citation is the guard."""
     for registration in LANE_REGISTRATIONS:

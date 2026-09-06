@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-import re
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from types import MappingProxyType
@@ -25,14 +24,7 @@ from agri_data_service.ingest.identity import (
     format_javascript_timestamp,
 )
 from agri_data_service.ingest.layer_binding import LayerBinding
-from agri_data_service.ingest.policy import (
-    UNCONFIGURED_BBOX_REASON,
-    is_fresh_observation,
-    javascript_parse_float,
-    resolve_bounded_bbox,
-    resolve_max_source_records,
-)
-from agri_data_service.ingest.results import IngestionJobResult, skipped_result
+from agri_data_service.ingest.policy import is_fresh_observation, javascript_parse_float
 from agri_data_service.ingest.source import (
     FetchRequest,
     FreshnessRule,
@@ -48,13 +40,13 @@ if TYPE_CHECKING:
     import httpx
 
     from agri_data_service.ingest.source import UpstreamRecord
-    from agri_data_service.ingest.writer import FeatureWriter
 
 logger = structlog.get_logger()
 
-FIRMS_SOURCE: Final = "nasa-firms"
-# A separate `--source` token so an operator cannot ask the archive walk for a current window, or the
-# forward job for a past one. Same producer, same layer, same identity contract; different access path.
+# The forward token `nasa-firms` and its `run_fire_ingestion_job` were DELETED 2026-09-06: FIRMS
+# forward days belong to `pipeline/direct/fire_detections.py`, which writes Parquet and reuses the
+# fetch/parse/identity code below. This archive token survives because `jobs-firms-archive` is still
+# an active durable lane and is the only producer of days below the direct writer's floor.
 FIRMS_ARCHIVE_SOURCE: Final = "nasa-firms-archive"
 FIRMS_PROPERTY_SOURCE: Final = "NASA FIRMS"
 
@@ -68,7 +60,6 @@ FIRMS_LAYER_VARIABLE: Final = FIRMS_LAYER.variable
 DEFAULT_FIRMS_LAYER_NAME: Final = FIRMS_LAYER.default
 
 FIRMS_API_KEY_VARIABLE: Final = "NASA_FIRMS_KEY"
-FIRMS_DAY_RANGE_VARIABLE: Final = "FIRMS_DAY_RANGE"
 FIRMS_AREA_CSV_TEMPLATE: Final = (
     "https://firms.modaps.eosdis.nasa.gov/api/area/csv/{api_key}/{source}/{area}/{day_range}"
 )
@@ -95,7 +86,6 @@ FIRMS_HISTORY_SOURCES: Final[tuple[str, ...]] = (
 FIRMS_BOUNDS: Final = UpstreamBounds(max_bytes=16 * 1024 * 1024, timeout_seconds=15.0)
 FIRMS_AVAILABILITY_BOUNDS: Final = UpstreamBounds(max_bytes=64 * 1024, timeout_seconds=15.0)
 
-DEFAULT_FIRMS_DAY_RANGE: Final = 2
 MIN_FIRMS_DAY_RANGE: Final = 1
 # Measured against the live API on 2026-08-05, not read off the documentation: day ranges 1-5 answer
 # HTTP 200 and 6, 7 and 10 all answer `400 Invalid day range. Expects [1..5].` for both the dated and
@@ -112,9 +102,9 @@ UNBOUNDED_OBSERVATION_AGE: Final = timedelta(days=100 * 365)
 # only whether a walk is refused outright; per-day coverage is still decided from the live table.
 FIRMS_ARCHIVE_EARLIEST_OBSERVATION: Final = datetime(2000, 11, 1, tzinfo=UTC)
 FIRMS_ARCHIVE_CURRENT_REFUSAL: Final = (
-    "nasa-firms-archive serves past windows only; `agri-service data ingest-firms` owns the current window "
-    "because it is the path that reports a partial-constellation outage as a reason rather than a "
-    "clean empty run."
+    "nasa-firms-archive serves past windows only; the current window belongs to the direct Parquet "
+    "writer `agri_data_service.pipeline.direct.fire_detections`, which replaced the deleted "
+    "`ingest-firms` verb on 2026-09-06."
 )
 
 MIN_CSV_LINES: Final = 2
@@ -170,20 +160,10 @@ _CATEGORICAL_CONFIDENCE: Final[Mapping[str, str]] = MappingProxyType(
     }
 )
 
-_STRICT_NONNEGATIVE_INTEGER: Final = re.compile(r"^\d+$")
-
 
 def resolve_firms_layer_name() -> str:
     """Read FIRMS_LAYER_ID at call time so a cron environment change needs no restart."""
     return FIRMS_LAYER.resolve()
-
-
-def firms_day_range() -> int:
-    """FIRMS lookback window in days, clamped 1-5; anything but a plain integer falls back to the default."""
-    raw = os.environ.get(FIRMS_DAY_RANGE_VARIABLE, "").strip()
-    if _STRICT_NONNEGATIVE_INTEGER.match(raw) is None:
-        return DEFAULT_FIRMS_DAY_RANGE
-    return _clamp_day_range(int(raw))
 
 
 def _clamp_day_range(day_range: int) -> int:
@@ -442,32 +422,6 @@ def products_covering_span(
     )
 
 
-async def _gather_constellation(
-    client: httpx.AsyncClient,
-    area: str,
-    day_range: int,
-) -> list[list[dict[str, object]] | BaseException]:
-    """Fetch every VIIRS constellation product, keeping one satellite's failure from discarding the rest."""
-    return await asyncio.gather(
-        *(fetch_active_fires(client, area, day_range, source) for source in FIRMS_VIIRS_SOURCES),
-        return_exceptions=True,
-    )
-
-
-def _partition_unavailable_sources(
-    collections: list[list[dict[str, object]] | BaseException],
-) -> tuple[list[str], BaseException | None]:
-    """Name the constellation products that failed and keep the first failure to re-raise."""
-    unavailable_sources: list[str] = []
-    first_failure: BaseException | None = None
-    for source, collection in zip(FIRMS_VIIRS_SOURCES, collections, strict=True):
-        if isinstance(collection, BaseException):
-            unavailable_sources.append(source)
-            if first_failure is None:
-                first_failure = collection
-    return unavailable_sources, first_failure
-
-
 def build_fire_detection_write(
     feature: Mapping[str, object],
     layer_name: str,
@@ -505,79 +459,6 @@ def build_fire_detection_write(
             "geometry": geometry,
         },
         channel=FIRMS_CHANNEL,
-    )
-
-
-async def run_fire_ingestion_job(
-    write_features: FeatureWriter,
-    *,
-    bbox: str | None = None,
-    day_range: int | None = None,
-    client: httpx.AsyncClient | None = None,
-    now: datetime | None = None,
-) -> IngestionJobResult:
-    """Fetch bounded FIRMS observations across the VIIRS constellation and write the fresh, natively-keyed ones.
-
-    Ports `runFireIngestionJob` (`ingestion-jobs.ts:118-204`): every constellation product is fetched
-    concurrently, one satellite's failure does not discard the others' detections, and the job only
-    raises when every product is unavailable. See ingest/AGENTS.md "firms.py".
-    """
-    area = resolve_bounded_bbox(bbox)
-    if area is None:
-        return skipped_result(FIRMS_SOURCE, UNCONFIGURED_BBOX_REASON)
-
-    window_days = firms_day_range() if day_range is None else day_range
-    if client is None:
-        async with upstream_client(FIRMS_BOUNDS) as owned_client:
-            collections = await _gather_constellation(owned_client, area, window_days)
-    else:
-        collections = await _gather_constellation(client, area, window_days)
-
-    unavailable_sources, first_failure = _partition_unavailable_sources(collections)
-    if len(unavailable_sources) == len(FIRMS_VIIRS_SOURCES) and first_failure is not None:
-        raise first_failure
-
-    max_observation_age = timedelta(days=_clamp_day_range(window_days))
-    layer_name = resolve_firms_layer_name()
-
-    # Keyed by external id with last-write-wins, matching the TypeScript
-    # `Map<string, IngestFeatureInput>.set` semantics. No tier precedence is applied here and none is
-    # needed: `FIRMS_VIIRS_SOURCES` is near-real-time only, so the three products this job merges carry
-    # three distinct `satellite` tokens and cannot collide. That is a property of THIS product list, not
-    # of the key -- `collapse_history_records` carries the rule for the walk that mixes both series.
-    records_seen = 0
-    rejected = 0
-    merged: dict[str, FeatureWrite] = {}
-    for collection in collections:
-        if isinstance(collection, BaseException):
-            continue
-        records_seen += len(collection)
-        for feature in collection:
-            write = build_fire_detection_write(feature, layer_name, max_observation_age, now)
-            if write is None:
-                rejected += 1
-                continue
-            merged[write.external_id] = write
-    if rejected:
-        logger.info("firms_observations_rejected", rejected=rejected, records_seen=records_seen)
-    if unavailable_sources:
-        logger.warning("firms_satellites_unavailable", unavailable=unavailable_sources)
-
-    # Cap the merged constellation, newest first, so truncation drops the oldest detections rather
-    # than whichever satellite happened to resolve last.
-    max_source_records = resolve_max_source_records()
-    fresh = sorted(merged.values(), key=lambda write: str(write.properties["observedAt"]), reverse=True)
-    selected = fresh[:max_source_records]
-
-    reason = f"Unavailable FIRMS products: {', '.join(unavailable_sources)}" if unavailable_sources else None
-    return IngestionJobResult(
-        source=FIRMS_SOURCE,
-        status="ingested",
-        records_seen=records_seen,
-        records_written=await write_features(selected),
-        truncated=len(fresh) > len(selected),
-        reason=reason,
-        details={"rejected": rejected, "dropped": len(fresh) - len(selected)},
     )
 
 

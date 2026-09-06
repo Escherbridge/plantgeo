@@ -1,17 +1,21 @@
-"""Open-Meteo ingestion: grid densification, payload validation, and the millisecond timestamp inside the key."""
+"""Open-Meteo source adapter: grid densification, payload validation, the millisecond timestamp in the key.
+
+The forward `geo.features` job this file also covered (`run_weather_ingestion_job`) and its row
+builder (`build_weather_write`) were deleted 2026-09-06 with the `ingest-weather` verb and the
+`postgres-weather` lane.
+"""
 
 # ruff: noqa: PLR2004
 
 from __future__ import annotations
 
-import json
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING
 
 import httpx
 import pytest
 
 from agri_data_service.ingest.http import UpstreamPayloadError
+from agri_data_service.ingest.identity import build_weather_observation_identity
 from agri_data_service.ingest.open_meteo import (
     DEFAULT_WEATHER_LAYER_NAME,
     MAX_OBSERVATION_AGE,
@@ -20,23 +24,15 @@ from agri_data_service.ingest.open_meteo import (
     OPEN_METEO_CHANNEL,
     OPEN_METEO_FORECAST_HISTORY_RETENTION,
     OPEN_METEO_FORECAST_PAST_DAYS_MAXIMUM,
-    OPEN_METEO_SOURCE,
     WEATHER_LAYER_VARIABLE,
     bounded_sample_points,
-    build_weather_write,
     current_weather_url,
     get_current_weather,
     parse_current_weather,
     resolve_weather_layer_name,
-    run_weather_ingestion_job,
     weather_history_capability,
 )
 from agri_data_service.ingest.policy import MAX_WEATHER_SAMPLE_POINTS, PACIFIC_NORTHWEST_COVERAGE_BBOX
-
-if TYPE_CHECKING:
-    from collections.abc import Sequence
-
-    from agri_data_service.ingest.writer import FeatureWrite
 
 NOW = datetime(2026, 8, 3, 14, 10, tzinfo=UTC)
 OBSERVATION_EPOCH_SECONDS = 1_785_766_500  # 2026-08-03T14:15:00Z
@@ -59,17 +55,6 @@ RECORDED_OBSERVATION = (
     },
     "46.5000:-124.5000:2026-08-04T04:00:00.000Z",
 )
-
-
-class RecordingWriter:
-    """A feature writer that records what a job handed it, so a job test needs no database."""
-
-    def __init__(self) -> None:
-        self.writes: list[FeatureWrite] = []
-
-    async def __call__(self, writes: Sequence[FeatureWrite]) -> int:
-        self.writes = list(writes)
-        return len(self.writes)
 
 
 def _payload(epoch_seconds: int = OBSERVATION_EPOCH_SECONDS, **overrides: float) -> dict[str, object]:
@@ -149,45 +134,24 @@ def test_a_malformed_payload_is_refused(payload: object) -> None:
 
 
 def test_a_sample_point_keys_the_coordinates_at_four_digits_and_the_instant_verbatim() -> None:
+    """The key contract, asserted on the identity itself now that `build_weather_write` is gone.
+
+    `build_weather_write` built the `geo.features` row and was deleted 2026-09-06 with
+    `run_weather_ingestion_job`. It never computed the key -- it delegated to
+    `build_weather_observation_identity`, which `pipeline/direct/weather_observations/rows.py` calls
+    for exactly the same purpose -- so the pin moves down one layer and loses nothing.
+    """
     observation = parse_current_weather(_payload(), NOW)
-    write = build_weather_write(42.5, -111.5, observation, "weather-observations")
-    assert write is not None
-    assert write.external_id == "42.5000:-111.5000:2026-08-03T14:15:00.000Z"
-    assert write.natural_key == "open-meteo:42.5000:-111.5000:2026-08-03T14:15:00.000Z"
-    assert write.channel == "layer:weather-observations"
-    assert write.properties["source"] == "Open-Meteo"
-    assert write.properties["geometry"] == {"type": "Point", "coordinates": [-111.5, 42.5]}
+    identity = build_weather_observation_identity(42.5, -111.5, observation)
+    assert identity.producer_local_id == "42.5000:-111.5000:2026-08-03T14:15:00.000Z"
+    assert identity.natural_key == "open-meteo:42.5000:-111.5000:2026-08-03T14:15:00.000Z"
 
 
-async def test_an_unset_bbox_is_skipped_and_never_failed() -> None:
-    result = await run_weather_ingestion_job(RecordingWriter())
-    assert result.source == OPEN_METEO_SOURCE
-    assert result.status == "skipped"
-    assert result.reason == "INGEST_BBOX is not configured"
-
-
-async def test_one_failing_sample_point_never_discards_the_rest_of_the_grid() -> None:
-    answered: list[str] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        answered.append(str(request.url))
-        if len(answered) == 1:
-            return httpx.Response(503)
-        return httpx.Response(
-            200,
-            content=json.dumps(_payload()).encode(),
-            headers={"content-type": "application/json"},
-        )
-
-    writer = RecordingWriter()
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        result = await run_weather_ingestion_job(writer, bbox="-120,44,-118,46", client=client, now=NOW)
-
-    assert result.status == "ingested"
-    assert result.records_seen == 4
-    assert result.records_written == 3
-    assert result.details["unavailable_points"] == 1
-    assert len(writer.writes) == 3
+# TWO JOB TESTS STOOD HERE AND ARE DELETED WITH THEIR SUBJECT (2026-09-06): the unset-bbox skip and
+# the one-failing-point isolation both exercised `run_weather_ingestion_job`. Its replacement,
+# `pipeline/direct/weather_observations/forward.py`, reuses the same `get_current_weather` per point
+# and states the same isolation rule in `source.py::poll_current_conditions`, which `tests/direct/`
+# covers; the bbox refusal moved to `support.py::weather_sample_points` raising `WeatherSupportError`.
 
 
 def test_the_upstream_bounds_and_freshness_window_are_pinned_to_the_typescript_values() -> None:
@@ -265,12 +229,8 @@ def test_a_recorded_production_observation_still_keys_to_the_stored_external_id(
     # (which predates this row): use an instant shortly after the recorded observedAt.
     captured_at = datetime(2026, 8, 4, 4, 30, tzinfo=UTC)
     observation = parse_current_weather({"current": {"time": unix_time, **current}}, captured_at)
-    write = build_weather_write(latitude, longitude, observation, "weather-observations")
-    assert write is not None
-    assert write.external_id == stored_external_id
-    assert write.natural_key == f"open-meteo:{stored_external_id}"
-    assert write.properties["observedAt"] == "2026-08-04T04:00:00.000Z"
-    assert not str(write.properties["observedAt"]).endswith("+00:00")
-    assert write.properties["source"] == "Open-Meteo"
-    assert write.properties["geometry"] == {"type": "Point", "coordinates": [-124.5, 46.5]}
-    assert write.channel == "layer:weather-observations"
+    identity = build_weather_observation_identity(latitude, longitude, observation)
+    assert identity.producer_local_id == stored_external_id
+    assert identity.natural_key == f"open-meteo:{stored_external_id}"
+    assert observation["observedAt"] == "2026-08-04T04:00:00.000Z"
+    assert not str(observation["observedAt"]).endswith("+00:00")

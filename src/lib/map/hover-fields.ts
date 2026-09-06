@@ -51,6 +51,41 @@ export const HOVERABLE_LAYER_IDS: string[] = [
   "osm-waterways",
 ];
 
+/**
+ * Six of `HOVERABLE_LAYER_IDS` already answer a `click` with their own richer popup:
+ * `FireLayer.tsx` owns `published-fire-circles` and `published-fire-cells-fill`,
+ * `WaterLayer.tsx` owns `water-gauges-circle`, `water-gauge-cells-fill`,
+ * `water-gauge-cells-circle` and `groundwater-wells-circle`. Named here so
+ * `TOOLTIP_TAP_LAYER_IDS` below can subtract them rather than a caller re-deriving -- or
+ * drifting from -- the same six.
+ */
+const LAYER_IDS_WITH_A_DEDICATED_CLICK_POPUP = new Set<string>([
+  "published-fire-circles",
+  "published-fire-cells-fill",
+  "water-gauges-circle",
+  "water-gauge-cells-fill",
+  "water-gauge-cells-circle",
+  "groundwater-wells-circle",
+]);
+
+/**
+ * The `HOVERABLE_LAYER_IDS` a touch tap must reach through THIS tooltip, because nothing else
+ * ever will.
+ *
+ * `HoverTooltip`'s content is driven by `mousemove`, and a tap fires no `mousemove` at all --
+ * there is no hover state on a touchscreen. For the six ids in
+ * `LAYER_IDS_WITH_A_DEDICATED_CLICK_POPUP` that is fine, because a tap is a `click` and those two
+ * components already answer one. For the other thirteen -- sensors, both fire-perimeter and
+ * burn-severity polygons, drought, evacuation zones, both intervention shapes, watersheds, both
+ * soil-survey shapes, weather and the two basemap layers -- a tap on this map does nothing at
+ * all today: `MapView`'s own click handler treats "a feature was under the tap" as reason enough
+ * to swallow it (so it never opens the confirm-before-analysis prompt either), and no popup ever
+ * answers it. `HoverTooltip`'s tap handler is what closes that gap, for exactly this subset.
+ */
+export const TOOLTIP_TAP_LAYER_IDS: readonly string[] = HOVERABLE_LAYER_IDS.filter(
+  (layerId) => !LAYER_IDS_WITH_A_DEDICATED_CLICK_POPUP.has(layerId)
+);
+
 export interface HoverContent {
   title: string;
   lines: string[];

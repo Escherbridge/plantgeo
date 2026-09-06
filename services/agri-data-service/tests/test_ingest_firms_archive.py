@@ -16,7 +16,6 @@ from agri_data_service.ingest.firms import (
     build_fire_detection_write,
     collapse_history_records,
     firms_archive_source,
-    firms_day_range,
     history_day_spans,
     normalize_confidence,
     parse_firms_csv,
@@ -75,7 +74,6 @@ class RecordingWriter:
 @pytest.fixture(autouse=True)
 def _api_key(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("NASA_FIRMS_KEY", "test-key")
-    monkeypatch.delenv("FIRMS_DAY_RANGE", raising=False)
 
 
 def _csv(*rows: str) -> str:
@@ -170,12 +168,14 @@ def test_a_chunk_bound_carrying_a_local_offset_is_bucketed_by_its_own_utc_date()
     assert spans == ((date(2022, 8, 5), 2),)
 
 
-def test_the_day_range_clamp_refuses_the_six_to_ten_range_the_api_rejects(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Measured live 2026-08-05: 1-5 answer HTTP 200; 6, 7 and 10 answer `400 Invalid day range. Expects [1..5].`"""
+def test_the_day_range_clamp_refuses_the_six_to_ten_range_the_api_rejects() -> None:
+    """Measured live 2026-08-05: 1-5 answer HTTP 200; 6, 7 and 10 answer `400 Invalid day range. Expects [1..5].`
+
+    The `FIRMS_DAY_RANGE` environment tunable and its `firms_day_range()` reader were deleted with
+    `run_fire_ingestion_job` on 2026-09-06 -- nothing read them once the forward job went -- so the
+    ceiling is asserted directly. `fetch_active_fires` still clamps every request to it.
+    """
     assert MAX_FIRMS_DAY_RANGE == 5
-    for requested in ("6", "7", "10"):
-        monkeypatch.setenv("FIRMS_DAY_RANGE", requested)
-        assert firms_day_range() == MAX_FIRMS_DAY_RANGE
 
 
 async def test_the_archive_source_refuses_a_current_window_and_a_pre_archive_past_one() -> None:

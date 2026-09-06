@@ -36,8 +36,8 @@
 --
 -- THE LAYER SCOPE SLOT. The one clause the two callers genuinely need to differ on is written here as a
 -- Python `.format()` slot, filled at import time from a closed set of two constants in
--- validation/queries.py and NEVER from request input -- the same load-time slot pattern
--- ingest/store_drought_area.sql already uses for its replace predicate. It is not a bound parameter
+-- validation/queries.py and NEVER from request input -- the same load-time slot pattern the deleted
+-- ingest/store_drought_area.sql used for its replace predicate. It is not a bound parameter
 -- for a measured reason: the alternative spelling, one statement with an "either the parameter is
 -- null or the column matches it" predicate, cannot use the index whose leading column is layer_id
 -- (features_layer_external_id_unique), because a prepared statement's generic plan has to be correct

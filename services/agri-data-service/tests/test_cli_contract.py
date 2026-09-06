@@ -41,8 +41,10 @@ def _write_plan(path: Path, **extra: object) -> None:
     path.write_text(json.dumps(plan), encoding="utf-8")
 
 
-def test_cli_hard_cutover_exposes_only_the_four_command_families() -> None:
-    assert set(cli.commands) == {"forecast", "ml", "data", "ops"}
+def test_cli_hard_cutover_exposes_only_the_named_command_families() -> None:
+    # `agent` is the fifth family and the only one that is not a data or operations verb: it serves
+    # the warehouse tools over MCP and drives them against an OpenAI-completions provider.
+    assert set(cli.commands) == {"forecast", "ml", "data", "ops", "agent"}
     assert "forecast-run-iteration" not in cli.commands
     assert "ingest-all" not in cli.commands
 

@@ -1,59 +1,39 @@
-"""Sentinel-2 NDVI ingestion: fixed-grid identity, the scene-datetime observed_at rule, and honest skips."""
+"""Sentinel-2 NDVI source adapter: fixed-grid identity, the scene-datetime observed_at rule, grid bounds.
+
+The `geo.features` job this file also covered (`ingest/ndvi.py::run_vegetation_ingestion_job`) was
+deleted whole 2026-09-06 with the `ingest-ndvi` verb and the `postgres-vegetation` lane.
+"""
 
 # ruff: noqa: PLR2004
 
 from __future__ import annotations
 
-import json
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
 
-import httpx
 import pytest
 
-from agri_data_service.ingest import ndvi as ndvi_module
 from agri_data_service.ingest.identity import MissingNativeKeyError
-from agri_data_service.ingest.ndvi import NO_CLEAR_SCENE_REASON, run_vegetation_ingestion_job
 from agri_data_service.ingest.policy import parse_bbox
 from agri_data_service.ingest.vegetation import (
     MIN_VALID_SUBSAMPLES,
     NDVI_CELL_RESOLUTION_METRES,
     NDVI_GRID_NAME,
-    SENTINEL2_L2A_EARLIEST_OBSERVATION,
     SENTINEL2_L2A_REFLECTANCE_OFFSET,
     SENTINEL2_NDVI_PRODUCER,
     VEGETATION_CHANNEL,
-    GridSampleOutcome,
     SceneMetadataError,
     build_ndvi_identity,
     build_ndvi_write,
-    build_vegetation_source,
     ndvi_grid_cells,
     parse_scene,
     parse_scene_asset,
     parse_scene_timestamp,
 )
 
-if TYPE_CHECKING:
-    from collections.abc import Sequence
-
-    from agri_data_service.ingest.writer import FeatureWrite
-
 # A north-up, square-pixel affine transform over a real Sentinel-2 UTM tile origin, shared by every
 # fixture asset so only the fields under test need to vary.
 BAND_TRANSFORM = [10.0, 0.0, 499_980.0, 0.0, -10.0, 5_900_040.0]
 BAND_SHAPE = [10_980, 10_980]  # [height, width]
-
-
-class RecordingWriter:
-    """A feature writer that records what a job handed it, so a job test needs no database."""
-
-    def __init__(self) -> None:
-        self.writes: list[FeatureWrite] = []
-
-    async def __call__(self, writes: Sequence[FeatureWrite]) -> int:
-        self.writes = list(writes)
-        return len(self.writes)
 
 
 @pytest.fixture(autouse=True)
@@ -225,130 +205,20 @@ def test_a_measured_cell_writes_its_own_geometry_and_grid_identity() -> None:
     assert write.grid_cell.resolution_metres == NDVI_CELL_RESOLUTION_METRES
 
 
-def test_the_job_requires_a_bound_feature_writer_rather_than_skipping_quietly() -> None:
-    # A missing writer used to be a "skipped" summary that read like the layer was working as designed
-    # while nothing could ever be written. It is now a signature error the caller cannot ignore.
-    with pytest.raises(TypeError):
-        run_vegetation_ingestion_job()  # type: ignore[call-arg]
-
-
-async def test_an_unset_bbox_is_skipped_and_never_failed() -> None:
-    result = await run_vegetation_ingestion_job(RecordingWriter())
-    assert result.status == "skipped"
-    assert result.reason == "INGEST_BBOX is not configured"
-
-
-async def test_a_window_with_no_cloud_free_scene_is_an_honest_skip_with_no_rows_written() -> None:
-    empty_collection = {"type": "FeatureCollection", "features": [], "links": []}
-    response = httpx.Response(
-        200,
-        content=json.dumps(empty_collection).encode(),
-        headers={"content-type": "application/json"},
-    )
-    writer = RecordingWriter()
-    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _r: response)) as client:
-        result = await run_vegetation_ingestion_job(writer, bbox="-120,44,-119,45", client=client)
-
-    assert result.status == "skipped"
-    assert result.reason == NO_CLEAR_SCENE_REASON
-    assert result.records_written == 0
-    assert writer.writes == []
-
-
-async def test_forward_publication_runs_after_successful_persistence_even_on_an_idempotent_raw_write(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    async def fake_collect(_client: httpx.AsyncClient, _window: object) -> GridSampleOutcome:
-        return GridSampleOutcome(records=[_grid_record()], cells_requested=1, truncated=False)
-
-    events: list[str] = []
-
-    async def idempotent_writer(writes: Sequence[FeatureWrite]) -> int:
-        assert len(writes) == 1
-        events.append("persisted")
-        return 0
-
-    async def forward(writes: Sequence[FeatureWrite]) -> dict[str, int]:
-        assert len(writes) == 1
-        events.append("forwarded")
-        return {"affected_days": 1, "written_days": 1}
-
-    monkeypatch.setattr(ndvi_module, "collect_ndvi_grid_records", fake_collect)
-    async with httpx.AsyncClient() as client:
-        result = await run_vegetation_ingestion_job(
-            idempotent_writer,
-            bbox="-120,44,-119,45",
-            client=client,
-            on_persisted=forward,
-        )
-
-    assert events == ["persisted", "forwarded"]
-    assert result.records_written == 0
-    assert result.details is not None
-    assert result.details["parquet_affected_days"] == 1
-    assert result.details["parquet_written_days"] == 1
-
-
-async def test_forward_publication_never_runs_when_raw_persistence_raises(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    async def fake_collect(_client: httpx.AsyncClient, _window: object) -> GridSampleOutcome:
-        return GridSampleOutcome(records=[_grid_record()], cells_requested=1, truncated=False)
-
-    callback_called = False
-
-    async def failing_writer(_writes: Sequence[FeatureWrite]) -> int:
-        raise RuntimeError("raw persistence failed")
-
-    async def forward(_writes: Sequence[FeatureWrite]) -> dict[str, int]:
-        nonlocal callback_called
-        callback_called = True
-        return {}
-
-    monkeypatch.setattr(ndvi_module, "collect_ndvi_grid_records", fake_collect)
-    async with httpx.AsyncClient() as client:
-        with pytest.raises(RuntimeError, match="raw persistence failed"):
-            await run_vegetation_ingestion_job(
-                failing_writer,
-                bbox="-120,44,-119,45",
-                client=client,
-                on_persisted=forward,
-            )
-
-    assert callback_called is False
-
-
-async def test_forward_failure_preserves_the_raw_persistence_counts_in_the_failed_result(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    async def fake_collect(_client: httpx.AsyncClient, _window: object) -> GridSampleOutcome:
-        return GridSampleOutcome(records=[_grid_record()], cells_requested=1, truncated=False)
-
-    async def forward(_writes: Sequence[FeatureWrite]) -> dict[str, int]:
-        raise RuntimeError("object store unavailable")
-
-    monkeypatch.setattr(ndvi_module, "collect_ndvi_grid_records", fake_collect)
-    async with httpx.AsyncClient() as client:
-        result = await run_vegetation_ingestion_job(
-            RecordingWriter(),
-            bbox="-120,44,-119,45",
-            client=client,
-            on_persisted=forward,
-        )
-
-    assert result.status == "failed"
-    assert result.records_seen == 1
-    assert result.records_written == 1
-    assert result.reason == ("raw vegetation persisted; governed Parquet publication failed: object store unavailable")
-    assert result.details == {"cells": 1, "rejected": 0}
-
-
-def test_the_composed_source_declares_a_grid_cell_shape_with_no_extra_freshness_rejection() -> None:
-    source = build_vegetation_source()
-    assert source.shape == "grid_cell"
-    # Every record is already dated by its own scene, and the search window bounds age; an extra
-    # freshness rule would only reject the backfill's own honest history.
-    assert source.freshness.max_observation_age is None
-    assert source.freshness.accepts_undated_records is False
-    assert source.history_capability().supported is True
-    assert source.history_capability().earliest == SENTINEL2_L2A_EARLIEST_OBSERVATION
+# SEVEN TESTS STOOD HERE AND ARE DELETED WITH THEIR SUBJECT (2026-09-06). Six covered
+# `ingest/ndvi.py::run_vegetation_ingestion_job` -- the bound-writer signature rule, the unset-bbox
+# skip, the no-clear-scene skip, and the three `on_persisted` forward-publication orderings -- and the
+# module was deleted whole with the `ingest-ndvi` verb and the `postgres-vegetation` lane. The seventh
+# asserted `build_vegetation_source()`'s `IngestionSource` composition, which went with
+# `ingest-backfill --source sentinel2-ndvi`.
+#
+# What replaced them: `pipeline/direct/vegetation/` writes Parquet from the SAME sampling code covered
+# above (`collect_ndvi_grid_records`, `build_ndvi_identity`, `ndvi_grid_cells`), so the grid, identity
+# and scene-timestamp contracts are still pinned here. The forward-publication ordering the three
+# `on_persisted` tests protected is now `forward.py`'s own, covered by `tests/direct/`.
+#
+# STILL OWED, and recorded rather than silently dropped: `bind_vegetation_forward_writer`
+# (`pipeline/parquet/vegetation_forward.py:882`) lost its only two call sites with those tests' subject
+# and now has ZERO src callers. It is not deleted here because that module is outside this lane's
+# ownership; it retires with `parquet-forward-vegetation` and `vegetation-catch-up` under the track's
+# D-fills item.

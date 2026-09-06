@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { HOVERABLE_LAYER_IDS, formatHoverContent } from "@/lib/map/hover-fields";
+import {
+  HOVERABLE_LAYER_IDS,
+  TOOLTIP_TAP_LAYER_IDS,
+  formatHoverContent,
+} from "@/lib/map/hover-fields";
 import {
   WATER_CELL_AGGREGATE_NOTE,
   WATER_CELL_CAPTION_TITLE,
@@ -55,6 +59,28 @@ describe("HOVERABLE_LAYER_IDS", () => {
       "osm-roads",
       "osm-waterways",
     ]);
+  });
+});
+
+describe("TOOLTIP_TAP_LAYER_IDS", () => {
+  it("excludes only the six ids FireLayer/WaterLayer already give their own click popup", () => {
+    const excluded = [
+      "published-fire-circles",
+      "published-fire-cells-fill",
+      "water-gauges-circle",
+      "water-gauge-cells-fill",
+      "water-gauge-cells-circle",
+      "groundwater-wells-circle",
+    ];
+    for (const layerId of excluded) {
+      expect(TOOLTIP_TAP_LAYER_IDS).not.toContain(layerId);
+    }
+    // Every other hoverable id has no click popup anywhere else, so a tap must still reach it.
+    for (const layerId of HOVERABLE_LAYER_IDS) {
+      if (excluded.includes(layerId)) continue;
+      expect(TOOLTIP_TAP_LAYER_IDS).toContain(layerId);
+    }
+    expect(TOOLTIP_TAP_LAYER_IDS.length).toBe(HOVERABLE_LAYER_IDS.length - excluded.length);
   });
 });
 

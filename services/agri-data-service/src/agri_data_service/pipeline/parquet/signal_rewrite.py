@@ -37,6 +37,24 @@ THE OPERATOR SEQUENCE this module exists to enable:
 Estimated scope, restated as an inference rather than a fact: ~222 lane-days (the signal-plane
 ladder-incomplete count) is the best current guess, roughly 888 objects across four tiers -- but
 this module's own dry-run output is what turns that guess into a measurement.
+
+DISCOVERY, the step before step 1: nothing above produces the manifest step 1 pins to. The
+census walk (`census_signal_rewrite_days` / `parquet-rewrite-signal-census`) fills that gap by
+calling `preflight_signal_rewrite_day` -- UNMODIFIED, so the discovery walk and the destructive
+rewrite can never disagree about what one day is -- across a bounded calendar window, and sorts
+every day it visits into exactly three buckets: `legacy` (rewritable), `current` (already fixed),
+or `refused` (a named reason: already-current is split out via `SignalRewriteAlreadyCurrent`, so
+only genuine anomalies -- unexpected schema, absent/incomplete/conflicted tier state, an unreadable
+object, or a day with no z13 marker at all -- land here). It is read-only: no lock, no retraction,
+no `--apply`. Its only side effect is writing the manifest file the rewrite verb consumes, byte-for-
+byte, so the operator sequence above gains a real step 0:
+
+  0. `parquet-rewrite-signal-census --first-day <d0> --last-day <d1> [--max-days N] \\
+        --manifest-out <path>`
+     Prints a JSON summary (`complete: false` if `--max-days` or `--last-day` cut the walk short)
+     and, when it found at least one `legacy` day, writes `<path>` and echoes the exact
+     `parquet-rewrite-signal --manifest <path> --expected-day-count ... --manifest-sha256 ...`
+     invocation to run next.
 """
 
 from __future__ import annotations
@@ -45,13 +63,14 @@ import asyncio
 import json
 from contextlib import suppress
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from typing import TYPE_CHECKING, Final, Literal, TypeVar
 
 import pyarrow as pa  # type: ignore[import-untyped]
 
 from agri_data_service.foundation.canonical import sha256_digest
 from agri_data_service.foundation.parquet.paths import (
+    MAX_GAP_WINDOW_DAYS,
     partition_day_statuses,
     try_parse_absence_marker_path,
     try_parse_completion_marker_path,
@@ -115,6 +134,16 @@ _T = TypeVar("_T")
 
 class SignalRewriteRefusal(ValueError):  # noqa: N818 - a refusal is an operator verdict
     """A manifest target is not one of the two shapes this destructive operation accepts."""
+
+
+class SignalRewriteAlreadyCurrent(SignalRewriteRefusal):
+    """The z13 base already carries the coordinate columns.
+
+    A subclass rather than a message the census string-matches: `_rewrite_one_day` still catches it
+    as an ordinary `SignalRewriteRefusal` (outcome stays `rejected`, message unchanged), while
+    `census_signal_rewrite_days` catches this specific type to classify the day `current` instead of
+    lumping it in with genuine anomalies under `refused`.
+    """
 
 
 class _RetryExhausted(RuntimeError):  # noqa: N818 - internal terminal retry state
@@ -315,7 +344,7 @@ def preflight_signal_rewrite_day(store: ObjectStore, day: date) -> SignalRewrite
 
     base_table = store.read_partition(SIGNAL_REWRITE_LAYER, SIGNAL_REWRITE_KIND, BASE_ZOOM_TIER, day)
     if base_table.schema.equals(_CURRENT_SIGNAL_SCHEMA, check_metadata=False):
-        raise SignalRewriteRefusal(
+        raise SignalRewriteAlreadyCurrent(
             f"refusing signal/observed z{BASE_ZOOM_TIER} {day.isoformat()}: data already has the current "
             "coordinate-bearing schema"
         )
@@ -567,4 +596,208 @@ async def rewrite_signal_manifest(  # noqa: PLR0913 - the controls are the destr
         manifest=manifest,
         dry_run=dry_run,
         days=tuple(results),
+    )
+
+
+# ---------------------------------------------------------------------------------------------
+# DISCOVERY: read-only census over a calendar window, producing the manifest step 1 above pins.
+# ---------------------------------------------------------------------------------------------
+
+SignalCensusClassification = Literal["legacy", "current", "refused"]
+# A census walking further than a manifest could ever hold is already off its own rails; the same
+# 5,000-day ceiling that bounds `SignalRewriteManifest` bounds how many calendar days one census
+# invocation will classify. Re-run with a shifted `--first-day` for the next chunk of a longer lane.
+SIGNAL_CENSUS_MAX_DAYS: Final = SIGNAL_REWRITE_MAX_DAYS
+
+
+@dataclass(frozen=True, slots=True)
+class SignalCensusDayFinding:
+    """One walked day's shape verdict: which of the three buckets it landed in, and why."""
+
+    day: date
+    classification: SignalCensusClassification
+    reason: str | None
+
+    def to_report(self) -> dict[str, object]:
+        return {"day": self.day.isoformat(), "classification": self.classification, "reason": self.reason}
+
+
+@dataclass(frozen=True, slots=True)
+class SignalCensusManifestEmission:
+    """The exact bytes `load_signal_rewrite_manifest` will re-read, plus the pin it re-verifies by."""
+
+    payload: bytes
+    sha256: str
+    day_count: int
+
+    def ready_command(self, *, manifest_path: str) -> str:
+        """The complete, copy-pasteable next invocation -- no hand-editing between the two verbs."""
+        return (
+            "uv run --no-sync agri-service data parquet-rewrite-signal "
+            f"--manifest {manifest_path} --expected-day-count {self.day_count} --manifest-sha256 {self.sha256}"
+        )
+
+    def to_report(self) -> dict[str, object]:
+        return {"day_count": self.day_count, "byte_count": len(self.payload), "sha256": self.sha256}
+
+
+@dataclass(frozen=True, slots=True)
+class SignalCensusSummary:
+    """One bounded calendar walk and every day-level verdict it produced.
+
+    `complete` is the load-bearing field: it is `True` only when the walk reached
+    `requested_last_day` on its own, so a caller can never mistake a `--max-days`- or
+    `--last-day`-truncated partial census for a finished one just because it exited zero.
+    """
+
+    run_id: str
+    requested_first_day: date
+    requested_last_day: date
+    walked_day_count: int
+    complete: bool
+    findings: tuple[SignalCensusDayFinding, ...]
+
+    @property
+    def walked_last_day(self) -> date | None:
+        return self.findings[-1].day if self.findings else None
+
+    @property
+    def legacy_days(self) -> tuple[date, ...]:
+        return tuple(finding.day for finding in self.findings if finding.classification == "legacy")
+
+    def manifest_emission(self) -> SignalCensusManifestEmission | None:
+        """`None` when nothing legacy was found this walk; never raises on an empty census."""
+        days = self.legacy_days
+        if not days:
+            return None
+        payload = build_signal_census_manifest_bytes(days)
+        return SignalCensusManifestEmission(payload=payload, sha256=sha256_digest(payload), day_count=len(days))
+
+    def to_report(self) -> dict[str, object]:
+        counts: dict[str, int] = {"current": 0, "legacy": 0, "refused": 0}
+        for finding in self.findings:
+            counts[finding.classification] += 1
+        emission = self.manifest_emission()
+        walked_last_day = self.walked_last_day
+        return {
+            "complete": self.complete,
+            "counts": counts,
+            "findings": [finding.to_report() for finding in self.findings],
+            "layer": SIGNAL_REWRITE_LAYER,
+            "kind": SIGNAL_REWRITE_KIND,
+            "manifest": None if emission is None else emission.to_report(),
+            "requested_first_day": self.requested_first_day.isoformat(),
+            "requested_last_day": self.requested_last_day.isoformat(),
+            "run_id": self.run_id,
+            "walked_day_count": self.walked_day_count,
+            "walked_first_day": self.requested_first_day.isoformat() if self.findings else None,
+            "walked_last_day": None if walked_last_day is None else walked_last_day.isoformat(),
+        }
+
+
+def build_signal_census_manifest_bytes(days: tuple[date, ...]) -> bytes:
+    """Serialize legacy days into the EXACT bytes `load_signal_rewrite_manifest` accepts unedited.
+
+    Sorted, deduplicated, and re-bounded by the same two limits `load_signal_rewrite_manifest`
+    itself enforces on the other end (`SIGNAL_REWRITE_MAX_DAYS` and
+    `SIGNAL_REWRITE_MAX_MANIFEST_BYTES`) -- so a census that overshoots fails HERE, with a message
+    naming which budget it broke, rather than at the rewrite verb after the operator already trusts
+    the manifest it wrote.
+    """
+    ordered = tuple(sorted(set(days)))
+    if not ordered:
+        raise ValueError("cannot build a signal rewrite manifest from zero legacy days")
+    if len(ordered) > SIGNAL_REWRITE_MAX_DAYS:
+        raise ValueError(
+            f"census found {len(ordered)} legacy day(s), exceeding the {SIGNAL_REWRITE_MAX_DAYS}-day manifest limit"
+        )
+    payload = json.dumps(
+        {
+            "schema_version": SIGNAL_REWRITE_MANIFEST_VERSION,
+            "layer": SIGNAL_REWRITE_LAYER,
+            "kind": SIGNAL_REWRITE_KIND,
+            "days": [day.isoformat() for day in ordered],
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    if len(payload) > SIGNAL_REWRITE_MAX_MANIFEST_BYTES:
+        raise ValueError(
+            f"census manifest of {len(payload)} bytes exceeds the {SIGNAL_REWRITE_MAX_MANIFEST_BYTES}-byte limit"
+        )
+    return payload
+
+
+def _classify_signal_census_day(store: ObjectStore, day: date) -> SignalCensusDayFinding:
+    """Classify one calendar day by calling `preflight_signal_rewrite_day` UNCHANGED.
+
+    Every exception is caught, not just `SignalRewriteRefusal`: a census exists to survive a bad
+    day and finish its bounded walk, so an object-store fault or a corrupt read on ONE day becomes
+    a `refused` finding (`unreadable: ...`) rather than an aborted census. `preflight_signal_rewrite_day`
+    itself takes no lock and holds no session, so this never contends with a live drain or a
+    concurrent rewrite -- and never needs to.
+    """
+    try:
+        preflight = preflight_signal_rewrite_day(store, day)
+    except SignalRewriteAlreadyCurrent as error:
+        return SignalCensusDayFinding(day=day, classification="current", reason=str(error))
+    except SignalRewriteRefusal as error:
+        return SignalCensusDayFinding(day=day, classification="refused", reason=str(error))
+    except Exception as error:  # a census must survive one unreadable day to finish its walk
+        return SignalCensusDayFinding(
+            day=day,
+            classification="refused",
+            reason=f"unreadable: {type(error).__name__}: {error}",
+        )
+    if preflight.base_state == "legacy":
+        return SignalCensusDayFinding(day=day, classification="legacy", reason=None)
+    # base_state == "missing": no z13 marker at all -- neither the legacy nor the current shape,
+    # and not raised by `preflight_signal_rewrite_day` because a cleanly missing day is its own
+    # resumable-rewrite checkpoint, not an anomaly. For discovery it is still not a candidate, so it
+    # is named and refused rather than silently absent from every one of the three buckets.
+    return SignalCensusDayFinding(
+        day=day,
+        classification="refused",
+        reason=(
+            f"no z{BASE_ZOOM_TIER} marker recorded for {day.isoformat()}: missing checkpoint, not legacy or "
+            "current data"
+        ),
+    )
+
+
+def census_signal_rewrite_days(
+    store: ObjectStore,
+    *,
+    run_id: str,
+    first_day: date,
+    last_day: date,
+    max_days: int | None = None,
+) -> SignalCensusSummary:
+    """Walk `[first_day, last_day]` oldest-first, classifying every day, bounded and resumable.
+
+    Read-only: no lock, no retraction, no write of any kind to the signal lane -- safe to run
+    repeatedly and concurrently with itself, a drain, or a rewrite. `max_days` (like
+    `parquet-vegetation-absence-ladders --max-days`) caps this ONE invocation to its oldest N days;
+    a caller wanting the next chunk re-invokes with `first_day` advanced past `walked_last_day`.
+    `SignalCensusSummary.complete` is `False` whenever `max_days` -- or the window itself running
+    past `SIGNAL_CENSUS_MAX_DAYS` -- cut the walk short of `last_day`, so a partial census is never
+    reported as if it were whole.
+    """
+    if last_day < first_day:
+        raise ValueError(f"census window {first_day.isoformat()}..{last_day.isoformat()} runs backwards")
+    span = (last_day - first_day).days + 1
+    if span > MAX_GAP_WINDOW_DAYS:
+        raise ValueError(f"census window of {span} days exceeds the {MAX_GAP_WINDOW_DAYS}-day budget")
+    if max_days is not None and not 1 <= max_days <= SIGNAL_CENSUS_MAX_DAYS:
+        raise ValueError(f"max-days must be between 1 and {SIGNAL_CENSUS_MAX_DAYS}")
+    bound = min(max_days, SIGNAL_CENSUS_MAX_DAYS) if max_days is not None else SIGNAL_CENSUS_MAX_DAYS
+    walked = min(span, bound)
+    findings = tuple(_classify_signal_census_day(store, first_day + timedelta(days=offset)) for offset in range(walked))
+    return SignalCensusSummary(
+        run_id=run_id,
+        requested_first_day=first_day,
+        requested_last_day=last_day,
+        walked_day_count=len(findings),
+        complete=(walked == span),
+        findings=findings,
     )

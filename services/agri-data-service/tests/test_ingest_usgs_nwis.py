@@ -1,49 +1,32 @@
-"""USGS NWIS ingestion: bbox tiling, gauge parsing, and the wall-clock identity fallback kept by owner ruling."""
+"""USGS NWIS source adapter: bbox tiling, gauge parsing, and the wall-clock identity fallback kept by owner ruling.
+
+The forward `geo.features` job this file also covered (`run_water_ingestion_job`) was deleted
+2026-09-06 with its `ingest-streamflow` verb and `postgres-streamflow` lane.
+"""
 
 # ruff: noqa: PLR2004
 
 from __future__ import annotations
 
-import json
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
 
-import httpx
 import pytest
 
 from agri_data_service.ingest.policy import PACIFIC_NORTHWEST_COVERAGE_BBOX
 from agri_data_service.ingest.usgs_nwis import (
-    USGS_STREAMFLOW_SOURCE,
     build_gauge_write,
     classify_condition,
     format_tile_ordinate,
     infer_trend,
     is_missing_value_sentinel,
     parse_gauge,
-    run_water_ingestion_job,
     tile_bbox,
 )
-
-if TYPE_CHECKING:
-    from collections.abc import Sequence
-
-    from agri_data_service.ingest.writer import FeatureWrite
 
 # Captured 2026-08-03 read-only from production `geo.features` on the `water-gauges` layer.
 RECORDED_GAUGE_EXTERNAL_ID = "05014500:2026-08-02T18:30:00.000-06:00"
 
 NOW = datetime(2026, 8, 3, 12, 0, tzinfo=UTC)
-
-
-class RecordingWriter:
-    """A feature writer that records what a job handed it, so a job test needs no database."""
-
-    def __init__(self) -> None:
-        self.writes: list[FeatureWrite] = []
-
-    async def __call__(self, writes: Sequence[FeatureWrite]) -> int:
-        self.writes = list(writes)
-        return len(self.writes)
 
 
 def _series(site_number: str, reading_time: str | None, *, value: str = "123.0") -> dict[str, object]:
@@ -194,67 +177,9 @@ def test_an_earlier_real_reading_is_preferred_over_a_trailing_sentinel_in_the_sa
     assert gauge["updatedAtIsWallClock"] is False
 
 
-async def test_an_unset_bbox_is_skipped_and_never_failed() -> None:
-    result = await run_water_ingestion_job(RecordingWriter())
-    assert result.source == USGS_STREAMFLOW_SOURCE
-    assert result.status == "skipped"
-    assert result.reason == "INGEST_BBOX is not configured"
-
-
-async def test_the_job_dedupes_boundary_sites_across_tiles_and_counts_wall_clock_identities() -> None:
-    time_series = [_series("05014500", None), _series("05014600", "2026-08-02T18:30:00.000-06:00")]
-    payload = {"value": {"timeSeries": time_series}}
-    response = httpx.Response(
-        200,
-        content=json.dumps(payload).encode(),
-        headers={"content-type": "application/json"},
-    )
-    writer = RecordingWriter()
-    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _r: response)) as client:
-        result = await run_water_ingestion_job(
-            writer,
-            bbox=PACIFIC_NORTHWEST_COVERAGE_BBOX,
-            client=client,
-            now=NOW,
-        )
-
-    # Eight tiles each answer with the same two sites; deduping by site number leaves two gauges.
-    assert result.records_seen == 2
-    assert result.records_written == 2
-    assert result.details["wall_clock_identities"] == 1
-    assert result.details["rejected"] == 0
-    assert result.details["sentinel_gauges"] == 0
-    assert {write.external_id for write in writer.writes} == {
-        "05014500:2026-08-03T12:00:00.000Z",
-        "05014600:2026-08-02T18:30:00.000-06:00",
-    }
-
-
-async def test_the_job_writes_no_sentinel_gauge_and_counts_the_dropped_sites_once_across_tiles() -> None:
-    time_series = [
-        _series("12024000", "2026-08-07T19:30:00.000-07:00", value="-999999"),
-        _series("12024400", "2026-08-07T20:00:00.000-07:00", value="-999999"),
-        _series("05014600", "2026-08-02T18:30:00.000-06:00"),
-    ]
-    payload = {"value": {"timeSeries": time_series}}
-    response = httpx.Response(
-        200,
-        content=json.dumps(payload).encode(),
-        headers={"content-type": "application/json"},
-    )
-    writer = RecordingWriter()
-    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _r: response)) as client:
-        result = await run_water_ingestion_job(
-            writer,
-            bbox=PACIFIC_NORTHWEST_COVERAGE_BBOX,
-            client=client,
-            now=NOW,
-        )
-
-    # All eight tiles answer with the same three sites, so the two sentinel sites are counted once
-    # each rather than sixteen times, and only the reporting gauge reaches the warehouse.
-    assert result.details["sentinel_gauges"] == 2
-    assert result.records_seen == 1
-    assert result.records_written == 1
-    assert [write.external_id for write in writer.writes] == ["05014600:2026-08-02T18:30:00.000-06:00"]
-    assert all(write.properties["flowCfs"] != -999999 for write in writer.writes)
+# THREE JOB TESTS STOOD HERE AND ARE DELETED WITH THEIR SUBJECT (2026-09-06): the unset-bbox skip, the
+# cross-tile site dedupe, and the sentinel-gauge drop count all exercised `run_water_ingestion_job`, the
+# deleted `geo.features` forward writer. `pipeline/parquet/water_gauges_forward.py` replaced it and
+# drives the SAME `fetch_streamflow_gauges` (which owns the tiling and the dedupe) and `build_gauge_write`
+# still covered above, so the parsing and identity contract is unchanged and is asserted here; the
+# writer-level behaviour is asserted against the Parquet writer in `tests/parquet/`.

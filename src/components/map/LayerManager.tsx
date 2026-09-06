@@ -498,39 +498,66 @@ export default function LayerManager() {
   // `fault` is an outage: nothing is drawn and the reason is upstream. `notice` is a true
   // statement ABOUT what is drawn -- a truncated read paints real cells that stop short of the
   // viewport, which must be said rather than left to look like the edge of the fire.
+  // The five wave-C layers, folded rather than written out five times: it is one sentence (two,
+  // counting the truncation notice below) about five lanes, and five copies is five places for
+  // one wording to drift. `truncated` is read straight off each lane's own `ParquetReaderResult`
+  // -- `mapEnvelope`/`getParquetBurnSeverity` already compute it server-side (see
+  // `src/lib/server/services/parquet-trpc-readers.ts`), and every presenter in
+  // `parquet-presentation.ts` maps `.data` into GeoJSON without ever reading it. Nothing else in
+  // this component looked at it before this block did, so a capped read painted a partial
+  // watershed set, burn-severity union, sensor roster, evacuation-zone snapshot or perimeter
+  // snapshot with nothing on the map saying the drawn shapes stop short of the viewport --
+  // the exact silent-refusal-as-absence this codebase's fire lane was already fixed against.
+  const wavecLanes = [
+    { layerId: "sensors" as const, isDrawn: sensorsEnabled, data: sensorsQuery.data, subject: "Sensor station readings" },
+    {
+      layerId: "evacuation-zones" as const,
+      isDrawn: evacuationZonesEnabled,
+      data: evacuationZonesQuery.data,
+      subject: "Evacuation zones",
+    },
+    {
+      layerId: "burn-severity" as const,
+      isDrawn: burnSeverityEnabled,
+      data: burnSeverityQuery.data,
+      subject: "Burn history boundaries",
+    },
+    {
+      layerId: "watersheds" as const,
+      isDrawn: watershedsEnabled,
+      data: watershedsQuery.data,
+      subject: "Watershed boundaries",
+    },
+    // Missing from this list entirely until now: the fifth wave-C layer never surfaced an
+    // upstream fault OR a truncation notice, so a failed or capped perimeter read looked exactly
+    // like an ordinary quiet fire season.
+    {
+      layerId: "fire-perimeters" as const,
+      isDrawn: firePerimetersEnabled,
+      data: firePerimetersQuery.data,
+      subject: "Fire perimeters",
+    },
+  ];
+
   const parquetLayerFaults = [
-    // The four wave-C layers, folded rather than written out four times: it is one sentence about
-    // four lanes, and four copies is four places for one wording to drift. They earn a notice for
-    // the same reason drought and vegetation do -- until 2026-09-04 these drew from Martin, where
-    // an outage arrived as an empty tile and read on the map as "nothing burned here".
-    ...(
-      [
-        { layerId: "sensors", isDrawn: sensorsEnabled, state: sensorsQuery.data?.state, subject: "Sensor station readings" },
-        {
-          layerId: "evacuation-zones",
-          isDrawn: evacuationZonesEnabled,
-          state: evacuationZonesQuery.data?.state,
-          subject: "Evacuation zones",
-        },
-        {
-          layerId: "burn-severity",
-          isDrawn: burnSeverityEnabled,
-          state: burnSeverityQuery.data?.state,
-          subject: "Burn history boundaries",
-        },
-        {
-          layerId: "watersheds",
-          isDrawn: watershedsEnabled,
-          state: watershedsQuery.data?.state,
-          subject: "Watershed boundaries",
-        },
-      ] as const
-    ).map((lane) =>
-      lane.isDrawn && lane.state === "upstream_unavailable"
+    ...wavecLanes.map((lane) =>
+      lane.isDrawn && lane.data?.state === "upstream_unavailable"
         ? {
             layerId: lane.layerId,
             tone: "fault" as const,
             message: `${lane.subject} are temporarily unavailable from the data service.`,
+          }
+        : null
+    ),
+    // A `notice`, not a `fault`: the lane answered, and the answer is real geometry that stops
+    // short of the row budget rather than an outage. Reusing the fire lane's own wording keeps
+    // one sentence for "this shape is a subset" across every layer that can say it.
+    ...wavecLanes.map((lane) =>
+      lane.isDrawn && lane.data?.state === "ready" && lane.data.truncated
+        ? {
+            layerId: `${lane.layerId}-truncated`,
+            tone: "notice" as const,
+            message: `The Parquet row budget was reached. The ${lane.subject.toLowerCase()} drawn are a subset of this viewport.`,
           }
         : null
     ),

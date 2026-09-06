@@ -235,7 +235,7 @@ command somewhere else.
 
 ```bash
 # Nothing to export — .env's DATABASE_URL is used.
-uv run agri-service data ingest-weather
+uv run agri-service data ingest-sensors
 
 # Or aim one command at a different database:
 export LOCAL_SOURCE_LOADER_DATABASE_URL='postgresql+asyncpg://plantgeo_owner:<password>@127.0.0.1:5442/plantgeo_scratch'
@@ -334,7 +334,7 @@ long-running container without restarting it (`src/agri_data_service/ingest/AGEN
 | `DATABASE_URL` | Required unless every command carries its own override; also the `combined_local` HTTP profile's DSN | none | Every ingestion verb refuses to start (§3.1) |
 | `DATABASE_URL_SYNC` | Required for migrations | `postgresql://geo:plantgeo@localhost:5432/plantgeo` (not the local warehouse!) | Silently migrates the wrong database (§3.2) |
 | `INGEST_BBOX` | **Effectively required** | none | Unset ⇒ every job reports `skipped`, not `failed` — looks clean, writes nothing (§9) |
-| `NASA_FIRMS_KEY` | Required for `ingest-firms`, `ingest-all`, `jobs-run --lane firms-archive` | none | FIRMS jobs fail; the archive lane permanently dead-letters every window it claims (§5, §9) |
+| `NASA_FIRMS_KEY` | Required for `jobs-run --lane firms-archive` and the direct fire-detections writer (`ingest-firms` was deleted 2026-09-06) | none | FIRMS jobs fail; the archive lane permanently dead-letters every window it claims (§5, §9) |
 | `CDSAPI_URL`, `CDSAPI_KEY` | Required for `historical-era5-backfill` only; `.env` is enough, a real export wins (see §5) | none | ERA5-Land backfill refuses with a clear message |
 | `INGEST_MAX_SOURCE_RECORDS` | Optional — **never set on an archive lane** | `10_000`, clamped `[1_000, 50_000]` | Silently drops the *oldest* days of an over-cap chunk while still reporting success (§9) |
 | `FIRMS_DAY_RANGE` | Optional | `2`, clamped ≤ `5` | Values above 5 get a `400 Invalid day range` from FIRMS |
@@ -386,7 +386,7 @@ against `config.py` and every `os.environ`/`getenv` call under `src/`.
 
 | Credential | Needed for | Where it comes from |
 |---|---|---|
-| `NASA_FIRMS_KEY` | `ingest-firms`, `ingest-all`, `jobs-run --lane firms-archive` | Free MAP_KEY from `firms.modaps.eosdis.nasa.gov/api/area/`. **Lives only on the cron/production service, not in any local `.env`** (`src/agri_data_service/ingest/lanes.py:209-210`). |
+| `NASA_FIRMS_KEY` | `jobs-run --lane firms-archive`, `python -m agri_data_service.pipeline.direct.fire_detections` | Free MAP_KEY from `firms.modaps.eosdis.nasa.gov/api/area/`. **Lives only on the cron/production service, not in any local `.env`** (`src/agri_data_service/ingest/lanes.py:209-210`). |
 | `CDSAPI_URL` + `CDSAPI_KEY` | `historical-era5-backfill` only | A Copernicus Climate Data Store account, **plus accepting the CDS web licence terms in a browser** before the key works. |
 
 > [!WARNING]
@@ -430,7 +430,7 @@ export DATABASE_URL_SYNC='postgresql://plantgeo_owner:<owner-password>@127.0.0.1
 
 uv run agri-service ops db-status          # proves DATABASE_URL_SYNC points where you think
 uv run agri-service ops pipeline-status    # proves a loader DSN resolves at all
-uv run agri-service data ingest-weather     # no credential needed; ~150 points; the fastest real write
+uv run agri-service data ingest-sensors     # no credential needed; the fastest surviving real write
 uv run agri-service ops validate-streams --format markdown --output /tmp/streams.md
 ```
 
@@ -442,7 +442,7 @@ $env:DATABASE_URL_SYNC = 'postgresql://plantgeo_owner:<owner-password>@127.0.0.1
 
 uv run agri-service ops db-status
 uv run agri-service ops pipeline-status
-uv run agri-service data ingest-weather
+uv run agri-service data ingest-sensors
 uv run agri-service ops validate-streams --format markdown --output $env:TEMP\streams.md
 ```
 
@@ -453,7 +453,7 @@ Expected output, in order:
 2. `pipeline-status` — a JSON object with `"local_bulk_ingestion": "runnable with a reviewed plan
    and payload"` if the DSN string is well-formed, or `"blocked: <the specific config error>"` if
    not.
-3. `ingest-weather` — one JSON line, `IngestionJobResult.to_summary()`, with
+3. `ingest-sensors` — one JSON line, `IngestionJobResult.to_summary()`, with
    `"records_seen"`/`"records_written"` counts. A `permission denied for schema geo` here means
    the DSN names a login other than the owner credential (§3.2).
 4. `validate-streams` — writes a markdown report to the given path; the command itself prints one
@@ -575,31 +575,47 @@ stderr, so a cron log parser can read stdout as a clean JSON-lines stream.
 
 ### A. Forward ingest (hourly/daily-shaped; take `--bbox WEST,SOUTH,EAST,NORTH` unless noted)
 
+**Five verbs were DELETED on 2026-09-06** — `ingest-firms`, `ingest-streamflow`, `ingest-weather`,
+`ingest-drought` and `ingest-ndvi` — under the owner directive "the ingestion should be going to
+parquet, remove the code for ingestion into the DB". Each of those five layers already had a
+direct-to-Parquet writer, so its PostgreSQL producer was the removable half of a pair. Their
+replacements are lanes that run a module rather than a `data` verb:
+
+| Deleted verb | Layer | Replacement (direct-to-Parquet) |
+|---|---|---|
+| `data ingest-firms` | `fire-detections` | `python -m agri_data_service.pipeline.direct.fire_detections` |
+| `data ingest-streamflow` | `water-gauges` | `python -m agri_data_service.pipeline.parquet.water_gauges_forward` |
+| `data ingest-weather` | `weather-observations` | `python -m agri_data_service.pipeline.direct.weather_observations` |
+| `data ingest-drought` | `drought` | `python -m agri_data_service.pipeline.direct.drought` |
+| `data ingest-ndvi` | `vegetation` | `python -m agri_data_service.pipeline.direct.vegetation` |
+
 | Verb | Source | Layer written | Credential |
 |---|---|---|---|
-| `data ingest-firms` | NASA FIRMS | `fire-detections` | `NASA_FIRMS_KEY` |
-| `data ingest-streamflow` | USGS NWIS | `water-gauges` | none |
-| `data ingest-weather` | Open-Meteo | `weather-observations` | none |
 | `data ingest-fire-perimeters` | WFIGS/NIFC | `fire-perimeters` | none |
-| `data ingest-drought [--valid-date] [--replace]` (no `--bbox`) | USDM | `geo.drought_areas` | none |
-| `data ingest-ndvi` | Sentinel-2 | `vegetation` | none |
 | `data ingest-sensors` | NWS | `sensors` | none |
 | `data ingest-evacuation-zones` | Oregon OEM | `evacuation-zones` | none |
 | `data ingest-watersheds` | USGS WBD HUC12 | `watersheds` | none — run once, no scheduled cadence |
 | `data ingest-mtbs [--release-year N ...]` | MTBS | `burn-severity` | none — no schedule, deliberately excluded from `data ingest-all` |
 | `data ingest-geometry-repair [--batch-size 200] [--max-features N]` | — | geometry repair pass | none |
-| `data ingest-all` | all of the above except watersheds/MTBS | — | needs `NASA_FIRMS_KEY` for its FIRMS leg |
+| `data ingest-all` | fire-perimeters, sensors, evacuation-zones | — | no credential |
 
-`ingest-all` runs FIRMS → streamflow → weather → WFIGS → USDM → NDVI → sensors →
-evacuation-zones, then geometry-repair **last**, sequentially (not concurrently) so one source's
-failure can never mask another's (`src/agri_data_service/ingest/runner.py:43-53`).
+These four are what is left because they are the layers with **no** direct-to-Parquet writer yet:
+their generic `parquet-*` exporters still read `geo.features`, so deleting their producers would stop
+the layer rather than finish its cutover. `ingest-geometry-repair` stays for the same reason — those
+same exporters join through `geo.geometry`.
+
+`ingest-all` runs WFIGS → sensors → evacuation-zones, then geometry-repair **last**, sequentially
+(not concurrently) so one source's failure can never mask another's
+(`src/agri_data_service/ingest/runner.py`).
 
 ### B. Non-durable backfill
 
 | Verb | What it does |
 |---|---|
-| `data ingest-backfill --source TOKEN [--since ISO] [--until ISO] [--years 2] [--chunk-days 7] [--bbox]` | Walks one source across a date range with no ledger — a bad `--source` prints the valid token list. Accepted tokens: `nws-sensors`, `sentinel2-ndvi`, `nasa-firms-archive`, `usgs-streamflow-archive`. |
-| `data ingest-drought-history [--years 2] [--replace]` | Walks USDM release history without the ledger. |
+| `data ingest-backfill --source TOKEN [--since ISO] [--until ISO] [--years 2] [--chunk-days 7] [--bbox]` | Walks one source across a date range with no ledger — a bad `--source` prints the valid token list. Accepted tokens: `nws-sensors`, `nasa-firms-archive`, `usgs-streamflow-archive`. The `sentinel2-ndvi` token was removed 2026-09-06 with `ingest-ndvi`; `pipeline/direct/vegetation/backfill.py` owns that window now. |
+
+`data ingest-drought-history` was deleted 2026-09-06 with the rest of the drought write path;
+`pipeline/direct/drought/backfill.py` walks the same release-week calendar into Parquet.
 
 ### C. Durable archive lanes (`jobs-*`) — see §7 for the full workflow
 

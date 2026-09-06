@@ -485,6 +485,66 @@ graph runs as a task so a dropped client cancels the run instead of leaking it, 
 exception becomes an `error` event followed by the sentinel — a failed run closes the
 stream, it never hangs it.
 
+## The MCP tool surface
+
+`WAREHOUSE_TOOLS` has two consumers, and only one of them is the graph.
+
+The graph is an opinionated consumer: it decides in Python whether the public web is warranted,
+budgets searches, and forces a structured report. `agent/mcp_server.py` is the unopinionated one.
+It lists the same ten tools over MCP stdio and calls them, carrying none of that policy, because a
+second quiet copy of the sufficiency gate is the way the two surfaces start disagreeing.
+
+Neither surface owns a schema. `agent/llm.py::tool_schemas` reads `.name`, `.description` and
+`.input_schema` off the `beta_async_tool` objects themselves and renders the OpenAI
+`tools[].function` shape; `mcp_server.tool_descriptors` renames one field to MCP's `inputSchema`. A
+parameter added to a tool therefore appears on both surfaces without either being edited, and the
+docstring that already documents the caps and the four-state contract is what the model reads.
+
+**The provider is a second, separate credential.** `ANTHROPIC_API_KEY` drives `/agent/analyze`;
+`AGENT_LLM_*` drives the MCP surface's CLI harness. They are not interchangeable in either
+direction: `graph.py` calls `client.beta.messages.tool_runner` and `client.beta.messages.parse`
+with `output_format=`, and an OpenAI chat-completions endpoint (OpenRouter, LM Studio, vLLM)
+implements neither. `agent/llm.py` reimplements only the part the tools need — publish schemas,
+receive `tool_calls`, execute, post results back — on the `httpx` this service already depends on,
+because adding `openai` or `mcp` means a `uv sync` this toolchain does not tolerate on an unrelated
+change. `require_agent_llm()` refuses by variable name, `AGENT_LLM_BASE_URL` must be
+credential-free, and plaintext `http` is allowed only on the loopback interface.
+
+`agent mcp-serve` and `agent list-tools` need **no** provider key at all. The MCP surface is the
+tools; the model is the client's problem.
+
+### stdout is the transport, and something else was writing to it
+
+Measured twice, once in each direction. Half this service's modules log through a bare
+`structlog.get_logger()`, whose unconfigured default factory prints to **stdout** — and
+`parquet_ops/availability_coverage.py`'s `availability_census_fallback` warning landed as line four
+of a live MCP session, between two protocol frames, and as line one of `agent ask`'s JSON. Both
+consumers' parsers die on it.
+
+`mcp_server.reserved_stdout` takes the real stream, rebinds `sys.stdout` to stderr for the duration,
+and forces UTF-8 on the stream it kept. Every logger, library and stray `print` beneath a tool call
+is therefore harmless, which is a guarantee that fixing individual loggers cannot give. Both stdio
+surfaces use it: the transport and every CLI leaf that prints machine-readable JSON.
+
+### Running it
+
+`.mcp.json` at the repo root registers the server with `cwd: services/agri-data-service`, and the
+cwd is load-bearing: `Settings` reads `env_file=".env"` relative to the working directory, so a
+server launched from the repo root reads the wrong env file and finds no provider — and no bucket.
+
+```
+agri-service agent list-tools                 # schemas only; needs nothing running
+agri-service agent probe                      # authenticates; reads no lane
+agri-service agent call-tool --name ... --arguments '{...}'   # one tool, no model
+agri-service agent ask --longitude ... --latitude ... --question '...'
+agri-service agent mcp-serve                  # stdio transport
+```
+
+`--max-tokens` on `ask` is not decoration. Omitting an output ceiling is not "no limit", it is the
+model's own maximum, and a gateway prices the request against it up front: OpenRouter answered
+`HTTP 402: you requested up to 64000 tokens, but can only afford 42853` on a question whose real
+answer was a few hundred tokens.
+
 ## Deploy
 
 The service already exposes a web CMD and the blueprint is registered in every profile, so
