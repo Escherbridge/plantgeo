@@ -1075,3 +1075,36 @@ zero-reader claim (wrong for all nine drop-now relations; it counted only `SELEC
 The DSN. Whether `signal-plane` and `soil-survey` join wave B or are recorded out of scope. The
 fire-history cap (45 years -> 2, and the tool it redirects to refuses until A4). The six observability
 decisions in `tracks/observability_log_capture_20260903/`.
+
+### The DSN fix, ready to paste (owner decision — NOT applied by the 2026-09-05 session)
+
+Recording the exact command so the decision is a paste, not a research task. Verify the reference name
+against `railway service list` first — the target is the service whose internal host is
+`plantgeo-spatiotemporal-db.railway.internal`, which is what the healthy `plantgeo-main` resolves to.
+
+```
+# 1. RECORD THE CURRENT VALUE FIRST so the change is reversible in seconds.
+railway variable list --service plantgeo-job-executor --environment production --kv | grep '^DATABASE_URL='
+
+# 2. Point it at the same database plantgeo-main uses.
+railway variable set --service plantgeo-job-executor --environment production \
+  'DATABASE_URL=${{plantgeo-spatiotemporal-db.DATABASE_URL}}'
+```
+
+Setting a variable triggers a redeploy on its own; do not pass `--skip-deploys`.
+
+**Then confirm recovery, in this order:**
+1. `railway logs --service plantgeo-job-executor` — the next tick must stop printing
+   `plantgeo_job_executor_tick_failed error_type=ProgrammingError`. A healthy tick prints
+   `plantgeo_job_executor_tick_started active_lane_count=26` followed by `tick_unhealthy` naming only
+   specific lanes, NOT `tick_failed`. `tick_unhealthy` with named lanes is the normal state; `tick_failed`
+   is the outage.
+2. `plantgeo-spatiotemporal-db` should leave SLEEPING once the executor starts writing to it again.
+3. Re-probe the two facts this outage invalidated: whether `agri.spatial_cell` actually exists (the
+   inventory's "absent" note was measured against the WRONG database), and whether signal exports have
+   been failing at the database level since `8ce71fd`.
+
+**Then the measurements the retirement track is waiting on become possible**, in dependency order:
+`parquet-rewrite-signal --manifest … ` (dry run first — its output is what turns the ~222-day estimate
+into a census), then the per-layer parity receipts, then `build_drop_packet.py --relation <name>` per
+relation, then A4's availability bootstrap and the `PARQUET_COVERAGE_AUTHORITY=availability` flip.
