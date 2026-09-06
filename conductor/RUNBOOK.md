@@ -1108,3 +1108,116 @@ Setting a variable triggers a redeploy on its own; do not pass `--skip-deploys`.
 `parquet-rewrite-signal --manifest … ` (dry run first — its output is what turns the ~222-day estimate
 into a census), then the per-layer parity receipts, then `build_drop_packet.py --relation <name>` per
 relation, then A4's availability bootstrap and the `PARQUET_COVERAGE_AUTHORITY=availability` flip.
+
+---
+
+## MEASURED — 2026-09-06, session `plantgeo-1d`. Cutover state, and the startup cost priced at last
+
+Supersedes the 2026-09-05 handoff above on every point it touches. **That handoff's blocker is
+resolved** — the executor DSN was repointed in `e1837d1` and the service has ticked healthily since.
+Read this section, not that one, for current state.
+
+### The one number the whole track exists to remove
+
+`GET /api/v1/parquet/coverage`, measured from inside `plantgeo-parquet-api` (`railway ssh`), commit
+`e1837d1`:
+
+```
+COLD_SECONDS 26.67   BYTES 259991
+WARM_SECONDS 0.01
+AUTHORITY {'census': 112}
+```
+
+**26.67 s cold against the app's 8 s coverage timeout.** Warm it is 10 ms, so this is a
+once-per-container cost that every deploy re-arms and that no amount of client retry fixes. All 112
+lane-rungs report `coverage_authority: "census"`; **zero report `availability`**.
+`PARQUET_COVERAGE_AUTHORITY` is set on no service, so the default at
+`src/agri_data_service/config.py:197` applies:
+
+```python
+parquet_coverage_authority: CoverageAuthorityPolicy = "census_until_bootstrap"
+```
+
+A4 has not landed. This is the highest-value remaining step and it depends on nothing in waves B–D.
+
+### The ladder is built. Say so, and stop planning re-exports it does not need.
+
+Same coverage answer, 112 lane-rungs across 28 layers, summed by rung:
+
+| rung | published days | gap days | governed absence |
+|---|---|---|---|
+| z0 / z5 / z9 | 40,542 | 16,735 | 279 |
+| z13 | 40,567 | 15,608 | 3,469 |
+
+Coarse rungs carry **40,542 of z13's 40,567 days**. The entire 25-day shortfall is `sensors`. Any
+note claiming the coarse rungs are broadly unbuilt is wrong and should be corrected where found.
+
+Gap days are dominated by declared horizons, not regressions: `water-gauges` 11,593 (history floor
+1990-09-30, 1,533 published) and `burn-severity` 2,063 (MTBS release history). `weather-observations`
+at 1,710 is the one that repays a look.
+
+### Two lanes report a green tick over a permanently stuck day
+
+Live executor logs, 2026-09-06 23:39–23:42 UTC. Both lanes print `outcome="complete"`,
+`remaining=0`, `ladder_remaining=0`, `lanes_with_ladder_backlog=[]` — the exact signature of "caught
+up" — while `detail` names a day that no future tick can ever clear:
+
+- **`sensors` 2026-08-23** — `TierDerivationError: the tier derivation names coordinate column(s)
+  ['station_longitude','station_latitude'] that the base table does not carry`.
+- **`signal` 2026-08-06** — same class, for `['cell_longitude','cell_latitude']`.
+
+The cause is a **stale base rung**, exported before positions were added and never re-exported —
+already measured and documented at `src/agri_data_service/agent/warehouse.py:362-370`. The remedy is
+retract-and-re-export, not re-derivation; `parquet-rewrite-signal` + `parquet-rewrite-signal-census`
+are the tools for the signal side. `sensors` has no equivalent verb yet.
+
+The reporting defect is separate from the data defect and is being fixed on its own lane: a day that
+cannot be laddered must not leave the backlog counters at zero.
+
+### Four registered lanes never reach the coverage answer
+
+`LANE_REGISTRY` (`pipeline/parquet/lane_registry.py:1254`) registers **32** lanes; coverage returns
+**28**. Absent: `calendar`, `signal`, `climate-field-dew-point`, `climate-field-relative-humidity`.
+
+The discriminator that makes this worth chasing: **`soil-survey` publishes zero days and still
+appears** (with empty ranges). So "absent" is not "empty" — these four are filtered out or never
+reached. `calendar` and `signal` may be excluded by design; the two climate-field lanes have six
+siblings each holding 1,560 days over 2022-04-30..2026-08-06, so their absence is not explained by
+their shadow gap-fill status. Under investigation; evidence lands at
+`tracks/environmental_postgres_retirement_20260904/evidence/absent-coverage-lanes-20260906.md`.
+
+### What is actually writing Parquet right now
+
+`plantgeo-job-executor`, 26 active lanes, ticking ~every 40 s. `tick_unhealthy` naming
+`['jobs-matview-refresh','maintenance-validate-streams','parquet-soil-survey']` is the **normal**
+state — 23 of 26 succeeding. Every gap-fill lane reports `outcome=complete, remaining=0, written=0`.
+
+But only **two** active lanes write Parquet from upstream: `fire-detections-direct-forward` and
+`water-gauges-direct-forward`. The other thirteen `parquet-*` lanes run
+`agri-service data parquet-gap-fill --layer X`, which **reads Postgres and writes Parquet**. The five
+new direct writers (`vegetation`, `weather-observations`, `drought`, `sensors`, `fire-perimeters`,
+`evacuation-zones`, `watersheds`, `burn-severity` — registered as `*-direct-forward`) are **SHADOW**.
+So the exporters are publishing from a frozen Postgres, and closing that is criterion 4.
+
+**Watersheds is the first of the five proven.** A live run fetched all 9,396 basins from NHDPlus_HR
+with no Postgres in the path and correctly no-op'd:
+
+```json
+{"accepted_basins": 9396, "rejected_basins": 0, "published": false, "state": "current",
+ "detail": "version 2026-08-07 is later than the source watermark 2019-11-21"}
+```
+
+`published: false` is the right answer here, not a failure — the published set is already current.
+
+### Operating notes that cost time to rediscover
+
+- **The bootstrap compiler needs no `railway run`.** `services/agri-data-service/.env` already carries
+  `OBJECT_STORE_*`. Worse, `railway run -s plantgeo-parquet-api` **fails**: it injects `DATABASE_URL`,
+  and the `published_reader` profile refuses it (`production service profiles must not receive
+  DATABASE_URL`). Run the compiler directly from `services/agri-data-service`.
+- **The parquet read surface is at `/api/v1/parquet/...`, not `/parquet/...`.** The blueprint group in
+  `src/agri_data_service/app.py:116` carries `url_prefix="/api/v1"`. Probing `/parquet/coverage`
+  returns 404 and reads exactly like a service that never mounted the blueprint.
+- **`plantgeo-parquet-api` has no `curl`.** Use `python -c` with `urllib.request` over `railway ssh`.
+- `SERVICE_PROFILE=published_reader` on `plantgeo-parquet-api`; `plantgeo-main` reaches it at
+  `AGRI_PARQUET_SERVICE_URL=http://plantgeo-parquet-api.railway.internal:8080`.
