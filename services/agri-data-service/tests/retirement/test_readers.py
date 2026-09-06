@@ -188,11 +188,12 @@ def test_a_same_line_block_comment_reference_is_documentation(tmp_path: Path) ->
     assert len(scan.documentation) == 1
 
 
-def test_a_block_comment_left_open_on_its_line_is_not_stripped(tmp_path: Path) -> None:
-    """A blind spot the docstring names: a comment spanning lines looks, from one line, unclosed.
+def test_a_block_comment_opener_with_no_closer_below_it_is_not_stripped(tmp_path: Path) -> None:
+    """The proof `_appears_after` demands: an opener whose closer is nowhere below it is not a comment.
 
-    The heuristic keeps the rest of the line as code rather than guess where such a comment ends, so
-    a reference on the opening line still blocks -- a false block, never a false clear.
+    It is an unterminated marker, or a `/*` sitting inside a string. Entering comment state on it
+    would let one line swallow the rest of a file and clear every relation named in it, so the
+    heuristic keeps it as code -- a false block, never a false clear.
     """
     root = build_checkout(tmp_path, files={"src/a.ts": "/* start of a long comment about geo.mv_reader_probe\n"})
 
@@ -200,6 +201,168 @@ def test_a_block_comment_left_open_on_its_line_is_not_stripped(tmp_path: Path) -
 
     assert scan.zero_readers is False
     assert scan.consumers[0].disposition is ReaderDisposition.CONSUMER
+
+
+def test_a_reference_inside_a_multi_line_jsdoc_block_is_documentation(tmp_path: Path) -> None:
+    """The first of the two blind spots that cost four false blockers, in its real shape.
+
+    `src/lib/server/services/usda-soil.ts` explains at :1057 and :1159 why the soil-survey read paths
+    were deliberately NOT repointed at `geo.mv_soil_survey_union`/`_grid`. Both explanations sit four
+    lines inside a `/** ... */` block, so the line-at-a-time heuristic saw an ordinary line of code
+    naming a matview and blocked both drops on the prose announcing that nothing reads them.
+    """
+    root = build_checkout(
+        tmp_path,
+        files={
+            "src/lib/server/services/usda-soil.ts": (
+                "/**\n"
+                " * Merges the stored map units intersecting the viewport by drainage class.\n"
+                " *\n"
+                " * NOT REPOINTED at `geo.mv_reader_probe` in the pre-aggregation pass, and the reason\n"
+                " * is a real grain mismatch rather than an omission.\n"
+                " */\n"
+                "async function readAggregatedFeatures() {\n"
+                "  return 1;\n"
+                "}\n"
+            )
+        },
+    )
+
+    scan = _scan(root)
+
+    assert scan.zero_readers is True
+    assert [hit.line for hit in scan.documentation] == [4]
+    assert scan.documentation[0].surface == "nextjs_app"
+
+
+def test_code_in_a_jsdoc_heavy_file_is_still_a_consumer(tmp_path: Path) -> None:
+    """The other direction of the same fix: state is exited at the closer, not carried past it."""
+    root = build_checkout(
+        tmp_path,
+        files={
+            "src/lib/server/services/usda-soil.ts": (
+                "/**\n"
+                " * Prose naming `geo.mv_reader_probe`, which must not block.\n"
+                " */\n"
+                "const rows = await sql`SELECT zoom_tier FROM geo.mv_reader_probe`;\n"
+            )
+        },
+    )
+
+    scan = _scan(root)
+
+    assert scan.zero_readers is False
+    assert [hit.line for hit in scan.consumers] == [4]
+    assert [hit.line for hit in scan.documentation] == [2]
+
+
+def test_a_reference_in_a_python_module_docstring_is_documentation(tmp_path: Path) -> None:
+    """The second blind spot: Python was registered with no block form, so a docstring read as code.
+
+    `warehouse/parquet/tiers.py:15` is a module-docstring line explaining why the Parquet warehouse
+    derives its coarse rungs from the base Parquet and never from the PostGIS-era matviews -- a third
+    false blocker on the same two relations, from prose that says they are not read.
+    """
+    root = build_checkout(
+        tmp_path,
+        files={
+            "services/agri-data-service/src/agri_data_service/warehouse/parquet/tiers.py": (
+                '"""The tier derivation: how one lane\'s base Parquet becomes its coarser rungs.\n'
+                "\n"
+                "WHY THE COARSE RUNGS ARE DERIVED FROM THE BASE PARQUET AND NEVER FROM POSTGRES.\n"
+                "`geo.mv_reader_probe` is the PostGIS era's own per-layer tier, and reading it would make\n"
+                "the warehouse depend on the database it is replacing.\n"
+                '"""\n'
+                "\n"
+                "TIER_COUNT = 4\n"
+            )
+        },
+    )
+
+    scan = _scan(root)
+
+    assert scan.zero_readers is True
+    assert [hit.line for hit in scan.documentation] == [4]
+    assert scan.documentation[0].surface == "service_python"
+
+
+def test_a_reference_in_a_python_function_docstring_is_documentation(tmp_path: Path) -> None:
+    """A docstring is admitted under a `def`/`class` header as well as at the top of a module."""
+    root = build_checkout(
+        tmp_path,
+        files={
+            "services/agri-data-service/src/agri_data_service/pipeline/derive.py": (
+                "def derive_tier() -> int:\n"
+                '    """Derive one coarse rung from the base rung below it.\n'
+                "\n"
+                "    Never from `geo.mv_reader_probe`: a rung read from the database this replaces can\n"
+                "    drift away from the base rung under it.\n"
+                '    """\n'
+                "    return 4\n"
+            )
+        },
+    )
+
+    scan = _scan(root)
+
+    assert scan.zero_readers is True
+    assert [hit.line for hit in scan.documentation] == [4]
+
+
+def test_a_multi_line_python_string_that_is_not_a_docstring_is_still_a_consumer(tmp_path: Path) -> None:
+    """The line that decides whether the docstring rule is safe: a SQL literal IS a read.
+
+    A triple quote owning its line is prose only in DOCSTRING POSITION -- at the top of a module, or
+    directly under a `def`/`class` header. Under a `SQL = (` continuation it is data, and data that
+    names a relation reads it, so the statement below still blocks.
+    """
+    root = build_checkout(
+        tmp_path,
+        files={
+            "services/agri-data-service/src/agri_data_service/pipeline/query.py": (
+                'COVERAGE_SQL = (\n    """\n    SELECT observed_day FROM geo.mv_reader_probe\n    """\n)\n'
+            )
+        },
+    )
+
+    scan = _scan(root)
+
+    assert scan.zero_readers is False
+    assert [hit.line for hit in scan.consumers] == [3]
+
+
+def test_a_same_line_triple_quoted_python_string_is_still_a_consumer(tmp_path: Path) -> None:
+    """A triple quote that does not own its line is a value being assigned, never a docstring."""
+    root = build_checkout(
+        tmp_path,
+        files={
+            "services/agri-data-service/src/agri_data_service/pipeline/query.py": (
+                'DAY_SQL = """SELECT observed_day FROM geo.mv_reader_probe"""\n'
+            )
+        },
+    )
+
+    scan = _scan(root)
+
+    assert scan.zero_readers is False
+    assert [hit.line for hit in scan.consumers] == [1]
+
+
+def test_a_docstring_opener_with_no_closer_below_it_is_not_stripped(tmp_path: Path) -> None:
+    """The same closer proof the block form demands, for the Python form."""
+    root = build_checkout(
+        tmp_path,
+        files={
+            "services/agri-data-service/src/agri_data_service/pipeline/truncated.py": (
+                '"""An opener that never closes, naming geo.mv_reader_probe.\n'
+            )
+        },
+    )
+
+    scan = _scan(root)
+
+    assert scan.zero_readers is False
+    assert [hit.line for hit in scan.consumers] == [1]
 
 
 def test_an_exemption_marks_a_hit_exempt_only_for_the_form_it_names(tmp_path: Path) -> None:

@@ -12,6 +12,17 @@ overrides below carry the corrections the track has recorded since A3 was writte
 raises a distinct, loud `INVENTORY_CONTRADICTED` blocker whenever a "drop now" row meets a live
 consumer in the scan. A ledger row is a hypothesis; the scan is the measurement.
 
+THE REFRESH LANE'S RETIREMENT REGISTRY IS NOT A READER OF WHAT IT RETIRES. `jobs/matview_refresh.py`
+keeps a `_RetiredView` entry for every relation it has stopped refreshing while the relation itself is
+still PRESENT, so each tick reports it `out_of_spec` with a ledger row instead of going silent -- that
+entry is the only thing standing between a frozen relation and disappearing from every tick until
+somebody happens to look. But the entry NAMES the relation, and `tests/test_matview_refresh.py` pins
+the names, so the mechanism keeping a retired relation honest was itself counted by the scan as a live
+reader of it. Left alone that is a circular gate: the relation can never read clean until the drop
+deletes the entries, and the drop needs it to read clean first. `MATVIEW_REFRESH_RETIRED_RELATIONS`
+below breaks the circle with an ASSERTED exemption over exactly those two files, for exactly the three
+relations that have such an entry, for `materialized_view_drop` only.
+
 WHAT A DROP FORM IS, AND WHY `geo.features` HAS ONLY ONE. `sql/agent/feature_value_near_point.sql`
 keeps a live PostgreSQL read of `geo.features` for `interventions`, a community layer RUNBOOK 0.26.1
 keeps in PostgreSQL permanently. There is therefore no future in which that table drops, and the wave
@@ -383,6 +394,75 @@ DEPENDENT_OBJECTS: Final[Mapping[str, tuple[DependentObject, ...]]] = MappingPro
 )
 
 
+#: The refresh lane's own module and its suite -- the only two files this exemption may ever cover.
+MATVIEW_REFRESH_REGISTRY_PATHS: Final[tuple[str, ...]] = (
+    "services/agri-data-service/src/agri_data_service/jobs/matview_refresh.py",
+    "services/agri-data-service/tests/test_matview_refresh.py",
+)
+
+#: Where the refresh lane's retired-view registry begins in its module. Everything ABOVE this line is
+#: the spec table's region, so a relation named as a `qualified_name` above it is a LIVE spec and must
+#: never be exempted. `tests/retirement/test_ledger.py` reads the real module and asserts exactly that
+#: against the registry below, which is what keeps a hand-spelled list from outliving a restored spec.
+MATVIEW_REFRESH_RETIRED_REGION_MARKER: Final = "MATVIEW_REFRESH_RETIRED_VIEWS: Final"
+
+#: Relation -> why `jobs/matview_refresh.py` carries a `_RetiredView` entry naming it. EXACTLY the
+#: three entries in `MATVIEW_REFRESH_RETIRED_VIEWS`, hand-spelled rather than imported: the retirement
+#: package reads files and nothing else, and importing the refresh lane would drag SQLAlchemy and a
+#: database session factory into a tool whose whole claim is that it cannot reach production
+#: (`tests/retirement/test_readers.py::test_the_retirement_package_cannot_reach_production`).
+#:
+#: `geo.mv_feature_observation_day_axis` and `geo.mv_signal_cell_daily` are deliberately ABSENT. Those
+#: two are ABSENT FROM THE DATABASE, not retired, so they have no `_RetiredView` entry at all; what
+#: names them is `REMOVED_MATVIEW_NAMES`, the guard that stops an absent relation being re-added to
+#: the lane. That guard is a live safety property and must go on blocking their packets -- exempting
+#: it would clear a relation on the strength of deleting the thing that protects it.
+MATVIEW_REFRESH_RETIRED_RELATIONS: Final[Mapping[str, str]] = MappingProxyType(
+    {
+        "geo.mv_signal_observation_day": (
+            "retired 2026-09-04 after its REFRESH ran 302.14s against its own 300s statement_timeout"
+        ),
+        "geo.mv_soil_survey_grid": (
+            "retired 2026-09-04 for ZERO CONSUMPTION: it refreshes correctly and no read path selects from it"
+        ),
+        "geo.mv_soil_survey_union": (
+            "retired 2026-09-04 for ZERO CONSUMPTION, having never once produced a row in production"
+        ),
+    }
+)
+
+
+def _matview_refresh_retirement_exemptions(relation: str) -> tuple[ReaderExemption, ...]:
+    """Exempt the refresh lane's retirement registry from being read as a reader of what it retires.
+
+    Returns nothing at all for a relation with no `_RetiredView` entry, which is what stops the
+    exemption reaching a relation still in `MATVIEW_REFRESH_SPECS` (a live spec is not in the registry
+    above) or a relation named only by the `REMOVED_MATVIEW_NAMES` re-add guard.
+
+    Scoped to `materialized_view_drop` alone. A retirement is a statement about REFRESHING a relation;
+    it is not evidence about deleting rows from one, and a row-delete packet must not inherit it.
+    """
+    why = MATVIEW_REFRESH_RETIRED_RELATIONS.get(relation)
+    if why is None:
+        return ()
+    return tuple(
+        ReaderExemption(
+            path=path,
+            reason=(
+                f"names {relation} only to RETIRE it: {why}. jobs/matview_refresh.py keeps a "
+                "`_RetiredView` entry per retired-but-still-present relation so every tick reports it "
+                "`out_of_spec` with a ledger row instead of going silent, and tests/test_matview_refresh.py "
+                "pins the three names -- so the mechanism that keeps a frozen relation from vanishing off "
+                "the tick is what this scan was counting as a live reader of it, a gate that could only "
+                "clear after the drop it gates. Neither file SELECTs from the relation. The entry is "
+                "deleted in the same migration as the DROP, never before it"
+            ),
+            applies_to_forms=frozenset({str(DropForm.MATERIALIZED_VIEW_DROP)}),
+        )
+        for path in MATVIEW_REFRESH_REGISTRY_PATHS
+    )
+
+
 def _geo_features_layer_scopes() -> tuple[LayerScope, ...]:
     """Build the seven environmental layer scopes, each carrying its own parity module and epoch."""
     return tuple(
@@ -475,6 +555,7 @@ def _synthesised_candidate(inventory: InventoryRow) -> DropCandidate:
         search_terms=default_search_terms(inventory.relation),
         parity=PARITY_BINDINGS.get(_LANE_FOR_RELATION.get(inventory.relation, "")),
         rewrite_epoch=PARQUET_REWRITE_EPOCHS.get(_LANE_FOR_RELATION.get(inventory.relation, "")),
+        reader_exemptions=_matview_refresh_retirement_exemptions(inventory.relation),
         dependent_objects=DEPENDENT_OBJECTS.get(inventory.relation, ()),
         survival=SURVIVAL_DEPENDENCIES.get(inventory.relation),
     )
@@ -528,6 +609,9 @@ __all__ = [
     "DEPENDENT_OBJECTS",
     "GEO_FEATURES_ENVIRONMENTAL_LAYERS",
     "INVENTORY_RELATIVE_PATH",
+    "MATVIEW_REFRESH_REGISTRY_PATHS",
+    "MATVIEW_REFRESH_RETIRED_REGION_MARKER",
+    "MATVIEW_REFRESH_RETIRED_RELATIONS",
     "OBJECT_KIND_OVERRIDES",
     "SURVIVAL_DEPENDENCIES",
     "DependentObject",

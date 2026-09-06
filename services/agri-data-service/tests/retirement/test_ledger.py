@@ -10,6 +10,9 @@ import pytest
 
 from agri_data_service.retirement.ledger import (
     GEO_FEATURES_ENVIRONMENTAL_LAYERS,
+    MATVIEW_REFRESH_REGISTRY_PATHS,
+    MATVIEW_REFRESH_RETIRED_REGION_MARKER,
+    MATVIEW_REFRESH_RETIRED_RELATIONS,
     DropForm,
     DropFormRefusedError,
     InventoryClass,
@@ -141,3 +144,70 @@ def test_the_real_inventory_still_parses() -> None:
     assert "geo.features" in ledger.relations_in_class(InventoryClass.DROP_AFTER_PARQUET_PROOF)
     assert "agri.spatial_cell" in ledger.relations_in_class(InventoryClass.DROP_NOW)
     assert "agri.job_run" in ledger.relations_in_class(InventoryClass.KEEP)
+
+
+# --- The refresh lane's retirement registry is not a reader of what it retires -------
+#
+# These four run against the REAL checkout rather than a synthetic one on purpose: the whole claim is
+# about two named files that exist, and a synthetic stand-in would pass by describing a tree nobody
+# ships. See `MATVIEW_REFRESH_RETIRED_RELATIONS` in ledger.py for the circular gate they break.
+
+
+def test_a_retired_matview_exempts_the_refresh_lanes_registry_for_its_drop_form_only() -> None:
+    """`jobs/matview_refresh.py` NAMES a retired relation in order to keep reporting it, not to read it."""
+    candidate = load_ledger(find_repository_root()).candidate("geo.mv_soil_survey_grid")
+
+    exemptions = candidate.reader_exemptions
+
+    assert [exemption.path for exemption in exemptions] == list(MATVIEW_REFRESH_REGISTRY_PATHS)
+    assert all(
+        exemption.applies_to_forms == frozenset({str(DropForm.MATERIALIZED_VIEW_DROP)}) for exemption in exemptions
+    )
+    assert all("_RetiredView" in exemption.reason for exemption in exemptions)
+
+
+def test_a_relation_still_on_the_refresh_lane_is_not_exempted_in_the_same_files() -> None:
+    """The scope that matters: a live `MATVIEW_REFRESH_SPECS` entry sits in the very same module.
+
+    `geo.mv_layer_feature_stats` is refreshed on every tick and read by `analytics.ts`. If the
+    exemption were written per FILE rather than per relation, it would clear a matview backing a
+    `publicProcedure` on the strength of the refresh lane's own retirement bookkeeping.
+    """
+    candidate = load_ledger(find_repository_root()).candidate("geo.mv_layer_feature_stats")
+
+    assert candidate.reader_exemptions == ()
+
+
+def test_the_re_add_guard_relation_keeps_blocking_and_earns_no_exemption() -> None:
+    """`geo.mv_feature_observation_day_axis` is ABSENT from production, not retired from the lane.
+
+    What names it is `REMOVED_MATVIEW_NAMES` in tests/test_matview_refresh.py -- the guard that stops
+    an absent relation being re-added to a lane it once dead-lettered. That guard is a live safety
+    property, and exempting it would clear the relation by deleting what protects it. It has no
+    `_RetiredView` entry, so it is not in the registry, so its packet still reports `live_readers`.
+    """
+    candidate = load_ledger(find_repository_root()).candidate("geo.mv_feature_observation_day_axis")
+
+    assert candidate.reader_exemptions == ()
+    assert "geo.mv_feature_observation_day_axis" not in MATVIEW_REFRESH_RETIRED_RELATIONS
+
+
+def test_every_exempted_relation_is_retired_in_the_real_module_and_specced_nowhere_in_it() -> None:
+    """The hand-spelled registry is checked against the module it describes, never trusted.
+
+    `ledger.py` may not import the refresh lane -- that would drag SQLAlchemy into a package whose
+    claim is that it cannot reach production -- so the registry is spelled by hand and verified here
+    against the module's own text. Restoring one of these three to `MATVIEW_REFRESH_SPECS` without
+    deleting its registry entry would leave a live spec exempted from its own reader scan; this fails
+    the moment that happens, because a spec entry is written above the retired region and a
+    `_RetiredView` entry below it.
+    """
+    source = (find_repository_root() / MATVIEW_REFRESH_REGISTRY_PATHS[0]).read_text(encoding="utf-8")
+    assert source.count(MATVIEW_REFRESH_RETIRED_REGION_MARKER) == 1
+    marker = source.index(MATVIEW_REFRESH_RETIRED_REGION_MARKER)
+    spec_region, retired_region = source[:marker], source[marker:]
+
+    for relation in MATVIEW_REFRESH_RETIRED_RELATIONS:
+        entry = f'qualified_name="{relation}"'
+        assert entry in retired_region, f"{relation} has no _RetiredView entry; delete its exemption"
+        assert entry not in spec_region, f"{relation} is back in MATVIEW_REFRESH_SPECS; delete its exemption"

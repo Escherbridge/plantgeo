@@ -71,13 +71,68 @@ wave-C review's complaint about the existing guard test was precisely that it pa
 the relation.
 
 Nor can a grep tell a read from a comment ABOUT a read. `readers.py::_match_lines` re-tests every hit
-against a line-level, comment-stripped view of the same line (`_code_only_line`): a match that
-survives only in the stripped-away portion is DOCUMENTATION regardless of which surface it landed on,
-never blocking. This is what let `public.drought_data`'s Drizzle declaration be correctly deleted and
-replaced with a `//` comment naming the table without the scan reading that comment as the very
-reference it announced the removal of. It is a heuristic, not a parser — it cannot see a match inside
-a multi-line string or a block comment that opened on an earlier line, and in both blind spots it
-resolves toward "code" rather than guess, so the false is a block, never a clear.
+against a comment-stripped view of the same line (`_code_only_lines`): a match that survives only in
+the stripped-away portion is DOCUMENTATION regardless of which surface it landed on, never blocking.
+This is what let `public.drought_data`'s Drizzle declaration be correctly deleted and replaced with a
+`//` comment naming the table without the scan reading that comment as the very reference it announced
+the removal of.
+
+## The comment stripper carries state across lines, and still refuses to guess
+
+The first version of that stripper read one line at a time, which made a `/** … */` JSDoc block and a
+Python docstring indistinguishable from code from their second line onward. That cost four false
+blockers at once, all of them raised by prose that said the relation is NOT read:
+`src/lib/server/services/usda-soil.ts:1057` and `:1159` (why the soil-survey read paths were
+deliberately not repointed at `geo.mv_soil_survey_union`/`_grid`), and
+`warehouse/parquet/tiers.py:15` (why the Parquet warehouse derives its coarse rungs from the base
+Parquet and never from those same matviews).
+
+`_code_only_lines` now walks a whole file with a one-slot state machine. The asymmetry the
+line-at-a-time version was built on survives it, because state is entered only on proof:
+
+- **The opener must own its line.** A `/*` that has code before it on the same line is left alone
+  unless it also closes on that line.
+- **The closer must appear somewhere below it in the same file** (`_appears_after`). An opener with
+  no closer is an unterminated marker or a `/*` inside a string, and entering state on one would let
+  a single line swallow a file's tail and clear every relation named in it.
+- **A Python triple quote is prose only in DOCSTRING POSITION** — at the top of a module, or directly
+  under a `def`/`class` header (`_PYTHON_DOCSTRING_OWNER`). Under a `SQL = (` continuation, a dict
+  key, or an `r`/`f` prefix it is DATA, and data that names a relation reads it, so
+  `COVERAGE_SQL = (\n    """\n    SELECT … FROM geo.x` still blocks.
+
+Everything the heuristic cannot resolve resolves toward "code": a match inside a multi-line string, a
+`/*` that owns its line but sits inside a template literal, a docstring written in a position this
+module will not admit. Each of those is a FALSE BLOCK — one cited line for a human to dismiss —
+whereas a false clear authorises dropping a relation something still reads. `_code_only_lines`' own
+docstring is the maintained list; the tests in `tests/retirement/test_readers.py` pin both directions
+of every rule above.
+
+## A retired-view entry is not a reader of what it retires
+
+`jobs/matview_refresh.py` keeps a `_RetiredView` entry per relation it has stopped refreshing while
+the relation is still PRESENT, so every tick reports it `out_of_spec` with a ledger row instead of
+going silent — the only thing standing between a frozen relation and vanishing from every tick until
+somebody happens to look. The entry names the relation, and `tests/test_matview_refresh.py` pins the
+names, so the scan counted the honesty mechanism as a live reader: a circular gate where the relation
+could not read clean until the drop deleted the entries, and the drop needed it to read clean first.
+
+`ledger.py::MATVIEW_REFRESH_RETIRED_RELATIONS` breaks it with an asserted exemption over exactly those
+two files, for `materialized_view_drop` only. Three things keep it from over-reaching:
+
+- It is keyed by RELATION, not by file. A live `MATVIEW_REFRESH_SPECS` entry sits in the same module —
+  `geo.mv_layer_feature_stats` is refreshed every tick and read by `analytics.ts` — and gets no
+  exemption, because it is not in the registry.
+- `geo.mv_feature_observation_day_axis` is deliberately absent. It has no `_RetiredView` entry; what
+  names it is `REMOVED_MATVIEW_NAMES`, the guard against re-adding an ABSENT relation to the lane.
+  That guard is a live safety property and its packet still reports `live_readers` — which is also the
+  running proof that the exemption is per relation and not per file, since it blocks on a line in a
+  file the same exemption clears for its three siblings.
+- The registry is hand-spelled (importing the refresh lane would drag SQLAlchemy into a package whose
+  claim is that it cannot reach production) and then CHECKED against that module's own text: every
+  exempted relation must appear as a `qualified_name=` below the retired-views marker and nowhere
+  above it. Restoring one to `MATVIEW_REFRESH_SPECS` without deleting its exemption fails that test.
+
+The entries are deleted in the same migration as the `DROP`, never before it.
 
 ## Order matters in `assess_shortfall`
 

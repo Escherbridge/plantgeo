@@ -28,14 +28,27 @@ A COMMENT NAMING A RELATION IS NOT A READ OF IT. `src/lib/server/db/schema.ts` h
 declaration of `public.drought_data` removed and replaced with a `//` comment explaining the removal
 -- correct practice that this scan used to punish, by counting the comment's own mention of the table
 name as the very reference it was announcing the absence of. `_match_lines` now re-tests a match
-against `_code_only_line`'s comment-stripped view of the same line; a match that survives only in the
+against `_code_only_lines`' comment-stripped view of the same line; a match that survives only in the
 stripped-away portion is DOCUMENTATION regardless of which surface it landed on, and a match that
 still appears in what is left is whatever the surface says, so `const x = droughtData; // legacy`
-still blocks. It is a line-level heuristic, not a parser, and says so at `_code_only_line`.
+still blocks. It is a heuristic, not a parser, and says so at `_code_only_lines`.
+
+THE STRIPPER CARRIES STATE ACROSS LINES, BUT NEVER GUESSES. The first version of that heuristic saw
+one line at a time, so a `/** ... */` JSDoc block and a Python docstring both read as code from the
+second line onward -- which cost four false blockers at once (`src/lib/server/services/usda-soil.ts`
+:1057 and :1159 are prose explaining why the soil-survey matviews were deliberately NOT repointed,
+and `warehouse/parquet/tiers.py:15` is a module docstring explaining the same thing for the
+warehouse). `_code_only_lines` now walks a whole file with a one-slot state machine, so a multi-line
+comment is stripped from every line it covers. The asymmetry the line-at-a-time version was built on
+SURVIVES the change: state is entered only when the opener OWNS ITS LINE and its closer provably
+appears further down the same file, a Python triple quote is prose only in DOCSTRING POSITION, and
+every case that fails either test stays code. A false block costs a human one cited line to read; a
+false clear authorises dropping a relation something still reads.
 """
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -436,20 +449,25 @@ def _iter_surface_files(root: Path, surface: ReaderSurface, claimed: set[Path]) 
 
 @dataclass(frozen=True, slots=True)
 class _CommentSyntax:
-    """The comment markers one file suffix uses, for the line-level heuristic below.
+    """The comment markers one file suffix uses, for the heuristic below.
 
     `line_markers` are checked in the order given; the EARLIEST one found on a line wins, because a
-    line can only ever be commented from its first marker onward. `block` is `None` for languages this
-    repository scans that have no block-comment form (Python's `#` has no paired closer).
+    line can only ever be commented from its first marker onward. `block` is the paired
+    open/close form (`/* */`), or `None` for a language that has none. `docstring_delimiters` are
+    self-closing delimiters that are prose ONLY in docstring position -- Python's triple quotes,
+    which are otherwise ordinary string literals and must keep counting as code. The two are separate
+    fields rather than one because they obey different rules, and collapsing them would silently give
+    a SQL string literal the licence a docstring earns.
     """
 
     line_markers: tuple[str, ...]
     block: tuple[str, str] | None
+    docstring_delimiters: tuple[str, ...] = ()
 
 
 #: Comment syntax by file suffix, for the surfaces this repository actually scans. A suffix absent
 #: from this mapping gets no comment awareness at all -- every match on it is still counted as code,
-#: which is the safe default `_code_only_line` falls back to.
+#: which is the safe default `_code_only_lines` falls back to.
 _COMMENT_SYNTAX_BY_SUFFIX: Final[dict[str, _CommentSyntax]] = {
     ".ts": _CommentSyntax(line_markers=("//",), block=("/*", "*/")),
     ".tsx": _CommentSyntax(line_markers=("//",), block=("/*", "*/")),
@@ -457,55 +475,151 @@ _COMMENT_SYNTAX_BY_SUFFIX: Final[dict[str, _CommentSyntax]] = {
     ".jsx": _CommentSyntax(line_markers=("//",), block=("/*", "*/")),
     ".mjs": _CommentSyntax(line_markers=("//",), block=("/*", "*/")),
     ".cjs": _CommentSyntax(line_markers=("//",), block=("/*", "*/")),
-    ".py": _CommentSyntax(line_markers=("#",), block=None),
+    ".py": _CommentSyntax(line_markers=("#",), block=None, docstring_delimiters=('"""', "'''")),
     ".yaml": _CommentSyntax(line_markers=("#",), block=None),
     ".yml": _CommentSyntax(line_markers=("#",), block=None),
     ".sql": _CommentSyntax(line_markers=("--",), block=("/*", "*/")),
 }
 
+#: The one line a Python docstring may follow: a `def`/`class` header, or the `) -> X:` that closes a
+#: signature written across several lines. Anything else -- a `SQL = (` continuation, a dict key, an
+#: operator -- leaves a line-initial triple quote classed as DATA, which is the safe answer, because a
+#: multi-line SQL literal naming a relation genuinely is a read of it. A module docstring is the other
+#: admitted position and is recognised separately, by there being no earlier code line at all.
+_PYTHON_DOCSTRING_OWNER: Final = re.compile(r"^(?:async\s+def|def|class)\b.*:$|^\).*:$")
 
-def _code_only_line(line: str, syntax: _CommentSyntax | None) -> str:
-    """Return the prefix of one line that is NOT inside a comment, per a line-level heuristic.
 
-    This is deliberately not a parser. It knows nothing about string literals, so a line comment
-    marker or block-comment opener that appears inside a same-line string (a URL's `//`, a SQL
-    literal's `--`) is still treated as the start of a comment; no hit in this repository currently
-    falls inside such a literal, but a future one could be misclassified this way.
+def _closer_for(opener: str, syntax: _CommentSyntax) -> str:
+    """Return the marker that ends a region this opener began; a docstring quote closes with itself."""
+    if syntax.block is not None and opener == syntax.block[0]:
+        return syntax.block[1]
+    return opener
 
-    What it genuinely cannot see, because a single line carries no memory of the lines around it:
-    a match inside a multi-line string, or inside a block comment that OPENED on an earlier line.
-    Both are handled the safe way rather than the clever way -- a `/*` with no `*/` on the same line
-    is left completely alone (the text after it is still "code" as far as this function is concerned),
-    so a match hiding in either blind spot is still counted as a consumer. A false block costs a human
-    one line to read; a false clear costs a table nobody rechecks, so every case this function cannot
-    resolve resolves toward "code".
+
+def _earliest_opener(line: str, syntax: _CommentSyntax, *, from_index: int) -> tuple[str, int] | None:
+    """Return the first multi-line-capable opener at or after `from_index`, and where it starts."""
+    openers = [*([] if syntax.block is None else [syntax.block[0]]), *syntax.docstring_delimiters]
+    found = [(position, opener) for opener in openers if (position := line.find(opener, from_index)) != -1]
+    if not found:
+        return None
+    position, opener = min(found)
+    return opener, position
+
+
+def _appears_after(lines: Sequence[str], index: int, marker: str) -> bool:
+    """True when `marker` occurs on some line after `index` -- the proof an opener really is closed.
+
+    An opener whose closer is nowhere below it is not a comment spanning lines; it is an unterminated
+    marker, or a `/*` sitting inside a string. Requiring the closer keeps such a line from silently
+    swallowing the rest of the file into "comment" and clearing every relation named in it.
     """
-    if syntax is None:
-        return line
-    working = line
-    if syntax.block is not None:
-        start_marker, end_marker = syntax.block
-        pieces: list[str] = []
-        rest = working
-        while True:
-            start = rest.find(start_marker)
-            if start == -1:
-                pieces.append(rest)
-                break
-            end = rest.find(end_marker, start + len(start_marker))
-            if end == -1:
-                # Unclosed on this line: a block comment spanning lines, or just an unmatched
-                # opener. Keep the rest of the line as code rather than guess where it ends.
-                pieces.append(rest)
-                break
-            pieces.append(rest[:start])
-            rest = rest[end + len(end_marker) :]
-        working = "".join(pieces)
+    return any(marker in line for line in lines[index + 1 :])
+
+
+def _strip_comment_regions(
+    lines: Sequence[str],
+    index: int,
+    syntax: _CommentSyntax,
+    *,
+    start: int,
+    docstring_allowed: bool,
+) -> tuple[str, str | None]:
+    """Return `(the code-only view of lines[index] from `start`, the closer now awaited)`.
+
+    `start` is 0 for an ordinary line, or the offset just past the closer on a line that ENDED a
+    multi-line comment; everything before it was comment and contributes nothing. Indices below are
+    absolute in the line, so "the opener owns this line" is asked of the real line rather than of a
+    shrinking tail.
+    """
+    pieces: list[str] = []
+    line = lines[index]
+    cursor = start
+    while True:
+        opener_at = _earliest_opener(line, syntax, from_index=cursor)
+        if opener_at is None:
+            pieces.append(line[cursor:])
+            return "".join(pieces), None
+        opener, position = opener_at
+        owns_the_line = start == 0 and not line[:position].strip()
+        if opener in syntax.docstring_delimiters and not (docstring_allowed and owns_the_line):
+            # A triple-quoted STRING rather than a docstring, so the rest of the line stays code and
+            # no state is entered: a SQL literal that names a relation is a read of that relation.
+            pieces.append(line[cursor:])
+            return "".join(pieces), None
+        closer = _closer_for(opener, syntax)
+        end = line.find(closer, position + len(opener))
+        if end != -1:
+            pieces.append(line[cursor:position])
+            cursor = end + len(closer)
+            continue
+        if owns_the_line and _appears_after(lines, index, closer):
+            pieces.append(line[cursor:position])
+            return "".join(pieces), closer
+        # Unclosed and not provably a comment -- an unmatched opener, or one sitting mid-line inside
+        # something this heuristic cannot read. Keep it as code rather than guess where it ends.
+        pieces.append(line[cursor:])
+        return "".join(pieces), None
+
+
+def _strip_line_comment(code: str, syntax: _CommentSyntax) -> str:
+    """Cut one line's code at its earliest line-comment marker."""
     earliest = min(
-        (index for marker in syntax.line_markers if (index := working.find(marker)) != -1),
+        (position for marker in syntax.line_markers if (position := code.find(marker)) != -1),
         default=None,
     )
-    return working if earliest is None else working[:earliest]
+    return code if earliest is None else code[:earliest]
+
+
+def _code_only_lines(lines: Sequence[str], syntax: _CommentSyntax | None) -> list[str]:
+    """Return every line's NOT-inside-a-comment view, carrying block state across lines.
+
+    This is deliberately not a parser. It knows nothing about string literals, so a line-comment
+    marker or a block-comment opener appearing inside a same-line string (a URL's `//`, a SQL
+    literal's `--`) is still read as the start of a comment.
+
+    WHAT IT CAN NOW SEE that the line-at-a-time version could not: a block comment opened on an
+    EARLIER line (the `/** ... */` JSDoc shape), and a Python module, class or function docstring.
+    Both are entered only on proof rather than on a guess -- the opener must own its line, and its
+    closer must appear somewhere below it in the same file.
+
+    WHAT IT STILL CANNOT SEE, and deliberately resolves toward "code" in every case:
+      * a `/*` or a triple quote that owns its line but sits inside a multi-line string literal -- a
+        SQL block comment inside a TypeScript template literal is the realistic shape, and it would
+        be stripped;
+      * a Python triple quote in a position this module refuses to call a docstring (a `SQL = (`
+        continuation, a dict value, or an `r`/`f`-prefixed triple quote, whose first non-whitespace
+        character is the prefix letter rather than the quote), which stays code -- so a docstring
+        written that way is a FALSE BLOCK, one cited line for a human to dismiss;
+      * a match inside a multi-line string in any language, which stays code for the same reason;
+      * an unterminated opener anywhere, which stays code because `_appears_after` refuses it.
+    """
+    if syntax is None:
+        return list(lines)
+    visible: list[str] = []
+    awaiting: str | None = None
+    seen_a_code_line = False
+    previous_code_line = ""
+    for index, line in enumerate(lines):
+        if awaiting is not None:
+            end = line.find(awaiting)
+            if end == -1:
+                visible.append("")
+                continue
+            resume_at = end + len(awaiting)
+            awaiting = None
+            code, awaiting = _strip_comment_regions(lines, index, syntax, start=resume_at, docstring_allowed=False)
+        else:
+            # A docstring may open where nothing has come before it (the module docstring) or
+            # directly under a `def`/`class` header. `previous_code_line` is taken from the STRIPPED
+            # view, so blank lines, `#` comments and decorated headers all resolve correctly.
+            docstring_allowed = not seen_a_code_line or _PYTHON_DOCSTRING_OWNER.match(previous_code_line) is not None
+            code, awaiting = _strip_comment_regions(lines, index, syntax, start=0, docstring_allowed=docstring_allowed)
+        code = _strip_line_comment(code, syntax)
+        visible.append(code)
+        if code.strip():
+            seen_a_code_line = True
+            previous_code_line = code.strip()
+    return visible
 
 
 def _match_lines(
@@ -519,16 +633,24 @@ def _match_lines(
     specific spelling present.
 
     `comment_only` is true when the matched term appears in the full line but NOT in
-    `_code_only_line`'s view of it -- the match exists only inside a comment. A line that carries the
+    `_code_only_lines`' view of it -- the match exists only inside a comment. A line that carries the
     term in both code and a trailing comment (`const x = droughtData; // legacy`) matches in the code
     portion too, so `comment_only` is false and the hit still counts as whatever the surface says.
+
+    The whole-file strip is skipped for a file no term appears in at all, which is nearly every file
+    of the ~2,000 scanned; the state machine only ever runs where its answer can change a hit.
     """
-    for index, line in enumerate(text.splitlines(), start=1):
+    lowered_text = text.lower()
+    if not any(term.pattern.lower() in lowered_text for term in terms):
+        return
+    lines = text.splitlines()
+    visible = _code_only_lines(lines, syntax)
+    for index, (line, code) in enumerate(zip(lines, visible, strict=True), start=1):
         lowered = line.lower()
         for term in terms:
             pattern = term.pattern.lower()
             if pattern in lowered:
-                comment_only = pattern not in _code_only_line(line, syntax).lower()
+                comment_only = pattern not in code.lower()
                 yield index, term, line.strip()[:MATCH_EXCERPT_LIMIT], comment_only
                 break
 
