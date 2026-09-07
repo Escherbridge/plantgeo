@@ -110,6 +110,26 @@ Every rung reports the lane's **selectable** days — days whose whole authorita
 one terminal state — and not that rung's own rows. The intersection is a subset of each rung, so no
 row over-claims, and a slider can never mount an axis at z13 over a day z0 cannot draw.
 
+**A coverage row states two upper edges, and only one of them is a publication claim.**
+`latest_day` is the newest day the rung can ANSWER — on a bounded-carry release lane
+(`BOUNDED_CARRY_RELEASE_LAYERS`, drought and only drought) that is the carried read-through edge,
+and `published_ranges` folds the carry in. `latest_recorded_day` is `max(days.data)`: the newest day
+an object was actually written for, before any carry. They are the same day on every lane that does
+not carry, and `None` together on a rung that never wrote.
+
+The split exists because the two are bounded by different things. `source_ceiling_day` is
+`today - publication_lag_days` and bounds PUBLICATION; the carry deliberately reaches past it, so a
+client weighing `latest_day` against the ceiling withholds a lane for keeping its contract. That is
+what blanked `drought-areas` on 2026-09-07, when `drought-direct-forward` published a release recent
+enough for its 14-day carry to cross its 4-day lag. Clipping the carry at the ceiling instead is
+argued against in `close_lane_coverage`'s own docstring: it shortens a release lane's axis by
+exactly its lag the moment the availability authority takes over.
+
+Note the one direction the two edges are NOT ordered: a partition mislabelled past the carry horizon
+is dropped from `published_days` entirely, so `latest_recorded_day` can sit ABOVE `latest_day`. That
+is the case a ceiling check has to be able to see, and it is why the check reads this field rather
+than skipping carry lanes.
+
 Two bounds are not tuning. `POINTER_REVALIDATE_SECONDS` (60 s) is the entire staleness budget of the
 availability path, because `AvailabilityStorage.read` is an unconditional GET with no `If-None-Match`
 to revalidate against. `MAX_CACHED_GENERATION_BYTES` (8 MiB) bounds what a generation may cost in

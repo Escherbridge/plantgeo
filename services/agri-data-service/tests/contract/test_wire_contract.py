@@ -95,7 +95,34 @@ def test_an_availability_row_cites_the_generation_an_operator_can_refetch() -> N
         assert lane["availability_generation_sha256"]
         assert lane["availability_pointer_key"].endswith("/availability/_LATEST.json")
         assert lane["required_rungs"] == [0, 5, 9, 13], "a proven lane binds the whole authoritative set"
-        assert lane["latest_day"] <= lane["source_ceiling_day"], "no lane may claim past its own ceiling"
+        # The RECORDED day, not the day the row can answer. `source_ceiling_day` bounds what the
+        # source may have PUBLISHED, and a bounded-carry release lane answers past it on purpose --
+        # the golden's drought rows do exactly that. Weighing the carried edge against this ceiling
+        # is what withheld drought from the live map on 2026-09-07.
+        assert lane["latest_recorded_day"] <= lane["source_ceiling_day"], (
+            "no lane may claim to have PUBLISHED past its own ceiling"
+        )
+
+
+def test_a_carried_release_lane_answers_past_its_ceiling_and_says_so_in_two_fields() -> None:
+    """The wire must be able to express a read-through, or a client can only guess at one.
+
+    Drought publishes weekly with a four-day lag and its newest release carries for fourteen days,
+    so its answerable edge routinely sits above the day its source could have published. A payload
+    that stated one day for both would force every client to choose between withholding a healthy
+    lane and trusting a day nothing proves.
+    """
+    carrying = [
+        lane
+        for lane in load("coverage_availability.json")["lanes"]
+        if lane["latest_day"] is not None and lane["latest_day"] != lane["latest_recorded_day"]
+    ]
+    assert carrying, "the availability fixture must exercise a lane whose carry crosses its ceiling"
+    for lane in carrying:
+        assert lane["nature"] == "release_series", "only a release series carries"
+        assert lane["latest_recorded_day"] < lane["latest_day"], "a carry only ever reads FORWARD"
+        assert lane["latest_day"] > lane["source_ceiling_day"], "the shape the old gate refused"
+        assert lane["published_ranges"][-1]["to"] == lane["latest_day"], "the carry is folded in"
 
 
 def test_a_withheld_lane_publishes_no_selectable_days() -> None:
@@ -163,6 +190,9 @@ def test_a_never_written_lane_reports_null_bounds() -> None:
     assert {lane["zoom"] for lane in lanes} == {0, 5, 9, 13}
     assert all(lane["earliest_day"] is None for lane in lanes)
     assert all(lane["latest_day"] is None for lane in lanes)
+    # All three null TOGETHER. The client narrows a row to "readable" on these fields at one site,
+    # so a row stating one edge and withholding another is unreadable rather than half-known.
+    assert all(lane["latest_recorded_day"] is None for lane in lanes)
 
 
 def test_the_typescript_client_still_agrees_with_this_contract() -> None:

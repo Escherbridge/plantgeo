@@ -236,8 +236,27 @@ export interface ParquetLaneCoverage {
   zoomTier: ZoomTier;
   /** Oldest day this lane holds, `YYYY-MM-DD`; null when it has written nothing at all. */
   earliestDay: string | null;
-  /** Newest day this lane holds, `YYYY-MM-DD`; null when it has written nothing at all. */
+  /**
+   * Newest day this lane can ANSWER, `YYYY-MM-DD`; null when it has written nothing at all.
+   *
+   * On a bounded-carry release lane this is the carried read-through edge, not a written day: a
+   * drought release published on the 18th is what a reader draws on the 24th, so the lane answers
+   * the 24th and `publishedRanges` runs there too. Use it for the axis, never for freshness.
+   */
   latestDay: string | null;
+  /**
+   * Newest day this lane actually WROTE, `YYYY-MM-DD`; null exactly when `latestDay` is null.
+   *
+   * The same day as `latestDay` on every lane that does not carry, and the only one of the two
+   * that may be weighed against `sourceCeilingDay` -- that ceiling bounds what the source can have
+   * PUBLISHED, and a carried read-through is not a publication claim. Judging the carried edge
+   * against it withheld `drought-areas` from the live map on 2026-09-07.
+   *
+   * It is NOT bounded above by `latestDay`: a partition mislabelled past the carry horizon drops
+   * out of `publishedRanges` altogether and survives only here, which is what keeps a ceiling
+   * check able to see it.
+   */
+  latestRecordedDay: string | null;
   /** Exact runs with complete, non-conflicting Parquet parts on this physical rung. */
   publishedRanges: DayRange[];
   /**
@@ -339,6 +358,11 @@ export interface ParquetWarehouseCoverage {
  *  9. The coverage body names its own shape in `coverage_schema_version`, and this client accepts
  *     exactly one value of it. See `COVERAGE_SCHEMA_VERSION` below; bumping it is a change to
  *     `wire_contract.py`, `parquet_ops/wire.py`, the fixtures and this file in ONE commit.
+ * 10. A coverage row has TWO upper day edges and they mean different things. `latest_day` is the
+ *     newest day the lane can ANSWER, carry included; `latest_recorded_day` is the newest day it
+ *     WROTE. Which lanes carry, and how far, is the serving side's knowledge and stays there --
+ *     this client learns the distinction from these two fields and never from a layer list of its
+ *     own, because a second copy of "drought carries for fourteen days" is a copy that drifts.
  * ------------------------------------------------------------------------- */
 
 const WIRE = {
@@ -422,13 +446,15 @@ const wireSha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
  * `wire_contract.py` and `parquet_ops/wire.py`, which must be bumped in the same change.
  *
  * `1` was the field set frozen before availability indexes existed; `2` adds the six provenance
- * fields. REJECTED rather than logged when it disagrees: a version-1 body carries no
- * `withheld_reason` at all, and reading that silence as "every lane's index is healthy" is exactly
- * the fail-open this decode exists to close. A serving side that has not been redeployed yet must
- * blank the slider, not quietly narrow it. The rejection lives in `decodeCoverage` and names the
- * number, so the operator reading the log sees "still on version 1" rather than "contract drift".
+ * fields; `3` adds `latest_recorded_day`. REJECTED rather than logged when it disagrees: a
+ * version-1 body carries no `withheld_reason` at all, and reading that silence as "every lane's
+ * index is healthy" is exactly the fail-open this decode exists to close. A serving side that has
+ * not been redeployed yet must blank the slider, not quietly narrow it. The rejection lives in
+ * `decodeCoverage` and names the number, so the operator reading the log sees "still on version 2"
+ * rather than "contract drift" -- which is the whole value of the bump during the deploy window,
+ * since a version-2 body cannot state which of its days were carried and which were published.
  */
-const COVERAGE_SCHEMA_VERSION = 2;
+const COVERAGE_SCHEMA_VERSION = 3;
 
 const wireCoverageSchema = z.object({
   // Decoded as a plain integer and gated separately in `decodeCoverage`, not pinned with
@@ -445,6 +471,7 @@ const wireCoverageSchema = z.object({
       zoom: wireZoomTierSchema,
       earliest_day: wireCalendarDaySchema.nullable(),
       latest_day: wireCalendarDaySchema.nullable(),
+      latest_recorded_day: wireCalendarDaySchema.nullable(),
       published_ranges: z.array(wireDayRangeSchema),
       gap_ranges: z.array(wireDayRangeSchema),
       governed_absence_ranges: z.array(wireDayRangeSchema),
@@ -616,6 +643,7 @@ function decodeCoverage(payload: unknown): ParquetWarehouseCoverage {
       zoomTier: lane.zoom,
       earliestDay: lane.earliest_day,
       latestDay: lane.latest_day,
+      latestRecordedDay: lane.latest_recorded_day,
       publishedRanges: lane.published_ranges,
       gapRanges: lane.gap_ranges,
       governedAbsenceRanges: lane.governed_absence_ranges,

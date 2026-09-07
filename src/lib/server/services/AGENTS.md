@@ -50,12 +50,39 @@ and an operator reading a withheld proof should be able to grep the serving side
 string. Precedence, when rungs disagree, is the wire's own declaration order
 (`PARQUET_AVAILABILITY_WITHHELD_REASONS`) — one list, so there is no second ordering to diverge.
 
-## §source-ceiling — withheld, never clamped
+## §source-ceiling — withheld, never clamped, and weighed against the RECORDED day
 
-`sourceCeilingDay` is the newest day the **source** can offer; `latestDay` is what the warehouse
-**holds**. A rung holding a day past its own source's ceiling is wrong about something — a
+`sourceCeilingDay` is the newest day the **source** can offer. The warehouse states two upper
+edges against it, and which one the gate reads is load-bearing:
+
+- `latestDay` — the newest day the rung can **answer**, carry included. On a bounded-carry release
+  lane (`parquet_ops/coverage.BOUNDED_CARRY_RELEASE_LAYERS`, drought and only drought) a release
+  published on the 18th is what a reader draws on the 24th, so `latestDay` is the 24th and
+  `publishedRanges` runs there too.
+- `latestRecordedDay` — the newest day the rung actually **wrote**. The same day as `latestDay` on
+  every lane that does not carry.
+
+A rung claiming to have RECORDED a day past its own source's ceiling is wrong about something — a
 mislabelled partition, a clock skew, a forecast row written into an observed stream — and the
 capability is withheld with `ceiling_violation` rather than clamped to the ceiling.
+
+**The gate reads `latestRecordedDay`, and it did not always.** Until 2026-09-07 it weighed
+`latestDay`, which is a read-through and not a publication claim. Drought's ceiling is
+`today - 4` and its newest release carries for 14 days; the contradiction stayed latent only while
+no release was recent enough for the carry to cross the lag. `drought-direct-forward` published one
+that afternoon, the carried edge went four days past the ceiling, and a layer that had served 1,470
+days that morning was withheld for behaving exactly as its contract specifies.
+
+Two fixes were rejected in getting here. Clamping the carry server-side moves a release lane's
+`latestDay` back by its own publication lag the moment the availability authority takes over — the
+same lane, the same days, a shorter axis — and `close_lane_coverage`'s docstring argues the point
+at length. Hard-coding the bounded-carry layer set on this side puts "drought carries for fourteen
+days" in two languages, and the copy drifts. The client learns the distinction from the wire.
+
+The check did not go soft. Every genuinely written day is in `latestRecordedDay` whether the lane
+carries or not, and a day the carry cannot even reach — a December partition written in August —
+drops out of `publishedRanges` entirely and survives ONLY there, so a mislabelled partition still
+withholds on a carry lane and on a daily lane alike.
 
 Clamping was considered and rejected. It produces a plausible axis out of a lane that has just
 demonstrated it disagrees with its own source, and a lane that is wrong at the live edge has not

@@ -95,6 +95,9 @@ def test_the_census_renderer_reproduces_the_frozen_payload_byte_for_byte() -> No
             zoom=validate_zoom_tier(int(lane["zoom"])),
             earliest_day=None if lane["earliest_day"] is None else date.fromisoformat(str(lane["earliest_day"])),
             latest_day=None if lane["latest_day"] is None else date.fromisoformat(str(lane["latest_day"])),
+            latest_recorded_day=(
+                None if lane["latest_recorded_day"] is None else date.fromisoformat(str(lane["latest_recorded_day"]))
+            ),
             published_ranges=tuple(_range(entry) for entry in lane["published_ranges"]),
             gap_ranges=tuple(_range(entry) for entry in lane["gap_ranges"]),
             governed_absence_ranges=tuple(_range(entry) for entry in lane["governed_absence_ranges"]),
@@ -172,6 +175,63 @@ def test_a_healthy_release_carries_through_the_current_sunday() -> None:
     assert censused.latest_day == date(2026, 8, 23)
     assert censused.published_ranges == (DayRange(first_day=date(2026, 8, 18), last_day=date(2026, 8, 23)),)
     assert censused.gap_ranges == ()
+
+
+def test_a_carried_release_states_the_day_it_was_actually_written_beside_the_day_it_answers() -> None:
+    """The carry is a READ-THROUGH, and the row must not let it be read as a publication claim.
+
+    A client judging freshness against `source_ceiling_day` has to weigh the recorded day, not the
+    carried edge: on 2026-09-07 the carried edge crossed drought's own four-day publication lag and
+    the slider withheld the layer for behaving exactly as its contract specifies.
+    """
+    listing = FakeListing()
+    listing.write_day("drought", "observed", SEEDED_TIER, date(2026, 8, 18))
+
+    censused = build_lane_coverage(listing, lane=DROUGHT_LANE, tier=SEEDED_TIER, today=date(2026, 8, 23))
+
+    assert censused.latest_day == date(2026, 8, 23), "the carried day a reader may still draw"
+    assert censused.latest_recorded_day == date(2026, 8, 18), "the day the source actually published"
+
+
+def test_a_daily_series_records_every_day_it_holds_so_both_edges_are_the_same_day() -> None:
+    """Nothing carries on a daily lane, so the new field must not invent a second, softer edge."""
+    listing = FakeListing()
+    for day in (date(2026, 8, 20), date(2026, 8, 21), date(2026, 8, 22)):
+        listing.write_day("signal", "observed", SEEDED_TIER, day)
+
+    censused = build_lane_coverage(listing, lane=SIGNAL_LANE, tier=SEEDED_TIER, today=date(2026, 8, 22))
+
+    assert censused.latest_day == date(2026, 8, 22)
+    assert censused.latest_recorded_day == censused.latest_day
+
+
+def test_a_never_written_rung_records_no_day_at_either_edge() -> None:
+    """`null` bounds must stay null together: one edge stated and the other not is unreadable."""
+    listing = FakeListing()
+
+    censused = build_lane_coverage(listing, lane=SIGNAL_LANE, tier=SEEDED_TIER, today=date(2026, 8, 22))
+
+    assert censused.latest_day is None
+    assert censused.latest_recorded_day is None
+
+
+def test_a_release_written_past_its_own_carry_stays_visible_as_a_recorded_day() -> None:
+    """THE CHECK THAT MUST NOT GO VACUOUS: a mislabelled partition is dropped from the carry.
+
+    A day the carry cannot reach never enters `published_ranges`, so `latest_day` alone would hide
+    it entirely and a client could not tell a lane writing December releases in August from a
+    healthy one. `latest_recorded_day` is what keeps that visible, and it sits ABOVE the carried
+    edge here -- the one direction the two fields are not ordered.
+    """
+    listing = FakeListing()
+    listing.write_day("drought", "observed", SEEDED_TIER, date(2026, 8, 18))
+    listing.write_day("drought", "observed", SEEDED_TIER, date(2026, 12, 25))
+
+    censused = build_lane_coverage(listing, lane=DROUGHT_LANE, tier=SEEDED_TIER, today=date(2026, 8, 23))
+
+    assert censused.latest_day == date(2026, 8, 23), "the mislabelled release is unreachable by carry"
+    assert censused.published_ranges == (DayRange(first_day=date(2026, 8, 18), last_day=date(2026, 8, 23)),)
+    assert censused.latest_recorded_day == date(2026, 12, 25), "and the census still states that it exists"
 
 
 def test_the_latest_governed_release_absence_uses_live_carry_then_becomes_historical() -> None:

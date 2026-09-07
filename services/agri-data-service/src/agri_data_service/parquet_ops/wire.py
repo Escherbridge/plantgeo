@@ -40,8 +40,10 @@ STATE_LANE_NEVER_WRITTEN: Final = "lane_never_written"
 
 #: The census payload's contract version. Bump whenever a coverage row gains, loses or re-means a
 #: field, so a client reading a cached body can tell which shape it holds. `1` was the field set
-#: frozen before availability indexes existed; `2` adds the six availability-provenance fields.
-COVERAGE_SCHEMA_VERSION: Final = 2
+#: frozen before availability indexes existed; `2` adds the six availability-provenance fields;
+#: `3` adds `latest_recorded_day`, which splits a release lane's CARRIED edge from its newest
+#: genuinely written day so a client can judge each against the thing that bounds it.
+COVERAGE_SCHEMA_VERSION: Final = 3
 
 #: Which evidence proved one coverage row. `availability` is one pointer GET plus one bounded
 #: generation GET; `census` is the whole-stream object listing the availability artifact replaces.
@@ -241,6 +243,17 @@ class LaneCoverage:
     zoom: ZoomTier
     earliest_day: date | None
     latest_day: date | None
+    #: The newest day this rung actually WROTE a readable partition for, which is not always the
+    #: newest day it can answer. A bounded-carry release lane reports its carried read-through edge
+    #: as `latest_day` and folds that carry into `published_ranges`, so those two state what a
+    #: reader may draw and this one states what the source is known to have published. They are the
+    #: same day on every lane that does not carry, and `None` exactly when `latest_day` is `None`.
+    #:
+    #: The distinction is load-bearing, not decorative: `source_ceiling_day` bounds PUBLICATION, and
+    #: judging a carried read-through against it withholds a lane that is behaving exactly as its
+    #: contract says (see `parquet_ops/coverage.close_lane_coverage`). Only the earliest edge needs
+    #: no twin -- the carry extends a release forward only, so `earliest_day` is already recorded.
+    latest_recorded_day: date | None
     published_ranges: tuple[DayRange, ...]
     gap_ranges: tuple[DayRange, ...]
     governed_absence_ranges: tuple[DayRange, ...]
@@ -264,6 +277,7 @@ class LaneCoverage:
             "zoom": self.zoom,
             "earliest_day": None if self.earliest_day is None else render_day(self.earliest_day),
             "latest_day": None if self.latest_day is None else render_day(self.latest_day),
+            "latest_recorded_day": None if self.latest_recorded_day is None else render_day(self.latest_recorded_day),
             "published_ranges": [entry.to_wire() for entry in self.published_ranges],
             "gap_ranges": [entry.to_wire() for entry in self.gap_ranges],
             "governed_absence_ranges": [entry.to_wire() for entry in self.governed_absence_ranges],

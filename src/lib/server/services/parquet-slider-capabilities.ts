@@ -435,17 +435,27 @@ function rowRequiredRungs(entries: readonly ParquetLaneCoverage[]): ZoomTier[] {
 }
 
 /**
- * A rung `proveCapability`'s `invalid_rung_bounds` check has already cleared, so both of its days
- * are known present.
+ * A rung `proveCapability`'s `invalid_rung_bounds` check has already cleared, so all THREE of its
+ * days are known present.
  *
  * The narrowing exists so the readers below state that guarantee in the type instead of restating
  * it as a non-null assertion at each use. Six assertions meant six independent bets that a check
  * forty lines above still ran first; `hasReadableBounds` is the one place the bet is made.
+ *
+ * `latestRecordedDay` joined the trio rather than being read as an optional extra: the serving
+ * side nulls all three together or none of them (`parquet_ops/coverage._bounded`), so a row that
+ * states an answerable edge and withholds its recorded edge is incoherent, and the alternatives --
+ * skipping the ceiling check for it, or falling back to `latestDay` -- are respectively a
+ * fail-open and a silent return of the bug this field exists to fix.
  */
-type BoundedLaneCoverage = ParquetLaneCoverage & { earliestDay: string; latestDay: string };
+type BoundedLaneCoverage = ParquetLaneCoverage & {
+  earliestDay: string;
+  latestDay: string;
+  latestRecordedDay: string;
+};
 
 function hasReadableBounds(entry: ParquetLaneCoverage): entry is BoundedLaneCoverage {
-  return entry.earliestDay !== null && entry.latestDay !== null;
+  return entry.earliestDay !== null && entry.latestDay !== null && entry.latestRecordedDay !== null;
 }
 
 function intersectingBounds(entries: readonly BoundedLaneCoverage[]): {
@@ -832,6 +842,10 @@ function proveCapability(
         entry.kind !== "observed" ||
         entry.earliestDay === null ||
         entry.latestDay === null ||
+        // A row that can answer a day but names no day it wrote describes nothing this gate can
+        // weigh. Refused here as unusable bounds rather than waved through, so the ceiling check
+        // below never has to invent a day to compare.
+        entry.latestRecordedDay === null ||
         entry.earliestDay > entry.latestDay
     )
     .map((entry) => ({ parquetLane: entry.layer, zoomTier: entry.zoomTier }));
@@ -842,12 +856,28 @@ function proveCapability(
   // `invalid_rung_bounds` having returned already.
   const boundedEntries = exactEntries.filter(hasReadableBounds);
 
-  // Withheld rather than clamped. A rung holding a day its own source cannot have published is
-  // wrong about something -- a mislabelled partition, a clock skew, a forecast row in an observed
-  // stream -- and a lane that disagrees with its source at the live edge has not earned belief on
-  // the days below it either. Clamping would hide the disagreement behind a plausible axis.
+  // Withheld rather than clamped. A rung claiming to have RECORDED a day its own source cannot
+  // have published is wrong about something -- a mislabelled partition, a clock skew, a forecast
+  // row in an observed stream -- and a lane that disagrees with its source at the live edge has not
+  // earned belief on the days below it either. Clamping would hide the disagreement behind a
+  // plausible axis.
+  //
+  // `latestRecordedDay`, NOT `latestDay`, and the difference is the whole point of the check.
+  // `sourceCeilingDay` is `today - publication_lag_days`: it bounds what the source can have
+  // PUBLISHED. A bounded-carry release lane answers past it by contract -- drought's map for the
+  // 18th is what a reader draws on the 24th, and the ceiling sits one lag behind that -- so
+  // weighing the carried edge here withholds a lane for doing exactly what it promised, which is
+  // what blanked `drought-areas` on 2026-09-07 the day a release landed recent enough for its
+  // fourteen-day carry to cross its four-day lag.
+  //
+  // The check does NOT go soft. Every genuinely written day is still in `latestRecordedDay`,
+  // carry or no carry, and a day the carry cannot even reach (a December partition written in
+  // August) leaves `publishedRanges` entirely and survives ONLY there -- so the mislabelled
+  // partition and the forecast row still trip this, on a carry lane and a daily lane alike.
   const beyondCeiling = boundedEntries
-    .filter((entry) => entry.sourceCeilingDay !== null && entry.latestDay > entry.sourceCeilingDay)
+    .filter(
+      (entry) => entry.sourceCeilingDay !== null && entry.latestRecordedDay > entry.sourceCeilingDay
+    )
     .map((entry) => ({ parquetLane: entry.layer, zoomTier: entry.zoomTier }));
   if (beyondCeiling.length > 0) return missing(contract, "ceiling_violation", beyondCeiling);
 

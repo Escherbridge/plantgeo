@@ -161,6 +161,13 @@ def close_lane_coverage(  # noqa: PLR0913 - one already-proven fact about the la
     release lane's `latest_day` BACK by its own publication lag the moment the availability
     authority took over -- the same lane, the same days, a shorter axis. `None` means "the horizon",
     which is what the census wants: there, the horizon already IS today.
+
+    Because the carry is real, `latest_day` is NOT a publication claim on a bounded-carry lane, and
+    the row states the publication claim separately as `latest_recorded_day` -- `max(days.data)`,
+    the newest day this rung was actually written for, before any carry. That is the day a reader
+    may judge against `source_ceiling_day`; judging the carried edge against it withheld drought
+    from the live map on 2026-09-07 for doing exactly what this docstring specifies. The two fields
+    are the same day on every lane that does not carry, so nothing but a carry lane can diverge.
     """
     carry_edge = horizon if carry_horizon is None else carry_horizon
     data_days = set(days.data)
@@ -216,6 +223,11 @@ def close_lane_coverage(  # noqa: PLR0913 - one already-proven fact about the la
             zoom=tier,
             earliest_day=min(published_days),
             latest_day=max(published_days),
+            # THE ONE ROW WHERE THESE TWO DIVERGE. `latest_day` is the carried read-through edge;
+            # this is the newest release actually on the store, and it can even sit ABOVE the
+            # carried edge -- a partition mislabelled past the carry horizon is dropped from
+            # `published_days` and stays visible here, which is what keeps a ceiling check honest.
+            latest_recorded_day=max(data_days),
             published_ranges=contiguous_ranges(published_days),
             gap_ranges=contiguous_ranges(
                 _owed_but_unwritten(
@@ -235,6 +247,8 @@ def close_lane_coverage(  # noqa: PLR0913 - one already-proven fact about the la
         zoom=tier,
         earliest_day=earliest_day,
         latest_day=latest_day,
+        # Nothing carries here, so the newest day held and the newest day recorded are one day.
+        latest_recorded_day=latest_day,
         published_ranges=contiguous_ranges(data_days),
         gap_ranges=contiguous_ranges(
             _owed_but_unwritten(
@@ -542,7 +556,12 @@ def _bounded(
     latest_day: date | None,
     published_ranges: tuple[DayRange, ...],
 ) -> LaneCoverage:
-    """One lane's census with bounds and NO ranges: nothing between those bounds was ever owed."""
+    """One lane's census with bounds and NO ranges: nothing between those bounds was ever owed.
+
+    Every caller reaches here with a `latest_day` that is `max(days.data)` or `None` -- a never
+    written rung, a version-stamped `static_lookup`, or a carry lane whose releases all fell off
+    their carry -- so no carried day can be present and `latest_recorded_day` IS `latest_day`.
+    """
     return LaneCoverage(
         layer=lane.layer,
         nature=lane.nature,
@@ -550,6 +569,7 @@ def _bounded(
         zoom=tier,
         earliest_day=earliest_day,
         latest_day=latest_day,
+        latest_recorded_day=latest_day,
         published_ranges=published_ranges,
         gap_ranges=(),
         governed_absence_ranges=(),

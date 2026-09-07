@@ -5,7 +5,7 @@ import {
   climateFieldStreamName,
 } from "@/lib/environmental/climate-field";
 import { UpstreamHttpError } from "@/lib/server/http/bounded-upstream";
-import type { ParquetAvailabilityWithheldReason } from "@/lib/server/services/parquet-plane-client";
+import type { ParquetLaneCoverage } from "@/lib/server/services/parquet-plane-client";
 
 const mocks = vi.hoisted(() => ({
   getParquetWarehouseCoverage: vi.fn(),
@@ -76,23 +76,15 @@ const baseCapability = (layerName: string) => ({
   minimumDailyObservationCount: 1,
 });
 
-type CoverageRow = {
-  layer: string;
-  nature: "daily_series" | "release_series" | "static_lookup";
-  kind: "observed";
-  zoomTier: ZoomTier;
-  earliestDay: string | null;
-  latestDay: string | null;
-  publishedRanges: Array<{ from: string; to: string }>;
-  gapRanges: Array<{ from: string; to: string }>;
-  governedAbsenceRanges: Array<{ from: string; to: string }>;
-  coverageAuthority: "availability" | "census";
-  availabilityGenerationSha256: string | null;
-  availabilityPointerKey: string | null;
-  sourceCeilingDay: string | null;
-  requiredRungs: readonly ZoomTier[];
-  withheldReason: ParquetAvailabilityWithheldReason | null;
-};
+/**
+ * A row the decoder could really have produced, narrowed to the `observed` kind these tests use.
+ *
+ * Intersected with the exported `ParquetLaneCoverage` rather than hand-copied from it, which is
+ * what a hand copy cost once already: `latestRecordedDay` reached the gate while a restated shape
+ * here would have kept every fixture silently one field short of the wire, and the suite would
+ * have passed on evidence no client ever receives.
+ */
+type CoverageRow = ParquetLaneCoverage & { kind: "observed" };
 
 /** A healthy, index-backed lane: the state every test starts from and then breaks one field of. */
 const AVAILABILITY_EVIDENCE = {
@@ -110,6 +102,7 @@ const AVAILABILITY_EVIDENCE = {
   | "zoomTier"
   | "earliestDay"
   | "latestDay"
+  | "latestRecordedDay"
   | "publishedRanges"
   | "gapRanges"
   | "governedAbsenceRanges"
@@ -141,6 +134,9 @@ function completeCoverage(): CoverageRow[] {
       zoomTier,
       earliestDay: FIRST_DAY,
       latestDay: LAST_DAY,
+      // Nothing carries in the baseline, so the day it answers and the day it wrote are one day.
+      // A carry lane is built by moving `latestDay` forward and leaving this one where it is.
+      latestRecordedDay: LAST_DAY,
       publishedRanges: [{ from: FIRST_DAY, to: LAST_DAY }],
       gapRanges: [],
       governedAbsenceRanges: [],
@@ -151,7 +147,7 @@ function completeCoverage(): CoverageRow[] {
 
 function setCoverage(lanes: CoverageRow[]): void {
   mocks.getParquetWarehouseCoverage.mockResolvedValue({
-    coverageSchemaVersion: 2,
+    coverageSchemaVersion: 3,
     generatedAt: "2026-08-28T12:00:00Z",
     evaluatedThroughDay: "2026-08-28",
     lanes,
@@ -384,6 +380,7 @@ describe("getParquetSliderCapabilities", () => {
       withLane(completeCoverage(), "burn-severity", {
         earliestDay: "2015-04-01",
         latestDay: "2024-08-22",
+        latestRecordedDay: "2024-08-22",
         publishedRanges: [
           { from: "2015-04-01", to: "2015-04-01" },
           { from: "2020-11-24", to: "2020-11-24" },
@@ -431,6 +428,7 @@ describe("getParquetSliderCapabilities", () => {
     const sparse = {
       earliestDay: "2015-04-01",
       latestDay: "2024-08-22",
+      latestRecordedDay: "2024-08-22",
       publishedRanges: [
         { from: "2015-04-01", to: "2015-04-01" },
         { from: "2020-11-24", to: "2020-11-24" },
@@ -494,7 +492,7 @@ describe("getParquetSliderCapabilities", () => {
     setCoverage(
       completeCoverage().map((entry) =>
         entry.layer === "climate-field-precipitation"
-          ? { ...entry, earliestDay: null, latestDay: null, publishedRanges: [] }
+          ? { ...entry, earliestDay: null, latestDay: null, latestRecordedDay: null, publishedRanges: [] }
           : entry
       )
     );
@@ -516,6 +514,7 @@ describe("getParquetSliderCapabilities", () => {
         ...entry,
         earliestDay: null,
         latestDay: null,
+        latestRecordedDay: null,
         publishedRanges: [],
       }),
       reason: "rung_never_written",
@@ -523,6 +522,14 @@ describe("getParquetSliderCapabilities", () => {
     {
       name: "half-bounded",
       mutate: (entry: CoverageRow): CoverageRow => ({ ...entry, latestDay: null }),
+      reason: "invalid_rung_bounds",
+    },
+    {
+      // A rung that can answer a day but names no day it wrote. The serving side nulls all three
+      // bounds together or none, so this row is incoherent -- and the ceiling check has no day to
+      // weigh, which must fail closed rather than skip the rung or fall back to the carried edge.
+      name: "missing its recorded edge",
+      mutate: (entry: CoverageRow): CoverageRow => ({ ...entry, latestRecordedDay: null }),
       reason: "invalid_rung_bounds",
     },
   ] as const)("withholds a direct lane whose z0 evidence is $name", async ({ mutate, reason }) => {
@@ -664,6 +671,7 @@ describe("getParquetSliderCapabilities", () => {
           return {
             ...entry,
             latestDay: "2026-08-18",
+            latestRecordedDay: "2026-08-18",
             publishedRanges: [{ from: FIRST_DAY, to: "2026-08-18" }],
           };
         }
@@ -674,6 +682,7 @@ describe("getParquetSliderCapabilities", () => {
           return {
             ...entry,
             latestDay: "2026-08-22",
+            latestRecordedDay: "2026-08-22",
             publishedRanges: [{ from: FIRST_DAY, to: "2026-08-22" }],
           };
         }
@@ -701,6 +710,7 @@ describe("getParquetSliderCapabilities", () => {
     setCoverage(
       withLane(completeCoverage(), "vegetation", {
         latestDay: "2026-08-18",
+        latestRecordedDay: "2026-08-18",
         publishedRanges: [{ from: FIRST_DAY, to: "2026-08-18" }],
         sourceCeilingDay: "2026-08-20",
       })
@@ -724,6 +734,7 @@ describe("getParquetSliderCapabilities", () => {
     setCoverage(
       withLane(completeCoverage(), "vegetation", {
         latestDay: "2026-08-18",
+        latestRecordedDay: "2026-08-18",
         publishedRanges: [{ from: FIRST_DAY, to: "2026-08-18" }],
         sourceCeilingDay: "2026-08-18",
       })
@@ -1053,6 +1064,91 @@ describe("getParquetSliderCapabilities", () => {
     ).toBe(LAST_DAY);
   });
 
+  /**
+   * THE 2026-09-07 REGRESSION, at this suite's clock. `drought-areas` served 1,470 days that
+   * morning and was withheld by the afternoon, because `drought-direct-forward` published a
+   * release recent enough for its fourteen-day carry to cross its four-day publication lag.
+   *
+   * Production measured `latest_day` 2026-09-07, `source_ceiling_day` 2026-09-03 and a newest
+   * written object of 2026-09-01: the carried edge four days above the ceiling, the recorded day
+   * two below it. Those offsets are reproduced here against `CENSUS_DAY`, and the carry is folded
+   * into `publishedRanges` exactly as the serving side folds it.
+   */
+  it("serves a release lane carrying past its own ceiling, with the axis still ending at the carried day", async () => {
+    setCoverage(
+      withLane(completeCoverage(), "drought", {
+        latestDay: "2026-08-28",
+        latestRecordedDay: "2026-08-22",
+        sourceCeilingDay: "2026-08-24",
+        publishedRanges: [{ from: FIRST_DAY, to: "2026-08-28" }],
+      })
+    );
+
+    const result = await getParquetSliderCapabilities();
+
+    expect(
+      result.withheldParquetCapabilities.some((entry) => entry.layerName === "drought-areas")
+    ).toBe(false);
+    expect(result.layers.find((layer) => layer.layerName === "drought-areas")).toMatchObject({
+      earliestObservedDate: FIRST_DAY,
+      // The carry is the FEATURE: a reader draws the 22nd's map on the 28th, so the axis has to
+      // reach the 28th. Clamping it to the ceiling would shorten the lane by its own lag.
+      latestObservedDate: "2026-08-28",
+      sourceCeilingDay: "2026-08-24",
+      coverageGaps: [],
+    });
+  });
+
+  /**
+   * The carry is not an exemption. A lane whose RECORDED day is past its ceiling is wrong about
+   * something whether or not it also carries, so this is the same violation as the vegetation
+   * case above, run on the one lane that could have talked its way out of it.
+   */
+  it("still withholds a carrying lane that recorded a day past its own ceiling", async () => {
+    setCoverage(
+      withLane(completeCoverage(), "drought", {
+        latestDay: "2026-08-28",
+        latestRecordedDay: "2026-08-27",
+        sourceCeilingDay: "2026-08-24",
+        publishedRanges: [{ from: FIRST_DAY, to: "2026-08-28" }],
+      })
+    );
+
+    const result = await getParquetSliderCapabilities();
+
+    expect(result.layers.some((layer) => layer.layerName === "drought-areas")).toBe(false);
+    expect(
+      result.withheldParquetCapabilities.find((entry) => entry.layerName === "drought-areas")
+    ).toMatchObject({ reason: "ceiling_violation" });
+  });
+
+  /**
+   * A lane that does not carry sees nothing change: its two edges are the same day, so the gate
+   * asks the identical question it asked before. Stated as a test because "the fix only touches
+   * carry lanes" is the claim a reviewer most needs held to.
+   */
+  it("leaves a non-carrying lane's proof exactly as it was", async () => {
+    setCoverage(
+      withLane(completeCoverage(), "vegetation", {
+        latestDay: "2026-08-18",
+        latestRecordedDay: "2026-08-18",
+        publishedRanges: [{ from: FIRST_DAY, to: "2026-08-18" }],
+        sourceCeilingDay: "2026-08-18",
+      })
+    );
+
+    const result = await getParquetSliderCapabilities();
+
+    expect(result.layers.find((layer) => layer.layerName === "vegetation")).toMatchObject({
+      earliestObservedDate: FIRST_DAY,
+      latestObservedDate: "2026-08-18",
+      coverageGaps: [],
+    });
+    expect(
+      result.withheldParquetCapabilities.some((entry) => entry.layerName === "vegetation")
+    ).toBe(false);
+  });
+
   it("surfaces the authority, the binding ceiling and the declared rungs on the published row", async () => {
     setCoverage(
       completeCoverage().map((entry) =>
@@ -1162,6 +1258,7 @@ function fireDetectionsLane(): {
   governedAbsenceRanges: Array<{ from: string; to: string }>;
   earliestDay: string;
   latestDay: string;
+  latestRecordedDay: string;
 } {
   const axisDays = 9_440;
   const firstEpoch = epochDay(CENSUS_DAY) - (axisDays - 1);
@@ -1192,6 +1289,7 @@ function fireDetectionsLane(): {
     governedAbsenceRanges,
     earliestDay: calendarDay(firstEpoch),
     latestDay: CENSUS_DAY,
+    latestRecordedDay: CENSUS_DAY,
   };
 }
 

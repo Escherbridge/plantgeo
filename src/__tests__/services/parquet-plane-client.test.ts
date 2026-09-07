@@ -327,7 +327,7 @@ describe("getParquetWarehouseCoverage", () => {
   const GENERATION_SHA256 = "a".repeat(64);
 
   const census = {
-    coverage_schema_version: 2,
+    coverage_schema_version: 3,
     generated_at: "2026-08-23T04:00:00+00:00",
     evaluated_through_day: "2026-08-23",
     lanes: [
@@ -338,6 +338,7 @@ describe("getParquetWarehouseCoverage", () => {
         zoom: 9,
         earliest_day: "2022-08-04",
         latest_day: "2026-08-14",
+        latest_recorded_day: "2026-08-14",
         published_ranges: [{ from: "2022-08-04", to: "2026-08-14" }],
         gap_ranges: [{ from: "2024-01-04", to: "2024-01-11" }],
         governed_absence_ranges: [{ from: "2025-12-25", to: "2025-12-25" }],
@@ -355,6 +356,7 @@ describe("getParquetWarehouseCoverage", () => {
         zoom: 9,
         earliest_day: null,
         latest_day: null,
+        latest_recorded_day: null,
         published_ranges: [],
         gap_ranges: [],
         governed_absence_ranges: [],
@@ -416,7 +418,7 @@ describe("getParquetWarehouseCoverage", () => {
 
     const coverage = await getParquetWarehouseCoverage();
 
-    expect(coverage.coverageSchemaVersion).toBe(2);
+    expect(coverage.coverageSchemaVersion).toBe(3);
     expect(coverage.generatedAt).toBe("2026-08-23T04:00:00+00:00");
     expect(coverage.evaluatedThroughDay).toBe("2026-08-23");
     expect(coverage.lanes[0]).toEqual({
@@ -426,6 +428,7 @@ describe("getParquetWarehouseCoverage", () => {
       zoomTier: 9,
       earliestDay: "2022-08-04",
       latestDay: "2026-08-14",
+      latestRecordedDay: "2026-08-14",
       publishedRanges: [{ from: "2022-08-04", to: "2026-08-14" }],
       gapRanges: [{ from: "2024-01-04", to: "2024-01-11" }],
       governedAbsenceRanges: [{ from: "2025-12-25", to: "2025-12-25" }],
@@ -436,7 +439,42 @@ describe("getParquetWarehouseCoverage", () => {
       requiredRungs: [0, 5, 9, 13],
       withheldReason: null,
     });
-    expect(coverage.lanes[1]).toMatchObject({ earliestDay: null, latestDay: null });
+    expect(coverage.lanes[1]).toMatchObject({
+      earliestDay: null,
+      latestDay: null,
+      latestRecordedDay: null,
+    });
+  });
+
+  /**
+   * A release lane answers past the day its source could have published, on purpose: the carry is
+   * a read-through, not a claim. The wire states both edges so the capability gate can weigh the
+   * recorded one against `sourceCeilingDay` -- weighing the carried one is what withheld
+   * `drought-areas` from the live map on 2026-09-07.
+   */
+  it("keeps a carried answerable edge distinct from the day the lane actually wrote", async () => {
+    mockedFetch.mockResolvedValue({
+      ...census,
+      lanes: [
+        {
+          ...census.lanes[0],
+          latest_day: "2026-08-21",
+          latest_recorded_day: "2026-08-14",
+          published_ranges: [{ from: "2022-08-04", to: "2026-08-21" }],
+        },
+      ],
+    });
+
+    const coverage = await getParquetWarehouseCoverage();
+
+    expect(coverage.lanes[0]).toMatchObject({
+      latestDay: "2026-08-21",
+      latestRecordedDay: "2026-08-14",
+      // The carry is FOLDED IN upstream, which is why `latestDay` alone cannot be read as a
+      // publication claim: the range says the same thing it does.
+      publishedRanges: [{ from: "2022-08-04", to: "2026-08-21" }],
+      sourceCeilingDay: "2026-08-14",
+    });
   });
 
   /**
@@ -521,6 +559,7 @@ describe("getParquetWarehouseCoverage", () => {
     "availability_generation_sha256",
     "availability_pointer_key",
     "source_ceiling_day",
+    "latest_recorded_day",
     "required_rungs",
     "withheld_reason",
   ])("rejects a coverage lane that omits %s rather than defaulting it", async (field) => {
@@ -868,7 +907,7 @@ describe("the frozen wire contract", () => {
       lanes: readonly Record<string, unknown>[];
     };
 
-    expect(raw.coverage_schema_version).toBe(2);
+    expect(raw.coverage_schema_version).toBe(3);
     for (const lane of raw.lanes) {
       expect(lane).toMatchObject({
         coverage_authority: "census",
@@ -885,7 +924,7 @@ describe("the frozen wire contract", () => {
 
     const coverage = await getParquetWarehouseCoverage();
 
-    expect(coverage.coverageSchemaVersion).toBe(2);
+    expect(coverage.coverageSchemaVersion).toBe(3);
     expect(coverage.lanes.every((lane) => lane.coverageAuthority === "census")).toBe(true);
     expect(coverage.lanes.every((lane) => lane.availabilityGenerationSha256 === null)).toBe(true);
     expect(coverage.lanes.every((lane) => lane.withheldReason === null)).toBe(true);
@@ -917,6 +956,18 @@ describe("the frozen wire contract", () => {
       withheldReason: null,
     });
     expect(coverage.evaluatedThroughDay).toBe("2026-08-25");
+
+    // The golden's carry lane, in the shape production held on 2026-09-07: one weekly release
+    // inside the ceiling, read-through carried four days past it to the census day. Both languages
+    // read these exact bytes, so this is where the two-edge rule is agreed rather than assumed.
+    expect(lane("drought", 13)).toMatchObject({
+      nature: "release_series",
+      sourceCeilingDay: "2026-08-21",
+      latestDay: "2026-08-25",
+      latestRecordedDay: "2026-08-18",
+      publishedRanges: [{ from: "2026-08-18", to: "2026-08-25" }],
+      withheldReason: null,
+    });
 
     expect(lane("burn-severity", 13)).toMatchObject({
       withheldReason: "availability_unpublished",

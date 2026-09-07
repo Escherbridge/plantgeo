@@ -1,11 +1,11 @@
 {
-  "coverage_schema_version": 2,
+  "coverage_schema_version": 3,
   "generated_at": "2026-08-25T04:00:00Z",
   "evaluated_through_day": "2026-08-25",
   "lanes": [
     {
       "layer": "signal", "nature": "daily_series", "kind": "observed", "zoom": 0,
-      "earliest_day": "2026-08-01", "latest_day": "2026-08-05",
+      "earliest_day": "2026-08-01", "latest_day": "2026-08-05", "latest_recorded_day": "2026-08-05",
       "published_ranges": [{"from": "2026-08-01", "to": "2026-08-05"}],
       "gap_ranges": [{"from": "2026-08-07", "to": "2026-08-07"}],
       "governed_absence_ranges": [{"from": "2026-08-06", "to": "2026-08-06"}],
@@ -16,7 +16,7 @@
     },
     {
       "layer": "signal", "nature": "daily_series", "kind": "observed", "zoom": 5,
-      "earliest_day": "2026-08-01", "latest_day": "2026-08-05",
+      "earliest_day": "2026-08-01", "latest_day": "2026-08-05", "latest_recorded_day": "2026-08-05",
       "published_ranges": [{"from": "2026-08-01", "to": "2026-08-05"}],
       "gap_ranges": [{"from": "2026-08-07", "to": "2026-08-07"}],
       "governed_absence_ranges": [{"from": "2026-08-06", "to": "2026-08-06"}],
@@ -27,7 +27,7 @@
     },
     {
       "layer": "signal", "nature": "daily_series", "kind": "observed", "zoom": 9,
-      "earliest_day": "2026-08-01", "latest_day": "2026-08-05",
+      "earliest_day": "2026-08-01", "latest_day": "2026-08-05", "latest_recorded_day": "2026-08-05",
       "published_ranges": [{"from": "2026-08-01", "to": "2026-08-05"}],
       "gap_ranges": [{"from": "2026-08-07", "to": "2026-08-07"}],
       "governed_absence_ranges": [{"from": "2026-08-06", "to": "2026-08-06"}],
@@ -38,7 +38,7 @@
     },
     {
       "layer": "signal", "nature": "daily_series", "kind": "observed", "zoom": 13,
-      "earliest_day": "2026-08-01", "latest_day": "2026-08-05",
+      "earliest_day": "2026-08-01", "latest_day": "2026-08-05", "latest_recorded_day": "2026-08-05",
       "published_ranges": [{"from": "2026-08-01", "to": "2026-08-05"}],
       "gap_ranges": [{"from": "2026-08-07", "to": "2026-08-07"}],
       "governed_absence_ranges": [{"from": "2026-08-06", "to": "2026-08-06"}],
@@ -48,8 +48,48 @@
       "required_rungs": [0, 5, 9, 13], "withheld_reason": null
     },
     {
+      "layer": "drought", "nature": "release_series", "kind": "observed", "zoom": 0,
+      "earliest_day": "2026-08-18", "latest_day": "2026-08-25", "latest_recorded_day": "2026-08-18",
+      "published_ranges": [{"from": "2026-08-18", "to": "2026-08-25"}],
+      "gap_ranges": [], "governed_absence_ranges": [],
+      "coverage_authority": "availability", "availability_generation_sha256": "9b1f0c4d2a7e63518c0dfb2e94a7150c3d6b8e2f41905ac7db3e6f82c150a4d7",
+      "availability_pointer_key": "layer=drought/kind=observed/availability/_LATEST.json",
+      "source_ceiling_day": "2026-08-21",
+      "required_rungs": [0, 5, 9, 13], "withheld_reason": null
+    },
+    {
+      "layer": "drought", "nature": "release_series", "kind": "observed", "zoom": 5,
+      "earliest_day": "2026-08-18", "latest_day": "2026-08-25", "latest_recorded_day": "2026-08-18",
+      "published_ranges": [{"from": "2026-08-18", "to": "2026-08-25"}],
+      "gap_ranges": [], "governed_absence_ranges": [],
+      "coverage_authority": "availability", "availability_generation_sha256": "9b1f0c4d2a7e63518c0dfb2e94a7150c3d6b8e2f41905ac7db3e6f82c150a4d7",
+      "availability_pointer_key": "layer=drought/kind=observed/availability/_LATEST.json",
+      "source_ceiling_day": "2026-08-21",
+      "required_rungs": [0, 5, 9, 13], "withheld_reason": null
+    },
+    {
+      "layer": "drought", "nature": "release_series", "kind": "observed", "zoom": 9,
+      "earliest_day": "2026-08-18", "latest_day": "2026-08-25", "latest_recorded_day": "2026-08-18",
+      "published_ranges": [{"from": "2026-08-18", "to": "2026-08-25"}],
+      "gap_ranges": [], "governed_absence_ranges": [],
+      "coverage_authority": "availability", "availability_generation_sha256": "9b1f0c4d2a7e63518c0dfb2e94a7150c3d6b8e2f41905ac7db3e6f82c150a4d7",
+      "availability_pointer_key": "layer=drought/kind=observed/availability/_LATEST.json",
+      "source_ceiling_day": "2026-08-21",
+      "required_rungs": [0, 5, 9, 13], "withheld_reason": null
+    },
+    {
+      "layer": "drought", "nature": "release_series", "kind": "observed", "zoom": 13,
+      "earliest_day": "2026-08-18", "latest_day": "2026-08-25", "latest_recorded_day": "2026-08-18",
+      "published_ranges": [{"from": "2026-08-18", "to": "2026-08-25"}],
+      "gap_ranges": [], "governed_absence_ranges": [],
+      "coverage_authority": "availability", "availability_generation_sha256": "9b1f0c4d2a7e63518c0dfb2e94a7150c3d6b8e2f41905ac7db3e6f82c150a4d7",
+      "availability_pointer_key": "layer=drought/kind=observed/availability/_LATEST.json",
+      "source_ceiling_day": "2026-08-21",
+      "required_rungs": [0, 5, 9, 13], "withheld_reason": null
+    },
+    {
       "layer": "burn-severity", "nature": "release_series", "kind": "observed", "zoom": 0,
-      "earliest_day": null, "latest_day": null, "published_ranges": [],
+      "earliest_day": null, "latest_day": null, "latest_recorded_day": null, "published_ranges": [],
       "gap_ranges": [], "governed_absence_ranges": [],
       "coverage_authority": "availability", "availability_generation_sha256": null,
       "availability_pointer_key": "layer=burn-severity/kind=observed/availability/_LATEST.json",
@@ -58,7 +98,7 @@
     },
     {
       "layer": "burn-severity", "nature": "release_series", "kind": "observed", "zoom": 5,
-      "earliest_day": null, "latest_day": null, "published_ranges": [],
+      "earliest_day": null, "latest_day": null, "latest_recorded_day": null, "published_ranges": [],
       "gap_ranges": [], "governed_absence_ranges": [],
       "coverage_authority": "availability", "availability_generation_sha256": null,
       "availability_pointer_key": "layer=burn-severity/kind=observed/availability/_LATEST.json",
@@ -67,7 +107,7 @@
     },
     {
       "layer": "burn-severity", "nature": "release_series", "kind": "observed", "zoom": 9,
-      "earliest_day": null, "latest_day": null, "published_ranges": [],
+      "earliest_day": null, "latest_day": null, "latest_recorded_day": null, "published_ranges": [],
       "gap_ranges": [], "governed_absence_ranges": [],
       "coverage_authority": "availability", "availability_generation_sha256": null,
       "availability_pointer_key": "layer=burn-severity/kind=observed/availability/_LATEST.json",
@@ -76,7 +116,7 @@
     },
     {
       "layer": "burn-severity", "nature": "release_series", "kind": "observed", "zoom": 13,
-      "earliest_day": null, "latest_day": null, "published_ranges": [],
+      "earliest_day": null, "latest_day": null, "latest_recorded_day": null, "published_ranges": [],
       "gap_ranges": [], "governed_absence_ranges": [],
       "coverage_authority": "availability", "availability_generation_sha256": null,
       "availability_pointer_key": "layer=burn-severity/kind=observed/availability/_LATEST.json",

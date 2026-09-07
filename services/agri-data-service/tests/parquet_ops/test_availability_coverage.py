@@ -86,6 +86,12 @@ OTHER_DIGEST: Final = "1c2d3e4f5061728394a5b6c7d8e9f0011223344556677889900aabbcc
 #: The fixture's proven lane: five published days, one governed absence, one owed-and-missing day.
 CEILING: Final = date(2026, 8, 7)
 
+#: The golden's CARRY lane, at production's own numbers: one weekly release inside the ceiling,
+#: read-through carried to the census day four days above it. `NOW - publication_lag_days` is the
+#: ceiling exactly as the publisher computes it, so the fixture cannot drift from the real rule.
+GOLDEN_DROUGHT_RELEASE: Final = date(2026, 8, 18)
+GOLDEN_DROUGHT_CEILING: Final = date(2026, 8, 21)
+
 #: The rung the disagreement tests break, chosen to be the most detailed one a slider would want.
 FINEST_RUNG: Final = 13
 
@@ -298,7 +304,13 @@ def test_a_lane_root_is_the_stream_prefix_the_warehouse_already_writes() -> None
 
 
 def test_a_valid_index_reproduces_the_frozen_availability_payload() -> None:
-    """The golden must be REACHABLE from an index and a withholding, not merely well-shaped."""
+    """The golden must be REACHABLE from an index and a withholding, not merely well-shaped.
+
+    Its middle lane is drought in the shape production held on 2026-09-07: one release inside the
+    ceiling, carried past it to the census day. That is the row whose `latest_day` and
+    `latest_recorded_day` DIFFER, so the golden bytes both languages read state the difference
+    rather than leaving it to a unit test on one side of the wire.
+    """
     payload = golden()
     reader = ScriptedReader(
         {
@@ -307,10 +319,15 @@ def test_a_valid_index_reproduces_the_frozen_availability_payload() -> None:
                 published=[date(2026, 8, day) for day in range(1, 6)],
                 absent=[date(2026, 8, 6)],
             ),
+            "drought": whole_ladder(
+                DROUGHT_LANE,
+                published=[GOLDEN_DROUGHT_RELEASE],
+                source_ceiling=GOLDEN_DROUGHT_CEILING,
+            ),
             "burn-severity": AvailabilityUnavailableError("availability_missing", "no pointer"),
         }
     )
-    lanes = (SIGNAL_LANE, UNPUBLISHED_LANE)
+    lanes = (SIGNAL_LANE, DROUGHT_LANE, UNPUBLISHED_LANE)
 
     resolution = resolve_availability_lanes(reader, lanes=lanes, policy="availability", now=NOW)
     coverage = WarehouseCoverage(

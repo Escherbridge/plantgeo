@@ -43,8 +43,9 @@ COVERAGE_WITHHELD_REASONS = (
 )
 
 #: `1` was the field set frozen before availability indexes existed; `2` adds the six provenance
-#: fields below. A client reading a cached body uses this to tell which shape it holds.
-COVERAGE_SCHEMA_VERSION = 2
+#: fields below; `3` adds `latest_recorded_day`. A client reading a cached body uses this to tell
+#: which shape it holds.
+COVERAGE_SCHEMA_VERSION = 3
 
 #: `YYYY-MM-DD`, checked by shape only -- the server owns the calendar.
 CalendarDay = Annotated[str, Field(pattern=r"^\d{4}-\d{2}-\d{2}$")]
@@ -132,7 +133,13 @@ class WireCoverageLane(_Frozen):
     kind: Literal["observed", "forecast"]
     zoom: Literal[0, 5, 9, 13]
     earliest_day: CalendarDay | None
+    #: What the rung may ANSWER: on a bounded-carry release lane this is the carried read-through
+    #: edge, which sits ahead of the newest release by design.
     latest_day: CalendarDay | None
+    #: What the rung actually WROTE. Equal to `latest_day` on every lane that does not carry, and
+    #: the only one of the two a reader may weigh against `source_ceiling_day`, which bounds
+    #: publication rather than read-through.
+    latest_recorded_day: CalendarDay | None
     published_ranges: list[WireDayRange]
     gap_ranges: list[WireDayRange]
     governed_absence_ranges: list[WireDayRange]

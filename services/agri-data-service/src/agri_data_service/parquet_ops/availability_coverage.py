@@ -589,6 +589,7 @@ def withheld_lane_coverage(lane: CensusLane, *, reason: CoverageWithholding) -> 
             zoom=tier,
             earliest_day=None,
             latest_day=None,
+            latest_recorded_day=None,
             published_ranges=(),
             gap_ranges=(),
             governed_absence_ranges=(),

@@ -1109,6 +1109,7 @@ def _build_product_coverage(
                     zoom=tier,
                     earliest_day=None,
                     latest_day=None,
+                    latest_recorded_day=None,
                     published_ranges=(),
                     gap_ranges=(),
                     governed_absence_ranges=(),
@@ -1132,6 +1133,9 @@ def _build_product_coverage(
                 zoom=tier,
                 earliest_day=min(published_days) if published_days else None,
                 latest_day=max(published_days) if published_days else None,
+                # A snapshot product is `daily_series` and carries nothing: every published day here
+                # is a day some half of the product actually wrote, so held and recorded coincide.
+                latest_recorded_day=max(published_days) if published_days else None,
                 published_ranges=contiguous_ranges(published_days),
                 gap_ranges=_gap_ranges(accounted) if accounted else (),
                 governed_absence_ranges=contiguous_ranges(absence_days),
