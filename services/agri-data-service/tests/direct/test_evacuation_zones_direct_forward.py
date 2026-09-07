@@ -16,7 +16,6 @@ import pytest
 from agri_data_service.foundation.parquet.absence import GovernedAbsence
 from agri_data_service.foundation.parquet.completion import PartitionCompletion
 from agri_data_service.foundation.parquet.paths import absence_marker_path
-from agri_data_service.pipeline.direct.evacuation_zones.adapter import DirectEvacuationZonesError
 from agri_data_service.pipeline.direct.evacuation_zones.forward import (
     EVACUATION_ZONES_MAX_DAYS,
     EvacuationZonesForwardConfig,
@@ -39,6 +38,7 @@ from agri_data_service.pipeline.direct.evacuation_zones.rows import (
     split_into_parts,
 )
 from agri_data_service.pipeline.direct.evacuation_zones.source import EvacuationZonesSource
+from agri_data_service.pipeline.direct.evacuation_zones.watermark import EvacuationZonesWatermarkError
 from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 from tests.parquet.test_objectstore_writer import RecordingBackend
@@ -197,7 +197,10 @@ def test_a_version_carrying_both_data_and_an_absence_marker_is_refused_never_res
         content_type="application/json",
     )
 
-    with pytest.raises(DirectEvacuationZonesError, match="both a data partition and a governed-absence"):
+    # `EvacuationZonesWatermarkError` since 2026-09-06, not `DirectEvacuationZonesError`: this read
+    # moved into `watermark.py` so the registered resolver and this writer share one implementation,
+    # and that module may not import `adapter.py` (which imports the registry) without closing a cycle.
+    with pytest.raises(EvacuationZonesWatermarkError, match="both a data partition and a governed-absence"):
         read_published_snapshot(store)
 
 

@@ -34,8 +34,8 @@ from agri_data_service.pipeline.direct.evacuation_zones.products import (
 )
 from agri_data_service.pipeline.direct.evacuation_zones.rows import split_into_parts
 from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
+from agri_data_service.pipeline.parquet.derivation import ABSENCE_LADDER_TIERS, write_absence_ladder
 from agri_data_service.pipeline.parquet.lane_registry import normalise_export_outcome
-from agri_data_service.warehouse.parquet.tiers import DERIVED_ZOOM_TIERS
 
 if TYPE_CHECKING:
     from datetime import date
@@ -48,11 +48,13 @@ if TYPE_CHECKING:
     from agri_data_service.pipeline.parquet.lane_registry import LaneRunResult
     from agri_data_service.pipeline.parquet.objectstore import AbsenceWriteReceipt, ObjectStore
 
-#: Coarse rungs FIRST, the base rung LAST, matching `gap_fill.py::_ABSENCE_LADDER_TIERS` exactly: a
-#: ladder written in this order leaves an interrupted run's day `missing` rather than
-#: covered-but-empty above the base rung. Restated rather than imported because that name is private
-#: to `gap_fill.py`; the ORDER is the contract and it is asserted in this package's tests.
-_ABSENCE_LADDER_TIERS: Final[tuple[ZoomTier, ...]] = (*DERIVED_ZOOM_TIERS, LANE_BASE_ZOOM_TIER)
+#: Coarse rungs FIRST, the base rung LAST: a ladder written in this order leaves an interrupted run's
+#: day `missing` rather than covered-but-empty above the base rung. Now the SHARED constant rather
+#: than a restatement of it -- `derivation.ABSENCE_LADDER_TIERS` is what every lane writer marks, and
+#: this module's own pre-flight below must ask about exactly the rungs that writer will touch or the
+#: refusal it exists to raise could be skipped for a rung the write then hits anyway. The local name
+#: is kept because the ORDER is this package's contract and its tests assert it here.
+_ABSENCE_LADDER_TIERS: Final[tuple[ZoomTier, ...]] = ABSENCE_LADDER_TIERS
 
 
 class DirectEvacuationZonesError(RuntimeError):
@@ -101,21 +103,25 @@ class DirectEvacuationZonesAdapter:
         """Mark the WHOLE four-rung ladder absent, coarse rungs first and the base rung last.
 
         THE LADDER, NOT ONE RUNG, and the ordering is the safety property. `gap_fill.py`'s own
-        `_govern_absent_day` writes `_ABSENCE_LADDER_TIERS` (coarse first, base last) because an
-        interrupted run must leave the day `missing` rather than covered-but-empty above the base
-        rung. This adapter cannot reach that helper -- it is only entered via `EmptyPartitionError`,
-        and letting the empty table bubble there would publish that path's "THIS RUN DID NOT CONTACT
-        THE UPSTREAM SOURCE SYSTEM" sentence, which is false here -- so the ladder is written by hand,
-        in the same order, for the same reason.
+        `_govern_absent_day` writes coarse-first and base-last because an interrupted run must leave
+        the day `missing` rather than covered-but-empty above the base rung. This adapter cannot reach
+        that helper -- it is only entered via `EmptyPartitionError`, and letting the empty table bubble
+        there would publish that path's "THIS RUN DID NOT CONTACT THE UPSTREAM SOURCE SYSTEM" sentence,
+        which is false here -- so it writes the ladder through `derivation.write_absence_ladder`, which
+        is now the one implementation of that order and of the roll-back that protects it.
 
         A base-rung-only marker would be worse than cosmetic on this lane: `planes/evacuation_zones.py`
         resolves "as of" ONE TIER at a time, so a z9 rung left `missing` through a quiet spell answers
         a coarse-zoom viewport with the last snapshot that HAD zones -- stale evacuation levels drawn
         over a state that has stood down.
 
+        THE BLOCKED PRE-FLIGHT STAYS HERE rather than being left to the shared helper, which raises a
+        generic `GovernedAbsenceConflictError` for the same condition. On this lane the refusal has to
+        name the life-safety judgement below, so it is made first; the helper then re-checks the same
+        rungs and refuses again if anything landed in between.
+
         The base-rung receipt is returned because it is the rung `normalise_export_outcome` and every
-        downstream census key on; the coarse markers are written, recorded in the store's ledger, and
-        need no separate result.
+        downstream census key on; it is the LAST of the four, which is what makes `receipts[-1]` it.
         """
         blocked = tuple(
             (zoom, part)
@@ -145,18 +151,15 @@ class DirectEvacuationZonesAdapter:
                 "version (ObjectStore.retract_partition_tier) if the stand-down is real, and the "
                 "next tick republishes the zones by itself if the empty answer was not"
             )
-        absence = self._absence(run_id=run_id)
-        receipt: AbsenceWriteReceipt | None = None
-        for zoom in _ABSENCE_LADDER_TIERS:
-            receipt = store.write_absence(
-                absence,
-                layer=EVACUATION_ZONES_STREAM,
-                kind=EVACUATION_ZONES_DIRECT_KIND,
-                zoom=zoom,
-                day=day,
-            )
-        assert receipt is not None  # `_ABSENCE_LADDER_TIERS` is never empty
-        return receipt
+        receipts = write_absence_ladder(
+            store,
+            self._absence(run_id=run_id),
+            layer=EVACUATION_ZONES_STREAM,
+            kind=EVACUATION_ZONES_DIRECT_KIND,
+            day=day,
+            tiers=_ABSENCE_LADDER_TIERS,
+        )
+        return receipts[-1]
 
     def _absence(self, *, run_id: str) -> GovernedAbsence:
         """Record a quiet statewide day, citing THE UPSTREAM this run actually contacted.

@@ -69,11 +69,13 @@ if TYPE_CHECKING:
 #: either way; a sample is what makes a shortfall diagnosable without printing 651 keys.
 MISSING_SAMPLE_SIZE: Final = 25
 
-#: THE PREDICATES ARE TRANSCRIBED from `sql/pipeline/evacuation_zones_day_export.sql:79-82`, exactly
-#: as `lane_watermark_evacuation_zones.sql` transcribes them, and must stay transcribed: a parity
-#: query over a different population than the export wrote would either invent a shortfall or hide
-#: one. The `geo.layers` join is not optional -- `layer.name` and `layer.is_public` are two of the
-#: four predicates -- so this is two tables rather than the one `drought/parity.py` needed.
+#: THE PREDICATES ARE TRANSCRIBED from `sql/pipeline/evacuation_zones_day_export.sql:79-82`, and must
+#: stay transcribed: a parity query over a different population than the export wrote would either
+#: invent a shortfall or hide one. `lane_watermark_evacuation_zones.sql` transcribed the identical
+#: four predicates until it was deleted on 2026-09-06 with the watermark swap, so this is now the
+#: last reader of that population and the only place the transcription can still drift. The
+#: `geo.layers` join is not optional -- `layer.name` and `layer.is_public` are two of the four
+#: predicates -- so this is two tables rather than the one `drought/parity.py` needed.
 _POSTGRES_PUBLISHED_ZONES_SQL: Final = text(
     "SELECT feature.properties ->> 'globalId' AS global_id "
     "FROM geo.features AS feature "

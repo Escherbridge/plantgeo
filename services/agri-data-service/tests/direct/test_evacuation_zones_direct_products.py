@@ -21,10 +21,10 @@ from agri_data_service.pipeline.direct.evacuation_zones.products import (
     MAX_ROWS_PER_PART,
     EvacuationZonesCoverageError,
     bbox_unconfigured_reason,
-    evacuation_zones_lane_registration,
     refuse_uncovered_state,
     resolve_coverage_bbox,
 )
+from agri_data_service.pipeline.direct.evacuation_zones.registration import evacuation_zones_lane_registration
 from agri_data_service.planes.evacuation_zones import classify_evacuation_zones_coverage
 
 
@@ -65,11 +65,14 @@ def test_a_configured_bbox_is_still_policy_checked(monkeypatch: pytest.MonkeyPat
         resolve_coverage_bbox("-179,-89,179,89")
 
 
-def test_the_registration_this_writer_replaces_is_still_a_watermark_driven_static_lookup() -> None:
+def test_the_registration_this_writer_owns_is_a_watermark_driven_static_lookup() -> None:
     """`forward.py` reads the registered floor and hands `fill_one_lane_day` a `static_lookup` lane.
 
     Both facts are load-bearing: `LaneRegistration.__post_init__` REFUSES a `static_lookup` with no
     watermark, which is why `forward._captured_watermark` exists at all.
+
+    Read through `registration.py` rather than `products.py` since 2026-09-06: the registry now
+    imports this package for its watermark, so `products.py` may not import the registry back.
     """
     lane = evacuation_zones_lane_registration()
 

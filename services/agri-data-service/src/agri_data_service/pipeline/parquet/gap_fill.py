@@ -1716,6 +1716,25 @@ def _append_note(detail: str | None, note: str) -> str:
     return note if detail is None else f"{detail}; {note}"
 
 
+def _absence_reason_of_record(store: ObjectStore, slug: str, day: date) -> str:
+    """Return the reason the day's BASE marker actually carries, never a second guess at it.
+
+    THIS DRIVER IS NOT THE ONLY WRITER OF THIS NAMESPACE. Every `pipeline/direct/*` adapter writes
+    `kind="observed"` under the same `layer=<slug>/` prefix this lane fills, so a day marked absent
+    by a direct writer carries THAT lane's own sentence -- "the source served no fire detections in
+    the requested extent", say -- not this driver's zero-row phrasing. `availability_index.py:2320`
+    compares the two: `if absence.reason != evidence.absence_reason: raise AvailabilityConflictError`.
+    Synthesising the reason here therefore refused to index exactly the days the direct writers had
+    just governed, and did it in a `try` whose except keeps the day terminal -- so the failure showed
+    up as a missing index row and a note, never as a wrong answer, which is why it survived.
+
+    Falls back to the synthesised sentence only when no marker can be read, which is the case this
+    driver itself creates and the one `zero_row_absence_reason` was written for.
+    """
+    absence = store.read_absence(slug, GAP_FILL_PARTITION_KIND, GAP_FILL_ZOOM_TIER, day)
+    return zero_row_absence_reason(slug, day) if absence is None else absence.reason
+
+
 async def _extend_availability_for_result(  # noqa: PLR0913 - one coordinate of the finished day per arg
     session: AsyncSession,
     store: ObjectStore,
@@ -1765,7 +1784,9 @@ async def _extend_availability_for_result(  # noqa: PLR0913 - one coordinate of 
                 ),
                 published_at=published_at,
                 source_ceiling=source_ceiling,
-                absence_reason=(None if terminal_state == "published" else zero_row_absence_reason(lane.slug, day)),
+                absence_reason=(
+                    None if terminal_state == "published" else _absence_reason_of_record(store, lane.slug, day)
+                ),
             ),
             availability=availability_storage,
             now=now,

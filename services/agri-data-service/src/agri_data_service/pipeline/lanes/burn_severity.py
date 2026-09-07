@@ -16,6 +16,7 @@ from sqlalchemy import text
 from agri_data_service.db.sql_queries import load_query_sql
 from agri_data_service.foundation.parquet.absence import GovernedAbsence
 from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
+from agri_data_service.pipeline.parquet.derivation import govern_day_absent
 from agri_data_service.warehouse.schemas.burn_severity import BURN_SEVERITY_SCHEMA, BURN_SEVERITY_STREAM
 
 if TYPE_CHECKING:
@@ -66,9 +67,12 @@ async def export_burn_severity_release_day(
 ) -> tuple[ParquetWriteReceipt, ...] | AbsenceWriteReceipt:
     """Export one MTBS release day, spilling across `part-N` files when the cohort is large.
 
-    A release day the source cannot serve is recorded with `store.write_absence`, never written
-    as a zero-row `write_partition` call -- the writer refuses that outright
-    (`EmptyPartitionError`) precisely so an empty file can never masquerade as a settled day.
+    A release day the source cannot serve is recorded with `derivation.govern_day_absent`, never
+    written as a zero-row `write_partition` call -- the writer refuses that outright
+    (`EmptyPartitionError`) precisely so an empty file can never masquerade as a settled day. The
+    absence lands at ALL FOUR RUNGS with one piece of evidence and the BASE rung's receipt is
+    returned, because a base-only marker leaves a day no availability generation can carry; see
+    `pipeline/parquet/derivation.py`, "AN ABSENT DAY OWES ITS LADDER TOO".
     """
     table = await read_burn_severity_release_day(session, release_day=release_day)
     if table.num_rows == 0:
@@ -83,11 +87,11 @@ async def export_burn_severity_release_day(
             recorded_at=datetime.now(UTC),
             run_id=run_id,
         )
-        return store.write_absence(
+        return govern_day_absent(
+            store,
             absence,
             layer=BURN_SEVERITY_STREAM,
             kind="observed",
-            zoom=LANE_BASE_ZOOM_TIER,
             day=release_day,
         )
 

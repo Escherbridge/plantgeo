@@ -42,6 +42,7 @@ from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.lanes.fire_detections import FIRE_DETECTIONS_DIRECT_WRITER_START_DAY
 from agri_data_service.pipeline.parquet.availability_extension import AvailabilityExtensionTally
 from agri_data_service.pipeline.parquet.availability_index import BotoAvailabilityStorage
+from agri_data_service.pipeline.parquet.derivation import govern_day_absent
 from agri_data_service.pipeline.parquet.gap_fill import (
     _lane_day_lock_key,
     fill_one_lane_day,
@@ -123,7 +124,8 @@ class DirectFireDetectionsAdapter:
         self.source = source
         if source.table.num_rows == 0:
             return normalise_export_outcome(
-                store.write_absence(
+                govern_day_absent(
+                    store,
                     GovernedAbsence(
                         reason="the complete applicable-product FIRMS response held no detections for this day",
                         upstream_response=(
@@ -135,7 +137,6 @@ class DirectFireDetectionsAdapter:
                     ),
                     layer=FIRE_DETECTIONS_STREAM,
                     kind=FIRE_DIRECT_KIND,
-                    zoom=LANE_BASE_ZOOM_TIER,
                     day=day,
                 )
             )

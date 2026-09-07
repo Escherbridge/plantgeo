@@ -1,9 +1,9 @@
 """Publish one version of Oregon OEM's evacuation areas directly, when and only when it has changed.
 
 Bypasses PostgreSQL entirely: `pipeline/lanes/evacuation_zones.py::export_evacuation_zones_day` (the
-registered `_fill_evacuation_zones` adapter) reads `geo.features` and LEFT JOINs `geo.geometry`, and
-`ingest/evacuation_zones.py::run_evacuation_zones_ingestion_job` is what filled them. This module
-replaces both. PostgreSQL is still opened for ONE thing -- the shared session-scoped lane-day
+former `_fill_evacuation_zones` adapter, unregistered on 2026-09-06) reads `geo.features` and LEFT
+JOINs `geo.geometry`, and `ingest/evacuation_zones.py::run_evacuation_zones_ingestion_job` is what
+filled them. This module replaces both. PostgreSQL is still opened for ONE thing -- the shared session-scoped lane-day
 advisory lock -- which is coordination, not a data sink (`pipeline/direct/AGENTS.md`, header).
 
 HOW A VERSION STAMP IS DECIDED WITHOUT A POSTGRES WATERMARK, which is this lane's whole problem.
@@ -34,6 +34,12 @@ Three consequences worth stating, because they are improvements rather than comp
 - A version is never stamped from the cron's calendar. A tick that finds nothing changed writes
   nothing at all, so a tick the scheduler skipped still costs nothing, exactly as the watermark
   model promised.
+
+THE COMPARISON ITSELF NOW LIVES IN `watermark.py`, NOT HERE. On 2026-09-06 the registration's
+`watermark` field was swapped off Postgres onto that module, so the census and this writer had to
+start asking one question spelled one way -- `PublishedSnapshot` and `read_published_snapshot` moved
+there and are imported back here. This module keeps the TURN: what to do about the answer, under
+which lock, with which retries, and what to report.
 """
 
 from __future__ import annotations
@@ -54,12 +60,7 @@ from typing import TYPE_CHECKING, Final
 from agri_data_service.config import settings
 from agri_data_service.db.engine import local_source_loader_session
 from agri_data_service.foundation.parquet.lane_contract import SourceWatermark
-from agri_data_service.foundation.parquet.paths import (
-    completed_partition_days,
-    partition_day_statuses,
-    try_parse_absence_marker_path,
-    try_parse_partition_path,
-)
+from agri_data_service.foundation.parquet.paths import partition_day_statuses
 from agri_data_service.ingest.mtbs import inline_bbox_value
 from agri_data_service.pipeline.direct.evacuation_zones.adapter import (
     DirectEvacuationZonesAdapter,
@@ -70,18 +71,18 @@ from agri_data_service.pipeline.direct.evacuation_zones.products import (
     EVACUATION_ZONES_DIRECT_KIND,
     EVACUATION_ZONES_STREAM,
     bbox_unconfigured_reason,
-    evacuation_zones_lane_registration,
     refuse_uncovered_state,
     resolve_coverage_bbox,
 )
+from agri_data_service.pipeline.direct.evacuation_zones.registration import evacuation_zones_lane_registration
 from agri_data_service.pipeline.direct.evacuation_zones.rows import (
     apply_carried_forward_updated_at,
     content_digest,
     evacuation_zones_table,
     row_content_digests,
-    updated_at_by_natural_key,
 )
 from agri_data_service.pipeline.direct.evacuation_zones.source import fetch_evacuation_zones_snapshot
+from agri_data_service.pipeline.direct.evacuation_zones.watermark import PublishedSnapshot, read_published_snapshot
 from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.parquet.availability_extension import AvailabilityExtensionTally
 from agri_data_service.pipeline.parquet.availability_index import BotoAvailabilityStorage
@@ -93,7 +94,6 @@ from agri_data_service.pipeline.parquet.gap_fill import (
 )
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 from agri_data_service.warehouse.parquet.tiers import DERIVED_ZOOM_TIERS
-from agri_data_service.warehouse.schemas.evacuation_zones import EVACUATION_ZONES_SCHEMA
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Sequence
@@ -153,22 +153,6 @@ class EvacuationZonesForwardConfig:
     today: date | None = None
     bbox: str | None = None
     state: str = COVERED_STATE
-
-
-@dataclass(frozen=True, slots=True)
-class PublishedSnapshot:
-    """What this lane has already published: which version, and what that version actually holds.
-
-    `absent` is True for a version published as a GOVERNED ABSENCE -- a real, readable answer
-    ("Oregon published nothing") whose content is the empty set, which is why `digest` is still
-    populated for it and compares equal to the next quiet capture rather than reading as "unknown".
-    """
-
-    day: date
-    digest: str
-    row_digests: dict[str, str]
-    updated_at: dict[str, datetime]
-    absent: bool
 
 
 def emit(payload: dict[str, object]) -> None:
@@ -331,71 +315,6 @@ def _unchanged_row_stamps(table: pa.Table, published: PublishedSnapshot | None) 
         for natural_key, stamp in published.updated_at.items()
         if published.row_digests.get(natural_key) == current.get(natural_key)
     }
-
-
-def read_published_snapshot(store: ObjectStore) -> PublishedSnapshot | None:
-    """Read the newest version this lane has published at its base rung, or None if it has none.
-
-    LISTING FIRST, then at most one partition read. `layer-lanes.md` section 4's "gap detection that
-    opens files has misused the layout" still holds for GAP DETECTION; this is not gap detection but
-    a content comparison, and the only object that can answer it is the published snapshot itself.
-    One `read_partition` of a few hundred polygons is the entire cost, paid once per turn.
-
-    A day carrying BOTH data and an absence marker is a conflict, and it is refused rather than
-    resolved: for a version-stamped life-safety layer, silently preferring one of two contradictory
-    claims is precisely what `planes/evacuation_zones.py` returns `conflicted` rather than guess.
-    """
-    listed = store.list_partition_objects(EVACUATION_ZONES_STREAM, EVACUATION_ZONES_DIRECT_KIND, LANE_BASE_ZOOM_TIER)
-    part_days = {
-        parsed.day
-        for entry in listed
-        if (parsed := try_parse_partition_path(entry.relative_path)) is not None
-        and parsed.layer == EVACUATION_ZONES_STREAM
-        and parsed.kind == EVACUATION_ZONES_DIRECT_KIND
-        and parsed.zoom == LANE_BASE_ZOOM_TIER
-    }
-    marker_days = {
-        marker.day
-        for entry in listed
-        if (marker := try_parse_absence_marker_path(entry.relative_path)) is not None
-        and marker.layer == EVACUATION_ZONES_STREAM
-        and marker.kind == EVACUATION_ZONES_DIRECT_KIND
-        and marker.zoom == LANE_BASE_ZOOM_TIER
-    }
-    conflicts = part_days & marker_days
-    if conflicts:
-        raise DirectEvacuationZonesError(
-            f"evacuation-zones version(s) {sorted(day.isoformat() for day in conflicts)} carry both a data "
-            "partition and a governed-absence marker; refusing to pick a side for a life-safety layer"
-        )
-    complete_days = part_days & completed_partition_days(
-        (entry.relative_path for entry in listed),
-        layer=EVACUATION_ZONES_STREAM,
-        kind=EVACUATION_ZONES_DIRECT_KIND,
-        zoom=LANE_BASE_ZOOM_TIER,
-    )
-    newest = max(complete_days | marker_days, default=None)
-    if newest is None:
-        return None
-    if newest in marker_days:
-        # Published content is the EMPTY SET, and that is a real answer rather than a missing one:
-        # the marker says Oregon had nothing statewide. The next quiet capture digests identically
-        # and correctly publishes nothing.
-        return PublishedSnapshot(
-            day=newest,
-            digest=content_digest(EVACUATION_ZONES_SCHEMA.arrow_schema.empty_table()),
-            row_digests={},
-            updated_at={},
-            absent=True,
-        )
-    table = store.read_partition(EVACUATION_ZONES_STREAM, EVACUATION_ZONES_DIRECT_KIND, LANE_BASE_ZOOM_TIER, newest)
-    return PublishedSnapshot(
-        day=newest,
-        digest=content_digest(table),
-        row_digests=row_content_digests(table),
-        updated_at=updated_at_by_natural_key(table),
-        absent=False,
-    )
 
 
 async def _publish_version_with_retries(  # noqa: PLR0913 - one caller-supplied coordinate per arg
@@ -561,8 +480,10 @@ def _captured_watermark(source: EvacuationZonesSource, day: date) -> LaneWaterma
     `last_edited_date` -- report a change on essentially every export, because Oregon re-stamps that
     clock on unchanged areas every few minutes. Neither buys protection this writer needs.
 
-    Reads no database: the `session` and `store` arguments exist because the resolver protocol is
-    uniform across lanes whose clock IS in Postgres.
+    Reads no database, and neither does the registered resolver it stands in for any more: since the
+    2026-09-06 swap `LANE_REGISTRY['evacuation-zones'].watermark` is `watermark.py`'s own content
+    comparison. This substitution therefore no longer exists to AVOID Postgres -- it exists to avoid
+    a SECOND statewide capture, since this turn already holds the one being published.
     """
     watermark = SourceWatermark(
         day=day,
@@ -570,8 +491,8 @@ def _captured_watermark(source: EvacuationZonesSource, day: date) -> LaneWaterma
         basis=(
             f"evacuation-zones: source-direct capture of {source.zone_count} Oregon OEM area(s) at "
             f"{source.fetched_at.isoformat()} within bbox {source.bbox}; this lane's Postgres watermark "
-            "(sql/pipeline/lane_watermark_evacuation_zones.sql) is retired and currency is decided by "
-            "content comparison in pipeline/direct/evacuation_zones/forward.py"
+            "(sql/pipeline/lane_watermark_evacuation_zones.sql) was deleted on 2026-09-06 and currency is "
+            "decided by the content comparison in pipeline/direct/evacuation_zones/watermark.py"
         ),
     )
 

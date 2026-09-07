@@ -13,6 +13,7 @@ from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
 from agri_data_service.ingest.usdm import usdm_source_url
 from agri_data_service.pipeline.direct.drought.rows import drought_release_table
 from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
+from agri_data_service.pipeline.parquet.derivation import govern_day_absent
 from agri_data_service.pipeline.parquet.lane_registry import normalise_export_outcome
 from agri_data_service.warehouse.schemas.drought import DROUGHT_STREAM
 
@@ -87,11 +88,11 @@ class DirectDroughtAdapter:
                 )
                 raise self.unsettled_refusal
             return normalise_export_outcome(
-                store.write_absence(
+                govern_day_absent(
+                    store,
                     self._absence(day, run_id=run_id, proof=proof),
                     layer=DROUGHT_STREAM,
                     kind=DROUGHT_DIRECT_KIND,
-                    zoom=LANE_BASE_ZOOM_TIER,
                     day=day,
                 )
             )

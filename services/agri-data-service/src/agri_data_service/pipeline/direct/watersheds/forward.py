@@ -1,15 +1,18 @@
 """Publish the current NHDPlus_HR WBDHU12 snapshot directly, bypassing PostgreSQL entirely.
 
-Bypasses `pipeline/lanes/watersheds.py::export_watersheds_release` (the registered `_fill_watersheds`
-adapter) AND its watermark resolver (`pipeline/parquet/lane_registry.py::_watersheds_watermark`),
-both of which read `geo.features`. This module is what makes `ingest/watersheds.py`'s
-`run_watersheds_ingestion_job` -- and the `postgres-watersheds` lane that runs it -- deletable: once
-nothing writes `geo.features` for this layer any more, a Postgres-backed watermark reads stale or
-empty forever, so this writer computes its OWN watermark straight from the source's own `loaddate`
-(`source.py`), never from Postgres. `pipeline/lanes/watersheds.py` and `_watersheds_watermark`
-themselves are left completely untouched -- swapping `LANE_REGISTRY[WATERSHEDS_STREAM]`'s `adapter`
-and `watermark` fields to point here is the join step's job, not this module's; see
-`pipeline/direct/watersheds/__init__.py`.
+Bypasses `pipeline/lanes/watersheds.py::export_watersheds_release` (the former `_fill_watersheds`
+adapter) AND the Postgres watermark resolver that used to sit beside it, both of which read
+`geo.features`. This module is what makes `ingest/watersheds.py`'s `run_watersheds_ingestion_job` --
+and the `postgres-watersheds` lane that runs it -- deletable: once nothing writes `geo.features` for
+this layer any more, a Postgres-backed watermark reads stale or empty forever, so this writer
+computes its OWN watermark straight from the source's own `loaddate` (`source.py`), never from
+Postgres.
+
+BOTH REGISTRY FIELDS WERE SWAPPED ON 2026-09-06, in one edit, because neither could move alone:
+`LANE_REGISTRY[WATERSHEDS_STREAM].adapter` is now a source-direct refusal naming this package, and
+its `watermark` is `watermark.py`, which calls the same `source.py` fetch this module does. The
+registered pair is therefore no longer a Postgres fallback to be careful of; the substitution below
+survives only to spare this turn a second whole-lane fetch.
 
 ONE FETCH, NOT THREE. `pipeline/parquet/gap_fill.py::_fill_static_day` brackets a static lane's
 export -- reading the watermark before AND after the write, to catch a source change landing

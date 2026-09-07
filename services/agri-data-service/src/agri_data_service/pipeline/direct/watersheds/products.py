@@ -22,12 +22,15 @@ def watersheds_lane_registration() -> LaneRegistration:
 
     `LANE_REGISTRY[WATERSHEDS_STREAM]` is the single place `history_floor` (2026-08-07) and
     `nature` (`static_lookup`) are declared and measured -- `pipeline/parquet/lane_registry.py`'s
-    `WATERSHEDS_STREAM` registration `floor_basis`. This package may not edit that file (owned by a
-    later join step), and re-declaring its numbers here would be a second copy free to drift from
-    the one the existing generic gap-fill/drain driver still reads. `forward.py` replaces only this
+    `WATERSHEDS_STREAM` registration `floor_basis` -- and re-declaring its numbers here would be a
+    second copy free to drift from the one the census reads. `forward.py` replaces only this
     registration's `adapter` and `watermark` fields for its own call into `fill_one_lane_day`;
     every other field -- `history_floor`, `nature`, `publication_lag_days`, `floor_basis` -- passes
     through unchanged.
+
+    SAFE TO IMPORT `LANE_REGISTRY` HERE, unlike in the evacuation-zones package: the registry
+    imports `watersheds/watermark.py`, which reaches only `source.py` and `ingest/`, never this
+    module. Nothing this file imports can therefore be reached from a half-initialised registry.
     """
     return LANE_REGISTRY[WATERSHEDS_STREAM]
 

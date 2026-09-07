@@ -35,6 +35,9 @@ from agri_data_service.foundation.parquet.paths import (
 )
 from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
 from agri_data_service.interface.cli import cli
+from agri_data_service.pipeline.direct.evacuation_zones.watermark import (
+    EvacuationZonesWatermarkError,
+)
 from agri_data_service.pipeline.parquet.derivation import DerivationResult, TierWriteError
 from agri_data_service.pipeline.parquet.gap_fill import (
     GAP_FILL_ZOOM_TIER,
@@ -42,6 +45,7 @@ from agri_data_service.pipeline.parquet.gap_fill import (
     GapFillSummary,
     LaneGapCensus,
     LaneWatermarkReading,
+    _absence_reason_of_record,
     build_gap_census,
     gap_census_report,
     lane_window,
@@ -1279,66 +1283,37 @@ async def test_a_prune_that_cannot_remove_an_orphan_withholds_the_mark_and_repor
     assert "NOT being marked complete" in (verdict.detail or "")
 
 
-class WatermarkRow:
-    """One aggregated watermark row: `row_count` is a count, every other column is the timestamp."""
-
-    def __init__(self, *, watermark_at: datetime | None, row_count: int) -> None:
-        self.watermark_at = watermark_at
-        self.row_count = row_count
-
-    def __getitem__(self, column: str) -> object:
-        return self.row_count if column == "row_count" else self.watermark_at
-
-
-class WatermarkSession:
-    """A session whose one statement returns a single canned watermark row; executes no real SQL."""
-
-    def __init__(self, row: WatermarkRow) -> None:
-        self.row = row
-
-    async def execute(self, statement: Any, params: dict[str, Any] | None = None) -> Any:  # noqa: ARG002
-        return self
-
-    def scalar(self) -> bool:
-        """Every advisory-lock probe this session sees is granted; contention is not its subject."""
-        return True
-
-    def mappings(self) -> list[WatermarkRow]:
-        return [self.row]
-
-    async def rollback(self) -> None:
-        return None
-
-
 @pytest.mark.asyncio
-async def test_the_real_zones_watermark_resolver_carries_the_instant_beside_the_day() -> None:
-    """THE PRODUCER END of the wiring. Dropping `instant=` from the reader must fail here.
+async def test_the_registered_zones_resolver_opens_no_database_session(monkeypatch: pytest.MonkeyPatch) -> None:
+    """THE PRODUCER END of the wiring, rewritten 2026-09-06 when this lane came off Postgres.
 
-    This runs the REGISTERED `evacuation-zones` resolver, not a fixture, so the day/instant pair is
-    asserted where production actually builds it. Without the instant the whole sub-day comparison
-    silently degrades to the day-resolution fallback, which is what the day already could not decide.
+    The two tests that stood here fed a canned SQL row to `_evacuation_zones_watermark` and asserted
+    it carried the instant beside the day. That resolver read `geo.features` AND `geo.geometry` --
+    both tables this track deletes -- and was replaced by a content comparison over the captured
+    population, which is the SAME test the writer publishes on. So their subject is gone, not merely
+    moved: there is no SQL row to can. The behaviour they were reaching for is now pinned where it
+    lives, in `tests/direct/test_evacuation_zones_direct_watermark.py`, which covers the re-stamp
+    trap, the retired area, the empty capture and the first version.
+
+    What remains THIS file's to guarantee is the seam: that the lane the registry hands the census is
+    the source-direct one. A session that raises on any attribute access is how that is proven --
+    were a database read to creep back in, this fails rather than quietly passing on a fixture.
     """
     (lane,) = resolve_lanes([ZONES])
     assert lane.watermark is not None
-    session = WatermarkSession(WatermarkRow(watermark_at=GO_NOW_AT, row_count=12))
+    # Pinned, not inherited: with INGEST_BBOX set this would open a socket to Oregon OEM, so the
+    # test would pass or fail on the developer's environment rather than on the code.
+    monkeypatch.delenv("INGEST_BBOX", raising=False)
 
-    watermark = await lane.watermark(session, ObjectStore(RecordingBackend()), today=TODAY)  # type: ignore[arg-type]
-
-    assert watermark.instant == GO_NOW_AT
-    assert watermark.day == VERSION_DAY
-    assert "12 published rows" in watermark.basis
+    with pytest.raises(EvacuationZonesWatermarkError, match="unread watermark, never an empty source"):
+        await lane.watermark(_SessionThatRefusesEveryAttribute(), ObjectStore(RecordingBackend()), today=TODAY)  # type: ignore[arg-type]
 
 
-@pytest.mark.asyncio
-async def test_a_source_with_no_rows_carries_neither_a_day_nor_an_instant() -> None:
-    """An empty population has nothing that changed, and the contract refuses an instant without a day."""
-    (lane,) = resolve_lanes([ZONES])
-    assert lane.watermark is not None
-    session = WatermarkSession(WatermarkRow(watermark_at=None, row_count=0))
+class _SessionThatRefusesEveryAttribute:
+    """A stand-in for the `AsyncSession` the resolver signature still takes and must never touch."""
 
-    watermark = await lane.watermark(session, ObjectStore(RecordingBackend()), today=TODAY)  # type: ignore[arg-type]
-
-    assert (watermark.day, watermark.instant) == (None, None)
+    def __getattr__(self, name: str) -> object:
+        raise AssertionError(f"the evacuation-zones watermark reads no database, but it touched session.{name}")
 
 
 # --- The ladder queue: published days that are invisible below z13 -------------------------------
@@ -1987,3 +1962,40 @@ async def test_a_second_absence_conflict_is_reported_rather_than_looped_on() -> 
     assert outcome.outcome == "raised"
     assert outcome.detail is not None
     assert "an admin must remove it" in outcome.detail
+
+
+def test_the_absence_reason_is_read_off_the_marker_a_direct_writer_left() -> None:
+    """A direct writer's own sentence must survive into the availability row, unaltered.
+
+    Every `pipeline/direct/*` adapter writes `kind="observed"` under the same `layer=<slug>/`
+    prefix this driver fills -- `BURN_SEVERITY_DIRECT_KIND`, `FIRE_DIRECT_KIND` and the rest are
+    all the literal `"observed"` -- so the two writers share one namespace. Synthesising a reason
+    here made `availability_index`'s `absence.reason != evidence.absence_reason` check refuse
+    exactly the days a direct writer had just governed.
+    """
+    backend = RecordingBackend()
+    store = ObjectStore(backend)
+    day = date(2026, 8, 14)
+    written_by_a_direct_writer = "the source served no fire detections in the requested extent"
+    marker = GovernedAbsence(
+        reason=written_by_a_direct_writer,
+        upstream_response="204",
+        recorded_at=FROZEN_NOW,
+        run_id="fire-detections-forward:seed",
+    )
+    backend.put(
+        absence_marker_path("fire-detections", "observed", BASE_TIER, day),
+        marker.to_json_bytes(),
+        content_type=ABSENCE_CONTENT_TYPE,
+    )
+
+    assert _absence_reason_of_record(store, "fire-detections", day) == written_by_a_direct_writer
+    # And it is genuinely a READ, not a coincidence: the synthesised sentence is a different string.
+    assert _absence_reason_of_record(store, "fire-detections", day) != zero_row_absence_reason("fire-detections", day)
+
+
+def test_the_synthesised_reason_still_answers_a_day_with_no_marker() -> None:
+    """The fallback is the case this driver itself creates, and it must not regress."""
+    store = ObjectStore(RecordingBackend())
+    day = date(2026, 8, 14)
+    assert _absence_reason_of_record(store, "signal", day) == zero_row_absence_reason("signal", day)

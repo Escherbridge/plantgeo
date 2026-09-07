@@ -7,8 +7,9 @@ NEW source-direct writer packages replacing them.
 Today nothing does this: `test_lane_registry.py` never walks `pipeline/direct/**`, and the per-package
 tests (`tests/direct/climate/test_lane_registrations.py`, `tests/direct/soil/test_lane_registrations.py`)
 only assert facts about the packages they already know are wired -- neither generalizes to a package
-nobody has registered yet, so the unregistered packages (three after the 2026-09-04 join, EIGHT after
-the 2026-09-06 wave-B join) correctly pass every existing test today.
+nobody has registered yet, so the unregistered packages (three after the 2026-09-04 join, eight after
+the 2026-09-06 wave-B join, SIX once watersheds and evacuation-zones were swapped later that day)
+correctly pass every existing test today.
 """
 
 from __future__ import annotations
@@ -32,11 +33,11 @@ DIRECT_PACKAGE_DIRECTORY = _SOURCE_ROOT / "pipeline" / "direct"
 PROBE_DAY = date(2026, 8, 6)
 
 # Packages under `pipeline/direct/` whose source-direct writer is built but still not routed to by
-# LANE_REGISTRY's own adapter. All EIGHT survived a join: the first three the 2026-09-04 one, the next
-# five the 2026-09-06 wave-B one. Each writer got its own EXECUTOR lane
+# LANE_REGISTRY's own adapter. SIX are left: three from the 2026-09-04 join and three of the five the
+# 2026-09-06 wave-B one added. Each writer got its own EXECUTOR lane
 # (`execution/job_executor_service.py`), but every one of those lanes ships SHADOW, and a shadow writer
 # cannot be the registration's adapter while the generic `parquet-*` lane beside it is the one
-# production actually runs. Each entry cites its OWN reason -- these are eight different reasons, not
+# production actually runs. Each entry cites its OWN reason -- these are six different reasons, not
 # one shared "owed at the join step", and an entry that could be swapped for any other entry's text is
 # an entry that has stopped saying anything.
 #
@@ -95,27 +96,10 @@ PENDING_REGISTRATION: dict[str, str] = {
     "geo.features record is the ONLY path to those days while the table holds them; a refusal would "
     "wedge them shut with no backfill to raise the alarm. Remove this entry once that boundary day is "
     "measured and cited, or once those historical days are proven published.",
-    "watersheds": "environmental_postgres_retirement_20260904 wave-B/join 2026-09-06: writer built "
-    "(pipeline/direct/watersheds/) and its executor lane IS registered (watersheds-direct-forward, "
-    "execution/job_executor_service.py), shadow. UNIQUE BLOCKER: this is the one lane whose adapter and "
-    "watermark must move in the SAME edit and cannot be sequenced. _watersheds_watermark reads "
-    "geo.features, which postgres-watersheds is the only writer of, so the instant that lane stops the "
-    "watermark freezes at a version that never changes again -- swap the adapter alone and a "
-    "source-direct writer is keyed to a dead clock; swap the watermark alone and the Postgres export "
-    "publishes under a version day it did not produce. forward.py computes its own watermark from "
-    "NHDPlus_HR's loaddate (source.py) precisely so neither half depends on Postgres. Remove this entry "
-    "in the push that swaps BOTH fields and retires ingest/watersheds.py.",
-    "evacuation_zones": "environmental_postgres_retirement_20260904 wave-B/join 2026-09-06: writer built "
-    "(pipeline/direct/evacuation_zones/) and its executor lane IS registered "
-    "(evacuation-zones-direct-forward, execution/job_executor_service.py), shadow. Its registered "
-    "watermark (_evacuation_zones_watermark) reads geo.features AND geo.geometry, and the replacement is "
-    "a DESIGN DECISION rather than a transcription: Oregon OEM publishes no equivalent column "
-    "(created_date never moves when a level is raised, last_edited_date is re-stamped on unchanged areas "
-    "every few minutes), so forward.py decides currency by content digest instead of by an instant. The "
-    "package offers a store-only replacement resolver on request; nobody has asked for one, and this "
-    "entry must not pre-empt that call. As a static_lookup no writer_ceiling is possible either "
-    "(__post_init__ refuses one), so conflicts_with on the two executor specs is the whole guard. Remove "
-    "this entry in the push that makes the watermark decision and drops those two tables.",
+    # `watersheds` and `evacuation_zones` were HERE until 2026-09-06 and are now REGISTERED, adapter
+    # and watermark swapped in one edit each -- see `tests/parquet/test_lane_registry.py`'s
+    # STATIC_SOURCE_DIRECT_SLUGS. Their entries said the two fields could not be sequenced, and that
+    # is exactly how they moved; the two Postgres watermark query files were deleted in the same edit.
     "burn_severity": "environmental_postgres_retirement_20260904 wave-B/join 2026-09-06: writer built "
     "(pipeline/direct/burn_severity/) and its executor lane IS registered (burn-severity-direct-forward, "
     "execution/job_executor_service.py), shadow. STRONGER blocker than drought's: mtbs-forward/ingest-mtbs "

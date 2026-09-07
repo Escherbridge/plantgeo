@@ -15,6 +15,7 @@ from sqlalchemy import text
 from agri_data_service.db.sql_queries import load_query_sql
 from agri_data_service.foundation.parquet.absence import GovernedAbsence
 from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
+from agri_data_service.pipeline.parquet.derivation import govern_day_absent
 from agri_data_service.warehouse.schemas.fire_detections import FIRE_DETECTIONS_SCHEMA, FIRE_DETECTIONS_STREAM
 
 if TYPE_CHECKING:
@@ -82,6 +83,10 @@ async def export_fire_detections_day(  # noqa: PLR0913 - one caller-supplied coo
     (Postgres held zero published, geometry-linked, geometrically-placed rows for the day), not a
     claim about what FIRMS itself published, which only `pipeline/validation/fire-detections.py`
     can verify against the live availability table.
+
+    THE MARKER LANDS AT ALL FOUR RUNGS and the BASE rung's receipt is returned, because a base-only
+    marker leaves a day no availability generation can carry; see `pipeline/parquet/derivation.py`,
+    "AN ABSENT DAY OWES ITS LADDER TOO".
     """
     table = await read_fire_detections_day(session, day=day, layer_id=layer_id)
     if table.num_rows == 0:
@@ -94,11 +99,11 @@ async def export_fire_detections_day(  # noqa: PLR0913 - one caller-supplied coo
             recorded_at=now if now is not None else datetime.now(UTC),
             run_id=run_id,
         )
-        return store.write_absence(
+        return govern_day_absent(
+            store,
             absence,
             layer=FIRE_DETECTIONS_STREAM,
             kind="observed",
-            zoom=LANE_BASE_ZOOM_TIER,
             day=day,
         )
     return store.write_partition(

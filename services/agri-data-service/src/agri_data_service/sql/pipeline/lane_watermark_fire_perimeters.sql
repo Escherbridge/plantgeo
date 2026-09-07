@@ -21,9 +21,12 @@
 -- that gate this column would be a poll clock and this lane would churn a full re-snapshot every
 -- hour.
 --
--- THREE CHANGE EVENTS, GREATEST OF THE THREE, transcribed from
+-- THREE CHANGE EVENTS, GREATEST OF THE THREE, originally transcribed from
 -- sql/pipeline/lane_watermark_evacuation_zones.sql because both lanes read the same table the same
--- way:
+-- way. That sibling file was DELETED on 2026-09-06 when evacuation-zones was swapped to a
+-- source-direct watermark (pipeline/direct/evacuation_zones/watermark.py); this file is now the
+-- last copy of the pattern, and the same swap is owed here once fire-perimeters-direct-forward
+-- stops being a shadow lane:
 --   * feature.updated_at        -- an attribute changed (containment percent, acreage, severity
 --                                 bucket, incident name).
 --   * feature.created_at        -- a brand-new incident appeared. An insert moves created_at and a

@@ -1,13 +1,19 @@
-"""The evacuation-zones lane's identity, its Oregon-only coverage gate, and the registration it reads.
+"""The evacuation-zones lane's identity and its Oregon-only coverage gate.
 
-Holds the constants `source.py`, `rows.py`, `adapter.py`, `forward.py` and `parity.py` all need, in
-one place a test can import without pulling the driver -- the same reason `drought/products.py`,
-`climate/products.py` and `soil/products.py` exist.
+Holds the constants `source.py`, `rows.py`, `adapter.py`, `watermark.py`, `forward.py` and
+`parity.py` all need, in one place a test can import without pulling the driver -- the same reason
+`drought/products.py`, `climate/products.py` and `soil/products.py` exist.
+
+DELIBERATELY CARRIES NO EDGE TO `pipeline/parquet/lane_registry.py`. The registry imports
+`watermark.py` (the body of the registered `_evacuation_zones_watermark` resolver), and that module
+reaches this one through `rows.py`; an import of `LANE_REGISTRY` here would close that chain into a
+cycle back through a half-initialised registry. `evacuation_zones_lane_registration()` therefore
+lives in `registration.py`, which nothing else in this package imports.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Final
+from typing import Final
 
 from agri_data_service.ingest.evacuation_zones import (
     EVACUATION_ZONES_PRODUCER,
@@ -15,11 +21,7 @@ from agri_data_service.ingest.evacuation_zones import (
     EVACUATION_ZONES_QUERY_URL,
 )
 from agri_data_service.ingest.policy import UNCONFIGURED_BBOX_REASON, resolve_bounded_bbox
-from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRY
 from agri_data_service.warehouse.schemas.evacuation_zones import EVACUATION_ZONES_STREAM
-
-if TYPE_CHECKING:
-    from agri_data_service.pipeline.parquet.lane_registry import LaneRegistration
 
 #: `Final` so the value narrows to the `PartitionKind` literal rather than to bare `str`. There is no
 #: `kind=forecast` sibling: an evacuation level is a policy decision by an emergency manager, not a
@@ -58,17 +60,6 @@ DIRECT_QUERY_URL: Final = EVACUATION_ZONES_QUERY_URL
 
 class EvacuationZonesCoverageError(RuntimeError):
     """Raised when a turn is asked to publish outside this lane's Oregon-only coverage."""
-
-
-def evacuation_zones_lane_registration() -> LaneRegistration:
-    """Read the registered evacuation-zones lane fresh on every call -- never cached at import.
-
-    `LANE_REGISTRY[EVACUATION_ZONES_STREAM]` is the single place `history_floor` (2025-04-14) and
-    `nature` (`static_lookup`) are declared and cited. This module may not edit that file, and
-    re-declaring its numbers here would be a second copy free to drift from the one the existing
-    gap-fill/drain driver still reads.
-    """
-    return LANE_REGISTRY[EVACUATION_ZONES_STREAM]
 
 
 def resolve_coverage_bbox(override: str | None = None) -> str | None:
@@ -124,7 +115,6 @@ __all__ = [
     "MAX_ROWS_PER_PART",
     "EvacuationZonesCoverageError",
     "bbox_unconfigured_reason",
-    "evacuation_zones_lane_registration",
     "refuse_uncovered_state",
     "resolve_coverage_bbox",
 ]

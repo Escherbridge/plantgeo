@@ -26,6 +26,7 @@ from agri_data_service.pipeline.lanes.fire_detections import (
     export_fire_detections_day,
     read_fire_detections_day,
 )
+from agri_data_service.pipeline.parquet.derivation import ABSENCE_LADDER_TIERS
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore, ParquetWriteReceipt
 from agri_data_service.warehouse.schemas.fire_detections import FIRE_DETECTIONS_SCHEMA, FIRE_DETECTIONS_STREAM
 from tests.parquet.test_objectstore_writer import RecordingBackend
@@ -172,7 +173,15 @@ async def test_a_zero_row_day_is_recorded_as_a_governed_absence_not_a_silent_zer
 
     expected_key = absence_marker_path(FIRE_DETECTIONS_STREAM, "observed", LANE_BASE_ZOOM_TIER, AUGUST_SIXTH)
     assert receipt.key == expected_key
-    assert list(backend.objects) == [expected_key]
+    # THE WHOLE LADDER, and this assertion USED to read `== [expected_key]`. That single-object
+    # expectation was the base-rung-only defect written down: a day marked at z13 alone holds no
+    # exact required-rungs ladder, so `availability_index._validate_generation_day` refuses it and
+    # the day is not merely a weaker index entry, it is not an entry. See
+    # `pipeline/parquet/AGENTS.md`, "The LANE WRITERS did not settle the ladder, and now do".
+    assert list(backend.objects) == [
+        absence_marker_path(FIRE_DETECTIONS_STREAM, "observed", tier, AUGUST_SIXTH) for tier in ABSENCE_LADDER_TIERS
+    ]
+    assert len({backend.objects[key] for key in backend.objects}) == 1, "one piece of evidence, four rungs"
     absence = GovernedAbsence.from_json_bytes(backend.objects[expected_key])
     assert absence.run_id == "run-0002"
     assert absence.recorded_at == recorded_at

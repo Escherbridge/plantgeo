@@ -877,11 +877,12 @@ _MIGRATION_INPUT_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
         # is sized for the whole walk rather than copied from the 300 s siblings that move small JSON.
         timeout_seconds=1800,
         description=(
-            "Direct NHDPlus_HR WBDHU12 forward writer for watersheds, and the ONE lane in this table "
-            "whose activation must swap BOTH LANE_REGISTRY['watersheds'].adapter AND its watermark: "
-            "_watersheds_watermark reads geo.features, so the moment postgres-watersheds stops writing "
-            "that table a Postgres-backed watermark reads stale or empty forever and this lane's census "
-            "freezes. DAILY at 03:00, one hour after the postgres-watersheds lane whose cadence it "
+            "Direct NHDPlus_HR WBDHU12 forward writer for watersheds. The adapter-and-watermark swap "
+            "this description used to say activation still owed LANDED 2026-09-06: "
+            "LANE_REGISTRY['watersheds'] now carries a source-direct refusal and a watermark reading "
+            "NHDPlus_HR's own loaddate, so neither half depends on geo.features any longer and the "
+            "census cannot freeze when postgres-watersheds stops. DAILY at 03:00, one hour after the "
+            "postgres-watersheds lane whose cadence it "
             "mirrors: one turn is the same ~9,400-basin, ~47-request NHDPlus_HR walk the export itself "
             "performs, against a national reference layer measured to hold exactly ONE load day in its "
             "whole history, so an hourly slot would pay that walk 24 times a day to detect a change "
@@ -911,10 +912,11 @@ _MIGRATION_INPUT_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
             "finds nothing changed writes nothing and a skipped tick costs nothing. No writer_ceiling is "
             "possible here either -- a version-stamped lane has no calendar window to divide -- so "
             "conflicts_with on both specs is the entire mutual-exclusion guard, exactly as drought's "
-            "registration argues. The registered watermark _evacuation_zones_watermark reads geo.features "
-            "AND geo.geometry, and must be replaced in the same push that drops those tables or the "
-            "census dies at watermark_unread. Hourly at :35, the cadence of the postgres-evacuation-zones "
-            "poller it replaces. Shadow until activated."
+            "registration argues. The watermark replacement this description used to say was still owed "
+            "LANDED 2026-09-06: _evacuation_zones_watermark no longer reads geo.features or geo.geometry, "
+            "it runs the SAME content digest the writer publishes on, so census and writer cannot "
+            "disagree and neither survives a last_edited_date re-stamp on an unchanged area. Hourly at "
+            ":35, the cadence of the postgres-evacuation-zones poller it replaces. Shadow until activated."
         ),
     ),
     _spec(

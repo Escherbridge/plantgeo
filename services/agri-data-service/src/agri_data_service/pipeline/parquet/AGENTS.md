@@ -1085,3 +1085,63 @@ See `pipeline/parquet/gap_fill.py`'s `_ladder_schema_mismatch`, `repair_one_lane
 block, and `_record_repair_outcome` for the code; `tests/parquet/test_gap_fill.py`'s
 `test_a_ladder_schema_mismatch_reports_nonzero_backlog_and_names_the_lane` and neighbours for the
 regression pin, built from the REAL column lists both production log lines carried.
+
+
+## The LANE WRITERS did not settle the ladder, and now do (2026-09-06, A4 lane)
+
+"Governed absences settle the whole ladder" above describes `gap_fill._export_one_day`. It was only
+ever true of THAT path. Nine other writers reached `ObjectStore.write_absence` directly with
+`zoom=LANE_BASE_ZOOM_TIER` and stopped — the seven `pipeline/direct/*` adapters plus
+`pipeline/lanes/burn_severity.py` and `pipeline/lanes/fire_detections.py` — and
+`_export_one_day` returns EARLY on `result.absence_recorded` ("a governed absence is ONE object and
+cannot be half-written"), so nothing downstream ever added the coarse rungs. Measured in production
+2026-09-06: **3,205 refused days**, all `partial_ladder`, across `fire-detections` (1,069),
+`burn-severity` (2,102), `vegetation` (4), `weather-observations` (2) and one `sensors` day; the live
+coverage answer corroborates it independently with 3,469 governed-absence days at z13 against 279 at
+z0/z5/z9. `burn-severity` compiled 5 selectable days out of 2,107.
+
+**The seam is `derivation.py`, not `objectstore.py` and not the eight adapters.**
+`objectstore.py`'s module docstring already assigns this obligation by name — "CROSS-TIER AGREEMENT
+OF ONE DAY IS NOT THIS MODULE'S INVARIANT ... is the DERIVATION step's obligation" — and states an
+absolute prohibition beside it: "EVERY OPERATION HERE NAMES ONE ZOOM TIER, AND NONE OF THEM MAY SPAN
+THE LADDER ... there is deliberately no 'all tiers' mode and no default". A `write_absence_ladder`
+method on `ObjectStore` would have been the smallest diff and would have broken that rule in the one
+module that spells it out. `derivation.py` is where a day's ladder is already brought into agreement
+(`derive_and_write_day_tiers`, `_retract_tier`), so the absence ladder is its third such operation
+and shares its ordering and its all-or-nothing failure rule. `write_absence` itself is unchanged: it
+is a correct per-tier primitive and keeps its documented single-tier contract.
+
+- `write_absence_ladder(store, absence, *, layer, kind, day, tiers=ABSENCE_LADDER_TIERS)` pre-checks
+  EVERY named rung with `part_blocking_absence` before the first write, writes coarse-first and
+  base-last, and rolls back on a mid-ladder failure — but **only the rungs THIS call created**,
+  read before the loop with `absence_exists`. A rollback past a marker a previous run proved would
+  make a failed re-run worse than the state it found.
+- `govern_day_absent(...)` is the one call a lane writer makes: the full ladder, returning the BASE
+  rung's `AbsenceWriteReceipt`, which is what `normalise_export_outcome` and every census key on.
+- **`_complete.empty.json` is never used for this.** `_is_published_empty_rung` reserves that name
+  for a coarse rung whose NON-EMPTY base generalised away; here nothing existed to generalise, and
+  `write_completion_marker` refuses one at the base rung anyway.
+- **Every rung is written every time, including one already holding these bytes.**
+  `availability_extension._rung_objects` binds an absent day from THIS RUN's written-object ledger,
+  so a rung skipped as unchanged becomes "z<n> carries no governed-absence marker from this run" and
+  the day is a ladder gap again. Re-putting identical bytes at one key is the store's own no-op.
+  `scripts/backfill_absence_ladder.py` owes no ledger and therefore does skip: it passes `tiers=`
+  naming only the missing rungs, and a second pass over a marked day costs zero PUTs.
+- `direct/evacuation_zones/adapter.py` already wrote its own four-rung ladder by hand and now calls
+  the shared writer; its life-safety pre-flight refusal stays local, because the shared helper's
+  `GovernedAbsenceConflictError` cannot name a same-day stand-down.
+
+**One consequence to watch, and it is NOT closed by this lane.** With the ladder whole, a
+direct-adapter absence day now reaches `publish_availability` instead of stopping at a `_LadderGap`,
+and `gap_fill._extend_availability_for_result` passes `absence_reason=zero_row_absence_reason(slug,
+day)` for EVERY absent outcome — a synthesised sentence, while a direct adapter's marker carries its
+own lane-specific reason. `availability_index._verify_absence_object` compares the two
+("absence marker reason does not match terminal evidence"), so those days will fail verification
+until the reason is taken from the marker. That is a `gap_fill.py` change and this lane does not own
+that file; the failure is caught and appended as a note ("the availability step raised and the day
+stays terminal"), so it costs an index row, never a published lie.
+
+Pinned in `tests/parquet/test_absence_ladder.py`, including
+`test_no_lane_writer_marks_one_rung_directly_any_more` — an AST walk of `pipeline/direct/` and
+`pipeline/lanes/` for `<x>.write_absence(...)` calls, with a companion test proving the walk can
+actually fail. A fix spread over nine call sites is worth exactly as much as its least-updated one.

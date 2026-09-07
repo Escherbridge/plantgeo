@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from agri_data_service.foundation.parquet.lane_contract import SourceWatermark
 from agri_data_service.foundation.parquet.paths import absence_marker_path, partition_path, validate_layer_slug
 from agri_data_service.pipeline.direct.vegetation.products import VEGETATION_DIRECT_WRITER_START_DAY
 from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
@@ -22,6 +23,7 @@ from agri_data_service.pipeline.lanes import soil_survey as soil_survey_lane
 from agri_data_service.pipeline.lanes.fire_detections import FIRE_DETECTIONS_DIRECT_WRITER_START_DAY
 from agri_data_service.pipeline.lanes.soil_survey import POLYGON_KEY_BATCH_SIZE
 from agri_data_service.pipeline.lanes.water_gauges import WATER_GAUGES_DIRECT_WRITER_START_DAY
+from agri_data_service.pipeline.parquet import lane_registry
 from agri_data_service.pipeline.parquet.gap_fill import GapFillContractError, lane_window
 from agri_data_service.pipeline.parquet.lane_registry import (
     LANE_REGISTRATIONS,
@@ -46,14 +48,16 @@ from tests.parquet.test_soil_survey_lane import soil_survey_row
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-# Twelve database-backed lanes, the eleven source-direct NASA POWER streams, the eight source-direct
-# Open-Meteo ERA5-Land streams, and `calendar`.
+# Ten database-backed lanes, the two static lanes swapped source-direct on 2026-09-06
+# (`STATIC_SOURCE_DIRECT_SLUGS`), the eleven source-direct NASA POWER streams, the eight
+# source-direct Open-Meteo ERA5-Land streams, and `calendar`. The COUNT did not move: the swap
+# changed two registrations' fields, it did not add or remove a stream.
 EXPECTED_LANE_COUNT = 32
 AUGUST_SIXTH = date(2026, 8, 6)
 
 # RUNBOOK section 0.26.6's table -- the wave-2 join's own record of what landed -- plus `calendar`,
 # the conformed date dimension, which is a registered stream with no source system.
-# The nineteen source-direct streams have NO PostgreSQL producer and never had one: their registry
+# The nineteen source-direct streams below have NO PostgreSQL producer and never had one: their registry
 # entry exists so the streams get a floor, a lag, a nature and a census, while their days are written
 # by a direct writer. Their registered adapter refuses a generic export, naming the writer that owns
 # it -- `pipeline/direct/climate/forward.py` for the eleven POWER streams (the eight climate fields
@@ -89,6 +93,12 @@ ERA5_LAND_DIRECT_SLUGS = frozenset(
 )
 
 SOURCE_DIRECT_SLUGS = NASA_POWER_DIRECT_SLUGS | ERA5_LAND_DIRECT_SLUGS
+
+# The two static lanes swapped off Postgres on 2026-09-06. Unlike the nineteen above -- generated
+# from a product list and never database-backed -- these had a working PostgreSQL producer until that
+# day, so their registrations are hand-written and keep their measured floors. Both fields moved in
+# one edit: the adapter to a refusal naming the package, the watermark to that package's own clock.
+STATIC_SOURCE_DIRECT_SLUGS = frozenset({"evacuation-zones", "watersheds"})
 
 EXPECTED_SLUGS = SOURCE_DIRECT_SLUGS | frozenset(
     {
@@ -244,18 +254,22 @@ def test_the_registry_is_keyed_by_slug_and_ordered_deterministically() -> None:
 
 @pytest.mark.asyncio
 async def test_every_source_direct_lane_refuses_and_names_its_own_writer() -> None:
-    """Nineteen lanes, two writers. A shared message would send an operator to the wrong module.
+    """Twenty-one lanes, four writers. A shared message would send an operator to the wrong module.
 
     The generic gap-fill driver can reach any registered lane, so the refusal is the only thing
     standing between a `parquet-soil-field-vpd` tick and a run that reports success having exported
-    nothing. It must also be SPECIFIC: `pipeline.direct.climate` cannot publish an ERA5-Land day.
+    nothing. It must also be SPECIFIC: `pipeline.direct.climate` cannot publish an ERA5-Land day, and
+    since 2026-09-06 a `parquet-watersheds` tick must name the NHDPlus_HR writer rather than fail on
+    a missing `geo.features`.
     """
     expected_writer = {
         **dict.fromkeys(NASA_POWER_DIRECT_SLUGS, "pipeline.direct.climate"),
         **dict.fromkeys(ERA5_LAND_DIRECT_SLUGS, "pipeline.direct.soil"),
+        "watersheds": "pipeline.direct.watersheds",
+        "evacuation-zones": "pipeline.direct.evacuation_zones",
     }
 
-    assert set(expected_writer) == SOURCE_DIRECT_SLUGS
+    assert set(expected_writer) == SOURCE_DIRECT_SLUGS | STATIC_SOURCE_DIRECT_SLUGS
     for slug, writer in sorted(expected_writer.items()):
         with pytest.raises(LaneRegistryError, match=re.escape(writer)):
             await LANE_REGISTRY[slug].adapter(None, None, day=AUGUST_SIXTH, run_id="generic")
@@ -309,16 +323,19 @@ def test_weather_observations_registry_adapter_is_also_still_postgres_reading() 
     assert weather_observations.writer_ceiling is None
 
 
-#: The 2026-09-06 wave-B join, mapped to the Postgres-reading adapter each registration must STILL
-#: carry. Every one of these five has a built direct writer and a registered executor lane, and every
-#: one of those lanes is shadow -- so the registered adapter is the writer the object stream actually
-#: has, and swapping it now would leave the layer with none.
+#: What is LEFT of the 2026-09-06 wave-B join, mapped to the Postgres-reading adapter each
+#: registration must STILL carry. Each has a built direct writer and a registered executor lane, and
+#: each of those lanes is shadow -- so the registered adapter is the writer the object stream
+#: actually has, and swapping it now would leave the layer with none.
+#:
+#: `watersheds` and `evacuation-zones` LEFT THIS TABLE on 2026-09-06, adapter and watermark together
+#: (`STATIC_SOURCE_DIRECT_SLUGS`); their direct writers were proven against production first -- 9,396
+#: basins fetched with no Postgres in the path, and 116 Oregon zones published against a live
+#: `returnCountOnly` count of 116.
 WAVE_B_UNSWAPPED_ADAPTERS = {
     "burn-severity": "_fill_burn_severity",
-    "evacuation-zones": "_fill_evacuation_zones",
     "fire-perimeters": "_fill_fire_perimeters",
     "sensors": "_fill_sensors",
-    "watersheds": "_fill_watersheds",
 }
 
 
@@ -326,12 +343,12 @@ WAVE_B_UNSWAPPED_ADAPTERS = {
 def test_the_wave_b_registrations_are_deliberately_still_postgres_reading(slug: str) -> None:
     """Registered, not activated: the join added executor lanes and changed no adapter, on purpose.
 
-    None of these five can be bridged by a `writer_ceiling` the way fire-detections/water-gauges are:
-    three are `static_lookup`, where a ceiling is refused outright; `sensors` ships no cited
-    ownership-boundary day and no backfill; and `burn-severity`'s forward and backfill walkers claim
-    one candidate set that IS the generic lane's whole window. So `conflicts_with` on the executor
-    specs is the only mutual exclusion these lanes have, and it only means anything while the adapter
-    below still points at Postgres.
+    None of these three can be bridged by a `writer_ceiling` the way fire-detections/water-gauges are:
+    `fire-perimeters` is a `static_lookup`, where a ceiling is refused outright; `sensors` ships no
+    cited ownership-boundary day and no backfill; and `burn-severity`'s forward and backfill walkers
+    claim one candidate set that IS the generic lane's whole window. So `conflicts_with` on the
+    executor specs is the only mutual exclusion these lanes have, and it only means anything while the
+    adapter below still points at Postgres.
     """
     registration = LANE_REGISTRY[slug]
 
@@ -339,20 +356,151 @@ def test_the_wave_b_registrations_are_deliberately_still_postgres_reading(slug: 
     assert registration.writer_ceiling is None
 
 
-@pytest.mark.parametrize("slug", ["evacuation-zones", "fire-perimeters", "watersheds"])
-def test_the_static_wave_b_lanes_still_read_their_watermark_from_postgres(slug: str) -> None:
+def test_the_one_unswapped_static_wave_b_lane_still_reads_its_watermark_from_postgres() -> None:
     """The watermark is the half of the swap that is easy to forget, and the census dies without it.
 
-    A direct writer substitutes BOTH fields at runtime, so a half-done join -- adapter swapped, resolver
-    left behind -- fails only in production, and quietly: the generic driver would key a source-direct
-    lane to a `geo.features` clock that stops advancing the moment its Postgres producer does. Pinning
-    the resolver BY NAME is what makes that half visible here rather than there.
+    `fire-perimeters` is what is left of the three static wave-B lanes: its direct writer substitutes
+    BOTH fields at runtime, so a half-done join -- adapter swapped, resolver left behind -- fails only
+    in production, and quietly, keying a source-direct lane to a `geo.features` clock that stops
+    advancing the moment its Postgres producer does. Pinning the resolver BY NAME is what makes that
+    half visible here rather than there.
     """
-    registration = LANE_REGISTRY[slug]
+    registration = LANE_REGISTRY["fire-perimeters"]
 
     assert registration.nature == "static_lookup"
     assert registration.watermark is not None
-    assert registration.watermark.__name__ == f"_{slug.replace('-', '_')}_watermark"
+    assert registration.watermark.__name__ == "_fire_perimeters_watermark"
+
+
+@pytest.mark.parametrize("slug", sorted(STATIC_SOURCE_DIRECT_SLUGS))
+def test_the_swapped_static_lanes_moved_adapter_and_watermark_together(slug: str) -> None:
+    """DO NOT SPLIT THIS ASSERTION. Half a swap is worse than none, and only fails in production.
+
+    Adapter alone: a source-direct writer keyed to a `geo.features` clock that stops advancing the
+    moment `postgres-watersheds` / `postgres-evacuation-zones` stops, and stops for good.
+    Watermark alone: the Postgres export keeps publishing, now stamped with a version day it did not
+    produce. Both fields must name something outside Postgres in the same registration, which is what
+    lets this pair survive the drop of `geo.features` and `geo.geometry`.
+
+    A `static_lookup` still cannot carry a `writer_ceiling` -- `__post_init__` refuses one on a
+    version-stamped lane -- so `conflicts_with` on the executor specs remains the whole
+    mutual-exclusion guard between each `parquet-*` lane and its `*-direct-forward` replacement.
+    """
+    registration = LANE_REGISTRY[slug]
+    package = slug.replace("-", "_")
+
+    assert registration.nature == "static_lookup"
+    assert registration.adapter.__name__ == "refuse"
+    assert registration.watermark is not None
+    assert registration.watermark.__name__ == f"_{package}_watermark"
+    assert registration.watermark.__module__ == "agri_data_service.pipeline.parquet.lane_registry"
+    assert registration.writer_ceiling is None
+    assert "SOURCE-DIRECT since 2026-09-06" in registration.floor_basis
+
+
+class ForbiddenSession:
+    """A session that fails the test on ANY use. The point is that a resolver never touches it."""
+
+    def __getattr__(self, name: str) -> Any:
+        raise AssertionError(f"a source-direct watermark resolver reached the database session ({name})")
+
+
+@pytest.mark.asyncio
+async def test_the_swapped_watersheds_watermark_reads_the_source_and_never_the_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """It delegates to `pipeline/direct/watersheds/watermark.py`, whose answer is NHDPlus_HR's loaddate.
+
+    The deleted `lane_watermark_watersheds.sql` read `geo.features.updated_at/created_at`, an
+    INGESTION-time proxy that freezes the moment `postgres-watersheds` stops. Anything reaching the
+    session here would be that same read wearing a different name.
+    """
+    loaded = SourceWatermark(
+        day=date(2019, 11, 21),
+        instant=datetime(2019, 11, 21, 12, tzinfo=UTC),
+        basis="NHDPlus_HR WBDHU12 loaddate (direct fetch), max across every accepted basin",
+    )
+
+    async def fake_read() -> SourceWatermark:
+        return loaded
+
+    monkeypatch.setattr(lane_registry, "read_watersheds_source_watermark", fake_read)
+    resolver = LANE_REGISTRY["watersheds"].watermark
+    assert resolver is not None
+
+    watermark = await resolver(ForbiddenSession(), None, today=date(2026, 9, 6))  # type: ignore[arg-type]
+
+    assert watermark is loaded
+    assert watermark.day == date(2019, 11, 21)
+    assert "loaddate" in watermark.basis
+
+
+@pytest.mark.asyncio
+async def test_the_swapped_evacuation_zones_watermark_reads_the_store_and_never_the_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """It delegates to `pipeline/direct/evacuation_zones/watermark.py`, handing it the OBJECT STORE.
+
+    `store` is load-bearing on this lane and `session` is not: currency is decided by comparing the
+    captured population against the version already published, so the published version has to be
+    readable. The three columns the deleted SQL read are in tables this track drops.
+    """
+    captured = SourceWatermark(day=date(2026, 9, 6), instant=datetime(2026, 9, 6, 3, tzinfo=UTC), basis="capture")
+    store = ObjectStore(RecordingBackend())
+    seen: list[object] = []
+
+    async def fake_read(passed_store: object) -> SourceWatermark:
+        seen.append(passed_store)
+        return captured
+
+    monkeypatch.setattr(lane_registry, "read_evacuation_zones_source_watermark", fake_read)
+    resolver = LANE_REGISTRY["evacuation-zones"].watermark
+    assert resolver is not None
+
+    watermark = await resolver(ForbiddenSession(), store, today=date(2026, 9, 6))  # type: ignore[arg-type]
+
+    assert watermark is captured
+    assert seen == [store]
+
+
+def test_no_other_lane_moved_when_those_two_did() -> None:
+    """THE NEGATIVE CONTROL for the 2026-09-06 swap: thirty of the thirty-two must be untouched.
+
+    A registry edit is a shared-file edit, and the failure this guards is a resolver or adapter
+    reassigned one line off target -- `soil-survey` quietly given watersheds' clock, say, which no
+    per-lane test above would notice because each one only asserts about its own lane. Pinning every
+    OTHER lane's adapter and watermark by name turns that into a diff nobody can land by accident.
+    """
+    moved = {"evacuation-zones", "watersheds"}
+    expected_adapters = {
+        "burn-severity": "_fill_burn_severity",
+        "calendar": "_fill_calendar",
+        "drought": "_fill_drought",
+        "fire-detections": "_fill_fire_detections",
+        "fire-perimeters": "_fill_fire_perimeters",
+        "sensors": "_fill_sensors",
+        "signal": "_fill_signal",
+        "soil-survey": "_fill_soil_survey",
+        "vegetation": "_fill_vegetation",
+        "water-gauges": "_fill_water_gauges",
+        "weather-observations": "_fill_weather_observations",
+        **dict.fromkeys(SOURCE_DIRECT_SLUGS, "refuse"),
+    }
+    expected_watermarks = {
+        "calendar": "_calendar_watermark",
+        "fire-perimeters": "_fire_perimeters_watermark",
+        "soil-survey": "_soil_survey_watermark",
+    }
+
+    others = [entry for entry in LANE_REGISTRATIONS if entry.slug not in moved]
+    expected_other_count = 30
+
+    assert len(others) == expected_other_count
+    assert set(expected_adapters) == {entry.slug for entry in others}
+    for entry in others:
+        assert entry.adapter.__name__ == expected_adapters[entry.slug], entry.slug
+        watermark_name = None if entry.watermark is None else entry.watermark.__name__
+        assert watermark_name == expected_watermarks.get(entry.slug), entry.slug
 
 
 def test_every_floor_is_cited_and_every_lag_is_declared() -> None:
@@ -778,7 +926,12 @@ async def test_a_release_bigger_than_the_retired_key_ceiling_streams_instead_of_
 
 @pytest.mark.asyncio
 async def test_a_watermark_query_answer_becomes_a_cited_version_day() -> None:
-    """The version stamp is the source's own change time in UTC, and the basis names what produced it."""
+    """The version stamp is the source's own change time in UTC, and the basis names what produced it.
+
+    Asked of `fire-perimeters`, the one static lane still reading a Postgres watermark: watersheds and
+    evacuation-zones both answer from their own source since 2026-09-06 and their query files are
+    deleted, so this shape is now pinned where it is still live.
+    """
     changed_at = datetime(2026, 8, 7, 23, 30, tzinfo=UTC)
     session = ScriptedSession(
         [
@@ -786,20 +939,21 @@ async def test_a_watermark_query_answer_becomes_a_cited_version_day() -> None:
                 {
                     "feature_updated_at": changed_at,
                     "feature_created_at": datetime(2026, 8, 7, 9, 0, tzinfo=UTC),
+                    "geometry_version_valid_from": None,
                     "watermark_at": changed_at,
-                    "row_count": 9396,
+                    "row_count": 177,
                 }
             ]
         ]
     )
-    resolver = LANE_REGISTRY["watersheds"].watermark
+    resolver = LANE_REGISTRY["fire-perimeters"].watermark
     assert resolver is not None
 
     watermark = await resolver(session, ObjectStore(RecordingBackend()), today=date(2026, 8, 22))  # type: ignore[arg-type]
 
     assert watermark.day == date(2026, 8, 7)
     assert "feature_updated_at=2026-08-07T23:30:00+00:00" in watermark.basis
-    assert "over 9396 published rows" in watermark.basis
+    assert "over 177 published rows" in watermark.basis
 
 
 @pytest.mark.asyncio
@@ -833,7 +987,7 @@ async def test_a_timezone_naive_watermark_is_refused_rather_than_assumed_to_be_u
             ]
         ]
     )
-    resolver = LANE_REGISTRY["evacuation-zones"].watermark
+    resolver = LANE_REGISTRY["fire-perimeters"].watermark
     assert resolver is not None
 
     with pytest.raises(LaneRegistryError, match="timezone-naive"):

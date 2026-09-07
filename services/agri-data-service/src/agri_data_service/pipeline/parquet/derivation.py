@@ -38,6 +38,30 @@ of it.
 A coarse rung IS marked complete as it lands, because a reader at z9 consults the z9 marker. A day
 whose coarse rungs are marked while its base is not is readable and correct -- the coarse rows were
 derived from a base that is fully written, merely not yet declared.
+
+AN ABSENT DAY OWES ITS LADDER TOO, AND THAT IS WHY `write_absence_ladder` LIVES HERE
+------------------------------------------------------------------------------------
+`pipeline/parquet/objectstore.py`'s module docstring assigns this obligation to this step by name:
+"CROSS-TIER AGREEMENT OF ONE DAY IS NOT THIS MODULE'S INVARIANT ... 'Every tier of a published day
+is present' is the DERIVATION step's obligation". `ObjectStore.write_absence` is a correct per-tier
+primitive -- it marks the rung it is given and refuses that rung alone -- so a caller that marks only
+the base rung leaves three rungs saying nothing, and the day is then unrepresentable in an
+availability generation: `availability_index.py::_validate_generation_day` demands the exact
+four-rung ladder, and `_verify_absence_object` demands each rung's row cite a marker at ITS OWN key,
+so the three missing rows can be neither omitted nor synthesised. Measured 2026-09-06, that gap is
+3,205 refused days across five lanes, every one of them the same one-rung shape.
+
+A DERIVED-EMPTY COMPLETION MARKER IS NOT THE COARSE RUNG'S ANSWER HERE. `_retract_tier` writes
+`_complete.empty.json` for a rung whose NON-EMPTY base generalised away, and it says the rows
+existed; a governed absence says the SOURCE had nothing. Using the first to close the second would
+be a false statement about upstream, which is why the coarse rungs of an absent day carry the base
+rung's OWN marker bytes and nothing else.
+
+Nothing in the ladder writer is a derivation in the transform sense -- there are no rows to
+generalise -- so it shares this module's ORDERING and its all-or-nothing failure rule rather than its
+transform. Coarse rungs first and the base rung last, because only the base rung is censused: a run
+that dies mid-ladder must leave the day `missing` and re-selectable, never covered-but-empty above a
+base rung that says nothing.
 """
 
 from __future__ import annotations
@@ -49,7 +73,7 @@ import polars as pl
 
 from agri_data_service.foundation.parquet.completion import CompletedPart, PartitionCompletion
 from agri_data_service.pipeline.parquet.objectstore import GovernedAbsenceConflictError
-from agri_data_service.warehouse.parquet.tiers import DERIVED_ZOOM_TIERS, derive_tier
+from agri_data_service.warehouse.parquet.tiers import BASE_ZOOM_TIER, DERIVED_ZOOM_TIERS, derive_tier
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -58,9 +82,17 @@ if TYPE_CHECKING:
     import pyarrow as pa  # type: ignore[import-untyped]
     from duckdb import DuckDBPyConnection
 
+    from agri_data_service.foundation.parquet.absence import GovernedAbsence
     from agri_data_service.foundation.parquet.paths import PartitionKind
     from agri_data_service.foundation.parquet.zoom import ZoomTier
-    from agri_data_service.pipeline.parquet.objectstore import ObjectStore
+    from agri_data_service.pipeline.parquet.objectstore import AbsenceWriteReceipt, ObjectStore
+
+#: The whole ladder one governed absence settles, COARSE RUNGS FIRST AND THE BASE RUNG LAST. Spelled
+#: exactly as `gap_fill.py::_ABSENCE_LADDER_TIERS` and `direct/evacuation_zones/adapter.py` already
+#: spell it, and ordered for the reason this module's docstring gives: only the base rung is censused,
+#: so a run that dies mid-ladder must leave the day re-selectable rather than covered above a base
+#: rung that says nothing.
+ABSENCE_LADDER_TIERS: Final[tuple[ZoomTier, ...]] = (*DERIVED_ZOOM_TIERS, BASE_ZOOM_TIER)
 
 # How many rows one derived part file holds. Matched to `pipeline/lanes/calendar.py:36`'s
 # `ROWS_PER_PART` rather than to `burn_severity.py`'s 100: a coarse rung is by construction smaller
@@ -71,6 +103,17 @@ DERIVED_ROWS_PER_PART: Final = 10_000
 
 class TierWriteError(RuntimeError):
     """Raised when a lane-day's coarse rungs cannot be written as a complete set."""
+
+
+class AbsenceLadderError(RuntimeError):
+    """Raised when a lane-day's governed absence cannot be marked at every rung it was asked for.
+
+    A SEPARATE NAME FROM `TierWriteError`, because the two failures ask for different repairs. A tier
+    write failing means rows could not be generalised and the day owes a re-derivation; an absence
+    ladder failing means a day upstream had nothing for is marked at no rung, and the next tick
+    re-selects it as an ordinary gap. `GovernedAbsenceConflictError` stays the answer when the day
+    holds DATA, so a caller that already handles a conflict keeps handling it.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -301,10 +344,151 @@ def _write_tier(  # noqa: PLR0913 - one coordinate of the rung being written per
     )
 
 
+def write_absence_ladder(  # noqa: PLR0913 - one coordinate of the day being governed per arg
+    store: ObjectStore,
+    absence: GovernedAbsence,
+    *,
+    layer: str,
+    kind: PartitionKind,
+    day: date,
+    tiers: Sequence[ZoomTier] = ABSENCE_LADDER_TIERS,
+) -> tuple[AbsenceWriteReceipt, ...]:
+    """Mark one lane-day absent at EVERY named rung with ONE piece of evidence, or mark none of them.
+
+    THE WHOLE LADDER IS CHECKED BEFORE THE FIRST MARKER IS WRITTEN, and a rung that fails after an
+    earlier one succeeded is ROLLED BACK. Writing rung by rung and refusing on the first conflict
+    leaves coarse rungs governing a day whose base rung still serves rows -- the exact stable lie the
+    marker contract exists to prevent, and one no census brings back, because `build_gap_census`
+    walks the base tier and finds its parts and its completion marker intact.
+
+    ONE `GovernedAbsence` FOR THE WHOLE LADDER, NEVER ONE PER RUNG. Every rung is handed the same
+    object and therefore the same canonical bytes, which is what
+    `availability_index.py::_validate_generation_day` requires -- "availability day ... mixes absence
+    reasons across its ladder" is raised on a day whose rungs disagree -- and what
+    `_verify_absence_object` re-proves per rung against the row's own `absence_reason`. A caller
+    minting a fresh reason per rung would publish four markers no generation can carry.
+
+    THE ROLLBACK NEVER REMOVES A MARKER IT DID NOT CREATE. Which rungs already carried a marker is
+    read BEFORE the first write, so a re-run over an already-governed day that fails part way leaves
+    that day exactly as governed as it found it, rather than stripping rungs a previous run proved.
+
+    EVERY NAMED RUNG IS WRITTEN, INCLUDING ONE THAT ALREADY HOLDS THESE BYTES, and that is deliberate
+    rather than lazy: `availability_extension.py::_rung_objects` binds an absent day from THIS RUN'S
+    written-object ledger, so a rung skipped as unchanged is a rung the availability step then reports
+    as "carries no governed-absence marker from this run" and the day goes back to being a ladder gap.
+    Re-putting identical bytes at the same key is the object store's own no-op -- one key, one object,
+    the same digest before and after -- so nothing is duplicated by writing it. A caller that must not
+    pay for the redundant writes passes `tiers` naming only the rungs it knows are missing;
+    `scripts/backfill_absence_ladder.py` is exactly that caller.
+    """
+    ordered = tuple(tiers)
+    if not ordered:
+        raise AbsenceLadderError(
+            f"{layer} {day.isoformat()}: a governed absence was asked for NO rungs, which would report a marked "
+            f"day over one that was never marked. Ask for {ABSENCE_LADDER_TIERS} or a subset of it"
+        )
+    if len(set(ordered)) != len(ordered):
+        raise AbsenceLadderError(
+            f"{layer} {day.isoformat()}: the absence ladder {ordered} names a rung twice, so the second write "
+            f"would silently overwrite the first and the receipt count would overstate what the day holds"
+        )
+    blocked = tuple(
+        (tier, part) for tier in ordered if (part := store.part_blocking_absence(layer, kind, tier, day)) is not None
+    )
+    if blocked:
+        rungs = ", ".join(f"z{tier} ({part})" for tier, part in blocked)
+        raise GovernedAbsenceConflictError(
+            f"{layer!r} {kind} {day.isoformat()} still holds part files at {rungs}, so it can be governed absent "
+            f"at no rung: correcting a completed record is a manual admin action, and no marker was written"
+        )
+    # Read BEFORE the loop, so the rollback below can tell a rung this call created from one it merely
+    # rewrote. Deleting the latter would make a failed re-run worse than the state it started from.
+    preexisting = frozenset(tier for tier in ordered if store.absence_exists(layer, kind, tier, day))
+    receipts: list[AbsenceWriteReceipt] = []
+    for tier in ordered:
+        try:
+            receipts.append(store.write_absence(absence, layer=layer, kind=kind, zoom=tier, day=day))
+        except Exception as refusal:
+            undone = _retract_absence_ladder(
+                store,
+                layer=layer,
+                kind=kind,
+                day=day,
+                rungs=tuple(receipt.zoom for receipt in receipts if receipt.zoom not in preexisting),
+            )
+            raise AbsenceLadderError(
+                f"{layer} z{tier} {day.isoformat()}: the governed-absence marker was refused, so this day cannot "
+                f"be marked absent as a complete ladder: {type(refusal).__name__}: {refusal}. {undone}"
+            ) from refusal
+    return tuple(receipts)
+
+
+def govern_day_absent(
+    store: ObjectStore,
+    absence: GovernedAbsence,
+    *,
+    layer: str,
+    kind: PartitionKind,
+    day: date,
+) -> AbsenceWriteReceipt:
+    """Govern one whole lane-day as absent and return the BASE rung's receipt, which is what callers key on.
+
+    THE ONE CALL A LANE WRITER MAKES. `normalise_export_outcome`, `build_gap_census` and every
+    downstream census read the base rung, so that receipt is the return value -- but it is now the
+    LAST of four written rather than the only one written, which is the whole of this fix.
+    """
+    receipts = write_absence_ladder(store, absence, layer=layer, kind=kind, day=day)
+    base = receipts[-1]
+    if base.zoom != BASE_ZOOM_TIER:
+        raise AbsenceLadderError(  # pragma: no cover - `ABSENCE_LADDER_TIERS` ends at the base rung by construction
+            f"{layer} {day.isoformat()}: the absence ladder ended at z{base.zoom} rather than the base rung "
+            f"z{BASE_ZOOM_TIER}, so the receipt returned to the lane writer settles the wrong rung"
+        )
+    return base
+
+
+def _retract_absence_ladder(
+    store: ObjectStore,
+    *,
+    layer: str,
+    kind: PartitionKind,
+    day: date,
+    rungs: tuple[ZoomTier, ...],
+) -> str:
+    """Undo a partly written absence ladder, so no rung governs a day the others do not.
+
+    Failures are described rather than raised: this runs inside the handler for a write that already
+    failed, and a second exception there would replace the reason the ladder stopped with the reason
+    the cleanup stopped. The caller folds this sentence into that message instead.
+    """
+    if not rungs:
+        return "no rung had been newly marked, so the day is exactly as this attempt found it"
+    failures: list[str] = []
+    retracted: list[ZoomTier] = []
+    for tier in rungs:
+        try:
+            store.clear_absence_marker(layer, kind, tier, day)
+        except Exception as error:
+            failures.append(f"z{tier}: {type(error).__name__}: {error}")
+        else:
+            retracted.append(tier)
+    undone = ", ".join(f"z{tier}" for tier in retracted) if retracted else "no rung"
+    if failures:
+        return (
+            f"{undone} was retracted, but {'; '.join(failures)} could not be, so that rung still governs a day "
+            f"the rest of the ladder does not and an admin must retract it"
+        )
+    return f"{undone} was retracted, so no rung governs this day"
+
+
 __all__ = [
+    "ABSENCE_LADDER_TIERS",
     "DERIVED_ROWS_PER_PART",
+    "AbsenceLadderError",
     "DerivationResult",
     "DerivedTierReport",
     "TierWriteError",
     "derive_and_write_day_tiers",
+    "govern_day_absent",
+    "write_absence_ladder",
 ]

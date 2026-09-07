@@ -13,6 +13,7 @@ from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
 from agri_data_service.pipeline.direct.climate.rows import climate_day_table
 from agri_data_service.pipeline.direct.climate.source import ClimateSourceError, ClimateSourceUnsettledError
 from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
+from agri_data_service.pipeline.parquet.derivation import govern_day_absent
 from agri_data_service.pipeline.parquet.lane_registry import normalise_export_outcome
 
 if TYPE_CHECKING:
@@ -106,11 +107,11 @@ class DirectClimateFieldAdapter:
                 )
                 raise self.unsettled_refusal
             return normalise_export_outcome(
-                store.write_absence(
+                govern_day_absent(
+                    store,
                     self._absence(source, run_id=run_id, proof=proof),
                     layer=self.product.stream,
                     kind=CLIMATE_DIRECT_KIND,
-                    zoom=LANE_BASE_ZOOM_TIER,
                     day=day,
                 )
             )

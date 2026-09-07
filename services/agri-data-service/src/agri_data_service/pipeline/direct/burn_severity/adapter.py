@@ -1,7 +1,7 @@
 """The lane adapter: fetch one governed MTBS release day under the lane-day lock, then write its base rung.
 
 NEVER CONSTRUCTS `TerminalEvidence` AND NEVER PASSES `provenance=`. Like
-`pipeline/direct/drought/adapter.py`, this module hands `store.write_partition` / `store.write_absence`
+`pipeline/direct/drought/adapter.py`, this module hands `store.write_partition` / `derivation.govern_day_absent`
 a validated table or a `GovernedAbsence`; the shared finalizer (`gap_fill.fill_one_lane_day` ->
 `_bind_rung`/`_rung_objects_from_ledger`) builds every `TerminalEvidence` from the real
 written-object ledger, so provenance defaults to `digested` by construction. See
@@ -24,6 +24,7 @@ from agri_data_service.foundation.parquet.absence import GovernedAbsence
 from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
 from agri_data_service.pipeline.direct.burn_severity.rows import burn_severity_release_day_table
 from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
+from agri_data_service.pipeline.parquet.derivation import govern_day_absent
 from agri_data_service.pipeline.parquet.lane_registry import normalise_export_outcome
 from agri_data_service.warehouse.schemas.burn_severity import BURN_SEVERITY_SCHEMA, BURN_SEVERITY_STREAM
 
@@ -86,11 +87,11 @@ class DirectBurnSeverityAdapter:
         self.source = source
         if not source.records:
             return normalise_export_outcome(
-                store.write_absence(
+                govern_day_absent(
+                    store,
                     self._absence(run_id=run_id, ignition_years=source.ignition_years),
                     layer=BURN_SEVERITY_STREAM,
                     kind=BURN_SEVERITY_DIRECT_KIND,
-                    zoom=LANE_BASE_ZOOM_TIER,
                     day=day,
                 )
             )

@@ -1300,23 +1300,35 @@ its cost.
 Executor lane `watersheds-direct-forward`, **daily at 03:00 UTC** -- the cadence of the `postgres-watersheds`
 lane it mirrors (02:00), offset an hour so the two never open the same fetch minute during the parity bake,
 when both are meant to be running. Hourly would pay that ~47-request walk 24 times a day to detect a change
-that has happened once in the layer's measured history. SHADOW. THIS IS THE ONE LANE WHOSE ACTIVATION MUST
-SWAP BOTH FIELDS IN ONE EDIT: swap the adapter alone and a source-direct writer is keyed to a clock that
-froze when `postgres-watersheds` stopped; swap the watermark alone and the Postgres export publishes under a
-version day it did not produce.
+that has happened once in the layer's measured history. The executor lane is still SHADOW -- activating it is
+a Railway variable edit -- but THE REGISTRY SWAP ALREADY HAPPENED, on 2026-09-06, and it moved BOTH FIELDS IN
+ONE EDIT because neither could move alone: swap the adapter alone and a source-direct writer is keyed to a
+clock that froze when `postgres-watersheds` stopped; swap the watermark alone and the Postgres export
+publishes under a version day it did not produce. `LANE_REGISTRY['watersheds'].adapter` now refuses and names
+this package, and its `watermark` is `watersheds/watermark.py` (one call into `source.py`);
+`sql/pipeline/lane_watermark_watersheds.sql` was deleted in the same edit.
 
 ## Evacuation zones
 
 `evacuation_zones/` publishes one version of Oregon OEM's evacuation areas directly, when and only when it has
-changed. It replaces both `pipeline/lanes/evacuation_zones.py::export_evacuation_zones_day` (the registered
-`_fill_evacuation_zones` adapter, which reads `geo.features` and LEFT JOINs `geo.geometry`) and
+changed. It replaces both `pipeline/lanes/evacuation_zones.py::export_evacuation_zones_day` (the former
+`_fill_evacuation_zones` adapter, which read `geo.features` and LEFT JOINed `geo.geometry`) and
 `ingest/evacuation_zones.py::run_evacuation_zones_ingestion_job` (which filled them). PostgreSQL is still
 opened for ONE thing -- the shared session-scoped lane-day advisory lock -- which is coordination, not a data
 sink.
 
+REGISTERED SINCE 2026-09-06, adapter and watermark in one edit: `LANE_REGISTRY['evacuation-zones'].adapter`
+refuses and names this package, and its `watermark` is `evacuation_zones/watermark.py`, which runs the SAME
+content comparison `forward.py` publishes on, so the census and the writer cannot disagree. Two modules exist
+only to keep that importable -- `registration.py` holds this package's single edge back to `LANE_REGISTRY`,
+and `products.py` deliberately holds none, because the registry now imports `watermark.py` -> `rows.py` ->
+`products.py` and an edge back from there would close a cycle. The executor lane stays SHADOW until an owner
+edits the Railway variable.
+
 ### How a version stamp is decided without a Postgres watermark
 
-`sql/pipeline/lane_watermark_evacuation_zones.sql` answered "when did the published set last change" with
+`sql/pipeline/lane_watermark_evacuation_zones.sql` (deleted 2026-09-06) answered "when did the published set
+last change" with
 `GREATEST(max(features.updated_at), max(features.created_at), max(geometry.version_valid_from))`. Every one
 of those three is a column this track deletes, and two of them are PlantGeo's own change-detection clock
 rather than anything Oregon publishes. The upstream offers no replacement: `created_date` never moves when a

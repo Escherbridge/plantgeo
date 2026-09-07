@@ -2,7 +2,7 @@
 
 NEVER CONSTRUCTS `TerminalEvidence` AND NEVER PASSES `provenance=`. Like `pipeline/direct/soil/adapter.py`
 and `pipeline/direct/climate/adapter.py`, this module hands `store.write_partition` /
-`store.write_absence` a validated table or a `GovernedAbsence`; the shared finalizer
+`derivation.govern_day_absent` a validated table or a `GovernedAbsence`; the shared finalizer
 (`gap_fill.fill_one_lane_day` -> `_bind_rung`/`_rung_objects_from_ledger`) builds every
 `TerminalEvidence` from the real written-object ledger, so provenance defaults to `digested` by
 construction. `scripts/compile_availability_bootstrap.py` is the ONLY caller that legitimately
@@ -27,6 +27,7 @@ from agri_data_service.pipeline.direct.vegetation.products import (
 from agri_data_service.pipeline.direct.vegetation.rows import vegetation_day_table
 from agri_data_service.pipeline.direct.vegetation.source import VegetationSourceError, VegetationSourceUnsettledError
 from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
+from agri_data_service.pipeline.parquet.derivation import govern_day_absent
 from agri_data_service.pipeline.parquet.lane_registry import normalise_export_outcome
 from agri_data_service.warehouse.schemas.vegetation import VEGETATION_PLANE_STREAM as VEGETATION_STREAM
 
@@ -123,11 +124,11 @@ class DirectVegetationAdapter:
                 )
                 raise self.unsettled_refusal
             return normalise_export_outcome(
-                store.write_absence(
+                govern_day_absent(
+                    store,
                     self._absence(source, run_id=run_id, proof=proof),
                     layer=VEGETATION_STREAM,
                     kind=VEGETATION_DIRECT_KIND,
-                    zoom=LANE_BASE_ZOOM_TIER,
                     day=day,
                 )
             )
