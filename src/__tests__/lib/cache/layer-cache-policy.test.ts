@@ -16,6 +16,8 @@ import {
   defaultLayerCachePolicy,
   layerCacheNature,
   layerCacheNatureTable,
+  refreshModeExceptionTable,
+  resolveLayerCachePolicy,
   sanitizeLayerCacheOverrides,
   sanitizeLayerTimestamps,
   type LayerCacheNature,
@@ -28,7 +30,11 @@ import {
   resetLayerCachePolicyForTests,
   useLayerCachePolicyStore,
 } from "@/lib/cache/layer-cache-policy-store";
-import { LAYER_TOGGLE_IDS, toggleIdForWarehouseLayerName } from "@/lib/map/layer-registry";
+import {
+  LAYER_TOGGLE_IDS,
+  toggleIdForWarehouseLayerName,
+  type LayerToggleId,
+} from "@/lib/map/layer-registry";
 
 beforeEach(() => {
   resetLayerCachePolicyForTests();
@@ -287,5 +293,51 @@ describe("refresh requests", () => {
     expect(isSupersededByRefreshRequest("vegetation", before)).toBe(false);
     // An unattributable entry can never be superseded; there is no layer to ask for.
     expect(isSupersededByRefreshRequest(null, before)).toBe(false);
+  });
+});
+
+describe("nature-default exceptions", () => {
+  /**
+   * The nature default argues `static_lookup: "manual"` from watersheds -- "published exactly one
+   * version in its entire history". Evacuation zones is the same nature and the opposite case: its
+   * watermark is a content digest recomputed hourly, and its population moved 677 -> 718 -> 116 in
+   * three weeks. On the nature default a reader who loaded before a fire keeps that snapshot for a
+   * year. This is the assertion that would fail if someone "simplified" the exception away.
+   */
+  it("evacuation-zones revalidates automatically despite being a static_lookup", () => {
+    const policy = resolveLayerCachePolicy("evacuation-zones", undefined);
+
+    expect(policy.nature).toBe("static_lookup");
+    expect(policy.refreshMode).toBe("automatic");
+    // The exception touches ONE field: retention still follows the nature.
+    expect(policy.retainedDayLimit).toBe(DEFAULT_RETAINED_DAY_LIMIT.static_lookup);
+    // It is a default, not a lock -- `isOverridden` reports the USER's departure, not ours.
+    expect(policy.isOverridden).toBe(false);
+  });
+
+  it("a user may still override an excepted layer in either direction", () => {
+    const toManual = resolveLayerCachePolicy("evacuation-zones", { refreshMode: "manual" });
+
+    expect(toManual.refreshMode).toBe("manual");
+    expect(toManual.isOverridden).toBe(true);
+  });
+
+  it("the sibling static_lookup layers keep the nature default", () => {
+    for (const layerId of ["watersheds", "soil-survey"] as const) {
+      const policy = resolveLayerCachePolicy(layerId, undefined);
+      expect(policy.nature).toBe("static_lookup");
+      expect(policy.refreshMode).toBe("manual");
+    }
+  });
+
+  it("every excepted layer names a real registry layer and actually departs from its nature", () => {
+    const table = refreshModeExceptionTable();
+    expect(Object.keys(table).length).toBeGreaterThan(0);
+    for (const [layerId, mode] of Object.entries(table)) {
+      const nature = layerCacheNature(layerId as LayerToggleId);
+      expect(layerCacheNatureTable()).toHaveProperty(layerId);
+      // An "exception" equal to the default is dead weight pretending to be a decision.
+      expect(mode).not.toBe(DEFAULT_REFRESH_MODE[nature]);
+    }
   });
 });

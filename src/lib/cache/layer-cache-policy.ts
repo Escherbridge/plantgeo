@@ -173,13 +173,49 @@ export function defaultLayerCachePolicy(nature: LayerCacheNature): LayerCachePol
   };
 }
 
+/**
+ * Layers whose nature is right but whose NATURE DEFAULT is wrong for them, each with its reason.
+ *
+ * `DEFAULT_REFRESH_MODE` argues `static_lookup: "manual"` from watersheds -- "published exactly one
+ * version in its entire history". That is true of watersheds and of soil-survey. It is FALSE of
+ * evacuation zones, whose whole lane exists because Oregon OEM's set changes: its watermark is a
+ * CONTENT DIGEST recomputed on an hourly poll (`pipeline/parquet/lane_registry.py`, the
+ * evacuation-zones registration), and its published population moved 677 -> 718 -> 116 rows inside
+ * three weeks.
+ *
+ * Left on the nature default, a reader who opened the map before a fire would be served that
+ * snapshot from disk for up to `MANUAL_TTL_MS` (365 days) unless they thought to press refetch, on
+ * the one layer where a stale answer is a life-safety answer. The nature stays `static_lookup` --
+ * it genuinely publishes version stamps, and its retention default is still right -- so this is an
+ * exception to one field, declared beside the table it departs from rather than hidden as a
+ * special case in the resolver.
+ *
+ * A user may still override this in either direction; an exception is a DEFAULT, not a lock.
+ */
+const REFRESH_MODE_EXCEPTIONS: Partial<Record<LayerToggleId, LayerRefreshMode>> = {
+  "evacuation-zones": "automatic",
+};
+
+/** Exported for the exception test; production code goes through `resolveLayerCachePolicy`. */
+export function refreshModeExceptionTable(): Partial<Record<LayerToggleId, LayerRefreshMode>> {
+  return REFRESH_MODE_EXCEPTIONS;
+}
+
+/** The nature default with any declared per-layer exception applied, before the user's override. */
+function baseLayerCachePolicy(layerId: LayerToggleId | null): LayerCachePolicy {
+  const nature = layerCacheNature(layerId);
+  const base = defaultLayerCachePolicy(nature);
+  const exception = layerId === null ? undefined : REFRESH_MODE_EXCEPTIONS[layerId];
+  return exception === undefined ? base : { ...base, refreshMode: exception };
+}
+
 /** Nature default with the user's override composed over it. Total; never throws. */
 export function resolveLayerCachePolicy(
   layerId: LayerToggleId | null,
   override: LayerCacheOverride | undefined
 ): LayerCachePolicy {
   const nature = layerCacheNature(layerId);
-  const base = defaultLayerCachePolicy(nature);
+  const base = baseLayerCachePolicy(layerId);
   if (override === undefined) return base;
   const refreshModeOverridden = override.refreshMode !== undefined;
   const limitOverridden = override.retainedDayLimit !== undefined;
