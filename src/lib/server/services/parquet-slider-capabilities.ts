@@ -122,7 +122,22 @@ const DIRECT_PARQUET_CAPABILITIES = [
   // inversion this gate exists to prevent.
   { layerName: "soil-survey", temporalKind: "snapshot", parquetNature: "static_lookup", servingReader: "postgresql", parquetLanes: ["soil-survey"] },
   { layerName: "evacuation-zones", temporalKind: "snapshot", parquetNature: "static_lookup", servingReader: "parquet", parquetLanes: ["evacuation-zones"] },
-  { layerName: "burn-severity", temporalKind: "event", parquetNature: "release_series", servingReader: "postgresql", parquetLanes: ["burn-severity"] },
+  // burn-severity flipped to "parquet" on 2026-09-07: the last row in this table whose axis and
+  // pixels disagreed, and the only one that ran the inversion in the direction `servingReader`
+  // cannot catch. The gate withholds a Parquet AXIS over a PostgreSQL population; this row was a
+  // PostgreSQL axis over a Parquet population, which no check here refuses -- it was simply exempt.
+  // Its render path has been Parquet since the reader cutover (`trpc/routers/environmental.ts:419`
+  // -> `parquet-trpc-readers.ts:2122` `getParquetBurnSeverity` -> the `burn-severity-features`
+  // GeoJSON source at `lib/map/layers.ts:314-317`, filled by `LayerManager.applyParquetFeatureData`)
+  // and Martin publishes no burn-severity tile function (`infra/martin/martin.yaml:65-71`), so
+  // nothing else was ever drawing it.
+  //
+  // WHAT THIS DOES DO, unlike the three snapshot rows above: `temporalKind: "event"` means
+  // `sliderDomain` returns a real domain (`stores/time-slider-store.ts`) and
+  // `lib/map/tile-layer-date-filter.ts:21` applies a real style filter, so the synthesized axis is
+  // user-visible on every scrub. `restoreCumulativeBurnHistory` is what keeps it honest against a
+  // reader that unions every release at or before the viewed day.
+  { layerName: "burn-severity", temporalKind: "event", parquetNature: "release_series", servingReader: "parquet", parquetLanes: ["burn-severity"] },
 ] as const satisfies readonly ParquetCapabilityContract[];
 
 const CLIMATE_PARQUET_LANES = {
@@ -193,8 +208,6 @@ const PARQUET_CAPABILITY_NAMES = new Set(
   PARQUET_CAPABILITY_CONTRACTS.map((contract) => contract.layerName)
 );
 
-const POSTGRES_CAPABILITY_PASSTHROUGH_NAMES = new Set(["burn-severity"]);
-
 function isCoverageBoundaryFault(error: unknown): boolean {
   return (
     error instanceof UpstreamConfigurationError ||
@@ -206,7 +219,22 @@ function isCoverageBoundaryFault(error: unknown): boolean {
   );
 }
 
-/** MTBS is a sparse cumulative event reader, so every day after its first event is selectable. */
+/**
+ * MTBS is a sparse cumulative event reader, so every day after its first event is selectable.
+ *
+ * `getParquetBurnSeverity` (`parquet-trpc-readers.ts:2122`) walks BACK through releases and unions
+ * every one dated at or before the requested day, so a day between two releases draws the older
+ * release in full. The evidence the census publishes says the opposite -- burn-severity has roughly
+ * five real release days across 2015-2026 -- so an axis synthesized straight from it would mark
+ * nearly the whole span as `coverageGaps` and the scrubber would forbid days the renderer handles
+ * perfectly. That is the one direction of error this module must never produce, so the rewrite
+ * follows the reader across the cutover rather than staying behind on the PostgreSQL path.
+ *
+ * Applied at exactly ONE site -- `proveCapability`'s single capability return, which is also the
+ * only producer of a non-null `CapabilityProof.capability` -- because the
+ * `observedDayCount + excludedObservedDayCount` fold below is not idempotent. The layer-name guard
+ * is what makes that one shared site a no-op for every other row.
+ */
 function restoreCumulativeBurnHistory(
   layer: ResolvedSliderLayerCapability
 ): ResolvedSliderLayerCapability {
@@ -238,44 +266,38 @@ function restoreCumulativeBurnHistory(
 }
 
 /**
- * The PostgreSQL rows that survive the cutover.
+ * The PostgreSQL rows that survive the cutover: exactly the layers this module owns no contract for.
  *
- * THE WITHHOLDING RULE, stated once and enforced only here and at the two call sites in
- * `getParquetSliderCapabilities`:
+ * THE WITHHOLDING RULE, which is now structural rather than a per-name exception list. A
+ * `POSTGRES_CAPABILITY_PASSTHROUGH_NAMES` set carried the one exception -- `burn-severity`, and
+ * nothing else -- until its reader flipped to Parquet on 2026-09-07 and emptied it. The set was
+ * deleted along with its four use sites rather than left empty, because an empty set states a rule
+ * through branches that can no longer be taken, and a reader cannot tell a live exception with no
+ * current members apart from a retired one:
  *
- * 1. **Withholding is per named lane.** A withheld availability index is a statement about ONE
- *    lane's published evidence. It withholds that lane's census days and that lane's PostgreSQL
- *    passthrough, and it says nothing whatever about any other lane.
- * 2. **A withheld lane gets neither fallback.** Not census facts, not the older PostgreSQL row --
- *    both would answer a question the warehouse just declined to answer, in a form the client
- *    cannot tell apart from a proved one. `withheldPassthroughNames` is how (2) reaches the
- *    passthrough, and it is built by filtering the proofs down to passthrough layer names, so
- *    burn-severity is dropped when BURN-SEVERITY withheld its index and never because some
- *    unrelated lane did.
- * 3. **A wholly unavailable census is not a withholding.** It leaves every Parquet-owned row
- *    unproven (`coverage_unavailable`) and leaves PostgreSQL-only passthrough lanes exactly as
- *    they are: nothing was said about those lanes' evidence, and blanking a layer the census
- *    never claimed to describe would be its own false report. That path therefore calls this
- *    function with an EMPTY withheld set, deliberately.
+ * 1. **A Parquet-owned layer is proved from Parquet evidence or it has no row at all.** Not a
+ *    census fallback, not the older PostgreSQL row -- either would answer a question the warehouse
+ *    just declined to answer, in a form the client cannot tell apart from a proved one. This holds
+ *    identically for a withheld availability index, an unproven contract, a stale census and a
+ *    wholly unavailable one, and needs no bookkeeping to keep holding.
+ * 2. **A layer with no Parquet contract is untouched.** `interventions` and any future
+ *    PostgreSQL-only row are not claims about warehouse evidence, so nothing here withholds them --
+ *    blanking a layer the census never claimed to describe would be its own false report.
+ *
+ * What (1) cost, stated rather than discovered: when the coverage plane is unavailable altogether,
+ * burn-severity now loses its slider row with every other Parquet-owned layer instead of falling
+ * back to a PostgreSQL axis. That is the point -- its pixels come from Parquet, so a retained
+ * PostgreSQL axis would be exactly the inversion `servingReader` exists to prevent, drawn at the
+ * moment the warehouse is least able to contradict it.
  */
 function retainedPostgresCapabilities(
-  capabilities: ResolvedSliderCapabilities,
-  withheldPassthroughNames: ReadonlySet<string> = new Set()
+  capabilities: ResolvedSliderCapabilities
 ): ResolvedSliderLayerCapability[] {
-  return capabilities.layers
-    .filter(
-      (layer) =>
-        (!PARQUET_CAPABILITY_NAMES.has(layer.layerName) ||
-          POSTGRES_CAPABILITY_PASSTHROUGH_NAMES.has(layer.layerName)) &&
-        !withheldPassthroughNames.has(layer.layerName)
-    )
-    .map(restoreCumulativeBurnHistory);
+  return capabilities.layers.filter((layer) => !PARQUET_CAPABILITY_NAMES.has(layer.layerName));
 }
 
 function unavailableCoverageProofs(): WithheldParquetCapability[] {
-  return PARQUET_CAPABILITY_CONTRACTS.filter(
-    (contract) => !POSTGRES_CAPABILITY_PASSTHROUGH_NAMES.has(contract.layerName)
-  ).map((contract) => ({
+  return PARQUET_CAPABILITY_CONTRACTS.map((contract) => ({
     layerName: contract.layerName,
     parquetLanes: [...contract.parquetLanes],
     reason: "coverage_unavailable",
@@ -769,15 +791,20 @@ function proveCapability(
     0
   );
   return {
-    capability: synthesizeCapability(
-      contract,
-      boundedEntries,
-      bounds.earliestDay,
-      earliestDay,
-      latestDay,
-      serverCurrentDate,
-      publishedRanges,
-      recordedPublishedDayCount - selectablePublishedDayCount
+    // The module's ONLY non-null capability, and therefore the only place a per-contract axis
+    // rewrite can be applied once and only once. `synthesizeCapability` stays a pure translation of
+    // rung evidence; a reader whose own semantics contradict that evidence is corrected here.
+    capability: restoreCumulativeBurnHistory(
+      synthesizeCapability(
+        contract,
+        boundedEntries,
+        bounds.earliestDay,
+        earliestDay,
+        latestDay,
+        serverCurrentDate,
+        publishedRanges,
+        recordedPublishedDayCount - selectablePublishedDayCount
+      )
     ),
     withheld: null,
   };
@@ -815,31 +842,21 @@ export async function getParquetSliderCapabilities(): Promise<ParquetSliderCapab
   const coverage = coverageResult.value;
   const evidence = buildEvidenceIndex(coverage.lanes);
   const withheldLanes = availabilityWithheldLanes(coverage.lanes);
-  // Availability is asked FIRST, and of every contract including the passthrough ones: a lane
-  // that withheld its index is withheld everywhere, and `coverage_not_current` would report the
-  // whole-census reason for what is really one lane's unpublished evidence.
-  const proofs = PARQUET_CAPABILITY_CONTRACTS.flatMap((contract) => {
+  // Availability is asked FIRST, of every contract: a lane that withheld its index is withheld
+  // everywhere, and `coverage_not_current` would report the whole-census reason for what is really
+  // one lane's unpublished evidence.
+  const proofs = PARQUET_CAPABILITY_CONTRACTS.map((contract) => {
     const withheld = availabilityWithholding(contract, withheldLanes);
-    if (withheld !== null) return [withheld];
-    if (POSTGRES_CAPABILITY_PASSTHROUGH_NAMES.has(contract.layerName)) return [];
-    return [
-      coverage.evaluatedThroughDay === postgresCapabilities.serverCurrentDate
-        ? proveCapability(contract, coverage.lanes, evidence, postgresCapabilities.serverCurrentDate)
-        : missing(contract, "coverage_not_current", []),
-    ];
+    if (withheld !== null) return withheld;
+    return coverage.evaluatedThroughDay === postgresCapabilities.serverCurrentDate
+      ? proveCapability(contract, coverage.lanes, evidence, postgresCapabilities.serverCurrentDate)
+      : missing(contract, "coverage_not_current", []);
   });
-  const withheldPassthroughNames = new Set(
-    proofs.flatMap((proof) =>
-      proof.withheld !== null && POSTGRES_CAPABILITY_PASSTHROUGH_NAMES.has(proof.withheld.layerName)
-        ? [proof.withheld.layerName]
-        : []
-    )
-  );
 
   return {
     ...postgresCapabilities,
     layers: [
-      ...retainedPostgresCapabilities(postgresCapabilities, withheldPassthroughNames),
+      ...retainedPostgresCapabilities(postgresCapabilities),
       ...proofs.flatMap((proof) => (proof.capability === null ? [] : [proof.capability])),
     ],
     // Every PostgreSQL stream row is Parquet-owned above; its retired scan cannot remount one.

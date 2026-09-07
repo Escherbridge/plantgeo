@@ -251,29 +251,36 @@ describe("getParquetSliderCapabilities", () => {
     const nonParquetReaders = PARQUET_CAPABILITY_CONTRACTS.filter(
       (contract) => contract.servingReader !== "parquet"
     ).map((contract) => contract.layerName);
+    // `interventions` alone survives from PostgreSQL: it is the only row this module owns no
+    // contract for. burn-severity now sits inside `parquetReaders`, in contract order, rather than
+    // ahead of them as a retained passthrough.
     expect(result.layers.map((layer) => layer.layerName)).toEqual([
-      "burn-severity",
       "interventions",
       ...parquetReaders,
     ]);
+    expect(parquetReaders).toContain("burn-severity");
+    expect(nonParquetReaders).toEqual(["soil-survey"]);
     expect(
       result.withheldParquetCapabilities
         .filter((entry) => entry.reason === "reader_not_parquet")
         .map((entry) => entry.layerName)
-    ).toEqual(nonParquetReaders.filter((layerName) => layerName !== "burn-severity"));
+    ).toEqual(nonParquetReaders);
     expect(result.parquetCoverageGeneratedAt).toBe("2026-08-28T12:00:00Z");
     expect(result.parquetCoverageEvaluatedThroughDay).toBe("2026-08-28");
     expect(result.parquetCoverageUnavailable).toBe(false);
-    expect(result.layers.find((layer) => layer.layerName === "burn-severity")).toEqual(
-      {
-        ...baseCapability("burn-severity"),
-        governedAbsenceRanges: [],
-        // The cumulative reader restates the whole axis as described, so BOTH boundaries clear.
-        describedThroughDay: null,
-        minimumDailyObservationCount: null,
-      }
-    );
-    for (const layerName of parquetReaders) {
+    // Synthesized from the census, NOT the `baseCapability("burn-severity")` row the PostgreSQL
+    // mock still publishes: its 1999 days would show here if any fallback survived.
+    expect(result.layers.find((layer) => layer.layerName === "burn-severity")).toMatchObject({
+      earliestObservedDate: FIRST_DAY,
+      latestObservedDate: LAST_DAY,
+      coverageGaps: [],
+      // The cumulative reader restates the whole axis as described, so BOTH boundaries clear.
+      describedFromDay: null,
+      describedThroughDay: null,
+      earliestObservedDateRule: "full_history",
+      minimumDailyObservationCount: null,
+    });
+    for (const layerName of parquetReaders.filter((name) => name !== "burn-severity")) {
       expect(result.layers.find((layer) => layer.layerName === layerName)).toMatchObject({
         earliestObservedDate: FIRST_DAY,
         latestObservedDate: LAST_DAY,
@@ -283,8 +290,14 @@ describe("getParquetSliderCapabilities", () => {
     }
   });
 
-  it("preserves Burn History from its explicit PostgreSQL capability without Parquet synthesis", async () => {
-    const burnCapability = {
+  /**
+   * The PostgreSQL row this asserts AGAINST is the one burn-severity was served from until
+   * 2026-09-07, while its pixels already came from `getParquetBurnSeverity`. Its distinctive 2015
+   * -2024 days are the tell: if any passthrough survived, they would appear here instead of the
+   * census's own bounds.
+   */
+  it("synthesizes Burn History from Parquet evidence instead of its PostgreSQL capability", async () => {
+    const postgresBurnRow = {
       ...baseCapability("burn-severity"),
       earliestObservedDate: "2024-08-22",
       latestObservedDate: "2024-08-22",
@@ -304,31 +317,135 @@ describe("getParquetSliderCapabilities", () => {
       serverCurrentDate: "2026-08-28",
       futureAxisDays: 30,
       streamsUnavailable: false,
-      layers: [burnCapability],
+      layers: [postgresBurnRow, baseCapability("interventions")],
     });
+
+    const result = await getParquetSliderCapabilities();
+    const burn = result.layers.find((layer) => layer.layerName === "burn-severity");
+
+    expect(burn).toMatchObject({
+      temporalKind: "event",
+      earliestObservedDate: FIRST_DAY,
+      latestObservedDate: LAST_DAY,
+      earliestRecordedObservationDate: FIRST_DAY,
+      latestRecordedObservationDate: LAST_DAY,
+      // The cumulative rewrite reached the Parquet path: no PostgreSQL row states these.
+      coverageGaps: [],
+      earliestObservedDateRule: "full_history",
+      coverageAuthority: "availability",
+      requiredRungs: [0, 5, 9, 13],
+    });
+    expect(burn).not.toMatchObject({ earliestObservedDate: "2024-08-22" });
+    expect(
+      result.withheldParquetCapabilities.some((entry) => entry.layerName === "burn-severity")
+    ).toBe(false);
+  });
+
+  it("withholds Burn History rather than falling back when its lane is absent from the census", async () => {
     setCoverage(completeCoverage().filter((entry) => entry.layer !== "burn-severity"));
 
     const result = await getParquetSliderCapabilities();
 
-    expect(result.layers).toContainEqual({
-      ...burnCapability,
+    expect(result.layers.some((layer) => layer.layerName === "burn-severity")).toBe(false);
+    expect(result.withheldParquetCapabilities).toContainEqual({
+      layerName: "burn-severity",
+      parquetLanes: ["burn-severity"],
+      reason: "lane_not_registered",
+      missingEvidence: [{ parquetLane: "burn-severity", zoomTier: null }],
+    });
+  });
+
+  /**
+   * THE regression this cutover exists to avoid.
+   *
+   * MTBS publishes roughly five release days across 2015-2026, so the census's own evidence for the
+   * lane is a handful of single days separated by multi-year `gapRanges`. Synthesized literally,
+   * that axis marks nearly every day between releases as uncovered -- while
+   * `getParquetBurnSeverity` (`parquet-trpc-readers.ts:2122`) walks back and unions every release at
+   * or before the viewed day, so those days draw perfectly. The scrubber would forbid days the
+   * renderer handles, which is the one direction of error the slider contract must never take.
+   */
+  it("keeps every day after the first release selectable across sparse MTBS release days", async () => {
+    setCoverage(
+      withLane(completeCoverage(), "burn-severity", {
+        earliestDay: "2015-04-01",
+        latestDay: "2024-08-22",
+        publishedRanges: [
+          { from: "2015-04-01", to: "2015-04-01" },
+          { from: "2020-11-24", to: "2020-11-24" },
+          { from: "2024-08-22", to: "2024-08-22" },
+        ],
+        gapRanges: [
+          { from: "2015-04-02", to: "2020-11-23" },
+          { from: "2020-11-25", to: "2024-08-21" },
+        ],
+      })
+    );
+
+    const result = await getParquetSliderCapabilities();
+    const burn = result.layers.find((layer) => layer.layerName === "burn-severity");
+
+    expect(burn).toMatchObject({
       earliestObservedDate: "2015-04-01",
+      latestObservedDate: "2024-08-22",
+      // Not the two multi-year holes the census reported: nine years of them would be forbidden days.
       coverageGaps: [],
       governedAbsenceRanges: [],
       thinRanges: [],
       describedFromDay: null,
       describedThroughDay: null,
       earliestObservedDateRule: "full_history",
+      earliestRecordedObservationDate: "2015-04-01",
       earliestContinuousObservationDate: "2015-04-01",
-      observedDayCount: 10,
+      // Three released days folded once, never twice: the rewrite adds `excludedObservedDayCount`
+      // into this total and is applied at a single site.
+      observedDayCount: 3,
       excludedObservedDayCount: 0,
       gapExcludedObservedDayCount: 0,
       densityExcludedObservedDayCount: 0,
       minimumDailyObservationCount: null,
     });
-    expect(
-      result.withheldParquetCapabilities.some((entry) => entry.layerName === "burn-severity")
-    ).toBe(false);
+  });
+
+  /**
+   * The negative control for the rewrite above: it is keyed on the LAYER NAME, not on
+   * `temporalKind: "event"` or `parquetNature: "release_series"`, because only MTBS's reader unions
+   * its past releases. A drought or perimeter gap is a real hole, and clearing it would assert
+   * coverage nobody measured.
+   */
+  it("leaves other event and release-series layers' gaps exactly as the census reported them", async () => {
+    const sparse = {
+      earliestDay: "2015-04-01",
+      latestDay: "2024-08-22",
+      publishedRanges: [
+        { from: "2015-04-01", to: "2015-04-01" },
+        { from: "2020-11-24", to: "2020-11-24" },
+        { from: "2024-08-22", to: "2024-08-22" },
+      ],
+      gapRanges: [
+        { from: "2015-04-02", to: "2020-11-23" },
+        { from: "2020-11-25", to: "2024-08-21" },
+      ],
+    } as const satisfies Partial<CoverageRow>;
+    setCoverage(
+      withLane(withLane(completeCoverage(), "drought", sparse), "fire-perimeters", sparse)
+    );
+
+    const result = await getParquetSliderCapabilities();
+
+    // `drought-areas` is the release-series half, `fire-perimeters` the `temporalKind: "event"` half.
+    for (const layerName of ["drought-areas", "fire-perimeters"]) {
+      expect(result.layers.find((layer) => layer.layerName === layerName)).toMatchObject({
+        earliestObservedDate: "2015-04-01",
+        coverageGaps: [
+          { from: "2015-04-02", to: "2020-11-23" },
+          { from: "2020-11-25", to: "2024-08-21" },
+        ],
+        earliestObservedDateRule: "warehouse_coverage",
+        earliestContinuousObservationDate: "2024-08-22",
+        observedDayCount: 3,
+      });
+    }
   });
 
   it("reports an exact missing moisture rung while complete soil temperature remains visible", async () => {
@@ -730,16 +847,16 @@ describe("getParquetSliderCapabilities", () => {
 
     const result = await getParquetSliderCapabilities();
 
-    expect(result.layers.map((layer) => layer.layerName)).toEqual([
-      "burn-severity",
-      "interventions",
-    ]);
+    // burn-severity is gone too, deliberately: its pixels are Parquet, so retaining a PostgreSQL
+    // axis for it exactly when the warehouse cannot answer is the inversion this module refuses.
+    expect(result.layers.map((layer) => layer.layerName)).toEqual(["interventions"]);
     expect(result.parquetCoverageUnavailable).toBe(true);
     expect(result.parquetCoverageGeneratedAt).toBeNull();
     expect(result.parquetCoverageEvaluatedThroughDay).toBeNull();
-    expect(result.withheldParquetCapabilities).toHaveLength(
-      PARQUET_CAPABILITY_CONTRACTS.length - 1
-    );
+    expect(result.withheldParquetCapabilities).toHaveLength(PARQUET_CAPABILITY_CONTRACTS.length);
+    expect(
+      result.withheldParquetCapabilities.map((entry) => entry.layerName)
+    ).toContain("burn-severity");
     expect(
       result.withheldParquetCapabilities.every(
         (entry) => entry.reason === "coverage_unavailable"
@@ -767,13 +884,8 @@ describe("getParquetSliderCapabilities", () => {
 
     const result = await getParquetSliderCapabilities();
 
-    expect(result.layers.map((layer) => layer.layerName)).toEqual([
-      "burn-severity",
-      "interventions",
-    ]);
-    expect(result.withheldParquetCapabilities).toHaveLength(
-      PARQUET_CAPABILITY_CONTRACTS.length - 1
-    );
+    expect(result.layers.map((layer) => layer.layerName)).toEqual(["interventions"]);
+    expect(result.withheldParquetCapabilities).toHaveLength(PARQUET_CAPABILITY_CONTRACTS.length);
     expect(result.withheldParquetCapabilities.every((entry) => entry.reason === "coverage_not_current")).toBe(
       true
     );
@@ -828,11 +940,12 @@ describe("getParquetSliderCapabilities", () => {
   });
 
   /**
-   * burn-severity is deliberately still served from PostgreSQL, but a withheld Parquet index for
-   * it is not a reason to reach for the older reader: the withheld proof is about that layer's
-   * published evidence, and the passthrough is not a second opinion about it.
+   * burn-severity kept a PostgreSQL row through `POSTGRES_CAPABILITY_PASSTHROUGH_NAMES` until
+   * 2026-09-07. The set is gone, so this now pins the stronger rule structurally: a withheld index
+   * leaves the layer with NO row, and the PostgreSQL capability the mock still publishes for it is
+   * not a second opinion about the evidence the warehouse just declined to state.
    */
-  it("drops even the PostgreSQL passthrough row when its Parquet lane withholds its index", async () => {
+  it("leaves burn-severity with no row at all when its Parquet lane withholds its index", async () => {
     setCoverage(
       withLane(completeCoverage(), "burn-severity", {
         withheldReason: "availability_checksum_invalid",
@@ -853,17 +966,20 @@ describe("getParquetSliderCapabilities", () => {
   /**
    * The other half of that rule, and the half that is easy to over-apply: withholding is per NAMED
    * lane. An unrelated lane's unpublished index says nothing about burn-severity's evidence, so
-   * dropping the passthrough on it would blank a layer nobody made a claim about -- a false report
-   * of its own, in the same direction fail-closed is trying to avoid errors in.
+   * dropping its row on that would blank a layer nobody made a claim about -- a false report of its
+   * own, in the same direction fail-closed is trying to avoid errors in.
    */
-  it("keeps the passthrough row when a DIFFERENT lane withholds its index", async () => {
+  it("keeps burn-severity synthesized when a DIFFERENT lane withholds its index", async () => {
     setCoverage(
       withLane(completeCoverage(), "vegetation", { withheldReason: "availability_unpublished" })
     );
 
     const result = await getParquetSliderCapabilities();
 
-    expect(result.layers.some((layer) => layer.layerName === "burn-severity")).toBe(true);
+    expect(result.layers.find((layer) => layer.layerName === "burn-severity")).toMatchObject({
+      earliestObservedDate: FIRST_DAY,
+      earliestObservedDateRule: "full_history",
+    });
     expect(
       result.withheldParquetCapabilities.some((entry) => entry.layerName === "burn-severity")
     ).toBe(false);

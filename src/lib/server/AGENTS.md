@@ -1309,3 +1309,46 @@ future POI feature has exactly two honest options: load `geo.poi` from OSM (or a
 in its own shape, or repoint every reader here at `geo.osm_pois` and rewrite `placeColumns`,
 `Place` and the category taxonomy (`POI_CATEGORIES`) to match its columns. Either is a real
 change; treating the two tables as interchangeable is not.
+
+## §burn-severity-cumulative-axis
+
+`burn-severity` was the last row in `services/parquet-slider-capabilities.ts` whose slider axis came
+from PostgreSQL while its pixels came from Parquet, and it flipped to `servingReader: "parquet"` on
+2026-09-07. It is worth naming why the `reader_not_parquet` gate never caught it: that gate refuses
+a **Parquet axis over a PostgreSQL population**, and this was the mirror image — a PostgreSQL axis
+over a Parquet population, which no check in the module refuses because the row was exempt from
+checking altogether. `POSTGRES_CAPABILITY_PASSTHROUGH_NAMES` held `burn-severity` and nothing else,
+and its membership made `proveCapability` return early, so the `servingReader` line could say
+anything at all without effect. **Both edits were needed or neither**; flipping the reader alone
+would have changed nothing.
+
+**The passthrough set was deleted, not left empty.** With its one member gone it governed four
+branches that could never be taken (the retained-rows filter, the unavailable-census proof list, the
+early return in the proof loop, and the `withheldPassthroughNames` set threaded into
+`retainedPostgresCapabilities`), and a reader cannot tell an exception mechanism with no current
+members apart from a retired one. The rule it enforced is now structural and stated once on
+`retainedPostgresCapabilities`: a Parquet-owned layer is proved from Parquet evidence or has no row
+at all, and a layer with no Parquet contract is untouched. `interventions` is the only survivor
+today. **This has a cost, and the cost is deliberate**: when the coverage plane is unavailable
+altogether, burn-severity now loses its slider row along with every other Parquet-owned layer
+instead of falling back to a PostgreSQL axis. Retaining that axis would be the inversion above,
+drawn at exactly the moment the warehouse cannot contradict it.
+
+**`restoreCumulativeBurnHistory` is the load-bearing part.** `getParquetBurnSeverity`
+(`services/parquet-trpc-readers.ts:2122`) walks BACK through releases and unions every one dated at
+or before the requested day, so any day at or after the first MTBS release draws. MTBS publishes
+roughly five release days across 2015-2026, so a census-literal axis marks nearly the whole span as
+`coverageGaps` — a scrubber forbidding days the renderer handles perfectly, which is the one
+direction of error the slider contract must never take. The transform therefore had to follow the
+reader across the cutover: it now runs on the Parquet path at `proveCapability`'s single capability
+return, which is the module's only producer of a non-null `CapabilityProof.capability`.
+
+That single call site is the whole once-only argument, and it is **structural, not test-detected**.
+The fold `observedDayCount + excludedObservedDayCount` is not idempotent in general, but on the
+Parquet path burn-severity's `excludedObservedDayCount` is always 0 — that number is
+`recordedPublishedDayCount - selectablePublishedDayCount`, and the two differ only under a
+`selectableHistoryFloor`, which only `water-gauges` declares. A doubled application was measured to
+leave all 40 tests green (2026-09-07). So do not read the suite as a guard here: if a second
+application site is ever added, or a floor is ever given to `burn-severity`, the double-count
+returns silently. The `layerName !== "burn-severity"` guard inside the transform is what makes the
+one shared site safe for every other row, and it must stay.
