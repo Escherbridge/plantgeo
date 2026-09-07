@@ -535,17 +535,19 @@ def test_the_weather_observations_direct_writer_and_its_generic_spec_refuse_to_r
 
 
 def test_the_drought_direct_writer_and_its_generic_spec_refuse_to_run_together() -> None:
-    """The same wiring as vegetation/weather-observations, and the same shadow status -- no distinction.
+    """The `_FORWARD_SIBLING_LANE_BY_SLUG` wiring, which is unchanged by the 2026-09-07 adapter swap.
 
-    An earlier docstring here claimed drought exercised a design distinction (a registry adapter that
-    refuses, "like climate/soil"). It did not, and could not: `parquet-drought` is the ACTIVE
-    production writer while `drought-direct-forward` is shadow, so `LANE_REGISTRY['drought'].adapter`
-    still reads Postgres via `_fill_drought` -- see
-    `tests/parquet/test_lane_registry.py::test_drought_registry_adapter_is_deliberately_still_postgres_reading`.
-    What this test actually asserts is the `_FORWARD_SIBLING_LANE_BY_SLUG` wiring: a two-sided
-    `conflicts_with` that does NOT strip the generic lane's real `plantgeo-ingest-cron` legacy owner
-    (which `_DIRECT_WRITER_BY_SLUG` would have), and a `writer_floor` that is the direct writer's own
-    floor rather than a boundary between two windows.
+    Two earlier docstrings here have been wrong about what this test proves, in opposite directions.
+    The first claimed drought exercised a design distinction (a registry adapter that refuses, "like
+    climate/soil") at a time when it did not. The second corrected that by asserting the adapter still
+    read Postgres -- which stopped being true on 2026-09-07, when `drought-direct-forward` went ACTIVE,
+    `parquet-drought` was retired and the adapter was routed to a source-direct refusal (pinned by
+    `tests/parquet/test_lane_registry.py`'s `test_the_swapped_series_lanes_moved_the_adapter_...`).
+    Neither claim belonged here: this test asserts SPEC wiring, and the spec wiring did not move. What
+    it pins is a two-sided `conflicts_with` that does NOT strip the generic lane's real
+    `plantgeo-ingest-cron` legacy owner (which `_DIRECT_WRITER_BY_SLUG` would have), and a
+    `writer_floor` that is the direct writer's own floor rather than a boundary between two windows.
+    The generic lane is retired, not deleted, so that guard still has work to do.
     """
     direct = "drought-direct-forward"
     generic = "parquet-drought"

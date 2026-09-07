@@ -88,7 +88,11 @@ class LocalFileBackend:
 
 
 def sensor_table(*, day: date, station_id: str, measurements: tuple[str, ...] = ("temperature",)) -> pa.Table:
-    """One station-day's tall-grain rows, shaped exactly like `pipeline/lanes/sensors.py`'s export."""
+    """One station-day's tall-grain rows, at the registered grain both writers publish.
+
+    Shaped from `pipeline/lanes/sensors.py`'s export, which was deleted on 2026-09-07 with the
+    Postgres-reading lane; `pipeline/direct/sensors/rows.py` produces the identical shape now.
+    """
     count = len(measurements)
     return pa.table(
         {

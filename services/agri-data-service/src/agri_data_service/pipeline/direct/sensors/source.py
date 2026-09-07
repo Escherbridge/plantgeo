@@ -14,8 +14,10 @@ date, the way `climate`/`soil` ask their archives, would get real data for six d
 receiving nothing for every older day forever -- and if that "nothing" were read as a governed
 absence (the `climate`/`soil` convention for a settled source that answered empty), it would
 permanently overwrite the record of days the OLD Postgres-reading adapter (`pipeline/lanes/sensors.py`,
-still the registered `LANE_REGISTRY['sensors'].adapter`) already captured and that this producer can
-never re-fetch. So this module never asks for one named day: it fetches the WHOLE currently-available
+the registered `LANE_REGISTRY['sensors'].adapter` until 2026-09-07 and deleted with that swap) already
+captured and that this producer can never re-fetch. Those published days are still in the bucket and
+nothing rewrites them now, which is exactly why this module must never manufacture an absence over
+one. So it never asks for one named day: it fetches the WHOLE currently-available
 window in one poll, `[now - NWS_OBSERVATION_RETENTION, now)`, and lets `rows.py` bucket whatever days
 that window actually touched. `_rolling_window` proves the window it built is provably inside the
 source's own declared capability by calling `HistoryCapability.require` on it -- a defensive,

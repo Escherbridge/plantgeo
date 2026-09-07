@@ -1,12 +1,14 @@
 """Publish the newest settled USDM release directly, one release Tuesday per lane-day lock.
 
-Bypasses PostgreSQL entirely: `pipeline/lanes/drought.py::export_drought_release` (the registered
-`_fill_drought` adapter) reads `geo.drought_areas` and is the OLD path this writer replaces for every
-day it owns, exactly as `pipeline/direct/fire_detections.py` replaces `_fill_fire_detections` for its
-own bounded window. Unlike fire, there is no co-existing Postgres producer left running for older
-days -- `postgres-drought`/`ingest-drought` are both stopped (owner decision 2026-09-04) -- so this
-module owns the FULL floor-to-settled window; `backfill.py` walks it oldest-first, this module walks
-it newest-first. See `pipeline/direct/AGENTS.md`, "Drought".
+Bypasses PostgreSQL entirely. The OLD path was `pipeline/lanes/drought.py::export_drought_release`
+behind the registered `_fill_drought` adapter, reading `geo.drought_areas`; on 2026-09-07 that
+adapter became a source-direct refusal naming this package and both the lane module and its query
+file were deleted, so this writer is not merely the preferred path for the days it owns, it is the
+only one. There is no co-existing Postgres producer either: `postgres-drought`/`ingest-drought` are
+both stopped (owner decision 2026-09-04) and never resume. This module owns the FULL
+floor-to-settled window; `backfill.py` walks it oldest-first, this module walks it newest-first,
+and -- unlike `vegetation` -- neither goes through the registration's adapter to do it. See
+`pipeline/direct/AGENTS.md`, "Drought".
 """
 
 from __future__ import annotations

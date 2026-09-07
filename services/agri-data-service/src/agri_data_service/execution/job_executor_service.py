@@ -767,9 +767,10 @@ _MIGRATION_INPUT_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
             "Direct Open-Meteo current-conditions forward writer for weather-observations. Unlike "
             "vegetation/fire-detections/water-gauges, no cited ownership-boundary constant exists yet "
             "in pipeline/direct/weather_observations/ (no backfill.py, no *_DIRECT_WRITER_START_DAY), "
-            "so LANE_REGISTRY['weather-observations'].adapter is left unchanged reading Postgres via "
-            "_fill_weather_observations, and no writer_ceiling/writer_floor is guessed here without one "
-            "to cite. Shadow until activated and until that boundary is measured and recorded."
+            "so no writer_ceiling/writer_floor was guessed here without one to cite. ACTIVE since 2026-09-07, "
+            "and LANE_REGISTRY['weather-observations'].adapter became a source-direct refusal in the same "
+            "wave: a boundary day is only worth having while TWO writers share the window, and they no "
+            "longer do. There is still no cited boundary; there is no longer anything for it to divide."
         ),
     ),
     _spec(
@@ -790,10 +791,10 @@ _MIGRATION_INPUT_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
             "there is no ownership-boundary day to abut: forward.py and backfill.py between them claim "
             "the SAME full floor-to-settled window the generic parquet-drought lane covers, so the two "
             "are total substitutes and conflicts_with -- not a writer_ceiling on the registration -- is "
-            "what keeps one of them off. LANE_REGISTRY['drought'].adapter therefore still reads Postgres "
-            "via _fill_drought and MUST keep doing so while parquet-drought is the ACTIVE production "
-            "writer; swap it to a source-direct refusal in the same owner-confirmed push that adds this "
-            "lane to PLANTGEO_JOB_EXECUTOR_ACTIVE_LANES, never earlier. Shadow until activated."
+            "what keeps one of them off. ACTIVE since 2026-09-07: parquet-drought was retired from the active "
+            "set and LANE_REGISTRY['drought'].adapter became a source-direct refusal in that same push, "
+            "which is exactly the ordering the previous text demanded. A re-activated parquet-drought "
+            "now raises rather than exporting a frozen Postgres over days this writer owns."
         ),
         # The direct writer's own floor, not a boundary: `forward.py:125` scans from
         # `max(lane.history_floor, ...)` and `backfill.py:72` walks `release_weeks(lane.history_floor,
@@ -858,9 +859,10 @@ _MIGRATION_INPUT_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
             "slot would re-transfer the same mostly-unchanged six days several times an hour for no new "
             "readings, while a slower slot risks a day ageing out of NWS's rolling retention unseen, "
             "which loses it from the source forever. Like weather-observations, this package ships no "
-            "*_DIRECT_WRITER_START_DAY and no backfill.py, so LANE_REGISTRY['sensors'].adapter is left "
-            "reading Postgres via _fill_sensors and no writer_floor is guessed without a boundary day "
-            "to cite. Shadow until activated."
+            "*_DIRECT_WRITER_START_DAY and no backfill.py, so no writer_floor was guessed without a boundary "
+            "day to cite. ACTIVE since 2026-09-07; the adapter became a source-direct refusal once "
+            "postgres-sensors was deleted, because a FROZEN geo.features is not a deeper archive -- it "
+            "is a fixed set of past days a generic export would republish forever under this lane."
         ),
     ),
     _spec(
@@ -946,12 +948,16 @@ _MIGRATION_INPUT_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
         selection_policy="newest unpublished governed MTBS release day first, one release day per lane-day lock",
         timeout_seconds=int(BURN_SEVERITY_DEFAULT_TIME_BUDGET_SECONDS) + COMMAND_CLEANUP_MARGIN_SECONDS,
         description=(
-            "Direct MTBS forward writer for burn-severity. UNLIKE every other lane in this join, "
-            "mtbs-forward/ingest-mtbs is STILL the sole ACTIVE writer of this layer and nothing here "
-            "stops it -- that is an owner-confirmed Railway variable edit -- so "
-            "LANE_REGISTRY['burn-severity'].adapter must keep reading Postgres via _fill_burn_severity "
-            "until BOTH conditions hold: parity.py proves D1 parity against what geo.features holds in "
-            "production, and the owner stops mtbs-forward. WEEKLY on Tuesday 08:55 UTC because MTBS "
+            "Direct MTBS forward writer for burn-severity. ACTIVE since 2026-09-07, and "
+            "LANE_REGISTRY['burn-severity'].adapter became a source-direct refusal in that wave. "
+            "mtbs-forward/ingest-mtbs STILL RUNS and is NOT a second writer of this stream: it writes "
+            "geo.features (ingest/mtbs.py) while this lane writes Parquet. What the swap did was empty "
+            "its consumer set -- parquet-burn-severity is retired and the adapter behind it now refuses "
+            "-- so it is a producer feeding nothing. Retiring it is still gated on parity.py proving D1 "
+            "against what geo.features holds, because it may hold release days this writer has not "
+            "published yet, and it is a two-variable edit (see conductor/RUNBOOK.md: dropping a lane "
+            "without dropping its handoff acknowledgement stops the executor booting). WEEKLY on "
+            "Tuesday 08:55 UTC because MTBS "
             "publishes quarterly and its governed release set grows only through a code change, never "
             "through the calendar advancing; forward.py's per-turn R2 census is explicitly sized for "
             "that weekly cadence. There is no boundary day to abut -- forward.py and backfill.py claim "

@@ -48,10 +48,11 @@ from tests.parquet.test_soil_survey_lane import soil_survey_row
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-# Ten database-backed lanes, the two static lanes swapped source-direct on 2026-09-06
-# (`STATIC_SOURCE_DIRECT_SLUGS`), the eleven source-direct NASA POWER streams, the eight
-# source-direct Open-Meteo ERA5-Land streams, and `calendar`. The COUNT did not move: the swap
-# changed two registrations' fields, it did not add or remove a stream.
+# Six database-backed lanes, the two static lanes swapped source-direct on 2026-09-06
+# (`STATIC_SOURCE_DIRECT_SLUGS`), the four series lanes swapped on 2026-09-07
+# (`SERIES_SOURCE_DIRECT_SLUGS`), the eleven source-direct NASA POWER streams, the eight
+# source-direct Open-Meteo ERA5-Land streams, and `calendar`. The COUNT has never moved across
+# either swap: both changed registrations' FIELDS, neither added or removed a stream.
 EXPECTED_LANE_COUNT = 32
 AUGUST_SIXTH = date(2026, 8, 6)
 
@@ -99,6 +100,20 @@ SOURCE_DIRECT_SLUGS = NASA_POWER_DIRECT_SLUGS | ERA5_LAND_DIRECT_SLUGS
 # day, so their registrations are hand-written and keep their measured floors. Both fields moved in
 # one edit: the adapter to a refusal naming the package, the watermark to that package's own clock.
 STATIC_SOURCE_DIRECT_SLUGS = frozenset({"evacuation-zones", "watersheds"})
+
+# The four SERIES lanes swapped off Postgres on 2026-09-07, once each one's own registration comment
+# had recorded a condition that was then discharged: drought's "same push that activates
+# drought-direct-forward", burn-severity's parity proof plus a stopped `mtbs-forward`, sensors' "the
+# only path to days older than NWS's rolling window", weather-observations' missing ownership-boundary
+# day. All four `*-direct-forward` executor lanes are ACTIVE and their `parquet-*` counterparts
+# retired, so the refusal is what a re-activated generic lane now hits instead of re-exporting a
+# frozen Postgres over days the direct writer owns.
+#
+# THESE FOUR MOVED THE ADAPTER ALONE, and that is the difference from the two above: a `daily_series`
+# or `release_series` lane carries no watermark to move with it. What it could carry is a
+# `writer_ceiling`, and none of the four declares one -- see each registration for why its lane has no
+# honest boundary day.
+SERIES_SOURCE_DIRECT_SLUGS = frozenset({"burn-severity", "drought", "sensors", "weather-observations"})
 
 EXPECTED_SLUGS = SOURCE_DIRECT_SLUGS | frozenset(
     {
@@ -152,11 +167,11 @@ _MONTE_CARLO_DIRECTORY = _SOURCE_ROOT / "method" / "monte_carlo"
 # day it lands, with nothing to remember to register. An unregistered lane is a stream nothing ever
 # schedules, and that failure is invisible -- every test still passes and the bucket just stays empty.
 #
-# `drought` was the sole entry here and is now REGISTERED. Both blockers this dict recorded were
-# cleared on 2026-08-22: its floor was measured against production (min(valid_date)=2022-08-09,
-# 209 releases) rather than inferred, and `cadence_days` was added to the registration so a weekly
-# source no longer marks six days in seven as a governed absence. The exemption mechanism stays --
-# it is the default-deny gate, not a list that happened to have one member.
+# `drought` was the sole entry here, was registered on 2026-08-22 once its floor had been measured
+# against production, and its MODULE was deleted on 2026-09-07 along with `sensors`' -- both lanes
+# are now written source-direct, so the Postgres-reading exporters that used to back them, and the
+# two day-export query files only they loaded, went with them. The exemption mechanism stays: it is
+# the default-deny gate, not a list that happened to have one member.
 UNREGISTERED_LANE_MODULES: dict[str, str] = {}
 
 
@@ -221,7 +236,10 @@ def test_every_lane_module_is_either_registered_or_explicitly_declared_unregiste
     """A lane nothing registers is a stream nothing schedules -- and that failure is otherwise silent.
 
     `drought` proved the point the day it landed: it appeared in `pipeline/lanes/` from a concurrent
-    agent, is a first-class stream, and would have had no gap-fill entry with nothing failing.
+    agent, is a first-class stream, and would have had no gap-fill entry with nothing failing. It also
+    shows the gate's other direction, since its module was DELETED on 2026-09-07: the check is over
+    modules that exist, so retiring a Postgres-reading exporter is silent here and is caught instead
+    by `tests/test_sql_tree_conventions.py`, which fails any query file no `load_query_sql` call names.
     """
     modules = {path.stem.replace("_", "-") for path in _LANE_MODULE_DIRECTORY.glob("*.py") if path.stem != "__init__"}
     registered = set(registered_lane_slugs())
@@ -254,88 +272,94 @@ def test_the_registry_is_keyed_by_slug_and_ordered_deterministically() -> None:
 
 @pytest.mark.asyncio
 async def test_every_source_direct_lane_refuses_and_names_its_own_writer() -> None:
-    """Twenty-one lanes, four writers. A shared message would send an operator to the wrong module.
+    """Twenty-five lanes, eight writers. A shared message would send an operator to the wrong module.
 
     The generic gap-fill driver can reach any registered lane, so the refusal is the only thing
     standing between a `parquet-soil-field-vpd` tick and a run that reports success having exported
     nothing. It must also be SPECIFIC: `pipeline.direct.climate` cannot publish an ERA5-Land day, and
     since 2026-09-06 a `parquet-watersheds` tick must name the NHDPlus_HR writer rather than fail on
     a missing `geo.features`.
+
+    The four lanes added on 2026-09-07 are where a shared message would hurt most, because their
+    generic `parquet-*` lanes were RETIRED rather than deleted: re-activating one is a variable edit,
+    and what it must produce is a report naming the module that owns the layer, not a stack trace
+    from a table this track is dropping.
     """
     expected_writer = {
         **dict.fromkeys(NASA_POWER_DIRECT_SLUGS, "pipeline.direct.climate"),
         **dict.fromkeys(ERA5_LAND_DIRECT_SLUGS, "pipeline.direct.soil"),
         "watersheds": "pipeline.direct.watersheds",
         "evacuation-zones": "pipeline.direct.evacuation_zones",
+        "burn-severity": "pipeline.direct.burn_severity",
+        "drought": "pipeline.direct.drought",
+        "sensors": "pipeline.direct.sensors",
+        "weather-observations": "pipeline.direct.weather_observations",
     }
 
-    assert set(expected_writer) == SOURCE_DIRECT_SLUGS | STATIC_SOURCE_DIRECT_SLUGS
+    assert set(expected_writer) == SOURCE_DIRECT_SLUGS | STATIC_SOURCE_DIRECT_SLUGS | SERIES_SOURCE_DIRECT_SLUGS
     for slug, writer in sorted(expected_writer.items()):
         with pytest.raises(LaneRegistryError, match=re.escape(writer)):
             await LANE_REGISTRY[slug].adapter(None, None, day=AUGUST_SIXTH, run_id="generic")
 
 
-def test_drought_registry_adapter_is_deliberately_still_postgres_reading() -> None:
-    """`drought-direct-forward` exists but is SHADOW; `parquet-drought` is the ACTIVE production writer.
+@pytest.mark.parametrize("slug", sorted(SERIES_SOURCE_DIRECT_SLUGS))
+def test_the_swapped_series_lanes_moved_the_adapter_and_declare_no_invented_boundary(slug: str) -> None:
+    """Each of these four carried a condition IN ITS OWN COMMENT that has since been discharged.
 
-    Routing this adapter to a source-direct refusal before an owner activates the direct lane leaves
-    the layer with NO writer: `gap_fill._export_one_day` catches every adapter exception and records
-    outcome `"raised"` (`FAILING_LANE_OUTCOMES`, `gap_fill.py:230`) on that tick and on every tick
-    after it. No `writer_ceiling` can bridge the two either, unlike vegetation/fire/water: the direct
-    writer claims the SAME full floor-to-settled window this registration covers
-    (`pipeline/direct/drought/forward.py:125`, `backfill.py:72` -- both start at
-    `lane.history_floor`), so the two are total substitutes with no boundary day between them, and
-    `conflicts_with` on the two executor specs is what keeps one of them off.
+    A registration documenting a gate that has already been met is worse than one documenting
+    nothing: the next reader cannot tell it from a live gate. So the assertion is two-sided -- the
+    adapter is the shared `refuse` closure `_source_direct_refusal` builds, AND the `floor_basis`
+    says the swap happened, in the same form `STATIC_SOURCE_DIRECT_SLUGS` uses for 2026-09-06.
+
+    `writer_ceiling is None` is the load-bearing half. These are series lanes, so unlike the two
+    static ones a ceiling is not refused by `__post_init__` -- it is simply not citable on any of the
+    four, and a ceiling invented to look symmetrical with vegetation/fire-detections/water-gauges
+    would hand a retired generic lane a window nobody measured.
     """
-    drought = LANE_REGISTRY["drought"]
+    registration = LANE_REGISTRY[slug]
 
-    assert drought.adapter.__name__ == "_fill_drought"
-    assert drought.writer_ceiling is None
+    assert registration.nature in {"daily_series", "release_series"}
+    assert registration.adapter.__name__ == "refuse"
+    assert registration.watermark is None
+    assert registration.writer_ceiling is None
+    assert "SOURCE-DIRECT since 2026-09-07" in registration.floor_basis
 
 
-def test_vegetation_registry_adapter_is_deliberately_still_postgres_reading() -> None:
-    """The one lane the 2026-09-04 join did NOT route to a source-direct refusal, and why.
+@pytest.mark.asyncio
+async def test_vegetation_registry_adapter_is_deliberately_still_postgres_reading() -> None:
+    """THE NEGATIVE CONTROL for the 2026-09-07 swap: the one series lane that must NOT move with it.
 
-    `pipeline/direct/vegetation/backfill.py` republishes every day at or before
+    `pipeline/direct/vegetation/backfill.py:149-155` republishes every day at or before
     `VEGETATION_DIRECT_WRITER_START_DAY` through this SAME adapter to reach D2 parity; swapping it for
     a refusal would make `refuse_pre_ownership_day` reject the entire backfill window by construction.
-    Calling the adapter with a null session/store would therefore raise an `AttributeError` reaching
-    into Postgres, not the `LaneRegistryError` a source-direct refusal raises -- which is exactly the
-    signal `test_every_direct_package_is_either_registered_or_named_pending`
+    Pinning the name alone would not catch a later sweep that swapped it for an equivalent-looking
+    refusal, so this also asserts the adapter is STILL CALLABLE against Postgres: with a null session
+    it raises `AttributeError` reaching for the database, not the `LaneRegistryError` a refusal
+    raises -- which is exactly the signal
+    `test_every_direct_package_is_either_registered_or_named_pending`
     (`tests/direct/test_direct_package_registration.py`) reads to keep `vegetation` PENDING.
     """
     vegetation = LANE_REGISTRY["vegetation"]
 
     assert vegetation.adapter.__name__ == "_fill_vegetation"
     assert vegetation.writer_ceiling == VEGETATION_DIRECT_WRITER_START_DAY
-
-
-def test_weather_observations_registry_adapter_is_also_still_postgres_reading() -> None:
-    """No cited `*_DIRECT_WRITER_START_DAY`-equivalent exists yet for this lane -- see
-    `pipeline/direct/weather_observations/__init__.py`, which only says the registry "may come to
-    import a submodule ... for its floor and lag", not that one is ready. Routing it to a refusal
-    without that citation would risk the same silent wedge `vegetation.py::backfill.py` warns about,
-    for a lane with no backfill.py to even raise the alarm.
-    """
-    weather_observations = LANE_REGISTRY["weather-observations"]
-
-    assert weather_observations.adapter.__name__ == "_fill_weather_observations"
-    assert weather_observations.writer_ceiling is None
+    assert "SOURCE-DIRECT since" not in vegetation.floor_basis
+    with pytest.raises(AttributeError):
+        await vegetation.adapter(None, None, day=AUGUST_SIXTH, run_id="negative-control")
 
 
 #: What is LEFT of the 2026-09-06 wave-B join, mapped to the Postgres-reading adapter each
-#: registration must STILL carry. Each has a built direct writer and a registered executor lane, and
-#: each of those lanes is shadow -- so the registered adapter is the writer the object stream
-#: actually has, and swapping it now would leave the layer with none.
+#: registration must STILL carry. `fire-perimeters` is the last one: its direct writer's executor
+#: lane is shadow, so the registered adapter is the writer the object stream actually has, and
+#: swapping it now would leave the layer with none.
 #:
 #: `watersheds` and `evacuation-zones` LEFT THIS TABLE on 2026-09-06, adapter and watermark together
 #: (`STATIC_SOURCE_DIRECT_SLUGS`); their direct writers were proven against production first -- 9,396
 #: basins fetched with no Postgres in the path, and 116 Oregon zones published against a live
-#: `returnCountOnly` count of 116.
+#: `returnCountOnly` count of 116. `burn-severity` and `sensors` LEFT IT on 2026-09-07
+#: (`SERIES_SOURCE_DIRECT_SLUGS`) once their direct lanes were active and their generic lanes retired.
 WAVE_B_UNSWAPPED_ADAPTERS = {
-    "burn-severity": "_fill_burn_severity",
     "fire-perimeters": "_fill_fire_perimeters",
-    "sensors": "_fill_sensors",
 }
 
 
@@ -343,11 +367,9 @@ WAVE_B_UNSWAPPED_ADAPTERS = {
 def test_the_wave_b_registrations_are_deliberately_still_postgres_reading(slug: str) -> None:
     """Registered, not activated: the join added executor lanes and changed no adapter, on purpose.
 
-    None of these three can be bridged by a `writer_ceiling` the way fire-detections/water-gauges are:
-    `fire-perimeters` is a `static_lookup`, where a ceiling is refused outright; `sensors` ships no
-    cited ownership-boundary day and no backfill; and `burn-severity`'s forward and backfill walkers
-    claim one candidate set that IS the generic lane's whole window. So `conflicts_with` on the
-    executor specs is the only mutual exclusion these lanes have, and it only means anything while the
+    `fire-perimeters` cannot be bridged by a `writer_ceiling` the way fire-detections/water-gauges
+    are -- it is a `static_lookup`, where a ceiling is refused outright -- so `conflicts_with` on the
+    executor specs is the only mutual exclusion this lane has, and it only means anything while the
     adapter below still points at Postgres.
     """
     registration = LANE_REGISTRY[slug]
@@ -463,41 +485,43 @@ async def test_the_swapped_evacuation_zones_watermark_reads_the_store_and_never_
     assert seen == [store]
 
 
-def test_no_other_lane_moved_when_those_two_did() -> None:
-    """THE NEGATIVE CONTROL for the 2026-09-06 swap: thirty of the thirty-two must be untouched.
+def test_every_lane_adapter_and_watermark_is_pinned_by_name() -> None:
+    """THE NEGATIVE CONTROL for both swaps: all thirty-two, adapter and clock, named here.
 
     A registry edit is a shared-file edit, and the failure this guards is a resolver or adapter
     reassigned one line off target -- `soil-survey` quietly given watersheds' clock, say, which no
-    per-lane test above would notice because each one only asserts about its own lane. Pinning every
-    OTHER lane's adapter and watermark by name turns that into a diff nobody can land by accident.
+    per-lane test above would notice because each one only asserts about its own lane. It used to
+    exclude the lanes the 2026-09-06 swap moved and assert about the other thirty; excluding the
+    moved lanes is exactly the wrong shape once a SECOND wave moves four more, because the excluded
+    set is where the mistakes are. Every lane is pinned now, and a swap edits one line of this table.
+
+    The six database-backed adapters left are `fire-detections`, `fire-perimeters`, `signal`,
+    `soil-survey`, `vegetation` and `water-gauges`; `calendar` reads no source at all. Everything
+    else is the shared `refuse` closure `_source_direct_refusal` returns.
     """
-    moved = {"evacuation-zones", "watersheds"}
     expected_adapters = {
-        "burn-severity": "_fill_burn_severity",
         "calendar": "_fill_calendar",
-        "drought": "_fill_drought",
         "fire-detections": "_fill_fire_detections",
         "fire-perimeters": "_fill_fire_perimeters",
-        "sensors": "_fill_sensors",
         "signal": "_fill_signal",
         "soil-survey": "_fill_soil_survey",
         "vegetation": "_fill_vegetation",
         "water-gauges": "_fill_water_gauges",
-        "weather-observations": "_fill_weather_observations",
         **dict.fromkeys(SOURCE_DIRECT_SLUGS, "refuse"),
+        **dict.fromkeys(STATIC_SOURCE_DIRECT_SLUGS, "refuse"),
+        **dict.fromkeys(SERIES_SOURCE_DIRECT_SLUGS, "refuse"),
     }
     expected_watermarks = {
         "calendar": "_calendar_watermark",
+        "evacuation-zones": "_evacuation_zones_watermark",
         "fire-perimeters": "_fire_perimeters_watermark",
         "soil-survey": "_soil_survey_watermark",
+        "watersheds": "_watersheds_watermark",
     }
 
-    others = [entry for entry in LANE_REGISTRATIONS if entry.slug not in moved]
-    expected_other_count = 30
-
-    assert len(others) == expected_other_count
-    assert set(expected_adapters) == {entry.slug for entry in others}
-    for entry in others:
+    assert len(LANE_REGISTRATIONS) == EXPECTED_LANE_COUNT
+    assert set(expected_adapters) == {entry.slug for entry in LANE_REGISTRATIONS}
+    for entry in LANE_REGISTRATIONS:
         assert entry.adapter.__name__ == expected_adapters[entry.slug], entry.slug
         watermark_name = None if entry.watermark is None else entry.watermark.__name__
         assert watermark_name == expected_watermarks.get(entry.slug), entry.slug
@@ -799,21 +823,14 @@ def test_resolve_lanes_returns_registry_order_and_names_what_is_unknown() -> Non
         resolve_lanes(["signal", "interventions"])
 
 
-@pytest.mark.asyncio
-async def test_a_sensors_day_no_station_published_on_becomes_a_governed_absence_not_a_broken_lane() -> None:
-    """The station list is day-scoped, so an empty one is an empty DAY, which belongs behind a marker."""
-    session = ScriptedSession([[]])
-    store = ObjectStore(RecordingBackend())
-
-    with pytest.raises(EmptyPartitionError, match="qualifying station reading"):
-        await LANE_REGISTRY["sensors"].adapter(
-            session,  # type: ignore[arg-type]
-            store,
-            day=AUGUST_SIXTH,
-            run_id="test-run",
-        )
-
-    assert session.params == [{"observed_day": AUGUST_SIXTH}]
+# `test_a_sensors_day_no_station_published_on_becomes_a_governed_absence_not_a_broken_lane` sat here
+# until 2026-09-07. It pinned `_fill_sensors`' day-scoped station probe: an empty station list is an
+# empty DAY, so the adapter raised the writer's own `EmptyPartitionError` (routed to a governed
+# absence) rather than `SensorsExportError` (which the driver would read as a broken lane). The
+# adapter, its probe and `sql/pipeline/lane_registry_sensor_station_ids.sql` were all deleted with the
+# swap; the same distinction now lives in `pipeline/direct/sensors/` and is covered by
+# `tests/direct/test_sensors_direct_adapter.py`. `soil-survey`'s equivalent probe is unaffected and
+# still exercises `_refuse_empty_day` below.
 
 
 @pytest.mark.asyncio

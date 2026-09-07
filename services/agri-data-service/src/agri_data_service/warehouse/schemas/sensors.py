@@ -3,7 +3,8 @@ station-day-measurement.
 
 Layer L1: may import `foundation`; may NOT import method, pipeline, planes, or interface.
 See `docs/lanes/sensors.md` for the source, cadence, and grain evidence this schema is built
-from, and `sql/pipeline/sensors_day_export.sql` for how one day's rows are produced.
+from, and `pipeline/direct/sensors/rows.py` for how one day's rows are produced -- it replaced
+`sql/pipeline/sensors_day_export.sql`, deleted 2026-09-07 with the Postgres-reading lane.
 
 DECISION -- export the sixteen captured measurement fields, not just the four currently served.
 Two measured facts (docs/lanes/sensors.md sections 4-5): this lane captures sixteen NWS measurements

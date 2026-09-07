@@ -23,8 +23,11 @@ whatever offset NWS actually used, the substring of the stored string is what
 `geo.feature_observation_day` evaluates, and matching that evaluation is what matters, not a fact
 about the upstream's convention.
 
-THE WINNING-REPORT REDUCTION MIRRORS `sql/pipeline/sensors_day_export.sql`'S `DISTINCT ON`, RESTATED
-IN PYTHON. That query picks one row per (sensor_id, day): the latest report that day, tie-broken by
+THE WINNING-REPORT REDUCTION IS A `DISTINCT ON`, RESTATED IN PYTHON. It was transcribed from
+`sql/pipeline/sensors_day_export.sql`, deleted 2026-09-07 with the Postgres-reading lane it backed;
+the surviving SQL statement of the identical shape is
+`sql/pipeline/direct/sensors/postgres_day_counts.sql`, which `parity.py` loads. That query picks
+one row per (sensor_id, day): the latest report that day, tie-broken by
 `observedAt DESC AS TEXT` then `feature.id DESC` for a total order -- "observedAt DESC as TEXT
 (ISO-8601 with a UTC offset sorts chronologically when compared lexically)". `_winning_write` takes
 the same `max()` over the identical (observedAt-text, external-id) tuple, which is the literal
@@ -57,7 +60,8 @@ if TYPE_CHECKING:
 
     from agri_data_service.ingest.writer import FeatureWrite
 
-#: Mirrors `sql/pipeline/sensors_day_export.sql`'s exclusion: free text, not one of the sixteen
+#: Mirrors the day export's exclusion (`sql/pipeline/direct/sensors/postgres_day_counts.sql`, the
+#: surviving transcription): free text, not one of the sixteen
 #: measurement fields, and carries no numeric `value` to cast.
 _EXCLUDED_MEASUREMENT_KEY: Final = "textDescription"
 _OBSERVED_DAY_PREFIX_LENGTH: Final = 10
@@ -122,8 +126,8 @@ def _observed_at_text(write: FeatureWrite) -> str:
 def _winning_write(candidates: Sequence[FeatureWrite]) -> FeatureWrite:
     """Pick one station-day's winning report: `max` over (observedAt text, external id), both DESC.
 
-    The literal Python form of `sql/pipeline/sensors_day_export.sql`'s
-    `ORDER BY ... observedAt DESC, feature.id DESC LIMIT 1 (via DISTINCT ON)` -- `max()` over that
+    The literal Python form of `sql/pipeline/direct/sensors/postgres_day_counts.sql`'s
+    `ORDER BY ... observedAt DESC, feature.id DESC` (via `DISTINCT ON`) -- `max()` over that
     same two-part tuple picks exactly the row that ordering would rank first, so the two reductions
     can never disagree on which report is "the winner" for a given station-day.
     """

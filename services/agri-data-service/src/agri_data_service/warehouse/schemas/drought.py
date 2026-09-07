@@ -28,8 +28,10 @@ DROUGHT_STREAM: Final = "drought"
 # export reuses that pair as its grain rather than inventing a second one.
 DROUGHT_GRAIN: Final[tuple[str, ...]] = ("valid_date", "dm_category")
 
-# Columns mirror exactly what `sql/pipeline/drought_release_export.sql` selects from
-# `geo.drought_areas`, whose declaration is `drizzle/0007_governed_environmental_ingestion.sql:9-18`.
+# Columns mirror exactly what the Postgres day export selected from `geo.drought_areas`, whose
+# declaration is `drizzle/0007_governed_environmental_ingestion.sql:9-18`. That export
+# (`sql/pipeline/drought_release_export.sql`) was deleted on 2026-09-07 with the lane it backed;
+# `pipeline/direct/drought/rows.py` now builds these same columns from the USDM source.
 # Not carried: nothing is dropped -- unlike watersheds' `geo.features`, this source table has no
 # surrogate-key noise or duplicate-encoding columns to leave behind.
 DROUGHT_SCHEMA: Final = register_stream_schema(
@@ -47,8 +49,10 @@ DROUGHT_SCHEMA: Final = register_stream_schema(
                 # YYYY-MM-DD by that constraint, never a free-form string -- so the export parses
                 # it with Postgres's own `to_date`, deliberately unguarded so a value that failed
                 # to parse would abort the export rather than land here as a silently coerced or
-                # NULL date (sql/pipeline/drought_release_export.sql). Carrying the varchar
-                # through unparsed would push the same ambiguity onto every future reader.
+                # NULL date (sql/pipeline/drought_release_export.sql, deleted 2026-09-07; the
+                # source-direct writer parses the same field in `pipeline/direct/drought/rows.py`
+                # and is equally unforgiving). Carrying the varchar through unparsed would push
+                # the same ambiguity onto every future reader.
                 pa.field("valid_date", pa.date32(), nullable=False),
                 # The USDM drought class, 0 (D0, abnormally dry) through 4 (D4, exceptional
                 # drought), CHECK-constrained at the source

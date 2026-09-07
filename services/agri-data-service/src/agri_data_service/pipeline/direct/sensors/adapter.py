@@ -10,19 +10,21 @@ one fixed sample point, so "refresh the source columns on a grain match" is corr
 instant is always reported the same way. Here the registered grain is
 `(sensor_id, observed_day, measurement_name)` (`warehouse/schemas/sensors.py::SENSORS_GRAIN`), and
 one station-day is published as ALL OF a single winning report's (at most sixteen) measurement rows
-at once (`rows.py::direct_sensor_tables`, mirroring `sql/pipeline/sensors_day_export.sql`'s
-`DISTINCT ON` reduction). If a later, newer report for the SAME station-day reports a DIFFERENT set
+at once (`rows.py::direct_sensor_tables`, mirroring the `DISTINCT ON` reduction now transcribed in
+`sql/pipeline/direct/sensors/postgres_day_counts.sql`). If a later, newer report for the SAME
+station-day reports a DIFFERENT set
 of measurements -- a station that stopped sending `windGust`, say -- a per-grain refresh would leave
 the stale `windGust` row behind forever, because "windGust" is simply absent from the new report and
 never revisits that grain to delete it. So the merge unit here is the WHOLE (sensor_id, observed_day)
 BLOCK: a later report replaces every row of the block at once, never row-by-row.
 
-"Later" is decided by `observed_at`, mirroring the SQL export's `observedAt DESC` winner-take-all --
+"Later" is decided by `observed_at`, mirroring that reduction's `observedAt DESC` winner-take-all --
 an incoming block whose `observed_at` is at least as new as the published block's REPLACES it
 wholesale (`>=` rather than `>`, so a repeat poll of the identical winning instant is an idempotent
 refresh, not a no-op skip); an incoming block that is OLDER is discarded, because a newer report was
-already captured (by a prior run of this same writer, or by the pre-existing `pipeline/lanes/sensors.py`
-Postgres adapter this forward writer is meant to eventually replace) and NWS's rolling window can
+already captured (by a prior run of this same writer, or -- before 2026-09-07 -- by the
+`pipeline/lanes/sensors.py` Postgres adapter this writer replaced and which was deleted with that
+swap, whose published days are still in the bucket) and NWS's rolling window can
 still resurface that same historical instant on a later poll before it ages out. This is the direct
 consequence of the rolling floor `source.py` documents: the SAME station-day can appear across many
 consecutive polls as the retention window slides past it, and every one of those polls must agree on
@@ -53,9 +55,9 @@ if TYPE_CHECKING:
     from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 
 #: `Final` so the value narrows to the `PartitionKind` literal rather than to bare `str`. Matches the
-#: existing Postgres-reading adapter's own kind (`pipeline/lanes/sensors.py::export_sensors_day`),
-#: so a day this writer publishes lands in the SAME namespace a `parquet-drain` of the generic lane
-#: would have used.
+#: kind the retired Postgres-reading adapter used (`pipeline/lanes/sensors.py::export_sensors_day`,
+#: deleted 2026-09-07), so a day this writer publishes lands in the SAME namespace as the days that
+#: adapter already published.
 SENSORS_DIRECT_KIND: Final = "observed"
 
 #: The first two components of the registered grain -- the block key this adapter merges at. The

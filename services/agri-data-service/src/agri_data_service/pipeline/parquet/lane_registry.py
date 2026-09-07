@@ -4,12 +4,12 @@ Layer L2: may import `foundation`, `warehouse` and `db`; may NOT import method, 
 interface. It lives in `pipeline/parquet/` and deliberately NOT in `pipeline/lanes/` -- a module
 inside that directory importing its siblings would (correctly) fail
 `tests/test_layer_import_contract.py::test_lanes_do_not_import_each_other`. The registry is not a
-lane; it is the one module allowed to know all thirty-two of them -- ten database-backed, two
-source-direct static snapshots (watersheds and evacuation-zones, swapped 2026-09-06), eleven
-source-direct NASA POWER streams, eight source-direct Open-Meteo ERA5-Land streams, and the calendar
-dimension.
+lane; it is the one module allowed to know all thirty-two of them -- six database-backed, six
+hand-written source-direct lanes (watersheds and evacuation-zones swapped 2026-09-06; burn-severity,
+drought, sensors and weather-observations swapped 2026-09-07), eleven source-direct NASA POWER
+streams, eight source-direct Open-Meteo ERA5-Land streams, and the calendar dimension.
 
-IT IMPORTS EXACTLY FOUR MODULES FROM `pipeline/direct/`, AND NOTHING ELSE FROM ANY OF THOSE PACKAGES:
+IT IMPORTS EXACTLY FIVE MODULES FROM `pipeline/direct/`, AND NOTHING ELSE FROM ANY OF THOSE PACKAGES:
 `climate/products.py`, `soil/products.py` and `vegetation/products.py` for floors and lags, and
 `watersheds/watermark.py` + `evacuation_zones/watermark.py` for the two static lanes whose version
 clock is now the source rather than `geo.features`. Every one of those reaches only `foundation`,
@@ -64,15 +64,12 @@ from agri_data_service.pipeline.direct.soil.products import (
 from agri_data_service.pipeline.direct.vegetation.products import VEGETATION_DIRECT_WRITER_START_DAY
 from agri_data_service.pipeline.direct.watersheds.watermark import read_watersheds_source_watermark
 from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
-from agri_data_service.pipeline.lanes.burn_severity import export_burn_severity_release_day
 from agri_data_service.pipeline.lanes.calendar import export_calendar_version
-from agri_data_service.pipeline.lanes.drought import export_drought_release
 from agri_data_service.pipeline.lanes.fire_detections import (
     FIRE_DETECTIONS_DIRECT_WRITER_START_DAY,
     export_fire_detections_day,
 )
 from agri_data_service.pipeline.lanes.fire_perimeters import export_fire_perimeters_day
-from agri_data_service.pipeline.lanes.sensors import export_sensors_day
 from agri_data_service.pipeline.lanes.signal import export_signal_day
 from agri_data_service.pipeline.lanes.soil_survey import POLYGON_KEY_BATCH_SIZE, export_soil_survey_release
 from agri_data_service.pipeline.lanes.vegetation import export_vegetation_day
@@ -80,7 +77,6 @@ from agri_data_service.pipeline.lanes.water_gauges import (
     WATER_GAUGES_DIRECT_WRITER_START_DAY,
     export_water_gauges_day,
 )
-from agri_data_service.pipeline.lanes.weather_observations import export_weather_observations_day
 from agri_data_service.pipeline.parquet.objectstore import (
     AbsenceWriteReceipt,
     EmptyPartitionError,
@@ -111,7 +107,6 @@ if TYPE_CHECKING:
 
 _SPATIAL_CELL_IDS_SQL: Final = text(load_query_sql("pipeline/lane_registry_spatial_cell_ids.sql"))
 _LAYER_ID_SQL: Final = text(load_query_sql("pipeline/lane_registry_layer_id.sql"))
-_SENSOR_STATION_IDS_SQL: Final = text(load_query_sql("pipeline/lane_registry_sensor_station_ids.sql"))
 _SOIL_SURVEY_POLYGON_KEYS_SQL: Final = text(load_query_sql("pipeline/lane_registry_soil_survey_polygon_keys.sql"))
 
 # The TWO static lanes still keyed to a Postgres clock. Each query is transcribed from its own lane's
@@ -326,12 +321,6 @@ async def _layer_id(session: AsyncSession, layer_name: str) -> str:
             "layer would silently export the wrong population"
         )
     return ids[0]
-
-
-async def _sensor_station_ids(session: AsyncSession, *, day: date) -> tuple[str, ...]:
-    """Read the stations that published on one UTC day; an empty result means an empty day."""
-    result = await session.execute(_SENSOR_STATION_IDS_SQL, {"observed_day": day})
-    return tuple(_coerce_text(row["station_id"], column="sensors.sensor_id") for row in result.mappings())
 
 
 async def _soil_survey_polygon_key_batches(session: AsyncSession) -> AsyncIterator[tuple[str, ...]]:
@@ -592,18 +581,6 @@ async def _fill_vegetation(
     return normalise_export_outcome(await export_vegetation_day(session, store, day=day, cell_ids=cell_ids))
 
 
-async def _fill_weather_observations(
-    session: AsyncSession,
-    store: ObjectStore,
-    *,
-    day: date,
-    run_id: str,  # noqa: ARG001 - uniform adapter shape; this lane records no absence of its own
-) -> LaneRunResult:
-    """Export one settled day of the Open-Meteo current-conditions side lane."""
-    layer_id = await _layer_id(session, WEATHER_OBSERVATIONS_STREAM)
-    return normalise_export_outcome(await export_weather_observations_day(session, store, day=day, layer_id=layer_id))
-
-
 async def _fill_water_gauges(
     session: AsyncSession,
     store: ObjectStore,
@@ -613,24 +590,6 @@ async def _fill_water_gauges(
 ) -> LaneRunResult:
     """Export one settled day of the USGS NWIS gauge reading log."""
     return normalise_export_outcome(await export_water_gauges_day(session, store, day=day))
-
-
-async def _fill_sensors(
-    session: AsyncSession,
-    store: ObjectStore,
-    *,
-    day: date,
-    run_id: str,  # noqa: ARG001 - uniform adapter shape; the driver records this lane's absences
-) -> LaneRunResult:
-    """Export one day of NWS station readings, refusing a day no station published on."""
-    station_ids = await _sensor_station_ids(session, day=day)
-    if not station_ids:
-        # NOT a LaneRegistryError: the station list IS day-scoped, so "no station published" is an
-        # empty day rather than a broken lane, and belongs behind a governed absence. Raising the
-        # writer's own refusal is what routes it there, instead of `SensorsExportError`, which the
-        # driver would (correctly) read as the lane itself being broken.
-        raise _refuse_empty_day(SENSORS_STREAM, day=day, subject="qualifying station reading")
-    return normalise_export_outcome(await export_sensors_day(session, store, day=day, station_ids=station_ids))
 
 
 async def _fill_fire_detections(
@@ -656,30 +615,6 @@ async def _fill_fire_perimeters(
 ) -> LaneRunResult:
     """Snapshot every published WFIGS incident perimeter under `day`, its source watermark's version date."""
     return normalise_export_outcome(await export_fire_perimeters_day(session, store, day=day))
-
-
-async def _fill_burn_severity(
-    session: AsyncSession,
-    store: ObjectStore,
-    *,
-    day: date,
-    run_id: str,
-) -> LaneRunResult:
-    """Export one MTBS release day, or record the lane's own absence for a day that is not one."""
-    return normalise_export_outcome(
-        await export_burn_severity_release_day(session, store, release_day=day, run_id=run_id)
-    )
-
-
-async def _fill_drought(
-    session: AsyncSession,
-    store: ObjectStore,
-    *,
-    day: date,
-    run_id: str,  # noqa: ARG001 - uniform adapter shape; the driver records this lane's absences
-) -> LaneRunResult:
-    """Export one weekly USDM release; `day` is both the partition day and the release `valid_date`."""
-    return normalise_export_outcome(await export_drought_release(session, store, day=day))
 
 
 async def _fill_soil_survey(
@@ -730,12 +665,12 @@ async def _fill_calendar(
 def _source_direct_refusal(writer_module: str) -> LaneAdapter:
     """Build the refusing adapter for one direct writer's lanes, naming THAT writer in the message.
 
-    A factory rather than four copies, and a factory rather than one shared message: there are four
-    direct writers registered here now, and an operator told to run the climate module against an
-    ERA5-Land lane would get a report that publishes nothing and explains nothing.
+    A factory rather than eight copies, and a factory rather than one shared message: there are
+    eight direct writers registered here now, and an operator told to run the climate module against
+    an ERA5-Land lane would get a report that publishes nothing and explains nothing.
 
     DEFINED ABOVE THE REGISTRATION TABLE, not beside the climate/soil aliases it used to sit with,
-    because two hand-written registrations below it now need a refusal too. A `Final` alias is only
+    because six hand-written registrations below it now need a refusal too. A `Final` alias is only
     a name for the closure; the closure itself is what
     `tests/direct/test_direct_package_registration.py` probes with a null session and store, so a
     package is "registered" exactly when some adapter here refuses in its name.
@@ -771,6 +706,25 @@ _refuse_watersheds_direct_export: Final[LaneAdapter] = _source_direct_refusal(
 _refuse_evacuation_zones_direct_export: Final[LaneAdapter] = _source_direct_refusal(
     "agri_data_service.pipeline.direct.evacuation_zones"
 )
+#: The four SERIES source-direct lanes, swapped off Postgres on 2026-09-07. Each of these four
+#: registrations used to carry a Postgres-reading adapter held back by a condition WRITTEN INTO THE
+#: REGISTRATION ITSELF -- "swap it in the same push that activates the direct lane", "once the owner
+#: stops `mtbs-forward`", "while `geo.features` is the only path to older days". Every one of those
+#: conditions has since been discharged (the four `*-direct-forward` executor lanes are ACTIVE and
+#: their `parquet-*` counterparts retired; `postgres-sensors` is deleted), so the adapters were
+#: routed here rather than left as gates nobody could tell from live ones. Unlike watersheds and
+#: evacuation-zones, these four are `daily_series`/`release_series` lanes, so the refusal is their
+#: WHOLE guard against a re-activated generic lane: `conflicts_with` on the executor specs stops the
+#: two writers running together, and no `writer_ceiling` divides their windows -- see each
+#: registration for why its lane has no honest boundary day to declare.
+_refuse_burn_severity_direct_export: Final[LaneAdapter] = _source_direct_refusal(
+    "agri_data_service.pipeline.direct.burn_severity"
+)
+_refuse_drought_direct_export: Final[LaneAdapter] = _source_direct_refusal("agri_data_service.pipeline.direct.drought")
+_refuse_sensors_direct_export: Final[LaneAdapter] = _source_direct_refusal("agri_data_service.pipeline.direct.sensors")
+_refuse_weather_observations_direct_export: Final[LaneAdapter] = _source_direct_refusal(
+    "agri_data_service.pipeline.direct.weather_observations"
+)
 
 
 # --- The twelve hand-written registrations, ten of them database-backed --------------------------
@@ -788,40 +742,49 @@ _refuse_evacuation_zones_direct_export: Final[LaneAdapter] = _source_direct_refu
 #
 # `interventions` is deliberately absent: RUNBOOK section 0.26.1 keeps that lane in Postgres.
 #
-# THE TUPLE'S NAME IS NOW ONE LANE-KIND BEHIND ITS CONTENTS, and that is deliberate rather than
-# unnoticed. `watersheds` and `evacuation-zones` were swapped to source-direct adapters on
-# 2026-09-06 and no longer read Postgres at all, but they stay HERE rather than moving into
-# `_SOURCE_DIRECT_REGISTRATIONS` below, because that tuple is GENERATED from a product list and
-# these two are hand-written registrations with measured, cited floors. Renaming the tuple would
-# rewrite the meaning of `CALENDAR_HISTORY_FLOOR`'s derivation for no gain; what matters is that
-# `LANE_REGISTRATIONS` is the union and every lane's own registration says which it is.
+# THE TUPLE'S NAME IS NOW HALF WRONG, and that is deliberate rather than unnoticed. Six of the
+# twelve registrations below no longer read Postgres at all -- `watersheds` and `evacuation-zones`
+# (swapped 2026-09-06) plus `burn-severity`, `drought`, `sensors` and `weather-observations`
+# (swapped 2026-09-07) -- yet they stay HERE rather than moving into `_SOURCE_DIRECT_REGISTRATIONS`
+# below, because that tuple is GENERATED from a product list and these six are hand-written
+# registrations with measured, cited floors. Renaming the tuple would rewrite the meaning of
+# `CALENDAR_HISTORY_FLOOR`'s derivation for no gain; what matters is that `LANE_REGISTRATIONS` is
+# the union and every lane's own registration says which it is. The six that DO still read Postgres
+# are `fire-detections`, `fire-perimeters`, `signal`, `soil-survey`, `vegetation` and
+# `water-gauges`.
 
 _DATABASE_BACKED_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = (
     LaneRegistration(
-        # DELIBERATELY STILL `_fill_burn_severity` (Postgres-reading) after the 2026-09-06 wave-B join,
-        # and for a STRONGER reason than drought's: `mtbs-forward`/`ingest-mtbs` is not merely one of
-        # two writers here, it is the SOLE ACTIVE writer this layer has, and nothing in that join stops
-        # it -- doing so is an owner-confirmed Railway variable edit. `burn-severity-direct-forward`
-        # (execution/job_executor_service.py) ships SHADOW beside it. Two conditions gate the swap to
-        # `_source_direct_refusal("agri_data_service.pipeline.direct.burn_severity")`: (1)
-        # `pipeline/direct/burn_severity/parity.py` proves D1 parity against what `geo.features` holds
-        # in production, and (2) the owner stops `mtbs-forward`. Swapping before both leaves the layer
-        # served by neither -- `gap_fill._export_one_day` (`:1177-1179`) catches the refusal as outcome
-        # `"raised"` on every tick forever.
+        # SOURCE-DIRECT SINCE 2026-09-07. `burn-severity-direct-forward`
+        # (execution/job_executor_service.py) is ACTIVE and `parquet-burn-severity` is retired, so the
+        # Parquet stream this registration describes is written by
+        # `python -m agri_data_service.pipeline.direct.burn_severity` and by nothing else. The adapter
+        # refuses a generic export and names that package.
         #
-        # NO `writer_ceiling`, for drought's reason exactly: `forward.py` (newest-first) and
+        # `mtbs-forward`/`ingest-mtbs` IS STILL ACTIVE, AND THAT IS NOT A SECOND WRITER OF THIS STREAM.
+        # It writes `geo.features` (`ingest/mtbs.py:947`); the direct lane writes Parquet -- different
+        # stores, and the audit that checked
+        # (`conductor/tracks/environmental_postgres_retirement_20260904/evidence/`
+        # `layer-uniformity-audit-20260907.md`) refuted the double-write alarm outright. What the swap
+        # DOES do is finish emptying `mtbs-forward`'s consumer set: `parquet-burn-severity` read those
+        # rows through this adapter, and after this edit no lane does.
+        #
+        # NO `writer_ceiling`, and none is possible to cite: `forward.py` (newest-first) and
         # `backfill.py` (oldest-first) walk ONE candidate set, `products.governed_release_days()`, and
-        # that set is the whole window this registration covers -- there is no boundary day between the
-        # two writers to declare, so their mutual exclusion lives in `conflicts_with` on the two
-        # executor specs instead.
+        # that set is the whole window this registration covers -- there is no boundary day between a
+        # generic and a direct writer to declare. `conflicts_with` on the two executor specs remains
+        # the mutual-exclusion guard if `parquet-burn-severity` is ever re-activated, and this refusal
+        # is what makes a re-activation loud instead of a frozen Postgres re-export.
         slug=BURN_SEVERITY_STREAM,
-        adapter=_fill_burn_severity,
+        adapter=_refuse_burn_severity_direct_export,
         history_floor=date(2020, 11, 24),
         publication_lag_days=7,
         nature="release_series",
         floor_basis=(
-            "NATURE release_series: MTBS publishes fire-year cohorts quarterly and each release IS a dated "
-            "fact -- five of them, at 2020-11-24 .. 2024-08-22. cadence_days stays 1 DELIBERATELY, unlike "
+            "NATURE release_series, SOURCE-DIRECT since 2026-09-07: MTBS publishes fire-year cohorts "
+            "quarterly and each release IS a dated fact -- five of them, at 2020-11-24 .. 2024-08-22. The "
+            "floor and lag are unchanged by the swap; they describe MTBS's publication, not which writer "
+            "reads it. cadence_days stays 1 DELIBERATELY, unlike "
             "drought's 7: those five dates do not sit on any fixed step from the floor, so a cadence above "
             "one would step straight past real releases. The ~2,000 honest absence markers this costs are the "
             "price of an IRREGULAR release series, and RUNBOOK section 0.27.5 item 5's 'give it a cadence' is "
@@ -835,31 +798,29 @@ _DATABASE_BACKED_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = (
     ),
     LaneRegistration(
         slug=DROUGHT_STREAM,
-        # DELIBERATELY STILL `_fill_drought` (Postgres-reading), and DELIBERATELY WITHOUT a
-        # `writer_ceiling`. `drought-direct-forward` (execution/job_executor_service.py) ships SHADOW
-        # and can only run once an owner adds it to PLANTGEO_JOB_EXECUTOR_ACTIVE_LANES, while
-        # `parquet-drought` is ACTIVE in production today -- so routing this adapter to a
-        # source-direct refusal now would leave the lane with NO writer at all: `gap_fill.py`'s
-        # `_export_one_day` (`:1177-1179`) catches EVERY adapter exception for per-lane isolation and
-        # records outcome `"raised"`, a `FAILING_LANE_OUTCOMES` member (`gap_fill.py:230`), on this
-        # tick and identically on every tick after it.
+        # SOURCE-DIRECT SINCE 2026-09-07, in the push this registration's own text asked for. The
+        # condition it carried was "swap it in the same owner-confirmed push that activates
+        # `drought-direct-forward`, never before it"; that lane is now ACTIVE and `parquet-drought` is
+        # retired, so the condition is discharged and the adapter refuses, naming
+        # `pipeline/direct/drought`. Leaving the gate written after it had been met would have been the
+        # worse of the two errors: a reader cannot tell a live gate from a discharged one.
         #
-        # WHY NO CEILING, unlike vegetation/fire-detections/water-gauges: those three have a cited
-        # ownership-boundary day, so the generic and direct writers abut. Drought has none, and there
-        # is no honest one to derive. `pipeline/direct/drought/forward.py:125` starts its own scan at
-        # `max(lane.history_floor, settled_through - DROUGHT_BACKLOG_SCAN_WEEKS)` and
-        # `backfill.py:72` walks `release_weeks(lane.history_floor, settled_through)` -- both floors
-        # ARE this registration's `history_floor`, because the direct writer claims the FULL
-        # floor-to-settled window (forward.py module docstring: "this module owns the FULL
-        # floor-to-settled window"). A ceiling separating the two would therefore have to sit at or
-        # below `history_floor`: below it `__post_init__` rejects outright ("before its history
-        # floor"), and AT it would be an invented boundary handing the generic writer exactly one
-        # day, cited to nothing. Neither is a measurement, so this lane declares none. The two
-        # writers are total substitutes, not neighbours, so their mutual exclusion is enforced where
-        # substitutes are enforced -- `conflicts_with` on both specs -- and the swap of THIS adapter
-        # to `_source_direct_refusal("agri_data_service.pipeline.direct.drought")` belongs in the
-        # same owner-confirmed push that activates `drought-direct-forward`, never before it.
-        adapter=_fill_drought,
+        # STILL NO `writer_ceiling`, and the reason is unchanged by the swap -- unlike
+        # vegetation/fire-detections/water-gauges, which have a cited ownership-boundary day where the
+        # generic and direct writers abut, drought has none and there is no honest one to derive.
+        # `pipeline/direct/drought/forward.py:125` starts its own scan at
+        # `max(lane.history_floor, settled_through - DROUGHT_BACKLOG_SCAN_WEEKS)` and `backfill.py:72`
+        # walks `release_weeks(lane.history_floor, settled_through)` -- both floors ARE this
+        # registration's `history_floor`, because the direct writer claims the FULL floor-to-settled
+        # window (forward.py module docstring: "this module owns the FULL floor-to-settled window"). A
+        # ceiling separating the two would have to sit at or below `history_floor`: below it
+        # `__post_init__` rejects outright ("before its history floor"), and AT it would be an invented
+        # boundary handing the generic writer exactly one day, cited to nothing. The two writers are
+        # total substitutes, not neighbours, so their mutual exclusion stays where substitutes are
+        # enforced -- `conflicts_with` on both executor specs -- and this refusal is what a
+        # re-activated `parquet-drought` now hits instead of silently re-exporting a frozen
+        # `geo.drought_areas` over days the direct writer owns.
+        adapter=_refuse_drought_direct_export,
         history_floor=date(2022, 8, 9),
         publication_lag_days=4,
         nature="release_series",
@@ -875,12 +836,13 @@ _DATABASE_BACKED_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = (
             "cadence 7: USDM publishes weekly, valid_date always a Tuesday, and 2022-08-09 is a "
             "Tuesday so the step lands on real release days. Lag 4: released Thursday for the "
             "preceding Tuesday, plus slack. "
-            "THE 2026-09-04 join registered a direct writer BESIDE this lane, not in place of it: "
-            "pipeline/direct/drought/forward.py (newest-first) and backfill.py (oldest-first) claim the "
-            "same full floor-to-settled window this registration describes, so the two are total "
-            "substitutes with no boundary day between them and this lane carries NO writer_ceiling. Its "
-            "adapter keeps reading Postgres until an owner activates drought-direct-forward, which is "
-            "shadow today while parquet-drought is the ACTIVE writer in production."
+            "SOURCE-DIRECT since 2026-09-07. The 2026-09-04 join registered a direct writer BESIDE this "
+            "lane; the 2026-09-07 swap put it IN PLACE OF it. pipeline/direct/drought/forward.py "
+            "(newest-first) and backfill.py (oldest-first) claim the same full floor-to-settled window "
+            "this registration describes, so the two are total substitutes with no boundary day between "
+            "them and this lane carries NO writer_ceiling. The floor and lag above are unchanged by the "
+            "swap -- they are properties of USDM's publication, not of which writer reads it -- and they "
+            "stay MEASURED against production even though the measurement was taken through Postgres."
         ),
     ),
     LaneRegistration(
@@ -989,24 +951,29 @@ _DATABASE_BACKED_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = (
         ),
     ),
     LaneRegistration(
-        # DELIBERATELY STILL `_fill_sensors` (Postgres-reading) after the 2026-09-06 wave-B join
-        # registered `sensors-direct-forward` (execution/job_executor_service.py) beside it, and after
-        # that lane went ACTIVE on 2026-09-07 and `postgres-sensors` -- the forward producer that
-        # APPENDED to `geo.features` -- was deleted. This adapter reads the rows that table ALREADY
-        # holds; it never needed the producer to keep running, and nothing it can reach got shallower.
-        # This lane mirrors `weather-observations` almost exactly: the direct package ships NO
-        # `*_DIRECT_WRITER_START_DAY`-equivalent constant and no `backfill.py`, so there is no cited
-        # ownership-boundary day to put in a `writer_ceiling`, and routing this adapter to a
-        # source-direct refusal without one would wedge the whole window for a lane with no backfill to
-        # raise the alarm.
+        # SOURCE-DIRECT SINCE 2026-09-07. `sensors-direct-forward` (execution/job_executor_service.py)
+        # is ACTIVE and `parquet-sensors` is retired, so this adapter refuses and names
+        # `pipeline/direct/sensors`.
         #
-        # The rolling window makes that worse than it is for weather-observations, not better: NWS keeps
-        # only ~6 days (`pipeline/direct/sensors/forward.py`, SENSORS_MAX_DAYS =
-        # NWS_OBSERVATION_RETENTION.days + 1), so every day older than that is unreachable from the
-        # SOURCE, and this Postgres-reading adapter over the append-only `geo.features` record is the
-        # only path to those days for as long as the table holds them.
+        # WHAT THE OLD GATE SAID, AND WHY IT NO LONGER HOLDS. This registration used to keep a
+        # Postgres-reading adapter on the argument that NWS retains only a rolling ~6 days
+        # (`pipeline/direct/sensors/forward.py`, SENSORS_MAX_DAYS = NWS_OBSERVATION_RETENTION.days + 1),
+        # so the append-only `geo.features` record was the ONLY path to any day older than that window.
+        # That is still true of the SOURCE and no longer decides anything here: `postgres-sensors`, the
+        # forward producer that appended those rows, was DELETED on 2026-09-07, so the table is frozen.
+        # A frozen table is not a deeper archive -- it is a fixed set of past days that a generic export
+        # would re-publish forever under a lane the direct writer owns. Whatever of those days is worth
+        # keeping has to be RETRACTED AND RE-EXPORTED as a one-off before `geo.features` is dropped
+        # (`evidence/sensors-stranded-days-20260906.md` counts 25 such days stranded at z13); it is a
+        # migration, not a lane, and keeping a scheduled adapter pointed at it was never how it would
+        # have been done.
+        #
+        # STILL NO `writer_ceiling`: this package ships no `*_DIRECT_WRITER_START_DAY`-equivalent
+        # constant and no `backfill.py`, so there is no cited ownership-boundary day to declare, and an
+        # invented one would divide the window on nothing. `conflicts_with` on the two executor specs is
+        # the mutual-exclusion guard, and this refusal is what a re-activated `parquet-sensors` hits.
         slug=SENSORS_STREAM,
-        adapter=_fill_sensors,
+        adapter=_refuse_sensors_direct_export,
         history_floor=date(2026, 7, 29),
         publication_lag_days=1,
         nature="daily_series",
@@ -1016,7 +983,11 @@ _DATABASE_BACKED_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = (
             "docs/lanes/sensors.md section 3: NWS keeps a rolling ~6-day window and no deeper archive exists, "
             "so the whole record is what this producer has accreted since 2026-08-04 plus its first run's "
             "~6-day reach -- derived there as 2026-07-29 to 2026-08-04, and the earlier end is taken. "
-            "geo.features is append-only for this lane, so the floor is static even though the SOURCE's is not."
+            "SOURCE-DIRECT since 2026-09-07, and the floor is now a claim about the PAST rather than a "
+            "window anything can still reach: geo.features was append-only for this lane, and its producer "
+            "(postgres-sensors) was deleted the same day, so nothing extends the record backwards or "
+            "forwards there. Re-measure min(observed_day) for this layer BEFORE geo.features is dropped -- "
+            "it is the last chance to confirm 2026-07-29 rather than inherit it."
         ),
     ),
     LaneRegistration(
@@ -1144,13 +1115,29 @@ _DATABASE_BACKED_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = (
         ),
     ),
     LaneRegistration(
+        # SOURCE-DIRECT SINCE 2026-09-07. `weather-observations-direct-forward`
+        # (execution/job_executor_service.py) is ACTIVE and `parquet-weather-observations` is retired, so
+        # this adapter refuses and names `pipeline/direct/weather_observations`.
+        #
+        # THE OLD GATE WANTED A CITED OWNERSHIP-BOUNDARY DAY, AND THERE STILL IS NONE -- the package
+        # ships no `*_DIRECT_WRITER_START_DAY`-equivalent constant and no `backfill.py`. What changed is
+        # that a boundary day is only worth having while TWO writers share the window, and they no
+        # longer do: the direct lane is the only writer this stream has. A `writer_ceiling` would now be
+        # an invented number dividing a window nobody else writes, which is why this registration
+        # declares none rather than guessing one to look symmetrical with
+        # vegetation/fire-detections/water-gauges.
+        #
+        # THE FLOOR AND LAG BELOW ARE STILL UNCITED, and the swap does not fix that -- it changes who
+        # writes the lane, not what its contract says. `docs/lanes/weather-observations.md` still
+        # describes the SIGNAL stream instead of this one. See the FALLBACK paragraph.
         slug=WEATHER_OBSERVATIONS_STREAM,
-        adapter=_fill_weather_observations,
+        adapter=_refuse_weather_observations_direct_export,
         history_floor=date(2026, 8, 1),
         publication_lag_days=2,
         nature="daily_series",
         floor_basis=(
-            "NATURE daily_series, NOT forecastable: no method/monte_carlo/weather_observations.py exists and "
+            "NATURE daily_series, SOURCE-DIRECT since 2026-09-07, NOT forecastable: no "
+            "method/monte_carlo/weather_observations.py exists and "
             "the lane's contract declares no horizon -- because it declares nothing at all, see below. "
             "FALLBACK -- NOT DECLARED ANYWHERE, AND THE GUESS IS DELIBERATELY SHALLOW. RUNBOOK section 0.26.8: "
             "docs/lanes/weather-observations.md describes the NASA POWER / ERA5-Land archive, which is the "
@@ -1159,7 +1146,9 @@ _DATABASE_BACKED_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = (
             "declared cadence, horizon, historical depth or known-gaps list. 2026-08-01 is a conservative "
             "recent floor chosen so a wrong guess costs a few dozen phantom gap-days instead of thousands, and "
             "lag 2 is borrowed from the hourly ingest-all tick. WRITE THAT HALF OF THE CONTRACT, then measure "
-            "min(geo.feature_observation_day) for this layer and replace both numbers."
+            "min(geo.feature_observation_day) for this layer and replace both numbers -- BEFORE geo.features "
+            "is dropped, because that measurement is only available while the table exists and this lane no "
+            "longer reads it for anything else."
         ),
     ),
 )
@@ -1168,20 +1157,27 @@ _DATABASE_BACKED_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = (
 # lag, a nature and a census, but with no PostgreSQL producer behind it, so the registered adapter
 # refuses. See `pipeline/direct/AGENTS.md`, "Ownership, and why the registered adapter refuses".
 #
-# ONLY `climate` AND `soil` ARE GENERATED HERE, but they are no longer the only source-direct lanes.
-# `watersheds` and `evacuation-zones` were swapped on 2026-09-06 and carry the same kind of refusing
-# adapter, hand-written above with the measured floors those two lanes had already earned; they are
-# source-direct in every sense this comment means, and they live above only because their
-# registrations are not derived from a product list.
+# ONLY `climate` AND `soil` ARE GENERATED HERE, but they are far from the only source-direct lanes.
+# Six hand-written registrations above carry the same kind of refusing adapter, with the measured
+# floors those lanes had already earned: `watersheds` and `evacuation-zones` (swapped 2026-09-06),
+# and `burn-severity`, `drought`, `sensors` and `weather-observations` (swapped 2026-09-07, once
+# each one's own stated condition had been discharged). They are source-direct in every sense this
+# comment means, and they live above only because their registrations are not derived from a
+# product list.
 #
-# THREE OF THE 2026-09-06 WAVE-B PACKAGES ARE STILL UNSWAPPED, each for a reason recorded on its own
-# registration above and in `tests/direct/test_direct_package_registration.py::PENDING_REGISTRATION`:
-# `fire-perimeters` (shadow executor lane, generic lane still the writer the stream has), `sensors`
-# (no cited ownership-boundary day, and NWS keeps only a rolling ~6-day window, so `geo.features` is
-# the only path to older days), and `burn-severity` (`mtbs-forward` is the SOLE ACTIVE writer and
-# stopping it is an owner-confirmed variable edit). `drought` from the 2026-09-04 join is unswapped
-# for the third of those reasons. A shadow writer cannot be a registration's adapter while the
-# generic `parquet-*` lane beside it is the writer the object stream actually has.
+# TWO PACKAGES ARE STILL UNSWAPPED, each for a reason recorded on its own registration above and in
+# `tests/direct/test_direct_package_registration.py::PENDING_REGISTRATION`. Neither reason is "the
+# join has not got to it yet":
+#   `vegetation`     -- `pipeline/direct/vegetation/backfill.py:149-155` republishes every day at or
+#                       below the ownership boundary THROUGH the registered `_fill_vegetation`
+#                       adapter to reach D2 parity, so a refusal here would make
+#                       `refuse_pre_ownership_day` reject the backfill's entire window by
+#                       construction. This one is load-bearing, not pending.
+#   `fire-perimeters` -- owes TWO substitutions (adapter AND watermark) and its direct lane is still
+#                       shadow, so the generic lane is the writer the object stream actually has.
+# A shadow writer cannot be a registration's adapter while the generic `parquet-*` lane beside it is
+# the writer the object stream actually has -- which is the test the other six all passed before
+# they moved.
 
 
 def _climate_floor_basis(product: ClimateFieldProduct) -> str:

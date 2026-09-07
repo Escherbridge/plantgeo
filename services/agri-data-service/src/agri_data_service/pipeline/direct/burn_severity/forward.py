@@ -1,11 +1,18 @@
 """Publish the newest unfilled governed MTBS release day directly, one release day per lane-day lock.
 
-Bypasses PostgreSQL entirely: `pipeline/lanes/burn_severity.py::export_burn_severity_release_day`
-(the registered `_fill_burn_severity` adapter) reads `geo.features` and is the OLD path this writer
-replaces for every release day it owns, exactly as `pipeline/direct/drought/forward.py` replaces
-`_fill_drought`. UNLIKE drought, `mtbs-forward` / `ingest-mtbs` is STILL the sole active writer of
-this layer today (`docs/lanes/burn-severity.md` section 2) -- stopping it is an owner-confirmed
-Railway variable edit this package never performs, and nothing here deactivates it.
+Bypasses PostgreSQL entirely. The OLD path was
+`pipeline/lanes/burn_severity.py::export_burn_severity_release_day` behind the registered
+`_fill_burn_severity` adapter, reading `geo.features`; on 2026-09-07 that adapter became a
+source-direct refusal naming this package, so this writer is the only path to a burn-severity
+PARQUET day. The lane module survives the swap because
+`pipeline/validation/burn_severity.py` still calls its `read_burn_severity_release_day` for the D1
+reconciliation; only the export half is now unreachable.
+
+`mtbs-forward` / `ingest-mtbs` IS STILL ACTIVE and still writes `geo.features`
+(`docs/lanes/burn-severity.md` section 2); stopping it is an owner-confirmed Railway variable edit
+this package never performs. That is not a second writer of this stream -- different store -- but
+after the swap it is Postgres work with no Parquet consumer left, since `parquet-burn-severity` was
+the reader of those rows and is retired.
 
 There is no "settled through today" computation the way `drought/products.py::newest_settled_tuesday`
 has one: a release day is not a step on a calendar cadence, it is whatever

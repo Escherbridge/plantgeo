@@ -9,19 +9,24 @@
 -- sql/AGENTS.md -- SQLAlchemy's text() scans comments too, and a colon-prefixed word here would
 -- mint a phantom bind parameter no caller supplies.
 --
--- THIS MIRRORS sql/pipeline/sensors_day_export.sql'S winning_observation REDUCTION AND MEASUREMENT
--- FAN-OUT EXACTLY, generalized across every day rather than one bound `observed_day`, and across
--- every station rather than one bound `station_ids` batch. Matching that reduction matters: a
--- parity receipt built on a looser count (e.g. one row per feature rather than one row per winning
--- measurement) could report "matched" against a row shape the existing Postgres-reading lane
--- adapter (`pipeline/lanes/sensors.py::export_sensors_day`) would never actually export.
+-- THIS IS NOW THE ONLY SURVIVING SQL TRANSCRIPTION OF THE winning_observation REDUCTION AND
+-- MEASUREMENT FAN-OUT. It was written to mirror sql/pipeline/sensors_day_export.sql exactly,
+-- generalized across every day rather than one bound `observed_day` and across every station
+-- rather than one bound `station_ids` batch. That file and the lane module that loaded it were
+-- DELETED on 2026-09-07, when LANE_REGISTRY['sensors'].adapter became a source-direct refusal and
+-- nothing loaded them any more -- so what they said is RESTATED below rather than cited. Matching
+-- the reduction still matters exactly as much: a parity receipt built on a looser count (e.g. one
+-- row per feature rather than one row per winning measurement) would report "matched" against a
+-- row shape the retired Postgres-reading lane never actually exported, and this receipt's whole
+-- claim is about that exact published population.
 --
--- WHY layer.id = CAST(:layer_id AS uuid) INSTEAD OF THE EXPORT QUERY'S layer.name = 'sensors': the
+-- WHY layer.id = CAST(:layer_id AS uuid) INSTEAD OF THE DELETED EXPORT QUERY'S layer.name =
+-- 'sensors': the
 -- caller already resolved `sensors` to a layer_id via resolve_layer_id, the same convention
 -- sql/pipeline/direct/weather_observations/postgres_day_counts.sql uses -- both predicates resolve
 -- to the identical single row, and binding the id keeps this file consistent with its sibling
 -- parity queries rather than re-deriving a name join. `layer.is_public IS TRUE` is kept because the
--- export query enforces it and a parity count must count exactly what the export would.
+-- export query enforced it and a parity count must count exactly what that export did.
 --
 -- WHY POSTGRES IS STILL THE GROUND LIST, AND WHY THIS NEVER LISTS THE WHOLE PARQUET STREAM. Same
 -- reasoning as the weather-observations twin: this lane's direct writer can publish a day Postgres
@@ -32,15 +37,21 @@
 -- whole-bucket `list_partition_keys()` over the Parquet stream (see parity.py's module docstring).
 --
 -- THE MALFORMED-TIMESTAMP GUARD (pg_input_is_valid) and THE DAY-BOUNDARY RULE
--- (geo.feature_observation_day, never a cast of observed_at) are inherited verbatim from
--- sensors_day_export.sql's own header -- see that file for the full rationale, including why a
--- pushed row's `observedAt` cannot be assumed parseable and why the day must never be re-derived
--- from a zoned instant.
+-- (geo.feature_observation_day, never a cast of observed_at) were inherited verbatim from
+-- sensors_day_export.sql, whose own header carried the rationale. That file is gone, so the
+-- rationale is stated here rather than forwarded. THE GUARD: a sensors row reaches geo.features
+-- through a push whose `observedAt` is upstream free text, so it cannot be assumed parseable,
+-- and one unparseable value in an unguarded cast aborts the whole statement rather than skipping
+-- that row. THE RULE: geo.feature_observation_day reads the ISO DATE PREFIX of that string, so
+-- re-deriving the day by casting to a zoned instant would move rows across the day boundary by
+-- whatever offset the string carries -- the same named-day trap pipeline/direct/sensors/rows.py
+-- restates in Python.
 --
 -- How this query works, clause by clause:
 --
 --   winning_observation CTE
---     Reproduces the day-export query's DISTINCT ON reduction, widened from `(sensor_id)` (that
+--     Reproduces the retired day-export query's DISTINCT ON reduction, widened from `(sensor_id)`
+--     (that
 --     query already fixes the day via its WHERE clause) to `(sensor_id, observed_day)` here, since
 --     this query counts every day at once. The ORDER BY keeps the identical tie-break --
 --     `observedAt DESC` as TEXT, then `feature.id DESC` -- so the winner picked here is always the

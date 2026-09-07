@@ -3,11 +3,14 @@
 READ-ONLY. This module opens a PostgreSQL session and a Parquet object store, reads both, and writes
 neither -- it is the operator's evidence for a drop packet (track spec, D1 item 1: "a counted
 comparison showing the Parquet twin covers at least every day and row the PostgreSQL relation
-holds"), not a migration or a backfill. `_POSTGRES_DAY_COUNTS_SQL` mirrors
-`sql/pipeline/sensors_day_export.sql`'s winning-observation reduction and measurement fan-out
-exactly (one row per winning (sensor_id, day) report's surviving measurement, never one row per
-feature) so this counts precisely the population the existing Postgres-reading lane adapter
-(`pipeline/lanes/sensors.py::export_sensors_day`) would itself export.
+holds"), not a migration or a backfill. `_POSTGRES_DAY_COUNTS_SQL` carries the
+winning-observation reduction and measurement fan-out itself (one row per winning (sensor_id,
+day) report's surviving measurement, never one row per feature), so this counts precisely the
+population the Postgres-reading lane adapter used to export. That adapter,
+`pipeline/lanes/sensors.py` and `sql/pipeline/sensors_day_export.sql` were all deleted on
+2026-09-07 when the registration became a source-direct refusal -- which is why the reduction is
+now stated in the parity query's own header rather than cited from the export it was
+transcribed from.
 
 WHY POSTGRES IS STILL THE GROUND LIST, AND WHY THIS NEVER LISTS THE WHOLE STREAM. This lane's direct
 writer can publish a day Postgres never held -- any day from its own deployment forward, or any day
@@ -53,9 +56,8 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
-#: Mirrors `sql/pipeline/sensors_day_export.sql`'s winning-observation reduction and measurement
-#: fan-out, minus that file's `:observed_day`/`:station_ids` parameters: this counts every day and
-#: every station, not one batch of one day.
+#: The winning-observation reduction and measurement fan-out, minus the deleted day export's
+#: per-day and per-station-batch parameters: this counts every day and every station at once.
 _POSTGRES_DAY_COUNTS_SQL: Final = text(load_query_sql("pipeline/direct/sensors/postgres_day_counts.sql"))
 
 _MISMATCH_SAMPLE_LIMIT: Final = 20

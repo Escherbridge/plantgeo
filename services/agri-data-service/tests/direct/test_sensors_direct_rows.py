@@ -119,7 +119,8 @@ class TestDirectSensorTables:
 
     def test_picks_the_latest_report_as_the_stations_winner_for_the_day(self) -> None:
         """Two polls of the SAME station-day: only the later report's measurements survive, mirroring
-        `sql/pipeline/sensors_day_export.sql`'s `DISTINCT ON ... ORDER BY observedAt DESC`."""
+        the day export's `DISTINCT ON ... ORDER BY observedAt DESC`, surviving as
+        `sql/pipeline/direct/sensors/postgres_day_counts.sql`."""
         earlier = _write(timestamp_text="2026-09-03T12:00:00+00:00", readings={"temperature": {"value": 18.0}})
         later = _write(timestamp_text="2026-09-03T18:00:00+00:00", readings={"temperature": {"value": 21.0}})
 

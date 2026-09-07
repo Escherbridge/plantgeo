@@ -613,11 +613,14 @@ executor's allow-list variable.
 
 `drought/` is the reference geometry-lane direct writer: the first of the eight
 `environmental_postgres_retirement_20260904` layers whose base rung needs a DuckDB spatial repair, not
-only Polars. `postgres-drought`/`ingest-drought` (`_fill_drought` in `pipeline/parquet/lane_registry.py`,
-reading `geo.drought_areas` through `pipeline/lanes/drought.py::export_drought_release`) are both
-stopped (owner decision 2026-09-04) and never resume; this package replaces them for every day it
-owns, `forward.py` for the newest settled release and `backfill.py` for the full 2022-08-09..settled
-history, and PostgreSQL is never written by either.
+only Polars. `postgres-drought`/`ingest-drought` are both stopped (owner decision 2026-09-04) and
+never resume; this package replaces them for every day it owns, `forward.py` for the newest settled
+release and `backfill.py` for the full 2022-08-09..settled history, and PostgreSQL is never written
+by either. **Since 2026-09-07 it is also the only READER path**: `LANE_REGISTRY['drought'].adapter`
+was `_fill_drought`, reading `geo.drought_areas` through
+`pipeline/lanes/drought.py::export_drought_release`, and is now a `_source_direct_refusal` naming
+this package -- the lane module and `sql/pipeline/drought_release_export.sql` were deleted in the
+same edit, because nothing loaded them any more.
 
 ### Two DuckDB spatial sessions, never merged into one
 
@@ -656,10 +659,11 @@ month by month and hand the raw key list straight to `foundation/parquet/paths.p
 which does its own parsing and ordering -- this package never re-derives a numeric part order from
 `part-N` key text, so the unpadded `part-10` sorts-before-`part-9` trap
 (`plantgeo-parquet-coarse-rungs-unbuilt`) has nothing here to reintroduce it into. A release is at
-most five rows and one part in every observed case; the multi-part budget
-(`pipeline/lanes/drought.py::_rows_per_part`, unchanged and unread by this package) is Postgres-side
-machinery this writer does not need, since `rows.py` always builds one table per release and lets
-`write_partition` split it into exactly one part-0 in the ordinary case.
+most five rows and one part in every observed case; the multi-part budget the retired Postgres lane
+carried (`pipeline/lanes/drought.py::_rows_per_part`, never read by this package and deleted with
+that module on 2026-09-07) was Postgres-side machinery this writer does not need, since `rows.py`
+always builds one table per release and lets `write_partition` split it into exactly one part-0 in
+the ordinary case.
 
 ### The `direct:` area_id, and why it is not a lineage column
 
@@ -766,10 +770,13 @@ going oldest-first beside a forward walker going newest-first contends for the s
 `burn_severity/` is the SECOND geometry-lane direct writer, built the same shape as `drought/`
 (DuckDB spatial repair before the base rung, no `TerminalEvidence`/`provenance=`, an adapter substituted
 via `replace(lane, adapter=...)`) but adapted to a source with no "not yet published" state at all.
-`mtbs-forward`/`ingest-mtbs` (`_fill_burn_severity` in `pipeline/parquet/lane_registry.py`, reading
-`geo.features` through `pipeline/lanes/burn_severity.py::export_burn_severity_release_day`) is **STILL
-the sole ACTIVE writer of this layer today** -- unlike drought's `postgres-drought`, nothing here stops
-it, and stopping it is an owner-confirmed Railway variable edit outside this package's ownership.
+`mtbs-forward`/`ingest-mtbs` is **STILL ACTIVE** -- nothing here stops it, and stopping it is an
+owner-confirmed Railway variable edit outside this package's ownership -- but since 2026-09-07 it is
+no longer a writer anything reads. `LANE_REGISTRY['burn-severity'].adapter` was `_fill_burn_severity`,
+reading `geo.features` through `pipeline/lanes/burn_severity.py::export_burn_severity_release_day`,
+and is now a `_source_direct_refusal` naming this package, so no Parquet lane consumes those rows.
+The lane MODULE survives -- `pipeline/validation/burn_severity.py` still calls its
+`read_burn_severity_release_day` -- but its export half has no caller.
 
 ### The grain: a release day is a UNION across ignition-year cohorts, not one fetch
 
@@ -885,14 +892,17 @@ The 2026-09-06 join registered `burn-severity-direct-forward`, **weekly on Tuesd
 weekly rhythm `mtbs-forward` already runs (07:55), one hour later so the two never open a fetch in the same
 minute while both are running. Weekly, not hourly, because MTBS publishes quarterly and its governed set
 grows only through a governance code change, and because `forward.py`'s per-turn R2 census is explicitly
-sized for that cadence (see "Known simplifications" below). IT SHIPS SHADOW and stays inactive until BOTH:
-(1) `parity.py` proves D1 parity against whatever `geo.features` holds in production, and (2) the owner
-explicitly stops `mtbs-forward`/`ingest-mtbs` -- unlike drought, that Postgres lane is still the layer's
-only active writer today, so routing `_fill_burn_severity` to a source-direct refusal before both conditions
-hold would leave the layer briefly served by neither, or double-fetch MTBS from two writers racing the same
-lane-day lock. The registration carries no `writer_ceiling`, because `forward.py` and `backfill.py` between
-them claim the whole governed release set the generic lane covers; `conflicts_with` against
-`parquet-burn-severity` is the whole guard.
+sized for that cadence (see "Known simplifications" below). IT SHIPPED SHADOW and is now ACTIVE, with
+`parquet-burn-severity` retired; `LANE_REGISTRY['burn-severity'].adapter` was routed to a source-direct
+refusal on 2026-09-07. The two conditions this section recorded were (1) `parity.py` proving D1 parity
+against what `geo.features` holds and (2) the owner stopping `mtbs-forward`/`ingest-mtbs`. Only the
+first still bears on anything: `mtbs-forward` is STILL ACTIVE, and the swap did not need it stopped,
+because it writes `geo.features` while this package writes Parquet -- the layer was never served by
+both. What the swap DID change is that `mtbs-forward` now has no Parquet consumer at all, which is the
+argument for retiring it, not a reason the swap was unsafe. The registration carries no
+`writer_ceiling`, because `forward.py` and `backfill.py` between them claim the whole governed release
+set the generic lane covered; `conflicts_with` against `parquet-burn-severity` is what keeps a
+re-activation of that retired lane off, and the refusal is what it hits if anyone tries.
 
 No `burn-severity-direct-backfill` LANE was registered, deliberately, matching what the 2026-09-04 join did
 with `drought`'s and `vegetation`'s backfills: a one-time historical catch-up has no cadence bucket to
@@ -1002,17 +1012,23 @@ that function. `support.py::weather_sample_points` reuses it verbatim rather tha
 `spatial_cell` grid_name, so a direct-written day samples the identical points a Postgres-era ingest
 tick would have.
 
-### Backfill is the existing, untouched Postgres adapter -- nothing new was built for it
+### Backfill WAS the Postgres adapter, and since 2026-09-07 there is none -- READ THIS BEFORE D2
 
-Same pattern as `fire_detections.py`: `pipeline/lanes/weather_observations.py` and its
-`LaneRegistration` in `pipeline/parquet/lane_registry.py` are left exactly as they were. That adapter
-already reads settled days out of `geo.features` and republishes them to Parquet
-(`export_weather_observations_day`), which is precisely what D2's backfill bar needs -- it remains the
-mechanism an operator runs (`parquet-drain --selection missing --layer weather-observations`, per
-`conductor/layer-sessions/weather-observations.md` section 1) until the day this writer's forward
-adapter is swapped in as the registered one, exactly as the climate/soil sections describe for their
-own generic-spec conflicts. No new backfill code was written in this package because none was owed:
-the gap is in what schedules the existing adapter, not in the adapter itself.
+This package still ships no `backfill.py`. Until 2026-09-07 it did not need one: the registered
+`_fill_weather_observations` read settled days out of `geo.features` and republished them to Parquet
+(`pipeline/lanes/weather_observations.py::export_weather_observations_day`), and an operator ran
+`parquet-drain --selection missing --layer weather-observations`
+(`conductor/layer-sessions/weather-observations.md` section 1) to clear D2's backfill bar with it.
+
+**That mechanism is gone.** `LANE_REGISTRY['weather-observations'].adapter` is now a
+`_source_direct_refusal`, so the same `parquet-drain` invocation raises instead of exporting. The
+lane module and `sql/pipeline/weather_observations_day_export.sql` still exist -- only because
+`pipeline/validation/weather_observations_exact.py` reads them for the D2 audit -- but nothing
+SCHEDULES or DRIVES an export any more. Any settled Postgres day this stream has not already
+published is now reachable only by a one-off retract-and-re-export, the same shape
+`evidence/sensors-stranded-days-20260906.md` describes for sensors, and it must happen BEFORE
+`geo.features` is dropped. Measure the gap with `parity.py` first: if it reports full coverage there
+is nothing to move and this note is discharged.
 
 ### The parity receipt
 
@@ -1023,7 +1039,9 @@ Postgres ingestion stopped, is not under-coverage and is deliberately not comput
 would require a whole-stream `list_partition_keys()` -- the exact A4 tripwire this track's acceptance
 criteria forbid, for a number D2 does not ask for). Its `_POSTGRES_DAY_COUNTS_SQL` mirrors
 `sql/pipeline/weather_observations_day_export.sql`'s WHERE clause and key-presence guard exactly, so
-the count matches precisely what the existing Postgres adapter would itself export. Run it with
+the count matches precisely what the Postgres adapter exported before the 2026-09-07 swap. That
+query file survives the swap: `pipeline/validation/weather_observations_exact.py` still loads it
+through `pipeline/lanes/weather_observations.py::read_weather_observations_day`. Run it with
 `python -m agri_data_service.pipeline.direct.weather_observations.parity`; it exits 1 on
 `under_coverage` so an operator's drop-packet script can gate on it directly.
 
@@ -1306,10 +1324,15 @@ join decided it: one run fetches the full 6-day window, which self-heals across 
 HTTP cost, so the only thing frequency buys is freshness. Roughly hourly is NWS's own publication cadence, so
 a `:15`/`:30`-style sub-hourly slot would re-transfer the same mostly-unchanged six days several times an
 hour for no new readings, while a slower slot risks a day ageing out of retention unseen -- and that day is
-then unrecoverable. SHADOW. Its activation swaps `LANE_REGISTRY['sensors'].adapter` only, and only once a
-boundary day is measured and cited: the rolling window means every day older than ~6 is unreachable from the
-SOURCE, so `_fill_sensors` over the append-only `geo.features` record is the only path to those days while
-the table holds them.
+then unrecoverable. ACTIVE since 2026-09-07, with `parquet-sensors` retired and
+`LANE_REGISTRY['sensors'].adapter` swapped to a source-direct refusal in the same wave -- no boundary
+day was ever cited, and none can be: this package ships no `backfill.py` and no
+`*_DIRECT_WRITER_START_DAY`. The gate that argument served has closed rather than been met.
+`postgres-sensors` was DELETED the same day, so `geo.features` is frozen for this lane; a
+Postgres-reading adapter over a frozen table is not a deeper archive, it is a re-export waiting for
+someone to re-activate a retired lane. The 25 pre-2026-08-24 days stranded at z13
+(`evidence/sensors-stranded-days-20260906.md`) are now a one-off retract-and-re-export owed BEFORE
+`geo.features` is dropped, not a lane.
 
 ## Watersheds
 
