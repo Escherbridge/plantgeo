@@ -1352,3 +1352,66 @@ leave all 40 tests green (2026-09-07). So do not read the suite as a guard here:
 application site is ever added, or a floor is ever given to `burn-severity`, the double-count
 returns silently. The `layerName !== "burn-severity"` guard inside the transform is what makes the
 one shared site safe for every other row, and it must stay.
+
+## §regional-context-fire-perimeters
+
+The agent's fire-perimeter block moved off PostgreSQL on 2026-09-07. It was the last environmental
+read `services/regional-context.ts` issued against `geo.features`, for a layer
+`parquet-slider-capabilities.ts` already declares `servingReader: "parquet"` — acceptance criterion
+2 of `environmental_postgres_retirement_20260904` ("not the app, **not the agent tools**"). The
+table was also FROZEN: `postgres-fire-perimeters` is not in the executor's active lane set, so that
+read was serving the AI whatever PostgreSQL last held with nothing in the payload saying it had
+stopped moving, while the Parquet lane it shares a name with kept being captured (version
+2026-09-04, exported 2026-09-06).
+
+It was not a like-for-like swap, and four things had to be re-decided.
+
+**Freshness is the snapshot's capture day, labelled as one.** The old function returned
+`features.updatedAt`, justified in its own docstring as "the only honest freshness signal
+available" — reasoning about a row in a table refreshed in place, which is also why a frozen table
+kept reporting its last write forever while claiming currency. The served Parquet projection
+carries no row timestamp and needs none: `fire-perimeters` is a `static_lookup`, so its whole
+population shares ONE version stamp and the answering release reports it as `servedDay`. That dates
+the SET rather than whichever row was touched last. `dataFreshness.firePerimeters` reports
+`snapshot_captured_<day>` rather than a bare day, because that map is headed "Observation times of
+the values actually served" in the prompt and a bare `2026-08-07` there would read as "the
+perimeters were observed then". They were not — each row carries its own `observedDay`.
+
+**The bound had to be re-derived, because `ORDER BY updated_at DESC LIMIT 10` has no equivalent.**
+Every row of one snapshot shares that snapshot's day, so the only per-row recency left is
+`observed_day`. `compareFirePerimeters` sorts newest-observed first and puts an UNDATED incident
+last — nothing dates it, which is not the same as it being old — then breaks ties on
+`uniqueFireIdentifier` so one window always yields the same ten. The cap is then STATED rather than
+silent: `totalCount` is the full in-frame count and `truncated` says whether even that is a floor.
+The PostgreSQL block could say neither, because its `LIMIT 10` ran in SQL and it reported the capped
+length as the total.
+
+**`firePerimeters` stays OUT of `DATE_PARAMETERISED_SOURCES`, and the new reader does not change
+that.** The old reason (WFIGS publishes no per-feature observation time) is now false —
+`firePerimeterRowSchema` carries a nullable `observed_day` and `getParquetFirePerimeters` filters
+the snapshot with the same expression the map installs client-side. The answer is unchanged for
+three properties of a `static_lookup` lane: the partition day is a version stamp, so a past day
+resolves to "newest snapshot at or before it" and the lane has only been captured since 2026-09-04;
+a snapshot is refreshed in place, so an in-frame filter yields "incidents discovered by that day,
+drawn as they are now"; and — decisively — the capability row dates its axis from the `observed_day`
+values inside the CURRENT snapshot, which run years back, so a 2024 viewed day sits inside a
+published axis with no listed gap while the reader can only answer `not_generated`. Admitting the
+block would hand that pairing to `coverageOnDay` and let it return
+`published_with_nothing_at_this_location` — the vocabulary's strongest sentence, "you may say there
+was none here" — for a day nobody ever captured. So the call passes no `date` at all, and the row
+keeps reporting `served_as_of_latest` + `map_bounded_by_viewed_day_payload_is_latest`.
+
+**No incident name, and nothing invented to stand in for one.** The reader validates eighteen
+registered columns and projects six; `incident_name`, `irwin_id` and `updated_at` are among the
+twelve it withholds, on the rule that a reader serves what the presenter draws. The PostgreSQL read
+took `name`/`irwinId` off a JSONB blob and fell back to the literal `"Unnamed perimeter"` — the same
+shape of drift the strict schema exists to stop. `NearbyFirePerimeter` is therefore
+`{ uniqueFireIdentifier, observedDay, severity }`: the agent can still name and count distinct
+incidents, it just cannot call one "the Dixie Fire". Widening that is a `hover-fields.ts` change
+with its own review, not something this cutover may decide by quietly shipping columns.
+
+`resolveCachedLayerId`, `readString`, drizzle's `desc` and `process.env.FIRES_LAYER_ID` all died in
+`regional-context.ts` with the old function. All but `readString` remain live elsewhere — notably
+`FIRES_LAYER_ID` in the write route `src/app/api/ingest/fires/route.ts:11` — so nothing was chased
+out of this module. `geo.features` is still read here by `readCommunityProposals`, which is a
+community-submission read rather than an environmental one and is outside that criterion.

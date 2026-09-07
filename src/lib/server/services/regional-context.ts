@@ -1,4 +1,4 @@
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/lib/server/db";
 import { features, layers } from "@/lib/server/db/schema";
 import {
@@ -18,7 +18,6 @@ import {
   getPublishedStreamflowGauges,
   getPublishedWeatherForBbox,
   getPublishedWeatherForPoint,
-  resolveCachedLayerId,
   resolveRequestedObservationDay,
   serverCurrentDate,
   type PublishedWeatherObservation,
@@ -33,6 +32,8 @@ import type { WaterGauge } from "@/lib/server/services/usgs-water";
 import { firmsDayRange } from "@/lib/server/services/environmental-time";
 import {
   getParquetFireDetections,
+  getParquetFirePerimeters,
+  type ParquetFirePerimeter,
   type ParquetFireWindow,
   type ParquetReaderResult,
 } from "@/lib/server/services/parquet-trpc-readers";
@@ -90,10 +91,32 @@ export interface NearbyFireDetection {
   frpSum: number | null;
 }
 
+/**
+ * One WFIGS incident in frame near the point, at the projection the Parquet lane actually serves.
+ *
+ * NO INCIDENT NAME, AND NO ROW TIMESTAMP -- neither is invented here, because neither reaches
+ * this assembler. `getParquetFirePerimeters` validates eighteen registered columns and projects
+ * six of them (`parquet-trpc-readers.ts:495-517`); `incident_name`, `irwin_id` and `updated_at`
+ * are among the twelve it deliberately withholds, on the rule that a reader serves what the
+ * presenter draws and widening that projection is a `hover-fields.ts` change with its own review.
+ * The PostgreSQL read this replaced took `name`/`irwinId` off a JSONB blob and `updatedAt` off the
+ * row, and reported "Unnamed perimeter" when the blob had neither -- exactly the shape of drift
+ * (`fire_risk_tiles` projecting a `risk_level` no producer ever wrote) the strict schema exists to
+ * stop. `uniqueFireIdentifier` is WFIGS' own incident identity and is served, so the agent can
+ * still name and count distinct incidents; it just cannot call one "the Dixie Fire".
+ */
 export interface NearbyFirePerimeter {
-  name: string;
-  irwinId: string | null;
-  updatedAt: string;
+  /** WFIGS `UniqueFireIdentifier`, the only incident identity the served projection carries. */
+  uniqueFireIdentifier: string;
+  /**
+   * The incident's own day, or null for a row WFIGS gave no parseable timestamp.
+   *
+   * Null is a contract state, not a fault: `geo.feature_observation_day` returns NULL for a row
+   * it cannot date and the map draws such a row at EVERY slider day, so a null here means
+   * "undated", never "old".
+   */
+  observedDay: string | null;
+  severity: string | null;
 }
 
 /**
@@ -167,7 +190,19 @@ export interface RegionalContextPayload {
     lastDay: string;
     servedDay: string;
   } | null;
-  firePerimeters: { perimeters: NearbyFirePerimeter[]; totalCount: number } | null;
+  /** Null whenever the Parquet perimeter read served no in-frame incident, for ANY reason. */
+  firePerimeters: {
+    perimeters: NearbyFirePerimeter[];
+    /** In-frame incidents in the served window; `perimeters` is capped at `MAX_FIRE_PERIMETERS`. */
+    totalCount: number;
+    /** The reader hit its row budget, so the window is a subset and `totalCount` is a floor. */
+    truncated: boolean;
+    /**
+     * The day the answering snapshot was CAPTURED. Never an observation day: this lane is a
+     * `static_lookup` whose partition day is a version stamp for the whole population.
+     */
+    snapshotDay: string;
+  } | null;
   mtbsPerimeters: { fires: GeoJSON.Feature[]; totalCount: number } | null;
   carbonPotential: InterventionSuitability | null;
 }
@@ -241,10 +276,10 @@ export type ViewedDateReadOutcome =
  * A second axis entirely from `ViewedDateReadOutcome`, and it has to be: the outcome says what
  * the server's read did, and every branch of it can be true of a block that describes a
  * different set of features than the one on the user's screen. `firePerimeters` is the live
- * case. It is excluded from `DATE_PARAMETERISED_SOURCES` because WFIGS publishes no per-feature
- * observation time, so it is read at the live edge -- while `fire-perimeters` is an `event`
- * layer that DOES get a slider and IS in `DATE_FILTERABLE_TILE_LAYER_TOGGLE_IDS`, so the map
- * draws only perimeters observed on or before the viewed day. A user scrubbed to 2024-06-01
+ * case. It is excluded from `DATE_PARAMETERISED_SOURCES` -- see the argument there -- so it is
+ * read at the live edge, while `fire-perimeters` is an `event` layer that DOES get a slider and
+ * IS in `DATE_FILTERABLE_TILE_LAYER_TOGGLE_IDS`, so the map draws only perimeters observed on or
+ * before the viewed day. A user scrubbed to 2024-06-01
  * sees three perimeters and asks what is burning; without this the agent answers about today's
  * set and attributes it to its own observation time, describing perimeters that are not on
  * screen and saying nothing about the three that are. The date vocabulary alone cannot prevent
@@ -327,9 +362,29 @@ const EVIDENCE_SOURCE_BY_VIEWED_LAYER: Record<string, RegionalEvidenceSource> = 
  * The blocks whose reader accepts a named day. Everything else is served at the live edge and
  * must SAY so rather than let its value be attributed to the day the user is looking at.
  *
- * `firePerimeters` is absent on purpose and not by oversight: WFIGS publishes no per-feature
- * observation time, so row `updatedAt` is the only time signal the perimeter read has (see
- * `readPublishedFirePerimeters`) and there is no honest way to ask it for a past day.
+ * `firePerimeters` IS ABSENT ON PURPOSE, AND ITS REASON CHANGED WITH THE READER WITHOUT CHANGING
+ * THE ANSWER. Until 2026-09-07 the argument was that WFIGS publishes no per-feature observation
+ * time; the Parquet lane disproves that half -- `firePerimeterRowSchema` carries a nullable
+ * `observed_day` and `getParquetFirePerimeters` takes a `date`, filtering the snapshot with the
+ * very expression the map installs client-side (`firePerimetersInFrame`,
+ * `parquet-trpc-readers.ts:1959-1987`). It still may not be read AT a viewed day, for three
+ * reasons that are properties of a `static_lookup` lane rather than of WFIGS:
+ *
+ * 1. THE PARTITION DAY IS A VERSION STAMP. `resolve_release` answers a past day with the newest
+ *    snapshot captured at or before it, and the lane has only been captured since its 2026-09-04
+ *    re-registration -- so every day before its first capture answers `not_generated`. A viewed
+ *    day in 2024 would yield nothing at all, not the 2024 set.
+ * 2. A SNAPSHOT IS REFRESHED IN PLACE. A perimeter in today's capture is that incident's CURRENT
+ *    footprint and current `severity`, so filtering it to `observed_day <= viewedDay` yields
+ *    "incidents discovered by that day, drawn as they are now" -- the same SET the map draws,
+ *    which is why the set-correspondence axis above can speak, but not values observed that day.
+ * 3. THE COVERAGE RECORD WOULD LICENSE A FALSE ABSENCE. `fire-perimeters`' capability row dates
+ *    its axis from the `observed_day` values inside the current snapshot, which run years back,
+ *    so a 2024 day sits inside a published axis with no listed gap. Admitting this block would
+ *    put `coverageOnDay` in charge of a `not_generated` read and let it return
+ *    `published_with_nothing_at_this_location` -- the vocabulary's strongest sentence, "you may
+ *    say there was none here" -- for a day the lane never captured.
+ *
  * `strategyRecommendations` and `carbonPotential` are derived scores over the live warehouse.
  * `soilProperties` (SoilGrids, via `getSoilProperties`) and `mtbsPerimeters` (via
  * `getMTBSPerimeters`) are populated from live external reads as of 2026-08-14, but neither
@@ -394,11 +449,6 @@ function nearestGauge(
 
 function settled<T>(result: PromiseSettledResult<T>, fallback: T): T {
   return result.status === "fulfilled" ? result.value : fallback;
-}
-
-function readString(source: Record<string, unknown>, key: string): string | null {
-  const value = source[key];
-  return typeof value === "string" && value.trim() ? value : null;
 }
 
 /**
@@ -496,57 +546,97 @@ function resolveFireRead(
 }
 
 /**
- * Fire perimeters have no per-feature observation time upstream, so row
- * `updatedAt` is the only honest freshness signal available for them.
+ * What the agent may be told about fire perimeters near this point, resolved from the Parquet
+ * reader's terminal state -- the same discipline `resolveFireRead` applies above, for the same
+ * reason: four different things produce zero perimeters and only two of them are absences.
+ *
+ * THE FRESHNESS SIGNAL IS THE SNAPSHOT DAY, and that is a different KIND of value from the one
+ * this block used to report. The PostgreSQL read this replaced returned `features.updatedAt`,
+ * justified as "the only honest freshness signal available", and that reasoning was about a row
+ * in a table refreshed in place. The served projection carries no row timestamp at all
+ * (`NearbyFirePerimeter`), and it does not need one: the lane is a `static_lookup`, so the whole
+ * population shares ONE version stamp -- the day the snapshot was captured -- and the release
+ * that answered reports it as `servedDay`. That is strictly better than the old signal, because
+ * it dates the POPULATION rather than whichever row happened to be touched last, and because a
+ * frozen `geo.features` slice would have kept reporting its last write forever while claiming
+ * currency. It is reported as `snapshot_captured_<day>` rather than as a bare day so that
+ * `dataFreshness` cannot be read as "these perimeters were observed then": they were not, each
+ * row carries its own `observedDay`, and the capture day is when the set was taken.
+ *
+ * `failed` is NOT `status === "rejected"`: this reader returns an outage as DATA
+ * (`upstream_unavailable`), so a status check alone would read a down warehouse as the warehouse
+ * having published nothing. `not_generated` and `absent` are honest empties, never faults.
  */
-async function readPublishedFirePerimeters(
-  west: number,
-  south: number,
-  east: number,
-  north: number
-): Promise<{ perimeters: NearbyFirePerimeter[]; latestUpdatedAt: string | null }> {
-  const layerId = await resolveCachedLayerId(process.env.FIRES_LAYER_ID ?? "fire-perimeters");
-  if (layerId === null) return { perimeters: [], latestUpdatedAt: null };
+interface FirePerimeterReadOutcome {
+  /** Capped at `MAX_FIRE_PERIMETERS`; see `compareFirePerimeters` for the order that survives. */
+  perimeters: NearbyFirePerimeter[];
+  /** In-frame incidents in the whole served window, before the cap above. */
+  totalCount: number;
+  truncated: boolean;
+  /** The capture day of the snapshot that answered; null when none did. */
+  snapshotDay: string | null;
+  failed: boolean;
+}
 
-  const rows = await db
-    .select({ properties: features.properties, updatedAt: features.updatedAt })
-    .from(features)
-    .where(
-      and(
-        eq(features.layerId, layerId),
-        eq(features.status, "published"),
-        // `&&` is the bounding-box overlap operator the GiST index on geo.features.geom
-        // ACTUALLY answers. The four ST_XMax/ST_XMin/ST_YMax/ST_YMin comparisons this
-        // replaces expressed the identical predicate -- envelope overlap -- but as functions
-        // OF the indexed column, which no index can serve: the planner had to seq-scan the
-        // fire-perimeters slice and call four PostGIS functions per row before the
-        // `ORDER BY updated_at DESC`. Same rows, same order, index-driven.
-        sql`${features.geom} && ST_MakeEnvelope(${west}, ${south}, ${east}, ${north}, 4326)`
-      )
-    )
-    .orderBy(desc(features.updatedAt))
-    .limit(MAX_FIRE_PERIMETERS);
-
-  const perimeters: NearbyFirePerimeter[] = [];
-  let latestUpdatedAt: string | null = null;
-  for (const row of rows) {
-    const properties =
-      row.properties && typeof row.properties === "object"
-        ? (row.properties as Record<string, unknown>)
-        : null;
-    if (!properties || !row.updatedAt) continue;
-    const updatedAt = row.updatedAt.toISOString();
-    latestUpdatedAt ??= updatedAt;
-    perimeters.push({
-      name:
-        readString(properties, "name") ??
-        readString(properties, "id") ??
-        "Unnamed perimeter",
-      irwinId: readString(properties, "irwinId"),
-      updatedAt,
-    });
+/**
+ * The order the `MAX_FIRE_PERIMETERS` cap keeps, and the one place a bound had to be re-decided.
+ *
+ * The PostgreSQL read took its ten rows `ORDER BY updated_at DESC`, which has no equivalent here:
+ * every row of one snapshot shares that snapshot's day, so there is no per-row recency to rank by
+ * except `observed_day`. Newest-observed-first is the closest honest analogue, and an UNDATED
+ * incident sorts LAST because nothing dates it -- never because it is old. `uniqueFireIdentifier`
+ * breaks ties so the same window always yields the same ten rather than an arbitrary slice.
+ *
+ * The cap is then STATED rather than silent: `totalCount` is the full in-frame count and
+ * `truncated` says whether even that is a floor, so a capped list can never be read as the whole
+ * set. The old block could not say this at all -- its `LIMIT 10` ran in SQL, so its `totalCount`
+ * was the capped length reported as if it were the total.
+ */
+function compareFirePerimeters(left: ParquetFirePerimeter, right: ParquetFirePerimeter): number {
+  if (left.observedDay !== right.observedDay) {
+    if (left.observedDay === null) return 1;
+    if (right.observedDay === null) return -1;
+    return right.observedDay.localeCompare(left.observedDay);
   }
-  return { perimeters, latestUpdatedAt };
+  return left.uniqueFireIdentifier.localeCompare(right.uniqueFireIdentifier);
+}
+
+function resolveFirePerimeterRead(
+  result: PromiseSettledResult<ParquetReaderResult<readonly ParquetFirePerimeter[]>>
+): FirePerimeterReadOutcome {
+  const nothing = {
+    perimeters: [] as NearbyFirePerimeter[],
+    totalCount: 0,
+    truncated: false,
+    snapshotDay: null,
+  };
+  if (result.status === "rejected") return { ...nothing, failed: true };
+
+  const read = result.value;
+  switch (read.state) {
+    case "ready": {
+      const ordered = [...read.data].sort(compareFirePerimeters);
+      return {
+        perimeters: ordered.slice(0, MAX_FIRE_PERIMETERS).map((perimeter) => ({
+          uniqueFireIdentifier: perimeter.uniqueFireIdentifier,
+          observedDay: perimeter.observedDay,
+          severity: perimeter.severity,
+        })),
+        totalCount: read.data.length,
+        truncated: read.truncated,
+        snapshotDay: read.servedDay,
+        failed: false,
+      };
+    }
+    // A governed absence and an unwritten snapshot are both honest empties. Neither is reported
+    // as a freshness value: `snapshotDay` stays null, so `dataFreshness` says "unavailable" and
+    // the prompt's own rule -- unavailable means unmeasured, never an observed absence -- holds.
+    case "absent":
+    case "not_generated":
+      return { ...nothing, failed: false };
+    case "upstream_unavailable":
+      return { ...nothing, failed: true };
+  }
 }
 
 const COMMUNITY_PROPOSAL_RADIUS_METERS = 10_000;
@@ -939,7 +1029,18 @@ export async function assembleRegionalContext(
       mapZoom: CONTEXT_MAP_ZOOM,
       dayRange: firmsDayRange(),
     }),
-    readPublishedFirePerimeters(west, south, east, north),
+    // The PARQUET perimeter reader since 2026-09-07, and it was the last environmental read in
+    // this assembler still touching `geo.features` -- acceptance criterion 2 of
+    // `environmental_postgres_retirement_20260904` ("not the agent tools"). The table it read is
+    // FROZEN: `postgres-fire-perimeters` is not in the executor's active lane set, so that read
+    // was serving the AI whatever PostgreSQL last held with nothing in the payload to say so,
+    // while the Parquet lane it shares a name with kept being captured.
+    //
+    // NO `date`, DELIBERATELY. The reader accepts one and the map passes one, but this block is
+    // not in `DATE_PARAMETERISED_SOURCES` and must not become so by the back door -- see the
+    // three-part argument there. An omitted day is the live edge: the newest snapshot captured
+    // at or before today, which is exactly what `served_as_of_latest` claims about it.
+    getParquetFirePerimeters({ bbox, mapZoom: CONTEXT_MAP_ZOOM }),
     getInterventionSuitability(lat, lon),
     // The PARQUET resolver, not the PostgreSQL one the browser stopped reading at the 2026-09-01
     // cutover. They answer differently on purpose: a lane whose availability index is withheld is
@@ -958,10 +1059,7 @@ export async function assembleRegionalContext(
   const gaugeValues = settled(gauges, [] as WaterGauge[]);
   const weatherValue = weather.status === "fulfilled" ? weather.value : null;
   const fireRead = resolveFireRead(fires);
-  const perimeterValue = settled(perimeters, {
-    perimeters: [] as NearbyFirePerimeter[],
-    latestUpdatedAt: null as string | null,
-  });
+  const perimeterRead = resolveFirePerimeterRead(perimeters);
   const carbonValue = carbon.status === "fulfilled" ? carbon.value : null;
   const soilValue = soil.status === "fulfilled" ? soil.value : null;
   const mtbsCollection = settled(mtbs, {
@@ -1006,7 +1104,15 @@ export async function assembleRegionalContext(
         .at(-1) ?? "unavailable",
     weatherObservations: weatherValue?.observedAt ?? "unavailable",
     fireDetections: latestDetectionAt ?? "unavailable",
-    firePerimeters: perimeterValue.latestUpdatedAt ?? "unavailable",
+    // The CAPTURE day of the snapshot that answered, labelled as one. A bare `2026-09-04` under
+    // a heading reading "Observation times of the values actually served" would say the
+    // perimeters were observed that day; they were not, each carries its own `observedDay`, and
+    // this lane's partition day stamps the version of the population rather than a measurement.
+    // The day is still in the string, so staleness stays computable for this as-of-latest block.
+    firePerimeters:
+      perimeterRead.snapshotDay !== null && perimeterRead.perimeters.length > 0
+        ? `snapshot_captured_${perimeterRead.snapshotDay}`
+        : "unavailable",
     strategyRecommendations:
       strategyValues.length > 0 ? "published_revision_required" : "unavailable",
     // SoilGrids v2.0 is a static, undated raster release (see soilgrids.ts): there is no
@@ -1046,12 +1152,15 @@ export async function assembleRegionalContext(
             ...fireRead.window,
           }
         : null,
-    firePerimeters: perimeterValue.perimeters.length
-      ? {
-          perimeters: perimeterValue.perimeters,
-          totalCount: perimeterValue.perimeters.length,
-        }
-      : null,
+    firePerimeters:
+      perimeterRead.snapshotDay !== null && perimeterRead.perimeters.length > 0
+        ? {
+            perimeters: perimeterRead.perimeters,
+            totalCount: perimeterRead.totalCount,
+            truncated: perimeterRead.truncated,
+            snapshotDay: perimeterRead.snapshotDay,
+          }
+        : null,
     mtbsPerimeters: mtbsCollection.features.length
       ? {
           fires: mtbsCollection.features.slice(0, MAX_MTBS_FIRES),
@@ -1081,9 +1190,14 @@ export async function assembleRegionalContext(
         ? {}
         : { rungNotWrittenReason: fireRead.rungNotWrittenReason }),
     },
+    // Same `failed` rule as `fireDetections` above and for the same reason -- the Parquet reader
+    // returns an outage as DATA. No viewed row can reach this entry today, because
+    // `firePerimeters` is not in `DATE_PARAMETERISED_SOURCES` and `resolveViewedLayerReading`
+    // returns `served_as_of_latest` before consulting `readState`; it is kept correct so that
+    // admitting the block later cannot silently reintroduce "a down warehouse published nothing".
     firePerimeters: {
-      failed: perimeters.status === "rejected",
-      hasObservations: perimeterValue.perimeters.length > 0,
+      failed: perimeterRead.failed,
+      hasObservations: perimeterRead.perimeters.length > 0,
     },
     streamflow: {
       failed: gauges.status === "rejected",

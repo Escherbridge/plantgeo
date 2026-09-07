@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   getPublishedWeatherForPoint: vi.fn(),
   getPublishedWeatherForBbox: vi.fn(),
   getParquetFireDetections: vi.fn(),
+  getParquetFirePerimeters: vi.fn(),
   getParquetSliderCapabilities: vi.fn(),
   getStrategyRecommendations: vi.fn(),
   getInterventionSuitability: vi.fn(),
@@ -14,20 +15,32 @@ const mocks = vi.hoisted(() => ({
   getMTBSPerimeters: vi.fn(),
   // Consumed in call order by the generic `db.select()`/`db.execute()` stand-ins below, so a
   // test that cares can queue exactly what `readCommunityProposals` and `resolveStrategyContext`
-  // will see on their next call. Left empty, every call resolves to `[]` -- the same "nothing
-  // configured" default `readPublishedFirePerimeters` has always seen from this file.
+  // will see on their next call. Left empty, every call resolves to `[]`.
   dbSelectResults: [] as unknown[][],
   dbExecuteResults: [] as unknown[][],
+  /**
+   * Counts every `db.select()` this module issues, which is what makes the fire-perimeter
+   * negative control below a real assertion rather than a hopeful one: the perimeter read is
+   * expected to touch `db` ZERO times, and only a spy can say zero rather than "nothing showed
+   * up in the payload".
+   */
+  dbSelect: vi.fn(),
 }));
 
 /**
- * `readPublishedFirePerimeters` is the one read `regional-context.ts` issued through `db`
- * before 2026-08-14; `readCommunityProposals` and `resolveStrategyContext` (real reads added
- * that day to close two fabrication gaps -- see the track's plan.md) added a second `db.select`
- * call shape with no `innerJoin`, and `db.execute` for the `to_regclass` matview guard. The stand-in
- * below is shape-agnostic (every chain method just returns itself) so it serves all three without
- * caring which methods a given query happens to call, and defaults to "nothing configured" so
- * every pre-existing test in this file keeps seeing exactly the empty results it always has.
+ * `readPublishedFirePerimeters` was the one read `regional-context.ts` issued through `db`
+ * before 2026-08-14, and it left the module entirely on 2026-09-07 when the perimeter block
+ * moved to `getParquetFirePerimeters`; `readCommunityProposals` and `resolveStrategyContext`
+ * (real reads added on 2026-08-14 to close two fabrication gaps -- see the track's plan.md) are
+ * what still issues `db.select`, plus `db.execute` for the `to_regclass` matview guard. The
+ * stand-in below is shape-agnostic (every chain method just returns itself) so it serves both
+ * without caring which methods a given query happens to call, and defaults to "nothing
+ * configured" so every pre-existing test in this file keeps seeing exactly the empty results it
+ * always has.
+ *
+ * The spy is deliberately OUTSIDE the behaviour: `mocks.dbSelect` only records the call while a
+ * plain closure returns the queue, so `vi.clearAllMocks()` in `beforeEach` can never strip the
+ * stand-in's implementation and turn a passing negative control into a vacuous one.
  */
 function chainableSelect(rows: unknown[]) {
   const node = {
@@ -42,7 +55,10 @@ function chainableSelect(rows: unknown[]) {
 
 vi.mock("@/lib/server/db", () => ({
   db: {
-    select: () => chainableSelect(mocks.dbSelectResults.shift() ?? []),
+    select: (...args: unknown[]) => {
+      mocks.dbSelect(...args);
+      return chainableSelect(mocks.dbSelectResults.shift() ?? []);
+    },
     execute: async () => mocks.dbExecuteResults.shift() ?? [],
   },
 }));
@@ -82,11 +98,19 @@ vi.mock("@/lib/server/services/environmental-read-model", async () => {
  * read did: `getPublishedFireDetections` answers an unwritten day and an empty day with the same
  * empty collection, so the assembler could not tell a coverage hole from an observed absence
  * without leaning entirely on the capability record. The Parquet reader states which it is.
+ *
+ * `getParquetFirePerimeters` joined it on 2026-09-07, closing the last environmental read this
+ * module issued against `geo.features` -- a table `postgres-fire-perimeters` no longer writes,
+ * so that read was serving the AI a frozen population with nothing in the payload saying so.
  */
 vi.mock("@/lib/server/services/parquet-trpc-readers", async (importOriginal) => {
   const actual =
     await importOriginal<typeof import("@/lib/server/services/parquet-trpc-readers")>();
-  return { ...actual, getParquetFireDetections: mocks.getParquetFireDetections };
+  return {
+    ...actual,
+    getParquetFireDetections: mocks.getParquetFireDetections,
+    getParquetFirePerimeters: mocks.getParquetFirePerimeters,
+  };
 });
 
 /**
@@ -115,10 +139,6 @@ import {
 } from "@/lib/server/services/regional-context";
 import { buildSystemPrompt, buildTemporalSection } from "@/lib/server/services/ai-prompt";
 import { MAX_VIEWED_LAYERS, requestSchema } from "@/app/api/ai/regional-intelligence/route";
-// Not overridden by the partial mock above, so this resolves to the REAL implementation --
-// its module-scope cache is shared with regional-context.ts's own readPublishedFirePerimeters
-// (which resolves its layer id through it), and must not leak a hit across tests.
-import { clearLayerIdCache } from "@/lib/server/services/environmental-read-model";
 
 const SERVER_TODAY = "2026-08-09";
 
@@ -223,14 +243,56 @@ function fireCell(day: string, observedAt: string, overrides: Record<string, unk
   };
 }
 
+/**
+ * The capture day of the perimeter snapshot every case here is answered from, and the day one
+ * incident in it was observed. They are deliberately different values, and neither is
+ * `SERVER_TODAY`: `fire-perimeters` is a `static_lookup` whose release resolves as "newest
+ * snapshot at or before the requested day", so a live-edge read answering from an older capture
+ * is the ordinary case for a lane written by a cron -- not an error state a fixture may skip.
+ */
+const PERIMETER_SNAPSHOT_DAY = "2026-08-07";
+const PERIMETER_OBSERVED_DAY = "2026-08-05";
+
+/** The six fields `getParquetFirePerimeters` projects out of the eighteen it validates. */
+function perimeterRow(overrides: Record<string, unknown> = {}) {
+  return {
+    featureId: "3f1c9a52-0d1e-4a2c-9c0f-2f6d5b8a7e11",
+    uniqueFireIdentifier: "2026-ORWIF-000412",
+    snapshotDay: PERIMETER_SNAPSHOT_DAY,
+    observedDay: PERIMETER_OBSERVED_DAY,
+    severity: "high",
+    geometry: { type: "Polygon", coordinates: [] },
+    ...overrides,
+  };
+}
+
+/**
+ * A `ready` perimeter release carrying whatever incidents a case needs -- empty by default,
+ * which is what every pre-existing case in this file saw from the PostgreSQL read it replaced
+ * (an unqueued `dbSelectResults` slot resolved to no rows).
+ */
+function readyPerimeterSnapshot(
+  perimeters: ReturnType<typeof perimeterRow>[] = [],
+  truncated = false
+) {
+  return {
+    state: "ready",
+    requestedDay: SERVER_TODAY,
+    servedDay: PERIMETER_SNAPSHOT_DAY,
+    truncated,
+    data: perimeters,
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.dbSelectResults.length = 0;
   mocks.dbExecuteResults.length = 0;
-  // resolveCachedLayerId memoizes a hit in module scope; clearing it keeps the
-  // dbSelectResults queue's consumption order (readPublishedFirePerimeters's own resolver
-  // call, then readCommunityProposals's layer lookup) the same in every test.
-  clearLayerIdCache();
+  // `clearLayerIdCache()` used to run here: `readPublishedFirePerimeters` resolved its layer id
+  // through the read model's module-scope memo, so a leaked hit shifted the dbSelectResults
+  // queue between tests. Nothing in this module resolves a layer id any more -- the only
+  // `db.select` callers left are `readCommunityProposals`' two queries -- so the queue's
+  // consumption order no longer depends on a cache at all.
   mocks.getStrategyRecommendations.mockResolvedValue([]);
   mocks.getInterventionSuitability.mockResolvedValue({
     availability: "unavailable",
@@ -241,6 +303,7 @@ beforeEach(() => {
   mocks.getPublishedWeatherForPoint.mockResolvedValue(null);
   mocks.getPublishedWeatherForBbox.mockResolvedValue([]);
   mocks.getParquetFireDetections.mockResolvedValue(readyFireWindow(SERVER_TODAY));
+  mocks.getParquetFirePerimeters.mockResolvedValue(readyPerimeterSnapshot());
   mocks.getParquetSliderCapabilities.mockResolvedValue(sliderCapabilities());
   // Unconfigured by default, same as the pre-2026-08-14 hardcoded nulls this replaced: no test
   // in this file exercises soil/MTBS content unless it explicitly overrides these.
@@ -1092,10 +1155,10 @@ describe("community proposals and strategy context (2026-08-14 fabrication fix)"
   it("reads nearby community intervention proposals from geo.features/geo.layers", async () => {
     mocks.dbSelectResults.push(
       // `db.select()` calls are consumed in issue order across every reader in this module, not
-      // per-reader: `readPublishedFirePerimeters` (unrelated to this test) always makes the
-      // first one, so its slot is queued empty here exactly as the shared "nothing configured"
-      // default already leaves it everywhere else in this file.
-      [],
+      // per-reader. Until 2026-09-07 an empty slot had to be queued ahead of these two, because
+      // `readPublishedFirePerimeters` (unrelated to this test) always made the first call; its
+      // read is Parquet now and issues none, so `readCommunityProposals`' own layer lookup is
+      // the first `db.select` this module makes.
       [{ id: "layer-1" }],
       [
         {
@@ -1276,3 +1339,265 @@ describe("community proposals and strategy context (2026-08-14 fabrication fix)"
     expect(result.dataFreshness.mtbsPerimeters).toBe("unavailable");
   });
 });
+
+/**
+ * The perimeter block's move off `geo.features` (2026-09-07), which was not a like-for-like swap.
+ *
+ * Two facts made it worth doing rather than deferring. Acceptance criterion 2 of
+ * `environmental_postgres_retirement_20260904` forbids any environmental read path touching
+ * PostgreSQL -- "not the app, not the agent tools" -- and this was the last one in this module,
+ * for a layer `parquet-slider-capabilities.ts` already declares `servingReader: "parquet"`. And
+ * the table was FROZEN: `postgres-fire-perimeters` is not in the executor's active lane set, so
+ * the read served the AI whatever PostgreSQL last held, with nothing in the payload to say it
+ * had stopped moving, while the Parquet lane it shares a name with kept being captured.
+ */
+describe("fire perimeters, served from the Parquet lane rather than from geo.features", () => {
+  it("populates the block from the Parquet reader, scoped to the assembler's own window and rung", async () => {
+    mocks.getParquetFirePerimeters.mockResolvedValue(
+      readyPerimeterSnapshot([perimeterRow()])
+    );
+
+    const result = await assembleRegionalContext(43.6, -116.2);
+
+    const [request] = mocks.getParquetFirePerimeters.mock.calls[0];
+    const [west, south, east, north] = request.bbox.split(",").map(Number);
+    expect(west).toBeCloseTo(-116.45, 6);
+    expect(south).toBeCloseTo(43.35, 6);
+    expect(east).toBeCloseTo(-115.95, 6);
+    expect(north).toBeCloseTo(43.85, 6);
+    expect(request.mapZoom).toBe(9);
+    // The whole request, key by key: the GiST `&&` envelope the PostgreSQL read used became a
+    // bbox string the warehouse filters on, and a regression that dropped it would answer a
+    // point question with a continental snapshot. `date` is not merely undefined here, it is
+    // ABSENT -- see the live-edge case below for why that is a decision and not an omission.
+    expect(Object.keys(request).sort()).toEqual(["bbox", "mapZoom"]);
+
+    expect(result.payload.firePerimeters).toEqual({
+      perimeters: [
+        {
+          uniqueFireIdentifier: "2026-ORWIF-000412",
+          observedDay: PERIMETER_OBSERVED_DAY,
+          severity: "high",
+        },
+      ],
+      totalCount: 1,
+      truncated: false,
+      snapshotDay: PERIMETER_SNAPSHOT_DAY,
+    });
+  });
+
+  /**
+   * The negative control, and it is a db-free assertion rather than a payload-shaped one: the
+   * spy can say ZERO perimeter queries were issued, which "no perimeter appeared from the db"
+   * never could.
+   */
+  it("issues no geo.features query for fire perimeters at all", async () => {
+    mocks.getParquetFirePerimeters.mockResolvedValue(
+      readyPerimeterSnapshot([perimeterRow()])
+    );
+    // The only `db.select` caller left in the module is `readCommunityProposals`, and it makes
+    // exactly two: the geo.layers lookup, then the features read. Queueing both results is what
+    // proves WHICH two calls those were -- the queue is consumed in issue order, so a stray
+    // perimeter select would take the layer row first and leave the community read matching on a
+    // proposal id, emptying the block asserted below.
+    mocks.dbSelectResults.push(
+      [{ id: "layer-1" }],
+      [
+        {
+          id: "feat-1",
+          name: "Streambank willow planting",
+          type: "riparian_buffer",
+          description: "Community-proposed riparian planting.",
+          distanceMeters: 1234.6,
+          createdAt: new Date("2026-07-01T00:00:00Z"),
+        },
+      ]
+    );
+
+    const result = await assembleRegionalContext(43.6, -116.2);
+
+    expect(mocks.dbSelect).toHaveBeenCalledTimes(2);
+    expect(result.payload.communityProposals).toHaveLength(1);
+    expect(result.payload.firePerimeters?.perimeters).toHaveLength(1);
+  });
+
+  /**
+   * FRESHNESS IS THE SNAPSHOT'S CAPTURE DAY, and it is labelled as one.
+   *
+   * The read this replaced reported `features.updatedAt`, justified in its own docstring as "the
+   * only honest freshness signal available" -- reasoning about a row in a table refreshed in
+   * place, which is also why a frozen table kept reporting its last write forever while claiming
+   * currency. The Parquet projection carries no row timestamp and needs none: a `static_lookup`
+   * lane stamps its whole population with one version day, which dates the SET rather than
+   * whichever row was touched last. It is prefixed rather than served bare because
+   * `dataFreshness` is headed "Observation times of the values actually served", and a bare
+   * `2026-08-07` there would say the perimeters were observed that day. They were not; each row
+   * carries its own `observedDay`, and this is when the population was captured.
+   */
+  it("dates the block by the snapshot's capture day, labelled as a capture and not an observation", async () => {
+    mocks.getParquetFirePerimeters.mockResolvedValue(
+      readyPerimeterSnapshot([perimeterRow()])
+    );
+
+    const result = await assembleRegionalContext(43.6, -116.2);
+
+    expect(result.dataFreshness.firePerimeters).toBe(
+      `snapshot_captured_${PERIMETER_SNAPSHOT_DAY}`
+    );
+    // Never the incident's own day, and never a bare day that reads as an observation time.
+    expect(result.dataFreshness.firePerimeters).not.toContain(PERIMETER_OBSERVED_DAY);
+    expect(result.dataFreshness.firePerimeters).not.toBe(PERIMETER_SNAPSHOT_DAY);
+    expect(result.payload.firePerimeters?.snapshotDay).toBe(PERIMETER_SNAPSHOT_DAY);
+    expect(result.contextIsEmpty).toBe(false);
+  });
+
+  it("never invents an incident name or a row timestamp the served projection does not carry", async () => {
+    mocks.getParquetFirePerimeters.mockResolvedValue(
+      readyPerimeterSnapshot([perimeterRow()])
+    );
+
+    const result = await assembleRegionalContext(43.6, -116.2);
+
+    // The PostgreSQL read took `name`/`irwinId` off a JSONB blob and fell back to the literal
+    // "Unnamed perimeter"; `getParquetFirePerimeters` validates `incident_name`, `irwin_id` and
+    // `updated_at` and deliberately withholds all three, so nothing downstream may reconstruct
+    // them. Widening that projection is a `hover-fields.ts` change with its own review.
+    const serialized = JSON.stringify(result.payload.firePerimeters);
+    expect(serialized).not.toContain("Unnamed perimeter");
+    expect(serialized).not.toContain("irwinId");
+    expect(serialized).not.toContain("updatedAt");
+  });
+
+  /**
+   * The bound had to be re-decided, because `ORDER BY updated_at DESC LIMIT 10` has no Parquet
+   * equivalent: every row of one snapshot shares that snapshot's day, so the only per-row
+   * recency left is `observed_day`. Newest-observed-first is the closest honest analogue, and
+   * the cap is STATED -- `totalCount` is the full in-frame count and `truncated` says whether
+   * even that is a floor. The old block could not say either: its LIMIT ran in SQL, so it
+   * reported the capped length as the total.
+   */
+  it("caps the list at ten while stating the true in-frame total, keeping the newest incidents", async () => {
+    const dated = Array.from({ length: 11 }, (_, index) =>
+      perimeterRow({
+        uniqueFireIdentifier: `dated-${index}`,
+        observedDay: `2026-07-${String(index + 10).padStart(2, "0")}`,
+      })
+    );
+    mocks.getParquetFirePerimeters.mockResolvedValue(
+      readyPerimeterSnapshot(
+        [perimeterRow({ uniqueFireIdentifier: "undated", observedDay: null }), ...dated],
+        true
+      )
+    );
+
+    const result = await assembleRegionalContext(43.6, -116.2);
+    const block = result.payload.firePerimeters;
+
+    expect(block?.perimeters).toHaveLength(10);
+    expect(block?.totalCount).toBe(12);
+    expect(block?.truncated).toBe(true);
+    expect(block?.perimeters[0]?.observedDay).toBe("2026-07-20");
+    expect(block?.perimeters.at(-1)?.observedDay).toBe("2026-07-11");
+  });
+
+  it("keeps an incident WFIGS never dated, and sorts it last because nothing dates it", async () => {
+    // `observed_day` is nullable by contract: `geo.feature_observation_day` returns NULL for a
+    // row it cannot date, and the map draws such a row at EVERY slider day. So null sorts last
+    // because nothing is known about when it burned -- never because it is old.
+    mocks.getParquetFirePerimeters.mockResolvedValue(
+      readyPerimeterSnapshot([
+        perimeterRow({ uniqueFireIdentifier: "undated", observedDay: null }),
+        perimeterRow({ uniqueFireIdentifier: "dated", observedDay: "2026-08-01" }),
+      ])
+    );
+
+    const result = await assembleRegionalContext(43.6, -116.2);
+
+    expect(
+      result.payload.firePerimeters?.perimeters.map((row) => row.uniqueFireIdentifier)
+    ).toEqual(["dated", "undated"]);
+    expect(result.payload.firePerimeters?.perimeters.at(-1)?.observedDay).toBeNull();
+  });
+
+  /**
+   * THE BLOCK STAYS OUT OF `DATE_PARAMETERISED_SOURCES`, and the new reader does not change that.
+   *
+   * It accepts a `date` and the map passes one, so the temptation is real; the argument against
+   * is in the constant's own docstring. The decisive half is the third point: `fire-perimeters`
+   * dates its capability axis from the `observed_day` values inside the CURRENT snapshot, which
+   * run years back, so a 2024 viewed day sits inside a published axis with no listed gap while
+   * the lane -- captured only since its 2026-09-04 re-registration -- can only answer
+   * `not_generated`. Admitting the block would hand that pairing to `coverageOnDay` and let it
+   * return `published_with_nothing_at_this_location`, the vocabulary's strongest sentence, for a
+   * day nobody ever captured.
+   */
+  it("still reads at the live edge on a scrubbed day, and says the map is drawing a different set", async () => {
+    mocks.getParquetFirePerimeters.mockResolvedValue(
+      readyPerimeterSnapshot([perimeterRow()])
+    );
+
+    const result = await assembleRegionalContext(43.6, -116.2, [
+      { layer: "fire-perimeters", date: "2024-06-01", hasDataOnDate: true },
+    ]);
+
+    expect(mocks.getParquetFirePerimeters).toHaveBeenCalledTimes(1);
+    expect(mocks.getParquetFirePerimeters.mock.calls[0][0].date).toBeUndefined();
+    expect(result.temporalContext.readings[0].outcome).toBe("served_as_of_latest");
+    expect(result.temporalContext.readings[0].setCorrespondence).toBe(
+      "map_bounded_by_viewed_day_payload_is_latest"
+    );
+  });
+
+  it("returns an honest empty block when the lane has captured no snapshot at all", async () => {
+    mocks.getParquetFirePerimeters.mockResolvedValue({
+      state: "not_generated",
+      requestedDay: SERVER_TODAY,
+      reason: "lane_never_written",
+    });
+
+    const result = await assembleRegionalContext(43.6, -116.2);
+
+    expect(result.payload.firePerimeters).toBeNull();
+    expect(result.dataFreshness.firePerimeters).toBe("unavailable");
+  });
+
+  it("returns an honest empty block for a governed absence rather than a freshness claim", async () => {
+    mocks.getParquetFirePerimeters.mockResolvedValue({
+      state: "absent",
+      requestedDay: SERVER_TODAY,
+      servedDay: PERIMETER_SNAPSHOT_DAY,
+      evidence: { kind: "source_empty", recordedAt: "2026-08-07T00:00:00Z" },
+    });
+
+    const result = await assembleRegionalContext(43.6, -116.2);
+
+    // A snapshot answered, so a capture day exists -- and it is still not reported. "unavailable"
+    // reads in the prompt as unmeasured, which is the safe direction; dating an empty block
+    // would invite the model to treat the absence as an observed one.
+    expect(result.payload.firePerimeters).toBeNull();
+    expect(result.dataFreshness.firePerimeters).toBe("unavailable");
+  });
+
+  /**
+   * The reader returns an outage as DATA (`upstream_unavailable`), so a `status === "rejected"`
+   * check alone would read a down warehouse as the warehouse having published nothing -- the
+   * same trap `resolveFireRead` was written for. Both shapes are covered here.
+   */
+  it("treats an outage and a rejection alike: an empty block, never a thrown assembly", async () => {
+    mocks.getParquetFirePerimeters.mockResolvedValue({
+      state: "upstream_unavailable",
+      fault: { kind: "http", message: "warehouse returned 503", status: 503 },
+    });
+
+    const outage = await assembleRegionalContext(43.6, -116.2);
+    expect(outage.payload.firePerimeters).toBeNull();
+    expect(outage.dataFreshness.firePerimeters).toBe("unavailable");
+
+    mocks.getParquetFirePerimeters.mockRejectedValue(new Error("socket hang up"));
+
+    const rejection = await assembleRegionalContext(43.6, -116.2);
+    expect(rejection.payload.firePerimeters).toBeNull();
+    expect(rejection.dataFreshness.firePerimeters).toBe("unavailable");
+  });
+});
+
