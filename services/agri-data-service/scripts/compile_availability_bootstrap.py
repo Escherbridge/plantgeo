@@ -24,6 +24,15 @@ still falls through to a digest-window download or a manifest-trusted row exactl
 paragraph existed. Wiring per-part digests into that writer is chartered separately (lane A1c) and is
 NOT attempted here -- see ``pipeline/parquet/AGENTS.md``, "Per-part digests", before touching it.
 
+``--digest-window-days`` DEFAULTS TO ``DEFAULT_DIGEST_WINDOW_DAYS`` (90) AND IS ALWAYS HONOURED,
+including under ``--dry-run``: the flag itself is never overwritten, coerced, or hidden.
+``--dry-run``'s own promise -- it never downloads a part -- is satisfied differently, by classifying
+every day internally as if the window were 0 (``digest_window_days_applied`` in the receipt), which
+means a dry-run preview UNDER-counts DIGESTED rows relative to a real compile run with the same flag.
+``receipt.json``'s ``apply_readiness_note`` names this gap, and ``digest_window_days_requested``/
+``digest_window_days_applied`` make it a diffable fact rather than something an operator must infer
+from the row-level ``provenance`` field. See "Dry-run digest window" in ``scripts/AGENTS.md``.
+
 WHAT COMES OUT, per lane, under ``--out/<lane>/``:
 
 * ``bootstrap-input.json`` and its SHA-256 -- the exact document ``agri data availability-bootstrap``
@@ -119,6 +128,18 @@ EVIDENCE_DIRECTORY_NAME: Final = "evidence"
 #: NOT make selectable, so the count belongs in the receipt rather than in a log line: a lane that
 #: excludes most of its history has a ladder problem, and the bootstrap is where it becomes visible.
 EXCLUSION_PARTIAL_LADDER: Final = "partial_ladder"
+#: The one SHAPE of partial ladder that is a WRITER gap rather than a shattered export: every rung the
+#: day holds carries a governed-absence marker and nothing else, and there are fewer than four of them.
+#: `ObjectStore.write_absence` marks ONE tier per call and says so
+#: (`pipeline/parquet/objectstore.py:57-62`, "CROSS-TIER AGREEMENT OF ONE DAY IS NOT THIS MODULE'S
+#: INVARIANT ... 'Every tier of a published day is present' is the DERIVATION step's obligation"), so a
+#: lane whose absence path never derived its coarse rungs leaves `absent.json` at the base rung alone.
+#:
+#: STILL REFUSED, and not admissible by this compiler -- see "Absence-only sub-ladders" in
+#: `scripts/AGENTS.md` for the two contract gates that settle it. Named apart because an operator
+#: reading `refused: 2102` otherwise cannot tell a one-rung marker set, which a marker backfill closes
+#: without re-exporting a byte, from a lane whose parts are stranded, which needs the export repaired.
+EXCLUSION_ABSENCE_ONLY_SUBLADDER: Final = "absence_marker_at_a_subset_of_rungs"
 EXCLUSION_MIXED_TERMINAL_STATES: Final = "mixed_terminal_states"
 EXCLUSION_MIXED_ABSENCE_REASONS: Final = "mixed_absence_reasons"
 EXCLUSION_UNMARKED_PARTS: Final = "parts_without_completion_marker"
@@ -232,6 +253,16 @@ class LaneCompilation:
     lane_root: str
     source_ceiling: date
     created_at: datetime
+    #: What `--digest-window-days` actually was (the flag's default or the operator's explicit value),
+    #: UNTOUCHED by dry-run. `arguments.digest_window_days` itself must never be mutated -- see
+    #: `digest_window_days_applied` below and "Dry-run digest window" in `scripts/AGENTS.md`.
+    digest_window_days_requested: int = 0
+    #: What the classification math in `_bind_day`/`_part_receipts` actually used for THIS compile. A
+    #: `--dry-run` always applies 0 regardless of what was requested, because it must never download a
+    #: part; a real compile always applies the requested value unchanged. The two fields diverge only
+    #: for a `--dry-run`, and that divergence is exactly what `_provenance_headline` reads to warn an
+    #: operator that the preview under-counts what a real compile would digest.
+    digest_window_days_applied: int = 0
     identity: AvailabilityIdentity | None = None
     rows: tuple[AvailabilityRow, ...] = ()
     input_receipts: tuple[EvidenceReceipt, ...] = ()
@@ -359,11 +390,22 @@ def _compile_lane(
 ) -> LaneCompilation:
     """Walk one lane's ladder, read its markers, hash what the window covers, and build its rows."""
     kind: PartitionKind = arguments.kind
+    # DRY RUN NEVER DOWNLOADS OR HASHES A PART -- that is `--dry-run`'s whole promise, so it applies a
+    # 0-day window regardless of what was requested. THE REQUESTED VALUE ITSELF IS NEVER TOUCHED: a
+    # prior version of this function reassigned `arguments.digest_window_days = 0` inside
+    # `_parse_arguments` whenever `--dry-run` was set, which corrupted the one value both the compile
+    # AND the printed receipt read, so a dry-run preview silently reported and exercised a 0-day window
+    # even when the operator asked for (or the 90-day default supplied) something else -- exactly the
+    # weaker policy D3 exists to avoid, taken invisibly. See "Dry-run digest window" in
+    # `scripts/AGENTS.md`.
+    applied_digest_window_days = 0 if arguments.dry_run else arguments.digest_window_days
     compilation = LaneCompilation(
         lane=lane,
         lane_root=availability_lane_root(lane.layer, kind),
         source_ceiling=arguments.source_ceiling or allowed_source_ceiling(lane, today=today),
         created_at=_now(),
+        digest_window_days_requested=arguments.digest_window_days,
+        digest_window_days_applied=applied_digest_window_days,
     )
     ladder = _walk_ladder(reader, layer=lane.layer, kind=kind)
     candidates = _candidate_days(ladder, compilation=compilation, since=arguments.since)
@@ -387,7 +429,7 @@ def _compile_lane(
             accept_exclusions=arguments.accept_exclusions,
         )
     _require_row_budget(lane.layer, day_count=len(days))
-    digest_floor = today - timedelta(days=arguments.digest_window_days)
+    digest_floor = today - timedelta(days=applied_digest_window_days)
     bound_days: list[_BoundDay] = []
     for day in days:
         bound_day = _bind_day(reader, ladder, markers, day=day, digest_floor=digest_floor, compilation=compilation)
@@ -517,10 +559,38 @@ def _candidate_days(
         elif since is not None and day < since:
             compilation.excluded_days.append((day, EXCLUSION_BEFORE_SINCE))
         elif set(ladder[day]) != set(AVAILABILITY_REQUIRED_RUNGS):
-            compilation.excluded_days.append((day, EXCLUSION_PARTIAL_LADDER))
+            compilation.excluded_days.append((day, _partial_ladder_reason(ladder[day])))
         else:
             candidates.append(day)
     return tuple(candidates)
+
+
+def _partial_ladder_reason(rungs: dict[int, RungObjects]) -> str:
+    """Name WHICH kind of incomplete ladder a day has, FROM THE LISTING ALONE -- no GET, no download.
+
+    Both answers are refusals; this only decides which word the receipt prints, and it stays on the
+    path side of `_read_markers` so it costs nothing. `RungObjects` already separates the three object
+    kinds by name, so "an absence marker and nothing else" is decidable before a byte is fetched.
+
+    THE EMPTY GUARD IS NOT DECORATION. `all()` over no rungs is True, so a day whose ladder entry held
+    nothing would be reported as an absence-only sub-ladder -- the loudest possible mislabel for the
+    emptiest possible day. `_walk_ladder` cannot build such an entry today; the guard is what keeps
+    that an implementation detail rather than a live way for this reason to be wrong.
+    """
+    if rungs and all(_holds_an_absence_marker_and_nothing_else(objects) for objects in rungs.values()):
+        return EXCLUSION_ABSENCE_ONLY_SUBLADDER
+    return EXCLUSION_PARTIAL_LADDER
+
+
+def _holds_an_absence_marker_and_nothing_else(objects: RungObjects) -> bool:
+    """True when this rung's whole content is one governed-absence marker.
+
+    KEYED ON MARKER KIND, NEVER ON RUNG COUNT, and that is the whole point. `sensors` holds 25 days
+    whose base rung carries real PART FILES stranded there by a tier derivation that names columns its
+    base table does not have. Those days look identical to an absence-only day if you count rungs, and
+    they are broken exports that must keep the `partial_ladder` spelling.
+    """
+    return objects.absence_path is not None and not objects.part_paths and objects.completion_path is None
 
 
 def _read_markers(
@@ -875,11 +945,28 @@ def _require_refusal_budget(
         return
     if accept_exclusions is not None and refused <= accept_exclusions:
         return
-    raise CompilationError(
+    message = (
         f"{layer}: {refused} refused day(s) out of {considered} considered ({fraction:.0%}) exceeds the "
         f"{REFUSED_DAY_FRACTION_CEILING:.0%} ladder-problem threshold; review excluded_days in a --dry-run "
         f"receipt, then pass --accept-exclusions {refused} to compile anyway"
     )
+    absence_only = sum(1 for _day, reason in excluded_days if reason == EXCLUSION_ABSENCE_ONLY_SUBLADDER)
+    if absence_only:
+        # THE SPLIT BELONGS IN THIS MESSAGE, not only in the receipt's `excluded_days_by_reason`: this
+        # string is where an operator is told to type a number, and the number means two different
+        # things. A marker backfill closes the absence-only share without re-exporting a byte; the rest
+        # is a broken export, and accepting it ships a lane whose ladder really is shattered.
+        stranded = refused - absence_only
+        remainder = (
+            ""
+            if stranded == 0
+            else f"; the other {stranded} strand parts or completion markers and need the export repaired"
+        )
+        message += (
+            f". {absence_only} refused day(s) hold nothing but a governed-absence marker at a SUBSET of the "
+            f"rungs -- a WRITER gap a marker backfill closes, not a broken export{remainder}"
+        )
+    raise CompilationError(message)
 
 
 def _bootstrap_document(compilation: LaneCompilation) -> dict[str, object]:
@@ -942,10 +1029,21 @@ def _receipt(
     days = sorted({row.day for row in compilation.rows})
     exclusions = Counter(reason for _day, reason in compilation.excluded_days)
     filtered_day_count = sum(count for reason, count in exclusions.items() if reason in FILTERED_EXCLUSION_REASONS)
+    provenance = availability_provenance_summary(compilation.rows)
     return {
         "apply_command": _apply_command(compilation, input_path=input_path, input_sha256=input_sha256),
+        # NAMED TO SORT RIGHT AFTER THE TWO KEYS ABOVE in the canonical (sorted-keys) JSON rendering, so
+        # the operator reads it in the same glance as `apply_command`/`apply_projected_cost` rather than
+        # having to interpret `provenance` themselves. See "Dry-run digest window" in scripts/AGENTS.md.
+        "apply_readiness_note": _provenance_headline(
+            provenance,
+            digest_window_days_requested=compilation.digest_window_days_requested,
+            digest_window_days_applied=compilation.digest_window_days_applied,
+        ),
         "apply_projected_cost": _apply_projected_cost(compilation),
         "created_at": _format_instant(compilation.created_at),
+        "digest_window_days_applied": compilation.digest_window_days_applied,
+        "digest_window_days_requested": compilation.digest_window_days_requested,
         "earliest_day": days[0].isoformat() if days else None,
         "evidence_objects_owed": len(compilation.artifacts),
         "evidence_upload_command": _upload_command(input_path=input_path, prefix=prefix),
@@ -964,11 +1062,65 @@ def _receipt(
         "latest_day": days[-1].isoformat() if days else None,
         "marker_objects_read": compilation.marker_read_count,
         "marker_recorded_rung_days": compilation.marker_recorded_rung_days,
-        "provenance": availability_provenance_summary(compilation.rows),
+        "provenance": provenance,
         "row_count": len(compilation.rows),
         "selectable_day_count": len(days),
         "source_ceiling": compilation.source_ceiling.isoformat(),
     }
+
+
+def _provenance_headline(
+    provenance: dict[str, object],
+    *,
+    digest_window_days_requested: int,
+    digest_window_days_applied: int,
+) -> str:
+    """One line naming how strong this compile's evidence actually is, read before `--apply`.
+
+    D3 trusts recorded manifests only for OLD days and hashes real parts for RECENT ones; a compile
+    that lands almost entirely `manifest_trusted` looks, at a glance, exactly like one that correctly
+    walked a real window -- the row-level `provenance` field is accurate either way, but an operator
+    skimming a receipt for `apply_command` can miss it. This is the fix's second half: the default/
+    dry-run fix (see `_compile_lane`) stops the tool from silently APPLYING the weakest policy; this
+    function stops it from silently SHIPPING one without saying so where the next command is read.
+    """
+    digested = _provenance_row_count(provenance, DIGESTED_PROVENANCE)
+    manifest_trusted = _provenance_row_count(provenance, MANIFEST_TRUSTED_PROVENANCE)
+    total = digested + manifest_trusted
+    if total == 0:
+        return "no rows compiled"
+    fraction = manifest_trusted / total
+    if manifest_trusted == total:
+        note = f"ALL {total} row(s) are manifest-trusted, none digested -- review before --apply"
+    elif manifest_trusted:
+        note = f"{manifest_trusted} of {total} row(s) ({fraction:.0%}) are manifest-trusted, not digested"
+    else:
+        note = f"all {total} row(s) digested"
+    if digest_window_days_applied < digest_window_days_requested:
+        note += (
+            f"; this run applied a {digest_window_days_applied}-day digest window instead of the "
+            f"requested {digest_window_days_requested} (a --dry-run never downloads a part), so a real "
+            "compile with the same --digest-window-days would likely digest MORE than this preview shows"
+        )
+    return note
+
+
+def _provenance_row_count(provenance: dict[str, object], provenance_class: str) -> int:
+    """Narrow one `availability_provenance_summary` class entry to its `row_count`.
+
+    The summary's own value type is `object` because its classes are heterogeneous JSON, exactly the
+    `Mapping[str, Any]`-at-the-decode-boundary shape `scripts/AGENTS.md` (Why mypy now covers this
+    directory) asks every operator script to narrow with an explicit guard rather than a bare
+    `# type: ignore` -- this is that guard, trusting the one shape `availability_provenance_summary`
+    itself always builds.
+    """
+    entry = provenance[provenance_class]
+    if not isinstance(entry, dict):
+        raise TypeError(f"provenance[{provenance_class!r}] must be a mapping")
+    row_count = entry["row_count"]
+    if not isinstance(row_count, int):
+        raise TypeError(f"provenance[{provenance_class!r}]['row_count'] must be an int")
+    return row_count
 
 
 def _apply_projected_cost(compilation: LaneCompilation) -> dict[str, object]:
@@ -1043,7 +1195,9 @@ def _parse_arguments(argv: Sequence[str] | None) -> argparse.Namespace:
         help=(
             "Days back from today whose parts are downloaded and hashed. Older days are bound as "
             "manifest-trusted rows unless their completion marker recorded its own part digests "
-            f"(default {DEFAULT_DIGEST_WINDOW_DAYS})."
+            f"(default {DEFAULT_DIGEST_WINDOW_DAYS}, owner decision D3). This value is always honoured "
+            "and echoed as-is, including under --dry-run; see --dry-run for what a preview applies "
+            "instead."
         ),
     )
     parser.add_argument("--since", type=date.fromisoformat, default=None, help="Ignore days before this date.")
@@ -1069,7 +1223,13 @@ def _parse_arguments(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Walk, read markers, report the plan. Hashes no part and writes no file.",
+        help=(
+            "Walk, read markers, report the plan. Hashes no part and writes no file: internally this "
+            "always classifies every day as if --digest-window-days were 0, so the preview under-counts "
+            "digested rows relative to a real compile with the same flag (see the receipt's "
+            "apply_readiness_note and digest_window_days_applied). The requested --digest-window-days "
+            "value itself is never altered or hidden."
+        ),
     )
     arguments = parser.parse_args(argv)
     if not arguments.lane and not arguments.all_time_bearing:
@@ -1080,10 +1240,13 @@ def _parse_arguments(argv: Sequence[str] | None) -> argparse.Namespace:
         parser.error("--workers must be at least 1")
     if arguments.accept_exclusions is not None and arguments.accept_exclusions < 0:
         parser.error("--accept-exclusions cannot be negative")
-    if arguments.dry_run:
-        # A dry run must not download parts: its purpose is to price the compile before paying for
-        # it. A zero-day window puts every day on the trusted side, which hashes nothing.
-        arguments.digest_window_days = 0
+    # NOTE: `--dry-run` used to reassign `arguments.digest_window_days = 0` right here. That corrupted
+    # the one attribute both `_compile_lane` and every printed receipt read for "what window was
+    # configured", so a dry-run preview silently reported (and exercised) a 0-day window even when the
+    # operator passed an explicit value or took the 90-day default -- the exact weaker-than-configured
+    # policy D3 exists to avoid, reached invisibly. `_compile_lane` now derives its own zero-day
+    # "applied" window locally for a dry run, and this Namespace attribute is left exactly as the
+    # operator configured it. See "Dry-run digest window" in scripts/AGENTS.md.
     return arguments
 
 

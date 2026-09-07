@@ -1035,3 +1035,53 @@ forever. `_finalize_written_day` closes that: a `GovernedAbsenceConflictError` o
 means a coarse rung still claims a day whose base rung now holds data, which the successful base
 write already PROVED retracted, so the surviving coarse markers are removed and the day is left
 unfinished for the next tick to rebuild. It decides nothing an admin had not already decided.
+
+## A ladder repair that cannot succeed is `blocked`, not silently dropped (measured 2026-09-06)
+
+Two live executor ticks logged `outcome="complete"`, `ladder_remaining=0` and an empty
+`lanes_with_ladder_backlog` for `sensors` and `signal`, while each carried one day whose coarse
+rungs could never be derived: the published base rung's columns (`station_longitude`/
+`station_latitude` for `sensors`, `cell_longitude`/`cell_latitude` for `signal`) no longer matched
+those lanes' registered tier derivations — a stale export from before positions were added (see
+`agent/warehouse.py:362-370`). The root cause is a DATA problem (retract-and-re-export the base
+rung), not something this driver may fix; what WAS a bug here is that `_record_repair_outcome`
+folded a raising `repair_one_lane_day` into no tally at all. The day had already been popped off
+`entry.repairs` before the attempt, so `written`/`contended` stayed correctly at zero, but so did
+everything else — the day vanished from every count at once, and the lane's `outcome` never moved
+off `complete`.
+
+The fix distinguishes RETRYABLE ladder backlog from UNREPAIRABLE-BY-THIS-DRIVER backlog, following
+the SAME split `_static_lane_census`'s stranded-version prose already draws for a different kind of
+day an admin alone must resolve:
+
+- `gap_fill._ladder_schema_mismatch(error)` walks `error.__cause__`/`__context__` looking for a
+  `warehouse.parquet.tiers.TierDerivationError` — the exact exception `_require_columns` raises for
+  a base/derivation column disagreement, which `derive_and_write_day_tiers` wraps in a
+  `TierWriteError` (`raise TierWriteError(...) from error`) before it ever reaches this driver. Only
+  THIS diagnosis is treated as permanent; anything else stays `raised` (retryable — the next tick's
+  census reselects the same day from the same unchanged listing and may simply succeed).
+- A diagnosed mismatch returns `LadderRepairOutcome("blocked", ...)` instead of `"raised"`. `blocked`
+  was chosen over inventing a new outcome because it is ALREADY the vocabulary member this module
+  uses for "this driver may not resolve it, an admin must, and the lane keeps draining anyway" (see
+  "Five lane-day outcomes" above) — reusing it means `FAILING_LANE_OUTCOMES`, `drain.py`'s own
+  `elif outcome == "blocked":` handling, and the CLI's exit-code rule all already know what to do
+  with it, with zero changes required outside `gap_fill.py`.
+- `_LaneProgress` gained two counters: `ladder_unrepairable` (the admin-needed subset) and
+  `ladder_retry_failed` (attempted-and-failed but not diagnosed as permanent). `LaneFillVerdict.
+  ladder_remaining` now sums `len(self.repairs) + ladder_unrepairable + ladder_retry_failed` instead
+  of `len(self.repairs)` alone, so a day this turn ATTEMPTED and could not resolve counts exactly as
+  a day it never reached — both are still, honestly, backlog. `ladder_unrepairable` is also reported
+  at the top level (`GapFillSummary.to_summary()["ladder_unrepairable"]`,
+  `["lanes_with_unrepairable_ladder_days"]`), beside the existing `ladder_remaining`/
+  `lanes_with_ladder_backlog`, mirroring `availability_unindexed_lanes`'s precedent for naming a
+  permanent loss apart from an ordinary one.
+- The bulk drain (`drain.py`, `--selection ladder`) needed NO changes: `_derive_one_day` already
+  funnels `repair_one_lane_day`'s outcome through the same generic `outcome == "blocked"` /
+  `FAILING_LANE_OUTCOMES` handling an export-blocked day already used, because that walk was already
+  written not to "learn which kind of backlog it is walking" (see "One definition of a lane-day, two
+  walks" above). It now gets the same diagnosis for free.
+
+See `pipeline/parquet/gap_fill.py`'s `_ladder_schema_mismatch`, `repair_one_lane_day`'s except
+block, and `_record_repair_outcome` for the code; `tests/parquet/test_gap_fill.py`'s
+`test_a_ladder_schema_mismatch_reports_nonzero_backlog_and_names_the_lane` and neighbours for the
+regression pin, built from the REAL column lists both production log lines carried.

@@ -123,6 +123,7 @@ from agri_data_service.pipeline.parquet.objectstore import (
     availability_lane_root,
     oldest_export_instant,
 )
+from agri_data_service.warehouse.parquet.tiers import TierDerivationError
 from agri_data_service.warehouse.schemas.vegetation import VEGETATION_PLANE_STREAM
 
 if TYPE_CHECKING:
@@ -351,11 +352,15 @@ class LaneFillVerdict:
     # was exported and no base object was touched, so folding the two would make a repair sweep look
     # like history being filled.
     repaired: int
-    # Repairs the census found and this turn did not reach. Apart from `remaining`, which counts days
-    # owing an export, because the two are answered by different work.
+    # Repairs the census found that this turn did not FINISH -- whether it never reached them (budget
+    # exhausted) or it reached one and could not resolve it, retryably or not. Apart from `remaining`,
+    # which counts days owing an export, because the two are answered by different work. See
+    # `ladder_unrepairable` for the subset no later tick can clear on its own.
     ladder_remaining: int
     # Days this driver may not resolve on its own. Reported apart from `written`/`absent` because
-    # they are neither, and apart from a raised lane because the lane kept working.
+    # they are neither, and apart from a raised lane because the lane kept working. Counts BOTH an
+    # export day blocked by stray parts (`_govern_absent_day`) and a ladder day blocked by an
+    # unrepairable schema mismatch (`ladder_unrepairable` is the ladder-only subset of this).
     blocked: int
     # Days another run was already writing. Not failure, not progress -- see `postgres_lane_day_lock`.
     contended: int
@@ -369,6 +374,13 @@ class LaneFillVerdict:
     # day -- so they are counted rather than left inside a detail string.
     availability: AvailabilityExtensionTally = field(default_factory=AvailabilityExtensionTally)
     detail: str | None = None
+    #: The subset of `ladder_remaining` this driver can NEVER clear by re-ticking: a published base
+    #: rung whose columns no longer match the lane's registered tier derivation
+    #: (`warehouse.parquet.tiers.TierDerivationError`). Retracting and re-exporting that base rung is
+    #: an admin action, so this is reported apart from an ordinary retryable backlog -- folding the two
+    #: together would tell an operator "wait for the next tick" about a day no tick will ever fix.
+    #: Defaulted rather than positional so a caller built before this field existed still constructs.
+    ladder_unrepairable: int = 0
 
     def to_row(self) -> dict[str, object]:
         """Render one summary-table row."""
@@ -383,6 +395,7 @@ class LaneFillVerdict:
             "contended": self.contended,
             "remaining": self.remaining,
             "ladder_remaining": self.ladder_remaining,
+            "ladder_unrepairable": self.ladder_unrepairable,
             "parts": self.parts,
             "rows": self.rows,
             "bytes": self.written_bytes,
@@ -431,6 +444,12 @@ class GapFillSummary:
             "repaired": sum(lane.repaired for lane in self.lanes),
             "ladder_remaining": sum(lane.ladder_remaining for lane in self.lanes),
             "lanes_with_ladder_backlog": [lane.slug for lane in self.lanes if lane.ladder_remaining],
+            # The subset of the ladder backlog above that NO later tick can clear alone -- a published
+            # base rung whose columns no longer match the lane's registered tier derivation. Named
+            # apart from `lanes_with_ladder_backlog` for the same reason `blocked_lanes` is named apart
+            # from a healthy backlog: "wait for the next tick" is the wrong advice for these.
+            "ladder_unrepairable": sum(lane.ladder_unrepairable for lane in self.lanes),
+            "lanes_with_unrepairable_ladder_days": [lane.slug for lane in self.lanes if lane.ladder_unrepairable],
             "remaining": sum(lane.remaining for lane in self.lanes),
             "parts": sum(lane.parts for lane in self.lanes),
             "rows": sum(lane.rows for lane in self.lanes),
@@ -961,6 +980,14 @@ class _LaneProgress:
     #: Days owing a re-derivation, drained only once `pending` is empty. A day that owes an EXPORT is
     #: strictly more valuable than a day that owes a generalization of rows already published.
     repairs: list[date] = field(default_factory=list)
+    #: Repairs this turn ATTEMPTED and could not finish because the base rung's columns no longer
+    #: match the lane's registered tier derivation -- a data problem (a stale base-rung export) that
+    #: no later tick can resolve by re-deriving. See `_ladder_schema_mismatch`.
+    ladder_unrepairable: int = 0
+    #: Repairs this turn attempted and could not finish for any OTHER reason. Counted apart from
+    #: `ladder_unrepairable` because nothing here proves the failure is permanent -- the next tick's
+    #: census reselects the same day and may simply succeed -- so it must not read as admin-needed.
+    ladder_retry_failed: int = 0
     written: int = 0
     absent: int = 0
     repaired: int = 0
@@ -998,7 +1025,12 @@ class _LaneProgress:
             written=self.written,
             absent=self.absent,
             repaired=self.repaired,
-            ladder_remaining=len(self.repairs),
+            # NOT LEFT AT `len(self.repairs)` ALONE: a day this turn popped, attempted and could not
+            # resolve is gone from `repairs` (it was already popped before the attempt) but is just as
+            # unfinished as one never reached at all, and a summary that only counted the latter is
+            # exactly the green tick this field exists to prevent.
+            ladder_remaining=len(self.repairs) + self.ladder_unrepairable + self.ladder_retry_failed,
+            ladder_unrepairable=self.ladder_unrepairable,
             blocked=self.blocked,
             contended=self.contended,
             remaining=len(self.pending),
@@ -1055,6 +1087,19 @@ def _record_repair_outcome(entry: _LaneProgress, result: LadderRepairOutcome) ->
     ONE published day -- a base rung that predates a schema change, most often -- and the day after it
     is usually fine. Stopping here would let one poisoned day in the history hide every other lane's
     ladder gap behind it.
+
+    A REPAIR THAT RAISES MUST STILL BE COUNTED, though, which for a year it was not: the day was
+    already popped off `entry.repairs` before this call, so a caller that only inspected `written` and
+    `contended` here made the day vanish from every tally at once -- `repaired` stayed 0 (correctly,
+    nothing was derived) but so did `ladder_remaining`, and the lane's `outcome` never moved off
+    `complete`. `blocked` is `repair_one_lane_day`'s answer for the UNREPAIRABLE half of that: a
+    schema mismatch between the published base rung and the lane's current tier derivation, which
+    reads identically on every future tick and needs an admin retract-and-re-export, not a re-attempt.
+    It is folded into `entry.blocked` -- the same "this driver may not resolve it" tally an admin-needed
+    EXPORT day already uses -- so the lane's outcome is elevated exactly as that case already is, and
+    into `ladder_unrepairable` so the ladder-specific count says so too. Anything else that raised is
+    `ladder_retry_failed`: nothing proves THAT failure is permanent, so it must not read as admin-needed,
+    but it must not read as zero either.
     """
     if result.emptied_tiers:
         entry.detail = _append_note(
@@ -1065,6 +1110,11 @@ def _record_repair_outcome(entry: _LaneProgress, result: LadderRepairOutcome) ->
         entry.repaired += 1
     elif result.outcome == "contended":
         entry.contended += 1
+    elif result.outcome == "blocked":
+        entry.blocked += 1
+        entry.ladder_unrepairable += 1
+    elif result.outcome == "raised":
+        entry.ladder_retry_failed += 1
     if result.availability is not None:
         # A repaired day's index verdict counts exactly as an exported day's does. Without this the
         # `retry_claim_failed` a failed claim reports would live only inside a detail string, which
@@ -1862,6 +1912,32 @@ class LadderRepairOutcome:
     availability: AvailabilityExtensionOutcome | None = None
 
 
+def _ladder_schema_mismatch(error: BaseException) -> bool:
+    """True when `error`, or something it was raised from, is a `TierDerivationError`.
+
+    `derive_and_write_day_tiers` (`pipeline/parquet/derivation.py`) wraps a `TierDerivationError` from
+    `derive_tier` inside a `TierWriteError` -- `raise TierWriteError(...) from error` -- so the
+    ORIGINAL cause naming the mismatched columns sits one step up `__cause__`, not on the exception
+    this driver catches directly. Walked rather than pattern-matched on `str(error)`: a message this
+    driver had to fuzzy-match against is a message a later reword of `tiers.py`'s prose would silently
+    break, turning an admin-needed day back into a swallowed one.
+
+    `TierDerivationError` NAMES exactly the case measured in production: a published base rung whose
+    columns no longer match the lane's currently-registered tier derivation (RUNBOOK-worthy stale
+    export, `warehouse.py:362-370`). It is the one failure this function recognizes as UNREPAIRABLE by
+    a re-tick; every other exception -- a transient store error, a lock edge case, anything not this --
+    is left for the caller to treat as retryable, because nothing here proves otherwise.
+    """
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen:
+        if isinstance(current, TierDerivationError):
+            return True
+        seen.add(id(current))
+        current = current.__cause__ or current.__context__
+    return False
+
+
 async def repair_one_lane_day(  # noqa: PLR0913 - one caller-supplied coordinate per arg, none foldable
     session: AsyncSession,
     store: ObjectStore,
@@ -1952,19 +2028,37 @@ async def repair_one_lane_day(  # noqa: PLR0913 - one caller-supplied coordinate
                     availability_storage=availability_storage,
                 )
     except Exception as error:
-        return LadderRepairOutcome(
-            "raised",
-            0,
-            0,
-            0,
-            _append_note(
-                "; ".join(notes) or None,
-                f"{day.isoformat()}: the coarse rungs could not be derived from the published base rung, so this "
-                f"day stays visible only at z{GAP_FILL_ZOOM_TIER}. A base rung that no longer matches its lane's "
-                f"schema reads exactly like this and needs retracting and re-exporting, not re-deriving: "
-                f"{type(error).__name__}: {error}",
-            ),
+        detail = _append_note(
+            "; ".join(notes) or None,
+            f"{day.isoformat()}: the coarse rungs could not be derived from the published base rung, so this "
+            f"day stays visible only at z{GAP_FILL_ZOOM_TIER}. A base rung that no longer matches its lane's "
+            f"schema reads exactly like this and needs retracting and re-exporting, not re-deriving: "
+            f"{type(error).__name__}: {error}",
         )
+        if _ladder_schema_mismatch(error):
+            # UNREPAIRABLE BY THIS DRIVER -- mirroring `_static_lane_census`'s stranded-version prose,
+            # which says a version cannot be repaired by this driver and retracting is an admin act. Reported
+            # `blocked`, never `raised`: `blocked` is failure that must NOT stop the lane
+            # (`FAILING_LANE_OUTCOMES`), and this is the NEWEST-known fact about ONE day -- stopping the
+            # lane's repairs over it would starve every other ladder gap behind it, forever.
+            return LadderRepairOutcome(
+                "blocked",
+                0,
+                0,
+                0,
+                _append_note(
+                    detail,
+                    f"{day.isoformat()}: this day's coarse rungs cannot be repaired by this driver -- the "
+                    "base rung's columns no longer match the lane's current tier derivation, which is a data "
+                    "problem (a stale base-rung export) and not a transient one. Retracting and re-exporting "
+                    "the base rung is an admin action; re-ticking this driver will report the identical "
+                    "mismatch every time",
+                ),
+            )
+        # RETRYABLE: nothing above diagnosed this as permanent. The next tick's census reselects the
+        # same day from the same unchanged listing and may simply succeed, so this is reported apart
+        # from the admin-needed case above rather than folded into it -- see `_record_repair_outcome`.
+        return LadderRepairOutcome("raised", 0, 0, 0, detail)
     finally:
         await _end_lane_day_transaction(session)
     notes.extend(derived.notes)

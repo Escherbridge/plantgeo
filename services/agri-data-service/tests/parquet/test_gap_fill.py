@@ -35,7 +35,7 @@ from agri_data_service.foundation.parquet.paths import (
 )
 from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
 from agri_data_service.interface.cli import cli
-from agri_data_service.pipeline.parquet.derivation import DerivationResult
+from agri_data_service.pipeline.parquet.derivation import DerivationResult, TierWriteError
 from agri_data_service.pipeline.parquet.gap_fill import (
     GAP_FILL_ZOOM_TIER,
     GapFillContractError,
@@ -66,6 +66,7 @@ from agri_data_service.pipeline.parquet.objectstore import (
     ListedObject,
     ObjectStore,
 )
+from agri_data_service.warehouse.parquet.tiers import TierDerivationError
 from tests.parquet.test_objectstore_writer import BASE_TIER, WHOLE_WORLD_TIER, RecordingBackend, signal_rows
 
 if TYPE_CHECKING:
@@ -1366,6 +1367,72 @@ def recording_deriver(derived: list[tuple[str, date]]) -> TierDeriver:
     return derive
 
 
+def _tier_derivation_error(
+    layer: str, *, missing: list[str], have: list[str], role: str = "coordinate"
+) -> TierDerivationError:
+    """A `TierDerivationError` in the EXACT shape `warehouse/parquet/tiers.py::_require_columns` raises it.
+
+    Built from real fields rather than a canned string, so a test using it is asserting against the
+    actual message shape production logs carried on 2026-09-06, not a paraphrase of it.
+    """
+    return TierDerivationError(
+        f"{layer}: the tier derivation names {role} column(s) {missing} that the base table does not carry; "
+        f"it has {sorted(have)}. A derivation and a schema that disagree publish a coarse rung whose columns "
+        f"are not the base rung's"
+    )
+
+
+def schema_mismatch_deriver(layer: str, cause: TierDerivationError) -> TierDeriver:
+    """Reproduce the EXACT chained exception `derive_and_write_day_tiers` raises for a stale base rung.
+
+    `TierWriteError(...) from TierDerivationError(...)` -- `pipeline/parquet/derivation.py`'s own
+    wrapping -- verbatim as measured in the two live executor ticks 2026-09-06 for `sensors` and
+    `signal`. `gap_fill._ladder_schema_mismatch` walks `__cause__` to find the `TierDerivationError`
+    one exception level up from the `TierWriteError` this driver actually catches; a stub raising the
+    unwrapped `TierDerivationError` directly would exercise only half of that walk.
+    """
+
+    def derive(store: ObjectStore, **kwargs: Any) -> DerivationResult:  # noqa: ARG001
+        raise TierWriteError(
+            f"{layer} z9 {kwargs['day'].isoformat()}: the derivation itself failed, so this day has no "
+            f"honest coarse rung and must not be marked complete: {type(cause).__name__}: {cause}"
+        ) from cause
+
+    return derive
+
+
+# The REAL column lists two live executor ticks logged 2026-09-06 -- not placeholders. A fixture
+# whose base table carries no columns, or whose derivation names none, would pass every assertion
+# below without ever exercising `_ladder_schema_mismatch`'s cause-chain walk.
+SENSORS_MISSING_COORDINATE_COLUMNS = ["station_longitude", "station_latitude"]
+SENSORS_BASE_TABLE_COLUMNS = [
+    "data_available_at",
+    "feature_id",
+    "measurement_name",
+    "network",
+    "observed_at",
+    "observed_day",
+    "quality_control",
+    "sensor_id",
+    "station_name",
+    "unit_code",
+    "value",
+]
+SIGNAL_MISSING_COORDINATE_COLUMNS = ["cell_longitude", "cell_latitude"]
+SIGNAL_BASE_TABLE_COLUMNS = [
+    "allowed_client_exposure",
+    "cell_id",
+    "coverage_fraction",
+    "newest_observed_at",
+    "normalized_unit",
+    "normalized_value",
+    "observation_count",
+    "observed_day",
+    "signal_name",
+    "support_key",
+]
+
+
 def one_day_lane(calls: list[LaneCall], day: date) -> LaneRegistration:
     """A lane whose settled window is exactly `day`, so its only work is whatever that day owes."""
     return stub_lane("signal", calls, floor=day, lag=(TODAY - day).days)
@@ -1534,7 +1601,14 @@ async def test_exports_are_taken_before_repairs() -> None:
 
 @pytest.mark.asyncio
 async def test_a_repair_that_raises_leaves_the_lane_working() -> None:
-    """A derivation failure is a property of ONE published day, not of the lane's source or schema."""
+    """A derivation failure is a property of ONE published day, not of the lane's source or schema.
+
+    RETRYABLE, NOT UNREPAIRABLE: `refuse` raises a bare `ValueError`, never diagnosed as the
+    `TierDerivationError` schema mismatch `_ladder_schema_mismatch` looks for, so this day is counted
+    as ordinary (retryable) ladder backlog rather than as admin-needed. Contrast
+    `test_a_ladder_schema_mismatch_reports_nonzero_backlog_and_names_the_lane`, whose fixture raises
+    the real, chained exception and is counted the OTHER way.
+    """
     calls: list[LaneCall] = []
     backend = RecordingBackend()
     newest = days_newest_first(1)[0]
@@ -1548,8 +1622,130 @@ async def test_a_repair_that_raises_leaves_the_lane_working() -> None:
 
     verdict = summary.lanes[0]
     assert verdict.outcome != "raised", "one poisoned day must not hide every other lane's ladder gap"
+    assert verdict.outcome != "blocked", "a failure not diagnosed as a schema mismatch is not admin-needed"
     assert verdict.repaired == 0
     assert "retracting and re-exporting" in (verdict.detail or "")
+    # THE OTHER HALF OF THE REGRESSION: this day was already popped off the repair queue before the
+    # attempt, so before the fix it left NO trace in any count at all -- `ladder_remaining` read 0
+    # over a day that was, in fact, still unresolved.
+    assert verdict.ladder_remaining == 1, "an attempted-and-failed repair is still outstanding backlog"
+    assert verdict.ladder_unrepairable == 0, "nothing here proves this particular failure is permanent"
+    assert summary.to_summary()["lanes_with_ladder_backlog"] == ["signal"]
+    assert summary.to_summary()["lanes_with_unrepairable_ladder_days"] == []
+
+
+@pytest.mark.asyncio
+async def test_a_ladder_schema_mismatch_reports_nonzero_backlog_and_names_the_lane() -> None:
+    """DO NOT DELETE. Two live executor ticks measured 2026-09-06 reported `outcome=complete`,
+    `ladder_remaining=0` and an EMPTY `lanes_with_ladder_backlog` for `sensors`, while a day was
+    permanently stuck visible only at z13 and no re-tick could ever fix it (RUNBOOK, `warehouse.py`
+    362-370: a stale base-rung export). This pins the fix at the lane-summary level.
+    """
+    calls: list[LaneCall] = []
+    backend = RecordingBackend()
+    newest = days_newest_first(1)[0]
+    seed_partition(backend, "sensors", newest)
+    seed_completion(backend, "sensors", newest)
+    cause = _tier_derivation_error(
+        "sensors", missing=SENSORS_MISSING_COORDINATE_COLUMNS, have=SENSORS_BASE_TABLE_COLUMNS
+    )
+    lane = stub_lane("sensors", calls, floor=newest, lag=(TODAY - newest).days)
+
+    summary = await drive([lane], ObjectStore(backend), derive_tiers=schema_mismatch_deriver("sensors", cause))
+
+    verdict = summary.lanes[0]
+    assert calls == [], "a ladder repair opens no source query at all"
+    assert verdict.ladder_remaining == 1, "the stuck day must not vanish from the backlog count"
+    assert verdict.ladder_unrepairable == 1, "a schema mismatch is diagnosed as admin-needed"
+    top_level = summary.to_summary()
+    assert top_level["lanes_with_ladder_backlog"] == ["sensors"]
+    assert top_level["lanes_with_unrepairable_ladder_days"] == ["sensors"]
+    assert top_level["ladder_remaining"] == 1
+    assert top_level["ladder_unrepairable"] == 1
+
+
+@pytest.mark.asyncio
+async def test_a_ladder_schema_mismatch_lane_outcome_is_not_unqualified_success() -> None:
+    """The exact production lie this fixes: `outcome=complete` over a day no re-tick will ever clear."""
+    calls: list[LaneCall] = []
+    backend = RecordingBackend()
+    newest = days_newest_first(1)[0]
+    seed_partition(backend, "sensors", newest)
+    seed_completion(backend, "sensors", newest)
+    cause = _tier_derivation_error(
+        "sensors", missing=SENSORS_MISSING_COORDINATE_COLUMNS, have=SENSORS_BASE_TABLE_COLUMNS
+    )
+    lane = stub_lane("sensors", calls, floor=newest, lag=(TODAY - newest).days)
+
+    summary = await drive([lane], ObjectStore(backend), derive_tiers=schema_mismatch_deriver("sensors", cause))
+
+    verdict = summary.lanes[0]
+    assert verdict.outcome not in ("complete", "filled"), (
+        f"an unrepairable ladder day must not read as unqualified success, got {verdict.outcome!r}"
+    )
+    assert verdict.outcome == "blocked"
+    assert summary.failed, "an unrepairable day must fail the tick loudly, not exit 0 silently"
+    assert [failing.slug for failing in summary.failing_lanes] == ["sensors"]
+    assert "cannot be repaired by this driver" in (verdict.detail or "")
+    assert "admin action" in (verdict.detail or "")
+
+
+@pytest.mark.asyncio
+async def test_repair_one_lane_day_reports_blocked_for_a_real_schema_mismatch() -> None:
+    """Direct-call pin on `repair_one_lane_day` itself, using the real `signal` lane registration."""
+    backend = RecordingBackend()
+    store = ObjectStore(backend)
+    day = days_newest_first(1)[0]
+    store.write_partition(signal_rows(), layer="signal", kind="observed", zoom=GAP_FILL_ZOOM_TIER, day=day)
+    store.write_completion_marker(
+        PartitionCompletion(part_count=1, row_count=3, completed_at=FROZEN_NOW, run_id=RUN_ID),
+        layer="signal",
+        kind="observed",
+        zoom=GAP_FILL_ZOOM_TIER,
+        day=day,
+    )
+    cause = _tier_derivation_error("signal", missing=SIGNAL_MISSING_COORDINATE_COLUMNS, have=SIGNAL_BASE_TABLE_COLUMNS)
+
+    outcome = await repair_one_lane_day(
+        RecordingSession(),  # type: ignore[arg-type]
+        store,
+        LANE_REGISTRY["signal"],
+        day=day,
+        run_id=RUN_ID,
+        now=lambda: FROZEN_NOW,
+        lane_day_lock=unlocked_lane_day,
+        vegetation_publication_barrier=unlocked_vegetation_publication_barrier,
+        derive_tiers=schema_mismatch_deriver("signal", cause),
+    )
+
+    assert outcome.outcome == "blocked", outcome.detail
+    assert outcome.detail is not None
+    assert "cannot be repaired by this driver" in outcome.detail
+    assert "admin action" in outcome.detail
+    assert "TierDerivationError" in outcome.detail
+    assert "cell_longitude" in outcome.detail
+
+
+@pytest.mark.asyncio
+async def test_a_negative_control_a_caught_up_lane_still_reports_zero_ladder_backlog() -> None:
+    """Otherwise this fix has just made every green tick red. A lane with a clean repair stays clean."""
+    calls: list[LaneCall] = []
+    derived: list[tuple[str, date]] = []
+    backend = RecordingBackend()
+    newest = days_newest_first(1)[0]
+    seed_partition(backend, "signal", newest)
+    seed_completion(backend, "signal", newest)
+
+    summary = await drive([one_day_lane(calls, newest)], ObjectStore(backend), derive_tiers=recording_deriver(derived))
+
+    verdict = summary.lanes[0]
+    assert verdict.ladder_remaining == 0
+    assert verdict.ladder_unrepairable == 0
+    assert verdict.outcome == "filled"
+    top_level = summary.to_summary()
+    assert top_level["lanes_with_ladder_backlog"] == []
+    assert top_level["lanes_with_unrepairable_ladder_days"] == []
+    assert not summary.failed
 
 
 @pytest.mark.asyncio

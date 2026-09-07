@@ -106,6 +106,130 @@ so the compile was restructured in the same pass:
   can freeze it with `monkeypatch.setattr(COMPILER, "_now", ...)` instead of depending on the suite
   happening to run after every fixture marker's timestamp.
 
+## Dry-run digest window (2026-09-06, fix lane)
+
+`DEFAULT_DIGEST_WINDOW_DAYS` was already 90 and already the argparse default -- it matches D3 and
+this file's own description of the window above. The measured bug was a SEPARATE line in
+`_parse_arguments`: `if arguments.dry_run: arguments.digest_window_days = 0`. Every `--dry-run`
+invocation -- the documented, safe way to preview a compile before `--apply` -- silently reset the
+one attribute both `_compile_lane`'s classification math and every printed receipt read for "what
+window is configured", regardless of whether the operator passed `--digest-window-days` explicitly or
+took the 90-day default. A real production run reproduced it exactly: `--lane drought --since
+2026-06-01 --workers 8 --dry-run` printed `"digest_window_days": 0` and a receipt that was 52 of 56
+rows manifest-trusted, even though nothing about the request asked for a 0-day window.
+
+**Decision: keep the 90-day default, do not require the flag.** D3 says "hash a recent window" with
+no per-lane variance, and nothing in this compiler's four lane families (`fire-detections`, `drought`,
+`vegetation`, `weather_observations`) needs a different one; a sane default with an explicit override
+remains kinder to an operator who has no reason to think about this flag on every invocation.
+
+**The fix separates "what was requested" from "what this run applied":**
+
+* `arguments.digest_window_days` is now NEVER mutated. It is the operator's real request (default or
+  explicit) for the whole life of the process, in `_compile_lane`'s classification math, in
+  `main()`'s top-level echo, and in every receipt.
+* `_compile_lane` computes `applied_digest_window_days = 0 if arguments.dry_run else
+  arguments.digest_window_days` locally and uses ONLY that for `digest_floor`. `--dry-run`'s own
+  promise -- it downloads no part -- is therefore satisfied by classifying every day as if the window
+  were 0, not by lying about what window was configured.
+* `LaneCompilation` carries both `digest_window_days_requested` and `digest_window_days_applied`, and
+  `_receipt()` emits both. They are equal for every real compile and diverge only under `--dry-run`,
+  which makes the gap a diffable fact rather than something inferred from `provenance` counts.
+* `_provenance_headline()` renders a plain-English `apply_readiness_note`, deliberately keyed to sort
+  immediately after `apply_command`/`apply_projected_cost` in the sorted-keys JSON receipt so an
+  operator reading toward the next command sees it in the same glance. It always names the
+  manifest-trusted share, escalates to "ALL ... review before --apply" when literally every row landed
+  manifest-trusted, and appends the requested-vs-applied gap sentence whenever `--dry-run` (or any
+  future caller) applied a narrower window than was requested. This is the fix for MAJOR-class findings
+  like this one in general, not just this bug: a receipt that is honest at the field level can still
+  mislead a skimming operator, so the loudest signal belongs next to the command they are about to run.
+
+**What this fix deliberately does NOT do.** It does not make `--dry-run` download real parts to prove
+a genuinely representative preview -- that would defeat the flag's whole cost-safety purpose (pricing
+a compile before paying for it) and was never broken; only the REPORTING of the window was. It also
+does not touch `marker_recorded_rung_days` or the base-rung v1-marker gap (lane A1c, still open per
+D3) -- that gap is real and raises the stakes on this default being right, but wiring per-part digests
+into `gap_fill.py::_finalize_written_day` is out of this fix lane's ownership.
+
+Pinned in `tests/scripts/test_compile_availability_bootstrap.py`:
+`test_the_default_digest_window_matches_the_design_doc`,
+`test_dry_run_never_corrupts_the_requested_digest_window`,
+`test_dry_run_applies_a_zero_day_window_internally_but_reports_the_real_request`,
+`test_receipt_flags_an_entirely_manifest_trusted_compile_before_apply`, and
+`test_receipt_names_no_gap_when_a_real_compile_used_the_requested_window`.
+
+## Absence-only sub-ladders (2026-09-06, A4 lane): why the gate was NOT widened
+
+A full `--all-time-bearing --dry-run` compile priced 12 time-bearing lanes at 83,172 rows over 20,793
+selectable days and refused 3,205 days, **every one of them `partial_ladder`**. A direct read-only
+listing of the bucket showed each lane holds exactly two rung-set shapes and no others: the full
+`('00','05','09','13')` ladder, and `('13',)` alone. Of the one-rung days, all of `fire-detections`
+(1,069), `burn-severity` (2,102), `vegetation` (4), `weather-observations` (2) and one of `sensors`
+hold a single `absent.json` and nothing else; the other 25 `sensors` days hold real PART FILES
+stranded at z13 by a separate defect (a tier derivation naming `station_longitude`/`station_latitude`
+columns the base table does not carry). The live coverage answer corroborates the split independently:
+3,469 governed-absence days at z13 against 279 at z0/z5/z9.
+
+**The proposal was to ADMIT an absence-only day**, on the reading that an absence describes the DAY
+and writing the same "the source had nothing" claim four times says nothing extra. The availability
+ROW schema supports that reading -- `AvailabilityRow` carries `absence_reason` and carries no absence
+receipt at all, and `_validate_generation_day` requires one reason across a day's whole ladder. The
+coverage READER supports it too: `parquet_ops/availability_coverage.py::lane_coverage_from_index`
+closes all four rung rows over ONE day set (`selectable = index.selectable_days()`), so no reader ever
+asks a coarse rung for its own absence row.
+
+**It was refused anyway, because two gates below the row schema make the day unrepresentable:**
+
+* `availability_index.py::_validate_generation_day` -- `if tuple(row.rung for row in rows) !=
+  required_rungs: raise ValueError("availability day ... does not contain the exact required_rungs
+  ladder")`. Every day of a generation owes all four rungs. A one-row day is not a weaker index entry;
+  it is not an index entry. And this compiler runs that check on itself: `_compile_and_report` calls
+  `load_bootstrap_request` on the bytes it just wrote, so admitting the day would have turned every
+  lane holding one into a `failed_lanes` entry -- `burn-severity` from five compiled days to zero.
+* `availability_index.py::_verify_absence_object` -- the absence receipt is parsed and its
+  `(layer, kind, zoom, day)` must equal `(layer, kind, evidence.rung, evidence.day)`. So the four rows
+  cannot be synthesised over the one z13 marker either: three of them would cite an object that does
+  not exist, `--apply` would 404 and then refuse, and the evidence documents written to disk would be
+  unverifiable by construction. That is precisely "coarse zooms claiming absence they cannot prove".
+
+So a governed absence is a property of the DAY in its *reason* and in how a reader answers it, and a
+property of the RUNG in its *proof*. The writer is what is wrong: `ObjectStore.write_absence` marks
+one tier per call and says so in `pipeline/parquet/objectstore.py`'s module docstring -- "CROSS-TIER
+AGREEMENT OF ONE DAY IS NOT THIS MODULE'S INVARIANT ... 'Every tier of a published day is present' is
+the DERIVATION step's obligation". The fix is a marker backfill of ~3,205 days x 3 rungs, which is
+outside this file and is why nothing here tries to substitute for it. A derived-empty completion
+marker is NOT an alternative: `_is_published_empty_rung` reserves that name for a coarse rung whose
+non-empty base generalised away, and using it here would state that rows existed when none did.
+
+**What this lane changed instead: the receipt now names the two populations apart.**
+`EXCLUSION_ABSENCE_ONLY_SUBLADDER` (`"absence_marker_at_a_subset_of_rungs"`) is returned by
+`_partial_ladder_reason` when EVERY rung the day holds carries a governed-absence marker and no parts
+and no completion marker; everything else keeps `EXCLUSION_PARTIAL_LADDER`. The rule keys on marker
+KIND, never on rung count, because the 25 stranded-part `sensors` days hold exactly one rung too and
+must keep the ordinary word. It is decided inside `_candidate_days` from `RungObjects`' three path
+fields, so it costs no GET, and `_require_refusal_budget` now names the split in the message where an
+operator is told to type `--accept-exclusions N` -- a marker backfill closes one share without
+re-exporting a byte, the other is a broken export.
+
+**The refusal budget is deliberately unchanged.** Both reasons stay out of
+`FILTERED_EXCLUSION_REASONS`, so `refused` is the same number it was: `burn-severity` 2,102/2,107
+(99.8%), `sensors` 26/39 (67%), `fire-detections` 1,069/9,439 (11.3%) all still exceed the 10% ceiling
+and still demand an explicit `--accept-exclusions`; `vegetation` (0.27%), `weather-observations`
+(0.14%) and `drought` (0.94%) still sit under it. Excusing absence-only days from the budget would be
+exactly the looser bar D2 warns about -- those days are genuinely not selectable, and a lane showing
+five selectable days out of 2,107 must not read as healthy.
+
+Pinned in `tests/scripts/test_compile_availability_bootstrap.py`:
+`test_an_absence_only_day_at_the_base_rung_is_refused_under_its_own_name`,
+`test_parts_stranded_at_one_rung_are_still_a_partial_ladder`,
+`test_a_completion_marker_at_a_subset_of_rungs_is_still_a_partial_ladder`,
+`test_an_absence_marker_beside_stranded_parts_is_never_read_as_absence_only`,
+`test_a_full_ladder_mixing_an_absence_and_published_rungs_is_still_refused_as_mixed`,
+`test_the_refusal_budget_names_the_two_populations_where_the_number_is_typed`,
+`test_a_complete_four_rung_absence_day_compiles_to_governed_absence_rows`, and
+`test_the_contract_refuses_the_one_rung_document_an_absence_only_admission_would_emit` -- the last of
+which executes the refutation rather than quoting it.
+
 # Weather observations exact audit
 
 `audit_weather_observations_exact.py` is the credential-free current-weather completion proof. Run
