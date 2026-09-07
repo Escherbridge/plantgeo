@@ -1350,3 +1350,59 @@ exit on a transient — re-verify once before believing it recovered.
 Missed scheduled lane turns only. Nothing is corrupted and nothing publishes wrongly: the lanes'
 own catch-up policies (`replay_oldest`, `coalesce_latest`) are built to absorb a gap, and any work
 driven from an operator machine is untouched. The cost is freshness, and it is silent.
+
+---
+
+## THE LAST STRUCTURAL GAP: 14 lanes the bootstrap compiler cannot see. 2026-09-07.
+
+After A4 the slider serves 13 layers and withholds 11 — 10 `availability_unpublished` plus
+soil-survey's `lane_never_written`. Those 10 are not a missed step. **They cannot be bootstrapped by
+the existing tool at all.**
+
+`scripts/compile_availability_bootstrap.py:1172`:
+
+```python
+time_bearing = tuple(lane for lane in registered_census_lanes() if nature_has_time_axis(lane.nature))
+```
+
+`registered_census_lanes()` (`parquet_ops/coverage.py:97-122`) drops every lane in `PRODUCT_BY_LAYER`
+— every **snapshot product** — and adds back only the five named in
+`DEDICATED_SLIDER_PRODUCT_LAYERS` (`coverage.py:52-58`): `climate-field-precipitation`,
+`climate-field-shortwave-radiation` and the three `soil-field-moisture-*`.
+
+So the compiler recognises exactly 12 time-bearing lanes, and `--lane climate-field-wind-speed` is
+refused outright:
+
+```
+unknown or non-time-bearing lane(s): climate-field-wind-speed
+```
+
+The 14 with no route to an availability index: `climate-field-air-temperature-{max,mean,min}`,
+`-dew-point`, `-relative-humidity`, `-wind-speed`, `soil-field-vpd`,
+`soil-temperature-{0-to-7cm,7-to-28cm,28-to-100cm,100-to-255cm}` and
+`soil-wetness-{surface,root-zone,profile}`. Under `PARQUET_COVERAGE_AUTHORITY=availability` they are
+withheld permanently.
+
+### Do NOT "just extend the tuple" — the lanes are not uniform
+
+Measured under `layer=<slug>/kind=observed/` on 2026-09-07:
+
+| lane | objects | days | rungs |
+|---|---|---|---|
+| `climate-field-dew-point` | 133,232 | 16,654 | all four on every day |
+| `soil-temperature-0-to-7cm` | 16 | 2 | all four |
+| `climate-field-wind-speed` | **0** | **0** | — |
+
+wind-speed reports 1,560 days in coverage while holding NOTHING at the live lane prefix, because a
+snapshot product's history lives in a frozen `snapshot=<id>/` root disjoint from
+`layer=<slug>/kind=observed/`. Admitting such a lane without settling which root its axis comes from
+would bootstrap an index over the wrong prefix.
+
+That is the question to answer before any of the 14 are admitted: **does a snapshot product's
+availability index describe its frozen snapshot root, its live lane prefix, or the union?** The
+answer differs per lane today, which is why the admitted five were curated by hand.
+
+### Cost, once the question is settled
+
+dew-point alone is 133,232 objects, and the compiler's evidence step runs ~150 objects/minute
+serially. Budget `evidence_count / 150` minutes per lane and run lanes in parallel.
