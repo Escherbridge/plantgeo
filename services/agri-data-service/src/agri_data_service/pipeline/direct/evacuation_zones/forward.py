@@ -1,9 +1,11 @@
 """Publish one version of Oregon OEM's evacuation areas directly, when and only when it has changed.
 
 Bypasses PostgreSQL entirely: `pipeline/lanes/evacuation_zones.py::export_evacuation_zones_day` (the
-former `_fill_evacuation_zones` adapter, unregistered on 2026-09-06) reads `geo.features` and LEFT
-JOINs `geo.geometry`, and `ingest/evacuation_zones.py::run_evacuation_zones_ingestion_job` is what
-filled them. This module replaces both. PostgreSQL is still opened for ONE thing -- the shared session-scoped lane-day
+former `_fill_evacuation_zones` adapter, unregistered and then DELETED on 2026-09-06) read
+`geo.features` and LEFT JOINed `geo.geometry`, and `ingest/evacuation_zones.py::
+run_evacuation_zones_ingestion_job` is what filled them -- that producer is still live inside
+`ingest-all` (`ingest/runner.py:48`). This module replaces both. PostgreSQL is still opened for
+ONE thing -- the shared session-scoped lane-day
 advisory lock -- which is coordination, not a data sink (`pipeline/direct/AGENTS.md`, header).
 
 HOW A VERSION STAMP IS DECIDED WITHOUT A POSTGRES WATERMARK, which is this lane's whole problem.

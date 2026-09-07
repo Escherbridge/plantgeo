@@ -43,8 +43,9 @@ _CONVERT_SQL: Final = (
     "SELECT huc12, ST_GeomFromGeoJSON(geojson) AS geom FROM raw_watershed_geometries) ORDER BY huc12"
 )
 
-# One row measured 21,572 B of WKB (sql/pipeline/watersheds_day_export.sql header, transcribed from
-# conductor/RUNBOOK.md:1783-1785) -- roughly 200 MB for the whole ~9,396-basin national extent held
+# One row measured 21,572 B of WKB (conductor/RUNBOOK.md:1783-1785; the measurement also sat in
+# sql/pipeline/watersheds_day_export.sql's header until that file was deleted on 2026-09-06, so the
+# RUNBOOK is now the only other copy) -- roughly 200 MB for the whole ~9,396-basin extent held
 # in memory at once. Sized well above `pipeline/direct/drought/support.py`'s 1600 MB / 3-thread
 # session, which that module's own comment scopes to "at most five rows": this session converts the
 # WHOLE lane in one round trip, not one release's handful of class polygons.

@@ -1,11 +1,15 @@
-"""USGS WBD HUC12 watershed ingestion: the paged NHDPlus_HR adapter that persists what was only ever proxied.
+"""USGS WBD HUC12 watershed source adapter: the paged NHDPlus_HR fetch and the snapshot identity it keys on.
 
-Until this module existed, watershed boundaries were the one map layer with no warehouse presence at
-all: `src/lib/server/services/hydrosheds.ts` queried NHDPlus_HR live on every viewport change and
-cached the answer in Redis for an hour. That makes the layer unusable on the time slider (an upstream
-that answers only "now" cannot answer "as of 2023"), unavailable when the hydrography service is down,
-and invisible to every warehouse-side reader. Persisting it is the 2026-08-03 architecture decision
-"we persist everything we serve", applied to the last layer that was not.
+THE POSTGRES HALF OF THIS MODULE WAS DELETED ON 2026-09-06. `run_watersheds_ingestion_job`,
+`build_watershed_write` and `WATERSHEDS_SOURCE` wrote `geo.features` for the `postgres-watersheds`
+lane; that lane, the `ingest-watersheds` verb behind it, and the `pipeline/lanes/watersheds.py`
+exporter that read the rows back out are all gone. What is left is the SOURCE half --
+`fetch_watersheds`, `fetch_watershed_object_ids`, `build_watershed_identity`, `parse_load_date` and
+`WBDHU12_BOUNDS` -- which `pipeline/direct/watersheds/` fetches through to write Parquet without ever
+staging a row in PostgreSQL, and which `pipeline/validation/watersheds.py` reuses for its vintage
+reconciliation. The `LayerBinding` block below survives the same way `ingest/firms.py`'s and
+`ingest/vegetation.py`'s did after their own jobs were deleted: it is the layer's env-var contract,
+pinned by `tests/test_ingest_layer_binding.py`, not by any writer.
 
 Boundaries are a SNAPSHOT, not a series: one row per HUC12, refreshed in place. That is why the
 identity's `producer_local_id` is the bare HUC12 code with no timestamp in it -- a re-run must land on
@@ -22,23 +26,18 @@ from urllib.parse import urlencode
 
 import structlog
 
-from agri_data_service.ingest.http import UpstreamBounds, UpstreamPayloadError, fetch_bounded_json, upstream_client
-from agri_data_service.ingest.identity import FeatureIdentity, MissingNativeKeyError, format_javascript_timestamp
+from agri_data_service.ingest.http import UpstreamBounds, UpstreamPayloadError, fetch_bounded_json
+from agri_data_service.ingest.identity import FeatureIdentity, MissingNativeKeyError
 from agri_data_service.ingest.layer_binding import LayerBinding
-from agri_data_service.ingest.policy import UNCONFIGURED_BBOX_REASON, parse_bbox, resolve_bounded_bbox
-from agri_data_service.ingest.results import IngestionJobResult, skipped_result
-from agri_data_service.ingest.writer import FeatureWrite
+from agri_data_service.ingest.policy import parse_bbox
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
     import httpx
 
-    from agri_data_service.ingest.writer import FeatureWriter
-
 logger = structlog.get_logger()
 
-WATERSHEDS_SOURCE: Final = "usgs-wbd-huc12"
 WATERSHEDS_PROPERTY_SOURCE: Final = "USGS NHDPlus HR WBDHU12"
 
 WATERSHEDS_LAYER: Final = LayerBinding(
@@ -126,45 +125,6 @@ def build_watershed_identity(watershed: Mapping[str, object]) -> FeatureIdentity
         producer_local_id=code,
         observed_at=parse_load_date(watershed.get("loaddate")),
         entity_local_id=code,
-    )
-
-
-def build_watershed_write(feature: Mapping[str, object], layer_name: str) -> FeatureWrite | None:
-    """Map one WBDHU12 GeoJSON feature to its write, returning None when it carries no HUC12 code."""
-    properties = feature.get("properties")
-    geometry = feature.get("geometry")
-    if not isinstance(properties, dict) or not isinstance(geometry, dict):
-        return None
-    try:
-        identity = build_watershed_identity(properties)
-    except (MissingNativeKeyError, ValueError):
-        return None
-
-    dated: dict[str, object] = {}
-    if identity.observed_at is not None:
-        # The read model dates every row from COALESCE(observedAt, updatedAt, polygonDateTime), and
-        # `loaddate` is in none of them -- so without this key a basin is undatable and the layer
-        # reports "Not yet observed" at every date forever. Emitted from the parsed instant rather than
-        # from the raw epoch so the two can never disagree.
-        dated["observedAt"] = format_javascript_timestamp(identity.observed_at)
-
-    return FeatureWrite(
-        layer_reference=layer_name,
-        identity=identity,
-        properties={
-            **dated,
-            # Field names are the layer's own lowercase GeoJSON spellings, NOT the title-case aliases
-            # the service catalog displays -- src/lib/map/hover-fields.ts reads these exact keys.
-            "huc12": properties.get("huc12"),
-            "name": properties.get("name"),
-            "areasqkm": properties.get("areasqkm"),
-            "tohuc": properties.get("tohuc"),
-            "states": properties.get("states"),
-            "hutype": properties.get("hutype"),
-            "source": WATERSHEDS_PROPERTY_SOURCE,
-            "geometry": geometry,
-        },
-        channel=WATERSHEDS_CHANNEL,
     )
 
 
@@ -261,44 +221,3 @@ async def fetch_watersheds(client: httpx.AsyncClient, bbox: str) -> list[dict[st
     if len(features) < len(object_ids):
         logger.warning("wbdhu12_batch_shortfall", expected=len(object_ids), received=len(features))
     return features
-
-
-async def run_watersheds_ingestion_job(
-    write_features: FeatureWriter,
-    *,
-    bbox: str | None = None,
-    client: httpx.AsyncClient | None = None,
-) -> IngestionJobResult:
-    """Fetch every HUC12 boundary in the configured extent and refresh them in place.
-
-    No record cap is applied, unlike every observation source. A cap exists to bound an unbounded
-    observation stream; this is a closed set of national boundaries whose size is a property of the
-    extent, and truncating it would leave permanent holes in a basin map rather than dropping the
-    oldest of a stream.
-    """
-    area = resolve_bounded_bbox(bbox)
-    if area is None:
-        return skipped_result(WATERSHEDS_SOURCE, UNCONFIGURED_BBOX_REASON)
-
-    if client is None:
-        async with upstream_client(WBDHU12_BOUNDS) as owned_client:
-            features = await fetch_watersheds(owned_client, area)
-    else:
-        features = await fetch_watersheds(client, area)
-
-    layer_name = resolve_watersheds_layer_name()
-    writes = [
-        write for write in (build_watershed_write(feature, layer_name) for feature in features) if write is not None
-    ]
-    undated = sum(1 for write in writes if "observedAt" not in write.properties)
-    if undated:
-        logger.info("watershed_boundaries_undated", undated=undated, written=len(writes))
-
-    return IngestionJobResult(
-        source=WATERSHEDS_SOURCE,
-        status="ingested",
-        records_seen=len(features),
-        records_written=await write_features(writes),
-        truncated=False,
-        details={"rejected": len(features) - len(writes), "undated": undated},
-    )

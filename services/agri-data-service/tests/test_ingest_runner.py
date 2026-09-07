@@ -29,10 +29,11 @@ if TYPE_CHECKING:
 # `ingest-firms`, `ingest-streamflow`, `ingest-weather`, `ingest-drought`, `ingest-ndvi` and
 # `ingest-drought-history` WERE HERE AND ARE DELETED (2026-09-06). Each of those six layers has a
 # direct-to-Parquet writer under `pipeline/direct/`, so its PostgreSQL producer was the removable half
-# of a pair. This tuple is the executable half of the removal proof: it and `INGEST_COMMANDS` are
-# asserted equal below, so a verb that came back would fail here.
+# of a pair. `ingest-watersheds` joined them later the same day, in the second wave, once
+# `watersheds-direct-forward` was proven and activated and BOTH registry fields for that lane stopped
+# reading `geo.features`. This tuple is the executable half of the removal proof: it and
+# `INGEST_COMMANDS` are asserted equal below, so a verb that came back would fail here.
 EXPECTED_VERBS = (
-    "ingest-watersheds",
     "ingest-fire-perimeters",
     "ingest-sensors",
     "ingest-evacuation-zones",

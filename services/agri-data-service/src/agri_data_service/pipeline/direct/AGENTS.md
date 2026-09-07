@@ -1267,10 +1267,11 @@ the table holds them.
 ## Watersheds
 
 `watersheds/` fetches NHDPlus_HR WBDHU12 directly and writes Parquet without ever staging a row in
-PostgreSQL. It bypasses `pipeline/lanes/watersheds.py::export_watersheds_release` AND
+PostgreSQL. It bypassed `pipeline/lanes/watersheds.py::export_watersheds_release` AND
 `pipeline/parquet/lane_registry.py::_watersheds_watermark`, both of which read `geo.features` -- which is
-what makes `ingest/watersheds.py::run_watersheds_ingestion_job` and the `postgres-watersheds` lane deletable
-once its own lane is activated. The watermark comes from the source's own `loaddate` (`source.py`), never
+what made `ingest/watersheds.py::run_watersheds_ingestion_job` and the `postgres-watersheds` lane
+deletable, and ALL OF THEM WERE DELETED ON 2026-09-06 once this lane was activated (removal packet:
+`conductor/tracks/environmental_postgres_retirement_20260904/evidence/removal-packet-watersheds-evacuation-zones-20260906.md`). The watermark comes from the source's own `loaddate` (`source.py`), never
 from Postgres, precisely because a Postgres-backed watermark reads stale or empty forever the moment nothing
 writes `geo.features` for this layer.
 
@@ -1298,11 +1299,12 @@ its cost.
 `--time-budget-seconds` knob, so the executor lane's command timeout (1800 s) is the only bound on a turn.
 
 Executor lane `watersheds-direct-forward`, **daily at 03:00 UTC** -- the cadence of the `postgres-watersheds`
-lane it mirrors (02:00), offset an hour so the two never open the same fetch minute during the parity bake,
-when both are meant to be running. Hourly would pay that ~47-request walk 24 times a day to detect a change
-that has happened once in the layer's measured history. The executor lane is still SHADOW -- activating it is
-a Railway variable edit -- but THE REGISTRY SWAP ALREADY HAPPENED, on 2026-09-06, and it moved BOTH FIELDS IN
-ONE EDIT because neither could move alone: swap the adapter alone and a source-direct writer is keyed to a
+lane it mirrored (02:00), offset an hour so the two never opened the same fetch minute during the parity bake,
+when both were meant to be running. Hourly would pay that ~47-request walk 24 times a day to detect a change
+that has happened once in the layer's measured history. THE LANE IS NOW ACTIVE and `postgres-watersheds` is
+DELETED (2026-09-06), so this is the only writer of the stream and the 03:00 phase is kept only so an operator
+re-run or a parity receipt never collides with it. THE REGISTRY SWAP HAPPENED FIRST, on the same day, and it
+moved BOTH FIELDS IN ONE EDIT because neither could move alone: swap the adapter alone and a source-direct writer is keyed to a
 clock that froze when `postgres-watersheds` stopped; swap the watermark alone and the Postgres export
 publishes under a version day it did not produce. `LANE_REGISTRY['watersheds'].adapter` now refuses and names
 this package, and its `watermark` is `watersheds/watermark.py` (one call into `source.py`);
@@ -1312,10 +1314,14 @@ this package, and its `watermark` is `watersheds/watermark.py` (one call into `s
 
 `evacuation_zones/` publishes one version of Oregon OEM's evacuation areas directly, when and only when it has
 changed. It replaces both `pipeline/lanes/evacuation_zones.py::export_evacuation_zones_day` (the former
-`_fill_evacuation_zones` adapter, which read `geo.features` and LEFT JOINed `geo.geometry`) and
-`ingest/evacuation_zones.py::run_evacuation_zones_ingestion_job` (which filled them). PostgreSQL is still
-opened for ONE thing -- the shared session-scoped lane-day advisory lock -- which is coordination, not a data
-sink.
+`_fill_evacuation_zones` adapter, which read `geo.features` and LEFT JOINed `geo.geometry`; DELETED
+2026-09-06 with `sql/pipeline/evacuation_zones_day_export.sql`) and
+`ingest/evacuation_zones.py::run_evacuation_zones_ingestion_job` (which filled them) -- but THAT PRODUCER
+IS STILL LIVE. `ingest/runner.py:48` keeps it in the `ingest-all` macro, which is the one named blocker
+on finishing this lane's removal; the removal packet
+(`conductor/tracks/environmental_postgres_retirement_20260904/evidence/removal-packet-watersheds-evacuation-zones-20260906.md`)
+records it as RETAINED. PostgreSQL is still opened for ONE thing -- the shared session-scoped lane-day
+advisory lock -- which is coordination, not a data sink.
 
 REGISTERED SINCE 2026-09-06, adapter and watermark in one edit: `LANE_REGISTRY['evacuation-zones'].adapter`
 refuses and names this package, and its `watermark` is `evacuation_zones/watermark.py`, which runs the SAME

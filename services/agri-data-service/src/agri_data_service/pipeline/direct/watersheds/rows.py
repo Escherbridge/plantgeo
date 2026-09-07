@@ -22,9 +22,10 @@ watersheds.md section 5, trap 5), and this writer has no producer for it any mor
 path did. Unlike `feature_id`, this column carries no `base_non_null_columns` entry, so NULL here is
 simply true, not a write-time refusal.
 
-WATERSHEDS IS A BIG PAYLOAD, AND ROW COUNT IS THE WRONG BUDGET. `pipeline/lanes/watersheds.py`'s
-retired Postgres exporter sliced parts at a flat `ROWS_PER_PART = 1_000`, which -- at the ~21,572 B
-WKB/row this lane measures -- writes roughly 21.5 MB per part, nearly three times the 8 MiB budget
+WATERSHEDS IS A BIG PAYLOAD, AND ROW COUNT IS THE WRONG BUDGET. The Postgres exporter this replaced
+(`pipeline/lanes/watersheds.py`, deleted 2026-09-06) sliced parts at a flat `ROWS_PER_PART = 1_000`,
+which -- at the ~21,572 B WKB/row this lane measures -- writes roughly 21.5 MB per part, nearly
+three times the 8 MiB budget
 `pipeline/lanes/fire_perimeters.py::MAX_PART_PAYLOAD_BYTES` sets for the next-heaviest geometry
 snapshot lane. `chunk_rows_by_geometry_bytes` below copies THAT lane's own
 `_chunk_row_indices_by_geometry_bytes` budget and algorithm instead: at ~21,572 B/row, 8 MiB fits
@@ -77,9 +78,10 @@ def watersheds_snapshot_table(source: WatershedsSnapshotSource, *, release_day: 
 
     An empty `source.accepted` still returns a genuinely zero-row, schema-shaped table -- never
     special-cased away -- so `store.write_partition`'s own `EmptyPartitionError` is what turns an
-    honestly empty extent into a governed absence, exactly as `pipeline/lanes/watersheds.py`'s own
-    docstring requires of the Postgres path this writer replaces: "a source that genuinely has
-    nothing published still reaches `store.write_partition` with a zero-row table."
+    honestly empty extent into a governed absence. That is the contract the Postgres path this writer
+    replaced stated in its own docstring, quoted here because that module (`pipeline/lanes/
+    watersheds.py`) was deleted on 2026-09-06: "a source that genuinely has nothing published still
+    reaches `store.write_partition` with a zero-row table."
 
     SORTED TO THE GRAIN HERE, not left to `write_partition` alone -- the identical discipline
     `pipeline/lanes/fire_perimeters.py::read_fire_perimeters_snapshot` documents: slicing an

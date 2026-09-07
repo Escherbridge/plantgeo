@@ -43,8 +43,8 @@ class EvacuationZonesTruncatedError(RuntimeError):
     from the Postgres path it replaces. `run_evacuation_zones_ingestion_job`
     (`ingest/evacuation_zones.py:457-463`) wrote whatever it got and set `truncated=True` on the
     result, so a bitten page/byte/record ceiling produced a warehouse row set that was quietly short
-    of the statewide picture, and `evacuation_zones_day_export.sql` then exported that short set as a
-    full snapshot. Nothing downstream reads `truncated`.
+    of the statewide picture, and `evacuation_zones_day_export.sql` (deleted 2026-09-06) then
+    exported that short set as a full snapshot. Nothing downstream reads `truncated`.
 
     For a version-stamped full-snapshot lane there is no honest way to publish a partial population:
     the snapshot IS the claim "these are all the currently-published Oregon OEM evacuation areas".

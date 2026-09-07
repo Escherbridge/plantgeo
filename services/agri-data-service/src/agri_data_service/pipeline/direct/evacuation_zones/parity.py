@@ -9,8 +9,9 @@ and row the PostgreSQL relation holds. Under-coverage is a blocker, not a note."
 WHY THIS RECEIPT COUNTS KEYS AND NOT DAYS, unlike `drought/parity.py`'s. Drought is a
 `release_series`: Postgres holds 209 dated releases and Parquet must hold all 209. This lane is a
 `static_lookup` -- Postgres holds ONE population, refreshed in place, with no day dimension at all
-(`sql/pipeline/evacuation_zones_day_export.sql`'s header: "Postgres holds no record of what was
-published on any day but today"). "Every day Postgres holds" is therefore one day, and the whole
+(the deleted `sql/pipeline/evacuation_zones_day_export.sql`'s header, quoted here because it is gone:
+"Postgres holds no record of what was published on any day but today"). "Every day Postgres
+holds" is therefore one day, and the whole
 comparison is a set comparison over `natural_key`.
 
 THE JOIN THIS QUERY DOES NOT MAKE. The export SQL LEFT JOINs `geo.geometry`; this one does not, and
@@ -69,11 +70,13 @@ if TYPE_CHECKING:
 #: either way; a sample is what makes a shortfall diagnosable without printing 651 keys.
 MISSING_SAMPLE_SIZE: Final = 25
 
-#: THE PREDICATES ARE TRANSCRIBED from `sql/pipeline/evacuation_zones_day_export.sql:79-82`, and must
-#: stay transcribed: a parity query over a different population than the export wrote would either
-#: invent a shortfall or hide one. `lane_watermark_evacuation_zones.sql` transcribed the identical
-#: four predicates until it was deleted on 2026-09-06 with the watermark swap, so this is now the
-#: last reader of that population and the only place the transcription can still drift. The
+#: THE PREDICATES WERE TRANSCRIBED from `sql/pipeline/evacuation_zones_day_export.sql:79-82`. BOTH
+#: SOURCES OF THAT TRANSCRIPTION ARE NOW GONE -- `lane_watermark_evacuation_zones.sql` was deleted on
+#: 2026-09-06 with the watermark swap, and the day-export file itself was deleted later the same day
+#: with the Postgres exporter that loaded it -- SO THIS IS THE LAST COPY of the four predicates.
+#: There is no second definition left to stay identical to: an edit here silently redefines what
+#: "the Postgres side of evacuation-zones" means, and a parity query over a different population than
+#: the export wrote would either invent a shortfall or hide one. The
 #: `geo.layers` join is not optional -- `layer.name` and `layer.is_public` are two of the four
 #: predicates -- so this is two tables rather than the one `drought/parity.py` needed.
 _POSTGRES_PUBLISHED_ZONES_SQL: Final = text(

@@ -390,8 +390,11 @@ _SOURCE_DIRECT_SLUGS: Final[frozenset[str]] = frozenset(_DIRECT_WRITER_BY_SLUG)
 #:
 #: The 2026-09-06 wave-B join adds five more of exactly that shape -- fire-perimeters, sensors,
 #: watersheds, evacuation-zones and burn-severity. Every one of them ALSO had a real
-#: `plantgeo-ingest-cron` (or, for watersheds, a legacy-owner-free `postgres-watersheds`) producer, so
-#: they belong here and not in `_DIRECT_WRITER_BY_SLUG` for the identical reason. NONE of them carries
+#: `plantgeo-ingest-cron` (or, for watersheds, a legacy-owner-free `postgres-watersheds`, now itself
+#: deleted) producer, so they belong here and not in `_DIRECT_WRITER_BY_SLUG` for the identical
+#: reason -- watersheds included: `parquet-watersheds` still EXISTS as a spec (one is generated for
+#: every `LaneRegistration`) and must still refuse to run beside its direct sibling, even though its
+#: adapter now refuses on its own. NONE of them carries
 #: a `writer_ceiling` on its registration and none can: three are `static_lookup` (a version-stamped
 #: lane has no calendar window to divide between two writers -- `LaneRegistration.__post_init__`
 #: refuses one outright), `sensors` ships no cited ownership-boundary day, and `burn-severity`'s
@@ -472,7 +475,7 @@ def _parquet_spec(slug: str) -> LaneExecutionSpec:
     )
 
 
-#: The FIVE surviving PostgreSQL forward-ingestion lanes, and why exactly five.
+#: The FOUR surviving PostgreSQL forward-ingestion lanes, and why exactly four.
 #:
 #: `postgres-firms`, `postgres-streamflow`, `postgres-weather`, `postgres-drought` and
 #: `postgres-vegetation` WERE HERE AND ARE DELETED (owner directive 2026-09-06, "the ingestion should
@@ -482,15 +485,27 @@ def _parquet_spec(slug: str) -> LaneExecutionSpec:
 #: `ingest-streamflow`, `ingest-weather`, `ingest-drought`, `ingest-ndvi`) and the job functions
 #: behind them are deleted with them; see `ingest/AGENTS.md`.
 #:
-#: The five below stay because deleting them would STOP a layer rather than finish its cutover.
-#: fire-perimeters, sensors, evacuation-zones and watersheds DID get a direct-to-Parquet writer in the
-#: 2026-09-06 wave-B join (`_MIGRATION_INPUT_SPECS` below), but every one of those lanes ships SHADOW,
-#: so the generic `parquet-*` exporter -- which reads `geo.features` -- is still the only writer each
-#: of those object streams actually has, and `postgres-geometry-repair` still links the `geo.geometry`
-#: rows those same exporters join through. There is a second reason beyond that: `parity.py` proves a
-#: direct writer's output AGAINST what PostgreSQL holds, so the Postgres producer has to keep running
-#: through the whole parity bake, which is why no direct lane declares `conflicts_with` against one.
-#: All five are `shadow` today; the code goes when its layer's direct lane is activated and proven.
+#: `postgres-watersheds` WAS HERE AND IS DELETED (2026-09-06, second wave). Its direct writer
+#: `watersheds-direct-forward` was proven against production and activated, and BOTH registry fields
+#: for that lane already read NHDPlus_HR rather than `geo.features` -- so unlike the four below, its
+#: generic `parquet-watersheds` sibling no longer exports anything and nothing was left for the
+#: producer to feed. The `ingest-watersheds` verb, `run_watersheds_ingestion_job`,
+#: `pipeline/lanes/watersheds.py` and `sql/pipeline/watersheds_day_export.sql` went with it; the
+#: removal packet is under
+#: `conductor/tracks/environmental_postgres_retirement_20260904/evidence/`.
+#:
+#: The four below stay because deleting them would STOP a layer rather than finish its cutover.
+#: fire-perimeters, sensors and evacuation-zones DID get a direct-to-Parquet writer in the 2026-09-06
+#: wave-B join (`_MIGRATION_INPUT_SPECS` below), but the generic `parquet-*` exporter -- which reads
+#: `geo.features` -- is still a live writer for each of those object streams, and
+#: `postgres-geometry-repair` still links the `geo.geometry` rows those same exporters join through.
+#: `postgres-evacuation-zones` has one further reason of its own: its job function is also called by
+#: `ingest/runner.py::run_all_ingestion_jobs`, so retiring it is a behaviour change to the
+#: `ingest-all` macro rather than a code removal, and it needs an owner. There is a second reason
+#: beyond all of that: `parity.py` proves a direct writer's output AGAINST what PostgreSQL holds, so
+#: the Postgres producer has to keep running through the whole parity bake, which is why no direct
+#: lane declares `conflicts_with` against one. All four are `shadow` today; the code goes when its
+#: layer's direct lane is activated and proven, exactly as watersheds' just did.
 _POSTGRES_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
     _postgres_spec("postgres-fire-perimeters", "ingest-fire-perimeters", "fire-perimeters"),
     _spec(
@@ -511,19 +526,6 @@ _POSTGRES_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
         publication_lag_days=0,
         publication_cadence_days=1,
         description="Independent repair of continuously arriving unlinked feature geometry.",
-    ),
-    _spec(
-        "postgres-watersheds",
-        command=("agri-service", "data", "ingest-watersheds"),
-        legacy_owners=(),
-        required_handoffs=(),
-        cadence_seconds=86400,
-        phase_offset_seconds=7200,
-        schedule="0 2 * * *",
-        publication_lag_days=_registration("watersheds")[0],
-        publication_cadence_days=_registration("watersheds")[1],
-        publication_lag_source="pipeline/parquet/lane_registry.py watersheds contract",
-        description="Previously unscheduled WBD snapshot refresh, visible without a fabricated legacy owner.",
     ),
 )
 
@@ -881,9 +883,12 @@ _MIGRATION_INPUT_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
             "this description used to say activation still owed LANDED 2026-09-06: "
             "LANE_REGISTRY['watersheds'] now carries a source-direct refusal and a watermark reading "
             "NHDPlus_HR's own loaddate, so neither half depends on geo.features any longer and the "
-            "census cannot freeze when postgres-watersheds stops. DAILY at 03:00, one hour after the "
-            "postgres-watersheds lane whose cadence it "
-            "mirrors: one turn is the same ~9,400-basin, ~47-request NHDPlus_HR walk the export itself "
+            "census cannot freeze when postgres-watersheds stops -- and it HAS stopped: that lane, its "
+            "ingest-watersheds verb and the Postgres exporter behind it were deleted on 2026-09-06, so "
+            "this is now the ONLY writer of the watersheds stream. DAILY at 03:00, one hour after the "
+            "02:00 slot the deleted postgres-watersheds lane held, a phase kept so the parity receipt "
+            "and any operator re-run never open the same fetch minute: one turn is the same "
+            "~9,400-basin, ~47-request NHDPlus_HR walk the export itself "
             "performs, against a national reference layer measured to hold exactly ONE load day in its "
             "whole history, so an hourly slot would pay that walk 24 times a day to detect a change "
             "that has happened once. Shadow until activated."

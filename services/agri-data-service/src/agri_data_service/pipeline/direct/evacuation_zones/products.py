@@ -29,9 +29,10 @@ from agri_data_service.warehouse.schemas.evacuation_zones import EVACUATION_ZONE
 EVACUATION_ZONES_DIRECT_KIND: Final = "observed"
 
 #: Restated rather than imported from `pipeline/lanes/evacuation_zones.py:36`, which this package
-#: replaces and which is scheduled for deletion: importing a constant out of a module being removed
-#: is how a "just delete the old lane" push turns into a broken import. The number and its reasoning
-#: are unchanged -- this layer has never been censused for polygon byte size
+#: replaced and WHICH WAS DELETED ON 2026-09-06: importing a constant out of a module being removed
+#: is how a "just delete the old lane" push turns into a broken import, and this restatement is what
+#: made that deletion a no-op here. The number and its reasoning are unchanged -- this layer has
+#: never been censused for polygon byte size
 #: (`docs/lanes/evacuation-zones.md` section 5), and the closest measured precedent (burn-severity)
 #: hid 37.5 MB in 541 rows, so one part file is bounded by row count until a real byte census exists.
 MAX_ROWS_PER_PART: Final = 200

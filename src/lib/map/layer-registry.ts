@@ -250,9 +250,10 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
   // USGS WBD HUC12 boundaries, drawn from the `watersheds` Parquet lane through
   // `environmental.getWatershedBoundaries` rather than by proxying environmental.getWatersheds per
   // viewport. 0017_watershed_persistence gave them a geo.layers row and a tile function, and
-  // `agri-service data ingest-watersheds` persists 9,396 PNW basins keyed by HUC12 code; the lane
-  // exports that same set as one full snapshot per release day, so the name claimed here is still
-  // the layer this toggle actually draws.
+  // `agri-service data ingest-watersheds` persisted 9,396 PNW basins keyed by HUC12 code until that
+  // verb was deleted on 2026-09-06; the `watersheds-direct-forward` lane now fetches the same set
+  // from NHDPlus_HR and writes one full Parquet snapshot per release day, so the name claimed here
+  // is still the layer this toggle actually draws.
   //
   // The proxy could never draw at an ordinary zoom: it caps a request at 1 square degree
   // (MAX_WATERSHED_BBOX_SQUARE_DEGREES in src/lib/server/services/hydrosheds.ts) while the

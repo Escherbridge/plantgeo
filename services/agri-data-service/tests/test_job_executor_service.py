@@ -60,9 +60,15 @@ _EXPECTED_REGISTRATION_COUNT = 32
 #
 # 62 after the 2026-09-06 wave-B join added five more direct writers -- fire-perimeters, sensors,
 # watersheds, evacuation-zones and burn-severity -- every one of them SHADOW. The count went up and the
-# `postgres-*` count did NOT go down, and that is the correct shape of this step: registering a writer
+# `postgres-*` count did NOT go down, and that is the correct shape of that step: registering a writer
 # and retiring the producer it replaces are two different pushes, and the second needs an owner.
-_EXPECTED_SPEC_COUNT = 62
+#
+# 61 once the owner authorised the second push for watersheds: `watersheds-direct-forward` was proven
+# against production and activated, so `postgres-watersheds` was DELETED with its `ingest-watersheds`
+# verb, its job function, its Postgres exporter and that exporter's SQL. `parquet-watersheds` is NOT
+# deleted with it and cannot be -- one generic spec is generated per `LaneRegistration`, and
+# `watersheds-direct-forward.conflicts_with` names it -- so the parquet count is untouched at 32.
+_EXPECTED_SPEC_COUNT = 61
 _DIRECT_FIRE_OWNER = "plantgeo-fire-detections-forward"
 _DIRECT_WATER_OWNER = "plantgeo-water-gauges-forward"
 
@@ -141,8 +147,16 @@ def test_registry_splits_ingest_parquet_and_jobs_pulse_failure_domains() -> None
     assert LANE_SPECS["vegetation-catch-up"].legacy_owners == (_INGEST_OWNER,)
     assert LANE_SPECS["parquet-vegetation"].command is not None
     assert "parquet-gap-fill" in LANE_SPECS["parquet-vegetation"].command
-    assert LANE_SPECS["postgres-watersheds"].legacy_owners == ()
-    assert LANE_SPECS["postgres-watersheds"].executable
+    # `postgres-watersheds` was asserted here (legacy-owner-free and executable) until 2026-09-06.
+    # It is deleted: `watersheds-direct-forward` is the only writer of the stream now, and unlike the
+    # deletion above its generic sibling SURVIVES, because every `LaneRegistration` still generates one.
+    assert "postgres-watersheds" not in LANE_SPECS
+    assert LANE_SPECS["watersheds-direct-forward"].command == (
+        "python",
+        "-m",
+        "agri_data_service.pipeline.direct.watersheds",
+    )
+    assert "parquet-watersheds" in LANE_SPECS
 
 
 def test_every_parquet_stream_has_one_bounded_registered_command() -> None:
@@ -307,7 +321,9 @@ def test_activation_fails_closed_on_unknown_missing_extra_and_inactive_acknowled
 
 
 def test_selected_lane_without_declared_acknowledgements_needs_only_the_allow_list() -> None:
-    lane_id = "postgres-watersheds"
+    # Was `postgres-watersheds` until that lane was deleted on 2026-09-06. Its replacement carries the
+    # same shape this test needs: `legacy_owners=()`, so `required_handoff_acknowledgements` is empty.
+    lane_id = "watersheds-direct-forward"
     activation = parse_activation(
         {
             ACTIVE_LANES_VARIABLE: lane_id,
@@ -667,15 +683,17 @@ def test_the_five_wave_b_direct_writers_take_distinct_slots_sized_to_their_own_s
         assert (spec.cadence_seconds, spec.phase_offset_seconds) == (3600, offset), lane_id
 
     watersheds = LANE_SPECS["watersheds-direct-forward"]
-    postgres_watersheds = LANE_SPECS["postgres-watersheds"]
     assert (watersheds.cadence_seconds, watersheds.schedule) == (86400, "0 3 * * *"), (
         "one turn is the same ~9,400-basin NHDPlus_HR walk the export performs, against a layer measured "
         "to hold exactly one load day in its history: hourly would pay it 24 times a day for nothing"
     )
-    assert watersheds.cadence_seconds == postgres_watersheds.cadence_seconds
-    assert watersheds.phase_offset_seconds == postgres_watersheds.phase_offset_seconds + 3600, (
-        "one hour after the Postgres lane it mirrors, so the two never open the same fetch minute "
-        "during the parity bake, when both are meant to be running"
+    # Both halves of this used to be read off `LANE_SPECS["postgres-watersheds"]`, which was deleted on
+    # 2026-09-06. The literals are that lane's own cadence (86400) and phase (7200) plus the hour of
+    # offset, kept so an operator re-run or a parity receipt never opens the same fetch minute.
+    assert watersheds.cadence_seconds == 86400
+    assert watersheds.phase_offset_seconds == 7200 + 3600, (
+        "one hour after the 02:00 slot the deleted Postgres lane held, so nothing re-reading NHDPlus_HR "
+        "by hand collides with the scheduled walk"
     )
 
     burn_severity = LANE_SPECS["burn-severity-direct-forward"]
@@ -741,7 +759,10 @@ def test_complete_ingest_owner_cutover_is_still_accepted() -> None:
     lanes = _owned_executable_lanes(_INGEST_OWNER)
     activation = parse_activation(_activation_environment(*lanes))
     assert activation.active_lanes == frozenset(lanes)
-    assert "postgres-watersheds" not in activation.active_lanes
+    # A legacy-owner-free lane is never dragged in by an owner-scoped activation. This named
+    # `postgres-watersheds` until that lane was deleted on 2026-09-06; its direct replacement carries
+    # the same `legacy_owners=()`, so the claim is still tested rather than trivially true.
+    assert "watersheds-direct-forward" not in activation.active_lanes
     assert "parquet-water-gauges" in activation.active_lanes
     assert "vegetation-catch-up" in activation.active_lanes
 
@@ -1492,7 +1513,9 @@ async def test_scheduler_refuses_single_lane_ticks_before_touching_the_database(
 async def test_planning_reapplies_statement_timeout_after_every_transaction_boundary(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    lane_id = "postgres-watersheds"
+    # Was `postgres-watersheds` until 2026-09-06; its direct replacement holds the same daily cadence
+    # this test plans two buckets against.
+    lane_id = "watersheds-direct-forward"
     spec = LANE_SPECS[lane_id]
     definition = _definition(spec.definition_name)
     specs = MappingProxyType({lane_id: spec})

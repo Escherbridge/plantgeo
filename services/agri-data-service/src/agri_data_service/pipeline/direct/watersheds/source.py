@@ -45,9 +45,10 @@ class WatershedsSourceError(RuntimeError):
 
 @dataclass(frozen=True, slots=True)
 class WatershedRecord:
-    """One accepted HUC12 basin: `ingest/watersheds.py::build_watershed_write`'s own field set, minus
-    the two columns that only ever exist on a `geo.features` row (`feature_id`, `data_available_at`)
-    -- a direct fetch has neither, and `rows.py` writes both honestly NULL rather than inventing them.
+    """One accepted HUC12 basin: the field set `ingest/watersheds.py::build_watershed_write` wrote to
+    `geo.features` (deleted 2026-09-06, so THIS IS NOW THE LAST COPY), minus the two columns that only
+    ever existed on a `geo.features` row (`feature_id`, `data_available_at`) -- a direct fetch has
+    neither, and `rows.py` writes both honestly NULL rather than inventing them.
     """
 
     huc12: str
@@ -82,11 +83,13 @@ def _optional_float(value: object) -> float | None:
 
 
 def _accept(feature: Mapping[str, object]) -> WatershedRecord | None:
-    """Mirror `build_watershed_write`'s own field mapping and rejection rule, minus the two Postgres-only fields.
+    """Mirror the deleted `build_watershed_write`'s field mapping and rejection rule, minus the
+    two Postgres-only fields.
 
-    Rejects on the identical condition that function does -- no `properties`/`geometry` dict, or no
-    parseable `huc12` -- by delegating to the SAME `build_watershed_identity` it calls, rather than
-    restating `MissingNativeKeyError`'s trigger a second time.
+    Rejects on the identical condition that function did -- no `properties`/`geometry` dict, or no
+    parseable `huc12` -- by delegating to the SAME `build_watershed_identity` it called, which is why
+    that function was kept when the rest of the Postgres writer was deleted on 2026-09-06: the
+    rejection rule has one definition, here, and `MissingNativeKeyError`'s trigger is never restated.
     """
     properties = feature.get("properties")
     geometry = feature.get("geometry")

@@ -44,9 +44,10 @@ if TYPE_CHECKING:
 # The only stream this lane ever writes (`horizon: none`, docs/lanes/watersheds.md section 7).
 _OBSERVED_KIND: Final = "observed"
 
-# Standard OGC WKB geometry-type codes. No SRID flag is checked: `ST_AsBinary` (sql/pipeline/
-# watersheds_day_export.sql) emits plain WKB, which carries no SRID header at all -- SRID 4326 is
-# this lane's own known-out-of-band contract, never encoded in the bytes themselves.
+# Standard OGC WKB geometry-type codes. No SRID flag is checked: the writer emits plain WKB
+# (`pipeline/direct/watersheds/support.py`'s `ST_AsWKB`, and `ST_AsBinary` in the deleted
+# sql/pipeline/watersheds_day_export.sql before it), which carries no SRID header at all -- SRID 4326
+# is this lane's own known-out-of-band contract, never encoded in the bytes themselves.
 _WKB_POLYGON_TYPE: Final = 3
 _WKB_MULTIPOLYGON_TYPE: Final = 6
 _WKB_LITTLE_ENDIAN_FLAG: Final = 1

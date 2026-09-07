@@ -15,15 +15,21 @@ DELETED, not merely unused"), applied to the ingestion path.
 | `ingest-weather`, `open_meteo.py::run_weather_ingestion_job`, `build_weather_write`, `OPEN_METEO_SOURCE` | weather-observations | `pipeline/direct/weather_observations/` |
 | `ingest-drought` + `ingest-drought-history`, `usdm.py::PostgresDroughtStore`/`run_drought_ingestion_job`/`DroughtStore`/retention, the whole `usdm_history.py` walk, `sql/ingest/store_drought_area.sql`, `sql/ingest/prune_drought_releases.sql` | drought | `pipeline/direct/drought/` |
 | `ingest-ndvi` (`ndvi.py`, whole module), `vegetation.py::build_vegetation_source` + its `IngestionSource` composition, `VEGETATION_SOURCE` | vegetation | `pipeline/direct/vegetation/` |
+| `ingest-watersheds`, `watersheds.py::run_watersheds_ingestion_job`, `build_watershed_write`, `WATERSHEDS_SOURCE`, `pipeline/lanes/watersheds.py`, `sql/pipeline/watersheds_day_export.sql`, lane `postgres-watersheds` | watersheds | `pipeline/direct/watersheds/` (second wave, 2026-09-06 -- see the removal packet under `conductor/tracks/environmental_postgres_retirement_20260904/evidence/`) |
 
-**Kept, and why — this is the load-bearing half.** The four `ingest-*` verbs that remain
-(`ingest-fire-perimeters`, `ingest-sensors`, `ingest-evacuation-zones`, `ingest-watersheds`, plus
-`ingest-mtbs` and `ingest-geometry-repair`) are NOT survivors of an oversight. Their layers have **no**
-direct-to-Parquet writer at all — track waves B4-B8 are unstarted — and their generic `parquet-*`
-exporters read `geo.features` (`sql/pipeline/{fire_perimeters,sensors,evacuation_zones,watersheds,
-burn_severity}_day_export.sql`). Deleting their producers would not finish the cutover; it would stop
-the layer. `ingest-geometry-repair` stays for the same reason: those exporters join `geo.geometry`,
-which nothing else maintains.
+**Kept, and why — this is the load-bearing half.** The `ingest-*` verbs that remain
+(`ingest-fire-perimeters`, `ingest-sensors`, `ingest-evacuation-zones`, plus `ingest-mtbs` and
+`ingest-geometry-repair`) are NOT survivors of an oversight. Their generic `parquet-*` exporters read
+`geo.features` (`sql/pipeline/{fire_perimeters,sensors,burn_severity}_day_export.sql`), so deleting
+their producers would not finish the cutover; it would stop the layer. `ingest-geometry-repair` stays
+for the same reason: those exporters join `geo.geometry`, which nothing else maintains.
+
+`ingest-evacuation-zones` is the one exception whose reason has changed. Its layer DOES now have a
+direct-to-Parquet writer (`pipeline/direct/evacuation_zones/`, activated 2026-09-06), and its export
+SQL and Postgres exporter were deleted with the watersheds wave — but `run_evacuation_zones_ingestion_job`
+is STILL CALLED by `ingest/runner.py:48`, inside the `ingest-all` macro, so it is not dead code. Cutting
+it is a behaviour change to `run_all_ingestion_jobs`, not a removal, and it needs an owner. That is the
+single named blocker in the 2026-09-06 removal packet.
 
 **What did NOT get deleted from the shared modules, and why.** `firms.py`, `usgs_nwis.py`,
 `open_meteo.py`, `usdm.py`, `usdm_history.py` and `vegetation.py` are all still here, because the

@@ -1,9 +1,13 @@
 """Direct-to-Parquet Oregon OEM evacuation-zone writer: source, geometry repair, forward publication.
 
-Replaces `pipeline/lanes/evacuation_zones.py::export_evacuation_zones_day` (which read `geo.features`
-and LEFT JOINed `geo.geometry`) and `ingest/evacuation_zones.py::run_evacuation_zones_ingestion_job`
-(which wrote them). Neither this package nor anything it imports writes PostgreSQL; `parity.py` is
-the only module that reads it.
+Replaced `pipeline/lanes/evacuation_zones.py::export_evacuation_zones_day` (which read
+`geo.features` and LEFT JOINed `geo.geometry`); THAT MODULE AND ITS SQL WERE DELETED ON 2026-09-06.
+It also replaces `ingest/evacuation_zones.py::run_evacuation_zones_ingestion_job`, which WROTE those
+rows and WHICH IS STILL LIVE: `ingest/runner.py:48` keeps it in the `ingest-all` macro, so the
+Postgres producer is retained with that blocker named (see
+`conductor/tracks/environmental_postgres_retirement_20260904/evidence/removal-packet-watersheds-evacuation-zones-20260906.md`).
+Neither this package nor anything it imports writes PostgreSQL; `parity.py` is the only module that
+reads it.
 
 STATUS: REGISTERED since 2026-09-06, both halves in one edit. `LANE_REGISTRY['evacuation-zones']`
 carries a source-direct refusal naming this package as its adapter and `watermark.py` as its

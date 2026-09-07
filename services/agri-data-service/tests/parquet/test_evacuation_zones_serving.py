@@ -26,7 +26,6 @@ from agri_data_service.planes.evacuation_zones import (
     resolve_evacuation_zones_as_of,
 )
 from agri_data_service.warehouse.schemas.evacuation_zones import EVACUATION_ZONES_SCHEMA, EVACUATION_ZONES_STREAM
-from tests.parquet.test_evacuation_zones_lane import zone_row
 from tests.parquet.test_objectstore_writer import (
     BASE_TIER,
     DETAIL_TIER,
@@ -45,6 +44,44 @@ BASE_TIER_REQUEST = BASE_TIER
 HISTORY_FLOOR = date(2026, 7, 1)
 AUGUST_FIRST = date(2026, 8, 1)
 AUGUST_SIXTH = date(2026, 8, 6)
+
+
+def zone_row(index: int) -> dict[str, object]:
+    """One exported grain row, shaped exactly as the retired SQL export's column list returned it.
+
+    MOVED HERE 2026-09-06 from `test_evacuation_zones_lane.py`, which was deleted along with the
+    Postgres exporter it covered. This file is a SERVING test -- it reads what the plane publishes
+    and has no stake in which writer produced it -- so the fixture outlives the exporter and belongs
+    beside its only remaining reader, rather than keeping a whole test module alive to host it.
+    """
+    global_id = f"{index:04d}"
+    return {
+        "global_id": global_id,
+        "natural_key": f"or-oem-evacuation-areas:{global_id}",
+        "producer": "or-oem-evacuation-areas",
+        "snapshot_day": AUGUST_SIXTH,
+        "evacuation_area_name": f"Zone {global_id}",
+        "fire_name": "Test Fire",
+        "county": "Jackson",
+        "hazard_type": "Wildfire",
+        "evacuation_level": 2,
+        "evacuation_level_label": "Be Set",
+        "severity": "high",
+        "structures_within": 12.0,
+        "addresses_within": 8.0,
+        "population_within": 20.0,
+        "editor_name": "oem-editor",
+        "observed_at": datetime(2026, 8, 5, 10, tzinfo=UTC),
+        "source": "Oregon OEM Fire Evacuation Areas",
+        "geometry_wkb": b"wkb-bytes",
+        "geometry_version_id": "11111111-1111-1111-1111-111111111111",
+        "geometry_version_valid_from": datetime(2026, 8, 1, tzinfo=UTC),
+        "geometry_last_confirmed_at": datetime(2026, 8, 6, 9, tzinfo=UTC),
+        "data_available_at": None,
+        "feature_updated_at": datetime(2026, 8, 6, 9, tzinfo=UTC),
+    }
+
+
 AUGUST_TENTH = date(2026, 8, 10)
 TWO_ZONES = 2
 

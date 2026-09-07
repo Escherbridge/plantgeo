@@ -1,43 +1,32 @@
-"""USGS WBD HUC12 ingestion: id-batched fetching, the loaddate as the observation day, and snapshot identity."""
+"""USGS WBD HUC12 source adapter: id-batched fetching, the loaddate as the observation day, and snapshot identity.
+
+THE POSTGRES-WRITING HALF OF THIS SUITE WAS DELETED ON 2026-09-06 with the code it exercised.
+`test_a_write_carries_observed_at_...`, `test_an_undated_basin_is_written_...`,
+`test_a_feature_with_no_huc12_is_rejected_...`, `test_the_job_skips_rather_than_querying_the_world_...`
+and `test_the_job_applies_no_record_cap_...` covered `build_watershed_write` and
+`run_watersheds_ingestion_job`, which no longer exist; the `RecordingWriter` they shared went with
+them. What remains covers the surface `pipeline/direct/watersheds/` fetches through, and the
+equivalent direct-writer behaviours are pinned in `tests/direct/test_watersheds_direct_*.py`.
+"""
 
 # ruff: noqa: PLR2004
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
 
 import httpx
 import pytest
 
 from agri_data_service.ingest.watersheds import (
-    WATERSHEDS_SOURCE,
     build_watershed_identity,
-    build_watershed_write,
     fetch_watersheds,
     parse_load_date,
-    run_watersheds_ingestion_job,
 )
-
-if TYPE_CHECKING:
-    from collections.abc import Sequence
-
-    from agri_data_service.ingest.writer import FeatureWrite
 
 # Captured 2026-08-07 from NHDPlus_HR layer 12. `loaddate` really is epoch MILLISECONDS, and
 # `states` really is null on these rows -- both are what the parser is written around.
 SANDY_RIVER_LOAD_DATE_MS = 1358492970000
-
-
-class RecordingWriter:
-    """A feature writer that records what a job handed it, so a job test needs no database."""
-
-    def __init__(self) -> None:
-        self.writes: list[FeatureWrite] = []
-
-    async def __call__(self, writes: Sequence[FeatureWrite]) -> int:
-        self.writes = list(writes)
-        return len(self.writes)
 
 
 def _feature(huc12: str, *, load_date: object = SANDY_RIVER_LOAD_DATE_MS) -> dict[str, object]:
@@ -92,33 +81,6 @@ def test_a_basin_is_keyed_by_its_huc12_alone_so_a_rerun_refreshes_it_in_place() 
     assert identity.observed_at == datetime(2013, 1, 18, 7, 9, 30, tzinfo=UTC)
 
 
-def test_a_write_carries_observed_at_so_the_read_model_can_date_it() -> None:
-    write = build_watershed_write(_feature("170800010702"), "watersheds")
-    assert write is not None
-
-    # The read model dates every row from COALESCE(observedAt, updatedAt, polygonDateTime), and
-    # `loaddate` is in none of them -- without this key the layer reports "Not yet observed" at
-    # every date forever.
-    assert str(write.properties["observedAt"]).startswith("2013-01-18")
-    assert write.properties["huc12"] == "170800010702"
-    # The layer's own lowercase GeoJSON spellings, which hover-fields.ts already reads.
-    assert write.properties["areasqkm"] == 42.83
-    assert write.properties["hutype"] == "S"
-    assert write.properties["geometry"]["type"] == "Polygon"  # type: ignore[index]
-
-
-def test_an_undated_basin_is_written_without_acquiring_a_clock_reading() -> None:
-    write = build_watershed_write(_feature("170800010702", load_date=None), "watersheds")
-    assert write is not None
-    assert "observedAt" not in write.properties
-
-
-def test_a_feature_with_no_huc12_is_rejected_rather_than_keyed_on_nothing() -> None:
-    feature = _feature("170800010702")
-    feature["properties"]["huc12"] = ""  # type: ignore[index]
-    assert build_watershed_write(feature, "watersheds") is None
-
-
 @pytest.mark.asyncio
 async def test_geometry_is_fetched_by_explicit_object_ids_rather_than_by_offset() -> None:
     seen: list[str] = []
@@ -149,36 +111,3 @@ async def test_an_arcgis_fault_behind_http_200_fails_the_job_rather_than_reporti
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(Exception, match="error object"):
             await fetch_watersheds(client, "-125,42,-111,49")
-
-
-@pytest.mark.asyncio
-async def test_the_job_skips_rather_than_querying_the_world_without_a_bbox() -> None:
-    writer = RecordingWriter()
-    result = await run_watersheds_ingestion_job(writer, bbox=None)
-
-    assert result.source == WATERSHEDS_SOURCE
-    assert result.status == "skipped"
-    assert writer.writes == []
-
-
-@pytest.mark.asyncio
-async def test_the_job_applies_no_record_cap_because_boundaries_are_a_closed_set() -> None:
-    ids = list(range(1, 21))
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        if "returnIdsOnly=true" in str(request.url):
-            return httpx.Response(200, json={"objectIds": ids})
-        return httpx.Response(
-            200,
-            json={"type": "FeatureCollection", "features": [_feature(f"1708000107{n:02d}") for n in ids]},
-        )
-
-    writer = RecordingWriter()
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        result = await run_watersheds_ingestion_job(writer, bbox="-125,42,-111,49", client=client)
-
-    # A cap bounds an unbounded observation stream. This is a closed set of national boundaries, and
-    # truncating it leaves permanent holes in a basin map rather than dropping the oldest of a feed.
-    assert result.status == "ingested"
-    assert result.truncated is False
-    assert len(writer.writes) == 20

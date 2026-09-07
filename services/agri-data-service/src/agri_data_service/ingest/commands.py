@@ -61,7 +61,6 @@ from agri_data_service.ingest.validation import (
     build_validation_report,
 )
 from agri_data_service.ingest.vegetation import COG_BOUNDS
-from agri_data_service.ingest.watersheds import WATERSHEDS_SOURCE, run_watersheds_ingestion_job
 from agri_data_service.ingest.wfigs import WFIGS_SOURCE, run_fire_perimeters_ingestion_job
 from agri_data_service.ingest.writer import MissingIngestionLayerError, bind_feature_writer
 from agri_data_service.jobs import (
@@ -157,27 +156,6 @@ def ingest_evacuation_zones(context: click.Context, bbox: str | None) -> None:
             _run_with_feature_writer(
                 EVACUATION_ZONES_SOURCE,
                 lambda write_features: run_evacuation_zones_ingestion_job(write_features, bbox=bbox),
-            )
-        )
-    ]
-    finish(context, results)
-
-
-@click.command("ingest-watersheds")
-@click.option("--bbox", default=None, help="Override INGEST_BBOX as west,south,east,north.")
-@click.pass_context
-def ingest_watersheds(context: click.Context, bbox: str | None) -> None:
-    """Ingest USGS WBD HUC12 watershed boundaries for the configured extent.
-
-    Run once, then only when USGS republishes the WBD. Boundaries are a snapshot keyed by the HUC12
-    code itself, so a re-run refreshes rows in place rather than accumulating versions -- there is no
-    backfill verb for this source because there is no series to walk.
-    """
-    results = [
-        asyncio.run(
-            _run_with_feature_writer(
-                WATERSHEDS_SOURCE,
-                lambda write_features: run_watersheds_ingestion_job(write_features, bbox=bbox),
             )
         )
     ]
@@ -1170,7 +1148,6 @@ INGEST_COMMANDS: tuple[click.Command, ...] = (
     ingest_fire_perimeters,
     ingest_sensors,
     ingest_evacuation_zones,
-    ingest_watersheds,
     ingest_mtbs,
     ingest_backfill,
     ingest_geometry_repair,

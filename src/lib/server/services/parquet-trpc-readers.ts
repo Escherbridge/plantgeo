@@ -1914,9 +1914,10 @@ export async function getParquetDrought(
  * Every published Oregon OEM evacuation area as of the requested day.
  *
  * `static_lookup`, and the export is a FULL re-snapshot per release day with no date predicate
- * (`sql/pipeline/evacuation_zones_day_export.sql:14-22`), so the newest release at or before the
- * day IS the standing set -- the same population `geo.evacuation_zone_tiles()` served, which that
- * export transcribes clause for clause. Nothing is carried forward and nothing is unioned: one
+ * (argued in `sql/pipeline/evacuation_zones_day_export.sql:14-22` until that file was deleted on
+ * 2026-09-06; the writer is now `pipeline/direct/evacuation_zones/`), so the newest release at or
+ * before the day IS the standing set -- the same population `geo.evacuation_zone_tiles()` served,
+ * which `pipeline/direct/evacuation_zones/parity.py` now transcribes clause for clause. Nothing is carried forward and nothing is unioned: one
  * release answers the whole layer.
  */
 export async function getParquetEvacuationZones(
@@ -2047,7 +2048,8 @@ export async function getParquetFirePerimeters(
  *
  * `static_lookup` and a full snapshot for the same reason evacuation zones are: the export carries
  * no date predicate at all, because a HUC12 boundary is re-keyed in place rather than resampled
- * (`sql/pipeline/watersheds_day_export.sql:13-22`). `hucLevel` is the code's own length, so a HUC6
+ * (argued in `sql/pipeline/watersheds_day_export.sql:13-22` until that file was deleted on
+ * 2026-09-06; the writer is now `pipeline/direct/watersheds/`). `hucLevel` is the code's own length, so a HUC6
  * rollup can never be captioned as a HUC12 -- the guarantee `geo.watershed_rollup.huc_level` made
  * as a stored column, made instead from the value it described.
  *

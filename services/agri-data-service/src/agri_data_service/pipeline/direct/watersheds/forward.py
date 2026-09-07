@@ -1,12 +1,13 @@
 """Publish the current NHDPlus_HR WBDHU12 snapshot directly, bypassing PostgreSQL entirely.
 
-Bypasses `pipeline/lanes/watersheds.py::export_watersheds_release` (the former `_fill_watersheds`
+Replaced `pipeline/lanes/watersheds.py::export_watersheds_release` (the former `_fill_watersheds`
 adapter) AND the Postgres watermark resolver that used to sit beside it, both of which read
-`geo.features`. This module is what makes `ingest/watersheds.py`'s `run_watersheds_ingestion_job` --
-and the `postgres-watersheds` lane that runs it -- deletable: once nothing writes `geo.features` for
-this layer any more, a Postgres-backed watermark reads stale or empty forever, so this writer
-computes its OWN watermark straight from the source's own `loaddate` (`source.py`), never from
-Postgres.
+`geo.features`; this module is what made them, `ingest/watersheds.py::run_watersheds_ingestion_job`
+and the `postgres-watersheds` lane that ran it deletable, and ALL OF THEM WERE DELETED ON 2026-09-06
+(`conductor/tracks/environmental_postgres_retirement_20260904/evidence/removal-packet-watersheds-evacuation-zones-20260906.md`).
+Once nothing writes `geo.features` for this layer any more, a Postgres-backed watermark reads stale
+or empty forever, so this writer computes its OWN watermark straight from the source's own
+`loaddate` (`source.py`), never from Postgres.
 
 BOTH REGISTRY FIELDS WERE SWAPPED ON 2026-09-06, in one edit, because neither could move alone:
 `LANE_REGISTRY[WATERSHEDS_STREAM].adapter` is now a source-direct refusal naming this package, and
@@ -187,8 +188,8 @@ async def run_watersheds_forward(config: WatershedsForwardConfig) -> dict[str, o
     """Publish the current NHDPlus_HR snapshot if the object store does not already hold its version.
 
     Never opens the object store at all when `INGEST_BBOX` is unconfigured -- the identical
-    before-any-network no-op `ingest/watersheds.py::run_watersheds_ingestion_job` and
-    `pipeline/direct/drought/forward.py`'s before-the-floor no-op both return.
+    before-any-network no-op the deleted `ingest/watersheds.py::run_watersheds_ingestion_job`
+    returned, and that `pipeline/direct/drought/forward.py`'s before-the-floor case still returns.
     """
     _validate_config(config)
     run_id = config.run_id or f"{WATERSHEDS_FORWARD_RUN_ID_PREFIX}{uuid.uuid4()}"

@@ -35,10 +35,10 @@ WATERSHEDS_STREAM: Final = "watersheds"
 # than minting a new one (ingest/watersheds.py:10-14), so huc12 alone is the whole grain.
 WATERSHEDS_GRAIN: Final[tuple[str, ...]] = ("huc12",)
 
-# Columns mirror exactly what `build_watershed_write` puts into geo.features
-# (services/agri-data-service/src/agri_data_service/ingest/watersheds.py:151-168) plus the two
-# columns native to the geo.features row itself (data_available_at, geom) and one column this
-# export adds (release_day). Not carried: geo.features.id / geo.layers.id -- warehouse-internal
+# Columns mirror exactly what the deleted `build_watershed_write` put into geo.features (removed
+# 2026-09-06; its field set now lives on `pipeline/direct/watersheds/source.py::WatershedRecord`)
+# plus the two columns native to the geo.features row itself (data_available_at, geom) and one column
+# the export adds (release_day). Not carried: geo.features.id / geo.layers.id -- warehouse-internal
 # surrogate keys with no meaning outside this Postgres instance, and huc12 already serves as the
 # lane's own durable identity.
 WATERSHEDS_SCHEMA: Final = register_stream_schema(
@@ -71,7 +71,9 @@ WATERSHEDS_SCHEMA: Final = register_stream_schema(
                 pa.field("data_available_at", pa.timestamp("us", tz="UTC"), nullable=True),
                 # The day THIS export represents -- a caller-supplied constant broadcast onto
                 # every row, not derived from any per-row column (see
-                # sql/pipeline/watersheds_day_export.sql). Distinct from `observed_at`: a static
+                # `pipeline/direct/watersheds/rows.py`'s `release_day` argument; the deleted
+                # sql/pipeline/watersheds_day_export.sql bound the identical constant). Distinct
+                # from `observed_at`: a static
                 # layer's one release day is not the same fact as any one basin's own vintage.
                 pa.field("release_day", pa.date32(), nullable=False),
                 # geo.features.id, kept for provenance back to the warehouse row; not part of

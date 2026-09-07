@@ -45,7 +45,8 @@
 --
 --   ST_AsBinary(geom) AS geom
 --     The polygon as well-known binary rather than GeoJSON text, this lane's chosen wire format
---     for geometry (matches watersheds_day_export.sql). WKB carries no coordinate-system header;
+--     for geometry (it matched watersheds_day_export.sql, deleted 2026-09-06; the surviving twin
+--     is pipeline/direct/watersheds/support.py's ST_AsWKB). WKB carries no coordinate-system header;
 --     every row in this stream is WGS 84, EPSG number 4326 -- the column's own declared type is
 --     geometry of kind MULTIPOLYGON in that reference system (drizzle/0007_governed_
 --     environmental_ingestion.sql, line 13), confirmed again by the write path's own SRID stamp

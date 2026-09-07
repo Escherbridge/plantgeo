@@ -6,15 +6,19 @@ empty of re-exports because pulling in a writer would close a cycle back through
 STATUS: REGISTERED since 2026-09-06, both halves in one edit. `LANE_REGISTRY[WATERSHEDS_STREAM]` now
 carries a source-direct refusal naming this package as its adapter, and `watermark.py` as its
 watermark; `sql/pipeline/lane_watermark_watersheds.sql` was deleted in the same edit. Nothing in the
-registry reads `geo.features` for this layer any more, which is what makes
-`ingest/watersheds.py::run_watersheds_ingestion_job` and the `postgres-watersheds` lane that calls it
-deletable -- see `parity.py` for the counted receipt a removal packet should read first.
+registry reads `geo.features` for this layer any more, and THE WHOLE POSTGRES SIDE IS NOW GONE:
+`ingest/watersheds.py::run_watersheds_ingestion_job`, `build_watershed_write`, the
+`ingest-watersheds` verb, `pipeline/lanes/watersheds.py`, `sql/pipeline/watersheds_day_export.sql`
+and the `postgres-watersheds` lane were all deleted on 2026-09-06 -- see
+`conductor/tracks/environmental_postgres_retirement_20260904/evidence/removal-packet-watersheds-evacuation-zones-20260906.md`,
+and `parity.py` for the counted receipt that packet reads first.
 
 The two fields had to move TOGETHER and could not be sequenced: `_watersheds_watermark` read
-`geo.features`, which `postgres-watersheds` was the only writer of, so swapping the adapter alone
-would have keyed a source-direct writer to a clock that stops advancing, and swapping the watermark
-alone would have left the Postgres export publishing under a version day it did not produce.
-`forward.py`'s module docstring records why the source's own `loaddate` is the honest replacement.
+`geo.features`, which the `postgres-watersheds` lane was the only writer of, so swapping the adapter
+alone would have keyed a source-direct writer to a clock that stops advancing, and swapping the
+watermark alone would have left the Postgres export publishing under a version day it did not
+produce. `forward.py`'s module docstring records why the source's own `loaddate` is the honest
+replacement.
 """
 
 from __future__ import annotations

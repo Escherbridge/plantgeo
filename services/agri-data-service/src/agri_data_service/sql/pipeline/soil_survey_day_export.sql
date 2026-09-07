@@ -13,12 +13,12 @@
 -- sql/AGENTS.md -- SQLAlchemy's text() scans comments too, and a colon-prefixed word here would
 -- mint a phantom bind parameter no caller supplies.
 --
--- THIS LANE IS STATIC, horizon: none (docs/lanes/soil-survey.md sections 2, 7). Like
--- watersheds_day_export.sql and unlike signal_plane_day_export.sql, there is no daily-resampled
--- axis to filter by: SSURGO issues no periodic re-observation, only a survey area's own
--- irregular republication (docs/lanes/soil-survey.md section 2). `release_day` is therefore a
--- caller-supplied constant broadcast onto every row, exactly like watersheds_day_export.sql's
--- own `release_day`, never a predicate here.
+-- THIS LANE IS STATIC, horizon: none (docs/lanes/soil-survey.md sections 2, 7). Like the deleted
+-- watersheds_day_export.sql (removed 2026-09-06) and unlike signal_plane_day_export.sql, there is
+-- no daily-resampled axis to filter by: SSURGO issues no periodic re-observation, only a survey
+-- area's own irregular republication (docs/lanes/soil-survey.md section 2). `release_day` is
+-- therefore a caller-supplied constant broadcast onto every row -- the same shape the watersheds
+-- writer still uses (pipeline/direct/watersheds/rows.py) -- never a predicate here.
 --
 -- GRAIN IS mupolygonkey, EXPLICITLY NOT mukey (docs/lanes/soil-survey.md section 4): one Boise
 -- viewport measured 683 delineations collapsing onto only 98 distinct mukeys
@@ -43,8 +43,8 @@
 -- geo.features rides ix_features_geometry_id. Both indexed, so this scopes cheaply to
 -- exactly the batch of delineations asked for, regardless of how large the full release is.
 -- docs/lanes/soil-survey.md section 5, point 8 measured the PNW envelope alone at 1,507,623
--- delineations -- an unscoped "read everything" query, the shape watersheds_day_export.sql
--- uses for its ~9,396-row national HUC12 set, is not a safe assumption at this lane's scale, so
+-- delineations -- an unscoped "read everything" query, the shape the watersheds lane uses for its
+-- ~9,396-row national HUC12 set, is not a safe assumption at this lane's scale, so
 -- this query is deliberately batch-scoped instead.
 SELECT
     g.natural_key::text AS natural_key,

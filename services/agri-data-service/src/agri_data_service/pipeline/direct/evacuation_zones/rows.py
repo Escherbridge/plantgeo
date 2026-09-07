@@ -1,9 +1,10 @@
 """Conform one Oregon OEM capture to `EVACUATION_ZONES_SCHEMA`, WKB-repaired through DuckDB spatial.
 
 WHAT THE RETIRED `geo.geometry` JOIN ACTUALLY CONTRIBUTED, since this module is what has to replace
-it. `sql/pipeline/evacuation_zones_day_export.sql:76-78` LEFT JOINs the Type-2 geometry dimension,
-but it does NOT read geometry from it: line 70 takes `ST_AsBinary(feature.geom)` off the FEATURE row,
-"the same column the tile function renders" (that file's own header, lines 37-40). The join
+it. `sql/pipeline/evacuation_zones_day_export.sql` (deleted 2026-09-06) LEFT JOINed the Type-2
+geometry dimension at its lines 76-78, but it did NOT read geometry from it: its line 70 took
+`ST_AsBinary(feature.geom)` off the FEATURE row, "the same column the tile function renders" (that
+file's own header, lines 37-40). The join
 contributes exactly three provenance columns, and each one is reproduced or refused below on its own
 terms:
 
@@ -183,8 +184,8 @@ def evacuation_zones_table(
 
     Returned already conformed and sorted to the registered grain (`snapshot_day`, `natural_key`) so
     that slicing it into parts afterwards preserves one global order across every part file -- the
-    same reason `pipeline/lanes/evacuation_zones.py::read_evacuation_zones_snapshot` conforms early
-    rather than leaving it to `write_partition`.
+    same reason the deleted `pipeline/lanes/evacuation_zones.py::read_evacuation_zones_snapshot`
+    conformed early rather than leaving it to `write_partition`.
     """
     carried_forward = dict(previous_updated_at or {})
     geometries: list[tuple[str, Mapping[str, object]]] = []

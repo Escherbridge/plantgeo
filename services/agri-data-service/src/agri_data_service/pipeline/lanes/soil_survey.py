@@ -140,7 +140,8 @@ async def export_soil_survey_release(
     lazily-warmed set still empty -- still makes exactly one `store.write_partition` call, with a
     zero-row table, so the writer's own `EmptyPartitionError` surfaces the governed absence rather
     than this function returning no receipts for a caller to misread as "nothing to export". That
-    is the same contract `export_watersheds_release` uses, for the same reason.
+    is the same contract the deleted `export_watersheds_release` used (`pipeline/lanes/watersheds.py`,
+    removed 2026-09-06) and that `pipeline/direct/watersheds/rows.py` still keeps, for the same reason.
     """
     receipts: list[ParquetWriteReceipt] = []
     buffered = SOIL_SURVEY_SCHEMA.arrow_schema.empty_table()

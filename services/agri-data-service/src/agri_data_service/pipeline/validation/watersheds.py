@@ -62,8 +62,9 @@ WRITTEN_ZOOM_TIER: Final[ZoomTier] = ZOOM_TIERS[-1]
 _LANE: Final = WATERSHEDS_STREAM
 
 # Only the three columns a reconciliation pass needs -- never the ~17.3 KB/row geometry column,
-# which `pipeline/lanes/watersheds.py`'s own measurement (ROWS_PER_PART's docstring) makes clear
-# dominates the row entirely. Column-projection pushdown in `read_written_watersheds` means this
+# which `pipeline/direct/watersheds/support.py`'s 21,572 B/row measurement (the same figure the
+# deleted `pipeline/lanes/watersheds.py` carried on `ROWS_PER_PART`) shows dominates the row
+# entirely. Column-projection pushdown in `read_written_watersheds` means this
 # validator's own Parquet read touches a small fraction of what a full-layer read would.
 _WRITTEN_COLUMNS: Final = ("huc12", "tohuc", "observed_at")
 

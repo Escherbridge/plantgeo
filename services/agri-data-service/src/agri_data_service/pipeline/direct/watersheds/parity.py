@@ -39,11 +39,12 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
-#: Transcribed from `sql/pipeline/watersheds_day_export.sql`'s own WHERE clause -- the predicates
-#: MUST stay identical, or this receipt compares two differently-scoped populations and calls the
-#: mismatch a defect that isn't one. One table, one predicate, no join -- the same convention
-#: `pipeline/direct/drought/parity.py`'s module docstring cites for `climate/support.py`'s equally
-#: small query.
+#: Originally transcribed from `sql/pipeline/watersheds_day_export.sql`'s own WHERE clause. THAT FILE
+#: WAS DELETED ON 2026-09-06 with the Postgres exporter that loaded it, so THIS IS NOW THE LAST COPY
+#: of the predicate set -- there is no longer a second definition to keep it identical to, and any
+#: future edit here silently redefines what "the Postgres side of watersheds" means for this receipt.
+#: One table, one predicate, no join -- the same convention `pipeline/direct/drought/parity.py`'s
+#: module docstring cites for `climate/support.py`'s equally small query.
 _POSTGRES_WATERSHEDS_COUNT_SQL: Final = text(
     "SELECT count(*) AS row_count FROM geo.features AS f JOIN geo.layers AS l ON l.id = f.layer_id "
     "WHERE l.name = 'watersheds' AND f.status = 'published' AND f.geom IS NOT NULL "
@@ -128,11 +129,12 @@ async def build_watersheds_parity_receipt(session: AsyncSession, store: ObjectSt
     """Build the counted Postgres-vs-Parquet comparison. Reads both sides; writes neither.
 
     UNLIKE `drought/parity.py`, a zero-row Postgres count is NOT refused here. Watersheds' own
-    `postgres-watersheds` lane is the thing this whole package exists to make deletable
-    (`pipeline/direct/watersheds/__init__.py`), so a future run of this receipt against a Postgres
-    database that legitimately holds nothing for this layer any more is an EXPECTED end state, not a
-    misconfiguration -- the receipt reports it (`parity_achieved=False` if Parquet still holds rows
-    Postgres no longer does) rather than treating zero as a probable wrong-database mistake.
+    `postgres-watersheds` lane was the thing this whole package existed to make deletable, and it WAS
+    DELETED on 2026-09-06 (`pipeline/direct/watersheds/__init__.py`), so a run of this receipt against
+    a Postgres database that legitimately holds nothing for this layer any more is now the EXPECTED
+    end state, not a misconfiguration -- the receipt reports it (`parity_achieved=False` if Parquet
+    still holds rows Postgres no longer does) rather than treating zero as a probable wrong-database
+    mistake.
     """
     postgres_rows = await postgres_watersheds_row_count(session)
     version_day, parquet_rows, complete = parquet_watersheds_state(store)
@@ -156,9 +158,10 @@ async def main(argv: Sequence[str] | None = None) -> int:
     """Print the parity receipt as one JSON object on stdout; exit 1 when the counts disagree.
 
     FIRE NO PRODUCTION ACTION: opens exactly one read-only Postgres session (rolled back, never
-    committed) and one read-only object-store listing. An operator runs this to decide whether the
-    forward writer's snapshot is trustworthy before retiring `postgres-watersheds`, never as part of
-    the write path itself.
+    committed) and one read-only object-store listing. An operator ran this to decide whether the
+    forward writer's snapshot was trustworthy before `postgres-watersheds` was retired (2026-09-06);
+    it stays as the standing audit of what Parquet holds against what the table still holds, never as
+    part of the write path itself.
     """
     parser().parse_args(argv)
     loader_database_url = settings.require_local_source_loader_database_url()

@@ -29,9 +29,10 @@
 -- The lane is now a `static_lookup` (`pipeline/parquet/lane_registry.py`): the partition day is a
 -- VERSION STAMP driven by `sql/pipeline/lane_watermark_fire_perimeters.sql`, every published row is
 -- selected unconditionally, and `snapshot_day` is stamped on as the capture date. This is the
--- identical shape `evacuation_zones_day_export.sql` already uses for the identical current-state
--- feed, and `foundation/parquet/AGENTS.md`'s "Static layers use the same layout" section names it
--- the correct one.
+-- identical shape `evacuation_zones_day_export.sql` used for the identical current-state feed
+-- (that file was DELETED on 2026-09-06 when evacuation-zones moved to a source-direct writer, so
+-- this file is now the last copy of the shape), and `foundation/parquet/AGENTS.md`'s "Static layers
+-- use the same layout" section names it the correct one.
 --
 -- `observed_day` SURVIVES AS A PER-ROW COLUMN and that is what makes the map's date slider still
 -- answerable from ONE read: `geo.fire_risk_tiles` itself applies no date predicate (it emits
@@ -42,7 +43,8 @@
 -- THE FILTER BELOW IS A TRANSCRIPTION of geo.fire_risk_tiles's own WHERE clause
 -- (`drizzle/0038_tile_low_zoom_routing.sql:466-472`, minus the two tile-envelope predicates) -- the
 -- canonical query that already decides which rows are "this layer, live" for the map, exactly as
--- `evacuation_zones_day_export.sql` transcribes `geo.evacuation_zone_tiles`. Exporting a different
+-- the deleted `evacuation_zones_day_export.sql` transcribed `geo.evacuation_zone_tiles` (that
+-- transcription now lives in `pipeline/direct/evacuation_zones/parity.py`). Exporting a different
 -- population than the map itself serves would silently create two disagreeing answers for "what is
 -- published today", and this lane exists to REPLACE that tile function.
 --
