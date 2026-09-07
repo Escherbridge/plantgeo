@@ -1304,3 +1304,49 @@ anything training on it.**
   Parquet. See `evidence/reader-not-parquet-scope-20260907.md`.
 - `regional-context.ts:502-528` still reads `geo.features` for fire-perimeters.
 - `sensors` — 25 pre-2026-08-24 days stranded at z13; needs retract-and-re-export.
+
+---
+
+## RETIRING A LANE IS A TWO-VARIABLE EDIT. 2026-09-07, and it cost an outage.
+
+**`PLANTGEO_JOB_EXECUTOR_ACTIVE_LANES` and `PLANTGEO_JOB_EXECUTOR_HANDOFF_ACKNOWLEDGEMENTS` must
+change together.** Removing a lane from the active list while its acknowledgement remains does not
+degrade the executor — it refuses to boot:
+
+```
+Error: handoff acknowledgement supplied for inactive lane(s):
+       parquet-evacuation-zones, parquet-sensors, parquet-watersheds
+```
+
+The guard is correct and worth keeping: an acknowledgement asserts a legacy owner was stood down for
+a lane this executor is taking over, and one naming a lane it does not run is a claim about nothing.
+
+### Why it went unnoticed for hours, which is the more useful half
+
+Every signal being watched at the time stayed green, because none of them ran on the executor:
+
+- the availability applies were driven from a laptop against the object store;
+- the coverage endpoint kept answering, because `plantgeo-parquet-api` is a different service;
+- the map kept serving, for the same reason;
+- `railway logs -s plantgeo-job-executor` returned **empty output**, which reads like a redeploy in
+  progress rather than a dead container.
+
+**Empty logs from this service are a symptom, not a pause.** The confirming check is
+`railway ssh -s plantgeo-job-executor -e production 'echo alive'`, which answers
+`container is not running (status: exited)` immediately. A liveness loop around that `echo` can also
+exit on a transient — re-verify once before believing it recovered.
+
+### The sequence that is safe
+
+1. Compute the new active-lane list.
+2. In the same sitting, strip every acknowledgement whose lane is not in that list.
+3. Set both variables.
+4. Confirm with `railway ssh … 'echo alive'` AND one `tick_started active_lane_count=<n>` line — a
+   successful build proves nothing here, because this failure is at container start, after the image
+   is pushed.
+
+### What an outage of this kind does and does not cost
+
+Missed scheduled lane turns only. Nothing is corrupted and nothing publishes wrongly: the lanes'
+own catch-up policies (`replay_oldest`, `coalesce_latest`) are built to absorb a gap, and any work
+driven from an operator machine is untouched. The cost is freshness, and it is silent.
