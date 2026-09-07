@@ -1927,12 +1927,47 @@ def _dedupe_receipts(receipts: Sequence[EvidenceReceipt]) -> tuple[EvidenceRecei
     return tuple(by_key[key] for key in sorted(by_key))
 
 
+def _snapshot_identity(snapshot: EvidenceSnapshot) -> tuple[str, str, str, int, str, str | None]:
+    """What makes two observations of one object THE SAME OBJECT, which `max_bytes` is not.
+
+    MEASURED 2026-09-07, sensors: comparing whole snapshots refused a bootstrap over an object whose
+    bytes were byte-identical in both readings. `layer=sensors/kind=observed/zoom=00/.../absent.json`
+    is cited twice by design -- once in a SOURCE document's `object_receipts`, read through
+    `_verify_raw_receipts` under `EVIDENCE_OBJECT_MAX_BYTES` (256 MiB), and once as a TERMINAL row's
+    `absence_receipt`, read through `_verify_absence_object` under `TYPED_RECEIPT_MAX_BYTES` (1 MiB).
+    Same key, same `expected_sha256`, same `observed_sha256`, same etag -- and unequal dataclasses,
+    because the read ceiling rides along as a field.
+
+    `max_bytes` is an argument to the read, not a property of the object, so it cannot participate in
+    identity. Every claim the caps enforce has already been enforced where the cap was applied: the
+    1 MiB ceiling refuses an oversized typed receipt inside `_read_receipt_snapshot`, long before
+    this function sees the result. Excluding it here weakens no check; including it invented a
+    conflict that no corruption could have caused.
+
+    Nothing about the REAL conflict is relaxed: two readings whose bytes actually differ still differ
+    in `observed_sha256` and are still refused below.
+    """
+    return (
+        snapshot.key,
+        snapshot.expected_sha256,
+        snapshot.observed_sha256,
+        snapshot.byte_count,
+        snapshot.etag,
+        snapshot.version_id,
+    )
+
+
 def _dedupe_snapshots(snapshots: Sequence[EvidenceSnapshot]) -> tuple[EvidenceSnapshot, ...]:
     by_key: dict[str, EvidenceSnapshot] = {}
     for snapshot in snapshots:
         held = by_key.setdefault(snapshot.key, snapshot)
-        if held != snapshot:
+        if _snapshot_identity(held) != _snapshot_identity(snapshot):
             raise AvailabilityConflictError(f"object {snapshot.key!r} was observed with two identities")
+        if snapshot.max_bytes > held.max_bytes:
+            # Keep the LARGER ceiling. `_revalidate_snapshots` re-reads at `snapshot.max_bytes` right
+            # before the pointer swap, and a re-read capped below the object's size fails the
+            # publication outright -- so of two equally valid ceilings, only the larger is safe here.
+            by_key[snapshot.key] = snapshot
     return tuple(by_key[key] for key in sorted(by_key))
 
 

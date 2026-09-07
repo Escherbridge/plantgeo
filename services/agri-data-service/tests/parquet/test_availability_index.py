@@ -20,6 +20,7 @@ from agri_data_service.foundation.canonical import canonical_json, sha256_digest
 from agri_data_service.foundation.parquet.absence import GovernedAbsence
 from agri_data_service.foundation.parquet.completion import PartitionCompletion
 from agri_data_service.interface.cli.data import data
+from agri_data_service.pipeline.parquet import availability_index
 from agri_data_service.pipeline.parquet.availability_index import (
     EVIDENCE_OBJECT_MAX_BYTES,
     GENERATION_MAX_BYTES,
@@ -1163,3 +1164,63 @@ class ReadResponseClient:
 
     def put_object(self, **kwargs: object) -> object:
         raise AssertionError(f"unexpected put_object: {kwargs}")
+
+
+def _snapshot_at(cap: int) -> availability_index.EvidenceSnapshot:
+    """One object's observation, differing ONLY in the ceiling it was read under."""
+    return availability_index.EvidenceSnapshot(
+        key="layer=sensors/kind=observed/zoom=00/year=2026/month=07/day=29/absent.json",
+        expected_sha256="4591e602f71a24c5330881a725914d0d83025899619f63699b6e9f6a50a8f24c",
+        observed_sha256="4591e602f71a24c5330881a725914d0d83025899619f63699b6e9f6a50a8f24c",
+        byte_count=213,
+        etag='"abc123"',
+        version_id=None,
+        max_bytes=cap,
+    )
+
+
+def test_one_object_read_under_two_ceilings_is_one_identity() -> None:
+    """MEASURED against production 2026-09-07, and it refused a real bootstrap.
+
+    A coarse absence marker is cited twice by design -- in a SOURCE document's `object_receipts`
+    (read under `EVIDENCE_OBJECT_MAX_BYTES`) and as a TERMINAL row's `absence_receipt` (read under
+    `TYPED_RECEIPT_MAX_BYTES`). The bytes are identical; only the read ceiling differs, and it used
+    to ride along in the equality check.
+    """
+    typed = _snapshot_at(availability_index.TYPED_RECEIPT_MAX_BYTES)
+    raw = _snapshot_at(availability_index.EVIDENCE_OBJECT_MAX_BYTES)
+
+    deduped = availability_index._dedupe_snapshots((typed, raw))
+
+    assert len(deduped) == 1
+    # The LARGER ceiling survives: `_revalidate_snapshots` re-reads at this value before the pointer
+    # swap, and a ceiling below the object's size would fail the publication.
+    assert deduped[0].max_bytes == availability_index.EVIDENCE_OBJECT_MAX_BYTES
+
+
+def test_the_larger_ceiling_survives_whichever_order_the_readings_arrive_in() -> None:
+    """Order-independence is the property; a dict `setdefault` alone would not have given it."""
+    typed = _snapshot_at(availability_index.TYPED_RECEIPT_MAX_BYTES)
+    raw = _snapshot_at(availability_index.EVIDENCE_OBJECT_MAX_BYTES)
+
+    for ordering in ((typed, raw), (raw, typed)):
+        assert (
+            availability_index._dedupe_snapshots(ordering)[0].max_bytes == availability_index.EVIDENCE_OBJECT_MAX_BYTES
+        )
+
+
+def test_two_readings_whose_bytes_actually_differ_are_still_refused() -> None:
+    """The negative control. Relaxing `max_bytes` must not relax the conflict this check exists for."""
+    honest = _snapshot_at(availability_index.TYPED_RECEIPT_MAX_BYTES)
+    tampered = availability_index.EvidenceSnapshot(
+        key=honest.key,
+        expected_sha256=honest.expected_sha256,
+        observed_sha256="0" * 64,
+        byte_count=honest.byte_count,
+        etag=honest.etag,
+        version_id=honest.version_id,
+        max_bytes=availability_index.EVIDENCE_OBJECT_MAX_BYTES,
+    )
+
+    with pytest.raises(availability_index.AvailabilityConflictError, match="two identities"):
+        availability_index._dedupe_snapshots((honest, tampered))
