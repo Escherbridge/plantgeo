@@ -70,8 +70,10 @@ CONCURRENT_COLD_LOADS = 4
 #: The fixed R2 listing ceiling the cold-path regression protects.
 EXPECTED_CENSUS_LIST_WORKERS: Final = 3
 
-#: Direct and dedicated physical lanes included in one production census.
-EXPECTED_REGISTERED_CENSUS_LANES: Final = 16
+#: Direct and dedicated physical lanes included in one production census. 16 until 2026-09-07, when
+#: `climate-field-dew-point` alone left `SNAPSHOT_PRODUCTS` for the ordinary census so it could own
+#: an availability index and stop being withheld.
+EXPECTED_REGISTERED_CENSUS_LANES: Final = 17
 
 #: Every registered physical lane must report all four serving rungs.
 EXPECTED_CENSUS_RUNG_ROWS: Final = EXPECTED_REGISTERED_CENSUS_LANES * len(ZOOM_TIERS)
@@ -439,6 +441,59 @@ def test_the_census_covers_all_direct_lanes_and_every_schema_backed_slider_produ
         "are censused through build_snapshot_coverage instead; the five DEDICATED_SLIDER_PRODUCT_LAYERS "
         "are registrations themselves today, so the derived fallback adds no further row"
     )
+
+
+def test_no_layer_belongs_to_both_the_census_and_the_snapshot_product_subsystem() -> None:
+    """THE hazard of moving a lane between subsystems: a layer in both emits TWO coverage rows.
+
+    `_build_coverage_payload` returns `direct_rows + snapshot.lanes`, and the client resolves a
+    capability by layer name to the FIRST match, so a second row per lane makes which axis a layer
+    draws depend on array order -- exactly what `registered_census_lanes`'s own docstring refuses for
+    `kind=forecast`. `registered_census_lanes()` subtracts `PRODUCT_BY_LAYER` and then adds back
+    `DEDICATED_SLIDER_PRODUCT_LAYERS`, so a lane ADDED to that tuple without being REMOVED from
+    `SNAPSHOT_PRODUCTS` reaches the payload twice and nothing else in the tree would say so.
+
+    Asserted over the REAL registries, never a fixture: a fixture would go on passing through the
+    edit this test exists to catch.
+    """
+    census_layers = [lane.layer for lane in registered_census_lanes()]
+
+    assert set(DEDICATED_SLIDER_PRODUCT_LAYERS) & set(PRODUCT_BY_LAYER) == set(), (
+        "a dedicated slider product that is also a snapshot product is censused twice"
+    )
+    assert set(census_layers) & set(PRODUCT_BY_LAYER) == set(), (
+        "a census lane that is also a snapshot product emits a direct row AND a snapshot row"
+    )
+    assert len(census_layers) == len(set(census_layers)), "one census row per layer, or a lookup is ambiguous"
+
+
+def test_the_lane_that_left_the_snapshot_subsystem_is_censused_as_an_ordinary_daily_series() -> None:
+    """It owns an availability index only by being a census lane; a product carries none by design.
+
+    No tuple was edited to admit it: `climate-field-dew-point` is a `LANE_REGISTRATIONS` member, so
+    dropping it from `PRODUCT_BY_LAYER` was enough for the `registered` branch to pick it up with its
+    registered cadence and NASA POWER publication lag intact. `daily_series` is what makes it
+    time-bearing, which is what `scripts/compile_availability_bootstrap.py::_resolve_lanes` requires
+    before it will compile a bootstrap input for it.
+
+    `climate-field-relative-humidity` is asserted ABSENT in the same breath. It is registered too, so
+    the only thing keeping it out of the census is its `SNAPSHOT_PRODUCTS` membership -- and that
+    membership is load-bearing: its snapshot root holds 1,560 days (2022-04-30..2026-08-06) that its
+    live prefix does not, so censusing it would strand the most recent four years.
+    """
+    lanes = {lane.layer: lane for lane in registered_census_lanes()}
+    slug = "climate-field-dew-point"
+
+    assert slug in lanes
+    assert slug not in DEDICATED_SLIDER_PRODUCT_LAYERS, f"{slug} is a registration, not a derived fallback"
+    assert lanes[slug].nature == "daily_series"
+    assert lanes[slug].kind == "observed"
+    assert (lanes[slug].cadence_days, lanes[slug].publication_lag_days) == (
+        LANE_REGISTRY[slug].cadence_days,
+        LANE_REGISTRY[slug].publication_lag_days,
+    )
+    assert "climate-field-relative-humidity" in LANE_REGISTRY, "registered, so only PRODUCT_BY_LAYER excludes it"
+    assert "climate-field-relative-humidity" not in lanes, "it is still censused through build_snapshot_coverage"
 
 
 def test_the_census_is_memoized_so_a_burst_of_page_loads_pays_one_listing_walk() -> None:

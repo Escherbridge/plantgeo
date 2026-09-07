@@ -123,12 +123,37 @@ exactly what they say and must not become a bucket for transport faults; the cen
 fails the whole answer for the same reason.
 
 `snapshot_products.SNAPSHOT_PRODUCTS` is the single immutable-product allowlist. Add a product only
-after its production `manifest.json` and `_COMPLETE` are final. Dew point entered the allowlist only
-after its final output receipt was pinned; no product may be registered with a guessed digest.
+after its production `manifest.json` and `_COMPLETE` are final; no product may be registered with a
+guessed digest.
+
+**Membership is EXCLUSIVE with the ordinary census, and that exclusivity is the point.**
+`coverage.registered_census_lanes()` subtracts `PRODUCT_BY_LAYER` and `_build_coverage_payload`
+returns `direct_rows + snapshot.lanes`, so a layer sitting in both subsystems emits two coverage rows
+under one layer name — and the client resolves a capability by FIRST match, which makes the axis a
+layer draws depend on array order. So a lane MOVES between the two; it is never added to one without
+being removed from the other. `tests/parquet_ops/test_coverage_census.py` pins that as an invariant
+over the real registries rather than over a fixture.
+
+**Which subsystem a lane belongs in is a measurement, not a preference.** Under
+`PARQUET_COVERAGE_AUTHORITY=availability` a snapshot product carries no availability index, so
+`_build_product_coverage` withholds the whole lane: a product cannot be served at all under the live
+authority. There is one rule for leaving, and it is comparative — the lane's live prefix
+`layer=<slug>/kind=observed/` must already hold everything its `snapshot=<id>/` root holds, so the
+move can only ADD days. **Count BOTH prefixes, never just the live one.** A live-prefix census alone
+made `climate-field-relative-humidity` look ready on 2026-09-07 — 15,038 four-rung days back to
+1981-01-01 — when the two prefixes are in fact COMPLEMENTARY: its snapshot root holds a measured
+12,538 objects over 1,560 days, 2022-04-30..2026-08-06, with a 55-day hole between the two that
+neither holds. Moving it would have swapped the most recent four years for old history, which for a
+map slider is the wrong end to trade. Only `climate-field-dew-point` left the allowlist that day: its
+snapshot root is 691 objects and zero day partitions, a manifest and breakdown rather than
+partitioned data, so its move is a pure gain of 16,654 days. The thirteen that stayed all wait on the
+same condition — their history republished at the live prefix, then re-measured. The per-lane counts
+are recorded above `SNAPSHOT_PRODUCTS` itself and in
+`conductor/tracks/environmental_postgres_retirement_20260904/evidence/snapshot-products-vs-availability-20260907.md`.
 
 ### `forward_first_day`: a product may be frozen at one end only
 
-The six NASA POWER climate products are closed BELOW `pipeline/direct/climate/products.py`'s
+The five NASA POWER climate products are closed BELOW `pipeline/direct/climate/products.py`'s
 `CLIMATE_DIRECT_WRITER_START_DAY` and live at and above it — the direct writer publishes those days
 into the ORDINARY lane layout, `layer=<slug>/kind=observed/zoom=NN/year=/month=/day=/`, under a
 completion marker rather than under this module's receipt chain. The constant is IMPORTED from the

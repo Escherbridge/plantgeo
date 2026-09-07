@@ -380,7 +380,7 @@ async def test_availability_authority_answers_coverage_without_listing_one_objec
     assert {lane.source_ceiling_day for lane in census.lanes} == {"2026-08-07"}
     assert all(lane.required_rungs == [0, 5, 9, 13] for lane in census.lanes)
     assert reader.reads == ["signal"]
-    # The SNAPSHOT half is authority-aware too: six products carry a live edge, and listing it on
+    # The SNAPSHOT half is authority-aware too: every product carries a live edge, and listing it on
     # every cold request is precisely the cost the index was published to retire.
     assert snapshots.policies == ["availability"]
     assert isinstance(snapshots.forward_ports[0], SnapshotForwardAvailability)

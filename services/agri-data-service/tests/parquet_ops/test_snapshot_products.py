@@ -785,8 +785,11 @@ def test_unbound_completion_never_exposes_a_snapshot() -> None:
 
 def test_registered_product_families_pin_their_exact_top_level_schemas() -> None:
     signal = PRODUCT_BY_LAYER["climate-field-air-temperature-mean"]
+    # `climate-field-relative-humidity` is the ONE product that pins no columns and therefore resolves
+    # the WHOLE registered stream schema -- 33 columns against the 12 a signal-plane product pins, so
+    # it is the only member that tells the two branches of `_snapshot_product_arrow_schema` apart.
     humidity = PRODUCT_BY_LAYER["climate-field-relative-humidity"]
-    dew = PRODUCT_BY_LAYER["climate-field-dew-point"]
+    max_temperature = PRODUCT_BY_LAYER["climate-field-air-temperature-max"]
     wetness = PRODUCT_BY_LAYER["soil-wetness-surface"]
     temperature = PRODUCT_BY_LAYER["soil-temperature-0-to-7cm"]
 
@@ -823,16 +826,17 @@ def test_registered_product_families_pin_their_exact_top_level_schemas() -> None
     assert snapshot_product_columns(humidity) == frozenset(
         get_stream_schema(humidity.layer, "observed").arrow_schema.names
     )
+    assert snapshot_product_columns(humidity) > frozenset(SIGNAL_PRODUCT_COLUMNS), "an unpinned product narrows nothing"
     assert snapshot_product_columns(wetness) == frozenset(SOIL_WETNESS_COLUMNS)
     assert snapshot_product_columns(temperature) == frozenset(SOIL_TEMPERATURE_COLUMNS)
-    assert signal.coverage_cell_grid_name == dew.coverage_cell_grid_name == "nasa-power-0.5-degree"
-    assert signal.coverage_cells_per_day == dew.coverage_cells_per_day == NASA_POWER_GRID_CELL_COUNT
+    assert signal.coverage_cell_grid_name == max_temperature.coverage_cell_grid_name == "nasa-power-0.5-degree"
+    assert signal.coverage_cells_per_day == max_temperature.coverage_cells_per_day == NASA_POWER_GRID_CELL_COUNT
 
 
 def test_every_product_with_a_live_writer_declares_that_writer_s_own_forward_edge() -> None:
     """Two upstreams, two release schedules, two edges -- and a product with none reports a frozen last day.
 
-    The six climate products and the three NASA POWER soil-wetness lanes open one day after the
+    The five climate products and the three NASA POWER soil-wetness lanes open one day after the
     canonical snapshot's 2026-08-06; the five snapshot-rooted ERA5-Land soil products one day after
     their own 2026-08-02. Borrowing one edge for the other would either hide four real days behind
     the manifest or route four days at the live lane that the manifest still owns.
@@ -842,7 +846,6 @@ def test_every_product_with_a_live_writer_declares_that_writer_s_own_forward_edg
         "climate-field-air-temperature-max",
         "climate-field-air-temperature-min",
         "climate-field-relative-humidity",
-        "climate-field-dew-point",
         "climate-field-wind-speed",
         "soil-wetness-surface",
         "soil-wetness-root-zone",
@@ -875,14 +878,59 @@ def test_a_forward_day_of_a_soil_product_is_read_through_its_lane_and_not_its_ma
     assert snapshot_products.serves_from_snapshot(product.layer, product.forward_first_day) is False
 
 
-def test_dew_point_is_registered_only_at_its_pinned_closed_snapshot() -> None:
-    product = PRODUCT_BY_LAYER["climate-field-dew-point"]
+def test_the_allowlist_is_exactly_the_thirteen_products_the_live_prefix_cannot_yet_replace() -> None:
+    """Pin the thirteen BY NAME, so a cleanup that swept one out with dew point would fail here.
 
-    assert product.layout == "monthly"
-    assert product.data_root == f"layer=climate-field-dew-point/snapshot={SNAPSHOT_ID}"
-    assert product.metadata_root == product.data_root
-    assert product.contract_version == "plantgeo.dew-point.snapshot-product.v1"
-    assert product.expected_manifest_sha256 == "c2972ea61ebfb66a86fa1e834625fae163e5d0a0abfd39f8c701edca3e59b71a"
+    Membership is a measurement of where a lane's history physically lives, and the rule is
+    COMPARATIVE: a lane may leave only when its live prefix already holds everything its
+    `snapshot=<id>/` root holds. Seven of these hold zero objects at `layer=<slug>/kind=observed/`,
+    five hold 448 or 2 days against ~1,560 in their root, and `climate-field-relative-humidity` holds
+    a complementary 15,038 days (1981-01-01..2022-03-05) against a measured 1,560-day root
+    (2022-04-30..2026-08-06) -- so moving it would trade recent days for old ones, not add days. All
+    thirteen wait on the same condition: their history republished at the live prefix, then
+    re-measured. See the block above `SNAPSHOT_PRODUCTS` and
+    `evidence/snapshot-products-vs-availability-20260907.md` in
+    `conductor/tracks/environmental_postgres_retirement_20260904/`.
+    """
+    assert {product.layer for product in SNAPSHOT_PRODUCTS} == {
+        "climate-field-air-temperature-max",
+        "climate-field-air-temperature-mean",
+        "climate-field-air-temperature-min",
+        "climate-field-relative-humidity",
+        "climate-field-wind-speed",
+        "soil-field-vpd",
+        "soil-temperature-0-to-7cm",
+        "soil-temperature-100-to-255cm",
+        "soil-temperature-28-to-100cm",
+        "soil-temperature-7-to-28cm",
+        "soil-wetness-profile",
+        "soil-wetness-root-zone",
+        "soil-wetness-surface",
+    }
+    assert set(PRODUCT_BY_LAYER) == {product.layer for product in SNAPSHOT_PRODUCTS}
+    assert all(product.data_root.endswith(f"snapshot={SNAPSHOT_ID}") for product in SNAPSHOT_PRODUCTS)
+
+
+def test_the_one_lane_that_moved_to_the_census_is_not_reachable_as_a_snapshot_product() -> None:
+    """`climate-field-dew-point` left the allowlist 2026-09-07; nothing else did.
+
+    It held a complete four-rung ladder over 16,654 contiguous days back to 1981-01-01 at the LIVE
+    prefix, against a snapshot root of 691 objects and ZERO day partitions -- so it can own an
+    availability index and be served, which a snapshot product cannot be under
+    `PARQUET_COVERAGE_AUTHORITY=availability`, and it strands nothing by leaving.
+    `serves_from_snapshot` must now answer False for EVERY day of it, including days below the old
+    `forward_first_day`: routing one back at the frozen manifest would ask a subsystem that no longer
+    holds a descriptor for it.
+    """
+    assert "climate-field-dew-point" not in PRODUCT_BY_LAYER
+    assert snapshot_products.serves_from_snapshot("climate-field-dew-point", date(2000, 1, 1)) is False
+    assert snapshot_products.serves_from_snapshot("climate-field-dew-point", CLIMATE_DIRECT_WRITER_START_DAY) is False
+    with pytest.raises(ServingRefusalError) as raised:
+        snapshot_products.product_for_layer("climate-field-dew-point")
+    assert raised.value.code == "snapshot_unpublished"
+    # Relative humidity did NOT move: its snapshot root holds 1,560 days the live prefix does not.
+    assert "climate-field-relative-humidity" in PRODUCT_BY_LAYER
+    assert snapshot_products.serves_from_snapshot("climate-field-relative-humidity", date(2024, 5, 1)) is True
 
 
 def test_declared_and_fixed_lattice_coverage_use_only_bound_metadata(
@@ -1217,7 +1265,7 @@ FORWARD_DAY_ROW_COUNT = 2
 
 
 def _forward_product(layer: str = FORWARD_LAYER) -> SnapshotProduct:
-    """A daily product frozen only BELOW `forward_first_day`, which is the six climate products' shape."""
+    """A daily product frozen only BELOW `forward_first_day`, which is the five climate products' shape."""
     return replace(_product(layer, layout="daily"), forward_first_day=FORWARD_FIRST_DAY)
 
 

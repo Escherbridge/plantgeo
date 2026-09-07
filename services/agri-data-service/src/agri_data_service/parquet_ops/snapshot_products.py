@@ -1,6 +1,6 @@
 """Bounded reads over manifest-closed immutable snapshot product prefixes.
 
-A PRODUCT MAY HAVE A FORWARD EDGE THE MANIFEST CANNOT SEE. Six climate products and the three
+A PRODUCT MAY HAVE A FORWARD EDGE THE MANIFEST CANNOT SEE. Five climate products and the three
 soil-wetness lanes were frozen at `CLIMATE_DIRECT_WRITER_START_DAY`, and the five ERA5-Land soil
 products at `SOIL_DIRECT_WRITER_START_DAY` -- two different upstreams, two different release
 schedules, two different edges. Every day from a product's own edge on is written by that upstream's
@@ -168,6 +168,48 @@ _PINNED_ARROW_SCHEMAS: Final[dict[tuple[str, ...], pa.Schema]] = {
 }
 
 
+#: The immutable-product allowlist. MEMBERSHIP IS EXCLUSIVE WITH THE ORDINARY CENSUS, and that is
+#: the whole reason a lane is listed here rather than in both places: `coverage.registered_census_lanes`
+#: excludes `PRODUCT_BY_LAYER` and `_build_coverage_payload` returns `direct_rows + snapshot.lanes`,
+#: so a layer in both subsystems emits TWO rows keyed by the same layer name and which axis it draws
+#: becomes array order. `tests/parquet_ops/test_coverage_census.py` pins that invariant.
+#:
+#: ONE LANE LEFT THIS TUPLE ON 2026-09-07, and the thirteen below deliberately did not. Under
+#: `PARQUET_COVERAGE_AUTHORITY=availability` a snapshot product carries no availability index, so
+#: `_build_product_coverage` withholds the whole lane -- a product cannot be served at all under the
+#: live authority. There is ONE rule for whether a lane may leave, and it is a measurement, not a
+#: preference: the lane's LIVE prefix, `layer=<slug>/kind=observed/`, must already hold everything
+#: its `snapshot=<id>/` root holds, so the move can only ADD days. Both prefixes were counted on
+#: 2026-09-07; see `conductor/tracks/environmental_postgres_retirement_20260904/`
+#: `evidence/snapshot-products-vs-availability-20260907.md`.
+#:
+#: THE ONE THAT LEFT. `climate-field-dew-point`: 16,654 days at the live prefix,
+#: 1981-01-01..2026-08-06 CONTIGUOUS, four rungs on every one, against a snapshot root of 691 objects
+#: and ZERO day partitions -- a manifest and breakdown, never partitioned data. Nothing it served is
+#: lost, so its move is a pure gain of 16,654 days. Its retired receipt was
+#: `c2972ea61ebfb66a86fa1e834625fae163e5d0a0abfd39f8c701edca3e59b71a`.
+#:
+#: THE THIRTEEN THAT STAYED all fail that one rule, in three shapes:
+#:
+#: - SEVEN hold ZERO objects at the live prefix -- the three `climate-field-air-temperature-*`,
+#:   `climate-field-wind-speed` and the three `soil-wetness-*`. An index over their live prefix would
+#:   describe emptiness while their ~1,560 real days sit in the frozen root.
+#: - FIVE hold far less at the live prefix than in their snapshot root: `soil-field-vpd` (448 days)
+#:   and the four `soil-temperature-*` (2 days each). Moving them would SHORTEN their axis.
+#: - `climate-field-relative-humidity` is the subtle one, and it is the same rule. Its two prefixes
+#:   are COMPLEMENTARY, not overlapping: the live prefix holds 15,038 days, 1981-01-01..2022-03-05,
+#:   while its snapshot root holds a MEASURED 12,538 objects over 1,560 distinct days,
+#:   2022-04-30..2026-08-06 (`scripts/build_relative_humidity_from_canonical_snapshot.py` pins
+#:   EXPECTED_FIRST_DAY/EXPECTED_LAST_DAY/EXPECTED_DAYS to exactly that window), with a 55-day hole
+#:   at 2022-03-06..2022-04-29 that NEITHER holds. So a move would swap the most recent four years
+#:   for 1981-2022 history, and for a map slider recency is the more valuable end. It carries no
+#:   `expected_manifest_sha256` and no audit receipt was ever recorded, which made it look unbuilt;
+#:   the 2026-09-07 listing settles that it was built.
+#:
+#: Every one of the thirteen waits on the SAME condition, which is why they are one list and not
+#: two: its 2022-2026 history republished at the live prefix, then re-measured. Do not sweep any of
+#: them out with a cleanup, and never on the strength of a live-prefix count alone -- the snapshot
+#: root has to be counted too, or a complementary lane reads like a superset.
 SNAPSHOT_PRODUCTS: Final[tuple[SnapshotProduct, ...]] = (
     SnapshotProduct(
         "climate-field-air-temperature-mean",
@@ -208,18 +250,6 @@ SNAPSHOT_PRODUCTS: Final[tuple[SnapshotProduct, ...]] = (
         _layer_root("climate-field-relative-humidity"),
         f"{_layer_root('climate-field-relative-humidity')}/_breakdown",
         contract_version="climate-field-relative-humidity.snapshot-breakdown.v1",
-        forward_first_day=CLIMATE_DIRECT_WRITER_START_DAY,
-    ),
-    SnapshotProduct(
-        "climate-field-dew-point",
-        "monthly",
-        _layer_root("climate-field-dew-point"),
-        _layer_root("climate-field-dew-point"),
-        expected_manifest_sha256="c2972ea61ebfb66a86fa1e834625fae163e5d0a0abfd39f8c701edca3e59b71a",
-        schema_columns=SIGNAL_PRODUCT_COLUMNS,
-        contract_version="plantgeo.dew-point.snapshot-product.v1",
-        coverage_cell_grid_name="nasa-power-0.5-degree",
-        coverage_cells_per_day=397,
         forward_first_day=CLIMATE_DIRECT_WRITER_START_DAY,
     ),
     SnapshotProduct(
@@ -818,7 +848,7 @@ def build_snapshot_coverage(
 ) -> SnapshotCoverageCensus:
     """Prove each product independently through bounded metadata-only evidence.
 
-    THE FORWARD HALF IS AUTHORITY-AWARE, and it has to be: six products carry a live edge, and
+    THE FORWARD HALF IS AUTHORITY-AWARE, and it has to be: every product carries a live edge, and
     listing it is a `layer=<slug>/kind=observed/` prefix walk on every cold `GET /coverage`. Under
     `availability` that walk is exactly the cost the index exists to retire, so the forward half is
     proven from the product's OWN availability index or withheld -- never from a LIST. Under
