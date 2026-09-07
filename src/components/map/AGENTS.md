@@ -990,3 +990,79 @@ during an active drag, the requested day IS the only day the slider has, and res
 a registry keyed on what has already landed would make the thumb visibly stutter behind the
 reader's own pointer. A future reader applying the rule here by name alone, without this line,
 could "fix" the one part of the row that was never broken.
+
+## §layer-time-state
+
+**One vocabulary, six states, every layer.** `src/components/map/layer-panel/layer-time-state.ts`
+is the single place that answers "what is this layer's time control doing?", and
+`LayerTimeStatus.tsx` is the single block that renders every answer except `ready`. The six:
+`loading`, `ready`, `empty`, `withheld`, `no_time_axis`, `error`. `LayerTimeSlider` renders the
+axis for `ready` and delegates the other five; nothing else may re-derive the choice.
+
+**The defect this replaced.** One row could render three different things and one of them was
+NOTHING. A failed fetch got a sentence, a mounted-without-an-axis layer got a different sentence,
+an in-flight fetch got a bare `return null`, and a WITHHELD layer got no control at all because
+`LayerRow`'s gate refused to mount one without an axis. Measured against production on
+2026-09-07: a cold `getSliderCapabilities` takes 7.6-8.5s (it walks the Parquet day census and can
+exhaust the 8s timeout, which is what `parquetCoverageUnavailable` reports), a warm one 0.28s. So
+for up to eight and a half seconds "still loading" and "this layer has no dates" were the same
+empty row -- the report that started this work, filed against `fire-detections`, whose axis is in
+fact withheld as `availability_unpublished` while its index builds.
+
+**Uniform is a claim about SHAPE, not about words.** Every non-`ready` state renders the identical
+three parts in the identical order -- chip, placeholder track at the real track's height, one
+sentence -- so the states differ in what they SAY and never in whether they say anything. The
+words must differ: `availability_unpublished` means the data is written and its index is being
+built, `lane_never_written` means the source has never produced a byte, and a caption that told a
+user to come back later would be right about one and wrong about the other. Fifteen withheld
+reasons, fifteen distinct sentences; `layer-time-state.test.ts` pins that they stay distinct.
+
+**A withheld layer is not an error and must not read like one.** No reason sentence says "error"
+or "failed to". Only two states pulse (`isSettling`): a first load in flight, and the two reasons
+something is genuinely working on -- `availability_unpublished` (a build that is running) and
+`coverage_unavailable` (the loader's own 30s retry). A settled refusal that animated would promise
+an arrival that is not on its way.
+
+**The loading block is deferred in CSS, not in JavaScript.** `.layer-time-status-deferred` holds
+it at `opacity: 0` for 400ms and then fades it in, so a warm 0.28s payload shows nothing at all
+and a cold one gets a real loading state. That is what preserves the old "do not flash a skeleton
+into every switched-on row" rule while ending the silence it caused. A `setTimeout` would be a
+second clock per row to keep in step with one fetch. Only `loading` is deferred: `withheld`,
+`no_time_axis` and `empty` are settled facts and are stated immediately.
+
+**`LayerRow` splits its gate, and the split is load-bearing.** `mountsTimeStatus` is
+`warehouseLayerName !== null` -- every stream-backed layer states its own time situation, snapshots
+included. `mountsDayControls` keeps the old, stricter `hasSelectableDay`-or-unknown rule and gates
+the refresh and sync-reset buttons, because both act on a per-day cache and a layer with no
+timeline has none. A sentence claims nothing about what a button would do; a button that does
+nothing is the fabricated affordance every other control on the row is guarded against. The eight
+toggles no warehouse stream backs stay out of both: a loading failure and a withheld index say
+nothing whatever about a layer that was never in the census.
+
+**Pending is derived from a PAIR of store fields, and that is a contract.** There is no
+`capabilitiesPending`. `capabilities === null` with `capabilitiesUnavailable === false` means "the
+first fetch is in flight", and it means that only because `TimeSliderCapabilitiesLoader` is mounted
+in `MapView` and never unmounts, its query is never conditional, and it is the sole writer of both
+fields. Gate the query, mount a second reader, or write either field from elsewhere and every row
+on the map renders a loading state that never ends. The loader's own header carries the same rule.
+
+**The withheld evidence is read structurally, on purpose.** `getSliderCapabilities` returns
+`ParquetSliderCapabilities` -- `SliderCapabilities` plus `withheldParquetCapabilities`,
+`parquetCoverageUnavailable` and the two census stamps -- but `setCapabilities` narrows it to
+`SliderCapabilities` on the way into the store, which erases those fields from the TYPE while
+leaving every byte on the object. `readWithheldCapabilities` reads them back with full runtime
+validation, and an entry whose reason this build cannot word is DROPPED rather than shown raw: a
+chip reading `rung_bounds_v2` teaches nobody anything and looks like a crash, so the layer falls
+through to the weaker-but-never-wrong "not published yet". `LAYER_WITHHOLDING_REASONS` is a
+hand-copy of the server enum because `scripts/check-client-server-imports.mjs` refuses every
+`@/lib/server/**` edge from `src/components/`, type-only ones included; the copy is held honest by
+a type-only import in `layer-time-state.test.ts`, which fails to compile if the two lists diverge.
+THE CLEANER FIX, when a lane owns `src/types/time-slider.ts`: declare the four Parquet fields on
+`SliderCapabilities` and delete both the structural read and the copied enum.
+
+**`MapDateSummary` states the same cold load at map level.** `useViewedLayerDays` drops every layer
+whose day cannot be named, so before the payload lands it is empty and the surface used to vanish
+outright -- the same "loading and empty look alike" defect, on the one surface that lives outside
+the closable dock. It now renders "Loading dates" (or "Dates unavailable") with no day, no span
+and no headline, and only while a layer a warehouse stream backs is actually switched on: over a
+map with nothing dated on it, silence still asserts nothing, which is still the honest answer.

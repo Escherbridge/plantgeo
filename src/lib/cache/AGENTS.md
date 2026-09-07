@@ -39,6 +39,14 @@ on purpose.
   `CACHEABLE_LAYER_QUERIES`.
 - The procedure's input must actually carry a `bbox` string and/or a `date` string.
 
+**`wildfire.getFireDetections` joined the allowlist on 2026-09-07**, and it was the largest
+omission the list has ever had: the fire lane is the read a reader scrubs hardest, and from
+`useFireData`'s deletion on 2026-09-02 until that date it was the one map layer with no
+local-first story at all. Its input carries `bbox` and `date`
+(`src/lib/server/trpc/routers/wildfire.ts:81-89`), so it satisfies the predicate unchanged, and
+`zoom`/`dayRange` ride in the `queryHash` so a different aggregation tier is a different entry
+rather than a stale hit.
+
 Both conditions must hold. Nothing is cached by default. To add a future layer: append its
 dot-joined path to `CACHEABLE_LAYER_QUERIES` -- nothing else in this file, or anywhere else,
 needs to change. This is deliberate: the predicate reads only the react-query `queryKey`
@@ -50,7 +58,102 @@ Never add anything user-scoped, authenticated, or mutation-shaped to the allowli
 `persister` option only ever applies to `defaultOptions.queries`, so mutations are structurally
 excluded already; the allowlist is the second layer of defense for queries.
 
+## Per-layer cache policy
+
+Added 2026-09-07. Before it, one TTL rule, one revalidation rule and one eviction rule governed
+every allowlisted layer, and **the blanket was wrong in both directions at once**: `watersheds`
+has published exactly ONE version in its entire history and was being revalidated once a minute
+per entry for a byte-identical answer, while `fire-detections` — 8,371 day partitions back to
+2000-11-01 — was not cached at all and could fill the whole 512 MB budget the moment it was.
+
+Three separable knobs, resolved in `layer-cache-policy.ts` and enforced in `query-persister.ts`:
+
+| Knob | Meaning | Where it bites |
+| --- | --- | --- |
+| `refreshMode` | `manual` \| `automatic` | `shouldRevalidate` and `resolveCacheTtlMs` |
+| `retainedDayLimit` | distinct days kept, or `null` for unlimited | `enforceLayerRetention` |
+| the refresh request | "refetch this layer now" | the hit path's supersession check |
+
+### The nature is the default, and the natures genuinely differ
+
+`NATURE_BY_LAYER` gives every registry toggle one of the server's three `ParquetLaneNature`
+values. The eleven lanes in the server's `DIRECT_PARQUET_CAPABILITIES`
+(`src/lib/server/services/parquet-slider-capabilities.ts`) carry that table's `parquetNature`
+verbatim; the four toggles with no Parquet lane are declared in that file and labelled as such.
+The nature is keyed by `LayerToggleId`, not by a second identity scheme — `layer-registry.ts`
+owns the toggle↔`warehouseLayerName` mapping and nothing here duplicates it.
+
+- `static_lookup` (watersheds, evacuation-zones, fire-perimeters, soil-survey) publish a VERSION
+  STAMP, not a day → **manual, unlimited**. Unlimited because those lanes barely have days at
+  all: `getWatersheds` carries no date, so its entries are never indexed against a day and a
+  day-count limit would govern nothing. The byte budget still bounds them.
+- `release_series` (drought, burn-severity) move in irregular jumps — burn-severity has five
+  releases across 2015-2026 → **manual, 180 days**.
+- `daily_series` (fire, vegetation, weather, water, sensors, the three soil fields, the nine
+  climate rows) grow every day AND get republished behind the reader → **automatic, 90 days**.
+  Automatic is not a preference here, it is the correction path; see "revalidation policy".
+
+### What `manual` costs, stated plainly
+
+A manual layer is **not revalidated in the background and its entries live for
+`MANUAL_TTL_MS` (365 days), the live edge included.** Both halves are deliberate: a TTL is a
+scheduled refetch wearing another name, so a "manual" layer with a five-minute live TTL would
+still hit the network every five minutes and the setting would mean nothing.
+
+The cost is exactly the one "revalidation policy" below warns about: **a warehouse correction to
+a day a manual layer already holds has no automatic route to the reader.** What replaces the
+automatic route is that the staleness is *exposed* rather than silently corrected —
+`lastFetchedAt` is persisted per layer and rendered beside the refetch button, and one click
+reaches every day the layer holds. That trade is why `manual` is the default only for the two
+natures that do not move that way, and why flipping a `daily_series` layer to manual is a choice
+the user has to make deliberately.
+
+### The manual refetch does not delete anything
+
+`requestLayerRefresh(layerId)` stamps an instant on the layer. Every stored entry created
+strictly before that instant is treated as a MISS the next time it is read, and falls into the
+same drop path an expired entry takes. One click therefore reaches days the reader is not
+currently looking at — lazily, when they next look — and costs nothing for days they never
+return to. `useLayerCacheControls.refetchNow` stamps first and invalidates react-query second,
+and that order is the mechanism: the refetch the invalidation triggers cannot be answered by the
+copy it was meant to replace.
+
+### Retention evicts by recency of USE, not by calendar date
+
+`enforceLayerRetention` keeps the N most-recently-accessed DAYS and drops every entry of the
+rest. Ranking by the day's own date would throw away the 2003 fire day a reader has open in
+favour of days they have never looked at, which is the opposite of what a retention control is
+for; it is also the same LRU order `ensureCapacityFor` evicts in, so a day cannot be kept by one
+rule and dropped by the other. A DAY is the unit rather than an entry, because one day
+accumulates an entry per viewport it was read at and dropping some of them would leave a day the
+sync track still lights but which mostly misses.
+
+It runs on three triggers: when the user changes or resets a limit (swept synchronously, so the
+held-days count beside the control cannot go on contradicting the number just set), and after a
+write that puts a NEW dated entry on disk (coalesced to one sweep per layer in flight, so a scrub
+landing on twelve new days does not queue twelve metadata passes). A write landing during a sweep
+can be missed until the next one — under-enforcing by a day for a moment, the same safe direction
+every other approximation in this file errs in.
+
+### Where the state lives, and why not in `src/stores/`
+
+`layer-cache-policy-store.ts` sits beside the cache it governs because `query-persister.ts` reads
+it on every hit and write, exactly as it already reads `useTimeSliderStore` for
+`serverCurrentDate`. If the store imported the persister back — to run a sweep — that would be a
+cycle between two module singletons, the failure mode `sync-index-store.ts` avoids with its
+callback seam. So the dependency runs one way (persister → policy store) and every action that
+has to touch IndexedDB lives in `src/hooks/useLayerCacheControls.ts`, above both.
+
+Persistence is zustand `persist` over localStorage under `plantgeo-layer-cache-policy`, hydrated
+synchronously at import — which is what lets `layerCachePolicyFor()` answer correctly on the
+first cache read of a session with no mount-time registration step to forget. The blob is
+re-sanitized on merge for the same reason `layer-store.ts` sanitizes opacity: localStorage is
+user-writable, and this one decides both what is evicted and how long an entry is trusted.
+
 ## TTL policy
+
+Read this together with "per-layer cache policy" above: everything below is the `automatic`
+branch. A layer on `manual` short-circuits to `MANUAL_TTL_MS` before any of it.
 
 - **Historical day** (`input.date < serverCurrentDate`): `HISTORICAL_TTL_MS` = 30 days.
 
@@ -324,6 +427,7 @@ network this time":
 | Quota exceeded on write | `putEntryWithMetadata` resolves `false`; the cache learns a ceiling at 90% of its live total, evicts down to it and retries once. The freshly-fetched result is returned to the caller either way. Never a silent permanent wedge — see "the budget". |
 | Corrupt or wrong-shape stored entry | `isStoredLayerQueryEntry` rejects it; the entry is deleted and treated as a miss. |
 | Query resolves but represents a failure (`availability === "request_failed"`) | `isCacheableResult` refuses to write it. (In practice the server never emits this value -- see `src/types/time-slider.ts` -- so this is defense in depth, not the common path.) |
+| Parquet reader answers `state: "upstream_unavailable"` | `isCacheableResult` refuses it too, added 2026-09-07. That member carries a `fault` and is the Parquet vocabulary's `request_failed`; SIX allowlisted procedures answer in that vocabulary and it was being stored under a 30-day historical TTL. It matters more under per-layer policy: a `manual` layer would neither expire a stored fault for a year nor revalidate it away. `absent` and `not_generated` are positive claims about the warehouse and are still cached. |
 | `queryFn` itself throws (a real network/server failure) | The throw is never caught by the persister; it propagates to react-query exactly as it would without a persister. Nothing is ever cached from a rejected promise. |
 | IndexedDB unreadable, sync index | `scanSyncedDays()` resolves `null` (never an empty index); the store's status is `unavailable`, `useSyncIndexReady()` stays false and `useSyncedDays` returns a stable empty set. |
 | A subscriber to the index throws | Caught at the observer seam; a display projection can never fail a layer read. |
@@ -332,9 +436,15 @@ network this time":
 
 - `indexeddb-store.ts` -- the wrapper described above.
 - `query-persister.ts` -- allowlist predicate, TTL policy, layer/day attribution, cacheability
-  check, expiry sweep and eviction, the synced-day scan and per-layer reset, and
-  `createIndexedDbLayerQueryPersister`, wired into `src/lib/providers.tsx`.
+  check, expiry sweep and eviction, per-layer retention, the synced-day scan and per-layer reset,
+  and `createIndexedDbLayerQueryPersister`, wired into `src/lib/providers.tsx`.
+- `layer-cache-policy.ts` -- PURE: the nature table, the per-nature defaults, override
+  resolution and the localStorage sanitizers. No zustand, no IndexedDB, no React, so both the
+  store and the persister may depend on it.
+- `layer-cache-policy-store.ts` -- the persisted overrides, refresh requests and `lastFetchedAt`.
 - `src/stores/sync-index-store.ts` -- the in-memory projection the sync track reads.
+- `src/hooks/useLayerCacheControls.ts` -- the one API a control surface calls; the only place the
+  policy store, the IndexedDB cache and the QueryClient meet.
 
 ## `environmental.getSoilMoisture` (added 2026-08-06)
 

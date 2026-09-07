@@ -15,6 +15,14 @@
  * (`scanSyncedDays`) and reset (`clearLayerEntries`) the per-layer "synced days" track is built
  * on. See src/lib/cache/AGENTS.md for the full rationale: the allowlist rule, the TTL policy,
  * layer/day attribution, the metadata store, the storage budget, and the degradation matrix.
+ *
+ * Since 2026-09-07 every one of those decisions is taken PER LAYER rather than for the cache as
+ * a whole. `layer-cache-policy.ts` derives a default from the layer's lane nature and
+ * `layer-cache-policy-store.ts` holds the user's override of it; this file reads the resolved
+ * policy in exactly three places -- `resolveCacheTtlMs`, `shouldRevalidate` and the
+ * refresh-request check on the hit path -- and enforces the retention limit in
+ * `enforceLayerRetention`. The dependency runs one way (this file -> the policy store), the same
+ * way it already reads `useTimeSliderStore`.
  */
 import type { QueryClient, QueryPersister } from "@tanstack/react-query";
 import {
@@ -29,6 +37,12 @@ import {
 } from "@/lib/environmental/soil-field";
 import type { LayerToggleId } from "@/lib/map/layer-registry";
 import { useTimeSliderStore } from "@/stores/time-slider-store";
+import { MANUAL_TTL_MS } from "./layer-cache-policy";
+import {
+  isSupersededByRefreshRequest,
+  layerCachePolicyFor,
+  recordLayerFetched,
+} from "./layer-cache-policy-store";
 import {
   deleteEntries,
   deleteEntry,
@@ -168,6 +182,14 @@ export const CACHEABLE_LAYER_QUERIES: readonly string[] = [
   "environmental.getWatershedBoundaries",
   "environmental.getFirePerimeters",
   "wildfire.getWeatherForBbox",
+  // Added 2026-09-07, and it is the largest omission this allowlist has ever had: the fire lane
+  // reaches back to 2000-11-01 across 8,371 day partitions, it is the read a reader scrubs
+  // hardest, and until this line it was the ONE map layer with no local-first story at all --
+  // `useFireData`'s private ETag cache went with the hook on 2026-09-02 and nothing replaced it.
+  // Its input carries `bbox` and `date` (`trpc/routers/wildfire.ts:81-89`), so it satisfies
+  // `isPersistableQueryKey` unchanged; `zoom` and `dayRange` ride in the queryHash, so a
+  // different aggregation tier is a different entry rather than a stale hit.
+  "wildfire.getFireDetections",
 ];
 
 /**
@@ -199,6 +221,9 @@ const TOGGLE_ID_BY_ROUTER_PATH: Readonly<Record<string, LayerToggleId>> = {
   // several requested days can be served by one capture and each is stored under its own day.
   "environmental.getFirePerimeters": "fire-perimeters",
   "wildfire.getWeatherForBbox": "weather",
+  // The detections lane, whose toggle is `fire` -- distinct from `fire-perimeters` above, which
+  // is a different lane of a different nature (a `static_lookup` snapshot, not a day series).
+  "wildfire.getFireDetections": "fire",
 };
 
 /**
@@ -318,13 +343,29 @@ function attributeStoredRow(
 }
 
 /**
- * Historical days cache for HISTORICAL_TTL_MS; "today" (or later, or a date we cannot yet
- * prove is in the past) caches only for LIVE_TTL_MS. "Today" is always the server's
- * `serverCurrentDate` from useTimeSliderStore -- never any layer's own day, and never the
- * browser clock, which would disagree with the server across a UTC midnight; see
- * src/stores/time-slider-store.ts.
+ * How long this answer may be served from disk, under the layer's own cache policy.
+ *
+ * **A layer on `manual` gets `MANUAL_TTL_MS` for every day, the live edge included.** That is
+ * the whole meaning of the setting: a TTL is a scheduled refetch wearing another name, so a
+ * "manual" layer with a five-minute live TTL would still hit the network every five minutes.
+ * What makes the long TTL safe is not that the data cannot move -- for `release_series` it
+ * plainly does -- but that the staleness is exposed rather than hidden: `lastFetchedAt` is
+ * persisted per layer and the control renders it beside a refetch button. See AGENTS.md
+ * "per-layer cache policy" for what is deliberately given up here.
+ *
+ * On `automatic` the rule is unchanged from 2026-08-16: historical days cache for
+ * HISTORICAL_TTL_MS, "today" (or later, or a date we cannot yet prove is in the past) only for
+ * LIVE_TTL_MS. "Today" is always the server's `serverCurrentDate` from useTimeSliderStore --
+ * never any layer's own day, and never the browser clock, which would disagree with the server
+ * across a UTC midnight; see src/stores/time-slider-store.ts.
+ *
+ * An unattributable query key resolves to the fallback nature (`daily_series`, automatic), so a
+ * router path this module cannot map to a layer keeps exactly its pre-policy behaviour and can
+ * never quietly acquire a year-long TTL.
  */
 export function resolveCacheTtlMs(queryKey: readonly unknown[]): number {
+  const { layerId } = attributeQueryKey(queryKey);
+  if (layerCachePolicyFor(layerId).refreshMode === "manual") return MANUAL_TTL_MS;
   const input = queryInputRecord(queryKey);
   const date = input && typeof input.date === "string" ? input.date : null;
   if (date === null) return LIVE_TTL_MS;
@@ -361,8 +402,16 @@ function isEntryFresh(entry: { schemaVersion: number; expiresAt: number }): bool
 function isCacheableResult(value: unknown): boolean {
   if (value === null || value === undefined) return false;
   if (typeof value === "object") {
-    const availability = (value as Record<string, unknown>).availability;
-    if (availability === "request_failed") return false;
+    const record = value as Record<string, unknown>;
+    if (record.availability === "request_failed") return false;
+    // The Parquet reader vocabulary (`ParquetBrowserReaderResult`, src/lib/environmental/
+    // parquet-presentation.ts) is a second, independent one, and SIX allowlisted procedures
+    // answer in it. `absent` and `not_generated` are positive claims about the warehouse and
+    // belong on disk; `upstream_unavailable` carries a `fault` and is the same transient
+    // failure `request_failed` is above -- storing it would let a dropped object-store request
+    // read back as a settled answer. It is worth far more now than it was before per-layer
+    // policy: a `manual` layer neither expires it for a year nor revalidates it away.
+    if (record.state === "upstream_unavailable") return false;
   }
   return true;
 }
@@ -416,6 +465,9 @@ export function resetCacheAccounting(): void {
   quotaCeilingBytes = null;
   bytesWrittenDuringWalk = 0;
   walkInFlight = false;
+  // A sweep left marked in-flight by a test that swapped the store out under it would block
+  // every later sweep for that layer for the rest of the run.
+  retentionSweepsInFlight.clear();
 }
 
 function serializeFullPass<T>(work: () => Promise<T>): Promise<T> {
@@ -766,6 +818,13 @@ async function persistEntry(
   if (!written) return;
   recordByteDelta(byteDelta);
   notifyEntryStored(cacheKey, attribution, metadata.expiresAt, byteDelta, isNewEntry);
+  if (attribution.layerId === null) return;
+  // Every path into this function follows a real network answer -- a cold write or a background
+  // revalidation -- so this is the "last fetched" a per-layer control needs. A cache HIT never
+  // reaches here, which is exactly the distinction that makes the number worth rendering.
+  recordLayerFetched(attribution.layerId, metadata.lastAccessedAt);
+  // Only a NEW key under a dated entry can grow a layer's day count; an overwrite cannot.
+  if (isNewEntry && attribution.day !== undefined) scheduleLayerRetentionSweep(attribution.layerId);
 }
 
 /**
@@ -819,6 +878,126 @@ export async function clearLayerEntries(layerId: LayerToggleId): Promise<SyncedD
       return null;
     }
   });
+}
+
+/** What one per-layer retention sweep did. */
+export interface RetentionSweepResult {
+  layerId: LayerToggleId;
+  /** The limit in force when the sweep ran. */
+  limit: number;
+  /** Distinct days this layer still holds afterwards. */
+  retainedDays: number;
+  evictedDays: number;
+  evictedBytes: number;
+}
+
+/**
+ * Enforces one layer's `retainedDayLimit`: keeps the N most-recently-USED days it holds and
+ * drops every entry of the rest.
+ *
+ * `null` is returned, and nothing is touched, when the layer has no limit (`static_lookup`
+ * lanes, or a user's explicit "unlimited"), when IndexedDB cannot be read, or when the delete
+ * transaction did not commit -- all three are "the sweep cannot be claimed", which must not
+ * render the same as "swept, nothing to do".
+ *
+ * **Ranked by recency of USE, not by calendar date.** A limit ranked by the day's own date would
+ * throw away the 2003 fire day a reader has open in favour of days they have never looked at,
+ * which is the opposite of what a retention control is for. It is also the same LRU discipline
+ * `ensureCapacityFor` already evicts by, so a day cannot be kept by one rule and dropped by the
+ * other. A DAY is the unit, not an entry: one day accumulates an entry per viewport it was read
+ * at, and dropping some of them would leave a day the sync track still lights but which mostly
+ * misses.
+ *
+ * Costs one metadata pass, which reads no payloads -- see AGENTS.md "the metadata store".
+ */
+export async function enforceLayerRetention(
+  layerId: LayerToggleId
+): Promise<RetentionSweepResult | null> {
+  if (!isIndexedDbAvailable()) return null;
+  const limit = layerCachePolicyFor(layerId).retainedDayLimit;
+  if (limit === null) return null;
+  return serializeFullPass(async () => {
+    try {
+      const walk = await walkCache();
+      const byDay = new Map<string, { keys: string[]; lastAccessedAt: number; bytes: number }>();
+      for (const record of walk.live) {
+        if (record.layerId !== layerId || record.day === undefined) continue;
+        const existing = byDay.get(record.day);
+        if (existing === undefined) {
+          byDay.set(record.day, {
+            keys: [record.key],
+            lastAccessedAt: record.lastAccessedAt,
+            bytes: record.approxByteSize,
+          });
+          continue;
+        }
+        existing.keys.push(record.key);
+        existing.lastAccessedAt = Math.max(existing.lastAccessedAt, record.lastAccessedAt);
+        existing.bytes += record.approxByteSize;
+      }
+
+      const overflow = byDay.size - limit;
+      const doomedDays =
+        overflow <= 0
+          ? []
+          : [...byDay.entries()]
+              .sort((left, right) => left[1].lastAccessedAt - right[1].lastAccessedAt)
+              .slice(0, overflow);
+      const doomedKeys = new Set<string>();
+      let evictedBytes = 0;
+      for (const [, facts] of doomedDays) {
+        for (const key of facts.keys) doomedKeys.add(key);
+        evictedBytes += facts.bytes;
+      }
+
+      const committed = await deleteEntries(STORE_CONFIG, [...walk.deadKeys, ...doomedKeys]);
+      if (!committed) {
+        commitWalkTotal(walk.liveBytes, false);
+        return null;
+      }
+      const survivors =
+        doomedKeys.size === 0 ? walk.live : walk.live.filter((r) => !doomedKeys.has(r.key));
+      commitWalkTotal(
+        survivors.reduce((sum, record) => sum + record.approxByteSize, 0),
+        true
+      );
+      // Only when something actually went, on the same rule `ensureCapacityFor` follows:
+      // republishing an unchanged index re-renders every subscriber for nothing.
+      if (doomedKeys.size > 0 || walk.deadKeys.length > 0) {
+        notifyIndexRebuilt(buildSyncedDayIndex(survivors));
+      }
+      return {
+        layerId,
+        limit,
+        retainedDays: byDay.size - doomedDays.length,
+        evictedDays: doomedDays.length,
+        evictedBytes,
+      };
+    } catch {
+      walkInFlight = false;
+      totalCacheBytes = null;
+      return null;
+    }
+  });
+}
+
+/**
+ * At most one retention sweep per layer in flight, so a scrub landing on twelve new days does
+ * not queue twelve metadata passes behind each other. A write that lands DURING a sweep can
+ * therefore be missed until the next one -- under-enforcing by one day for a moment, which is
+ * the same safe direction every other approximation in this file errs in.
+ */
+const retentionSweepsInFlight = new Set<LayerToggleId>();
+
+function scheduleLayerRetentionSweep(layerId: LayerToggleId): void {
+  if (retentionSweepsInFlight.has(layerId)) return;
+  if (layerCachePolicyFor(layerId).retainedDayLimit === null) return;
+  retentionSweepsInFlight.add(layerId);
+  void enforceLayerRetention(layerId)
+    .catch(() => null)
+    .finally(() => {
+      retentionSweepsInFlight.delete(layerId);
+    });
 }
 
 /** Concurrency-throttled background revalidation queue (max 2 active requests). */
@@ -903,7 +1082,13 @@ function publishToQueryClient(
  * HISTORICAL_TTL_MS above), so background revalidation IS the correction path, and the throttle
  * is the only thing that may bound it.
  */
-function shouldRevalidate(stored: StoredLayerQueryEntry): boolean {
+function shouldRevalidate(stored: StoredLayerQueryEntry, layerId: LayerToggleId | null): boolean {
+  // The one gate that is allowed to narrow it, and only because the user asked for it: a layer
+  // on `manual` is never revalidated in the background. That is a real loss for a lane whose
+  // past days get republished, and it is why `manual` is the DEFAULT only for the two natures
+  // that do not move that way (see `DEFAULT_REFRESH_MODE` in layer-cache-policy.ts) and why the
+  // refetch control renders `lastFetchedAt` next to it.
+  if (layerCachePolicyFor(layerId).refreshMode === "manual") return false;
   const lastRevalidatedAt = stored.lastRevalidatedAt ?? stored.createdAt;
   return Date.now() - lastRevalidatedAt >= REVALIDATION_MIN_INTERVAL_MS;
 }
@@ -1015,7 +1200,12 @@ export function createIndexedDbLayerQueryPersister(
       const stored = await getEntry<unknown>(STORE_CONFIG, cacheKey);
       if (stored !== null && isStoredLayerQueryEntry(stored)) {
         const attribution = attributeStoredRow(stored, cacheKey);
-        if (isEntryFresh(stored)) {
+        // A manual refetch does not delete anything up front: it stamps an instant on the layer,
+        // and every entry older than that instant becomes a miss the next time it is READ. One
+        // click therefore reaches the days the reader is not currently looking at, lazily, and
+        // costs nothing for the days they never return to. The entry then falls into the same
+        // drop path an expired one takes, three lines below.
+        if (isEntryFresh(stored) && !isSupersededByRefreshRequest(attribution.layerId, stored.createdAt)) {
           // Recency is a metadata-only write, so a cache hit rewrites ~100 bytes rather than
           // re-serializing the payload it just read.
           void putMetadata(STORE_CONFIG, cacheKey, {
@@ -1027,7 +1217,7 @@ export function createIndexedDbLayerQueryPersister(
             ...(attribution.layerId === null ? {} : { layerId: attribution.layerId }),
             ...(attribution.day === undefined ? {} : { day: attribution.day }),
           } satisfies StoredEntryMetadata).catch(() => {});
-          if (shouldRevalidate(stored)) {
+          if (shouldRevalidate(stored, attribution.layerId)) {
             void revalidateAgainstDW(
               queryFn,
               context,

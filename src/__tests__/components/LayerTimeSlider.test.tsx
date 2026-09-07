@@ -366,19 +366,24 @@ describe("LayerTimeSlider", () => {
   });
 
   /**
-   * The PRECONDITION refusal, reached only by mounting this control the way `LayerRow` never
-   * does. `LayerRow.test.tsx` owns what the row actually mounts; this owns what the control does
-   * when its own gate has been violated, and the answer must not be a bare silent return.
+   * A layer with no axis, which `LayerRow` now mounts this control for on purpose (see the
+   * uniform-states suite at the bottom of this file). The answer must not be a bare silent
+   * return, and it must not be the scrubber either.
    */
-  it("names the axis it was mounted without instead of returning nothing", () => {
+  it("names the axis it has none of instead of returning nothing", () => {
     renderWithProviders(<LayerTimeSlider layerId="interventions" />);
 
     expect(screen.queryByTestId("layer-time-slider-range-interventions")).toBeNull();
-    const refusal = screen.getByTestId("layer-time-slider-no-axis-interventions");
-    expect(refusal.textContent).toContain("snapshot");
+    const refusal = screen.getByTestId("layer-time-status-interventions");
+    expect(refusal.dataset.state).toBe("no_time_axis");
+    expect(screen.getByTestId("layer-time-status-detail-interventions").textContent).toContain(
+      "snapshot"
+    );
     // The layer is still on the map as of some day, and a mixed-time composite is only readable
     // while every row admits its own.
-    expect(refusal.textContent).toContain("2019-02-01");
+    expect(screen.getByTestId("layer-time-status-date-interventions").textContent).toBe(
+      "2019-02-01"
+    );
   });
 
   /**
@@ -1099,6 +1104,223 @@ describe("LayerTimeSlider", () => {
       const coverageIndex = note.indexOf("No data on this date");
       expect(pendingIndex).toBeGreaterThanOrEqual(0);
       expect(coverageIndex).toBeGreaterThan(pendingIndex);
+    });
+  });
+
+  /**
+   * The uniform per-layer states, rendered through the real control rather than through the
+   * resolver -- `layer-time-state.test.ts` owns which state a payload produces, this owns that
+   * each one reaches the screen as its own visible thing.
+   *
+   * The defect being pinned: before this, "the day census is still cold" (7.6-8.5s in
+   * production), "the server withheld this layer's index" and "this lane has never published"
+   * were all the SAME empty row -- two of them because the control returned null, the third
+   * because no control was mounted at all. Every case below therefore asserts a rendered token,
+   * and the last one asserts the tokens differ from each other; a fixture that merely failed to
+   * crash would pass none of them.
+   */
+  describe("the uniform per-layer states", () => {
+    /** The withheld list rides on the payload but is absent from the CLIENT type; see
+     * `layer-time-state.ts` §WithheldLayerCapability for why this cast is the honest shape. */
+    function withCapabilities(options: {
+      layers?: SliderCapabilities["layers"];
+      withheld?: { layerName: string; reason: string; parquetLanes: string[] }[];
+    }): void {
+      useTimeSliderStore.setState({
+        capabilities: {
+          ...CAPABILITIES,
+          layers: options.layers ?? CAPABILITIES.layers,
+          withheldParquetCapabilities: options.withheld ?? [],
+        } as SliderCapabilities,
+        capabilitiesUnavailable: false,
+      });
+    }
+
+    /** Every visible token of the status block, or null when the block is not rendered. */
+    function statusOf(layerId: string): { state: string; badge: string; detail: string } | null {
+      const block = screen.queryByTestId(`layer-time-status-${layerId}`);
+      if (block === null) return null;
+      return {
+        state: block.dataset.state ?? "",
+        badge: screen.getByTestId(`layer-time-status-badge-${layerId}`).textContent ?? "",
+        detail: screen.getByTestId(`layer-time-status-detail-${layerId}`).textContent ?? "",
+      };
+    }
+
+    it("shows a real loading state while the payload is still in flight", () => {
+      useTimeSliderStore.setState({ capabilities: null, capabilitiesUnavailable: false });
+      renderWithProviders(<LayerTimeSlider layerId="vegetation" />);
+
+      const status = statusOf("vegetation");
+      expect(status?.state).toBe("loading");
+      expect(status?.badge).toBe("Loading");
+      // Names the wait rather than spinning silently: this is the sentence the owner's complaint
+      // asked for.
+      expect(status?.detail).toContain("few seconds");
+      // A track of the real control's height, so nothing on the row jumps when the axis lands.
+      expect(screen.getByTestId("layer-time-status-track-vegetation").className).toContain(
+        "layer-time-status-track-settling"
+      );
+      // Deferred by CSS, so a warm 0.28s payload never flashes this block in and back out.
+      expect(screen.getByTestId("layer-time-status-vegetation").className).toContain(
+        "layer-time-status-deferred"
+      );
+      // No day is guessed while none is known.
+      expect(screen.queryByTestId("layer-time-status-date-vegetation")).toBeNull();
+      expect(screen.queryByTestId("layer-time-slider-range-vegetation")).toBeNull();
+    });
+
+    it("draws the axis and no status block at all once the payload is in hand", () => {
+      renderWithProviders(<LayerTimeSlider layerId="vegetation" />);
+
+      expect(screen.getByTestId("layer-time-slider-range-vegetation")).not.toBeNull();
+      // Exactly one of the two renders, always. A status line beside a live axis would be the
+      // two-surfaces-one-fact defect this dock already recorded once.
+      expect(statusOf("vegetation")).toBeNull();
+    });
+
+    it("says a published layer has observed nothing, and does not call that an error", () => {
+      withCapabilities({
+        layers: [vegetationCapability({ earliestObservedDate: null, latestObservedDate: null })],
+      });
+      renderWithProviders(<LayerTimeSlider layerId="vegetation" />);
+
+      const status = statusOf("vegetation");
+      expect(status?.state).toBe("empty");
+      expect(status?.detail).toContain("Nothing observed yet");
+      // Nothing is in flight, so the row must not animate a promise it cannot keep.
+      expect(screen.getByTestId("layer-time-status-vegetation").getAttribute("aria-busy")).toBeNull();
+      expect(screen.getByTestId("layer-time-status-track-vegetation").className).not.toContain(
+        "layer-time-status-track-settling"
+      );
+    });
+
+    /**
+     * The owner's explicit ask, at the surface. Both layers are absent from `layers` in exactly
+     * the same way and only the withheld list separates them -- so this asserts the two rows do
+     * not read alike, token by token.
+     */
+    it("says different things about an index being built and a source that never published", () => {
+      withCapabilities({
+        layers: [],
+        withheld: [
+          { layerName: "fire-detections", reason: "availability_unpublished", parquetLanes: ["fire-detections"] },
+          { layerName: "vegetation", reason: "lane_never_written", parquetLanes: ["vegetation"] },
+        ],
+      });
+      renderWithProviders(
+        <>
+          <LayerTimeSlider layerId="fire" />
+          <LayerTimeSlider layerId="vegetation" />
+        </>
+      );
+
+      const indexing = statusOf("fire");
+      const never = statusOf("vegetation");
+      expect(indexing?.state).toBe("withheld");
+      expect(never?.state).toBe("withheld");
+
+      expect(indexing?.detail).toContain("still being built");
+      expect(never?.detail).toContain("never published anything");
+      expect(indexing?.badge).not.toBe(never?.badge);
+      expect(indexing?.detail).not.toBe(never?.detail);
+
+      // An index that is building is on its way; a lane that never wrote is not. Only the first
+      // is allowed to look like it is working on it.
+      expect(screen.getByTestId("layer-time-status-fire").getAttribute("aria-busy")).toBe("true");
+      expect(
+        screen.getByTestId("layer-time-status-vegetation").getAttribute("aria-busy")
+      ).toBeNull();
+
+      // The wire's own reason survives for the operator, unspun, without reaching the sentence.
+      expect(screen.getByTestId("layer-time-status-badge-fire").getAttribute("title")).toBe(
+        "availability_unpublished (fire-detections)"
+      );
+      expect(indexing?.detail).not.toContain("availability_unpublished");
+    });
+
+    it("treats a snapshot as having no time axis rather than as empty or failed", () => {
+      renderWithProviders(<LayerTimeSlider layerId="interventions" />);
+
+      const status = statusOf("interventions");
+      expect(status?.state).toBe("no_time_axis");
+      expect(status?.badge).toBe("No time axis");
+      expect(status?.detail).toContain("draws the same on every date");
+      // It still admits the day it is on the map as of, which is what keeps a mixed-time
+      // composite readable.
+      expect(screen.getByTestId("layer-time-status-date-interventions").textContent).toBe(
+        "2019-02-01"
+      );
+    });
+
+    it("says a failed load is a failed load and not a gap in the record", () => {
+      useTimeSliderStore.setState({ capabilities: null, capabilitiesUnavailable: true });
+      renderWithProviders(<LayerTimeSlider layerId="vegetation" />);
+
+      const status = statusOf("vegetation");
+      expect(status?.state).toBe("error");
+      expect(status?.detail).toContain("not a gap in the record");
+      // The failure is stated immediately; only the first-load case is deferred.
+      expect(screen.getByTestId("layer-time-status-vegetation").className).not.toContain(
+        "layer-time-status-deferred"
+      );
+    });
+
+    /**
+     * Uniform SHAPE, different WORDS -- which is the whole contract in one case. A shared block
+     * that said the same thing in every state would be uniform and useless; five states with
+     * five layouts would be informative and unreadable.
+     */
+    it("renders every state in the same three parts, and no two of them alike", () => {
+      const rendered: { state: string; badge: string; detail: string }[] = [];
+
+      const arrangements: (() => void)[] = [
+        () => useTimeSliderStore.setState({ capabilities: null, capabilitiesUnavailable: false }),
+        () => useTimeSliderStore.setState({ capabilities: null, capabilitiesUnavailable: true }),
+        () =>
+          withCapabilities({
+            layers: [vegetationCapability({ earliestObservedDate: null, latestObservedDate: null })],
+          }),
+        () =>
+          withCapabilities({
+            layers: [],
+            withheld: [
+              { layerName: "vegetation", reason: "availability_unpublished", parquetLanes: ["vegetation"] },
+            ],
+          }),
+        () =>
+          withCapabilities({
+            layers: [],
+            withheld: [
+              { layerName: "vegetation", reason: "lane_never_written", parquetLanes: ["vegetation"] },
+            ],
+          }),
+        () =>
+          withCapabilities({
+            layers: [vegetationCapability({ temporalKind: "snapshot" })],
+          }),
+      ];
+
+      for (const arrange of arrangements) {
+        arrange();
+        const { unmount } = renderWithProviders(<LayerTimeSlider layerId="vegetation" />);
+        // The three parts, present in every state -- that is the uniformity.
+        expect(screen.getByTestId("layer-time-status-badge-vegetation")).not.toBeNull();
+        expect(screen.getByTestId("layer-time-status-track-vegetation")).not.toBeNull();
+        expect(screen.getByTestId("layer-time-status-detail-vegetation")).not.toBeNull();
+        const status = statusOf("vegetation");
+        expect(status).not.toBeNull();
+        rendered.push(status!);
+        unmount();
+      }
+
+      // Six arrangements, six sentences nobody could confuse for one another. An empty or
+      // duplicated caption would collapse this to fewer.
+      expect(new Set(rendered.map((entry) => entry.detail)).size).toBe(arrangements.length);
+      for (const entry of rendered) {
+        expect(entry.badge.length).toBeGreaterThan(0);
+        expect(entry.detail.length).toBeGreaterThan(20);
+      }
     });
   });
 });

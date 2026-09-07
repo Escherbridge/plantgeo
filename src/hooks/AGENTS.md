@@ -7,6 +7,44 @@ type: agents
 Directory-level rationale for hooks whose "why" is too long for a one-line doc comment. Add a
 section rather than a new file when the next hook needs one.
 
+## useLayerCacheControls
+
+The whole per-layer local-cache surface as one hook, added 2026-09-07: the resolved policy
+(refresh mode, retention limit, whether the user has overridden the nature default), what is
+currently held (`heldDayCount`, `heldBytes`, `isHeldKnown`, `lastFetchedAt`) and five actions
+(`setRefreshMode`, `setRetainedDayLimit`, `resetToDefaults`, `refetchNow`, `clearHeldData`).
+
+**It exists because it is the one place the three moving parts may meet.** The persisted
+preference store (`src/lib/cache/layer-cache-policy-store.ts`) must not import the IndexedDB
+persister that enforces it — that would be a cycle between two module singletons, the failure
+mode `sync-index-store.ts` avoids with a callback seam — and neither of them may reach a
+`QueryClient`, which only exists inside the provider tree. So the store stays a leaf, the
+persister reads it one way, and every action that has to touch both plus react-query lives here.
+
+**`refetchNow` stamps before it invalidates, and the order is the mechanism.**
+`requestLayerRefresh` records an instant; the persister then refuses any stored entry created
+strictly before it. Invalidating first would let the refetch be answered by the very copy it was
+meant to replace. Nothing is deleted up front — days the reader is not looking at refetch lazily
+when they next look.
+
+**`clearHeldData` removes INACTIVE query entries only.** Removing an active one makes react-query
+refetch on the spot, which writes the layer straight back to disk and makes "clear" look like it
+failed. What is on screen stays on screen; what is not is gone from memory as well as disk.
+
+**`setRetainedDayLimit` sweeps synchronously rather than waiting for the next write.** A limit
+that only takes effect the next time the reader happens to land on a new day is a control whose
+effect cannot be observed, and the held-days count rendered beside it would go on contradicting
+the number just set.
+
+**`isHeldKnown` is not decoration.** It is `useSyncIndexReady()`, false until IndexedDB has been
+read once and permanently false where it cannot be read at all (SSR, jsdom, private browsing).
+"Nothing is held" and "not yet known" must not render the same on a control whose whole job is to
+make what is held falsifiable.
+
+Rationale for the policy itself — the nature table, why `manual` is the default for
+`static_lookup`/`release_series`, and what a manual layer deliberately gives up — is in
+`src/lib/cache/AGENTS.md` §"per-layer cache policy".
+
 ## useParquetFireDetections
 
 The map's only fire read since the 2026-09-01 Parquet cutover. It calls

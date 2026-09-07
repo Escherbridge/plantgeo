@@ -14,6 +14,11 @@ import {
   SYNCED_DAY_APPEARANCE_BACKGROUND_SIZE,
   TRACK_REGION_APPEARANCE,
 } from "@/components/map/layer-panel/layer-coverage-track";
+import {
+  resolveLayerTimeState,
+  type LayerTimeState,
+} from "@/components/map/layer-panel/layer-time-state";
+import { LayerTimeStatus } from "@/components/map/layer-panel/LayerTimeStatus";
 import { layerLabel, type LayerToggleId } from "@/lib/map/layer-registry";
 import { useLayerDay } from "@/lib/map/layer-toggle-context";
 import { cn } from "@/lib/utils";
@@ -179,49 +184,24 @@ const COARSE_STEP_DAYS = 30;
 const VERY_COARSE_STEP_DAYS = 365;
 
 /**
- * Why this layer has no scrubbable axis, named rather than left blank.
+ * The one state this control can be IN that `resolveLayerTimeState` cannot name.
  *
- * Five separate facts, and collapsing them would misinform in both directions: a snapshot has a
- * perfectly complete record that simply does not vary by day, while an unpublished layer has no
- * record at all, and a row that said the same thing about both would be wrong about one of them.
- * The row keeps showing its date either way -- the layer is still drawing as of some day, and
- * hiding that is what makes a mixed-time map unreadable.
- *
- * A PRECONDITION refusal, not an ordinary state: `LayerRow` mounts this control only for a layer
- * that has a selectable day or whose capabilities have not landed yet, so reaching this branch
- * means the row's gate and `sliderDomain` disagreed. It states which fact it was mounted
- * without rather than returning null, because a bare silent return is exactly the shape of the
- * defect this whole control exists to remove.
+ * A PRECONDITION refusal and, on the current contract, unreachable: `resolveLayerTimeState`
+ * returns `ready` only when `sliderDomain` answered, and that answer needs the same warehouse
+ * name, capability row and payload the render path below needs. Reaching it means those two
+ * disagreed about one payload. It states the disagreement rather than returning null, because a
+ * bare silent return is exactly the shape of the defect this whole control exists to remove --
+ * and it deliberately does NOT reuse the `ready` wording, which would tell a reader there is a
+ * range to scrub while drawing no range at all.
  */
-function describeMissingAxis(
-  warehouseLayerName: string | null,
-  capability: ReturnType<typeof findLayerCapability>,
-  serverCurrentDate: string | null,
-  streamsUnavailable: boolean
-): string {
-  if (warehouseLayerName === null) {
-    return "No warehouse layer backs this one, so it has no record of its own to scrub.";
-  }
-  // Checked BEFORE the null-capability sentence below, which would otherwise report a timed-out
-  // scan as "not published yet" -- a claim about the warehouse built out of a failed query, and
-  // the precise inversion this control exists to refuse. The absence is ours, not the record's.
-  if (streamsUnavailable && capability === null) {
-    return "Its history could not be read just now, so no range can be drawn yet. Retrying.";
-  }
-  if (capability === null) {
-    return "Not published to the warehouse record yet, so it has no dates of its own.";
-  }
-  if (capability.temporalKind === "snapshot") {
-    return "A snapshot, not a daily record: it draws the same on every date.";
-  }
-  if (capability.earliestObservedDate === null) {
-    return "Nothing observed yet, so there is no range to scrub.";
-  }
-  if (serverCurrentDate !== null && capability.earliestObservedDate > serverCurrentDate) {
-    return `Its record starts on ${capability.earliestObservedDate}, after today, so no range can be drawn.`;
-  }
-  return "No range can be drawn from this layer's record.";
-}
+const AXIS_DISAGREEMENT_STATE: LayerTimeState = {
+  kind: "error",
+  badge: "Unavailable",
+  detail: "Its range could not be drawn from the payload that describes it.",
+  isSettling: false,
+  reason: null,
+  evidenceLanes: [],
+};
 
 export interface LayerTimeSliderProps {
   layerId: LayerToggleId;
@@ -252,12 +232,18 @@ export interface LayerTimeSliderProps {
  * even for a layer with no axis at all -- and why the behind-latest mark is a word and not a
  * colour.
  *
- * It also owns the account of why there is no axis to draw. `LayerRow` mounts this control for
- * any layer that has a selectable day OR whose capabilities have not landed yet, precisely so
- * that a failed `getSliderCapabilities` reaches a control that can SAY so: the row cannot know
- * whether a layer has dates while the payload is missing, and refusing the control on that
- * unknown is what silently stripped the time control from every row during the read model's
- * bigint 500 with nothing anywhere naming the cause.
+ * It also owns the account of why there is no axis to draw, and `LayerRow` now mounts it for
+ * EVERY warehouse-backed layer that is switched on -- not only for the ones with an axis. The
+ * row cannot know whether a layer has dates while the payload is missing (the read model's
+ * bigint 500 stripped the time control from every row at once, with nothing anywhere naming the
+ * cause), and it must not answer for a layer the server deliberately withheld either. So the
+ * gate is now "is this layer backed by a stream at all", and everything downstream of that is
+ * this control's to state.
+ *
+ * Exactly one of two things renders: the axis below, or `LayerTimeStatus` -- one uniform block
+ * for all five non-`ready` states, in the same three-part shape on every row. The choice is
+ * `resolveLayerTimeState`'s and nothing here re-derives it; see `layer-time-state.ts` and
+ * src/components/map/AGENTS.md §layer-time-state.
  *
  * Presentational and store-driven: no tRPC of its own, so it renders against a fixture without
  * a provider. `TimeSliderCapabilitiesLoader` remains the one reader and the one writer of
@@ -271,8 +257,7 @@ export function LayerTimeSlider({
   useLayerTimeSliderStyles();
 
   const label = layerLabel(layerId);
-  const { selectedDate, serverCurrentDate, latestObservedDate, isBehindLatestObservedDate } =
-    useLayerDay(layerId);
+  const { selectedDate, latestObservedDate, isBehindLatestObservedDate } = useLayerDay(layerId);
   const capabilities = useTimeSliderStore((state) => state.capabilities);
   const capabilitiesUnavailable = useTimeSliderStore((state) => state.capabilitiesUnavailable);
   // What THIS BROWSER holds locally, not what the server has -- see the synced-days row below
@@ -340,54 +325,42 @@ export function LayerTimeSlider({
     [domain, syncedDays]
   );
 
-  // The fetch has never once succeeded and its last attempt failed. There is no honest axis to
-  // draw and no honest "today" to anchor it to, so the row says why rather than going silent --
-  // silence is what let a failing endpoint read as "this layer has no dates". Reachable only
-  // because `LayerRow` mounts this control while the payload is unknown; gating that mount on an
-  // axis instead made this branch unreachable and the outage invisible.
-  if (capabilities === null && capabilitiesUnavailable) {
-    return (
-      <p
-        className={cn("text-[10px] leading-relaxed text-[hsl(var(--muted-foreground))]", className)}
-        data-testid={`layer-time-slider-unavailable-${layerId}`}
-      >
-        Dates could not be loaded. This is a loading failure, not a gap in the record.
-      </p>
-    );
-  }
-
-  // Capabilities still in flight. Rendering nothing rather than a placeholder is what keeps a
-  // normal fast load from flashing a skeleton in and back out of every switched-on row.
-  if (capabilities === null || selectedDate === null) return null;
-
-  // One guard for every state that leaves this layer without a scrubbable axis. The three
-  // conditions are not independent -- `sliderDomain` already returns null whenever the warehouse
-  // name or the capability row is missing -- but naming all three is what lets the compiler treat
-  // them as present below, rather than leaving a `?? ""` fallback that could quietly clamp one
-  // layer's day against another layer's axis.
+  // Which of the six states this layer is in, decided once, in one place, for every row on the
+  // map -- including the two this control could not previously reach at all: a first fetch still
+  // in flight (which used to be a bare `return null`, so a 7.6-8.5s cold census rendered as an
+  // empty row) and a layer the server explicitly WITHHELD with a named reason (which used to
+  // reach no control at all, because `LayerRow` refused to mount one without an axis).
   //
-  // With capabilities in hand this is `LayerRow`'s own gate restated, so reaching it means the
-  // gate and `sliderDomain` disagreed -- see `describeMissingAxis`. It states the disagreement
-  // instead of returning null, and keeps showing the day the layer is drawing as of either way.
-  if (domain === null || warehouseLayerName === null || capability === null) {
+  // Not memoized: it is a `find` plus a comparison over the same payload the two `useMemo`s above
+  // already walk, and its result is consumed on this render only.
+  const timeState = resolveLayerTimeState({
+    warehouseLayerName,
+    capabilities,
+    capabilitiesUnavailable,
+  });
+
+  // The four narrowings are not independent of `ready` -- `sliderDomain` answers only when all
+  // four hold -- but naming them is what lets the compiler treat them as present below, rather
+  // than leaving a `?? ""` fallback that could quietly clamp one layer's day against another
+  // layer's axis. A `ready` state that fails one of them is the disagreement described on
+  // `AXIS_DISAGREEMENT_STATE`, and it must not be captioned with the `ready` wording.
+  if (
+    timeState.kind !== "ready" ||
+    domain === null ||
+    warehouseLayerName === null ||
+    capability === null ||
+    selectedDate === null
+  ) {
     return (
-      <div
-        className={cn("flex flex-col gap-0.5", className)}
-        data-testid={`layer-time-slider-no-axis-${layerId}`}
-      >
-        {/* Still says which day this layer is drawing. It has no axis, but it is on the map as
-            of some date, and a mixed-time composite is only readable while every row admits its
-            own. */}
-        <p className="text-[10px] tabular-nums text-[hsl(var(--foreground))]">{selectedDate}</p>
-        <p className="text-[10px] leading-relaxed text-[hsl(var(--muted-foreground))]">
-          {describeMissingAxis(
-            warehouseLayerName,
-            capability,
-            serverCurrentDate,
-            capabilities?.streamsUnavailable ?? false
-          )}
-        </p>
-      </div>
+      <LayerTimeStatus
+        layerId={layerId}
+        state={timeState.kind === "ready" ? AXIS_DISAGREEMENT_STATE : timeState}
+        // Still says which day this layer is drawing. It has no axis, but it is on the map as of
+        // some date, and a mixed-time composite is only readable while every row admits its own.
+        // Null only before the payload lands, where no day can be named without guessing one.
+        drawingDate={selectedDate}
+        className={className}
+      />
     );
   }
 

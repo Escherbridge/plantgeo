@@ -39,10 +39,30 @@ const CAPABILITIES_RETRY_MS = 30_000;
  *
  * There is no fallback domain, and there must not be one: a browser-clock guess would put
  * "today" on the wrong day for anyone outside UTC and invent an axis nobody measured. Until the
- * payload lands, every consumer renders nothing -- unless the fetch failed outright (see
- * `capabilitiesUnavailable`), because a failed request and a slow-but-healthy one must not look
- * identical: the former was mistaken for a UI bug once already (the read-model's
+ * payload lands, no consumer may name a day -- but a failed request and a slow-but-healthy one
+ * must not LOOK identical: the former was mistaken for a UI bug once already (the read-model's
  * `invalid input syntax for type bigint: "0.01"` 500).
+ *
+ * ## Two store fields carry three states, and this component is the reason that is sound
+ *
+ * There is no `capabilitiesPending` flag, and none is needed. Every consumer reads pending off
+ * the PAIR of fields written here:
+ *
+ * - `capabilities === null` and `capabilitiesUnavailable === false` -> the first fetch is in
+ *   flight. Measured against production: a cold `getSliderCapabilities` takes 7.6-8.5s (it walks
+ *   the Parquet day census) and a warm one 0.28s.
+ * - `capabilities === null` and `capabilitiesUnavailable === true`  -> it has never succeeded.
+ * - `capabilities !== null` -> some payload landed, however old.
+ *
+ * That reading is only sound because of three properties of THIS component, all of which must
+ * hold together: it is mounted in `MapView` and never unmounts, its query is never `enabled:
+ * false` and never conditional, and it is the sole writer of both fields. Break any one of them
+ * -- gate the query, mount a second reader, write either field from elsewhere -- and "null with
+ * no failure" stops meaning "in flight" and starts meaning "nobody asked", which every row on
+ * the map would then render as a loading state that never ends.
+ *
+ * `resolveLayerTimeState` in `src/components/map/layer-panel/layer-time-state.ts` is the one
+ * place that turns the pair into a state; see src/components/map/AGENTS.md §layer-time-state.
  */
 export default function TimeSliderCapabilitiesLoader() {
   const setCapabilities = useTimeSliderStore((state) => state.setCapabilities);

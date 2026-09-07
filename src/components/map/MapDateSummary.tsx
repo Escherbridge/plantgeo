@@ -2,8 +2,17 @@
 
 import { useMemo } from "react";
 import { CalendarDays } from "lucide-react";
-import { layerLabel, type LayerToggleId } from "@/lib/map/layer-registry";
-import { useViewedLayerDays, type ViewedLayerDay } from "@/lib/map/layer-toggle-context";
+import {
+  LAYER_REGISTRY,
+  LAYER_TOGGLE_IDS,
+  layerLabel,
+  type LayerToggleId,
+} from "@/lib/map/layer-registry";
+import {
+  useLayerVisibility,
+  useViewedLayerDays,
+  type ViewedLayerDay,
+} from "@/lib/map/layer-toggle-context";
 import {
   dayOffset,
   latestObservedDateFor,
@@ -260,6 +269,14 @@ const PRIMARY_CHIP_CLASSES = `${CHIP_CLASSES} bg-[hsl(var(--primary))]/15 text-[
  */
 export function MapDateSummary() {
   const viewedLayerDays = useViewedLayerDays();
+  // Which layers are SWITCHED ON, which is a different question from which name a day. Between
+  // them lies the whole cold-load window: `useViewedLayerDays` drops every layer whose day cannot
+  // be named, so before the capabilities payload lands it is empty and this surface used to
+  // vanish outright for the 7.6-8.5s a cold day census takes. Silence there is the same defect
+  // the per-row sliders had -- "still loading" and "nothing dated is on the map" rendered
+  // identically -- and it is worse here, because this is the only surface outside the closable
+  // dock. See the pending branch below.
+  const layerVisibility = useLayerVisibility();
   // What the layers say they are PAINTING, which is what this surface states. The rows above
   // carry the slider's position; captioning that would name a day the canvas is not showing for
   // the length of every fetch. See `src/stores/useMetricAtDate.ts` §DrawnLayerDay.
@@ -267,6 +284,9 @@ export function MapDateSummary() {
   // The whole payload, because "behind its latest" is re-answered per layer against the day
   // actually drawn -- see `resolveDrawnViewedDays`.
   const capabilities = useTimeSliderStore((state) => state.capabilities);
+  // The other half of the pending pair; `TimeSliderCapabilitiesLoader`'s header is the contract
+  // for reading the two together.
+  const capabilitiesUnavailable = useTimeSliderStore((state) => state.capabilitiesUnavailable);
   const serverCurrentDate = capabilities?.serverCurrentDate ?? null;
 
   const drawnLayerDays = useMemo(
@@ -281,6 +301,53 @@ export function MapDateSummary() {
     () => (summary === null ? "" : describeViewedDays(drawnLayerDays, summary)),
     [drawnLayerDays, summary]
   );
+  // Whether a layer whose day COULD be named is on screen. Nothing else licenses this surface to
+  // speak while no day is known: a map showing only the basemap, or only the four toggles no
+  // warehouse stream backs, has no dates to be waiting for, and a "Loading dates" box over it
+  // would be a claim about a composite that does not exist.
+  const awaitsAnyLayerDate = useMemo(
+    () =>
+      LAYER_TOGGLE_IDS.some(
+        (toggleId) =>
+          layerVisibility[toggleId] && LAYER_REGISTRY[toggleId].warehouseLayerName !== null
+      ),
+    [layerVisibility]
+  );
+
+  // No day can be named yet. Said out loud rather than left blank, and said with the SAME two
+  // words the rows use, so the map-wide surface and every row in the dock report one cold load in
+  // one vocabulary. It states no day and no span -- there is none to state -- which is what keeps
+  // it from being the map-wide "when" that per-layer dates deleted.
+  if (summary === null && capabilities === null && awaitsAnyLayerDate) {
+    const isLoadFailure = capabilitiesUnavailable;
+    return (
+      <div className={SUMMARY_ANCHOR_CLASSES} data-testid="map-date-summary">
+        <div
+          className={SUMMARY_SURFACE_CLASSES}
+          data-testid="map-date-summary-pending"
+          data-state={isLoadFailure ? "error" : "loading"}
+          aria-busy={isLoadFailure ? undefined : "true"}
+        >
+          <div className="flex items-center gap-1.5">
+            <CalendarDays
+              aria-hidden="true"
+              className="size-3.5 shrink-0 text-[hsl(var(--muted-foreground))]"
+            />
+            <span className="text-[hsl(var(--muted-foreground))]">
+              {isLoadFailure ? "Dates unavailable" : "Loading dates"}
+            </span>
+          </div>
+          <span className="sr-only">
+            {isLoadFailure
+              ? "The layer date index could not be loaded. This is a loading failure, not a gap " +
+                "in the record: what is drawn is undated until it recovers."
+              : "Reading which days each layer has published. Until it lands, no layer on this " +
+                "map can be dated."}
+          </span>
+        </div>
+      </div>
+    );
+  }
 
   if (summary === null) return null;
 

@@ -111,6 +111,16 @@ function timeSliderSlotFor(layerId: LayerToggleId): HTMLElement | null {
   return screen.queryByTestId(`layer-time-slider-slot-${layerId}`);
 }
 
+/** The scrubber itself, which is a narrower question than "does this row speak about time". */
+function timeRangeInputFor(layerId: LayerToggleId): HTMLElement | null {
+  return screen.queryByTestId(`layer-time-slider-range-${layerId}`);
+}
+
+/** The uniform status block, and the state it declares. */
+function timeStatusStateFor(layerId: LayerToggleId): string | null {
+  return screen.queryByTestId(`layer-time-status-${layerId}`)?.dataset.state ?? null;
+}
+
 describe("LayerRow time control gate", () => {
   beforeEach(() => {
     useMapStore.setState({ activeLayers: [...LAYER_TOGGLE_IDS] });
@@ -139,45 +149,88 @@ describe("LayerRow time control gate", () => {
     expect(timeSliderSlotFor("water")).toBeNull();
   });
 
-  it("gives a snapshot layer no time control even though it carries a published date", () => {
+  /**
+   * Rewritten 2026-09-07 from "gives a snapshot layer no time control". The CONTROL is still
+   * refused, for the reason it always was -- `watersheds` publishes a real capability with a real
+   * date, but 96% of its 9,396 HUC12 basins carry one 2013 WBD loaddate, and a track over them
+   * would advertise years of scrubbing across a boundary set that draws identically on every one
+   * of those days. What changed is that refusing the control no longer means saying nothing: the
+   * row now states that this layer legitimately has no time axis, which is a first-class answer
+   * and not the same blank space a still-loading row used to leave.
+   */
+  it("gives a snapshot layer no scrubber, and says why instead of saying nothing", () => {
     renderRow("watersheds");
 
     expect(screen.getByTestId("layer-row-watersheds")).not.toBeNull();
-    expect(timeSliderSlotFor("watersheds")).toBeNull();
+    expect(timeRangeInputFor("watersheds")).toBeNull();
+    expect(timeStatusStateFor("watersheds")).toBe("no_time_axis");
   });
 
-  it("gives a layer with no warehouse stream behind it no time control", () => {
+  it("gives a layer with no warehouse stream behind it no time control and no caption", () => {
     renderRow("soil");
 
+    // `soil` was never in the census at all, so there is nothing about time to report -- an
+    // "unavailable" or "loading" line here would be a claim about a layer the payload never
+    // describes either way.
     expect(screen.getByTestId("layer-row-soil")).not.toBeNull();
     expect(timeSliderSlotFor("soil")).toBeNull();
+    expect(timeStatusStateFor("soil")).toBeNull();
   });
 
-  it("gives a layer this payload does not carry no time control", () => {
+  it("gives a layer this payload does not carry no scrubber, and names the absence", () => {
     // `fire-detections` is a real warehouse stream that this payload simply omits, which is what
-    // an unpublished layer looks like from the client.
+    // an unpublished layer looks like from the client. In production it is omitted because its
+    // availability index is still being built -- the case the reader most needs told apart from
+    // a slow load, and the one that used to render as an empty row.
     renderRow("fire");
 
     expect(screen.getByTestId("layer-row-fire")).not.toBeNull();
-    expect(timeSliderSlotFor("fire")).toBeNull();
+    expect(timeRangeInputFor("fire")).toBeNull();
+    expect(timeStatusStateFor("fire")).toBe("empty");
   });
 
   /**
    * The single rule, asserted as a single rule.
    *
    * `hasSelectableDay` decides both whether a layer's map read is date-filtered and whether its
-   * row gets a control, and the two disagreeing is the defect it was written to close: a layer
+   * row gets a SCRUBBER, and the two disagreeing is the defect it was written to close: a layer
    * filtered to a day its row gave no way to change, with no one place where that could be
    * noticed. This is that place.
+   *
+   * Asserted on the range input rather than on the slot since 2026-09-07: the slot now mounts for
+   * every stream-backed layer so that each can state its own situation, so the slot is no longer
+   * the control -- the control is. The rule itself is untouched.
    */
-  it("mounts a control for exactly the layers the store says have a selectable day", () => {
+  it("mounts a scrubber for exactly the layers the store says have a selectable day", () => {
     renderEveryRow();
 
     for (const layerId of LAYER_TOGGLE_IDS) {
       if (LAYER_REGISTRY[layerId].permanentlyUnavailableReason !== null) continue;
-      expect(timeSliderSlotFor(layerId) !== null, layerId).toBe(
+      expect(timeRangeInputFor(layerId) !== null, layerId).toBe(
         hasSelectableDay(CAPABILITIES, layerId)
       );
+    }
+  });
+
+  /**
+   * The owner's ask, at the level it was made: "ideally all the layer UI interfaces can be
+   * uniform". Every switched-on layer a stream backs says something about time, and every one of
+   * them says it in the same place -- either a scrubber or a status block, never neither.
+   */
+  it("leaves no stream-backed layer silent about its own time state", () => {
+    renderEveryRow();
+
+    for (const layerId of LAYER_TOGGLE_IDS) {
+      if (LAYER_REGISTRY[layerId].permanentlyUnavailableReason !== null) continue;
+      if (LAYER_REGISTRY[layerId].warehouseLayerName === null) continue;
+      const speaks = timeRangeInputFor(layerId) !== null || timeStatusStateFor(layerId) !== null;
+      expect(speaks, layerId).toBe(true);
+      // And never both: two surfaces stating one fact, one line apart, is the defect the dock
+      // already recorded once.
+      expect(
+        timeRangeInputFor(layerId) !== null && timeStatusStateFor(layerId) !== null,
+        layerId
+      ).toBe(false);
     }
   });
 });
@@ -208,7 +261,8 @@ describe("LayerRow when the capabilities payload does not arrive", () => {
     renderRow("water");
 
     expect(timeSliderSlotFor("water")).not.toBeNull();
-    expect(screen.getByTestId("layer-time-slider-unavailable-water").textContent).toContain(
+    expect(timeStatusStateFor("water")).toBe("error");
+    expect(screen.getByTestId("layer-time-status-detail-water").textContent).toContain(
       "not a gap in the record"
     );
   });
@@ -219,10 +273,7 @@ describe("LayerRow when the capabilities payload does not arrive", () => {
     for (const layerId of LAYER_TOGGLE_IDS) {
       if (LAYER_REGISTRY[layerId].permanentlyUnavailableReason !== null) continue;
       const backedByStream = LAYER_REGISTRY[layerId].warehouseLayerName !== null;
-      expect(
-        screen.queryByTestId(`layer-time-slider-unavailable-${layerId}`) !== null,
-        layerId
-      ).toBe(backedByStream);
+      expect(timeStatusStateFor(layerId) === "error", layerId).toBe(backedByStream);
     }
   });
 
@@ -232,30 +283,43 @@ describe("LayerRow when the capabilities payload does not arrive", () => {
     // `soil` names no warehouse stream at all, so a loading failure says nothing about it and
     // the row must not imply otherwise.
     expect(timeSliderSlotFor("soil")).toBeNull();
-    expect(screen.queryByTestId("layer-time-slider-unavailable-soil")).toBeNull();
+    expect(timeStatusStateFor("soil")).toBeNull();
   });
 
-  it("states nothing at all while the payload is merely still in flight", () => {
+  /**
+   * Rewritten 2026-09-07, and the assertion is inverted on purpose. It used to read
+   * `slot.textContent === ""`, pinning the deliberate silence of a first load -- which was right
+   * while a warm payload was the only case anyone had measured, and wrong the moment a COLD
+   * `getSliderCapabilities` was measured at 7.6-8.5s against production. For those eight seconds
+   * every switched-on row rendered exactly what a layer with no dates renders, which is the
+   * report this work came from. The flash the old rule guarded against is now handled by a CSS
+   * delay inside the block (see `LayerTimeStatus`), so a fast payload still shows nothing while a
+   * slow one is stated plainly.
+   */
+  it("states that the payload is still in flight rather than rendering an empty row", () => {
     useTimeSliderStore.setState({ capabilities: null, capabilitiesUnavailable: false });
     renderRow("water");
 
-    // The slot is mounted, because the row still does not know whether this layer has dates --
-    // but nothing inside it makes a claim, so a normal fast load flashes no skeleton and no
-    // error into every switched-on row.
-    expect(timeSliderSlotFor("water")?.textContent).toBe("");
-    expect(screen.queryByTestId("layer-time-slider-unavailable-water")).toBeNull();
+    expect(timeStatusStateFor("water")).toBe("loading");
+    expect(screen.getByTestId("layer-time-status-detail-water").textContent).toContain(
+      "few seconds"
+    );
+    // Loading is not failure, and the row must not say the stronger thing.
+    expect(screen.getByTestId("layer-time-status-detail-water").textContent).not.toContain(
+      "not a gap in the record"
+    );
     expect(screen.queryByTestId("layer-time-slider-range-water")).toBeNull();
   });
 
   it("replaces the failure with a real axis once a payload finally lands", () => {
     renderRow("water");
-    expect(screen.getByTestId("layer-time-slider-unavailable-water")).not.toBeNull();
+    expect(timeStatusStateFor("water")).toBe("error");
 
     act(() => {
       useTimeSliderStore.getState().setCapabilities(CAPABILITIES);
     });
 
-    expect(screen.queryByTestId("layer-time-slider-unavailable-water")).toBeNull();
+    expect(timeStatusStateFor("water")).toBeNull();
     expect(screen.getByTestId("layer-time-slider-range-water")).not.toBeNull();
   });
 });
@@ -291,14 +355,19 @@ describe("LayerRow when the payload arrives without its stream scan", () => {
     renderRow("fire");
 
     expect(timeSliderSlotFor("fire")).not.toBeNull();
-    expect(screen.getByTestId("layer-time-slider-no-axis-fire")).not.toBeNull();
+    expect(timeStatusStateFor("fire")).toBe("error");
   });
 
   it("says the history could not be read rather than that the layer is unpublished", () => {
     renderRow("fire");
 
-    expect(screen.getByTestId("layer-time-slider-no-axis-fire").textContent).toContain(
+    expect(screen.getByTestId("layer-time-status-detail-fire").textContent).toContain(
       "could not be read"
+    );
+    // The attribution is the whole point: the same absence is `empty` -- "not published yet" --
+    // when the payload is whole, and an `error` only because the scan reported itself short.
+    expect(screen.getByTestId("layer-time-status-detail-fire").textContent).not.toContain(
+      "Not published"
     );
   });
 
@@ -316,15 +385,21 @@ describe("LayerRow when the payload arrives without its stream scan", () => {
     renderRow("water");
 
     expect(screen.getByTestId("layer-time-slider-range-water")).not.toBeNull();
-    expect(screen.queryByTestId("layer-time-slider-no-axis-water")).toBeNull();
+    expect(timeStatusStateFor("water")).toBeNull();
   });
 });
 
 /**
- * The per-timeline reset control. Gated on the SAME `mountsTimeSlider` boolean as the slider
- * slot -- a layer with no timeline has no per-day cache entries to offer resetting -- and, once
- * mounted, armed by an explicit two-step confirm rather than firing on the first click. See
- * src/components/map/AGENTS.md §synced-days-track for the full home decision and its rationale.
+ * The per-timeline reset control. Gated on `mountsDayControls` -- a layer with no timeline has no
+ * per-day cache entries to offer resetting -- and, once mounted, armed by an explicit two-step
+ * confirm rather than firing on the first click. See src/components/map/AGENTS.md
+ * §synced-days-track for the full home decision and its rationale.
+ *
+ * That gate is now STRICTER than the slot's, which is the point of the split landed 2026-09-07:
+ * the slot mounts for every stream-backed layer so each can state its own time situation, while
+ * these two buttons still mount only where there is a timeline for them to act on. A sentence
+ * claims nothing about what a button would do; a button that does nothing is the fabricated
+ * affordance every other control on this row is guarded against.
  */
 describe("layer sync reset control", () => {
   beforeEach(() => {
@@ -338,11 +413,15 @@ describe("layer sync reset control", () => {
     });
   });
 
-  it("mounts only where the time slider itself mounts", () => {
+  it("stays off a layer with no timeline, even though that row now speaks about time", () => {
     renderRow("watersheds");
 
-    expect(timeSliderSlotFor("watersheds")).toBeNull();
+    // The row states its situation -- a snapshot has no time axis -- and still offers nothing to
+    // reset, because a snapshot has no per-day cache entries. The status block and the buttons
+    // answer two different questions and must not share one gate.
+    expect(timeStatusStateFor("watersheds")).toBe("no_time_axis");
     expect(screen.queryByTestId("layer-sync-reset-watersheds")).toBeNull();
+    expect(screen.queryByTestId("layer-refresh-watersheds")).toBeNull();
   });
 
   /**

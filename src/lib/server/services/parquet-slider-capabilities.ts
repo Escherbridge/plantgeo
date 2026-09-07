@@ -606,6 +606,88 @@ function commonPublishedRanges(
   }, [{ from: earliestDay, to: latestDay }]);
 }
 
+/**
+ * How many governed-absence ranges one row publishes, newest first.
+ *
+ * THIS LIST IS PARQUET-ONLY, which is why it is capped here and `coverageGaps` is not. The
+ * PostgreSQL read model has no governed-absence concept at all -- `buildCapability`
+ * (`environmental-read-model.ts`) never sets the field, and `SliderLayerCapability` marks it
+ * optional for exactly that reason -- so this module is its sole producer and the only place a
+ * cap can live. `coverageGaps` has two producers and must keep the one shared
+ * `MAX_REPORTED_DAY_RANGES`; a second, tighter cap here would make a layer's Parquet row and its
+ * PostgreSQL row disagree about what "truncated" means.
+ *
+ * DERIVED FROM WHAT THE TRACK CAN DRAW, not from a byte target. `floorAxisRunsToBands`
+ * (`components/map/layer-panel/layer-coverage-track.ts`) widens every run to
+ * `MINIMUM_DRAWN_BAND_PERCENT` = 0.9% of the axis and coalesces any two same-kind bands that
+ * then touch, so a track can never show more than `ceil(100 / 0.9)` = 112 marks of one kind
+ * however many ranges it is sent. Past that the extra ranges buy no ahead-of-scrubbing
+ * information at all: on fire-detections' 9,441-day axis 0.9% is 85 days, its 447 absence
+ * ranges sit a mean 21 days apart, and every one of them coalesces into essentially a single
+ * painted band -- 19,668 bytes, 47% of the whole 42,291-byte whole-warehouse payload, spent to
+ * draw one band and to let `describeCoverageTopology` say "447 ranges" instead of "112".
+ *
+ * WHAT IS NOT LOST, and the reason a cap is honest rather than merely cheap. The distinction
+ * this list exists to carry -- the source was checked and served nothing, versus we hold no
+ * record -- is NOT carried only here. Every day read returns a `ParquetPlaneEnvelope` whose four
+ * states name it exactly (`parquet-envelope.ts` `PARQUET_PLANE_STATES`), and the surfaces quote
+ * it verbatim with the upstream's own reason attached: `LayerManager.tsx` "The fire lane
+ * recorded a governed absence for this day: <reason>" against "This day has not been written for
+ * the fire lane", and `FireDetails.tsx` the same sentence in the dock. That per-day answer is
+ * strictly better evidence than a range list, because it carries the reason. This list's own job
+ * is the view BEFORE any scrubbing -- where to look -- and that view is band-resolution.
+ *
+ * WHAT IS LOST, stated rather than discovered: below the boundary this cap publishes, a day is
+ * `undescribed` on the track rather than named as a governed absence or drawn as dense. The
+ * reader is told the report does not reach that far, scrubs onto the day anyway (nothing here
+ * narrows the axis or forbids a day), and the read then answers exactly. That is the direction
+ * `capDayRanges` already chose for the two lists it caps -- understating what we know is safe,
+ * overstating it is the bug -- and it is why the boundary is folded into `describedFromDay`
+ * below instead of the list being silently shortened.
+ */
+export const MAX_REPORTED_GOVERNED_ABSENCE_RANGES = 112;
+
+/** A capped range list plus the oldest day the survivors still completely describe. */
+interface CappedDayRanges {
+  kept: DayRange[];
+  /** null when nothing was dropped, so the list still describes the whole axis. */
+  describedFromDay: string | null;
+}
+
+/**
+ * Keeps the newest `limit` ranges and says which day the kept list still describes.
+ *
+ * The same policy as `capDayRanges` in `environmental-read-model.ts`, restated here because that
+ * one is module-private: newest kept, because the right-hand edge of the axis is where people
+ * scrub; boundary set to the oldest SURVIVING range's own start day rather than the newest
+ * dropped range's end, because the survivors are complete only from there on and a day just
+ * below it may sit inside a range that was dropped.
+ *
+ * No `truncated` flag is produced, and that is deliberate rather than an omission. There is no
+ * `governedAbsenceRangesTruncated` slot on `ResolvedSliderLayerCapability` to fill, and the
+ * lesson recorded on `MAX_REPORTED_DAY_RANGES` is that the flags "were computed, shipped and
+ * read by nothing" while the DAY is the value a consumer has to consult. Publishing the day and
+ * not a flag is that lesson applied, not skipped.
+ */
+function capNewestDayRanges(ranges: readonly DayRange[], limit: number): CappedDayRanges {
+  if (ranges.length <= limit) return { kept: [...ranges], describedFromDay: null };
+  const kept = ranges.slice(ranges.length - limit);
+  return { kept, describedFromDay: kept[0].from };
+}
+
+/**
+ * The later of two per-list boundaries; null only when BOTH lists describe their whole axis.
+ *
+ * Deliberately the same name as the private helper in `environmental-read-model.ts` that folds
+ * `coverageGaps`' and `thinRanges`' boundaries together, so one grep finds both sites of one
+ * rule: a day is described only when EVERY list describes it, so the stricter boundary wins.
+ */
+function laterDescribedFromDay(left: string | null, right: string | null): string | null {
+  if (left === null) return right;
+  if (right === null) return left;
+  return left > right ? left : right;
+}
+
 function synthesizeCapability(
   contract: ParquetCapabilityContract,
   entries: readonly ParquetLaneCoverage[],
@@ -630,9 +712,15 @@ function synthesizeCapability(
     earliestDay,
     coverageEnd
   );
-  const governedAbsenceRanges = subtractRangeSets(
-    mergeRanges(entries, "governedAbsenceRanges", earliestDay, coverageEnd),
-    allCoverageGaps
+  // Capped AFTER the subtraction, never before: `subtractRangeSets` can split one governed range
+  // into two around an overlapping gap, so a cap applied first would report a boundary for a
+  // count the row does not publish.
+  const governedAbsence = capNewestDayRanges(
+    subtractRangeSets(
+      mergeRanges(entries, "governedAbsenceRanges", earliestDay, coverageEnd),
+      allCoverageGaps
+    ),
+    MAX_REPORTED_GOVERNED_ABSENCE_RANGES
   );
   const coverageGapsTruncated = allCoverageGaps.length > MAX_REPORTED_DAY_RANGES;
   const coverageGaps = coverageGapsTruncated
@@ -647,9 +735,18 @@ function synthesizeCapability(
     earliestObservedDate: earliestDay,
     latestObservedDate: latestDay,
     coverageGaps,
-    governedAbsenceRanges,
+    governedAbsenceRanges: governedAbsence.kept,
     thinRanges: [],
-    describedFromDay: coverageGapsDescribedFromDay,
+    // The three lists' boundaries folded into the one field every consumer consults
+    // (`isDayDescribed`), exactly as the read model folds `coverageGaps`' and `thinRanges`'.
+    // A truncated governed-absence list makes the OTHER lists' silence unusable below its
+    // boundary too -- a day there is neither provably dense nor provably absent -- so the fold
+    // is what keeps `dayCoverageState` from falling through to `dense` on a day this row just
+    // stopped describing.
+    describedFromDay: laterDescribedFromDay(
+      coverageGapsDescribedFromDay,
+      governedAbsence.describedFromDay
+    ),
     describedThroughDay,
     coverageGapsTruncated,
     coverageGapsDescribedFromDay,

@@ -337,32 +337,38 @@ export function LayerRow({ layerId, legendContext, isFetchingSelectedDay }: Laye
   // one the reader switched off, which is the confusion this caption exists to prevent.
   const { unavailableReason, warehouseLayerName } = useLayerRenderState(layerId);
 
-  // Whether this row mounts a time control at all, and the answer is deliberately THREE-valued
-  // collapsed to two.
+  // Whether this row says anything at all about time, and the rule is now ONE fact: is this
+  // layer backed by a warehouse stream?
   //
-  // `hasSelectableDay` is the contract's single rule for "this layer is date-filtered, so it
-  // must have a control" -- it already refuses a toggle no warehouse stream backs, a stream this
-  // payload does not carry, a SNAPSHOT (watersheds' 9,396 basins share one 2013 WBD loaddate, so
-  // a track over them would advertise years of scrubbing across an unchanging boundary set), and
-  // a stream that has observed nothing. Mounting a control for those is the fabricated affordance
-  // layer-legends.ts exists to prevent.
+  // It used to be `hasSelectableDay`, plus two unknowns folded onto the same side of it. That
+  // gate answered the wrong question. It is the right rule for a CONTROL -- a scrubber over a
+  // snapshot is the fabricated affordance layer-legends.ts exists to prevent -- but the row was
+  // using it to decide whether to say anything, so every layer without an axis got silence: a
+  // withheld lane, a snapshot, and a payload still in flight all rendered as the same empty row.
+  // That is precisely the confusion reported against `fire-detections`, whose axis is withheld
+  // while its index builds and which therefore looked identical to a cold 7.6-8.5s census read.
   //
-  // But with NO capabilities that function cannot answer, and it returns false -- which is not
-  // "this layer has no dates", it is "nobody knows yet". Treating the two alike is what stripped
-  // the time control from every row during the read model's bigint 500 with nothing anywhere
-  // saying why, so the unknown mounts the control and lets it state the outage. The registry
-  // name is the one thing knowable without the payload, and it keeps the eight layers that never
-  // had a warehouse stream out of it.
+  // So the gate mounts `LayerTimeSlider` for anything a stream backs, and the control decides
+  // what to render -- an axis, or the uniform status block for the other five states. The eight
+  // toggles that never had a warehouse stream stay out of it entirely: a loading failure and a
+  // withheld index say nothing whatever about a layer that was never in the census.
   //
-  // Selected as a BOOLEAN, so the five-minute capabilities poll re-renders this row only when
-  // the answer actually changes rather than on every fresh payload object.
+  // Read straight off the registry rather than the store, so the five-minute capabilities poll
+  // cannot re-render this row for an answer that cannot change.
+  const mountsTimeStatus = warehouseLayerName !== null;
+
+  // The two SIBLING controls keep the old, stricter gate, and deliberately do not follow the
+  // status block. Both act on a per-day cache: a layer with no timeline has no per-day entries to
+  // refresh or to reset, so offering either is the fabricated affordance the status block is
+  // explicitly not (a sentence claims nothing about what a button would do). `hasSelectableDay`
+  // is the contract's single rule for "this layer is date-filtered", and `capabilities === null`
+  // and `streamsUnavailable` join it on the UNKNOWN side -- a payload whose stream scan timed out
+  // carries only the geo.features layers, so a stream-backed layer reads as "no selectable day"
+  // there for a reason that is ours, not the record's.
   //
-  // `streamsUnavailable` joins `capabilities === null` on the unknown side for the same reason.
-  // A payload whose stream scan timed out carries only the geo.features layers, so every
-  // stream-backed layer reads as "no selectable day" -- indistinguishable from a layer that
-  // genuinely has no history, and the exact shape of the outage above: the sliders vanished
-  // from drought, the three soil measures and the nine climate signals with nothing saying why.
-  const mountsTimeSlider = useTimeSliderStore(
+  // Selected as a BOOLEAN, so the capabilities poll re-renders this row only when the answer
+  // actually changes rather than on every fresh payload object.
+  const mountsDayControls = useTimeSliderStore(
     (state) =>
       warehouseLayerName !== null &&
       (state.capabilities === null ||
@@ -470,12 +476,11 @@ export function LayerRow({ layerId, legendContext, isFetchingSelectedDay }: Laye
           is on but paints nothing (soil, whose tile template is still empty) gets the opacity
           control disabled with the reason, rather than a live slider over an absent raster.
 
-          The time slider is additionally gated on the layer having a day to select -- or on
-          that being unknown -- so a snapshot and a layer with no warehouse feed behind it get no
-          track rather than a dead one, while a failed capabilities load still reaches a control
-          that can say so; see `mountsTimeSlider`. Stacked under the opacity slider rather than
-          set beside it: the dock column is 19rem, and splitting it would leave each track under
-          7rem, where a four-year axis cannot address a day at all. */}
+          The time block is gated only on the layer being backed by a warehouse stream, and what
+          it then renders -- an axis, or one uniform sentence about why there is none -- is
+          `LayerTimeSlider`'s call; see `mountsTimeStatus`. Stacked under the opacity slider
+          rather than set beside it: the dock column is 19rem, and splitting it would leave each
+          track under 7rem, where a four-year axis cannot address a day at all. */}
       {isActive && (
         <div className="flex flex-col gap-1 pl-[3.5rem] pr-1">
           <LayerOpacitySlider
@@ -483,27 +488,29 @@ export function LayerRow({ layerId, legendContext, isFetchingSelectedDay }: Laye
             showCaption={false}
             inertReason={legendlessReason}
           />
-          {/* Wrapped so the decision this row makes -- does this layer get a time control at
-              all -- is observable without reaching into the slider's own markup. The gate is the
-              contract here; what the control then says, axis or outage, belongs to
+          {/* Wrapped so the decision this row makes -- does this layer say anything about time
+              at all -- is observable without reaching into the slider's own markup. The gate is
+              the contract here; what the block then says, axis or status, belongs to
               `LayerTimeSlider`.
 
-              The sync-reset control shares this same gate rather than mounting unconditionally:
-              a layer with no timeline has no per-day cache entries to speak of, so offering to
-              "reset its timeline" would be the fabricated affordance layer-legends.ts already
-              guards every other control on this row against. It is a SIBLING of the slot, not a
-              child of it, and deliberately not part of the slider's own top row where "Latest"
-              lives -- see LayerSyncResetControl's own doc for why that separation matters. */}
-          {mountsTimeSlider && (
-            <>
-              <div data-testid={`layer-time-slider-slot-${layerId}`}>
-                <LayerTimeSlider layerId={layerId} isFetchingCurrentDay={isFetchingSelectedDay} />
-              </div>
-              <div className="flex flex-wrap items-center gap-1">
-                <LayerRefreshControl layerId={layerId} label={entry.label} />
-                <LayerSyncResetControl layerId={layerId} label={entry.label} />
-              </div>
-            </>
+              The refresh and sync-reset pair is a SIBLING of the slot, not a child of it, and it
+              keeps the STRICTER gate the slot has given up: both act on a per-day cache, and a
+              layer with no timeline has no per-day entries to refresh or reset, so offering
+              either would be the fabricated affordance layer-legends.ts guards every other
+              control on this row against. Splitting the two gates is what lets a snapshot or a
+              withheld layer state its situation without also growing two buttons that would do
+              nothing. Deliberately not part of the slider's own top row where "Latest" lives --
+              see LayerSyncResetControl's own doc for why that separation matters. */}
+          {mountsTimeStatus && (
+            <div data-testid={`layer-time-slider-slot-${layerId}`}>
+              <LayerTimeSlider layerId={layerId} isFetchingCurrentDay={isFetchingSelectedDay} />
+            </div>
+          )}
+          {mountsDayControls && (
+            <div className="flex flex-wrap items-center gap-1">
+              <LayerRefreshControl layerId={layerId} label={entry.label} />
+              <LayerSyncResetControl layerId={layerId} label={entry.label} />
+            </div>
           )}
         </div>
       )}

@@ -101,7 +101,13 @@ function fullStatement(): string {
 }
 
 beforeEach(() => {
-  useTimeSliderStore.setState({ capabilities: null, layerDates: {} });
+  // Explicit, because the pending branch reads the PAIR: leaving this to whatever the previous
+  // case left behind would make "still loading" and "never loaded" swap silently.
+  useTimeSliderStore.setState({
+    capabilities: null,
+    capabilitiesUnavailable: false,
+    layerDates: {},
+  });
   useMapStore.setState({ activeLayers: [] });
   usePanelStore.setState({ layerPanelOpen: false });
   useDrawnLayerDayStore.setState({ drawnDays: {} });
@@ -167,8 +173,46 @@ describe("stating on the canvas what day the drawn layers are showing", () => {
     expect(screen.queryByTestId("map-date-summary")).toBeNull();
   });
 
-  it("states nothing before capabilities arrive rather than guessing a day", () => {
+  /**
+   * Rewritten 2026-09-07. The claim it was written for -- never guess a day -- is unchanged and
+   * is still asserted below; what changed is that saying NOTHING was the wrong way to keep it. A
+   * cold `getSliderCapabilities` was measured at 7.6-8.5s against production (a warm one is
+   * 0.28s), and for those seconds this surface vanished from a map that was already drawing
+   * layers, which reads exactly like a map with no dates rather than one still fetching them.
+   */
+  it("says it is still loading, without naming a day, before capabilities arrive", () => {
     arrangeVisibleLayers(["fire", "vegetation"], { capabilities: null });
+
+    renderWithProviders(<MapDateSummary />);
+
+    const pending = screen.getByTestId("map-date-summary-pending");
+    expect(pending.dataset.state).toBe("loading");
+    expect(pending.getAttribute("aria-busy")).toBe("true");
+    expect(pending.textContent).toContain("Loading dates");
+    // The guarantee the old assertion protected: no day, no span, no headline -- there is no
+    // honest day to state, and the browser clock is not one.
+    expect(screen.queryByTestId("map-date-summary-headline")).toBeNull();
+    expect(screen.queryByTestId("map-date-summary-detail")).toBeNull();
+    expect(pending.textContent).not.toMatch(/\d{4}-\d{2}-\d{2}/);
+  });
+
+  it("distinguishes a fetch that failed outright from one still in flight", () => {
+    arrangeVisibleLayers(["fire", "vegetation"], { capabilities: null });
+    useTimeSliderStore.setState({ capabilitiesUnavailable: true });
+
+    renderWithProviders(<MapDateSummary />);
+
+    const pending = screen.getByTestId("map-date-summary-pending");
+    expect(pending.dataset.state).toBe("error");
+    expect(pending.textContent).toContain("Dates unavailable");
+    // Nothing is on its way, so nothing may claim to be busy.
+    expect(pending.getAttribute("aria-busy")).toBeNull();
+  });
+
+  it("stays silent while no dated layer is even on the map", () => {
+    // Only `soil`, which no warehouse stream backs. There is no date to be waiting for, so a
+    // "Loading dates" box over this map would be a claim about a composite that does not exist.
+    arrangeVisibleLayers(["soil"], { capabilities: null });
 
     renderWithProviders(<MapDateSummary />);
 

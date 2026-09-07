@@ -83,22 +83,29 @@ describe("isPersistableQueryKey", () => {
   });
 });
 
+/**
+ * The `automatic` branch of the TTL rule, unchanged since 2026-08-16. Every key below belongs to
+ * a `daily_series` layer, which is the nature that defaults to automatic -- the cases were
+ * written against `getDroughtClassification` and re-pointed on 2026-09-07 when `drought` became
+ * `release_series`/manual and stopped exercising this branch at all. The manual branch, and the
+ * per-nature defaults that select between them, are in `layer-cache-enforcement.test.ts`.
+ */
 describe("resolveCacheTtlMs", () => {
   it("gives a long TTL to a date strictly before the server's current date", () => {
     useTimeSliderStore.setState({ capabilities: { serverCurrentDate: "2026-08-05", futureAxisDays: 0, layers: [], streamsUnavailable: false } });
-    const key = trpcQueryKey(["environmental", "getDroughtClassification"], { date: "2026-08-01" });
+    const key = trpcQueryKey(["environmental", "getVegetationIndex"], { date: "2026-08-01" });
     expect(resolveCacheTtlMs(key)).toBe(HISTORICAL_TTL_MS);
   });
 
   it("gives a short TTL to the server's current date itself", () => {
     useTimeSliderStore.setState({ capabilities: { serverCurrentDate: "2026-08-05", futureAxisDays: 0, layers: [], streamsUnavailable: false } });
-    const key = trpcQueryKey(["environmental", "getDroughtClassification"], { date: "2026-08-05" });
+    const key = trpcQueryKey(["environmental", "getVegetationIndex"], { date: "2026-08-05" });
     expect(resolveCacheTtlMs(key)).toBe(LIVE_TTL_MS);
   });
 
   it("gives a short TTL to a future forecast date", () => {
     useTimeSliderStore.setState({ capabilities: { serverCurrentDate: "2026-08-05", futureAxisDays: 0, layers: [], streamsUnavailable: false } });
-    const key = trpcQueryKey(["environmental", "getDroughtClassification"], { date: "2026-08-09" });
+    const key = trpcQueryKey(["environmental", "getVegetationIndex"], { date: "2026-08-09" });
     expect(resolveCacheTtlMs(key)).toBe(LIVE_TTL_MS);
   });
 
@@ -110,7 +117,7 @@ describe("resolveCacheTtlMs", () => {
 
   it("never invents today from the browser clock: an unknown server date is always short-TTL", () => {
     useTimeSliderStore.setState({ capabilities: null });
-    const key = trpcQueryKey(["environmental", "getDroughtClassification"], { date: "2000-01-01" });
+    const key = trpcQueryKey(["environmental", "getVegetationIndex"], { date: "2000-01-01" });
     expect(resolveCacheTtlMs(key)).toBe(LIVE_TTL_MS);
   });
 });

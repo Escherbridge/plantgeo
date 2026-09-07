@@ -188,6 +188,78 @@ describe("TimeSliderCapabilitiesLoader", () => {
     expect(useTimeSliderStore.getState().capabilitiesUnavailable).toBe(false);
   });
 
+  /**
+   * The pending contract, pinned as a contract rather than left as an emergent property.
+   *
+   * There is no `capabilitiesPending` field; every consumer -- `resolveLayerTimeState` above all
+   * -- reads pending as "null payload AND no failure", and that reading is sound only because
+   * this component is always mounted, never conditional, and the sole writer of both fields. The
+   * three states must therefore stay mutually exclusive through one render pass, or a row will
+   * either sit in a loading state that never ends or report an outage that is really a slow
+   * fetch.
+   */
+  it("keeps the two fields separating in-flight, failed and landed", () => {
+    const { unmount } = renderWithProviders(<TimeSliderCapabilitiesLoader />);
+    const inFlight = useTimeSliderStore.getState();
+    expect([inFlight.capabilities, inFlight.capabilitiesUnavailable]).toEqual([null, false]);
+    unmount();
+
+    capabilitiesQuery.mockReturnValue({ data: undefined, isError: true });
+    const failed = renderWithProviders(<TimeSliderCapabilitiesLoader />);
+    const afterFailure = useTimeSliderStore.getState();
+    expect([afterFailure.capabilities, afterFailure.capabilitiesUnavailable]).toEqual([
+      null,
+      true,
+    ]);
+    failed.unmount();
+
+    capabilitiesQuery.mockReturnValue({ data: CAPABILITIES, isError: false });
+    renderWithProviders(<TimeSliderCapabilitiesLoader />);
+    const landed = useTimeSliderStore.getState();
+    expect(landed.capabilities).not.toBeNull();
+    expect(landed.capabilitiesUnavailable).toBe(false);
+  });
+
+  /**
+   * `setCapabilities` takes `SliderCapabilities`, which declares neither
+   * `withheldParquetCapabilities` nor `parquetCoverageUnavailable` -- but the tRPC procedure
+   * returns the wider `ParquetSliderCapabilities` and this component hands the whole object over
+   * untouched. Every withheld-reason sentence in the layer panel is read back off the stored
+   * object, so a "tidy-up" that reconstructed a narrow payload here would silently return every
+   * withheld layer to the generic "not published yet" caption with nothing failing.
+   */
+  it("stores the payload whole, including the fields the client type does not declare", () => {
+    const withheldPayload = {
+      ...CAPABILITIES,
+      parquetCoverageUnavailable: true,
+      withheldParquetCapabilities: [
+        {
+          layerName: "fire-detections",
+          reason: "availability_unpublished",
+          parquetLanes: ["fire-detections"],
+          missingEvidence: [],
+        },
+      ],
+    };
+    capabilitiesQuery.mockReturnValue({
+      data: withheldPayload as SliderCapabilities,
+      isError: false,
+    });
+    renderWithProviders(<TimeSliderCapabilitiesLoader />);
+
+    const stored = useTimeSliderStore.getState().capabilities as
+      | (SliderCapabilities & {
+          parquetCoverageUnavailable?: boolean;
+          withheldParquetCapabilities?: { layerName: string; reason: string }[];
+        })
+      | null;
+    expect(stored?.parquetCoverageUnavailable).toBe(true);
+    expect(stored?.withheldParquetCapabilities?.[0]).toMatchObject({
+      layerName: "fire-detections",
+      reason: "availability_unpublished",
+    });
+  });
+
   it("clears the failure flag as soon as any payload lands", () => {
     useTimeSliderStore.setState({ capabilitiesUnavailable: true });
     capabilitiesQuery.mockReturnValue({ data: CAPABILITIES, isError: false });

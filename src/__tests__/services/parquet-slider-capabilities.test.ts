@@ -29,9 +29,23 @@ vi.mock("@/lib/server/services/environmental-read-model", () => ({
 
 import {
   getParquetSliderCapabilities,
+  MAX_REPORTED_GOVERNED_ABSENCE_RANGES,
   PARQUET_CAPABILITY_CONTRACTS,
   PARQUET_CAPABILITY_LANES,
 } from "@/lib/server/services/parquet-slider-capabilities";
+// The REAL client readers, imported rather than restated: what this payload has to keep
+// derivable is whatever these functions can still answer, so a second copy of their rules here
+// would pin the copy instead of the contract.
+import {
+  dayCoverageState,
+  describeDayCoverage,
+  MINIMUM_DRAWN_BAND_PERCENT,
+} from "@/components/map/layer-panel/layer-coverage-track";
+import {
+  isDayDescribed,
+  isWithinGovernedAbsence,
+  type SliderDomain,
+} from "@/stores/time-slider-store";
 
 const ZOOM_TIERS = [0, 5, 9, 13] as const satisfies readonly ZoomTier[];
 const FIRST_DAY = "2022-08-05";
@@ -1112,5 +1126,216 @@ describe("getParquetSliderCapabilities", () => {
     const result = await getParquetSliderCapabilities();
 
     expect(result.streamsUnavailable).toBe(false);
+  });
+});
+
+const MILLISECONDS_PER_DAY = 86_400_000;
+
+function epochDay(day: string): number {
+  return Date.parse(`${day}T00:00:00Z`) / MILLISECONDS_PER_DAY;
+}
+
+function calendarDay(epoch: number): string {
+  return new Date(epoch * MILLISECONDS_PER_DAY).toISOString().slice(0, 10);
+}
+
+function daysIn(ranges: readonly { from: string; to: string }[]): number {
+  return ranges.reduce((count, range) => count + epochDay(range.to) - epochDay(range.from) + 1, 0);
+}
+
+/** The `2026-08-28` every fixture here shares: `serverCurrentDate` and `evaluatedThroughDay` both. */
+const CENSUS_DAY = "2026-08-28";
+
+/**
+ * Production's fire-detections lane, reproduced to the day: a ~26-year axis whose non-published
+ * days are governed absences rather than ingest holes.
+ *
+ * The measured shape on 2026-09-07, matched here field for field -- 8,371 observed days, 447
+ * governed-absence ranges over 1,069 days, ZERO coverage gaps, axis running to the census day so
+ * no tail is owed. The absence runs are 2 and 3 days long and sit 18 or 19 published days apart,
+ * which is production's own mean spacing of 21 days on a 9,440-day axis; that spacing is the
+ * whole point, because 0.9% of this axis is 85 days and no two of these ranges can be drawn
+ * apart by `floorAxisRunsToBands`.
+ */
+function fireDetectionsLane(): {
+  publishedRanges: Array<{ from: string; to: string }>;
+  governedAbsenceRanges: Array<{ from: string; to: string }>;
+  earliestDay: string;
+  latestDay: string;
+} {
+  const axisDays = 9_440;
+  const firstEpoch = epochDay(CENSUS_DAY) - (axisDays - 1);
+  const publishedRanges: Array<{ from: string; to: string }> = [];
+  const governedAbsenceRanges: Array<{ from: string; to: string }> = [];
+
+  // The axis opens on a published day so `earliestObservedDate` is the axis start, not an
+  // absence marker -- production's row opens the same way.
+  publishedRanges.push({ from: calendarDay(firstEpoch), to: calendarDay(firstEpoch) });
+  let cursor = firstEpoch + 1;
+  for (let index = 0; index < 447; index += 1) {
+    const absenceLength = index < 175 ? 3 : 2;
+    const publishedLength = index < 324 ? 19 : 18;
+    governedAbsenceRanges.push({
+      from: calendarDay(cursor),
+      to: calendarDay(cursor + absenceLength - 1),
+    });
+    cursor += absenceLength;
+    publishedRanges.push({
+      from: calendarDay(cursor),
+      to: calendarDay(cursor + publishedLength - 1),
+    });
+    cursor += publishedLength;
+  }
+
+  return {
+    publishedRanges,
+    governedAbsenceRanges,
+    earliestDay: calendarDay(firstEpoch),
+    latestDay: CENSUS_DAY,
+  };
+}
+
+async function fireDetectionsCapability() {
+  const lane = fireDetectionsLane();
+  setCoverage(withLane(completeCoverage(), "fire-detections", lane));
+  const result = await getParquetSliderCapabilities();
+  const capability = result.layers.find((layer) => layer.layerName === "fire-detections");
+  if (capability === undefined) throw new Error("fire-detections was withheld");
+  return { lane, capability };
+}
+
+/**
+ * What this payload costs a browser, and what it still lets one say.
+ *
+ * The endpoint is whole-warehouse, un-bboxed and memoised for 300 s, so every viewport in every
+ * tab downloads one blob; on 2026-09-07 that blob was 42,291 bytes for 13 layers and
+ * fire-detections' `governedAbsenceRanges` alone was 20,580 of them -- 49% of the payload spent
+ * on one field of one layer.
+ */
+describe("governed-absence reporting on an absence-dominated axis", () => {
+  it("holds the cap to the number of marks a coverage track can actually draw", () => {
+    // The derivation asserted rather than commented, and asserted against the component's own
+    // constant so a change to the flooring policy fails HERE. Deliberately not imported by the
+    // service itself: a server payload must not compile against a CSS width, and a mirrored
+    // copy of the number is a drift this test exists to catch instead.
+    expect(MAX_REPORTED_GOVERNED_ABSENCE_RANGES).toBe(Math.ceil(100 / MINIMUM_DRAWN_BAND_PERCENT));
+    expect(MAX_REPORTED_GOVERNED_ABSENCE_RANGES).toBe(112);
+  });
+
+  it("caps the fire axis to 4,481 bytes of absence ranges from 17,881 and publishes the boundary", async () => {
+    const { lane, capability } = await fireDetectionsCapability();
+
+    // The fixture is production's row, so these are the numbers the cap is being judged against.
+    expect(lane.governedAbsenceRanges).toHaveLength(447);
+    expect(daysIn(lane.governedAbsenceRanges)).toBe(1_069);
+    expect(capability.observedDayCount).toBe(8_371);
+    expect(capability.coverageGaps).toEqual([]);
+
+    // BEFORE is not a guess: with `gapRanges` empty, `subtractRangeSets` is the identity and
+    // `mergeDayRanges` merges nothing at 18-day spacing, so the uncapped code emitted exactly
+    // the fixture's own list. AFTER is what it emits now.
+    const beforeBytes = JSON.stringify(lane.governedAbsenceRanges).length;
+    const afterBytes = JSON.stringify(capability.governedAbsenceRanges).length;
+    expect(beforeBytes).toBe(17_881);
+    expect(afterBytes).toBe(4_481);
+    expect(beforeBytes - afterBytes).toBe(13_400);
+
+    // The whole row, which is what actually ships: the field stops being the largest thing in it.
+    const beforeRowBytes = JSON.stringify({
+      ...capability,
+      governedAbsenceRanges: lane.governedAbsenceRanges,
+      describedFromDay: null,
+    }).length;
+    // 13,400 off the list, 8 back on for the boundary day that replaces a `null` -- the honesty
+    // this change buys costs eight bytes and is the only thing the row gained.
+    expect(beforeRowBytes - JSON.stringify(capability).length).toBe(13_392);
+
+    // The newest 112 ranges kept, and the boundary set to the oldest SURVIVOR's own start day --
+    // not the newest dropped range's end -- because a day just under it may sit inside a range
+    // that was dropped.
+    expect(capability.governedAbsenceRanges).toEqual(lane.governedAbsenceRanges.slice(-112));
+    expect(capability.describedFromDay).toBe("2020-07-11");
+
+    // The per-list fields keep stating per-list truths: `coverageGaps` really does describe this
+    // whole axis, and saying otherwise to signal a DIFFERENT list's truncation would be a second
+    // false report. The conjunction lives in `describedFromDay` alone.
+    expect(capability.coverageGapsTruncated).toBe(false);
+    expect(capability.coverageGapsDescribedFromDay).toBeNull();
+
+    // Nothing about the axis narrowed. Every day from 2000 on is still selectable, still
+    // fetchable, and still answered exactly by the read's own envelope.
+    expect(capability.earliestObservedDate).toBe(lane.earliestDay);
+    expect(capability.latestObservedDate).toBe(CENSUS_DAY);
+    expect(capability.describedThroughDay).toBe(CENSUS_DAY);
+  });
+
+  it("keeps every distinction the coverage track draws derivable from what it now sends", async () => {
+    const { lane, capability } = await fireDetectionsCapability();
+    const domain: SliderDomain = {
+      firstDay: capability.earliestObservedDate!,
+      today: CENSUS_DAY,
+      lastDay: CENSUS_DAY,
+    };
+
+    // ABOVE the boundary nothing changed at all: a surviving absence day is still named as one,
+    // in the sentence that separates "the source served nothing" from "we hold no record".
+    const survivingAbsenceDay = lane.governedAbsenceRanges.at(-1)!.from;
+    expect(isWithinGovernedAbsence(capability, survivingAbsenceDay)).toBe(true);
+    expect(dayCoverageState(domain, capability, survivingAbsenceDay)).toBe("governed_absence");
+    expect(describeDayCoverage("governed_absence")).toBe(
+      "The source was checked and intentionally published no data on this date"
+    );
+
+    // A published day above the boundary still reads as dense, so the cap did not blur the axis
+    // it still describes.
+    expect(dayCoverageState(domain, capability, "2026-08-20")).toBe("dense");
+
+    // BELOW the boundary, THE ONE INVERSION THIS CHANGE MUST NOT MAKE. A dropped absence day is
+    // reported as undescribed -- never as dense, which on a fire map would state that the lane
+    // was checked and burned nothing on a day it was never asked about.
+    const droppedAbsenceDay = lane.governedAbsenceRanges[0].from;
+    expect(isWithinGovernedAbsence(capability, droppedAbsenceDay)).toBe(false);
+    expect(isDayDescribed(capability, droppedAbsenceDay)).toBe(false);
+    expect(dayCoverageState(domain, capability, droppedAbsenceDay)).toBe("undescribed");
+    expect(describeDayCoverage("undescribed")).toBe(
+      "Coverage on this date is unknown; the record's gap list does not reach this far back"
+    );
+
+    // And a PUBLISHED day below the boundary reads undescribed too, which is the cost stated
+    // rather than hidden: the boundary bounds the whole report, not just the dropped ranges.
+    expect(dayCoverageState(domain, capability, "2001-01-15")).toBe("undescribed");
+  });
+
+  it("leaves a lane at the cap byte-identical, and moves no boundary for it", async () => {
+    // Exactly `MAX_REPORTED_GOVERNED_ABSENCE_RANGES` one-day absences: the largest list that must
+    // survive untouched, so the cap is pinned at `<=` and cannot drift to `<`.
+    const governedAbsenceRanges = Array.from({ length: 112 }, (_unused, index) => {
+      const day = calendarDay(epochDay("2025-01-01") + index * 3);
+      return { from: day, to: day };
+    });
+    setCoverage(withLane(completeCoverage(), "vegetation", { governedAbsenceRanges }));
+
+    const result = await getParquetSliderCapabilities();
+    const vegetation = result.layers.find((layer) => layer.layerName === "vegetation");
+
+    expect(vegetation?.governedAbsenceRanges).toEqual(governedAbsenceRanges);
+    // Untruncated, so the row still describes its whole axis and the track paints no
+    // undescribed region. The only boundary a layer like this can have is its own gap list's.
+    expect(vegetation?.describedFromDay).toBeNull();
+    expect(vegetation?.coverageGapsDescribedFromDay).toBeNull();
+  });
+
+  it("truncates and reports the boundary one range past the cap", async () => {
+    const governedAbsenceRanges = Array.from({ length: 113 }, (_unused, index) => {
+      const day = calendarDay(epochDay("2025-01-01") + index * 3);
+      return { from: day, to: day };
+    });
+    setCoverage(withLane(completeCoverage(), "vegetation", { governedAbsenceRanges }));
+
+    const result = await getParquetSliderCapabilities();
+    const vegetation = result.layers.find((layer) => layer.layerName === "vegetation");
+
+    expect(vegetation?.governedAbsenceRanges).toEqual(governedAbsenceRanges.slice(1));
+    expect(vegetation?.describedFromDay).toBe(governedAbsenceRanges[1].from);
   });
 });

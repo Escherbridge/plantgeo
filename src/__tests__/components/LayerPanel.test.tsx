@@ -582,8 +582,13 @@ describe("LayerPanel per-layer time sliders", () => {
    * a real date -- 96% of its 9,396 HUC12 basins carry one 2013 WBD loaddate -- but it is a
    * SNAPSHOT and defines no axis, so a track over it would advertise years of scrubbing across a
    * boundary set that draws identically on every one of those days.
+   *
+   * Since 2026-09-07 the row still MOUNTS the time block for it -- "this layer legitimately has
+   * no time axis" is a first-class state and every stream-backed row states its own -- so the
+   * assertion moved from the slot to the scrubber. The rule the case was written for is
+   * unchanged: no dead track on a snapshot.
    */
-  it("gives a snapshot layer no slider even though it carries a published date", () => {
+  it("gives a snapshot layer no scrubber even though it carries a published date", () => {
     renderDock();
     openPanel();
 
@@ -592,7 +597,10 @@ describe("LayerPanel per-layer time sliders", () => {
     });
 
     expect(screen.getByTestId("layer-row-watersheds")).toBeTruthy();
-    expect(screen.queryByTestId("layer-time-slider-slot-watersheds")).toBeNull();
+    expect(screen.queryByTestId("layer-time-slider-range-watersheds")).toBeNull();
+    expect(
+      screen.getByTestId("layer-time-status-watersheds").dataset.state
+    ).toBe("no_time_axis");
   });
 
   // `soil` has no `geo.layers` row behind it at all, so there is no axis to draw and no day to
