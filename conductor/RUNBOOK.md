@@ -1221,3 +1221,86 @@ with no Postgres in the path and correctly no-op'd:
 - **`plantgeo-parquet-api` has no `curl`.** Use `python -c` with `urllib.request` over `railway ssh`.
 - `SERVICE_PROFILE=published_reader` on `plantgeo-parquet-api`; `plantgeo-main` reaches it at
   `AGRI_PARQUET_SERVICE_URL=http://plantgeo-parquet-api.railway.internal:8080`.
+
+---
+
+## A4 LANDED — 2026-09-07. The startup cost is gone and the map answers again.
+
+### The number, before and after
+
+| | before | after |
+|---|---|---|
+| `getSliderCapabilities` | 8.48 s, `parquetCoverageUnavailable: true` | **0.26 s warm**, `false` |
+| coverage read (cold, in-container) | 26.67 s | one pointer GET per lane |
+| layers served | 2 | 5 and climbing as applies land |
+| withheld | 22, all `coverage_unavailable` | each with a *specific*, actionable reason |
+
+`PARQUET_COVERAGE_AUTHORITY=availability` is set on `plantgeo-parquet-api`. Do not set it back
+without reading "what the flip does not do" below.
+
+### What it took, in order — repeat this shape for any new lane
+
+1. **Absence markers must span the ladder.** 9,543 coarse absence markers were missing; the bootstrap
+   requires all four rungs per day, so 3,205 days were refused as `partial_ladder`. `burn-severity`
+   compiled **5 of 2,107 days** before, **2,108 of 2,108** after.
+   `scripts/backfill_absence_ladder.py --all-time-bearing --apply` (dry-run is the default).
+2. **Compile:** `scripts/compile_availability_bootstrap.py --all-time-bearing --out <dir>`.
+   12 lanes, 95,856 rows, 23,964 selectable days.
+3. **Upload the evidence** — 119,907 content-addressed objects, ~130 MB. `--apply` reads them from
+   the bucket, so they must land first.
+4. **Apply per lane.** ~150 evidence objects/minute, SERIALLY, so a lane costs
+   `evidence_count / 150` minutes. Run lanes in parallel; they take no shared lock during
+   verification.
+
+### Traps that cost real time here
+
+- **`--apply` verification is serial and slow.** burn-severity's 10,541 objects took 70 minutes and
+  published nothing until the very end. Twelve lanes in one file would have been ~12 hours. Run them
+  concurrently, smallest-evidence-first, and never conclude "stuck" from a silent hour — list the
+  lane's `availability/` prefix and count non-evidence objects instead.
+- **Killing a parallel runner orphans its grandchildren.** Stopping the harness task reaps the Python
+  parent, not the `uv run` subprocesses. They keep verifying and keep holding the lane's advisory
+  barrier, so the retry fails instantly with `availability publication barrier is contended`.
+  Check `Get-CimInstance Win32_Process` for `availability-bootstrap` before blaming the code.
+- **An idle-in-transaction session is NOT evidence of an orphan.** A healthy publisher holds the
+  barrier across its entire object-store verification and touches Postgres the whole time. Never
+  terminate by idle age — map the lock to its lane first (`hashtextextended` of
+  `parquet_lane_publication_barrier_key(layer, kind)`).
+- **A read ceiling is not an object identity.** Fixed in `f8e1ec1`; see that commit before touching
+  `_dedupe_snapshots`.
+- **Partial bootstrapping buys nothing.** Coverage is all-or-nothing: one un-bootstrapped lane's
+  census blows the 8 s budget and every layer is withheld. Four published generations changed the
+  served count by zero. The authority flip is the step function.
+
+### What the flip does not do
+
+`static_lookup` lanes stay on the census under BOTH policies
+(`parquet_ops/availability_coverage.py:515-524`) — withholding them would strip a published reference
+set out of coverage. Their listings are trivial, so this is not what was blowing the budget.
+
+`burn-severity` temporarily lost its answer: it was served from the Postgres passthrough and is now
+withheld until its own generation publishes.
+
+### Producers: 19 of 32 lanes were frozen, and now are not
+
+Counted 2026-09-07: only 13 registered lanes had a live producer. All eight `climate-field-*`, all
+four `soil-temperature-*`, three `soil-field-moisture-*`, `soil-field-vpd` and three `soil-wetness-*`
+had **none** — their gap-fill lanes were shadow, and those read Postgres anyway.
+
+`climate-nasa-power-direct-forward` (11 streams) and `soil-era5-land-direct-forward` (8) cover exactly
+those 19 and are now ACTIVE (28 lanes). Both were proven first: soil wrote `soil-field-vpd`
+2026-08-29 with 1,470 base rows and all three derived rungs; climate refused an unsettled NASA POWER
+day rather than governing it absent.
+
+**If you add a lane, it needs a direct forward writer in the active set. A registered lane with a
+shadow producer holds history that nothing advances — which is invisible on the map and fatal to
+anything training on it.**
+
+### Still owed
+
+- `soil-survey` — `lane_never_written`; upstream 200,001-vs-200,000 key cap.
+- `burn-severity` slider — `servingReader: "postgresql"` plus the
+  `POSTGRES_CAPABILITY_PASSTHROUGH_NAMES` entry; its scrubber is Postgres-derived while its pixels are
+  Parquet. See `evidence/reader-not-parquet-scope-20260907.md`.
+- `regional-context.ts:502-528` still reads `geo.features` for fire-perimeters.
+- `sensors` — 25 pre-2026-08-24 days stranded at z13; needs retract-and-re-export.
