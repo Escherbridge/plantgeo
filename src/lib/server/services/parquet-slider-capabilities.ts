@@ -98,11 +98,30 @@ const DIRECT_PARQUET_CAPABILITIES = [
     selectableHistoryFloor: "2022-08-05",
   },
   { layerName: "weather-observations", temporalKind: "daily_series", parquetNature: "daily_series", servingReader: "parquet", parquetLanes: ["weather-observations"] },
-  { layerName: "sensors", temporalKind: "snapshot", parquetNature: "daily_series", servingReader: "postgresql", parquetLanes: ["sensors"] },
-  { layerName: "watersheds", temporalKind: "snapshot", parquetNature: "static_lookup", servingReader: "postgresql", parquetLanes: ["watersheds"] },
+  // sensors / watersheds / evacuation-zones flipped to "parquet" on 2026-09-07. Their RENDER paths
+  // left Postgres on 2026-09-04 (wave C) and this line was never updated behind them, so all three
+  // were withheld as `reader_not_parquet` while drawing Parquet pixels. Two independent proofs:
+  // each resolves to a `getParquet*` reader (`parquet-trpc-readers.ts:2200/2063/1923`) onto a GeoJSON
+  // source `LayerManager.applyParquetFeatureData` fills, and Martin publishes only
+  // `intervention_tiles`/`building_tiles` (`infra/martin/martin.yaml:65-71`), so no tile function
+  // serves them. The production reason itself was the third proof: `reader_not_parquet` is the LAST
+  // check in `proveCapability`, so each had already passed availability, four-rung reporting, nature,
+  // bounds and ceiling.
+  //
+  // WHAT THIS DOES NOT DO: all three are `temporalKind: "snapshot"`, so `sliderDomain` returns null
+  // (`stores/time-slider-store.ts:105`) and none gains a scrubber. What changes is that they stop
+  // being withheld, and `resolveLayerDate` starts using the lane's own `latestObservedDate` instead
+  // of falling back to today -- which is a fix, not a cosmetic one.
+  { layerName: "sensors", temporalKind: "snapshot", parquetNature: "daily_series", servingReader: "parquet", parquetLanes: ["sensors"] },
+  { layerName: "watersheds", temporalKind: "snapshot", parquetNature: "static_lookup", servingReader: "parquet", parquetLanes: ["watersheds"] },
   { layerName: "vegetation", temporalKind: "daily_series", parquetNature: "daily_series", servingReader: "parquet", parquetLanes: ["vegetation"] },
+  // soil-survey STAYS postgresql, and not because the line is stale: the lane has never written an
+  // object (it is withheld as `lane_never_written`, never reaching the reader gate), and
+  // `services/usda-soil.ts` both READS `geo.features`/`geo.soil_survey_coverage` and WRITES them on
+  // its SDA warm path. Flipping it would advertise a Parquet axis over Postgres polygons -- the exact
+  // inversion this gate exists to prevent.
   { layerName: "soil-survey", temporalKind: "snapshot", parquetNature: "static_lookup", servingReader: "postgresql", parquetLanes: ["soil-survey"] },
-  { layerName: "evacuation-zones", temporalKind: "snapshot", parquetNature: "static_lookup", servingReader: "postgresql", parquetLanes: ["evacuation-zones"] },
+  { layerName: "evacuation-zones", temporalKind: "snapshot", parquetNature: "static_lookup", servingReader: "parquet", parquetLanes: ["evacuation-zones"] },
   { layerName: "burn-severity", temporalKind: "event", parquetNature: "release_series", servingReader: "postgresql", parquetLanes: ["burn-severity"] },
 ] as const satisfies readonly ParquetCapabilityContract[];
 
