@@ -65,6 +65,15 @@ from agri_data_service.db.engine import local_source_loader_session
 from agri_data_service.foundation.parquet.lane_contract import SourceWatermark
 from agri_data_service.foundation.parquet.paths import partition_day_statuses
 from agri_data_service.ingest.mtbs import inline_bbox_value
+from agri_data_service.pipeline.direct import (
+    BBOX_UNCONFIGURED,
+    LANE_DAY_OUTCOMES,
+    REFUSE_WHOLE_RELEASE,
+    SKIP_TURN_ON_UNCONFIGURED_BBOX,
+    TIME_BUDGET_EXHAUSTED,
+    UNCHANGED,
+    DirectWriterContract,
+)
 from agri_data_service.pipeline.direct.evacuation_zones.adapter import (
     DirectEvacuationZonesAdapter,
     DirectEvacuationZonesError,
@@ -133,9 +142,44 @@ EVACUATION_ZONES_MAX_CONTENTION_TIMEOUT_SECONDS: Final = 3_600.0
 EVACUATION_ZONES_STATEMENT_TIMEOUT_SECONDS: Final = 120
 EVACUATION_ZONES_MIN_DELAY_SECONDS: Final = 0.1
 
-EVACUATION_ZONES_UNCHANGED_OUTCOME: Final = "unchanged"
-EVACUATION_ZONES_BBOX_UNCONFIGURED_OUTCOME: Final = "bbox_unconfigured"
-EVACUATION_ZONES_TIME_BUDGET_OUTCOME: Final = "time_budget_exhausted"
+EVACUATION_ZONES_UNCHANGED_OUTCOME: Final = UNCHANGED
+EVACUATION_ZONES_BBOX_UNCONFIGURED_OUTCOME: Final = BBOX_UNCONFIGURED
+EVACUATION_ZONES_TIME_BUDGET_OUTCOME: Final = TIME_BUDGET_EXHAUSTED
+
+#: What this writer promises about its own failure policy, CLI surface and reported words; see
+#: `pipeline/direct/__init__.py` for the axes and `tests/direct/test_direct_writer_contract.py` for
+#: the table all eleven are read as.
+#:
+#: THIS IS THE `skip_turn` HALF OF THE UNSET-BBOX SPLIT, and `fire_perimeters/forward.py` is the
+#: `refuse` half. Both are `static_lookup` lanes with the same shape, so the difference is worth
+#: stating precisely rather than reconciling: this lane's coverage is bounded TWICE -- by Oregon's own
+#: statewide feed AND by INGEST_BBOX -- so an unset envelope would WIDEN the query past the coverage
+#: contract in `docs/lanes/evacuation-zones.md` section 4, and skipping leaves the previous version
+#: serving under a claim it already proved. Fire-perimeters has only one bound, so skipping there
+#: would leave a version serving under a coverage claim nothing re-proved. Same fact, opposite
+#: consequence, and a twelfth writer picks by asking which of the two shapes it has.
+WRITER_CONTRACT: Final = DirectWriterContract(
+    slug="evacuation-zones",
+    identity_defect=REFUSE_WHOLE_RELEASE,
+    geometry_defect=REFUSE_WHOLE_RELEASE,
+    unconfigured_bbox=SKIP_TURN_ON_UNCONFIGURED_BBOX,
+    turn_outcomes=LANE_DAY_OUTCOMES | {TIME_BUDGET_EXHAUSTED, BBOX_UNCONFIGURED, UNCHANGED},
+    flags_absent_on_purpose={
+        "--product": "one stream; see products.py. Oregon publishes one statewide evacuation-area "
+        "set, so there is no second product a selector could name.",
+        "--max-records": "the population is Oregon's whole current statewide set, and a truncated walk "
+        "is already refused as `EvacuationZonesTruncatedError` (source.py:94) rather than capped. A "
+        "life-safety layer publishing a partial zone set that reads as complete is the failure this "
+        "lane exists to avoid.",
+        "--max-records-per-day": "same reason as `--max-records`; this is a version-stamped lane, so "
+        "its unit is a snapshot rather than a day whose size an operator could bound.",
+    },
+    policy_basis="A zone reaching the row builder without a GlobalID RAISES (`rows.py:144`, 'identity "
+    "is never synthesised') rather than being counted and dropped, and that is the life-safety "
+    "direction: a silently missing evacuation area renders as 'no zone here', which is the same "
+    "picture as 'no evacuation ordered'. The geometry refusal is the shared basis every geometry "
+    "writer cites (`support.py:131`).",
+)
 
 
 class EvacuationZonesForwardConfigError(ValueError):

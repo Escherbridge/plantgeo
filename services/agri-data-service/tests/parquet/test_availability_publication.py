@@ -333,7 +333,13 @@ async def test_guarded_publish_keeps_barrier_until_cancelled_core_finishes_cas()
         await publish_then_checkpoint()
 
     assert events == [("cas", True), ("barrier_exit", True)]
-    assert store.cas_barrier_states == [True]
+    # TWO conditional writes now happen inside this barrier, and both must observe it held: the
+    # lane pointer's own swap, then the coverage rollup's refresh (`coverage_rollup.py`, hooked at
+    # the async publication seam so it can reuse the rows the publication already proved). The
+    # count is spelled out rather than relaxed to `all(...)` because a THIRD entry appearing here
+    # means someone added a write to the critical section, and that should require reading this
+    # comment. What the assertion guards is unchanged: no CAS may escape the barrier.
+    assert store.cas_barrier_states == [True, True]
     assert store.objects[pointer_key] != pointer_before
     assert probe.held is False
 

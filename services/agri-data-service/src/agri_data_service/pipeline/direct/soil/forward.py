@@ -18,6 +18,19 @@ from typing import TYPE_CHECKING, Final
 from agri_data_service.config import settings
 from agri_data_service.db.engine import local_source_loader_session
 from agri_data_service.foundation.parquet.paths import partition_day_statuses
+from agri_data_service.pipeline.direct import (
+    IDEMPOTENT_NOOP,
+    LANE_DAY_OUTCOMES,
+    NO_SUCH_DEFECT,
+    NOT_BBOX_BOUNDED,
+    NOT_YET_SETTLED,
+    PUBLISHED,
+    REFUSE_WHOLE_RELEASE,
+    REQUEST_BUDGET_EXHAUSTED,
+    SOURCE_UNSETTLED,
+    TIME_BUDGET_EXHAUSTED,
+    DirectWriterContract,
+)
 from agri_data_service.pipeline.direct.soil.adapter import (
     SOIL_DIRECT_KIND,
     DirectSoilFieldAdapter,
@@ -92,12 +105,47 @@ SOIL_BACKLOG_SCAN_DAYS: Final = 400
 #: gaps, so they can never starve a day that has no data at all.
 SOIL_ABSENCE_RECHECK_DAYS: Final = 14
 #: The one outcome a bounded turn reports instead of failing when its wall clock runs out.
-SOIL_TIME_BUDGET_OUTCOME: Final = "time_budget_exhausted"
+SOIL_TIME_BUDGET_OUTCOME: Final = TIME_BUDGET_EXHAUSTED
 #: The outcome an all-null day reports when nothing proves the mirror has moved past it. Not a
 #: failure: the day is simply not settled yet, and the next turn asks again.
-SOIL_SOURCE_UNSETTLED_OUTCOME: Final = "source_unsettled"
+SOIL_SOURCE_UNSETTLED_OUTCOME: Final = SOURCE_UNSETTLED
 #: The one outcome a bounded turn reports instead of fetching past its per-turn request budget.
-SOIL_REQUEST_BUDGET_OUTCOME: Final = "request_budget_exhausted"
+SOIL_REQUEST_BUDGET_OUTCOME: Final = REQUEST_BUDGET_EXHAUSTED
+
+#: What this writer promises about its own failure policy, CLI surface and reported words; see
+#: `pipeline/direct/__init__.py` for the axes and `tests/direct/test_direct_writer_contract.py` for
+#: the table all eleven are read as.
+WRITER_CONTRACT: Final = DirectWriterContract(
+    slug="soil",
+    identity_defect=REFUSE_WHOLE_RELEASE,
+    geometry_defect=NO_SUCH_DEFECT,
+    unconfigured_bbox=NOT_BBOX_BOUNDED,
+    turn_outcomes=LANE_DAY_OUTCOMES
+    | {
+        TIME_BUDGET_EXHAUSTED,
+        REQUEST_BUDGET_EXHAUSTED,
+        SOURCE_UNSETTLED,
+        NOT_YET_SETTLED,
+        IDEMPOTENT_NOOP,
+        PUBLISHED,
+    },
+    flags_absent_on_purpose={
+        "--bbox": "the support is the PINNED 1,568-cell `sentinel2-ndvi-0p25deg` lattice read from "
+        "`agri.spatial_cell` (support.py), not an envelope -- the same lattice `vegetation/` rides. "
+        "`ERA5_LAND_SUPPORT_CELL_COUNT` refuses a day with any other cell count, so a bbox could only "
+        "turn every day into a refusal.",
+        "--max-records": "the per-day record count is the support cell count times the requested "
+        "variables, both fixed. The binding bound is requests, spent by `--time-budget-seconds` and "
+        "SOIL_REQUEST_BUDGET_OUTCOME.",
+        "--max-records-per-day": "same reason as `--max-records`; 1,470 of 1,568 cells carry a value on "
+        "a complete day and any other number is refused, so there is no count for an operator to cap.",
+    },
+    policy_basis="Identical shape to `climate/` and for the identical reason -- both are cell-keyed "
+    "value planes over a pinned lattice, so there is no geometry to be malformed and a cell that does "
+    "not land on a support centroid is refused rather than dropped (`rows.py:49`). The difference "
+    "between the two writers is the upstream (Open-Meteo ERA5-Land archive, NOT the Copernicus CDS -- "
+    "see products.py) and the lattice, never the policy.",
+)
 MONTHS_PER_YEAR: Final = 12
 
 
@@ -747,7 +795,14 @@ def _validate_config(config: SoilForwardConfig) -> None:
 
 
 def parser() -> argparse.ArgumentParser:
-    """Build the bounded, forward-only soil lane operator."""
+    """Build the bounded, forward-only soil lane operator.
+
+    Every knob this parser does NOT expose is named in WRITER_CONTRACT.flags_absent_on_purpose
+    with its reason, and tests/direct/test_direct_writer_contract.py fails if one of them quietly
+    appears here or if a knob vanishes without an entry. --product IS exposed, unlike nine of the
+    eleven writers': this lane fans one Open-Meteo response out to eight streams, so naming one is
+    a real operator choice rather than a no-op.
+    """
     built = argparse.ArgumentParser(description=__doc__)
     built.add_argument("--product", default="all", choices=[*SOIL_PRODUCT_IDS, "all"])
     built.add_argument("--max-days", type=int, default=SOIL_DEFAULT_MAX_DAYS)

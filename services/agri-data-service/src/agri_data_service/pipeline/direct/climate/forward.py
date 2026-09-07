@@ -18,6 +18,19 @@ from typing import TYPE_CHECKING, Final
 from agri_data_service.config import settings
 from agri_data_service.db.engine import local_source_loader_session
 from agri_data_service.foundation.parquet.paths import partition_day_statuses
+from agri_data_service.pipeline.direct import (
+    IDEMPOTENT_NOOP,
+    LANE_DAY_OUTCOMES,
+    NO_SUCH_DEFECT,
+    NOT_BBOX_BOUNDED,
+    NOT_YET_SETTLED,
+    PUBLISHED,
+    REFUSE_WHOLE_RELEASE,
+    REQUEST_BUDGET_EXHAUSTED,
+    SOURCE_UNSETTLED,
+    TIME_BUDGET_EXHAUSTED,
+    DirectWriterContract,
+)
 from agri_data_service.pipeline.direct.climate.adapter import (
     CLIMATE_DIRECT_KIND,
     DirectClimateFieldAdapter,
@@ -89,12 +102,47 @@ CLIMATE_BACKLOG_SCAN_DAYS: Final = 400
 #: real gaps, so they can never starve a day that has no data at all.
 CLIMATE_ABSENCE_RECHECK_DAYS: Final = 14
 #: The one outcome a bounded turn reports instead of failing when its wall clock runs out.
-CLIMATE_TIME_BUDGET_OUTCOME: Final = "time_budget_exhausted"
+CLIMATE_TIME_BUDGET_OUTCOME: Final = TIME_BUDGET_EXHAUSTED
 #: The outcome an all-fill day reports when nothing proves the release has moved past it. Not a
 #: failure: the day is simply not settled yet, and the next turn asks again.
-CLIMATE_SOURCE_UNSETTLED_OUTCOME: Final = "source_unsettled"
+CLIMATE_SOURCE_UNSETTLED_OUTCOME: Final = SOURCE_UNSETTLED
 #: The one outcome a bounded turn reports instead of fetching past its per-turn request budget.
-CLIMATE_REQUEST_BUDGET_OUTCOME: Final = "request_budget_exhausted"
+CLIMATE_REQUEST_BUDGET_OUTCOME: Final = REQUEST_BUDGET_EXHAUSTED
+
+#: What this writer promises about its own failure policy, CLI surface and reported words; see
+#: `pipeline/direct/__init__.py` for the axes and `tests/direct/test_direct_writer_contract.py` for
+#: the table all eleven are read as.
+WRITER_CONTRACT: Final = DirectWriterContract(
+    slug="climate",
+    identity_defect=REFUSE_WHOLE_RELEASE,
+    geometry_defect=NO_SUCH_DEFECT,
+    unconfigured_bbox=NOT_BBOX_BOUNDED,
+    turn_outcomes=LANE_DAY_OUTCOMES
+    | {
+        TIME_BUDGET_EXHAUSTED,
+        REQUEST_BUDGET_EXHAUSTED,
+        SOURCE_UNSETTLED,
+        NOT_YET_SETTLED,
+        IDEMPOTENT_NOOP,
+        PUBLISHED,
+    },
+    flags_absent_on_purpose={
+        "--bbox": "the support is the PINNED 397-cell NASA POWER lattice read from `agri.spatial_cell` "
+        "(support.py), not an envelope. A bbox could only ever cut cells OUT of a fixed support, and a "
+        "day written against a different cell count is not comparable with the history it extends -- "
+        "`NASA_POWER_SUPPORT_CELL_COUNT` refuses one.",
+        "--max-records": "the record count per day is the support cell count times the requested "
+        "parameters, both fixed; the bound that matters is requests, and `--time-budget-seconds` plus "
+        "CLIMATE_REQUEST_BUDGET_OUTCOME already spend it.",
+        "--max-records-per-day": "same reason as `--max-records`, and a per-day spelling would imply a "
+        "day whose size this writer can choose. It cannot: a short day is a refusal, not a truncation.",
+    },
+    policy_basis="A cell-keyed value plane has no geometry column, so `geometry_defect` cannot arise "
+    "here rather than being refused. A POWER point that does not land on a support centroid IS an "
+    "identity defect and is refused whole (`rows.py:46`) rather than counted, because matching is "
+    "equality on the quantised centroid key: a counted-and-dropped cell would silently shrink the "
+    "support, and shrinking the support is the one change that makes a day incomparable.",
+)
 MONTHS_PER_YEAR: Final = 12
 
 
@@ -726,7 +774,14 @@ def _validate_config(config: ClimateForwardConfig) -> None:
 
 
 def parser() -> argparse.ArgumentParser:
-    """Build the bounded, forward-only climate lane operator."""
+    """Build the bounded, forward-only climate lane operator.
+
+    Every knob this parser does NOT expose is named in `WRITER_CONTRACT.flags_absent_on_purpose`
+    with its reason, and `tests/direct/test_direct_writer_contract.py` fails if one of them quietly
+    appears here or if a knob vanishes without an entry. `--product` IS exposed, unlike nine of the
+    eleven writers': this lane fans one POWER response out to eleven streams, so naming one is a
+    real operator choice rather than a no-op.
+    """
     built = argparse.ArgumentParser(description=__doc__)
     built.add_argument("--product", default="all", choices=[*CLIMATE_PRODUCT_IDS, "all"])
     built.add_argument("--max-days", type=int, default=CLIMATE_DEFAULT_MAX_DAYS)

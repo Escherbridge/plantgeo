@@ -55,6 +55,17 @@ from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
 from agri_data_service.ingest.http import upstream_client
 from agri_data_service.ingest.mtbs import inline_bbox_value
 from agri_data_service.ingest.sensors import NWS_OBSERVATION_RETENTION, OBSERVATION_BOUNDS
+from agri_data_service.pipeline.direct import (
+    COMPLETE,
+    INCOMPLETE,
+    LANE_DAY_OUTCOMES,
+    NO_SUCH_DEFECT,
+    NO_WRITABLE_OBSERVATIONS,
+    REFUSE_UNCONFIGURED_BBOX,
+    SKIP_AND_COUNT,
+    TIME_BUDGET_EXHAUSTED,
+    DirectWriterContract,
+)
 from agri_data_service.pipeline.direct.sensors.adapter import SENSORS_DIRECT_KIND, DirectSensorsForwardAdapter
 from agri_data_service.pipeline.direct.sensors.rows import direct_sensor_tables
 from agri_data_service.pipeline.direct.sensors.source import (
@@ -84,6 +95,36 @@ SENSORS_MAX_DAYS: Final = NWS_OBSERVATION_RETENTION.days + 1
 #: Defaults to the full ceiling for the same no-extra-cost, cannot-lose-data reasoning
 #: `weather_observations` states for its own default.
 SENSORS_DEFAULT_MAX_DAYS: Final = SENSORS_MAX_DAYS
+
+#: What this writer promises about its own failure policy, CLI surface and reported words; see
+#: `pipeline/direct/__init__.py` for the axes and `tests/direct/test_direct_writer_contract.py` for
+#: the table all eleven are read as.
+#:
+#: `--max-records` IS A DIFFERENT KNOB FROM `fire_detections`' `--max-records-per-day`, and the two
+#: spellings are the correct outcome rather than drift: this one caps readings across the WHOLE
+#: ROSTER for one poll, so its unit is a turn; that one caps records inside ONE EXACT UTC DAY, so its
+#: unit is a day. Giving them one name would make a turn-scoped ceiling look day-scoped, which is how
+#: an operator sets a cap ten times smaller than they meant.
+WRITER_CONTRACT: Final = DirectWriterContract(
+    slug="sensors",
+    identity_defect=SKIP_AND_COUNT,
+    geometry_defect=NO_SUCH_DEFECT,
+    unconfigured_bbox=REFUSE_UNCONFIGURED_BBOX,
+    turn_outcomes=LANE_DAY_OUTCOMES | {TIME_BUDGET_EXHAUSTED, NO_WRITABLE_OBSERVATIONS, COMPLETE, INCOMPLETE},
+    flags_absent_on_purpose={
+        "--product": "one stream; a station reading is one series per station rather than a fan-out "
+        "of several products over one fetch, so there is no second product a selector could name.",
+        "--max-records-per-day": "this lane polls a ROLLING WINDOW and sorts the answer into day "
+        "buckets afterwards -- it never issues a per-day request -- so a per-day ceiling would bound "
+        "something no request corresponds to. `--max-records` is the turn-scoped ceiling that does.",
+    },
+    policy_basis="A reading whose identity will not build is counted (`source.py`'s `rejected` and "
+    "`dropped`, both carried on the fetch record) rather than refusing the poll, because NWS is a "
+    "rolling ~6-day window: a refused turn does not retry a day, it LOSES it once the window slides "
+    "past. There is no geometry to be malformed -- the station's coordinates are provenance floats, "
+    "and a shape mismatch nulls them (`rows.py:93`) rather than dropping the reading, since the "
+    "reading is the observation and the position is metadata about who took it.",
+)
 SENSORS_DEFAULT_TIME_BUDGET_SECONDS: Final = 300.0
 SENSORS_MAX_TIME_BUDGET_SECONDS: Final = 900.0
 STATEMENT_TIMEOUT_SECONDS: Final = 600

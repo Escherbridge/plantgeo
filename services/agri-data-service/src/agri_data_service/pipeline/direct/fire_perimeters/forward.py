@@ -47,6 +47,14 @@ from agri_data_service.db.engine import local_source_loader_session
 from agri_data_service.foundation.parquet.lane_contract import resolve_static_lane
 from agri_data_service.foundation.parquet.paths import partition_day_statuses
 from agri_data_service.ingest.mtbs import inline_bbox_value
+from agri_data_service.pipeline.direct import (
+    LANE_DAY_OUTCOMES,
+    REFUSE_UNCONFIGURED_BBOX,
+    REFUSE_WHOLE_RELEASE,
+    SKIP_AND_COUNT,
+    TIME_BUDGET_EXHAUSTED,
+    DirectWriterContract,
+)
 from agri_data_service.pipeline.direct.fire_perimeters.adapter import (
     DirectFirePerimetersAdapter,
     DirectFirePerimetersError,
@@ -113,7 +121,48 @@ FIRE_PERIMETERS_DEFAULT_CONTENTION_TIMEOUT_SECONDS: Final = 300.0
 FIRE_PERIMETERS_MAX_CONTENTION_TIMEOUT_SECONDS: Final = 3_600.0
 FIRE_PERIMETERS_STATEMENT_TIMEOUT_SECONDS: Final = 120
 FIRE_PERIMETERS_MIN_DELAY_SECONDS: Final = 0.1
-FIRE_PERIMETERS_TIME_BUDGET_OUTCOME: Final = "time_budget_exhausted"
+FIRE_PERIMETERS_TIME_BUDGET_OUTCOME: Final = TIME_BUDGET_EXHAUSTED
+
+#: What this writer promises about its own failure policy, CLI surface and reported words; see
+#: `pipeline/direct/__init__.py` for the axes and `tests/direct/test_direct_writer_contract.py` for
+#: the table all eleven are read as.
+#:
+#: THE TWO CELLS BELOW ARE NOT THE SAME ANSWER TO THE SAME QUESTION, and the whole "fire-perimeters
+#: refuses while watersheds publishes" comparison turns on that. A WFIGS record whose identity will
+#: not build is COUNTED as `rejected` and the snapshot publishes (`rows.py:242`) -- byte-identical to
+#: what `watersheds` does with `rejected_basins`. A perimeter whose geometry is invalid or empty
+#: refuses the WHOLE snapshot (`support.py:75`) -- and so does watersheds (`watersheds/support.py:130`).
+#: The two writers' declared contracts are IDENTICAL on both axes. What differs is which defect their
+#: live data happens to contain, which is why one lane is blocked in production and the other is not.
+#:
+#: THE GEOMETRY REFUSAL IS DELIBERATE AND IS NOT THIS PASS'S TO CHANGE. Its basis is not taste:
+#: `geo_features_sync_geom` raises SQLSTATE 22023 for an invalid shape and aborts the INSERT that
+#: carried it, so PostgreSQL never held such a perimeter either. Dropping it here would publish a
+#: version the PostgreSQL population disagrees with; keeping it would publish a shape PostGIS refuses.
+#: If an owner decides a named, counted loss is preferable to a blocked lane, the change is to
+#: `support.py`'s refusal plus this declaration, together, in one diff.
+WRITER_CONTRACT: Final = DirectWriterContract(
+    slug="fire-perimeters",
+    identity_defect=SKIP_AND_COUNT,
+    geometry_defect=REFUSE_WHOLE_RELEASE,
+    unconfigured_bbox=REFUSE_UNCONFIGURED_BBOX,
+    turn_outcomes=LANE_DAY_OUTCOMES | {TIME_BUDGET_EXHAUSTED},
+    flags_absent_on_purpose={
+        "--product": "one stream; see products.py. WFIGS _Current is a single current-incident "
+        "population, so a product selector here could only ever take one value.",
+        "--max-records": "the ceiling is `INGEST_MAX_SOURCE_RECORDS`, shared with every other ArcGIS "
+        "walk rather than owned here, and a walk WFIGS itself says was clipped is refused as "
+        "`FirePerimetersTruncatedError` (source.py:49) rather than accepted at the cap. A per-writer "
+        "spelling would imply this lane may publish a truncated incident population. It may not.",
+        "--max-records-per-day": "same reason as `--max-records`; this is a version-stamped lane whose "
+        "unit is a snapshot, not a day whose size an operator could bound.",
+    },
+    policy_basis="An unset INGEST_BBOX REFUSES here where `evacuation_zones` skips, because this "
+    "lane's coverage has only ONE bound: skipping would leave the previously published version serving "
+    "under a coverage claim this turn never re-proved, and publishing over an unstated extent would "
+    "stamp a version whose coverage nobody can cite (source.py:86). Evacuation-zones is bounded twice "
+    "and can therefore skip safely; see that writer's own contract for the other half of the split.",
+)
 
 
 class FirePerimetersForwardConfigError(ValueError):

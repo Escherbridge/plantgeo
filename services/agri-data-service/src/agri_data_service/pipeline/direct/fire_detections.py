@@ -37,7 +37,14 @@ from agri_data_service.ingest.firms import (
     products_covering_span,
 )
 from agri_data_service.ingest.http import upstream_client
+from agri_data_service.ingest.mtbs import inline_bbox_value
 from agri_data_service.ingest.policy import resolve_bounded_bbox
+from agri_data_service.pipeline.direct import (
+    LANE_DAY_OUTCOMES,
+    REFUSE_WHOLE_RELEASE,
+    USAGE_ERROR_ON_UNCONFIGURED_BBOX,
+    DirectWriterContract,
+)
 from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.lanes.fire_detections import FIRE_DETECTIONS_DIRECT_WRITER_START_DAY
 from agri_data_service.pipeline.parquet.availability_extension import AvailabilityExtensionTally
@@ -77,6 +84,48 @@ FIRE_DIRECT_ALL_TIERS: Final[tuple[ZoomTier, ...]] = (
     *DERIVED_ZOOM_TIERS,
 )
 FIRE_DIRECT_RUN_ID_PREFIX: Final = "fire-detections-forward:"
+
+#: What this writer promises about its own failure policy, CLI surface and reported words; see
+#: `pipeline/direct/__init__.py` for the axes and `tests/direct/test_direct_writer_contract.py` for
+#: the table all eleven are read as.
+#:
+#: THE ONE OUTLIER ON THE IDENTITY AXIS, DECLARED RATHER THAN CHANGED. `fire_perimeters`, `sensors`
+#: and `watersheds` all COUNT a record whose identity will not build and publish the rest; this
+#: writer refuses the whole day ("FIRMS returned {n} unkeyable or invalid records for {day};
+#: refusing a partial day"). The defensible reading is that a FIRMS day is a complete constellation
+#: response whose row count is itself the evidence -- the 50,000-record ceiling is fail-closed for
+#: the same reason -- so a silently short day would be indistinguishable from a quiet fire season.
+#: The cost is that ONE malformed upstream record blocks a whole day indefinitely, and unlike a
+#: geometry defect there is no PostGIS refusal to point at as the basis. Flipping it to
+#: SKIP_AND_COUNT is an owner decision, not a uniformity edit; it would be one change in
+#: `fire_table_from_features` plus this declaration, in one diff.
+#:
+#: THE ONLY WRITER THAT ANSWERS AN UNSET `INGEST_BBOX` WITH `argparse.error` (exit 2). Earlier and
+#: louder than its siblings' refuse/skip, but it is also the only one whose exit code cannot be told
+#: apart from an operator typo, which is why nothing else adopted it.
+WRITER_CONTRACT: Final = DirectWriterContract(
+    slug="fire-detections",
+    identity_defect=REFUSE_WHOLE_RELEASE,
+    geometry_defect=REFUSE_WHOLE_RELEASE,
+    unconfigured_bbox=USAGE_ERROR_ON_UNCONFIGURED_BBOX,
+    turn_outcomes=LANE_DAY_OUTCOMES,
+    flags_absent_on_purpose={
+        "--product": "one stream; the NRT/SP FIRMS products are constellation sources folded into one "
+        "day, not separate publishable streams -- `source_products` reports which answered.",
+        "--time-budget-seconds": "this turn is bounded in four INDEPENDENT dimensions already (one "
+        "exact UTC day per request, a maximum five-day lookback, a fail-closed per-day record ceiling, "
+        "and finite retries), and each is a bound on the SOURCE rather than on the clock. A wall-clock "
+        "budget on top would abort a day mid-ladder, which is the one state this writer's "
+        "retract-and-republish contract cannot cheaply recover.",
+        "--max-records": "the ceiling here is per EXACT UTC DAY, and `--max-records-per-day` says so. "
+        "The turn-scoped spelling `sensors/` uses would name a bound this writer does not have.",
+    },
+    policy_basis="Every bound is on the source, not the schedule: the lane owns days at or after "
+    "FIRE_DETECTIONS_DIRECT_WRITER_START_DAY and no flag can move that boundary, and a complete "
+    "zero-row response records a governed z13 absence that a later non-empty response explicitly "
+    "retracts. The inverse never happens automatically -- a later empty response never removes "
+    "published data. That asymmetry is why a short day is treated as a defect rather than a reading.",
+)
 FIRE_DIRECT_DEFAULT_LOOKBACK_DAYS: Final = 5
 FIRE_DIRECT_MAX_LOOKBACK_DAYS: Final = 5
 FIRE_DIRECT_DEFAULT_MAX_DAYS: Final = 5
@@ -184,6 +233,10 @@ class FireForwardConfig:
     contention_timeout_seconds: float
     forward_start_day: date = FIRE_DETECTIONS_DIRECT_WRITER_START_DAY
     force_day: date | None = None
+    #: Ten of the eleven direct writers let an operator pin the run id so one turn's records can be
+    #: correlated across emitters; this one only ever generated its own until 2026-09-07. None keeps
+    #: the generated default, so nothing that already runs this writer changes.
+    run_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -358,7 +411,7 @@ async def fetch_fire_day(  # noqa: PLR0913
 async def run_fire_forward(config: FireForwardConfig) -> dict[str, object]:
     """Refresh a bounded newest-first slice of settled FIRMS days."""
     _validate_config(config)
-    run_id = f"{FIRE_DIRECT_RUN_ID_PREFIX}{uuid.uuid4()}"
+    run_id = config.run_id or f"{FIRE_DIRECT_RUN_ID_PREFIX}{uuid.uuid4()}"
     today = datetime.now(UTC).date()
     lane = LANE_REGISTRY[FIRE_DETECTIONS_STREAM]
     # ONE TALLY FOR THE WHOLE RUN, on EVERY report this function can return. Without it every
@@ -866,13 +919,23 @@ def _optional_day_env(name: str) -> date | None:
         raise DirectFireDetectionsError(f"{name} must be an ISO date, got {raw!r}") from error
 
 
-def _parse_args(argv: Sequence[str] | None = None) -> FireForwardConfig:
-    parser = argparse.ArgumentParser(description=__doc__)
+def parser() -> argparse.ArgumentParser:
+    """Build the bounded, forward-only fire-detections lane operator.
+
+    A FACTORY, matching every other pipeline/direct writer, rather than an ArgumentParser built
+    inline inside the private parse function. This module was the one writer whose CLI surface
+    nothing outside it could read, so the flag-parity test in
+    tests/direct/test_direct_writer_contract.py had no way to see it -- and a knob nobody can
+    enumerate is a knob that drifts unobserved. Every knob this parser does NOT expose is named in
+    WRITER_CONTRACT.flags_absent_on_purpose with its reason.
+    """
+    built = argparse.ArgumentParser(description=__doc__)
     forward_start_default = _optional_day_env("FIRE_FORWARD_START_DAY")
     if forward_start_default is None:
         forward_start_default = FIRE_DETECTIONS_DIRECT_WRITER_START_DAY
-    parser.add_argument("--bbox", default=None, help="west,south,east,north; defaults to INGEST_BBOX")
-    parser.add_argument(
+    built.add_argument("--bbox", default=None, help="west,south,east,north; defaults to INGEST_BBOX")
+    built.add_argument("--run-id", default=None, help="correlate this turn's records; generated when omitted")
+    built.add_argument(
         "--lookback-days",
         type=int,
         default=_positive_int_env(
@@ -881,22 +944,22 @@ def _parse_args(argv: Sequence[str] | None = None) -> FireForwardConfig:
             maximum=FIRE_DIRECT_MAX_LOOKBACK_DAYS,
         ),
     )
-    parser.add_argument(
+    built.add_argument(
         "--max-days",
         type=int,
         default=_positive_int_env("FIRE_FORWARD_MAX_DAYS", FIRE_DIRECT_DEFAULT_MAX_DAYS),
     )
-    parser.add_argument(
+    built.add_argument(
         "--max-records-per-day",
         type=int,
         default=_positive_int_env("FIRE_FORWARD_MAX_RECORDS_PER_DAY", FIRE_DIRECT_DEFAULT_MAX_RECORDS_PER_DAY),
     )
-    parser.add_argument(
+    built.add_argument(
         "--retry-attempts",
         type=int,
         default=_positive_int_env("FIRE_FORWARD_RETRY_ATTEMPTS", FIRE_DIRECT_DEFAULT_RETRY_ATTEMPTS),
     )
-    parser.add_argument(
+    built.add_argument(
         "--retry-base-seconds",
         type=float,
         default=_positive_float_env(
@@ -905,7 +968,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> FireForwardConfig:
             maximum=FIRE_DIRECT_MAX_RETRY_BASE_SECONDS,
         ),
     )
-    parser.add_argument(
+    built.add_argument(
         "--retry-max-seconds",
         type=float,
         default=_positive_float_env(
@@ -914,7 +977,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> FireForwardConfig:
             maximum=FIRE_DIRECT_MAX_RETRY_MAX_SECONDS,
         ),
     )
-    parser.add_argument(
+    built.add_argument(
         "--contention-timeout-seconds",
         type=float,
         default=_positive_float_env(
@@ -923,22 +986,37 @@ def _parse_args(argv: Sequence[str] | None = None) -> FireForwardConfig:
             maximum=FIRE_DIRECT_MAX_CONTENTION_TIMEOUT_SECONDS,
         ),
     )
-    parser.add_argument(
+    built.add_argument(
         "--forward-start-day",
         type=date.fromisoformat,
         default=forward_start_default,
         help=f"pinned ownership boundary; must equal {FIRE_DETECTIONS_DIRECT_WRITER_START_DAY}",
     )
-    parser.add_argument(
+    built.add_argument(
         "--force-day",
         type=date.fromisoformat,
         default=None,
         help="re-publish one already-settled YYYY-MM-DD inside the bounded NRT lookback",
     )
-    arguments = parser.parse_args(argv)
+    return built
+
+
+def _parse_args(argv: Sequence[str] | None = None) -> FireForwardConfig:
+    """Validate every operator input at the boundary and hand back one bounded turn.
+
+    inline_bbox_value rewrites "--bbox -125,42,..." to "--bbox=-125,42,..." before argparse ever
+    sees it, matching every other --bbox writer in pipeline/direct. Without it argparse reads the
+    leading -125 as a second flag and the documented operator command dies with
+    "argument --bbox: expected one argument" -- and every bbox this warehouse is configured with
+    starts with a negative longitude, so the failure was total rather than occasional. This writer
+    accepted --bbox without the rewrite until 2026-09-07.
+    """
+    built = parser()
+    raw = list(argv) if argv is not None else sys.argv[1:]
+    arguments = built.parse_args(inline_bbox_value(raw))
     bbox = resolve_bounded_bbox(arguments.bbox)
     if bbox is None:
-        parser.error("--bbox or INGEST_BBOX is required")
+        built.error("--bbox or INGEST_BBOX is required")
     lookback_days = max(1, min(FIRE_DIRECT_MAX_LOOKBACK_DAYS, arguments.lookback_days))
     config = FireForwardConfig(
         bbox=bbox,
@@ -951,11 +1029,12 @@ def _parse_args(argv: Sequence[str] | None = None) -> FireForwardConfig:
         contention_timeout_seconds=arguments.contention_timeout_seconds,
         forward_start_day=arguments.forward_start_day,
         force_day=arguments.force_day,
+        run_id=arguments.run_id,
     )
     try:
         _validate_config(config)
     except DirectFireDetectionsError as error:
-        parser.error(str(error))
+        built.error(str(error))
     return config
 
 
@@ -984,11 +1063,13 @@ if __name__ == "__main__":
 
 
 __all__ = [
+    "WRITER_CONTRACT",
     "DirectFireDetectionsAdapter",
     "DirectFireDetectionsError",
     "FireDaySource",
     "FireForwardConfig",
     "fetch_fire_day",
     "fire_table_from_features",
+    "parser",
     "run_fire_forward",
 ]

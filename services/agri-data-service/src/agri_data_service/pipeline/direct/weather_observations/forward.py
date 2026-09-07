@@ -18,6 +18,7 @@ import argparse
 import asyncio
 import hashlib
 import json
+import sys
 import time
 from collections import Counter
 from dataclasses import dataclass, replace
@@ -31,7 +32,19 @@ from agri_data_service.db.engine import local_source_loader_session
 from agri_data_service.foundation.parquet.paths import partition_day_statuses
 from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
 from agri_data_service.ingest.http import upstream_client
+from agri_data_service.ingest.mtbs import inline_bbox_value
 from agri_data_service.ingest.open_meteo import OPEN_METEO_BOUNDS
+from agri_data_service.pipeline.direct import (
+    COMPLETE,
+    INCOMPLETE,
+    LANE_DAY_OUTCOMES,
+    NO_SUCH_DEFECT,
+    NO_WRITABLE_OBSERVATIONS,
+    REFUSE_UNCONFIGURED_BBOX,
+    REFUSE_WHOLE_RELEASE,
+    TIME_BUDGET_EXHAUSTED,
+    DirectWriterContract,
+)
 from agri_data_service.pipeline.direct.weather_observations.adapter import (
     WEATHER_OBSERVATIONS_DIRECT_KIND,
     DirectWeatherObservationsForwardAdapter,
@@ -54,7 +67,7 @@ from agri_data_service.warehouse.schemas.weather_observations import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Sequence
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -73,6 +86,32 @@ WEATHER_OBSERVATIONS_MAX_DAYS: Final = 2
 #: executor lane -- not wired") and the upstream poll cost is independent of --max-days (one
 #: current-conditions fetch either way), so there is no budget reason to prefer 1.
 WEATHER_OBSERVATIONS_DEFAULT_MAX_DAYS: Final = WEATHER_OBSERVATIONS_MAX_DAYS
+
+#: What this writer promises about its own failure policy, CLI surface and reported words; see
+#: `pipeline/direct/__init__.py` for the axes and `tests/direct/test_direct_writer_contract.py` for
+#: the table all eleven are read as.
+WRITER_CONTRACT: Final = DirectWriterContract(
+    slug="weather-observations",
+    identity_defect=REFUSE_WHOLE_RELEASE,
+    geometry_defect=NO_SUCH_DEFECT,
+    unconfigured_bbox=REFUSE_UNCONFIGURED_BBOX,
+    turn_outcomes=LANE_DAY_OUTCOMES | {TIME_BUDGET_EXHAUSTED, NO_WRITABLE_OBSERVATIONS, COMPLETE, INCOMPLETE},
+    flags_absent_on_purpose={
+        "--product": "one stream; each sample point carries one current-conditions record, so there "
+        "is no second product a selector could name.",
+        "--max-records": "the record count is the sample-point count, computed from the bbox and a "
+        "fixed spacing by `support.py::weather_sample_points`. `--bbox` is therefore already the "
+        "record-count knob, and a second one could only disagree with it.",
+        "--max-records-per-day": "same reason as `--max-records`; the poll is a current-conditions "
+        "snapshot sorted into day buckets afterwards, so no request is scoped to a day.",
+    },
+    policy_basis="Unlike its closest sibling `sensors/`, which counts a bad reading and publishes, a "
+    "point whose `observedAt` will not parse REFUSES here (`rows.py:70`). The reason is the support: "
+    "this lane's population is a computed grid where every point is expected to answer, so a dropped "
+    "point silently shrinks the grid a day was written against -- the same comparability argument the "
+    "lattice writers make. `sensors/` polls a roster it does not control, where a station going quiet "
+    "is ordinary. There is no geometry column on either.",
+)
 WEATHER_OBSERVATIONS_DEFAULT_TIME_BUDGET_SECONDS: Final = 120.0
 WEATHER_OBSERVATIONS_MAX_TIME_BUDGET_SECONDS: Final = 900.0
 STATEMENT_TIMEOUT_SECONDS: Final = 600
@@ -142,6 +181,25 @@ def parser() -> argparse.ArgumentParser:
     built.add_argument("--retry-max-seconds", type=float, default=MAX_RETRY_DELAY_SECONDS)
     built.add_argument("--contention-timeout-seconds", type=float, default=DEFAULT_CONTENTION_TIMEOUT_SECONDS)
     return built
+
+
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    """Read the operator's argv into a namespace, surviving a bbox whose first ordinate is negative.
+
+    `inline_bbox_value` rewrites `--bbox -125,42,...` to `--bbox=-125,42,...` before argparse ever
+    sees it. Without it argparse reads the leading `-125` as a second flag and the documented
+    operator command dies with "argument --bbox: expected one argument" -- and EVERY bbox this
+    warehouse is configured with starts with a negative longitude, so the failure was total rather
+    than occasional.
+
+    This writer accepted `--bbox` without the rewrite until 2026-09-07: `main` called
+    `parser().parse_args()` with no argv and no normalisation, alone among the seven `--bbox`
+    writers. Matches `sensors/forward.py::parse_args` exactly, down to being a function rather than
+    an inline call in `main`, so a test can exercise the rewrite on a real argv without spawning a
+    process -- an untested guard is the next regression.
+    """
+    raw = list(argv) if argv is not None else sys.argv[1:]
+    return parser().parse_args(inline_bbox_value(raw))
 
 
 def _validate_args(args: argparse.Namespace) -> None:
@@ -551,9 +609,9 @@ async def run(args: argparse.Namespace) -> int:
     return 0 if all(result.outcome == "written" for result in results) else 1
 
 
-async def main() -> int:
+async def main(argv: Sequence[str] | None = None) -> int:
     """Run the operator and emit one typed terminal fault on failure."""
-    args = parser().parse_args()
+    args = parse_args(argv)
     try:
         return await run(args)
     except Exception as error:
@@ -567,6 +625,7 @@ __all__ = [
     "ForwardDayResult",
     "WeatherObservationsForwardConfigError",
     "main",
+    "parse_args",
     "parser",
     "run",
 ]

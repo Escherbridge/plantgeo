@@ -576,6 +576,46 @@ loader was the forward-path guard — it was half false, and the half that held 
 `_require_declared_provenance`, a construction-time check on the evidence document rather than on the
 row.
 
+## `coverage_rollup.py` — the shared cache the pointer swap already had a chokepoint for
+
+One object, `availability/_COVERAGE_ROLLUP.json`, holding every availability lane's resolved coverage
+day sets so a cold `GET /coverage` does not download and re-verify 11.5 MB of generations it has
+already verified. The full measurement and the reader's discipline are in `parquet_ops/AGENTS.md`,
+"Coverage rollup"; this section is about the WRITE side.
+
+**Why the chokepoint is here and not a scheduler.** `bootstrap_availability`, `publish_availability`
+and `rollback_availability` all end at one compare-and-swap on the lane pointer, inside the caller's
+per-lane barrier. `_refresh_coverage_rollup` runs immediately after that, off the `PublicationResult`
+which now carries the winning generation's `rows`. A separate refresher would have to rediscover
+which lanes moved and would be a second thing to keep alive; this one cannot drift from publication
+because it IS publication. Hooking the ASYNC seams rather than the `_owned` cores is deliberate twice
+over: it covers `interface/cli/data.py` without editing another lane's file, and it leaves every
+existing publication test — all of which call the `_owned` cores — writing exactly what it wrote
+before.
+
+**Why two publishers cannot lose each other's update.** `refresh_coverage_rollup_entry` re-reads the
+object on every attempt and builds its merge from the bytes it just observed, then writes
+conditionally on the ETag of exactly that observation, through the same
+`AvailabilityStorage.compare_and_swap` the pointer swap uses. Of two publishers racing on one
+observed version at most one write is accepted; the loser is told `False`, re-reads the winner's
+bytes and merges its own lane on top. Each writer only ever replaces ITS OWN lane's entry, so the
+merge is commutative across lanes and the loop converges. This adds no new dependency on conditional
+writes — if `If-Match` were not honoured, the pointer swap would already be broken.
+
+**A cache failure is never a publication failure.** The pointer has already advanced by the time this
+runs, so the publication is durable. `refresh_coverage_rollup_entry` returns `False` rather than
+raising when it loses every attempt, and `_refresh_coverage_rollup` swallows and logs anything else.
+What that leaves behind is a stale entry, which the reader detects by pointer digest and repairs with
+one full per-lane read.
+
+**An unparseable rollup is replaced, not merged into.** Leaving it would strand every lane on the
+fallback path forever with nobody told. The replacement is still written against the ETag of the
+unparseable bytes, so a publisher that repaired it a moment earlier is not overwritten.
+
+`scripts/coverage_rollup_status.py` is the operator seam: read-only by default (one rollup GET plus
+one pointer per lane, no generation reads), and `--rebuild` fills or repairs entries in one pass for
+a warehouse whose lanes were bootstrapped before the rollup existed.
+
 ## `availability_extension.py` — the terminal day joins the index, and only after it is terminal
 
 Every lane-day that `gap_fill.fill_one_lane_day` makes TERMINAL — published parts plus derived rungs

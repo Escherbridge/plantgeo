@@ -60,7 +60,7 @@ const layerTimeSliderStyles = `
     -webkit-appearance: none;
     appearance: none;
     background: transparent;
-    /* Taller than the 12px track and thumb on purpose: this is the drag control's hit area in a
+    /** Taller than the 12px track and thumb on purpose: this is the drag control's hit area in a
        19rem column, so it grows without changing anything that is drawn. */
     height: 20px;
     width: 100%;
@@ -104,7 +104,7 @@ const layerTimeSliderStyles = `
   .layer-time-slider-range:focus-visible::-moz-range-thumb {
     box-shadow: 0 0 0 3px hsl(var(--ring) / 0.6);
   }
-  /* Pending affordance: this layer's map data is still in flight (a settled scrub, or a pan
+  /** Pending affordance: this layer's map data is still in flight (a settled scrub, or a pan
      over unchanged ground) and what is painted is a retained frame (placeholderData:
      keepPreviousData in useMetricAtDate). The thumb is what a scrub is already looking at, so it
      pulses rather than the track changing shape -- see isFetchingCurrentDay. Static under
@@ -139,13 +139,13 @@ const layerTimeSliderStyles = `
     0%, 100% { filter: drop-shadow(0 0 1px hsl(var(--primary) / 0.45)); }
     50% { filter: drop-shadow(0 0 4px hsl(var(--primary) / 0.85)); }
   }
-  /* Without this the UA paints the calendar glyph for a light page, which on the default dark
+  /** Without this the UA paints the calendar glyph for a light page, which on the default dark
      theme is a near-black icon on a near-black field: the picker is there but invisible, so the
      field reads as plain text and nobody clicks it. */
   .layer-time-slider-date-input {
     color-scheme: light dark;
   }
-  /* 44px tap target on a phone, where the panel is a full-screen overlay and this is the one
+  /** 44px tap target on a phone, where the panel is a full-screen overlay and this is the one
      drag control on the row. Only the hit area grows; the thumb and the track keep their size,
      and the row around it carries max-sm:h-11 so it still contains the taller input. */
   @media (max-width: 640px) {

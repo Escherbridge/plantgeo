@@ -35,6 +35,15 @@ from agri_data_service.db.engine import local_source_loader_session
 from agri_data_service.foundation.parquet.paths import partition_day_statuses
 from agri_data_service.ingest.mtbs import inline_bbox_value
 from agri_data_service.ingest.policy import UNCONFIGURED_BBOX_REASON, parse_bbox, resolve_bounded_bbox
+from agri_data_service.pipeline.direct import (
+    BBOX_UNCONFIGURED,
+    LANE_DAY_OUTCOMES,
+    NO_WINDOW,
+    REFUSE_WHOLE_RELEASE,
+    SKIP_TURN_ON_UNCONFIGURED_BBOX,
+    TIME_BUDGET_EXHAUSTED,
+    DirectWriterContract,
+)
 from agri_data_service.pipeline.direct.burn_severity.adapter import (
     BURN_SEVERITY_DIRECT_KIND,
     DirectBurnSeverityAdapter,
@@ -89,7 +98,31 @@ BURN_SEVERITY_DEFAULT_CONTENTION_TIMEOUT_SECONDS: Final = 300.0
 BURN_SEVERITY_MAX_CONTENTION_TIMEOUT_SECONDS: Final = 3_600.0
 BURN_SEVERITY_STATEMENT_TIMEOUT_SECONDS: Final = 120
 BURN_SEVERITY_MIN_DELAY_SECONDS: Final = 0.1
-BURN_SEVERITY_TIME_BUDGET_OUTCOME: Final = "time_budget_exhausted"
+BURN_SEVERITY_TIME_BUDGET_OUTCOME: Final = TIME_BUDGET_EXHAUSTED
+
+#: What this writer promises about its own failure policy, CLI surface and reported words; see
+#: `pipeline/direct/__init__.py` for the axes and `tests/direct/test_direct_writer_contract.py` for
+#: the table all eleven are read as.
+WRITER_CONTRACT: Final = DirectWriterContract(
+    slug="burn-severity",
+    identity_defect=REFUSE_WHOLE_RELEASE,
+    geometry_defect=REFUSE_WHOLE_RELEASE,
+    unconfigured_bbox=SKIP_TURN_ON_UNCONFIGURED_BBOX,
+    turn_outcomes=LANE_DAY_OUTCOMES | {TIME_BUDGET_EXHAUSTED, BBOX_UNCONFIGURED, NO_WINDOW},
+    flags_absent_on_purpose={
+        "--product": "one stream, BURN_SEVERITY_STREAM; see products.py. A `--product` here could "
+        "only ever take one value.",
+        "--max-records": "the release-day population is whatever MTBS's governed release table names "
+        "for that day; capping it would publish a partial fire year that reads as a complete one.",
+        "--max-records-per-day": "same reason as `--max-records`; a release day is a governed unit, "
+        "not a fetch this writer is free to truncate.",
+    },
+    policy_basis="Identity is refused rather than counted because `ingest/mtbs.py` already guarantees "
+    "`fire_id` is unique within one cohort's paged fetch (MtbsDuplicateFeatureError), so a duplicate "
+    "reaching support.py means two ignition years reused one MTBS Fire_ID -- a data-shape error, not a "
+    "record to drop. The unset-bbox skip matches ingest-mtbs, which this lane still runs beside: MTBS "
+    "is a national archive bounded only by INGEST_BBOX, so an unset envelope would fetch the country.",
+)
 _MONTHS_PER_YEAR: Final = 12
 
 
@@ -129,7 +162,13 @@ async def run_burn_severity_forward(config: BurnSeverityForwardConfig) -> dict[s
 
     resolved_bbox = resolve_bounded_bbox(config.bbox)
     if resolved_bbox is None:
-        report = _noop_report(run_id, days=days, availability=availability, detail=UNCONFIGURED_BBOX_REASON)
+        report = _noop_report(
+            run_id,
+            days=days,
+            availability=availability,
+            outcome=BBOX_UNCONFIGURED,
+            detail=UNCONFIGURED_BBOX_REASON,
+        )
         emit({"event": "burn_severity_forward_noop", **report})
         return report
     if not days:
@@ -137,6 +176,7 @@ async def run_burn_severity_forward(config: BurnSeverityForwardConfig) -> dict[s
             run_id,
             days=days,
             availability=availability,
+            outcome=NO_WINDOW,
             detail="MTBS_ANNUAL_RELEASE_DATES carries no governed release day",
         )
         emit({"event": "burn_severity_forward_noop", **report})
@@ -229,11 +269,20 @@ def _noop_report(
     *,
     days: tuple[date, ...],
     availability: AvailabilityExtensionTally,
+    outcome: str,
     detail: str,
 ) -> dict[str, object]:
+    """Render a turn that published nothing, naming the state in a declared word as well as in prose.
+
+    `outcome` is REQUIRED rather than defaulted: the two callers stop for genuinely different reasons
+    -- no envelope to fetch over, versus no governed release day to fetch -- and a default would let
+    a third caller inherit whichever was written first. The `detail` sentence stays: the word is what
+    a monitor reads across all eleven writers, the sentence is what an operator reads.
+    """
     return {
         "status": "completed",
         "run_id": run_id,
+        "outcome": outcome,
         "layer": BURN_SEVERITY_STREAM,
         "namespace": f"layer={BURN_SEVERITY_STREAM}/kind={BURN_SEVERITY_DIRECT_KIND}/",
         "governed_release_days": [day.isoformat() for day in days],
@@ -605,7 +654,13 @@ def _validate_config(config: BurnSeverityForwardConfig) -> None:
 
 
 def parser() -> argparse.ArgumentParser:
-    """Build the bounded, forward-only burn-severity lane operator. No `--product`: this lane has one."""
+    """Build the bounded, forward-only burn-severity lane operator.
+
+    Every knob this parser does NOT expose is named in `WRITER_CONTRACT.flags_absent_on_purpose`
+    with its reason, and `tests/direct/test_direct_writer_contract.py` fails if one of them quietly
+    appears here or if a knob vanishes without an entry. `--product` is absent because this lane has
+    exactly one stream.
+    """
     built = argparse.ArgumentParser(description=__doc__)
     built.add_argument("--max-days", type=int, default=BURN_SEVERITY_DEFAULT_MAX_DAYS)
     built.add_argument("--bbox", default=None)

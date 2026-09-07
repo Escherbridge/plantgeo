@@ -32,8 +32,14 @@ from agri_data_service.pipeline.parquet.availability_index import (
     AvailabilityUnavailableError,
     BotoAvailabilityStorage,
     availability_pointer_key,
+    read_availability_pointer,
     read_bootstrap_marker,
     read_latest_availability,
+)
+from agri_data_service.pipeline.parquet.coverage_rollup import (
+    CoverageRollup,
+    CoverageRollupMalformedError,
+    read_coverage_rollup,
 )
 from agri_data_service.pipeline.parquet.lane_ceiling import allowed_source_ceiling
 from agri_data_service.pipeline.parquet.objectstore import availability_lane_root
@@ -49,9 +55,11 @@ if TYPE_CHECKING:
     from agri_data_service.pipeline.parquet.availability_index import (
         AvailabilityIndex,
         AvailabilityNature,
+        AvailabilityPointer,
         AvailabilityStorage,
         StoredAvailabilityObject,
     )
+    from agri_data_service.pipeline.parquet.coverage_rollup import CoverageRollupEntry
 
 logger = structlog.get_logger()
 
@@ -191,6 +199,65 @@ class AvailabilityCoverageReader:
             self._held[lane_root] = (now, index)
         return index
 
+    def read_pointer(self, lane: CensusLane, *, now: datetime) -> AvailabilityPointer:
+        """Read ONE lane's pointer without its generation, applying every check the full read applies.
+
+        The fast half of the rollup path: 600-odd bytes instead of the megabytes a generation costs,
+        and no per-row verification at all. Only called when the rollup already holds an entry for
+        this lane, so a warehouse with no rollup pays exactly what it paid before.
+        """
+        return self.read_pointer_for_root(
+            lane_root=lane_root(lane),
+            lane=lane.layer,
+            nature=_availability_nature(lane),
+            oldest_believable_ceiling=required_source_ceiling(lane, now=now),
+        )
+
+    def read_pointer_for_root(
+        self,
+        *,
+        lane_root: str,
+        lane: str,
+        nature: AvailabilityNature,
+        oldest_believable_ceiling: date | None,
+    ) -> AvailabilityPointer:
+        """Read one lane root's pointer by its physical coordinates, with no registration record needed.
+
+        DELIBERATELY UNCACHED. The pointer is the mutable head, and it is exactly what proves a held
+        rollup entry still current; serving it from a memo would mean proving a cache with a cache.
+        """
+        return read_availability_pointer(
+            self._store,
+            lane_root=lane_root,
+            expected_lane=lane,
+            expected_nature=nature,
+            expected_required_rungs=AVAILABILITY_REQUIRED_RUNGS,
+            required_source_ceiling=oldest_believable_ceiling,
+        )
+
+    def read_rollup(self) -> CoverageRollup:
+        """Return the warehouse rollup, or an EMPTY one whenever it cannot be read for any reason.
+
+        NEVER RAISES. A rollup is a cache; failing a whole coverage answer because a cache was
+        missing, truncated, oversized or unreachable would trade a slow answer for no answer, and
+        an absent entry already costs nothing worse than the full per-lane read it replaces.
+        """
+        try:
+            held = read_coverage_rollup(self._store)
+        except CoverageRollupMalformedError as exc:
+            logger.warning(
+                "coverage_rollup_unreadable",
+                reason=str(exc),
+                detail="every lane falls back to its own pointer and generation for this answer",
+            )
+            return CoverageRollup.empty()
+        except Exception:
+            # Broad on purpose, and narrower than the alternative: a transport fault reading a CACHE
+            # must not fail the coverage answer that cache exists to make cheaper.
+            logger.exception("coverage_rollup_read_failed")
+            return CoverageRollup.empty()
+        return CoverageRollup.empty() if held is None else held
+
     def was_bootstrapped(self, root: str) -> bool:
         """Report whether this lane ever published a bootstrap, from ONE GET at a deterministic key.
 
@@ -248,10 +315,16 @@ class SnapshotForwardAvailability:
 
     reader: AvailabilityCoverageReader
     now: datetime
+    #: The same warehouse rollup the direct lanes use. A product's forward half is an ordinary
+    #: availability lane root, so one entry serves both halves of the coverage answer.
+    rollup: CoverageRollup | None = None
 
     def forward_days(self, *, layer: str, first_day: date) -> ForwardAvailability | ForwardAvailabilityWithheld:
         """Return the product's forward-half day sets, or the exact reason none may be published."""
         root = availability_lane_root(layer, FORWARD_PARTITION_KIND)
+        cached = self._forward_from_rollup(root=root, layer=layer, first_day=first_day)
+        if cached is not None:
+            return cached
         try:
             index = self.reader.read_lane_root(
                 lane_root=root,
@@ -284,6 +357,63 @@ class SnapshotForwardAvailability:
             pointer_key=availability_pointer_key(root),
         )
 
+    def _forward_from_rollup(
+        self,
+        *,
+        root: str,
+        layer: str,
+        first_day: date,
+    ) -> ForwardAvailability | None:
+        """Answer one product's forward half from a rollup entry its own pointer still vouches for.
+
+        `None` means "no cheap answer", never "no coverage": the caller then reads the index in full
+        and keeps sole ownership of the four withholding verdicts. The entry's day sets are already
+        clipped at the ceiling, so only `first_day` remains to be applied here -- the same clip the
+        full path applies to `selectable_days()`.
+        """
+        if self.rollup is None:
+            return None
+        entry = self.rollup.entry_for(root)
+        if entry is None:
+            return None
+        try:
+            pointer = self.reader.read_pointer_for_root(
+                lane_root=root,
+                lane=layer,
+                nature="daily_series",
+                # A product's forward half has no registration to read a cadence off, exactly as on
+                # the full path below; presence is what it is judged on.
+                oldest_believable_ceiling=None,
+            )
+        except Exception as exc:
+            logger.info(
+                "coverage_rollup_probe_deferred",
+                layer=layer,
+                kind=FORWARD_PARTITION_KIND,
+                fault=type(exc).__name__,
+                reason="the pointer that would prove this entry could not be read, so the half is read in full",
+            )
+            return None
+        if not entry.answers(pointer):
+            logger.warning(
+                "coverage_rollup_entry_stale",
+                layer=layer,
+                kind=FORWARD_PARTITION_KIND,
+                entry_generation_sha256=entry.generation_sha256,
+                pointer_generation_sha256=pointer.generation_sha256,
+                reason="the rollup entry does not describe the generation this product's pointer names",
+            )
+            return None
+        published = frozenset(day for day in entry.published_days() if day >= first_day)
+        absent = frozenset(day for day in entry.absent_days() if day >= first_day)
+        return ForwardAvailability(
+            published_days=published,
+            absent_days=absent,
+            source_ceiling=entry.source_ceiling,
+            generation_sha256=entry.generation_sha256,
+            pointer_key=availability_pointer_key(root),
+        )
+
 
 def resolve_availability_lanes(
     reader: AvailabilityCoverageReader,
@@ -291,16 +421,26 @@ def resolve_availability_lanes(
     lanes: Sequence[CensusLane],
     policy: CoverageAuthorityPolicy,
     now: datetime,
+    rollup: CoverageRollup | None = None,
 ) -> AvailabilityResolution:
     """Answer every lane it can from its index and name what the remaining lanes still owe.
 
     Performs NO object listing on any path. A lane that raises anything other than the four
     availability refusals propagates: an unclassified transport fault is not evidence about content,
     and the census this replaces fails the whole answer for the same reason.
+
+    `rollup` is a CACHE and is optional in both senses: `None` and an empty rollup both mean every
+    lane is read in full, which is what this function did before the rollup existed.
     """
     plans = tuple((lane, _lane_plan(lane)) for lane in lanes)
     to_read = tuple(lane for lane, plan in plans if plan == "read")
-    outcomes = _read_lanes(reader, lanes=to_read, policy=policy, now=now)
+    outcomes = _read_lanes(
+        reader,
+        lanes=to_read,
+        policy=policy,
+        now=now,
+        rollup=CoverageRollup.empty() if rollup is None else rollup,
+    )
     rows_by_lane: dict[tuple[str, str], tuple[LaneCoverage, ...]] = {}
     census_lanes: list[CensusLane] = []
     withheld: list[LaneWithholding] = []
@@ -350,6 +490,63 @@ def lane_coverage_from_index(index: AvailabilityIndex, *, lane: CensusLane, now:
     each rung, so no row over-claims, and a slider can never mount an axis at z13 over a day z0
     cannot draw.
 
+    Splitting the day sets out from the closing is what lets a rollup entry answer identically:
+    `pipeline/parquet/coverage_rollup.entry_from_index` records exactly the two sets computed here,
+    and `lane_coverage_from_rollup_entry` hands them to the SAME closer.
+    """
+    ceiling = index.pointer.source_ceiling
+    selectable = frozenset(day for day in index.selectable_days() if day <= ceiling)
+    published = frozenset(row.day for row in index.rows if row.day in selectable and row.terminal_state == "published")
+    return lane_coverage_from_proven_days(
+        lane=lane,
+        published_days=published,
+        absent_days=selectable - published,
+        source_ceiling=ceiling,
+        generation_sha256=index.pointer.generation_sha256,
+        required_rungs=tuple(index.pointer.required_rungs),
+        now=now,
+    )
+
+
+def lane_coverage_from_rollup_entry(
+    entry: CoverageRollupEntry,
+    *,
+    lane: CensusLane,
+    now: datetime,
+) -> tuple[LaneCoverage, ...]:
+    """Close one lane's rung rows from a rollup entry the caller has already proven current.
+
+    THE CALLER OWNS THE FRESHNESS PROOF. This function does not know whether the entry still matches
+    its lane's pointer; `_read_lane` establishes that with `CoverageRollupEntry.answers` before it
+    gets here, and reads the lane in full when it cannot.
+    """
+    return lane_coverage_from_proven_days(
+        lane=lane,
+        published_days=entry.published_days(),
+        absent_days=entry.absent_days(),
+        source_ceiling=entry.source_ceiling,
+        generation_sha256=entry.generation_sha256,
+        required_rungs=entry.required_rungs,
+        now=now,
+    )
+
+
+def lane_coverage_from_proven_days(  # noqa: PLR0913 - one already-proven fact about the lane per arg
+    *,
+    lane: CensusLane,
+    published_days: frozenset[date],
+    absent_days: frozenset[date],
+    source_ceiling: date,
+    generation_sha256: str,
+    required_rungs: tuple[int, ...],
+    now: datetime,
+) -> tuple[LaneCoverage, ...]:
+    """Close four rung rows from day sets an availability generation already proved.
+
+    THE ONE PLACE an availability answer is closed, whichever evidence proved its days. A rollup
+    entry and a freshly verified generation reach the same rows because they reach them through this
+    function, not because two code paths were kept in step by hand.
+
     `now` IS PASSED AS THE CARRY HORIZON AND NOTHING ELSE. The ceiling is what judges lateness, but a
     release lane's published day CARRIES: drought's map for the 18th is what a reader draws on the
     24th, and the ceiling sits one publication lag behind that. Closing the carry at the ceiling
@@ -357,17 +554,14 @@ def lane_coverage_from_index(index: AvailabilityIndex, *, lane: CensusLane, now:
     availability -- the census closes the same carry at today, so the two would disagree about the
     same lane's `latest_day`.
     """
-    ceiling = index.pointer.source_ceiling
-    selectable = frozenset(day for day in index.selectable_days() if day <= ceiling)
-    published = frozenset(row.day for row in index.rows if row.day in selectable and row.terminal_state == "published")
-    days = LaneDays(data=published, absent=selectable - published, conflict=frozenset())
+    days = LaneDays(data=published_days, absent=absent_days, conflict=frozenset())
     pointer_key = availability_pointer_key(lane_root(lane))
     return tuple(
         replace(
             close_lane_coverage(
                 lane=lane,
                 tier=tier,
-                horizon=ceiling,
+                horizon=source_ceiling,
                 days=days,
                 # The publisher already subtracted this lane's publication lag when it declared the
                 # ceiling; charging it again would hide one lag period of the real gap tail.
@@ -375,10 +569,10 @@ def lane_coverage_from_index(index: AvailabilityIndex, *, lane: CensusLane, now:
                 carry_horizon=now.astimezone(UTC).date(),
             ),
             coverage_authority=COVERAGE_AUTHORITY_AVAILABILITY,
-            availability_generation_sha256=index.pointer.generation_sha256,
+            availability_generation_sha256=generation_sha256,
             availability_pointer_key=pointer_key,
-            source_ceiling_day=ceiling,
-            required_rungs=tuple(index.pointer.required_rungs),
+            source_ceiling_day=source_ceiling,
+            required_rungs=required_rungs,
         )
         for tier in ZOOM_TIERS
     )
@@ -421,6 +615,7 @@ def _read_lanes(
     lanes: Sequence[CensusLane],
     policy: CoverageAuthorityPolicy,
     now: datetime,
+    rollup: CoverageRollup,
 ) -> dict[tuple[str, str], _LaneOutcome]:
     """Read every lane's index on a bounded pool, cancelling the rest on the first hard fault."""
     if not lanes:
@@ -429,7 +624,9 @@ def _read_lanes(
         max_workers=min(AVAILABILITY_LANE_WORKERS, len(lanes)),
         thread_name_prefix="parquet-availability-read",
     ) as pool:
-        futures = tuple(pool.submit(_read_lane, reader, lane=lane, policy=policy, now=now) for lane in lanes)
+        futures = tuple(
+            pool.submit(_read_lane, reader, lane=lane, policy=policy, now=now, rollup=rollup) for lane in lanes
+        )
         done, pending = wait(futures, return_when=FIRST_EXCEPTION)
         failed = next((future for future in done if future.exception() is not None), None)
         if failed is not None:
@@ -445,8 +642,21 @@ def _read_lane(
     lane: CensusLane,
     policy: CoverageAuthorityPolicy,
     now: datetime,
+    rollup: CoverageRollup | None = None,
 ) -> _LaneOutcome:
-    """Read one lane's index, or classify the refusal into a withholding or a transitional census."""
+    """Read one lane's index, or classify the refusal into a withholding or a transitional census.
+
+    THE ROLLUP IS TRIED FIRST AND PROVEN SECOND. A held entry buys nothing until this lane's pointer
+    says it still describes the current generation, so the fast path is: read the pointer, compare
+    its digest against the entry, and answer from the entry only when they agree. Every other
+    outcome -- no entry, a digest that moved, any refusal at all -- falls through to the full read
+    below, which is byte-for-byte the path this function has always taken.
+    """
+    entry = None if rollup is None else rollup.entry_for(lane_root(lane))
+    if entry is not None:
+        rows = _rollup_rows(reader, lane=lane, entry=entry, now=now)
+        if rows is not None:
+            return _LaneOutcome(rows=rows, withholding=None, census=False)
     try:
         index = reader.read(lane, now=now)
     except AvailabilityChecksumError as exc:
@@ -458,6 +668,44 @@ def _read_lane(
             return _no_pointer(reader, lane, policy=policy, detail=str(exc))
         return _withheld(lane, reason=WITHHELD_AVAILABILITY_STALE, detail=str(exc))
     return _LaneOutcome(rows=lane_coverage_from_index(index, lane=lane, now=now), withholding=None, census=False)
+
+
+def _rollup_rows(
+    reader: AvailabilityCoverageReader,
+    *,
+    lane: CensusLane,
+    entry: CoverageRollupEntry,
+    now: datetime,
+) -> tuple[LaneCoverage, ...] | None:
+    """Answer one lane from its rollup entry, or `None` to say the caller must read it in full.
+
+    `None` IS NOT A REFUSAL AND IS NEVER PUBLISHED. Every way this can fail -- a moved pointer, a
+    missing pointer, a malformed one, a stale ceiling, a transport fault -- returns `None`, and the
+    caller then takes the full path, which classifies the SAME conditions into the same four
+    withholdings it always did. Deciding a lane's fate here would give one lane two verdicts.
+    """
+    try:
+        pointer = reader.read_pointer(lane, now=now)
+    except Exception as exc:
+        logger.info(
+            "coverage_rollup_probe_deferred",
+            layer=lane.layer,
+            kind=lane.kind,
+            fault=type(exc).__name__,
+            reason="the pointer that would prove this entry could not be read, so the lane is read in full",
+        )
+        return None
+    if entry.answers(pointer):
+        return lane_coverage_from_rollup_entry(entry, lane=lane, now=now)
+    logger.warning(
+        "coverage_rollup_entry_stale",
+        layer=lane.layer,
+        kind=lane.kind,
+        entry_generation_sha256=entry.generation_sha256,
+        pointer_generation_sha256=pointer.generation_sha256,
+        reason="the rollup entry does not describe the generation this lane's pointer names; reading it in full",
+    )
+    return None
 
 
 def _no_pointer(

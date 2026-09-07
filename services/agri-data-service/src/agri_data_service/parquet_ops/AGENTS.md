@@ -200,6 +200,66 @@ be: the reader's `LIMIT` selects in ITS order, so a truncated forward day return
 ordered SUBSET presented in lon/lat order. That is what `truncated` on the envelope is for — a
 partial day is declared partial, and its last row is not the day's last row.
 
+## Coverage rollup — one object, proven per lane against that lane's own pointer
+
+**What the measurement actually said (2026-09-07, against production).** The cold coverage cost was
+attributed to "104 lanes at ~100 ms serial", which is not what 104 is: it is the ROW count —
+26 availability lane roots (13 registered plus 13 snapshot forward halves) times four rungs — plus
+16 census rows from the four `static_lookup` lanes. Instrumenting one cold build gave **1,390 GETs
+and 44.4 MB**, decomposed as:
+
+| component | GETs | bytes | serial CPU |
+| --- | ---: | ---: | ---: |
+| availability pointers | 26 | 15,553 | ~0 |
+| availability generations | 12 | 11,467,797 | **5.24 s** |
+| snapshot monthly receipts | 1,352 | ~33 MB | 0.65 s |
+| static-lookup listings | 4 LISTs | 1,775 keys | 0.006 s |
+
+Replaying the identical build from an in-memory recording of every object — **zero network** — still
+cost **5.9 s**, so a perfect object store would not have got a cold read under the app's 8 s coverage
+timeout. The 5.24 s is per-row Python inside `_read_generation_for_pointer`: `to_pylist` 1.66 s,
+`AvailabilityRow` construction 2.00 s, the semantic receipt hash 1.05 s, row validation 0.47 s, over
+96,012 rows. `fire-detections` alone is 37,760 of them and 1.99 s. `AVAILABILITY_LANE_WORKERS = 3`
+buys almost nothing against it, because all of that work holds the GIL.
+
+**It is also not a once-per-deploy cost.** `POINTER_REVALIDATE_SECONDS` is 60 s and the payload cache
+is 120 s, so a warm process re-verifies the SAME generation bytes it already holds on every rebuild:
+measured 6.70 s cold then 5.06 / 4.95 / 5.43 s on a reader whose generations never left memory.
+
+**The rollup.** `pipeline/parquet/coverage_rollup.py` holds one entry per availability lane root at
+`availability/_COVERAGE_ROLLUP.json` — the SELECTABLE published and governed-absence day sets, folded
+to runs and already clipped at the lane's ceiling. It stores the proven DAYS, never the closed ROWS:
+a release lane's carry closes against TODAY, so cached rows would answer yesterday's axis.
+
+**It is a cache and is proven, not trusted.** A reader with an entry in hand still fetches that
+lane's pointer (600-odd bytes) and compares `CoverageRollupEntry.pointer_sha256` against
+`pointer_digest(pointer)` — a digest of the WHOLE canonical pointer document, so a moved generation,
+ceiling, rung contract or bootstrap binding all read as stale. Only on equality is the entry served;
+every other outcome, including a pointer that cannot be read at all, falls through to the unchanged
+per-lane path, which keeps sole ownership of the four withholding verdicts. A lane absent from the
+rollup is read in full and is never reported as having no days.
+
+**Measured on production, 12 lanes:** 7.50 s / 26 GETs / 11,486,755 bytes without it, **1.41 s / 14
+GETs / 15,553 bytes** with it, with the resolved rows byte-identical on the wire. The rollup object
+is 47,875 bytes and its whole read path — parse plus closing every lane — is **113 ms of CPU**.
+
+**What it deliberately gives up.** A rollup hit does not fetch the generation, so it does not re-hash
+it: the reader trusts the digest the publisher recorded in the pointer instead of re-deriving it from
+the bytes. Availability bit-rot that today would surface as `availability_checksum_invalid` on the
+next coverage build now surfaces only when a lane misses the rollup or a row read touches the data.
+That is the entire price, and it is why the freshness key is the pointer document rather than a
+timestamp.
+
+**The 16 census rungs stay out.** A `static_lookup` owns no index and therefore no generation digest,
+so there is no cheap key to prove an entry against; verifying one would mean the prefix listing the
+rollup exists to avoid, and not verifying it would be a silently stale reference set. Those four
+listings cost 0.006 s of CPU and 1,775 keys — the complexity would buy a network-only saving on the
+smallest component of the answer.
+
+**Not wired into `agent/warehouse.py` on purpose.** That caller resolves lanes and then reads each
+admitted lane's index again for its ROWS. A rollup hit would skip the read that warms the generation
+cache, so the second read would pay full price — the same work, moved.
+
 ## Why the memory ceiling is not advisory
 
 `duckdb_session.py` sets `memory_limit`, a `threads` cap, `max_temp_directory_size='0GiB'` and

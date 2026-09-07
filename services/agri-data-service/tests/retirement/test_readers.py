@@ -691,33 +691,16 @@ class _AcknowledgedTemplateLiteralComment:
     reason: str
 
 
-#: Reviewed by hand when this guard was introduced (2026-09-05): all four are CSS comments inside
-#: `layerTimeSliderStyles`, a PLAIN backtick string of raw CSS text (never a query), and none of the
-#: four spans contains anything shaped like a relation reference. A fifth entry anywhere outside
-#: this one file is a reason to stop and re-read this module's note before adding it, not a reason
-#: to assume the pattern is now routine.
-_ACKNOWLEDGED_TEMPLATE_LITERAL_COMMENTS: Final[tuple[_AcknowledgedTemplateLiteralComment, ...]] = (
-    _AcknowledgedTemplateLiteralComment(
-        path="src/components/map/layer-panel/LayerTimeSlider.tsx",
-        line=58,
-        reason="CSS comment ('Taller than the 12px track...'); no relation-shaped text in it",
-    ),
-    _AcknowledgedTemplateLiteralComment(
-        path="src/components/map/layer-panel/LayerTimeSlider.tsx",
-        line=102,
-        reason="CSS comment ('Pending affordance...'); no relation-shaped text in it",
-    ),
-    _AcknowledgedTemplateLiteralComment(
-        path="src/components/map/layer-panel/LayerTimeSlider.tsx",
-        line=137,
-        reason="CSS comment ('Without this the UA paints...'); no relation-shaped text in it",
-    ),
-    _AcknowledgedTemplateLiteralComment(
-        path="src/components/map/layer-panel/LayerTimeSlider.tsx",
-        line=143,
-        reason="CSS comment ('44px tap target...'); no relation-shaped text in it",
-    ),
-)
+#: EMPTY ON PURPOSE, 2026-09-07. Four entries lived here for `LayerTimeSlider.tsx`'s CSS comments.
+#: They are gone because the comments were rewritten from `/*` to `/**` -- still valid CSS, since the
+#: extra `*` is just comment content -- which removes the dangerous shape STRUCTURALLY rather than
+#: acknowledging it. A structural fix outranks an acknowledgement: an acknowledgement asserts that a
+#: human read the span once, while `/**` means the stripper cannot misread it however the file changes.
+#: Prefer that rewrite to a new entry. If you ever genuinely need one -- a template literal that must
+#: open a comment with a single star -- read this module's note on the stripper first: the risk is that
+#: everything down to the next `*/` reads as a comment, so a `SELECT ... FROM <relation>` inside that
+#: span makes a drop packet report a live relation as having zero readers.
+_ACKNOWLEDGED_TEMPLATE_LITERAL_COMMENTS: Final[tuple[_AcknowledgedTemplateLiteralComment, ...]] = ()
 
 
 def test_no_unacknowledged_scanned_js_surface_carries_a_line_initial_single_star_block_opener() -> None:

@@ -17,7 +17,7 @@ import { cn } from "@/lib/utils";
 const LAYER_TIME_STATUS_STYLE_ELEMENT_ID = "plantgeo-layer-time-status-styles";
 
 const layerTimeStatusStyles = `
-  /* The whole point of the delay: a warm getSliderCapabilities answers in ~0.28s and a cold one
+  /** The whole point of the delay: a warm getSliderCapabilities answers in ~0.28s and a cold one
      in 7.6-8.5s, and the row must not flash a loading block through the warm case. Held at
      opacity 0 for 400ms, then faded in -- so a fast load shows nothing at all and a slow one gets
      a real, unmissable loading state instead of the blank row this replaces. A pure-CSS delay,
@@ -26,7 +26,7 @@ const layerTimeStatusStyles = `
     opacity: 0;
     animation: plantgeo-layer-time-status-appear 180ms ease-out 400ms forwards;
   }
-  /* The delay stays -- it is timing, not motion, and it is what protects the warm load. Only the
+  /** The delay stays -- it is timing, not motion, and it is what protects the warm load. Only the
      fade is dropped. */
   @media (prefers-reduced-motion: reduce) {
     .layer-time-status-deferred {
@@ -36,7 +36,7 @@ const layerTimeStatusStyles = `
   @keyframes plantgeo-layer-time-status-appear {
     to { opacity: 1; }
   }
-  /* The placeholder track for a state that is still settling: a highlight sweeping along a bar of
+  /** The placeholder track for a state that is still settling: a highlight sweeping along a bar of
      exactly the real track's height, so the row keeps its geometry and nothing jumps when the
      axis lands. Distinct from the inert hatch a settled state wears, which is the one thing a
      reader has to be able to tell apart at a glance -- "on its way" versus "this is the answer". */
@@ -53,7 +53,7 @@ const layerTimeStatusStyles = `
     background-position: -60% 0;
     animation: plantgeo-layer-time-status-sweep 1.5s ease-in-out infinite;
   }
-  /* Static under reduced motion, and still visibly different from the inert hatch: the highlight
+  /** Static under reduced motion, and still visibly different from the inert hatch: the highlight
      parks in the middle rather than sweeping. The state stays tellable without movement. */
   @media (prefers-reduced-motion: reduce) {
     .layer-time-status-track-settling {

@@ -380,17 +380,24 @@ async def _build_coverage_payload(generated_at: datetime) -> dict[str, object]:
     `daily`-layout forward product on a snapshot-coverage cache MISS -- two products, two bounded
     listings, over a manifest-declared marker count rather than a day range. Every other daily and
     release lane is answered from one pointer GET and one generation GET.
+
+    THE ROLLUP IS READ ONCE, HERE, AND SHARED. One GET answers whether any lane can skip its
+    generation; a lane it does not cover, or covers with an entry its pointer no longer vouches for,
+    reads in full exactly as before. `read_rollup` never raises, so this line cannot fail a coverage
+    answer -- see `parquet_ops/AGENTS.md`, "Coverage rollup".
     """
 
     def work() -> dict[str, object]:
         lanes = registered_census_lanes()
         policy = settings.parquet_coverage_authority
         reader = open_availability_reader()
+        rollup = reader.read_rollup()
         resolution = resolve_availability_lanes(
             reader,
             lanes=lanes,
             policy=policy,
             now=generated_at,
+            rollup=rollup,
         )
         for lane in resolution.withheld:
             logger.warning(
@@ -410,7 +417,7 @@ async def _build_coverage_payload(generated_at: datetime) -> dict[str, object]:
             open_snapshot_store(),
             now=generated_at,
             policy=policy,
-            forward_availability=SnapshotForwardAvailability(reader=reader, now=generated_at),
+            forward_availability=SnapshotForwardAvailability(reader=reader, now=generated_at, rollup=rollup),
         )
         for withheld in snapshot.withheld:
             logger.warning(

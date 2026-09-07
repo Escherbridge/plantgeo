@@ -51,6 +51,16 @@ from agri_data_service.db.engine import local_source_loader_session
 from agri_data_service.foundation.parquet.lane_contract import newest_data_day, newest_marker_day, resolve_static_lane
 from agri_data_service.ingest.mtbs import inline_bbox_value
 from agri_data_service.ingest.policy import UNCONFIGURED_BBOX_REASON, resolve_bounded_bbox
+from agri_data_service.pipeline.direct import (
+    BBOX_UNCONFIGURED,
+    LANE_DAY_OUTCOMES,
+    NO_WINDOW,
+    REFUSE_WHOLE_RELEASE,
+    SKIP_AND_COUNT,
+    SKIP_TURN_ON_UNCONFIGURED_BBOX,
+    UNCHANGED,
+    DirectWriterContract,
+)
 from agri_data_service.pipeline.direct.watersheds.adapter import (
     WATERSHEDS_DIRECT_KIND,
     DirectWatershedsAdapter,
@@ -86,6 +96,53 @@ WATERSHEDS_FORWARD_RUN_ID_PREFIX: Final = "watersheds-forward:"
 #: rather than dropped outright, so the CLI stays shaped like every other `pipeline/direct/*`
 #: forward writer (this track's brief: `python -m ... --max-days 1`).
 WATERSHEDS_MAX_DAYS: Final = 1
+
+#: What this writer promises about its own failure policy, CLI surface and reported words; see
+#: `pipeline/direct/__init__.py` for the axes and `tests/direct/test_direct_writer_contract.py` for
+#: the table all eleven are read as.
+#:
+#: IDENTICAL TO `fire_perimeters`' ON BOTH DEFECT AXES, which is the point worth recording: the
+#: `rejected_basins: 0` this lane publishes beside `accepted_basins: 9396` counts an IDENTITY defect
+#: (`source.py:_accept` -- no properties/geometry object, or an unparseable huc12), the same defect
+#: fire-perimeters counts as `rejected` and also publishes. A HUC12 whose geometry converts to empty
+#: refuses this whole population (`support.py:130`), the same defect fire-perimeters refuses on. The
+#: two lanes never disagreed; their live data did.
+#:
+#: THE MISSING RETRY SERIES IS DECLARED, NOT OVERLOOKED. Ten of the eleven writers expose
+#: `--retry-attempts`/`--retry-base-seconds`/`--retry-max-seconds`; this one fetches exactly once.
+WRITER_CONTRACT: Final = DirectWriterContract(
+    slug="watersheds",
+    identity_defect=SKIP_AND_COUNT,
+    geometry_defect=REFUSE_WHOLE_RELEASE,
+    unconfigured_bbox=SKIP_TURN_ON_UNCONFIGURED_BBOX,
+    turn_outcomes=LANE_DAY_OUTCOMES | {BBOX_UNCONFIGURED, UNCHANGED, NO_WINDOW},
+    flags_absent_on_purpose={
+        "--product": "one stream, WATERSHEDS_STREAM; see products.py. NHDPlus_HR WBDHU12 is one "
+        "national basin index, so a product selector here could only ever take one value.",
+        "--time-budget-seconds": "a `static_lookup` turn publishes AT MOST ONE version, so there is no "
+        "multi-day walk for a clock to interrupt part-way. A budget here could only abort a single "
+        "indivisible fetch-and-publish, turning a slow turn into a failed one for no gain.",
+        "--retry-attempts": "one turn is one ~9,400-basin, ~47-request NHDPlus_HR walk, and the whole "
+        "walk is the retry unit -- there is no cheaper attribute-only probe to re-poll (source.py). "
+        "Against a national reference layer measured to hold exactly ONE load day in its entire "
+        "history, a failed turn costs nothing that the next cron tick does not recover, so paying for "
+        "the walk twice inside one turn buys a shorter recovery on a lane with no recovery pressure.",
+        "--retry-base-seconds": "no retry series exists to space out; see `--retry-attempts`.",
+        "--retry-max-seconds": "no retry series exists to cap; see `--retry-attempts`.",
+        "--contention-timeout-seconds": "this writer never WAITS on the lane-day lock: a contended turn "
+        "reports `contended` immediately and exits, so there is no wait for a timeout to bound. A knob "
+        "accepted and then ignored is worse than an absent one.",
+        "--max-records": "the population is every HUC12 in the extent; a cap would publish a partial "
+        "national basin index that reads as a complete one.",
+        "--max-records-per-day": "same reason as `--max-records`, and a version-stamped lane's unit is "
+        "a snapshot rather than a day.",
+    },
+    policy_basis="`support.py` applies NO repair chain -- no ST_MakeValid, no CollectionExtract, no "
+    "Multi -- unlike `drought/`, because this lane's own Postgres write path applied none either "
+    "(`sql/ingest/insert_geometry_versions.sql:210` is a bare ST_GeomFromGeoJSON). Mirroring the bare "
+    "conversion is what keeps a direct-fetched basin identical to the row it must reproduce. A repair "
+    "chain belongs here the day a self-intersecting WBDHU12 polygon is actually measured.",
+)
 
 
 class WatershedsForwardConfigError(ValueError):
@@ -170,11 +227,20 @@ def _direct_watermark_resolver(cache: _WatershedsSnapshotCache) -> LaneWatermark
 
 
 def _noop_report(
-    run_id: str, *, published: bool, state: str | None, detail: str | None, **extra: object
+    run_id: str, *, published: bool, outcome: str, state: str | None, detail: str | None, **extra: object
 ) -> dict[str, object]:
+    """Render a turn that published nothing, carrying BOTH the shared word and the static-lane state.
+
+    `state` is a `StaticLaneState` and answers "where does this lane stand against its source
+    watermark"; `outcome` is a `DIRECT_TURN_OUTCOMES` word and answers "what did this turn do". They
+    are different questions, and until this key existed a monitor reading all eleven writers had to
+    special-case the two static lanes because their no-op reports carried no `outcome` at all. Both
+    are kept: the state is strictly more informative and the word is what generalises.
+    """
     return {
         "status": "completed",
         "run_id": run_id,
+        "outcome": outcome,
         "layer": WATERSHEDS_STREAM,
         "namespace": f"layer={WATERSHEDS_STREAM}/kind={WATERSHEDS_DIRECT_KIND}/",
         "published": published,
@@ -196,7 +262,13 @@ async def run_watersheds_forward(config: WatershedsForwardConfig) -> dict[str, o
     today = config.today or datetime.now(UTC).date()
     bbox = resolve_bounded_bbox(config.bbox)
     if bbox is None:
-        report = _noop_report(run_id, published=False, state="watermark_unread", detail=UNCONFIGURED_BBOX_REASON)
+        report = _noop_report(
+            run_id,
+            published=False,
+            outcome=BBOX_UNCONFIGURED,
+            state="watermark_unread",
+            detail=UNCONFIGURED_BBOX_REASON,
+        )
         emit({"event": "watersheds_forward_noop", **report})
         return report
 
@@ -219,6 +291,11 @@ async def run_watersheds_forward(config: WatershedsForwardConfig) -> dict[str, o
         report = _noop_report(
             run_id,
             published=False,
+            # `current` means the published version already matches the source watermark, which is
+            # exactly what `UNCHANGED` names. `source_empty` and `watermark_unread` both mean there
+            # is no version to publish at all, which is `NO_WINDOW`; the precise distinction between
+            # them survives untouched in `state` beside it.
+            outcome=UNCHANGED if verdict.state == "current" else NO_WINDOW,
             state=verdict.state,
             detail=verdict.detail,
             accepted_basins=len(snapshot.accepted),
@@ -245,6 +322,7 @@ async def run_watersheds_forward(config: WatershedsForwardConfig) -> dict[str, o
             report = _noop_report(
                 run_id,
                 published=False,
+                outcome="contended",
                 state="contended",
                 detail=f"{version_day.isoformat()}: another run holds this lane-day",
             )

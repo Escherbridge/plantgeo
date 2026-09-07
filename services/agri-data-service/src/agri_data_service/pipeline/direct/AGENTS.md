@@ -4,6 +4,53 @@ Modules here fetch upstream products and publish registered Parquet schemas with
 ingested rows in PostgreSQL. PostgreSQL may still supply the shared session-scoped lane-day
 advisory lock during the transition; it is coordination, not a data sink.
 
+## The cross-writer contract lives in `__init__.py`, and each writer claims it
+
+Eleven writers, built over months by different passes, drifted on three axes that a monitor and an
+operator both have to read across all eleven: the WORDS a turn reports, the KNOBS its CLI takes, and
+what it does with a MALFORMED upstream record. `pipeline/direct/__init__.py` declares all three,
+every writer carries a `WRITER_CONTRACT` beside its `parser()`, and
+`tests/direct/test_direct_writer_contract.py` checks the claim against the code.
+
+Three things about that module are load-bearing rather than stylistic:
+
+- It is the package `__init__` and NOT a `contract.py`, because
+  `tests/test_layer_import_contract.py::_lane_names` counts every flat `*.py` under this directory
+  as its own LANE and `test_lanes_do_not_import_each_other` forbids a lane importing a sibling. A
+  `pipeline/direct/contract.py` would be a twelfth lane the other eleven could not import. Same
+  reasoning `pipeline/lanes/__init__.py::LANE_BASE_ZOOM_TIER` records for itself.
+- `LANE_DAY_OUTCOMES` RESTATES `gap_fill.py::LaneDayOutcome` rather than importing it, because
+  `gap_fill` imports `lane_registry`, which imports writer packages, which import this module.
+  `test_lane_day_outcomes_match_the_shared_literal` is the anti-drift proof in place of the edge.
+- Nothing heavy is imported there. The module runs on the way in to every writer, adapter and test.
+
+### The two record-failure policies are two answers to two different questions
+
+The apparent contradiction -- fire-perimeters refusing a whole WFIGS snapshot while watersheds
+publishes beside `rejected_basins: 0` -- is a comparison ACROSS the defect axis, not along it.
+
+- IDENTITY DEFECT (the record cannot be keyed at all): `fire_perimeters`, `sensors` and `watersheds`
+  count it and publish; the other eight refuse the release.
+- GEOMETRY DEFECT (it keys fine, but its shape repairs or converts to nothing): every geometry-bearing
+  writer refuses the whole release, all five citing the same basis -- `geo_features_sync_geom` raises
+  SQLSTATE 22023 and aborts the INSERT, so PostgreSQL never held such a row either, and a
+  `MULTIPOLYGON EMPTY` is a fabricated "this exists and covers nothing" claim.
+
+Fire-perimeters and watersheds are IDENTICAL on both axes. What differed was which defect their live
+data happened to contain. The one real outlier is `fire_detections`, which routes an identity defect
+into the refuse-the-release bucket; that is declared at its `WRITER_CONTRACT` and left alone, because
+changing a live lane's failure policy is an owner decision rather than a uniformity edit.
+
+### Unset `INGEST_BBOX` has three answers and the lane's shape picks one
+
+`refuse` (fire-perimeters, sensors, weather-observations) where the coverage has ONE bound, so
+skipping would leave a version serving under a claim this turn never re-proved. `skip_turn`
+(evacuation-zones, watersheds, burn-severity) where the layer is bounded TWICE, so an unset envelope
+would WIDEN the query past the published coverage contract. `usage_error` (fire-detections alone).
+`not_bbox_bounded` (climate, soil, vegetation, drought) where the support is a pinned lattice or a
+national release -- a `--bbox` there would not narrow a query, it would change the SUPPORT the day is
+written against, which is the one change that makes a day incomparable with its own history.
+
 ## Water gauges
 
 water_gauges.py partitions NWIS instantaneous values by the publisher-named day: the first ten

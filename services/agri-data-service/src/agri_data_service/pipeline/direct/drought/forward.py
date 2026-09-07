@@ -27,6 +27,14 @@ from typing import TYPE_CHECKING, Final
 from agri_data_service.config import settings
 from agri_data_service.db.engine import local_source_loader_session
 from agri_data_service.foundation.parquet.paths import partition_day_statuses
+from agri_data_service.pipeline.direct import (
+    LANE_DAY_OUTCOMES,
+    NOT_BBOX_BOUNDED,
+    REFUSE_WHOLE_RELEASE,
+    SOURCE_UNSETTLED,
+    TIME_BUDGET_EXHAUSTED,
+    DirectWriterContract,
+)
 from agri_data_service.pipeline.direct.drought.adapter import (
     DROUGHT_DIRECT_KIND,
     DirectDroughtAdapter,
@@ -87,8 +95,36 @@ DROUGHT_BACKLOG_SCAN_WEEKS: Final = 60
 #: because a recheck costs one live request. See `pipeline/direct/AGENTS.md`, "A governed absence is
 #: re-examined, or it is permanent".
 DROUGHT_ABSENCE_RECHECK_WEEKS: Final = 8
-DROUGHT_TIME_BUDGET_OUTCOME: Final = "time_budget_exhausted"
-DROUGHT_SOURCE_UNSETTLED_OUTCOME: Final = "source_unsettled"
+DROUGHT_TIME_BUDGET_OUTCOME: Final = TIME_BUDGET_EXHAUSTED
+DROUGHT_SOURCE_UNSETTLED_OUTCOME: Final = SOURCE_UNSETTLED
+
+#: What this writer promises about its own failure policy, CLI surface and reported words; see
+#: `pipeline/direct/__init__.py` for the axes and `tests/direct/test_direct_writer_contract.py` for
+#: the table all eleven are read as.
+WRITER_CONTRACT: Final = DirectWriterContract(
+    slug="drought",
+    identity_defect=REFUSE_WHOLE_RELEASE,
+    geometry_defect=REFUSE_WHOLE_RELEASE,
+    unconfigured_bbox=NOT_BBOX_BOUNDED,
+    turn_outcomes=LANE_DAY_OUTCOMES | {TIME_BUDGET_EXHAUSTED, SOURCE_UNSETTLED},
+    flags_absent_on_purpose={
+        "--bbox": "USDM publishes ONE national release per week as five class polygons; there is no "
+        "per-record spatial filter to apply and clipping the national geometry would publish a class "
+        "whose extent is this run's envelope rather than the drought's. The layer is bounded by the "
+        "release, not by INGEST_BBOX.",
+        "--product": "one stream, DROUGHT_STREAM; see products.py. A national drought release is one "
+        "map, not a family of them, so a product selector here could only ever take one value.",
+        "--max-records": "a release is exactly five class polygons. A ceiling under five publishes a "
+        "partial national map that reads as complete; a ceiling over five is unreachable.",
+        "--max-records-per-day": "same reason as `--max-records`, and this lane's unit is a weekly "
+        "release rather than a day, so a per-day spelling would name a period this lane does not have.",
+    },
+    policy_basis="A duplicate `dm_category` within one release COLLAPSES last-write-wins, matching "
+    "`sql/ingest/store_drought_area.sql`'s `ON CONFLICT (valid_date, dm_category) DO UPDATE` exactly "
+    "-- equivalent behaviour, not a dropped record, which is why it is not `skip_and_count`. A class "
+    "that repairs to empty refuses the whole release (`support.py:129`) on the shared geometry basis: "
+    "a MULTIPOLYGON EMPTY row claims a drought class exists and covers nothing.",
+)
 MONTHS_PER_YEAR: Final = 12
 
 
@@ -604,7 +640,13 @@ def _validate_config(config: DroughtForwardConfig) -> None:
 
 
 def parser() -> argparse.ArgumentParser:
-    """Build the bounded, forward-only drought lane operator. No `--product`: this lane has one."""
+    """Build the bounded, forward-only drought lane operator.
+
+    Every knob this parser does NOT expose is named in WRITER_CONTRACT.flags_absent_on_purpose
+    with its reason, and tests/direct/test_direct_writer_contract.py fails if one of them quietly
+    appears here or if a knob vanishes without an entry. --product is absent because this lane has
+    exactly one stream.
+    """
     built = argparse.ArgumentParser(description=__doc__)
     built.add_argument("--max-days", type=int, default=DROUGHT_DEFAULT_MAX_DAYS)
     built.add_argument("--time-budget-seconds", type=float, default=DROUGHT_DEFAULT_TIME_BUDGET_SECONDS)

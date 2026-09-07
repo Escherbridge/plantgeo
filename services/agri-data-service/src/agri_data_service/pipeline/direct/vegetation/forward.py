@@ -23,6 +23,21 @@ from typing import TYPE_CHECKING, Final
 from agri_data_service.config import settings
 from agri_data_service.db.engine import local_source_loader_session
 from agri_data_service.foundation.parquet.paths import partition_day_statuses
+from agri_data_service.pipeline.direct import (
+    IDEMPOTENT_NOOP,
+    INCOMPLETE_AFTER_WRITE,
+    LANE_DAY_OUTCOMES,
+    LOCK_CONTENDED,
+    NO_SUCH_DEFECT,
+    NOT_BBOX_BOUNDED,
+    NOT_YET_SETTLED,
+    PUBLISHED,
+    REFUSE_WHOLE_RELEASE,
+    SOURCE_UNSETTLED,
+    TIME_BUDGET_EXHAUSTED,
+    UNRESOLVED_DAY_BUDGET_EXHAUSTED,
+    DirectWriterContract,
+)
 from agri_data_service.pipeline.direct.vegetation.adapter import (
     DirectVegetationAdapter,
     DirectVegetationError,
@@ -89,8 +104,51 @@ VEGETATION_BACKLOG_SCAN_DAYS: Final = 400
 #: How far back a turn re-examines a day it has already governed as absent, behind every day that
 #: owes real work. `pipeline/direct/AGENTS.md`, "A governed absence is re-examined, or it is permanent".
 VEGETATION_ABSENCE_RECHECK_DAYS: Final = 14
-VEGETATION_TIME_BUDGET_OUTCOME: Final = "time_budget_exhausted"
-VEGETATION_SOURCE_UNSETTLED_OUTCOME: Final = "source_unsettled"
+VEGETATION_TIME_BUDGET_OUTCOME: Final = TIME_BUDGET_EXHAUSTED
+VEGETATION_SOURCE_UNSETTLED_OUTCOME: Final = SOURCE_UNSETTLED
+
+#: What this writer promises about its own failure policy, CLI surface and reported words; see
+#: `pipeline/direct/__init__.py` for the axes and `tests/direct/test_direct_writer_contract.py` for
+#: the table all eleven are read as.
+#:
+#: THE WIDEST VOCABULARY OF THE ELEVEN, and that is a real property rather than sprawl: this is the
+#: only writer with a `backfill.py` walking a bounded historical window beside the forward turn, so
+#: it is the only one that can report a day it touched and did not settle
+#: (`incomplete_after_write`) or a walk that ran out of unresolved-day patience rather than clock
+#: (`unresolved_day_budget_exhausted`). It also spells lock contention `lock_contended` where
+#: `LaneDayOutcome` spells it `contended`; that pair is declared in
+#: `pipeline/direct/__init__.py::KNOWN_SYNONYMS` rather than renamed, because renaming changes an
+#: observable field on a live lane and that is an owner call, not a uniformity edit.
+WRITER_CONTRACT: Final = DirectWriterContract(
+    slug="vegetation",
+    identity_defect=REFUSE_WHOLE_RELEASE,
+    geometry_defect=NO_SUCH_DEFECT,
+    unconfigured_bbox=NOT_BBOX_BOUNDED,
+    turn_outcomes=LANE_DAY_OUTCOMES
+    | {
+        TIME_BUDGET_EXHAUSTED,
+        SOURCE_UNSETTLED,
+        NOT_YET_SETTLED,
+        IDEMPOTENT_NOOP,
+        PUBLISHED,
+        LOCK_CONTENDED,
+        UNRESOLVED_DAY_BUDGET_EXHAUSTED,
+        INCOMPLETE_AFTER_WRITE,
+    },
+    flags_absent_on_purpose={
+        "--bbox": "the support is the PINNED 1,568-cell `sentinel2-ndvi-0p25deg` lattice read from "
+        "`agri.spatial_cell` (support.py) -- the same lattice `soil/` rides, whose centroids sit at odd "
+        "multiples of 0.125 degrees. A bbox would change the support rather than narrow a query.",
+        "--product": "one stream, one metric_name of 'ndvi' per spatial cell (products.py: \"ONE STREAM, NOT EIGHT\").",
+        "--max-records": "the per-day record count is the fixed support cell count; a cap could only "
+        "publish a partial lattice that reads as a complete one.",
+        "--max-records-per-day": "same reason as `--max-records`: the day's size is the support cell "
+        "count, which is fixed, so there is no count for an operator to bound.",
+    },
+    policy_basis="A cell-keyed value plane, so no geometry can be malformed; an NDVI value that does "
+    "not land on a support centroid, or a naive `data_available_at`, is refused whole (`rows.py:54`) "
+    "rather than dropped, on the same support-comparability grounds as `climate/` and `soil/`.",
+)
 MONTHS_PER_YEAR: Final = 12
 
 
@@ -607,7 +665,13 @@ def _validate_config(config: VegetationForwardConfig) -> None:
 
 
 def parser() -> argparse.ArgumentParser:
-    """Build the bounded, forward-only vegetation lane operator."""
+    """Build the bounded, forward-only vegetation lane operator.
+
+    Every knob this parser does NOT expose is named in WRITER_CONTRACT.flags_absent_on_purpose
+    with its reason, and tests/direct/test_direct_writer_contract.py fails if one of them quietly
+    appears here or if a knob vanishes without an entry. --product is absent because this lane has
+    exactly one stream (products.py: "ONE STREAM, NOT EIGHT").
+    """
     built = argparse.ArgumentParser(description=__doc__)
     built.add_argument("--max-days", type=int, default=VEGETATION_DEFAULT_MAX_DAYS)
     built.add_argument("--time-budget-seconds", type=float, default=VEGETATION_DEFAULT_TIME_BUDGET_SECONDS)

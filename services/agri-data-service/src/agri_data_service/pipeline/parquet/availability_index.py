@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Final, Literal, Protocol, cast
 
 import pyarrow as pa  # type: ignore[import-untyped]
 import pyarrow.parquet as pq  # type: ignore[import-untyped]
+import structlog
 from botocore.exceptions import ClientError  # type: ignore[import-untyped]
 
 from agri_data_service.config import ObjectStoreCredentials, Settings, settings
@@ -34,6 +35,7 @@ from agri_data_service.foundation.parquet.paths import (
     try_parse_completion_marker_path,
     try_parse_partition_path,
 )
+from agri_data_service.pipeline.parquet.coverage_rollup import entry_from_index, refresh_coverage_rollup_entry
 from agri_data_service.pipeline.parquet.objectstore import BotoObjectStoreBackend
 from agri_data_service.pipeline.parquet.publication_barrier import postgres_lane_publication_barrier
 from agri_data_service.warehouse.parquet.tiers import BASE_ZOOM_TIER
@@ -52,6 +54,8 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     AvailabilityPublicationBarrier = Callable[[AsyncSession, str], AbstractAsyncContextManager[bool]]
+
+logger = structlog.get_logger()
 
 AvailabilityNature = Literal["daily_series", "release_series"]
 TerminalState = Literal["published", "governed_absence"]
@@ -902,11 +906,15 @@ class PublicationRequest:
 
 @dataclass(frozen=True, slots=True)
 class PublicationResult:
-    """The winning pointer and whether this call advanced it."""
+    """The winning pointer, whether this call advanced it, and the generation it now names."""
 
     pointer: AvailabilityPointer
     advanced: bool
     attempts: int
+    #: The rows the winning generation holds. Carried so the async publication seams can refresh the
+    #: coverage rollup without re-reading and re-verifying the generation they just wrote. EMPTY on a
+    #: replay that advanced nothing, which is exactly when there is no rollup work to do.
+    rows: tuple[AvailabilityRow, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -1182,7 +1190,7 @@ async def bootstrap_availability(
     async with publication_barrier(session, request.identity.lane_root) as granted:
         if not granted:
             raise AvailabilityConflictError("availability publication barrier is contended")
-        return _bootstrap_availability_owned(store, request)
+        return _refresh_coverage_rollup(store, _bootstrap_availability_owned(store, request))
 
 
 def _bootstrap_availability_owned(store: AvailabilityStorage, request: BootstrapRequest) -> PublicationResult:
@@ -1268,7 +1276,7 @@ def _bootstrap_availability_owned(store: AvailabilityStorage, request: Bootstrap
             expected_etag=None,
             content_type=JSON_CONTENT_TYPE,
         ):
-            return PublicationResult(pointer=pointer, advanced=True, attempts=attempt)
+            return PublicationResult(pointer=pointer, advanced=True, attempts=attempt, rows=request.rows)
     raise AvailabilityConflictError("availability bootstrap pointer remained contended after bounded retries")
 
 
@@ -1283,7 +1291,7 @@ async def publish_availability(
     async with publication_barrier(session, request.config.identity.lane_root) as granted:
         if not granted:
             raise AvailabilityConflictError("availability publication barrier is contended")
-        return _publish_availability_owned(store, request)
+        return _refresh_coverage_rollup(store, _publish_availability_owned(store, request))
 
 
 def _publish_availability_owned(store: AvailabilityStorage, request: PublicationRequest) -> PublicationResult:
@@ -1343,7 +1351,7 @@ def _publish_availability_owned(store: AvailabilityStorage, request: Publication
             expected_etag=latest.etag,
             content_type=JSON_CONTENT_TYPE,
         ):
-            return PublicationResult(pointer=pointer, advanced=True, attempts=attempt)
+            return PublicationResult(pointer=pointer, advanced=True, attempts=attempt, rows=merged)
     raise AvailabilityConflictError("availability pointer remained contended after bounded retries")
 
 
@@ -1360,12 +1368,49 @@ async def rollback_availability(  # noqa: PLR0913 - public ownership seam plus r
     async with publication_barrier(session, lane_root) as granted:
         if not granted:
             raise AvailabilityConflictError("availability publication barrier is contended")
-        return _rollback_availability_owned(
+        return _refresh_coverage_rollup(
             store,
-            lane_root=lane_root,
-            target_generation_key=target_generation_key,
-            created_at=created_at,
+            _rollback_availability_owned(
+                store,
+                lane_root=lane_root,
+                target_generation_key=target_generation_key,
+                created_at=created_at,
+            ),
         )
+
+
+def _refresh_coverage_rollup(store: AvailabilityStorage, result: PublicationResult) -> PublicationResult:
+    """Merge this lane's resolved coverage facts into the warehouse rollup, and never fail on it.
+
+    THE CHOKEPOINT, chosen because it already exists: all three publication seams end here, inside
+    the caller's per-lane barrier and immediately after the compare-and-swap that made the new
+    generation visible. A separate scheduler would have to rediscover which lanes moved and would
+    be a second thing to keep alive; this cannot drift from publication because it IS publication.
+
+    A rollup failure is swallowed on purpose. The pointer already advanced, so the publication is
+    durable; what a failure leaves behind is a stale CACHE entry, and the reader's pointer-digest
+    check turns that into one full per-lane read rather than a wrong answer. Raising here would
+    convert a cache miss into a lane that failed to publish.
+    """
+    if not result.advanced or not result.rows:
+        return result
+    try:
+        refresh_coverage_rollup_entry(
+            store,
+            entry=entry_from_index(
+                AvailabilityIndex(pointer=result.pointer, rows=result.rows),
+                updated_at=result.pointer.created_at,
+            ),
+        )
+    except Exception:
+        # Broad on purpose: EVERY fault reachable from a cache refresh -- transport, shape, bound --
+        # must leave the durable publication above it untouched and reported as the success it was.
+        logger.exception(
+            "coverage_rollup_refresh_failed",
+            lane_root=result.pointer.identity.lane_root,
+            generation_sha256=result.pointer.generation_sha256,
+        )
+    return result
 
 
 def _rollback_availability_owned(
@@ -1422,7 +1467,7 @@ def _rollback_availability_owned(
             expected_etag=latest.etag,
             content_type=JSON_CONTENT_TYPE,
         ):
-            return PublicationResult(pointer=pointer, advanced=True, attempts=attempt)
+            return PublicationResult(pointer=pointer, advanced=True, attempts=attempt, rows=target.rows)
     raise AvailabilityConflictError("availability rollback pointer remained contended after bounded retries")
 
 
@@ -1438,11 +1483,70 @@ def read_latest_availability(  # noqa: PLR0913
 ) -> AvailabilityIndex:
     """Read exactly one pointer and its checksum-bound generation, failing closed."""
     latest = _load_latest_required(store, lane_root)
+    _require_pointer_expectations(
+        latest.pointer,
+        expected_lane=expected_lane,
+        expected_product=expected_product,
+        expected_nature=expected_nature,
+        expected_required_rungs=expected_required_rungs,
+        required_source_ceiling=required_source_ceiling,
+    )
+    return AvailabilityIndex(pointer=latest.pointer, rows=latest.rows)
+
+
+def read_availability_pointer(  # noqa: PLR0913 - one declared expectation per arg, exactly as the full read
+    store: AvailabilityStorage,
+    *,
+    lane_root: str,
+    expected_lane: str | None = None,
+    expected_product: str | None = None,
+    expected_nature: AvailabilityNature | None = None,
+    expected_required_rungs: tuple[int, ...] | None = None,
+    required_source_ceiling: date | None = None,
+) -> AvailabilityPointer:
+    """Read and check ONE pointer, without fetching the generation it names.
+
+    Every expectation `read_latest_availability` enforces about lane identity, nature, rung contract
+    and ceiling staleness is enforced here too -- all of them are pointer facts. What is NOT enforced
+    is the generation's own checksum, row population and semantic receipt, because those need the
+    generation's bytes. A caller that answers from this pointer alone is therefore trusting a digest
+    the publisher computed rather than re-deriving it, and must say so: see
+    `parquet_ops/availability_coverage.py`, which uses it only when the coverage rollup already holds
+    an entry bound to this exact pointer document.
+    """
+    stored = store.read(availability_pointer_key(lane_root), max_bytes=POINTER_MAX_BYTES)
+    if stored is None:
+        raise AvailabilityUnavailableError("availability_missing", f"availability pointer is missing for {lane_root!r}")
+    try:
+        pointer = _parse_pointer(stored.payload, expected_lane_root=lane_root)
+    except (ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise AvailabilityMalformedError(f"malformed availability pointer for {lane_root!r}") from exc
+    _require_pointer_expectations(
+        pointer,
+        expected_lane=expected_lane,
+        expected_product=expected_product,
+        expected_nature=expected_nature,
+        expected_required_rungs=expected_required_rungs,
+        required_source_ceiling=required_source_ceiling,
+    )
+    return pointer
+
+
+def _require_pointer_expectations(  # noqa: PLR0913 - one declared expectation per arg
+    pointer: AvailabilityPointer,
+    *,
+    expected_lane: str | None,
+    expected_product: str | None,
+    expected_nature: AvailabilityNature | None,
+    expected_required_rungs: tuple[int, ...] | None,
+    required_source_ceiling: date | None,
+) -> None:
+    """Refuse a pointer whose identity, rung contract or ceiling is not what the caller requires."""
     expectations: tuple[tuple[str, object | None, object], ...] = (
-        ("lane", expected_lane, latest.pointer.identity.lane),
-        ("product", expected_product, latest.pointer.identity.product),
-        ("nature", expected_nature, latest.pointer.identity.nature),
-        ("required_rungs", expected_required_rungs, latest.pointer.required_rungs),
+        ("lane", expected_lane, pointer.identity.lane),
+        ("product", expected_product, pointer.identity.product),
+        ("nature", expected_nature, pointer.identity.nature),
+        ("required_rungs", expected_required_rungs, pointer.required_rungs),
     )
     for label, expected, actual in expectations:
         if expected is not None and expected != actual:
@@ -1450,12 +1554,11 @@ def read_latest_availability(  # noqa: PLR0913
                 "availability_stale",
                 f"availability {label} {actual!r} does not match required {expected!r}",
             )
-    if required_source_ceiling is not None and latest.pointer.source_ceiling < required_source_ceiling:
+    if required_source_ceiling is not None and pointer.source_ceiling < required_source_ceiling:
         raise AvailabilityUnavailableError(
             "availability_stale",
-            f"availability source ceiling {latest.pointer.source_ceiling} precedes required {required_source_ceiling}",
+            f"availability source ceiling {pointer.source_ceiling} precedes required {required_source_ceiling}",
         )
-    return AvailabilityIndex(pointer=latest.pointer, rows=latest.rows)
 
 
 def _write_generation(  # noqa: PLR0913
