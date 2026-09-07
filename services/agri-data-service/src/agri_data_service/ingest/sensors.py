@@ -1,4 +1,18 @@
-"""NOAA NWS ground-station ingestion: the keyless observation-station puller behind the sensors layer."""
+"""NOAA NWS ground-station upstream: the keyless observation-station puller behind the sensors layer.
+
+The PostgreSQL job this puller used to feed -- `run_sensor_ingestion_job` and its `_run_sensor_job`
+body -- was DELETED on 2026-09-07, once `sensors-direct-forward` went ACTIVE (2,361 rows in one part,
+`outcome: complete`, `availability_extended: 1`) and `parquet-sensors`, the only exporter that read
+`geo.features` for this layer, was retired from the active set.
+
+Everything else here survived because it is the SOURCE, not the Postgres sink.
+`pipeline/direct/sensors/source.py` imports `fetch_station_roster`, `collect_sensor_records` and
+`nws_sensor_source` for the identical roster walk and record contract, and `nws_sensor_source` is
+also the `nws-sensors` token `ingest-backfill` resolves. `build_sensor_reading_write` therefore
+stays too: it is `nws_sensor_source().build_feature_write`, so the direct lane runs it through
+`select_writes` on every poll. See the removal packet under
+`conductor/tracks/environmental_postgres_retirement_20260904/evidence/`.
+"""
 
 from __future__ import annotations
 
@@ -16,20 +30,11 @@ from agri_data_service.ingest.http import UpstreamBounds, UpstreamPayloadError, 
 from agri_data_service.ingest.identity import FeatureIdentity, MissingNativeKeyError
 from agri_data_service.ingest.layer_binding import LayerBinding
 from agri_data_service.ingest.policy import (
-    UNCONFIGURED_BBOX_REASON,
     javascript_number,
     parse_bbox,
-    resolve_bounded_bbox,
     resolve_max_source_records,
 )
-from agri_data_service.ingest.results import IngestionJobResult, skipped_result
-from agri_data_service.ingest.source import (
-    FetchRequest,
-    FreshnessRule,
-    FunctionSource,
-    HistoryCapability,
-    select_writes,
-)
+from agri_data_service.ingest.source import FreshnessRule, FunctionSource, HistoryCapability
 from agri_data_service.ingest.writer import FeatureWrite
 
 if TYPE_CHECKING:
@@ -37,8 +42,7 @@ if TYPE_CHECKING:
 
     import httpx
 
-    from agri_data_service.ingest.source import HistoryWindow, UpstreamRecord
-    from agri_data_service.ingest.writer import FeatureWriter
+    from agri_data_service.ingest.source import FetchRequest, HistoryWindow, UpstreamRecord
 
 logger = structlog.get_logger()
 
@@ -94,8 +98,6 @@ MAX_CONCURRENT_STATION_REQUESTS: Final = 8
 # api.weather.gov keeps a rolling week of per-station observations. Six days is the depth a live
 # bisect actually returned records at, so six days is the only depth this source will promise.
 NWS_OBSERVATION_RETENTION: Final = timedelta(days=6)
-
-NO_STATIONS_REASON: Final = "NOAA NWS published no observation stations inside INGEST_BBOX for the configured networks"
 
 MIN_COORDINATE_COUNT: Final = 2
 
@@ -611,61 +613,3 @@ def nws_sensor_source(now: datetime | None = None) -> FunctionSource:
         fetch_history_records=fetch_sensor_history_records,
         shape="feature",
     )
-
-
-async def _run_sensor_job(
-    write_features: FeatureWriter,
-    bbox: str,
-    client: httpx.AsyncClient,
-    now: datetime | None,
-) -> IngestionJobResult:
-    """Resolve the roster, poll it and write what it published; an empty roster is an honest skip."""
-    stations = await fetch_station_roster(client, bbox)
-    if not stations:
-        return skipped_result(NWS_SENSOR_SOURCE, NO_STATIONS_REASON)
-
-    request = FetchRequest(bbox=bbox, max_records=resolve_max_source_records(), now=now, client=client)
-    records = await collect_sensor_records(client, stations, None, request.max_records)
-    selection = select_writes(nws_sensor_source(now), records, request)
-    return IngestionJobResult(
-        source=NWS_SENSOR_SOURCE,
-        status="ingested",
-        records_seen=len(records),
-        records_written=await write_features(selection.writes),
-        truncated=selection.truncated,
-        details={"stations": len(stations), "rejected": selection.rejected},
-    )
-
-
-async def run_sensor_ingestion_job(
-    write_features: FeatureWriter,
-    *,
-    bbox: str | None = None,
-    client: httpx.AsyncClient | None = None,
-    now: datetime | None = None,
-) -> IngestionJobResult:
-    """Poll NOAA NWS ground stations inside the coverage box and write the readings they actually published.
-
-    The sensors layer has always had a push endpoint (`src/app/api/ingest/sensors/route.ts`) and no
-    producer, which is the whole reason it holds zero features. This job is that producer: NOAA's
-    api.weather.gov aggregates ASOS, RAWS, NonFedAWOS, HADS, MesoWest and APRSWXNET ground stations,
-    issues no API key, and was the only candidate that answered with real data on no credential at
-    all (OpenAQ v2 is retired, OpenAQ v3 / PurpleAir / Synoptic / AirNow all demand a key).
-
-    Two shapes of honesty are load-bearing here. Every row is dated by `properties.timestamp` from
-    the station's own report, never by the poll clock, and the natural key folds that same timestamp
-    in, so re-polling an unchanged station rewrites nothing. And when no station answers inside the
-    box -- an unset INGEST_BBOX, a network filter that matches nothing, an upstream outage -- the job
-    skips with a typed reason and writes zero rows. It never manufactures a reading to fill the map.
-
-    Scale is bounded on purpose: NWS publishes no bulk "all stations latest" endpoint, so the puller
-    issues one request per station. The roster is filtered to the coverage box and the named networks,
-    sorted, capped by SENSOR_MAX_STATIONS, and polled in batches under a concurrency ceiling.
-    """
-    area = resolve_bounded_bbox(bbox)
-    if area is None:
-        return skipped_result(NWS_SENSOR_SOURCE, UNCONFIGURED_BBOX_REASON)
-    if client is not None:
-        return await _run_sensor_job(write_features, area, client, now)
-    async with upstream_client(OBSERVATION_BOUNDS) as owned_client:
-        return await _run_sensor_job(write_features, area, owned_client, now)

@@ -43,7 +43,6 @@ from agri_data_service.ingest.backfill import (
     run_source_backfill,
     subtract_years,
 )
-from agri_data_service.ingest.evacuation_zones import EVACUATION_ZONES_SOURCE, run_evacuation_zones_ingestion_job
 from agri_data_service.ingest.firms import firms_archive_source
 from agri_data_service.ingest.http import upstream_client
 from agri_data_service.ingest.lanes import LaneSpecificationError, UnknownBackfillLaneError, resolve_lane
@@ -52,7 +51,7 @@ from agri_data_service.ingest.realtime import RealtimePublisher
 from agri_data_service.ingest.reconcile import ReconciliationError, plan_lane_gaps, reconcile_lane
 from agri_data_service.ingest.results import any_job_failed, run_isolated_job
 from agri_data_service.ingest.runner import run_all_ingestion_jobs
-from agri_data_service.ingest.sensors import NWS_SENSOR_SOURCE, nws_sensor_source, run_sensor_ingestion_job
+from agri_data_service.ingest.sensors import nws_sensor_source
 from agri_data_service.ingest.source import HistoryWindow
 from agri_data_service.ingest.usgs_nwis import usgs_streamflow_archive_source
 from agri_data_service.ingest.validation import (
@@ -130,38 +129,6 @@ def ingest_fire_perimeters(context: click.Context, bbox: str | None) -> None:
     finish(context, results)
 
 
-@click.command("ingest-sensors")
-@click.option("--bbox", default=None, help="Override INGEST_BBOX as west,south,east,north.")
-@click.pass_context
-def ingest_sensors(context: click.Context, bbox: str | None) -> None:
-    """Ingest the latest NOAA NWS ground-station observations inside the coverage box."""
-    results = [
-        asyncio.run(
-            _run_with_feature_writer(
-                NWS_SENSOR_SOURCE,
-                lambda write_features: run_sensor_ingestion_job(write_features, bbox=bbox),
-            )
-        )
-    ]
-    finish(context, results)
-
-
-@click.command("ingest-evacuation-zones")
-@click.option("--bbox", default=None, help="Override INGEST_BBOX as west,south,east,north.")
-@click.pass_context
-def ingest_evacuation_zones(context: click.Context, bbox: str | None) -> None:
-    """Ingest bounded Oregon OEM fire evacuation areas."""
-    results = [
-        asyncio.run(
-            _run_with_feature_writer(
-                EVACUATION_ZONES_SOURCE,
-                lambda write_features: run_evacuation_zones_ingestion_job(write_features, bbox=bbox),
-            )
-        )
-    ]
-    finish(context, results)
-
-
 @click.command("ingest-mtbs")
 @click.option("--bbox", default=None, help="Override INGEST_BBOX as west,south,east,north.")
 @click.option(
@@ -203,6 +170,12 @@ def _build_backfillable_sources() -> Mapping[str, IngestionSource]:
 
     Built on demand rather than at import: `nws_sensor_source` stamps its own `earliest` from the
     run clock, so a module-level instance would freeze the NWS retention window at import time.
+
+    `nws-sensors` is the one token here whose FORWARD verb is gone: `ingest-sensors` and
+    `run_sensor_ingestion_job` were deleted on 2026-09-07 with the rest of the Postgres sensors
+    producer, but `nws_sensor_source` itself is the source DESCRIPTION -- roster walk, freshness
+    rule, six-day history capability -- and both this backfill token and
+    `pipeline/direct/sensors/source.py` still resolve through it.
 
     `nasa-firms-archive` reads the same endpoint with a start date and reads which product answers for
     a past day from the live availability table per chunk. Its forward twin `nasa-firms` was deleted
@@ -1146,8 +1119,6 @@ async def plan_archive_lane_gaps(
 
 INGEST_COMMANDS: tuple[click.Command, ...] = (
     ingest_fire_perimeters,
-    ingest_sensors,
-    ingest_evacuation_zones,
     ingest_mtbs,
     ingest_backfill,
     ingest_geometry_repair,

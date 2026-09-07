@@ -67,9 +67,10 @@ def resolve_coverage_bbox(override: str | None = None) -> str | None:
     """Return the policy-checked ingestion bbox, or None when neither an override nor INGEST_BBOX is set.
 
     THE UNSET-BBOX SKIP IS THE GATE, AND IT IS PRESERVED VERBATIM.
-    `run_evacuation_zones_ingestion_job` (`ingest/evacuation_zones.py:430-432`) returns a
-    `skipped_result` rather than failing when no bbox is configured, pinned by
-    `tests/test_ingest_evacuation_zones.py:351-355`. A direct writer that defaulted to a bbox of its
+    `run_evacuation_zones_ingestion_job` (DELETED 2026-09-07 with the rest of the Postgres producer)
+    returned a `skipped_result` rather than failing when no bbox was configured, and its
+    unset-bbox test went with it -- this function is now the only place that gate lives, which is
+    why it is asserted here instead. A direct writer that defaulted to a bbox of its
     own -- or to Oregon's full extent, or to no envelope at all -- would query a wider population
     than the Postgres lane ever did while every downstream consumer still believed the coverage
     contract in `docs/lanes/evacuation-zones.md` section 4: "bounded twice, once by Oregon's own

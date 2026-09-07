@@ -475,7 +475,7 @@ def _parquet_spec(slug: str) -> LaneExecutionSpec:
     )
 
 
-#: The FOUR surviving PostgreSQL forward-ingestion lanes, and why exactly four.
+#: The TWO surviving PostgreSQL forward-ingestion lanes, and why exactly two.
 #:
 #: `postgres-firms`, `postgres-streamflow`, `postgres-weather`, `postgres-drought` and
 #: `postgres-vegetation` WERE HERE AND ARE DELETED (owner directive 2026-09-06, "the ingestion should
@@ -485,27 +485,31 @@ def _parquet_spec(slug: str) -> LaneExecutionSpec:
 #: `ingest-streamflow`, `ingest-weather`, `ingest-drought`, `ingest-ndvi`) and the job functions
 #: behind them are deleted with them; see `ingest/AGENTS.md`.
 #:
-#: `postgres-watersheds` WAS HERE AND IS DELETED (2026-09-06, second wave). Its direct writer
-#: `watersheds-direct-forward` was proven against production and activated, and BOTH registry fields
-#: for that lane already read NHDPlus_HR rather than `geo.features` -- so unlike the four below, its
-#: generic `parquet-watersheds` sibling no longer exports anything and nothing was left for the
-#: producer to feed. The `ingest-watersheds` verb, `run_watersheds_ingestion_job`,
-#: `pipeline/lanes/watersheds.py` and `sql/pipeline/watersheds_day_export.sql` went with it; the
-#: removal packet is under
-#: `conductor/tracks/environmental_postgres_retirement_20260904/evidence/`.
+#: `postgres-watersheds` WAS HERE AND IS DELETED (2026-09-06, second wave), and `postgres-sensors`
+#: and `postgres-evacuation-zones` FOLLOWED IT on 2026-09-07 (third wave). All three left on the same
+#: test, which is about READERS rather than about writers: a Postgres producer may go once its
+#: layer's direct writer is ACTIVE and the generic `parquet-*` exporter that read `geo.features` for
+#: that stream is retired from the active set, because at that moment the producer is feeding nobody.
+#: `watersheds-direct-forward`, `sensors-direct-forward` and `evacuation-zones-direct-forward` each
+#: cleared it against production -- sensors on its proving run of 2,361 rows in one part,
+#: `outcome: complete`, `availability_extended: 1`. Their verbs (`ingest-watersheds`,
+#: `ingest-sensors`, `ingest-evacuation-zones`) and job functions
+#: (`run_watersheds_ingestion_job`, `run_sensor_ingestion_job`,
+#: `run_evacuation_zones_ingestion_job`, `build_evacuation_zone_write`) went with them, as did
+#: `pipeline/lanes/watersheds.py` and `sql/pipeline/watersheds_day_export.sql`; the removal packets
+#: are under `conductor/tracks/environmental_postgres_retirement_20260904/evidence/`.
 #:
-#: The four below stay because deleting them would STOP a layer rather than finish its cutover.
-#: fire-perimeters, sensors and evacuation-zones DID get a direct-to-Parquet writer in the 2026-09-06
-#: wave-B join (`_MIGRATION_INPUT_SPECS` below), but the generic `parquet-*` exporter -- which reads
-#: `geo.features` -- is still a live writer for each of those object streams, and
-#: `postgres-geometry-repair` still links the `geo.geometry` rows those same exporters join through.
-#: `postgres-evacuation-zones` has one further reason of its own: its job function is also called by
-#: `ingest/runner.py::run_all_ingestion_jobs`, so retiring it is a behaviour change to the
-#: `ingest-all` macro rather than a code removal, and it needs an owner. There is a second reason
-#: beyond all of that: `parity.py` proves a direct writer's output AGAINST what PostgreSQL holds, so
-#: the Postgres producer has to keep running through the whole parity bake, which is why no direct
-#: lane declares `conflicts_with` against one. All four are `shadow` today; the code goes when its
-#: layer's direct lane is activated and proven, exactly as watersheds' just did.
+#: The two below stay because deleting them would STOP a layer rather than finish its cutover.
+#: `fire-perimeters-direct-forward` EXISTS but is SHADOW: it refuses to publish while any upstream
+#: WFIGS perimeter carries invalid geometry, an open owner decision, so `parquet-fire-perimeters` --
+#: which reads `geo.features` -- is still the ACTIVE writer of that object stream and
+#: `postgres-fire-perimeters` is still its only producer. `postgres-geometry-repair` stays for the
+#: matching reason plus one of its own: it links the `geo.geometry` rows that exporter joins through,
+#: and orphans regrow continuously because the `/api/ingest/*` push routes set no `geometry_id`.
+#: There is a further reason not to hurry either one: `parity.py` proves a direct writer's output
+#: AGAINST what PostgreSQL holds, so the Postgres producer has to keep running through the whole
+#: parity bake, which is why no direct lane declares `conflicts_with` against one. The code goes when
+#: its layer's direct lane is activated and proven, exactly as the other three just did.
 _POSTGRES_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
     _postgres_spec("postgres-fire-perimeters", "ingest-fire-perimeters", "fire-perimeters"),
     _spec(
@@ -518,8 +522,6 @@ _POSTGRES_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
         selection_policy="45-day fingerprint revalidation followed by bounded durable pending-day drain",
         description="Exact vegetation publication barrier and pending-queue acknowledgement lane.",
     ),
-    _postgres_spec("postgres-sensors", "ingest-sensors", "sensors"),
-    _postgres_spec("postgres-evacuation-zones", "ingest-evacuation-zones", "evacuation-zones"),
     _spec(
         "postgres-geometry-repair",
         command=("agri-service", "data", "ingest-geometry-repair"),
@@ -921,7 +923,9 @@ _MIGRATION_INPUT_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
             "LANDED 2026-09-06: _evacuation_zones_watermark no longer reads geo.features or geo.geometry, "
             "it runs the SAME content digest the writer publishes on, so census and writer cannot "
             "disagree and neither survives a last_edited_date re-stamp on an unchanged area. Hourly at "
-            ":35, the cadence of the postgres-evacuation-zones poller it replaces. Shadow until activated."
+            ":35, the cadence of the postgres-evacuation-zones poller it replaced -- that lane, its "
+            "ingest-evacuation-zones verb and the job behind it were deleted on 2026-09-07, so this is "
+            "now the ONLY writer of the evacuation-zones stream. Shadow until activated."
         ),
     ),
     _spec(

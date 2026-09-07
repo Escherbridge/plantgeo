@@ -47,14 +47,14 @@ _INGEST_OWNER = "plantgeo-ingest-cron"
 #: Open-Meteo ERA5-Land streams and `calendar`. Pinned so a lane added without its spec, or a spec
 #: added without its lane, fails here rather than in production's scheduler.
 _EXPECTED_REGISTRATION_COUNT = 32
-#: The 32 generic `parquet-*` specs plus the 30 non-parquet duties (PostgreSQL ingestion, jobs
+#: The 32 generic `parquet-*` specs plus the 27 non-parquet duties (PostgreSQL ingestion, jobs
 #: maintenance and the migration-input lanes, which now include seven direct/source-specific
 #: writers: fire, water, climate, soil, plus the 2026-09-04 join's vegetation, weather-observations
 #: and drought forward lanes).
 # 57 on 2026-09-06 when `postgres-firms`, `postgres-streamflow`, `postgres-weather`,
 # `postgres-drought` and `postgres-vegetation` were DELETED with the CLI verbs and job functions
 # behind them. Each of those five layers has a direct-to-Parquet writer registered in
-# `_MIGRATION_INPUT_SPECS`, so its PostgreSQL producer was the removable half of a pair; the five
+# `_MIGRATION_INPUT_SPECS`, so its PostgreSQL producer was the removable half of a pair; the
 # `postgres-*` lanes that remain still have an ACTIVE-writer dependency, plus the geometry repair
 # their exporters' `geo.geometry` join depends on.
 #
@@ -68,7 +68,15 @@ _EXPECTED_REGISTRATION_COUNT = 32
 # verb, its job function, its Postgres exporter and that exporter's SQL. `parquet-watersheds` is NOT
 # deleted with it and cannot be -- one generic spec is generated per `LaneRegistration`, and
 # `watersheds-direct-forward.conflicts_with` names it -- so the parquet count is untouched at 32.
-_EXPECTED_SPEC_COUNT = 61
+#
+# 59 on 2026-09-07, the third push: `sensors-direct-forward` and `evacuation-zones-direct-forward`
+# were proven against production and activated and the generic `parquet-sensors` /
+# `parquet-evacuation-zones` exporters were retired from the active set, so `postgres-sensors` and
+# `postgres-evacuation-zones` were DELETED with their `ingest-sensors` / `ingest-evacuation-zones`
+# verbs and job functions. The parquet count is untouched at 32 for the same reason as watersheds:
+# both direct lanes name their generic sibling in `conflicts_with`, and `:991` asserts every such
+# target resolves, so deleting the generic spec would raise at import.
+_EXPECTED_SPEC_COUNT = 59
 _DIRECT_FIRE_OWNER = "plantgeo-fire-detections-forward"
 _DIRECT_WATER_OWNER = "plantgeo-water-gauges-forward"
 
@@ -750,7 +758,7 @@ def test_complete_recurring_railway_responsibility_set_can_activate_together() -
 
 def test_one_ingest_owner_lane_activates_alone_now_that_the_legacy_cron_is_fenced() -> None:
     """Owner decision 2026-09-03: Postgres ingestion retires lane by lane, so no atomic-owner rule remains."""
-    lane_id = "postgres-sensors"
+    lane_id = "postgres-fire-perimeters"
     activation = parse_activation(_activation_environment(lane_id))
     assert activation.active_lanes == frozenset({lane_id})
 
@@ -799,7 +807,7 @@ def test_mtbs_weekly_and_soilgrids_hourly_phases_are_exact() -> None:
 def test_restart_catch_up_coalesces_source_polls_and_replays_oldest_durable_bucket() -> None:
     now = datetime(2026, 8, 28, 18, 30, tzinfo=UTC)
     previous = datetime(2026, 8, 28, 12, tzinfo=UTC)
-    source = LANE_SPECS["postgres-sensors"]
+    source = LANE_SPECS["postgres-fire-perimeters"]
     durable = LANE_SPECS["parquet-weather-observations"]
     assert source.catch_up_policy == "coalesce_latest"
     assert next_scheduled_bucket(source, now, previous) == datetime(2026, 8, 28, 18, tzinfo=UTC)
@@ -827,13 +835,13 @@ def test_fair_order_interleaves_incremental_and_backlog_and_rotates_oldest() -> 
     ordered = fair_due_order(
         (
             _due("fire-detections-direct-forward", newer),
-            _due("postgres-sensors", older),
+            _due("postgres-fire-perimeters", older),
             _due("parquet-water-gauges", newer),
             _due("jobs-firms-archive", older),
         )
     )
     assert [entry.spec.lane_id for entry in ordered] == [
-        "postgres-sensors",
+        "postgres-fire-perimeters",
         "jobs-firms-archive",
         "fire-detections-direct-forward",
         "parquet-water-gauges",
@@ -1047,7 +1055,7 @@ async def test_restart_resumes_the_exact_open_logical_bucket(
 @pytest.mark.parametrize(
     ("lane_id", "expected_bucket"),
     [
-        ("postgres-sensors", datetime(2026, 8, 28, 18, tzinfo=UTC)),
+        ("postgres-fire-perimeters", datetime(2026, 8, 28, 18, tzinfo=UTC)),
         ("parquet-weather-observations", datetime(2026, 8, 28, 13, tzinfo=UTC)),
     ],
 )
@@ -1708,7 +1716,7 @@ async def test_invalidated_pinned_connection_aborts_before_a_second_candidate(
 ) -> None:
     session = _ShadowSession()
     session.bind = SimpleNamespace(invalidated=False)  # type: ignore[attr-defined]
-    candidates = [_due("postgres-sensors", None), _due("jobs-firms-archive", None)]
+    candidates = [_due("postgres-fire-perimeters", None), _due("jobs-firms-archive", None)]
     attempted: list[str] = []
 
     async def _noop_timeout(_session: object) -> None:
@@ -1742,7 +1750,7 @@ async def test_invalidated_pinned_connection_aborts_before_a_second_candidate(
             max_lanes_per_tick=2,
         )
 
-    assert attempted == ["postgres-sensors"]
+    assert attempted == ["postgres-fire-perimeters"]
 
 
 async def test_service_loop_binds_each_tick_session_to_one_external_connection(
@@ -1977,7 +1985,7 @@ async def test_one_executor_tick_never_overlaps_source_writer_processes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     session = _ShadowSession()
-    candidates = [_due("postgres-sensors", None), _due("fire-detections-direct-forward", None)]
+    candidates = [_due("postgres-fire-perimeters", None), _due("fire-detections-direct-forward", None)]
     active = 0
     maximum_active = 0
     order: list[str] = []
@@ -2025,8 +2033,8 @@ async def test_one_executor_tick_never_overlaps_source_writer_processes(
     assert order == [
         "start:fire-detections-direct-forward",
         "stop:fire-detections-direct-forward",
-        "start:postgres-sensors",
-        "stop:postgres-sensors",
+        "start:postgres-fire-perimeters",
+        "stop:postgres-fire-perimeters",
     ]
 
 

@@ -67,18 +67,21 @@ def _failed(source: str, reason: str) -> IngestionJobResult:
 
 
 # --- Every feature-writing verb shares one shape: a single bbox-scoped job run through the shared
-#     feature writer. Table-driven over the three that survive. ---
+#     feature writer. Table-driven over the one that survives. ---
 #
 # `ingest-firms`, `ingest-streamflow`, `ingest-weather` and `ingest-ndvi` WERE IN THIS TABLE AND ARE
 # DELETED (2026-09-06), together with the `on_persisted` forward-vegetation seam that only
-# `ingest-ndvi` used. Each of those four layers has a direct-to-Parquet writer under
-# `pipeline/direct/`; the three left are the ones whose `parquet-*` exporters still read
-# `geo.features`, so their producers stay until wave B gives each a replacement.
+# `ingest-ndvi` used. `ingest-sensors` and `ingest-evacuation-zones` FOLLOWED on 2026-09-07, once
+# `sensors-direct-forward` and `evacuation-zones-direct-forward` went ACTIVE and the generic
+# `parquet-sensors` / `parquet-evacuation-zones` exporters -- the last readers of what those two
+# producers wrote into `geo.features` -- were retired from the active set.
+#
+# `ingest-fire-perimeters` is the one left, and the table stays table-driven for it: its direct
+# sibling is SHADOW (it refuses to publish while an upstream WFIGS perimeter carries invalid
+# geometry), so `parquet-fire-perimeters` still reads `geo.features` and this producer still fills it.
 
 _BBOX_SCOPED_VERBS = [
     ("ingest-fire-perimeters", "run_fire_perimeters_ingestion_job", "WFIGS_SOURCE"),
-    ("ingest-sensors", "run_sensor_ingestion_job", "NWS_SENSOR_SOURCE"),
-    ("ingest-evacuation-zones", "run_evacuation_zones_ingestion_job", "EVACUATION_ZONES_SOURCE"),
 ]
 
 

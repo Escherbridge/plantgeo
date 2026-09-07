@@ -149,7 +149,10 @@ DEFAULT_STREAM_DEFINITIONS: Final[tuple[StreamDefinition, ...]] = (
         kind="time_series",
         store="features",
         publication_cadence_days=1,
-        cadence_basis="job-executor lane postgres-evacuation-zones runs hourly",
+        cadence_basis=(
+            "job-executor lane evacuation-zones-direct-forward runs hourly at :35; the "
+            "postgres-evacuation-zones poller whose cadence it inherited was deleted 2026-09-07"
+        ),
     ),
     StreamDefinition(stream="sensors", kind="snapshot", store="features", cadence_basis=None),
     StreamDefinition(stream="soil-survey", kind="reference", store="features"),

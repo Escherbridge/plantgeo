@@ -1,4 +1,11 @@
-"""NOAA NWS sensor ingestion: identity/route parity, the roster pagination terminator, and honest skips."""
+"""NOAA NWS sensor upstream: identity/route parity, the roster pagination terminator, and the record contract.
+
+`run_sensor_ingestion_job` -- the PostgreSQL job -- WAS TESTED HERE AND IS DELETED (2026-09-07), so its
+unset-bbox and empty-roster skip tests, the `NO_STATIONS_REASON` they asserted and the `RecordingWriter`
+that existed only to catch its writes went with it. Everything still tested here is the SOURCE half
+that `pipeline/direct/sensors/` calls: the identity, the write builder `nws_sensor_source` exposes as
+`build_feature_write`, the roster walk, and the composed source's history window.
+"""
 
 # ruff: noqa: PLR2004
 
@@ -6,16 +13,15 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
 
 import httpx
 import pytest
 
+from agri_data_service.ingest import sensors as sensors_module
 from agri_data_service.ingest.geometry import geometry_key_for
 from agri_data_service.ingest.identity import MissingNativeKeyError
 from agri_data_service.ingest.policy import PACIFIC_NORTHWEST_COVERAGE_BBOX
 from agri_data_service.ingest.sensors import (
-    NO_STATIONS_REASON,
     NWS_API_PRODUCER,
     NWS_OBSERVATION_RETENTION,
     NWS_SENSOR_SOURCE,
@@ -30,14 +36,8 @@ from agri_data_service.ingest.sensors import (
     parse_observation,
     parse_station_page,
     resolve_max_stations,
-    run_sensor_ingestion_job,
 )
 from agri_data_service.ingest.source import FetchRequest
-
-if TYPE_CHECKING:
-    from collections.abc import Sequence
-
-    from agri_data_service.ingest.writer import FeatureWrite
 
 RECORDED_STATION_IDENTIFIER = "KBOI"
 RECORDED_TIMESTAMP = "2026-08-04T13:00:00+00:00"
@@ -48,17 +48,6 @@ STATION = SensorStation(
     latitude=43.5651,
     longitude=-116.2229,
 )
-
-
-class RecordingWriter:
-    """A feature writer that records what a job handed it, so a job test needs no database."""
-
-    def __init__(self) -> None:
-        self.writes: list[FeatureWrite] = []
-
-    async def __call__(self, writes: Sequence[FeatureWrite]) -> int:
-        self.writes = list(writes)
-        return len(self.writes)
 
 
 @pytest.fixture(autouse=True)
@@ -260,23 +249,12 @@ def test_the_composed_source_pins_history_to_the_measured_retention_window() -> 
     assert source.history_capability().earliest == now - NWS_OBSERVATION_RETENTION
 
 
-async def test_an_unset_bbox_is_skipped_and_never_failed() -> None:
-    result = await run_sensor_ingestion_job(RecordingWriter())
-    assert result.source == NWS_SENSOR_SOURCE
-    assert result.status == "skipped"
-    assert result.reason == "INGEST_BBOX is not configured"
+def test_the_postgres_forward_job_is_gone_and_cannot_come_back_unnoticed() -> None:
+    """The executable removal proof for 2026-09-07: the Postgres sink is gone, the source is not.
 
-
-async def test_an_empty_roster_is_an_honest_skip_with_no_rows_written() -> None:
-    empty_page = {"type": "FeatureCollection", "features": []}
-    response = httpx.Response(
-        200, content=json.dumps(empty_page).encode(), headers={"content-type": "application/geo+json"}
-    )
-    writer = RecordingWriter()
-    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _r: response)) as client:
-        result = await run_sensor_ingestion_job(writer, bbox=PACIFIC_NORTHWEST_COVERAGE_BBOX, client=client)
-
-    assert result.status == "skipped"
-    assert result.reason == NO_STATIONS_REASON
-    assert result.records_written == 0
-    assert writer.writes == []
+    Named rather than merely absent, because the module still legitimately exports a write builder
+    (`build_sensor_reading_write`) and a source description (`nws_sensor_source`) -- so "no writer
+    here" is not a claim a reader can check by eye.
+    """
+    for deleted in ("run_sensor_ingestion_job", "_run_sensor_job", "NO_STATIONS_REASON"):
+        assert not hasattr(sensors_module, deleted), deleted

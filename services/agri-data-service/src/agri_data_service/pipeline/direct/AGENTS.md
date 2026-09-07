@@ -1316,11 +1316,18 @@ this package, and its `watermark` is `watersheds/watermark.py` (one call into `s
 changed. It replaces both `pipeline/lanes/evacuation_zones.py::export_evacuation_zones_day` (the former
 `_fill_evacuation_zones` adapter, which read `geo.features` and LEFT JOINed `geo.geometry`; DELETED
 2026-09-06 with `sql/pipeline/evacuation_zones_day_export.sql`) and
-`ingest/evacuation_zones.py::run_evacuation_zones_ingestion_job` (which filled them) -- but THAT PRODUCER
-IS STILL LIVE. `ingest/runner.py:48` keeps it in the `ingest-all` macro, which is the one named blocker
-on finishing this lane's removal; the removal packet
+`ingest/evacuation_zones.py::run_evacuation_zones_ingestion_job` (which filled them). THAT PRODUCER IS
+NOW GONE: it, `build_evacuation_zone_write`, the `ingest-evacuation-zones` verb and the
+`postgres-evacuation-zones` lane were DELETED on 2026-09-07 once this lane went ACTIVE and
+`parquet-evacuation-zones` -- the last reader of what the producer wrote -- was retired from the
+active set. The 2026-09-06 packet
 (`conductor/tracks/environmental_postgres_retirement_20260904/evidence/removal-packet-watersheds-evacuation-zones-20260906.md`)
-records it as RETAINED. PostgreSQL is still opened for ONE thing -- the shared session-scoped lane-day
+had recorded it as RETAINED because `ingest/runner.py` still called it inside the `ingest-all` macro;
+that made the cut a behaviour change needing an owner, and the owner made it. The same file's
+appended 2026-09-07 section carries the zero-reader proof. What SURVIVES in
+`ingest/evacuation_zones.py` is the upstream adapter this package calls -- `fetch_evacuation_zones`,
+`parse_evacuation_zone_collection`, the bounds, the query URL, the producer token -- so the module is
+a source, not a sink. PostgreSQL is still opened for ONE thing -- the shared session-scoped lane-day
 advisory lock -- which is coordination, not a data sink.
 
 REGISTERED SINCE 2026-09-06, adapter and watermark in one edit: `LANE_REGISTRY['evacuation-zones'].adapter`
@@ -1371,7 +1378,7 @@ the validated ceiling -- a `static_lookup` owes at most one version at any insta
 (default 300, max 1800), `--run-id` and the bounded retry/contention knobs.
 
 Executor lane `evacuation-zones-direct-forward`, **hourly at `:35`** -- the cadence of the
-`postgres-evacuation-zones` poller it replaces, for a life-safety layer whose whole value is currency, and a
-tick that finds nothing changed writes nothing. SHADOW. Its activation swaps the adapter AND the watermark
+`postgres-evacuation-zones` poller it replaced (that lane spec was deleted 2026-09-07), for a life-safety
+layer whose whole value is currency, and a tick that finds nothing changed writes nothing. SHADOW. Its activation swaps the adapter AND the watermark
 resolver, and the watermark replacement is a DESIGN DECISION rather than a transcription: this package offers
 a store-only resolver on request, and nobody has asked for one yet.

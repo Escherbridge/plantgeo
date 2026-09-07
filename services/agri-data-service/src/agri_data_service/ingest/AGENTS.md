@@ -18,18 +18,26 @@ DELETED, not merely unused"), applied to the ingestion path.
 | `ingest-watersheds`, `watersheds.py::run_watersheds_ingestion_job`, `build_watershed_write`, `WATERSHEDS_SOURCE`, `pipeline/lanes/watersheds.py`, `sql/pipeline/watersheds_day_export.sql`, lane `postgres-watersheds` | watersheds | `pipeline/direct/watersheds/` (second wave, 2026-09-06 -- see the removal packet under `conductor/tracks/environmental_postgres_retirement_20260904/evidence/`) |
 
 **Kept, and why — this is the load-bearing half.** The `ingest-*` verbs that remain
-(`ingest-fire-perimeters`, `ingest-sensors`, `ingest-evacuation-zones`, plus `ingest-mtbs` and
-`ingest-geometry-repair`) are NOT survivors of an oversight. Their generic `parquet-*` exporters read
-`geo.features` (`sql/pipeline/{fire_perimeters,sensors,burn_severity}_day_export.sql`), so deleting
-their producers would not finish the cutover; it would stop the layer. `ingest-geometry-repair` stays
-for the same reason: those exporters join `geo.geometry`, which nothing else maintains.
+(`ingest-fire-perimeters`, plus `ingest-mtbs` and `ingest-geometry-repair`) are NOT survivors of an
+oversight. Their generic `parquet-*` exporters read `geo.features`
+(`sql/pipeline/{fire_perimeters,burn_severity}_day_export.sql`), so deleting their producers would
+not finish the cutover; it would stop the layer. For fire-perimeters that is not for want of a direct
+writer: `fire-perimeters-direct-forward` exists but is SHADOW, because it refuses to publish while
+any upstream WFIGS perimeter carries invalid geometry — an open owner decision — so
+`parquet-fire-perimeters` is still the ACTIVE writer the stream has. `ingest-geometry-repair` stays
+for the same reason plus one of its own: those exporters join `geo.geometry`, which nothing else
+maintains, and orphans regrow because the `/api/ingest/*` push routes set no `geometry_id`.
 
-`ingest-evacuation-zones` is the one exception whose reason has changed. Its layer DOES now have a
-direct-to-Parquet writer (`pipeline/direct/evacuation_zones/`, activated 2026-09-06), and its export
-SQL and Postgres exporter were deleted with the watersheds wave — but `run_evacuation_zones_ingestion_job`
-is STILL CALLED by `ingest/runner.py:48`, inside the `ingest-all` macro, so it is not dead code. Cutting
-it is a behaviour change to `run_all_ingestion_jobs`, not a removal, and it needs an owner. That is the
-single named blocker in the 2026-09-06 removal packet.
+`ingest-sensors` and `ingest-evacuation-zones` WERE IN THAT LIST AND ARE DELETED (2026-09-07, third
+wave), together with `run_sensor_ingestion_job`, `run_evacuation_zones_ingestion_job` and
+`build_evacuation_zone_write`. The test they left on is the one above, read as a statement about
+READERS: `sensors-direct-forward` and `evacuation-zones-direct-forward` are ACTIVE and the generic
+`parquet-sensors` / `parquet-evacuation-zones` exporters are retired from the active set, so nothing
+reads what those two producers wrote into `geo.features` any more. The 2026-09-06 packet had RETAINED
+evacuation-zones on the grounds that `run_evacuation_zones_ingestion_job` was still called by
+`ingest/runner.py` inside `ingest-all`; that made cutting it a behaviour change needing an owner, and
+the owner made it. See
+`conductor/tracks/environmental_postgres_retirement_20260904/evidence/removal-packet-watersheds-evacuation-zones-20260906.md`.
 
 **What did NOT get deleted from the shared modules, and why.** `firms.py`, `usgs_nwis.py`,
 `open_meteo.py`, `usdm.py`, `usdm_history.py` and `vegetation.py` are all still here, because the

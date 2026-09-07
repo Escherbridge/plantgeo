@@ -1,4 +1,14 @@
-"""Oregon OEM evacuation-area ingestion: the ArcGIS FeatureServer adapter and its retrying, bounded, paged job."""
+"""Oregon OEM evacuation-area upstream: the ArcGIS FeatureServer adapter and its retrying, bounded, paged walk.
+
+The PostgreSQL job this adapter used to feed -- `run_evacuation_zones_ingestion_job` and the
+`build_evacuation_zone_write` that shaped its rows -- was DELETED on 2026-09-07, once
+`evacuation-zones-direct-forward` went ACTIVE and `parquet-evacuation-zones` (the only exporter that
+read `geo.features` for this layer) was retired from the active set. The adapter itself stayed
+because it is not the Postgres half of that pair: `pipeline/direct/evacuation_zones/source.py` calls
+`fetch_evacuation_zones` for the very same 64 MiB-budgeted adaptive walk, so deleting this module
+would have broken the lane the removal was cleaning up after. See the removal packet under
+`conductor/tracks/environmental_postgres_retirement_20260904/evidence/`.
+"""
 
 from __future__ import annotations
 
@@ -24,7 +34,6 @@ from agri_data_service.ingest.http import (
     UpstreamPayloadError,
     fetch_bounded_json,
     fetch_bounded_json_sized,
-    upstream_client,
 )
 from agri_data_service.ingest.identity import (
     FeatureIdentity,
@@ -32,22 +41,14 @@ from agri_data_service.ingest.identity import (
     format_javascript_timestamp,
 )
 from agri_data_service.ingest.layer_binding import LayerBinding
-from agri_data_service.ingest.policy import (
-    UNCONFIGURED_BBOX_REASON,
-    resolve_bounded_bbox,
-    resolve_max_source_records,
-)
-from agri_data_service.ingest.results import IngestionJobResult, skipped_result
+from agri_data_service.ingest.policy import resolve_max_source_records
 from agri_data_service.ingest.source import HistoryCapability
 from agri_data_service.ingest.upstream_retry import UpstreamRetryPolicy, retry_upstream
-from agri_data_service.ingest.writer import FeatureWrite
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping
 
     import httpx
-
-    from agri_data_service.ingest.writer import FeatureWriter
 
 EVACUATION_ZONES_SOURCE: Final = "evacuation-zones"
 EVACUATION_ZONES_PROPERTY_SOURCE: Final = "Oregon OEM Fire Evacuation Areas"
@@ -252,8 +253,9 @@ def parse_evacuation_zone_collection(payload: object, *, byte_count: int = 0) ->
                 "structuresWithin": optional_number(properties, "StructuresWithin"),
                 "addressesWithin": optional_number(properties, "AddressesWithin"),
                 "populationWithin": optional_number(properties, "PopulationWithin"),
-                # The parse layer reports the upstream faithfully; `build_evacuation_zone_write` decides what is
-                # stored. `createdAt` stays a datetime because it dates the identity; `last_edited_date` is
+                # The parse layer reports the upstream faithfully; the direct writer's row builder
+                # (`pipeline/direct/evacuation_zones/rows.py::evacuation_zones_table`) decides what is stored.
+                # `createdAt` stays a datetime because it dates the identity; `last_edited_date` is
                 # reported only as a string and dates nothing -- see `build_evacuation_zone_identity`.
                 "createdAt": created_at,
                 "createdDate": None if created_at is None else format_javascript_timestamp(created_at),
@@ -371,94 +373,4 @@ def build_evacuation_zone_identity(zone: Mapping[str, object]) -> FeatureIdentit
         producer=EVACUATION_ZONES_PRODUCER,
         producer_local_id=global_id,
         observed_at=created_at,
-    )
-
-
-def build_evacuation_zone_write(zone: Mapping[str, object], layer_name: str) -> FeatureWrite | None:
-    """Build one evacuation area's write, returning None when the upstream supplied no stable GlobalID."""
-    try:
-        identity = build_evacuation_zone_identity(zone)
-    except (MissingNativeKeyError, ValueError):
-        return None
-    properties: dict[str, object] = {}
-    if identity.observed_at is not None:
-        # The read model dates every row from COALESCE(observedAt, updatedAt, polygonDateTime);
-        # `createdDate` is in none of them, so without this key an area is undatable and the
-        # `evacuation-zones` layer reports "Not yet observed" on every date forever. The value is
-        # `createdDate` verbatim -- already the JS-formatted instant -- so the two keys can never
-        # disagree, and an area the upstream dated not at all stays honestly undated rather than
-        # acquiring a clock reading.
-        properties["observedAt"] = zone.get("createdDate")
-    return FeatureWrite(
-        layer_reference=layer_name,
-        identity=identity,
-        properties={
-            **properties,
-            "globalId": zone.get("globalId"),
-            "evacuationAreaName": zone.get("evacuationAreaName"),
-            "fireName": zone.get("fireName"),
-            "county": zone.get("county"),
-            "hazardType": zone.get("hazardType"),
-            "evacuationLevel": zone.get("evacuationLevel"),
-            "evacuationLevelLabel": zone.get("evacuationLevelLabel"),
-            "severity": zone.get("severity"),
-            "structuresWithin": zone.get("structuresWithin"),
-            "addressesWithin": zone.get("addressesWithin"),
-            "populationWithin": zone.get("populationWithin"),
-            "editorName": zone.get("editorName"),
-            "createdDate": zone.get("createdDate"),
-            # `lastEditedDate` is deliberately NOT stored, and deliberately does not date the row either. The
-            # upstream sync re-stamps an unchanged area's edit clock every few minutes, so storing it would
-            # make every poll a "changed" refresh for the whole layer -- flooding records_written and the
-            # realtime channel with rows nothing actually happened to -- and dating by it would be a clock
-            # reading laundered through an upstream field. The freshness signal a consumer needs to age out a
-            # vanished area is geo.geometry.last_confirmed_at. See ingest/AGENTS.md.
-            "source": EVACUATION_ZONES_PROPERTY_SOURCE,
-            "geometry": zone.get("geometry"),
-        },
-        channel=EVACUATION_ZONES_CHANNEL,
-    )
-
-
-async def run_evacuation_zones_ingestion_job(
-    write_features: FeatureWriter,
-    *,
-    bbox: str | None = None,
-    client: httpx.AsyncClient | None = None,
-) -> IngestionJobResult:
-    """Fetch bounded Oregon OEM evacuation areas and refresh them in place as their levels and shapes advance."""
-    area = resolve_bounded_bbox(bbox)
-    if area is None:
-        return skipped_result(EVACUATION_ZONES_SOURCE, UNCONFIGURED_BBOX_REASON)
-
-    if client is None:
-        async with upstream_client(EVACUATION_ZONES_BOUNDS) as owned_client:
-            zones, more_remaining = await fetch_evacuation_zones(owned_client, area)
-    else:
-        zones, more_remaining = await fetch_evacuation_zones(client, area)
-
-    # A bitten cap drops the OLDEST areas, never an arrival slice -- the same policy
-    # `source.select_writes` documents and applies for every source that goes through it. Taking
-    # `zones[:cap]` dropped whichever page ArcGIS happened to return last, so which areas survived
-    # a bitten cap depended on upstream paging order rather than on recency. Undated areas sort
-    # last, matching `source._truncation_rank`, and `sorted` is stable so arrival breaks ties.
-    def _newest_first(zone: Mapping[str, object]) -> tuple[int, float]:
-        created_at = zone.get("createdAt")
-        if not isinstance(created_at, datetime):
-            return (0, 0.0)
-        return (1, created_at.timestamp())
-
-    selected = sorted(zones, key=_newest_first, reverse=True)[: resolve_max_source_records()]
-    layer_name = resolve_evacuation_zones_layer_name()
-    writes = [
-        write for write in (build_evacuation_zone_write(zone, layer_name) for zone in selected) if write is not None
-    ]
-
-    return IngestionJobResult(
-        source=EVACUATION_ZONES_SOURCE,
-        status="ingested",
-        records_seen=len(zones),
-        records_written=await write_features(writes),
-        truncated=more_remaining or len(zones) > len(selected),
-        details={"rejected": len(selected) - len(writes)},
     )

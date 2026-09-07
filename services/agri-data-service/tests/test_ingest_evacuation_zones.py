@@ -1,4 +1,13 @@
-"""Oregon OEM evacuation-zone ingestion: GlobalID identity, the created-date observed_at rule, and honest skips."""
+"""Oregon OEM evacuation-zone upstream: GlobalID identity, the created-date observed_at rule, the paged walk.
+
+`run_evacuation_zones_ingestion_job` and `build_evacuation_zone_write` -- the PostgreSQL job and the
+row shape it wrote -- WERE TESTED HERE AND ARE DELETED (2026-09-07), so the unset-bbox skip, the
+writes-what-it-fetched and record-ceiling job tests, and the `RecordingWriter` that existed only to
+catch their writes went with them. What the direct writer stores is pinned by
+`tests/direct/test_evacuation_zones_direct_rows.py` against `EVACUATION_ZONES_SCHEMA`, which has no
+`lastEditedDate` column at all -- so the "the edit clock is parsed and then neither stored nor used
+to date" contract is now structural there rather than asserted here.
+"""
 
 # ruff: noqa: PLR2004
 
@@ -6,7 +15,6 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
 
 import httpx
 import pytest
@@ -14,14 +22,12 @@ import pytest
 from agri_data_service.ingest import evacuation_zones
 from agri_data_service.ingest.evacuation_zones import (
     EVACUATION_ZONES_BOUNDS,
-    EVACUATION_ZONES_CHANNEL,
     EVACUATION_ZONES_HISTORY_CAPABILITY,
     EVACUATION_ZONES_PRODUCER,
     EVACUATION_ZONES_SOURCE,
     MAX_RECORD_COUNT,
     UNEXPECTED_SHAPE_REASON,
     build_evacuation_zone_identity,
-    build_evacuation_zone_write,
     build_query_url,
     epoch_milliseconds_to_datetime,
     evacuation_level,
@@ -29,32 +35,15 @@ from agri_data_service.ingest.evacuation_zones import (
     evacuation_severity,
     fetch_evacuation_zones,
     parse_evacuation_zone_collection,
-    run_evacuation_zones_ingestion_job,
 )
 from agri_data_service.ingest.http import UpstreamHttpError, UpstreamPayloadError
 from agri_data_service.ingest.identity import MissingNativeKeyError
 from agri_data_service.ingest.source import HistoryUnavailableError, HistoryWindow
 
-if TYPE_CHECKING:
-    from collections.abc import Sequence
-
-    from agri_data_service.ingest.writer import FeatureWrite
-
 RECORDED_GLOBAL_ID = "47569dae-8535-405b-930e-51bc28167c97"
 LAST_EDITED_EPOCH_MILLISECONDS = 1_785_848_400_000  # 2026-08-04T13:00:00.000Z
 CREATED_EPOCH_MILLISECONDS = 1_785_142_800_000  # 2026-07-27T09:00:00.000Z
 SQUARE_RING = [[-123.0, 44.0], [-123.0, 44.1], [-122.9, 44.1], [-122.9, 44.0], [-123.0, 44.0]]
-
-
-class RecordingWriter:
-    """A feature writer that records what a job handed it, so a job test needs no database."""
-
-    def __init__(self) -> None:
-        self.writes: list[FeatureWrite] = []
-
-    async def __call__(self, writes: Sequence[FeatureWrite]) -> int:
-        self.writes = list(writes)
-        return len(self.writes)
 
 
 async def _no_sleep(_delay: float) -> None:
@@ -195,17 +184,26 @@ def test_a_recorded_production_zone_parses_and_keys_to_the_bare_global_id() -> N
     assert zone["evacuationLevel"] == 3
     assert zone["severity"] == "critical"
     assert zone["createdAt"] == datetime(2026, 7, 27, 9, 0, tzinfo=UTC)
+    assert zone["createdDate"] == "2026-07-27T09:00:00.000Z"
 
-    write = build_evacuation_zone_write(zone, "evacuation-zones")
-    assert write is not None
-    assert write.natural_key == f"{EVACUATION_ZONES_PRODUCER}:{RECORDED_GLOBAL_ID}"
-    assert write.channel == EVACUATION_ZONES_CHANNEL
-    assert write.properties["globalId"] == RECORDED_GLOBAL_ID
-    assert write.properties["createdDate"] == "2026-07-27T09:00:00.000Z"
-    # The upstream sync re-stamps an unchanged area's edit clock every few minutes; storing it would
-    # mark every poll a "changed" refresh for the whole layer, and dating by it would be a clock
-    # reading laundered through the payload. It is parsed, and then neither stored nor used to date.
-    assert "lastEditedDate" not in write.properties
+    identity = build_evacuation_zone_identity(zone)
+    assert identity.natural_key == f"{EVACUATION_ZONES_PRODUCER}:{RECORDED_GLOBAL_ID}"
+    assert identity.observed_at == datetime(2026, 7, 27, 9, 0, tzinfo=UTC)
+    # The upstream sync re-stamps an unchanged area's edit clock every few minutes, so dating by it
+    # would be a clock reading laundered through the payload. It is parsed and reported, and then
+    # dates nothing -- `createdDate`, not `lastEditedDate`, is what the identity carries.
+    assert zone["lastEditedDate"] == "2026-08-04T13:00:00.000Z"
+
+
+def test_the_postgres_forward_job_and_its_write_builder_are_gone() -> None:
+    """The executable removal proof for 2026-09-07: the Postgres sink is gone, the upstream adapter is not.
+
+    Named rather than merely absent, because the module still legitimately exports an identity builder
+    and a paged fetch that `pipeline/direct/evacuation_zones/` calls -- so "no writer here" is not a
+    claim a reader can check by eye.
+    """
+    for deleted in ("run_evacuation_zones_ingestion_job", "build_evacuation_zone_write"):
+        assert not hasattr(evacuation_zones, deleted), deleted
 
 
 def test_an_arcgis_error_payload_answered_with_http_200_is_still_a_failure() -> None:
@@ -395,45 +393,3 @@ async def test_the_ceiling_stops_paging_even_when_the_upstream_says_more_remain(
     assert len(attempts) == 1
     assert len(zones) == 1
     assert more_remaining is True
-
-
-async def test_an_unset_bbox_is_skipped_and_never_failed() -> None:
-    result = await run_evacuation_zones_ingestion_job(RecordingWriter())
-    assert result.source == EVACUATION_ZONES_SOURCE
-    assert result.status == "skipped"
-    assert result.reason == "INGEST_BBOX is not configured"
-
-
-async def test_the_job_writes_the_zones_it_fetched_and_reports_nothing_rejected() -> None:
-    response = httpx.Response(
-        200, content=json.dumps(_collection()).encode(), headers={"content-type": "application/json"}
-    )
-    writer = RecordingWriter()
-    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _r: response)) as client:
-        result = await run_evacuation_zones_ingestion_job(writer, bbox="-125,42,-111,49", client=client)
-
-    assert result.status == "ingested"
-    assert result.records_seen == 1
-    assert result.records_written == 1
-    assert result.truncated is False
-    assert result.details["rejected"] == 0
-    assert [write.external_id for write in writer.writes] == [RECORDED_GLOBAL_ID]
-
-
-async def test_the_job_respects_the_record_ceiling_and_reports_truncation(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(evacuation_zones, "resolve_max_source_records", lambda: 1)
-    two_zone_collection = _collection()
-    second_feature = json.loads(json.dumps(two_zone_collection["features"][0]))
-    second_feature["properties"]["GlobalID"] = "b2c3d4e5-1111-2222-3333-444455556666"
-    two_zone_collection["features"].append(second_feature)
-    response = httpx.Response(
-        200, content=json.dumps(two_zone_collection).encode(), headers={"content-type": "application/json"}
-    )
-    writer = RecordingWriter()
-    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _r: response)) as client:
-        result = await run_evacuation_zones_ingestion_job(writer, bbox="-125,42,-111,49", client=client)
-
-    assert result.records_seen == 2
-    assert result.records_written == 1
-    assert result.truncated is True
-    assert len(writer.writes) == 1

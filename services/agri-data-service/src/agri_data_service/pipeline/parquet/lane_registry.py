@@ -990,7 +990,10 @@ _DATABASE_BACKED_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = (
     ),
     LaneRegistration(
         # DELIBERATELY STILL `_fill_sensors` (Postgres-reading) after the 2026-09-06 wave-B join
-        # registered `sensors-direct-forward` (execution/job_executor_service.py) beside it in SHADOW.
+        # registered `sensors-direct-forward` (execution/job_executor_service.py) beside it, and after
+        # that lane went ACTIVE on 2026-09-07 and `postgres-sensors` -- the forward producer that
+        # APPENDED to `geo.features` -- was deleted. This adapter reads the rows that table ALREADY
+        # holds; it never needed the producer to keep running, and nothing it can reach got shallower.
         # This lane mirrors `weather-observations` almost exactly: the direct package ships NO
         # `*_DIRECT_WRITER_START_DAY`-equivalent constant and no `backfill.py`, so there is no cited
         # ownership-boundary day to put in a `writer_ceiling`, and routing this adapter to a

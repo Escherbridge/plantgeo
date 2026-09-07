@@ -41,7 +41,7 @@ class EvacuationZonesTruncatedError(RuntimeError):
 
     A REFUSAL, NOT A PARTIAL PUBLICATION, and this is where the direct writer deliberately diverges
     from the Postgres path it replaces. `run_evacuation_zones_ingestion_job`
-    (`ingest/evacuation_zones.py:457-463`) wrote whatever it got and set `truncated=True` on the
+    (DELETED 2026-09-07) wrote whatever it got and set `truncated=True` on the
     result, so a bitten page/byte/record ceiling produced a warehouse row set that was quietly short
     of the statewide picture, and `evacuation_zones_day_export.sql` (deleted 2026-09-06) then
     exported that short set as a full snapshot. Nothing downstream reads `truncated`.

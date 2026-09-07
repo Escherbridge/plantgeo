@@ -206,6 +206,12 @@ mistake the survivors for leftovers.
 
 ## 6. RETAINED — `run_evacuation_zones_ingestion_job` / `build_evacuation_zone_write`. **The blocker is `ingest/runner.py:48`.**
 
+> **This verdict was discharged on 2026-09-07 — see "Wave 3" appended at the end of this file.** The
+> blocker below was correctly named; the owner then made the decision it was waiting for, and the
+> `geo.evacuation_zone_tiles` sub-argument was refuted separately
+> (`evidence/reader-not-parquet-scope-20260907.md`, section "REFUTED"). Both symbols are now deleted.
+> The text below is left exactly as written, because it is the record of what was true on 2026-09-06.
+
 **The brief's premise is factually wrong and this is the finding.** It says this item has "the same
 shape" as item 5 — one caller in `ingest/commands.py`. It has two:
 
@@ -258,6 +264,8 @@ Post-deletion: 8, all prose, all rewritten to say *deleted*. It is not in `_BBOX
 
 ### 7b. RETAINED — `ingest/commands.py::ingest_evacuation_zones`
 
+> **Discharged 2026-09-07 — see "Wave 3" below.** The verb and its registration are deleted.
+
 Its job (item 6) is live. Deleting the targeted verb while `ingest-all` still runs the same job would
 leave an operator with only the macro — which also re-runs fire-perimeters, sensors and the geometry
 repair — as the way to refresh **a life-safety evacuation layer**. That is a capability regression,
@@ -288,6 +296,9 @@ Import proof: `LANE_SPECS` is 61 (was 62), `postgres-watersheds` absent, the fou
 `postgres-sensors`.
 
 ### 8b. RETAINED — `postgres-evacuation-zones`
+
+> **Discharged 2026-09-07 — see "Wave 3" below.** The lane spec is deleted, together with
+> `postgres-sensors`, which this 2026-09-06 pass did not examine at all.
 
 It schedules item 7b, which is retained with item 6. Removing the schedule while keeping the verb and
 the job splits one producer across three artifacts with three different reasons — exactly the
@@ -372,6 +383,8 @@ written copy of a fact, the fact was relocated and the new site labelled as the 
 Ordered by how close each is to being removable.
 
 ### R1 — The evacuation-zones Postgres producer (items 6, 7b, 8b). **One owner decision away.**
+> **CLOSED 2026-09-07 — see "Wave 3" below.** The owner made the decision; all four artifacts and
+> their tests were deleted in one push, and `postgres-sensors` went with them.
 `run_evacuation_zones_ingestion_job`, `build_evacuation_zone_write`, the `ingest-evacuation-zones`
 verb and the `postgres-evacuation-zones` lane form one unit. **Blocker: `ingest/runner.py:48`.** The
 decision needed is not about dead code — it is *"may `ingest-all` stop refreshing `geo.features` for
@@ -436,3 +449,398 @@ from NHDPlus_HR, correct no-op). If it is not, the watersheds stream now has no 
 No pytest, no mypy, no `ruff check` — one sweep runs at the end and the owner runs it.
 `ruff format` reported *31 files left unchanged*. No Railway, no object store, no database, no
 Alembic, no local app run. `QUALITY_RECEIPT.json` untouched. Nothing committed or pushed.
+
+---
+
+# Wave 3 — appended 2026-09-07: sensors and evacuation-zones Postgres producers REMOVED
+
+`observed_at: 2026-09-07` · `base_commit: ec92226` · `status: sensors_removed; evacuation_zones_removed; fire_perimeters_and_geometry_repair_retained_with_reasons`
+
+This section is an APPEND. Nothing above it was rewritten; items 6, 7b, 8b and R1 each carry a
+one-line pointer here, and their 2026-09-06 text stands as the record of what was true that day.
+
+## What changed in the world between the two waves
+
+The 2026-09-06 pass retained evacuation-zones for one named blocker and never examined sensors. Two
+production facts moved since, and they are the whole authority for this pass:
+
+1. `evacuation-zones-direct-forward` is ACTIVE and `parquet-evacuation-zones` is retired from the
+   active set. Its direct writer was proven against production — 116 zones, verified against the live
+   Oregon OEM feed.
+2. `sensors-direct-forward` is ACTIVE and `parquet-sensors` is retired. Proving run: **2,361 rows
+   written in one part, `outcome: complete`, `availability_extended: 1`** — it extended the published
+   availability index directly.
+
+## The rule, restated so it produces the right answer
+
+`ingest/runner.py`'s docstring stated the old rule as *"the layers that have NO Parquet writer yet"*.
+That phrasing is about WRITERS and it no longer discriminates. The rule that actually governs, and
+that all three waves obeyed, is about **READERS**:
+
+> A PostgreSQL producer may be deleted once its layer's direct writer is ACTIVE **and** the generic
+> `parquet-*` exporter that read `geo.features` for that stream is retired from the active set —
+> because at that moment the producer is feeding nobody.
+
+`runner.py`'s docstring has been rewritten to say exactly that, in the same voice, and to name WFIGS
+as the one source it still keeps and why.
+
+**The 2026-09-06 `geo.evacuation_zone_tiles` sub-argument is REFUTED**, and this pass did not re-adopt
+it. "Style-backed" in `src/components/map/AGENTS.md:287` means the style layer is declared in
+`styles.ts` rather than component-added; the tile function is unpublished in Martin and named by no
+style. See `evidence/reader-not-parquet-scope-20260907.md`, section "REFUTED".
+
+## Method — same command, same standard as the 2026-09-06 pass
+
+Zero-reader claims use the packet's one command (repository root
+`c:/Users/atooz/Programming/plantgeo`, six trees, `--include` filtered). Binding proof is the same
+AST walk, re-run after every deletion:
+
+```bash
+UV_NO_SYNC=1 uv run --no-sync python -c "<ast walk of every Import/ImportFrom under src/, tests/, scripts/>"
+#  files walked: 752
+#  BROKEN IMPORTS: none
+```
+
+and a real import of the module whose module-level `assert`s could have been broken by the spec
+deletions:
+
+```bash
+UV_NO_SYNC=1 uv run --no-sync python -c "from agri_data_service.execution.job_executor_service import LANE_SPECS; ..."
+#  LANE_SPECS 59                         (was 61)
+#  postgres lanes: ['postgres-fire-perimeters', 'postgres-geometry-repair']
+#  parquet count: 32                     (unchanged — one generic spec per LaneRegistration)
+#  verbs: ['ingest-fire-perimeters', 'ingest-mtbs', 'ingest-backfill', 'ingest-geometry-repair',
+#          'ingest-all', 'jobs-plan-lane', 'jobs-plan-gaps', 'jobs-run', 'jobs-status',
+#          'jobs-reconcile-lane', 'validate-streams']
+#  runner has sensors? False False
+#  sensors leftovers: []   evac leftovers: []
+```
+
+A successful import IS the statement that both module-level asserts still hold — including
+`job_executor_service.py:991`, *"a lane declares conflicts_with against a lane id that is not in
+LANE_SPECS"*.
+
+## Verdict summary
+
+| # | Item | Verdict | Decisive evidence |
+|---|---|---|---|
+| W3-1 | `ingest/runner.py` — the two `jobs` entries, their imports, the docstring | **REMOVED + REWRITTEN** | both jobs deleted below; docstring restated on the reader rule and reduced from "three surviving sources" to one |
+| W3-2 | `ingest/evacuation_zones.py::run_evacuation_zones_ingestion_job` | **REMOVED** (module survives) | non-test readers were `runner.py:48` and `commands.py:158`, both deleted in this push; **0 remaining** |
+| W3-3 | `ingest/evacuation_zones.py::build_evacuation_zone_write` | **REMOVED** (module survives) | sole call site was W3-2, `evacuation_zones.py:454`; **0 remaining** |
+| W3-4 | `ingest/sensors.py::run_sensor_ingestion_job` + `_run_sensor_job` | **REMOVED** (module survives) | non-test readers were `runner.py:47` and `commands.py:142`; `_run_sensor_job` had exactly one caller, the job itself; **0 remaining** |
+| W3-5 | `ingest/sensors.py::NO_STATIONS_REASON` | **REMOVED** | the skip reason of W3-4 and nothing else; the direct lane has its own bbox gate |
+| W3-6 | `ingest/commands.py::ingest_sensors`, `::ingest_evacuation_zones` + registrations | **REMOVED** | verb names verified, not assumed: `ingest-sensors` / `ingest-evacuation-zones` |
+| W3-7 | lane specs `postgres-sensors`, `postgres-evacuation-zones` | **REMOVED** | hand-written `_postgres_spec` calls; nothing names either in `conflicts_with`; import passes |
+| W3-8 | tests of the deleted functions | **REMOVED**, replaced by executable "cannot come back" proofs | see W3-8 |
+| — | `ingest/sensors.py::build_sensor_reading_write` | **KEPT — live reader** | it is `nws_sensor_source().build_feature_write`, which `pipeline/direct/sensors/source.py` runs through `select_writes` on every poll |
+| — | `postgres-fire-perimeters`, `postgres-geometry-repair` | **KEPT — live readers** | `parquet-fire-perimeters` still reads `geo.features` because its direct sibling is SHADOW on an open owner decision; the repair maintains the `geo.geometry` that exporter joins |
+
+## W3-1 — `src/agri_data_service/ingest/runner.py`. Two entries gone, docstring rewritten.
+
+Removed: the `NWS_SENSOR_SOURCE` and `EVACUATION_ZONES_SOURCE` entries from the `jobs` list and their
+two `from ... import` lines. The list is now WFIGS then the geometry repair.
+
+The module docstring said *"three surviving sources"* and stated a rule that no longer produced that
+answer — the exact drift the brief called worse than no docstring. It now says seven sources have
+left this list across three dated waves, states the reader rule verbatim, and gives WFIGS its own
+paragraph: `fire-perimeters-direct-forward` EXISTS but is SHADOW because it refuses to publish while
+any upstream WFIGS perimeter carries invalid geometry, so `parquet-fire-perimeters` is still the
+ACTIVE writer and this producer is still its only filler. The geometry-repair paragraph is unchanged
+except for its last clause, which now names WFIGS as the source still writing rows that need linking.
+
+## W3-2 / W3-3 — `run_evacuation_zones_ingestion_job` and `build_evacuation_zone_write`
+
+**90 lines removed** from the tail of `src/agri_data_service/ingest/evacuation_zones.py` (466 → 376),
+plus the imports only they used: `upstream_client`, `UNCONFIGURED_BBOX_REASON`,
+`resolve_bounded_bbox`, `IngestionJobResult`, `skipped_result`, `FeatureWrite`, and the
+`TYPE_CHECKING` import of `FeatureWriter`.
+
+Readers before this push
+(`grep -rn "\brun_evacuation_zones_ingestion_job\b" --include=*.py src/ tests/ scripts/ alembic/ db/`):
+
+```
+src/agri_data_service/ingest/commands.py:46    (import)      -> DELETED in W3-6
+src/agri_data_service/ingest/commands.py:158   (call)        -> DELETED in W3-6
+src/agri_data_service/ingest/runner.py:8       (import)      -> DELETED in W3-1
+src/agri_data_service/ingest/runner.py:48      (call)        -> DELETED in W3-1
+tests/test_ingest_commands.py:81                             -> DELETED in W3-8
+tests/test_ingest_runner.py:230                              -> DELETED in W3-8
+tests/test_ingest_evacuation_zones.py:32,401,413,434         -> DELETED in W3-8
+```
+
+`build_evacuation_zone_write` (`grep -rn "\bbuild_evacuation_zone_write\b" ...`): one non-test call
+site, `evacuation_zones.py:454`, inside W3-2 itself; tests at
+`test_ingest_evacuation_zones.py:24,199`. **Zero non-test readers → delete; readers only in tests of
+the deleted thing → both deleted.**
+
+After: **0 executable readers of either.** The 7 and 11 remaining text hits are all prose — the
+rewritten module docstring, this packet's own names, historical citations in `pipeline/direct/`, and
+the two removal-proof test tuples.
+
+**THE MODULE SURVIVES and its docstring now opens by saying so.**
+`pipeline/direct/evacuation_zones/source.py:28` imports `EVACUATION_ZONES_BOUNDS` and
+`fetch_evacuation_zones`; `pipeline/direct/evacuation_zones/products.py:18-22` imports
+`EVACUATION_ZONES_PRODUCER`, `EVACUATION_ZONES_PROPERTY_SOURCE`, `EVACUATION_ZONES_QUERY_URL`;
+`pipeline/validation/evacuation_zones.py:36` imports `EVACUATION_ZONES_BOUNDS` and
+`fetch_evacuation_zones` again. Deleting the file would have broken the lane this packet is cleaning
+up after.
+
+## W3-4 / W3-5 — `run_sensor_ingestion_job`, `_run_sensor_job`, `NO_STATIONS_REASON`
+
+**58 lines removed** from the tail of `src/agri_data_service/ingest/sensors.py` (673 → 615), plus the
+`NO_STATIONS_REASON` constant and the imports only they used: `UNCONFIGURED_BBOX_REASON`,
+`resolve_bounded_bbox`, `IngestionJobResult`, `skipped_result`, `select_writes`, and the
+`TYPE_CHECKING` import of `FeatureWriter`. `FetchRequest` MOVED from a runtime import into the
+`TYPE_CHECKING` block, because after the deletion its only remaining use is the annotation on
+`build_sensor_reading_write` — a runtime import used solely in an annotation is what ruff's `TCH`
+rules exist to catch, and this repo selects them (`ruff.toml`).
+
+Readers before this push:
+
+```
+src/agri_data_service/ingest/commands.py:55    (import)      -> narrowed in W3-6 to `nws_sensor_source` only
+src/agri_data_service/ingest/commands.py:142   (call)        -> DELETED in W3-6
+src/agri_data_service/ingest/runner.py:10      (import)      -> DELETED in W3-1
+src/agri_data_service/ingest/runner.py:47      (call)        -> DELETED in W3-1
+tests/test_ingest_commands.py:80, test_ingest_runner.py:229,311, test_ingest_sensors.py:33,264,277
+```
+
+`_run_sensor_job`: one caller, `run_sensor_ingestion_job`, twice (`sensors.py:669,671`).
+`NO_STATIONS_REASON`: one use, `_run_sensor_job`'s skip at `sensors.py:625`, plus the test that
+asserted it. All three: **zero readers after → deleted.**
+
+### What was KEPT in `sensors.py`, and exactly why — the trap the brief warned about
+
+`pipeline/direct/sensors/source.py:56-62` imports **`NWS_OBSERVATION_RETENTION`,
+`NWS_SENSOR_SOURCE`, `collect_sensor_records`, `fetch_station_roster`, `nws_sensor_source`**;
+`pipeline/direct/sensors/forward.py:57` imports **`NWS_OBSERVATION_RETENTION`, `OBSERVATION_BOUNDS`**.
+So the roster walk, the batched poll, the retention constant and the composed source all had live
+non-test readers and could not go.
+
+The non-obvious one: **`build_sensor_reading_write` LOOKS like a Postgres-write helper and is not.**
+`nws_sensor_source()` passes it as `build_feature_write` (`sensors.py:609` before this edit), and the
+direct lane calls `select_writes(nws_sensor_source(now), records, request)`, so the direct writer
+executes this function on every poll. Deleting it as "the thing that built FeatureWrites for
+Postgres" would have broken the ACTIVE sensors lane. Everything it transitively needs is kept with
+it: `build_sensor_reading_identity`, `_required_text`, `_parse_upstream_timestamp`,
+`resolve_sensors_layer_name`, `SENSORS_CHANNEL`, `SENSORS_PROPERTY_SOURCE`.
+
+`nws_sensor_source` has a second live reader that is easy to miss: `ingest/commands.py`'s
+`_build_backfillable_sources`, which is what makes `agri-service data ingest-backfill --source
+nws-sensors` resolve. **The forward verb is gone; the backfill token is not.** That asymmetry is now
+stated in that function's docstring.
+
+Runtime smoke of the kept path (not a test run — one call, no database, no network):
+
+```
+build_sensor_reading_write(...) -> natural_key 'nws-api:KBOI:2026-08-04T13:00:00+00:00', channel 'layer:sensors'
+select_writes(nws_sensor_source(...), [record], request) -> 0 writes, 1 rejected (the record is older
+    than the 6-day freshness rule measured against the real clock — correct behaviour, not a regression)
+```
+
+## W3-6 — the CLI verbs. Names verified, not assumed.
+
+`grep -n '@click.command' src/agri_data_service/ingest/commands.py` confirmed the two verbs are
+literally `ingest-sensors` and `ingest-evacuation-zones`. Removed: both `@click.command` functions
+(32 lines), the `evacuation_zones` import line, the two entries in `INGEST_COMMANDS`, and
+`NWS_SENSOR_SOURCE` / `run_sensor_ingestion_job` from the sensors import — which narrows to
+`from agri_data_service.ingest.sensors import nws_sensor_source`.
+
+`register_ingest_commands` needed no edit: it iterates `INGEST_COMMANDS`. Verified by import — the
+group now registers 11 verbs, and `tests/test_ingest_runner.py::EXPECTED_VERBS` is asserted equal to
+it, so a verb that came back fails there.
+
+## W3-7 — the two lane specs. The file's own invariants were read FIRST.
+
+The brief's warning was specific: `parquet-*` specs are GENERATED per `LaneRegistration` and
+`job_executor_service.py:991` asserts every `conflicts_with` target resolves, so deleting a spec that
+something still names raises at import and the executor does not start. Checked before cutting:
+
+| invariant | site | result for `postgres-sensors` / `postgres-evacuation-zones` |
+|---|---|---|
+| `conflicts_with` must name a live lane | module-level `assert` at `:991` | **nothing declares `conflicts_with` against either.** The direct lanes conflict with `parquet-sensors` / `parquet-evacuation-zones`, which are untouched. Import passes |
+| generated vs hand-written | `_POSTGRES_SPECS` | both were hand-written `_postgres_spec(...)` one-liners, not generated — safe to delete, unlike the `parquet-*` pair |
+| `_FORWARD_SIBLING_LANE_BY_SLUG` slugs must exist | module-level `assert` before `_parquet_spec` | untouched: it maps registration *slugs* to *direct* lane ids, never to `postgres-*` |
+| unknown active lane → `ExecutorConfigurationError` | `parse_activation` | production `PLANTGEO_JOB_EXECUTOR_ACTIVE_LANES` no longer names either (owner-supplied; Assumption W3-A1) |
+| legacy-owner completeness | `_lanes_owned_by(INGEST_CRON_OWNER)` | computed dynamically from `_LANE_SPECS`, so `LEGACY_RAILWAY_RESPONSIBILITIES` merely shrinks; `test_every_observed_legacy_railway_writer_has_a_complete_terminal_mapping` still holds |
+
+**Nothing had to be stopped and reported.** No invariant would have broken.
+
+The `#:` comment above `_POSTGRES_SPECS` said *"The FOUR surviving PostgreSQL forward-ingestion lanes,
+and why exactly four"* and gave four reasons that no longer produce four. Rewritten to TWO, with the
+reader rule and with fire-perimeters' shadow-writer blocker named.
+
+## W3-8 — tests
+
+**Deleted, because they existed only to exercise deleted functions:**
+
+- `tests/test_ingest_sensors.py` — `test_an_unset_bbox_is_skipped_and_never_failed`,
+  `test_an_empty_roster_is_an_honest_skip_with_no_rows_written`, and the `RecordingWriter` helper
+  (whose only users they were), plus the then-unused `TYPE_CHECKING` block.
+- `tests/test_ingest_evacuation_zones.py` — `test_an_unset_bbox_is_skipped_and_never_failed`,
+  `test_the_job_writes_the_zones_it_fetched_and_reports_nothing_rejected`,
+  `test_the_job_respects_the_record_ceiling_and_reports_truncation`, `RecordingWriter`, and the
+  `build_evacuation_zone_write` half of
+  `test_a_recorded_production_zone_parses_and_keys_to_the_bare_global_id` (its parse half stays, now
+  asserting the identity instead, so the created-date rule is still pinned end to end).
+- `tests/test_ingest_commands.py` — the two `_BBOX_SCOPED_VERBS` rows. The table is now one row and
+  stays table-driven.
+- `tests/test_ingest_runner.py` — the two `EXPECTED_VERBS` entries, the two `EXPECTED_SOURCE_ORDER` /
+  `EXPECTED_JOB_ORDER` entries, the two fixture fakes and their `monkeypatch.setattr` lines.
+
+**Rewritten rather than deleted, because they test the runner/executor and not the deleted jobs:**
+
+- `test_runner_a_single_job_failure_does_not_erase_the_other_results` exploded the sensors job to
+  prove isolation "in the middle of the sequence". The sequence is now two jobs long, so there is no
+  middle. It became `test_runner_a_geometry_repair_failure_does_not_erase_the_source_result` — it
+  fails the LAST job, while the surviving
+  `test_runner_a_failure_in_the_first_job_still_lets_the_remaining_jobs_run` fails the FIRST. Two
+  jobs, two directions, one test each; isolation stays fully pinned.
+- `tests/test_job_executor_service.py` used `"postgres-sensors"` in **10 places** as a generic
+  hourly / `coalesce_latest` / `incremental` Postgres-lane fixture — scheduling, fair ordering,
+  missed-tick policy, connection invalidation, writer non-overlap. None of them is a test of the
+  sensors lane. All 10 repointed to `"postgres-fire-perimeters"`, which `_postgres_spec` gives the
+  identical cadence (3600s), schedule (`0 * * * *`), phase offset (0), work class and catch-up
+  policy. `fair_due_order` breaks timestamp ties **alphabetically by `lane_id`**
+  (`job_executor_service.py:1209-1210`), so the two order assertions were re-derived by hand rather
+  than assumed: `fire-detections-direct-forward` still sorts before `postgres-fire-perimeters`, and
+  the oldest-first entry is still first.
+
+**Counts updated, with their reasoning:** `_EXPECTED_SPEC_COUNT` 61 → **59**, and the comment above
+it gained the third dated paragraph explaining why the `parquet-*` count stays 32. The companion
+`#:` comment's "30 non-parquet duties" became 27.
+
+**Added — executable "cannot come back" proofs**, because both modules still legitimately export
+write-shaped functions, so "no Postgres writer here" is not a claim a reader can check by eye:
+
+- `tests/test_ingest_sensors.py::test_the_postgres_forward_job_is_gone_and_cannot_come_back_unnoticed`
+  asserts `not hasattr(sensors_module, ...)` for `run_sensor_ingestion_job`, `_run_sensor_job` and
+  `NO_STATIONS_REASON`.
+- `tests/test_ingest_evacuation_zones.py::test_the_postgres_forward_job_and_its_write_builder_are_gone`
+  for `run_evacuation_zones_ingestion_job` and `build_evacuation_zone_write`.
+- `tests/test_ingest_runner.py::test_runner_never_runs_a_source_whose_layer_has_a_parquet_writer`
+  extended with the two job names **and the two `*_SOURCE` constants**, which were imported into
+  `runner.py` only to label the deleted entries.
+
+## Dangling-pointer repairs (comment/doc only, no behaviour)
+
+Every one of these was a statement this deletion made **false**, not merely a drifted line number:
+
+| file | was | now |
+|---|---|---|
+| `ingest/runner.py:1,27` | "three surviving sources"; the writer-shaped rule | one source; the reader rule; WFIGS' shadow-writer blocker named |
+| `ingest/evacuation_zones.py:1` | "…and its retrying, bounded, paged **job**" | "…paged **walk**", plus a header stating what was deleted and why the module survived |
+| `ingest/sensors.py:1` | "NOAA NWS ground-station **ingestion**" | "…**upstream**", plus the same survivor note including the `build_sensor_reading_write` trap |
+| `ingest/commands.py` `_build_backfillable_sources` | silent on the asymmetry | states that `nws-sensors` is the one token whose forward verb is gone |
+| `execution/job_executor_service.py:478-512` | "The FOUR surviving…" + four reasons | "The TWO surviving…" + the reader rule |
+| `execution/job_executor_service.py:926` | "the cadence of the postgres-evacuation-zones poller it **replaces**" | "…it **replaced** — that lane… deleted 2026-09-07, so this is now the ONLY writer" |
+| `ingest/validation/models.py:152` | `cadence_basis="job-executor lane postgres-evacuation-zones runs hourly"` | names `evacuation-zones-direct-forward` at `:35` and records the deletion — the same pattern the vegetation entry already used |
+| `pipeline/parquet/lane_registry.py:992` | "…beside it in SHADOW" | records the activation, and that this Postgres-READING gap-fill adapter never needed the producer to keep running |
+| `pipeline/direct/evacuation_zones/forward.py:6` | "**that producer is still live** inside `ingest-all` (`ingest/runner.py:48`)" | records the deletion |
+| `pipeline/direct/evacuation_zones/parity.py:30` | "`postgres-evacuation-zones` **is STOPPED**… frozen" | "is GONE… permanently frozen", and states that this receipt deliberately compares against a dead snapshot |
+| `pipeline/direct/evacuation_zones/parity.py:156` | present-tense "`build_evacuation_zone_write` **refuses**" | past tense + "(deleted 2026-09-07)" |
+| `pipeline/direct/evacuation_zones/products.py:70` | cited `ingest/evacuation_zones.py:430-432` and a test line range, both now dead | names the deletion and says this function is now the only place the unset-bbox gate lives |
+| `pipeline/direct/evacuation_zones/source.py:44` | cited `ingest/evacuation_zones.py:457-463` | "(DELETED 2026-09-07)" |
+| `ingest/AGENTS.md:20-32` | listed both verbs under "Kept, and why", and named `runner.py:48` as the single blocker | lists only the survivors, states the reader rule, and records that the blocker was discharged |
+| `pipeline/direct/AGENTS.md:1319,1374` | "**THAT PRODUCER IS STILL LIVE**"; "the poller it replaces" | records the deletion and what survives in `ingest/evacuation_zones.py` |
+
+## What was NOT removed, and why — the input to the next wave
+
+### W3-R1 — `postgres-fire-perimeters`, `ingest-fire-perimeters`, `run_fire_perimeters_ingestion_job`. Blocked on an open owner decision, not on dead code.
+`fire-perimeters-direct-forward` EXISTS but is SHADOW: it refuses to publish while any upstream WFIGS
+perimeter carries invalid geometry. So `parquet-fire-perimeters` is still the ACTIVE writer of that
+object stream, it still reads `geo.features`, and deleting this producer would **stop the layer**.
+This is the same shape evacuation-zones had on 2026-09-06: one decision away, and the decision is not
+this pass's to make.
+
+### W3-R2 — `postgres-geometry-repair` and `run_geometry_repair`. Structurally last, deliberately.
+Kept for W3-R1's exporter (`geo.geometry` is what it joins) plus a reason of its own: orphans regrow
+continuously because the `/api/ingest/*` push routes set no `geometry_id` at all, and WFIGS is still
+writing rows that need linking. It stays the last job of every tick.
+
+### W3-R3 — `ingest/evacuation_zones.py::build_evacuation_zone_identity`. Orphaned by this pass; kept, and flagged.
+Its only caller was `build_evacuation_zone_write`, so after W3-3 its only readers are tests
+(`test_ingest_evacuation_zones.py`, 8 assertions). Kept for three reasons: the brief named exactly two
+functions to remove and this is not one of them; its docstring is the CITED contract for the direct
+writer's `created_date` column (`pipeline/direct/evacuation_zones/rows.py:17`,
+`warehouse/schemas/evacuation_zones.py:51`); and the 2026-09-06 wave set the precedent for exactly
+this case with the watersheds `LayerBinding` block (item R2 above). **This is the honest weak point of
+this packet** — a reviewer may reasonably call it dead code. It should go with the `geo.features`
+evacuation-zones row drop, not lane by lane.
+
+### W3-R4 — the evacuation-zones `LayerBinding` block and `EVACUATION_ZONES_SOURCE`.
+`EVACUATION_ZONES_LAYER`, `EVACUATION_ZONES_CHANNEL`, `EVACUATION_ZONES_LAYER_VARIABLE`,
+`DEFAULT_EVACUATION_ZONES_LAYER_NAME` and `resolve_evacuation_zones_layer_name` lost their last
+production reader with W3-3; their remaining reader is
+`tests/test_ingest_layer_binding.py:7-12,97-101`, which is the cross-cutting `LayerBinding`
+convention suite over all producers, **not** a test of the deleted function. `EVACUATION_ZONES_SOURCE`
+likewise survives — it is still used at `test_ingest_evacuation_zones.py:238` for the
+history-capability refusal, and it is the layer's source token. Kept on the identical precedent as
+item R2 above. The sensors equivalents were never orphaned: `resolve_sensors_layer_name` and
+`SENSORS_CHANNEL` are reached through `build_sensor_reading_write`.
+
+### W3-R5 — `LANE_REGISTRY['sensors'].adapter` is STILL `_fill_sensors`, which reads `geo.features`.
+Reported rather than treated as a contradiction. That adapter is the **gap-fill** path for days older
+than NWS's rolling ~6-day window, not the forward exporter, and it reads rows `geo.features` already
+holds. Removing the producer stops that table GROWING for sensors; it makes nothing already reachable
+unreachable, because every newer day now comes from the direct writer and every day older than the
+rolling window was never reachable from the source anyway. The registration comment now says this in
+place of its stale "beside it in SHADOW".
+`tests/direct/test_direct_package_registration.py::PENDING_REGISTRATION` still exempts `sensors` for
+its own separate reason (no cited ownership-boundary day), untouched here.
+
+### W3-R6 — `README.md`. Refused, deliberately, and it is a real defect.
+`README.md:238,433,445,456,595,596,599` still document `agri-service data ingest-sensors` and
+`data ingest-evacuation-zones` as runnable, and the "fastest surviving real write" walkthrough makes
+`ingest-sensors` its example command. Not fixed here for two reasons: the README was ALREADY stale in
+the same way (`data ingest-watersheds` is still in its table after the 2026-09-06 deletion), so this
+is a standing gap rather than one this pass opened; and choosing the replacement walkthrough command
+— `ingest-fire-perimeters` is the only remaining feature-writing verb, and it is slower and
+bbox-sensitive — is an editorial call an owner should make. **Recommended:** repoint the walkthrough
+to `ingest-fire-perimeters` and delete three table rows in one small doc push.
+
+### W3-R7 — `src/components/map/AGENTS.md:287` (the Next.js tree).
+The one hit outside the service tree. It cites `evacuation_zones.py build_evacuation_zone_write` as
+the origin of the `severity` property. It is a documentation pointer, not a code reader, and this
+pass was scoped out of the repo-root `src/` tree. The property itself is unaffected: the direct writer
+populates `severity` from the same parse layer. Worth a one-line fix whenever that file is next
+touched.
+
+### W3-R8 — this file's YAML frontmatter.
+`status: watersheds_removed_whole; evacuation_zones_partial_with_named_blocker` is now stale, and the
+`observed_at` / `base_commit` fields describe the 2026-09-06 pass. Left untouched on the brief's
+append-only rule; this section's own header carries the 2026-09-07 values. An owner may want to bump
+the frontmatter, or split this section into its own file.
+
+### W3-R9 — line-number citations in prose that were already drifting.
+`warehouse/schemas/evacuation_zones.py:51,59` cites `ingest/evacuation_zones.py:283-305` and
+`:308-351`; those ranges were **already wrong before this pass** (the functions had moved to `:352`
+and `:377`). Only the citations this deletion made point at *nothing that exists* were repaired (table
+above). A repo-wide line-citation audit is a separate job and is not smuggled in here.
+
+## Assumptions
+
+**W3-A1 — production `PLANTGEO_JOB_EXECUTOR_ACTIVE_LANES` names neither `postgres-sensors` nor
+`postgres-evacuation-zones`.** Supplied by the brief ("`parquet-sensors` is retired from the active
+set"; the 2026-09-04 owner decision to stop all ten `postgres-*` lanes). **Not independently
+verified — this pass was forbidden Railway, database and object-store access.** If either IS still
+named, `parse_activation` raises `ExecutorConfigurationError: unknown active lane(s): …` and **every**
+lane fails, not just that one. Reversal is two lines: restore the two `_postgres_spec(...)` calls.
+
+**W3-A2 — `sensors-direct-forward` and `evacuation-zones-direct-forward` are ACTIVE and their generic
+siblings are retired.** Supplied by the brief with proving-run figures (2,361 rows /
+`availability_extended: 1`; 116 zones). If either is not, that layer now has no forward writer at all.
+
+**W3-A3 — the `geo.evacuation_zone_tiles` blocker stays refuted.** Taken from
+`evidence/reader-not-parquet-scope-20260907.md`, section "REFUTED", per the brief's explicit
+instruction not to re-adopt it.
+
+## What this pass did not run
+
+No pytest, no mypy, no `ruff check` — one sweep runs at the end and the owner runs it. `ruff format`
+reported *16 files left unchanged*. `python -m py_compile` passed on all 16 touched Python files, and
+the import / AST checks above ran. No Railway, no object store, no database, no Alembic, no local app
+run; the long-running fire-detections `availability-bootstrap --apply` was not disturbed.
+`QUALITY_RECEIPT.json` untouched. Nothing committed or pushed.
+
+**Net change across the service tree: +256 / -447 lines (net −191) over 18 files.**

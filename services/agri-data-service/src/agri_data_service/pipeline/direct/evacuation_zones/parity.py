@@ -27,8 +27,11 @@ rather than passing them:
    capture correctly no longer holds it -- while nothing in the repo ever unpublished it from
    `geo.features` (`docs/lanes/evacuation-zones.md` section 5: "a zone Oregon has quietly dropped
    will keep rendering on the PlantGeo map indefinitely").
-2. `postgres-evacuation-zones` is STOPPED (owner decision 2026-09-04), so the Postgres side is frozen
-   at whatever it last ingested while the direct side keeps moving.
+2. `postgres-evacuation-zones` is GONE -- stopped by owner decision 2026-09-04, then deleted with its
+   verb and job function on 2026-09-07 -- so the Postgres side is permanently frozen at whatever it
+   last ingested while the direct side keeps moving. This receipt therefore compares against a dead
+   snapshot on purpose: it is proving the direct writer covers what Postgres ONCE held, not that two
+   live writers agree.
 
 Neither is auto-forgiven. `parity_achieved` is false whenever Postgres holds a key Parquet does not,
 `main()` exits 1, and an operator reads `missing_from_parquet_sample` to decide which of the two it
@@ -153,7 +156,8 @@ async def postgres_published_natural_keys(session: AsyncSession) -> set[str]:
     keys: set[str] = set()
     for row in result:
         if row.global_id is None:
-            # `build_evacuation_zone_write` refuses a blank GlobalID before a write is attempted, so
+            # `build_evacuation_zone_write` (deleted 2026-09-07) refused a blank GlobalID before a
+            # write was ever attempted, so
             # a NULL here is a row no forward path could have produced. Counted as a mismatch by
             # being skipped rather than silently mapped onto some other key.
             continue
