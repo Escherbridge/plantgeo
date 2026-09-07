@@ -53,11 +53,17 @@ export const HOVERABLE_LAYER_IDS: string[] = [
 
 /**
  * Six of `HOVERABLE_LAYER_IDS` already answer a `click` with their own richer popup:
- * `FireLayer.tsx` owns `published-fire-circles` and `published-fire-cells-fill`,
- * `WaterLayer.tsx` owns `water-gauges-circle`, `water-gauge-cells-fill`,
- * `water-gauge-cells-circle` and `groundwater-wells-circle`. Named here so
- * `TOOLTIP_TAP_LAYER_IDS` below can subtract them rather than a caller re-deriving -- or
- * drifting from -- the same six.
+ * `components/map/layers/FireLayer.tsx` owns `published-fire-circles` and
+ * `published-fire-cells-fill` (registered at :415-416 via its `FIRE_CIRCLES`/`FIRE_CELLS_FILL`
+ * constants), and `components/map/layers/WaterLayer.tsx` owns `water-gauges-circle` (:499),
+ * `water-gauge-cells-fill` and `water-gauge-cells-circle` (:542-543) and
+ * `groundwater-wells-circle` (:587). Named here so `TOOLTIP_TAP_LAYER_IDS` below can subtract
+ * them rather than a caller re-deriving -- or drifting from -- the same six.
+ *
+ * SUBTRACTING AN ID THAT NO LONGER ANSWERS A CLICK IS THE FAILURE THIS SET CAN CAUSE: the layer
+ * would be excluded from the tap tooltip AND have no popup, i.e. dead to touch with nothing to
+ * catch it -- the exact bug the tap handler was added to fix. `hover-fields.test.ts` reads both
+ * component sources and pins that each of the six is still registered for a `click` there.
  */
 const LAYER_IDS_WITH_A_DEDICATED_CLICK_POPUP = new Set<string>([
   "published-fire-circles",

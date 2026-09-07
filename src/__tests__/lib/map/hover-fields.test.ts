@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   HOVERABLE_LAYER_IDS,
@@ -81,6 +83,45 @@ describe("TOOLTIP_TAP_LAYER_IDS", () => {
       expect(TOOLTIP_TAP_LAYER_IDS).toContain(layerId);
     }
     expect(TOOLTIP_TAP_LAYER_IDS.length).toBe(HOVERABLE_LAYER_IDS.length - excluded.length);
+  });
+
+  /**
+   * The partition test above proves no hoverable id falls out of BOTH paths *as declared*. It
+   * cannot prove the declaration is true. Subtracting an id whose component has stopped
+   * registering a `click` leaves that layer excluded from the tap tooltip AND without a popup --
+   * dead to touch, with nothing to catch it, which is precisely the bug the tap handler exists to
+   * fix and which a set-arithmetic test would report as healthy. So read the two owning sources
+   * and check the registration is really there.
+   */
+  it("each excluded id is still registered for a click in the component that claims it", () => {
+    const owners: Record<string, string> = {
+      "published-fire-circles": "src/components/map/layers/FireLayer.tsx",
+      "published-fire-cells-fill": "src/components/map/layers/FireLayer.tsx",
+      "water-gauges-circle": "src/components/map/layers/WaterLayer.tsx",
+      "water-gauge-cells-fill": "src/components/map/layers/WaterLayer.tsx",
+      "water-gauge-cells-circle": "src/components/map/layers/WaterLayer.tsx",
+      "groundwater-wells-circle": "src/components/map/layers/WaterLayer.tsx",
+    };
+    const sources = new Map<string, string>();
+    for (const path of new Set(Object.values(owners))) {
+      sources.set(path, readFileSync(resolve(process.cwd(), path), "utf8"));
+    }
+
+    for (const [layerId, path] of Object.entries(owners)) {
+      const source = sources.get(path) as string;
+      // The id may be registered by literal or through a local constant, so resolve a constant
+      // to its value first rather than demanding one spelling.
+      const constant = source.match(new RegExp(`const (\\w+) = "${layerId}"`))?.[1];
+      const names = constant ? [layerId, constant] : [layerId];
+      const registered = names.some((name) =>
+        // No trailing `\b` after the quoted form: a closing quote followed by a comma is two
+        // non-word characters, so a word boundary can never match there.
+        new RegExp(`map\\.on\\(\\s*"click",\\s*(?:"${name}"|\\b${name}\\b)`).test(source)
+      );
+      expect(registered, `${layerId} is subtracted from the tap tooltip but ${path} registers no click for it`).toBe(
+        true
+      );
+    }
   });
 });
 
