@@ -559,7 +559,13 @@ export const aiConversations = pgTable("ai_conversations", {
   userId: uuid("user_id")
     .notNull()
     .references(() => users.id, { onDelete: "cascade" }),
-  geohash: varchar("geohash", { length: 12 }).notNull(),
+  // 12 was sized for a real precision-12 geohash, but the producer stores a COORDINATE PAIR
+  // (`regional-context.ts` -> `${lat.toFixed(2)}_${lon.toFixed(2)}`), which is 13 characters for any
+  // 3-digit longitude and 14 with a negative latitude too. Every location in the Americas therefore
+  // failed the insert with "value too long for type character varying(12)", which the route caught
+  // and returned as 503 "Could not start the conversation" -- so this feature had never worked
+  // outside Europe/Africa. 24 fits the widest pair (-45.67_-123.45) with room to spare.
+  geohash: varchar("geohash", { length: 24 }).notNull(),
   lat: doublePrecision("lat").notNull(),
   lon: doublePrecision("lon").notNull(),
   title: varchar("title", { length: 255 }).notNull().default("New Analysis"),
