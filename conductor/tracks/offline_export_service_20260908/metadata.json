@@ -1,0 +1,57 @@
+{
+  "track": "offline_export_service_20260908",
+  "title": "Offline export service — stage locally, transform locally, upload in bulk",
+  "created": "2026-09-08",
+  "status": "chartered",
+  "owner": "atoozmc@gmail.com",
+  "premise_corrected": {
+    "original": "pull down a database backup and export from it",
+    "measured": "the eight remaining lanes read raw-canonical in the object store (8796 objects, 1.96 GiB); the four proven builders contain zero psycopg2/asyncpg/DATABASE_URL references",
+    "conclusion": "stage the object store, not the database; the local-staging instinct was right, the source was not"
+  },
+  "baseline_2026_09_07": {
+    "bucket_objects": 1047868,
+    "bucket_gib": 14.0,
+    "serving_objects": 998486,
+    "serving_gib": 9.49,
+    "avg_serving_object_kib": 10,
+    "compile_evidence_rate_per_min": 150,
+    "relative_humidity_apply": "hung at 3h08m, idle in transaction, zero object-store connections"
+  },
+  "lanes_in_scope": [
+    "climate-field-air-temperature-mean",
+    "climate-field-air-temperature-max",
+    "climate-field-air-temperature-min",
+    "soil-field-vpd",
+    "soil-temperature-0-to-7cm",
+    "soil-temperature-7-to-28cm",
+    "soil-temperature-28-to-100cm",
+    "soil-temperature-100-to-255cm"
+  ],
+  "lane_families": {
+    "era5-land": {
+      "lanes": ["soil-field-vpd", "soil-temperature-0-to-7cm", "soil-temperature-7-to-28cm", "soil-temperature-28-to-100cm", "soil-temperature-100-to-255cm"],
+      "source_key": "open-meteo-era5-land-archive",
+      "support_key": "era5-land-0.1deg",
+      "cells_per_day": 1470,
+      "reference_builder": "scripts/build_soil_moisture_from_canonical_snapshot.py",
+      "note": "soil-field-vpd already holds 462 correct live day partitions - RESUME, do not rebuild"
+    },
+    "nasa-power": {
+      "lanes": ["climate-field-air-temperature-mean", "climate-field-air-temperature-max", "climate-field-air-temperature-min"],
+      "source_key": "nasa-power-daily",
+      "support_key": "surface",
+      "cells_per_day": 397,
+      "blocked_by": "climate-nasa-power-direct-forward dead-lettered at attempt 6/6 since 2026-09-07T08:32Z"
+    }
+  },
+  "out_of_scope": ["soil-survey", "postgres cost reduction", "serving re-partitioning", "postgres table drops"],
+  "serialized_files": [
+    "services/agri-data-service/src/agri_data_service/pipeline/parquet/lane_registry.py",
+    "services/agri-data-service/src/agri_data_service/execution/job_executor_service.py",
+    "services/agri-data-service/src/agri_data_service/interface/cli/data.py",
+    "services/agri-data-service/src/agri_data_service/parquet_ops/snapshot_products.py",
+    "services/agri-data-service/QUALITY_RECEIPT.json"
+  ],
+  "partitions": { "confidence": "none", "note": "phase 0 emits the per-lane manifest that would justify a partition; guessing one now would send two agents at one lane" }
+}
