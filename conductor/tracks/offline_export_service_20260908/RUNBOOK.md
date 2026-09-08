@@ -168,9 +168,26 @@ missing timeout around a long-held pair of connections.
 
 Step 2 is O(rows) network calls while step 1's **Postgres transaction stays open the whole time**.
 
-**`read_timeout` and `connect_timeout` appear NOWHERE in the service** — verified by
-`grep -rn "read_timeout\|connect_timeout" --include=*.py src/`, zero hits. So when either side of the
-pair goes away mid-verification, the process blocks forever instead of failing.
+**CORRECTION, 2026-09-08 — the first version of this section blamed boto, and that was WRONG.**
+It is true that `read_timeout`/`connect_timeout` appear nowhere in the service (zero grep hits), but
+that does NOT mean there are no timeouts: **botocore already defaults both to 60 s** (verified:
+`c.meta.config.read_timeout == 60`, botocore 1.43.56, `retries={'mode': 'legacy'}` = 5 attempts). A
+dead object-store socket therefore RAISES after a minute; it cannot hang for three hours. Anyone who
+"fixes" this by adding boto timeouts will see no improvement.
+
+The side with genuinely no timeout is **Postgres**:
+
+* `apply_statement_timeout(session)` exists and is called by **13** execution paths
+  (`grep -rln apply_statement_timeout --include=*.py src/`). The availability bootstrap path calls it
+  **zero** times — verified against `availability_index.py` and `interface/cli/data.py`.
+* `local_source_loader_pool` (`db/engine.py:110-122`) builds its engine with `pool_size=1`,
+  `max_overflow=0`, `pool_pre_ping=True` and **no `connect_args`** — so no TCP keepalive and no
+  `command_timeout`.
+* `pool_pre_ping` validates a connection at CHECKOUT only. It does nothing for a connection that dies
+  while a transaction is already open, which is exactly this case.
+
+So the advisory-lock transaction is opened, held across an hours-long verification, and when the
+Railway TCP proxy drops that idle-in-transaction connection the next await on it never returns.
 
 Both observed hangs fit exactly, and they are mirror images:
 
@@ -213,10 +230,11 @@ four objects deleted, 89,282 evidence objects kept.
 
 Two changes, neither made yet, both in a serialized single-owner file:
 
-1. Give the boto client explicit `read_timeout`/`connect_timeout` so a dead socket raises instead of
-   blocking forever.
+1. Call `apply_statement_timeout(session)` on the loader session, as the other 13 execution paths
+   already do, and give `local_source_loader_pool` TCP keepalives via `connect_args` so a dead peer
+   is detected rather than awaited forever. (NOT boto timeouts — botocore already has 60 s defaults.)
 2. Stop holding the Postgres transaction across the verification loop — verify first, then take the
-   lock only for the write-and-swap.
+   lock only for the write-and-swap. This is the structural fix; (1) only bounds the damage.
 
 Until then, **the offline export service does not remove this bottleneck, it only moves the compile
 half of it.** A workflow reviewer raised exactly this on 2026-09-08 and it is the strongest open
