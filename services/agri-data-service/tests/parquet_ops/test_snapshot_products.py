@@ -786,7 +786,14 @@ def test_unbound_completion_never_exposes_a_snapshot() -> None:
 def test_registered_product_families_pin_their_exact_top_level_schemas() -> None:
     signal = PRODUCT_BY_LAYER["climate-field-air-temperature-mean"]
     max_temperature = PRODUCT_BY_LAYER["climate-field-air-temperature-max"]
-    temperature = PRODUCT_BY_LAYER["soil-temperature-0-to-7cm"]
+    temperature = SnapshotProduct(
+        "soil-temperature-0-to-7cm",
+        "monthly",
+        f"derived-canonical/signal-observation/lane=soil-temperature-0-to-7cm/snapshot={SNAPSHOT_ID}",
+        f"derived-canonical/signal-observation/lane=soil-temperature-0-to-7cm/snapshot={SNAPSHOT_ID}",
+        schema_columns=SOIL_TEMPERATURE_COLUMNS,
+        contract_version="plantgeo.signal-product-breakdown.v1",
+    )
     # These two are CONSTRUCTED, not looked up. `climate-field-relative-humidity` and
     # `soil-wetness-surface` used to witness these two schema families from inside
     # `SNAPSHOT_PRODUCTS`, and both left the tuple on 2026-09-07 once their live prefixes were
@@ -868,13 +875,11 @@ def test_every_product_with_a_live_writer_declares_that_writer_s_own_forward_edg
         "climate-field-air-temperature-max",
         "climate-field-air-temperature-min",
     }
-    era5_land_forward = {
-        "soil-field-vpd",
-        "soil-temperature-0-to-7cm",
-        "soil-temperature-7-to-28cm",
-        "soil-temperature-28-to-100cm",
-        "soil-temperature-100-to-255cm",
-    }
+    # Empty since 2026-09-08: every ERA5-Land product finished its day-grain re-export and left the
+    # tuple, so no member declares SOIL_DIRECT_WRITER_START_DAY any more. Kept as an explicit empty
+    # set rather than deleted, because the POWER/ERA5-Land split is the thing this test exists to
+    # assert and a future re-export would repopulate it.
+    era5_land_forward: set[str] = set()
 
     for layer in sorted(power_forward):
         assert PRODUCT_BY_LAYER[layer].forward_first_day == CLIMATE_DIRECT_WRITER_START_DAY, layer
@@ -886,17 +891,23 @@ def test_every_product_with_a_live_writer_declares_that_writer_s_own_forward_edg
     } == power_forward | era5_land_forward
 
 
-def test_a_forward_day_of_a_soil_product_is_read_through_its_lane_and_not_its_manifest() -> None:
-    """`forward_first_day` is the ONE boundary: below it the closed manifest, at or above it the lane."""
-    product = PRODUCT_BY_LAYER["soil-field-vpd"]
+def test_a_forward_day_of_a_product_is_read_through_its_lane_and_not_its_manifest() -> None:
+    """`forward_first_day` is the ONE boundary: below it the closed manifest, at or above it the lane.
+
+    Asserted on an air-temperature product because it is the only FAMILY still in the tuple. This read
+    `soil-field-vpd` until 2026-09-08 and then `soil-temperature-0-to-7cm` for a matter of minutes,
+    losing each as its day-grain re-export finished and it left. The BOUNDARY is the contract; which
+    product demonstrates it is an accident of how far the cutover has got.
+    """
+    product = PRODUCT_BY_LAYER["climate-field-air-temperature-mean"]
     assert product.forward_first_day is not None
 
     assert snapshot_products.serves_from_snapshot(product.layer, product.forward_first_day - timedelta(days=1)) is True
     assert snapshot_products.serves_from_snapshot(product.layer, product.forward_first_day) is False
 
 
-def test_the_allowlist_is_exactly_the_eight_month_grain_products_awaiting_a_re_export() -> None:
-    """Pin the eight BY NAME as a LIST, so a cleanup that sweeps one out with the six that left fails here.
+def test_the_allowlist_is_exactly_the_three_month_grain_products_awaiting_a_re_export() -> None:
+    """Pin the three BY NAME as a LIST, so a cleanup that sweeps one out with the eleven that left fails here.
 
     A list, not a set: a set hides both a duplicated entry and the arity, and the arity is the whole
     claim. After 2026-09-07 this tuple holds ONE kind of member, and the invariant asserted below is
@@ -912,11 +923,6 @@ def test_the_allowlist_is_exactly_the_eight_month_grain_products_awaiting_a_re_e
         "climate-field-air-temperature-max",
         "climate-field-air-temperature-mean",
         "climate-field-air-temperature-min",
-        "soil-field-vpd",
-        "soil-temperature-0-to-7cm",
-        "soil-temperature-100-to-255cm",
-        "soil-temperature-28-to-100cm",
-        "soil-temperature-7-to-28cm",
     ]
     assert {product.layout for product in SNAPSHOT_PRODUCTS} == {"monthly"}, (
         "a day-grain product left in this tuple is a lane withheld for no reason; promote it instead"

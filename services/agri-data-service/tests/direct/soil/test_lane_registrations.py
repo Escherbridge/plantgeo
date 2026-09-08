@@ -36,13 +36,12 @@ EXPECTED_CADENCE_DAYS = 1
 #: The five soil products the snapshot manifest actually holds. The three `soil-field-moisture-*`
 #: streams are dedicated slider prefixes rather than snapshot products (`parquet_ops/coverage.py`
 #: DEDICATED_SLIDER_PRODUCT_LAYERS), so they have no descriptor to carry a forward edge.
-SNAPSHOT_ROOTED_SOIL_LAYERS = (
-    "soil-field-vpd",
-    "soil-temperature-0-to-7cm",
-    "soil-temperature-7-to-28cm",
-    "soil-temperature-28-to-100cm",
-    "soil-temperature-100-to-255cm",
-)
+#: Empty since 2026-09-08. Every ERA5-Land soil product -- `soil-field-vpd` and the four
+#: `soil-temperature-*` -- finished its day-grain re-export that day and left `SNAPSHOT_PRODUCTS`
+#: for the ordinary census, so none of them has a descriptor to look up any more. Kept as an
+#: explicit empty tuple, and asserted empty below, so that a lane REAPPEARING here is a test
+#: failure rather than a silent regression to manifest-served days.
+SNAPSHOT_ROOTED_SOIL_LAYERS: tuple[str, ...] = ()
 
 
 def test_every_soil_product_is_a_registered_lane_with_a_time_axis() -> None:
@@ -105,10 +104,14 @@ def test_every_soil_slug_resolves_to_the_schema_the_writer_will_conform_to() -> 
         assert schema is product.stream_schema
 
 
-def test_the_five_snapshot_rooted_soil_products_route_forward_days_through_the_lane() -> None:
-    """Without the edge these products go on reporting 2026-08-02 while the bucket grows past it."""
-    for layer in SNAPSHOT_ROOTED_SOIL_LAYERS:
-        assert PRODUCT_BY_LAYER[layer].forward_first_day == SOIL_DIRECT_WRITER_START_DAY, layer
+def test_no_soil_product_is_snapshot_rooted_any_more() -> None:
+    """The whole ERA5-Land family serves from its live prefix now; a re-entry here is a regression."""
+    assert SNAPSHOT_ROOTED_SOIL_LAYERS == ()
+    for product in SOIL_FIELD_PRODUCTS:
+        assert product.stream not in PRODUCT_BY_LAYER, (
+            f"{product.stream} is back in SNAPSHOT_PRODUCTS; its days would be served from the frozen "
+            "manifest again instead of the day-grain live prefix built on 2026-09-08"
+        )
 
 
 def test_the_three_moisture_streams_are_lanes_rather_than_snapshot_products() -> None:

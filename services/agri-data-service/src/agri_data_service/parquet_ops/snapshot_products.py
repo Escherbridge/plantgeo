@@ -47,7 +47,6 @@ from agri_data_service.parquet_ops.wire import (
     contiguous_ranges,
 )
 from agri_data_service.pipeline.direct.climate.products import CLIMATE_DIRECT_WRITER_START_DAY
-from agri_data_service.pipeline.direct.soil.products import SOIL_DIRECT_WRITER_START_DAY
 from agri_data_service.warehouse.parquet.schema import SIGNAL_PLANE_SCHEMA, get_stream_schema
 from agri_data_service.warehouse.parquet.snapshot_signal_product import SOIL_TEMPERATURE_FIELDS
 
@@ -302,55 +301,6 @@ SNAPSHOT_PRODUCTS: Final[tuple[SnapshotProduct, ...]] = (
         coverage_cell_grid_name="nasa-power-0.5-degree",
         coverage_cells_per_day=397,
         forward_first_day=CLIMATE_DIRECT_WRITER_START_DAY,
-    ),
-    SnapshotProduct(
-        "soil-field-vpd",
-        "monthly",
-        _layer_root("soil-field-vpd"),
-        _layer_root("soil-field-vpd"),
-        schema_columns=SIGNAL_PRODUCT_COLUMNS,
-        contract_version="plantgeo.vpd.snapshot-product.v1",
-        forward_first_day=SOIL_DIRECT_WRITER_START_DAY,
-    ),
-    SnapshotProduct(
-        "soil-temperature-0-to-7cm",
-        "monthly",
-        _derived_lane_root("soil-temperature-0-to-7cm"),
-        _derived_lane_root("soil-temperature-0-to-7cm"),
-        expected_manifest_sha256="67216660bd64f938e883dd51eba0fc9c28afbdd3eaa79351862eb96f4d4e480f",
-        schema_columns=SOIL_TEMPERATURE_COLUMNS,
-        contract_version="plantgeo.signal-product-breakdown.v1",
-        forward_first_day=SOIL_DIRECT_WRITER_START_DAY,
-    ),
-    SnapshotProduct(
-        "soil-temperature-7-to-28cm",
-        "monthly",
-        _derived_lane_root("soil-temperature-7-to-28cm"),
-        _derived_lane_root("soil-temperature-7-to-28cm"),
-        expected_manifest_sha256="0120ae2a9d6922b67861bf257b8c1b354a97e6cc0e889e146305ccd4e4a835d1",
-        schema_columns=SOIL_TEMPERATURE_COLUMNS,
-        contract_version="plantgeo.signal-product-breakdown.v1",
-        forward_first_day=SOIL_DIRECT_WRITER_START_DAY,
-    ),
-    SnapshotProduct(
-        "soil-temperature-28-to-100cm",
-        "monthly",
-        _derived_lane_root("soil-temperature-28-to-100cm"),
-        _derived_lane_root("soil-temperature-28-to-100cm"),
-        expected_manifest_sha256="3cacd5856630dc252f4f71d6b7156ec98cb8125270743420c5d7fa692ca2ce34",
-        schema_columns=SOIL_TEMPERATURE_COLUMNS,
-        contract_version="plantgeo.signal-product-breakdown.v1",
-        forward_first_day=SOIL_DIRECT_WRITER_START_DAY,
-    ),
-    SnapshotProduct(
-        "soil-temperature-100-to-255cm",
-        "monthly",
-        _derived_lane_root("soil-temperature-100-to-255cm"),
-        _derived_lane_root("soil-temperature-100-to-255cm"),
-        expected_manifest_sha256="d40aa7851877f2ab4f85b71b7e8a9ed7bb6c5c4d754e5f54ee8ec6b4237cb82f",
-        schema_columns=SOIL_TEMPERATURE_COLUMNS,
-        contract_version="plantgeo.signal-product-breakdown.v1",
-        forward_first_day=SOIL_DIRECT_WRITER_START_DAY,
     ),
 )
 

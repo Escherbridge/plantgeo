@@ -76,7 +76,11 @@ EXPECTED_CENSUS_LIST_WORKERS: Final = 3
 #: `climate-field-relative-humidity` and the three `soil-wetness-*`. One lane per departure, because
 #: `registered_census_lanes` derives from `LANE_REGISTRATIONS` minus `PRODUCT_BY_LAYER` and every one
 #: of them was already registered -- dropping the entry from the tuple was the whole edit.
-EXPECTED_REGISTERED_CENSUS_LANES: Final = 22
+#: The whole ERA5-Land family joined on 2026-09-08 -- `soil-field-vpd` plus the four
+#: `soil-temperature-*` -- once their day-grain windows were built. That was a RE-EXPORT, not a
+#: promotion: every one of their frozen roots is month-grain and can never be copied onto a live
+#: prefix. Only the three `climate-field-air-temperature-*` remain snapshot products.
+EXPECTED_REGISTERED_CENSUS_LANES: Final = 27
 
 #: Every registered physical lane must report all four serving rungs.
 EXPECTED_CENSUS_RUNG_ROWS: Final = EXPECTED_REGISTERED_CENSUS_LANES * len(ZOOM_TIERS)
