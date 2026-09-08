@@ -204,7 +204,7 @@ async def read_day(request: Request) -> HTTPResponse:
     except RequestError as exc:
         return _refused(exc)
 
-    # DAY-AWARE, not layer-aware. Five climate products are frozen only BELOW their forward first
+    # DAY-AWARE, not layer-aware. Four climate products are frozen only BELOW their forward first
     # day; a request at or above it is answered by the live lane like any other layer's day.
     if serves_from_snapshot(scope.layer, day):
         return await _answer(

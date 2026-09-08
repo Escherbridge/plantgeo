@@ -1,6 +1,6 @@
 """Bounded reads over manifest-closed immutable snapshot product prefixes.
 
-A PRODUCT MAY HAVE A FORWARD EDGE THE MANIFEST CANNOT SEE. Five climate products and the three
+A PRODUCT MAY HAVE A FORWARD EDGE THE MANIFEST CANNOT SEE. Four climate products and the three
 soil-wetness lanes were frozen at `CLIMATE_DIRECT_WRITER_START_DAY`, and the five ERA5-Land soil
 products at `SOIL_DIRECT_WRITER_START_DAY` -- two different upstreams, two different release
 schedules, two different edges. Every day from a product's own edge on is written by that upstream's
@@ -174,26 +174,62 @@ _PINNED_ARROW_SCHEMAS: Final[dict[tuple[str, ...], pa.Schema]] = {
 #: so a layer in both subsystems emits TWO rows keyed by the same layer name and which axis it draws
 #: becomes array order. `tests/parquet_ops/test_coverage_census.py` pins that invariant.
 #:
-#: ONE LANE LEFT THIS TUPLE ON 2026-09-07, and the thirteen below deliberately did not. Under
-#: `PARQUET_COVERAGE_AUTHORITY=availability` a snapshot product carries no availability index, so
-#: `_build_product_coverage` withholds the whole lane -- a product cannot be served at all under the
-#: live authority. There is ONE rule for whether a lane may leave, and it is a measurement, not a
+#: TWO LANES HAVE LEFT THIS TUPLE, both on 2026-09-07, and the twelve below deliberately did not.
+#: Under `PARQUET_COVERAGE_AUTHORITY=availability` a snapshot product carries no availability index,
+#: so `_build_product_coverage` withholds the whole lane -- a product cannot be served at all under
+#: the live authority. There is ONE rule for whether a lane may leave, and it is a measurement, not a
 #: preference: the lane's LIVE prefix, `layer=<slug>/kind=observed/`, must already hold everything
 #: its `snapshot=<id>/` root holds, so the move can only ADD days. Both prefixes were counted on
 #: 2026-09-07; see `conductor/tracks/environmental_postgres_retirement_20260904/`
 #: `evidence/snapshot-products-vs-availability-20260907.md`.
 #:
-#: THE ONE THAT LEFT. `climate-field-dew-point`: 16,654 days at the live prefix,
-#: 1981-01-01..2026-08-06 CONTIGUOUS, four rungs on every one, against a snapshot root of 691 objects
-#: and ZERO day partitions -- a manifest and breakdown, never partitioned data. Nothing it served is
-#: lost, so its move is a pure gain of 16,654 days. Its retired receipt was
-#: `c2972ea61ebfb66a86fa1e834625fae163e5d0a0abfd39f8c701edca3e59b71a`.
+#: THE TWO THAT LEFT, and they satisfied the rule two different ways:
 #:
-#: THE THIRTEEN THAT STAYED all fail that one rule, in three shapes:
+#: - `climate-field-dew-point` already satisfied it: 16,654 days at the live prefix,
+#:   1981-01-01..2026-08-06 CONTIGUOUS, four rungs on every one, against a snapshot root of 691
+#:   objects and ZERO day partitions -- a manifest and breakdown, never partitioned data. Nothing it
+#:   served is lost, so its move is a pure gain of 16,654 days. Its retired receipt was
+#:   `c2972ea61ebfb66a86fa1e834625fae163e5d0a0abfd39f8c701edca3e59b71a`.
+#: - `climate-field-wind-speed` was MADE to satisfy it, and until then could not move at all: it
+#:   held ZERO objects at the live prefix while all 1,560 of its real days sat in the frozen root,
+#:   so an index over its live prefix would have described emptiness. Its snapshot root was PROMOTED
+#:   onto the live prefix by server-side copy on 2026-09-07 -- the copy dropped exactly one path
+#:   segment, `snapshot=<id>/`, and touched nothing else, and the root still exists untouched. The
+#:   live prefix then measured 6,240 objects over 1,560 days, 2022-04-30..2026-08-06, span 1,560 and
+#:   therefore CONTIGUOUS, the full four-rung ladder on all 1,560, matching the root's 6,240 objects
+#:   exactly with 0 copy failures. That is the rule satisfied by construction: the live prefix holds
+#:   everything the root holds, so the move can only ADD days. Its retired receipt was
+#:   `7dced7e273ed8357cafc8388742b892074061dcd59cd9ffeff086f0cb95da13f`.
 #:
-#: - SEVEN hold ZERO objects at the live prefix -- the three `climate-field-air-temperature-*`,
-#:   `climate-field-wind-speed` and the three `soil-wetness-*`. An index over their live prefix would
-#:   describe emptiness while their ~1,560 real days sit in the frozen root.
+#: A PROMOTION IS TWO STEPS, AND THE SECOND IS THE ONE THAT IS EASY TO MISS. Those 6,240 copied
+#: objects were 1,560 x 4 EXACTLY: part files and NOTHING else. A snapshot product proves a day
+#: through the manifest's `part_receipts`, never through a per-day completion marker, so the copy
+#: could not carry markers that were never written -- and `classify_partition_day` reads `has_parts`
+#: without a completion as `incomplete`, which is NOT `data`. A read-only dry run on 2026-09-07
+#: measured exactly that: selectable_day_count 0, refused_day_count 1,560, every one
+#: `parts_without_completion_marker`. Left there, the move would have taken this lane from
+#: manifest-answered to advertising nothing.
+#:
+#: The markers were then written from the COPIED OBJECTS, not from the frozen receipts: every
+#: sha256 is recomputed over the bytes read back at the live prefix and every row count comes from
+#: that same object's Parquet footer, because the rule this whole contract rests on is never to
+#: emit a digest not computed from the object it describes. The frozen per-day checkpoints were
+#: used only as an INDEPENDENT cross-check, and all 6,240 agreed on sha256, row_count and
+#: byte_count with zero refusals -- two sources agreeing, rather than one source copied twice. The
+#: same dry run then reported selectable_day_count 1,560, refused 0.
+#:
+#: SO THE RECIPE IS THREE STEPS, NOT ONE: copy the frozen root, write a completion marker per
+#: promoted (day, rung) from the copied bytes, and only then move the lane out of this tuple. THE
+#: OBJECT COUNT AND THE RUNG LADDER ARE NOT THE WHOLE RULE -- a day is movable only when it holds a
+#: TERMINAL STATE, which is one more thing to count at the live prefix than either census counts.
+#:
+#: THE TWELVE THAT STAYED all fail that one rule, in three shapes:
+#:
+#: - SIX hold ZERO objects at the live prefix -- the three `climate-field-air-temperature-*` and the
+#:   three `soil-wetness-*`. An index over their live prefix would describe emptiness while their
+#:   ~1,560 real days sit in the frozen root. This is exactly the shape wind-speed was in, so it is
+#:   the shape with a PROVEN remedy: copy the root, write the markers from the copied bytes, move.
+#:   Six lanes x ~6,240 objects is the whole cost, and none of it is a re-export.
 #: - FIVE hold far less at the live prefix than in their snapshot root: `soil-field-vpd` (448 days)
 #:   and the four `soil-temperature-*` (2 days each). Moving them would SHORTEN their axis.
 #: - `climate-field-relative-humidity` is the subtle one, and it is the same rule. Its two prefixes
@@ -206,9 +242,13 @@ _PINNED_ARROW_SCHEMAS: Final[dict[tuple[str, ...], pa.Schema]] = {
 #:   `expected_manifest_sha256` and no audit receipt was ever recorded, which made it look unbuilt;
 #:   the 2026-09-07 listing settles that it was built.
 #:
-#: Every one of the thirteen waits on the SAME condition, which is why they are one list and not
-#: two: its 2022-2026 history republished at the live prefix, then re-measured. Do not sweep any of
-#: them out with a cleanup, and never on the strength of a live-prefix count alone -- the snapshot
+#: Every one of the twelve waits on the SAME condition, which is why they are one list and not two:
+#: its 2022-2026 history published at the live prefix, then re-measured. Wind-speed is what clearing
+#: that condition actually costs, and it is now a recipe rather than a question: COPY the frozen
+#: root, WRITE a completion marker per (day, rung) from the copied bytes, re-measure, THEN move. A
+#: lane never leaves on a plan to finish that later -- the marker step is not optional, it is what
+#: turns `incomplete` into `data`. Do not sweep any
+#: of them out with a cleanup, and never on the strength of a live-prefix count alone -- the snapshot
 #: root has to be counted too, or a complementary lane reads like a superset.
 SNAPSHOT_PRODUCTS: Final[tuple[SnapshotProduct, ...]] = (
     SnapshotProduct(
@@ -250,16 +290,6 @@ SNAPSHOT_PRODUCTS: Final[tuple[SnapshotProduct, ...]] = (
         _layer_root("climate-field-relative-humidity"),
         f"{_layer_root('climate-field-relative-humidity')}/_breakdown",
         contract_version="climate-field-relative-humidity.snapshot-breakdown.v1",
-        forward_first_day=CLIMATE_DIRECT_WRITER_START_DAY,
-    ),
-    SnapshotProduct(
-        "climate-field-wind-speed",
-        "daily",
-        _layer_root("climate-field-wind-speed"),
-        _layer_root("climate-field-wind-speed"),
-        expected_manifest_sha256="7dced7e273ed8357cafc8388742b892074061dcd59cd9ffeff086f0cb95da13f",
-        schema_columns=SIGNAL_PRODUCT_COLUMNS,
-        contract_version="plantgeo.climate-field-wind-speed.snapshot.v1",
         forward_first_day=CLIMATE_DIRECT_WRITER_START_DAY,
     ),
     SnapshotProduct(

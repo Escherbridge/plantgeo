@@ -63,8 +63,11 @@ rather than on a production bill.
 - `test_the_serving_session_caps_memory_threads_and_disables_spilling` — asserts the guard by
   reading `duckdb_settings()` back, so a future edit that "tunes" `max_temp_directory_size` off zero
   fails here rather than on the host.
-- `test_a_cold_census_lists_each_registered_lane_tier_once` — proves the cold walk still covers the
-  frozen thirteen-by-four ladder exactly once; the timeout fix changes scheduling, not scope.
+- `test_a_cold_census_lists_each_registered_and_product_lane_tier_once` — proves the cold walk still
+  covers the whole ladder exactly once; the timeout fix changes scheduling, not scope. The ladder is
+  `EXPECTED_REGISTERED_CENSUS_LANES` (18 since `climate-field-wind-speed` joined it on 2026-09-07)
+  by the four rungs, derived from the registries rather than restated, because it moves every time a
+  lane crosses between `SNAPSHOT_PRODUCTS` and the census.
 - `test_a_cold_census_bounds_parallel_r2_listings_without_a_clock` — the first three lane listings
   rendezvous at a barrier, proving the cold path is concurrent and capped at three without asserting
   wall-clock timing.

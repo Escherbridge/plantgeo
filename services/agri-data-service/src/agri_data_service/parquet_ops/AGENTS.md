@@ -164,16 +164,35 @@ made `climate-field-relative-humidity` look ready on 2026-09-07 — 15,038 four-
 1981-01-01 — when the two prefixes are in fact COMPLEMENTARY: its snapshot root holds a measured
 12,538 objects over 1,560 days, 2022-04-30..2026-08-06, with a 55-day hole between the two that
 neither holds. Moving it would have swapped the most recent four years for old history, which for a
-map slider is the wrong end to trade. Only `climate-field-dew-point` left the allowlist that day: its
-snapshot root is 691 objects and zero day partitions, a manifest and breakdown rather than
-partitioned data, so its move is a pure gain of 16,654 days. The thirteen that stayed all wait on the
-same condition — their history republished at the live prefix, then re-measured. The per-lane counts
-are recorded above `SNAPSHOT_PRODUCTS` itself and in
+map slider is the wrong end to trade. Two lanes left the allowlist that day.
+`climate-field-dew-point` already satisfied the rule: its snapshot root is 691 objects and zero day
+partitions, a manifest and breakdown rather than partitioned data, so its move is a pure gain of
+16,654 days. `climate-field-wind-speed` was MADE to satisfy it — it held ZERO objects at its live
+prefix, which is why it could not move at all, until its snapshot root was promoted onto that prefix
+by server-side copy, dropping exactly the `snapshot=<id>/` segment and leaving the root untouched.
+Re-measured after the copy the live prefix holds 6,240 objects over 1,560 contiguous days,
+2022-04-30..2026-08-06, four rungs on every one, matching the root's 6,240 exactly. **Promote,
+re-measure, THEN move** — a lane never leaves on a plan to promote it later.
+
+**Wind-speed's move is a prerequisite, not a finish, and counting objects is what hid that.** 6,240
+is 1,560 × 4 exactly: part files and no markers. A read-only
+`scripts/compile_availability_bootstrap.py --lane climate-field-wind-speed --dry-run` on 2026-09-07
+admitted all 1,560 days as candidates and refused every one `parts_without_completion_marker` —
+`selectable_day_count` 0, `refused_day_count` 1,560. A snapshot product proves a day through the
+manifest's `part_receipts`, never a per-day completion marker, so the copy could not bring markers
+that never existed. `classify_partition_day` reads parts-without-completion as `incomplete`, not
+`data`, so until markers are written the ordinary census advertises none of these days and
+`resolve_day` refuses them — where the manifest answered all 1,560. **Count TERMINAL STATES at the
+live prefix, not objects and rungs**: that is one more thing to measure than either prefix census
+measured, and it is the difference between a lane that can be bootstrapped and one that only looks
+it. The twelve that stayed
+all wait on the same condition, their history published at the live prefix and then re-measured. The
+per-lane counts are recorded above `SNAPSHOT_PRODUCTS` itself and in
 `conductor/tracks/environmental_postgres_retirement_20260904/evidence/snapshot-products-vs-availability-20260907.md`.
 
 ### `forward_first_day`: a product may be frozen at one end only
 
-The five NASA POWER climate products are closed BELOW `pipeline/direct/climate/products.py`'s
+The four NASA POWER climate products are closed BELOW `pipeline/direct/climate/products.py`'s
 `CLIMATE_DIRECT_WRITER_START_DAY` and live at and above it — the direct writer publishes those days
 into the ORDINARY lane layout, `layer=<slug>/kind=observed/zoom=NN/year=/month=/day=/`, under a
 completion marker rather than under this module's receipt chain. The constant is IMPORTED from the
@@ -224,9 +243,11 @@ partial day is declared partial, and its last row is not the day's last row.
 
 **What the measurement actually said (2026-09-07, against production).** The cold coverage cost was
 attributed to "104 lanes at ~100 ms serial", which is not what 104 is: it is the ROW count —
-26 availability lane roots (13 registered plus 13 snapshot forward halves) times four rungs — plus
-16 census rows from the four `static_lookup` lanes. Instrumenting one cold build gave **1,390 GETs
-and 44.4 MB**, decomposed as:
+26 availability lane roots (14 time-bearing registered lanes plus 12 snapshot forward halves) times
+four rungs — plus 16 census rows from the four `static_lookup` lanes. The split was 13 and 13 when
+this was instrumented; `climate-field-wind-speed` moved across it later the same day, which changes
+which side a root is counted on and NOT the total, so the numbers below still stand. Instrumenting
+one cold build gave **1,390 GETs and 44.4 MB**, decomposed as:
 
 | component | GETs | bytes | serial CPU |
 | --- | ---: | ---: | ---: |

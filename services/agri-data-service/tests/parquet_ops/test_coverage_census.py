@@ -71,9 +71,11 @@ CONCURRENT_COLD_LOADS = 4
 EXPECTED_CENSUS_LIST_WORKERS: Final = 3
 
 #: Direct and dedicated physical lanes included in one production census. 16 until 2026-09-07, when
-#: `climate-field-dew-point` alone left `SNAPSHOT_PRODUCTS` for the ordinary census so it could own
-#: an availability index and stop being withheld.
-EXPECTED_REGISTERED_CENSUS_LANES: Final = 17
+#: `climate-field-dew-point` and then `climate-field-wind-speed` left `SNAPSHOT_PRODUCTS` for the
+#: ordinary census so they could own an availability index and stop being withheld -- one lane per
+#: departure, because `registered_census_lanes` derives from `LANE_REGISTRATIONS` minus
+#: `PRODUCT_BY_LAYER` and both were already registered.
+EXPECTED_REGISTERED_CENSUS_LANES: Final = 18
 
 #: Every registered physical lane must report all four serving rungs.
 EXPECTED_CENSUS_RUNG_ROWS: Final = EXPECTED_REGISTERED_CENSUS_LANES * len(ZOOM_TIERS)
@@ -527,14 +529,22 @@ def test_no_layer_belongs_to_both_the_census_and_the_snapshot_product_subsystem(
     assert len(census_layers) == len(set(census_layers)), "one census row per layer, or a lookup is ambiguous"
 
 
-def test_the_lane_that_left_the_snapshot_subsystem_is_censused_as_an_ordinary_daily_series() -> None:
-    """It owns an availability index only by being a census lane; a product carries none by design.
+def test_the_lanes_that_left_the_snapshot_subsystem_are_censused_as_ordinary_daily_series() -> None:
+    """They own an availability index only by being census lanes; a product carries none by design.
 
-    No tuple was edited to admit it: `climate-field-dew-point` is a `LANE_REGISTRATIONS` member, so
-    dropping it from `PRODUCT_BY_LAYER` was enough for the `registered` branch to pick it up with its
-    registered cadence and NASA POWER publication lag intact. `daily_series` is what makes it
-    time-bearing, which is what `scripts/compile_availability_bootstrap.py::_resolve_lanes` requires
-    before it will compile a bootstrap input for it.
+    No tuple was edited to admit either: `climate-field-dew-point` and `climate-field-wind-speed` are
+    both `LANE_REGISTRATIONS` members, so dropping each from `PRODUCT_BY_LAYER` was enough for the
+    `registered` branch to pick it up with its registered cadence and NASA POWER publication lag
+    intact. `daily_series` is what makes them time-bearing, which is what
+    `scripts/compile_availability_bootstrap.py::_resolve_lanes` requires before it will compile a
+    bootstrap input for them.
+
+    Wind-speed left only AFTER its snapshot root was promoted onto its live prefix on 2026-09-07 --
+    6,240 objects over 1,560 contiguous days, 2022-04-30..2026-08-06, four rungs on every one,
+    matching the root exactly -- because until then the live prefix held ZERO objects and an index
+    over it would have described emptiness. Census MEMBERSHIP is all this asserts: those 6,240
+    objects are parts with no completion markers, so the bootstrap compiler refuses every one of the
+    1,560 days until markers are written, and no test here may imply otherwise.
 
     `climate-field-relative-humidity` is asserted ABSENT in the same breath. It is registered too, so
     the only thing keeping it out of the census is its `SNAPSHOT_PRODUCTS` membership -- and that
@@ -542,16 +552,17 @@ def test_the_lane_that_left_the_snapshot_subsystem_is_censused_as_an_ordinary_da
     live prefix does not, so censusing it would strand the most recent four years.
     """
     lanes = {lane.layer: lane for lane in registered_census_lanes()}
-    slug = "climate-field-dew-point"
 
-    assert slug in lanes
-    assert slug not in DEDICATED_SLIDER_PRODUCT_LAYERS, f"{slug} is a registration, not a derived fallback"
-    assert lanes[slug].nature == "daily_series"
-    assert lanes[slug].kind == "observed"
-    assert (lanes[slug].cadence_days, lanes[slug].publication_lag_days) == (
-        LANE_REGISTRY[slug].cadence_days,
-        LANE_REGISTRY[slug].publication_lag_days,
-    )
+    for slug in ("climate-field-dew-point", "climate-field-wind-speed"):
+        assert slug in lanes
+        assert slug not in PRODUCT_BY_LAYER, f"{slug} left the allowlist; a residual entry re-splits its axis"
+        assert slug not in DEDICATED_SLIDER_PRODUCT_LAYERS, f"{slug} is a registration, not a derived fallback"
+        assert lanes[slug].nature == "daily_series", slug
+        assert lanes[slug].kind == "observed", slug
+        assert (lanes[slug].cadence_days, lanes[slug].publication_lag_days) == (
+            LANE_REGISTRY[slug].cadence_days,
+            LANE_REGISTRY[slug].publication_lag_days,
+        ), slug
     assert "climate-field-relative-humidity" in LANE_REGISTRY, "registered, so only PRODUCT_BY_LAYER excludes it"
     assert "climate-field-relative-humidity" not in lanes, "it is still censused through build_snapshot_coverage"
 
