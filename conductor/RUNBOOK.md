@@ -1406,3 +1406,87 @@ answer differs per lane today, which is why the admitted five were curated by ha
 
 dew-point alone is 133,232 objects, and the compiler's evidence step runs ~150 objects/minute
 serially. Budget `evidence_count / 150` minutes per lane and run lanes in parallel.
+
+## THE 14-LANE QUESTION IS ANSWERED, AND `layout` IS THE ANSWER. 2026-09-07.
+
+The section above asks: **does a snapshot product's availability index describe its frozen snapshot
+root, its live lane prefix, or the union?** Settled by measurement, and by one wrong move worth
+recording.
+
+**The index describes the LIVE lane prefix, always.** Every validated bootstrap prints
+`"lane_root": "layer=<slug>/kind=observed"` — never a `snapshot=` path, never a `derived-canonical/`
+one. So promotion is not a choice between roots: it is the act of making the live prefix hold what
+the frozen root holds, after which the index describes the live prefix like every other lane's.
+
+### The lanes were never uniform, and `layout` is the field that says so
+
+`SnapshotProduct.layout` is the declared partition grain and the ONLY trustworthy discriminator:
+
+| `layout`  | frozen shape                          | promotion              |
+|-----------|---------------------------------------|------------------------|
+| `daily`   | `kind=observed/zoom=NN/year/month/day` | server-side COPY       |
+| `monthly` | `kind=observed/zoom=NN/year/month`     | IMPOSSIBLE by copy     |
+
+A month-grain root copied onto a live prefix puts month files where `classify_partition_day` looks
+for a `day=` segment. The lane then advertises nothing AND the objects have to be hunted down and
+deleted. This is not hypothetical: the three `climate-field-air-temperature-*` roots were copied on
+2026-09-07 on the strength of the wind-speed recipe, produced 1,908 unreadable objects across three
+live prefixes, and were reverted the same day. **Check `layout` before reaching for a copier.**
+
+### `data_root` is authoritative — there are TWO trees, not one
+
+`_layer_root()` gives `layer=<slug>/snapshot=<id>`; `_derived_lane_root()` gives
+`derived-canonical/signal-observation/lane=<slug>/snapshot=<id>`. A census that lists only
+`layer=<slug>/` reports a derived-tree lane as holding NOTHING ANYWHERE — which is exactly how the
+three `soil-wetness-*` lanes were recorded as empty when each held 6,240 parts and 6,240 markers.
+Always census `product.data_root`.
+
+### The `_complete.json` trap: same filename, different document
+
+The derived tree's `_complete.json` is a product-breakdown SIDECAR, not a completion marker:
+
+    SIDECAR  {base_lineage_sha256, contract_version, day, input_manifest_sha256, lane, part_count,
+              part_key, part_sha256, product_parameter, row_count, tier}
+    MARKER   {completed_at, part_count, row_count, run_id, schema_version}
+
+A promoted lane therefore lands with a `_complete.json` on every day and still has NO terminal
+state, and the compiler refuses it with "no day holds the exact required-rungs ladder (0, 5, 9, 13)
+in one terminal state" while every part sits there correct. Repair by recomputing SHA-256 and row
+count from the bytes at the LIVE prefix, cross-checking both against the sidecar's recorded values,
+and only then writing a real marker. 18,720 markers were rewritten this way with zero refusals —
+every recomputed digest agreed with its frozen sidecar. `climate-field-relative-humidity` did NOT
+need this: its frozen root already held real `PartitionCompletion` documents. Check, do not assume.
+
+### What landed, and what the tuple means now
+
+Four lanes left `SNAPSHOT_PRODUCTS` (12 -> 8): `climate-field-relative-humidity` by UNION (its live
+1981-01-01..2022-03-05 and frozen 2022-04-30..2026-08-06 are disjoint, so copying into non-colliding
+keys keeps both — 16,598 days on all four rungs), and the three `soil-wetness-*` by straight copy
+plus marker repair (1,560 days each).
+
+**EVERY REMAINING ENTRY IS `monthly`.** That is the tuple's invariant now, and it is why the list is
+finally one kind of problem: the three air-temperature lanes, `soil-field-vpd` and the four
+`soil-temperature-*` all need a day-grain RE-EXPORT, not a rename. Do not attempt a copy on any of
+them; a promoter that respects `layout` will refuse them outright, which is the correct behaviour.
+
+### `MAX_INPUT_BYTES` is a real ceiling — trim the window, do not raise the cap
+
+`availability_index.py:90` caps a bootstrap input at 64 MiB. Relative-humidity's full 16,598-day
+input compiled to 69.12 MiB (~1,092 bytes/row) and was REFUSED. It was recompiled with
+`--since 1986-01-01` to 14,772 days / 61.52 MiB. **1981-01-01..1985-12-31 is therefore in the bucket
+but not in the index.** The designed remedy is an append — `load_publication_request` takes a
+`bootstrap_receipt_key` — but NO compiler emits publication documents yet, so recovering those
+1,826 days is real work, not a flag. Raising the cap to fit a payload would be the wrong fix.
+
+### soil-survey: the key-cap story is dead, the budget story is live
+
+`conductor/RUNBOOK.md`'s own "Still owed" line calling this an "upstream 200,001-vs-200,000 key cap"
+is STALE. Commit `68da7af` (2026-08-23) deleted `MAX_SOIL_SURVEY_POLYGON_KEYS` and replaced the
+read-everything query with keyset pagination. The live blocker is a time budget: job definition
+`plantgeo.executor.parquet-soil-survey` allows `time_budget_seconds=1230`, and its only recorded run
+(`d4896a98-5e41-4fad-b31b-6c265375db19`) ran 3h20m before being marked failed with a NULL error
+summary — a silent kill before `_finalize_written_day`. The bucket holds 959 parts at `zoom=13`
+across two release-days and **zero** completion markers, so `close_lane_coverage` correctly returns
+null bounds and the slider says `lane_never_written`. Note also that even a completed export will
+NOT serve: `parquet-slider-capabilities.ts:123` pins soil-survey to `servingReader: "postgresql"`,
+so it would next surface as `reader_not_parquet`. Three separate things to fix, in that order.

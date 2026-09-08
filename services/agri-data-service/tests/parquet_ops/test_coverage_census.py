@@ -71,11 +71,12 @@ CONCURRENT_COLD_LOADS = 4
 EXPECTED_CENSUS_LIST_WORKERS: Final = 3
 
 #: Direct and dedicated physical lanes included in one production census. 16 until 2026-09-07, when
-#: `climate-field-dew-point` and then `climate-field-wind-speed` left `SNAPSHOT_PRODUCTS` for the
-#: ordinary census so they could own an availability index and stop being withheld -- one lane per
-#: departure, because `registered_census_lanes` derives from `LANE_REGISTRATIONS` minus
-#: `PRODUCT_BY_LAYER` and both were already registered.
-EXPECTED_REGISTERED_CENSUS_LANES: Final = 18
+#: SIX lanes left `SNAPSHOT_PRODUCTS` for the ordinary census so they could own an availability index
+#: and stop being withheld: `climate-field-dew-point`, `climate-field-wind-speed`,
+#: `climate-field-relative-humidity` and the three `soil-wetness-*`. One lane per departure, because
+#: `registered_census_lanes` derives from `LANE_REGISTRATIONS` minus `PRODUCT_BY_LAYER` and every one
+#: of them was already registered -- dropping the entry from the tuple was the whole edit.
+EXPECTED_REGISTERED_CENSUS_LANES: Final = 22
 
 #: Every registered physical lane must report all four serving rungs.
 EXPECTED_CENSUS_RUNG_ROWS: Final = EXPECTED_REGISTERED_CENSUS_LANES * len(ZOOM_TIERS)
@@ -542,14 +543,17 @@ def test_the_lanes_that_left_the_snapshot_subsystem_are_censused_as_ordinary_dai
     Wind-speed left only AFTER its snapshot root was promoted onto its live prefix on 2026-09-07 --
     6,240 objects over 1,560 contiguous days, 2022-04-30..2026-08-06, four rungs on every one,
     matching the root exactly -- because until then the live prefix held ZERO objects and an index
-    over it would have described emptiness. Census MEMBERSHIP is all this asserts: those 6,240
-    objects are parts with no completion markers, so the bootstrap compiler refuses every one of the
-    1,560 days until markers are written, and no test here may imply otherwise.
+    over it would have described emptiness. Its root carried no `_complete.json` to copy, so a marker
+    was written per (day, rung) from the copied bytes before it left; a day holding parts and no
+    terminal state reads as `incomplete`, never `data`.
 
-    `climate-field-relative-humidity` is asserted ABSENT in the same breath. It is registered too, so
-    the only thing keeping it out of the census is its `SNAPSHOT_PRODUCTS` membership -- and that
-    membership is load-bearing: its snapshot root holds 1,560 days (2022-04-30..2026-08-06) that its
-    live prefix does not, so censusing it would strand the most recent four years.
+    `climate-field-relative-humidity` is asserted PRESENT, which reverses what this test said earlier
+    the same day. The measurement did not change, the reading of it did: its live prefix held
+    1981-01-01..2022-03-05 and its root held 2022-04-30..2026-08-06, and those ranges are DISJOINT.
+    Read as a replacement that looked like trading the recent four years for old history; done as a
+    copy into non-colliding keys it is a UNION, and the lane now holds 16,598 days on all four rungs.
+    Census membership is all this asserts -- what each lane may then publish is the bootstrap
+    compiler's business, and no test here may imply otherwise.
     """
     lanes = {lane.layer: lane for lane in registered_census_lanes()}
 
@@ -563,8 +567,12 @@ def test_the_lanes_that_left_the_snapshot_subsystem_are_censused_as_ordinary_dai
             LANE_REGISTRY[slug].cadence_days,
             LANE_REGISTRY[slug].publication_lag_days,
         ), slug
-    assert "climate-field-relative-humidity" in LANE_REGISTRY, "registered, so only PRODUCT_BY_LAYER excludes it"
-    assert "climate-field-relative-humidity" not in lanes, "it is still censused through build_snapshot_coverage"
+    assert "climate-field-relative-humidity" in LANE_REGISTRY, "registered, so only PRODUCT_BY_LAYER excluded it"
+    assert "climate-field-relative-humidity" in lanes, (
+        "it left SNAPSHOT_PRODUCTS on 2026-09-07 once its live prefix held BOTH its own "
+        "1981-01-01..2022-03-05 history and the 2022-04-30..2026-08-06 days copied from its frozen "
+        "root -- disjoint ranges, so the union adds the recent four years rather than trading them"
+    )
 
 
 def test_the_census_is_memoized_so_a_burst_of_page_loads_pays_one_listing_walk() -> None:

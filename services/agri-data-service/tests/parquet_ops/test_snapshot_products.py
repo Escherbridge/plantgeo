@@ -785,13 +785,30 @@ def test_unbound_completion_never_exposes_a_snapshot() -> None:
 
 def test_registered_product_families_pin_their_exact_top_level_schemas() -> None:
     signal = PRODUCT_BY_LAYER["climate-field-air-temperature-mean"]
-    # `climate-field-relative-humidity` is the ONE product that pins no columns and therefore resolves
-    # the WHOLE registered stream schema -- 33 columns against the 12 a signal-plane product pins, so
-    # it is the only member that tells the two branches of `_snapshot_product_arrow_schema` apart.
-    humidity = PRODUCT_BY_LAYER["climate-field-relative-humidity"]
     max_temperature = PRODUCT_BY_LAYER["climate-field-air-temperature-max"]
-    wetness = PRODUCT_BY_LAYER["soil-wetness-surface"]
     temperature = PRODUCT_BY_LAYER["soil-temperature-0-to-7cm"]
+    # These two are CONSTRUCTED, not looked up. `climate-field-relative-humidity` and
+    # `soil-wetness-surface` used to witness these two schema families from inside
+    # `SNAPSHOT_PRODUCTS`, and both left the tuple on 2026-09-07 once their live prefixes were
+    # published. `_snapshot_product_arrow_schema` still has both branches, and after that graduation
+    # EVERY remaining member pins columns -- so the unpinned branch has no member left to witness it
+    # and a lookup-based test would have quietly stopped covering it. A test that tells two production
+    # branches apart must not depend on which lanes happen to still be un-promoted.
+    unpinned = SnapshotProduct(
+        "climate-field-relative-humidity",
+        "daily",
+        f"layer=climate-field-relative-humidity/snapshot={SNAPSHOT_ID}",
+        f"layer=climate-field-relative-humidity/snapshot={SNAPSHOT_ID}/_breakdown",
+        contract_version="climate-field-relative-humidity.snapshot-breakdown.v1",
+    )
+    wetness = SnapshotProduct(
+        "soil-wetness-surface",
+        "daily",
+        f"derived-canonical/signal-observation/lane=soil-wetness-surface/snapshot={SNAPSHOT_ID}",
+        f"derived-canonical/signal-observation/lane=soil-wetness-surface/snapshot={SNAPSHOT_ID}",
+        schema_columns=SOIL_WETNESS_COLUMNS,
+        contract_version="plantgeo.signal-product-breakdown.v1",
+    )
 
     assert SIGNAL_PRODUCT_COLUMNS == (
         "support_key",
@@ -823,10 +840,10 @@ def test_registered_product_families_pin_their_exact_top_level_schemas() -> None
         *SOIL_WETNESS_COLUMNS,
     ) == SOIL_TEMPERATURE_COLUMNS
     assert snapshot_product_columns(signal) == frozenset(SIGNAL_PRODUCT_COLUMNS)
-    assert snapshot_product_columns(humidity) == frozenset(
-        get_stream_schema(humidity.layer, "observed").arrow_schema.names
+    assert snapshot_product_columns(unpinned) == frozenset(
+        get_stream_schema(unpinned.layer, "observed").arrow_schema.names
     )
-    assert snapshot_product_columns(humidity) > frozenset(SIGNAL_PRODUCT_COLUMNS), "an unpinned product narrows nothing"
+    assert snapshot_product_columns(unpinned) > frozenset(SIGNAL_PRODUCT_COLUMNS), "an unpinned product narrows nothing"
     assert snapshot_product_columns(wetness) == frozenset(SOIL_WETNESS_COLUMNS)
     assert snapshot_product_columns(temperature) == frozenset(SOIL_TEMPERATURE_COLUMNS)
     assert signal.coverage_cell_grid_name == max_temperature.coverage_cell_grid_name == "nasa-power-0.5-degree"
@@ -836,19 +853,20 @@ def test_registered_product_families_pin_their_exact_top_level_schemas() -> None
 def test_every_product_with_a_live_writer_declares_that_writer_s_own_forward_edge() -> None:
     """Two upstreams, two release schedules, two edges -- and a product with none reports a frozen last day.
 
-    The four climate products and the three NASA POWER soil-wetness lanes open one day after the
-    canonical snapshot's 2026-08-06; the five snapshot-rooted ERA5-Land soil products one day after
-    their own 2026-08-02. Borrowing one edge for the other would either hide four real days behind
-    the manifest or route four days at the live lane that the manifest still owns.
+    The three NASA POWER air-temperature products open one day after the canonical snapshot's
+    2026-08-06; the five snapshot-rooted ERA5-Land soil products one day after their own 2026-08-02.
+    Borrowing one edge for the other would either hide four real days behind the manifest or route
+    four days at the live lane that the manifest still owns.
+
+    The POWER side used to hold seven layers. `climate-field-relative-humidity` and the three
+    `soil-wetness-*` lanes left `SNAPSHOT_PRODUCTS` on 2026-09-07, once their live prefixes held the
+    full rung ladder with real completion markers; a graduated lane resolves its forward edge the way
+    every ordinary lane does, so it has no `forward_first_day` here to declare.
     """
     power_forward = {
         "climate-field-air-temperature-mean",
         "climate-field-air-temperature-max",
         "climate-field-air-temperature-min",
-        "climate-field-relative-humidity",
-        "soil-wetness-surface",
-        "soil-wetness-root-zone",
-        "soil-wetness-profile",
     }
     era5_land_forward = {
         "soil-field-vpd",
@@ -877,59 +895,68 @@ def test_a_forward_day_of_a_soil_product_is_read_through_its_lane_and_not_its_ma
     assert snapshot_products.serves_from_snapshot(product.layer, product.forward_first_day) is False
 
 
-def test_the_allowlist_is_exactly_the_twelve_products_the_live_prefix_cannot_yet_replace() -> None:
-    """Pin the twelve BY NAME as a LIST, so a cleanup that swept one out with the two that left fails here.
+def test_the_allowlist_is_exactly_the_eight_month_grain_products_awaiting_a_re_export() -> None:
+    """Pin the eight BY NAME as a LIST, so a cleanup that sweeps one out with the six that left fails here.
 
     A list, not a set: a set hides both a duplicated entry and the arity, and the arity is the whole
-    claim. Membership is a measurement of where a lane's history physically lives, and the rule is
-    COMPARATIVE: a lane may leave only when its live prefix already holds everything its
-    `snapshot=<id>/` root holds. Six of these hold zero objects at `layer=<slug>/kind=observed/`,
-    five hold 448 or 2 days against ~1,560 in their root, and `climate-field-relative-humidity` holds
-    a complementary 15,038 days (1981-01-01..2022-03-05) against a measured 1,560-day root
-    (2022-04-30..2026-08-06) -- so moving it would trade recent days for old ones, not add days. All
-    twelve wait on the same condition: their history published at the live prefix, then re-measured,
-    which is exactly what `climate-field-wind-speed` did before it left. See the block above
-    `SNAPSHOT_PRODUCTS` and `evidence/snapshot-products-vs-availability-20260907.md` in
-    `conductor/tracks/environmental_postgres_retirement_20260904/`.
+    claim. After 2026-09-07 this tuple holds ONE kind of member, and the invariant asserted below is
+    the useful half: every remaining product declares `layout="monthly"`, so its frozen root is
+    partitioned `kind=observed/zoom=NN/year/month` with NO `day=` segment. Such a root cannot be
+    promoted by copying -- month files would land where `classify_partition_day` looks for a day, the
+    lane would advertise nothing, and the objects would have to be found and deleted again (which is
+    exactly what happened to the air-temperature trio on 2026-09-07, 1,908 unreadable objects,
+    reverted the same day). Each of these eight waits on a real day-grain RE-EXPORT, not a rename.
+    See the block above `SNAPSHOT_PRODUCTS`.
     """
     assert sorted(product.layer for product in SNAPSHOT_PRODUCTS) == [
         "climate-field-air-temperature-max",
         "climate-field-air-temperature-mean",
         "climate-field-air-temperature-min",
-        "climate-field-relative-humidity",
         "soil-field-vpd",
         "soil-temperature-0-to-7cm",
         "soil-temperature-100-to-255cm",
         "soil-temperature-28-to-100cm",
         "soil-temperature-7-to-28cm",
-        "soil-wetness-profile",
-        "soil-wetness-root-zone",
-        "soil-wetness-surface",
     ]
+    assert {product.layout for product in SNAPSHOT_PRODUCTS} == {"monthly"}, (
+        "a day-grain product left in this tuple is a lane withheld for no reason; promote it instead"
+    )
     assert set(PRODUCT_BY_LAYER) == {product.layer for product in SNAPSHOT_PRODUCTS}
     assert all(product.data_root.endswith(f"snapshot={SNAPSHOT_ID}") for product in SNAPSHOT_PRODUCTS)
 
 
-def test_the_two_lanes_that_moved_to_the_census_are_not_reachable_as_snapshot_products() -> None:
-    """`climate-field-dew-point` and `climate-field-wind-speed` left the allowlist 2026-09-07; nothing else did.
+def test_the_six_lanes_that_moved_to_the_census_are_not_reachable_as_snapshot_products() -> None:
+    """Six lanes left the allowlist on 2026-09-07, each by a DIFFERENT route; nothing else did.
 
-    Dew point held a complete four-rung ladder over 16,654 contiguous days back to 1981-01-01 at the
-    LIVE prefix, against a snapshot root of 691 objects and ZERO day partitions. Wind speed held
-    NOTHING at its live prefix until its snapshot root was promoted onto it by server-side copy on
-    2026-09-07 -- one dropped `snapshot=<id>/` path segment, 6,240 objects over 1,560 contiguous days
-    2022-04-30..2026-08-06, four rungs on every one, matching the root's 6,240 exactly. Both may now
-    OWN an availability index, which a snapshot product cannot under
-    `PARQUET_COVERAGE_AUTHORITY=availability`, and neither strands a day by leaving.
-    `serves_from_snapshot` must now answer False for EVERY day of both, including days below their
-    old `forward_first_day`: routing one back at the frozen manifest would ask a subsystem that no
-    longer holds a descriptor for it.
+    `climate-field-dew-point` already held a complete four-rung ladder over 16,654 contiguous days
+    back to 1981-01-01 at the LIVE prefix, against a snapshot root of 691 objects and ZERO day
+    partitions -- it needed no promotion at all. `climate-field-wind-speed` held NOTHING live until
+    its root was copied onto the live prefix and a completion marker was written per (day, rung) FROM
+    THE COPIED BYTES, because its frozen root carried no terminal state to copy.
 
-    MAY own, not does: wind speed's 6,240 promoted objects are 1,560 x 4 parts and no markers, so the
-    bootstrap compiler refused all 1,560 days `parts_without_completion_marker` on 2026-09-07. That
-    is a defect in the promoted objects, not in this membership -- see the block above
-    `SNAPSHOT_PRODUCTS`.
+    `climate-field-relative-humidity` moved by UNION rather than replacement, which is why an earlier
+    reading of the same measurements rejected the move. Its two prefixes are disjoint -- live held
+    15,038 days 1981-01-01..2022-03-05, the root held 1,560 days 2022-04-30..2026-08-06 -- so copying
+    into non-colliding keys ADDS the recent four years instead of trading them away: 16,598 days on
+    all four rungs. The three `soil-wetness-*` moved by copy plus a MARKER REPAIR: their roots live
+    under `_derived_lane_root` and their `_complete.json` is a product-breakdown sidecar, not a
+    `PartitionCompletion`, so the promoted days held parts and no terminal state until 18,720 real
+    markers were written from the live bytes and cross-checked against the sidecars' own digests.
+
+    All six may now OWN an availability index, which a snapshot product cannot under
+    `PARQUET_COVERAGE_AUTHORITY=availability`, and none strands a day by leaving.
+    `serves_from_snapshot` must answer False for EVERY day of each, including days below its old
+    `forward_first_day`: routing one back at the frozen manifest would ask a subsystem that no longer
+    holds a descriptor for it.
     """
-    for layer in ("climate-field-dew-point", "climate-field-wind-speed"):
+    for layer in (
+        "climate-field-dew-point",
+        "climate-field-wind-speed",
+        "climate-field-relative-humidity",
+        "soil-wetness-surface",
+        "soil-wetness-root-zone",
+        "soil-wetness-profile",
+    ):
         assert layer not in PRODUCT_BY_LAYER
         assert snapshot_products.serves_from_snapshot(layer, date(2000, 1, 1)) is False
         assert snapshot_products.serves_from_snapshot(layer, date(2024, 5, 1)) is False
@@ -937,9 +964,6 @@ def test_the_two_lanes_that_moved_to_the_census_are_not_reachable_as_snapshot_pr
         with pytest.raises(ServingRefusalError) as raised:
             snapshot_products.product_for_layer(layer)
         assert raised.value.code == "snapshot_unpublished"
-    # Relative humidity did NOT move: its snapshot root holds 1,560 days the live prefix does not.
-    assert "climate-field-relative-humidity" in PRODUCT_BY_LAYER
-    assert snapshot_products.serves_from_snapshot("climate-field-relative-humidity", date(2024, 5, 1)) is True
 
 
 def test_declared_and_fixed_lattice_coverage_use_only_bound_metadata(

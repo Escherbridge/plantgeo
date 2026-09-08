@@ -223,33 +223,52 @@ _PINNED_ARROW_SCHEMAS: Final[dict[tuple[str, ...], pa.Schema]] = {
 #: OBJECT COUNT AND THE RUNG LADDER ARE NOT THE WHOLE RULE -- a day is movable only when it holds a
 #: TERMINAL STATE, which is one more thing to count at the live prefix than either census counts.
 #:
-#: THE TWELVE THAT STAYED all fail that one rule, in three shapes:
+#: `layout` IS THE DISCRIMINATOR, AND IT IS THE ONLY ONE. A lane's own `layout` field says whether
+#: its frozen root is day-grain or month-grain, and that -- not an object count, not a lane's family
+#: name -- decides whether promotion is a rename or a re-export:
 #:
-#: - SIX hold ZERO objects at the live prefix -- the three `climate-field-air-temperature-*` and the
-#:   three `soil-wetness-*`. An index over their live prefix would describe emptiness while their
-#:   ~1,560 real days sit in the frozen root. This is exactly the shape wind-speed was in, so it is
-#:   the shape with a PROVEN remedy: copy the root, write the markers from the copied bytes, move.
-#:   Six lanes x ~6,240 objects is the whole cost, and none of it is a re-export.
-#: - FIVE hold far less at the live prefix than in their snapshot root: `soil-field-vpd` (448 days)
-#:   and the four `soil-temperature-*` (2 days each). Moving them would SHORTEN their axis.
-#: - `climate-field-relative-humidity` is the subtle one, and it is the same rule. Its two prefixes
-#:   are COMPLEMENTARY, not overlapping: the live prefix holds 15,038 days, 1981-01-01..2022-03-05,
-#:   while its snapshot root holds a MEASURED 12,538 objects over 1,560 distinct days,
-#:   2022-04-30..2026-08-06 (`scripts/build_relative_humidity_from_canonical_snapshot.py` pins
-#:   EXPECTED_FIRST_DAY/EXPECTED_LAST_DAY/EXPECTED_DAYS to exactly that window), with a 55-day hole
-#:   at 2022-03-06..2022-04-29 that NEITHER holds. So a move would swap the most recent four years
-#:   for 1981-2022 history, and for a map slider recency is the more valuable end. It carries no
-#:   `expected_manifest_sha256` and no audit receipt was ever recorded, which made it look unbuilt;
-#:   the 2026-09-07 listing settles that it was built.
+#: - `layout="daily"`  -> `kind=observed/zoom=NN/year/month/day/`, which is exactly what live readers
+#:   and `classify_partition_day` expect. Promotion is a server-side COPY.
+#: - `layout="monthly"` -> `kind=observed/zoom=NN/year/month/` with NO day segment. Promotion is
+#:   IMPOSSIBLE by copy: month files land where a day is looked for, the lane advertises nothing, and
+#:   the objects have to be hunted down and deleted again. These need a real day-grain re-export.
 #:
-#: Every one of the twelve waits on the SAME condition, which is why they are one list and not two:
-#: its 2022-2026 history published at the live prefix, then re-measured. Wind-speed is what clearing
-#: that condition actually costs, and it is now a recipe rather than a question: COPY the frozen
-#: root, WRITE a completion marker per (day, rung) from the copied bytes, re-measure, THEN move. A
-#: lane never leaves on a plan to finish that later -- the marker step is not optional, it is what
-#: turns `incomplete` into `data`. Do not sweep any
-#: of them out with a cleanup, and never on the strength of a live-prefix count alone -- the snapshot
-#: root has to be counted too, or a complementary lane reads like a superset.
+#: EVERY ENTRY BELOW IS NOW `monthly`. That is the invariant this tuple has after 2026-09-07, and it
+#: is why the list is finally one kind of problem instead of three. Anything still here needs a
+#: pipeline run, not a rename; if you find yourself reaching for a copier, you are on the wrong lane.
+#:
+#: THE FOUR THAT LEFT ON 2026-09-07, and what each corrected:
+#:
+#: - `climate-field-relative-humidity` left by UNION, not by the "move" this comment used to weigh up
+#:   and reject. Its two prefixes are COMPLEMENTARY -- live held 15,038 days, 1981-01-01..2022-03-05;
+#:   the frozen root held 1,560 days, 2022-04-30..2026-08-06, with a 55-day hole at
+#:   2022-03-06..2022-04-29 that NEITHER holds. The old reasoning ("a move would swap the most recent
+#:   four years for 1981-2022 history") was sound only for a REPLACE. Copying into disjoint keys
+#:   keeps both: 16,598 days on all four rungs, 1981-01-01..2026-08-06, markers included.
+#: - The three `soil-wetness-*` left by straight copy. This comment previously grouped them with the
+#:   air-temperature trio as "SIX hold ZERO objects at the live prefix ... exactly the shape
+#:   wind-speed was in". That sentence was HALF RIGHT AND HALF WRONG, and the wrong half cost real
+#:   objects. Soil-wetness genuinely was that shape -- `layout="daily"`, 6,240 parts and 6,240
+#:   markers each over 1,560 days -- but it lives under `_derived_lane_root`
+#:   (`derived-canonical/signal-observation/lane=.../snapshot=...`), NOT under `layer=.../snapshot=`,
+#:   so a census that only listed `layer=<lane>/` reported it as holding nothing anywhere. Always
+#:   census `product.data_root`; the tree is per-product and there are two of them.
+#:
+#: WHAT THE AIR-TEMPERATURE TRIO ACTUALLY IS, since the old text sent an operator at it with a
+#: copier: `layout="monthly"`, 636 parts under two DIFFERENT shapes -- 212 at
+#: `kind=observed/zoom/year/month` and 424 at `kind=physical/year/month`, the latter carrying no zoom
+#: segment and a stream that has no business at a live prefix at all. Copying them onto the live
+#: prefix was attempted on 2026-09-07 and produced 1,908 unreadable objects, reverted the same day.
+#: `soil-temperature-*` is the same month grain (265 parts each, 212 of them zoomed) and holds 16
+#: live days, not the "2 days each" this comment used to claim.
+#:
+#: THE PROMOTION RECIPE, for a `daily` lane only: COPY `product.data_root` to `layer=<lane>/`
+#: preserving the tail from `kind=` onward, CONFIRM per-rung parts == markers at the live prefix,
+#: THEN remove the entry here. Where a frozen root carries no `_complete.json` (wind-speed), write
+#: one per (day, rung) FROM THE COPIED BYTES first -- a day without terminal state reads as
+#: `incomplete`, never `data`, so the marker step is not optional. Never move a lane on a plan to
+#: finish that later, never on the strength of a live-prefix count alone, and never without checking
+#: `layout` first.
 SNAPSHOT_PRODUCTS: Final[tuple[SnapshotProduct, ...]] = (
     SnapshotProduct(
         "climate-field-air-temperature-mean",
@@ -285,14 +304,6 @@ SNAPSHOT_PRODUCTS: Final[tuple[SnapshotProduct, ...]] = (
         forward_first_day=CLIMATE_DIRECT_WRITER_START_DAY,
     ),
     SnapshotProduct(
-        "climate-field-relative-humidity",
-        "daily",
-        _layer_root("climate-field-relative-humidity"),
-        f"{_layer_root('climate-field-relative-humidity')}/_breakdown",
-        contract_version="climate-field-relative-humidity.snapshot-breakdown.v1",
-        forward_first_day=CLIMATE_DIRECT_WRITER_START_DAY,
-    ),
-    SnapshotProduct(
         "soil-field-vpd",
         "monthly",
         _layer_root("soil-field-vpd"),
@@ -300,40 +311,6 @@ SNAPSHOT_PRODUCTS: Final[tuple[SnapshotProduct, ...]] = (
         schema_columns=SIGNAL_PRODUCT_COLUMNS,
         contract_version="plantgeo.vpd.snapshot-product.v1",
         forward_first_day=SOIL_DIRECT_WRITER_START_DAY,
-    ),
-    # The three soil-wetness lanes are NASA POWER, not ERA5-Land: GWETTOP/GWETROOT/GWETPROF on the
-    # 397-cell POWER lattice. Their forward edge is therefore the CLIMATE writer's, one day after the
-    # canonical snapshot's 2026-08-06 -- four days later than the ERA5-Land products above, which is
-    # a different upstream's release schedule and not a rounding difference.
-    SnapshotProduct(
-        "soil-wetness-surface",
-        "daily",
-        _derived_lane_root("soil-wetness-surface"),
-        _derived_lane_root("soil-wetness-surface"),
-        expected_manifest_sha256="92f4486e5054495fc46ffc15cac558b03916c60f436c8eac0afcbdf0200d6565",
-        schema_columns=SOIL_WETNESS_COLUMNS,
-        contract_version="plantgeo.signal-product-breakdown.v1",
-        forward_first_day=CLIMATE_DIRECT_WRITER_START_DAY,
-    ),
-    SnapshotProduct(
-        "soil-wetness-root-zone",
-        "daily",
-        _derived_lane_root("soil-wetness-root-zone"),
-        _derived_lane_root("soil-wetness-root-zone"),
-        expected_manifest_sha256="0cffc4832438a228d23e6de6fdd16ac038243ed302809b8143f939378ffbe948",
-        schema_columns=SOIL_WETNESS_COLUMNS,
-        contract_version="plantgeo.signal-product-breakdown.v1",
-        forward_first_day=CLIMATE_DIRECT_WRITER_START_DAY,
-    ),
-    SnapshotProduct(
-        "soil-wetness-profile",
-        "daily",
-        _derived_lane_root("soil-wetness-profile"),
-        _derived_lane_root("soil-wetness-profile"),
-        expected_manifest_sha256="8f3a10450716b0fa71548721f245591d5001de35fc2a0a4a7b3d5ea3262f1347",
-        schema_columns=SOIL_WETNESS_COLUMNS,
-        contract_version="plantgeo.signal-product-breakdown.v1",
-        forward_first_day=CLIMATE_DIRECT_WRITER_START_DAY,
     ),
     SnapshotProduct(
         "soil-temperature-0-to-7cm",
