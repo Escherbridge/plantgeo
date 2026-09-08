@@ -148,3 +148,77 @@ the compiler — better to learn that from a census than from a two-hour apply.
 - **Postgres cost**: `layers` has 33,273,668 sequential scans against a 48 kB table; `features` is
   8,635 MB for 247,706 live rows; `pg_stat_statements` is **not installed**, so query cost cannot be
   attributed today. Serving-path problem, charted separately.
+
+## 8. WHY THE APPLY HANGS — root cause, found 2026-09-08
+
+`availability-bootstrap --apply` hung TWICE on `climate-field-relative-humidity` (3h08m, then 178
+min) and completed fine on six smaller lanes. The discriminator is size, and the mechanism is a
+missing timeout around a long-held pair of connections.
+
+### The mechanism
+
+`bootstrap_availability` (`pipeline/parquet/availability_index.py:1182`) does, in one transaction:
+
+1. take a Postgres advisory lock through `postgres_lane_publication_barrier`
+2. `_verify_bootstrap_inventory_receipts(...)` then `_verify_rows_evidence(store, request.rows, ...)`
+   — **one object-store verification per row**, serial
+3. `put_immutable` the receipt and `_BOOTSTRAPPED.json`
+4. `_write_generation(...)`
+5. `compare_and_swap` on `_LATEST`
+
+Step 2 is O(rows) network calls while step 1's **Postgres transaction stays open the whole time**.
+
+**`read_timeout` and `connect_timeout` appear NOWHERE in the service** — verified by
+`grep -rn "read_timeout\|connect_timeout" --include=*.py src/`, zero hits. So when either side of the
+pair goes away mid-verification, the process blocks forever instead of failing.
+
+Both observed hangs fit exactly, and they are mirror images:
+
+| hang | DB session | object-store socket | wrote |
+|---|---|---|---|
+| 1st (3h08m) | `idle in transaction`, `Client/ClientRead` | **none** | nothing |
+| 2nd (178 min) | **none** | one, idle | bootstrap + generation, no `_LATEST` |
+
+CPU is ~0.2% of a core in both, so **CPU cannot distinguish hung from slow.** The reliable signals are
+(a) nothing written for a long interval and (b) only ONE of the two connections present. A healthy
+apply holds BOTH.
+
+### Observed size threshold
+
+| lane | rows | outcome |
+|---|---|---|
+| `soil-wetness-*` (x3) | 6,240 each | completed, ~1 min each |
+| `climate-field-relative-humidity` | 12,336 | see below |
+| `climate-field-relative-humidity` | 59,088 | hung twice |
+
+The practical ceiling sits somewhere between 12k and 59k rows, which is a far tighter constraint than
+the documented 64 MiB `MAX_INPUT_BYTES` and is **not** written down anywhere else. Size the window to
+what completes, not to what the cap allows.
+
+### Recovery, and the trap inside the recovery
+
+A hung apply can leave `_BOOTSTRAPPED.json` and a generation with **no `_LATEST`**. The bootstrap is
+IMMUTABLE — one per lane, ever — so a retry with a DIFFERENT window is refused:
+
+    Error: immutable availability object '.../bootstrap/_BOOTSTRAPPED.json' already holds different bytes
+
+Retrying the SAME document is the supported path (it re-writes identical bytes, and
+`_write_generation` is content-addressed). Only when the same document cannot be made to complete is
+the orphan a problem. Then, with **owner confirmation**, and only after proving `_LATEST` is absent so
+nothing references them, delete exactly the `bootstrap/` and `generation=` objects and KEEP every
+`evidence/` object — they are content-addressed and are reused by the next window. Done 2026-09-08:
+four objects deleted, 89,282 evidence objects kept.
+
+### The fix this points at
+
+Two changes, neither made yet, both in a serialized single-owner file:
+
+1. Give the boto client explicit `read_timeout`/`connect_timeout` so a dead socket raises instead of
+   blocking forever.
+2. Stop holding the Postgres transaction across the verification loop — verify first, then take the
+   lock only for the write-and-swap.
+
+Until then, **the offline export service does not remove this bottleneck, it only moves the compile
+half of it.** A workflow reviewer raised exactly this on 2026-09-08 and it is the strongest open
+objection to this track's premise: the apply is still O(rows) serial verification, and the apply is
+what actually failed.
