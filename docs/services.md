@@ -805,7 +805,7 @@ Background jobs defined in `/src/lib/server/jobs/`:
 | Photon/Nominatim | `PHOTON_URL` |
 | OpenWeatherMap | `OPENWEATHER_KEY` |
 | PlantCommerce | `PLANTCOMMERCE_API_URL`, `PLANTCOMMERCE_WEBHOOK_SECRET` |
-| Anthropic Claude | `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` |
+| OpenRouter (google/gemini-2.5-flash-lite) | `OPENROUTER_API_KEY`, `OPENROUTER_MODEL`, `OPENROUTER_BASE_URL` |
 | SendGrid | `SENDGRID_API_KEY` |
 
 ---

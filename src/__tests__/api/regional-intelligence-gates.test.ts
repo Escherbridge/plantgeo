@@ -34,7 +34,10 @@ function postRequest(body: unknown): NextRequest {
 describe("regional intelligence access gates", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    process.env.ANTHROPIC_API_KEY = "test-key";
+    // The route gates on the key it actually sends; this moved with the provider swap to
+    // OpenRouter. Setting the old name here would 503 every request before it reached the gate
+    // each test below is actually about.
+    process.env.OPENROUTER_API_KEY = "test-key";
   });
 
   it("classifies future evidence timestamps as unavailable", () => {

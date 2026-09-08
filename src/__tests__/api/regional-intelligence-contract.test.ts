@@ -6,14 +6,14 @@ const mocks = vi.hoisted(() => ({
   // The SDK client streamRegionalIntelligence builds internally. Mocked at the module boundary
   // rather than passed in, exactly like every other service call in this file, so the request
   // it actually issues -- the `tools` array in particular -- is observable from the test.
-  anthropicStream: vi.fn(),
+  completionStream: vi.fn(),
 }));
 vi.mock("@/lib/server/auth", () => ({
   getServerSession: mocks.getServerSession,
 }));
-vi.mock("@anthropic-ai/sdk", () => ({
-  default: class MockAnthropic {
-    messages = { stream: mocks.anthropicStream };
+vi.mock("openai", () => ({
+  default: class MockOpenAI {
+    chat = { completions: { stream: mocks.completionStream } };
   },
 }));
 
@@ -135,7 +135,7 @@ describe("remediation report contract", () => {
  */
 describe("generate_remediation_report tool wiring", () => {
   afterEach(() => {
-    mocks.anthropicStream.mockReset();
+    mocks.completionStream.mockReset();
     vi.unstubAllEnvs();
   });
 
@@ -165,34 +165,55 @@ describe("generate_remediation_report tool wiring", () => {
     };
   }
 
-  /** A `MessageStream`-shaped stand-in: no text deltas, `finalMessage()` resolves immediately. */
-  function fakeAnthropicStream(finalMessage: {
-    stop_reason: string;
-    content: Array<{ type: string; id: string; name: string; input: unknown }>;
-  }) {
+  /**
+   * A `ChatCompletionStream`-shaped stand-in: no text deltas, `finalChatCompletion()` resolves
+   * immediately. Tool arguments are SERIALISED here on purpose -- the completions dialect delivers
+   * them as a JSON string, and a fixture that handed back a live object would pass against a
+   * service that never parses one.
+   */
+  function fakeCompletionStream(
+    toolCalls: Array<{ id: string; name: string; input: unknown }>
+  ) {
     return {
       [Symbol.asyncIterator]: () =>
         (async function* () {
           /* no text deltas for this fixture */
         })(),
-      finalMessage: async () => finalMessage,
+      finalChatCompletion: async () => ({
+        choices: [
+          {
+            message: {
+              role: "assistant",
+              content: null,
+              refusal: null,
+              tool_calls: toolCalls.map((call) => ({
+                id: call.id,
+                type: "function",
+                function: {
+                  name: call.name,
+                  arguments: JSON.stringify(call.input),
+                },
+              })),
+            },
+          },
+        ],
+      }),
     };
   }
 
-  it("includes generate_remediation_report in the tools array actually sent to Anthropic", async () => {
+  it("includes generate_remediation_report in the tools array actually sent to the provider", async () => {
     const { streamRegionalIntelligence, REPORT_TOOL, GENERATE_REMEDIATION_REPORT_TOOL } =
       await import("@/lib/server/services/ai-prompt");
 
-    let capturedTools: Array<{ name: string }> | undefined;
-    mocks.anthropicStream.mockImplementation(
-      (request: { tools: Array<{ name: string }> }) => {
+    let capturedTools:
+      | Array<{ function: { name: string } }>
+      | undefined;
+    mocks.completionStream.mockImplementation(
+      (request: { tools: Array<{ function: { name: string } }> }) => {
         capturedTools = request.tools;
-        return fakeAnthropicStream({
-          stop_reason: "tool_use",
-          content: [
-            { type: "tool_use", id: "toolu_1", name: REPORT_TOOL.name, input: validReport },
-          ],
-        });
+        return fakeCompletionStream([
+          { id: "call_1", name: REPORT_TOOL.name, input: validReport },
+        ]);
       }
     );
 
@@ -208,7 +229,7 @@ describe("generate_remediation_report tool wiring", () => {
       events.push(event);
     }
 
-    expect(capturedTools?.map((tool) => tool.name)).toEqual(
+    expect(capturedTools?.map((tool) => tool.function.name)).toEqual(
       expect.arrayContaining([REPORT_TOOL.name, GENERATE_REMEDIATION_REPORT_TOOL.name])
     );
   });
@@ -216,18 +237,10 @@ describe("generate_remediation_report tool wiring", () => {
   it("dispatches a generate_remediation_report tool_use as the report, in a single round", async () => {
     const { streamRegionalIntelligence } = await import("@/lib/server/services/ai-prompt");
 
-    mocks.anthropicStream.mockImplementation(() =>
-      fakeAnthropicStream({
-        stop_reason: "tool_use",
-        content: [
-          {
-            type: "tool_use",
-            id: "toolu_2",
-            name: "generate_remediation_report",
-            input: validReport,
-          },
-        ],
-      })
+    mocks.completionStream.mockImplementation(() =>
+      fakeCompletionStream([
+        { id: "call_2", name: "generate_remediation_report", input: validReport },
+      ])
     );
 
     const events: { type: string; report?: unknown }[] = [];
@@ -246,6 +259,6 @@ describe("generate_remediation_report tool wiring", () => {
     expect(reportEvent?.report).toEqual(validReport);
     // Would have kept nudging for the full MAX_TOOL_ROUNDS before the dispatch fix, since a
     // generate_remediation_report tool_use was never recognized as the report.
-    expect(mocks.anthropicStream).toHaveBeenCalledTimes(1);
+    expect(mocks.completionStream).toHaveBeenCalledTimes(1);
   });
 });

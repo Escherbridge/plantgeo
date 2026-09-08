@@ -171,7 +171,10 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  if (!process.env.ANTHROPIC_API_KEY?.trim()) {
+  // Gate on the key the agent actually sends. This checked ANTHROPIC_API_KEY until the provider
+  // moved to OpenRouter; left as it was, the route would 503 with a configured provider, or -- far
+  // worse -- serve with a stale Anthropic key present and fail deep inside the stream instead.
+  if (!process.env.OPENROUTER_API_KEY?.trim()) {
     return jsonResponse(
       { error: 'Regional intelligence is not configured', retryable: false },
       503

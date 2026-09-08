@@ -118,8 +118,9 @@ still required, for the realtime publisher. See
 | Variable | Policy |
 | --- | --- |
 | `REGIONAL_INTELLIGENCE_MAX_CONCURRENT_PER_REPLICA` | Optional bounded AI concurrency; defaults to `4` and is capped at `16` per replica. |
-| `ANTHROPIC_API_KEY` | **Required** for the regional-intelligence agent. Absent, the route returns 503 and the panel stays inert. Server-only. |
-| `ANTHROPIC_MODEL` | Optional model pin; defaults to `claude-opus-5`. Set deliberately — it is the dominant cost lever for this feature. |
+| `OPENROUTER_API_KEY` | **Required** for the regional-intelligence agent. Absent, the route returns 503 and the panel stays inert. Server-only. |
+| `OPENROUTER_MODEL` | Optional model pin; defaults to `google/gemini-2.5-flash-lite`. Set deliberately — it is the dominant cost lever for this feature. Note `MAX_OUTPUT_TOKENS` in `src/lib/server/services/ai-prompt.ts` asks for 16k, so a model whose completion ceiling is lower needs that constant lowered too — the provider rejects an over-large request rather than clamping it. |
+| `OPENROUTER_BASE_URL` | Optional; defaults to `https://openrouter.ai/api/v1`. Override only to point at a compatible gateway. |
 | `JINA_API_KEY` | Optional. Enables the agent's `search_web` tool (`s.jina.ai` + `r.jina.ai`). Absent, the agent runs offline and says so in its system prompt rather than failing. |
 | `REDIS_URL` | Load-bearing for AI quota. The per-user reservation is a Redis ZSET; in production an unreachable Redis fails the request closed rather than serving unmetered. |
 | `EMAIL_PROVIDER` | Optional `resend` or `sendgrid`; absence keeps delivery disabled. |
