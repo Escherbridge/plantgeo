@@ -1552,11 +1552,27 @@ index is published.** The window between the two is paid by every user request.
 
 ### Decisions
 
-- **Postgres scope, owner call 2026-09-09: EVERYTHING NON-SOCIAL GOES, INCLUDING THE ML PLANE.** Not
-  only the map-serving data. Postgres ends up holding the ~23 social tables (~600 KB) plus auth and
-  operational tables. The ~45 `agri.*` ML/forecast/strategy tables — `agri.forecast_observation`
-  alone is 2.4 GB — therefore need a Parquet home or a retirement decision FIRST. That is a design
-  problem rather than a drop, and materially more work than the retirement track scoped.
+- **Postgres scope, owner call 2026-09-09: EVERYTHING NON-SOCIAL GOES, INCLUDING THE ML PLANE.**
+  Postgres ends up holding the ~23 social/user-management tables (~600 KB) plus auth and operational
+  tables. **REVISED the same day, and this supersedes the first reading:** ML TRAINING NEVER STARTED,
+  so there is no model state to migrate and the ML plane does NOT need a Parquet home first. Verified
+  by census — of 42 `agri.*` ML-family tables, **34 are empty**, and every training/model table is
+  among them: `forecast_model`, `forecast_training_run`, `forecast_backtest_metric`,
+  `expert_label_training_instance`, `strategy_selection_policy`, `forecast_candidate_evaluation`.
+  These are DROPS under the ordinary D1 proof, not a design problem.
+
+  The eight non-empty tables are derived forecast output the pipeline can regenerate:
+  `forecast_observation` 4,085,706 rows / 2.4 GB, `forecast_iteration_value` 50,280,
+  `forecast_iteration` 1,676, `forecast_series` 1,568, `forecast_input_recorded_at` 3,480,
+  `forecast_iteration_actual` and `_actual_input` 473 each.
+
+  **ONE EXCEPTION — export `agri.expert_label` (30 rows) before dropping anything.** It is
+  human/agent-reviewed labels with an owner signature still pending: curation effort, not derived
+  data, and the only thing in this family that no pipeline can regenerate. Thirty rows, so preserving
+  it is free; losing it is not recoverable.
+
+  A dedicated ML service layer is planned LATER and will build on the Parquet planes; it is
+  explicitly not a prerequisite for this drop.
 - **Extend the proven in-repo builder; do not use the standalone service.** The workflow produced
   ~7,000 lines at `plantgeo-export` and three independent adversarial reviews returned
   CHANGES-REQUIRED (unrunnable imports, markers uploaded before their parts, and a "two independent
@@ -1645,8 +1661,9 @@ index is published.** The window between the two is paid by every user request.
    since 2026-09-07T08:32Z; without that fix the lanes get no NEW days regardless of backfill.
 5. **soil-survey:** raise `time_budget_seconds` (1,230 s against a run that took 3h20m), let one
    export finish so `_finalize_written_day` writes its markers, then flip `servingReader` to parquet.
-6. **Then the Postgres clause**, under the 2026-09-09 decision above — which now requires settling the
-   ML plane's fate first. `pg_stat_statements` is NOT installed, so no query cost can be attributed
+6. **Then the Postgres clause**, under the 2026-09-09 decision above. Export `agri.expert_label`
+   (30 rows) FIRST, then the ML family drops under the ordinary D1 proof — no Parquet home needed,
+   because training never ran and 34 of its 42 tables are empty. `pg_stat_statements` is NOT installed, so no query cost can be attributed
    today, and `layers` shows 33,273,668 sequential scans against a 48 kB table.
 
 ### Open questions
