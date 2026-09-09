@@ -1678,3 +1678,71 @@ directly to the air-temperature trio, which must be built AND indexed before its
   (relative-humidity 1981-2017) needs recovering.
 - `fire-perimeters` invalid WFIGS geometry remains an owner call; the recommendation is still a named
   counted quarantine rather than a policy flip.
+
+## THE DEAD-LETTERED FORWARD WRITER — evidence, and one strong lead. 2026-09-09.
+
+`plantgeo.executor.climate-nasa-power-direct-forward` has been dead-lettered since 2026-09-07T08:32Z
+at `attempt_count` 6/6, error class `scheduled_command_exit`, summary
+`lane 'climate-nasa-power-direct-forward' command exited with status 1`, `last_error_summary` NULL on
+the run rows. **The three air-temperature lanes therefore receive no NEW days regardless of any
+backfill** — this is the goal's "updating with new data" clause, not a history problem.
+
+### Measured
+
+| run started (UTC) | duration | job `time_budget_seconds` |
+|---|---|---|
+| 2026-09-07 08:32 | 4,713 s | 1,230 |
+| 2026-09-07 09:51 | 7,023 s | 1,230 |
+| 2026-09-07 11:49 | 5,347 s | 1,230 |
+
+Definition: `schedule=40 * * * *`, `time_budget_seconds=1230`, `lease_seconds=1320`, `enabled=true`.
+Its sibling `plantgeo.executor.soil-era5-land-direct-forward` carries the IDENTICAL 1,230 s budget and
+has succeeded on all of its recent runs, so the budget alone is not the differentiator — this lane's
+turn is doing far more work, or blocking.
+
+### The lane is supposed to survive this
+
+The bounded-turn machinery exists and is wired: `pipeline/direct/climate/forward.py:192` sets
+`deadline = time.monotonic() + config.time_budget_seconds` and checks it at `:205` and `:278`.
+`CLIMATE_TIME_BUDGET_OUTCOME = TIME_BUDGET_EXHAUSTED` (`forward.py:104`) is documented as "the one
+outcome a bounded turn reports instead of failing when its wall clock runs out", matching the
+2026-09-04 owner decision that catch-up bounded turns exit 0. A turn that merely runs long should
+therefore report and exit 0, never `status 1`.
+
+### STRONG LEAD — not yet a confirmed root cause
+
+`execution/job_executor_service.py:205` passes the writer:
+
+    time_budget_seconds=self.command_timeout_seconds + 30,
+
+The INNER deadline is set THIRTY SECONDS LONGER than the OUTER kill timeout. For a graceful exit the
+inner budget must be strictly SHORTER than the outer one; as written, the executor always kills the
+process ~30 s before the writer's own bounded-turn logic would fire. That produces precisely the
+observed signature: `scheduled_command_exit`, status 1, and no captured error, on a lane whose
+bounded-turn code is correct.
+
+**Why this is a lead and not a finding:** the measured durations (4,713-7,023 s) far exceed
+1,230 + 30, so something else is also extending the turn. `CLIMATE_MAX_CONTENTION_TIMEOUT_SECONDS` is
+3,600 s (`forward.py:92`) against a 300 s default (`:91`), and 7,023 s is suspiciously close to
+2 x 3,600 — a turn blocking on lane-day contention would sit inside one unit of work while the
+deadline is only checked BETWEEN units. Do not fix the `+30` and declare victory; confirm first.
+
+**What would settle it:** executor stdout/stderr for one of those three runs. `railway logs` returns
+only a live stream (8 lines of startup history when tried on 2026-09-08), so this needs either the
+Railway dashboard's log view for deployment-scoped history, or a one-off manual run of the lane
+command with the same arguments and a stopwatch.
+
+### Suggested order when this is picked up
+
+1. Get one failing run's actual stderr. Everything below is guesswork without it.
+2. Fix the `+30` inversion so the inner budget is shorter than the outer timeout — correct
+   regardless, since it defeats the graceful-exit contract by construction.
+3. Only then consider raising `time_budget_seconds`, and lower
+   `--contention-timeout-seconds` from its 3,600 s ceiling toward the 300 s default so a blocked turn
+   cannot outlive its own budget.
+4. Release the dead letters with `agri-service ops jobs-supersede-run` once the cause is fixed;
+   attempts are exhausted at 6/6 so the lane will not retry itself.
+
+**Same shape as `soil-survey`**, whose export runs 3h20m against the same 1,230 s budget. Two lanes,
+one class of defect: a per-tick time budget that does not fit the work, and a kill that reports as an
+opaque `status 1`.
