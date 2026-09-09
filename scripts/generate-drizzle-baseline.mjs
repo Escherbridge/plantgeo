@@ -42,6 +42,13 @@ sql = sql.replace(/^\\(?:un)?restrict [A-Za-z0-9]+[ \t]*\n/gm, "");
 // Non-deterministic banner: changes with every run and every client version.
 sql = sql.replace(/^-- Dumped (?:from|by).*\n/gm, "");
 
+// `transaction_timeout` is PostgreSQL 17+. pg_dump 18 emits it, but the baseline must also apply
+// to a PostgreSQL 16 target (`docker-compose.yml` runs postgis/postgis:16-3.4), where it raises
+// "unrecognized configuration parameter". The whole baseline is sent as ONE statement -- it
+// carries no drizzle statement breakpoints -- so that single unknown GUC would roll back all of
+// it. Dropping the line is safe: it only disables a timeout that is already off by default.
+sql = sql.replace(/^SET transaction_timeout = 0;\n/gm, "");
+
 // Objects Alembic owns. `--schema=public` sweeps up `alembic_version`, and a baseline that creates
 // it makes `alembic upgrade head` fail with "relation already exists" when the bootstrap runs
 // Alembic first. Filtering is per pg_dump object BLOCK, not per line, so an object's header
@@ -81,12 +88,15 @@ const header = `-- PlantGeo Drizzle greenfield baseline.
 --     pending migration in ONE transaction, and CREATE INDEX CONCURRENTLY cannot run in one.
 --   * Seven of the last ten migrations had never been applied to production at all.
 --
--- PREREQUISITES, in order. This baseline creates no extensions and no \`agri\` objects:
+-- PREREQUISITES, in order. This baseline creates no extensions, no \`agri\` objects and no rows:
 --   1. CREATE EXTENSION postgis, pgcrypto, vector, btree_gist
---   2. Alembic \`upgrade head\` -- seven objects below read Alembic-owned agri tables
---      (agri.signal_observation, agri.spatial_cell, agri.strategies and seven more).
+--   2. Alembic \`upgrade head\`, run separately -- seven objects below read Alembic-owned agri
+--      tables (agri.signal_observation, agri.spatial_cell, agri.strategies and seven more).
 --   3. This baseline.
--- \`scripts/bootstrap-database.mjs\` performs all three in order and refuses step 3 without step 2.
+--   4. \`drizzle/seed/\` -- this dump is --schema-only, and an empty \`geo.layers\` makes
+--      /api/ready return 503, which fails the Railway healthcheck.
+-- \`scripts/bootstrap-database.mjs\` does 1, 3 and 4, and REFUSES 3 until 2 has been done. It does
+-- not run Alembic itself: that is a Python toolchain the Next.js image does not carry.
 --
 -- VERIFIED 2026-09-08 by building an empty database on the production server and comparing every
 -- column, index, constraint, function, view definition and trigger against production by

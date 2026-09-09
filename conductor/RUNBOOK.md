@@ -1809,7 +1809,14 @@ the baseline carries the pin because production does.
   `when` timestamp compared against the single MAXIMUM `created_at`. The ledger is a high-water
   mark, not a set: it cannot express "0034 applied, 0033 pending", and an entry stamped below the
   maximum is skipped silently and forever.
-- **Stamp the ledger BEFORE pushing a journal change.** Old tree + stamped ledger is a safe no-op;
-  new tree + unstamped ledger tries to apply the baseline over the live schema. Backup of the 29
-  replaced rows: `schema-baselines/20260908-prod-drizzle-ledger-backup.txt` in the object store.
+- **Stamp the ledger BEFORE pushing a journal change**, because new tree + unstamped ledger tries
+  to apply the baseline over the live schema. Backup of the 29 replaced rows:
+  `schema-baselines/20260908-prod-drizzle-ledger-backup.txt` in the object store.
+- **A REVERT OF THAT COMMIT IS NOT SAFE ON ITS OWN**, correcting an earlier claim in this section
+  that "old tree + stamped ledger is a no-op". That is true of the *migrator*, which compares only
+  `when` against MAX(`created_at`), and false of `/api/ready`, which matches on `created_at` AND
+  `hash`. Reverting restores the old pin (`1788100000000` / `048b8f5f...`) whose ledger row was
+  deleted, so readiness 503s and the rollback deploy fails its healthcheck. **To revert, restore
+  the 29 rows from that backup in the same change** - or re-pin `EXPECTED_DRIZZLE_MIGRATION` to a
+  row that actually exists.
 - **`pg_dump` cannot dump a newer server.** Production is PG18; the local client is 16.

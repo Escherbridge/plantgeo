@@ -25,8 +25,18 @@ Two facts about the migrator that are easy to get wrong, both from
   out-of-band steps that a fresh database had no way to interleave.
 
 Building a database from empty is `scripts/bootstrap-database.mjs`: extensions, then Alembic
-(`agri` is Alembic's and the baseline reads ten of its tables), then the baseline. It refuses step
-three without step two. Regenerating the baseline is `scripts/generate-drizzle-baseline.mjs`.
+(`agri` is Alembic's and the baseline reads ten of its tables), then the baseline, then
+`drizzle/seed/`. It refuses the baseline without the `agri` schema. The seed step is not optional —
+the baseline is a `--schema-only` dump, and `/api/ready` fails its `count(DISTINCT name) = 8` check
+against an empty `geo.layers`, returning 503 and failing the Railway healthcheck. Regenerating the
+baseline is `scripts/generate-drizzle-baseline.mjs`.
+
+**Do not run `npm run db:generate` here.** `drizzle/meta/` holds a journal and no snapshot, so
+drizzle-kit diffs `schema.ts` against an *empty* schema and emits a whole-schema `0001_*` with a
+`when` above the baseline's — which the next deploy would then try to apply, failing on "relation
+already exists". This repo has not used generated migrations since 0006 (snapshots stop there while
+the chain ran to 0040); migrations are hand-written and parked in `docs/pending-migrations/` until
+they can be applied. Adding one still requires re-pinning `EXPECTED_DRIZZLE_MIGRATION`.
 
 ## §geometry-dimension
 

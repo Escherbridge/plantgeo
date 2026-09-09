@@ -61,6 +61,10 @@ const SOURCE_DIR = fileURLToPath(new NodeURL("../../", import.meta.url));
 const DRIZZLE_DIR = fileURLToPath(
   new NodeURL("../../../drizzle/archive", import.meta.url)
 );
+/** The one file on the migration path, and so the definition production actually runs. */
+const BASELINE_PATH = fileURLToPath(
+  new NodeURL("../../../drizzle/0000_baseline.sql", import.meta.url)
+);
 
 /** The six products the spec's render table calls `native_polygon`, in registry order. */
 const EXPECTED_NATIVE_POLYGON_LAYER_IDS: readonly LayerToggleId[] = [
@@ -199,6 +203,23 @@ function styleLayerFacts(styleLayerId: string): StyleLayerFacts {
  * that reintroduces simplification into a tile function fails here without being named.
  */
 function newestMigrationStatement(createMarker: string): string {
+  // The baseline is the only file on the migration path, so when it declares the object it IS the
+  // definition production runs, and the archived chain below is superseded history. pg_dump writes
+  // `CREATE FUNCTION`, never `CREATE OR REPLACE FUNCTION`. Reading the archive first would assert
+  // against bodies that, for 0033 and 0035, were never applied to production at all -- see
+  // `drizzle/archive/README.md`.
+  const baseline = readFileSync(BASELINE_PATH, "utf8");
+  const baselineMarker = createMarker.replace(
+    "CREATE OR REPLACE FUNCTION",
+    "CREATE FUNCTION"
+  );
+  const declaredAt = baseline.lastIndexOf(baselineMarker);
+  if (declaredAt !== -1) {
+    // pg_dump delimits objects with a `--\n-- Name: ...` header; that is this statement's end.
+    const end = baseline.indexOf("\n--\n-- Name:", declaredAt);
+    return baseline.slice(declaredAt, end === -1 ? baseline.length : end);
+  }
+
   const files = readdirSync(DRIZZLE_DIR)
     .filter((name) => name.endsWith(".sql"))
     .sort();
@@ -606,11 +627,18 @@ describe("generalization is server-side, topology-preserving and chosen by zoom"
   });
 
   it("admits no bare ST_Simplify anywhere in the migration tree", () => {
-    const offending = readdirSync(DRIZZLE_DIR)
-      .filter((name) => name.endsWith(".sql"))
-      .filter((name) =>
-        /\bST_Simplify\s*\(/i.test(readFileSync(join(DRIZZLE_DIR, name), "utf8"))
-      );
+    // Both trees, deliberately. The archive is frozen, so scanning it alone would make this a
+    // tautology that can never fail again; the baseline is the file a new migration would be
+    // generated from and the only one on the migration path.
+    const candidates: string[] = [
+      ...readdirSync(DRIZZLE_DIR)
+        .filter((name) => name.endsWith(".sql"))
+        .map((name) => join(DRIZZLE_DIR, name)),
+      BASELINE_PATH,
+    ];
+    const offending = candidates.filter((path) =>
+      /\bST_Simplify\s*\(/i.test(readFileSync(path, "utf8"))
+    );
 
     expect(offending).toEqual([]);
   });

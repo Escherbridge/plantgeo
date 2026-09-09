@@ -6,7 +6,7 @@ import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 /**
- * Runs the repo's manual-only spatial SQL tests (`drizzle/tests/*.test.sql`) through a REAL
+ * Runs the repo's manual-only spatial SQL tests (`drizzle/archive/tests/*.test.sql`) through a REAL
  * driver, against a REAL PostGIS. Until this file, those four scripts existed only as psql
  * instructions in their own headers -- nothing in `vitest run` or CI ever executed them, so a
  * regression in `geo.sync_feature_geom_from_properties()`, `geo.evacuation_zone_tiles()`,
@@ -26,7 +26,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
  *
  * Set `POSTGIS_TEST_DSN` to a DISPOSABLE local PostgreSQL superuser DSN whose server has the
  * `postgis` extension available -- the repo's own podman postgis container is exactly this,
- * e.g. `postgresql://postgres:<pw>@127.0.0.1:5434/postgres` (see any `drizzle/tests/*.test.sql`
+ * e.g. `postgresql://postgres:<pw>@127.0.0.1:5434/postgres` (see any `drizzle/archive/tests/*.test.sql`
  * header for the container's usual port). The suite creates its own randomly named database,
  * enables `postgis` in it, applies the real migration files up through the ceiling below, and
  * drops the database again in `afterAll` -- it never writes to the database named in the DSN.
@@ -55,7 +55,7 @@ const ADMIN_DSN = process.env.POSTGIS_TEST_DSN;
 
 if (ADMIN_DSN === undefined) {
   console.warn(
-    "\n[postgis-spatial] SKIPPED — no real-PostGIS coverage for drizzle/tests/*.test.sql.\n" +
+    "\n[postgis-spatial] SKIPPED — no real-PostGIS coverage for drizzle/archive/tests/*.test.sql.\n" +
       "  These scripts exercise geo.sync_feature_geom_from_properties(), geo.evacuation_zone_tiles(),\n" +
       "  geo.sensor_tiles() and geo.burn_severity_tiles() against real PostGIS geometry functions no\n" +
       "  shim can honestly stand in for. Set POSTGIS_TEST_DSN to a disposable local superuser DSN\n" +
@@ -66,7 +66,7 @@ if (ADMIN_DSN === undefined) {
 
 /**
  * Only migrations at or below this number are applied. See the file header: every
- * `drizzle/tests/000N*.test.sql` script targets the state as of migration N, not HEAD.
+ * `drizzle/archive/tests/000N*.test.sql` script targets the state as of migration N, not HEAD.
  */
 const MIGRATION_CEILING = 12;
 
@@ -91,17 +91,33 @@ const SPATIAL_TEST_FILES: readonly { file: string; finalNotice: string }[] = [
   },
 ] as const;
 
+// The chain moved to `drizzle/archive/` on 2026-09-08 when `drizzle/` was collapsed to a single
+// generated baseline. Reading from `drizzle/` here would be actively dangerous rather than merely
+// wrong: `0000_baseline.sql` passes the ceiling filter (0 <= 12), so this harness would apply the
+// WHOLE production schema instead of migrations 0000..0012, fail setup on its agri references, and
+// skip all four cases -- reporting green with zero real PostGIS coverage.
+const MIGRATION_DIRECTORY = "drizzle/archive";
+const SPATIAL_TEST_DIRECTORY = "drizzle/archive/tests";
+
 /** Committed migration files at or below `MIGRATION_CEILING`, in numeric (== lexical, zero-padded) order. */
 function migrationFilesThroughCeiling(): string[] {
-  return readdirSync("drizzle")
+  const files = readdirSync(MIGRATION_DIRECTORY)
     .filter((name) => /^\d{4}_.*\.sql$/.test(name))
     .filter((name) => Number(name.slice(0, 4)) <= MIGRATION_CEILING)
     .sort();
+  // Refused loudly: an empty list would apply nothing, leave every object absent, and report the
+  // skip as "setup-failed" rather than as this directory having moved again.
+  if (files.length === 0) {
+    throw new Error(
+      `no migrations at or below ${MIGRATION_CEILING} in ${MIGRATION_DIRECTORY}`
+    );
+  }
+  return files;
 }
 
 /** Applies one committed migration file, honouring drizzle's statement breakpoints. */
 async function applyMigration(client: postgres.Sql, file: string): Promise<void> {
-  const body = readFileSync(`drizzle/${file}`, "utf8");
+  const body = readFileSync(`${MIGRATION_DIRECTORY}/${file}`, "utf8");
   for (const statement of body.split("--> statement-breakpoint")) {
     if (statement.trim() === "") continue;
     await client.unsafe(statement);
@@ -109,7 +125,7 @@ async function applyMigration(client: postgres.Sql, file: string): Promise<void>
 }
 
 /**
- * Runs one `drizzle/tests/*.test.sql` script exactly as psql would (`-f`): the whole file in
+ * Runs one `drizzle/archive/tests/*.test.sql` script exactly as psql would (`-f`): the whole file in
  * one call, never split on `;`. Every script is `BEGIN; DO $$ ... $$; ROLLBACK;` and the DO
  * block's own body contains semicolons a naive statement-by-statement split would sever mid
  * declaration -- postgres-js's simple query protocol (the path `unsafe()` takes with no bound
@@ -127,7 +143,7 @@ async function applyMigration(client: postgres.Sql, file: string): Promise<void>
  */
 async function runSpatialTestFile(client: postgres.Sql, file: string): Promise<void> {
   await client.unsafe("ROLLBACK").catch(() => {});
-  const body = readFileSync(`drizzle/tests/${file}`, "utf8");
+  const body = readFileSync(`${SPATIAL_TEST_DIRECTORY}/${file}`, "utf8");
   await client.unsafe(body);
 }
 
