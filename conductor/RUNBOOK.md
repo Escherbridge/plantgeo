@@ -1500,13 +1500,13 @@ Postgres reduced to social features only with legacy Postgres code removed.
 
 ### State
 
-**Serving: 21 of 24 layers** (16 at session start). Withheld, with per-lane evidence counts taken
+**Serving: 22 of 24 layers** (16 at session start; the last soil-temperature index published
+2026-09-09 and took it from 21 to 22). Withheld, with per-lane evidence counts taken
 from `getSliderCapabilities.withheldParquetCapabilities`:
 
 | layer | lanes | missing | blocker |
 |---|---|---|---|
 | `climate-field-air-temperature` | 3 | 3 | month-grain, needs day-grain re-export; forward writer ALSO dead-lettered |
-| `soil-field-temperature` | 4 | **1** | three lanes published; the fourth's apply was still running at handoff |
 | `soil-survey` | 1 | 1 | job time budget, then a deliberate `servingReader` flip |
 
 **VERIFIED against production, not inferred:**
@@ -1518,7 +1518,10 @@ from `getSliderCapabilities.withheldParquetCapabilities`:
   `{layout} == {"monthly"}` now asserted in tests. Census lanes 18 -> 27.
 - Regional intelligence live: the endpoint returns 401 (auth required), not 503.
 
-**IN FLIGHT at handoff:** `availability-bootstrap --apply` for `soil-temperature-100-to-255cm`,
+**NOTHING IN FLIGHT.** (Historical: the last apply's stdout was lost when its shell was severed
+during process cleanup, but the bucket confirms bootstrap=2, generation=1, `_LATEST`=1 on all four
+soil-temperature lanes. Check the BUCKET, not the log, when an apply's output goes missing.)
+Former in-flight note: `availability-bootstrap --apply` for `soil-temperature-100-to-255cm`,
 56 minutes old, PID 59356, healthy two-connection signature, nothing written yet — which is normal,
 since the bootstrap marker, generation and `_LATEST` all land at the end. Its first attempt died on a
 transient `IncompleteRead`; this is the retry. Output lands in the session task directory as
@@ -1532,7 +1535,7 @@ archive-verified before the last push.
 workflow's three adversarial reviews all returned CHANGES-REQUIRED, and the service it produced at
 `c:\Users\atooz\Programming\plantgeo-export` is NOT usable — see Decisions.
 
-### THE ONE THING TO CHECK FIRST — a live latency regression
+### RESOLVED — the latency regression, and the rule it proves
 
 `getSliderCapabilities` went from **0.33 s warm to 29.3-29.8 s warm**, reproduced on four consecutive
 probes at 2026-09-09T03:0x. `parquetCoverageUnavailable` is still false, so it is slow rather than
@@ -1543,12 +1546,15 @@ census lanes, and under `PARQUET_COVERAGE_AUTHORITY=availability` a census lane 
 availability index falls back to a full object listing. `soil-temperature-100-to-255cm` is the only
 lane still un-indexed and it holds 12,448 objects, walked on every 300-second memo refresh.
 
-**Prediction to test:** when the in-flight apply lands, latency returns to sub-second. If it does
-NOT, the cost is structural in the 27-lane census and needs its own investigation before any further
-lane graduates.
+**RESOLVED 2026-09-09, prediction CONFIRMED.** The final apply published and latency recovered
+immediately: 8.38 s (memo cold) -> 2.20 s -> **0.303 s**. Serving went 21 -> 22; `soil-field-temperature`
+is live at 1,572 days, 2022-04-30..2026-08-29. The cost was NOT structural in the 27-lane census, so
+no redesign is needed.
 
-**Durable lesson either way: never graduate a lane out of `SNAPSHOT_PRODUCTS` before its availability
-index is published.** The window between the two is paid by every user request.
+**VERIFIED RULE, not a hypothesis: never graduate a lane out of `SNAPSHOT_PRODUCTS` before its
+availability index is published.** The window between the two is paid by every user request, at full
+object-listing cost. This session created a ~1-hour window of 29-second responses that way. Applies
+directly to the air-temperature trio, which must be built AND indexed before its entries are removed.
 
 ### Decisions
 
@@ -1643,15 +1649,14 @@ index is published.** The window between the two is paid by every user request.
 
 ### Continuation plan
 
-1. **Probe `getSliderCapabilities` twice, warm.** If the in-flight apply landed, expect 21 -> 22
-   layers and sub-second latency. If it is still ~29 s with every lane indexed, STOP and investigate
-   the 27-lane census cost before graduating anything else — that is the goal's "performant" clause
-   failing.
-2. If `soil-temperature-100-to-255cm` still reports `missing=1`, re-run its apply. The document is at
-   `<scratch>/st-out/soil-temperature-100-to-255cm/bootstrap-input.json`, sha256
-   `251136d400ece7ccbc4df99d2f0fec6ee22d540c862e828ed95f604e0167a76a`, 6,288 rows. Retrying the SAME
-   document is the supported path; a different window is refused as an immutable-bootstrap conflict.
-3. **Fix the apply hang properly** in `availability_index.py`: call `apply_statement_timeout` on the
+1. **Air-temperature is now the whole remaining map story.** Add a second `ProductSpec` family to
+   `build_era5_land_from_canonical_snapshot.py` for NASA POWER (`source=nasa-power-daily`,
+   `support=surface`, 397 cells/day, 1,560 days x 3 lanes). BUILD AND INDEX BEFORE REMOVING the
+   `SNAPSHOT_PRODUCTS` entries — see the verified rule above. Separately,
+   `plantgeo.executor.climate-nasa-power-direct-forward` is dead-lettered at 6/6 attempts since
+   2026-09-07T08:32Z; without that fix these lanes get no NEW days regardless of backfill, which is
+   the goal's "updating with new data" clause.
+2. **Fix the apply hang properly** in `availability_index.py`: call `apply_statement_timeout` on the
    loader session as the other 13 paths already do, add TCP keepalives to
    `local_source_loader_pool`, and stop holding the transaction across the verification loop. This
    unblocks large lanes and would let relative-humidity recover its 1981-2017 history.
