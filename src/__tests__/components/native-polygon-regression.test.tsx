@@ -55,7 +55,12 @@ import { DEFAULT_VIEWPORT } from "@/stores/map-store";
 // multi-level ".." against a Windows file:// base. Same reason as
 // src/__tests__/lib/map/layer-registry.test.ts.
 const SOURCE_DIR = fileURLToPath(new NodeURL("../../", import.meta.url));
-const DRIZZLE_DIR = fileURLToPath(new NodeURL("../../../drizzle", import.meta.url));
+// The migration chain moved to `drizzle/archive/` on 2026-09-08 when `drizzle/` was collapsed to a
+// single generated baseline; see `drizzle/archive/README.md`. This scan reads migration TEXT, so it
+// follows the text.
+const DRIZZLE_DIR = fileURLToPath(
+  new NodeURL("../../../drizzle/archive", import.meta.url)
+);
 
 /** The six products the spec's render table calls `native_polygon`, in registry order. */
 const EXPECTED_NATIVE_POLYGON_LAYER_IDS: readonly LayerToggleId[] = [

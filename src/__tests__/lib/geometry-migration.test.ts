@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-const MIGRATION_PATH = "drizzle/0008_geometry_dimension.sql";
+const MIGRATION_PATH = "drizzle/archive/0008_geometry_dimension.sql";
 const BACKFILL_PATH = "scripts/backfill-geometry.sql";
 
 /** Reads a SQL file with its `--` comments removed, so prose about a mistake never satisfies a guard. */

@@ -178,7 +178,7 @@ const AGRI_SCHEMA = `
 
 /** Applies a committed migration file, honouring drizzle's statement breakpoints. */
 async function applyMigration(client: postgres.Sql, file: string): Promise<void> {
-  const body = readFileSync(`drizzle/${file}`, "utf8");
+  const body = readFileSync(`drizzle/archive/${file}`, "utf8");
   for (const statement of body.split("--> statement-breakpoint")) {
     if (statement.trim() === "") continue;
     await client.unsafe(statement);

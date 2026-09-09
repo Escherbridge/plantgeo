@@ -57,7 +57,14 @@ const GOVERNED_SIGNAL_NAMES = [
   "vapor_pressure_deficit",
 ];
 
-const MIGRATION_PATH = "drizzle/0029_pre_aggregation_layer.sql";
+// STALE SUBJECT, recorded 2026-09-08 rather than silently repaired. `geo.mv_signal_cell_daily`
+// was dropped by `drizzle/archive/0034_record_signal_cell_daily_drop.sql`; that migration IS
+// applied, and the relation is ABSENT from production and from `drizzle/0000_baseline.sql`. The
+// assertions below therefore pin the 19-name list as it was written in archived, frozen text --
+// they can no longer catch a drift in anything production runs. Keep them only as the record of
+// that list, or re-aim them at whatever still consumes it; do not read a pass here as evidence
+// that a live census matches `coverage_contract.py`.
+const MIGRATION_PATH = "drizzle/archive/0029_pre_aggregation_layer.sql";
 
 /**
  * The text of one `CREATE MATERIALIZED VIEW [IF NOT EXISTS] <name> ...` statement, comments

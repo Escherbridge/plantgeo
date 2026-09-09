@@ -1746,3 +1746,70 @@ command with the same arguments and a stopwatch.
 **Same shape as `soil-survey`**, whose export runs 3h20m against the same 1,230 s budget. Two lanes,
 one class of defect: a per-tick time budget that does not fit the work, and a kill that reports as an
 opaque `status 1`.
+
+## THE DRIZZLE TREE IS NOW A BASELINE, AND SEVEN MIGRATIONS WERE NEVER APPLIED. 2026-09-08.
+
+`drizzle/` holds one migration, `0000_baseline.sql`, generated from production's real schema by
+pg_dump 18. The 0000-0040 chain is retained unedited in `drizzle/archive/` with the evidence in its
+README. Owner decisions this session: collapse to a greenfield baseline, and treat the never-applied
+migrations as superseded by the Parquet/PMTiles architecture.
+
+### The handoff's premise was wrong, and acting on it would have blocked deploys
+
+The handoff said ten files "were hand-applied to production". Probed directly, only **three** were
+(0034, 0038, 0040). These seven were **never applied**: 0030, 0031, 0032, 0033, 0035, 0036, 0039.
+
+The two hardest proofs, because they are the ones that bite:
+
+- `geo.features` in production is `relkind='r'` with **0 partitions**. 0036 asserts a partitioned
+  parent, so it cannot have run. The partition swap in `scripts/partition-features.mjs` has never
+  been performed against production.
+- All five tile functions 0039 drops are **still present** in production.
+
+Repairing the journal as instructed and deploying would have made `preDeployCommand` try to apply
+all seven in one transaction. 0036 fails outright, so every deploy would have failed. 0039 would
+have dropped the tile functions Martin serves.
+
+### Why the chain could never be replayed
+
+`drizzle-orm` applies every pending migration in ONE transaction, so on a fresh database there is
+no point at which a step can run *between* two migrations - but four had to: two
+`CREATE INDEX CONCURRENTLY` builds (which cannot run in a transaction at all), a matview refresh,
+and the 8-phase partition swap. `drizzle/0030`'s own header already said it: "a FRESH database
+cannot replay this tree from 0000 unattended".
+
+Separately, 7 Drizzle migrations read 10 Alembic-owned `agri` tables, so Alembic must run first.
+That ordering existed nowhere as an executable sequence; it does now.
+
+### One real hole, found and recorded
+
+0033 deliberately leaves `geo.intervention_tiles` without a `search_path` pin; 0038 asserts all five
+tile functions have one. Production only passed because the pin was applied **by hand** - nothing in
+the tree reproduced it. `drizzle/archive/0037_intervention_tiles_search_path.sql` records that gap;
+the baseline carries the pin because production does.
+
+### What to use now
+
+- **Build a database from empty:** `node scripts/bootstrap-database.mjs` - extensions, then Alembic
+  (it REFUSES to go further without `agri`), then the baseline. ~1.2 s, no manual steps.
+- **Regenerate the baseline:** `node scripts/generate-drizzle-baseline.mjs <artifact>`. The artifact
+  is a pg_dump 18 `--schema-only` of public+geo+tracking, stored at
+  `schema-baselines/20260908-prod-drizzle-schema.sql` in the object store. Do not rely on a local
+  podman image - it was removed to reclaim disk.
+- **Verify:** never compare dump text across majors. Build an empty database and compare the
+  CATALOGUE against production. Expected benign differences: CHECK constraints re-render after a
+  dump/restore round trip, and pg18 auto-names NOT NULL constraints with a numeric suffix.
+
+### Traps this session paid for
+
+- **`EXPECTED_DRIZZLE_MIGRATION` must be re-pinned with any journal change.** `/api/ready` matches
+  the ledger on `created_at` AND `hash`; a stale pin 503s the readiness probe and fails the Railway
+  healthcheck, blocking every deploy. Now pinned to the baseline, verified `t` against production.
+- **The migrator ignores `hash` but `/api/ready` does not.** Migration decisions are purely the
+  `when` timestamp compared against the single MAXIMUM `created_at`. The ledger is a high-water
+  mark, not a set: it cannot express "0034 applied, 0033 pending", and an entry stamped below the
+  maximum is skipped silently and forever.
+- **Stamp the ledger BEFORE pushing a journal change.** Old tree + stamped ledger is a safe no-op;
+  new tree + unstamped ledger tries to apply the baseline over the live schema. Backup of the 29
+  replaced rows: `schema-baselines/20260908-prod-drizzle-ledger-backup.txt` in the object store.
+- **`pg_dump` cannot dump a newer server.** Production is PG18; the local client is 16.

@@ -34,11 +34,18 @@ import { PUBLISHER_NAMED_DAY_RULE } from "@/lib/server/services/environmental-re
  */
 const FUNCTION_SIGNATURE = "CREATE OR REPLACE FUNCTION geo.feature_observation_day";
 
+// The chain that defines this function was archived on 2026-09-08 when `drizzle/` was collapsed to
+// a single generated baseline; see `drizzle/archive/README.md`. The scan follows it there. Note
+// what this now does and does not prove: the archived text is frozen, so this pins the definition
+// as it was last WRITTEN. The live authority for what production runs is
+// `drizzle/0000_baseline.sql`, which is regenerated from production itself.
+const MIGRATION_DIRECTORY = "drizzle/archive";
+
 function authoritativeMigrationPath(): string {
-  const defining = readdirSync("drizzle")
+  const defining = readdirSync(MIGRATION_DIRECTORY)
     .filter((name) => name.endsWith(".sql"))
     .sort()
-    .map((name) => `drizzle/${name}`)
+    .map((name) => `${MIGRATION_DIRECTORY}/${name}`)
     .filter((path) => readFileSync(path, "utf8").includes(FUNCTION_SIGNATURE));
   const newest = defining.at(-1);
   // Refused loudly at collection time: with no definition to read, every assertion below
@@ -210,7 +217,9 @@ describe("publisher-named day contract", () => {
   it("keeps the function's definition in the newest migration that replaces it", () => {
     // 0015 introduced the function; a later migration may replace it, and this contract must
     // follow the definition production actually runs rather than the one it was born in.
-    expect(MIGRATION_PATH).toBe("drizzle/0018_fire_discovery_observation_day.sql");
+    expect(MIGRATION_PATH).toBe(
+      "drizzle/archive/0018_fire_discovery_observation_day.sql"
+    );
     // The five baked tile sources and any future functional index depend on the signature and
     // the volatility surviving every redefinition untouched.
     expect(MIGRATION_SOURCE).toContain("RETURNS date");

@@ -2,6 +2,13 @@
 
 SQL that is written and reviewed but deliberately **not yet** in `drizzle/`.
 
+> **Status, 2026-09-08.** `drizzle/` was collapsed to a single generated baseline
+> (`drizzle/0000_baseline.sql`); the 0000–0040 chain now lives in `drizzle/archive/`, and
+> `EXPECTED_DRIZZLE_MIGRATION` pins the baseline. The coupling below is unchanged and still
+> applies to the next migration anyone adds. The parked files here that describe pre-aggregation
+> and features partitioning are **superseded** by the Parquet/PMTiles architecture — production
+> never received them, and `geo.features` is still a plain table. See `drizzle/archive/README.md`.
+
 A migration only belongs in `drizzle/` once it can be applied, because landing
 one there couples three things that must move together:
 

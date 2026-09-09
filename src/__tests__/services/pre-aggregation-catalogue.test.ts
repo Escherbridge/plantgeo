@@ -78,10 +78,10 @@ const ALL_CATALOGUE_SURFACE_NAMES = [...FEATURE_LAYER_NAMES, ...STREAM_LAYER_NAM
  * (`SELECT name FROM geo.layers`) reads against in production.
  */
 const GEO_LAYERS_SEED_MIGRATIONS = [
-  "drizzle/0001_handy_riptide.sql",
-  "drizzle/0011_burn_severity_layer.sql",
-  "drizzle/0013_soil_survey_persistence.sql",
-  "drizzle/0017_watershed_persistence.sql",
+  "drizzle/archive/0001_handy_riptide.sql",
+  "drizzle/archive/0011_burn_severity_layer.sql",
+  "drizzle/archive/0013_soil_survey_persistence.sql",
+  "drizzle/archive/0017_watershed_persistence.sql",
 ];
 
 /** Every name inserted into geo.layers across the seed migrations above. */
@@ -104,7 +104,7 @@ function seededGeoLayersNames(): string[] {
   return names;
 }
 
-const CENSUS_MIGRATION_PATH = "drizzle/0029_pre_aggregation_layer.sql";
+const CENSUS_MIGRATION_PATH = "drizzle/archive/0029_pre_aggregation_layer.sql";
 
 /**
  * The text of one `CREATE MATERIALIZED VIEW [IF NOT EXISTS] <name> ...` statement, comments

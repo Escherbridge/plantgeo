@@ -3,6 +3,31 @@
 Rationale and constraints that the code's one-line doc comments deliberately omit.
 Add a section per module as it grows; sections are independent.
 
+## §migrations — the tree is a baseline, not a chain
+
+Since 2026-09-08 `drizzle/` holds **one** migration, `0000_baseline.sql`, generated from
+production's real schema. The former 0000–0040 chain is retained unedited in `drizzle/archive/`,
+whose README carries the evidence. **A `drizzle/00NN_*.sql` reference anywhere in this repo now
+resolves to `drizzle/archive/00NN_*.sql`** — those references were left in place deliberately
+rather than rewritten across 127 files, because they are explanatory ("applied by drizzle/0015")
+and the archive is the single place that explains where they went.
+
+Two facts about the migrator that are easy to get wrong, both from
+`drizzle-orm/pg-core/dialect.js`:
+
+- It decides what to apply **purely on the journal's `when` timestamp**, comparing it against the
+  single **maximum** `created_at` in `drizzle.__drizzle_migrations`. The stored `hash` is written
+  but never compared, and the ledger is a high-water mark rather than a set — so it cannot
+  represent "0034 applied, 0033 pending", and a new entry stamped *below* the maximum is skipped
+  silently and forever.
+- It applies **every pending migration in one transaction**. That is why nothing needing
+  `CREATE INDEX CONCURRENTLY` can ever be a migration, and why the old chain needed four
+  out-of-band steps that a fresh database had no way to interleave.
+
+Building a database from empty is `scripts/bootstrap-database.mjs`: extensions, then Alembic
+(`agri` is Alembic's and the baseline reads ten of its tables), then the baseline. It refuses step
+three without step two. Regenerating the baseline is `scripts/generate-drizzle-baseline.mjs`.
+
 ## §geometry-dimension
 
 The one conformed geometry dimension every fact joins to. Files: `schema.ts`
