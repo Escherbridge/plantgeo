@@ -1490,3 +1490,169 @@ across two release-days and **zero** completion markers, so `close_lane_coverage
 null bounds and the slider says `lane_never_written`. Note also that even a completed export will
 NOT serve: `parquet-slider-capabilities.ts:123` pins soil-survey to `servingReader: "postgresql"`,
 so it would next surface as `reader_not_parquet`. Three separate things to fix, in that order.
+
+## SESSION HANDOFF 2026-09-09 — Parquet cutover: 16 -> 21 layers, and a live latency regression
+
+### Goal
+
+Full cutover to Parquet: every layer serving from Parquet with the right rungs, performant, and
+Postgres reduced to social features only with legacy Postgres code removed.
+
+### State
+
+**Serving: 21 of 24 layers** (16 at session start). Withheld, with per-lane evidence counts taken
+from `getSliderCapabilities.withheldParquetCapabilities`:
+
+| layer | lanes | missing | blocker |
+|---|---|---|---|
+| `climate-field-air-temperature` | 3 | 3 | month-grain, needs day-grain re-export; forward writer ALSO dead-lettered |
+| `soil-field-temperature` | 4 | **1** | three lanes published; the fourth's apply was still running at handoff |
+| `soil-survey` | 1 | 1 | job time budget, then a deliberate `servingReader` flip |
+
+**VERIFIED against production, not inferred:**
+
+- Five ERA5-Land lanes built at day grain: 1,556 days each, `owed=0`, parts == markers on all four
+  rungs, 58,664 objects. `soil-field-vpd` serving 1,572 days.
+- Three `soil-wetness-*` plus `climate-field-relative-humidity` promoted and serving.
+- `SNAPSHOT_PRODUCTS` 12 -> 3 (air-temperature trio only), with the invariant
+  `{layout} == {"monthly"}` now asserted in tests. Census lanes 18 -> 27.
+- Regional intelligence live: the endpoint returns 401 (auth required), not 503.
+
+**IN FLIGHT at handoff:** `availability-bootstrap --apply` for `soil-temperature-100-to-255cm`,
+56 minutes old, PID 59356, healthy two-connection signature, nothing written yet — which is normal,
+since the bootstrap marker, generation and `_LATEST` all land at the end. Its first attempt died on a
+transient `IncompleteRead`; this is the retry. Output lands in the session task directory as
+`ba3hyrc3i.output`.
+
+**Commits, all pushed:** ba99a37, 8cd2844, 08a5991, ce63d94, 0c452e9, 9b7565b, fb72d07. Tree clean
+apart from `.omc/` state. The Python sweep is GREEN (format, lint, mypy, pytest) and the receipt was
+archive-verified before the last push.
+
+**Review ledger:** the offline-export-service track's five phases each still read `_pending_`. The
+workflow's three adversarial reviews all returned CHANGES-REQUIRED, and the service it produced at
+`c:\Users\atooz\Programming\plantgeo-export` is NOT usable — see Decisions.
+
+### THE ONE THING TO CHECK FIRST — a live latency regression
+
+`getSliderCapabilities` went from **0.33 s warm to 29.3-29.8 s warm**, reproduced on four consecutive
+probes at 2026-09-09T03:0x. `parquetCoverageUnavailable` is still false, so it is slow rather than
+broken — but this is a real regression against the goal's "performant".
+
+Most likely cause, NOT yet confirmed: graduating nine lanes out of `SNAPSHOT_PRODUCTS` made them
+census lanes, and under `PARQUET_COVERAGE_AUTHORITY=availability` a census lane WITHOUT an
+availability index falls back to a full object listing. `soil-temperature-100-to-255cm` is the only
+lane still un-indexed and it holds 12,448 objects, walked on every 300-second memo refresh.
+
+**Prediction to test:** when the in-flight apply lands, latency returns to sub-second. If it does
+NOT, the cost is structural in the 27-lane census and needs its own investigation before any further
+lane graduates.
+
+**Durable lesson either way: never graduate a lane out of `SNAPSHOT_PRODUCTS` before its availability
+index is published.** The window between the two is paid by every user request.
+
+### Decisions
+
+- **Postgres scope, owner call 2026-09-09: EVERYTHING NON-SOCIAL GOES, INCLUDING THE ML PLANE.** Not
+  only the map-serving data. Postgres ends up holding the ~23 social tables (~600 KB) plus auth and
+  operational tables. The ~45 `agri.*` ML/forecast/strategy tables — `agri.forecast_observation`
+  alone is 2.4 GB — therefore need a Parquet home or a retirement decision FIRST. That is a design
+  problem rather than a drop, and materially more work than the retirement track scoped.
+- **Extend the proven in-repo builder; do not use the standalone service.** The workflow produced
+  ~7,000 lines at `plantgeo-export` and three independent adversarial reviews returned
+  CHANGES-REQUIRED (unrunnable imports, markers uploaded before their parts, and a "two independent
+  witnesses" digest check that was the same digest read twice).
+  `scripts/build_era5_land_from_canonical_snapshot.py` extends
+  `build_soil_moisture_from_canonical_snapshot.py`, which serves in production today.
+- **relative-humidity serves 2018-2026, not 1981-2026.** Its full 59,088-row bootstrap hung twice;
+  12,336 rows applied cleanly. The 1981-2017 days are in the bucket and correct, merely unindexed.
+- The export track's premise is HALF REFUTED by its own reviewer: the service removes the
+  compile-side serial reads but not the apply's, and the apply is what actually failed.
+
+### Assumptions
+
+- The 29 s latency resolves when the last index publishes - default taken: assumed, untested - to
+  reverse: one probe after the apply lands; if wrong, the 27-lane census cost needs redesign before
+  any more lanes graduate.
+- The air-temperature trio can reuse the same builder pattern - default taken: assumed from the
+  census - to reverse: a second `ProductSpec` family (NASA POWER, 397-cell grid), not a rewrite.
+- Nothing else regressed while the coverage memo was slow - default taken: only this endpoint was
+  probed - to reverse: check the tile and row-read paths too.
+
+### Key context a fresh read would not surface
+
+- **`layout` is the discriminator, not object count.** A `monthly` root cannot be promoted by copy;
+  1,908 unreadable objects were written and reverted on 2026-09-07 learning that.
+- **`data_root` has two trees, and they differ WITHIN one family:** `soil-field-vpd` uses
+  `layer=.../snapshot=`, while the four `soil-temperature-*` use
+  `derived-canonical/signal-observation/`.
+- **`_complete.json` is two different documents.** A product-breakdown sidecar written where a
+  `PartitionCompletion` belongs makes a fully-present lane advertise NOTHING.
+- **The apply's practical ceiling is between 12k and 59k rows** — far tighter than the documented
+  64 MiB `MAX_INPUT_BYTES`, and recorded nowhere else. Root cause is in section 8 above: a Postgres
+  advisory-lock transaction held across an O(rows) serial verification, with `apply_statement_timeout`
+  called by 13 other execution paths but NOT this one, and no TCP keepalive on the loader pool.
+  botocore already defaults to 60 s timeouts, so the earlier "missing boto timeouts" diagnosis in
+  ce63d94 was WRONG; it is corrected in 0c452e9.
+- **A cold `getSliderCapabilities` returns `coverage_unavailable` for EVERY layer.** It looks exactly
+  like a total outage and is not one. Always probe twice.
+- **`ai_conversations.geohash` was `varchar(12)` holding a 13-character coordinate pair**, so regional
+  intelligence had never worked anywhere in the Americas. An explicit `::varchar(12)` CAST silently
+  truncates while an INSERT raises, which is why it surfaced only as a 503.
+- Two bugs existed only in the state a successful build creates and were invisible to any dry run:
+  the builder looked up `PRODUCT_BY_LAYER` (whose entry it removes), and publishing the availability
+  index broke the builder's own ladder census.
+
+### Relevant files
+
+- `services/agri-data-service/scripts/build_era5_land_from_canonical_snapshot.py` — the working
+  day-grain builder; extend this for NASA POWER.
+- `services/agri-data-service/src/agri_data_service/parquet_ops/snapshot_products.py:229-357` — the
+  authoritative account of layout and promotion, plus the three remaining products.
+- `services/agri-data-service/src/agri_data_service/pipeline/parquet/availability_index.py:1182` —
+  `bootstrap_availability`, the hang site.
+- `services/agri-data-service/src/agri_data_service/db/engine.py:110-122` — the loader pool, with no
+  keepalive and no statement timeout.
+- `src/lib/server/services/parquet-slider-capabilities.ts:123` — soil-survey's `servingReader` pin.
+- `conductor/tracks/offline_export_service_20260908/` — spec, plan, metadata and a dedicated RUNBOOK.
+
+### Environment
+
+- Branch `main`, clean apart from `.omc/`. All work pushed.
+- Credentials: `services/agri-data-service/.env` (gitignored) holds the prod DSN and object store;
+  root `.env.local` holds `OPENROUTER_*`. Values are never echoed. Railway vars are set on
+  `plantgeo-main`.
+- Every Python command: `UV_NO_SYNC=1 uv run --no-sync ...` from `services/agri-data-service`.
+- Railway CLI authenticated, project `Aevani` linked, `plantgeo-main` deploy 878125a2 SUCCESS.
+- Local Postgres 16 could not be stopped without elevation (`net stop postgresql-x64-16`).
+
+### Continuation plan
+
+1. **Probe `getSliderCapabilities` twice, warm.** If the in-flight apply landed, expect 21 -> 22
+   layers and sub-second latency. If it is still ~29 s with every lane indexed, STOP and investigate
+   the 27-lane census cost before graduating anything else — that is the goal's "performant" clause
+   failing.
+2. If `soil-temperature-100-to-255cm` still reports `missing=1`, re-run its apply. The document is at
+   `<scratch>/st-out/soil-temperature-100-to-255cm/bootstrap-input.json`, sha256
+   `251136d400ece7ccbc4df99d2f0fec6ee22d540c862e828ed95f604e0167a76a`, 6,288 rows. Retrying the SAME
+   document is the supported path; a different window is refused as an immutable-bootstrap conflict.
+3. **Fix the apply hang properly** in `availability_index.py`: call `apply_statement_timeout` on the
+   loader session as the other 13 paths already do, add TCP keepalives to
+   `local_source_loader_pool`, and stop holding the transaction across the verification loop. This
+   unblocks large lanes and would let relative-humidity recover its 1981-2017 history.
+4. **Air-temperature:** add a second `ProductSpec` family to the ERA5-Land builder for NASA POWER
+   (`source=nasa-power-daily`, `support=surface`, 397 cells/day, 1,560 days across three lanes).
+   Separately, `plantgeo.executor.climate-nasa-power-direct-forward` is dead-lettered at 6/6 attempts
+   since 2026-09-07T08:32Z; without that fix the lanes get no NEW days regardless of backfill.
+5. **soil-survey:** raise `time_budget_seconds` (1,230 s against a run that took 3h20m), let one
+   export finish so `_finalize_written_day` writes its markers, then flip `servingReader` to parquet.
+6. **Then the Postgres clause**, under the 2026-09-09 decision above — which now requires settling the
+   ML plane's fate first. `pg_stat_statements` is NOT installed, so no query cost can be attributed
+   today, and `layers` shows 33,273,668 sequential scans against a 48 kB table.
+
+### Open questions
+
+- Build the availability APPEND compiler? `load_publication_request` exists and takes a
+  `bootstrap_receipt_key`, but nothing emits that document. Trigger: when deferred history
+  (relative-humidity 1981-2017) needs recovering.
+- `fire-perimeters` invalid WFIGS geometry remains an owner call; the recommendation is still a named
+  counted quarantine rather than a policy flip.
