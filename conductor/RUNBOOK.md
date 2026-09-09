@@ -1820,3 +1820,70 @@ the baseline carries the pin because production does.
   the 29 rows from that backup in the same change** - or re-pin `EXPECTED_DRIZZLE_MIGRATION` to a
   row that actually exists.
 - **`pg_dump` cannot dump a newer server.** Production is PG18; the local client is 16.
+
+## PRODUCTION WAS REBUILT FROM EMPTY. 2026-09-09.
+
+Owner decision: full rebuild of both schemas, wiping and re-bootstrapping rather than retiring
+relations one at a time. Production went from **40 GB to 30 MB**. This is the retirement executed in
+one move, and it is done.
+
+### What was verified afterwards
+
+- **Catalogue parity is exact.** A freshly bootstrapped database and production now differ in
+  **0 of 5,479** catalogue rows (columns, indexes, constraints, functions, view definitions,
+  triggers). Before the rebuild that number was 174.
+- **The 174 were only CHECK-constraint renderings**, and they are now gone: a diff of pre-wipe
+  production against rebuilt production shows 174 differing lines and **zero** that are not
+  `CONSTRAINT` lines. Nothing else in the schema moved.
+- `/api/ready` returns HTTP 200 `status: ready`. All four database gates pass: layers_ready,
+  migration_ready, core_tables, extensions.
+
+### What was preserved, and what it cost
+
+Only ~3,700 rows in the whole 40 GB were not machine-derived. All of them were exported to CSV
+first and restored after, verified row-for-row:
+
+`agri.job_definition` 50 · `agri.spatial_cell` 1,965 · `agri.expert_label` 30 ·
+`agri.expert_label_source` 29 · `agri.expert_label_release` 1 · `agri.data_source` 5 ·
+`agri.matview_refresh_state` 15 · `geo.raster_release` 12 · `geo.layers` 11 (from `drizzle/seed/`) ·
+`public.soil_grid_cache` 1,583 · users/teams/team_members/ai_conversations/ai_messages/
+strategy_requests/email_verification_tokens 9 total.
+
+Archive: `schema-baselines/20260909-prod-preserve-set.tar.gz` in the object store (sha256
+`d53009c9...`), plus the schema dump and the pre-wipe ledger backup alongside it.
+
+**`agri.job_definition` was the near-miss.** The Alembic baseline creates that table EMPTY - it does
+not seed the 50 lane definitions. Wiping without exporting it would have destroyed the entire
+ingestion schedule, which is configuration, not regenerable data. Check for this class of table
+before any future rebuild: the question is not "is this data derived" but "does the baseline
+recreate it".
+
+### Deliberately NOT preserved
+
+- `geo.features` 5,376,690 and `geo.geometry` 3,335,131 - regenerable, and 15 of 16 layers already
+  serve from Parquet.
+- `geo.drought_areas` 1,050 rows but **1.02 GB** of polygon geometry. Drought serves from Parquet;
+  keeping a gigabyte of superseded geometry would have defeated the rebuild.
+- `geo.soil_survey_coverage` 1,358 - derived from the features that were dropped, so restoring it
+  would have asserted coverage for data that no longer exists.
+- All execution history (`job_run`, `job_attempt`, `job_work_item`, `job_checkpoint`), all lineage
+  (`source_release`, `artifact`, `release_set*`), and the whole forecast plane.
+
+### soil-survey is DARK, and its return has a requirement
+
+`soil-survey` was the only layer still reading Postgres (`servingReader: "postgresql"`,
+`src/lib/server/services/parquet-slider-capabilities.ts:123`) with 240,224 features / 1,229 MB. The
+owner accepted it going dark. **When it is cut over to Parquet it must come back WITH THE LOW-ZOOM /
+generalized geometry rungs, not only native-resolution features** - owner requirement, 2026-09-09.
+Do not call the cutover done if the layer only renders at high zoom.
+
+### Notes for whoever picks this up
+
+- **Postgres is now out of the serving path entirely.** That was the Parquet pivot's goal.
+- **The job executor was left running on purpose.** Its 50 lanes are restored and enabled, so it
+  will begin re-ingesting into empty tables. Expect sustained lane activity; that is the intent, not
+  a fault. It was NOT stopped because a from-source redeploy of `plantgeo-job-executor` builds the
+  wrong Dockerfile unless config-as-code is set, so taking it down risks not getting it back.
+- **Martin and plantgeo-main were redeployed** after the rebuild. Both hold cached plans / server
+  side prepared statements against dropped OIDs, and nothing in the pipeline bounces them.
+- `railway redeploy -s <service> -y` prints NOTHING on success. Check `railway status` to confirm.
