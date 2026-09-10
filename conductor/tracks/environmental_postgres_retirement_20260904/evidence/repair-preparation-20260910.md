@@ -72,6 +72,14 @@ records no bucket/database calls and no archive transfer. This remains temporary
 executor storage, not durable preservation across a redeployment. Preserve it
 before replacing that executor; the original bucket partitions remain unchanged.
 
+The subsequent supported inbound transfer preserved the archive in the local
+workspace at [signal-coordinate-artifacts-20260910.tar.gz](../../../../.omc/research/signal-coordinate-artifacts-20260910.tar.gz).
+The [transfer receipt](../../../../.omc/research/signal-coordinate-archive-transfer-20260910.json)
+verifies the same 54,850,520-byte archive hash, all 1,555 regular members and
+their content hashes, and the pinned 222-day batch manifest without extraction.
+This discharges the archive-preservation condition before an executor replacement.
+No bucket/database calls or sensor outbound transfer accompanied this download.
+
 ## Sensors: independently verified positive candidates, incomplete source
 
 The independent review matched every candidate row to captured raw JSON without
@@ -127,9 +135,12 @@ records format 0.22 seconds, lint 0.19 seconds, mypy 1.70 seconds and pytest
 168.75 seconds. Its summary records pytest passing without a case count. All
 test database settings were absent; this does not certify database integration.
 
-No prepare or apply has run against production. The local rescue
-archive transfer back to the executor remains awaiting explicit user approval
-following automatic approval review's rejection of that sensitive transfer.
+No sensor correction prepare or apply has run against production. Following the
+earlier automatic approval rejection, the user explicitly approved copying the
+preserved 2.29 MB sensor archive back to the executor for hash-verified offline
+preparation. Execution is scheduled after the new executor is ready so deployment
+does not discard the temporary preparation. The approval covers that archive
+transfer; it does not claim any repair publication has occurred.
 
 ## Soil reader: deployed and checked against source
 
