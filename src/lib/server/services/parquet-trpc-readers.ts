@@ -54,6 +54,7 @@ import {
   getParquetLatestRelease,
   getParquetLayerDay,
   getParquetLayerDayWindow,
+  getParquetWarehouseCoverage,
   ParquetPlaneContractError,
   ParquetPlaneRequestError,
 } from "@/lib/server/services/parquet-plane-client";
@@ -2113,11 +2114,7 @@ const BURN_SEVERITY_MAX_RELEASES = 12;
  * across the lane's release days, and a single `getParquetLatestRelease` would draw only the newest
  * release: last year's fire scars would vanish from a map that has always drawn them.
  *
- * The walk is the release resolver used as designed rather than a new path: each answer reports its
- * own `servedDay`, and asking again for the day before it yields the previous release, terminating
- * at `day_not_written` once the lane's floor is passed. It reproduces exactly the set
- * `geo.burn_severity_tiles()` plus the `observed_day <= day` style filter drew, at a bounded number
- * of round trips instead of one 37.5 MB, 28.4-second unsimplified read.
+ * Reads only indexed publication dates; see services/AGENTS.md for absence spans and history gaps.
  */
 export async function getParquetBurnSeverity(
   input: ParquetViewportRead
@@ -2134,13 +2131,32 @@ export async function getParquetBurnSeverity(
   } as const;
 
   return boundedResult(async () => {
+    const coverage = await getParquetWarehouseCoverage();
+    const lane = coverage.lanes.find((entry) => entry.layer === "burn-severity"
+      && entry.kind === "observed" && entry.zoomTier === zoomTier);
+    if (!lane || lane.nature !== "release_series" || lane.withheldReason !== null
+      || lane.coverageAuthority !== "availability" || !lane.availabilityGenerationSha256
+      || !lane.availabilityPointerKey) {
+      throw contractError("burn-severity requires authoritative publication coverage for the requested rung");
+    }
+    const releaseDays = new Set<string>();
+    for (const range of [...lane.publishedRanges].sort((a, b) => b.to.localeCompare(a.to))) {
+      let releaseDay = range.to < day ? range.to : day;
+      while (releaseDay >= range.from && releaseDays.size <= BURN_SEVERITY_MAX_RELEASES) {
+        releaseDays.add(releaseDay);
+        releaseDay = addUtcDays(releaseDay, -1);
+      }
+      if (releaseDays.size > BURN_SEVERITY_MAX_RELEASES) break;
+    }
+    const indexedDays = [...releaseDays].sort().reverse();
     const scars: ParquetBurnScar[] = [];
     let newestServedDay: string | null = null;
-    let firstAnswer: ParquetReaderResult<ParquetBurnScar[]> | null = null;
-    let asOfDay = day;
-    let truncated = false;
+    let truncated = indexedDays.length > BURN_SEVERITY_MAX_RELEASES
+      || lane.gapRanges.some((range) => range.from <= day)
+      || coverage.evaluatedThroughDay < day;
 
-    for (let release = 0; release < BURN_SEVERITY_MAX_RELEASES; release += 1) {
+    // MTBS published ranges are release dates, unlike carried drought coverage.
+    for (const asOfDay of (indexedDays.length ? indexedDays.slice(0, BURN_SEVERITY_MAX_RELEASES) : [day])) {
       const answer = mapEnvelope(
         await getParquetLatestRelease({ ...releaseRequest, asOfDay }),
         (rows) =>
@@ -2158,25 +2174,20 @@ export async function getParquetBurnSeverity(
             geometry: decodePolygonGeometry(row.geom, "burn-severity"),
           }))
       );
-      firstAnswer ??= answer;
-      // A governed absence or an unwritten day ENDS the walk rather than failing it: the releases
-      // already collected are a true statement about the day, and the older ones simply stop.
-      if (answer.state !== "ready") break;
+      if (!indexedDays.length) {
+        if (answer.state === "ready") throw contractError("burn-severity publication disagrees with its coverage index");
+        return answer;
+      }
+      if (answer.state !== "ready" || answer.servedDay !== asOfDay) {
+        throw contractError("burn-severity indexed release did not serve its exact publication day");
+      }
       newestServedDay ??= answer.servedDay;
       scars.push(...answer.data);
       truncated ||= answer.truncated;
-      // The release before this one. Day arithmetic on the SERVED day, never the requested one:
-      // asking `requestedDay - 1` again would re-serve the release just read, forever. The walk
-      // needs no floor of its own -- once `asOfDay` drops below the lane's first release the plane
-      // answers `day_not_written` in one call and the loop above ends.
-      asOfDay = addUtcDays(answer.servedDay, -1);
-      if (release === BURN_SEVERITY_MAX_RELEASES - 1) truncated = true;
     }
 
-    // Nothing published at or before the day: report the plane's own first answer, whatever it
-    // said, so an absence stays an absence and an unwritten lane stays unwritten.
     if (newestServedDay === null) {
-      return firstAnswer ?? { state: "not_generated", requestedDay: day, reason: "day_not_written" };
+      throw contractError("burn-severity indexed history returned no release");
     }
     // The served day is the NEWEST release in the union, which is the day the map is drawing: an
     // older member does not make the answer older than its freshest release.

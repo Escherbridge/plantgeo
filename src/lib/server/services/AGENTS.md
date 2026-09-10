@@ -533,3 +533,27 @@ The phrase detector, gauge comparison requirements and correction budget are unc
 Post-claim denials must end the clause or name an exact reading/gauge-value/measurement
 origin; causal continuations such as "not established as a cause" do not exempt a
 qualitative flow claim.
+
+## Cumulative MTBS publication enumeration (2026-09-10)
+
+Live Oregon/Idaho/Washington comparisons proved 2021 fire boundaries disappeared when
+advancing from the 2023-08-09 publication to 2024-08-22. The next release lookup at
+2024-08-21 answered a governed no-release marker. The old walk treated that marker
+as the end of history, returning only the newest cohort with truncated=false.
+
+The MTBS-only reader now uses matching-rung observed/release-series availability
+coverage to enumerate actual published dates at/before selection. It visits at most
+12 releases, detecting a thirteenth without expanding unbounded calendar ranges.
+Every read must return ready at the exact indexed publication day; missing/withheld
+coverage or contradictory release responses fail closed, never fall back to the
+latest cohort. No release day or feature date is inferred from ignition year.
+Governed absence spans cost no row requests. When no indexed release precedes the
+day, the underlying plane's actual absence/not-generated response is preserved.
+
+The response unions the published cohorts and retains each feature's original dates,
+geometry and units. Existing row caps, any owed historical gap at/before selection,
+a selection beyond evaluated coverage, and the release budget mark it truncated.
+This flag means incomplete history as well as a row cap; it does not assert complete
+MTBS history when the availability index still records the 2015–2020 publication gap.
+MTBS publication ranges are exact dates: this enumeration must not be generalized to
+release lanes whose coverage ranges represent carried values, such as drought.

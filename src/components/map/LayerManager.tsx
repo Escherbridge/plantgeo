@@ -553,7 +553,9 @@ export default function LayerManager() {
         ? {
             layerId: `${lane.layerId}-truncated`,
             tone: "notice" as const,
-            message: `The Parquet row budget was reached. The ${lane.subject.toLowerCase()} drawn are a subset of this viewport.`,
+            message: lane.layerId === "burn-severity"
+              ? "Burn history is incomplete because some history is unpublished or a read limit was reached. Available published burn history boundaries are shown."
+              : `The Parquet row budget was reached. The ${lane.subject.toLowerCase()} drawn are a subset of this viewport.`,
           }
         : null
     ),

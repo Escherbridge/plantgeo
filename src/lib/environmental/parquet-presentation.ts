@@ -617,10 +617,8 @@ export function presentParquetVegetation(
  * The envelope travels rather than being dropped here because it is the only thing that can say
  * whether a dot is ONE sampled observation or the mean of however many the derivation floored into
  * a coarse cell -- the same distinction the fire and streamflow lanes draw, and one the weather
- * layer had no way to state at all before 2026-09-02. Whether a coarse rung should stop being a
- * dot is a rendering question this presenter deliberately does not answer: `weather` is an
- * `event_point` layer in `LAYER_RENDER_CONTRACT`, and widening that is m0's open sampled-grid
- * ruling, not a presenter's decision.
+ * layer had no way to state at all before 2026-09-02. The renderer uses declared aggregate
+ * footprints while raw samples remain points; see components/map/AGENTS.md weather support fidelity.
  */
 export function presentParquetWeather(
   result: ParquetBrowserReaderResult<readonly ParquetBrowserWeatherObservation[]> | undefined
@@ -633,6 +631,8 @@ export function presentParquetWeather(
     temperature: observation.temperatureC,
     humidity: observation.relativeHumidityPct,
     observedAt: observation.observedAt,
+    observedDay: observation.observedDay,
+    sampleKind: "model_estimate" as const,
     support: observation.support,
   }));
 }

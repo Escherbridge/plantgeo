@@ -48,6 +48,7 @@ export const HOVERABLE_LAYER_IDS: string[] = [
   "soil-survey-fill",
   "soil-survey-summary",
   "weather-temperature",
+  "weather-temperature-cells",
   "osm-roads",
   "osm-waterways",
 ];
@@ -465,13 +466,17 @@ function formatWeatherObservation(props: Properties): HoverContent | null {
   const humidity = formatInteger(props.humidity, "%");
   const observed = formatTimestampWithRelative(toIsoTimestamp(props.observedAt));
 
-  return buildContent("Weather observation", [
+  const aggregate = props.supportKind === "aggregate_cell";
+  const estimate = props.sampleKind === "model_estimate";
+  return buildContent(aggregate ? "Weather estimate aggregate" : estimate ? "Sampled weather estimate" : "Weather observation", [
+    aggregate ? "Mean of captured Open-Meteo readings on the source day; not a native model grid cell." : estimate ? "Open-Meteo model estimate at a sampled location; not a station reading." : null,
     temperature ? `Temperature: ${temperature}` : null,
     windSpeed
       ? `Wind: ${windSpeed}${windDirection ? ` from ${windDirection}` : ""}`
       : null,
     humidity ? `Humidity: ${humidity}` : null,
-    observed ? `Observed: ${observed}` : null,
+    typeof props.observedDay === "string" ? `Source day: ${formatCalendarDay(props.observedDay)}` : null,
+    observed ? `${aggregate ? 'Newest contributing reading' : 'Observed'}: ${observed}` : null,
   ]);
 }
 
@@ -520,6 +525,7 @@ const FORMATTERS: Record<string, (props: Properties) => HoverContent | null> = {
   // their own `summary` flag rather than by which layer drew them.
   "soil-survey-summary": formatSoilSurvey,
   "weather-temperature": formatWeatherObservation,
+  "weather-temperature-cells": formatWeatherObservation,
   "osm-roads": formatRoad,
   "osm-waterways": formatWaterway,
 };

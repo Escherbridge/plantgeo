@@ -7,6 +7,7 @@ vi.mock("@/lib/server/services/parquet-plane-client", async (importOriginal) => 
     getParquetLayerDay: vi.fn(),
     getParquetLayerDayWindow: vi.fn(),
     getParquetLatestRelease: vi.fn(),
+    getParquetWarehouseCoverage: vi.fn(),
   };
 });
 
@@ -22,6 +23,8 @@ import {
   getParquetLatestRelease,
   getParquetLayerDay,
   getParquetLayerDayWindow,
+  getParquetWarehouseCoverage,
+  type ParquetWarehouseCoverage,
   ParquetPlaneContractError,
   ParquetPlaneRequestError,
 } from "@/lib/server/services/parquet-plane-client";
@@ -44,6 +47,22 @@ import {
 const mockedDay = vi.mocked(getParquetLayerDay);
 const mockedWindow = vi.mocked(getParquetLayerDayWindow);
 const mockedRelease = vi.mocked(getParquetLatestRelease);
+const mockedCoverage = vi.mocked(getParquetWarehouseCoverage);
+
+function burnCoverage(days = ['2024-03-01', '2022-05-10']): ParquetWarehouseCoverage {
+  return {
+    coverageSchemaVersion: 4, generatedAt: '2026-08-26T00:00:00Z', evaluatedThroughDay: '2026-08-26',
+    lanes: [{
+      layer: 'burn-severity', nature: 'release_series', kind: 'observed', zoomTier: 13,
+      earliestDay: [...days].sort()[0] ?? null, latestDay: [...days].sort().at(-1) ?? null,
+      latestRecordedDay: [...days].sort().at(-1) ?? null,
+      publishedRanges: days.map(day => ({ from: day, to: day })),
+      gapRanges: [], governedAbsenceRanges: [], coverageAuthority: 'availability',
+      availabilityGenerationSha256: 'a'.repeat(64), availabilityPointerKey: 'burn/availability/_LATEST.json',
+      sourceCeilingDay: '2026-08-26', requiredRungs: [0, 5, 9, 13], withheldReason: null,
+    }],
+  };
+}
 
 const evidence = {
   reason: "source had no release",
@@ -277,6 +296,8 @@ function climateLineageRow(day = "2026-08-06") {
 }
 
 beforeEach(() => {
+  mockedCoverage.mockReset();
+  mockedCoverage.mockResolvedValue(burnCoverage());
   mockedDay.mockReset();
   mockedWindow.mockReset();
   mockedRelease.mockReset();
@@ -1913,7 +1934,7 @@ describe("the five layers that left Martin's tile functions", () => {
     });
   });
 
-  it("unions every burn-severity release at or before the day, walking back by served day", async () => {
+  it("unions indexed burn-severity publications without walking intervening absence days", async () => {
     mockedRelease
       .mockResolvedValueOnce(
         published("2026-08-26", [burnScarRow({ fire_id: "newest" })], "2024-03-01")
@@ -1932,14 +1953,13 @@ describe("the five layers that left Martin's tile functions", () => {
       nowMs: Date.parse("2026-08-26T12:00:00Z"),
     });
 
-    // Each step asks for the day BEFORE the release just served. Asking for requestedDay minus a
-    // day would re-serve the newest release forever.
+    // The indexed previous publication bypasses hundreds of governed-absence days.
     expect(mockedRelease).toHaveBeenNthCalledWith(2, {
       layer: "burn-severity",
-      asOfDay: "2024-02-29",
+      asOfDay: "2022-05-10",
       zoomTier: 13,
     });
-    expect(mockedRelease).toHaveBeenCalledTimes(3);
+    expect(mockedRelease).toHaveBeenCalledTimes(2);
     expect(result).toMatchObject({
       state: "ready",
       requestedDay: "2026-08-26",
@@ -1951,6 +1971,7 @@ describe("the five layers that left Martin's tile functions", () => {
   });
 
   it("reports the plane's own refusal when no burn-severity release precedes the day", async () => {
+    mockedCoverage.mockResolvedValue(burnCoverage([]));
     mockedRelease.mockResolvedValue({
       state: "lane_never_written" as const,
       requestedDay: "2026-08-26",
@@ -1969,7 +1990,48 @@ describe("the five layers that left Martin's tile functions", () => {
     });
   });
 
+  it('keeps the older cohort when advancing past a newer release separated by absence spans', async () => {
+    const coverage = burnCoverage(['2023-08-09', '2024-08-22']);
+    coverage.lanes[0].governedAbsenceRanges = [{ from: '2023-08-10', to: '2024-08-21' }];
+    mockedCoverage.mockResolvedValue(coverage);
+    mockedRelease.mockImplementation(async ({ asOfDay }) => published(asOfDay, [burnScarRow({ fire_id: asOfDay, observed_day: asOfDay })]));
+    const before = await getParquetBurnSeverity({ date: '2023-08-09', mapZoom: 13, nowMs: Date.parse('2026-08-26') });
+    const after = await getParquetBurnSeverity({ date: '2024-08-22', mapZoom: 13, nowMs: Date.parse('2026-08-26') });
+    expect(readyData(before).map(scar => scar.fireId)).toEqual(['2023-08-09']);
+    expect(readyData(after).map(scar => scar.fireId)).toEqual(['2024-08-22', '2023-08-09']);
+    expect(mockedRelease.mock.calls.map(([request]) => request.asOfDay)).toEqual(['2023-08-09', '2024-08-22', '2023-08-09']);
+  });
+
+  it.each(['historical_gap', 'coverage_horizon', 'row_cap'])('labels known incomplete burn history: %s', async (reason) => {
+    const coverage = burnCoverage(['2024-08-22']);
+    if (reason === 'historical_gap') coverage.lanes[0].gapRanges = [{ from: '2015-04-02', to: '2020-11-23' }];
+    if (reason === 'coverage_horizon') coverage.evaluatedThroughDay = '2024-08-22';
+    mockedCoverage.mockResolvedValue(coverage);
+    mockedRelease.mockResolvedValue({ ...published('2024-08-22', [burnScarRow()], '2024-08-22'), truncated: reason === 'row_cap' });
+    expect(await getParquetBurnSeverity({ date: '2026-08-26', mapZoom: 13, nowMs: Date.parse('2026-08-26') })).toMatchObject({ state: 'ready', truncated: true });
+  });
+
+  it.each(['missing_rung', 'unproven_authority', 'absent_indexed_release', 'wrong_served_day'])('fails inconsistent publication metadata closed: %s', async (reason) => {
+    const coverage = burnCoverage(['2024-08-22']);
+    if (reason === 'missing_rung') coverage.lanes[0].zoomTier = 9;
+    if (reason === 'unproven_authority') coverage.lanes[0].coverageAuthority = 'census';
+    mockedCoverage.mockResolvedValue(coverage);
+    mockedRelease.mockResolvedValue(reason === 'absent_indexed_release'
+      ? { state: 'governed_absence', requestedDay: '2024-08-22', servedDay: '2024-08-22', evidence }
+      : published('2024-08-22', [burnScarRow()], '2023-08-09'));
+    expect(await getParquetBurnSeverity({ date: '2026-08-26', mapZoom: 13, nowMs: Date.parse('2026-08-26') })).toMatchObject({ state: 'upstream_unavailable', fault: { kind: 'contract' } });
+  });
+
+  it('does not turn unavailable coverage into an apparently complete latest release', async () => {
+    mockedCoverage.mockRejectedValue(new UpstreamTimeoutError('coverage unavailable'));
+    expect(await getParquetBurnSeverity({ date: '2026-08-26', mapZoom: 13, nowMs: Date.parse('2026-08-26') })).toMatchObject({ state: 'upstream_unavailable', fault: { kind: 'timeout' } });
+    expect(mockedRelease).not.toHaveBeenCalled();
+  });
+
   it("bounds the burn-severity walk and says so rather than dropping the oldest releases", async () => {
+    const coverage = burnCoverage();
+    coverage.lanes[0].publishedRanges = [{ from: '2026-08-01', to: '2026-08-20' }];
+    mockedCoverage.mockResolvedValue(coverage);
     // Every call answers with a release one day older, so the walk can only end at its ceiling.
     let servedDay = "2026-08-20";
     mockedRelease.mockImplementation(async () => {

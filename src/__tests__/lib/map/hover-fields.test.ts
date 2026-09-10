@@ -58,6 +58,7 @@ describe("HOVERABLE_LAYER_IDS", () => {
       // arrows: "weather-wind" is a text symbol whose hit area is the glyph run and whose
       // placement collides away at density.
       "weather-temperature",
+      "weather-temperature-cells",
       "osm-roads",
       "osm-waterways",
     ]);
@@ -604,6 +605,14 @@ describe("formatHoverContent: osm-waterways", () => {
 });
 
 describe("formatHoverContent: weather-temperature", () => {
+  it('identifies modeled aggregate cells without inventing station or native-grid identity', () => {
+    const content = formatHoverContent('weather-temperature-cells', { temperature: 24, windSpeed: 3, windDirection: 0, sampleKind: 'model_estimate', supportKind: 'aggregate_cell', observedDay: '2026-09-09', observedAt: '2026-09-10T06:45:00Z' });
+    expect(content?.title).toBe('Weather estimate aggregate');
+    expect(content?.lines).toContain('Mean of captured Open-Meteo readings on the source day; not a native model grid cell.');
+    expect(content?.lines.some(line => line.startsWith('Source day:'))).toBe(true);
+    expect(content?.lines.some(line => line.startsWith('Newest contributing reading:'))).toBe(true);
+    expect(formatHoverContent('weather-temperature', { temperature: 24, sampleKind: 'model_estimate' })?.title).toBe('Sampled weather estimate');
+  });
   it("formats a full observation in the units the feed measures in", () => {
     const content = formatHoverContent("weather-temperature", {
       temperature: 21.37,

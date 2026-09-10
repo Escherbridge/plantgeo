@@ -301,6 +301,8 @@ describe("Parquet browser presentation", () => {
       coordinates: [-114.25, 43.5],
       temperature: 24,
       windSpeed: 3,
+      observedDay: "2026-08-20",
+      sampleKind: "model_estimate",
     });
     // A sampled station is a point and declares no footprint, which is what keeps the layer
     // drawing a dot: `weather` is an `event_point` layer, and the contract permits no square

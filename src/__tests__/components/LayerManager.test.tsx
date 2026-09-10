@@ -2054,7 +2054,13 @@ describe("LayerManager holds the previous day while the next one loads", () => {
       const notice = rendered.getByTestId(
         `parquet-layer-unavailable-${layerId}-truncated`
       ).textContent;
-      expect(notice).toContain("The Parquet row budget was reached");
+      if (layerId === "burn-severity") {
+        expect(notice).toContain("Burn history is incomplete because some history is unpublished or a read limit was reached.");
+        expect(notice).toContain("Available published burn history boundaries are shown.");
+        expect(notice).not.toContain("Parquet row budget");
+      } else {
+        expect(notice).toContain("The Parquet row budget was reached");
+      }
       expect(notice?.toLowerCase()).toContain(subjectLower);
     });
 

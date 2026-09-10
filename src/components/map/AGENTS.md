@@ -1093,3 +1093,31 @@ rules are untouched. Unknown coverage is phrased without assuming it lies before
 whole-range unknown history has no claimed covered tail, and an unknown suffix is named as a range.
 This prevents a history ending today from claiming it is only undescribed before tomorrow and
 then announcing no gaps after that nonexistent boundary.
+
+## Weather support fidelity (2026-09-10)
+
+Wind & Weather reads the Open-Meteo current-conditions sampled-model side lane, not
+physical stations or the separate climate archive. Its producer derives sampling
+locations from a bounded bbox and spacing; this is not a published native model-cell
+footprint. At detail, preserve point geometry. At coarse/middle rungs, the existing
+Parquet support envelope declares aggregate cells: WeatherLayer now draws their
+actual supportCellPolygon footprints as temperature fills, with wind labels anchored
+at cell centers only when speed and direction are present. The temperature point
+layer excludes cells, and the wind layer excludes polygons to avoid duplicate glyphs.
+Fill opacity, style reload, teardown and shared hover registration cover the new layer.
+
+Coarse weather values are means of captured readings across the source day, not
+merely the newest samples averaged spatially. Detail selects the latest sample at
+each position. The legend names the zoom-dependent statistic; aggregate hover names
+the newest contributing reading timestamp and source day. No station/count claim is
+made from contributorCount, which is not a reliable source observation count here.
+Units and source values remain C, m/s and relative humidity percent without conversion.
+
+The prior wind-arrow lookup already represented meteorological FROM as the opposite
+TO glyph, then added 180 degrees a second time. The extra reversal is removed:
+0 degrees north winds point south, and 90 degrees east winds point west. Symbols align
+with the map so compass directions remain meaningful when the camera bearing changes.
+
+Burn-history incomplete notices name unpublished history or a read limit and clarify
+that available published boundaries are shown; they do not assert a row budget was
+necessarily reached. Other layer notices retain their existing row-cap semantics.

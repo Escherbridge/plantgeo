@@ -367,3 +367,14 @@ claim that no code invoked intervention publishing was stale: its callable exper
 survived, but the queue was unmounted. The 2026-09-10 route repair restores that queue beside the
 separate proposal-moderation panel. Keep Interventions and Demand Heatmap exposed; these are real
 community workflows, unlike the deferred untrained Strategy Recommendations layer.
+
+### Weather support decision (2026-09-10)
+
+The sampled-grid question above is resolved only for already-declared aggregation
+support: weather aggregate cells render their declared footprints; raw detail samples
+retain points because their sampling grid does not establish native model support.
+No LANE_BASE_LATTICES/native-resolution claim changes. Hover and legend distinguish
+Open-Meteo model estimates from stations and daily captured-reading aggregate means
+from latest detail samples. The aggregate timestamp is the newest contributing reading,
+not the instant at which the mean was measured. The separate sensors layer remains
+station-based.
