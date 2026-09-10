@@ -135,12 +135,53 @@ records format 0.22 seconds, lint 0.19 seconds, mypy 1.70 seconds and pytest
 168.75 seconds. Its summary records pytest passing without a case count. All
 test database settings were absent; this does not certify database integration.
 
-No sensor correction prepare or apply has run against production. Following the
-earlier automatic approval rejection, the user explicitly approved copying the
-preserved 2.29 MB sensor archive back to the executor for hash-verified offline
-preparation. Execution is scheduled after the new executor is ready so deployment
-does not discard the temporary preparation. The approval covers that archive
-transfer; it does not claim any repair publication has occurred.
+The user explicitly approved the sensor archive transfer. On the new executor,
+the [successful transfer receipt](../../../../.omc/research/sensors-approved-transfer-receipt-20260910.json)
+verifies all 2,289,729 compressed bytes against
+`eb3ca823a0a3319cc42e47c4066893cfd88efd58979bfb1e177949d9eb70537e`.
+The executor reproduced all five candidate/audit files from that archive; every
+byte hash and the pinned candidate manifest matched the reviewed local evidence.
+Only the archive and two reviewed command scripts were transferred. The first
+attempt refused before creating its temporary directory because the final image
+omits operator scripts; the corrected driver used the deployed source modules
+and verified their identity and quality receipt before preparing anything.
+
+Read-only prepare succeeded with request SHA256
+`2e18b2c8ef7c8ed6a781d91b048c6d5080fc73f0a1b12e2e7d431d90c06b0421`.
+The [independent in-place review](../../../../.omc/research/sensor-preparation-in-place-review-20260910.json)
+validated the original evidence graph, all eight captured absence identities,
+and the exact candidate objects and ledgers for both days at all four rungs.
+That review emitted only booleans, counts and dates, with zero bucket/database
+requests or remote writes. A broader metadata download was rejected and was not
+retried; the separately approved in-place review completed the bounded review.
+
+No correction has been applied or published. The 3,228 September 5 observations
+and 2,707 September 6 observations remain partial source candidates. Publication
+still requires fresh evidence-backed quiescence of ordinary and retry writers,
+the exact apply scope, and the operator's locked physical/generation revalidation.
+Prepared files remain temporary executor storage; the original archive is also
+preserved locally and the reproduction path is recorded.
+
+## Recovery release: deployed with existing frontend fixes preserved
+
+The reviewed Python patch was integrated onto accepted production commit
+`24515bf` and pushed as `0ae1528ed4655fcd198966877b91abdf9c472f31`.
+The Python source matches the tested patch exactly; frontend source, package
+files and the root Dockerfile are unchanged from that production base.
+Railway reported success for the main application at
+`b4c9eec8-03fc-4912-b0cb-1dbf61825e19`, Parquet API at
+`81d95bfb-f1b3-467d-9e12-61ebf092a631`, and executor at
+`90251911-636a-4836-9a49-6affc6f2fbd7`. Both Python images verified the same
+1,287-file quality receipt. The [application build evidence](../../../../.omc/research/recovery-app-build-gates-20260910.json)
+records 138 test files passing, two skipped; 2,084 tests passing, 13 skipped;
+and successful compilation/static generation. The test run took 109.71 seconds.
+
+The coordinating QA task reported four compatibility checks passing without
+retries against the new API: eight exact Washington burn-history identifiers
+with matching scalar/geometry data, the weather source contract, and August 31
+soil moisture 0.138 and temperature 17.6. The weather check did not recertify
+every numeric value, and the burn-history check did not close cold-read reliability.
+Release success is separate from applying either pending signal or sensor repair.
 
 ## Soil reader: deployed and checked against source
 
@@ -187,12 +228,23 @@ network transfer/retries and decompression or geometry CPU remains unproven:
 the slow scan did not collect CPU or transfer counters, and later CPU measurements
 were warm. The profile did not implement a behavior, cache or timeout fix.
 The opt-in serving-stage telemetry implementation passed independent review and
-the full integrated gate. It remains off by default and has not been deployed or
-enabled. It records elapsed, worker-thread CPU and whole-process CPU with explicit
+the full integrated gate and is deployed in `0ae1528`. It remains disabled.
+It records elapsed, worker-thread CPU and whole-process CPU with explicit
 scope labels; HTTP transfer counters are unavailable, not estimated. The existing
 14-second route deadline, admission/memory limits and exact clipping remain
 unchanged. Cold-request reliability remains open; neither candidate layout
 changes nor a cache/timeout remedy is accepted here.
+
+The [bounded rollout plan](../../../../.omc/research/parquet-read-telemetry-rollout-plan-20260910.md)
+allows at most four sequential requests in a ten-minute sampling window, with
+API-only activation and deactivation deployments. Automatic approval review
+rejected the attempted dedicated one-variable activation before mutation because
+the user's existing deployment approval did not explicitly cover the logging
+side effects. Explicit approval has been requested; no diagnostic request ran.
+The [subsequent runtime check](../../../../.omc/research/telemetry-disabled-verification-20260910.log)
+verified the original API deployment, tested commit and effective configuration
+flag `false`. The unrelated 156-change pending patch remained identical after
+normalizing response ordering; it was not applied or amended.
 
 ## Limited fidelity follow-ups
 
