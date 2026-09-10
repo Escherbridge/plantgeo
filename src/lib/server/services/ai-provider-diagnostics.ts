@@ -43,6 +43,8 @@ export function providerErrorDiagnostic(error: unknown) {
   if (/context.{0,25}(length|limit|window)|too many (input )?tokens|input.{0,25}(too long|token limit)|token.{0,25}exceed/i.test(reasonText)) reasons.push("context_limit");
   if (/tool[_\s-]?(call|result|use)[_\s-]?id|tool.{0,50}(response|respond|pair|follow)|function.{0,20}response/i.test(reasonText)) reasons.push("tool_history");
   if (/schema|function[_\s-]?declaration|additionalProperties|INVALID_ARGUMENT.*tools/i.test(reasonText)) reasons.push("tool_schema");
+  if (/too many states|schema.{0,60}(complex|constraint)|complex.{0,40}schema/i.test(reasonText)) reasons.push("schema_too_complex");
+  if (/(schema|field|keyword).{0,45}(unsupported|not supported)|unknown field|unsupported.{0,45}(schema|keyword)/i.test(reasonText)) reasons.push("unsupported_schema_keyword");
   if (/tool_choice|function[_\s-]?calling|forced.{0,20}(tool|function)/i.test(reasonText)) reasons.push("tool_choice");
   if (/max_tokens|max_output_tokens|output.{0,20}token/i.test(reasonText)) reasons.push("output_token_limit");
   if (/safety|content[_\s-]?filter|blocked.{0,20}(content|prompt)/i.test(reasonText)) reasons.push("content_filter");
@@ -65,6 +67,16 @@ export function providerErrorDiagnostic(error: unknown) {
     rawErrorAvailable: raw !== undefined,
     rawErrorOversized: typeof raw === "string" && Buffer.byteLength(raw, "utf8") > MAX_RAW_ERROR_BYTES,
   };
+}
+
+/** Return canonical issue codes and known field paths only, never validation messages or inputs. */
+export function reportValidationDiagnostic(issues: ReadonlyArray<{ code: string; path: ReadonlyArray<PropertyKey> }>) {
+  const codes = new Set(["invalid_type", "too_big", "too_small", "invalid_value", "unrecognized_keys", "invalid_format", "not_multiple_of", "invalid_union", "invalid_key", "invalid_element", "custom"]);
+  const fields = new Set(["riskSummary", "level", "headline", "factors", "evidenceOrigin", "evidenceSources", "observations", "statement", "evidenceSource", "remediation", "strategy", "title", "rationale", "timeframe", "confidence", "consultProfessionals", "professionalConsultation"]);
+  return issues.slice(0, 12).map((issue) => ({
+    code: codes.has(issue.code) ? issue.code : "unknown",
+    path: issue.path.map((part) => typeof part === "number" ? "[]" : typeof part === "string" && fields.has(part) ? part : "unknown_field").join(".") || "report",
+  }));
 }
 
 /** Describe an incomplete completion without retaining model text or unknown tool names. */

@@ -454,14 +454,24 @@ switched to named forced tool selection. Google's [function-calling documentatio
 explains that ANY mode enforces schema adherence and can reject large/deep schemas.
 The diagnostic identifies the failing path, not the exact rejected schema keyword.
 
-For exactly `google/gemini-2.5-flash-lite`, final and correction rounds therefore
-retain automatic tool selection. Other configured models retain named report forcing.
-Both report aliases, complete schema constraints, original assistant/tool messages,
-one correction and maximum five calls remain unchanged. Only a validated report can
-succeed; a text-only or malformed correction fails without a silent fallback or
-further retry. `toolChoiceMode` distinguishes actual provider forcing from the
-logical final-round flag in diagnostics. This is a bounded compatibility candidate
-until the representative mixed-date application request passes in production.
+Automatic final/correction selection was tried and failed live: the model emitted
+empty responses and prose, then a malformed tool report and prose-only correction.
+It is not the serving policy. `gemini-report-schema.ts` now derives a provider-only
+schema for exactly `google/gemini-2.5-flash-lite`: string length and array count bounds
+become generated descriptions rather than constrained-decoding keywords. Shapes,
+enums, required fields and additional-property rules remain; both report aliases
+receive the identical projection. The canonical schema and local validator are
+unchanged and still enforce every original limit. Other models receive the full
+canonical schema. This candidate reduces constrained-decoding complexity without
+accepting a weaker report or silently converting prose to a report.
+
+When search is unavailable, named report selection is forced from the first call:
+there is no other productive tool, so three speculative automatic rounds only add
+latency. With search available, normal rounds remain automatic until final/correction.
+Original assistant/tool messages, one correction and maximum five calls remain.
+Only a validated report succeeds; malformed or text-only correction still fails.
+`toolChoiceMode` distinguishes provider forcing from the logical final-round flag.
+Live mixed-date acceptance is still required before claiming this candidate fixed.
 
 The next mixed-date retry avoided provider 400 but ended with no report. That is
 not acceptance of the compatibility candidate. Incomplete-round diagnostics now
@@ -471,3 +481,6 @@ numeric token usage. Empty completions and exhausted attempts are distinguished.
 Model content is never logged or accepted through this diagnostic path; report
 acceptance and the existing retry budget remain unchanged while the response
 shape is investigated.
+Invalid reports also emit bounded known validation codes/field paths, never issue
+messages or inputs. Schema complexity and unsupported-keyword diagnostics use
+static categories so another provider rejection need not expose raw error text.

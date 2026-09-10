@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { incompleteReportDiagnostic, providerErrorDiagnostic } from "@/lib/server/services/ai-provider-diagnostics";
+import { incompleteReportDiagnostic, providerErrorDiagnostic, reportValidationDiagnostic } from "@/lib/server/services/ai-provider-diagnostics";
 
 function failure(message: string) {
   return {
@@ -10,6 +10,11 @@ function failure(message: string) {
 }
 
 describe("safe AI provider diagnostics", () => {
+  it("exposes only known validation codes and paths and classifies schema complexity safely", () => {
+    expect(reportValidationDiagnostic([{ code: "too_big", path: ["observations", 32, "statement"] }, { code: "private secret", path: ["private prompt"] }])).toEqual([{ code: "too_big", path: "observations.[].statement" }, { code: "unknown", path: "unknown_field" }]);
+    expect(providerErrorDiagnostic(failure("Too many states for serving this schema")).reasons).toContain("schema_too_complex");
+    expect(providerErrorDiagnostic(failure("Unknown field maxLength")).reasons).toContain("unsupported_schema_keyword");
+  });
   it("distinguishes empty, text and structured completions without exposing output or unknown names", () => {
     expect(incompleteReportDiagnostic(undefined, undefined, undefined)).toMatchObject({ messagePresent: false, finishReason: "unknown", contentKind: "empty", reportToolCount: 0 });
     const secret = "sk-or-private-model-output";

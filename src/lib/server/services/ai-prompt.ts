@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
-import { incompleteReportDiagnostic, providerErrorDiagnostic } from './ai-provider-diagnostics';
+import { incompleteReportDiagnostic, providerErrorDiagnostic, reportValidationDiagnostic } from './ai-provider-diagnostics';
+import { geminiReportSchema } from './gemini-report-schema';
 import { soilAiEvidence } from './soil-ai-evidence';
 import { remediationReportSchema, REMEDIATION_REPORT_JSON_SCHEMA, type RemediationReport } from './remediation-report';
 import type {
@@ -46,8 +47,8 @@ const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
  * lever that matters here: every turn ends in a large structured tool call.
  */
 const DEFAULT_MODEL = 'google/gemini-2.5-flash-lite';
-/** This model rejects the report schema in forced mode; see AGENTS.md §Gemini report correction. */
-const AUTO_REPORT_TOOL_MODEL = 'google/gemini-2.5-flash-lite';
+/** Provider schema compatibility is scoped to the reproduced model; see AGENTS.md. */
+const COMPATIBLE_REPORT_SCHEMA_MODEL = 'google/gemini-2.5-flash-lite';
 
 /**
  * One tool, described the way this module has always described them.
@@ -370,7 +371,9 @@ export async function* streamRegionalIntelligence(
     searchProvider
       ? [SEARCH_TOOL, REPORT_TOOL, GENERATE_REMEDIATION_REPORT_TOOL]
       : [REPORT_TOOL, GENERATE_REMEDIATION_REPORT_TOOL]
-  ).map(asFunctionTool);
+  ).map((tool) => asFunctionTool(model === COMPATIBLE_REPORT_SCHEMA_MODEL && tool !== SEARCH_TOOL
+    ? { ...tool, input_schema: geminiReportSchema(tool.input_schema) }
+    : tool));
   const system = buildSystemPrompt(searchProvider !== null);
 
   // The system prompt is the FIRST MESSAGE here, not a separate request field: the completions
@@ -402,14 +405,14 @@ export async function* streamRegionalIntelligence(
   for (let round = 0; round < MAX_TOOL_ROUNDS + MAX_REPORT_CORRECTIONS; round += 1) {
     if (round >= MAX_TOOL_ROUNDS && !correctingReport) break;
     const isFinalRound = correctingReport || round >= MAX_TOOL_ROUNDS - 1;
-    const forceReportTool = isFinalRound && model !== AUTO_REPORT_TOOL_MODEL;
+    const forceReportTool = !searchProvider || isFinalRound;
 
     const completionRequest = {
       model,
       max_tokens: MAX_OUTPUT_TOKENS,
       messages,
       tools,
-      // Acceptance still requires a valid report when provider-side forcing is unavailable.
+      // Without search, reporting is the only productive tool from the first round.
       tool_choice: forceReportTool
         ? { type: 'function' as const, function: { name: REPORT_TOOL.name } }
         : 'auto' as const,
@@ -443,10 +446,11 @@ export async function* streamRegionalIntelligence(
       throw error;
     }
 
-    const logIncomplete = (reason: 'empty_completion' | 'report_missing' | 'report_invalid') => console.warn('[AI] incomplete report response', {
+    const logIncomplete = (reason: 'empty_completion' | 'report_missing' | 'report_invalid', validationIssues: ReturnType<typeof reportValidationDiagnostic> = []) => console.warn('[AI] incomplete report response', {
       model, round: round + 1, isFinalRound, correctingReport,
       toolChoiceMode: forceReportTool ? 'forced_report' : 'auto',
       reason, streamedTextCharacterCount: roundNarration.length,
+      validationIssues,
       ...incompleteReportDiagnostic(message, finishReason, completionUsage),
     });
     if (!message) {
@@ -475,7 +479,7 @@ export async function* streamRegionalIntelligence(
         yield { type: 'report', report: parsed.data };
         return;
       }
-      logIncomplete('report_invalid');
+      logIncomplete('report_invalid', reportValidationDiagnostic(parsed.error.issues));
       if (reportCorrections >= MAX_REPORT_CORRECTIONS) {
         throw new Error('The report remained invalid after its bounded correction attempt.');
       }

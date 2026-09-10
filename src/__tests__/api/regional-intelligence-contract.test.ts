@@ -332,7 +332,7 @@ describe("generate_remediation_report tool wiring", () => {
     try {
       await expect(collect()).rejects.toBe(failure);
       expect(mocks.completionStream).toHaveBeenCalledTimes(afterCorrection ? 2 : 1);
-      expect(log).toHaveBeenCalledWith("[AI] provider request failed", expect.objectContaining({ round: afterCorrection ? 2 : 1, isFinalRound: afterCorrection, toolChoiceMode: "auto", correctingReport: afterCorrection, status: 400, provider: "Google AI Studio", reasons: ["thought_signature"], messageCount: afterCorrection ? 4 : 2 }));
+      expect(log).toHaveBeenCalledWith("[AI] provider request failed", expect.objectContaining({ round: afterCorrection ? 2 : 1, isFinalRound: afterCorrection, toolChoiceMode: "forced_report", correctingReport: afterCorrection, status: 400, provider: "Google AI Studio", reasons: ["thought_signature"], messageCount: afterCorrection ? 4 : 2 }));
       const diagnostic = log.mock.calls[0]?.[1] as { requestByteCount: number };
       expect(diagnostic.requestByteCount).toBeGreaterThan(100);
       expect(JSON.stringify(log.mock.calls)).not.toContain(secret);
@@ -357,7 +357,8 @@ describe("generate_remediation_report tool wiring", () => {
     expect(events).toEqual([{ type: "text", text: "Validated answer" }, { type: "report", report: validReport }]);
     expect(mocks.completionStream).toHaveBeenCalledTimes(2);
     const correctiveRequest = mocks.completionStream.mock.calls[1][0];
-    expect(correctiveRequest.tool_choice).toBe("auto");
+    expect(correctiveRequest.tool_choice).toEqual({ type: "function", function: { name: "remediation_report" } });
+    expect(mocks.completionStream.mock.calls[0][0].tool_choice).toEqual(correctiveRequest.tool_choice);
     expect(correctiveRequest.tools).toEqual(mocks.completionStream.mock.calls[0][0].tools);
     expect(correctiveRequest.messages).toEqual(expect.arrayContaining([
       expect.objectContaining({ role: "tool", tool_call_id: "invalid", content: expect.stringMatching(/observations:.*12/) }),
@@ -379,8 +380,8 @@ describe("generate_remediation_report tool wiring", () => {
     for await (const event of streamRegionalIntelligence(minimalPayload(), {}, true, minimalTemporalContext(), [])) events.push(event);
     expect(events).toEqual([{ type: "report", report: validReport }]);
     expect(mocks.completionStream).toHaveBeenCalledTimes(5);
-    expect(mocks.completionStream.mock.calls[3][0].tool_choice).toBe("auto");
-    expect(mocks.completionStream.mock.calls[4][0].tool_choice).toBe("auto");
+    expect(mocks.completionStream.mock.calls[3][0].tool_choice).toEqual({ type: "function", function: { name: "remediation_report" } });
+    expect(mocks.completionStream.mock.calls[4][0].tool_choice).toEqual({ type: "function", function: { name: "remediation_report" } });
   });
 
   it("retains forced report selection for other configured models", async () => {
@@ -393,9 +394,46 @@ describe("generate_remediation_report tool wiring", () => {
     for await (const event of streamRegionalIntelligence(minimalPayload(), {}, true, minimalTemporalContext(), [])) events.push(event);
     expect(events).toEqual([{ type: "report", report: validReport }]);
     expect(mocks.completionStream.mock.calls[1][0].tool_choice).toEqual({ type: "function", function: { name: "remediation_report" } });
+    expect(mocks.completionStream.mock.calls[0][0].tools[0].function.parameters).toHaveProperty("properties.observations.maxItems", 12);
   });
 
-  it("rejects a text-only auto correction without emitting it or adding retries", async () => {
+  it("forces a compatible report on the first Gemini call without search", async () => {
+    vi.stubEnv("OPENROUTER_MODEL", "google/gemini-2.5-flash-lite");
+    const webEvidence = await import("@/lib/server/services/web-evidence");
+    const provider = vi.spyOn(webEvidence, "getWebEvidenceProvider").mockReturnValue(null);
+    const { streamRegionalIntelligence } = await import("@/lib/server/services/ai-prompt");
+    mocks.completionStream.mockReturnValue(fakeCompletionStream([{ id: "first", name: "remediation_report", input: validReport }]));
+    try {
+      const events = [];
+      for await (const event of streamRegionalIntelligence(minimalPayload(), {}, true, minimalTemporalContext(), [])) events.push(event);
+      expect(events).toEqual([{ type: "report", report: validReport }]);
+      expect(mocks.completionStream).toHaveBeenCalledTimes(1);
+      const request = mocks.completionStream.mock.calls[0][0];
+      expect(request.tool_choice).toEqual({ type: "function", function: { name: "remediation_report" } });
+      expect(request.tools).toHaveLength(2);
+      expect(request.tools[0].function.parameters).toEqual(request.tools[1].function.parameters);
+      expect(request.tools[0].function.parameters).not.toHaveProperty("properties.observations.maxItems");
+      expect(request.tools[0].function.parameters).toHaveProperty("properties.observations.description", "Maximum item count: 12.");
+    } finally { provider.mockRestore(); }
+  });
+
+  it("keeps search-enabled rounds automatic until the final report round", async () => {
+    const webEvidence = await import("@/lib/server/services/web-evidence");
+    const provider = vi.spyOn(webEvidence, "getWebEvidenceProvider").mockReturnValue({ name: "test", search: vi.fn() });
+    const { streamRegionalIntelligence } = await import("@/lib/server/services/ai-prompt");
+    mocks.completionStream
+      .mockReturnValueOnce(fakeCompletionStream([]))
+      .mockReturnValueOnce(fakeCompletionStream([]))
+      .mockReturnValueOnce(fakeCompletionStream([]))
+      .mockReturnValueOnce(fakeCompletionStream([{ id: "final", name: "remediation_report", input: validReport }]));
+    try {
+      for await (const event of streamRegionalIntelligence(minimalPayload(), {}, true, minimalTemporalContext(), [])) void event;
+      expect(mocks.completionStream.mock.calls.slice(0, 3).map((call) => call[0].tool_choice)).toEqual(["auto", "auto", "auto"]);
+      expect(mocks.completionStream.mock.calls[3][0].tool_choice).toEqual({ type: "function", function: { name: "remediation_report" } });
+    } finally { provider.mockRestore(); }
+  });
+
+  it("rejects a text-only forced correction without emitting it or adding retries", async () => {
     vi.stubEnv("OPENROUTER_MODEL", "google/gemini-2.5-flash-lite");
     const { streamRegionalIntelligence } = await import("@/lib/server/services/ai-prompt");
     mocks.completionStream
@@ -408,7 +446,7 @@ describe("generate_remediation_report tool wiring", () => {
     await expect(collect()).rejects.toThrow("The correction attempt did not return a report.");
     expect(events).toEqual([]);
     expect(mocks.completionStream).toHaveBeenCalledTimes(2);
-    expect(mocks.completionStream.mock.calls[1][0].tool_choice).toBe("auto");
+    expect(mocks.completionStream.mock.calls[1][0].tool_choice).toEqual({ type: "function", function: { name: "remediation_report" } });
   });
 
   it("stops after one failed correction and never truncates a report into validity", async () => {
@@ -424,7 +462,7 @@ describe("generate_remediation_report tool wiring", () => {
     expect(mocks.completionStream).toHaveBeenCalledTimes(2);
   });
 
-  it("diagnoses exhausted auto rounds without accepting narration or logging its content", async () => {
+  it("diagnoses exhausted rounds without accepting narration or logging its content", async () => {
     vi.stubEnv("OPENROUTER_MODEL", "google/gemini-2.5-flash-lite");
     const { streamRegionalIntelligence } = await import("@/lib/server/services/ai-prompt");
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -435,7 +473,7 @@ describe("generate_remediation_report tool wiring", () => {
       for await (const event of streamRegionalIntelligence(minimalPayload(), {}, true, minimalTemporalContext(), [])) events.push(event);
       expect(events).toEqual([]);
       expect(mocks.completionStream).toHaveBeenCalledTimes(4);
-      expect(warn).toHaveBeenCalledWith("[AI] incomplete report response", expect.objectContaining({ round: 4, reason: "report_missing", finishReason: "stop", contentKind: "text", reportToolCount: 0, toolChoiceMode: "auto" }));
+      expect(warn).toHaveBeenCalledWith("[AI] incomplete report response", expect.objectContaining({ round: 4, reason: "report_missing", finishReason: "stop", contentKind: "text", reportToolCount: 0, toolChoiceMode: "forced_report" }));
       expect(warn).toHaveBeenCalledWith("[AI] report attempts exhausted", expect.objectContaining({ reportCorrections: 0, maxToolRounds: 4 }));
       expect(JSON.stringify(warn.mock.calls)).not.toContain(privateNarration);
     } finally {
