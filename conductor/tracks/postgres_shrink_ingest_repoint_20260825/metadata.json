@@ -4,6 +4,10 @@
   "type": "feature",
   "created_at": "2026-08-25T02:30:00Z",
   "status": "active",
+  "retirement_successor": {
+    "track": "environmental_postgres_retirement_20260904",
+    "scope": "P5/P6 environmental retirement superseded by the expanded per-relation retirement charter; other unfinished work and historical bridge evidence remain here."
+  },
   "supersedes": {
     "parquet_duckdb_pivot_20260823": "item E of RUNBOOK 0.33.3 (forward path per lane, upstream -> Parquet) moves here; items A (slice d1), C (d3), D (d4) stay there and are this track's external dependencies"
   },

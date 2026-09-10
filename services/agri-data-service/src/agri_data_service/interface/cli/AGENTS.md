@@ -10,6 +10,8 @@ Thin Click adapters for the `agri-service` console script. The root exposes exac
 - Command bodies delegate to the retained execution, ingest, pipeline, method, warehouse, and shared
   `parquet_ops` modules; this package does not own business rules.
 - Parquet reads acquire bounded core admission through `parquet_ops`; no CLI adapter opens DuckDB directly.
+- Parquet day/window commands use the live lane for all dates. Coverage remains a registered-lane
+  listing audit; frozen snapshot recovery is explicit and is not merged into ordinary CLI answers.
 - A leaf command is registered once beneath one family. The removed flat command surface is not an alias source.
 
 ## Hard-cutover invariant

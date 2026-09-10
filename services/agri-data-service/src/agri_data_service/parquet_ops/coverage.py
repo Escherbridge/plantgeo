@@ -19,7 +19,6 @@ from agri_data_service.foundation.parquet.paths import zoom_prefix
 from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
 from agri_data_service.parquet_ops import faults
 from agri_data_service.parquet_ops.serving import day_status_sets
-from agri_data_service.parquet_ops.snapshot_products import PRODUCT_BY_LAYER
 from agri_data_service.parquet_ops.wire import DayRange, LaneCoverage, WarehouseCoverage, contiguous_ranges
 from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRATIONS
 
@@ -111,7 +110,7 @@ def registered_census_lanes() -> tuple[CensusLane, ...]:
             publication_lag_days=registration.publication_lag_days,
         )
         for registration in LANE_REGISTRATIONS
-        if registration.slug not in NON_SLIDER_REGISTERED_LAYERS and registration.slug not in PRODUCT_BY_LAYER
+        if registration.slug not in NON_SLIDER_REGISTERED_LAYERS
     )
     registered_layers = {lane.layer for lane in registered}
     derived = tuple(

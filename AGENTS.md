@@ -58,6 +58,15 @@ GitHub Actions pipeline. A new migration must land with a matching
 
 ## Quality gates
 
+For local development, apply the entire change batch before one final verification sweep.
+Use `npm run test:changed -- --base <review-base>` or the Python
+`scripts/check.py --changed --base <review-base>` selector for the affected test surface.
+Inspect `--plan` when the scope is unclear; see `docs/testing.md` for named batches and
+fallback rules. Retain full type/lint/boundary checks and full tests for shared harness
+changes or release gates. A scoped pass must never be described as a full-suite pass or
+produce a full Python quality receipt. Remove tests whose sole subject is proven retired
+code, preserving the historical evidence in Conductor.
+
 `type-check` and `lint` are the executable half of
 [`conductor/code_styleguides/typescript.md`](conductor/code_styleguides/typescript.md); the
 Docker build stage runs both, so a finding below blocks the deploy rather than accumulating.

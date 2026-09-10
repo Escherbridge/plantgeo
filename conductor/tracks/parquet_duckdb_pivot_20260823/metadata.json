@@ -2,6 +2,7 @@
   "slug": "parquet_duckdb_pivot_20260823",
   "title": "Parquet/DuckDB pivot — the twelve-lane warehouse and its serving path",
   "status": "active",
+  "completed_slices_archive": "conductor/retros/parquet_cutover_completed_slices_20260910/README.md",
   "created_on": "2026-08-23",
   "depends_on": [],
   "runbook_section": "0.35",

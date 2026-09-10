@@ -2,16 +2,56 @@
 
 from __future__ import annotations
 
+import json
+from datetime import date
 from typing import TYPE_CHECKING
 
+import pytest
 from click.testing import CliRunner
 
 import agri_data_service.interface.cli.parquet as parquet_cli
 from agri_data_service.interface.cli import cli
 from agri_data_service.parquet_ops.faults import ServingRefusalError
+from tests.parquet_ops.fakes import FakeListing, FakeRowReader
 
 if TYPE_CHECKING:
-    import pytest
+    from collections.abc import Callable
+
+
+@pytest.mark.parametrize("statistic", ["mean", "min", "max"])
+def test_temperature_history_day_and_window_use_the_live_warehouse(
+    monkeypatch: pytest.MonkeyPatch,
+    statistic: str,
+) -> None:
+    listing, reader = FakeListing(), FakeRowReader()
+    layer = f"climate-field-air-temperature-{statistic}"
+    day = date(2022, 4, 30)
+    part = listing.write_day(layer, "observed", 13, day)
+    reader.rows_by_key[part] = ({"normalized_value": 21.4},)
+
+    async def read(
+        work: Callable[[FakeListing, FakeRowReader], dict[str, object]],
+        _operation: str,
+    ) -> dict[str, object]:
+        return work(listing, reader)
+
+    monkeypatch.setattr(parquet_cli, "_row_read", read)
+    scope = ["--layer", layer, "--zoom", "13"]
+    runner = CliRunner()
+    single = runner.invoke(cli, ["data", "parquet", "day", *scope, "--day", day.isoformat()])
+    window = runner.invoke(
+        cli, ["data", "parquet", "window", *scope, "--first-day", day.isoformat(), "--last-day", day.isoformat()]
+    )
+    assert single.exit_code == window.exit_code == 0
+    envelope = json.loads(single.output)
+    assert envelope == {
+        "state": "published",
+        "requested_day": day.isoformat(),
+        "served_day": day.isoformat(),
+        "rows": [{"normalized_value": 21.4}],
+        "truncated": False,
+    }
+    assert json.loads(window.output) == {"days": [envelope]}
 
 
 def test_unexpected_row_fault_is_rendered_as_a_typed_refusal(monkeypatch: pytest.MonkeyPatch) -> None:

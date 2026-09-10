@@ -12,6 +12,11 @@ with 1,560 parts and completion markers at every z13/z09/z05/z00 rung and no `ki
 Their serving descriptors leave `SNAPSHOT_PRODUCTS`; the ordinary registry now supplies their live
 day reader, coverage and availability compiler. The serving catalogue is intentionally empty.
 
+The completed cutover's HTTP/CLI snapshot dispatch and empty snapshot coverage merge have been
+removed. `registered_census_lanes` now derives exclusively from the ordinary lane/schema registry;
+adding a frozen provenance descriptor cannot silently remove a live lane from its census. Retained
+snapshot coverage and exact-product functions are explicit recovery APIs, not public serving paths.
+
 `FROZEN_SNAPSHOT_PRODUCTS` retains the original monthly roots, schemas and source ownership boundaries
 for explicit provenance reads and tests. It is not a serving fallback. Generic frozen readers and the
 canonical source contracts remain available to the snapshot builders. Do not copy monthly objects
@@ -156,7 +161,10 @@ timeout — propagates and refuses the whole coverage answer. The four `withheld
 exactly what they say and must not become a bucket for transport faults; the census this replaces
 fails the whole answer for the same reason.
 
-`snapshot_products.SNAPSHOT_PRODUCTS` is the single immutable-product allowlist. Add a product only
+The following records the historical transition architecture, superseded for public HTTP/CLI
+serving by the completed graduation above. Its generic readers remain available for explicit recovery.
+
+`snapshot_products.SNAPSHOT_PRODUCTS` was the single immutable-product allowlist. Add a product only
 after its production `manifest.json` and `_COMPLETE` are final; no product may be registered with a
 guessed digest.
 

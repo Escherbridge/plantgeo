@@ -34,7 +34,6 @@ from agri_data_service.parquet_ops.coverage import (
 from agri_data_service.parquet_ops.faults import ServingRefusalError
 from agri_data_service.parquet_ops.request_params import ReadScope
 from agri_data_service.parquet_ops.serving import resolve_release
-from agri_data_service.parquet_ops.snapshot_products import PRODUCT_BY_LAYER
 from agri_data_service.parquet_ops.warehouse_reader import ObjectStoreListing
 from agri_data_service.parquet_ops.wire import DayRange, LaneCoverage, WarehouseCoverage
 from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRY
@@ -71,15 +70,7 @@ CONCURRENT_COLD_LOADS = 4
 EXPECTED_CENSUS_LIST_WORKERS: Final = 3
 
 #: Direct and dedicated physical lanes included in one production census. 16 until 2026-09-07, when
-#: SIX lanes left `SNAPSHOT_PRODUCTS` for the ordinary census so they could own an availability index
-#: and stop being withheld: `climate-field-dew-point`, `climate-field-wind-speed`,
-#: `climate-field-relative-humidity` and the three `soil-wetness-*`. One lane per departure, because
-#: `registered_census_lanes` derives from `LANE_REGISTRATIONS` minus `PRODUCT_BY_LAYER` and every one
-#: of them was already registered -- dropping the entry from the tuple was the whole edit.
-#: The whole ERA5-Land family joined on 2026-09-08 -- `soil-field-vpd` plus the four
-#: `soil-temperature-*` -- once their day-grain windows were built. That was a RE-EXPORT, not a
-#: promotion: every one of their frozen roots is month-grain and can never be copied onto a live
-#: prefix. The three air-temperature lanes joined after their verified day-grain rebuild on 2026-09-10.
+#: All slider registrations after completed snapshot graduation; history is in parquet_ops/AGENTS.md.
 EXPECTED_REGISTERED_CENSUS_LANES: Final = 30
 
 #: Every registered physical lane must report all four serving rungs.
@@ -495,87 +486,14 @@ def test_the_census_covers_all_direct_lanes_and_every_schema_backed_slider_produ
     product_lanes = {lane.layer: lane for lane in lanes if lane.layer in DEDICATED_SLIDER_PRODUCT_LAYERS}
     assert set(product_lanes) == set(DEDICATED_SLIDER_PRODUCT_LAYERS)
     assert all(lane.nature == "daily_series" for lane in product_lanes.values())
-    # The two exclusion sets are IMPORTED, never respelt: an immutable product is registered as a
-    # lane so it has a floor and a schedule, and censused through `build_snapshot_coverage` instead,
-    # so a hand-written list here goes stale the day a product gains or loses its snapshot.
     assert {lane.layer for lane in lanes if lane.layer in LANE_REGISTRY} == (
-        set(LANE_REGISTRY) - NON_SLIDER_REGISTERED_LAYERS - set(PRODUCT_BY_LAYER)
+        set(LANE_REGISTRY) - NON_SLIDER_REGISTERED_LAYERS
     )
     for layer in DEDICATED_SLIDER_PRODUCT_LAYERS:
         assert get_stream_schema(layer, "observed").name == layer
     assert len(lanes) == EXPECTED_REGISTERED_CENSUS_LANES, (
-        "every lane registration except calendar/signal and the immutable snapshot products, which "
-        "are censused through build_snapshot_coverage instead; the five DEDICATED_SLIDER_PRODUCT_LAYERS "
+        "every lane registration except calendar/signal; the five DEDICATED_SLIDER_PRODUCT_LAYERS "
         "are registrations themselves today, so the derived fallback adds no further row"
-    )
-
-
-def test_no_layer_belongs_to_both_the_census_and_the_snapshot_product_subsystem() -> None:
-    """THE hazard of moving a lane between subsystems: a layer in both emits TWO coverage rows.
-
-    `_build_coverage_payload` returns `direct_rows + snapshot.lanes`, and the client resolves a
-    capability by layer name to the FIRST match, so a second row per lane makes which axis a layer
-    draws depend on array order -- exactly what `registered_census_lanes`'s own docstring refuses for
-    `kind=forecast`. `registered_census_lanes()` subtracts `PRODUCT_BY_LAYER` and then adds back
-    `DEDICATED_SLIDER_PRODUCT_LAYERS`, so a lane ADDED to that tuple without being REMOVED from
-    `SNAPSHOT_PRODUCTS` reaches the payload twice and nothing else in the tree would say so.
-
-    Asserted over the REAL registries, never a fixture: a fixture would go on passing through the
-    edit this test exists to catch.
-    """
-    census_layers = [lane.layer for lane in registered_census_lanes()]
-
-    assert set(DEDICATED_SLIDER_PRODUCT_LAYERS) & set(PRODUCT_BY_LAYER) == set(), (
-        "a dedicated slider product that is also a snapshot product is censused twice"
-    )
-    assert set(census_layers) & set(PRODUCT_BY_LAYER) == set(), (
-        "a census lane that is also a snapshot product emits a direct row AND a snapshot row"
-    )
-    assert len(census_layers) == len(set(census_layers)), "one census row per layer, or a lookup is ambiguous"
-
-
-def test_the_lanes_that_left_the_snapshot_subsystem_are_censused_as_ordinary_daily_series() -> None:
-    """They own an availability index only by being census lanes; a product carries none by design.
-
-    No tuple was edited to admit either: `climate-field-dew-point` and `climate-field-wind-speed` are
-    both `LANE_REGISTRATIONS` members, so dropping each from `PRODUCT_BY_LAYER` was enough for the
-    `registered` branch to pick it up with its registered cadence and NASA POWER publication lag
-    intact. `daily_series` is what makes them time-bearing, which is what
-    `scripts/compile_availability_bootstrap.py::_resolve_lanes` requires before it will compile a
-    bootstrap input for them.
-
-    Wind-speed left only AFTER its snapshot root was promoted onto its live prefix on 2026-09-07 --
-    6,240 objects over 1,560 contiguous days, 2022-04-30..2026-08-06, four rungs on every one,
-    matching the root exactly -- because until then the live prefix held ZERO objects and an index
-    over it would have described emptiness. Its root carried no `_complete.json` to copy, so a marker
-    was written per (day, rung) from the copied bytes before it left; a day holding parts and no
-    terminal state reads as `incomplete`, never `data`.
-
-    `climate-field-relative-humidity` is asserted PRESENT, which reverses what this test said earlier
-    the same day. The measurement did not change, the reading of it did: its live prefix held
-    1981-01-01..2022-03-05 and its root held 2022-04-30..2026-08-06, and those ranges are DISJOINT.
-    Read as a replacement that looked like trading the recent four years for old history; done as a
-    copy into non-colliding keys it is a UNION, and the lane now holds 16,598 days on all four rungs.
-    Census membership is all this asserts -- what each lane may then publish is the bootstrap
-    compiler's business, and no test here may imply otherwise.
-    """
-    lanes = {lane.layer: lane for lane in registered_census_lanes()}
-
-    for slug in ("climate-field-dew-point", "climate-field-wind-speed"):
-        assert slug in lanes
-        assert slug not in PRODUCT_BY_LAYER, f"{slug} left the allowlist; a residual entry re-splits its axis"
-        assert slug not in DEDICATED_SLIDER_PRODUCT_LAYERS, f"{slug} is a registration, not a derived fallback"
-        assert lanes[slug].nature == "daily_series", slug
-        assert lanes[slug].kind == "observed", slug
-        assert (lanes[slug].cadence_days, lanes[slug].publication_lag_days) == (
-            LANE_REGISTRY[slug].cadence_days,
-            LANE_REGISTRY[slug].publication_lag_days,
-        ), slug
-    assert "climate-field-relative-humidity" in LANE_REGISTRY, "registered, so only PRODUCT_BY_LAYER excluded it"
-    assert "climate-field-relative-humidity" in lanes, (
-        "it left SNAPSHOT_PRODUCTS on 2026-09-07 once its live prefix held BOTH its own "
-        "1981-01-01..2022-03-05 history and the 2022-04-30..2026-08-06 days copied from its frozen "
-        "root -- disjoint ranges, so the union adds the recent four years rather than trading them"
     )
 
 
@@ -721,7 +639,7 @@ def test_every_registered_lane_carries_its_own_cadence_and_publication_lag_into_
     lanes = {lane.layer: lane for lane in registered_census_lanes()}
 
     for slug, registration in LANE_REGISTRY.items():
-        if slug in NON_SLIDER_REGISTERED_LAYERS or slug in PRODUCT_BY_LAYER:
+        if slug in NON_SLIDER_REGISTERED_LAYERS:
             continue
         lane = lanes[slug]
         assert (lane.cadence_days, lane.publication_lag_days) == (

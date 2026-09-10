@@ -771,3 +771,34 @@ only. The coordinator merges results in candidate-day order, preserving exclusio
 bytes, source identity, and the rule that a refused final rung discards its entire day's costs.
 Only surviving days enter the source inventory. Unexpected worker errors still abort compilation
 before output files are written; concurrency does not change refusal or digest policy.
+
+
+## Python validation batches
+
+Run from `services/agri-data-service`. The default `python scripts/check.py` still runs the full
+format, lint, mypy and pytest gate. `--write-receipt` retains the existing staged-tree and digest
+checks and is available only to the full, unscoped invocation.
+
+- `python scripts/check.py --changed --plan` prints a JSON plan without executing checks.
+- `--changed` compares HEAD to the working tree, including staged edits and untracked files.
+  `--changed --base main` instead compares the merge base with the working tree. Deletions and
+  both sides of renames participate; unavailable Git/base information falls back to full tests.
+- `--list-batches` prints the explicit batch manifest. `--batch direct --batch scripts` selects
+  their union. It can also add explicit batches to `--changed`.
+- `--plan` reports mode, paths, batches, fallback reasons, exact check arguments and receipt
+  eligibility. Without it, selection is printed before checks execute. Static checks remain full;
+  only pytest is scoped. A documentation-only or unchanged selection skips pytest explicitly.
+- Automatic source mapping is deliberately limited to known direct-producer packages. Their batch
+  includes direct, Parquet, interface, retirement, script, ingest and executor contract tests.
+  Shared code, harness/config, unknown source files, and deleted tests fall back to the full suite.
+  Existing test-only changes select those files. Named batches are operator-selected surfaces,
+  not a claim that dependency analysis is complete.
+- Every `--changed` or `--batch` invocation refuses `--write-receipt`, even when conservative
+  fallback chooses full pytest. Listing flags cannot be combined with run selection. `--base`
+  requires `--changed`. No batch changes database configuration: the existing unset
+  `AGRI_TEST_DATABASE_URL` no-database skip contract still applies.
+
+When removing obsolete implementation, remove its obsolete tests and update any explicit batch
+manifest entries in the same change. Unknown/deleted paths intentionally widen validation rather
+than silently suppressing it. Batch plans are local feedback, not replacements for the full
+release receipt. Tests live in `tests/scripts/test_check_batches.py` and use fake Git/tool runners.

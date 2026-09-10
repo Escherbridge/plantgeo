@@ -16,8 +16,11 @@ requirements. This document governs only Conductor state.
    track instead of editing historical findings into a new conclusion.
 5. Apply changes in one bounded writer lane; obtain an independent review for
    governance, statistical, security, or release-boundary changes.
-6. Run the project-integrated verification sweep once after the change batch,
-   as required by `AGENTS.md`, and record only its actual result.
+6. After all edits, run one final verification sweep scoped to the affected
+   boundaries by default. Use a full integrated sweep for cross-cutting changes
+   or when release gates require it. Follow [`docs/testing.md`](../docs/testing.md)
+   for commands, and identify the tested scope in the receipt: a scoped pass is
+   not a full-suite or release acceptance result.
 
 For a release, [`release-governance.md`](./release-governance.md) takes
 precedence over every track. For data/forecast/ML work, an evaluation result is

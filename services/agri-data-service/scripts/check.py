@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import json
 import platform
 import shutil
 import subprocess
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
@@ -117,9 +118,182 @@ INDEX_ENTRY_FIELD_COUNT: Final = 3
 BATCH_HEADER_FIELD_COUNT: Final = 3
 
 
+DIRECT_PACKAGE_PATH_DEPTH: Final = 5
+
+DIRECT_PACKAGES: Final = frozenset(
+    {
+        "climate",
+        "soil",
+        "vegetation",
+        "drought",
+        "burn_severity",
+        "sensors",
+        "weather_observations",
+        "watersheds",
+        "evacuation_zones",
+        "fire_perimeters",
+    }
+)
+
+BATCH_PATHS: Final[Mapping[str, tuple[str, ...]]] = {
+    "direct": (
+        "tests/direct",
+        "tests/parquet",
+        "tests/parquet_ops",
+        "tests/interface",
+        "tests/contract",
+        "tests/retirement",
+        "tests/scripts",
+        "tests/test_ingest*.py",
+        "tests/test*direct*.py",
+        "tests/test*executor*.py",
+        "tests/test_layer_import_contract.py",
+    ),
+    "parquet": (
+        "tests/parquet",
+        "tests/parquet_ops",
+        "tests/direct",
+        "tests/contract",
+        "tests/retirement",
+        "tests/interface",
+        "tests/scripts",
+    ),
+    "scripts": ("tests/scripts",),
+    "foundation": ("tests/foundation",),
+    "interface": ("tests/interface", "tests/contract"),
+    "jobs": ("tests/test*job*.py", "tests/test*executor*.py"),
+}
+
+
+@dataclass(frozen=True)
+class TestPlan:
+    """Explain a scoped selection without certifying the full tree."""
+
+    mode: str
+    changed_paths: tuple[str, ...]
+    batches: tuple[str, ...]
+    pytest_paths: tuple[str, ...]
+    reasons: tuple[str, ...]
+    receipt_eligible: bool = False
+
+
+def changed_paths(service_root: Path, base: str | None) -> tuple[str, ...]:
+    """Include deletions, both rename sides, staged edits and untracked files."""
+    reference = "HEAD"
+    if base is not None:
+        resolved = (
+            _git_output(("rev-parse", "--verify", "--end-of-options", f"{base}^{{commit}}"), service_root)
+            .decode()
+            .strip()
+        )
+        reference = _git_output(("merge-base", "HEAD", resolved), service_root).decode().strip()
+    raw = _git_output(("diff", "--relative", "--no-renames", "--name-only", "-z", reference, "--", "."), service_root)
+    raw += _git_output(("ls-files", "--others", "--exclude-standard", "-z", "--", "."), service_root)
+    return tuple(sorted({item.decode("utf-8") for item in raw.split(b"\0") if item}))
+
+
+def _batch_paths(names: Sequence[str], service_root: Path) -> tuple[str, ...]:
+    paths = {
+        path.relative_to(service_root).as_posix()
+        for name in names
+        for pattern in BATCH_PATHS[name]
+        for path in service_root.glob(pattern)
+        if path.is_dir() or path.name.startswith("test")
+    }
+    return tuple(sorted(paths))
+
+
+def plan_tests(paths: Sequence[str], batches: Sequence[str], service_root: Path) -> TestPlan:
+    """Use only known boundaries; uncertain changes require the complete suite."""
+    selected = set(batches)
+    tests: set[str] = set()
+    reasons: list[str] = []
+    for name in sorted(set(paths)):
+        path = Path(name)
+        if name.endswith(".md"):
+            continue
+        if (
+            name.startswith("src/agri_data_service/pipeline/direct/")
+            and path.suffix == ".py"
+            and len(path.parts) > DIRECT_PACKAGE_PATH_DEPTH
+            and path.parts[4] in DIRECT_PACKAGES
+        ):
+            selected.add("direct")
+        elif name.startswith("tests/") and path.name.startswith("test_") and path.suffix == ".py":
+            if (service_root / name).is_file():
+                tests.add(name)
+            else:
+                reasons.append(f"deleted test requires full suite: {name}")
+        else:
+            reasons.append(f"shared, harness, or unmapped change: {name}")
+    tests.update(_batch_paths(tuple(sorted(selected)), service_root))
+    if selected and not tests:
+        reasons.append("selected batches have no existing tests")
+    tests = {name for name in tests if not any(name.startswith(parent + "/") for parent in tests if parent != name)}
+    mode = "full" if reasons else "scoped" if tests else "none"
+    return TestPlan(
+        mode,
+        tuple(sorted(set(paths))),
+        tuple(sorted(selected)),
+        () if reasons else tuple(sorted(tests)),
+        tuple(reasons),
+    )
+
+
+def _selection_plan(arguments: argparse.Namespace, service_root: Path) -> TestPlan:
+    paths: tuple[str, ...] = ()
+    if arguments.changed:
+        try:
+            paths = changed_paths(service_root, arguments.base)
+        except (GitQueryError, UnicodeError) as error:
+            return TestPlan("full", (), (), (), (f"git selection unavailable: {error}",))
+    return plan_tests(paths, arguments.batch or (), service_root)
+
+
+def _planned_checks(checks: Sequence[CheckDefinition], plan: TestPlan) -> tuple[CheckDefinition, ...]:
+    if plan.mode == "full":
+        return tuple(checks)
+    return tuple(
+        CheckDefinition(check.name, (*check.command, *plan.pytest_paths)) if check.name == "pytest" else check
+        for check in checks
+        if check.name != "pytest" or plan.mode != "none"
+    )
+
+
+def _configure_selection(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--changed", action="store_true", help="Select pytest by changed service paths; static checks stay full."
+    )
+    parser.add_argument("--base", help="With --changed, compare merge-base(HEAD, REF) to the working tree.")
+    parser.add_argument(
+        "--batch", action="append", choices=sorted(BATCH_PATHS), help="Add an explicit pytest batch; repeatable."
+    )
+    parser.add_argument("--list-batches", action="store_true", help="Print the batch manifest as JSON and exit.")
+    parser.add_argument("--plan", action="store_true", help="Print a JSON command plan without running checks.")
+
+
+def _prepare_checks(
+    arguments: argparse.Namespace, parser: argparse.ArgumentParser, service_root: Path
+) -> tuple[CheckDefinition, ...]:
+    checks = select_checks(arguments.only, parser)
+    if arguments.base and not arguments.changed:
+        parser.error("--base requires --changed")
+    scoped = arguments.changed or bool(arguments.batch)
+    if arguments.write_receipt and scoped:
+        parser.error("changed/batch runs cannot write a full quality receipt, including full-suite fallbacks")
+    plan = _selection_plan(arguments, service_root) if scoped else TestPlan("full", (), (), (), (), checks == CHECKS)
+    selected = _planned_checks(checks, plan)
+    if arguments.plan:
+        print(json.dumps(asdict(plan) | {"checks": [asdict(check) for check in selected]}, sort_keys=True))
+    elif scoped:
+        print("Test selection: " + json.dumps(asdict(plan), sort_keys=True))
+    return selected
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the command-line parser."""
     parser = argparse.ArgumentParser(description=__doc__)
+    _configure_selection(parser)
     parser.add_argument("--only", metavar="CHECK[,CHECK...]", help="Run only the named checks.")
     parser.add_argument("--list", action="store_true", help="List available check names and exit.")
     parser.add_argument(
@@ -478,12 +652,22 @@ def main(
     """Run selected validation checks and return a consolidated status."""
     parser = build_parser()
     arguments = parser.parse_args(argv)
-    if arguments.list:
-        for check in CHECKS:
-            print(check.name)
+    if sum((arguments.list, arguments.list_batches, arguments.plan)) > 1:
+        parser.error("--list, --list-batches and --plan are mutually exclusive")
+    if (arguments.list or arguments.list_batches) and (
+        arguments.changed or arguments.base or arguments.batch or arguments.only or arguments.write_receipt
+    ):
+        parser.error("listing options cannot be combined with run selection or receipt options")
+    if arguments.list or arguments.list_batches:
+        if arguments.list:
+            for check in CHECKS:
+                print(check.name)
+        else:
+            print(json.dumps(BATCH_PATHS, sort_keys=True))
         return 0
-
-    selected_checks = select_checks(arguments.only, parser)
+    selected_checks = _prepare_checks(arguments, parser, service_root)
+    if arguments.plan:
+        return 0
     if arguments.write_receipt and selected_checks != CHECKS:
         print("Refusing to write a receipt: --write-receipt requires every check, not --only.")
         return 1

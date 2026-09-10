@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import asyncio
 import json as json_module
-import threading
 from datetime import UTC, date, datetime
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
@@ -19,12 +18,8 @@ from sanic import Sanic
 
 from agri_data_service import app as app_module
 from agri_data_service.interface.http import parquet_routes
-from agri_data_service.parquet_ops import faults, snapshot_products
-from agri_data_service.parquet_ops.availability_coverage import SnapshotForwardAvailability
+from agri_data_service.parquet_ops import faults
 from agri_data_service.parquet_ops.coverage import CensusLane
-from agri_data_service.parquet_ops.request_params import ReadScope
-from agri_data_service.parquet_ops.snapshot_products import SnapshotCoverageCensus
-from agri_data_service.parquet_ops.wire import DayNotWritten
 from agri_data_service.pipeline.direct.climate.products import CLIMATE_DIRECT_WRITER_START_DAY
 from agri_data_service.pipeline.parquet.availability_index import AvailabilityUnavailableError
 from tests.contract.wire_contract import WIRE_BASE_PATH, WIRE_ROUTES, WireCoverage, WireWindow
@@ -43,7 +38,6 @@ if TYPE_CHECKING:
     from sanic.response import HTTPResponse
 
     from agri_data_service.parquet_ops.faults import ServingRefusalError
-    from agri_data_service.parquet_ops.snapshot_products import SnapshotProduct
 
 HTTP_OK = 200
 HTTP_BAD_REQUEST = 400
@@ -64,18 +58,6 @@ def payload_of(response: HTTPResponse) -> dict[str, object]:
     body = response.body
     assert body is not None
     return json_module.loads(body)
-
-
-@pytest.fixture
-def registered_snapshot_product(monkeypatch: pytest.MonkeyPatch) -> SnapshotProduct:
-    """Register frozen provenance only inside tests of the snapshot routing boundary."""
-    product = next(
-        product
-        for product in snapshot_products.FROZEN_SNAPSHOT_PRODUCTS
-        if product.layer == "climate-field-air-temperature-mean"
-    )
-    monkeypatch.setitem(snapshot_products.PRODUCT_BY_LAYER, product.layer, product)
-    return product
 
 
 @pytest.fixture
@@ -158,63 +140,26 @@ async def test_a_written_day_answers_200_with_its_rows(warehouse: tuple[FakeList
 
 
 @pytest.mark.asyncio
-async def test_an_allowlisted_snapshot_day_uses_exact_day_dispatch(
+@pytest.mark.parametrize("statistic", ["mean", "min", "max"])
+@pytest.mark.parametrize("day", [date(2022, 4, 30), CLIMATE_DIRECT_WRITER_START_DAY])
+async def test_temperature_history_and_forward_days_read_the_registered_live_lane(
     warehouse: tuple[FakeListing, FakeRowReader],
-    monkeypatch: pytest.MonkeyPatch,
-    registered_snapshot_product: SnapshotProduct,
+    statistic: str,
+    day: date,
 ) -> None:
-    del warehouse
-    seen: list[date] = []
-
-    async def snapshot_day(*, scope: object, day: date) -> dict[str, object]:
-        del scope
-        seen.append(day)
-        return {
-            "state": "published",
-            "requested_day": day.isoformat(),
-            "served_day": day.isoformat(),
-            "rows": [],
-            "truncated": False,
-        }
-
-    monkeypatch.setattr(parquet_routes, "_run_snapshot_day", snapshot_day)
-    response = await parquet_routes.read_day(
-        request_with(layer=registered_snapshot_product.layer, zoom="13", day="2026-08-02")
-    )
-
-    assert response.status == HTTP_OK
-    assert payload_of(response)["served_day"] == "2026-08-02"
-    assert seen == [date(2026, 8, 2)]
-
-
-@pytest.mark.asyncio
-async def test_a_snapshot_layer_s_forward_day_is_routed_to_the_live_lane(
-    warehouse: tuple[FakeListing, FakeRowReader],
-    monkeypatch: pytest.MonkeyPatch,
-    registered_snapshot_product: SnapshotProduct,
-) -> None:
-    """The predicate is DAY-aware. A layer-only test sent a day the direct writer owns to a frozen manifest.
-
-    `climate-field-air-temperature-mean` is closed below `CLIMATE_DIRECT_WRITER_START_DAY` and live at
-    and above it, so the same layer answers one day from each path.
-    """
     listing, reader = warehouse
-    forward_day = CLIMATE_DIRECT_WRITER_START_DAY
-    layer = registered_snapshot_product.layer
-    part = listing.write_day(layer, "observed", 13, forward_day)
+    layer = f"climate-field-air-temperature-{statistic}"
+    part = listing.write_day(layer, "observed", 13, day)
     reader.rows_by_key[part] = ({"cell_id": "4127", "normalized_value": 21.4},)
-
-    async def refuse_snapshot(*, scope: object, day: date) -> dict[str, object]:
-        raise AssertionError(f"{scope} {day} belongs to the live lane and must never reach the snapshot path")
-
-    monkeypatch.setattr(parquet_routes, "_run_snapshot_day", refuse_snapshot)
-    response = await parquet_routes.read_day(request_with(layer=layer, zoom="13", day=forward_day.isoformat()))
-
+    response = await parquet_routes.read_day(request_with(layer=layer, zoom="13", day=day.isoformat()))
     assert response.status == HTTP_OK
-    body = payload_of(response)
-    assert body["state"] == "published"
-    assert body["served_day"] == forward_day.isoformat()
-    assert body["rows"] == [{"cell_id": "4127", "normalized_value": 21.4}]
+    assert payload_of(response) == {
+        "state": "published",
+        "requested_day": day.isoformat(),
+        "served_day": day.isoformat(),
+        "rows": [{"cell_id": "4127", "normalized_value": 21.4}],
+        "truncated": False,
+    }
 
 
 @pytest.mark.asyncio
@@ -332,28 +277,6 @@ async def test_the_coverage_route_answers_the_whole_warehouse_with_no_viewport(
 _AVAILABILITY_MISSING = AvailabilityUnavailableError("availability_missing", "no pointer has been published")
 
 
-class _EmptySnapshotCoverage:
-    """A snapshot census that answers nothing, so a direct-lane test is only about direct lanes."""
-
-    def __init__(self) -> None:
-        self.policies: list[str] = []
-        self.forward_ports: list[object] = []
-
-    def get(
-        self,
-        store: object,
-        *,
-        now: datetime,
-        policy: str = "census_until_bootstrap",
-        forward_availability: object = None,
-    ) -> SnapshotCoverageCensus:
-        """Return an empty immutable-product census, recording what authority it was asked under."""
-        del store, now
-        self.policies.append(policy)
-        self.forward_ports.append(forward_availability)
-        return SnapshotCoverageCensus(lanes=(), withheld=())
-
-
 def _direct_lane_coverage(
     monkeypatch: pytest.MonkeyPatch,
     *,
@@ -361,17 +284,13 @@ def _direct_lane_coverage(
     reader: ScriptedReader,
     lanes: tuple[CensusLane, ...],
     listing: object,
-) -> _EmptySnapshotCoverage:
+) -> None:
     """Point the real coverage builder at scripted availability evidence and one listing."""
-    snapshots = _EmptySnapshotCoverage()
     monkeypatch.setattr(parquet_routes.settings, "parquet_coverage_authority", authority)
     monkeypatch.setattr(parquet_routes, "open_availability_reader", lambda: reader)
     monkeypatch.setattr(parquet_routes, "registered_census_lanes", lambda: lanes)
     monkeypatch.setattr(parquet_routes, "open_listing", lambda: listing)
-    monkeypatch.setattr(parquet_routes, "open_snapshot_store", lambda: None)
-    monkeypatch.setattr(parquet_routes, "_snapshot_coverage_cache", snapshots)
     parquet_routes._coverage_cache.clear()
-    return snapshots
 
 
 @pytest.mark.asyncio
@@ -380,7 +299,7 @@ async def test_availability_authority_answers_coverage_without_listing_one_objec
 ) -> None:
     """The runbook's steady state: a pointer and a generation, and NOTHING that walks a prefix."""
     reader = ScriptedReader({"signal": whole_ladder(SIGNAL_LANE, published=[date(2026, 8, 1)])})
-    snapshots = _direct_lane_coverage(
+    _direct_lane_coverage(
         monkeypatch,
         authority="availability",
         reader=reader,
@@ -395,11 +314,6 @@ async def test_availability_authority_answers_coverage_without_listing_one_objec
     assert {lane.source_ceiling_day for lane in census.lanes} == {"2026-08-07"}
     assert all(lane.required_rungs == [0, 5, 9, 13] for lane in census.lanes)
     assert reader.reads == ["signal"]
-    # The SNAPSHOT half is authority-aware too: every product carries a live edge, and listing it on
-    # every cold request is precisely the cost the index was published to retire.
-    assert snapshots.policies == ["availability"]
-    assert isinstance(snapshots.forward_ports[0], SnapshotForwardAvailability)
-    assert snapshots.forward_ports[0].reader is reader
 
 
 @pytest.mark.asyncio
@@ -483,123 +397,6 @@ async def test_cold_coverage_waiters_share_one_builder_before_any_serving_slot(
 
     assert build_calls == 1
     assert answers[0] is answers[1]
-
-
-@pytest.mark.asyncio
-async def test_cold_snapshot_day_and_window_evidence_waiters_do_not_take_serving_slots(  # noqa: PLR0915
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    all_loading = threading.Event()
-    release_evidence = threading.Event()
-    load_condition = threading.Condition()
-    expected_evidence = object()
-    store = object()
-    load_calls = 0
-    build_calls = 0
-    evidence_ready = False
-    evidence_building = False
-    session_admissions = 0
-    concurrent_call_count = 3
-    expected_unrelated_admissions = 1
-
-    def slow_load(candidate_store: object, _scope: object) -> object:
-        nonlocal build_calls, evidence_building, evidence_ready, load_calls
-        assert candidate_store is store
-        with load_condition:
-            load_calls += 1
-            if load_calls == concurrent_call_count:
-                all_loading.set()
-            if evidence_ready:
-                return expected_evidence
-            if evidence_building:
-                load_condition.wait_for(lambda: evidence_ready, timeout=5)
-                assert evidence_ready
-                return expected_evidence
-            evidence_building = True
-            build_calls += 1
-        assert release_evidence.wait(timeout=5), "test failed to release cold immutable evidence"
-        with load_condition:
-            evidence_ready = True
-            evidence_building = False
-            load_condition.notify_all()
-        return expected_evidence
-
-    async def admitted_read(
-        _credentials: object,
-        work: Callable[[object], object],
-        **_options: object,
-    ) -> object:
-        nonlocal session_admissions
-        session_admissions += 1
-        return work(object())
-
-    def exact_day(
-        _store: object,
-        _session: object,
-        *,
-        evidence: object,
-        day: date,
-        **_scope: object,
-    ) -> DayNotWritten:
-        assert evidence is expected_evidence
-        return DayNotWritten(requested_day=day)
-
-    def exact_window(
-        _store: object,
-        _session: object,
-        *,
-        evidence: object,
-        first_day: date,
-        **_scope: object,
-    ) -> tuple[DayNotWritten, ...]:
-        assert evidence is expected_evidence
-        return (DayNotWritten(requested_day=first_day),)
-
-    def credentials(_settings: object) -> object:
-        return object()
-
-    monkeypatch.setattr(parquet_routes, "open_snapshot_store", lambda: store)
-    monkeypatch.setattr(parquet_routes, "load_snapshot_scope_evidence", slow_load)
-    monkeypatch.setattr(parquet_routes, "run_serving_read", admitted_read)
-    monkeypatch.setattr(parquet_routes, "resolve_snapshot_evidence_day", exact_day)
-    monkeypatch.setattr(parquet_routes, "resolve_snapshot_evidence_window", exact_window)
-    monkeypatch.setattr(type(parquet_routes.settings), "require_object_store", credentials)
-    scope = ReadScope(
-        layer="climate-field-air-temperature-mean",
-        kind="observed",
-        tier=13,
-        bbox=None,
-    )
-    callers = [
-        asyncio.create_task(parquet_routes._run_snapshot_day(scope=scope, day=date(2026, 8, 1))),
-        asyncio.create_task(parquet_routes._run_snapshot_day(scope=scope, day=date(2026, 8, 2))),
-        asyncio.create_task(
-            parquet_routes._run_snapshot_window(
-                scope=scope,
-                first_day=date(2026, 8, 1),
-                last_day=date(2026, 8, 1),
-            )
-        ),
-    ]
-    try:
-        poll_attempts = 100
-        for _attempt in range(poll_attempts):
-            if all_loading.is_set():
-                break
-            await asyncio.sleep(0.01)
-        assert all_loading.is_set()
-        assert build_calls == 1
-        assert session_admissions == 0, "cold snapshot evidence must resolve before DuckDB admission"
-        unrelated = await parquet_routes._run_row_read(lambda _reader: {"available": True}, route="day")
-        assert unrelated == {"available": True}
-        assert session_admissions == expected_unrelated_admissions, (
-            "an unrelated read must retain serving-slot admission"
-        )
-    finally:
-        release_evidence.set()
-
-    await asyncio.gather(*callers)
-    assert session_admissions == concurrent_call_count + expected_unrelated_admissions
 
 
 @pytest.mark.asyncio
@@ -767,9 +564,6 @@ def test_the_http_adapter_owns_every_core_refusal_status() -> None:
         "object_store_session_unavailable",
         "serving_extension_unavailable",
         "census_budget_exhausted",
-        "snapshot_unpublished",
-        "snapshot_schema_mismatch",
-        "snapshot_manifest_conflict",
     }
 
     assert set(parquet_routes._REFUSAL_HTTP_STATUS) == expected
