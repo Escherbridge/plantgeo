@@ -1,5 +1,29 @@
 # Parquet reader services — rationale
 
+## §soil-direct-lineage — preserve both registered source namespaces
+
+The ERA5-Land soil writer owns days beginning 2026-08-03; frozen moisture and
+temperature history ends on 2026-08-02 (`pipeline/direct/soil/products.py`).
+`soilLineageMatches` retains the canonical manifest pin for historical days and
+accepts the direct writer's response digest only in its owned time window.
+Source, parameter, support, unit, served day, coordinates, and rung identity checks
+continue to apply to both populations.
+
+Direct moisture rows carry `source_snapshot_id=direct:<response digest>` and the
+registered direct precedence contract on every rung. At z13 their selected release
+and checksum must agree too. Direct temperature rows carry the namespace in the
+selected release at z13. The ordinary coarse aggregation deliberately nulls that
+release field and retains the input response digest; a coarse temperature row is
+therefore checked against temporal ownership, its typed digest, and a null selected
+release, without claiming a namespace witness that aggregation removed. The
+availability-backed Python reader remains the authority for publication evidence.
+
+The reader tests use synthetic values in the actual direct writer's base and coarse
+row shapes. They cover the first direct day, the preceding frozen day, mismatched
+namespace/checksum, unregistered precedence, and malformed digests. The historical
+canonical checks are retained; accepting arbitrary hashes on every date would hide
+the original source-contract mismatch.
+
 ## §slider-bootstrap — Parquet owns the public date census
 
 `getParquetSliderCapabilities` reads only `getParquetWarehouseCoverage`. It must not call

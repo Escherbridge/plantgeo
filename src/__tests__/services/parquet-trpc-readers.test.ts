@@ -255,6 +255,61 @@ function soilTemperatureRow(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function directSoilRow(
+  measure: "moisture" | "temperature",
+  zoom: 5 | 13,
+  day = "2026-08-03",
+  overrides: Record<string, unknown> = {}
+) {
+  const digest = "e".repeat(64);
+  const rowDigest = "b".repeat(64);
+  const release = `direct:${digest}`;
+  const coarse = zoom !== 13;
+  const common = {
+    observed_day: day,
+    newest_observed_at: `${day}T00:00:00Z`,
+    observation_count: coarse ? 4 : 1,
+    allowed_client_exposure: true,
+    cell_id: coarse ? null : "era5-land:42.125:-124.875",
+    cell_longitude: coarse ? -125 : -124.875,
+    cell_latitude: coarse ? 42 : 42.125,
+    selected_source_release_id: coarse ? null : release,
+  };
+  return measure === "moisture"
+    ? soilMoistureRow({
+        ...common,
+        source_snapshot_id: release,
+        source_manifest_sha256: digest,
+        precedence_contract: "open-meteo-era5-land-archive-per-support-cell-v1",
+        selected_source_row_id: coarse ? null : 7,
+        selected_source_row_sha256: coarse ? null : rowDigest,
+        selected_source_release_retrieved_at: coarse ? null : "2026-09-01T00:00:00Z",
+        selected_source_release_payload_checksum: coarse ? null : digest,
+        selected_source_part_key: coarse ? null : "https://archive-api.open-meteo.com/v1/archive",
+        selected_source_part_sha256: coarse ? null : "c".repeat(64),
+        selected_source_row_ordinal: coarse ? null : 7,
+        input_source_row_count: coarse ? 4 : 1,
+        input_source_row_digest: coarse ? null : rowDigest,
+        input_source_row_ids: coarse ? null : [7],
+        input_source_row_sha256s: coarse ? null : [rowDigest],
+        input_source_release_ids: coarse ? null : [release],
+        input_source_part_keys: coarse ? null : ["https://archive-api.open-meteo.com/v1/archive"],
+        input_source_part_sha256s: coarse ? null : ["c".repeat(64)],
+        input_source_row_ordinals: coarse ? null : [7],
+        ...overrides,
+      })
+    : soilTemperatureRow({
+        ...common,
+        input_manifest_sha256: digest,
+        selected_observation_id: coarse ? null : 7,
+        selected_canonical_row_sha256: coarse ? null : rowDigest,
+        selected_release_retrieved_at: coarse ? null : "2026-09-01T00:00:00Z",
+        physical_candidate_count: coarse ? 4 : 1,
+        lineage_sha256: rowDigest,
+        ...overrides,
+      });
+}
+
 function climateLineageRow(day = "2026-08-06") {
   const sha = "a".repeat(64);
   return {
@@ -1553,6 +1608,67 @@ describe("lane day and release semantics", () => {
         depth: "deep",
         date: "2026-08-02",
         zoom: 13,
+      })
+    ).rejects.toBeInstanceOf(ParquetPlaneContractError);
+  });
+
+  it.each([
+    ["moisture", 13],
+    ["moisture", 5],
+    ["temperature", 13],
+    ["temperature", 5],
+  ] as const)("serves direct %s at z%s from its first owned day", async (measure, zoom) => {
+    mockedDay.mockResolvedValue(published("2026-08-03", [directSoilRow(measure, zoom)]));
+    await expect(
+      getParquetSoilField("-125,42,-111,49", {
+        measure,
+        depth: measure === "moisture" ? "root-zone" : "deep",
+        date: "2026-08-03",
+        zoom,
+      })
+    ).resolves.toMatchObject({
+      availability: "published",
+      observedDay: "2026-08-03",
+      features: [{ properties: { value: measure === "moisture" ? 0.23 : 21.5 } }],
+    });
+  });
+
+  it.each([
+    ["moisture", 13, "2026-08-02", {}],
+    ["moisture", 5, "2026-08-02", {}],
+    ["temperature", 13, "2026-08-02", {}],
+    ["temperature", 5, "2026-08-02", {}],
+    ["moisture", 13, "2026-08-03", { source_snapshot_id: "direct:malformed" }],
+    ["moisture", 5, "2026-08-03", { source_snapshot_id: `direct:${"f".repeat(64)}` }],
+    ["moisture", 13, "2026-08-03", { precedence_contract: "unregistered" }],
+    ["moisture", 13, "2026-08-03", { selected_source_release_payload_checksum: "f".repeat(64) }],
+    ["moisture", 13, "2026-08-03", { selected_source_release_id: "release-7" }],
+    ["moisture", 5, "2026-08-03", { source_manifest_sha256: "malformed" }],
+    ["temperature", 13, "2026-08-03", { selected_source_release_id: "release-7" }],
+    ["temperature", 13, "2026-08-03", { selected_source_release_id: `direct:${"f".repeat(64)}` }],
+    ["temperature", 5, "2026-08-03", { selected_source_release_id: `direct:${"e".repeat(64)}` }],
+    ["temperature", 5, "2026-08-03", { input_manifest_sha256: "malformed" }],
+    [
+      "moisture", 5, "2026-08-03",
+      {
+        source_manifest_sha256: "465abc4e813bf28c78acd7f97a4da9d19ad959e525de3eb1f422ca2f6e73e94f",
+        source_snapshot_id: "prod-20260826-full-signal-v1",
+      },
+    ],
+    [
+      "temperature", 5, "2026-08-03",
+      {
+        input_manifest_sha256: "465abc4e813bf28c78acd7f97a4da9d19ad959e525de3eb1f422ca2f6e73e94f",
+      },
+    ],
+  ] as const)("refuses invalid direct soil lineage %s z%s %s %j", async (measure, zoom, day, overrides) => {
+    mockedDay.mockResolvedValue(published(day, [directSoilRow(measure, zoom, day, overrides)]));
+    await expect(
+      getParquetSoilField("-125,42,-111,49", {
+        measure,
+        depth: measure === "moisture" ? "root-zone" : "deep",
+        date: day,
+        zoom,
       })
     ).rejects.toBeInstanceOf(ParquetPlaneContractError);
   });

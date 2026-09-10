@@ -1511,6 +1511,52 @@ function emptyParquetSoilField(
   };
 }
 
+// See AGENTS.md §soil-direct-lineage for the writer ownership boundary and coarse-row limitation.
+function soilLineageMatches(
+  row: Record<string, unknown>,
+  measure: SoilFieldMeasure,
+  servedDay: string,
+  zoomTier: ZoomTier
+): boolean {
+  const frozenDay = servedDay <= "2026-08-02";
+  if (measure === "moisture") {
+    if (frozenDay) {
+      return (
+        row.source_manifest_sha256 === SNAPSHOT_SOURCE_MANIFEST_SHA256 &&
+        row.source_snapshot_id === "prod-20260826-full-signal-v1"
+      );
+    }
+    const directId = `direct:${String(row.source_manifest_sha256)}`;
+    return (
+      row.source_manifest_sha256 !== SNAPSHOT_SOURCE_MANIFEST_SHA256 &&
+      row.source_snapshot_id === directId &&
+      row.precedence_contract === "open-meteo-era5-land-archive-per-support-cell-v1" &&
+      (zoomTier === BASE_ZOOM_TIER
+        ? row.selected_source_release_id === directId &&
+          row.selected_source_release_payload_checksum === row.source_manifest_sha256
+        : row.selected_source_release_id === null)
+    );
+  }
+  if (measure === "temperature") {
+    if (frozenDay) {
+      return (
+        row.input_manifest_sha256 === SNAPSHOT_SOURCE_MANIFEST_SHA256 &&
+        !(
+          typeof row.selected_source_release_id === "string" &&
+          row.selected_source_release_id.startsWith("direct:")
+        )
+      );
+    }
+    return (
+      row.input_manifest_sha256 !== SNAPSHOT_SOURCE_MANIFEST_SHA256 &&
+      (zoomTier === BASE_ZOOM_TIER
+        ? row.selected_source_release_id === `direct:${String(row.input_manifest_sha256)}`
+        : row.selected_source_release_id === null)
+    );
+  }
+  return true;
+}
+
 function decodeSoilFieldRows(
   rows: readonly Record<string, unknown>[],
   measure: SoilFieldMeasure,
@@ -1540,15 +1586,13 @@ function decodeSoilFieldRows(
           depth === "substratum" ||
           !("source_parameter" in row) ||
           row.source_parameter !== SOIL_MOISTURE_SOURCE_PARAMETERS[depth] ||
-          !("source_manifest_sha256" in row) ||
-          row.source_manifest_sha256 !== SNAPSHOT_SOURCE_MANIFEST_SHA256)) ||
+          !soilLineageMatches(row, measure, servedDay, zoomTier))) ||
       (measure === "temperature" &&
         (!("data_source_key" in row) ||
           row.data_source_key !== SOIL_FIELD_SOURCE_KEY ||
           !("source_parameter" in row) ||
           row.source_parameter !== SOIL_TEMPERATURE_SOURCE_PARAMETERS[depth] ||
-          !("input_manifest_sha256" in row) ||
-          row.input_manifest_sha256 !== SNAPSHOT_SOURCE_MANIFEST_SHA256))
+          !soilLineageMatches(row, measure, servedDay, zoomTier)))
     ) {
       throw contractError(`${layer} returned a row outside its registered soil-field contract`);
     }
