@@ -218,9 +218,10 @@ describe("generate_remediation_report tool wiring", () => {
       finalChatCompletion: async () => ({
         choices: [
           {
+            finish_reason: toolCalls.length ? "tool_calls" : "stop",
             message: {
               role: "assistant",
-              content: null,
+              content: narration ?? null,
               refusal: null,
               tool_calls: toolCalls.map((call) => ({
                 id: call.id,
@@ -421,5 +422,24 @@ describe("generate_remediation_report tool wiring", () => {
     await expect(collect()).rejects.toThrow("bounded correction attempt");
     expect(events).toEqual([]);
     expect(mocks.completionStream).toHaveBeenCalledTimes(2);
+  });
+
+  it("diagnoses exhausted auto rounds without accepting narration or logging its content", async () => {
+    vi.stubEnv("OPENROUTER_MODEL", "google/gemini-2.5-flash-lite");
+    const { streamRegionalIntelligence } = await import("@/lib/server/services/ai-prompt");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const privateNarration = "Private model output without a report";
+    mocks.completionStream.mockImplementation(() => fakeCompletionStream([], privateNarration));
+    const events: Array<{ type: string }> = [];
+    try {
+      for await (const event of streamRegionalIntelligence(minimalPayload(), {}, true, minimalTemporalContext(), [])) events.push(event);
+      expect(events).toEqual([]);
+      expect(mocks.completionStream).toHaveBeenCalledTimes(4);
+      expect(warn).toHaveBeenCalledWith("[AI] incomplete report response", expect.objectContaining({ round: 4, reason: "report_missing", finishReason: "stop", contentKind: "text", reportToolCount: 0, toolChoiceMode: "auto" }));
+      expect(warn).toHaveBeenCalledWith("[AI] report attempts exhausted", expect.objectContaining({ reportCorrections: 0, maxToolRounds: 4 }));
+      expect(JSON.stringify(warn.mock.calls)).not.toContain(privateNarration);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

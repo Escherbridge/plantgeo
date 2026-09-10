@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { providerErrorDiagnostic } from "@/lib/server/services/ai-provider-diagnostics";
+import { incompleteReportDiagnostic, providerErrorDiagnostic } from "@/lib/server/services/ai-provider-diagnostics";
 
 function failure(message: string) {
   return {
@@ -10,6 +10,17 @@ function failure(message: string) {
 }
 
 describe("safe AI provider diagnostics", () => {
+  it("distinguishes empty, text and structured completions without exposing output or unknown names", () => {
+    expect(incompleteReportDiagnostic(undefined, undefined, undefined)).toMatchObject({ messagePresent: false, finishReason: "unknown", contentKind: "empty", reportToolCount: 0 });
+    const secret = "sk-or-private-model-output";
+    const diagnostic = incompleteReportDiagnostic({ content: secret, tool_calls: [{ function: { name: secret } }, { function: { name: "remediation_report" } }] }, secret, { prompt_tokens: 23, completion_tokens: 45, total_tokens: 68 });
+    expect(diagnostic).toMatchObject({ finishReason: "unknown", contentKind: "text", contentMatchesReportSchema: false, toolCallCount: 2, reportToolCount: 1, otherToolCount: 1, promptTokens: 23, completionTokens: 45 });
+    expect(JSON.stringify(diagnostic)).not.toContain(secret);
+    const report = { riskSummary: { level: "low", headline: secret, factors: [], evidenceOrigin: "model_inference", evidenceSources: [] }, observations: [], remediation: [], professionalConsultation: "Consult a professional." };
+    const structured = incompleteReportDiagnostic({ content: "```json\n" + JSON.stringify(report) + "\n```" }, "stop", {});
+    expect(structured).toMatchObject({ contentKind: "fenced_json", contentMatchesReportSchema: true, knownContentKeys: ["riskSummary", "observations", "remediation", "professionalConsultation"] });
+    expect(JSON.stringify(structured)).not.toContain(secret);
+  });
   it.each([
     ["Function call is missing a thought_signature", "thought_signature"],
     ["Input exceeds the context length limit", "context_limit"],

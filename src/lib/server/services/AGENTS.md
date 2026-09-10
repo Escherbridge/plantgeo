@@ -462,3 +462,12 @@ succeed; a text-only or malformed correction fails without a silent fallback or
 further retry. `toolChoiceMode` distinguishes actual provider forcing from the
 logical final-round flag in diagnostics. This is a bounded compatibility candidate
 until the representative mixed-date application request passes in production.
+
+The next mixed-date retry avoided provider 400 but ended with no report. That is
+not acceptance of the compatibility candidate. Incomplete-round diagnostics now
+record only finish reason, known tool counts, text size, JSON/fenced-JSON shape,
+whether content would satisfy the canonical schema, allowlisted content keys and
+numeric token usage. Empty completions and exhausted attempts are distinguished.
+Model content is never logged or accepted through this diagnostic path; report
+acceptance and the existing retry budget remain unchanged while the response
+shape is investigated.

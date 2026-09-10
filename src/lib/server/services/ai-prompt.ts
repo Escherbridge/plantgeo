@@ -1,5 +1,5 @@
 import OpenAI from 'openai';
-import { providerErrorDiagnostic } from './ai-provider-diagnostics';
+import { incompleteReportDiagnostic, providerErrorDiagnostic } from './ai-provider-diagnostics';
 import { soilAiEvidence } from './soil-ai-evidence';
 import { remediationReportSchema, REMEDIATION_REPORT_JSON_SCHEMA, type RemediationReport } from './remediation-report';
 import type {
@@ -417,13 +417,18 @@ export async function* streamRegionalIntelligence(
 
     let roundNarration = '';
     let message: OpenAI.Chat.Completions.ChatCompletionMessage | undefined;
+    let finishReason: unknown;
+    let completionUsage: unknown;
     try {
       const stream = client.chat.completions.stream(completionRequest, { signal });
       for await (const chunk of stream) {
         const text = chunk.choices[0]?.delta?.content;
         if (text) roundNarration += text;
       }
-      message = (await stream.finalChatCompletion()).choices[0]?.message;
+      const completion = await stream.finalChatCompletion();
+      message = completion.choices[0]?.message;
+      finishReason = completion.choices[0]?.finish_reason;
+      completionUsage = completion.usage;
     } catch (error) {
       if (!signal?.aborted) console.error('[AI] provider request failed', {
         model,
@@ -438,7 +443,16 @@ export async function* streamRegionalIntelligence(
       throw error;
     }
 
-    if (!message) return;
+    const logIncomplete = (reason: 'empty_completion' | 'report_missing' | 'report_invalid') => console.warn('[AI] incomplete report response', {
+      model, round: round + 1, isFinalRound, correctingReport,
+      toolChoiceMode: forceReportTool ? 'forced_report' : 'auto',
+      reason, streamedTextCharacterCount: roundNarration.length,
+      ...incompleteReportDiagnostic(message, finishReason, completionUsage),
+    });
+    if (!message) {
+      logIncomplete('empty_completion');
+      return;
+    }
 
     if (message.refusal) {
       yield { type: 'refusal' };
@@ -461,6 +475,7 @@ export async function* streamRegionalIntelligence(
         yield { type: 'report', report: parsed.data };
         return;
       }
+      logIncomplete('report_invalid');
       if (reportCorrections >= MAX_REPORT_CORRECTIONS) {
         throw new Error('The report remained invalid after its bounded correction attempt.');
       }
@@ -481,6 +496,7 @@ export async function* streamRegionalIntelligence(
       }
       continue;
     }
+    logIncomplete('report_missing');
     if (correctingReport) throw new Error('The correction attempt did not return a report.');
 
     const searches = toolUses.filter(
@@ -577,6 +593,7 @@ export async function* streamRegionalIntelligence(
     // `tool_call_id`, and a batched user message would leave every call unanswered.
     for (const result of toolResults) messages.push(result);
   }
+  console.warn('[AI] report attempts exhausted', { model, reportCorrections, maxToolRounds: MAX_TOOL_ROUNDS });
 }
 
 export {

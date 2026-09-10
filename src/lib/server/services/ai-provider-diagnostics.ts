@@ -1,3 +1,5 @@
+import { remediationReportSchema } from "./remediation-report";
+
 const MAX_RAW_ERROR_BYTES = 16_384;
 const KNOWN_CODES = new Set(["INVALID_ARGUMENT", "RESOURCE_EXHAUSTED", "FAILED_PRECONDITION", "PERMISSION_DENIED", "UNAUTHENTICATED", "NOT_FOUND", "UNAVAILABLE", "INTERNAL", "DEADLINE_EXCEEDED", "invalid_request_error", "invalid_argument", "context_length_exceeded", "rate_limit_exceeded", "rate_limit_error", "authentication_error", "permission_error", "not_found_error", "api_error", "server_error", "insufficient_quota"]);
 const KNOWN_PROVIDERS = new Set(["Google", "Google AI Studio", "Google Vertex", "Google Vertex AI", "OpenAI", "Anthropic", "Amazon Bedrock", "Azure", "Together", "Fireworks", "DeepInfra"]);
@@ -62,5 +64,37 @@ export function providerErrorDiagnostic(error: unknown) {
     reasons: reasons.length ? reasons : ["unclassified_provider_error"],
     rawErrorAvailable: raw !== undefined,
     rawErrorOversized: typeof raw === "string" && Buffer.byteLength(raw, "utf8") > MAX_RAW_ERROR_BYTES,
+  };
+}
+
+/** Describe an incomplete completion without retaining model text or unknown tool names. */
+export function incompleteReportDiagnostic(message: unknown, finishReason: unknown, usage: unknown) {
+  const content = field(message, "content");
+  const text = typeof content === "string" ? content.trim() : "";
+  const jsonText = text.replace(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/i, "$1").trim();
+  let parsedContent: unknown;
+  if (jsonText.length <= 128_000 && jsonText.startsWith("{")) {
+    try { parsedContent = JSON.parse(jsonText); } catch { /* Shape diagnostic only. */ }
+  }
+  const toolCalls = field(message, "tool_calls");
+  const names = Array.isArray(toolCalls) ? toolCalls.map((call) => field(field(call, "function"), "name")) : [];
+  const tokens = (name: string) => {
+    const value = field(usage, name);
+    return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
+  };
+  return {
+    messagePresent: message != null,
+    finishReason: typeof finishReason === "string" && ["stop", "length", "tool_calls", "content_filter", "function_call"].includes(finishReason) ? finishReason : "unknown",
+    textCharacterCount: typeof content === "string" ? content.length : 0,
+    contentKind: !text ? "empty" : parsedContent !== undefined ? text.startsWith("```") ? "fenced_json" : "json_object" : text.startsWith("```") ? "fenced_text" : "text",
+    contentMatchesReportSchema: parsedContent !== undefined && remediationReportSchema.safeParse(parsedContent).success,
+    knownContentKeys: ["riskSummary", "observations", "remediation", "professionalConsultation", "name", "arguments", "parameters", "tool_calls", "aiGenerated", "webSources", "dataFreshness"].filter((key) => field(parsedContent, key) !== undefined),
+    toolCallCount: names.length,
+    reportToolCount: names.filter((name) => name === "remediation_report" || name === "generate_remediation_report").length,
+    searchToolCount: names.filter((name) => name === "search_web").length,
+    otherToolCount: names.filter((name) => name !== "remediation_report" && name !== "generate_remediation_report" && name !== "search_web").length,
+    promptTokens: tokens("prompt_tokens"),
+    completionTokens: tokens("completion_tokens"),
+    totalTokens: tokens("total_tokens"),
   };
 }
