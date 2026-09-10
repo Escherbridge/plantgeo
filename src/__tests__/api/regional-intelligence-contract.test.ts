@@ -72,6 +72,7 @@ describe("remediation report contract", () => {
     const { buildSystemPrompt } = await import("@/lib/server/services/ai-prompt");
     const prompt = buildSystemPrompt(false);
     expect(prompt).toContain("A single streamflow reading establishes a flow at its own observation time, not a trend");
+    expect(prompt).toContain("A small absolute cfs value alone is not evidence of low flow");
     expect(prompt).toContain("Strategy-model evidence is unavailable");
     expect(prompt).toContain("You may still suggest remediation grounded in the supplied environmental evidence");
     expect(prompt).not.toContain("evaluation_only_model");
@@ -311,6 +312,32 @@ describe("generate_remediation_report tool wiring", () => {
     expect(sent).toContain("5.12");
     expect(sent).toContain("divide g/kg by 10");
     expect(events.some((event) => event.type === "report")).toBe(true);
+  });
+
+  it.each([false, true])("logs safe provider diagnostics for a 400 on the initial or correction round (%s)", async (afterCorrection) => {
+    const { streamRegionalIntelligence } = await import("@/lib/server/services/ai-prompt");
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const secret = "sk-or-hidden-provider-key";
+    const privateQuestion = "Private ranch analysis question";
+    const failure = Object.assign(new Error("400 Provider returned error"), { status: 400, code: 400, error: { metadata: { provider_name: "Google AI Studio", raw: JSON.stringify({ error: { code: 400, status: "INVALID_ARGUMENT", message: `Missing thought_signature; echoed ${privateQuestion} ${secret}` } }) } } });
+    if (afterCorrection) mocks.completionStream.mockImplementationOnce(() => fakeCompletionStream([{ id: "invalid", name: "remediation_report", input: { invalid: true } }]));
+    mocks.completionStream.mockImplementationOnce(() => ({
+      [Symbol.asyncIterator]: () => ({ next: async () => { throw failure; } }),
+    }));
+    const collect = async () => {
+      for await (const event of streamRegionalIntelligence(minimalPayload(), {}, true, minimalTemporalContext(), [], privateQuestion)) void event;
+    };
+    try {
+      await expect(collect()).rejects.toBe(failure);
+      expect(mocks.completionStream).toHaveBeenCalledTimes(afterCorrection ? 2 : 1);
+      expect(log).toHaveBeenCalledWith("[AI] provider request failed", expect.objectContaining({ round: afterCorrection ? 2 : 1, isFinalRound: afterCorrection, correctingReport: afterCorrection, status: 400, provider: "Google AI Studio", reasons: ["thought_signature"], messageCount: afterCorrection ? 4 : 2 }));
+      const diagnostic = log.mock.calls[0]?.[1] as { requestByteCount: number };
+      expect(diagnostic.requestByteCount).toBeGreaterThan(100);
+      expect(JSON.stringify(log.mock.calls)).not.toContain(secret);
+      expect(JSON.stringify(log.mock.calls)).not.toContain(privateQuestion);
+    } finally {
+      log.mockRestore();
+    }
   });
 
   it("corrects too many observations before emitting a report or its narration", async () => {

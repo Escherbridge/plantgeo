@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import { providerErrorDiagnostic } from './ai-provider-diagnostics';
 import { soilAiEvidence } from './soil-ai-evidence';
 import { remediationReportSchema, REMEDIATION_REPORT_JSON_SCHEMA, type RemediationReport } from './remediation-report';
 import type {
@@ -140,7 +141,7 @@ function buildSystemPrompt(hasWebSearch: boolean): string {
 
 ## What each observation can establish
 - Soil properties include explicit units and represent SoilGrids predictions at 0–5 cm, not a local soil sample. Preserve each value's unit. Nitrogen and organicCarbon are g/kg, never percentages with the same numeric value. Prefer the supplied g/kg; if a mass percentage is necessary, divide g/kg by 10 and label the conversion explicitly. Do not convert organic carbon concentration into organic matter or carbon stocks without additional evidence.
-- A single streamflow reading establishes a flow at its own observation time, not a trend. Do not describe flow as stable, rising, declining or normal unless a non-null supplied trend or condition explicitly supports that statement. Missing trend/percentile/condition means unmeasured, not stable or normal.
+- A single streamflow reading establishes a flow at its own observation time, not a trend. Do not describe flow as stable, rising, declining, normal, low, high, below-normal or above-normal unless a supplied gauge-specific comparator, percentile or condition explicitly supports that comparison (and a supplied trend supports any trend claim). A small absolute cfs value alone is not evidence of low flow. Missing trend/percentile/condition means unmeasured, not stable or normal. You may still discuss drought-based concerns as AI inference without relabelling the measured flow.
 - A gauge's observedDay is its publisher's calendar day; updatedAt is the actual observation instant. Attribute named-day streamflow to observedDay. A late Pacific observation on September 9 can have a September 10 UTC timestamp: this is still September 9 publisher-day evidence. If mentioning the instant, include its timezone; never replace observedDay with the date obtained by converting updatedAt.
 - firePerimeters contains perimeter records, not active satellite detections. Their record dates and snapshot capture day are not ignition dates and do not prove a fire was active or detected on that day. Say "perimeter records dated ..." and keep them distinct from the fireDetections source; a count of perimeter records is not a count of new fires.
 - No fuel-load or fuel-moisture observation is supplied merely because weather is warm or dry. Missing vegetation/fuels evidence cannot establish abundant, dry or available fuel at this location. Any possible fuel-related concern inferred from other sources must be labelled model_inference and conditional on field assessment, never a measured local condition.
@@ -400,27 +401,39 @@ export async function* streamRegionalIntelligence(
     if (round >= MAX_TOOL_ROUNDS && !correctingReport) break;
     const isFinalRound = correctingReport || round >= MAX_TOOL_ROUNDS - 1;
 
-    const stream = client.chat.completions.stream(
-      {
-        model,
-        max_tokens: MAX_OUTPUT_TOKENS,
-        messages,
-        tools,
-        // The last round must produce a report rather than another search.
-        tool_choice: isFinalRound
-          ? { type: 'function', function: { name: REPORT_TOOL.name } }
-          : 'auto',
-      },
-      { signal }
-    );
+    const completionRequest = {
+      model,
+      max_tokens: MAX_OUTPUT_TOKENS,
+      messages,
+      tools,
+      // The last round must produce a report rather than another search.
+      tool_choice: isFinalRound
+        ? { type: 'function' as const, function: { name: REPORT_TOOL.name } }
+        : 'auto' as const,
+    };
 
     let roundNarration = '';
-    for await (const chunk of stream) {
-      const text = chunk.choices[0]?.delta?.content;
-      if (text) roundNarration += text;
+    let message: OpenAI.Chat.Completions.ChatCompletionMessage | undefined;
+    try {
+      const stream = client.chat.completions.stream(completionRequest, { signal });
+      for await (const chunk of stream) {
+        const text = chunk.choices[0]?.delta?.content;
+        if (text) roundNarration += text;
+      }
+      message = (await stream.finalChatCompletion()).choices[0]?.message;
+    } catch (error) {
+      if (!signal?.aborted) console.error('[AI] provider request failed', {
+        model,
+        round: round + 1,
+        isFinalRound,
+        correctingReport,
+        messageCount: messages.length,
+        requestByteCount: Buffer.byteLength(JSON.stringify(completionRequest), 'utf8'),
+        ...providerErrorDiagnostic(error),
+      });
+      throw error;
     }
 
-    const message = (await stream.finalChatCompletion()).choices[0]?.message;
     if (!message) return;
 
     if (message.refusal) {

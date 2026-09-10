@@ -7,6 +7,7 @@ import { getServerSession } from '@/lib/server/auth';
 import { parseBoundedJson } from '@/lib/server/security/ingress';
 import { assembleRegionalContext } from '@/lib/server/services/regional-context';
 import { streamRegionalIntelligence } from '@/lib/server/services/ai-prompt';
+import { providerErrorDiagnostic } from '@/lib/server/services/ai-provider-diagnostics';
 import {
   openConversation,
   recordExchange,
@@ -302,7 +303,7 @@ export async function POST(request: NextRequest) {
           if (abortController.signal.aborted) return;
           console.error(
             '[AI] stream error',
-            error instanceof Error ? error.message : error
+            providerErrorDiagnostic(error)
           );
           send('error', {
             message: 'An error occurred processing your request.',

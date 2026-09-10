@@ -422,3 +422,25 @@ published recommendation. The report schema remains compatible and ordinary
 remediation suggestions may still be inferred from actual environmental evidence.
 Nearby community proposals retain their application-database reads and are
 explicitly unreviewed context, not model evidence.
+
+## Provider failure diagnostics (2026-09-10)
+
+The model-call boundary logs one bounded diagnostic on a failed provider call and
+rethrows the original error. Model selection, retry bounds, report validation and
+user-visible errors are unchanged. Round number, forced-tool/correction state,
+message count and serialized request byte count distinguish initial input failures
+from later tool-history failures without logging request content.
+
+`ai-provider-diagnostics.ts` returns only allowlisted technical codes, provider names,
+parameter roots, restricted request-id formats and static reason categories. It
+reads at most 16 KiB of a raw provider error for classification, never logs that
+text, and excludes arbitrary code/provider strings, headers, original inputs and
+credentials. The route uses the same safe projection rather than emitting arbitrary
+exception messages. An unrecognized error stays unclassified; absence of a category
+does not prove a particular cause. This is diagnostic instrumentation, not a retry
+or a provider compatibility repair. The local SDK contains workspace modifications,
+so its behavior must not be assumed to match the deployed dependency.
+
+Single absolute discharge also cannot establish low/high or below/above-normal flow:
+the prompt requires a supplied gauge-specific comparator, percentile or condition.
+Drought-based concerns remain possible as explicitly labelled AI inference.
