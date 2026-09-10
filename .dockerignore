@@ -74,3 +74,7 @@ scripts/*
 !scripts/migrate.mjs
 !scripts/*.sql
 !scripts/warm-soilgrids.mjs
+!scripts/test-surface.mjs
+!scripts/tests/
+scripts/tests/*
+!scripts/tests/test-surface.test.mjs
