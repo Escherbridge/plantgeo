@@ -47,7 +47,8 @@ export const remediationReportSchema = z
           .strict()
       )
       .max(8),
-    professionalConsultation: z.string().trim().min(1).max(600),
+    professionalConsultation: z.string().trim().min(1).max(600)
+      .describe('One short sentence naming the relevant professional disciplines to consult before acting; aim below 200 characters. Do not repeat disclaimers, evidence, strategy rationales or per-strategy explanations.'),
   })
   .strict();
 

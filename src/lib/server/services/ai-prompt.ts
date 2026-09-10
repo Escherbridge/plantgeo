@@ -133,7 +133,7 @@ function buildSystemPrompt(hasWebSearch: boolean): string {
 
 ## Your output is AI-generated advice, and you must say so
 - Every briefing you produce is AI-generated. Never present it as a validated model output, a certified assessment, or a professional recommendation.
-- Always fill in professionalConsultation, and always name the specific disciplines a reader should consult before acting. This is not boilerplate — name who is relevant to the strategies you actually recommended and what they should be asked to confirm.
+- Fill professionalConsultation with one short sentence naming only the relevant professional disciplines to consult before acting. Aim for fewer than 200 characters. Do not repeat the disclaimer, evidence, strategy rationales or individual consultation tasks; those belong elsewhere in the report.
 - List consultProfessionals on every remediation item.
 
 ## Evidence and honesty
@@ -301,12 +301,27 @@ function buildUserMessage(
   const coverageNote = contextIsEmpty
     ? 'No warehouse source resolved for this location. Say so explicitly, and base any advice on reasoning labelled model_inference.'
     : 'Sources marked "unavailable" were not observed. Do not describe them as absent conditions — they are simply unmeasured.';
+  const gauge = payload.waterScarcity?.nearestGauge;
+  const flowGuidance: string[] = [];
+  if (gauge) {
+    if (gauge.flowCfs !== null && Number.isFinite(gauge.flowCfs)) {
+      flowGuidance.push(`Permitted numeric observation from the supplied nearest gauge: "The gauge reports ${gauge.flowCfs} cfs." Attribute its day and timestamp using the supplied observedDay and updatedAt.`);
+    }
+    if (gauge.condition === 'unknown' || gauge.percentile === null || !Number.isFinite(gauge.percentile) || gauge.percentile < 0 || gauge.percentile > 100) {
+      flowGuidance.push('For this gauge, comparative flow status is unknown. Use "Comparative flow status is unknown." Do not characterize the discharge as low, high, normal, below-normal or above-normal, including in risk factors, recommendation titles or rationales. Recommend monitoring without calling the existing flow low or high. Attribute any water-scarcity concern to supplied drought evidence, not to the absolute discharge.');
+    }
+    if (gauge.trend === null) {
+      flowGuidance.push('For this gauge, trend is unknown. Use "Flow trend is unknown." Do not characterize it as stable, rising, declining, increasing or decreasing, including in recommendations.');
+    }
+  }
 
   return `## Location (WGS84)
 latitude ${payload.location.lat.toFixed(4)}, longitude ${payload.location.lon.toFixed(4)}
 
 ## Warehouse observations
 ${JSON.stringify({ ...payload, soilProperties: soilAiEvidence(payload.soilProperties) }, null, 2)}
+
+${flowGuidance.length ? `## Supplied streamflow evidence limits\n${flowGuidance.join('\n')}` : ''}
 
 ## Observation times of the values actually served
 ${JSON.stringify(dataFreshness, null, 2)}
@@ -492,13 +507,16 @@ export async function* streamRegionalIntelligence(
       const issues = validationIssues.slice(0, 12).map((issue) =>
         `${issue.path.map(String).join('.') || 'report'}: ${issue.message}`
       ).join('\n');
+      const consultationCorrection = validationIssues.some((issue) =>
+        issue.code === 'too_big' && issue.path.length === 1 && issue.path[0] === 'professionalConsultation'
+      ) ? '\nFor professionalConsultation, replace the long text with ONE short sentence naming the relevant disciplines only. Aim below 200 characters. Remove repeated disclaimers, evidence, rationales and per-strategy explanations. Return the complete report, not just this field.' : '';
       messages.push(message);
       for (const use of toolUses) {
         messages.push({
           role: 'tool',
           tool_call_id: use.id,
           content: use.id === report.id
-            ? `Report rejected by validation:\n${issues}\nReturn a corrected complete report within the schema limits. Select and consolidate the most relevant evidence yourself; do not invent or alter observations. This is the only correction attempt.`
+            ? `Report rejected by validation:\n${issues}${consultationCorrection}\nReturn a corrected complete report within the schema limits. Select and consolidate the most relevant evidence yourself; do not invent or alter observations. This is the only correction attempt.`
             : 'This tool was not executed because the report needs correction. Use the evidence already supplied.',
         });
       }

@@ -504,3 +504,19 @@ check catches the demonstrated claim class, not every paraphrase or scientific e
 it is not a general semantic truth validator. Logs retain only known paths/custom
 codes, while corrective tool feedback describes the missing evidence without
 inventing a comparator. Existing canonical structure and bounds remain unchanged.
+
+Live follow-up also exceeded the unchanged 600-character professionalConsultation
+limit twice. The schema description and system prompt now request one short sentence
+naming relevant disciplines, with a 200-character writing target rather than a new
+validation bound. A too_big issue on that exact field adds focused shortening advice
+to the existing correction message. No text is truncated, no discipline is invented
+by server code, and repeated overflow still fails within the same correction budget.
+
+The user-message evidence section now supplies a literal numeric observation from
+finite nearest-gauge discharge and explicit permitted unknown-comparison/trend
+wording when those fields lack support. It forbids unsupported comparative wording
+in recommendation titles/rationales as well as observations, while allowing concerns
+attributed to supplied drought. Supported condition/trend evidence is not relabelled
+unknown; missing discharge creates no invented numeric example. This is prompt
+clarity alongside the unchanged bounded validator, not proof of the unlogged wording
+that caused the latest rejected reports.

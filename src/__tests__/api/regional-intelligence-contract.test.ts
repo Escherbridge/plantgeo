@@ -66,6 +66,29 @@ const unclassifiedGauge: WaterGauge = {
 };
 
 describe('streamflow report grounding', () => {
+  it('provides actual numeric wording and explicit unknown comparisons only when evidence is missing', async () => {
+    const { buildUserMessage } = await import('@/lib/server/services/ai-prompt');
+    const payload: RegionalContextPayload = {
+      location: { lat: 44.66, lon: -118.83, geohash: '9r' },
+      waterScarcity: { droughtClass: 'D2', nearestGauge: unclassifiedGauge },
+      strategyRecommendations: null, strategyContext: [], communityProposals: [],
+      soilProperties: null, weather: null, fireDetections: null, firePerimeters: null,
+      mtbsPerimeters: null, carbonPotential: null,
+    };
+    const temporal: TemporalContext = { serverCurrentDate: '2026-09-10', viewedLayersUnreported: true, readings: [], viewedDates: [], sourcesServedAsOfLatest: [] };
+    const message = buildUserMessage(payload, {}, false, temporal);
+    expect(message).toContain('The gauge reports 13.2 cfs.');
+    expect(message).toContain('Comparative flow status is unknown.');
+    expect(message).toContain('Flow trend is unknown.');
+    expect(message).toContain('recommendation titles or rationales');
+    payload.waterScarcity = { droughtClass: 'D2', nearestGauge: { ...unclassifiedGauge, flowCfs: 42, percentile: 10, condition: 'below_normal', trend: 'declining' } };
+    const supportedMessage = buildUserMessage(payload, {}, false, temporal);
+    expect(supportedMessage).toContain('The gauge reports 42 cfs.');
+    expect(supportedMessage).not.toContain('Comparative flow status is unknown.');
+    expect(supportedMessage).not.toContain('Flow trend is unknown.');
+    payload.waterScarcity = { droughtClass: 'D2', nearestGauge: { ...unclassifiedGauge, flowCfs: null } };
+    expect(buildUserMessage(payload, {}, false, temporal)).not.toContain('The gauge reports');
+  });
   it.each(['Low streamflow (13.2 cfs) indicates water scarcity.', 'High discharge raises concern.', 'Below-normal flow was observed.', 'Streamflow is rising.', 'Stable flow was observed.', 'We cannot determine whether flow is low, but low streamflow indicates scarcity.'])('rejects unsupported comparison: %s', (statement) => {
     const report = { ...validReport, observations: [{ ...validReport.observations[0], statement }] };
     expect(reportFlowGroundingIssues(report, unclassifiedGauge)).toEqual([expect.objectContaining({ path: ['observations', 0, 'statement'] })]);
@@ -395,6 +418,27 @@ describe("generate_remediation_report tool wiring", () => {
     expect(events).toEqual(repeated ? [] : [{ type: 'report', report: corrected }]);
     expect(mocks.completionStream).toHaveBeenCalledTimes(2);
     expect(JSON.stringify(mocks.completionStream.mock.calls[1]?.[0])).toContain('Unsupported streamflow classification or trend');
+  });
+
+  it.each([false, true])('targets overlong consultation text without relaxing its bound (repeated=%s)', async (repeated) => {
+    const { streamRegionalIntelligence, buildSystemPrompt, REPORT_TOOL } = await import('@/lib/server/services/ai-prompt');
+    const overlong = { ...validReport, professionalConsultation: 'x'.repeat(601) };
+    const corrected = { ...validReport, professionalConsultation: 'Consult a local wildfire mitigation specialist before acting.' };
+    mocks.completionStream
+      .mockReturnValueOnce(fakeCompletionStream([{ id: 'long', name: 'remediation_report', input: overlong }], 'Rejected narration'))
+      .mockReturnValueOnce(fakeCompletionStream([{ id: 'short', name: 'remediation_report', input: repeated ? overlong : corrected }]));
+    const events: Array<{ type: string }> = [];
+    const collect = async () => {
+      for await (const event of streamRegionalIntelligence(minimalPayload(), {}, true, minimalTemporalContext(), [])) events.push(event);
+    };
+    if (repeated) await expect(collect()).rejects.toThrow('bounded correction attempt');
+    else await collect();
+    expect(events).toEqual(repeated ? [] : [{ type: 'report', report: corrected }]);
+    expect(mocks.completionStream).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(mocks.completionStream.mock.calls[1]?.[0])).toContain('replace the long text with ONE short sentence');
+    expect(buildSystemPrompt(false)).toContain('one short sentence naming only the relevant professional disciplines');
+    expect(JSON.stringify(REPORT_TOOL.input_schema)).toContain('One short sentence naming the relevant professional disciplines');
+    expect(remediationReportSchema.safeParse(overlong).success).toBe(false);
   });
 
   it("corrects too many observations before emitting a report or its narration", async () => {
