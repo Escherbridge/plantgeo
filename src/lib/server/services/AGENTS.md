@@ -444,3 +444,21 @@ so its behavior must not be assumed to match the deployed dependency.
 Single absolute discharge also cannot establish low/high or below/above-normal flow:
 the prompt requires a supplied gauge-specific comparator, percentile or condition.
 Drought-based concerns remain possible as explicitly labelled AI inference.
+
+## Gemini report correction (2026-09-10)
+
+Mixed-date live QA at 44.66, -118.83 reproduced Google `INVALID_ARGUMENT` with
+`tool_schema` classification on round 2: `correctingReport=true`, after the identical
+schema had been accepted under automatic tool selection on round 1. The correction
+switched to named forced tool selection. Google's [function-calling documentation](https://ai.google.dev/gemini-api/docs/generate-content/function-calling)
+explains that ANY mode enforces schema adherence and can reject large/deep schemas.
+The diagnostic identifies the failing path, not the exact rejected schema keyword.
+
+For exactly `google/gemini-2.5-flash-lite`, final and correction rounds therefore
+retain automatic tool selection. Other configured models retain named report forcing.
+Both report aliases, complete schema constraints, original assistant/tool messages,
+one correction and maximum five calls remain unchanged. Only a validated report can
+succeed; a text-only or malformed correction fails without a silent fallback or
+further retry. `toolChoiceMode` distinguishes actual provider forcing from the
+logical final-round flag in diagnostics. This is a bounded compatibility candidate
+until the representative mixed-date application request passes in production.

@@ -321,7 +321,10 @@ function WebSourcesList({
 
 function DataFreshnessFooter({ freshness }: { freshness: Record<string, string> }) {
   const [open, setOpen] = useState(false);
-  const entries = Object.entries(freshness);
+  const entries = Object.entries(freshness).filter(([source, value]) =>
+    !((source === 'strategyRecommendations' || source === 'carbonPotential') &&
+      (value === 'unavailable' || value === 'published_revision_required'))
+  );
   if (!entries.length) return null;
 
   return (

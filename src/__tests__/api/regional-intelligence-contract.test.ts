@@ -315,6 +315,7 @@ describe("generate_remediation_report tool wiring", () => {
   });
 
   it.each([false, true])("logs safe provider diagnostics for a 400 on the initial or correction round (%s)", async (afterCorrection) => {
+    vi.stubEnv("OPENROUTER_MODEL", "google/gemini-2.5-flash-lite");
     const { streamRegionalIntelligence } = await import("@/lib/server/services/ai-prompt");
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     const secret = "sk-or-hidden-provider-key";
@@ -330,7 +331,7 @@ describe("generate_remediation_report tool wiring", () => {
     try {
       await expect(collect()).rejects.toBe(failure);
       expect(mocks.completionStream).toHaveBeenCalledTimes(afterCorrection ? 2 : 1);
-      expect(log).toHaveBeenCalledWith("[AI] provider request failed", expect.objectContaining({ round: afterCorrection ? 2 : 1, isFinalRound: afterCorrection, correctingReport: afterCorrection, status: 400, provider: "Google AI Studio", reasons: ["thought_signature"], messageCount: afterCorrection ? 4 : 2 }));
+      expect(log).toHaveBeenCalledWith("[AI] provider request failed", expect.objectContaining({ round: afterCorrection ? 2 : 1, isFinalRound: afterCorrection, toolChoiceMode: "auto", correctingReport: afterCorrection, status: 400, provider: "Google AI Studio", reasons: ["thought_signature"], messageCount: afterCorrection ? 4 : 2 }));
       const diagnostic = log.mock.calls[0]?.[1] as { requestByteCount: number };
       expect(diagnostic.requestByteCount).toBeGreaterThan(100);
       expect(JSON.stringify(log.mock.calls)).not.toContain(secret);
@@ -341,6 +342,7 @@ describe("generate_remediation_report tool wiring", () => {
   });
 
   it("corrects too many observations before emitting a report or its narration", async () => {
+    vi.stubEnv("OPENROUTER_MODEL", "google/gemini-2.5-flash-lite");
     const { streamRegionalIntelligence } = await import("@/lib/server/services/ai-prompt");
     const tooMany = { ...validReport, observations: Array.from({ length: 13 }, () => validReport.observations[0]) };
     mocks.completionStream
@@ -354,7 +356,8 @@ describe("generate_remediation_report tool wiring", () => {
     expect(events).toEqual([{ type: "text", text: "Validated answer" }, { type: "report", report: validReport }]);
     expect(mocks.completionStream).toHaveBeenCalledTimes(2);
     const correctiveRequest = mocks.completionStream.mock.calls[1][0];
-    expect(correctiveRequest.tool_choice).toEqual({ type: "function", function: { name: "remediation_report" } });
+    expect(correctiveRequest.tool_choice).toBe("auto");
+    expect(correctiveRequest.tools).toEqual(mocks.completionStream.mock.calls[0][0].tools);
     expect(correctiveRequest.messages).toEqual(expect.arrayContaining([
       expect.objectContaining({ role: "tool", tool_call_id: "invalid", content: expect.stringMatching(/observations:.*12/) }),
       expect.objectContaining({ role: "tool", tool_call_id: "unused", content: expect.stringContaining("not executed") }),
@@ -362,6 +365,7 @@ describe("generate_remediation_report tool wiring", () => {
   });
 
   it("allows one correction when the first invalid report arrives on the final normal round", async () => {
+    vi.stubEnv("OPENROUTER_MODEL", "google/gemini-2.5-flash-lite");
     const { streamRegionalIntelligence } = await import("@/lib/server/services/ai-prompt");
     const tooMany = { ...validReport, observations: Array.from({ length: 13 }, () => validReport.observations[0]) };
     mocks.completionStream
@@ -374,6 +378,36 @@ describe("generate_remediation_report tool wiring", () => {
     for await (const event of streamRegionalIntelligence(minimalPayload(), {}, true, minimalTemporalContext(), [])) events.push(event);
     expect(events).toEqual([{ type: "report", report: validReport }]);
     expect(mocks.completionStream).toHaveBeenCalledTimes(5);
+    expect(mocks.completionStream.mock.calls[3][0].tool_choice).toBe("auto");
+    expect(mocks.completionStream.mock.calls[4][0].tool_choice).toBe("auto");
+  });
+
+  it("retains forced report selection for other configured models", async () => {
+    vi.stubEnv("OPENROUTER_MODEL", "another/provider-model");
+    const { streamRegionalIntelligence } = await import("@/lib/server/services/ai-prompt");
+    mocks.completionStream
+      .mockReturnValueOnce(fakeCompletionStream([{ id: "invalid", name: "remediation_report", input: {} }]))
+      .mockReturnValueOnce(fakeCompletionStream([{ id: "valid", name: "remediation_report", input: validReport }]));
+    const events = [];
+    for await (const event of streamRegionalIntelligence(minimalPayload(), {}, true, minimalTemporalContext(), [])) events.push(event);
+    expect(events).toEqual([{ type: "report", report: validReport }]);
+    expect(mocks.completionStream.mock.calls[1][0].tool_choice).toEqual({ type: "function", function: { name: "remediation_report" } });
+  });
+
+  it("rejects a text-only auto correction without emitting it or adding retries", async () => {
+    vi.stubEnv("OPENROUTER_MODEL", "google/gemini-2.5-flash-lite");
+    const { streamRegionalIntelligence } = await import("@/lib/server/services/ai-prompt");
+    mocks.completionStream
+      .mockReturnValueOnce(fakeCompletionStream([{ id: "invalid", name: "remediation_report", input: {} }]))
+      .mockReturnValueOnce(fakeCompletionStream([], "Unstructured fallback"));
+    const events: Array<{ type: string }> = [];
+    const collect = async () => {
+      for await (const event of streamRegionalIntelligence(minimalPayload(), {}, true, minimalTemporalContext(), [])) events.push(event);
+    };
+    await expect(collect()).rejects.toThrow("The correction attempt did not return a report.");
+    expect(events).toEqual([]);
+    expect(mocks.completionStream).toHaveBeenCalledTimes(2);
+    expect(mocks.completionStream.mock.calls[1][0].tool_choice).toBe("auto");
   });
 
   it("stops after one failed correction and never truncates a report into validity", async () => {

@@ -78,6 +78,37 @@ function assistantMessage(response: RegionalIntelligenceResponse): ChatMessage {
 }
 
 describe("RegionalIntelligencePanel strategy chips", () => {
+  it("counts supported sources without advertising deferred model placeholders", () => {
+    mocks.state.dataFreshness = {
+      drought: "unavailable", streamflow: "unavailable", weatherObservations: "unavailable",
+      fireDetections: "unavailable", firePerimeters: "unavailable", soilProperties: "unavailable",
+      mtbsPerimeters: "unavailable", strategyRecommendations: "unavailable",
+      carbonPotential: "published_revision_required",
+    };
+    renderWithProviders(<RegionalIntelligencePanel />);
+    fireEvent.click(screen.getByRole("button", { name: "Data sources (7)" }));
+    expect(screen.getAllByText("Not observed")).toHaveLength(7);
+    expect(screen.queryByText("strategyRecommendations")).toBeNull();
+    expect(screen.queryByText("carbonPotential")).toBeNull();
+  });
+
+  it("omits a footer containing only deferred model placeholders", () => {
+    mocks.state.dataFreshness = { strategyRecommendations: "published_revision_required", carbonPotential: "unavailable" };
+    renderWithProviders(<RegionalIntelligencePanel />);
+    expect(screen.queryByRole("button", { name: /Data sources/ })).toBeNull();
+  });
+
+  it("retains dated evidence in historical reports even for a now-deferred source", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-10T12:00:00Z"));
+    mocks.state.dataFreshness = { strategyRecommendations: "2026-08-01T12:00:00Z", carbonPotential: "2026-08-01T12:00:00Z" };
+    renderWithProviders(<RegionalIntelligencePanel />);
+    fireEvent.click(screen.getByRole("button", { name: "Data sources (2)" }));
+    expect(screen.getByText("strategyRecommendations")).toBeTruthy();
+    expect(screen.getByText("carbonPotential")).toBeTruthy();
+    expect(screen.queryByText("Not observed")).toBeNull();
+  });
+
   it("labels SoilGrids evidence as a published estimate without relabelling measured sources", () => {
     const response = baseResponse([]);
     response.observations = [

@@ -26,7 +26,7 @@ export type {
 
 /** Conversation turns replayed into the model on a follow-up question. */
 const MAX_HISTORY_TURNS = 8;
-/** Bounds one request's agentic loop; the last round forces the report tool. */
+/** Bounds one request's agentic loop; the last round requires an accepted report. */
 const MAX_TOOL_ROUNDS = 4;
 const MAX_REPORT_CORRECTIONS = 1;
 const MAX_SEARCHES_PER_REQUEST = 3;
@@ -46,6 +46,8 @@ const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
  * lever that matters here: every turn ends in a large structured tool call.
  */
 const DEFAULT_MODEL = 'google/gemini-2.5-flash-lite';
+/** This model rejects the report schema in forced mode; see AGENTS.md §Gemini report correction. */
+const AUTO_REPORT_TOOL_MODEL = 'google/gemini-2.5-flash-lite';
 
 /**
  * One tool, described the way this module has always described them.
@@ -400,14 +402,15 @@ export async function* streamRegionalIntelligence(
   for (let round = 0; round < MAX_TOOL_ROUNDS + MAX_REPORT_CORRECTIONS; round += 1) {
     if (round >= MAX_TOOL_ROUNDS && !correctingReport) break;
     const isFinalRound = correctingReport || round >= MAX_TOOL_ROUNDS - 1;
+    const forceReportTool = isFinalRound && model !== AUTO_REPORT_TOOL_MODEL;
 
     const completionRequest = {
       model,
       max_tokens: MAX_OUTPUT_TOKENS,
       messages,
       tools,
-      // The last round must produce a report rather than another search.
-      tool_choice: isFinalRound
+      // Acceptance still requires a valid report when provider-side forcing is unavailable.
+      tool_choice: forceReportTool
         ? { type: 'function' as const, function: { name: REPORT_TOOL.name } }
         : 'auto' as const,
     };
@@ -426,6 +429,7 @@ export async function* streamRegionalIntelligence(
         model,
         round: round + 1,
         isFinalRound,
+        toolChoiceMode: forceReportTool ? 'forced_report' : 'auto',
         correctingReport,
         messageCount: messages.length,
         requestByteCount: Buffer.byteLength(JSON.stringify(completionRequest), 'utf8'),
