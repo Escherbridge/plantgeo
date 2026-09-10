@@ -66,6 +66,29 @@ const unclassifiedGauge: WaterGauge = {
 };
 
 describe('streamflow report grounding', () => {
+  const explicitDenials = [
+    'The gauge value cannot be used to establish low flow',
+    'The gauge value does not establish low streamflow',
+    "The gauge value doesn't indicate low flow",
+    'There is insufficient evidence to establish low flow',
+    'There is insufficient evidence to classify this as low flow',
+    'There is not enough evidence to determine whether flow is low',
+    'There is no evidence to confirm high discharge',
+    'We cannot determine whether streamflow is low',
+    'Low flow cannot be inferred from the gauge value alone',
+    'Low streamflow is not established by this reading',
+  ];
+  it.each(explicitDenials)('permits an explicit denial without suppressing a later affirmative claim: %s', (denial) => {
+    const withFactor = (factor: string) => ({ ...validReport, riskSummary: { ...validReport.riskSummary, factors: [factor] } });
+    expect(reportFlowGroundingIssues(withFactor(denial), unclassifiedGauge)).toEqual([]);
+    for (const separator of ['. ', '; ', ', but ', ', however ', ', yet ', ', nevertheless ']) {
+      expect(reportFlowGroundingIssues(withFactor(`${denial}${separator}low streamflow indicates scarcity`), unclassifiedGauge)).toHaveLength(1);
+      expect(reportFlowGroundingIssues(withFactor(`Low streamflow indicates scarcity${separator}${denial}`), unclassifiedGauge)).toHaveLength(1);
+    }
+  });
+  it.each(['We cannot ignore low streamflow.', 'There is no evidence of flooding; low streamflow indicates scarcity.', 'Low flow cannot be ignored.', 'Low flow is not improving.', 'Low flow cannot be inferred to cause fish mortality.', 'Low flow is not established as a cause of fish mortality.'])('does not treat unrelated negation as missing classification evidence: %s', (statement) => {
+    expect(reportFlowGroundingIssues({ ...validReport, observations: [{ ...validReport.observations[0], statement }] }, unclassifiedGauge)).toHaveLength(1);
+  });
   it('provides actual numeric wording and explicit unknown comparisons only when evidence is missing', async () => {
     const { buildUserMessage } = await import('@/lib/server/services/ai-prompt');
     const payload: RegionalContextPayload = {

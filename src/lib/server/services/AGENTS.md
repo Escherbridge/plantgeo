@@ -520,3 +520,16 @@ attributed to supplied drought. Supported condition/trend evidence is not relabe
 unknown; missing discharge creates no invented numeric example. This is prompt
 clarity alongside the unchanged bounded validator, not proof of the unlogged wording
 that caused the latest rejected reports.
+
+Follow-up questions about why a gauge cannot establish low flow exposed demonstrable
+false positives in the immediate-prefix denial check, although the exact live rejected
+text was not logged. A small explicit polarity grammar now recognizes contiguous
+inability/lack-of-evidence prefixes and unestablished/inferred denial suffixes around
+each detected flow phrase. Punctuation and adversative conjunctions bound its scope;
+no arbitrary text wildcard connects a negation to a distant claim. Paired tests retain
+rejection of affirmative claims before or after an allowed denial, and unrelated
+negation such as "cannot ignore low flow" is not treated as an evidence disclaimer.
+The phrase detector, gauge comparison requirements and correction budget are unchanged.
+Post-claim denials must end the clause or name an exact reading/gauge-value/measurement
+origin; causal continuations such as "not established as a cause" do not exempt a
+qualitative flow claim.
