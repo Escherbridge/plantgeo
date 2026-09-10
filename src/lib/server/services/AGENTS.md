@@ -484,3 +484,23 @@ shape is investigated.
 Invalid reports also emit bounded known validation codes/field paths, never issue
 messages or inputs. Schema complexity and unsupported-keyword diagnostics use
 static categories so another provider rejection need not expose raw error text.
+
+## Bounded streamflow claim grounding (2026-09-10)
+
+The compatible forced report transport passed live mixed-date QA, but a valid report
+still called an unclassified 13.2 cfs reading "low streamflow". `report-flow-grounding.ts`
+checks affirmative flow/classification phrases in report headlines, factors,
+observations, recommendation titles/rationale and consultation text. It consults
+only the supplied nearest gauge: magnitude comparisons require its valid percentile
+and matching published condition; trend claims require its matching supplied trend.
+The Parquet adapter currently withholds historical fabricated trends and conditions
+without valid percentiles. An absolute discharge is never itself a comparison.
+
+Failures share the existing single schema-correction allowance and rejected narration
+is withheld. A repeated failure fails closed; no report text is rewritten or dropped.
+Numeric discharge, explicit lack of comparison evidence, low cost/confidence wording
+and drought-attributed inference remain allowed. This deliberately bounded phrase
+check catches the demonstrated claim class, not every paraphrase or scientific error;
+it is not a general semantic truth validator. Logs retain only known paths/custom
+codes, while corrective tool feedback describes the missing evidence without
+inventing a comparator. Existing canonical structure and bounds remain unchanged.

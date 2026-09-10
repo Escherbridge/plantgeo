@@ -1,6 +1,7 @@
 import OpenAI from 'openai';
 import { incompleteReportDiagnostic, providerErrorDiagnostic, reportValidationDiagnostic } from './ai-provider-diagnostics';
 import { geminiReportSchema } from './gemini-report-schema';
+import { reportFlowGroundingIssues } from './report-flow-grounding';
 import { soilAiEvidence } from './soil-ai-evidence';
 import { remediationReportSchema, REMEDIATION_REPORT_JSON_SCHEMA, type RemediationReport } from './remediation-report';
 import type {
@@ -473,19 +474,22 @@ export async function* streamRegionalIntelligence(
     );
     if (report && report.type === 'function') {
       const parsed = remediationReportSchema.safeParse(readToolArguments(report.function.arguments));
-      if (parsed.success) {
+      const validationIssues = parsed.success
+        ? reportFlowGroundingIssues(parsed.data, payload.waterScarcity?.nearestGauge ?? null)
+        : parsed.error.issues;
+      if (parsed.success && validationIssues.length === 0) {
         if (roundNarration) yield { type: 'text', text: roundNarration };
         if (citations.length) yield { type: 'sources', sources: citations };
         yield { type: 'report', report: parsed.data };
         return;
       }
-      logIncomplete('report_invalid', reportValidationDiagnostic(parsed.error.issues));
+      logIncomplete('report_invalid', reportValidationDiagnostic(validationIssues));
       if (reportCorrections >= MAX_REPORT_CORRECTIONS) {
         throw new Error('The report remained invalid after its bounded correction attempt.');
       }
       reportCorrections += 1;
       correctingReport = true;
-      const issues = parsed.error.issues.slice(0, 12).map((issue) =>
+      const issues = validationIssues.slice(0, 12).map((issue) =>
         `${issue.path.map(String).join('.') || 'report'}: ${issue.message}`
       ).join('\n');
       messages.push(message);

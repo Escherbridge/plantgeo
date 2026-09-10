@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { reportFlowGroundingIssues } from "@/lib/server/services/report-flow-grounding";
+import type { WaterGauge } from "@/lib/environmental/water";
 
 vi.mock("@/lib/server/db", () => ({ db: {} }));
 const mocks = vi.hoisted(() => ({
@@ -56,6 +58,39 @@ const validReport = {
   professionalConsultation:
     "Confirm defensible-space spacing with a local wildfire mitigation specialist before clearing.",
 };
+
+const unclassifiedGauge: WaterGauge = {
+  siteNo: '123', siteName: 'Nearest gauge', lat: 44.66, lon: -118.83,
+  flowCfs: 13.2, percentile: null, condition: 'unknown', trend: null,
+  updatedAt: '2026-09-10T06:45:00Z', observedDay: '2026-09-09',
+};
+
+describe('streamflow report grounding', () => {
+  it.each(['Low streamflow (13.2 cfs) indicates water scarcity.', 'High discharge raises concern.', 'Below-normal flow was observed.', 'Streamflow is rising.', 'Stable flow was observed.', 'We cannot determine whether flow is low, but low streamflow indicates scarcity.'])('rejects unsupported comparison: %s', (statement) => {
+    const report = { ...validReport, observations: [{ ...validReport.observations[0], statement }] };
+    expect(reportFlowGroundingIssues(report, unclassifiedGauge)).toEqual([expect.objectContaining({ path: ['observations', 0, 'statement'] })]);
+  });
+
+  it.each(['The gauge reports 13.2 cfs; drought suggests possible water scarcity.', 'Low confidence in the discharge assessment; use low cost monitoring.', 'No evidence of low streamflow is supplied.', 'We cannot infer low flow from 13.2 cfs.', 'Cannot determine whether streamflow is low.', 'Cannot infer that streamflow is low.', 'Flow classification is unknown.'])('preserves numeric evidence and uncertainty: %s', (headline) => {
+    expect(reportFlowGroundingIssues({ ...validReport, riskSummary: { ...validReport.riskSummary, headline } }, unclassifiedGauge)).toEqual([]);
+  });
+
+  it('requires a matching supplied condition and valid percentile, or a matching trend', () => {
+    const report = { ...validReport, riskSummary: { ...validReport.riskSummary, factors: ['Low streamflow was observed.'] } };
+    expect(reportFlowGroundingIssues(report, { ...unclassifiedGauge, condition: 'low', percentile: 5 })).toEqual([]);
+    for (const gauge of [null, { ...unclassifiedGauge, condition: 'low' as const }, { ...unclassifiedGauge, condition: 'above_normal' as const, percentile: 95 }, { ...unclassifiedGauge, condition: 'low' as const, percentile: NaN }]) {
+      expect(reportFlowGroundingIssues(report, gauge)).toHaveLength(1);
+    }
+    const trendReport = { ...validReport, professionalConsultation: 'Rising streamflow requires assessment.' };
+    expect(reportFlowGroundingIssues(trendReport, { ...unclassifiedGauge, trend: 'rising' })).toEqual([]);
+    expect(reportFlowGroundingIssues(trendReport, { ...unclassifiedGauge, trend: 'declining' })).toHaveLength(1);
+  });
+
+  it('checks recommendation titles and rationale without rejecting drought-only inference', () => {
+    const report = { ...validReport, remediation: [{ ...validReport.remediation[0], title: 'Respond to low streamflow', rationale: 'Low streamflow indicates scarcity.' }] };
+    expect(reportFlowGroundingIssues(report, unclassifiedGauge).map((issue) => issue.path)).toEqual([['remediation', 0, 'title'], ['remediation', 0, 'rationale']]);
+  });
+});
 
 describe("remediation report contract", () => {
   afterEach(() => {
@@ -340,6 +375,26 @@ describe("generate_remediation_report tool wiring", () => {
     } finally {
       log.mockRestore();
     }
+  });
+
+  it.each([false, true])('uses only one correction for unsupported flow claims (repeated=%s)', async (repeated) => {
+    const { streamRegionalIntelligence } = await import('@/lib/server/services/ai-prompt');
+    const unsupported = { ...validReport, riskSummary: { ...validReport.riskSummary, factors: ['Low streamflow (13.2 cfs) indicates water scarcity.'] } };
+    const corrected = { ...validReport, riskSummary: { ...validReport.riskSummary, factors: ['The gauge reports 13.2 cfs. Drought suggests possible water scarcity.'] } };
+    const payload = minimalPayload();
+    payload.waterScarcity = { droughtClass: 'D2', nearestGauge: unclassifiedGauge };
+    mocks.completionStream
+      .mockReturnValueOnce(fakeCompletionStream([{ id: 'bad', name: 'remediation_report', input: unsupported }], 'Rejected narration'))
+      .mockReturnValueOnce(fakeCompletionStream([{ id: 'correction', name: 'remediation_report', input: repeated ? unsupported : corrected }]));
+    const events: Array<{ type: string }> = [];
+    const collect = async () => {
+      for await (const event of streamRegionalIntelligence(payload, {}, false, minimalTemporalContext(), [])) events.push(event);
+    };
+    if (repeated) await expect(collect()).rejects.toThrow('bounded correction attempt');
+    else await collect();
+    expect(events).toEqual(repeated ? [] : [{ type: 'report', report: corrected }]);
+    expect(mocks.completionStream).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(mocks.completionStream.mock.calls[1]?.[0])).toContain('Unsupported streamflow classification or trend');
   });
 
   it("corrects too many observations before emitting a report or its narration", async () => {
