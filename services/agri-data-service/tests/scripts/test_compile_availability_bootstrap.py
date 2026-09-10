@@ -29,6 +29,7 @@ from __future__ import annotations
 import io
 import json
 from datetime import UTC, date, datetime, timedelta
+from threading import Barrier, Lock
 from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa  # type: ignore[import-untyped]
@@ -506,6 +507,81 @@ def test_a_marker_disagreeing_with_the_listing_takes_its_whole_day(tmp_path: Pat
 
     assert (OLD_DAY, COMPILER.EXCLUSION_PART_COUNT_DISAGREES) in compilation.excluded_days
     assert {row.day for row in compilation.rows} == {RECENT_DAY}
+
+
+def test_parallel_part_binding_is_bounded_and_emits_identical_evidence(tmp_path: Path) -> None:
+    """Real part reads overlap while the document, artifacts, and accounting stay identical."""
+    worker_count = 2
+    barrier = Barrier(worker_count, timeout=5)
+    lock = Lock()
+
+    class ConcurrentBackend(InMemoryBackend):
+        active = 0
+        peak = 0
+
+        def get(self, key: str) -> bytes | None:
+            if not key.endswith(".parquet"):
+                return super().get(key)
+            with lock:
+                self.active += 1
+                self.peak = max(self.peak, self.active)
+            try:
+                barrier.wait()
+                return super().get(key)
+            finally:
+                with lock:
+                    self.active -= 1
+
+    serial_backend = InMemoryBackend()
+    for offset in range(4):
+        _seed_published_day(serial_backend, RECENT_DAY - timedelta(days=offset))
+    concurrent_backend = ConcurrentBackend()
+    concurrent_backend.objects.update(serial_backend.objects)
+    arguments = _arguments(tmp_path)
+    arguments.workers = 1
+    serial = COMPILER._compile_lane(_reader(serial_backend), _lane(), arguments=arguments, today=TODAY)
+    arguments.workers = worker_count
+    parallel = COMPILER._compile_lane(_reader(concurrent_backend), _lane(), arguments=arguments, today=TODAY)
+
+    assert concurrent_backend.peak == worker_count
+    assert concurrent_backend.active == 0
+    assert parallel == serial
+    assert COMPILER._json_bytes(COMPILER._bootstrap_document(parallel)) == COMPILER._json_bytes(
+        COMPILER._bootstrap_document(serial)
+    )
+
+
+def test_parallel_failed_last_rungs_discard_day_costs_and_keep_refusals_ordered(tmp_path: Path) -> None:
+    """Rejected days cannot donate downloaded bytes or source markers to surviving days."""
+    backend = InMemoryBackend()
+    rejected_days = (RECENT_DAY - timedelta(days=2), RECENT_DAY - timedelta(days=1))
+    for day in (*rejected_days, RECENT_DAY):
+        _seed_published_day(backend, day)
+    for day in rejected_days:
+        backend.put(
+            _key(completion_marker_path(LAYER, KIND, max(AVAILABILITY_REQUIRED_RUNGS), day)),
+            PartitionCompletion(
+                part_count=2, row_count=ROW_COUNT, completed_at=COMPLETED_AT, run_id="bad"
+            ).to_json_bytes(),
+            content_type="application/json",
+        )
+    arguments = _arguments(tmp_path)
+    arguments.workers = 1
+    serial = COMPILER._compile_lane(_reader(backend), _lane(), arguments=arguments, today=TODAY)
+    arguments.workers = 3
+    parallel = COMPILER._compile_lane(_reader(backend), _lane(), arguments=arguments, today=TODAY)
+
+    assert parallel == serial
+    assert parallel.excluded_days == [(day, COMPILER.EXCLUSION_PART_COUNT_DISAGREES) for day in rejected_days]
+    assert {row.day for row in parallel.rows} == {RECENT_DAY}
+    assert parallel.hashed_part_count == parallel.digested_part_count == len(AVAILABILITY_REQUIRED_RUNGS)
+    expected_bytes = sum(
+        len(backend.objects[_key(partition_path(LAYER, KIND, rung, RECENT_DAY, 0))])
+        for rung in AVAILABILITY_REQUIRED_RUNGS
+    )
+    assert parallel.hashed_part_bytes == parallel.digested_part_bytes == expected_bytes
+    assert parallel.marker_recorded_rung_days == 0
+    assert all(day.isoformat() not in receipt.key for day in rejected_days for receipt in parallel.input_receipts)
 
 
 def test_only_time_bearing_lanes_may_be_compiled() -> None:

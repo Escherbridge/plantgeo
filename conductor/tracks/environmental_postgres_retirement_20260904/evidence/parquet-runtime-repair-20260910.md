@@ -168,3 +168,35 @@ The unchanged compiler hash is
 An initial automatic-review refusal was resolved with verified Railway deployment identity and
 proof that the operation copied existing source only inside that service's temporary directory.
 The reviewed retry exited zero; installed runtime modules were not changed.
+
+## Bounded verification performance and final gate
+
+The original availability compiler hit its deliberate 570-second cap without completing one lane:
+marker reads were parallel, but all historical part reads were serial. The follow-up patch gives day
+binding private accounting and bounded workers, merging outputs in original day order. Availability
+publication now verifies source groups and final object identities with a maximum of eight tasks per
+batch, preserving every checksum, physical row count, ETag/version check, publication lock and final
+compare-and-swap. Nested receipt verification stays serial inside each group, so worker counts do not
+multiply. Independent review found no actionable correctness issue.
+
+The final complete quality sweep passed format, lint, mypy and pytest in the supported no-database
+mode. Its receipt supersedes the earlier one and binds the same 1,275-file domain to
+`sha256:f0fc804b6e8754cc48afc72b7226118779da81e22a76211556d9098519eb6be0`.
+Evidence: `.omc/research/python-parallel-verification-final-sweep-20260910.log`.
+
+The eight-worker compiler completed all three lanes under the same 570-second cap, with no failures.
+Each output contains 6,240 digested rows covering all 1,560 historical days, zero manifest-trusted rows,
+zero exclusions, and a current registered source ceiling of 2026-09-05. Hashed part bytes were
+47,357,541 (mean), 47,193,777 (minimum), and 47,446,633 (maximum).
+
+Exact input digests:
+
+- Mean: `cea1d34f82163cf99b97aab713211e49b68c7c04065a7bd1cb26886f7fe134c0`.
+- Minimum: `6ba7bad834fffe162289888b840445252b446fa374ea7fc894cf9ea7c4e80512`.
+- Maximum: `41a00ffbd004211eb2c938f343f9666890879fbc24d0105d73b6c967c160270a`.
+
+The reviewed helper uploads only the 7,801 referenced evidence objects and one exact input archive
+per lane, using immutable conditional creates and byte-identical replay checks. Input archives live
+at each lane's `availability/operator-input/input=<digest>.json`, making exact recovery independent of
+executor temporary storage. Publication is still a separate supported CLI operation under the existing
+operational advisory lock. Input validation and uploads do not manufacture availability or absence.

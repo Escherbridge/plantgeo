@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import json
 from collections.abc import Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING, Final, Literal, Protocol, cast
@@ -2011,14 +2012,35 @@ def _read_receipt_snapshot(
     )
 
 
+_VERIFICATION_WORKERS: Final = 8
+
+
+def _verify_bounded[VerificationInput, VerificationOutput](
+    operation: Callable[[VerificationInput], VerificationOutput],
+    values: Sequence[VerificationInput],
+) -> tuple[VerificationOutput, ...]:
+    """Join bounded batches in input order; see AGENTS.md verification concurrency."""
+    if len(values) <= 1:
+        return tuple(operation(value) for value in values)
+    results: list[VerificationOutput] = []
+    with ThreadPoolExecutor(max_workers=_VERIFICATION_WORKERS) as executor:
+        for start in range(0, len(values), _VERIFICATION_WORKERS):
+            futures = [executor.submit(operation, value) for value in values[start : start + _VERIFICATION_WORKERS]]
+            results.extend(future.result() for future in futures)
+    return tuple(results)
+
+
 def _verify_raw_receipts(
     store: AvailabilityStorage,
     receipts: Sequence[EvidenceReceipt],
+    *,
+    parallel: bool = False,
 ) -> tuple[EvidenceSnapshot, ...]:
-    return tuple(
-        _read_receipt_snapshot(store, receipt, max_bytes=EVIDENCE_OBJECT_MAX_BYTES)[1]
-        for receipt in _dedupe_receipts(receipts)
-    )
+    def verify(receipt: EvidenceReceipt) -> EvidenceSnapshot:
+        return _read_receipt_snapshot(store, receipt, max_bytes=EVIDENCE_OBJECT_MAX_BYTES)[1]
+
+    unique = _dedupe_receipts(receipts)
+    return _verify_bounded(verify, unique) if parallel else tuple(verify(receipt) for receipt in unique)
 
 
 def _dedupe_receipts(receipts: Sequence[EvidenceReceipt]) -> tuple[EvidenceReceipt, ...]:
@@ -2075,7 +2097,7 @@ def _dedupe_snapshots(snapshots: Sequence[EvidenceSnapshot]) -> tuple[EvidenceSn
 
 
 def _revalidate_snapshots(store: AvailabilityStorage, snapshots: Sequence[EvidenceSnapshot]) -> None:
-    for snapshot in snapshots:
+    def verify(snapshot: EvidenceSnapshot) -> None:
         stored = store.read(snapshot.key, max_bytes=snapshot.max_bytes)
         if stored is None:
             raise AvailabilityUnavailableError(
@@ -2092,6 +2114,8 @@ def _revalidate_snapshots(store: AvailabilityStorage, snapshots: Sequence[Eviden
         )
         if identity != expected:
             raise AvailabilityConflictError(f"snapshotted object {snapshot.key!r} changed before pointer publication")
+
+    _verify_bounded(verify, snapshots)
 
 
 def _verify_bootstrap_inventory_receipts(
@@ -2123,7 +2147,7 @@ def _verify_bootstrap_inventory_receipts(
             raise AvailabilityConflictError("bootstrap inventory evidence does not match its request contract")
         inventories.append(inventory)
         snapshots.append(wrapper_snapshot)
-        snapshots.extend(_verify_raw_receipts(store, inventory.object_receipts))
+        snapshots.extend(_verify_raw_receipts(store, inventory.object_receipts, parallel=True))
     return tuple(inventories), _dedupe_snapshots(snapshots)
 
 
@@ -2133,30 +2157,39 @@ def _verify_rows_evidence(
     *,
     identity: AvailabilityIdentity,
 ) -> tuple[EvidenceSnapshot, ...]:
-    source_cache: dict[str, SourceEvidence] = {}
-    snapshots: list[EvidenceSnapshot] = []
+    groups: dict[str, list[AvailabilityRow]] = {}
     for row in rows:
-        source = source_cache.get(row.source_receipt.key)
-        if source is None:
-            source, source_snapshots = _verify_source_evidence_receipt(
-                store,
-                row.source_receipt,
-                expected_identity=identity,
-                expected_day=row.day,
-                expected_source_ceiling=row.source_ceiling,
-            )
-            source_cache[row.source_receipt.key] = source
-            snapshots.extend(source_snapshots)
-        elif (source.day, source.source_ceiling) != (row.day, row.source_ceiling):
-            raise AvailabilityConflictError("one source evidence receipt was reused across incompatible rows")
-        terminal, terminal_snapshots = _verify_terminal_evidence_receipt(
+        group = groups.setdefault(row.source_receipt.key, [])
+        if group:
+            first = group[0]
+            if first.source_receipt.sha256 != row.source_receipt.sha256:
+                raise AvailabilityChecksumError("one source evidence key was bound to different digests")
+            if (first.day, first.source_ceiling) != (row.day, row.source_ceiling):
+                raise AvailabilityConflictError("one source evidence receipt was reused across incompatible rows")
+        group.append(row)
+
+    def verify_group(group: list[AvailabilityRow]) -> tuple[EvidenceSnapshot, ...]:
+        first = group[0]
+        _, source_snapshots = _verify_source_evidence_receipt(
             store,
-            row.terminal_receipt,
+            first.source_receipt,
             expected_identity=identity,
+            expected_day=first.day,
+            expected_source_ceiling=first.source_ceiling,
         )
-        _cross_bind_terminal_row(row, terminal)
-        snapshots.extend(terminal_snapshots)
-    return _dedupe_snapshots(snapshots)
+        snapshots = list(source_snapshots)
+        for row in group:
+            terminal, terminal_snapshots = _verify_terminal_evidence_receipt(
+                store,
+                row.terminal_receipt,
+                expected_identity=identity,
+            )
+            _cross_bind_terminal_row(row, terminal)
+            snapshots.extend(terminal_snapshots)
+        return tuple(snapshots)
+
+    verified = _verify_bounded(verify_group, tuple(groups.values()))
+    return _dedupe_snapshots(tuple(snapshot for group in verified for snapshot in group))
 
 
 def _verify_source_evidence_receipt(

@@ -1229,3 +1229,17 @@ Pinned in `tests/parquet/test_absence_ladder.py`, including
 `test_no_lane_writer_marks_one_rung_directly_any_more` — an AST walk of `pipeline/direct/` and
 `pipeline/lanes/` for `<x>.write_absence(...)` calls, with a companion test proving the walk can
 actually fail. A fix spread over nine call sites is worth exactly as much as its least-updated one.
+
+
+## Availability verification concurrency
+
+Strong bootstrap/publication verification runs at most eight read-only source groups
+concurrently, in bounded batches. Each group validates its source once and all terminal
+rows serially; nested source objects stay serial to avoid multiplying worker counts.
+Standalone bootstrap inventory objects and final snapshot revalidation use the same
+eight-worker bound. Results and failures are consumed in input order. Reused source keys
+must bind identical digests, days and ceilings; all observed object identities still
+undergo deduplication. Every final revalidation batch is joined before pointer CAS,
+including all retries, within the existing publication barrier. No cached read replaces
+physical verification. The bound can hold up to eight object payloads at their existing
+byte ceilings; it is not a request to raise those ceilings.

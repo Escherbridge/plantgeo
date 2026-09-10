@@ -430,11 +430,15 @@ def _compile_lane(
         )
     _require_row_budget(lane.layer, day_count=len(days))
     digest_floor = today - timedelta(days=applied_digest_window_days)
-    bound_days: list[_BoundDay] = []
-    for day in days:
-        bound_day = _bind_day(reader, ladder, markers, day=day, digest_floor=digest_floor, compilation=compilation)
-        if bound_day is not None:
-            bound_days.append(bound_day)
+    bound_days = _bind_days(
+        reader,
+        ladder,
+        markers,
+        days=days,
+        digest_floor=digest_floor,
+        compilation=compilation,
+        workers=arguments.workers,
+    )
     if not bound_days:
         raise CompilationError(f"{lane.layer}: every candidate day was excluded; see the receipt's excluded_days")
     surviving_days = tuple(bound_day.day for bound_day in bound_days)
@@ -746,6 +750,43 @@ def _inventory_receipts(
     kept = set(days)
     receipts = {marker.relative_path: marker.receipt for (day, _rung), marker in markers.items() if day in kept}
     return tuple(receipts[key] for key in sorted(receipts))
+
+
+def _bind_days(  # noqa: PLR0913 - binding context plus the bounded worker count
+    reader: BucketReader,
+    ladder: dict[date, dict[int, RungObjects]],
+    markers: dict[tuple[date, int], MarkerRead],
+    *,
+    days: Sequence[date],
+    digest_floor: date,
+    compilation: LaneCompilation,
+    workers: int,
+) -> list[_BoundDay]:
+    """Bind days concurrently with private accounting; fold results in input order."""
+
+    def bind(day: date) -> tuple[_BoundDay | None, LaneCompilation]:
+        local = LaneCompilation(
+            lane=compilation.lane,
+            lane_root=compilation.lane_root,
+            source_ceiling=compilation.source_ceiling,
+            created_at=compilation.created_at,
+            digest_window_days_requested=compilation.digest_window_days_requested,
+            digest_window_days_applied=compilation.digest_window_days_applied,
+        )
+        return _bind_day(reader, ladder, markers, day=day, digest_floor=digest_floor, compilation=local), local
+
+    bound_days: list[_BoundDay] = []
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        for bound_day, local in pool.map(bind, days):
+            compilation.excluded_days.extend(local.excluded_days)
+            compilation.hashed_part_count += local.hashed_part_count
+            compilation.hashed_part_bytes += local.hashed_part_bytes
+            compilation.marker_recorded_rung_days += local.marker_recorded_rung_days
+            compilation.digested_part_count += local.digested_part_count
+            compilation.digested_part_bytes += local.digested_part_bytes
+            if bound_day is not None:
+                bound_days.append(bound_day)
+    return bound_days
 
 
 def _bind_day(  # noqa: PLR0913 - one coordinate of the day being bound per argument
@@ -1209,7 +1250,7 @@ def _parse_arguments(argv: Sequence[str] | None) -> argparse.Namespace:
     )
     parser.add_argument("--kind", default="observed", choices=("observed", "forecast"), help="Stream kind.")
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT, help=f"Output directory (default {DEFAULT_OUT}).")
-    parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS, help="Parallel marker reads.")
+    parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS, help="Parallel marker reads and day binding.")
     parser.add_argument(
         "--accept-exclusions",
         type=int,

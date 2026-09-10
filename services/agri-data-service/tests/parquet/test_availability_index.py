@@ -3,9 +3,10 @@ from __future__ import annotations
 import io
 import json
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+from threading import Barrier, Lock
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
@@ -1224,3 +1225,133 @@ def test_two_readings_whose_bytes_actually_differ_are_still_refused() -> None:
 
     with pytest.raises(availability_index.AvailabilityConflictError, match="two identities"):
         availability_index._dedupe_snapshots((honest, tampered))
+
+
+_PARALLEL_READ_WORKERS = 8
+_PARALLEL_READ_OBJECTS = 16
+_REVALIDATION_READ_NUMBER = 2
+
+
+@pytest.mark.parametrize("phase", ["raw", "revalidate"])
+def test_receipt_reads_are_bounded_parallel_and_ordered(phase: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    store = MemoryAvailabilityStorage()
+    receipts = tuple(store.seed(f"evidence/{number:02d}", b"data") for number in range(_PARALLEL_READ_OBJECTS))
+    snapshots = availability_index._verify_raw_receipts(store, receipts)
+    barrier = Barrier(_PARALLEL_READ_WORKERS, timeout=10)
+    lock = Lock()
+    active = peak = calls = 0
+    original = store.read
+
+    def read(key: str, *, max_bytes: int) -> StoredAvailabilityObject | None:
+        nonlocal active, peak, calls
+        with lock:
+            active += 1
+            peak = max(peak, active)
+            calls += 1
+        try:
+            barrier.wait()
+            return original(key, max_bytes=max_bytes)
+        finally:
+            with lock:
+                active -= 1
+
+    monkeypatch.setattr(store, "read", read)
+    if phase == "raw":
+        actual = availability_index._verify_raw_receipts(store, tuple(reversed(receipts)), parallel=True)
+        assert actual == snapshots
+    else:
+        availability_index._revalidate_snapshots(store, snapshots)
+    assert (peak, calls, active) == (_PARALLEL_READ_WORKERS, _PARALLEL_READ_OBJECTS, 0)
+
+
+def test_parallel_receipt_errors_follow_receipt_order(monkeypatch: pytest.MonkeyPatch) -> None:
+    store = MemoryAvailabilityStorage()
+    receipts = tuple(store.seed(f"evidence/{number}", b"data") for number in range(_PARALLEL_READ_WORKERS))
+    barrier = Barrier(_PARALLEL_READ_WORKERS, timeout=10)
+
+    def read(key: str, *, max_bytes: int) -> StoredAvailabilityObject | None:
+        del max_bytes
+        barrier.wait()
+        raise AvailabilityConflictError(key)
+
+    monkeypatch.setattr(store, "read", read)
+    with pytest.raises(AvailabilityConflictError, match="evidence/0"):
+        availability_index._verify_raw_receipts(store, tuple(reversed(receipts)), parallel=True)
+
+
+def test_parallel_revalidation_etag_change_refuses_pointer_cas(monkeypatch: pytest.MonkeyPatch) -> None:
+    original = MemoryAvailabilityStorage.read
+    reads = 0
+    swaps = 0
+
+    def read(self: MemoryAvailabilityStorage, key: str, *, max_bytes: int) -> StoredAvailabilityObject | None:
+        nonlocal reads
+        stored = original(self, key, max_bytes=max_bytes)
+        if key == "source/response.bin":
+            reads += 1
+            if reads == _REVALIDATION_READ_NUMBER:
+                assert stored is not None
+                return replace(stored, etag='"changed"')
+        return stored
+
+    def swap(_self: MemoryAvailabilityStorage, *_args: object, **_kwargs: object) -> bool:
+        nonlocal swaps
+        swaps += 1
+        return True
+
+    monkeypatch.setattr(MemoryAvailabilityStorage, "read", read)
+    monkeypatch.setattr(MemoryAvailabilityStorage, "compare_and_swap", swap)
+    with pytest.raises(AvailabilityConflictError, match="changed before pointer publication"):
+        _published_bootstrap()
+    assert reads == _REVALIDATION_READ_NUMBER
+    assert swaps == 0
+
+
+def test_source_groups_verify_once_with_bounded_concurrency(monkeypatch: pytest.MonkeyPatch) -> None:
+    store = MemoryAvailabilityStorage()
+    manifest = store.seed("evidence/manifest.json", b"manifest")
+    identity = _identity(manifest)
+    rows: list[AvailabilityRow] = []
+    for offset in range(_PARALLEL_READ_OBJECTS):
+        day = date(2026, 8, 1) + timedelta(days=offset)
+        raw = store.seed(f"source/{offset}.bin", b"source")
+        source = build_source_evidence(
+            SourceEvidence(identity=identity, day=day, source_ceiling=day, object_receipts=(raw,))
+        )
+        store.seed(source.receipt.key, source.payload)
+        rows.extend(
+            _published_row(store, identity=identity, source=source.receipt, day=day, rung=rung)
+            for rung in AVAILABILITY_REQUIRED_RUNGS
+        )
+    expected = availability_index._verify_rows_evidence(store, rows, identity=identity)
+    original = store.read
+    source_keys = {row.source_receipt.key for row in rows}
+    barrier = Barrier(_PARALLEL_READ_WORKERS, timeout=10)
+    lock = Lock()
+    calls: dict[str, int] = {}
+    active = peak = 0
+
+    def read(key: str, *, max_bytes: int) -> StoredAvailabilityObject | None:
+        nonlocal active, peak
+        with lock:
+            active += 1
+            peak = max(peak, active)
+            calls[key] = calls.get(key, 0) + 1
+        try:
+            if key in source_keys:
+                barrier.wait()
+            return original(key, max_bytes=max_bytes)
+        finally:
+            with lock:
+                active -= 1
+
+    monkeypatch.setattr(store, "read", read)
+    assert availability_index._verify_rows_evidence(store, rows, identity=identity) == expected
+    assert peak == _PARALLEL_READ_WORKERS
+    assert all(calls[key] == 1 for key in source_keys)
+    with pytest.raises(AvailabilityChecksumError, match="different digests"):
+        availability_index._verify_rows_evidence(
+            store,
+            (rows[0], replace(rows[1], source_receipt=replace(rows[1].source_receipt, sha256="0" * 64))),
+            identity=identity,
+        )

@@ -760,3 +760,14 @@ fire-perimeters Parquet lane", because the layer name and the lane slug are the 
 per-layer scan narrows to the SQL string-literal spelling and the packet still demands a named
 `--layer-reader-proof` citation per layer. An honest limit that forces a human citation beats a grep
 that reads as a proof.
+
+# Availability compiler worker accounting
+
+`compile_availability_bootstrap.py --workers` bounds both marker reads and day binding in
+separate phases. Full historical digest windows otherwise serialize thousands of part downloads
+and can exceed a bounded executor run before producing any receipt. Each binding worker owns a
+fresh `LaneCompilation` and the existing per-day `_DayCost`; shared listings and markers are read
+only. The coordinator merges results in candidate-day order, preserving exclusion order, receipt
+bytes, source identity, and the rule that a refused final rung discards its entire day's costs.
+Only surviving days enter the source inventory. Unexpected worker errors still abort compilation
+before output files are written; concurrency does not change refusal or digest policy.
