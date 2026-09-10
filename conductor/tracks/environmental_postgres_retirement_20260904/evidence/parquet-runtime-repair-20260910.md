@@ -249,3 +249,43 @@ an intermediate state before generation verification and final pointer publicati
 generation readback, deployed serving result, or completed temperature availability release is
 claimed here. Final confirmation must bind each published head to its reviewed input and verify
 the complete day/rung population through the normal reader contract.
+
+## Final temperature publication verified
+
+This section supersedes the pending-publication checkpoint above. All three supported CLI
+bootstrap operations exited zero, and independent live availability reads verified their published
+pointers and checksum-bound generations against the exact CLI publication results. Maximum was
+verified at approximately 13:39 UTC, minimum at 13:44 UTC, and mean at 13:45 UTC on 2026-09-10.
+
+| Temperature statistic | Generation SHA-256 | Generation bytes |
+| --- | --- | ---: |
+| Mean | `527989e565b95d6369a59fa8e0b6404b58969fddc1f919d7e6a01f90c538f3b2` | 793,655 |
+| Minimum | `a607e073e88702bcdd4a7a0278ff3aabf147ef0d281acd2b283ee554823c1377` | 794,128 |
+| Maximum | `962763ebdc1325cf32949e43c8c581f77869f6a926ae2d32d012c1810a80757d` | 793,493 |
+
+Each generation contains 6,240 fully digested rows, with 1,560 rows at each required rung
+`[0, 5, 9, 13]`, covering exactly 1,560 complete days from **2022-04-30 through 2026-08-06**.
+All use source ceiling **2026-09-05**; the later ceiling does not claim that the unfilled forward
+interval is published. The normal reader validated generation checksums and metadata, and its
+complete-day and rung counts agreed with the pinned CLI result.
+
+The final JSON generation objects extracted from the three verifier logs are preserved verbatim
+in field values in [temperature-bootstrap-receipts-20260910.json](temperature-bootstrap-receipts-20260910.json).
+They retain generation and semantic-receipt hashes, bootstrap receipt keys and hashes, source
+inventory roots, physical byte counts, and verified day/rung populations. Original local evidence:
+`.omc/research/temperature-mean-publication-verified-20260910.log`,
+`.omc/research/temperature-min-publication-verified-20260910.log`, and
+`.omc/research/temperature-max-publication-verified-20260910.log`.
+
+This confirms object-storage availability publication only. The repaired source has **not yet been
+deployed**, and the planned eight-lane environment changes have **not yet been applied** at this
+checkpoint. No deployed serving result or ingestion cutoff is claimed.
+
+At **2026-09-10T13:48:23.7340624Z**, a subsequent configuration checkpoint superseded the
+environment-change status above. The running executor's 28 active lanes matched the prepared
+prior list. Railway `set_variables` successfully changed only `ACTIVE_LANES` to the reviewed
+20-lane list, with `skipDeploys: true` and `staged: false`; no staged deployment patch was accepted.
+The eight pauses are therefore **configured_pending_deployment**, not yet effective in the running
+executor. The local receipt is `.omc/research/executor-ingestion-cutoff-20260910.json`.
+The source has not been pushed and awaits the separate AI-head QA result before release. This
+configuration success does not establish a runtime ingestion cutoff or deployed serving validation.

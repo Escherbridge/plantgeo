@@ -1,0 +1,110 @@
+[
+  {
+    "bootstrap_receipt_key": "layer=climate-field-air-temperature-mean/kind=observed/availability/bootstrap/receipt=7a2f6659cd5fbbdeaee0ec566887aaf2a51b0a74f6e355a697869933fd480d8d.json",
+    "bootstrap_receipt_sha256": "7a2f6659cd5fbbdeaee0ec566887aaf2a51b0a74f6e355a697869933fd480d8d",
+    "created_at": "2026-09-10T12:25:44.725543Z",
+    "earliest_terminal_day": "2022-04-30",
+    "generation_bytes": 793655,
+    "generation_key": "layer=climate-field-air-temperature-mean/kind=observed/availability/generation=527989e565b95d6369a59fa8e0b6404b58969fddc1f919d7e6a01f90c538f3b2/availability.parquet",
+    "generation_receipt_sha256": "7643dc256c25e379450086d915e3724c9539df58ba11a82f8d6dce88be1f5085",
+    "generation_sha256": "527989e565b95d6369a59fa8e0b6404b58969fddc1f919d7e6a01f90c538f3b2",
+    "lane": "climate-field-air-temperature-mean",
+    "lane_root": "layer=climate-field-air-temperature-mean/kind=observed",
+    "latest_terminal_day": "2026-08-06",
+    "nature": "daily_series",
+    "prior_generation_key": null,
+    "prior_generation_sha256": null,
+    "product": "climate-field-air-temperature-mean",
+    "required_rungs": [
+      0,
+      5,
+      9,
+      13
+    ],
+    "rows": 6240,
+    "schema_version": "1",
+    "source_ceiling": "2026-09-05",
+    "verified_complete_days": 1560,
+    "verified_earliest_complete_day": "2022-04-30",
+    "verified_latest_complete_day": "2026-08-06",
+    "verified_rows_per_rung": {
+      "0": 1560,
+      "5": 1560,
+      "9": 1560,
+      "13": 1560
+    },
+    "verified_source_inventory_root": "76c277ff405e687b0594d80336289da8a929d52e81b30f647e1b3758943b2032"
+  },
+  {
+    "bootstrap_receipt_key": "layer=climate-field-air-temperature-min/kind=observed/availability/bootstrap/receipt=457cdae7b539305efb06c4cf69b42aae63646c0940e242aa978cfe871b0c0097.json",
+    "bootstrap_receipt_sha256": "457cdae7b539305efb06c4cf69b42aae63646c0940e242aa978cfe871b0c0097",
+    "created_at": "2026-09-10T12:28:11.699054Z",
+    "earliest_terminal_day": "2022-04-30",
+    "generation_bytes": 794128,
+    "generation_key": "layer=climate-field-air-temperature-min/kind=observed/availability/generation=a607e073e88702bcdd4a7a0278ff3aabf147ef0d281acd2b283ee554823c1377/availability.parquet",
+    "generation_receipt_sha256": "1bf7e1df5977cb725f0c652f75c02257c700a923c299617e569e032302369fee",
+    "generation_sha256": "a607e073e88702bcdd4a7a0278ff3aabf147ef0d281acd2b283ee554823c1377",
+    "lane": "climate-field-air-temperature-min",
+    "lane_root": "layer=climate-field-air-temperature-min/kind=observed",
+    "latest_terminal_day": "2026-08-06",
+    "nature": "daily_series",
+    "prior_generation_key": null,
+    "prior_generation_sha256": null,
+    "product": "climate-field-air-temperature-min",
+    "required_rungs": [
+      0,
+      5,
+      9,
+      13
+    ],
+    "rows": 6240,
+    "schema_version": "1",
+    "source_ceiling": "2026-09-05",
+    "verified_complete_days": 1560,
+    "verified_earliest_complete_day": "2022-04-30",
+    "verified_latest_complete_day": "2026-08-06",
+    "verified_rows_per_rung": {
+      "0": 1560,
+      "5": 1560,
+      "9": 1560,
+      "13": 1560
+    },
+    "verified_source_inventory_root": "49773aa36e8dd5ea8d414187a63f83e69ac1ea10c76d3806e177bd0b07697b23"
+  },
+  {
+    "bootstrap_receipt_key": "layer=climate-field-air-temperature-max/kind=observed/availability/bootstrap/receipt=78f7191eab9c043d0d5a0d22fcab587d7375d5763101585f7742ed339b097968.json",
+    "bootstrap_receipt_sha256": "78f7191eab9c043d0d5a0d22fcab587d7375d5763101585f7742ed339b097968",
+    "created_at": "2026-09-10T12:29:33.986004Z",
+    "earliest_terminal_day": "2022-04-30",
+    "generation_bytes": 793493,
+    "generation_key": "layer=climate-field-air-temperature-max/kind=observed/availability/generation=962763ebdc1325cf32949e43c8c581f77869f6a926ae2d32d012c1810a80757d/availability.parquet",
+    "generation_receipt_sha256": "4b30fe52ba823acc0e957aaac7cac9ee589ef22b58864c55d9229b98f7812da7",
+    "generation_sha256": "962763ebdc1325cf32949e43c8c581f77869f6a926ae2d32d012c1810a80757d",
+    "lane": "climate-field-air-temperature-max",
+    "lane_root": "layer=climate-field-air-temperature-max/kind=observed",
+    "latest_terminal_day": "2026-08-06",
+    "nature": "daily_series",
+    "prior_generation_key": null,
+    "prior_generation_sha256": null,
+    "product": "climate-field-air-temperature-max",
+    "required_rungs": [
+      0,
+      5,
+      9,
+      13
+    ],
+    "rows": 6240,
+    "schema_version": "1",
+    "source_ceiling": "2026-09-05",
+    "verified_complete_days": 1560,
+    "verified_earliest_complete_day": "2022-04-30",
+    "verified_latest_complete_day": "2026-08-06",
+    "verified_rows_per_rung": {
+      "0": 1560,
+      "5": 1560,
+      "9": 1560,
+      "13": 1560
+    },
+    "verified_source_inventory_root": "f92abc2c8eba0f3ec6a0c6852f9adeaa7fdbbbf93cef8010d77356fc6d77ce0e"
+  }
+]
