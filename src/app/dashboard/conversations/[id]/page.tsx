@@ -5,6 +5,7 @@ import { eq, and, asc } from 'drizzle-orm';
 import { redirect, notFound } from 'next/navigation';
 import Link from 'next/link';
 import { ArrowLeft, MapPin, ExternalLink } from 'lucide-react';
+import { buildMapFocusHref } from '@/lib/map/focus-params';
 
 export default async function ConversationDetailPage({
   params,
@@ -28,6 +29,7 @@ export default async function ConversationDetailPage({
     .limit(1);
 
   if (!conversation) notFound();
+  const mapHref = buildMapFocusHref(conversation.lon, conversation.lat);
 
   const messages = await db
     .select()
@@ -49,13 +51,13 @@ export default async function ConversationDetailPage({
           <div className="flex items-center gap-2 text-sm text-gray-500">
             <MapPin className="h-3 w-3" />
             {conversation.lat.toFixed(4)}°, {conversation.lon.toFixed(4)}°
-            <Link
-              href={`/?lat=${conversation.lat}&lon=${conversation.lon}&ai=open`}
+            {mapHref && <Link
+              href={mapHref}
               className="ml-2 flex items-center gap-1 text-blue-500 hover:underline"
             >
               <ExternalLink className="h-3 w-3" />
               Open on Map
-            </Link>
+            </Link>}
           </div>
         </div>
       </div>

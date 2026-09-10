@@ -2,6 +2,10 @@
 
 Saved AI conversations: the list (up to 50 rows) and a single conversation transcript.
 
+Open on Map uses `buildMapFocusHref` to focus the saved coordinates through the
+existing MapFocus query contract. It does not resume a conversation or trigger
+an AI request; location analysis remains an explicit map action.
+
 - `/dashboard` is an *exact-match* exemption in `ApplicationShell`, so this
   subtree renders under the 3.5rem `TopBar` while `/dashboard` itself does not.
   `globals.css` keeps `body { overflow: hidden }` for the map, so the viewport

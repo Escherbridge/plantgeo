@@ -35,20 +35,12 @@ export function MapFocus() {
     if (appliedTargetRef.current === target) return;
     appliedTargetRef.current = target;
 
-    const prefersReducedMotion = window.matchMedia(
-      "(prefers-reduced-motion: reduce)"
-    ).matches;
-
     const camera = {
       center: [focus.longitude, focus.latitude] as [number, number],
       zoom: focus.zoom,
     };
 
-    if (prefersReducedMotion) {
-      map.jumpTo(camera);
-      return;
-    }
-    map.flyTo({ ...camera, duration: 1200, essential: true });
+    map.jumpTo(camera);
   }, [map, searchParams]);
 
   return null;

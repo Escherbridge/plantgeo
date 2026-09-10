@@ -17,7 +17,7 @@ const DASHBOARD_SECTIONS = [
   {
     href: "/dashboard/conversations",
     title: "AI Conversations",
-    description: "Revisit your saved location analyses and continue a conversation.",
+    description: "Revisit your saved location analyses.",
   },
 ] as const;
 

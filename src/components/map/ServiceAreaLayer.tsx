@@ -5,6 +5,7 @@ import type { Map as MapLibreMap, GeoJSONSource } from "maplibre-gl";
 import { trpc } from "@/lib/trpc/client";
 import { getFirstSymbolLayer, safeRemoveLayerAndSource } from "@/lib/map/layer-utils";
 import { viewportForBbox } from "@/lib/map/coverage-region";
+import { readMapFocus } from "@/lib/map/focus-params";
 
 const SOURCE_ID = "ingestion-coverage";
 const MASK_LAYER_ID = "ingestion-coverage-mask";
@@ -214,6 +215,7 @@ export function ServiceAreaLayer({ map }: ServiceAreaLayerProps) {
 
     if (!hasFitRef.current) {
       hasFitRef.current = true;
+      if (readMapFocus(new URLSearchParams(window.location.search))) return;
 
       // The store's DEFAULT_VIEWPORT already opens on an approximation of this
       // bbox (see src/stores/map-store.ts / src/lib/map/coverage-region.ts),

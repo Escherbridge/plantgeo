@@ -11,6 +11,7 @@ import { getStyle, skyThemes } from "@/lib/map/styles";
 import { MapProvider } from "@/lib/map/map-context";
 import { Skeleton } from "@/components/ui/skeleton";
 import { MapFocus } from "./MapFocus";
+import { readMapFocus } from "@/lib/map/focus-params";
 import { ReverseGeocode } from "@/components/search/ReverseGeocode";
 import MapKeyboardShortcuts from "./MapKeyboardShortcuts";
 import { ManagerRail } from "./layer-panel/ManagerRail";
@@ -115,11 +116,12 @@ export default function MapView() {
     // The seed camera, read once. This callback runs once per mount and never re-runs, so a
     // subscription would only cost renders -- see the note above the selectors.
     const viewport = useMapStore.getState().viewport;
+    const focus = readMapFocus(new URLSearchParams(window.location.search));
     const m = new maplibregl.Map({
       container: mapContainer.current,
       style: getStyle(currentStyle),
-      center: [viewport.longitude, viewport.latitude],
-      zoom: viewport.zoom,
+      center: [focus?.longitude ?? viewport.longitude, focus?.latitude ?? viewport.latitude],
+      zoom: focus?.zoom ?? viewport.zoom,
       bearing: viewport.bearing,
       pitch: is3DEnabled ? 60 : 0,
       maxPitch: 85,

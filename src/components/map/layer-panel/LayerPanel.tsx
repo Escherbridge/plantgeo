@@ -52,11 +52,18 @@ function useMapPaddingForPanel(isOpen: boolean): void {
       typeof window !== "undefined" &&
       window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
 
-    if (prefersReducedMotion === true) {
-      map.jumpTo({ padding: { top: 0, bottom: 0, left, right: 0 } });
-      return;
+    const applyPadding = () => {
+      if (prefersReducedMotion === true) {
+        map.jumpTo({ padding: { top: 0, bottom: 0, left, right: 0 } });
+        return;
+      }
+      map.easeTo({ padding: { top: 0, bottom: 0, left, right: 0 }, duration: 250 });
+    };
+    if (map.isMoving?.()) {
+      map.once("moveend", applyPadding);
+      return () => { map.off("moveend", applyPadding); };
     }
-    map.easeTo({ padding: { top: 0, bottom: 0, left, right: 0 }, duration: 250 });
+    applyPadding();
   }, [map, isOpen]);
 }
 

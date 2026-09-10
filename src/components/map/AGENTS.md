@@ -297,6 +297,15 @@ addressable from outside the map. The query contract lives in
 `src/lib/map/focus-params.ts` — `focusLng`, `focusLat`, `focusZoom` — because two
 unrelated modules must agree on it byte for byte, and `MapFocus.tsx` applies it.
 
+`MapView` seeds its initial camera from valid focus parameters, and `MapFocus`
+applies subsequent URL changes with `jumpTo`. The immediate movement avoids
+initial padding/pitch animations interrupting a focus flight. `ServiceAreaLayer`
+still applies its geographic constraints but skips its first regional fit when
+the URL names a valid target, so delayed coverage cannot overwrite that target.
+Dock padding waits for an active camera movement's `moveend` before applying,
+and removes that pending listener if the dock changes or unmounts. Closing the
+manager during coordinate-search navigation must not truncate its flight.
+
 `MapFocus` moves the camera directly rather than seeding the store. `MapView`
 reads `viewport` once, inside an init effect with an empty dependency list, so
 writing to the store only works on a cold mount and silently does nothing when a

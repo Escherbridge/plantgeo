@@ -1,4 +1,6 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { Map as MapLibreMap } from "maplibre-gl";
+import { MapProvider } from "@/lib/map/map-context";
 import { act, fireEvent, screen } from "@testing-library/react";
 import { QueryClient } from "@tanstack/react-query";
 import { httpBatchLink } from "@trpc/client";
@@ -46,7 +48,7 @@ function classListOf(element: Element): string {
  * `@/lib/trpc/client` wholesale with `vi.mock`, and a shared helper importing `trpc` would
  * break in every one of them.
  */
-function renderDock() {
+function renderDock(map: MapLibreMap | null = null) {
   const trpcClient = trpc.createClient({
     // superjson because the router is built with it: an untransformed link is a type error,
     // and would decode a real response wrongly if one ever arrived.
@@ -55,10 +57,22 @@ function renderDock() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return renderWithProviders(
     <trpc.Provider client={trpcClient} queryClient={queryClient}>
-      <LayerPanel />
+      <MapProvider value={map}><LayerPanel /></MapProvider>
     </trpc.Provider>
   );
 }
+
+it("waits for camera navigation before applying dock padding and removes pending work on unmount", () => {
+  const map = { isMoving: vi.fn(() => true), once: vi.fn(), off: vi.fn(), easeTo: vi.fn(), jumpTo: vi.fn() };
+  const view = renderDock(map as unknown as MapLibreMap);
+  expect(map.easeTo).not.toHaveBeenCalled();
+  const pending = map.once.mock.calls.at(-1)!;
+  expect(pending[0]).toBe("moveend");
+  act(() => { pending[1](); });
+  expect(map.easeTo).toHaveBeenCalledWith(expect.objectContaining({ padding: expect.any(Object) }));
+  view.unmount();
+  expect(map.off).toHaveBeenCalledWith("moveend", pending[1]);
+});
 
 function openPanel(): HTMLElement {
   act(() => {
