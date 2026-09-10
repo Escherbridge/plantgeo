@@ -200,3 +200,52 @@ per lane, using immutable conditional creates and byte-identical replay checks. 
 at each lane's `availability/operator-input/input=<digest>.json`, making exact recovery independent of
 executor temporary storage. Publication is still a separate supported CLI operation under the existing
 operational advisory lock. Input validation and uploads do not manufacture availability or absence.
+
+## Publication request budget and pending runtime verification
+
+Read-only analysis of the supported bootstrap implementation establishes the following GET budget
+for each exact input above: 1,560 source-day groups, 6,240 fully digested rows, one part and one
+completion marker per rung, and one inventory wrapper. Counts assume a pristine successful attempt;
+transport retries and immutable-object adoption can add reads.
+
+| Verification phase | GETs per lane |
+| --- | ---: |
+| Initial missing-pointer check | 1 |
+| Inventory wrapper and 6,240 raw completion markers | 6,241 |
+| 1,560 source wrappers and their four nested markers each | 7,800 |
+| 6,240 terminal wrappers, physical parts, and completion markers | 18,720 |
+| System bootstrap receipt readback | 1 |
+| Immutable generation readback | 1 |
+| Final deduplicated object-identity revalidation | 20,282 |
+| **Total** | **53,046** |
+
+Final revalidation covers one inventory wrapper, 1,560 source wrappers, 6,240 terminal wrappers,
+6,240 completion markers, 6,240 parts, and one system bootstrap receipt. The bootstrap marker is
+created only after the first **32,762 GETs** complete. Its absence during that phase does not prove
+a stalled process. Each source-day group retains 17 sequential GETs, with eight groups in flight;
+inventory raw reads and final revalidation also use eight-worker batches. A slow member can delay
+the next batch, but no unbounded serial part-verification pass remains. Checks are repeated across
+evidence roles and at final revalidation deliberately; this budget does not authorize removing them.
+
+The mean bootstrap reached its 1,200-second cap and exited **124**. Before retrying, inspection
+confirmed that the worker had stopped and both its availability head and bootstrap marker were
+absent. The retry retained the exact reviewed input digest and used a **3,600-second** cap under
+the supported publication lock. It did not shorten history, weaken digest policy, or bypass evidence
+validation. The larger bound reflects the full GET population rather than repeating a cap that had
+already proved insufficient.
+
+Minimum and maximum evidence uploads both completed with exit zero. Each accounted for **7,802
+objects and 18,693,045 bytes**. Minimum verified 6,304 existing objects and made 1,498 PUT calls;
+maximum verified 6,432 existing objects and made 1,370 PUT calls. Existing objects were verified
+before reuse. These upload receipts establish evidence availability, not publication completion.
+
+All three inputs passed the supported CLI dry validation with source ceiling **2026-09-05**.
+Their 3,600-second locked publication attempts were underway from approximately **13:04 UTC**.
+At **13:17:29 UTC**, the minimum bootstrap marker was observed, but its availability head was
+still absent; mean and maximum had no bootstrap marker at that observation. A marker alone is
+an intermediate state before generation verification and final pointer publication.
+
+**Publication remains pending at this checkpoint.** No successful pointer publication, verified
+generation readback, deployed serving result, or completed temperature availability release is
+claimed here. Final confirmation must bind each published head to its reviewed input and verify
+the complete day/rung population through the normal reader contract.

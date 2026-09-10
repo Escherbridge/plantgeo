@@ -74,14 +74,65 @@ Parquet point/UI work does not itself close those producer/history gaps.
 ## Cutoff scope refinement
 
 The planned first cutoff pauses the four environmental source/promotion writers and four associated
-archive planners/reconcilers. The two materialized-view refresh jobs remain active for now: a separate
-consumer audit found `forecast_summary_for_cell` reading `agri.mv_forecast_ml_daily_serving` and
-regional strategy AI context reading `geo.mv_strategy_recommendations_regional`. They are not
-reader-free, and their consumer retirement is separate work. Community demand/vote operations use
+archive planners/reconcilers. The two materialized-view refresh jobs remain in that prepared list.
+The earlier consumer audit found `forecast_summary_for_cell` reading
+`agri.mv_forecast_ml_daily_serving` and regional strategy AI context reading
+`geo.mv_strategy_recommendations_regional`. Commit `6e2a112` subsequently removed the regional
+strategy context consumer; retaining the strategy refresh job must not be justified by that removed
+reader. Forecast refresh still has its separate consumer. Community demand/vote operations use
 operational tables independently of those views.
 
-Direct climate and soil writers publish environmental observations directly into Parquet, but still
+A subsequent repository-only strategy audit found no connected runtime reader of the three strategy
+views. `jobs/strategy_mv_refresh.py` remains their refresh writer; the TypeScript materialized-view
+references are tests or comments. The SQL reader `geo.strategy_recommendations_tiles()` still exists
+in `drizzle/0000_baseline.sql` and selects all three tiers, but `infra/martin/martin.yaml` sets
+`auto_publish: false` and does not register it. `src/components/map/layers/StrategyLayer.tsx` returns
+when that source is absent; `src/lib/map/sources.ts` does not declare it. The unused `strategySource`
+export in `src/lib/map/layers/strategy-layer.ts` names a strategy tile route that is not implemented
+under `src/app/api/tiles`. These dormant definitions are not evidence of an active consumer.
+
+This is repository evidence, not a live zero-reader certificate: deployed Martin overrides, older
+app processes, external SQL consumers, and database dependencies were not queried. The prepared
+eight-lane cutoff remains unchanged pending independent review and full zero-reader proof. Adding
+`jobs-strategy-mv-refresh` would be a separately reviewed ninth pause once that proof is accepted;
+pausing it would preserve the existing materialized views, not authorize dropping them.
+
+Direct climate, soil, and vegetation writers publish environmental observations directly into Parquet, but still
 read their fixed support definitions from `agri.spatial_cell`. That small dimension read is a remaining
 migration dependency, distinct from the avoided historical observation export and from operational
 publication locks. A future bucket-pinned support artifact must preserve exact IDs, coordinates,
 coverage fractions, order, and grid validation before that lookup can be removed.
+
+
+## Scheduled gap repair scope
+
+The surviving direct schedules do not establish complete historical gap repair. Their executable
+selection windows are bounded as follows (source paths are relative to
+`services/agri-data-service/src/agri_data_service/`):
+
+| Direct producer | Scheduled repair scope | Source |
+| --- | --- | --- |
+| Climate NASA POWER | Latest 400 days, clipped to product history floor; reconsider governed absences within 14 days. | `pipeline/direct/climate/forward.py`: `CLIMATE_BACKLOG_SCAN_DAYS`, `CLIMATE_ABSENCE_RECHECK_DAYS`, `_publish_product`. |
+| Soil ERA5-Land | Latest 400 days, clipped to product history floor; reconsider governed absences within 14 days. | `pipeline/direct/soil/forward.py`: `SOIL_BACKLOG_SCAN_DAYS`, `SOIL_ABSENCE_RECHECK_DAYS`, `_publish_product`. |
+| Vegetation Sentinel-2 | Latest 400 days, clipped to the direct ownership floor; reconsider governed absences within 14 days. Historical backfill and parity remain manual and retain the PostgreSQL adapter. | `pipeline/direct/vegetation/forward.py`: `VEGETATION_BACKLOG_SCAN_DAYS`, `VEGETATION_ABSENCE_RECHECK_DAYS`, `history_floor`; `execution/job_executor_service.py`: `VEGETATION_DIRECT_LANE_ID` specification. |
+| Drought | Latest 60 settled release weeks; reconsider absences within 8 weeks. | `pipeline/direct/drought/forward.py`: `DROUGHT_BACKLOG_SCAN_WEEKS`, `DROUGHT_ABSENCE_RECHECK_WEEKS`. |
+| Burn severity | Whole explicitly governed release set, with bounded pending releases per turn. | `pipeline/direct/burn_severity/forward.py`: `governed_release_days()` census. |
+| Fire detections | Five settled days; deeper source archive gaps are outside this scheduled window. | `pipeline/direct/fire_detections.py`: `FIRE_DIRECT_DEFAULT_LOOKBACK_DAYS`, `FIRE_DIRECT_MAX_LOOKBACK_DAYS`. |
+| Sensors | Rolling NWS retention, at most seven day buckets; missed ticks can recover only while observations remain available upstream. Expired history and false-absence corrections are separate work. | `execution/job_executor_service.py`: `SENSORS_DIRECT_LANE_ID` specification; `pipeline/direct/sensors/forward.py`. |
+| Water gauges and weather observations | Current source poll merged into publisher-day buckets; no scheduled historical gap-authoring path. | `pipeline/parquet/water_gauges_forward.py`: `fetch_streamflow_gauges` call and `_owned_publisher_tables`; `execution/job_executor_service.py`: `WEATHER_OBSERVATIONS_DIRECT_LANE_ID` specification. |
+| Watersheds and evacuation zones | Current source-version polling; cannot reconstruct uncaptured source versions between polls. | `execution/job_executor_service.py`: `WATERSHEDS_DIRECT_LANE_ID` and `EVACUATION_ZONES_DIRECT_LANE_ID` specifications. |
+
+The retained generic `parquet-*` jobs do run `parquet-gap-fill` (see
+`execution/job_executor_service.py::_parquet_spec`), but the historical environmental exporters
+listed above still read frozen PostgreSQL data. Their schedules do not replace upstream archive
+acquisition. The eight-lane cutoff remains unchanged by this scope clarification.
+
+Direct publication retains its physical checks; that does not prove equivalent historical coverage
+or source-completeness validation across every lane. `maintenance-validate-streams` still runs
+PostgreSQL-oriented validation (`ingest/validation/queries.py`, including feature observation-day
+queries), so its retained schedule is not a Parquet-wide quality certification.
+
+Fixed-support dimension reads remain in `pipeline/direct/climate/support.py::load_nasa_power_support`,
+`pipeline/direct/soil/support.py`, and `pipeline/direct/vegetation/support.py`; each selects the
+ordered lattice from `agri.spatial_cell`. These are additional environmental dimension dependencies
+alongside the separately retained operational locks and scheduler metadata.
