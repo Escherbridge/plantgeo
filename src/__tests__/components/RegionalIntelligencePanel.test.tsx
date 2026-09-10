@@ -78,6 +78,29 @@ function assistantMessage(response: RegionalIntelligenceResponse): ChatMessage {
 }
 
 describe("RegionalIntelligencePanel strategy chips", () => {
+  it("labels SoilGrids evidence as a published estimate without relabelling measured sources", () => {
+    const response = baseResponse([]);
+    response.observations = [
+      { statement: "SoilGrids estimates surface clay at 26%.", evidenceOrigin: "warehouse", evidenceSource: "soilProperties" },
+      { statement: "Streamflow was 14,100 cfs.", evidenceOrigin: "warehouse", evidenceSource: "streamflow" },
+    ];
+    mocks.state.messages = [assistantMessage(response)];
+    renderWithProviders(<RegionalIntelligencePanel />);
+    expect(screen.getByText("Published estimate · soilProperties")).toBeTruthy();
+    expect(screen.getByText("Observed data · streamflow")).toBeTruthy();
+  });
+
+  it("labels an observation instant with its viewer timezone rather than an ambiguous calendar date", () => {
+    mocks.state.dataFreshness = { streamflow: "2026-09-10T06:45:00Z" };
+    const formatter = vi.spyOn(Date.prototype, "toLocaleString");
+    try {
+      renderWithProviders(<RegionalIntelligencePanel />);
+      fireEvent.click(screen.getByRole("button", { name: "Data sources (1)" }));
+      expect(formatter).toHaveBeenCalledWith(undefined, { timeZoneName: "short" });
+    } finally {
+      formatter.mockRestore();
+    }
+  });
   afterEach(() => {
     mocks.state.messages = [];
     mocks.state.dataFreshness = {};

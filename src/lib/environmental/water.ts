@@ -14,6 +14,7 @@ export interface WaterGauge {
     | "unknown";
   trend: "rising" | "stable" | "declining" | null;
   updatedAt: string;
+  observedDay?: string;
 }
 
 export interface GroundwaterWell {

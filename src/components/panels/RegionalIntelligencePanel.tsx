@@ -45,6 +45,10 @@ function humanize(value: string): string {
   return value.replace(/_/g, ' ');
 }
 
+function originLabel(origin: EvidenceOrigin, source?: string): string {
+  return origin === 'warehouse' && source === 'soilProperties' ? 'Published estimate' : ORIGIN_LABELS[origin];
+}
+
 function OriginBadge({
   origin,
   source,
@@ -61,7 +65,7 @@ function OriginBadge({
           : undefined
       }
     >
-      {ORIGIN_LABELS[origin]}
+      {originLabel(origin, source)}
       {source ? ` · ${humanize(source)}` : ''}
     </span>
   );
@@ -241,7 +245,7 @@ function reportToMarkdown(response: RegionalIntelligenceResponse): string {
     lines.push('## What the data shows');
     for (const observation of response.observations) {
       const source = observation.evidenceSource ? ` (${humanize(observation.evidenceSource)})` : '';
-      lines.push(`- ${observation.statement} — _${ORIGIN_LABELS[observation.evidenceOrigin]}${source}_`);
+      lines.push(`- ${observation.statement} — _${originLabel(observation.evidenceOrigin, observation.evidenceSource)}${source}_`);
     }
   }
 
@@ -263,7 +267,7 @@ function reportToMarkdown(response: RegionalIntelligenceResponse): string {
         );
       }
       lines.push('');
-      lines.push(`_Evidence origin: ${ORIGIN_LABELS[item.evidenceOrigin]}_`);
+      lines.push(`_Evidence origin: ${originLabel(item.evidenceOrigin, item.evidenceSource)}_`);
     }
   } else {
     lines.push('');
@@ -343,7 +347,7 @@ function DataFreshnessFooter({ freshness }: { freshness: Record<string, string> 
               : 'unavailable';
             const timestamp = Date.parse(value);
             const observedAt = Number.isFinite(timestamp)
-              ? new Date(timestamp).toLocaleString()
+              ? new Date(timestamp).toLocaleString(undefined, { timeZoneName: 'short' })
               : null;
             const snapshotDay = isRegionalEvidenceSource(source)
               ? regionalEvidenceSnapshotDay(source, value)

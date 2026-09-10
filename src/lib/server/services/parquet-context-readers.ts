@@ -32,6 +32,7 @@ export async function getContextWaterGauges(bbox: string, date?: string): Promis
     return [{
       siteNo: gauge.siteNumber, siteName: gauge.siteName, lat: gauge.latitude, lon: gauge.longitude,
       flowCfs: gauge.flowCfs, percentile, updatedAt: gauge.observedAt,
+      observedDay: gauge.observedDay,
       condition: percentile !== null && (condition === "above_normal" || condition === "normal" || condition === "below_normal" || condition === "low" || condition === "critically_low") ? condition : "unknown",
       trend: null,
     }];

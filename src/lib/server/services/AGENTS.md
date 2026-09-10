@@ -334,7 +334,28 @@ block by regex — adding a key to `routes` or `params` without the matching ent
 schemas live *below* that block and are not parsed, so they are freed to change only in step with
 the fixtures.
 
+## §soil-ai-evidence — explicit normalized soil units (2026-09-10)
+
+`soilgrids.ts` already divides upstream means by each response's `d_factor`.
+`soil-ai-evidence.ts` pairs those normalized values with units when `ai-prompt.ts`
+serializes evidence for the model, without changing the numeric API or cache.
+ISRIC's [unit table](https://docs.isric.org/globaldata/soilgrids/SoilGrids_faqs_01.html)
+defines nitrogen and SOC as g/kg, CEC as cmol(c)/kg, and OCD as kg/m³ after scaling.
+Bulk density kg/dm³ is numerically identical to the UI's g/cm³. The live values
+5.12 g/kg nitrogen and 61.9 g/kg SOC are therefore 0.512% and 6.19% by mass,
+not 5.12% and 61.9%. The prompt prefers the supplied units and requires explicit
+conversion if a percentage is used. Depth and prediction metadata distinguish
+the static 0–5 cm modeled release from a sampled local soil measurement.
+This reduces narrative unit ambiguity; structured report validation cannot prove
+the model's scientific interpretation or guarantee every generated conversion.
+
 ## §parquet-context-readers — residual AI and point-weather cutover (2026-09-10)
+
+Gauge context preserves `observedDay` independently of the `updatedAt` instant.
+A Pacific publisher's September 9 23:45 reading can legitimately have a September
+10 UTC timestamp. Named-day AI attribution uses the publisher day; displayed
+instants include the viewer's timezone. Never UTC-filter away those valid rows
+or change the timestamp to force it onto the selected calendar day.
 
 AI gauge context withholds every published trend until the read contract carries a
 validated historical comparison basis. Historical NWIS partitions contain default

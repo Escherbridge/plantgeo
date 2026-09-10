@@ -16,6 +16,12 @@ const weather = { latitude: 43.6, longitude: -116.2, observedAt: `${day}T12:00:0
 beforeEach(() => vi.clearAllMocks());
 
 describe("Parquet context adapters", () => {
+  it("preserves the publisher day when a late Pacific gauge instant falls on the next UTC day", async () => {
+    const observedAt = "2026-09-10T06:45:00Z";
+    mocks.water.mockResolvedValue(ready([{ siteNumber: "13334300", siteName: "Snake River McDuff", latitude: 45.94, longitude: -116.78, flowCfs: 14100, percentile: null, condition: null, observedDay: "2026-09-09", observedAt }]));
+    expect(await getContextWaterGauges("-117.03,45.69,-116.53,46.19", "2026-09-09")).toMatchObject([{ observedDay: "2026-09-09", updatedAt: observedAt, flowCfs: 14100 }]);
+    expect(mocks.water).toHaveBeenCalledWith(expect.objectContaining({ date: "2026-09-09" }));
+  });
   it("reads a named day at the identity-bearing rung without inventing aggregate gauge identities", async () => {
     const gauge = { siteNumber: "13206000", siteName: "Boise River", latitude: 43.6, longitude: -116.2, flowCfs: null, percentile: null, condition: null, trend: null, observedAt: `${day}T12:00:00Z` };
     mocks.water.mockResolvedValue(ready([gauge]));

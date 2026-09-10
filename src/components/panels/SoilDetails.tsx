@@ -604,7 +604,8 @@ export function SoilDetails({
                   copy describing a capability that has never existed. */}
               <p className="text-[10px] text-[hsl(var(--muted-foreground))] leading-relaxed">
                 No soil raster is published, so nothing is drawn for this property. The values
-                below come from ISRIC SoilGrids, read live for the point you click.
+                below are ISRIC SoilGrids model estimates for the top 0–5 cm at the point
+                you click, not on-site soil samples.
               </p>
             </div>
 

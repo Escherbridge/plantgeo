@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import { soilAiEvidence } from './soil-ai-evidence';
 import { remediationReportSchema, REMEDIATION_REPORT_JSON_SCHEMA, type RemediationReport } from './remediation-report';
 import type {
   RegionalContextPayload,
@@ -138,7 +139,9 @@ function buildSystemPrompt(hasWebSearch: boolean): string {
 - Confidence should reflect how well the evidence supports the specific recommendation, not how confident you feel in general.
 
 ## What each observation can establish
+- Soil properties include explicit units and represent SoilGrids predictions at 0–5 cm, not a local soil sample. Preserve each value's unit. Nitrogen and organicCarbon are g/kg, never percentages with the same numeric value. Prefer the supplied g/kg; if a mass percentage is necessary, divide g/kg by 10 and label the conversion explicitly. Do not convert organic carbon concentration into organic matter or carbon stocks without additional evidence.
 - A single streamflow reading establishes a flow at its own observation time, not a trend. Do not describe flow as stable, rising, declining or normal unless a non-null supplied trend or condition explicitly supports that statement. Missing trend/percentile/condition means unmeasured, not stable or normal.
+- A gauge's observedDay is its publisher's calendar day; updatedAt is the actual observation instant. Attribute named-day streamflow to observedDay. A late Pacific observation on September 9 can have a September 10 UTC timestamp: this is still September 9 publisher-day evidence. If mentioning the instant, include its timezone; never replace observedDay with the date obtained by converting updatedAt.
 - firePerimeters contains perimeter records, not active satellite detections. Their record dates and snapshot capture day are not ignition dates and do not prove a fire was active or detected on that day. Say "perimeter records dated ..." and keep them distinct from the fireDetections source; a count of perimeter records is not a count of new fires.
 - No fuel-load or fuel-moisture observation is supplied merely because weather is warm or dry. Missing vegetation/fuels evidence cannot establish abundant, dry or available fuel at this location. Any possible fuel-related concern inferred from other sources must be labelled model_inference and conditional on field assessment, never a measured local condition.
 
@@ -299,12 +302,12 @@ function buildUserMessage(
 latitude ${payload.location.lat.toFixed(4)}, longitude ${payload.location.lon.toFixed(4)}
 
 ## Warehouse observations
-${JSON.stringify(payload, null, 2)}
+${JSON.stringify({ ...payload, soilProperties: soilAiEvidence(payload.soilProperties) }, null, 2)}
 
 ## Observation times of the values actually served
 ${JSON.stringify(dataFreshness, null, 2)}
 
-These are the times the served values DESCRIBE, not a measure of how stale they are. When a source was read at a day the user asked to view, its time IS that requested day and calling it old data is wrong. Age is only a staleness signal for the sources marked as-of-latest below.
+These are observation instants or explicitly labelled release/snapshot metadata. A named publisher day and its observation instant can fall on different UTC or viewer-local dates. Preserve both: use a gauge's observedDay for its calendar-day attribution and updatedAt for its timestamp. Historical evidence requested by the user is not a failed freshness check merely because it is old. Age is a staleness signal for sources marked as-of-latest below.
 
 ${coverageNote}
 

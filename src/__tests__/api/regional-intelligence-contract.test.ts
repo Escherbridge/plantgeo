@@ -72,6 +72,8 @@ describe("remediation report contract", () => {
     const { buildSystemPrompt } = await import("@/lib/server/services/ai-prompt");
     const prompt = buildSystemPrompt(false);
     expect(prompt).toContain("A single streamflow reading establishes a flow at its own observation time, not a trend");
+    expect(prompt).toContain("Attribute named-day streamflow to observedDay");
+    expect(prompt).toContain("never replace observedDay with the date obtained by converting updatedAt");
     expect(prompt).toContain("firePerimeters contains perimeter records, not active satellite detections");
     expect(prompt).toContain("Missing vegetation/fuels evidence cannot establish abundant, dry or available fuel");
   });
@@ -290,6 +292,22 @@ describe("generate_remediation_report tool wiring", () => {
     // Would have kept nudging for the full MAX_TOOL_ROUNDS before the dispatch fix, since a
     // generate_remediation_report tool_use was never recognized as the report.
     expect(mocks.completionStream).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends nitrogen and carbon to the model with g/kg units and soil prediction provenance", async () => {
+    const { streamRegionalIntelligence } = await import("@/lib/server/services/ai-prompt");
+    mocks.completionStream.mockImplementation(() => fakeCompletionStream([{ id: "soil_report", name: "remediation_report", input: validReport }]));
+    const payload = minimalPayload();
+    payload.soilProperties = { ph: 6.6, organicCarbon: 61.9, nitrogen: 5.12, bulkDensity: 1.25, cec: 14, ocd: 3.2 };
+    const events = [];
+    for await (const event of streamRegionalIntelligence(payload, {}, false, minimalTemporalContext(), [])) events.push(event);
+    const sent = JSON.stringify(mocks.completionStream.mock.calls[0]?.[0]);
+    expect(sent).toContain("SoilGrids model predictions; not a local soil sample");
+    expect(sent).toContain("g/kg");
+    expect(sent).toContain("61.9");
+    expect(sent).toContain("5.12");
+    expect(sent).toContain("divide g/kg by 10");
+    expect(events.some((event) => event.type === "report")).toBe(true);
   });
 
   it("corrects too many observations before emitting a report or its narration", async () => {

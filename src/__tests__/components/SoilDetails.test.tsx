@@ -608,6 +608,7 @@ describe("SoilDetails property selector", () => {
 
     expect(screen.getByText("6.4")).toBeTruthy();
     expect(screen.getByText("12.3 g/kg")).toBeTruthy();
+    expect(screen.getByText(/ISRIC SoilGrids model estimates for the top 0–5 cm/)).toBeTruthy();
     expect(screen.getByText("1.10 g/kg")).toBeTruthy();
     expect(screen.getByText("1.35 g/cm³")).toBeTruthy();
     expect(screen.getByText("18.2 cmol/kg")).toBeTruthy();
