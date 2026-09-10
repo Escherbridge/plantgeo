@@ -208,7 +208,7 @@ function StrategyChips({
 }) {
   if (!remediation.length) return null;
   return (
-    <div aria-label="Suggested strategy chips" className="flex flex-wrap gap-1">
+    <div aria-label="Suggested strategy chips" className="flex min-w-0 max-w-full flex-wrap gap-1">
       {remediation.map((item, index) => (
         <span
           key={`${item.strategy}-${index}`}
@@ -417,9 +417,9 @@ export function RegionalIntelligenceReport({ response }: { response: RegionalInt
   return (
     <div className="space-y-3">
       <AiGeneratedBanner />
-      <div className="flex items-center justify-between gap-2">
+      <div className="flex flex-wrap items-start justify-between gap-2">
         <StrategyChips remediation={response.remediation} />
-        <div className="flex shrink-0 gap-1.5">
+        <div className="flex min-w-0 max-w-full flex-wrap gap-1.5">
           <button
             onClick={handleExportJson}
             className="px-2.5 py-1 text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white rounded transition"
