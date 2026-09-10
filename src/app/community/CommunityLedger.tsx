@@ -187,10 +187,6 @@ export function CommunityLedger() {
     { enabled: authenticated, retry: false }
   );
 
-  const priorityZonesQuery = trpc.community.getPriorityZones.useQuery(
-    {},
-    { enabled: authenticated, retry: false }
-  );
 
   const voteMutation = trpc.community.voteOnRequest.useMutation({
     onSuccess: () => {
@@ -312,40 +308,13 @@ export function CommunityLedger() {
         )}
       </EditorialSection>
 
-      <EditorialSection
-        index="02"
-        title="Opportunity waypoints"
-        id="opportunity-waypoints"
-      >
-        {priorityZonesQuery.isPending ? (
-          <EditorialCaption>Checking availability…</EditorialCaption>
-        ) : priorityZonesQuery.error ? (
-          <EditorialNotice tone="signal" title="Not available" role="status">
-            <p>{priorityZonesQuery.error.message}</p>
-            <p className="mt-comfortable text-caption text-ink-muted">
-              This section is deliberately empty. Publishing aggregate priority
-              zones would leak the locations the ledger exists to protect, so it
-              stays dark until a reviewed, access-controlled warehouse
-              publication is in place.
-            </p>
-          </EditorialNotice>
-        ) : (
-          <EditorialNotice title="No zones published" role="status">
-            <p>
-              The warehouse returned no priority zones for the current
-              selection.
-            </p>
-          </EditorialNotice>
-        )}
-      </EditorialSection>
-
-      <EditorialSection index="03" title="Adding a request" id="submit">
+      <EditorialSection index="02" title="Adding a request" id="submit">
         <EditorialProse>
           <p>
             A strategy request is anchored to a point on the ground, so it is
             created from the map rather than from this page. Open the map, centre
             it on the parcel you have in mind, open the community panel, and
-            press Submit; the request is recorded at the map&rsquo;s centre point.
+            choose + Request; the request is recorded at the map&rsquo;s centre point.
             The location is stored against your account or your workspace and is
             never made public by the act of submitting it.
           </p>

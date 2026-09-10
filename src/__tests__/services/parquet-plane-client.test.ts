@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
  * providerUrl and fetchBoundedJson are the only seams stubbed -- providerUrl so a base URL is
@@ -31,6 +31,7 @@ import {
   getParquetLayerDay,
   getParquetLayerDayWindow,
   getParquetWarehouseCoverage,
+  resetParquetCoverageCacheForTests,
   ParquetPlaneContractError,
   ParquetPlaneRequestError,
 } from "@/lib/server/services/parquet-plane-client";
@@ -76,12 +77,15 @@ function requestedOptions(callIndex = 0) {
 }
 
 beforeEach(() => {
+  resetParquetCoverageCacheForTests();
   mockedProviderUrl.mockReset();
   mockedFetch.mockReset();
   // A fresh URL per call: `endpoint()` mutates `pathname`, so one shared instance would let the
   // second read of a test append its route onto the first one's.
   mockedProviderUrl.mockImplementation(() => new URL("http://agri.internal:8000"));
 });
+
+afterEach(() => vi.useRealTimers());
 
 describe("getParquetLayerDay", () => {
   it("addresses the day route with the layer, kind, tier and day", async () => {
@@ -391,6 +395,48 @@ describe("getParquetWarehouseCoverage", () => {
     const revalidateSeconds = requestedOptions()?.revalidateSeconds;
     expect(revalidateSeconds).toBeGreaterThanOrEqual(300);
     expect(revalidateSeconds).toBeLessThanOrEqual(1_800);
+  });
+
+  it("keeps same-day coverage usable while one background refresh runs, then replaces its evidence", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(census.generated_at));
+    mockedFetch.mockResolvedValue(census);
+    const original = await getParquetWarehouseCoverage();
+    vi.setSystemTime(Date.now() + 301_000);
+    let resolveRefresh!: (value: unknown) => void;
+    mockedFetch.mockReturnValue(new Promise((resolve) => { resolveRefresh = resolve; }));
+    const first = await getParquetWarehouseCoverage();
+    const second = await getParquetWarehouseCoverage();
+    expect(first).toBe(original);
+    expect(second).toBe(original);
+    expect(first.generatedAt).toBe(census.generated_at);
+    expect(mockedFetch).toHaveBeenCalledTimes(2);
+    resolveRefresh({ ...census, generated_at: new Date().toISOString(), lanes: [] });
+    await vi.advanceTimersByTimeAsync(0);
+    expect((await getParquetWarehouseCoverage()).lanes).toEqual([]);
+  });
+
+  it("retains a valid same-day census after refresh failure only up to its generation age limit", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(census.generated_at));
+    mockedFetch.mockResolvedValue(census);
+    const original = await getParquetWarehouseCoverage();
+    vi.setSystemTime(Date.now() + 301_000);
+    mockedFetch.mockRejectedValue(new UpstreamTimeoutError("slow rebuild"));
+    expect(await getParquetWarehouseCoverage()).toBe(original);
+    await vi.advanceTimersByTimeAsync(0);
+    vi.setSystemTime(Date.parse(census.generated_at) + 600_000);
+    await expect(getParquetWarehouseCoverage()).rejects.toBeInstanceOf(UpstreamTimeoutError);
+  });
+
+  it("never serves yesterday's memo across UTC midnight", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-23T23:59:59Z"));
+    mockedFetch.mockResolvedValue({ ...census, generated_at: new Date().toISOString() });
+    await getParquetWarehouseCoverage();
+    vi.setSystemTime(new Date("2026-08-24T00:00:00Z"));
+    mockedFetch.mockRejectedValue(new UpstreamTimeoutError("new-day rebuild"));
+    await expect(getParquetWarehouseCoverage()).rejects.toBeInstanceOf(UpstreamTimeoutError);
   });
 
   it("uses a short public boot budget and single-flights concurrent cold coverage reads", async () => {

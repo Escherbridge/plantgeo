@@ -35,11 +35,9 @@ export const LAYER_PUBLICATION_STANDINGS: Partial<
 > = {
   interventions: {
     reason:
-      "Interventions are a community feature and stay in Postgres by design, so no warehouse " +
-      "lane backs them.",
+      "Shows community intervention recommendations that have been reviewed and published.",
     unblockedBy:
-      "An approved recommendation only reaches the map once a publish step runs, and nothing " +
-      "invokes that step today, so the tile is empty even where recommendations exist.",
+      "New recommendations stay in the review queue until an expert approves them for the map.",
   },
   "strategy-recommendations": {
     reason:
@@ -51,11 +49,9 @@ export const LAYER_PUBLICATION_STANDINGS: Partial<
   },
   "demand-heatmap": {
     reason:
-      "The demand heatmap is derived from private strategy requests at the moment you ask for " +
-      "it rather than stored per day, so it has no warehouse lane and no timeline.",
+      "Shows where people have requested help while protecting individual request locations.",
     unblockedBy:
-      "A cell draws only once enough separate requests fall inside it to clear the anonymity " +
-      "floor, so a sparse area is blank by design rather than by outage.",
+      "Areas with too few separate requests remain blank for privacy.",
   },
 };
 

@@ -114,6 +114,24 @@ describe("RegionalIntelligencePanel strategy chips", () => {
     expect(screen.getByText("Stale (Snapshot captured 2026-08-01)")).toBeTruthy();
   });
 
+  it("labels the drought release by its publisher day rather than the previous local evening", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-10T12:00:00Z"));
+    const dateFormat = vi.spyOn(Date.prototype, "toLocaleDateString").mockImplementation(
+      function (this: Date, _locales, options) {
+        return new Intl.DateTimeFormat("en-US", { timeZone: "America/Denver", ...options }).format(this);
+      }
+    );
+    try {
+      mocks.state.dataFreshness = { drought: "2026-09-01T00:00:00Z" };
+      renderWithProviders(<RegionalIntelligencePanel />);
+      fireEvent.click(screen.getByRole("button", { name: "Data sources (1)" }));
+      expect(screen.getByText("Release Sep 1, 2026")).toBeTruthy();
+    } finally {
+      dateFormat.mockRestore();
+    }
+  });
+
   it("renders a chip per recommended strategy, named from the model's own remediation items", () => {
     mocks.state.messages = [
       assistantMessage(

@@ -413,6 +413,8 @@ resource picker; give the layer its own row instead, as every layer already has 
 
 **2026-09-10 recovery:** `TimeSliderCapabilitiesLoader` retries a failed request once and
 uses its 30-second recovery interval for query errors as well as incomplete coverage payloads.
+Incomplete coverage uses a five-second recovery interval during the first minute after mounting
+to collect a cold census as soon as its shared rebuild completes; it then returns to thirty seconds.
 Previously an initial HTTP 500 exhausted default retries and then waited five minutes before
 recovering. The public census now depends only on Parquet evidence; see
 `src/lib/server/services/AGENTS.md` §slider-bootstrap.
@@ -1072,3 +1074,13 @@ outright -- the same "loading and empty look alike" defect, on the one surface t
 the closable dock. It now renders "Loading dates" (or "Dates unavailable") with no day, no span
 and no headline, and only while a layer a warehouse stream backs is actually switched on: over a
 map with nothing dated on it, silence still asserts nothing, which is still the honest answer.
+
+## Coverage captions distinguish common-scale gaps — 2026-09-10
+
+Parquet slider availability intersects the required map scales. A missing common day can still
+have rows at the current scale, so `absent` track bands now say coverage is incomplete rather
+than claim no data exists. This changes labels only; governed absence and the selection/availability
+rules are untouched. Unknown coverage is phrased without assuming it lies before the record:
+whole-range unknown history has no claimed covered tail, and an unknown suffix is named as a range.
+This prevents a history ending today from claiming it is only undescribed before tomorrow and
+then announcing no gaps after that nonexistent boundary.

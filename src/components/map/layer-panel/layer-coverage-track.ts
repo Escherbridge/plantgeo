@@ -421,11 +421,11 @@ export function describeDayCoverage(state: DayCoverageState): string | null {
     case "thin":
       return "Fewer readings than usual on this date";
     case "absent":
-      return "No data on this date";
+      return "Coverage incomplete on this date; some map scales may have data";
     case "governed_absence":
       return "The source was checked and intentionally published no data on this date";
     case "undescribed":
-      return "Coverage on this date is unknown; the record's gap list does not reach this far back";
+      return "Coverage on this date is unknown; the available record does not describe it";
     case "beyond_record":
       return "Beyond the record; nothing is published after today";
     case "off_axis":
@@ -536,7 +536,7 @@ export const SYNCED_DAY_APPEARANCE_BACKGROUND_SIZE = "5px 5px";
 
 /** What a band of each drawn kind is called, in the tooltip and in the spoken summary. */
 const DRAWN_COVERAGE_SUBJECT: Record<DrawnCoverageKind, string> = {
-  absent: "No data",
+  absent: "Coverage incomplete",
   governed_absence: "Governed absence",
   thin: "Fewer readings than usual",
   undescribed: "Coverage unknown",
@@ -613,23 +613,28 @@ export function describeCoverageTopology(
     segments[segments.length - 1].endOffsetExclusive - 1
   );
 
+  if (segments.every((segment) => segment.kind === "undescribed")) {
+    return `Coverage is not yet described from ${domain.firstDay} to ${lastCoveredDay}.`;
+  }
+
   const spoken = [`Coverage from ${domain.firstDay} to ${lastCoveredDay}.`];
   if (undescribed.length > 0) {
-    // Named as the boundary rather than as a run, because that is the fact a reader can use:
-    // everything below it is a region the report simply does not reach.
-    spoken.push(`Not described before ${addDays(undescribed[undescribed.length - 1].to, 1)}.`);
+    const prefixOnly = undescribed.length === 1 && undescribed[0].from === domain.firstDay;
+    spoken.push(prefixOnly
+      ? `Not described before ${addDays(undescribed[0].to, 1)}.`
+      : `Coverage not described: ${listRuns(undescribed)}.`);
   }
   if (absent.length === 0 && governedAbsence.length === 0 && thin.length === 0) {
     spoken.push(
       undescribed.length > 0
-        ? "No gaps and no sparse days after that."
+        ? "No gaps and no sparse days within the described dates."
         : "No gaps and no sparse days."
     );
     return spoken.join(" ");
   }
   if (absent.length > 0) {
     const noun = absent.length === 1 ? "gap" : "gaps";
-    spoken.push(`${absent.length} ${noun} with no data: ${listRuns(absent)}.`);
+    spoken.push(`${absent.length} ${noun} in verified coverage: ${listRuns(absent)}.`);
   }
   if (governedAbsence.length > 0) {
     const noun = governedAbsence.length === 1 ? "range" : "ranges";

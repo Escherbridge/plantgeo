@@ -73,6 +73,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.clearAllMocks();
+  vi.useRealTimers();
 });
 
 describe("TimeSliderCapabilitiesLoader", () => {
@@ -137,6 +138,7 @@ describe("TimeSliderCapabilitiesLoader", () => {
   });
 
   it("polls on the same interval the read-model memoizes for", () => {
+    vi.useFakeTimers();
     renderWithProviders(<TimeSliderCapabilitiesLoader />);
 
     // `serverCurrentDate` rides in this payload and rolls over at UTC midnight, an instant no
@@ -165,6 +167,12 @@ describe("TimeSliderCapabilitiesLoader", () => {
     // in the server cache seconds later, so waiting the full five minutes to collect it would
     // hold every stream-backed slider in the outage state long after the outage ended.
     expect(refetchInterval({ state: { data: { streamsUnavailable: true } } })).toBe(30_000);
+    expect(
+      refetchInterval({
+        state: { data: { streamsUnavailable: false, parquetCoverageUnavailable: true } },
+      })
+    ).toBe(5_000);
+    vi.setSystemTime(Date.now() + 60_000);
     expect(
       refetchInterval({
         state: { data: { streamsUnavailable: false, parquetCoverageUnavailable: true } },

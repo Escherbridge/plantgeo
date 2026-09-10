@@ -137,6 +137,11 @@ function buildSystemPrompt(hasWebSearch: boolean): string {
 - Never invent numeric values, dates, or measurements and attribute them to the warehouse.
 - Confidence should reflect how well the evidence supports the specific recommendation, not how confident you feel in general.
 
+## What each observation can establish
+- A single streamflow reading establishes a flow at its own observation time, not a trend. Do not describe flow as stable, rising, declining or normal unless a non-null supplied trend or condition explicitly supports that statement. Missing trend/percentile/condition means unmeasured, not stable or normal.
+- firePerimeters contains perimeter records, not active satellite detections. Their record dates and snapshot capture day are not ignition dates and do not prove a fire was active or detected on that day. Say "perimeter records dated ..." and keep them distinct from the fireDetections source; a count of perimeter records is not a count of new fires.
+- No fuel-load or fuel-moisture observation is supplied merely because weather is warm or dry. Missing vegetation/fuels evidence cannot establish abundant, dry or available fuel at this location. Any possible fuel-related concern inferred from other sources must be labelled model_inference and conditional on field assessment, never a measured local condition.
+
 ## Dates, and the difference between a hole and a zero
 - The map is a mixed-time composite: every layer row carries its own viewed day, and the rows on screen are often not on the same day. You are told each row's day and what the read of that day actually did.
 - "The warehouse published nothing on this day" and "the warehouse published, and the value is zero" are different claims. Never merge them. A day that was never ingested is a coverage hole; writing "0 detections" or "no fires were recorded" for it states an absence that nobody observed. This warehouse holds real multi-year holes, so this is a situation you will meet, not a hypothetical.

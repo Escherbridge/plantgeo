@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils";
 import { OrganizationTypePicker, type OrganizationType } from "./OrganizationTypePicker";
 
 const inputClass =
-  "rounded-md bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-emerald-500";
+  "min-w-0 w-full rounded-md bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-emerald-500";
 
 type Step = "basics" | "type" | "details";
 const STEPS: Step[] = ["basics", "type", "details"];
@@ -166,8 +166,8 @@ export function CreateOrganizationForm({ onCancel }: CreateOrganizationFormProps
                 </button>
               )}
             </div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-zinc-600">plantgeo.app/org/</span>
+            <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
+              <span className="shrink-0 text-xs text-zinc-600">plantgeo.app/org/</span>
               <input
                 id="org-slug"
                 type="text"

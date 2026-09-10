@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isReusableSliderCoverage } from "@/lib/environmental/slider-policy";
 import { fetchBoundedJson, providerUrl } from "@/lib/server/http/bounded-upstream";
 import type { ZoomTier } from "@/lib/map/zoom-tiers";
 import type { DayRange } from "@/types/time-slider";
@@ -97,7 +98,9 @@ const COVERAGE_TIMEOUT_MS = 8_000;
  */
 const COVERAGE_REVALIDATE_SECONDS = 300;
 
-/** Collapse concurrent cold callers; the successful response still lives in Next's shared cache. */
+let cachedCoverage: { value: ParquetWarehouseCoverage; receivedAt: number } | null = null;
+
+/** One refresh shared by cold waiters and same-day background revalidation. */
 let coverageRequest: Promise<ParquetWarehouseCoverage> | null = null;
 
 /** `YYYY-MM-DD`. A shape check only: nothing here turns a day into an instant. */
@@ -786,9 +789,16 @@ export async function getParquetLatestRelease(
  * Takes NO caller signal, unlike the three row reads. The answer is single-flighted and memoized
  * across every session, so one caller's cancellation would abort an in-flight read that other
  * callers are already awaiting -- a browser tab closing would blank the slider for everyone else.
- * The 8-second budget is the only bound this read needs.
+ * Same-day stale reads may return during revalidation; see services/AGENTS.md section coverage-recovery.
  */
 export async function getParquetWarehouseCoverage(): Promise<ParquetWarehouseCoverage> {
+  const now = Date.now();
+  const held = cachedCoverage;
+  const canReuse = held !== null && isReusableSliderCoverage(held.value, now);
+  if (canReuse && now - held.receivedAt < COVERAGE_REVALIDATE_SECONDS * 1_000) {
+    return held.value;
+  }
+
   coverageRequest ??= (async () => {
     const url = endpoint(WIRE.routes.coverage);
     const payload = await readJson(url, {
@@ -796,12 +806,26 @@ export async function getParquetWarehouseCoverage(): Promise<ParquetWarehouseCov
       timeoutMs: COVERAGE_TIMEOUT_MS,
       revalidateSeconds: COVERAGE_REVALIDATE_SECONDS,
     });
-    return decodeCoverage(payload);
+    const value = decodeCoverage(payload);
+    cachedCoverage = { value, receivedAt: Date.now() };
+    return value;
   })();
   const request = coverageRequest;
+  if (canReuse) {
+    void request.catch(() => undefined).finally(() => {
+      if (coverageRequest === request) coverageRequest = null;
+    });
+    return held.value;
+  }
   try {
     return await request;
   } finally {
     if (coverageRequest === request) coverageRequest = null;
   }
+}
+
+/** Clears process-local coverage state between isolated transport tests. */
+export function resetParquetCoverageCacheForTests(): void {
+  cachedCoverage = null;
+  coverageRequest = null;
 }

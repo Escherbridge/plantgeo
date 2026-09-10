@@ -68,6 +68,14 @@ describe("remediation report contract", () => {
     expect(parsed.remediation[0].strategy).toBe("fuel_reduction");
   });
 
+  it("distinguishes single readings, perimeter records and unmeasured fuels in its evidence rules", async () => {
+    const { buildSystemPrompt } = await import("@/lib/server/services/ai-prompt");
+    const prompt = buildSystemPrompt(false);
+    expect(prompt).toContain("A single streamflow reading establishes a flow at its own observation time, not a trend");
+    expect(prompt).toContain("firePerimeters contains perimeter records, not active satellite detections");
+    expect(prompt).toContain("Missing vegetation/fuels evidence cannot establish abundant, dry or available fuel");
+  });
+
   it("advertises the same report limits enforced by validation", async () => {
     const { REPORT_TOOL, GENERATE_REMEDIATION_REPORT_TOOL } = await import("@/lib/server/services/ai-prompt");
     expect(REPORT_TOOL.input_schema).toMatchObject({

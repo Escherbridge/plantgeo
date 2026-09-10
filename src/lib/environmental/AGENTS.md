@@ -17,6 +17,10 @@ that worst case while bounding longer histories. Keep the newest ranges and move
 described boundary when truncating; a dropped gap must never become a claim of coverage.
 The future band makes the today boundary visible and does not promise forecast data.
 
+`isReusableSliderCoverage` parses only the generation timestamp and numeric server clock for
+the cache's ten-minute bound. The evaluated publisher day is compared as an opaque string
+with UTC today; it never enters a date conversion. Transport modules remain free of conversions.
+
 ## §soil-field
 
 `soil-field.ts` is the value vocabulary for **all three** ERA5-Land layers — volumetric

@@ -20,6 +20,25 @@ The loader retries an initial transport failure once, then polls every 30 second
 query is failed or coverage unavailable. Successful complete results retain the five-minute
 refresh interval and real last-successful data remains visible across transient failures.
 
+## Coverage recovery
+
+Production verification on 2026-09-10 measured an initial coverage timeout at eight seconds,
+followed by warm private reads of 79/21/21 ms and a public slider response of 397 ms. The
+Python service shields its shared rebuild from caller cancellation, so the initial timeout
+can finish warming the next request. The TypeScript timeout remains eight seconds.
+
+`getParquetWarehouseCoverage` keeps a validated process-local response fresh for five minutes.
+It can serve that response while a single background refresh runs only when its evaluated day
+is today's UTC day and its original generation timestamp is less than ten minutes old. Original
+provenance, absence ranges, and withheld rows are retained verbatim. A successful newer response,
+including an empty or withheld one, replaces the memo. A failed refresh never advances its age.
+At midnight or the age ceiling, callers must wait for fresh evidence; no legacy data source is used.
+
+During the first minute after mounting, the browser retries incomplete coverage after five
+seconds so it can collect the newly warmed census. After that minute it returns to the
+thirty-second recovery interval. The visible state remains explicitly retrying, not a claim
+that no observations exist. Healthy complete responses still refresh every five minutes.
+
 Why the Parquet-plane modules in this directory are shaped the way they are. The "what" stays in
 the one-line doc comments beside each symbol; this file holds the reasoning a reader cannot
 reconstruct from the code. Scope: `parquet-plane-client.ts`, `parquet-envelope.ts`,
@@ -317,6 +336,15 @@ the fixtures.
 
 ## §parquet-context-readers — residual AI and point-weather cutover (2026-09-10)
 
+AI gauge context withholds every published trend until the read contract carries a
+validated historical comparison basis. Historical NWIS partitions contain default
+`stable` and qualifier-derived `declining` values that are not measured trends;
+fixing the producer does not repair those old rows. Preserve actual discharge,
+and retain a published condition only with a finite percentile in 0–100; otherwise
+return `unknown` and normalize invalid percentiles to null. Reinstating trend
+requires explicit, validated comparison provenance in the serving schema and
+regression coverage for old partitions, not merely an allowed enum or prompt rule.
+
 The live Next.js regional advisor still assembled drought, gauges and weather through retired
 PostgreSQL environmental readers after map viewport routes had migrated. The context adapters
 now use the same Parquet reader family, retaining named days and the served drought release date.
@@ -354,3 +382,11 @@ Narration is buffered within each model round. Accepted report narration and sea
 can be emitted; narration accompanying a rejected report is discarded so a user does not first see
 an apparently finished answer followed by a schema failure. Existing validated report rendering,
 source citations, cancellation, search budgets and persistence remain unchanged.
+
+The same live QA found narrative overreach after successful validation: a single gauge value was
+called stable, perimeter records were called new fire detections, and absent fuel evidence was
+reasoned about as measured fuel availability. The system prompt now explicitly limits those
+inferences to the supplied trend/condition, distinguishes perimeter record/capture dates from
+active detections or ignition, and marks any fuel concern as conditional inference unless measured.
+These are probabilistic language-model instructions, not a semantic proof enforced by the schema.
+The JSON validator certifies structure and bounds only; it cannot certify scientific truth.

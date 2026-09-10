@@ -327,10 +327,10 @@ describe("LayerTimeSlider", () => {
 
     const slider = screen.getByTestId("layer-time-slider-range-vegetation");
     expect(slider.getAttribute("aria-valuetext")).toBe(
-      `${VEGETATION_GAP.from}, No data on this date`
+      `${VEGETATION_GAP.from}, Coverage incomplete on this date; some map scales may have data`
     );
     expect(screen.getByTestId("layer-time-slider-note-vegetation").textContent).toContain(
-      "No data on this date."
+      "Coverage incomplete on this date; some map scales may have data."
     );
   });
 
@@ -352,7 +352,7 @@ describe("LayerTimeSlider", () => {
       screen.getByTestId("layer-time-slider-range-vegetation").getAttribute("aria-valuetext")
     ).toBe("2019-02-20");
     expect(screen.getByTestId("layer-time-slider-note-vegetation").textContent).not.toContain(
-      "No data"
+      "Coverage incomplete"
     );
   });
 
@@ -489,7 +489,7 @@ describe("LayerTimeSlider", () => {
 
     const spoken = summary?.textContent ?? "";
     expect(spoken).toContain(`Coverage from ${FIRST_DAY} to ${SERVER_CURRENT_DATE}`);
-    expect(spoken).toContain(`1 gap with no data: ${VEGETATION_GAP.from} to ${VEGETATION_GAP.to}`);
+    expect(spoken).toContain(`1 gap in verified coverage: ${VEGETATION_GAP.from} to ${VEGETATION_GAP.to}`);
     expect(spoken).toContain(
       `1 sparse range: ${VEGETATION_THIN.from} to ${VEGETATION_THIN.to}`
     );
@@ -525,7 +525,7 @@ describe("LayerTimeSlider", () => {
 
     expect(
       screen.getByTestId("layer-time-slider-range-weather").getAttribute("aria-valuetext")
-    ).toBe("2019-01-15, Coverage on this date is unknown; the record's gap list does not reach this far back");
+    ).toBe("2019-01-15, Coverage on this date is unknown; the available record does not describe it");
     // And the same fact is drawn, in a band of its own rather than as solid coverage.
     const undescribed = screen.queryAllByTestId("layer-time-slider-band-weather-undescribed");
     expect(undescribed).toHaveLength(1);
@@ -828,7 +828,7 @@ describe("LayerTimeSlider", () => {
       });
       const spoken = describeCoverageTopology(VEGETATION_DOMAIN, many);
 
-      expect(spoken).toContain("5 gaps with no data");
+      expect(spoken).toContain("5 gaps in verified coverage");
       // A one-day run is named once rather than as a range from a day to itself.
       expect(spoken).toContain("2019-01-10 to 2019-01-12; 2019-01-20; 2019-02-05 to 2019-02-06");
       expect(spoken).toContain(`and ${5 - MAX_SPOKEN_COVERAGE_RUNS} more`);
@@ -841,6 +841,25 @@ describe("LayerTimeSlider", () => {
       expect(describeCoverageTopology(VEGETATION_DOMAIN, clean)).toBe(
         `Coverage from ${FIRST_DAY} to ${SERVER_CURRENT_DATE}. No gaps and no sparse days.`
       );
+    });
+
+    it("does not claim a covered tail after an entirely undescribed history", () => {
+      const unknown = vegetationCapability({
+        coverageGaps: [], thinRanges: [],
+        describedFromDay: addDays(SERVER_CURRENT_DATE, 1),
+        describedThroughDay: SERVER_CURRENT_DATE,
+      });
+      const spoken = describeCoverageTopology(VEGETATION_DOMAIN, unknown);
+      expect(spoken).toBe(`Coverage is not yet described from ${FIRST_DAY} to ${SERVER_CURRENT_DATE}.`);
+      expect(spoken).not.toContain("No gaps");
+      expect(spoken).not.toContain(addDays(SERVER_CURRENT_DATE, 1));
+    });
+
+    it("names an undescribed tail as a range rather than a false lower boundary", () => {
+      const unknownTail = vegetationCapability({ coverageGaps: [], thinRanges: [], describedThroughDay: "2019-03-04" });
+      const spoken = describeCoverageTopology(VEGETATION_DOMAIN, unknownTail);
+      expect(spoken).toContain("Coverage not described: 2019-03-05 to 2019-03-07.");
+      expect(spoken).not.toContain("Not described before");
     });
 
     it("encodes each track region with a hatch angle of its own, so texture alone tells them apart", () => {
@@ -1101,7 +1120,7 @@ describe("LayerTimeSlider", () => {
 
       const note = screen.getByTestId("layer-time-slider-note-vegetation").textContent ?? "";
       const pendingIndex = note.indexOf("moment behind");
-      const coverageIndex = note.indexOf("No data on this date");
+      const coverageIndex = note.indexOf("Coverage incomplete on this date; some map scales may have data");
       expect(pendingIndex).toBeGreaterThanOrEqual(0);
       expect(coverageIndex).toBeGreaterThan(pendingIndex);
     });

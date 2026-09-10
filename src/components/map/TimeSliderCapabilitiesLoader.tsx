@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { trpc } from "@/lib/trpc/client";
 import { useTimeSliderStore } from "@/stores/time-slider-store";
 
@@ -15,6 +15,8 @@ const CAPABILITIES_REFRESH_MS = 5 * 60_000;
  * reload.
  */
 const CAPABILITIES_RETRY_MS = 30_000;
+const CAPABILITIES_BOOT_RETRY_MS = 5_000;
+const CAPABILITIES_BOOT_WINDOW_MS = 60_000;
 
 /**
  * The one read of `environmental.getSliderCapabilities`, and the one writer of the store fields
@@ -65,6 +67,10 @@ const CAPABILITIES_RETRY_MS = 30_000;
  * place that turns the pair into a state; see src/components/map/AGENTS.md §layer-time-state.
  */
 export default function TimeSliderCapabilitiesLoader() {
+  const mountedAt = useRef<number | null>(null);
+  useEffect(() => {
+    mountedAt.current = Date.now();
+  }, []);
   const setCapabilities = useTimeSliderStore((state) => state.setCapabilities);
   const setCapabilitiesUnavailable = useTimeSliderStore(
     (state) => state.setCapabilitiesUnavailable
@@ -89,8 +95,12 @@ export default function TimeSliderCapabilitiesLoader() {
     staleTime: CAPABILITIES_REFRESH_MS,
     retry: 1,
     refetchInterval: (query) =>
-      query.state.status === "error" ||
-      query.state.data?.streamsUnavailable || query.state.data?.parquetCoverageUnavailable
+      query.state.data?.parquetCoverageUnavailable &&
+      mountedAt.current !== null &&
+      Date.now() - mountedAt.current < CAPABILITIES_BOOT_WINDOW_MS
+        ? CAPABILITIES_BOOT_RETRY_MS
+        : query.state.status === "error" ||
+          query.state.data?.streamsUnavailable || query.state.data?.parquetCoverageUnavailable
         ? CAPABILITIES_RETRY_MS
         : CAPABILITIES_REFRESH_MS,
     refetchOnWindowFocus: false,

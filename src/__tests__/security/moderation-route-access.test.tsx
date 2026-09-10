@@ -16,7 +16,10 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/server/auth", () => ({ getServerSession: mocks.getServerSession }));
 vi.mock("next/navigation", () => ({ redirect: mocks.redirect }));
 vi.mock("@/components/panels/ModerationPanel", () => ({
-  ModerationPanel: () => <div data-testid="contribution-queue-stub" />,
+  ModerationPanel: () => <div data-testid="proposal-moderation-stub" />,
+}));
+vi.mock("@/components/panels/ContributionQueue", () => ({
+  ContributionQueue: () => <div data-testid="contribution-queue-stub" />,
 }));
 
 import ModerationPage from "@/app/moderation/page";
@@ -56,6 +59,7 @@ describe("moderation route access", () => {
     expect(mocks.redirect).not.toHaveBeenCalled();
     render(result as ReactElement);
     expect(screen.getByTestId("contribution-queue-stub")).toBeTruthy();
+    expect(screen.getByTestId("proposal-moderation-stub")).toBeTruthy();
   });
 
   it("mounts the queue for an admin without redirecting", async () => {

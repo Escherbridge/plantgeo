@@ -26,6 +26,16 @@ describe("Parquet context adapters", () => {
     await expect(getContextWaterGauges("-117,43,-116,44", day)).rejects.toThrow("lacks identity");
   });
 
+  it.each(["stable", "declining", "rising"])("withholds unverified %s gauge trends while retaining observed flow", async (trend) => {
+    mocks.water.mockResolvedValue(ready([{ siteNumber: "13206000", siteName: "Boise River", latitude: 43.6, longitude: -116.2, flowCfs: 17.7, percentile: null, condition: "low", trend, observedAt: `${day}T12:00:00Z` }]));
+    expect(await getContextWaterGauges("-117,43,-116,44", day)).toMatchObject([{ flowCfs: 17.7, percentile: null, condition: "unknown", trend: null }]);
+  });
+
+  it.each([null, -1, 101, Number.NaN, Number.POSITIVE_INFINITY, 12])("requires a valid percentile before retaining a gauge condition (%s)", async (percentile) => {
+    mocks.water.mockResolvedValue(ready([{ siteNumber: "13206000", siteName: "Boise River", latitude: 43.6, longitude: -116.2, flowCfs: 17.7, percentile, condition: "low", trend: "stable", observedAt: `${day}T12:00:00Z` }]));
+    expect(await getContextWaterGauges("-117,43,-116,44", day)).toMatchObject([{ flowCfs: 17.7, percentile: percentile === 12 ? 12 : null, condition: percentile === 12 ? "low" : "unknown", trend: null }]);
+  });
+
   it("preserves weather units and nullable direction on the requested day", async () => {
     mocks.weather.mockResolvedValue(ready([weather]));
     expect(await getContextWeatherForBbox("-117,43,-116,44", day)).toEqual([{ lat: 43.6, lon: -116.2, observedAt: weather.observedAt, temperature: 21, humidity: 33, windSpeed: 4, windDirection: null, precipitation: 0 }]);

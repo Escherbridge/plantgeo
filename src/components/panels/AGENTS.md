@@ -7,6 +7,8 @@ The AI footer recognizes `static_release_untimed` only for soil properties and d
 `snapshot_captured_YYYY-MM-DD` markers display their validated capture day, not a measurement
 time, and retain the existing fourteen-day staleness limit. Invalid, future, and source-mismatched
 markers remain unavailable. Keep these labels aligned with `src/lib/regional-intelligence.ts`.
+Drought freshness retains its age checks but displays the publisher's calendar release day.
+Its synthetic UTC midnight is not localized into the previous evening in western timezones.
 
 ## Narrow dock controls and status copy
 
@@ -119,3 +121,13 @@ tabs are deferred, and opacity is controlled once on the layer row. SoilDetails 
 point reads and observed soil layers; unpublished erosion/carbon-effect tabs no longer mount or
 issue suitability requests. Organic carbon is still a measured property. Backend implementation
 is retained; restoration criteria are in the Parquet pivot track's deferred analysis UI section.
+
+## Community publishing route restored — 2026-09-10
+
+The map's intervention caption claimed nothing invoked publishing, while `publishContribution`
+remained callable and `ContributionQueue` had its approve/reject controls. The queue had been
+replaced at `/moderation` by a different `ModerationPanel`, making the community publisher
+unreachable from that route. Both now mount under the existing expert/admin server role gate.
+Their backend workflows remain separate and unchanged. Community forms, submission history and
+intervention map rendering remain supported; captions state review/publication and privacy rules
+without describing internal database systems or asserting the map must always be empty.

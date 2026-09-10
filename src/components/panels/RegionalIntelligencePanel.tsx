@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { useRegionalIntelligenceStore, type ChatMessage } from '@/stores/regional-intelligence-store';
 import { useRegionalIntelligence } from '@/hooks/useRegionalIntelligence';
+import { formatCalendarDay } from '@/lib/map/time-format';
 import {
   AI_GENERATED_DISCLAIMER,
   AI_GENERATED_LABEL,
@@ -347,11 +348,14 @@ function DataFreshnessFooter({ freshness }: { freshness: Record<string, string> 
             const snapshotDay = isRegionalEvidenceSource(source)
               ? regionalEvidenceSnapshotDay(source, value)
               : null;
+            const releaseDay = source === 'drought' ? formatCalendarDay(value.slice(0, 10)) : null;
             const evidenceLabel = source === 'soilProperties' && value === 'static_release_untimed'
               ? 'Static release (undated)'
               : snapshotDay !== null
                 ? `Snapshot captured ${snapshotDay}`
-                : observedAt;
+                : releaseDay !== null
+                  ? `Release ${releaseDay}`
+                  : observedAt;
             const state =
               freshnessState === 'available'
                 ? {

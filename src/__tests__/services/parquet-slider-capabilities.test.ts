@@ -1423,7 +1423,7 @@ describe("governed-absence reporting on an absence-dominated axis", () => {
     expect(isDayDescribed(capability, droppedAbsenceDay)).toBe(false);
     expect(dayCoverageState(domain, capability, droppedAbsenceDay)).toBe("undescribed");
     expect(describeDayCoverage("undescribed")).toBe(
-      "Coverage on this date is unknown; the record's gap list does not reach this far back"
+      "Coverage on this date is unknown; the available record does not describe it"
     );
 
     // And a PUBLISHED day below the boundary reads undescribed too, which is the cost stated

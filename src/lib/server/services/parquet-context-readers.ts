@@ -28,12 +28,12 @@ export async function getContextWaterGauges(bbox: string, date?: string): Promis
       throw new ParquetContextReadError("A detail gauge lacks identity or location; nearest evidence cannot be established.");
     }
     const condition = gauge.condition;
-    const trend = gauge.trend;
+    const percentile = gauge.percentile !== null && Number.isFinite(gauge.percentile) && gauge.percentile >= 0 && gauge.percentile <= 100 ? gauge.percentile : null;
     return [{
       siteNo: gauge.siteNumber, siteName: gauge.siteName, lat: gauge.latitude, lon: gauge.longitude,
-      flowCfs: gauge.flowCfs, percentile: gauge.percentile, updatedAt: gauge.observedAt,
-      condition: condition === "above_normal" || condition === "normal" || condition === "below_normal" || condition === "low" || condition === "critically_low" ? condition : "unknown",
-      trend: trend === "rising" || trend === "stable" || trend === "declining" ? trend : null,
+      flowCfs: gauge.flowCfs, percentile, updatedAt: gauge.observedAt,
+      condition: percentile !== null && (condition === "above_normal" || condition === "normal" || condition === "below_normal" || condition === "low" || condition === "critically_low") ? condition : "unknown",
+      trend: null,
     }];
   });
 }

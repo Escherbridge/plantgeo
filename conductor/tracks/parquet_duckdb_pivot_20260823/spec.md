@@ -227,3 +227,21 @@ unconfigured-forecast/unpublished-land-cover branches, the constant refusal in
 `services/carbon-potential.ts`, and production strategy view-refresh failures recorded in
 `.omc/research/railway-ingestion-2026-09-10.md`. Re-enable each UI only when its concrete publication
 criterion above is satisfied; do not restore empty tabs as a roadmap advertisement.
+
+### Dashboard publication gate — 2026-09-10
+
+The account dashboard retains working map, organization and saved-conversation navigation.
+Fire/Fleet/Environmental presets, static unavailable chart slots, connecting-but-empty operational
+metrics, legacy PostgreSQL spatial statistics and the icon-only map preview are removed from the
+mounted page. The dashboard/widget modules and API routes remain deferred implementation.
+Restoration requires actual published aggregate sources, a metric stream with an agreed payload,
+Parquet-backed environmental statistics and explicit outage/empty handling. A real map preview
+requires a rendered map; a navigation link remains navigation. Existing map layers continue to be
+available, including lanes awaiting ingestion repair. Evidence is documented in
+`src/app/dashboard/AGENTS.md`; this is UI unmounting, not module or backend deletion.
+
+The community ledger's Opportunity waypoints subsection is also deferred. Its current query
+returns safe per-strategy activity totals, while the UI ignored those values and always displayed
+No zones published. Removing this unused query/subsection does not remove private requests, voting,
+or the activity-summary API. A restored waypoint view must have a spatial publication and render
+its results under the caller's access scope.

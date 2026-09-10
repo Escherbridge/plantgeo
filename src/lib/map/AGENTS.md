@@ -361,3 +361,9 @@ The registry entry remains for future implementation and persisted identifiers; 
 also stops mounting StrategyLayer, so a stale active selection cannot request its tile endpoint.
 Deferred entries are exempt from UI reachability checks, but no observed layer is hidden because
 its ingestion is behind. Restoration criteria live in the Parquet pivot track's deferred UI section.
+
+Community publication standings describe user-facing review and privacy requirements. The old
+claim that no code invoked intervention publishing was stale: its callable expert API and queue
+survived, but the queue was unmounted. The 2026-09-10 route repair restores that queue beside the
+separate proposal-moderation panel. Keep Interventions and Demand Heatmap exposed; these are real
+community workflows, unlike the deferred untrained Strategy Recommendations layer.
