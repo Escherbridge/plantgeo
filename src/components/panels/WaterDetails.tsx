@@ -40,14 +40,14 @@ function parquetStateNotice(
 ): string | null {
   if (result === undefined || result.state === "ready") return null;
   if (result.state === "absent") {
-    return `${subject} has a governed absence for ${result.servedDay}: ${result.evidence.reason}. Nothing is drawn.`;
+    return `The published record confirms no ${subject} data for ${result.servedDay}.`;
   }
   if (result.state === "not_generated") {
     return result.reason === "day_not_written"
-      ? `No Parquet partition or governed absence was written for ${subject} on ${result.requestedDay}. This is a record gap, not evidence that no observations occurred.`
-      : `The ${subject} Parquet lane has never been generated. Nothing is drawn.`;
+      ? `No ${subject} data has been published for ${result.requestedDay}.`
+      : `No ${subject} data has been published yet.`;
   }
-  return `The private Parquet reader for ${subject} is unavailable (${result.fault.kind}). No PostgreSQL fallback was used.`;
+  return `Could not load ${subject} data. Please try again shortly.`;
 }
 
 /**
@@ -270,15 +270,13 @@ export function WaterDetails({ bbox, zoom }: WaterDetailsProps) {
 
             {streamflowQuery.isError && (
               <p className="text-xs text-red-500" role="alert">
-                The private Parquet request failed before returning a typed state. No PostgreSQL or
-                synthetic fallback is shown.
+                Streamflow data could not be loaded. Please try again shortly.
               </p>
             )}
 
             {streamflowQuery.data?.state === "ready" && streamflowQuery.data.truncated && (
               <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]">
-                The Parquet row budget was reached. The gauges and coarse cells below are a subset
-                of this viewport.
+                Showing part of this area’s streamflow data. Zoom in for more detail.
               </p>
             )}
 
@@ -373,8 +371,7 @@ export function WaterDetails({ bbox, zoom }: WaterDetailsProps) {
               bbox &&
               !streamflowQuery.isError && (
                 <p className="text-xs text-[hsl(var(--muted-foreground))]">
-                  The published Parquet answer contains no locatable streamflow observations in
-                  the current view.
+                  No streamflow observations are available in this view.
                 </p>
               )}
           </TabsContent>
@@ -393,15 +390,13 @@ export function WaterDetails({ bbox, zoom }: WaterDetailsProps) {
 
             {droughtQuery.isError && (
               <p className="text-xs text-red-500" role="alert">
-                The private Parquet request failed before returning a typed state. No PostgreSQL or
-                synthetic fallback is shown.
+                Drought data could not be loaded. Please try again shortly.
               </p>
             )}
 
             {droughtQuery.data?.state === "ready" && droughtQuery.data.truncated && (
               <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]">
-                The Parquet row budget was reached. The drought areas below are a subset of the
-                release intersecting this viewport.
+                Showing part of this area’s drought data. Zoom in for more detail.
               </p>
             )}
 
@@ -577,8 +572,7 @@ export function WaterDetails({ bbox, zoom }: WaterDetailsProps) {
             {!watershedQuery.isLoading && watershedsUnavailable && bbox && !watershedQuery.isError && (
               <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]">
                 The USGS hydrography service did not return boundaries for this view.
-                Nothing is drawn; the response was not cached, so reloading this view
-                asks the provider again.
+                Please try again shortly.
               </p>
             )}
 
@@ -589,9 +583,7 @@ export function WaterDetails({ bbox, zoom }: WaterDetailsProps) {
                 reads as a fault. */}
             {beyondWatershedListZoom && (
               <p className="rounded-md border border-sky-500/40 bg-sky-500/10 p-3 text-xs text-[hsl(var(--foreground))]">
-                This view is wider than the {WATERSHED_LIST_MAX_SQUARE_DEGREES} square degree
-                the USGS hydrography service will list basins for. The map still draws them,
-                grouped into their parent basins — zoom in for the named HUC12 list.
+                Zoom in to list individual watersheds. The map shows larger basin groups at this scale.
               </p>
             )}
 

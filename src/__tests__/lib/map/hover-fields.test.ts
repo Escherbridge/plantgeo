@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   HOVERABLE_LAYER_IDS,
   TOOLTIP_TAP_LAYER_IDS,
@@ -751,6 +751,7 @@ describe("formatHoverContent: native polygons", () => {
     const content = formatHoverContent("drought-fill", {
       DM: 3,
       label: "D3",
+      validDate: "2026-08-25",
       observedAt: "2026-08-25T00:00:00Z",
     });
 
@@ -764,5 +765,25 @@ describe("formatHoverContent: native polygons", () => {
 
   it("yields no drought tooltip for a feature carrying no category", () => {
     expect(formatHoverContent("drought-fill", {})).toBeNull();
+  });
+
+  it("keeps the publisher's September 1 release day in a Denver browser", () => {
+    const localizedDate = vi.spyOn(Date.prototype, "toLocaleDateString").mockImplementation(
+      function (this: Date, _locales, options) {
+        return new Intl.DateTimeFormat("en-US", { timeZone: "America/Denver", ...options }).format(this);
+      }
+    );
+    try {
+      const content = formatHoverContent("drought-fill", {
+        DM: 3,
+        label: "D3",
+        validDate: "2026-09-01",
+        observedAt: "2026-09-01T00:00:00Z",
+      });
+      expect(content?.lines).toContain("Valid: Sep 1, 2026");
+      expect(content?.lines.join(" ")).not.toContain("Aug 31");
+    } finally {
+      localizedDate.mockRestore();
+    }
   });
 });

@@ -204,71 +204,71 @@ const WITHHOLDING_WORDING: Record<LayerWithholdingReason, ReasonWording> = {
   availability_unpublished: {
     badge: "Indexing",
     detail:
-      "The data is written; its day index is still being built, so no dates can be offered yet.",
+      "Its list of available dates is still being built.",
     isSettling: true,
   },
   availability_stale: {
     badge: "Index behind",
     detail:
-      "Its day index is older than the data it describes, so its dates are not offered until it is rebuilt.",
+      "Available dates need updating before history can be shown.",
   },
   availability_malformed: {
     badge: "Index unreadable",
-    detail: "Its day index could not be read, so no dates are taken from it.",
+    detail: "Available dates could not be read. History is temporarily unavailable.",
   },
   availability_checksum_invalid: {
     badge: "Index unverified",
-    detail: "Its day index failed its own checksum, so no dates are taken from it.",
+    detail: "Available dates could not be verified. History is temporarily unavailable.",
   },
   lane_never_written: {
     badge: "Never published",
-    detail: "This source has never published anything, so there is no record to scrub.",
+    detail: "This source has never published anything to show here.",
   },
   lane_not_registered: {
     badge: "No source",
-    detail: "No warehouse lane is registered for this layer, so nothing describes its days.",
+    detail: "A data source has not been connected for this layer.",
   },
   coverage_unavailable: {
     badge: "Retrying",
-    detail: "The day census could not be read just now, so no dates are offered yet. Retrying.",
+    detail: "Available dates could not be read just now. Retrying.",
     isSettling: true,
   },
   coverage_not_current: {
-    badge: "Census behind",
+    badge: "Dates behind",
     detail:
-      "The day census has not caught up to today, so its dates are held back rather than offered short.",
+      "Available dates have not caught up to today.",
   },
   reader_not_parquet: {
     badge: "Other source",
-    detail: "This layer is drawn from a store the day census does not describe, so it has no axis here.",
+    detail: "Date history is not available for this layer yet.",
   },
   rung_not_reported: {
     badge: "Zooms missing",
     detail:
-      "Not every zoom level this layer publishes has reported its days, so an axis would be wrong at some scales.",
+      "Available dates are not yet confirmed at every map scale.",
   },
   rung_never_written: {
     badge: "Zooms missing",
-    detail: "A zoom level this layer publishes has never been written, so its dates are held back.",
+    detail: "Data is missing at a map scale needed to show its history.",
   },
   lane_nature_mismatch: {
     badge: "Kind mismatch",
     detail:
-      "The source behind this layer is not the kind of series its axis was declared as, so no axis is offered.",
+      "This data's format does not match its history settings.",
   },
   invalid_rung_bounds: {
     badge: "Bounds invalid",
-    detail: "The day bounds its zoom levels report do not agree, so none of them is offered.",
+    detail: "The reported date ranges are inconsistent across map scales.",
   },
   no_common_readable_history: {
     badge: "No shared days",
     detail:
-      "Its zoom levels share no day all of them can read, so no single axis covers the whole layer.",
+      "No dates are available across all required map scales.",
   },
   ceiling_violation: {
     badge: "Past its source",
     detail:
-      "It reports days newer than its own source can offer, so the axis is refused rather than quietly trimmed.",
+      "Reported dates are newer than the source's latest release.",
   },
 };
 
@@ -329,7 +329,7 @@ const STREAMS_UNAVAILABLE_STATE: LayerTimeState = {
 const UNBACKED_STATE: LayerTimeState = {
   kind: "no_time_axis",
   badge: "No time axis",
-  detail: "No warehouse layer backs this one, so it has no record of its own to scrub.",
+  detail: "This layer does not provide a date history.",
   isSettling: false,
   reason: null,
   evidenceLanes: [],
@@ -350,7 +350,7 @@ const SNAPSHOT_STATE: LayerTimeState = {
 const NOT_PUBLISHED_STATE: LayerTimeState = {
   kind: "empty",
   badge: "No dates",
-  detail: "Not published to the warehouse record yet, so it has no dates of its own.",
+  detail: "No dates have been published for this layer yet.",
   isSettling: false,
   reason: null,
   evidenceLanes: [],

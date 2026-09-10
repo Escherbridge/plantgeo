@@ -23,5 +23,6 @@ Organization management: overview, members, invitations/join-links, settings.
   shrink below its content and the overflow never engages.
 - Switching organizations always goes through `teams.setActiveTeam` (persists
   server-side) *and* `useSession().update({ activeTeamId })` (refreshes the
-  JWT immediately) — see `TeamSwitcher`. Skipping either leaves the UI and the
-  middleware's org gate out of sync.
+  JWT immediately) — see `TeamSwitcher`. Skipping either leaves the persisted
+  selection and session UI out of sync. Middleware requires authentication;
+  membership authorization remains in the team APIs.

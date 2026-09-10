@@ -1,4 +1,5 @@
 import { and, eq, sql } from "drizzle-orm";
+import { haversineDistance } from "@/lib/map/measurement";
 import { db } from "@/lib/server/db";
 import { features, layers } from "@/lib/server/db/schema";
 import {
@@ -14,10 +15,6 @@ import {
   type StrategyScore,
 } from "@/lib/server/services/strategy-scoring";
 import {
-  getPublishedDroughtClassification,
-  getPublishedStreamflowGauges,
-  getPublishedWeatherForBbox,
-  getPublishedWeatherForPoint,
   resolveRequestedObservationDay,
   serverCurrentDate,
   type PublishedWeatherObservation,
@@ -28,6 +25,12 @@ import {
   getInterventionSuitability,
   type InterventionSuitability,
 } from "@/lib/server/services/carbon-potential";
+import {
+  getContextDrought,
+  getContextWaterGauges,
+  getContextWeatherForBbox,
+  getContextWeatherForPoint,
+} from "./parquet-context-readers";
 import type { WaterGauge } from "@/lib/server/services/usgs-water";
 import { firmsDayRange } from "@/lib/server/services/environmental-time";
 import {
@@ -438,13 +441,13 @@ function nearestGauge(
   let nearest: WaterGauge | null = null;
   let distance = Number.POSITIVE_INFINITY;
   for (const gauge of gauges) {
-    const candidate = Math.hypot(gauge.lat - latitude, gauge.lon - longitude);
+    const candidate = haversineDistance([longitude, latitude], [gauge.lon, gauge.lat]);
     if (candidate < distance) {
       nearest = gauge;
       distance = candidate;
     }
   }
-  return distance <= NEAREST_GAUGE_MAX_DEGREES ? nearest : null;
+  return nearest && Math.hypot(nearest.lat - latitude, nearest.lon - longitude) <= NEAREST_GAUGE_MAX_DEGREES ? nearest : null;
 }
 
 function settled<T>(result: PromiseSettledResult<T>, fallback: T): T {
@@ -795,12 +798,8 @@ async function resolveStrategyContext(
 /**
  * The nearest published weather sample to the point, for the live edge or for one named day.
  *
- * The live path stays on `getPublishedWeatherForPoint`'s unbounded nearest-1 KNN, untouched:
- * it is the first paint of every session and its cost is already measured. A named past day
- * has no point reader at all, so it goes through the bbox reader and the nearest sample is
- * picked here. That difference is real and is reported rather than hidden -- on a past day
- * this only sees the context window, so an empty result means "nothing within
- * CONTEXT_RADIUS_DEGREES of the point", not "nothing anywhere".
+ * Both live and historical reads use the bounded Parquet context window at the detail rung.
+ * See services/AGENTS.md §parquet-context-readers for the spatial and refusal contract.
  */
 async function readNearestWeather(
   lat: number,
@@ -810,12 +809,12 @@ async function readNearestWeather(
   today: string
 ): Promise<PublishedWeatherObservation | null> {
   if (resolveRequestedObservationDay(date, today).kind !== "historical") {
-    return getPublishedWeatherForPoint(lat, lon);
+    return getContextWeatherForPoint(lat, lon);
   }
   let nearest: PublishedWeatherObservation | null = null;
   let distance = Number.POSITIVE_INFINITY;
-  for (const observation of await getPublishedWeatherForBbox(bbox, date)) {
-    const candidate = Math.hypot(observation.lat - lat, observation.lon - lon);
+  for (const observation of await getContextWeatherForBbox(bbox, date)) {
+    const candidate = haversineDistance([lon, lat], [observation.lon, observation.lat]);
     if (candidate < distance) {
       nearest = observation;
       distance = candidate;
@@ -1009,8 +1008,8 @@ export async function assembleRegionalContext(
     communityProposals,
   ] = await Promise.allSettled([
     getStrategyRecommendations(lat, lon),
-    getPublishedDroughtClassification(undefined, dateBySource.get("drought")),
-    getPublishedStreamflowGauges(bbox, dateBySource.get("streamflow")),
+    getContextDrought(bbox, dateBySource.get("drought")),
+    getContextWaterGauges(bbox, dateBySource.get("streamflow")),
     readNearestWeather(
       lat,
       lon,

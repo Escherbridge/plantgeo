@@ -3,6 +3,8 @@ import { db } from "@/lib/server/db";
 import { features, layers } from "@/lib/server/db/schema";
 import { WEATHER_LAYER_ID } from "@/lib/server/layer-ids";
 import { SLIDER_STREAM_LAYER_NAMES } from "@/types/time-slider";
+import { FUTURE_AXIS_DAYS, MAX_REPORTED_DAY_RANGES } from "@/lib/environmental/slider-policy";
+export { MAX_REPORTED_DAY_RANGES } from "@/lib/environmental/slider-policy";
 import type {
   DayRange,
   MetricAtDateAvailability,
@@ -2551,36 +2553,6 @@ const OBSERVATION_DENSITY_FLOOR_FRACTION = 0.01;
  * water-gauges is ~9,000 points, which is a viewport bbox's job to narrow. */
 const METRIC_AT_DATE_MAX_ROWS = 5_000;
 
-/**
- * Most coverage gaps, and most thin ranges, reported for ONE layer.
- *
- * Ranges rather than per-day flags is what makes this payload affordable at all: 12 layers x
- * up to ~1,460 observed days is ~17,500 per-day entries and ~385 KB of JSON, against a handful
- * of ~40-byte objects.
- *
- * RAISED from 120 to 800, and the number is derived rather than tuned. Disjoint closed ranges
- * over an N-day axis can number at most ceil(N/2) -- every range needs a day between it and
- * the next -- and the deepest axis this warehouse has is vegetation's ~1,460 days, which bounds
- * either list at 730. 800 therefore admits the entire pathological worst case for every layer
- * that exists today, so truncation is unreachable in practice while staying a real bound if an
- * axis ever grows past ~1,600 days. The review measured the old cap at ~10.8 KB per layer and
- * ~160 KB across ~15 layers uncompressed on an endpoint that is cached five minutes and fetched
- * once per tab; at 800 the same pathological layer costs ~36 KB per list, which that budget
- * absorbs, and every realistic layer costs a handful of ranges either way.
- *
- * The NEWEST ranges are the ones kept, because the right-hand edge of the axis is where people
- * scrub and where a stalled ingest lane shows up.
- *
- * Truncation is no longer merely REPORTED. `coverageGapsTruncated`/`thinRangesTruncated` were
- * computed, shipped and read by nothing, so a dropped gap drew as solid coverage on the track
- * and let `coverageOnDay` answer `published` for a day that was never ingested -- which the
- * agent prompt turns verbatim into "This is an observed absence". Every truncation now also
- * moves `describedFromDay` to the oldest day the surviving ranges still cover, which is a value
- * a consumer has to consult rather than a flag it can skip. See that field's note in
- * src/types/time-slider.ts.
- */
-export const MAX_REPORTED_DAY_RANGES = 800;
-
 /** How `earliestObservedDate` was decided, so the UI never has to guess. */
 export type EarliestObservedDateRule =
   /** Isolated older observations exist but were excluded from the axis. */
@@ -2714,18 +2686,6 @@ const DEFAULT_TEMPORAL_KIND: TemporalKind = "snapshot";
  * horizon is about forecasts, not about emptiness.
  */
 const FORECAST_HORIZON_DAYS = 0;
-
-/**
- * How far past today the slider's axis is drawn. See `futureAxisDays` on SliderCapabilities
- * for why this is not a forecast horizon and must never be conflated with one.
- *
- * 30 days: long enough that the today boundary lands visibly inside the track rather than
- * within a thumb's width of its right edge, and short enough that it stays a minority of a
- * ~1,460-day observed axis -- the future band is a boundary marker, not half the control.
- * Scrubbing into it is allowed and answers `not_forecastable` for every layer, which is
- * exactly what the record supports.
- */
-const FUTURE_AXIS_DAYS = 30;
 
 /** Which upstream payload field dates an observation, in priority order.
  *
@@ -3391,10 +3351,8 @@ function closeCoverageGapsAtLiveEdge(
  * precomputed into `geo.mv_feature_observation_day` anyway (~16,000 rows against 4.97M).
  *
  * The memo is KEPT, at the same TTL, for a different reason than the one it was written for.
- * The read is now cheap, but `getGeoFeatureSliderCapabilities` feeds the `getSliderCapabilities`
- * tRPC procedure (via `getParquetSliderCapabilities`) and can be called in a loop by a scrub
- * prefetch; the single-flight guard collapses that fan-out onto one evaluation. The payload
- * still only changes when the refresh lane lands a new day.
+ * This cache remains for legacy metric readers. The public Parquet slider census no longer
+ * calls it; see services/AGENTS.md section slider-bootstrap.
  */
 const CAPABILITIES_CACHE_TTL_MS = 5 * 60_000;
 
@@ -3439,18 +3397,7 @@ async function readLayerCapabilities(): Promise<ResolvedSliderLayerCapability[]>
   return layerCapabilitiesInFlight;
 }
 
-/**
- * PostgreSQL `geo.features` capability rows: one per `geo.layers` row, day-axis, gaps and thin
- * ranges all resolved from `geo.v_observation_day_census WHERE surface_kind = 'feature'`.
- *
- * `streamsUnavailable` is always `false` here: this reader never touched the thirteen
- * non-geo.features streams (drought, the three soil measures, the nine climate-field signals)
- * even before the removal above -- see `src/lib/server/AGENTS.md`. Their capability comes from
- * `getParquetSliderCapabilities` (`parquet-slider-capabilities.ts`), which is what the live
- * `getSliderCapabilities` tRPC procedure actually serves
- * (`src/lib/server/trpc/routers/environmental.ts:629`); this function is that procedure's OTHER
- * input, awaited via `Promise.allSettled` alongside the Parquet coverage census.
- */
+/** Legacy feature capabilities; the public slider census no longer calls this reader. */
 export async function getGeoFeatureSliderCapabilities(): Promise<ResolvedSliderCapabilities> {
   const today = serverCurrentDate();
   const layers = await readLayerCapabilities();

@@ -1,6 +1,7 @@
 "use client";
 
 import { Suspense, useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Building2, Loader2, UserPlus } from "lucide-react";
 import { trpc } from "@/lib/trpc/client";
@@ -21,17 +22,24 @@ function LoadingNotice({ message }: { message: string }) {
 /** Post-registration fork: create an organization, join one, or skip for now. */
 export default function OnboardingPage() {
   return (
-    <Suspense fallback={<LoadingNotice message="Loading…" />}>
-      <OnboardingView />
-    </Suspense>
+    <div className="flex flex-col gap-6">
+      <div className="flex flex-col items-center gap-2 border-b border-zinc-800 pb-5 text-center">
+        <Link
+          href="/dashboard"
+          className="rounded-md border border-emerald-500/50 px-4 py-2 text-sm font-medium text-emerald-300 transition-colors hover:bg-emerald-500/10"
+        >
+          Continue individually
+        </Link>
+        <p className="text-xs text-zinc-400">Organization setup is optional. You can return to it later.</p>
+      </div>
+      <Suspense fallback={<LoadingNotice message="Loading…" />}>
+        <OnboardingView />
+      </Suspense>
+    </div>
   );
 }
 
-/**
- * Reads the `create` intent and renders the fork. Bare `/onboarding` bounces a
- * member back to their organization; `?create=1` is the deliberate request for
- * another one and stays on the create form.
- */
+/** Resolve organization setup intent; see components/onboarding/AGENTS.md. */
 function OnboardingView() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -125,20 +133,6 @@ function OnboardingView() {
         </button>
       </div>
 
-      {/* The skip cookie is the org-gate bypass middleware checks, so it is only
-          offered to a user who has no organization to be gated into. */}
-      {!belongsToOrganization && (
-        <button
-          type="button"
-          onClick={() => {
-            document.cookie = "pg_onboarding_skipped=1; path=/; max-age=2592000; samesite=lax";
-            router.push("/dashboard");
-          }}
-          className="self-center text-xs text-zinc-500 transition-colors hover:text-zinc-300"
-        >
-          Skip for now
-        </button>
-      )}
     </div>
   );
 }

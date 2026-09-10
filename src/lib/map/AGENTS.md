@@ -225,6 +225,12 @@ which path a number came from whenever one is quoted.
 
 ## The hover tooltip and the caption modules
 
+USDM `validDate` is a publisher calendar day, not an instant. Its tooltip uses
+`formatCalendarDay` with UTC formatting so a September 1 release stays September 1
+in Denver. The presentation also carries a synthetic midnight `observedAt`; localizing
+that timestamp used to display August 31. Other event timestamps keep local date/time
+formatting. Never infer the release day by localizing the synthetic observation instant.
+
 `hover-fields.ts` is the pure per-layer field selection for the shared hover manager, and
 `fire-cell-caption.ts` and `water-cell-caption.ts` are the one caption a fire cell and a coarse
 streamflow cell get in BOTH the tooltip and their layer's click popup — and, for water, in the
@@ -347,3 +353,11 @@ and nothing reads them. `hover-fields.ts`'s `formatFirePerimeter` reads camelCas
 (`incidentName`, `gisAcres`, `percentContained`, ...) that the tile never emitted either, so today
 it shows a title and a severity line; widening it is a hover-fields change with its own review, not
 something the cutover should have decided by shipping extra columns.
+
+## deferred-analysis-surfaces
+
+As of 2026-09-10, `isLayerDeferred` excludes untrained Strategy Recommendations from dock groups.
+The registry entry remains for future implementation and persisted identifiers; LayerManager
+also stops mounting StrategyLayer, so a stale active selection cannot request its tile endpoint.
+Deferred entries are exempt from UI reachability checks, but no observed layer is hidden because
+its ingestion is behind. Restoration criteria live in the Parquet pivot track's deferred UI section.

@@ -1,5 +1,25 @@
 # Parquet reader services — rationale
 
+## §slider-bootstrap — Parquet owns the public date census
+
+`getParquetSliderCapabilities` reads only `getParquetWarehouseCoverage`. It must not call
+`getGeoFeatureSliderCapabilities` or depend on the legacy observation materialized views.
+Production returned HTTP 500 on 2026-09-10 because the supposedly feature-only read of
+`geo.v_observation_day_census` still depended on the unpopulated retired signal view. That
+failure prevented every Parquet date control from initializing even when Parquet was healthy.
+
+The server stamps UTC today after the coverage read, including a cold read across midnight;
+the census must still prove it was evaluated through that day. Coverage failures return the
+same server clock with explicit withheld rows and no invented axes. The pure
+`src/lib/environmental/slider-policy.ts` owns the 30-day future display band and 800-range
+reporting cap shared with the legacy reader. The future band does not advertise forecasts.
+Only declared Parquet contracts enter this public payload; legacy catalogue passthrough is
+retired. A declared contract whose serving reader remains non-Parquet stays explicitly withheld.
+
+The loader retries an initial transport failure once, then polls every 30 seconds while the
+query is failed or coverage unavailable. Successful complete results retain the five-minute
+refresh interval and real last-successful data remains visible across transient failures.
+
 Why the Parquet-plane modules in this directory are shaped the way they are. The "what" stays in
 the one-line doc comments beside each symbol; this file holds the reasoning a reader cannot
 reconstruct from the code. Scope: `parquet-plane-client.ts`, `parquet-envelope.ts`,
@@ -38,11 +58,9 @@ which is precisely why a lane carrying one may not be described from census fact
 may not fall back to the PostgreSQL passthrough either. Both fallbacks would answer a question the
 warehouse had just declined to answer, in a form the client cannot tell apart from a proved one.
 
-This is why `availabilityWithholding` runs **first** in `getParquetSliderCapabilities`, ahead of
-`coverage_not_current` and ahead of the passthrough filter, and why `retainedPostgresCapabilities`
-takes a withheld-name set: burn-severity is deliberately still served from PostgreSQL, but if its
-Parquet lane withheld its index then something is wrong with that layer's published evidence and
-the older reader is not a second opinion about it.
+This is why `availabilityWithholding` runs first in `getParquetSliderCapabilities`, ahead of
+`coverage_not_current`. Every row is proved from its own Parquet evidence. Burn severity now
+uses the same proof gate, and there is no PostgreSQL passthrough or legacy catalogue read.
 
 The four wire spellings are carried through into `WithheldParquetCapabilityReason` **unchanged**.
 A translation table between two enums that mean the same thing is a place for the two to drift,
@@ -281,7 +299,7 @@ identical bytes. Adding a field means editing `wire_contract.py`, the `WIRE`-adj
 `parquet-plane-client.ts`, and those fixtures in one change.
 
 The coverage body names its own shape in `coverage_schema_version`, mirrored here as
-`COVERAGE_SCHEMA_VERSION = 2`. It is decoded as a plain integer, echoed on
+`COVERAGE_SCHEMA_VERSION = 3`. It is decoded as a plain integer, echoed on
 `ParquetWarehouseCoverage.coverageSchemaVersion`, and then **gated in `decodeCoverage`** rather
 than pinned with `z.literal`: a zod failure would report "the census does not match the contract"
 for what is really a half-landed deploy, and the version number is the one fact that distinguishes
@@ -296,3 +314,43 @@ block by regex — adding a key to `routes` or `params` without the matching ent
 `WIRE_ROUTES`/`WIRE_PARAMS` fails the Python suite, which is the intended coupling. The response
 schemas live *below* that block and are not parsed, so they are freed to change only in step with
 the fixtures.
+
+## §parquet-context-readers — residual AI and point-weather cutover (2026-09-10)
+
+The live Next.js regional advisor still assembled drought, gauges and weather through retired
+PostgreSQL environmental readers after map viewport routes had migrated. The context adapters
+now use the same Parquet reader family, retaining named days and the served drought release date.
+Gauge and weather reads use zoom 13 because the AI payload describes individual stations; coarser
+rungs erase station identity. Gauges lacking a real id, name or coordinates refuse the read rather than
+silently narrowing the nearest-station search or assigning synthetic identities. Nullable measurements stay nullable; unrecognized conditions are
+explicitly unknown. Drought is scoped to the context bbox instead of loading a national collection.
+
+Point weather searches the same half-degree box as regional context, including at the live edge.
+It no longer performs a global PostgreSQL nearest-neighbour query. The result is the nearest
+published sample within this explicit window, never a claim about a global nearest station.
+Unwritten rungs, upstream faults and truncated reads reject so the advisor reports a failed read
+rather than licenses an absence from incomplete evidence. Governed absences remain empty values.
+Cancellation preserves CLIENT_CLOSED_REQUEST. The existing community proposal and strategy
+application reads are outside this environmental cutover; the Python agent remains a separate path.
+
+## report-validation — one report contract and one correction (2026-09-10)
+
+The September 10 production failure returned 13 observations against the route's maximum 12.
+The tool's manually copied JSON Schema omitted every array/string maximum, and the agent emitted
+its report before route validation. `remediation-report.ts` now owns the strict validator and
+uses the installed Zod v4 JSON Schema generator to expose its exact structure and bounds to both
+report-tool names. The route reuses that validator as defense in depth; no limit is weakened.
+The package is already present through zod 3.25.76's public `zod/v4` export, so no dependency update
+or vendor-internal API is involved.
+
+The agent validates tool arguments before emitting a report. Invalid JSON or schema violations
+receive field-specific tool feedback and one forced report correction, including when failure
+arrives on the fourth normal round. At most five completions occur, with at most one correction;
+the correction executes no searches and answers every tool call in the rejected message. A second
+invalid report throws into the route's existing error handling. Arrays are never truncated to pass:
+the model must consolidate/select evidence and return a complete valid report itself.
+
+Narration is buffered within each model round. Accepted report narration and search-round narration
+can be emitted; narration accompanying a rejected report is discarded so a user does not first see
+an apparently finished answer followed by a schema failure. Existing validated report rendering,
+source citations, cancellation, search budgets and persistence remain unchanged.

@@ -1,7 +1,5 @@
 "use client";
 
-import { Layers, Wind, Leaf } from "lucide-react";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { trpc } from "@/lib/trpc/client";
 import { Fragment } from "react";
 import {
@@ -10,9 +8,6 @@ import {
   SOIL_PROPERTY_POINT_FIELD,
 } from "@/components/map/layers/SoilLayer";
 import { useSoilStore } from "@/stores/soil-store";
-import { EROSION_COLORS, type ErosionClass } from "@/lib/environmental/erosion";
-import { CARBON_COLORS, classifyCarbonPotential, type CarbonClass } from "@/lib/environmental/carbon";
-import type { InterventionType } from "@/lib/environmental/intervention";
 import { useDebouncedLayerDay, useLayerVisibility } from "@/lib/map/layer-toggle-context";
 import {
   useSoilFieldQuery,
@@ -35,7 +30,7 @@ import { LANE_BASE_LATTICES } from "@/lib/map/zoom-tiers";
 const SOIL_FIELD_MEASURED_CELL_DEGREES = LANE_BASE_LATTICES["soil-field"].cellSizeDegrees;
 
 interface SoilDetailsProps {
-  /** Point to query for soil + intervention suitability */
+  /** Point to query for published soil properties. */
   queryPoint?: { lat: number; lon: number } | null;
   /**
    * Drops the query pin. Supplied by the dock's Soil section, which owns the click capture --
@@ -81,32 +76,6 @@ const SOIL_POINT_FIELD_ROWS: {
   { field: "cec", label: "CEC", format: (v) => `${v.toFixed(1)} cmol/kg` },
   { field: "ocd", label: "OCD", format: (v) => `${v.toFixed(1)} kg/m³` },
 ];
-
-const EROSION_CLASSES: ErosionClass[] = ["very_low", "low", "moderate", "high", "very_high"];
-const EROSION_CLASS_LABELS: Record<ErosionClass, string> = {
-  very_low: "Very Low",
-  low: "Low",
-  moderate: "Moderate",
-  high: "High",
-  very_high: "Very High",
-};
-
-const CARBON_CLASSES: CarbonClass[] = ["very_low", "low", "medium", "high", "very_high"];
-const CARBON_CLASS_LABELS: Record<CarbonClass, string> = {
-  very_low: "Very Low (<0.2 tC/ha/yr)",
-  low: "Low (0.2–0.5 tC/ha/yr)",
-  medium: "Medium (0.5–1.0 tC/ha/yr)",
-  high: "High (1.0–2.0 tC/ha/yr)",
-  very_high: "Very High (>2.0 tC/ha/yr)",
-};
-
-const INTERVENTION_LABELS: Record<InterventionType, string> = {
-  reforestation: "Reforestation",
-  silvopasture: "Silvopasture",
-  cover_cropping: "Cover Cropping",
-  biochar: "Biochar",
-  keyline: "Keyline Design",
-};
 
 function ColorLegendRow({ color, label }: { color: string; label: string }) {
   return (
@@ -343,32 +312,6 @@ function SoilFieldSection({
   );
 }
 
-// Reuses EROSION_COLORS (see erosion.ts) so risk color never disagrees between panels;
-// suitability has one fewer tier than erosion, so very_high is unused here.
-function SuitabilityBar({ score }: { score: number }) {
-  const color =
-    score >= 75
-      ? EROSION_COLORS.very_low
-      : score >= 50
-      ? EROSION_COLORS.low
-      : score >= 30
-      ? EROSION_COLORS.moderate
-      : EROSION_COLORS.high;
-  return (
-    <div className="flex items-center gap-2 flex-1">
-      <div className="flex-1 h-2 rounded-full bg-[hsl(var(--muted))] overflow-hidden">
-        <div
-          className="h-full rounded-full transition-all"
-          style={{ width: `${score}%`, backgroundColor: color }}
-        />
-      </div>
-      <span className="text-xs font-medium w-8 text-right" style={{ color }}>
-        {score}
-      </span>
-    </div>
-  );
-}
-
 /**
  * What the soil layers are showing, as the Soil section of the map dock.
  *
@@ -390,10 +333,6 @@ export function SoilDetails({
     { enabled: !!queryPoint }
   );
 
-  const suitabilityQuery = trpc.environmental.getInterventionSuitability.useQuery(
-    { lat: queryPoint?.lat ?? 0, lon: queryPoint?.lon ?? 0 },
-    { enabled: !!queryPoint }
-  );
 
   function handlePropertyChange(prop: SoilProperty) {
     setProperty(prop);
@@ -454,8 +393,6 @@ export function SoilDetails({
     : 0;
 
   const soil = soilQuery.data;
-  const suitability = suitabilityQuery.data;
-  const suitabilityAvailable = suitability?.availability === "published";
 
   return (
     <div className="flex flex-col">
@@ -630,24 +567,7 @@ export function SoilDetails({
       {/* No scroller of its own: the dock's body is the one scrolling element -- see
           panel-scroll.ts rule 2, whose exhibit was this very wrapper. */}
       <div className="mt-4">
-        <Tabs defaultValue="properties">
-          <TabsList className="w-full">
-            <TabsTrigger value="properties" className="flex-1 text-xs">
-              <Layers className="h-3.5 w-3.5 mr-1" />
-              Soil
-            </TabsTrigger>
-            <TabsTrigger value="erosion" className="flex-1 text-xs">
-              <Wind className="h-3.5 w-3.5 mr-1" />
-              Erosion
-            </TabsTrigger>
-            <TabsTrigger value="carbon" className="flex-1 text-xs">
-              <Leaf className="h-3.5 w-3.5 mr-1" />
-              Carbon
-            </TabsTrigger>
-          </TabsList>
-
-          {/* Soil Properties Tab */}
-          <TabsContent value="properties" className="flex flex-col gap-4 mt-4">
+        <div className="flex flex-col gap-4">
             <div className="flex flex-col gap-2">
               {/* "Display property" was a lie about scope. These buttons select nothing on the
                   map -- the SoilGrids raster they were built for cannot draw at all, because
@@ -752,159 +672,7 @@ export function SoilDetails({
                 </div>
               </div>
             )}
-          </TabsContent>
-
-          {/* Erosion Risk Tab */}
-          <TabsContent value="erosion" className="flex flex-col gap-4 mt-4">
-            <div className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
-              <p className="text-xs font-semibold mb-2 text-[hsl(var(--foreground))]">
-                Erosion Risk Classes
-              </p>
-              <div className="flex flex-col gap-1">
-                {EROSION_CLASSES.map((cls) => (
-                  <ColorLegendRow
-                    key={cls}
-                    color={EROSION_COLORS[cls]}
-                    label={EROSION_CLASS_LABELS[cls]}
-                  />
-                ))}
-              </div>
-            </div>
-
-            <div className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3 flex flex-col gap-2">
-              <p className="text-xs font-semibold text-[hsl(var(--foreground))]">
-                USLE K-Factor Method
-              </p>
-              <p className="text-[10px] text-[hsl(var(--muted-foreground))] leading-relaxed">
-                Erosion risk is estimated using the Universal Soil Loss Equation (USLE).
-                K-factor is approximated from organic carbon and bulk density.
-                LS-factor is derived from slope. C-factor is assigned by land cover type.
-              </p>
-            </div>
-
-            {suitabilityAvailable && suitability.erosionClass && suitability.erosionRisk !== null && (
-              <div className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3 flex flex-col gap-1">
-                <p className="text-xs font-semibold text-[hsl(var(--foreground))]">
-                  Point Erosion Risk
-                </p>
-                <div className="flex items-center gap-2 mt-1">
-                  <span
-                    className="w-3 h-3 rounded-full shrink-0"
-                    style={{
-                      backgroundColor:
-                        EROSION_COLORS[suitability.erosionClass as ErosionClass] ?? "#888",
-                    }}
-                  />
-                  <span className="text-xs font-medium capitalize">
-                    {EROSION_CLASS_LABELS[suitability.erosionClass as ErosionClass] ??
-                      suitability.erosionClass}{" "}
-                    (score: {suitability.erosionRisk})
-                  </span>
-                </div>
-              </div>
-            )}
-          </TabsContent>
-
-          {/* Carbon Potential Tab */}
-          <TabsContent value="carbon" className="flex flex-col gap-4 mt-4">
-            <div className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
-              <p className="text-xs font-semibold mb-2 text-[hsl(var(--foreground))]">
-                Sequestration Potential
-              </p>
-              <div className="flex flex-col gap-1">
-                {CARBON_CLASSES.map((cls) => (
-                  <ColorLegendRow
-                    key={cls}
-                    color={CARBON_COLORS[cls]}
-                    label={CARBON_CLASS_LABELS[cls]}
-                  />
-                ))}
-              </div>
-            </div>
-
-            {!queryPoint && (
-              <p className="text-xs text-[hsl(var(--muted-foreground))]">
-                Click on the map to see intervention-specific carbon potential.
-              </p>
-            )}
-
-            {queryPoint && suitabilityQuery.isLoading && (
-              <p className="text-xs text-[hsl(var(--muted-foreground))]">
-                Calculating intervention suitability…
-              </p>
-            )}
-
-            {suitability?.availability === "unavailable" && (
-              <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]">
-                Intervention effects are unavailable until a validated,
-                evidence-linked model release is published.
-              </p>
-            )}
-
-            {/* Two very different failures, told apart by the code the router chose.
-                PRECONDITION_FAILED is `SoilEvidenceUnavailableError` -- SoilGrids
-                actually reporting no measurement at this cell. Anything else is a
-                transport or provider fault. The previous single sentence blamed both on
-                an unpublished warehouse release, which names neither cause: this point
-                query has never been warehouse-backed, it reads ISRIC live. */}
-            {queryPoint && soilQuery.isError && (
-              <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]">
-                {soilQuery.error?.data?.code === "PRECONDITION_FAILED"
-                  ? "SoilGrids reports no soil measurement at this point."
-                  : "SoilGrids did not answer for this point — that is a provider fault, not an absence of soil. Try again shortly."}
-              </p>
-            )}
-
-            {suitabilityAvailable && (
-              <>
-                <div className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3 flex flex-col gap-2">
-                  <p className="text-xs font-semibold text-[hsl(var(--foreground))]">
-                    Intervention Suitability &amp; Carbon Potential
-                  </p>
-                  {(Object.entries(suitability.interventions) as [InterventionType, NonNullable<(typeof suitability.interventions)[InterventionType]>][]).map(
-                    ([type, data]) => {
-                      const carbonClass = classifyCarbonPotential(
-                        data.carbonPotential.potentialGain
-                      );
-                      return (
-                        <div
-                          key={type}
-                          className="border-t border-[hsl(var(--border))] pt-2 first:border-0 first:pt-0"
-                        >
-                          <div className="flex items-center justify-between mb-1">
-                            <span className="text-xs font-medium text-[hsl(var(--foreground))]">
-                              {INTERVENTION_LABELS[type]}
-                            </span>
-                            <span
-                              className="text-[10px] px-1.5 py-0.5 rounded-full font-medium"
-                              style={{
-                                backgroundColor: CARBON_COLORS[carbonClass] + "33",
-                                color: CARBON_COLORS[carbonClass],
-                              }}
-                            >
-                              {data.carbonPotential.potentialGain.toFixed(2)} tC/ha/yr
-                            </span>
-                          </div>
-                          <SuitabilityBar score={data.suitabilityScore} />
-                          <p className="text-[10px] text-[hsl(var(--muted-foreground))] mt-1">
-                            {data.rationale}
-                          </p>
-                          <p className="text-[10px] text-[hsl(var(--muted-foreground))]">
-                            Confidence:{" "}
-                            <span className="capitalize font-medium">
-                              {data.carbonPotential.confidenceClass}
-                            </span>{" "}
-                            · ~{data.carbonPotential.yearsToSaturation} yrs to saturation
-                          </p>
-                        </div>
-                      );
-                    }
-                  )}
-                </div>
-              </>
-            )}
-          </TabsContent>
-        </Tabs>
+        </div>
       </div>
     </div>
   );

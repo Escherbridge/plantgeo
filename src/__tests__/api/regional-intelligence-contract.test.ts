@@ -68,6 +68,27 @@ describe("remediation report contract", () => {
     expect(parsed.remediation[0].strategy).toBe("fuel_reduction");
   });
 
+  it("advertises the same report limits enforced by validation", async () => {
+    const { REPORT_TOOL, GENERATE_REMEDIATION_REPORT_TOOL } = await import("@/lib/server/services/ai-prompt");
+    expect(REPORT_TOOL.input_schema).toMatchObject({
+      additionalProperties: false,
+      properties: {
+        riskSummary: { properties: {
+          headline: { minLength: 1, maxLength: 300 },
+          factors: { maxItems: 8, items: { minLength: 1, maxLength: 240 } },
+          evidenceSources: { maxItems: 9 },
+        } },
+        observations: { maxItems: 12, items: { properties: { statement: { minLength: 1, maxLength: 500 } } } },
+        remediation: { maxItems: 8, items: { properties: {
+          title: { maxLength: 160 }, rationale: { maxLength: 900 }, consultProfessionals: { maxItems: 5 },
+        } } },
+        professionalConsultation: { minLength: 1, maxLength: 600 },
+      },
+    });
+    expect(GENERATE_REMEDIATION_REPORT_TOOL.input_schema).toBe(REPORT_TOOL.input_schema);
+    expect(remediationReportSchema.safeParse({ ...validReport, observations: Array.from({ length: 13 }, () => validReport.observations[0]) }).success).toBe(false);
+  });
+
   it("requires a professional-consultation statement", () => {
     const { professionalConsultation: _omitted, ...withoutConsultation } =
       validReport;
@@ -172,12 +193,13 @@ describe("generate_remediation_report tool wiring", () => {
    * service that never parses one.
    */
   function fakeCompletionStream(
-    toolCalls: Array<{ id: string; name: string; input: unknown }>
+    toolCalls: Array<{ id: string; name: string; input: unknown }>,
+    narration?: string
   ) {
     return {
       [Symbol.asyncIterator]: () =>
         (async function* () {
-          /* no text deltas for this fixture */
+          if (narration) yield { choices: [{ delta: { content: narration } }] };
         })(),
       finalChatCompletion: async () => ({
         choices: [
@@ -217,7 +239,7 @@ describe("generate_remediation_report tool wiring", () => {
       }
     );
 
-    const events = [];
+    const events: Array<{ type: string; report?: unknown; text?: string }> = [];
     for await (const event of streamRegionalIntelligence(
       minimalPayload(),
       { drought: "unavailable" },
@@ -260,5 +282,54 @@ describe("generate_remediation_report tool wiring", () => {
     // Would have kept nudging for the full MAX_TOOL_ROUNDS before the dispatch fix, since a
     // generate_remediation_report tool_use was never recognized as the report.
     expect(mocks.completionStream).toHaveBeenCalledTimes(1);
+  });
+
+  it("corrects too many observations before emitting a report or its narration", async () => {
+    const { streamRegionalIntelligence } = await import("@/lib/server/services/ai-prompt");
+    const tooMany = { ...validReport, observations: Array.from({ length: 13 }, () => validReport.observations[0]) };
+    mocks.completionStream
+      .mockReturnValueOnce(fakeCompletionStream([
+        { id: "invalid", name: "remediation_report", input: tooMany },
+        { id: "unused", name: "search_web", input: { query: "unnecessary" } },
+      ], "Unvalidated answer"))
+      .mockReturnValueOnce(fakeCompletionStream([{ id: "corrected", name: "remediation_report", input: validReport }], "Validated answer"));
+    const events: Array<{ type: string; report?: unknown; text?: string }> = [];
+    for await (const event of streamRegionalIntelligence(minimalPayload(), {}, true, minimalTemporalContext(), [])) events.push(event);
+    expect(events).toEqual([{ type: "text", text: "Validated answer" }, { type: "report", report: validReport }]);
+    expect(mocks.completionStream).toHaveBeenCalledTimes(2);
+    const correctiveRequest = mocks.completionStream.mock.calls[1][0];
+    expect(correctiveRequest.tool_choice).toEqual({ type: "function", function: { name: "remediation_report" } });
+    expect(correctiveRequest.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ role: "tool", tool_call_id: "invalid", content: expect.stringMatching(/observations:.*12/) }),
+      expect.objectContaining({ role: "tool", tool_call_id: "unused", content: expect.stringContaining("not executed") }),
+    ]));
+  });
+
+  it("allows one correction when the first invalid report arrives on the final normal round", async () => {
+    const { streamRegionalIntelligence } = await import("@/lib/server/services/ai-prompt");
+    const tooMany = { ...validReport, observations: Array.from({ length: 13 }, () => validReport.observations[0]) };
+    mocks.completionStream
+      .mockReturnValueOnce(fakeCompletionStream([]))
+      .mockReturnValueOnce(fakeCompletionStream([]))
+      .mockReturnValueOnce(fakeCompletionStream([]))
+      .mockReturnValueOnce(fakeCompletionStream([{ id: "invalid", name: "remediation_report", input: tooMany }]))
+      .mockReturnValueOnce(fakeCompletionStream([{ id: "corrected", name: "remediation_report", input: validReport }]));
+    const events: Array<{ type: string; report?: unknown; text?: string }> = [];
+    for await (const event of streamRegionalIntelligence(minimalPayload(), {}, true, minimalTemporalContext(), [])) events.push(event);
+    expect(events).toEqual([{ type: "report", report: validReport }]);
+    expect(mocks.completionStream).toHaveBeenCalledTimes(5);
+  });
+
+  it("stops after one failed correction and never truncates a report into validity", async () => {
+    const { streamRegionalIntelligence } = await import("@/lib/server/services/ai-prompt");
+    const tooMany = { ...validReport, observations: Array.from({ length: 13 }, () => validReport.observations[0]) };
+    mocks.completionStream.mockImplementation(() => fakeCompletionStream([{ id: "invalid", name: "remediation_report", input: tooMany }], "Not yet valid"));
+    const events: Array<{ type: string; report?: unknown; text?: string }> = [];
+    const collect = async () => {
+      for await (const event of streamRegionalIntelligence(minimalPayload(), {}, true, minimalTemporalContext(), [])) events.push(event);
+    };
+    await expect(collect()).rejects.toThrow("bounded correction attempt");
+    expect(events).toEqual([]);
+    expect(mocks.completionStream).toHaveBeenCalledTimes(2);
   });
 });

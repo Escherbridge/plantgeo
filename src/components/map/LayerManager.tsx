@@ -175,10 +175,6 @@ const QueryPointLayer = dynamic(
   () => import("@/components/map/layers/QueryPointLayer").then((m) => ({ default: m.QueryPointLayer })),
   { ssr: false }
 );
-const StrategyLayer = dynamic(
-  () => import("@/components/map/layers/StrategyLayer").then((m) => ({ default: m.StrategyLayer })),
-  { ssr: false }
-);
 
 export default function LayerManager() {
   const map = useMap();
@@ -1197,7 +1193,7 @@ export default function LayerManager() {
           and DockDetails' capture hook (SoilDetailsBody, DockDetails.tsx:100-101) is the
           only thing that ever sets it. */}
       <QueryPointLayer map={map} point={queryPoint} />
-      <StrategyLayer map={map} loaded={styleReady} />
+
     </>
   );
 }

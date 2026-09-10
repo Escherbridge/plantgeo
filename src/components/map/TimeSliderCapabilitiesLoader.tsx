@@ -87,7 +87,9 @@ export default function TimeSliderCapabilitiesLoader() {
   // so waiting five minutes would keep valid sliders hidden after the evidence recovered.
   const capabilitiesQuery = trpc.environmental.getSliderCapabilities.useQuery(undefined, {
     staleTime: CAPABILITIES_REFRESH_MS,
+    retry: 1,
     refetchInterval: (query) =>
+      query.state.status === "error" ||
       query.state.data?.streamsUnavailable || query.state.data?.parquetCoverageUnavailable
         ? CAPABILITIES_RETRY_MS
         : CAPABILITIES_REFRESH_MS,

@@ -30,7 +30,7 @@ const Tabs = React.forwardRef<HTMLDivElement, TabsProps>(
 
     return (
       <TabsContext.Provider value={{ value, onValueChange: handleChange }}>
-        <div ref={ref} className={cn("w-full", className)} {...props} />
+        <div ref={ref} className={cn("min-w-0 w-full", className)} {...props} />
       </TabsContext.Provider>
     );
   }
@@ -44,7 +44,7 @@ const TabsList = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivEl
         ref={ref}
         role="tablist"
         className={cn(
-          "inline-flex h-10 items-center gap-1 rounded-(--radius) bg-[hsl(var(--muted))] p-1 text-[hsl(var(--muted-foreground))]",
+          "inline-flex min-h-10 max-w-full flex-wrap items-center gap-1 rounded-(--radius) bg-[hsl(var(--muted))] p-1 text-[hsl(var(--muted-foreground))]",
           className
         )}
         {...props}
@@ -103,7 +103,7 @@ const TabsTrigger = React.forwardRef<HTMLButtonElement, TabsTriggerProps>(
         onClick={() => ctx.onValueChange(value)}
         onKeyDown={handleKeyDown}
         className={cn(
-          "relative inline-flex items-center justify-center whitespace-nowrap rounded-[calc(var(--radius)-2px)] px-3 py-1.5 text-sm font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))] focus-visible:ring-offset-2 focus-visible:ring-offset-[hsl(var(--background))] disabled:pointer-events-none disabled:opacity-50",
+          "relative inline-flex min-w-fit max-w-full items-center justify-center whitespace-normal rounded-[calc(var(--radius)-2px)] px-2 py-1.5 text-center text-sm font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))] focus-visible:ring-offset-2 focus-visible:ring-offset-[hsl(var(--background))] disabled:pointer-events-none disabled:opacity-50 [&_svg]:shrink-0",
           isActive
             ? "bg-[hsl(var(--background))] text-[hsl(var(--foreground))] shadow-sm"
             : "hover:text-[hsl(var(--foreground))]",

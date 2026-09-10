@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ZoomTier } from "@/lib/map/zoom-tiers";
 import {
   CLIMATE_FIELD_SIGNAL_IDS,
@@ -156,6 +156,8 @@ function setCoverage(lanes: CoverageRow[]): void {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-08-28T12:00:00Z"));
   setCoverage(completeCoverage());
   mocks.getGeoFeatureSliderCapabilities.mockResolvedValue({
     serverCurrentDate: "2026-08-28",
@@ -168,7 +170,35 @@ beforeEach(() => {
   });
 });
 
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 describe("getParquetSliderCapabilities", () => {
+  it("serves Parquet dates when the retired PostgreSQL census would fail", async () => {
+    mocks.getGeoFeatureSliderCapabilities.mockRejectedValue(
+      new Error('materialized view "mv_signal_observation_day" has not been populated')
+    );
+    const result = await getParquetSliderCapabilities();
+    expect(result.layers.find((layer) => layer.layerName === "fire-detections")).toMatchObject({
+      earliestObservedDate: FIRST_DAY,
+      latestObservedDate: LAST_DAY,
+    });
+    expect(result.serverCurrentDate).toBe("2026-08-28");
+    expect(result.futureAxisDays).toBe(30);
+    expect(mocks.getGeoFeatureSliderCapabilities).not.toHaveBeenCalled();
+  });
+
+  it("restamps UTC today after a cold read crosses midnight", async () => {
+    mocks.getParquetWarehouseCoverage.mockImplementation(async () => {
+      vi.setSystemTime(new Date("2026-08-29T00:00:00Z"));
+      return { generatedAt: "2026-08-28T12:00:00Z", evaluatedThroughDay: "2026-08-28", lanes: completeCoverage() };
+    });
+    const result = await getParquetSliderCapabilities();
+    expect(result.serverCurrentDate).toBe("2026-08-29");
+    expect(result.layers).toEqual([]);
+    expect(result.withheldParquetCapabilities.every((entry) => entry.reason === "coverage_not_current")).toBe(true);
+  });
   it("owns every catalogue row but publishes only end-to-end Parquet readers with exact evidence", async () => {
     const expectedCatalogue = [
       "drought-areas",
@@ -261,11 +291,8 @@ describe("getParquetSliderCapabilities", () => {
     const nonParquetReaders = PARQUET_CAPABILITY_CONTRACTS.filter(
       (contract) => contract.servingReader !== "parquet"
     ).map((contract) => contract.layerName);
-    // `interventions` alone survives from PostgreSQL: it is the only row this module owns no
-    // contract for. burn-severity now sits inside `parquetReaders`, in contract order, rather than
-    // ahead of them as a retained passthrough.
+    // The public census publishes only its explicitly owned Parquet contracts.
     expect(result.layers.map((layer) => layer.layerName)).toEqual([
-      "interventions",
       ...parquetReaders,
     ]);
     expect(parquetReaders).toContain("burn-severity");
@@ -847,7 +874,7 @@ describe("getParquetSliderCapabilities", () => {
     ]);
   });
 
-  it("starts the independent PostgreSQL-owned capability read while coverage is cold", async () => {
+  it("does not start a PostgreSQL read while Parquet coverage is cold", async () => {
     let resolveCoverage!: (coverage: ReturnType<typeof completeCoverage>) => void;
     mocks.getParquetWarehouseCoverage.mockReturnValue(
       new Promise((resolve) => {
@@ -861,7 +888,7 @@ describe("getParquetSliderCapabilities", () => {
     );
 
     const pending = getParquetSliderCapabilities();
-    expect(mocks.getGeoFeatureSliderCapabilities).toHaveBeenCalledTimes(1);
+    expect(mocks.getGeoFeatureSliderCapabilities).not.toHaveBeenCalled();
     resolveCoverage(completeCoverage());
     await pending;
   });
@@ -874,7 +901,7 @@ describe("getParquetSliderCapabilities", () => {
 
     // burn-severity is gone too, deliberately: its pixels are Parquet, so retaining a PostgreSQL
     // axis for it exactly when the warehouse cannot answer is the inversion this module refuses.
-    expect(result.layers.map((layer) => layer.layerName)).toEqual(["interventions"]);
+    expect(result.layers.map((layer) => layer.layerName)).toEqual([]);
     expect(result.parquetCoverageUnavailable).toBe(true);
     expect(result.parquetCoverageGeneratedAt).toBeNull();
     expect(result.parquetCoverageEvaluatedThroughDay).toBeNull();
@@ -896,7 +923,7 @@ describe("getParquetSliderCapabilities", () => {
     mocks.getParquetWarehouseCoverage.mockRejectedValue(fault);
 
     await expect(getParquetSliderCapabilities()).rejects.toBe(fault);
-    expect(mocks.getGeoFeatureSliderCapabilities).toHaveBeenCalledTimes(1);
+    expect(mocks.getGeoFeatureSliderCapabilities).not.toHaveBeenCalled();
   });
 
   it("withholds every Parquet-owned row when coverage predates the server current day", async () => {
@@ -909,7 +936,7 @@ describe("getParquetSliderCapabilities", () => {
 
     const result = await getParquetSliderCapabilities();
 
-    expect(result.layers.map((layer) => layer.layerName)).toEqual(["interventions"]);
+    expect(result.layers.map((layer) => layer.layerName)).toEqual([]);
     expect(result.withheldParquetCapabilities).toHaveLength(PARQUET_CAPABILITY_CONTRACTS.length);
     expect(result.withheldParquetCapabilities.every((entry) => entry.reason === "coverage_not_current")).toBe(
       true

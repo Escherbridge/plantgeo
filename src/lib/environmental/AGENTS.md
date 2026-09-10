@@ -8,6 +8,15 @@ depend only on these inert contracts.
 Types describe evidence returned by first-party APIs. They do not imply that a
 provider is configured or that a validated warehouse release is available.
 
+## §slider-policy
+
+`slider-policy.ts` keeps display and payload limits independent of any database reader.
+Both capability implementations use its 800-range cap and 30-day future band. A four-year
+daily axis can alternate published and absent days at most about 730 times, so 800 admits
+that worst case while bounding longer histories. Keep the newest ranges and move the
+described boundary when truncating; a dropped gap must never become a claim of coverage.
+The future band makes the today boundary visible and does not promise forecast data.
+
 ## §soil-field
 
 `soil-field.ts` is the value vocabulary for **all three** ERA5-Land layers — volumetric

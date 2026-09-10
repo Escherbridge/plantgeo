@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { screen, within } from "@testing-library/react";
+import { fireEvent, screen, within } from "@testing-library/react";
 import { renderWithProviders } from "@/test/utils";
 import type { ChatMessage } from "@/stores/regional-intelligence-store";
 import type { RegionalIntelligenceResponse } from "@/lib/regional-intelligence";
@@ -80,6 +80,38 @@ function assistantMessage(response: RegionalIntelligenceResponse): ChatMessage {
 describe("RegionalIntelligencePanel strategy chips", () => {
   afterEach(() => {
     mocks.state.messages = [];
+    mocks.state.dataFreshness = {};
+    vi.useRealTimers();
+  });
+
+  it("does not describe an empty completed request as still reviewing", () => {
+    mocks.state.messages = [{ id: "failed", role: "assistant", content: "", isStreaming: false }];
+    renderWithProviders(<RegionalIntelligencePanel />);
+    expect(screen.getByText("No analysis was completed.")).toBeTruthy();
+    expect(screen.queryByText("Reviewing this location…")).toBeNull();
+  });
+
+  it("labels undated soil and captured perimeter releases without calling them unobserved", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-10T12:00:00Z"));
+    mocks.state.dataFreshness = {
+      soilProperties: "static_release_untimed",
+      firePerimeters: "snapshot_captured_2026-09-01",
+    };
+    renderWithProviders(<RegionalIntelligencePanel />);
+    fireEvent.click(screen.getByRole("button", { name: "Data sources (2)" }));
+    expect(screen.getByText("Static release (undated)")).toBeTruthy();
+    expect(screen.getByText("Snapshot captured 2026-09-01")).toBeTruthy();
+    expect(screen.queryByText("Not observed")).toBeNull();
+  });
+
+  it("keeps an old perimeter snapshot stale while displaying its actual capture day", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-10T12:00:00Z"));
+    mocks.state.dataFreshness = { firePerimeters: "snapshot_captured_2026-08-01" };
+    renderWithProviders(<RegionalIntelligencePanel />);
+    fireEvent.click(screen.getByRole("button", { name: "Data sources (1)" }));
+    expect(screen.getByText("Stale (Snapshot captured 2026-08-01)")).toBeTruthy();
   });
 
   it("renders a chip per recommended strategy, named from the model's own remediation items", () => {

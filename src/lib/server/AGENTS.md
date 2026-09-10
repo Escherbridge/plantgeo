@@ -1183,8 +1183,10 @@ The private `/window` client verifies every adjacent calendar day, not only the 
 sort order. A missing interior envelope is a contract fault even when the first and last days are
 correct; adjacency is computed from ISO fields without converting publisher days to instants.
 
-The slider adapter may retain only the PostgreSQL-backed `geo.features` catalogue rows that have
-not crossed that boundary. It reads them through `getGeoFeatureSliderCapabilities()`.
+The public slider adapter reads only Parquet coverage. It does not call
+`getGeoFeatureSliderCapabilities()` or retain legacy PostgreSQL catalogue rows. The old
+feature-only UNION census still depended on an unpopulated retired signal view, causing every
+date slider to fail on 2026-09-10. See `services/AGENTS.md` section slider-bootstrap.
 
 **2026-09-04 (wave-C lane C3):** the merged `getSliderCapabilities()` this paragraph used to warn
 against calling -- the one that also waited on a `readStreamCapabilities()` scan of
@@ -1258,11 +1260,11 @@ denominator cell that the reader was not allowed to return. `cellCount` remains 
 population, so a partial day says “N of M” instead of redefining M to equal N. This is a serving
 contract, not a second data source: no value or availability is derived from the lattice table.
 
-The census UTC `evaluated_through_day` must equal the PostgreSQL capability clock's
-`serverCurrentDate`; a cache straddling midnight withholds every owned row rather than inventing a
+The census UTC `evaluated_through_day` must equal the server's UTC `serverCurrentDate`,
+stamped after the coverage read; a cache straddling midnight withholds every owned row rather than inventing a
 gap it did not evaluate. Exact storage proof is also not enough by itself: only products named by
-an end-to-end Parquet reader can synthesize a slider. Other catalogue rows remain owned and have
-their PostgreSQL capability filtered, but are withheld as `reader_not_parquet` even when four-rung
+an end-to-end Parquet reader can synthesize a slider. Other declared contracts remain owned
+but are withheld as `reader_not_parquet` even when four-rung
 evidence is perfect. That gate prevents a Parquet-derived axis from driving a PostgreSQL-rendered
 population.
 
@@ -1322,17 +1324,12 @@ and its membership made `proveCapability` return early, so the `servingReader` l
 anything at all without effect. **Both edits were needed or neither**; flipping the reader alone
 would have changed nothing.
 
-**The passthrough set was deleted, not left empty.** With its one member gone it governed four
-branches that could never be taken (the retained-rows filter, the unavailable-census proof list, the
-early return in the proof loop, and the `withheldPassthroughNames` set threaded into
-`retainedPostgresCapabilities`), and a reader cannot tell an exception mechanism with no current
-members apart from a retired one. The rule it enforced is now structural and stated once on
-`retainedPostgresCapabilities`: a Parquet-owned layer is proved from Parquet evidence or has no row
-at all, and a layer with no Parquet contract is untouched. `interventions` is the only survivor
-today. **This has a cost, and the cost is deliberate**: when the coverage plane is unavailable
-altogether, burn-severity now loses its slider row along with every other Parquet-owned layer
-instead of falling back to a PostgreSQL axis. Retaining that axis would be the inversion above,
-drawn at exactly the moment the warehouse cannot contradict it.
+**All PostgreSQL passthrough is retired as of 2026-09-10.** The earlier per-name exception set
+was removed on September 7; `retainedPostgresCapabilities` and the legacy catalogue query are
+now removed from the public census too. Every published row must belong to an explicit Parquet
+contract and pass its evidence proof. This excludes legacy `interventions` catalogue rows.
+When coverage is unavailable, burn-severity loses its slider row with the other Parquet layers;
+an older PostgreSQL axis cannot substitute for unavailable evidence.
 
 **`restoreCumulativeBurnHistory` is the load-bearing part.** `getParquetBurnSeverity`
 (`services/parquet-trpc-readers.ts:2122`) walks BACK through releases and unions every one dated at
@@ -1355,10 +1352,11 @@ one shared site safe for every other row, and it must stay.
 
 ## §regional-context-fire-perimeters
 
-The agent's fire-perimeter block moved off PostgreSQL on 2026-09-07. It was the last environmental
-read `services/regional-context.ts` issued against `geo.features`, for a layer
-`parquet-slider-capabilities.ts` already declares `servingReader: "parquet"` — acceptance criterion
-2 of `environmental_postgres_retirement_20260904` ("not the app, **not the agent tools**"). The
+The agent's fire-perimeter block moved off PostgreSQL on 2026-09-07. The earlier claim that this
+was its last environmental PostgreSQL read was incorrect: drought, gauges and weather still
+called the legacy readers indirectly. Those remaining calls move to Parquet on 2026-09-10;
+see `services/AGENTS.md` §parquet-context-readers. The perimeter lane was already declared
+`servingReader: "parquet"` in `parquet-slider-capabilities.ts`. The
 table was also FROZEN: `postgres-fire-perimeters` is not in the executor's active lane set, so that
 read was serving the AI whatever PostgreSQL last held with nothing in the payload saying it had
 stopped moving, while the Parquet lane it shares a name with kept being captured (version

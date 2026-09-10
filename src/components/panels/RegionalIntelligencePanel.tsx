@@ -19,6 +19,7 @@ import {
   AI_GENERATED_LABEL,
   isRegionalEvidenceSource,
   regionalEvidenceFreshnessState,
+  regionalEvidenceSnapshotDay,
   type EvidenceOrigin,
   type RegionalIntelligenceResponse,
 } from '@/lib/regional-intelligence';
@@ -343,10 +344,18 @@ function DataFreshnessFooter({ freshness }: { freshness: Record<string, string> 
             const observedAt = Number.isFinite(timestamp)
               ? new Date(timestamp).toLocaleString()
               : null;
+            const snapshotDay = isRegionalEvidenceSource(source)
+              ? regionalEvidenceSnapshotDay(source, value)
+              : null;
+            const evidenceLabel = source === 'soilProperties' && value === 'static_release_untimed'
+              ? 'Static release (undated)'
+              : snapshotDay !== null
+                ? `Snapshot captured ${snapshotDay}`
+                : observedAt;
             const state =
               freshnessState === 'available'
                 ? {
-                    label: observedAt ?? 'Available',
+                    label: evidenceLabel ?? 'Available',
                     color: 'text-green-600 dark:text-green-400',
                     dot: 'bg-green-400',
                   }
@@ -358,7 +367,7 @@ function DataFreshnessFooter({ freshness }: { freshness: Record<string, string> 
                     }
                   : freshnessState === 'stale'
                     ? {
-                        label: `Stale${observedAt ? ` (${observedAt})` : ''}`,
+                        label: `Stale${evidenceLabel ? ` (${evidenceLabel})` : ''}`,
                         color: 'text-amber-600 dark:text-amber-400',
                         dot: 'bg-amber-400',
                       }
@@ -459,7 +468,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
       role={message.isStreaming ? 'status' : undefined}
       className="whitespace-pre-wrap rounded-lg bg-gray-50 px-3 py-2 text-sm dark:bg-gray-800"
     >
-      {message.content || 'Reviewing this location…'}
+      {message.content || (message.isStreaming ? 'Reviewing this location…' : 'No analysis was completed.')}
       {message.isStreaming && <span className="ml-1 animate-pulse">|</span>}
     </div>
   );

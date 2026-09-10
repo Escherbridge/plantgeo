@@ -472,6 +472,11 @@ export function layerRegistryEntries(): LayerRegistryEntry[] {
   return LAYER_TOGGLE_IDS.map((toggleId) => LAYER_REGISTRY[toggleId]);
 }
 
+/** Deferred product entrypoints; see AGENTS.md section deferred-analysis-surfaces. */
+export function isLayerDeferred(toggleId: LayerToggleId): boolean {
+  return toggleId === "strategy-recommendations";
+}
+
 /** True when the string names a registry layer rather than a user-uploaded one. */
 export function isLayerToggleId(value: string): value is LayerToggleId {
   return Object.prototype.hasOwnProperty.call(LAYER_REGISTRY, value);
@@ -536,6 +541,6 @@ export function unreachableLayerToggleIds(renderedToggleIds?: Iterable<string>):
   if (renderedToggleIds === undefined) return [];
   const rendered = new Set(renderedToggleIds);
   return layerRegistryEntries()
-    .filter((entry) => !rendered.has(entry.toggleId))
+    .filter((entry) => !isLayerDeferred(entry.toggleId) && !rendered.has(entry.toggleId))
     .map((entry) => entry.toggleId);
 }

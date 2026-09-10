@@ -121,7 +121,7 @@ describe("resolveLayerTimeState: the transport states", () => {
     // A failed fetch says nothing about a layer that was never in the census, so the state is
     // decided BEFORE transport is consulted.
     expect(state.kind).toBe("no_time_axis");
-    expect(state.detail).toContain("No warehouse layer backs this one");
+    expect(state.detail).toContain("does not provide a date history");
   });
 });
 
@@ -232,7 +232,7 @@ describe("resolveLayerTimeState: the record's own states", () => {
     });
 
     expect(state.kind).toBe("empty");
-    expect(state.detail).toContain("Not published to the warehouse record yet");
+    expect(state.detail).toContain("No dates have been published");
   });
 
   it("blames the short scan, not the record, when the payload says its streams are unavailable", () => {
@@ -408,7 +408,7 @@ describe("reading the withheld evidence the client type does not declare", () =>
         capabilities: payload,
         capabilitiesUnavailable: false,
       }).detail
-    ).toContain("Not published to the warehouse record yet");
+    ).toContain("No dates have been published");
 
     // A malformed neighbour does not take the readable entries down with it.
     expect(findWithheldCapability(payload, "vegetation")).toEqual({

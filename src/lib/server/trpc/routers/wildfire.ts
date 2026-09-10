@@ -3,7 +3,7 @@ import { TRPCError } from "@trpc/server";
 import { router, publicProcedure, type Context } from "@/lib/server/trpc/init";
 import { features, layers } from "@/lib/server/db/schema";
 import { eq, and } from "drizzle-orm";
-import { getPublishedWeatherForPoint } from "@/lib/server/services/environmental-read-model";
+import { getContextWeatherForPoint } from "@/lib/server/services/parquet-context-readers";
 import {
   getParquetFireDetections,
   getParquetWeatherObservations,
@@ -184,10 +184,11 @@ export const wildfireRouter = router({
         lon: z.number().min(-180).max(180),
       })
     )
-    .query(async ({ input }) => {
-      const observation = await getPublishedWeatherForPoint(
+    .query(async ({ input, signal }) => {
+      const observation = await getContextWeatherForPoint(
         input.lat,
-        input.lon
+        input.lon,
+        signal
       );
       return observation
         ? { availability: "published" as const, observation }

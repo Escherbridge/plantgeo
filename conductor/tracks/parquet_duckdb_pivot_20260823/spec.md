@@ -196,3 +196,34 @@ is genuine work, not a phantom-floor artefact.
 **`weather-observations` holds only 21 days in Postgres (2026-08-03 → today).** There is no deeper
 weather history to drain. Years of it must come from the Open-Meteo historical API writing Parquet
 directly — which is decision 2 of §0.31.5 arriving on its own.
+
+## Deferred analysis UI — owner decision 2026-09-10
+
+Forecast, untrained ML recommendations and empty analysis placeholders are deferred until their
+published data supports a useful interaction. The observed Parquet layers remain visible even
+where ingestion/availability needs repair: missing publication work is not a reason to hide a
+real lane. This decision removes UI entrypoints and automatic requests, not backend APIs or
+future implementation modules.
+
+- Vegetation retains measured NDVI and NASA MODIS satellite views. The Forecast tab is removed
+  while the deployed forecast service is unconfigured; restoration requires a configured reader
+  and a validated published series at the selected place/time. The empty Land Cover tab is also
+  removed; restoration requires an actual published land-cover producer and reader. Opacity stays
+  on the shared layer row, removing the duplicate control from the details pane.
+- ML Strategy Recommendations is removed from the exposed map layer groups and its component is
+  no longer mounted, including for sessions retaining an old active-layer selection. The registry,
+  rendering implementation, backend routes and vocabulary stay available for future work. Restore
+  only after a trained/validated label plane and published recommendation evidence exist.
+- Soil Carbon and Erosion tabs and their suitability request are removed because
+  `getInterventionSuitability` returns only `unavailable`, null effects and an empty intervention
+  set. Measured organic carbon remains a real soil property, and SoilGrids point properties,
+  soil-field observations and soil-survey readers remain intact. Restore effect estimates only
+  from a validated warehouse-backed release with provenance and uncertainty.
+
+Proof scope: no module, dependency, route or historical migration was deleted, so the repository
+conformity track's proof-before-delete module-removal gate is not claimed. Only UI consumers and
+locals exclusively used by those consumers are removed. Source evidence: VegetationDetails' own
+unconfigured-forecast/unpublished-land-cover branches, the constant refusal in
+`services/carbon-potential.ts`, and production strategy view-refresh failures recorded in
+`.omc/research/railway-ingestion-2026-09-10.md`. Re-enable each UI only when its concrete publication
+criterion above is satisfied; do not restore empty tabs as a roadmap advertisement.

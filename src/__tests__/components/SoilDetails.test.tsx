@@ -254,6 +254,16 @@ function renderPanel() {
 }
 
 describe("SoilDetails SSURGO coverage", () => {
+  it("keeps real soil point queries without unpublished carbon and erosion tabs", () => {
+    renderWithProviders(<SoilDetails queryPoint={{ lat: 43.6, lon: -116.2 }} bbox={VIEWPORT_BBOX} />);
+    expect(queries.getSoilProperties).toHaveBeenCalledWith(
+      { lat: 43.6, lon: -116.2 },
+      { enabled: true }
+    );
+    expect(queries.getInterventionSuitability).not.toHaveBeenCalled();
+    expect(screen.queryByRole("tab", { name: "Carbon" })).toBeNull();
+    expect(screen.queryByRole("tab", { name: "Erosion" })).toBeNull();
+  });
   it("reports a truncated view as partial rather than as the map units in view", () => {
     // Reachable at the sanctioned zoom: at MAX_SOIL_BBOX_SQUARE_DEGREES over Corn Belt
     // farmland SDA holds more than MAX_SOIL_POLYGONS map units, serves the first 1000,

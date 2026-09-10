@@ -21,10 +21,7 @@ interface ConsoleShellProps {
   maxWidthClassName?: string;
 }
 
-/**
- * Shared "geospatial access" console frame for onboarding, invite, and join
- * landing pages — the visual continuation of the (auth) route group.
- */
+/** Scrollable frame for onboarding, invite, and join pages. */
 export function ConsoleShell({
   children,
   eyebrow,
@@ -33,7 +30,7 @@ export function ConsoleShell({
 }: ConsoleShellProps) {
   return (
     <div
-      className={`${displayFont.variable} ${monoFont.variable} relative flex min-h-screen items-center justify-center overflow-hidden bg-zinc-950 px-4 py-16 [font-family:var(--font-onboarding-mono)]`}
+      className={`${displayFont.variable} ${monoFont.variable} relative flex h-dvh items-start justify-center overflow-y-auto bg-zinc-950 px-4 py-8 sm:py-16 [font-family:var(--font-onboarding-mono)]`}
     >
       <div aria-hidden className="onboarding-waypoint-field pointer-events-none absolute inset-0" />
       <div
@@ -48,7 +45,7 @@ export function ConsoleShell({
         {cornerLabel}
       </div>
 
-      <div className={`relative z-10 w-full ${maxWidthClassName}`}>
+      <div className={`relative z-10 my-auto w-full shrink-0 ${maxWidthClassName}`}>
         <div className="mb-8 flex flex-col items-center text-center">
           <span className="text-[10px] uppercase tracking-[0.35em] text-emerald-500">{eyebrow}</span>
           <h1 className="mt-2 text-3xl italic text-zinc-50 [font-family:var(--font-onboarding-display)]">

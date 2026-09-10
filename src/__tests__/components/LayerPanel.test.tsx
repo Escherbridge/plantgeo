@@ -259,6 +259,10 @@ describe("LayerPanel layer tree", () => {
     openPanel();
 
     for (const toggleId of LAYER_TOGGLE_IDS) {
+      if (toggleId === "strategy-recommendations") {
+        expect(screen.queryByTestId(`layer-row-${toggleId}`)).toBeNull();
+        continue;
+      }
       const row = rowFor(toggleId);
       expect(row.textContent, toggleId).toContain(LAYER_REGISTRY[toggleId].label);
     }
@@ -477,8 +481,8 @@ describe("LayerPanel dock sections", () => {
     for (const label of [
       "Fire Dashboard",
       "Water Scarcity",
-      "Vegetation & Land Cover",
-      "Soil Health & Carbon",
+      "Vegetation",
+      "Soil Properties",
       "Strategy Requests",
       "Team Dashboard",
       "Offline & Sync",
@@ -504,7 +508,7 @@ describe("LayerPanel dock sections", () => {
 
     expect(usePanelStore.getState().expandedDetails).toEqual(["water"]);
     expect(detailsToggleFor("Water Scarcity").getAttribute("aria-expanded")).toBe("true");
-    expect(detailsToggleFor("Soil Health & Carbon").getAttribute("aria-expanded")).toBe(
+    expect(detailsToggleFor("Soil Properties").getAttribute("aria-expanded")).toBe(
       "false"
     );
   });

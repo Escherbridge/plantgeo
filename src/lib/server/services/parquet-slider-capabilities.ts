@@ -1,9 +1,8 @@
-import {
-  getGeoFeatureSliderCapabilities,
-  MAX_REPORTED_DAY_RANGES,
-  type ResolvedSliderCapabilities,
-  type ResolvedSliderLayerCapability,
+import type {
+  ResolvedSliderCapabilities,
+  ResolvedSliderLayerCapability,
 } from "@/lib/server/services/environmental-read-model";
+import { FUTURE_AXIS_DAYS, MAX_REPORTED_DAY_RANGES } from "@/lib/environmental/slider-policy";
 import {
   getParquetWarehouseCoverage,
   PARQUET_AVAILABILITY_WITHHELD_REASONS,
@@ -198,15 +197,11 @@ const SIGNAL_PARQUET_CAPABILITIES = [
   ),
 ] as const satisfies readonly ParquetCapabilityContract[];
 
-/** Complete client-catalogue ownership table; a migrated row absent here would fall back to PostgreSQL. */
+/** Complete environmental capability catalogue; only proved Parquet rows are published. */
 export const PARQUET_CAPABILITY_CONTRACTS = [
   ...DIRECT_PARQUET_CAPABILITIES,
   ...SIGNAL_PARQUET_CAPABILITIES,
 ] as const satisfies readonly ParquetCapabilityContract[];
-
-const PARQUET_CAPABILITY_NAMES = new Set(
-  PARQUET_CAPABILITY_CONTRACTS.map((contract) => contract.layerName)
-);
 
 function isCoverageBoundaryFault(error: unknown): boolean {
   return (
@@ -263,37 +258,6 @@ function restoreCumulativeBurnHistory(
     densityExcludedObservedDayCount: 0,
     minimumDailyObservationCount: null,
   };
-}
-
-/**
- * The PostgreSQL rows that survive the cutover: exactly the layers this module owns no contract for.
- *
- * THE WITHHOLDING RULE, which is now structural rather than a per-name exception list. A
- * `POSTGRES_CAPABILITY_PASSTHROUGH_NAMES` set carried the one exception -- `burn-severity`, and
- * nothing else -- until its reader flipped to Parquet on 2026-09-07 and emptied it. The set was
- * deleted along with its four use sites rather than left empty, because an empty set states a rule
- * through branches that can no longer be taken, and a reader cannot tell a live exception with no
- * current members apart from a retired one:
- *
- * 1. **A Parquet-owned layer is proved from Parquet evidence or it has no row at all.** Not a
- *    census fallback, not the older PostgreSQL row -- either would answer a question the warehouse
- *    just declined to answer, in a form the client cannot tell apart from a proved one. This holds
- *    identically for a withheld availability index, an unproven contract, a stale census and a
- *    wholly unavailable one, and needs no bookkeeping to keep holding.
- * 2. **A layer with no Parquet contract is untouched.** `interventions` and any future
- *    PostgreSQL-only row are not claims about warehouse evidence, so nothing here withholds them --
- *    blanking a layer the census never claimed to describe would be its own false report.
- *
- * What (1) cost, stated rather than discovered: when the coverage plane is unavailable altogether,
- * burn-severity now loses its slider row with every other Parquet-owned layer instead of falling
- * back to a PostgreSQL axis. That is the point -- its pixels come from Parquet, so a retained
- * PostgreSQL axis would be exactly the inversion `servingReader` exists to prevent, drawn at the
- * moment the warehouse is least able to contradict it.
- */
-function retainedPostgresCapabilities(
-  capabilities: ResolvedSliderCapabilities
-): ResolvedSliderLayerCapability[] {
-  return capabilities.layers.filter((layer) => !PARQUET_CAPABILITY_NAMES.has(layer.layerName));
 }
 
 function unavailableCoverageProofs(): WithheldParquetCapability[] {
@@ -423,7 +387,7 @@ function rowSourceCeilingDay(entries: readonly ParquetLaneCoverage[]): string | 
  *
  * An empty list is not "no rungs were required" -- `REQUIRED_ZOOM_TIERS` is what `proveCapability`
  * enforced before this row could exist, and a wire that stated nothing does not relax it (see
- * `src/lib/server/services/AGENTS.md` §availability-authority: `requiredRungs` is a label, not a
+ * `src/lib/server/services/AGENTS.md` section availability-authority: `requiredRungs` is a label, not a
  * gate). Publishing `[]` labelled a four-rung proof as an unconditional one, which is the one
  * reading of this field a client must never be able to take.
  */
@@ -937,28 +901,20 @@ function proveCapability(
   };
 }
 
-/**
- * Repoints the public census to exact Parquet product/rung evidence without a PostgreSQL fallback.
- * See `src/lib/server/AGENTS.md` section "Parquet tRPC cutover".
- */
+/** Builds the public slider census solely from Parquet; see AGENTS.md section slider-bootstrap. */
 export async function getParquetSliderCapabilities(): Promise<ParquetSliderCapabilities> {
-  const [coverageResult, postgresResult] = await Promise.allSettled([
-    getParquetWarehouseCoverage(),
-    getGeoFeatureSliderCapabilities(),
-  ]);
-  if (postgresResult.status === "rejected") throw postgresResult.reason;
-  const postgresCapabilities = postgresResult.value;
-  if (coverageResult.status === "rejected") {
-    if (!isCoverageBoundaryFault(coverageResult.reason)) throw coverageResult.reason;
+  let coverage;
+  try {
+    coverage = await getParquetWarehouseCoverage();
+  } catch (error) {
+    if (!isCoverageBoundaryFault(error)) throw error;
     console.error("Parquet slider coverage unavailable; withholding every Parquet-owned row", {
-      error:
-        coverageResult.reason instanceof Error
-          ? coverageResult.reason.message
-          : String(coverageResult.reason),
+      error: error instanceof Error ? error.message : String(error),
     });
     return {
-      ...postgresCapabilities,
-      layers: retainedPostgresCapabilities(postgresCapabilities),
+      serverCurrentDate: new Date().toISOString().slice(0, 10),
+      futureAxisDays: FUTURE_AXIS_DAYS,
+      layers: [],
       streamsUnavailable: false,
       parquetCoverageGeneratedAt: null,
       parquetCoverageEvaluatedThroughDay: null,
@@ -966,27 +922,21 @@ export async function getParquetSliderCapabilities(): Promise<ParquetSliderCapab
       withheldParquetCapabilities: unavailableCoverageProofs(),
     };
   }
-  const coverage = coverageResult.value;
+  const serverCurrentDate = new Date().toISOString().slice(0, 10);
   const evidence = buildEvidenceIndex(coverage.lanes);
   const withheldLanes = availabilityWithheldLanes(coverage.lanes);
-  // Availability is asked FIRST, of every contract: a lane that withheld its index is withheld
-  // everywhere, and `coverage_not_current` would report the whole-census reason for what is really
-  // one lane's unpublished evidence.
   const proofs = PARQUET_CAPABILITY_CONTRACTS.map((contract) => {
     const withheld = availabilityWithholding(contract, withheldLanes);
     if (withheld !== null) return withheld;
-    return coverage.evaluatedThroughDay === postgresCapabilities.serverCurrentDate
-      ? proveCapability(contract, coverage.lanes, evidence, postgresCapabilities.serverCurrentDate)
+    return coverage.evaluatedThroughDay === serverCurrentDate
+      ? proveCapability(contract, coverage.lanes, evidence, serverCurrentDate)
       : missing(contract, "coverage_not_current", []);
   });
 
   return {
-    ...postgresCapabilities,
-    layers: [
-      ...retainedPostgresCapabilities(postgresCapabilities),
-      ...proofs.flatMap((proof) => (proof.capability === null ? [] : [proof.capability])),
-    ],
-    // Every PostgreSQL stream row is Parquet-owned above; its retired scan cannot remount one.
+    serverCurrentDate,
+    futureAxisDays: FUTURE_AXIS_DAYS,
+    layers: proofs.flatMap((proof) => (proof.capability === null ? [] : [proof.capability])),
     streamsUnavailable: false,
     parquetCoverageGeneratedAt: coverage.generatedAt,
     parquetCoverageEvaluatedThroughDay: coverage.evaluatedThroughDay,

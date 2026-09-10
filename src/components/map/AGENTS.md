@@ -411,6 +411,12 @@ resource picker; give the layer its own row instead, as every layer already has 
 
 ## One capabilities fetch; the controls are per-layer rows, not a dock section
 
+**2026-09-10 recovery:** `TimeSliderCapabilitiesLoader` retries a failed request once and
+uses its 30-second recovery interval for query errors as well as incomplete coverage payloads.
+Previously an initial HTTP 500 exhausted default retries and then waited five minutes before
+recovering. The public census now depends only on Parquet evidence; see
+`src/lib/server/services/AGENTS.md` §slider-bootstrap.
+
 **Superseded 2026-08-09.** This section used to be titled "The scrubber is a dock section; the
 pill is a marker, not a disclosure" and described three components sharing one shared day:
 `TimeSliderCapabilitiesLoader` (the fetch), `TimeDockSection` (one scrubber card in the manager,

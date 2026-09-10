@@ -12,9 +12,6 @@ const PROTECTED_PATHS = ["/dashboard", "/onboarding"];
  */
 const PUBLIC_PATHS = ["/invite", "/join"];
 
-/** Where an authenticated user without an organization is sent. */
-const ONBOARDING_PATH = "/onboarding";
-
 function isUnder(pathname: string, base: string): boolean {
   return pathname === base || pathname.startsWith(`${base}/`);
 }
@@ -34,16 +31,6 @@ export async function middleware(request: NextRequest) {
     const loginUrl = new URL("/login", request.url);
     loginUrl.searchParams.set("callbackUrl", pathname);
     return NextResponse.redirect(loginUrl);
-  }
-
-  // A session without an organization cannot use the dashboard yet, unless
-  // they explicitly opted out via "Skip for now" (avoids a redirect loop).
-  if (
-    isUnder(pathname, "/dashboard") &&
-    token.activeTeamId == null &&
-    !request.cookies.get("pg_onboarding_skipped")
-  ) {
-    return NextResponse.redirect(new URL(ONBOARDING_PATH, request.url));
   }
 
   return NextResponse.next();

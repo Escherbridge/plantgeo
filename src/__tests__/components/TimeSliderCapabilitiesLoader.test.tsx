@@ -144,11 +144,13 @@ describe("TimeSliderCapabilitiesLoader", () => {
     // yesterday as today. The refetch is a server-side cache hit, so it costs nothing upstream.
     const [, options] = capabilitiesQuery.mock.calls[0] as [unknown, Record<string, unknown>];
     expect(options.staleTime).toBe(5 * 60_000);
+    expect(options.retry).toBe(1);
 
     // Two clocks, chosen per payload. A COMPLETE payload polls on the read-model's own memo
     // interval, so the poll is a server-side cache hit that only re-stamps the date.
     const refetchInterval = options.refetchInterval as (query: {
       state: {
+        status?: "pending" | "success" | "error";
         data:
           | { streamsUnavailable: boolean; parquetCoverageUnavailable?: boolean }
           | undefined;
@@ -156,6 +158,7 @@ describe("TimeSliderCapabilitiesLoader", () => {
     }) => number;
     expect(refetchInterval({ state: { data: { streamsUnavailable: false } } })).toBe(5 * 60_000);
     expect(refetchInterval({ state: { data: undefined } })).toBe(5 * 60_000);
+    expect(refetchInterval({ state: { data: undefined, status: "error" } })).toBe(30_000);
 
     // A SHORT payload is known-incomplete rather than merely old -- the server answered without
     // its stream scan, so thirteen layers are missing an axis they really have. That scan lands

@@ -11,7 +11,7 @@
  * Rationale for the shape -- one dock, no sheets -- is in src/components/map/AGENTS.md.
  */
 
-import { layerRegistryEntries, type LayerToggleId } from "@/lib/map/layer-registry";
+import { isLayerDeferred, layerRegistryEntries, type LayerToggleId } from "@/lib/map/layer-registry";
 import type { DockDetailsId, DockSectionId, PanelId } from "@/stores/panel-store";
 
 /**
@@ -43,8 +43,8 @@ export const GROUP_LABELS: Record<PanelId, string> = {
 export const DETAILS_LABELS: Record<DockDetailsId, string> = {
   fire: "Fire Dashboard",
   water: "Water Scarcity",
-  vegetation: "Vegetation & Land Cover",
-  soil: "Soil Health & Carbon",
+  vegetation: "Vegetation",
+  soil: "Soil Properties",
   // The one region with no sheet predecessor: the Climate section was added on 2026-08-08
   // with the NASA POWER field, after the sheets were gone.
   climate: "Climate & Weather History",
@@ -89,6 +89,7 @@ function buildLayerGroups(): DockLayerGroup[] {
   const byKey = new Map<string, DockLayerGroup>();
 
   for (const entry of layerRegistryEntries()) {
+    if (isLayerDeferred(entry.toggleId)) continue;
     const key = entry.panelId;
     let group = byKey.get(key);
     if (group === undefined) {

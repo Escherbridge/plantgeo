@@ -1,5 +1,24 @@
 # Panels
 
+## Regional evidence release labels
+
+The AI footer recognizes `static_release_untimed` only for soil properties and displays
+"Static release (undated)". Availability does not imply a recent observation. Fire perimeter
+`snapshot_captured_YYYY-MM-DD` markers display their validated capture day, not a measurement
+time, and retain the existing fourteen-day staleness limit. Invalid, future, and source-mismatched
+markers remain unavailable. Keep these labels aligned with `src/lib/regional-intelligence.ts`.
+
+## Narrow dock controls and status copy
+
+The shared tab list wraps when its labels do not fit the dock. Tabs retain enough intrinsic
+width for their icons and labels, and the list grows in height rather than clipping a fixed
+row. Keep one opacity control on each layer row; details sections must not duplicate it.
+
+Water status messages state the available data, selected day, or action the reader can take.
+Keep the distinction between a confirmed absence, an unpublished day, a partial result, and
+a request failure. Storage engines, internal endpoints, fallback policy, and row budgets belong
+in diagnostics and directory documentation, not the normal panel flow.
+
 ## These are dock sections, not panels
 
 **2026-08-08.** Every `*Details.tsx` in this directory is the body of one section of the map's
@@ -92,3 +111,11 @@ so a proposal now carries an estimate only when a caller supplied one. **Rows al
 the invented `0.15` are still in the table and are still suspect** -- the removal stops new ones,
 it does not clean up old ones, and this panel may render neither.
 Pinned by `src/__tests__/components/ModerationPanel.test.tsx`.
+
+## Published analysis controls — 2026-09-10
+
+VegetationDetails presents measured/satellite NDVI controls directly. Forecast and empty land-cover
+tabs are deferred, and opacity is controlled once on the layer row. SoilDetails keeps soil-property
+point reads and observed soil layers; unpublished erosion/carbon-effect tabs no longer mount or
+issue suitability requests. Organic carbon is still a measured property. Backend implementation
+is retained; restoration criteria are in the Parquet pivot track's deferred analysis UI section.

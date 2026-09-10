@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   formatAbsoluteDate,
+  formatCalendarDay,
   formatAbsoluteDateTime,
   formatRelativeTime,
   formatTimestampWithRelative,
@@ -33,6 +34,11 @@ describe("toIsoTimestamp", () => {
 });
 
 describe("absolute formatting", () => {
+  it("refuses impossible publisher days instead of normalizing them", () => {
+    expect(formatCalendarDay("2026-02-30")).toBeNull();
+    expect(formatCalendarDay("2026-09-01T00:00:00Z")).toBeNull();
+    expect(formatCalendarDay(null)).toBeNull();
+  });
   it("renders a calendar date and a date-time", () => {
     const iso = "2026-07-14T09:30:00Z";
     expect(formatAbsoluteDate(iso)).toMatch(/2026/);

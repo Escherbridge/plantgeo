@@ -8,6 +8,7 @@ import {
 } from "@/lib/map/fire-cell-caption";
 import {
   formatAbsoluteDate,
+  formatCalendarDay,
   formatTimestampWithRelative,
   toIsoTimestamp,
 } from "@/lib/map/time-format";
@@ -297,7 +298,7 @@ function formatBurnSeverity(props: Properties): HoverContent | null {
 function formatDroughtArea(props: Properties): HoverContent | null {
   const category = toFiniteNumber(props.DM);
   const label = stringField(props.label);
-  const validDate = formatAbsoluteDate(toIsoTimestamp(props.observedAt));
+  const validDate = formatCalendarDay(stringField(props.validDate));
 
   return buildContent("Drought (US Drought Monitor)", [
     category === null ? null : `Category: ${label ?? `D${category}`}`,

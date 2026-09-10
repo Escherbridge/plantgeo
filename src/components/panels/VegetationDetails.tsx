@@ -1,9 +1,5 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { Layers, Leaf, TrendingUp } from "lucide-react";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { trpc } from "@/lib/trpc/client";
 import { GIBS_NDVI_PRODUCT, NDVI_COLOR_RAMP } from "@/lib/vegetation";
 import { useVegetationStore } from "@/stores/vegetation-store";
 import {
@@ -11,17 +7,8 @@ import {
   useLayerRenderState,
   useVegetationDisplayMode,
 } from "@/lib/map/layer-toggle-context";
-import { LayerOpacitySlider } from "@/components/ui/layer-opacity-slider";
-import { ForecastBandChart } from "@/components/dashboard/ForecastBandChart";
-import { hasFullBand } from "@/components/dashboard/chart-scales";
-import { ndviForecastSeriesKeyForPoint } from "@/lib/forecast/series-key";
-import { useMapStore } from "@/stores/map-store";
-import { PROXIED_RETRY_COUNT } from "@/hooks/useViewportProxiedLayers";
 import type { VegetationSource } from "@/components/map/layers/VegetationLayer";
 
-// Published forecasts change on publication cadence (roughly daily), so ten minutes
-// trades invisible staleness for not re-paying the proxy on every dock cycle.
-const FORECAST_STALE_TIME_MS = 10 * 60 * 1000;
 
 /**
  * The two NDVI encodings, named by provenance rather than by style. Each carries the sentence
@@ -84,9 +71,6 @@ export function VegetationDetails() {
   // take the slider's day directly, so saying "NDVI draws the Aug 2026 composite" over them
   // would describe a raster the reader is not looking at.
   const showsComposite = source === "satellite";
-  // Controlled so the forecast proxy query can gate on its tab actually being on
-  // screen; typed so a drifted trigger value breaks the build, not the gate.
-  const [activeTab, setActiveTab] = useState<"ndvi" | "landcover" | "forecast">("ndvi");
 
   // The `vegetation` row's own day, read from the toggle context. This panel owns NO time
   // control of its own: the slider on that row is this layer's one clock, and the composite
@@ -100,44 +84,6 @@ export function VegetationDetails() {
   const { compositePeriod, compositeUnavailableReason } = useVegetationDisplayMode();
 
   const vegetationReason = useLayerRenderState("vegetation").unavailableReason;
-
-  // The forecast plane is series-keyed, not viewport-keyed: the 0.25° cell under the
-  // view centre stands in for "this view", matching the cells the measured grid draws.
-  // The derived key only changes when the centre crosses a cell boundary, so panning
-  // inside one cell never refetches.
-  const viewportLatitude = useMapStore((state) => state.viewport.latitude);
-  const viewportLongitude = useMapStore((state) => state.viewport.longitude);
-  const forecastSeriesKey = useMemo(
-    () => ndviForecastSeriesKeyForPoint(viewportLatitude, viewportLongitude),
-    [viewportLatitude, viewportLongitude]
-  );
-
-  // Priced like every proxied upstream query (§proxied-viewport-queries): one retry,
-  // a stale time that survives dock collapse/expand, and no fetch until the Forecast
-  // tab is the one on screen.
-  const forecastQuery = trpc.forecasts.getSeries.useQuery(
-    { seriesKey: forecastSeriesKey },
-    {
-      enabled: activeTab === "forecast",
-      retry: PROXIED_RETRY_COUNT,
-      staleTime: FORECAST_STALE_TIME_MS,
-    }
-  );
-  const forecast = forecastQuery.data;
-  const forecastUnavailable = forecast?.availability === "unavailable";
-  const forecastView = useMemo(() => {
-    const points = forecast?.points ?? [];
-    // All-or-nothing on both quantities: a line that silently switched from median
-    // to point value mid-series would be captioned as something it is not.
-    const lineIsMedian = points.length > 0 && points.every((point) => point.p50 !== null);
-    const chartData = points.map((point) => ({
-      time: point.validTime.slice(5, 10),
-      median: lineIsMedian ? (point.p50 as number) : point.pointValue,
-      low: point.p10,
-      high: point.p90,
-    }));
-    return { lineIsMedian, hasBand: hasFullBand(chartData), chartData };
-  }, [forecast]);
 
   return (
     <div className="flex flex-col">
@@ -192,27 +138,7 @@ export function VegetationDetails() {
       {/* No scroller of its own: the dock's body is the one scrolling element, and a second
           one nested inside it is the defect panel-scroll.ts rule 2 exists to prevent. */}
       <div className="mt-4">
-        <Tabs
-          value={activeTab}
-          onValueChange={(value) => setActiveTab(value as "ndvi" | "landcover" | "forecast")}
-        >
-          <TabsList className="w-full">
-            <TabsTrigger value="ndvi" className="flex-1 text-xs">
-              <Leaf className="h-3.5 w-3.5 mr-1" />
-              NDVI
-            </TabsTrigger>
-            <TabsTrigger value="landcover" className="flex-1 text-xs">
-              <Layers className="h-3.5 w-3.5 mr-1" />
-              Land Cover
-            </TabsTrigger>
-            <TabsTrigger value="forecast" className="flex-1 text-xs">
-              <TrendingUp className="h-3.5 w-3.5 mr-1" />
-              Forecast
-            </TabsTrigger>
-          </TabsList>
-
-          {/* NDVI Tab */}
-          <TabsContent value="ndvi" className="flex flex-col gap-4 mt-4">
+        <div className="flex flex-col gap-4">
             {/* Why the vegetation layer has nothing for the selected day, so an empty
                 layer is never mistaken for the toggle being off. */}
             {vegetationReason !== null && (
@@ -251,15 +177,7 @@ export function VegetationDetails() {
               </p>
             </div>
 
-            {/* With one encoding drawn at a time the basemap underneath still needs to be
-                readable through it. The same control the layer tree renders, over the same
-                `layer-store.layerOpacity.vegetation` value -- two surfaces, one number, so
-                they cannot disagree. It used to write `vegetation-store.opacity`, which no
-                other layer could reach and no other surface could read. */}
-            <div className="flex flex-col gap-2">
-              <span className="text-xs text-[hsl(var(--foreground))]">Layer opacity</span>
-              <LayerOpacitySlider layerId="vegetation" />
-            </div>
+
 
             <div className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
               <p className="text-xs font-semibold mb-2 text-[hsl(var(--foreground))]">
@@ -290,103 +208,7 @@ export function VegetationDetails() {
               )}
             </div>
 
-          </TabsContent>
-
-          {/* Land Cover Tab */}
-          <TabsContent value="landcover" className="flex flex-col gap-4 mt-4">
-            {/* This notice belongs here, not on the NDVI tab: NDVI is served -- either from
-                the warehouse cells or the GIBS proxy -- while land cover is exactly what
-                ENVIRONMENTAL_TILES_CONFIGURED gates, so on the NDVI tab it contradicted a
-                layer the reader could plainly see drawing. */}
-            {/* A product selector and a category filter stood here, over a layer that has
-                never drawn: `ENVIRONMENTAL_TILES_CONFIGURED` is a literal `false`, there is no
-                NLCD producer, and geo.osm_landuse holds no rows. They are deleted rather than
-                explained -- a control the reader can operate teaches that operating it does
-                something, and no caption undoes that. The class vocabulary itself is kept in
-                src/lib/environmental/nlcd.ts, ready for the day a producer publishes. */}
-            <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]">
-              No land-cover product is published for this platform yet. Nothing is drawn, and
-              there are no controls here until there is something for them to control.
-            </p>
-          </TabsContent>
-
-          {/* Forecast Tab */}
-          <TabsContent value="forecast" className="flex flex-col gap-4 mt-4">
-            {forecastQuery.isLoading && (
-              <p className="text-xs text-[hsl(var(--muted-foreground))]">
-                Loading published forecast…
-              </p>
-            )}
-
-            {forecastQuery.isError && (
-              <p className="text-xs text-[hsl(var(--destructive))]">
-                The published forecast could not be loaded.
-              </p>
-            )}
-
-            {forecastUnavailable && (
-              <p
-                className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]"
-                data-testid="vegetation-forecast-unavailable"
-              >
-                The forecast service is not configured for this deployment, so no published
-                forecast can be served.
-              </p>
-            )}
-
-            {/* The expected state until a forecast run publishes receipts: the serving
-                plane answered, and it holds nothing for this cell. Distinct from the
-                unavailable notice above -- an empty answer is still an answer. */}
-            {forecast && !forecastUnavailable && forecast.points.length === 0 && (
-              <p
-                className="text-xs text-[hsl(var(--muted-foreground))]"
-                data-testid="vegetation-forecast-empty"
-              >
-                No forecast has been published for the 0.25° cell at the view centre yet.
-                This panel fills in the moment a forecast run publishes receipts for it.
-              </p>
-            )}
-
-            {forecast && forecast.points.length > 0 && (
-              <>
-                <div className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
-                  <p className="text-xs font-semibold mb-2 text-[hsl(var(--foreground))]">
-                    {forecast.metricName === "ndvi"
-                      ? "NDVI forecast"
-                      : `${forecast.metricName ?? "Metric"} forecast`}
-                  </p>
-                  <ForecastBandChart
-                    data={forecastView.chartData}
-                    width={320}
-                    height={180}
-                    color="#4caf50"
-                    unit={forecast.metricUnit === "ndvi_index" ? undefined : forecast.metricUnit ?? undefined}
-                  />
-                  {/* The caption promises only what is drawn: the band claim drops when a
-                      quantile is missing, and the line is named by what it plots. */}
-                  <p className="mt-2 text-[10px] text-[hsl(var(--muted-foreground))] leading-relaxed">
-                    {forecastView.hasBand
-                      ? "The shaded band spans the published p10–p90; "
-                      : "No uncertainty band was published; "}
-                    the line is the{" "}
-                    {forecastView.lineIsMedian ? "median" : "point forecast"}. Drawn for the
-                    0.25° cell at the view centre ({forecast.entityKey}).
-                  </p>
-                </div>
-
-                <p className="text-[10px] text-[hsl(var(--muted-foreground))] leading-relaxed">
-                  {forecast.forecastMethod === "ml" ? "ML lane" : "Statistical baseline"}{" "}
-                  forecast, issued {forecast.issuedAt?.slice(0, 10) ?? "—"}
-                  {forecast.publishedAt !== null &&
-                    `, published ${forecast.publishedAt.slice(0, 10)}`}
-                  .{forecast.hasMore && " Showing the first page of a longer horizon."}
-                  {forecast.staleReceiptPointsDropped > 0 &&
-                    " A superseded forecast run on this page is not drawn."}
-                </p>
-              </>
-            )}
-          </TabsContent>
-        </Tabs>
+        </div>
       </div>
     </div>
   );

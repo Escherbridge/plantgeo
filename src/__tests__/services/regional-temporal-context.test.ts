@@ -93,6 +93,13 @@ vi.mock("@/lib/server/services/environmental-read-model", async () => {
   };
 });
 
+vi.mock("@/lib/server/services/parquet-context-readers", () => ({
+  getContextDrought: mocks.getPublishedDroughtClassification,
+  getContextWaterGauges: mocks.getPublishedStreamflowGauges,
+  getContextWeatherForPoint: mocks.getPublishedWeatherForPoint,
+  getContextWeatherForBbox: mocks.getPublishedWeatherForBbox,
+}));
+
 /**
  * The agent's fire read moved off PostgreSQL on 2026-09-02, for the same reason the capability
  * read did: `getPublishedFireDetections` answers an unwritten day and an empty day with the same
@@ -330,7 +337,7 @@ describe("assembling regional context at the days the user is viewing", () => {
       "2026-03-02"
     );
     expect(mocks.getPublishedDroughtClassification).toHaveBeenCalledWith(
-      undefined,
+      expect.any(String),
       "2026-01-07"
     );
   });
@@ -1600,4 +1607,3 @@ describe("fire perimeters, served from the Parquet lane rather than from geo.fea
     expect(rejection.dataFreshness.firePerimeters).toBe("unavailable");
   });
 });
-

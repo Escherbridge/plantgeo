@@ -183,7 +183,7 @@ describe('layer registry derivations', () => {
   it('gives every registry layer a group, exactly once', () => {
     // Sorted, because grouping deliberately reorders: the dock lists a category's layers
     // together, and the registry declares them apart.
-    expect([...dockReachableLayerToggleIds()].sort()).toEqual([...LAYER_TOGGLE_IDS].sort())
+    expect([...dockReachableLayerToggleIds()].sort()).toEqual(LAYER_TOGGLE_IDS.filter((id) => id !== 'strategy-recommendations').sort())
     for (const group of DOCK_LAYER_GROUPS) {
       expect(group.detailsId, group.key).toBe(group.key)
     }
