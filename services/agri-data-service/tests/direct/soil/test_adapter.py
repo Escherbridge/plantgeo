@@ -25,7 +25,11 @@ from agri_data_service.pipeline.direct.soil.products import (
     SOIL_FIELD_PRODUCTS,
 )
 from agri_data_service.pipeline.direct.soil.rows import SoilRowError, soil_day_table
-from agri_data_service.pipeline.direct.soil.source import SoilSourceUnsettledError, soil_day_from_cache
+from agri_data_service.pipeline.direct.soil.source import (
+    SoilProviderDeferredError,
+    SoilSourceUnsettledError,
+    soil_day_from_cache,
+)
 from agri_data_service.pipeline.direct.soil.support import ERA5_LAND_VALUE_CELL_COUNT
 from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.parquet.gap_fill import fill_one_lane_day, unlocked_lane_day
@@ -303,3 +307,18 @@ def test_a_valueless_day_never_builds_a_zero_row_table() -> None:
     """A zero-row partition reads as a published day; a day with no values is an absence instead."""
     with pytest.raises(SoilRowError, match="governed absence"):
         soil_day_table(product_for(VPD_STREAM), day=DAY, values=(), receipt=None)  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_provider_budget_refusal_is_reported_for_deferral_without_publishing() -> None:
+    """The driver must see quota exhaustion even though gap-fill catches adapter exceptions."""
+    refusal = SoilProviderDeferredError("this turn has zero requests left")
+
+    async def fetch() -> SoilDaySource:
+        raise refusal
+
+    adapter = DirectSoilFieldAdapter(product=product_for(MOISTURE_STREAM), fetch_source=fetch)
+    with pytest.raises(SoilProviderDeferredError):
+        await adapter(SessionDouble(), ObjectStore(RecordingBackend()), day=DAY, run_id="quota-test")
+    assert adapter.unsettled_refusal is refusal
+    assert adapter.source is None

@@ -23,7 +23,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Final
 
@@ -41,10 +41,12 @@ from agri_data_service.execution.weather_observations.era5_land import (
     OPEN_METEO_ARCHIVE_NATIVE_GRID_DEGREES,
     OPEN_METEO_ARCHIVE_SIGNAL_SPECIFICATIONS,
 )
+from agri_data_service.foundation.canonical import canonical_json, sha256_digest
 from agri_data_service.ingest.http import upstream_client
 from agri_data_service.ingest.open_meteo import (
     OPEN_METEO_ARCHIVE_BOUNDS,
     OPEN_METEO_ERA5_LAND_MODEL,
+    OpenMeteoRateLimitError,
     archive_daily_request,
     archive_daily_url,
     fetch_archive_daily,
@@ -55,6 +57,12 @@ from agri_data_service.pipeline.direct.soil.products import (
     SOIL_SOURCE_PARAMETERS,
 )
 from agri_data_service.pipeline.direct.soil.support import ERA5_LAND_VALUE_CELL_COUNT
+from agri_data_service.pipeline.parquet.source_checkpoint import (
+    SourceCheckpoint,
+    SourceCheckpointIdentity,
+    SourceResponseCheckpoints,
+    report_checkpoint_rejection,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping, Sequence
@@ -94,6 +102,10 @@ class SoilSourceUnsettledError(SoilSourceError):
     """Raised when the archive answered but the day is not yet whole: a refusal, never an absence."""
 
 
+class SoilProviderDeferredError(SoilSourceUnsettledError):
+    """A provider quota or request budget requires a later turn."""
+
+
 class SoilTimeBudgetExhaustedError(RuntimeError):
     """Raised when the turn's clock ran out mid-fetch; deliberately NOT a `SoilSourceError`.
 
@@ -121,6 +133,7 @@ class SoilChunkDayResponse:
     retrieved_at: datetime
     #: `(cell_key, source_parameter)` -> the day's value, or None where the archive modelled nothing.
     values: Mapping[tuple[str, str], float | None]
+    body: bytes | None = field(default=None, repr=False, compare=False)
 
 
 @dataclass(slots=True)
@@ -133,6 +146,9 @@ class SoilSourceCache:
     request_budget: int
     responses: dict[tuple[str, date], SoilChunkDayResponse] = field(default_factory=dict)
     requests_spent: int = 0
+    deferred_refusal: SoilProviderDeferredError | None = None
+    checkpoints: SourceResponseCheckpoints | None = None
+    restored_days: set[tuple[str, date]] = field(default_factory=set)
 
     @property
     def remaining_requests(self) -> int:
@@ -150,6 +166,39 @@ class SoilSourceCache:
     def hold(self, response: SoilChunkDayResponse) -> None:
         """Record one completed chunk-day; a failed request is never held, so a retry re-asks only for it."""
         self.responses[(response.chunk.key, response.day)] = response
+
+    async def restore(
+        self, chunks: Sequence[Era5LandChunk], day: date, *, now: datetime | None = None, deadline: float | None = None
+    ) -> None:
+        """Resume verified non-null chunks from an earlier turn before pricing missing requests."""
+        if self.checkpoints is None:
+            return
+        support_digest = _support_digest(chunks)
+        if (support_digest, day) in self.restored_days:
+            return
+        self.restored_days.add((support_digest, day))
+        gate = asyncio.Semaphore(ERA5_LAND_CHUNK_CONCURRENCY)
+        clock = receipt_clock(now)
+        checkpoints = self.checkpoints
+
+        async def restore_chunk(chunk: Era5LandChunk) -> None:
+            async with gate:
+                if deadline is not None and time.monotonic() >= deadline:
+                    return
+                identity = _checkpoint_identity(chunk, day=day, support_digest=support_digest)
+                held = await asyncio.to_thread(checkpoints.read, identity, now=clock)
+                if held is None:
+                    return
+                try:
+                    response = parse_soil_chunk_body(
+                        chunk, day=day, body=held.body, request_url=identity.request_url, retrieved_at=held.retrieved_at
+                    )
+                    if _checkpoint_eligible(response):
+                        self.hold(response)
+                except SoilSourceError as error:
+                    report_checkpoint_rejection(identity, error)
+
+        await asyncio.gather(*(restore_chunk(chunk) for chunk in self.missing_chunks(chunks, day)))
 
 
 @dataclass(frozen=True, slots=True)
@@ -270,37 +319,54 @@ async def fill_chunk_day_cache(  # noqa: PLR0913 - the day, chunks, cache, clock
     concurrency: int = ERA5_LAND_CHUNK_CONCURRENCY,
 ) -> None:
     """Request every chunk this day still owes, bounded by budget, concurrency and the turn deadline."""
+    await cache.restore(chunks, day, now=now, deadline=deadline)
     missing = cache.missing_chunks(chunks, day)
     if not missing:
         return
     if len(missing) > cache.remaining_requests:
-        raise SoilSourceUnsettledError(
+        raise SoilProviderDeferredError(
             f"{day.isoformat()} needs {len(missing)} more archive request(s) and this turn has "
             f"{cache.remaining_requests} left of its budget of {cache.request_budget}"
         )
     require_time_remaining(deadline, day=day)
     gate = asyncio.Semaphore(max(1, concurrency))
+    support_digest = _support_digest(chunks) if cache.checkpoints is not None else ""
 
     async def one(chunk: Era5LandChunk, client: httpx.AsyncClient) -> SoilChunkDayResponse:
         async with gate:
             require_time_remaining(deadline, day=day)
-            return await _fetch_chunk_day(client, chunk, day=day, now=now, deadline=deadline)
+            if cache.deferred_refusal is not None:
+                raise cache.deferred_refusal
+            cache.requests_spent += 1
+            try:
+                response = await _fetch_chunk_day(client, chunk, day=day, now=now, deadline=deadline)
+            except SoilProviderDeferredError as error:
+                cache.deferred_refusal = error
+                raise
+            cache.hold(response)
+            if cache.checkpoints is not None and response.body is not None and _checkpoint_eligible(response):
+                await asyncio.to_thread(
+                    cache.checkpoints.write,
+                    _checkpoint_identity(chunk, day=day, support_digest=support_digest),
+                    SourceCheckpoint(body=response.body, retrieved_at=response.retrieved_at),
+                    response_sha256=response.response_sha256,
+                )
+            return response
 
     async with upstream_client(OPEN_METEO_ARCHIVE_BOUNDS) as client:
         answers = await asyncio.gather(*(one(chunk, client) for chunk in missing), return_exceptions=True)
 
     failures: list[tuple[Era5LandChunk, BaseException]] = []
     for chunk, answer in zip(missing, answers, strict=True):
-        cache.requests_spent += 1
         if isinstance(answer, BaseException):
             failures.append((chunk, answer))
-            continue
-        cache.hold(answer)
     if any(isinstance(error, SoilTimeBudgetExhaustedError) for _chunk, error in failures):
         raise SoilTimeBudgetExhaustedError(
             f"the turn's time budget ran out while fetching {day.isoformat()}; "
             f"{len(failures)} of {len(missing)} chunk request(s) did not complete"
         )
+    if cache.deferred_refusal is not None:
+        raise cache.deferred_refusal
     if failures:
         chunk, error = failures[0]
         raise SoilSourceUnsettledError(
@@ -474,7 +540,25 @@ def parse_soil_chunk_body(
         response_bytes=len(body),
         retrieved_at=retrieved_at,
         values=values,
+        body=body,
     )
+
+
+def _support_digest(chunks: Sequence[Era5LandChunk]) -> str:
+    """Bind checkpoints to the full ordered support and its chunk boundaries."""
+    return sha256_digest(canonical_json([asdict(chunk) for chunk in chunks]))
+
+
+def _checkpoint_identity(chunk: Era5LandChunk, *, day: date, support_digest: str) -> SourceCheckpointIdentity:
+    """Version canonical ERA5-Land payload checkpoints independently of serving partitions."""
+    return SourceCheckpointIdentity(
+        "era5-land-canonical-v1", support_digest, day.isoformat(), soil_chunk_url(chunk, day=day)
+    )
+
+
+def _checkpoint_eligible(response: SoilChunkDayResponse) -> bool:
+    """Never retain a not-yet-mirrored null value across turns."""
+    return bool(response.values) and all(value is not None for value in response.values.values())
 
 
 def soil_chunk_url(chunk: Era5LandChunk, *, day: date) -> str:
@@ -572,7 +656,10 @@ async def _capture_chunk(  # noqa: PLR0913 - the client, chunk, request, day and
     """Run one chunk through the shared retry/quota policy, translating its failure into a refusal."""
 
     def refuse(chunk_key: str, cause: UpstreamError | None, attempts: int) -> Exception:
-        return SoilSourceUnsettledError(
+        error_type = (
+            SoilProviderDeferredError if isinstance(cause, OpenMeteoRateLimitError) else SoilSourceUnsettledError
+        )
+        return error_type(
             f"the Open-Meteo archive refused {chunk_key} for {day.isoformat()} after {attempts} attempt(s): "
             f"{type(cause).__name__ if cause is not None else 'no response'}: {cause}"
         )
@@ -668,6 +755,7 @@ __all__ = [
     "SoilCellValue",
     "SoilChunkDayResponse",
     "SoilDaySource",
+    "SoilProviderDeferredError",
     "SoilSourceCache",
     "SoilSourceError",
     "SoilSourceReceipt",

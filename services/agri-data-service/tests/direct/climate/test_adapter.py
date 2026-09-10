@@ -26,6 +26,7 @@ from agri_data_service.pipeline.direct.climate.products import (
 )
 from agri_data_service.pipeline.direct.climate.rows import climate_day_table
 from agri_data_service.pipeline.direct.climate.source import (
+    ClimateProviderDeferredError,
     ClimateSourceUnsettledError,
     climate_day_from_cache,
     parse_climate_point_body,
@@ -436,3 +437,18 @@ def test_every_product_maps_to_exactly_one_power_parameter() -> None:
     assert len(parameters) == len(set(parameters))
     assert len(CLIMATE_FIELD_PRODUCTS) == len({product.stream for product in CLIMATE_FIELD_PRODUCTS})
     assert tuple(sorted(parameters)) == CLIMATE_SOURCE_PARAMETERS
+
+
+@pytest.mark.asyncio
+async def test_provider_budget_refusal_is_reported_for_deferral_without_publishing() -> None:
+    """The driver must see quota exhaustion even though gap-fill catches adapter exceptions."""
+    refusal = ClimateProviderDeferredError("this turn has zero requests left")
+
+    async def fetch() -> ClimateDaySource:
+        raise refusal
+
+    adapter = DirectClimateFieldAdapter(product=product_for(PLANE_STREAM), fetch_source=fetch)
+    with pytest.raises(ClimateProviderDeferredError):
+        await adapter(SessionDouble(), ObjectStore(RecordingBackend()), day=DAY, run_id="quota-test")
+    assert adapter.unsettled_refusal is refusal
+    assert adapter.source is None

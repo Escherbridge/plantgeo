@@ -6,8 +6,9 @@ import asyncio
 import hashlib
 import json
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
+from http import HTTPStatus
 from typing import TYPE_CHECKING, Final
 
 from agri_data_service.execution.weather_observations.nasa_power import (
@@ -15,12 +16,19 @@ from agri_data_service.execution.weather_observations.nasa_power import (
     nasa_power_daily_point_url,
     nasa_power_observed_value,
 )
+from agri_data_service.foundation.canonical import canonical_json, sha256_digest
 from agri_data_service.ingest.http import UpstreamBounds, UpstreamError, fetch_bounded, upstream_client
 from agri_data_service.pipeline.direct.climate.products import (
     CLIMATE_DIRECT_SNAPSHOT_PREFIX,
     CLIMATE_SOURCE_PARAMETERS,
 )
 from agri_data_service.pipeline.direct.climate.support import quantize_coordinate
+from agri_data_service.pipeline.parquet.source_checkpoint import (
+    SourceCheckpoint,
+    SourceCheckpointIdentity,
+    SourceResponseCheckpoints,
+    report_checkpoint_rejection,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -56,6 +64,10 @@ class ClimateSourceUnsettledError(ClimateSourceError):
     """Raised when POWER answered but the day is not yet whole: a refusal, never a governed absence."""
 
 
+class ClimateProviderDeferredError(ClimateSourceUnsettledError):
+    """A provider quota or request budget requires a later turn."""
+
+
 class ClimateTimeBudgetExhaustedError(RuntimeError):
     """Raised when the turn's clock ran out mid-fetch; deliberately NOT a `ClimateSourceError`.
 
@@ -74,6 +86,7 @@ class ClimateCellDayResponse:
     response_bytes: int
     retrieved_at: datetime
     parameters: Mapping[str, object]
+    body: bytes | None = field(default=None, repr=False, compare=False)
 
 
 @dataclass(slots=True)
@@ -86,6 +99,9 @@ class ClimateSourceCache:
     request_budget: int
     responses: dict[tuple[str, date], ClimateCellDayResponse] = field(default_factory=dict)
     requests_spent: int = 0
+    deferred_refusal: ClimateProviderDeferredError | None = None
+    checkpoints: SourceResponseCheckpoints | None = None
+    restored_days: set[tuple[str, date]] = field(default_factory=set)
 
     @property
     def remaining_requests(self) -> int:
@@ -103,6 +119,39 @@ class ClimateSourceCache:
     def hold(self, response: ClimateCellDayResponse) -> None:
         """Record one completed cell-day; a failed request is never held, so a retry re-asks only for it."""
         self.responses[(response.cell.cell_key, response.day)] = response
+
+    async def restore(
+        self, support: NasaPowerSupport, day: date, *, now: datetime | None = None, deadline: float | None = None
+    ) -> None:
+        """Resume verified non-fill cells from an earlier turn before pricing the missing requests."""
+        if self.checkpoints is None:
+            return
+        support_digest = _support_digest(support)
+        if (support_digest, day) in self.restored_days:
+            return
+        self.restored_days.add((support_digest, day))
+        gate = asyncio.Semaphore(NASA_POWER_POINT_CONCURRENCY)
+        clock = receipt_clock(now)
+        checkpoints = self.checkpoints
+
+        async def restore_cell(cell: NasaPowerSupportCell) -> None:
+            async with gate:
+                if deadline is not None and time.monotonic() >= deadline:
+                    return
+                identity = _checkpoint_identity(cell, day=day, support_digest=support_digest)
+                held = await asyncio.to_thread(checkpoints.read, identity, now=clock)
+                if held is None:
+                    return
+                try:
+                    response = parse_climate_point_body(
+                        cell, day=day, body=held.body, request_url=identity.request_url, retrieved_at=held.retrieved_at
+                    )
+                    if _checkpoint_eligible(response):
+                        self.hold(response)
+                except ClimateSourceError as error:
+                    report_checkpoint_rejection(identity, error)
+
+        await asyncio.gather(*(restore_cell(cell) for cell in self.missing_cells(support, day)))
 
 
 @dataclass(frozen=True, slots=True)
@@ -198,37 +247,54 @@ async def fill_cell_day_cache(  # noqa: PLR0913 - the day, support, cache, clock
     concurrency: int = NASA_POWER_POINT_CONCURRENCY,
 ) -> None:
     """Request every support cell this day still owes, bounded by budget, concurrency and the turn deadline."""
+    await cache.restore(support, day, now=now, deadline=deadline)
     missing = cache.missing_cells(support, day)
     if not missing:
         return
     if len(missing) > cache.remaining_requests:
-        raise ClimateSourceUnsettledError(
+        raise ClimateProviderDeferredError(
             f"{day.isoformat()} needs {len(missing)} more POWER point request(s) and this turn has "
             f"{cache.remaining_requests} left of its budget of {cache.request_budget}"
         )
     require_time_remaining(deadline, day=day)
     gate = asyncio.Semaphore(max(1, concurrency))
+    support_digest = _support_digest(support) if cache.checkpoints is not None else ""
 
     async def one(cell: NasaPowerSupportCell, client: httpx.AsyncClient) -> ClimateCellDayResponse:
         async with gate:
             require_time_remaining(deadline, day=day)
-            return await _fetch_cell_day(client, cell, day=day, now=now)
+            if cache.deferred_refusal is not None:
+                raise cache.deferred_refusal
+            cache.requests_spent += 1
+            try:
+                response = await _fetch_cell_day(client, cell, day=day, now=now)
+            except ClimateProviderDeferredError as error:
+                cache.deferred_refusal = error
+                raise
+            cache.hold(response)
+            if cache.checkpoints is not None and response.body is not None and _checkpoint_eligible(response):
+                await asyncio.to_thread(
+                    cache.checkpoints.write,
+                    _checkpoint_identity(cell, day=day, support_digest=support_digest),
+                    SourceCheckpoint(body=response.body, retrieved_at=response.retrieved_at),
+                    response_sha256=response.response_sha256,
+                )
+            return response
 
     async with upstream_client(NASA_POWER_POINT_BOUNDS) as client:
         answers = await asyncio.gather(*(one(cell, client) for cell in missing), return_exceptions=True)
 
     failures: list[tuple[NasaPowerSupportCell, BaseException]] = []
     for cell, answer in zip(missing, answers, strict=True):
-        cache.requests_spent += 1
         if isinstance(answer, BaseException):
             failures.append((cell, answer))
-            continue
-        cache.hold(answer)
     if any(isinstance(error, ClimateTimeBudgetExhaustedError) for _cell, error in failures):
         raise ClimateTimeBudgetExhaustedError(
             f"the turn's time budget ran out while fetching {day.isoformat()}; "
             f"{len(failures)} of {len(missing)} cell request(s) did not complete"
         )
+    if cache.deferred_refusal is not None:
+        raise cache.deferred_refusal
     if failures:
         cell, error = failures[0]
         raise ClimateSourceUnsettledError(
@@ -361,7 +427,30 @@ def parse_climate_point_body(  # noqa: PLR0913 - the cell, day, body, url and cl
         response_bytes=len(body),
         retrieved_at=retrieved_at,
         parameters=values,
+        body=body,
     )
+
+
+def _support_digest(support: NasaPowerSupport) -> str:
+    """Bind checkpoints to every support cell's identity, coordinates and coverage fraction."""
+    return sha256_digest(canonical_json([asdict(cell) for cell in support.cells]))
+
+
+def _checkpoint_identity(cell: NasaPowerSupportCell, *, day: date, support_digest: str) -> SourceCheckpointIdentity:
+    """Version POWER parser-input checkpoints independently of serving partitions."""
+    return SourceCheckpointIdentity(
+        "nasa-power-point-v1", support_digest, day.isoformat(), climate_point_url(cell, day=day)
+    )
+
+
+def _checkpoint_eligible(response: ClimateCellDayResponse) -> bool:
+    """Never retain an unsettled parameter's fill value across turns."""
+    try:
+        return bool(response.parameters) and all(
+            nasa_power_observed_value(value) is not None for value in response.parameters.values()
+        )
+    except ValueError:
+        return False
 
 
 def climate_point_url(cell: NasaPowerSupportCell, *, day: date) -> str:
@@ -398,6 +487,10 @@ async def _fetch_cell_day(
         raise ClimateSourceUnsettledError(
             f"NASA POWER transport failed for {cell.cell_key} {day.isoformat()}: {type(error).__name__}: {error}"
         ) from error
+    if response.status == HTTPStatus.TOO_MANY_REQUESTS:
+        raise ClimateProviderDeferredError(
+            f"NASA POWER answered 429 for {cell.cell_key} {day.isoformat()}; deferred until a later turn"
+        )
     if not response.ok:
         raise ClimateSourceUnsettledError(
             f"NASA POWER answered {response.status} for {cell.cell_key} {day.isoformat()}"
@@ -501,6 +594,7 @@ __all__ = [
     "ClimateCellDayResponse",
     "ClimateCellValue",
     "ClimateDaySource",
+    "ClimateProviderDeferredError",
     "ClimateSourceCache",
     "ClimateSourceError",
     "ClimateSourceReceipt",

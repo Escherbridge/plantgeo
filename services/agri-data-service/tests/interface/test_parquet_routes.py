@@ -19,7 +19,7 @@ from sanic import Sanic
 
 from agri_data_service import app as app_module
 from agri_data_service.interface.http import parquet_routes
-from agri_data_service.parquet_ops import faults
+from agri_data_service.parquet_ops import faults, snapshot_products
 from agri_data_service.parquet_ops.availability_coverage import SnapshotForwardAvailability
 from agri_data_service.parquet_ops.coverage import CensusLane
 from agri_data_service.parquet_ops.request_params import ReadScope
@@ -43,6 +43,7 @@ if TYPE_CHECKING:
     from sanic.response import HTTPResponse
 
     from agri_data_service.parquet_ops.faults import ServingRefusalError
+    from agri_data_service.parquet_ops.snapshot_products import SnapshotProduct
 
 HTTP_OK = 200
 HTTP_BAD_REQUEST = 400
@@ -63,6 +64,18 @@ def payload_of(response: HTTPResponse) -> dict[str, object]:
     body = response.body
     assert body is not None
     return json_module.loads(body)
+
+
+@pytest.fixture
+def registered_snapshot_product(monkeypatch: pytest.MonkeyPatch) -> SnapshotProduct:
+    """Register frozen provenance only inside tests of the snapshot routing boundary."""
+    product = next(
+        product
+        for product in snapshot_products.FROZEN_SNAPSHOT_PRODUCTS
+        if product.layer == "climate-field-air-temperature-mean"
+    )
+    monkeypatch.setitem(snapshot_products.PRODUCT_BY_LAYER, product.layer, product)
+    return product
 
 
 @pytest.fixture
@@ -148,6 +161,7 @@ async def test_a_written_day_answers_200_with_its_rows(warehouse: tuple[FakeList
 async def test_an_allowlisted_snapshot_day_uses_exact_day_dispatch(
     warehouse: tuple[FakeListing, FakeRowReader],
     monkeypatch: pytest.MonkeyPatch,
+    registered_snapshot_product: SnapshotProduct,
 ) -> None:
     del warehouse
     seen: list[date] = []
@@ -165,7 +179,7 @@ async def test_an_allowlisted_snapshot_day_uses_exact_day_dispatch(
 
     monkeypatch.setattr(parquet_routes, "_run_snapshot_day", snapshot_day)
     response = await parquet_routes.read_day(
-        request_with(layer="climate-field-air-temperature-mean", zoom="13", day="2026-08-02")
+        request_with(layer=registered_snapshot_product.layer, zoom="13", day="2026-08-02")
     )
 
     assert response.status == HTTP_OK
@@ -177,6 +191,7 @@ async def test_an_allowlisted_snapshot_day_uses_exact_day_dispatch(
 async def test_a_snapshot_layer_s_forward_day_is_routed_to_the_live_lane(
     warehouse: tuple[FakeListing, FakeRowReader],
     monkeypatch: pytest.MonkeyPatch,
+    registered_snapshot_product: SnapshotProduct,
 ) -> None:
     """The predicate is DAY-aware. A layer-only test sent a day the direct writer owns to a frozen manifest.
 
@@ -185,7 +200,7 @@ async def test_a_snapshot_layer_s_forward_day_is_routed_to_the_live_lane(
     """
     listing, reader = warehouse
     forward_day = CLIMATE_DIRECT_WRITER_START_DAY
-    layer = "climate-field-air-temperature-mean"
+    layer = registered_snapshot_product.layer
     part = listing.write_day(layer, "observed", 13, forward_day)
     reader.rows_by_key[part] = ({"cell_id": "4127", "normalized_value": 21.4},)
 

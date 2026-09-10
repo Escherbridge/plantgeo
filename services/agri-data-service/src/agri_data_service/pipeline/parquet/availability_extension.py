@@ -39,6 +39,7 @@ from agri_data_service.pipeline.parquet.availability_index import (
     build_source_evidence,
     build_terminal_evidence,
     publish_availability,
+    read_bootstrap_marker,
     read_latest_availability,
 )
 from agri_data_service.pipeline.parquet.objectstore import (
@@ -344,7 +345,7 @@ async def extend_availability_for_lane_day(  # noqa: PLR0911, PLR0913 - one type
     if isinstance(claimed, AvailabilityExtensionOutcome):
         return claimed
     try:
-        index = read_latest_availability(availability, lane_root=lane_root)
+        index = _read_extension_index(availability, lane_root=lane_root)
     except AvailabilityUnavailableError as unavailable:
         if unavailable.code == "availability_missing":
             # NOTHING is owed: the offline bootstrap builds generation zero from the objects this day
@@ -525,7 +526,7 @@ async def _retry_one_day(  # noqa: PLR0911, PLR0913 - one typed outcome per exit
             error=error,
         )
     try:
-        index = read_latest_availability(availability, lane_root=lane_root)
+        index = _read_extension_index(availability, lane_root=lane_root)
     except AvailabilityUnavailableError as unavailable:
         if unavailable.code == "availability_missing":
             return AvailabilityExtensionOutcome(
@@ -1256,6 +1257,23 @@ def _already_indexed(index: AvailabilityIndex, rows: Sequence[AvailabilityRow]) 
     """Return whether the current generation already carries exactly these rows."""
     held: Mapping[tuple[date, int], AvailabilityRow] = {row.grain: row for row in index.rows}
     return all(held.get(row.grain) == row for row in rows)
+
+
+def _read_extension_index(availability: AvailabilityStorage, *, lane_root: str) -> AvailabilityIndex:
+    """Distinguish an unbootstrapped lane from a lost pointer before clearing its claim."""
+    try:
+        return read_latest_availability(availability, lane_root=lane_root)
+    except AvailabilityUnavailableError as error:
+        if (
+            error.code == "availability_missing"
+            and read_bootstrap_marker(availability, lane_root=lane_root) is not None
+        ):
+            raise AvailabilityUnavailableError(
+                "availability_pointer_lost",
+                f"{lane_root} has a bootstrap marker but no availability pointer; "
+                "restore the verified head before retrying",
+            ) from error
+        raise
 
 
 def _read_failure(

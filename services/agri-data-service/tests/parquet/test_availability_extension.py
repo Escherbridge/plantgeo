@@ -42,6 +42,7 @@ from agri_data_service.pipeline.parquet.availability_index import (
     SourceEvidence,
     StoredAvailabilityObject,
     TerminalEvidence,
+    availability_bootstrap_marker_key,
     availability_pointer_key,
     build_bootstrap_inventory_evidence,
     build_source_evidence,
@@ -536,6 +537,71 @@ async def test_a_lane_with_no_bootstrap_is_reported_and_writes_nothing() -> None
     assert outcome.error_kind == "availability_not_bootstrapped"
     assert backend.objects == before
     assert availability_pointer_key(LANE_ROOT) not in backend.objects
+
+
+@pytest.mark.asyncio
+async def test_a_lost_bootstrapped_pointer_preserves_claim_until_verified_head_is_restored() -> None:
+    """A missing head cannot erase the only work item that can index a terminal day."""
+    backend, store, storage, _log = new_lane()
+    bootstrap_lane(store, storage)
+    pointer_key = availability_pointer_key(LANE_ROOT)
+    saved_pointer = backend.objects.pop(pointer_key)
+    assert availability_bootstrap_marker_key(LANE_ROOT) in backend.objects
+    ledger = write_published_day(store, day=DAY)
+    parts_before = _lane_part_objects(backend)
+    cas_before = storage.cas_calls
+
+    outcome = await extend(store, storage, published_outcome(ledger))
+
+    assert outcome.state == "retry_owed"
+    assert outcome.error_kind == "availability_unreadable"
+    assert "bootstrap marker but no availability pointer" in outcome.reason
+    marker = availability_retry_path(LANE, GAP_FILL_PARTITION_KIND, DAY)
+    saved_claim = backend.objects[marker]
+    still_missing = await retry_pending_availability(
+        cast("AsyncSession", object()),
+        store,
+        lane=LANE,
+        kind=GAP_FILL_PARTITION_KIND,
+        availability=storage,
+        now=lambda: NOW,
+        publication_barrier=granted_barrier,
+    )
+    assert [item.state for item in still_missing] == ["retry_owed"]
+    assert backend.objects[marker] == saved_claim
+    assert storage.cas_calls == cas_before
+    assert pointer_key not in backend.objects
+
+    backend.objects[pointer_key] = saved_pointer
+    recovered = await retry_pending_availability(
+        cast("AsyncSession", object()),
+        store,
+        lane=LANE,
+        kind=GAP_FILL_PARTITION_KIND,
+        availability=storage,
+        now=lambda: NOW,
+        publication_barrier=granted_barrier,
+    )
+    assert [item.state for item in recovered] == ["extended"]
+    assert marker not in backend.objects
+    assert DAY in read_latest_availability(storage, lane_root=LANE_ROOT).selectable_days()
+    assert _lane_part_objects(backend) == parts_before
+
+
+@pytest.mark.asyncio
+async def test_a_malformed_bootstrap_marker_cannot_clear_the_terminal_day_claim() -> None:
+    """An unreadable marker cannot establish that generation zero never existed."""
+    backend, store, storage, _log = new_lane()
+    backend.objects[availability_bootstrap_marker_key(LANE_ROOT)] = b"{}"
+    ledger = write_published_day(store, day=DAY)
+
+    outcome = await extend(store, storage, published_outcome(ledger))
+
+    assert outcome.state == "retry_owed"
+    assert outcome.error_kind == "availability_unreadable"
+    assert availability_retry_path(LANE, GAP_FILL_PARTITION_KIND, DAY) in backend.objects
+    assert availability_pointer_key(LANE_ROOT) not in backend.objects
+    assert storage.cas_calls == 0
 
 
 @pytest.mark.asyncio

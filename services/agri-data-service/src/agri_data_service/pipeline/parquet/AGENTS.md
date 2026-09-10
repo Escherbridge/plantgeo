@@ -1,5 +1,42 @@
 # `pipeline/parquet` — the object store and the partition writer
 
+## Source response checkpoints
+
+`source_checkpoint.py` stores acquisition progress outside the serving namespace at
+`source-response-checkpoints/v1/<identity-sha256>.json`. A deterministic key binds provider/parser
+version, the full ordered support fingerprint, publisher day, and credential-free request URL.
+Support fingerprints include every cell's identity, coordinates, and coverage fraction; soil also
+includes chunk boundaries. Changing any of these facts produces a different key.
+
+The checkpoint retains the original bytes passed to the source parser: POWER's bounded response
+text encoded as UTF-8, or Open-Meteo's canonical response payload. The response dataclass holds
+these bytes alongside the original source digest and retrieval instant. The writer refuses a body
+whose digest disagrees with that receipt; it never substitutes a hash of reconstructed parsed
+values. Base64 preserves those exact bytes in a separately checksummed JSON envelope. A reader
+verifies identity, envelope checksum, body checksum/length, timezone, and a maximum age of seven
+days, then the lane reruns its original provider parser. Future-dated and expired entries are
+refused. Integrity, parser, and I/O failures are logged and trigger source refetch; failed evidence
+never enters a published day.
+
+Only responses with every requested parameter non-fill (POWER) or every cell/parameter non-null
+(soil) are checkpointed or resumed. Recent POWER meteorology with expected solar fill and coastal
+soil chunks with a stable null mask therefore still refetch across turns. This conservative rule
+avoids retaining unsettled values; the ordinary in-memory cache continues to share them within a
+turn. All existing day completeness, source ceiling, and absence-proof checks remain in force.
+
+The body ceiling is 2 MiB and envelope ceiling 3 MiB. Reads/conditional writes run off the async
+event loop under each lane's existing concurrency cap. Production forward commands wire the
+checkpoint store; plain cache construction remains in-memory for standalone callers and tests.
+Restoration occurs before the request-budget affordability check, so resumed responses cost zero
+upstream requests. Completed responses are checkpointed as they arrive, before the fan-out settles.
+
+The existing conditional storage adapter supplies GET and ETag compare-and-swap only; no availability
+pointer is involved. Refresh uses a stable key and cannot overwrite a newer valid response with an
+older one. A concurrent winner keeps its bytes on a CAS conflict; there is no blind overwrite retry.
+Seven-day reuse allows partial progress to survive a daily quota reset. It neither increases provider
+capacity nor adds a cross-turn cooldown. Old keys are ignored after expiry but are not garbage
+collected by this change; bucket lifecycle cleanup remains explicit operational debt.
+
 ## Responsibility
 The single seam through which every lane puts a Parquet partition into Railway object storage.
 Stream **S0** owns `objectstore.py`; no lane reimplements uploading, and no lane composes an
@@ -633,6 +670,13 @@ refused there rather than quietly beginning a second history. Its whole purpose 
 it nothing can ask "was this lane ever bootstrapped?" without already knowing the receipt digest,
 and `parquet_ops/availability_coverage.py` needs that answer to tell a lane that never had an index
 from one that LOST its pointer.
+
+The terminal-day publisher and its retry path also consult this marker when `_LATEST.json` is
+missing. Only a missing pointer AND missing bootstrap marker mean `not_bootstrapped`. A surviving
+marker means the head was lost: the publisher reports `retry_owed` and retains the physical-receipt
+claim until an operator restores the verified head. An unreadable marker also preserves the claim;
+it cannot prove the lane never had an index. This prevents a storage incident from permanently
+dropping completed days out of the retry ledger. Neither path recreates generation zero.
 
 The receipts come from a WRITE LEDGER, not from re-reading the bucket. `ObjectStore` grew
 `recording_written_objects()`: a scope that captures the `ParquetWriteReceipt`,

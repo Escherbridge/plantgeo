@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import replace
 from datetime import date, timedelta
-from typing import Any, Final
+from typing import TYPE_CHECKING, Any, Final
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -23,9 +25,22 @@ from agri_data_service.pipeline.direct.soil.products import (
     SOIL_SOURCE_PARAMETERS,
     products_for,
 )
-from agri_data_service.pipeline.direct.soil.source import ERA5_LAND_CHUNK_CELL_COUNT
+from agri_data_service.pipeline.direct.soil.source import (
+    ERA5_LAND_CHUNK_CELL_COUNT,
+    SoilProviderDeferredError,
+    SoilSourceCache,
+)
 from agri_data_service.pipeline.direct.soil.support import ERA5_LAND_SUPPORT_CELL_COUNT
 from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
+from agri_data_service.pipeline.parquet.availability_extension import AvailabilityExtensionTally
+from agri_data_service.pipeline.parquet.objectstore import ObjectStore
+from tests.direct.soil.conftest import product_for
+from tests.direct.soil.test_adapter import SessionDouble
+from tests.parquet.test_objectstore_writer import RecordingBackend
+
+if TYPE_CHECKING:
+    from agri_data_service.pipeline.direct.soil.source import Era5LandChunk
+    from agri_data_service.pipeline.direct.soil.support import Era5LandSupport
 
 MOISTURE_STREAM_COUNT: Final = 3
 TEMPERATURE_STREAM_COUNT: Final = 4
@@ -46,6 +61,43 @@ def config(**overrides: Any) -> SoilForwardConfig:
         contention_timeout_seconds=300.0,
     )
     return replace(base, **overrides)
+
+
+@pytest.mark.asyncio
+async def test_provider_quota_passes_through_gap_fill_as_one_deferred_attempt(
+    support: Era5LandSupport,
+    chunks: tuple[Era5LandChunk, ...],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A caught adapter refusal must remain a deferral through the real gap-fill driver."""
+    fetch = AsyncMock(side_effect=SoilProviderDeferredError("provider quota exceeded"))
+    sleep = AsyncMock(side_effect=AssertionError("a deferred provider must not enter publication retry sleep"))
+    monkeypatch.setattr(forward, "fetch_soil_day", fetch)
+    monkeypatch.setattr(forward.asyncio, "sleep", sleep)
+    backend = RecordingBackend()
+
+    result = await forward._publish_locked_day(
+        SessionDouble(),
+        ObjectStore(backend),
+        product_for("soil-field-moisture-7-28cm"),
+        date(2026, 8, 20),
+        support=support,
+        chunks=chunks,
+        cache=SoilSourceCache(request_budget=len(chunks)),
+        today=date(2026, 9, 2),
+        run_id="quota-run",
+        config=config(),
+        deadline=time.monotonic() + 60,
+        availability_storage=None,
+        availability=AvailabilityExtensionTally(),
+        mirrored_past=None,
+    )
+
+    assert result["outcome"] == forward.SOIL_SOURCE_UNSETTLED_OUTCOME
+    assert result["attempts"] == 1
+    assert fetch.await_count == 1
+    sleep.assert_not_awaited()
+    assert not backend.objects
 
 
 def test_each_browser_toggle_resolves_to_the_streams_that_serve_it() -> None:

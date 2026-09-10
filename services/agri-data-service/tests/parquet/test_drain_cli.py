@@ -30,6 +30,7 @@ from agri_data_service.pipeline.parquet.drain import DrainLaneProgress, DrainSum
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 from agri_data_service.warehouse.parquet.schema import observed_stream_schema
 from agri_data_service.warehouse.parquet.tiers import BASE_ZOOM_TIER
+from tests.parquet.test_availability_index import MemoryAvailabilityStorage
 from tests.parquet.test_objectstore_writer import RecordingBackend
 
 if TYPE_CHECKING:
@@ -125,6 +126,8 @@ def test_the_ladder_selection_reaches_run_drain(monkeypatch: pytest.MonkeyPatch)
     """The whole of FINDING 1: `_parquet_drain` passed no `selection`, so this path was unreachable."""
     store, _ = _store_with_one_base_complete_day()
     _pin_store(monkeypatch, store)
+    storage = MemoryAvailabilityStorage()
+    monkeypatch.setattr(BotoAvailabilityStorage, "from_settings", classmethod(lambda _cls, _source=None: storage))
     seen: dict[str, Any] = {}
 
     async def _record(*_args: object, **kwargs: object) -> DrainSummary:
@@ -156,6 +159,7 @@ def test_the_ladder_selection_reaches_run_drain(monkeypatch: pytest.MonkeyPatch)
 
     assert result.exit_code == 0, result.output
     assert seen["selection"] == "ladder", "the drain ran the selection the operator asked for"
+    assert seen["availability_storage"] is storage
 
 
 def test_the_drain_verb_hands_run_drain_the_availability_storage(monkeypatch: pytest.MonkeyPatch) -> None:

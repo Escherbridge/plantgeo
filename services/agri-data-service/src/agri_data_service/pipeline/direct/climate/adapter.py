@@ -11,7 +11,11 @@ from typing import TYPE_CHECKING, Final
 from agri_data_service.foundation.parquet.absence import GovernedAbsence
 from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
 from agri_data_service.pipeline.direct.climate.rows import climate_day_table
-from agri_data_service.pipeline.direct.climate.source import ClimateSourceError, ClimateSourceUnsettledError
+from agri_data_service.pipeline.direct.climate.source import (
+    ClimateProviderDeferredError,
+    ClimateSourceError,
+    ClimateSourceUnsettledError,
+)
 from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.parquet.derivation import govern_day_absent
 from agri_data_service.pipeline.parquet.lane_registry import normalise_export_outcome
@@ -83,6 +87,9 @@ class DirectClimateFieldAdapter:
         await session.rollback()
         try:
             source = await self.fetch_source()
+        except ClimateProviderDeferredError as error:
+            self.unsettled_refusal = error
+            raise
         except ClimateSourceError as error:
             raise DirectClimateFieldError(f"{self.product.stream} {day.isoformat()}: {error}") from error
         if source.day != day or source.product.stream != self.product.stream:

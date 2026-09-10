@@ -35,6 +35,7 @@ from agri_data_service.pipeline.parquet.vegetation_forward import (
     forward_persisted_vegetation,
     vegetation_forward_scope,
 )
+from tests.parquet.test_availability_index import MemoryAvailabilityStorage
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping
@@ -590,6 +591,7 @@ async def test_bound_callback_raises_when_a_bounded_run_leaves_pending_days(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     writes = (_write("45.1250:-122.6250", "2026-08-25T18:00:00Z"),)
+    storage = MemoryAvailabilityStorage()
     scope = vegetation_forward_scope(writes)
     summary = VegetationForwardSummary(
         scope=scope,
@@ -601,13 +603,15 @@ async def test_bound_callback_raises_when_a_bounded_run_leaves_pending_days(
         days=(VegetationForwardDayResult(day=date(2026, 8, 25), outcome="written", attempt_count=1),),
     )
 
-    async def incomplete(*_args: object, **_kwargs: object) -> VegetationForwardSummary:
+    async def incomplete(*_args: object, **kwargs: object) -> VegetationForwardSummary:
+        assert kwargs["availability_storage"] is storage
         return summary
 
     monkeypatch.setattr(forward_module, "forward_persisted_vegetation", incomplete)
     callback = bind_vegetation_forward_writer(
         cast("AsyncSession", object()),
         store=cast("ObjectStore", object()),
+        availability_storage=storage,
     )
     with pytest.raises(VegetationForwardIncompleteError, match="1 pending day"):
         await callback(writes)

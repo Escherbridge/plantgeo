@@ -1085,3 +1085,17 @@ the baseline the adaptive walk is described against above, and `tests/test_inges
 pin the offset semantics BOTH walks share (`resultOffset` advances by `len(page)`, the ceiling stops
 the run, an empty page ends it). Deleting it would delete that regression proof with it. If a third
 ArcGIS source is ever added, it starts on the adaptive walk.
+
+
+## NWIS flow trend evidence
+
+The NWIS parsers preserve measured flow and observation timestamps but emit a null `trend`.
+The removed qualifier helper returned `stable` without comparing observations and treated an
+estimated-value qualifier as `declining`; neither was a measured temporal change. Its only source
+callers were the instantaneous and daily-value parsers, and its remaining references were its
+unit tests, so removal does not discard any real trend calculation. A future trend needs an explicit
+comparison window, sufficient measured observations, and a documented threshold. Groundwater trend
+calculations elsewhere are separate and unchanged. With no percentile supplied, flow `condition`
+remains `unknown`; an absolute flow of 17.7 cfs alone does not establish a low-flow condition.
+Existing Parquet rows retain previously emitted classifications until explicitly corrected or
+replaced; this producer change does not claim to rewrite historical objects.

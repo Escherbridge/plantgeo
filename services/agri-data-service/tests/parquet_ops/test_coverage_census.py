@@ -79,8 +79,8 @@ EXPECTED_CENSUS_LIST_WORKERS: Final = 3
 #: The whole ERA5-Land family joined on 2026-09-08 -- `soil-field-vpd` plus the four
 #: `soil-temperature-*` -- once their day-grain windows were built. That was a RE-EXPORT, not a
 #: promotion: every one of their frozen roots is month-grain and can never be copied onto a live
-#: prefix. Only the three `climate-field-air-temperature-*` remain snapshot products.
-EXPECTED_REGISTERED_CENSUS_LANES: Final = 27
+#: prefix. The three air-temperature lanes joined after their verified day-grain rebuild on 2026-09-10.
+EXPECTED_REGISTERED_CENSUS_LANES: Final = 30
 
 #: Every registered physical lane must report all four serving rungs.
 EXPECTED_CENSUS_RUNG_ROWS: Final = EXPECTED_REGISTERED_CENSUS_LANES * len(ZOOM_TIERS)

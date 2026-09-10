@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import date
+from dataclasses import replace
+from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
+from unittest.mock import AsyncMock
 
+import httpx
 import pytest
 
 from agri_data_service.pipeline.direct.climate.products import CLIMATE_SOURCE_PARAMETERS
 from agri_data_service.pipeline.direct.climate.source import (
+    ClimateProviderDeferredError,
     ClimateSourceCache,
     ClimateSourceUnsettledError,
     build_climate_day,
@@ -32,10 +36,59 @@ from agri_data_service.pipeline.direct.climate.support import (
     quantize_coordinate,
     require_pinned_lattice_cell,
 )
+from agri_data_service.pipeline.parquet.source_checkpoint import SourceResponseCheckpoints
 from tests.direct.climate.conftest import FETCHED_AT, cell_day_response, filled_cache, product_for
+from tests.parquet.test_availability_index import MemoryAvailabilityStorage
 
 if TYPE_CHECKING:
     from agri_data_service.pipeline.direct.climate.support import NasaPowerSupport
+
+
+@pytest.mark.asyncio
+async def test_a_new_turn_resumes_only_verified_nonfill_responses(
+    support: NasaPowerSupport, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    storage = MemoryAvailabilityStorage()
+    checkpoints = SourceResponseCheckpoints(storage)
+    cache = ClimateSourceCache(request_budget=len(support.cells), checkpoints=checkpoints)
+    first = replace(
+        cell_day_response(support.cells[0], day=DAY),
+        request_url=climate_point_url(support.cells[0], day=DAY),
+    )
+    fetch = AsyncMock(side_effect=[first, ClimateProviderDeferredError("quota")])
+    monkeypatch.setattr("agri_data_service.pipeline.direct.climate.source._fetch_cell_day", fetch)
+    with pytest.raises(ClimateProviderDeferredError):
+        await fill_cell_day_cache(day=DAY, support=support, cache=cache, concurrency=1, now=FETCHED_AT)
+
+    resumed = ClimateSourceCache(request_budget=len(support.cells) - 1, checkpoints=SourceResponseCheckpoints(storage))
+    remaining = [cell_day_response(cell, day=DAY) for cell in support.cells[1:]]
+    resumed_fetch = AsyncMock(side_effect=remaining)
+    monkeypatch.setattr("agri_data_service.pipeline.direct.climate.source._fetch_cell_day", resumed_fetch)
+    await fill_cell_day_cache(
+        day=DAY, support=support, cache=resumed, concurrency=1, now=FETCHED_AT + timedelta(days=1)
+    )
+    assert resumed.requests_spent == len(support.cells) - 1
+    assert resumed_fetch.await_count == len(support.cells) - 1
+    assert resumed.responses[(first.cell.cell_key, DAY)] == first
+    assert resumed.responses[(first.cell.cell_key, DAY)].body == first.body
+
+    changed = replace(support, cells=(replace(support.cells[0], coverage_fraction=0.9), *support.cells[1:]))
+    foreign = ClimateSourceCache(request_budget=0, checkpoints=SourceResponseCheckpoints(storage))
+    await foreign.restore(changed, DAY, now=FETCHED_AT + timedelta(days=1))
+    assert foreign.responses == {}
+
+
+@pytest.mark.asyncio
+async def test_fill_values_are_never_checkpointed(support: NasaPowerSupport, monkeypatch: pytest.MonkeyPatch) -> None:
+    storage = MemoryAvailabilityStorage()
+    cache = ClimateSourceCache(request_budget=len(support.cells), checkpoints=SourceResponseCheckpoints(storage))
+    response = cell_day_response(support.cells[0], day=DAY, values=dict.fromkeys(CLIMATE_SOURCE_PARAMETERS))
+    fetch = AsyncMock(side_effect=[response, ClimateProviderDeferredError("quota")])
+    monkeypatch.setattr("agri_data_service.pipeline.direct.climate.source._fetch_cell_day", fetch)
+    with pytest.raises(ClimateProviderDeferredError):
+        await fill_cell_day_cache(day=DAY, support=support, cache=cache, concurrency=1, now=FETCHED_AT)
+    assert storage.objects == {}
+
 
 #: A byte-identical copy of `.omc/research/nasa-power-point-response-2026-09-02.json`, which is
 #: gitignored; the header and the provenance are in the sibling `.md` there.
@@ -281,7 +334,7 @@ async def test_a_fan_out_the_budget_cannot_cover_is_refused_before_a_socket_open
     """A half-spent budget must refuse the day rather than issue as many requests as it can afford."""
     cache = ClimateSourceCache(request_budget=NASA_POWER_SUPPORT_CELL_COUNT - 1)
 
-    with pytest.raises(ClimateSourceUnsettledError, match="budget"):
+    with pytest.raises(ClimateProviderDeferredError, match="budget"):
         await fill_cell_day_cache(day=DAY, support=support, cache=cache)
 
     assert cache.requests_spent == 0
@@ -321,3 +374,48 @@ def test_quantize_lands_an_integer_degree_on_an_exact_key() -> None:
     """Matching is equality on the quantized key; a tolerance window binds a value to the cell next door."""
     assert quantize_coordinate(-119.0) == Decimal("-119.000000")
     assert quantize_coordinate(46.0) == Decimal("46.000000")
+
+
+@pytest.mark.asyncio
+async def test_provider_quota_stops_queued_requests_and_keeps_completed_responses(
+    support: NasaPowerSupport,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A refused fan-out cannot burn the remaining queue or restart it for another product."""
+    cache = ClimateSourceCache(request_budget=len(support.cells) * 2)
+    response = cell_day_response(support.cells[0], day=DAY)
+    fetch = AsyncMock(side_effect=[response, ClimateProviderDeferredError("provider quota exceeded")])
+    monkeypatch.setattr("agri_data_service.pipeline.direct.climate.source._fetch_cell_day", fetch)
+
+    expected_requests = 2
+    for _attempt in range(expected_requests):
+        with pytest.raises(ClimateProviderDeferredError, match="provider quota"):
+            await fill_cell_day_cache(day=DAY, support=support, cache=cache, concurrency=1)
+
+    assert fetch.await_count == expected_requests
+    assert cache.requests_spent == expected_requests
+    assert list(cache.responses.values()) == [response]
+
+
+@pytest.mark.asyncio
+async def test_http_429_becomes_a_provider_deferral_before_the_remaining_fan_out(
+    support: NasaPowerSupport,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Exercise the HTTP boundary, including the bounded response's status classification."""
+    requests: list[httpx.Request] = []
+
+    def quota_response(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(429, text="Too Many Requests")
+
+    monkeypatch.setattr(
+        "agri_data_service.pipeline.direct.climate.source.upstream_client",
+        lambda _bounds: httpx.AsyncClient(transport=httpx.MockTransport(quota_response)),
+    )
+    cache = ClimateSourceCache(request_budget=len(support.cells))
+    with pytest.raises(ClimateProviderDeferredError, match="429"):
+        await fill_cell_day_cache(day=DAY, support=support, cache=cache, concurrency=1)
+    assert len(requests) == 1
+    assert cache.requests_spent == 1
+    assert not cache.responses

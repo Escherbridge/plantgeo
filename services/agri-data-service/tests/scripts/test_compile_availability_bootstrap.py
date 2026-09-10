@@ -50,6 +50,7 @@ from agri_data_service.pipeline.parquet.availability_index import (
     PROVENANCE_FIELD,
     load_bootstrap_request,
 )
+from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRY
 from agri_data_service.pipeline.parquet.objectstore import ListedObject, ObjectStore
 from agri_data_service.warehouse.schemas.availability_index import AVAILABILITY_REQUIRED_RUNGS
 from tests.scripts import load_scripts_module
@@ -62,6 +63,19 @@ if TYPE_CHECKING:
     from agri_data_service.foundation.parquet.zoom import ZoomTier
 
 COMPILER: Any = load_scripts_module("compile_availability_bootstrap.py", "compile_availability_bootstrap")
+
+
+def test_graduated_temperature_lanes_compile_with_their_registered_source_clock() -> None:
+    """The compiler accepts live temperature ladders without a staged or snapshot-specific bypass."""
+    layers = [f"climate-field-air-temperature-{statistic}" for statistic in ("mean", "max", "min")]
+    arguments = COMPILER._parse_arguments([argument for layer in layers for argument in ("--lane", layer)])
+    resolved = COMPILER._resolve_lanes(arguments)
+    assert [lane.layer for lane in resolved] == layers
+    for lane in resolved:
+        registration = LANE_REGISTRY[lane.layer]
+        assert lane.nature == registration.nature == "daily_series"
+        assert lane.publication_lag_days == registration.publication_lag_days
+
 
 LAYER = "test-lane"
 KIND: PartitionKind = "observed"

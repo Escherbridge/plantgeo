@@ -4,6 +4,20 @@ type: module-notes
 
 # `parquet_ops/` — one reusable Parquet operations core
 
+## Air-temperature graduation
+
+The three `climate-field-air-temperature-*` lanes were rebuilt from the pinned canonical Parquet
+snapshot on 2026-09-10. Each historical window has 1,560 complete days, 2022-04-30 through 2026-08-06,
+with 1,560 parts and completion markers at every z13/z09/z05/z00 rung and no `kind=physical` pollution.
+Their serving descriptors leave `SNAPSHOT_PRODUCTS`; the ordinary registry now supplies their live
+day reader, coverage and availability compiler. The serving catalogue is intentionally empty.
+
+`FROZEN_SNAPSHOT_PRODUCTS` retains the original monthly roots, schemas and source ownership boundaries
+for explicit provenance reads and tests. It is not a serving fallback. Generic frozen readers and the
+canonical source contracts remain available to the snapshot builders. Do not copy monthly objects
+into day paths or overwrite the frozen source. Bootstrap the verified live availability index before
+release, using the lane's current source ceiling so missing forward days remain visible as owed work.
+
 Protocol-independent parsing, four-state resolution, coverage, wire rendering, object reads, typed
 refusals, and bounded DuckDB execution. HTTP, CLI, and agent adapters consume this package; this
 package must never import a surface package.

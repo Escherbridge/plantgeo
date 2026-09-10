@@ -268,7 +268,7 @@ _PINNED_ARROW_SCHEMAS: Final[dict[tuple[str, ...], pa.Schema]] = {
 #: `incomplete`, never `data`, so the marker step is not optional. Never move a lane on a plan to
 #: finish that later, never on the strength of a live-prefix count alone, and never without checking
 #: `layout` first.
-SNAPSHOT_PRODUCTS: Final[tuple[SnapshotProduct, ...]] = (
+FROZEN_SNAPSHOT_PRODUCTS: Final[tuple[SnapshotProduct, ...]] = (
     SnapshotProduct(
         "climate-field-air-temperature-mean",
         "monthly",
@@ -304,7 +304,9 @@ SNAPSHOT_PRODUCTS: Final[tuple[SnapshotProduct, ...]] = (
     ),
 )
 
-PRODUCT_BY_LAYER: Final = {product.layer: product for product in SNAPSHOT_PRODUCTS}
+# Serving graduation and frozen provenance are separate; see AGENTS.md, "Air-temperature graduation".
+SNAPSHOT_PRODUCTS: Final[tuple[SnapshotProduct, ...]] = ()
+PRODUCT_BY_LAYER: Final[dict[str, SnapshotProduct]] = {product.layer: product for product in SNAPSHOT_PRODUCTS}
 
 
 class SnapshotStore(Protocol):
@@ -2465,6 +2467,7 @@ def _read_observed_day(
 
 __all__ = [
     "FORWARD_PARTITION_KIND",
+    "FROZEN_SNAPSHOT_PRODUCTS",
     "MAX_SNAPSHOT_READ_PARTS",
     "PRODUCT_BY_LAYER",
     "SIGNAL_PRODUCT_COLUMNS",

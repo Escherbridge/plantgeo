@@ -84,8 +84,7 @@ WATER_GAUGES_SCHEMA: Final = register_stream_schema(
                 # null in practice, but modelled nullable since nothing in the ingest contract
                 # guarantees the key is always populated for every future producer of this lane.
                 pa.field("condition", pa.string(), nullable=True),
-                # infer_trend always returns "stable" or "declining"; same nullable reasoning as
-                # condition above.
+                # Unknown until a separate measured comparison supplies a trend.
                 pa.field("trend", pa.string(), nullable=True),
                 # Literal "USGS NWIS", stamped by build_gauge_write on every row this lane writes.
                 pa.field("source", pa.string(), nullable=False),

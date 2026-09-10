@@ -199,3 +199,12 @@ def test_a_window_below_the_floor_is_refused_in_typed_terms() -> None:
                 end=datetime(2019, 2, 1, tzinfo=UTC),
             ),
         )
+
+
+def test_daily_values_with_different_flows_do_not_claim_an_uncomputed_trend() -> None:
+    records = parse_daily_value_series(
+        _daily_series("14137000", [("2026-08-01T00:00:00", "30"), ("2026-08-02T00:00:00", "17.7")])
+    )
+    assert [record["flowCfs"] for record in records] == [30.0, 17.7]
+    assert all(record["trend"] is None for record in records)
+    assert all(record["condition"] == "unknown" for record in records)

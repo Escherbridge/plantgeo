@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import date
+from dataclasses import replace
+from datetime import date, timedelta
 from decimal import Decimal
 from typing import TYPE_CHECKING, Final
+from unittest.mock import AsyncMock
 
+import httpx
 import pytest
 
 from agri_data_service.ingest.open_meteo import (
@@ -16,6 +19,7 @@ from agri_data_service.ingest.open_meteo import (
 from agri_data_service.pipeline.direct.soil.products import SOIL_SOURCE_PARAMETERS
 from agri_data_service.pipeline.direct.soil.source import (
     ERA5_LAND_CHUNK_CELL_COUNT,
+    SoilProviderDeferredError,
     SoilSourceCache,
     SoilSourceUnsettledError,
     build_soil_day,
@@ -38,6 +42,7 @@ from agri_data_service.pipeline.direct.soil.support import (
     quantize_coordinate,
     require_pinned_lattice_cell,
 )
+from agri_data_service.pipeline.parquet.source_checkpoint import SourceResponseCheckpoints
 from tests.direct.soil.conftest import (
     FETCHED_AT,
     chunk_body,
@@ -46,10 +51,56 @@ from tests.direct.soil.conftest import (
     masked_cell_keys,
     product_for,
 )
+from tests.parquet.test_availability_index import MemoryAvailabilityStorage
 
 if TYPE_CHECKING:
     from agri_data_service.pipeline.direct.soil.source import Era5LandChunk
     from agri_data_service.pipeline.direct.soil.support import Era5LandSupport
+
+
+@pytest.mark.asyncio
+async def test_a_new_turn_resumes_only_verified_nonnull_chunks(
+    chunks: tuple[Era5LandChunk, ...], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    storage = MemoryAvailabilityStorage()
+    cache = SoilSourceCache(request_budget=len(chunks), checkpoints=SourceResponseCheckpoints(storage))
+    first = chunk_day_response(chunks[0], day=DAY)
+    fetch = AsyncMock(side_effect=[first, SoilProviderDeferredError("quota")])
+    monkeypatch.setattr("agri_data_service.pipeline.direct.soil.source._fetch_chunk_day", fetch)
+    with pytest.raises(SoilProviderDeferredError):
+        await fill_chunk_day_cache(day=DAY, chunks=chunks, cache=cache, concurrency=1, now=FETCHED_AT)
+
+    resumed = SoilSourceCache(request_budget=len(chunks) - 1, checkpoints=SourceResponseCheckpoints(storage))
+    resumed_fetch = AsyncMock(side_effect=[chunk_day_response(chunk, day=DAY) for chunk in chunks[1:]])
+    monkeypatch.setattr("agri_data_service.pipeline.direct.soil.source._fetch_chunk_day", resumed_fetch)
+    await fill_chunk_day_cache(day=DAY, chunks=chunks, cache=resumed, concurrency=1, now=FETCHED_AT + timedelta(days=1))
+    assert resumed.requests_spent == len(chunks) - 1
+    assert resumed_fetch.await_count == len(chunks) - 1
+    assert resumed.responses[(first.chunk.key, DAY)] == first
+    assert resumed.responses[(first.chunk.key, DAY)].body == first.body
+
+    changed = (
+        replace(chunks[0], cells=(replace(chunks[0].cells[0], coverage_fraction=0.9), *chunks[0].cells[1:])),
+        *chunks[1:],
+    )
+    foreign = SoilSourceCache(request_budget=0, checkpoints=SourceResponseCheckpoints(storage))
+    await foreign.restore(changed, DAY, now=FETCHED_AT + timedelta(days=1))
+    assert foreign.responses == {}
+
+
+@pytest.mark.asyncio
+async def test_null_values_are_never_checkpointed(
+    chunks: tuple[Era5LandChunk, ...], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    storage = MemoryAvailabilityStorage()
+    cache = SoilSourceCache(request_budget=len(chunks), checkpoints=SourceResponseCheckpoints(storage))
+    response = chunk_day_response(chunks[0], day=DAY, values=dict.fromkeys(SOIL_SOURCE_PARAMETERS))
+    fetch = AsyncMock(side_effect=[response, SoilProviderDeferredError("quota")])
+    monkeypatch.setattr("agri_data_service.pipeline.direct.soil.source._fetch_chunk_day", fetch)
+    with pytest.raises(SoilProviderDeferredError):
+        await fill_chunk_day_cache(day=DAY, chunks=chunks, cache=cache, concurrency=1, now=FETCHED_AT)
+    assert storage.objects == {}
+
 
 DAY: Final = date(2026, 8, 20)
 NEXT_DAY: Final = date(2026, 8, 21)
@@ -244,7 +295,7 @@ async def test_a_fan_out_the_budget_cannot_cover_is_refused_before_a_socket_open
     """A half-spent budget must refuse the day rather than issue as many requests as it can afford."""
     cache = SoilSourceCache(request_budget=len(chunks) - 1)
 
-    with pytest.raises(SoilSourceUnsettledError, match="budget"):
+    with pytest.raises(SoilProviderDeferredError, match="budget"):
         await fill_chunk_day_cache(day=DAY, chunks=chunks, cache=cache)
 
     assert cache.requests_spent == 0
@@ -306,3 +357,51 @@ def test_the_chunk_count_is_the_ceiling_of_the_lattice_over_the_chunk_width(
     """A floor here would drop the last partial chunk, which is 18 cells of every day."""
     assert len(chunks) == -(-ERA5_LAND_SUPPORT_CELL_COUNT // ERA5_LAND_CHUNK_CELL_COUNT)
     assert len(chunks[-1].cells) == ERA5_LAND_SUPPORT_CELL_COUNT % ERA5_LAND_CHUNK_CELL_COUNT
+
+
+@pytest.mark.asyncio
+async def test_provider_quota_stops_queued_requests_and_keeps_completed_responses(
+    chunks: tuple[Era5LandChunk, ...],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A refused fan-out cannot burn the remaining queue or restart it for another product."""
+    cache = SoilSourceCache(request_budget=len(chunks) * 2)
+    response = chunk_day_response(chunks[0], day=DAY)
+    fetch = AsyncMock(side_effect=[response, SoilProviderDeferredError("provider quota exceeded")])
+    monkeypatch.setattr("agri_data_service.pipeline.direct.soil.source._fetch_chunk_day", fetch)
+
+    expected_requests = 2
+    for _attempt in range(expected_requests):
+        with pytest.raises(SoilProviderDeferredError, match="provider quota"):
+            await fill_chunk_day_cache(day=DAY, chunks=chunks, cache=cache, concurrency=1)
+
+    assert fetch.await_count == expected_requests
+    assert cache.requests_spent == expected_requests
+    assert list(cache.responses.values()) == [response]
+
+
+@pytest.mark.asyncio
+async def test_http_daily_quota_becomes_a_provider_deferral_without_retries(
+    chunks: tuple[Era5LandChunk, ...],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Exercise Open-Meteo's HTTP quota parser and the capture error translation together."""
+    requests: list[httpx.Request] = []
+
+    def quota_response(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            429,
+            json={"error": True, "reason": "Daily API request limit exceeded. Please try again tomorrow."},
+        )
+
+    monkeypatch.setattr(
+        "agri_data_service.pipeline.direct.soil.source.upstream_client",
+        lambda _bounds: httpx.AsyncClient(transport=httpx.MockTransport(quota_response)),
+    )
+    cache = SoilSourceCache(request_budget=len(chunks))
+    with pytest.raises(SoilProviderDeferredError, match="Daily API request limit"):
+        await fill_chunk_day_cache(day=DAY, chunks=chunks, cache=cache, concurrency=1)
+    assert len(requests) == 1
+    assert cache.requests_spent == 1
+    assert not cache.responses

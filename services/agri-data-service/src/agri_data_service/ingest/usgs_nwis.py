@@ -131,7 +131,6 @@ ABOVE_NORMAL_PERCENTILE: Final = 75
 NORMAL_PERCENTILE: Final = 25
 BELOW_NORMAL_PERCENTILE: Final = 10
 LOW_PERCENTILE: Final = 5
-DECLINING_QUALIFIER_CODE: Final = "e"
 
 
 def resolve_water_gauges_layer_name() -> str:
@@ -175,14 +174,6 @@ def classify_condition(percentile: float | None) -> str:
     if percentile >= LOW_PERCENTILE:
         return "low"
     return "critically_low"
-
-
-def infer_trend(qualifiers: object) -> str:
-    """Infer a trend from NWIS qualifier codes; without a historical comparison the default is stable."""
-    if not isinstance(qualifiers, list):
-        return "stable"
-    codes = {str(qualifier.get("qualifierCode", "")).lower() for qualifier in qualifiers if isinstance(qualifier, dict)}
-    return "declining" if DECLINING_QUALIFIER_CODE in codes else "stable"
 
 
 def _require_mapping(value: object, field_name: str) -> Mapping[str, object]:
@@ -267,7 +258,7 @@ def parse_gauge(series: Mapping[str, object], now: datetime | None = None) -> di
         "flowCfs": flow_cfs,
         "percentile": None,
         "condition": classify_condition(None),
-        "trend": infer_trend(first_values.get("qualifier") if isinstance(first_values, dict) else None),
+        "trend": None,
         # Ported unchanged from `usgs-water.ts:183`: a silent gauge keeps a wall-clock reading time, which
         # mints a fresh identity every run. See ingest/AGENTS.md "usgs_nwis.py".
         "updatedAt": updated_at
@@ -328,7 +319,6 @@ def parse_daily_value_series(series: Mapping[str, object]) -> list[dict[str, obj
 
     zone_offset = site_zone_offset(source_info)
     site_name = str(source_info.get("siteName", "") or "")
-    trend = infer_trend(first_values.get("qualifier") if isinstance(first_values, dict) else None)
 
     records: list[dict[str, object]] = []
     for reading in readings:
@@ -353,7 +343,7 @@ def parse_daily_value_series(series: Mapping[str, object]) -> list[dict[str, obj
                 "flowCfs": flow_cfs,
                 "percentile": None,
                 "condition": classify_condition(None),
-                "trend": trend,
+                "trend": None,
                 # The publisher-named day, offset-stamped but never shifted.
                 "updatedAt": f"{reading_time.strip()}{zone_offset}",
                 # Always false: a daily value names its own day, so the wall-clock fallback

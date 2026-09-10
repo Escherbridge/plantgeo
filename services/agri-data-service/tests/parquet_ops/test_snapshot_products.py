@@ -25,6 +25,7 @@ from agri_data_service.parquet_ops import snapshot_products
 from agri_data_service.parquet_ops.faults import ServingRefusalError
 from agri_data_service.parquet_ops.request_params import BoundingBox, ReadScope
 from agri_data_service.parquet_ops.snapshot_products import (
+    FROZEN_SNAPSHOT_PRODUCTS,
     PRODUCT_BY_LAYER,
     SIGNAL_PRODUCT_COLUMNS,
     SNAPSHOT_ID,
@@ -784,8 +785,9 @@ def test_unbound_completion_never_exposes_a_snapshot() -> None:
 
 
 def test_registered_product_families_pin_their_exact_top_level_schemas() -> None:
-    signal = PRODUCT_BY_LAYER["climate-field-air-temperature-mean"]
-    max_temperature = PRODUCT_BY_LAYER["climate-field-air-temperature-max"]
+    frozen = {product.layer: product for product in FROZEN_SNAPSHOT_PRODUCTS}
+    signal = frozen["climate-field-air-temperature-mean"]
+    max_temperature = frozen["climate-field-air-temperature-max"]
     temperature = SnapshotProduct(
         "soil-temperature-0-to-7cm",
         "monthly",
@@ -857,78 +859,50 @@ def test_registered_product_families_pin_their_exact_top_level_schemas() -> None
     assert signal.coverage_cells_per_day == max_temperature.coverage_cells_per_day == NASA_POWER_GRID_CELL_COUNT
 
 
-def test_every_product_with_a_live_writer_declares_that_writer_s_own_forward_edge() -> None:
-    """Two upstreams, two release schedules, two edges -- and a product with none reports a frozen last day.
-
-    The three NASA POWER air-temperature products open one day after the canonical snapshot's
-    2026-08-06; the five snapshot-rooted ERA5-Land soil products one day after their own 2026-08-02.
-    Borrowing one edge for the other would either hide four real days behind the manifest or route
-    four days at the live lane that the manifest still owns.
-
-    The POWER side used to hold seven layers. `climate-field-relative-humidity` and the three
-    `soil-wetness-*` lanes left `SNAPSHOT_PRODUCTS` on 2026-09-07, once their live prefixes held the
-    full rung ladder with real completion markers; a graduated lane resolves its forward edge the way
-    every ordinary lane does, so it has no `forward_first_day` here to declare.
-    """
+def test_frozen_provenance_retains_the_original_source_ownership_boundary() -> None:
+    """Graduating serving does not change the frozen source's historical boundary."""
     power_forward = {
         "climate-field-air-temperature-mean",
         "climate-field-air-temperature-max",
         "climate-field-air-temperature-min",
     }
-    # Empty since 2026-09-08: every ERA5-Land product finished its day-grain re-export and left the
-    # tuple, so no member declares SOIL_DIRECT_WRITER_START_DAY any more. Kept as an explicit empty
-    # set rather than deleted, because the POWER/ERA5-Land split is the thing this test exists to
-    # assert and a future re-export would repopulate it.
-    era5_land_forward: set[str] = set()
-
+    frozen = {product.layer: product for product in FROZEN_SNAPSHOT_PRODUCTS}
     for layer in sorted(power_forward):
-        assert PRODUCT_BY_LAYER[layer].forward_first_day == CLIMATE_DIRECT_WRITER_START_DAY, layer
-    for layer in sorted(era5_land_forward):
-        assert PRODUCT_BY_LAYER[layer].forward_first_day == SOIL_DIRECT_WRITER_START_DAY, layer
+        assert frozen[layer].forward_first_day == CLIMATE_DIRECT_WRITER_START_DAY, layer
     assert CLIMATE_DIRECT_WRITER_START_DAY != SOIL_DIRECT_WRITER_START_DAY
     assert {
-        product.layer for product in SNAPSHOT_PRODUCTS if product.forward_first_day is not None
-    } == power_forward | era5_land_forward
+        product.layer for product in FROZEN_SNAPSHOT_PRODUCTS if product.forward_first_day is not None
+    } == power_forward
 
 
-def test_a_forward_day_of_a_product_is_read_through_its_lane_and_not_its_manifest() -> None:
-    """`forward_first_day` is the ONE boundary: below it the closed manifest, at or above it the lane.
-
-    Asserted on an air-temperature product because it is the only FAMILY still in the tuple. This read
-    `soil-field-vpd` until 2026-09-08 and then `soil-temperature-0-to-7cm` for a matter of minutes,
-    losing each as its day-grain re-export finished and it left. The BOUNDARY is the contract; which
-    product demonstrates it is an accident of how far the cutover has got.
-    """
-    product = PRODUCT_BY_LAYER["climate-field-air-temperature-mean"]
+def test_a_forward_day_of_a_product_is_read_through_its_lane_and_not_its_manifest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Explicitly registering a frozen product preserves its historical routing boundary."""
+    product = next(
+        product for product in FROZEN_SNAPSHOT_PRODUCTS if product.layer == "climate-field-air-temperature-mean"
+    )
+    monkeypatch.setitem(snapshot_products.PRODUCT_BY_LAYER, product.layer, product)
     assert product.forward_first_day is not None
 
     assert snapshot_products.serves_from_snapshot(product.layer, product.forward_first_day - timedelta(days=1)) is True
     assert snapshot_products.serves_from_snapshot(product.layer, product.forward_first_day) is False
 
 
-def test_the_allowlist_is_exactly_the_three_month_grain_products_awaiting_a_re_export() -> None:
-    """Pin the three BY NAME as a LIST, so a cleanup that sweeps one out with the eleven that left fails here.
-
-    A list, not a set: a set hides both a duplicated entry and the arity, and the arity is the whole
-    claim. After 2026-09-07 this tuple holds ONE kind of member, and the invariant asserted below is
-    the useful half: every remaining product declares `layout="monthly"`, so its frozen root is
-    partitioned `kind=observed/zoom=NN/year/month` with NO `day=` segment. Such a root cannot be
-    promoted by copying -- month files would land where `classify_partition_day` looks for a day, the
-    lane would advertise nothing, and the objects would have to be found and deleted again (which is
-    exactly what happened to the air-temperature trio on 2026-09-07, 1,908 unreadable objects,
-    reverted the same day). Each of these eight waits on a real day-grain RE-EXPORT, not a rename.
-    See the block above `SNAPSHOT_PRODUCTS`.
-    """
-    assert sorted(product.layer for product in SNAPSHOT_PRODUCTS) == [
+def test_graduated_temperature_products_retain_frozen_provenance_without_serving_it() -> None:
+    """The frozen descriptors remain auditable while every temperature date uses the live lane."""
+    assert sorted(product.layer for product in FROZEN_SNAPSHOT_PRODUCTS) == [
         "climate-field-air-temperature-max",
         "climate-field-air-temperature-mean",
         "climate-field-air-temperature-min",
     ]
-    assert {product.layout for product in SNAPSHOT_PRODUCTS} == {"monthly"}, (
-        "a day-grain product left in this tuple is a lane withheld for no reason; promote it instead"
-    )
+    assert {product.layout for product in FROZEN_SNAPSHOT_PRODUCTS} == {"monthly"}
     assert set(PRODUCT_BY_LAYER) == {product.layer for product in SNAPSHOT_PRODUCTS}
-    assert all(product.data_root.endswith(f"snapshot={SNAPSHOT_ID}") for product in SNAPSHOT_PRODUCTS)
+    assert not SNAPSHOT_PRODUCTS
+    assert all(product.data_root.endswith(f"snapshot={SNAPSHOT_ID}") for product in FROZEN_SNAPSHOT_PRODUCTS)
+    for product in FROZEN_SNAPSHOT_PRODUCTS:
+        for day in (date(2022, 4, 30), date(2026, 8, 6), CLIMATE_DIRECT_WRITER_START_DAY):
+            assert snapshot_products.serves_from_snapshot(product.layer, day) is False
 
 
 def test_the_six_lanes_that_moved_to_the_census_are_not_reachable_as_snapshot_products() -> None:

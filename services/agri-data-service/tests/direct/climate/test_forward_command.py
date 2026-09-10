@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING, Any
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -23,7 +24,11 @@ from agri_data_service.pipeline.direct.climate.products import (
     CLIMATE_SHORTWAVE_RADIATION_PUBLICATION_LAG_DAYS,
     products_for,
 )
-from agri_data_service.pipeline.direct.climate.source import ClimateSourceCache, ClimateTimeBudgetExhaustedError
+from agri_data_service.pipeline.direct.climate.source import (
+    ClimateProviderDeferredError,
+    ClimateSourceCache,
+    ClimateTimeBudgetExhaustedError,
+)
 from agri_data_service.pipeline.direct.climate.support import NASA_POWER_SUPPORT_CELL_COUNT
 from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.parquet.availability_extension import (
@@ -69,6 +74,41 @@ def bounded_config(**overrides: Any) -> forward.ClimateForwardConfig:
         contention_timeout_seconds=300.0,
     )
     return replace(base, **overrides)
+
+
+@pytest.mark.asyncio
+async def test_provider_quota_passes_through_gap_fill_as_one_deferred_attempt(
+    support: NasaPowerSupport,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A caught adapter refusal must remain a deferral through the real gap-fill driver."""
+    fetch = AsyncMock(side_effect=ClimateProviderDeferredError("provider quota exceeded"))
+    sleep = AsyncMock(side_effect=AssertionError("a deferred provider must not enter publication retry sleep"))
+    monkeypatch.setattr(forward, "fetch_climate_day", fetch)
+    monkeypatch.setattr(forward.asyncio, "sleep", sleep)
+    backend = RecordingBackend()
+
+    result = await forward._publish_locked_day(
+        SessionDouble(),
+        ObjectStore(backend),
+        product_for(PLANE_STREAM),
+        date(2026, 8, 20),
+        support=support,
+        cache=ClimateSourceCache(request_budget=NASA_POWER_SUPPORT_CELL_COUNT),
+        today=TODAY,
+        run_id="quota-run",
+        config=bounded_config(),
+        deadline=time.monotonic() + 60,
+        availability_storage=None,
+        availability=AvailabilityExtensionTally(),
+        mirrored_past=None,
+    )
+
+    assert result["outcome"] == forward.CLIMATE_SOURCE_UNSETTLED_OUTCOME
+    assert result["attempts"] == 1
+    assert fetch.await_count == 1
+    sleep.assert_not_awaited()
+    assert not backend.objects
 
 
 class SessionDouble:

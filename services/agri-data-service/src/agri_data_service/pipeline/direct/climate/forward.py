@@ -64,6 +64,7 @@ from agri_data_service.pipeline.parquet.gap_fill import (
 )
 from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRY
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore
+from agri_data_service.pipeline.parquet.source_checkpoint import SourceResponseCheckpoints
 from agri_data_service.warehouse.parquet.tiers import DERIVED_ZOOM_TIERS
 
 if TYPE_CHECKING:
@@ -188,7 +189,9 @@ async def run_climate_forward(config: ClimateForwardConfig) -> dict[str, object]
     products = products_for(config.product_id)
     store = ObjectStore.from_settings()
     availability_storage = BotoAvailabilityStorage.from_settings()
-    cache = ClimateSourceCache(request_budget=config.request_budget)
+    cache = ClimateSourceCache(
+        request_budget=config.request_budget, checkpoints=SourceResponseCheckpoints(availability_storage)
+    )
     deadline = time.monotonic() + config.time_budget_seconds
     results: list[dict[str, object]] = []
     # ONE TALLY FOR THE WHOLE RUN. Without it every availability verdict lands only inside a day's
@@ -277,6 +280,10 @@ async def _publish_product(  # noqa: PLR0913 - the store, product, support, cach
     for day in selected:
         if time.monotonic() >= deadline:
             published.append(_stopped_day(day, outcome=CLIMATE_TIME_BUDGET_OUTCOME, detail="before the day started"))
+            break
+        await cache.restore(support, day, deadline=deadline)
+        if time.monotonic() >= deadline:
+            published.append(_stopped_day(day, outcome=CLIMATE_TIME_BUDGET_OUTCOME, detail="after checkpoint restore"))
             break
         if not cache.can_afford(support, day):
             published.append(

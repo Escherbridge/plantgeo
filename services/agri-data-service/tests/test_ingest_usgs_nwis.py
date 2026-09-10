@@ -8,7 +8,7 @@ The forward `geo.features` job this file also covered (`run_water_ingestion_job`
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 import pytest
 
@@ -17,11 +17,11 @@ from agri_data_service.ingest.usgs_nwis import (
     build_gauge_write,
     classify_condition,
     format_tile_ordinate,
-    infer_trend,
     is_missing_value_sentinel,
     parse_gauge,
     tile_bbox,
 )
+from agri_data_service.pipeline.direct.water_gauges import tables_by_publisher_day
 
 # Captured 2026-08-03 read-only from production `geo.features` on the `water-gauges` layer.
 RECORDED_GAUGE_EXTERNAL_ID = "05014500:2026-08-02T18:30:00.000-06:00"
@@ -85,10 +85,25 @@ def test_a_condition_is_unknown_without_a_percentile_and_graded_with_one() -> No
     assert classify_condition(1) == "critically_low"
 
 
-def test_a_trend_declines_only_on_the_estimated_qualifier() -> None:
-    assert infer_trend(None) == "stable"
-    assert infer_trend([{"qualifierCode": "P"}]) == "stable"
-    assert infer_trend([{"qualifierCode": "E"}]) == "declining"
+@pytest.mark.parametrize("qualifiers", [None, [], [{"qualifierCode": "P"}], [{"qualifierCode": "E"}]])
+def test_gauge_qualifiers_never_fabricate_a_trend_or_flow_condition(qualifiers: object) -> None:
+    series = _series("14018500", "2026-09-10T10:15:00Z", value="17.7")
+    series["values"] = [{"value": [{"value": "17.7", "dateTime": "2026-09-10T10:15:00Z"}], "qualifier": qualifiers}]
+    gauge = parse_gauge(series, NOW)
+    assert gauge is not None
+    assert gauge["flowCfs"] == 17.7
+    assert gauge["updatedAt"] == "2026-09-10T10:15:00Z"
+    assert gauge["percentile"] is None
+    assert gauge["condition"] == "unknown"
+    assert gauge["trend"] is None
+    write = build_gauge_write(gauge, "water-gauges")
+    assert write is not None
+    assert write.properties["trend"] is None
+    table = tables_by_publisher_day([gauge], ingested_at=NOW)[date(2026, 9, 10)]
+    row = table.to_pylist()[0]
+    assert row["flow_cfs"] == 17.7
+    assert row["trend"] is None
+    assert row["condition"] == "unknown"
 
 
 def test_a_gauge_with_a_reading_keeps_the_upstream_reading_time_verbatim() -> None:
