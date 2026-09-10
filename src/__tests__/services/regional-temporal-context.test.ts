@@ -14,7 +14,7 @@ const mocks = vi.hoisted(() => ({
   getSoilProperties: vi.fn(),
   getMTBSPerimeters: vi.fn(),
   // Consumed in call order by the generic `db.select()`/`db.execute()` stand-ins below, so a
-  // test that cares can queue exactly what `readCommunityProposals` and `resolveStrategyContext`
+  // test that cares can queue exactly what `readCommunityProposals` and a forbidden legacy strategy read
   // will see on their next call. Left empty, every call resolves to `[]`.
   dbSelectResults: [] as unknown[][],
   dbExecuteResults: [] as unknown[][],
@@ -25,23 +25,10 @@ const mocks = vi.hoisted(() => ({
    * up in the payload".
    */
   dbSelect: vi.fn(),
+  dbExecute: vi.fn(),
 }));
 
-/**
- * `readPublishedFirePerimeters` was the one read `regional-context.ts` issued through `db`
- * before 2026-08-14, and it left the module entirely on 2026-09-07 when the perimeter block
- * moved to `getParquetFirePerimeters`; `readCommunityProposals` and `resolveStrategyContext`
- * (real reads added on 2026-08-14 to close two fabrication gaps -- see the track's plan.md) are
- * what still issues `db.select`, plus `db.execute` for the `to_regclass` matview guard. The
- * stand-in below is shape-agnostic (every chain method just returns itself) so it serves both
- * without caring which methods a given query happens to call, and defaults to "nothing
- * configured" so every pre-existing test in this file keeps seeing exactly the empty results it
- * always has.
- *
- * The spy is deliberately OUTSIDE the behaviour: `mocks.dbSelect` only records the call while a
- * plain closure returns the queue, so `vi.clearAllMocks()` in `beforeEach` can never strip the
- * stand-in's implementation and turn a passing negative control into a vacuous one.
- */
+/** Community application reads stay active; execute is spied to forbid deferred strategy reads. */
 function chainableSelect(rows: unknown[]) {
   const node = {
     from: () => node,
@@ -59,7 +46,10 @@ vi.mock("@/lib/server/db", () => ({
       mocks.dbSelect(...args);
       return chainableSelect(mocks.dbSelectResults.shift() ?? []);
     },
-    execute: async () => mocks.dbExecuteResults.shift() ?? [],
+    execute: async (...args: unknown[]) => {
+      mocks.dbExecute(...args);
+      return mocks.dbExecuteResults.shift() ?? [];
+    },
   },
 }));
 
@@ -1149,16 +1139,7 @@ describe("the viewed-layers request contract", () => {
   });
 });
 
-/**
- * A 2026-08-14 fabrication audit found `regional-context.ts` untouched since 2026-08-09 despite
- * a checked-off plan claiming ML strategy context and community proposals had been added:
- * `communityProposals` did not exist, `strategyRecommendations` was the pre-existing heuristic
- * shape, and `soilProperties`/`mtbsPerimeters` were hardcoded null despite both having a real
- * server-side read path. These tests pin the honest versions of all four, including the
- * governance constraint that strategy context may never carry a causal effect size or a
- * percentage benefit, whichever tier produced it.
- */
-describe("community proposals and strategy context (2026-08-14 fabrication fix)", () => {
+describe("community proposals and deferred strategy evidence", () => {
   it("reads nearby community intervention proposals from geo.features/geo.layers", async () => {
     mocks.dbSelectResults.push(
       // `db.select()` calls are consumed in issue order across every reader in this module, not
@@ -1198,101 +1179,21 @@ describe("community proposals and strategy context (2026-08-14 fabrication fix)"
     expect(result.payload.communityProposals).toEqual([]);
   });
 
-  it("falls back to the heuristic StrategyScore list, tagged heuristic_score, when the matview is absent", async () => {
-    mocks.getStrategyRecommendations.mockResolvedValue([
-      {
-        strategyId: "biochar",
-        name: "Biochar amendment",
-        score: 0.82,
-        factors: {
-          waterStress: 0.5,
-          soilHealth: 0.7,
-          fireRisk: 0.2,
-          vegetationDegradation: 0.3,
-          communityDemand: 0.4,
-        },
-        confidence: "medium",
-        topReasons: ["High soil organic carbon deficit"],
-      },
-    ]);
-    // dbExecuteResults left unconfigured: `to_regclass` resolves to `[]`, so the matview reads
-    // as absent, exactly the drizzle-0027-not-yet-applied state this branch exists for.
-
-    const result = await assembleRegionalContext(43.6, -116.2);
-
-    expect(result.payload.strategyContext).toEqual([
-      {
-        claimTier: "heuristic_score",
-        strategySlug: "biochar",
-        name: "Biochar amendment",
-        category: null,
-        score: 0.82,
-      },
-    ]);
-  });
-
-  it("reads geo.mv_strategy_recommendations_regional when it exists, tagged evaluation_only_model", async () => {
-    mocks.dbExecuteResults.push(
+  it("withholds deferred strategy evidence even when evaluation rows and heuristic scores are available", async () => {
+    const temptingRows = [
       [{ exists: true }],
-      [
-        {
-          strategy_slug: "silvopasture",
-          strategy_name: "Silvopasture conversion",
-          strategy_category: "agroforestry",
-          suitability_score: 0.71,
-        },
-      ]
-    );
-
+      [{ strategy_slug: "silvopasture", strategy_name: "Silvopasture conversion", suitability_score: 0.99 }],
+    ];
+    mocks.dbExecuteResults.push(...temptingRows);
+    mocks.getStrategyRecommendations.mockResolvedValue([{ strategyId: "biochar", score: 0.99 }]);
     const result = await assembleRegionalContext(43.6, -116.2);
-
-    expect(result.payload.strategyContext).toEqual([
-      {
-        claimTier: "evaluation_only_model",
-        strategySlug: "silvopasture",
-        name: "Silvopasture conversion",
-        category: "agroforestry",
-        score: 0.71,
-      },
-    ]);
-  });
-
-  it("never carries a causal effect size or a percentage benefit in strategy context, from either source", async () => {
-    mocks.getStrategyRecommendations.mockResolvedValue([
-      {
-        strategyId: "biochar",
-        name: "Biochar amendment",
-        score: 0.82,
-        factors: {
-          waterStress: 0.5,
-          soilHealth: 0.7,
-          fireRisk: 0.2,
-          vegetationDegradation: 0.3,
-          communityDemand: 0.4,
-        },
-        confidence: "medium",
-        topReasons: ["High soil organic carbon deficit"],
-      },
-    ]);
-    mocks.dbExecuteResults.push(
-      [{ exists: true }],
-      [
-        {
-          strategy_slug: "silvopasture",
-          strategy_name: "Silvopasture conversion",
-          strategy_category: "agroforestry",
-          suitability_score: 0.71,
-        },
-      ]
-    );
-
-    const result = await assembleRegionalContext(43.6, -116.2);
-
-    // The matview branch wins when present, but the guard below holds regardless of which
-    // branch produced the entries -- neither StrategyScore nor a matview row is ever mapped
-    // through a field named tau/causal/benefit-percent.
-    const serialized = JSON.stringify(result.payload.strategyContext);
-    expect(serialized.toLowerCase()).not.toMatch(/tau|causal|benefit.*%|%.*benefit/);
+    expect(mocks.dbExecute).not.toHaveBeenCalled();
+    expect(mocks.dbExecuteResults).toEqual(temptingRows);
+    expect(mocks.getStrategyRecommendations).not.toHaveBeenCalled();
+    expect(result.payload.strategyContext).toEqual([]);
+    expect(result.payload.strategyRecommendations).toBeNull();
+    expect(result.dataFreshness.strategyRecommendations).toBe("unavailable");
+    expect(result.contextIsEmpty).toBe(true);
   });
 
   it("wires soil properties and MTBS perimeters from their live read paths", async () => {

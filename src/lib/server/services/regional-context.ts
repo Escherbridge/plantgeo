@@ -11,7 +11,6 @@ import {
   type MTBSFireProperties,
 } from "@/lib/server/services/mtbs";
 import {
-  getStrategyRecommendations,
   type StrategyScore,
 } from "@/lib/server/services/strategy-scoring";
 import {
@@ -138,20 +137,7 @@ export interface CommunityProposal {
   createdAt: string;
 }
 
-/**
- * What produced a `StrategyContextEntry`, so the prompt and the UI can say so rather than let a
- * ranking read as a validated prediction.
- *
- * `"heuristic_score"` — `strategy-scoring.ts`'s rule-based `StrategyScore` list (currently always
- * empty: that plane has no validated evidence release published yet, see
- * `getStrategyRecommendationResult`).
- * `"evaluation_only_model"` — a `geo.mv_strategy_recommendations_*` row (drizzle 0027, rebuilt
- * over real geometry by 0028). No row on that plane has ever been signed off by an owner: every
- * receipt feeding it is CHECK-pinned `evaluation_only` with `CHECK (NOT publication_authorized)`,
- * and each served cell carries its own `label_review_tier` saying what its label release is
- * worth — down to `no_label_release_bound` when nothing can be cited at all. Never causal: see
- * the governance note on `resolveStrategyContext` below.
- */
+/** Compatibility types for deferred strategy evidence; no active reader. */
 export type StrategyClaimTier = "heuristic_score" | "evaluation_only_model";
 
 /**
@@ -171,7 +157,7 @@ export interface StrategyContextEntry {
 export interface RegionalContextPayload {
   location: { lat: number; lon: number; geohash: string };
   strategyRecommendations: StrategyScore[] | null;
-  /** Top strategy candidates for this point. See `resolveStrategyContext`. */
+  /** Reserved for a future published strategy release; currently always empty. */
   strategyContext: StrategyContextEntry[];
   /** Nearby unreviewed community intervention proposals. See `readCommunityProposals`. */
   communityProposals: CommunityProposal[];
@@ -388,11 +374,11 @@ const EVIDENCE_SOURCE_BY_VIEWED_LAYER: Record<string, RegionalEvidenceSource> = 
  *    `published_with_nothing_at_this_location` -- the vocabulary's strongest sentence, "you may
  *    say there was none here" -- for a day the lane never captured.
  *
- * `strategyRecommendations` and `carbonPotential` are derived scores over the live warehouse.
+ * Strategy recommendations are deferred and always unavailable; carbon potential keeps its
+ * separate publication gate.
  * `soilProperties` (SoilGrids, via `getSoilProperties`) and `mtbsPerimeters` (via
  * `getMTBSPerimeters`) are populated from live external reads as of 2026-08-14, but neither
- * upstream accepts a historical day, so both are always served as-of-latest, the same as
- * `strategyRecommendations` and `carbonPotential`.
+ * upstream accepts a historical day, so both are always served as-of-latest.
  */
 const DATE_PARAMETERISED_SOURCES: ReadonlySet<RegionalEvidenceSource> = new Set<
   RegionalEvidenceSource
@@ -706,95 +692,6 @@ async function readCommunityProposals(
   }));
 }
 
-const STRATEGY_CONTEXT_MATVIEW = "geo.mv_strategy_recommendations_regional";
-const MAX_STRATEGY_CONTEXT_ENTRIES = 3;
-/**
- * How far outside a cell's own boundary a point still counts as being in it.
- *
- * A tolerance, not a cell half-width. Until drizzle 0028 the regional matview drew fixed
- * `ST_MakeEnvelope(lon±0.125, lat±0.125)` boxes around fabricated centres, so half of one box
- * was a meaningful number; the tier now unions REAL `agri.spatial_cell` polygons, whose size is
- * whatever the source grid publishes and differs between grids. `ST_DWithin` against the real
- * polygon is already 0 for any point inside it, so this only widens the match to points just
- * outside a cell edge — near enough that answering about the neighbouring cell is better than
- * answering about nothing.
- */
-const STRATEGY_MATVIEW_CELL_RADIUS_METERS = 14_000;
-
-/** Object type, not an interface: db.execute requires an implicit index signature. */
-type StrategyMatviewRow = {
-  strategy_slug: string;
-  strategy_name: string;
-  strategy_category: string | null;
-  suitability_score: number;
-};
-
-/** Whether a relation is present in this database. Used to gate on drizzle 0027/0028 (`geo.mv_strategy_recommendations_*`), which is not yet applied in every environment. */
-async function relationExists(qualifiedName: string): Promise<boolean> {
-  const rows = await db.execute<{ exists: boolean }>(
-    sql`SELECT to_regclass(${qualifiedName}) IS NOT NULL AS exists`
-  );
-  return rows[0]?.exists === true;
-}
-
-/**
- * Top strategy candidates for this point.
- *
- * Governance boundary (do not relax without an owner decision): this repo forbids representing
- * strategy-model output as a causal effect claim. The `20260725_0013` causal plane is empty and
- * deliberately blocked, and today's evaluation model carries
- * `label_review_tier = agent_reviewed_pending_owner_signature` -- reviewed by an agent, not
- * signed off by an owner. See
- * `services/agri-data-service/src/agri_data_service/method/AGENTS.md`.
- *
- * `geo.mv_strategy_recommendations_*` carries an `effect_utility_score` and an
- * `effect_utility_lower`/`effect_utility_upper` spread. Until drizzle 0028 those three were
- * named `causal_benefit_tau`, `confidence_lower` and `confidence_upper` -- names asserting a
- * causal effect and a validated interval that this evidence chain has never been able to
- * support -- and they were computed over `agri.strategy_selection_candidate` rows assigned to
- * RANDOM coordinates (`37.5 + random() * 5.0`), so they described no place at all. 0028
- * rebuilds the plane over the real `agri.spatial_cell` geometry each candidate's analysis
- * subject actually occupies and renames the three columns to what they are: a model-internal
- * ordering quantity and its spread.
- *
- * They are still never read here, and the renaming does not relax the boundary. Only
- * `suitability_score` -- a relative ranking, not an effect size -- crosses it, and every entry
- * is tagged with the tier that produced it so the prompt and the UI can say so.
- */
-async function resolveStrategyContext(
-  lat: number,
-  lon: number,
-  heuristicRecommendations: StrategyScore[]
-): Promise<StrategyContextEntry[]> {
-  const matviewPresent = await relationExists(STRATEGY_CONTEXT_MATVIEW).catch(() => false);
-
-  if (matviewPresent) {
-    const point = sql`ST_SetSRID(ST_MakePoint(${lon}, ${lat}), 4326)::geography`;
-    const rows = await db.execute<StrategyMatviewRow>(sql`
-      SELECT strategy_slug, strategy_name, strategy_category, suitability_score
-      FROM ${sql.raw(STRATEGY_CONTEXT_MATVIEW)}
-      WHERE ST_DWithin(geom::geography, ${point}, ${STRATEGY_MATVIEW_CELL_RADIUS_METERS})
-      ORDER BY suitability_score DESC
-      LIMIT ${MAX_STRATEGY_CONTEXT_ENTRIES}
-    `);
-    return rows.map((row) => ({
-      claimTier: "evaluation_only_model" as const,
-      strategySlug: row.strategy_slug,
-      name: row.strategy_name,
-      category: row.strategy_category,
-      score: row.suitability_score,
-    }));
-  }
-
-  return heuristicRecommendations.slice(0, MAX_STRATEGY_CONTEXT_ENTRIES).map((score) => ({
-    claimTier: "heuristic_score" as const,
-    strategySlug: score.strategyId,
-    name: score.name,
-    category: null,
-    score: score.score,
-  }));
-}
-
 /**
  * The nearest published weather sample to the point, for the live edge or for one named day.
  *
@@ -995,7 +892,6 @@ export async function assembleRegionalContext(
   }
 
   const [
-    strategy,
     drought,
     gauges,
     weather,
@@ -1007,7 +903,6 @@ export async function assembleRegionalContext(
     mtbs,
     communityProposals,
   ] = await Promise.allSettled([
-    getStrategyRecommendations(lat, lon),
     getContextDrought(bbox, dateBySource.get("drought")),
     getContextWaterGauges(bbox, dateBySource.get("streamflow")),
     readNearestWeather(
@@ -1053,7 +948,6 @@ export async function assembleRegionalContext(
     readCommunityProposals(lat, lon),
   ]);
 
-  const strategyValues = settled(strategy, [] as StrategyScore[]);
   const droughtValue = drought.status === "fulfilled" ? drought.value : null;
   const gaugeValues = settled(gauges, [] as WaterGauge[]);
   const weatherValue = weather.status === "fulfilled" ? weather.value : null;
@@ -1069,16 +963,6 @@ export async function assembleRegionalContext(
     communityProposals,
     [] as CommunityProposal[]
   );
-  // Runs after the batch above resolves rather than inside it: the matview branch is a second
-  // sequential query only when drizzle 0027/0028 is actually applied, which today it is not
-  // anywhere this runs -- so the common path adds no extra latency, just a map over
-  // `strategyValues`.
-  const strategyContextValue = await resolveStrategyContext(
-    lat,
-    lon,
-    strategyValues
-  ).catch(() => [] as StrategyContextEntry[]);
-
   const latestMtbsIgnitionDate = mtbsCollection.features
     .map((feature) => {
       const properties = feature.properties as MTBSFireProperties | null;
@@ -1112,8 +996,7 @@ export async function assembleRegionalContext(
       perimeterRead.snapshotDay !== null && perimeterRead.perimeters.length > 0
         ? `snapshot_captured_${perimeterRead.snapshotDay}`
         : "unavailable",
-    strategyRecommendations:
-      strategyValues.length > 0 ? "published_revision_required" : "unavailable",
+    strategyRecommendations: "unavailable",
     // SoilGrids v2.0 is a static, undated raster release (see soilgrids.ts): there is no
     // per-request observation time to report, so this sentinel is deliberately not a parseable
     // date. It still resolves `contextIsEmpty` and the freshness footer correctly to "available
@@ -1128,8 +1011,8 @@ export async function assembleRegionalContext(
 
   const payload: RegionalContextPayload = {
     location: { lat, lon, geohash: `${lat.toFixed(2)}_${lon.toFixed(2)}` },
-    strategyRecommendations: strategyValues.length > 0 ? strategyValues : null,
-    strategyContext: strategyContextValue,
+    strategyRecommendations: null,
+    strategyContext: [],
     communityProposals: communityProposalsValue,
     soilProperties: soilValue,
     waterScarcity:
@@ -1174,10 +1057,7 @@ export async function assembleRegionalContext(
     (value) => value === "unavailable"
   );
 
-  // A rejection and an empty result are separate facts and stay separate all the way to the
-  // prompt. Only the blocks a viewed row can name are tracked: `strategyRecommendations`
-  // rejects with StrategyEvidenceUnavailableError on its ordinary unavailable path, so calling
-  // that a failed read would be its own small lie.
+  // Track read failures only for viewed sources; deferred strategy evidence makes no read.
   const readState: Partial<Record<RegionalEvidenceSource, SourceReadState>> = {
     // `failed` is NOT `fires.status === "rejected"` the way its neighbours are: the Parquet
     // reader returns an outage as DATA (`upstream_unavailable`), so a status check alone would

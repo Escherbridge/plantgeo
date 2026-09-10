@@ -72,6 +72,9 @@ describe("remediation report contract", () => {
     const { buildSystemPrompt } = await import("@/lib/server/services/ai-prompt");
     const prompt = buildSystemPrompt(false);
     expect(prompt).toContain("A single streamflow reading establishes a flow at its own observation time, not a trend");
+    expect(prompt).toContain("Strategy-model evidence is unavailable");
+    expect(prompt).toContain("You may still suggest remediation grounded in the supplied environmental evidence");
+    expect(prompt).not.toContain("evaluation_only_model");
     expect(prompt).toContain("Attribute named-day streamflow to observedDay");
     expect(prompt).toContain("never replace observedDay with the date obtained by converting updatedAt");
     expect(prompt).toContain("firePerimeters contains perimeter records, not active satellite detections");

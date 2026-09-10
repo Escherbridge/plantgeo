@@ -2,6 +2,18 @@
 
 Saved AI conversations: the list (up to 50 rows) and a single conversation transcript.
 
+Saved assistant reports pass through `saved-report.ts`, which extends the canonical
+remediation report validator with the stored response envelope. Valid reports use
+the same `RegionalIntelligenceReport` presentation as the live map conversation,
+including AI attribution, evidence labels, recommendations, citations and export.
+Only HTTP(S) citation URLs are accepted for this historical rendering boundary.
+User text is always text, even if a stored row also contains structured data.
+Older or invalid report shapes fall back to the original message with escaped data
+under an optional disclosure; opening a conversation never repairs or rewrites it.
+The original ownership check and scroll layout remain authoritative.
+The page identifies the transcript as saved and retains each creation timestamp.
+Rendering old reports does not correct old model claims or imply regenerated evidence.
+
 Open on Map uses `buildMapFocusHref` to focus the saved coordinates through the
 existing MapFocus query contract. It does not resume a conversation or trigger
 an AI request; location analysis remains an explicit map action.

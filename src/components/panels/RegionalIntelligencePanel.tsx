@@ -398,6 +398,68 @@ function DataFreshnessFooter({ freshness }: { freshness: Record<string, string> 
   );
 }
 
+/** Shared presentation for live and validated saved analyses. */
+export function RegionalIntelligenceReport({ response }: { response: RegionalIntelligenceResponse }) {
+  const downloadReport = (content: string, mimeType: string, extension: string) => {
+    const reportBlob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(reportBlob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `remediation-report-${Date.now()}.${extension}`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+  const handleExportJson = () =>
+    downloadReport(JSON.stringify(response, null, 2), "application/json", "json");
+  const handleExportMarkdown = () =>
+    downloadReport(reportToMarkdown(response), "text/markdown", "md");
+
+  return (
+    <div className="space-y-3">
+      <AiGeneratedBanner />
+      <div className="flex items-center justify-between gap-2">
+        <StrategyChips remediation={response.remediation} />
+        <div className="flex shrink-0 gap-1.5">
+          <button
+            onClick={handleExportJson}
+            className="px-2.5 py-1 text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white rounded transition"
+          >
+            Export JSON
+          </button>
+          <button
+            onClick={handleExportMarkdown}
+            className="px-2.5 py-1 text-xs font-semibold bg-gray-600 hover:bg-gray-500 text-white rounded transition"
+          >
+            Export Markdown
+          </button>
+        </div>
+      </div>
+      <RiskSummaryCard data={response.riskSummary} />
+      <ObservationsList observations={response.observations} />
+      {response.remediation.length > 0 ? (
+        <section className="space-y-2">
+          <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+            Suggested remediation
+          </h4>
+          {response.remediation.map((item, index) => (
+            <RemediationCard key={`${item.strategy}-${index}`} item={item} />
+          ))}
+        </section>
+      ) : (
+        <p className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+          The assistant did not find enough here to suggest a remediation
+          strategy. Treat this as an absence of evidence, not an all-clear.
+        </p>
+      )}
+      <div className="flex items-start gap-2 rounded-lg border border-gray-300 bg-gray-50 p-3 text-sm dark:border-gray-700 dark:bg-gray-800">
+        <Stethoscope aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-gray-500" />
+        <p>{response.professionalConsultation}</p>
+      </div>
+      <WebSourcesList sources={response.webSources} />
+    </div>
+  );
+}
+
 function MessageBubble({ message }: { message: ChatMessage }) {
   if (message.role === 'user') {
     return (
@@ -409,67 +471,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
     );
   }
 
-  const response = message.parsedResponse;
-  if (response) {
-    const downloadReport = (content: string, mimeType: string, extension: string) => {
-      const reportBlob = new Blob([content], { type: mimeType });
-      const url = URL.createObjectURL(reportBlob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `remediation-report-${Date.now()}.${extension}`;
-      link.click();
-      URL.revokeObjectURL(url);
-    };
-    const handleExportJson = () =>
-      downloadReport(JSON.stringify(response, null, 2), "application/json", "json");
-    const handleExportMarkdown = () =>
-      downloadReport(reportToMarkdown(response), "text/markdown", "md");
-
-    return (
-      <div className="space-y-3">
-        <AiGeneratedBanner />
-        <div className="flex items-center justify-between gap-2">
-          <StrategyChips remediation={response.remediation} />
-          <div className="flex shrink-0 gap-1.5">
-            <button
-              onClick={handleExportJson}
-              className="px-2.5 py-1 text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white rounded transition"
-            >
-              Export JSON
-            </button>
-            <button
-              onClick={handleExportMarkdown}
-              className="px-2.5 py-1 text-xs font-semibold bg-gray-600 hover:bg-gray-500 text-white rounded transition"
-            >
-              Export Markdown
-            </button>
-          </div>
-        </div>
-        <RiskSummaryCard data={response.riskSummary} />
-        <ObservationsList observations={response.observations} />
-        {response.remediation.length > 0 ? (
-          <section className="space-y-2">
-            <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-              Suggested remediation
-            </h4>
-            {response.remediation.map((item, index) => (
-              <RemediationCard key={`${item.strategy}-${index}`} item={item} />
-            ))}
-          </section>
-        ) : (
-          <p className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
-            The assistant did not find enough here to suggest a remediation
-            strategy. Treat this as an absence of evidence, not an all-clear.
-          </p>
-        )}
-        <div className="flex items-start gap-2 rounded-lg border border-gray-300 bg-gray-50 p-3 text-sm dark:border-gray-700 dark:bg-gray-800">
-          <Stethoscope aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-gray-500" />
-          <p>{response.professionalConsultation}</p>
-        </div>
-        <WebSourcesList sources={response.webSources} />
-      </div>
-    );
-  }
+  if (message.parsedResponse) return <RegionalIntelligenceReport response={message.parsedResponse} />;
 
   return (
     <div

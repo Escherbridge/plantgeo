@@ -116,6 +116,11 @@ Pinned by `src/__tests__/components/ModerationPanel.test.tsx`.
 
 ## Published analysis controls — 2026-09-10
 
+`RegionalIntelligenceReport` is the shared presentation for a parsed live report
+and a validated saved report. The saved-conversation server boundary validates its
+historical JSON before calling it; exporting a stored report is a browser action
+and does not rerun the model or mutate the saved conversation.
+
 VegetationDetails presents measured/satellite NDVI controls directly. Forecast and empty land-cover
 tabs are deferred, and opacity is controlled once on the layer row. SoilDetails keeps soil-property
 point reads and observed soil layers; unpublished erosion/carbon-effect tabs no longer mount or

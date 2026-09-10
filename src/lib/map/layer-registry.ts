@@ -299,7 +299,7 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
     // an ordinary working toggle -- flip it, watch nothing happen, conclude the data is
     // missing. The capability is withheld, and the row now says so instead of pretending.
     permanentlyUnavailableReason:
-      "Soil property rasters are not published yet: no first-party SoilGrids tile release exists, so this layer has no tiles to draw. Click the map with the Soil section open to read measured values at a point.",
+      "Soil property rasters are not published yet: no first-party SoilGrids tile release exists, so this layer has no tiles to draw. Click the map with the Soil section open to read SoilGrids model estimates at a point.",
   },
   // USDA SSURGO map units, rendered per viewport through environmental.getSoilSurvey.
   // Distinct from `soil` above, which draws the SoilGrids raster: this one is the vector

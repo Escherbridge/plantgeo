@@ -411,3 +411,14 @@ inferences to the supplied trend/condition, distinguishes perimeter record/captu
 active detections or ignition, and marks any fuel concern as conditional inference unless measured.
 These are probabilistic language-model instructions, not a semantic proof enforced by the schema.
 The JSON validator certifies structure and bounds only; it cannot certify scientific truth.
+
+## Deferred strategy evidence in regional AI (2026-09-10)
+
+Regional analysis emits `strategyRecommendations: null`, `strategyContext: []`,
+and unavailable strategy freshness. It does not probe a strategy relation or read
+evaluation-only PostgreSQL model rows. Model training, refresh jobs and backend
+definitions remain deferred infrastructure; their existence cannot authorize a
+published recommendation. The report schema remains compatible and ordinary
+remediation suggestions may still be inferred from actual environmental evidence.
+Nearby community proposals retain their application-database reads and are
+explicitly unreviewed context, not model evidence.

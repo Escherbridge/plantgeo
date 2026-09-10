@@ -26,6 +26,10 @@ export default defineConfig({
   ],
   webServer: {
     command: "npm run dev",
+    env: {
+      NEXT_PUBLIC_PMTILES_URL: "https://tiles.aevani.com/fixture.pmtiles",
+      NEXT_PUBLIC_DYNAMIC_TILES_URL: "http://localhost:3100",
+    },
     url: BASE_URL,
     reuseExistingServer: !process.env.CI,
     // Turbopack's first compile of the whole App Router tree is slow, well past
