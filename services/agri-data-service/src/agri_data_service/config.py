@@ -195,6 +195,7 @@ class Settings(BaseSettings):
     # a production bootstrap receipt yet: flipping to `availability` before one exists withholds
     # every lane, which is fail-closed and correct but is an empty slider.
     parquet_coverage_authority: CoverageAuthorityPolicy = "census_until_bootstrap"
+    parquet_read_telemetry: bool = False
 
     @field_validator("object_store_endpoint_url")
     @classmethod

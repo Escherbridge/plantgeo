@@ -1,5 +1,35 @@
 # `pipeline/parquet` — the object store and the partition writer
 
+## Sensor false-absence correction evidence
+
+`sensor_absence_correction.py` is scoped to September 5/6, 2026 and the fixed reviewed rescue candidate.
+Its in-memory backend runs the ordinary partition writer and tier deriver before an operator requests
+any production mutation. Prepared bytes and writer receipts bind recovery: a missing object is allowed
+only after the journal records mutation, and every surviving object must equal the original or prepared
+candidate. The exact durable finalization retains publication time, source detail and full writer receipts.
+Existing retry codecs are reused only to compare a surviving exact-day claim against that finalization;
+the correction does not invoke the lane-wide retry sweep. See `scripts/AGENTS.md` for the required
+external quiescence proof, pinned connection and CAS journal contract, and reader/fencing limitations.
+
+The helper's checks are evidence checks, not authority to apply. Default preparation has no external
+write path; only the explicitly SHA-pinned operator apply acquires ownership and archives originals.
+No complete-source claim follows from positive station-day blocks, and failed recovery never restores
+the archived false-absence claim as current truth.
+
+## Signal coordinate preview
+
+`signal_coordinate_preview.py` adds the two cell centroid columns to the exact approved legacy
+signal schema, using a checksum-pinned canonical spatial-cell dimension. Every dimension row must
+have unique identities/grid keys and an explicit finite EPSG:4326 EWKB Point, including unused cells.
+The Arrow IPC digest of the original ten columns must agree after projection from the candidate;
+existing values, order, counts, timestamps, coverage and exposure flags are never recalculated.
+Coarse candidates use the ordinary `derive_tier` rules and deterministic row ordering.
+
+This module is pure candidate construction. It grants no rewrite or bootstrap authority, takes no
+publication lock, and cannot write bucket objects. A future repair must separately archive originals,
+revalidate their full identities under the lane-day/publication barriers, and respect existing
+bootstrap-marker/head state. A missing head with a surviving bootstrap marker is not a new bootstrap.
+
 ## Source response checkpoints
 
 `source_checkpoint.py` stores acquisition progress outside the serving namespace at

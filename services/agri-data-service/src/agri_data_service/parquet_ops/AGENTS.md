@@ -4,6 +4,42 @@ type: module-notes
 
 # `parquet_ops/` — one reusable Parquet operations core
 
+## Optional serving-stage telemetry
+
+`PARQUET_READ_TELEMETRY` is a Settings boolean, default false. Pydantic accepts
+case-insensitive `1/on/t/true/y/yes` and `0/off/f/false/n/no`; other values refuse
+configuration. Enable only for a bounded diagnostic period; this change does not
+enable it in production. HTTP row reads pass the flag to `run_serving_read`.
+
+An admitted worker emits one `parquet_read_stages` completion event after session
+close, even when its caller timed out while the worker continued. Admission still
+belongs to the actual worker future, not the cancelled HTTP coroutine. No new
+timeouts, interruption, retry, cache or response fields are introduced. A request
+refused before admission has no worker event. `caller_cancelled` includes any
+caller cancellation, not only the HTTP deadline; completed means the worker
+completed, not that the caller received its result.
+
+Session opening, actual listing, per-object schema proof, data execute/fetch and
+the nullable-point probe aggregate into five fixed stage names. Totals include
+other work and close. Wall and CPU durations are capped at one day and calls at
+one million; repeated stages aggregate rather than grow the event. Thread CPU
+measures only the calling worker and excludes DuckDB auxiliary threads. Process
+CPU includes every thread and other reads in the process: it is context, never
+exclusive request attribution. Neither measure alone proves network latency.
+
+HTTP transfer bytes are explicitly null/unavailable. The locked DuckDB 1.5.4
+dependency and official [profiling documentation](https://duckdb.org/docs/current/dev/profiling)
+do not establish a safe per-request HTTP counter through this reader's existing
+connection API. Query profiling/output is not enabled; logical Parquet bytes are
+not relabeled as network bytes. Official documentation captures remain under
+`.omc/research/duckdb-*-telemetry-*-20260910.json`.
+
+Only a generated read ID, allowlisted operation, fixed outcomes and numeric
+aggregates are logged. No SQL, paths, object URIs, bbox, request strings,
+credentials, exception text or user metadata enters the event. Clock/metric/log
+failures must not change the serving result or original exception. Context is
+worker-local and reset before emission so pooled threads cannot mix requests.
+
 ## Air-temperature graduation
 
 The three `climate-field-air-temperature-*` lanes were rebuilt from the pinned canonical Parquet

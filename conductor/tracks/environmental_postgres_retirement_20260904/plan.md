@@ -9,6 +9,9 @@ status: active
 Five waves. Waves A and B run concurrently on disjoint trees; C depends on B's parity receipts; D
 depends on C. Each wave ends in one sweep and one adversarial review by a separate context.
 
+September 10 preparation checkpoint: [signal/sensor candidates and soil reader validation](evidence/repair-preparation-20260910.md).
+This records bounded preparation, not completed publication or closure of the active repair work.
+
 ## Wave A — unblock the time slider and clear the dead objects
 
 - [ ] **A1 — availability bootstrap compiler (D3).** New `scripts/compile_availability_bootstrap.py`:

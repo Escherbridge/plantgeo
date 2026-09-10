@@ -15,6 +15,7 @@ from agri_data_service.foundation.parquet.paths import (
     zoom_prefix,
 )
 from agri_data_service.parquet_ops import faults
+from agri_data_service.parquet_ops.read_telemetry import stage
 from agri_data_service.parquet_ops.wire import DeclaredListCell
 from agri_data_service.warehouse.parquet.schema import get_stream_schema
 
@@ -138,7 +139,8 @@ class ObjectStoreListing:
     ) -> tuple[str, ...]:
         """Return every part file, absence marker and completion marker of ONE tier, optionally narrowed."""
         scope = _listing_scope(layer, kind, tier, year, month)
-        return tuple(sorted(self._iter_layout_keys(scope, max_keys=MAX_LISTED_KEYS_PER_REQUEST)))
+        with stage("listing"):
+            return tuple(sorted(self._iter_layout_keys(scope, max_keys=MAX_LISTED_KEYS_PER_REQUEST)))
 
     def iter_tier_keys(self, layer: str, kind: PartitionKind, tier: ZoomTier) -> Iterator[str]:
         """Yield one tier's layout objects so a census can charge its aggregate budget while listing."""
@@ -213,9 +215,10 @@ class DuckDbRowReader:
         if read.scope.bbox is not None:
             self._refuse_unapplicable_bbox(key_of_uri, support, read.scope)
         statement, parameters = _scan_statement(support, read.scope.bbox, uris=uris, row_budget=read.row_budget)
-        cursor = self.session.connection.execute(statement, parameters)
-        columns = [description[0] for description in cursor.description or ()]
-        fetched = cursor.fetchall()
+        with stage("data_scan"):
+            cursor = self.session.connection.execute(statement, parameters)
+            columns = [description[0] for description in cursor.description or ()]
+            fetched = cursor.fetchall()
         budget_exhausted = len(fetched) > read.row_budget
         declared_list_columns = _declared_list_columns(read.scope.layer, read.scope.kind)
         rows = tuple(
@@ -248,9 +251,11 @@ class DuckDbRowReader:
         # not and DROPS its rows, answering `published, rows: [], truncated: false` for days that hold
         # rows. Measured 2026-08-25 against two local parts: one row returned out of two.
         columns_by_object: dict[str, set[str]] = {}
-        for file_name, column in self.session.connection.execute(
-            "SELECT file_name, name FROM parquet_schema(?)", [list(key_of_uri)]
-        ).fetchall():
+        with stage("schema"):
+            schema_rows = self.session.connection.execute(
+                "SELECT file_name, name FROM parquet_schema(?)", [list(key_of_uri)]
+            ).fetchall()
+        for file_name, column in schema_rows:
             columns_by_object.setdefault(str(file_name), set()).add(str(column))
         # Iterating what was ASKED FOR rather than what came back: an object the probe did not report
         # is an object whose columns are unproven, and an unproven object is exactly the one whose
@@ -281,7 +286,8 @@ class DuckDbRowReader:
             "SELECT count(*) FROM (SELECT 1 FROM read_parquet(?, hive_partitioning=false, union_by_name=true) "
             f'WHERE "{support.longitude_column}" IS NULL OR "{support.latitude_column}" IS NULL LIMIT 1)'
         )
-        counted = self.session.connection.execute(statement, [uris]).fetchone()
+        with stage("point_null_probe"):
+            counted = self.session.connection.execute(statement, [uris]).fetchone()
         return int(counted[0]) if counted is not None else 0
 
 

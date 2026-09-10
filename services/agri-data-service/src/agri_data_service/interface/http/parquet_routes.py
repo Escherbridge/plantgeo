@@ -262,6 +262,7 @@ async def _run_row_read(
         lambda session: work(DuckDbRowReader(session=session)),
         prefix=settings.object_store_prefix,
         operation=route,
+        telemetry=settings.parquet_read_telemetry,
     )
 
 

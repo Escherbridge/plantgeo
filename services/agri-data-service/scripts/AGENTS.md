@@ -1,5 +1,78 @@
 # Vegetation production proof scripts
 
+## Exact September 5/6 sensor false-absence correction
+
+`correct_sensor_absences.py` defaults to read-only preparation with `--candidate <candidate-manifest.json>`,
+`--archive <rescue.tar.gz>` and `--out <new-local-directory>`. It accepts only the independently reviewed
+candidate manifest SHA `e99bce200991ea1b57ef4c2e60a6c36598c992c4d7ad27e700962c528cf8dd40` and original
+capture SHA `eb3ca823a0a3319cc42e47c4066893cfd88efd58979bfb1e177949d9eb70537e`. Preparation reproduces
+ordinary sensor writer/deriver output in memory, binds four exact original absences per day plus the
+current availability generation and evidence, then writes local content-addressed blobs and `request.json`.
+It performs no bucket mutation or database connection. Changed original absence identities are refused.
+
+Apply requires `--apply <request.json> --request-sha256 <reviewed-digest> --quiescence <proof.json>
+--quiescence-sha256 <reviewed-proof-digest>`. The proof schema is `sensors-correction-quiescence/v1`,
+with `request_sha256`, `lane_root=layer=sensors/kind=observed`, `writers_stopped=true`,
+`no_inflight_retry_workers=true`, nonempty `operator` and `evidence`, and timezone-bearing `observed_at`
+and `valid_until` bounding at most one hour. This is a separately reviewed external attestation:
+the operator must actually stop writers and establish that no old availability retry worker remains
+in flight. A held publication barrier alone cannot establish this because claim preparation and
+clearing happen outside that barrier. Expiry or a changed lock connection stops the operation.
+
+Apply uses the existing pinned loader connection only for operational advisory locks and statement
+timeouts; it issues no environmental-observation queries. It holds the lane publication barrier and
+both existing lane-day lock identities, archives exact original/source/candidate/proof bytes beneath
+`availability/repairs/<request-sha>/`, and advances an ETag-CAS journal. Ordinary physical writes are
+restricted to exact prepared bytes; deletes are restricted to the two target days' old absences and
+completion markers. The ordinary adapter and shared finalizer run with automatic availability disabled.
+Each day then extends availability from the immutable prepared finalization and stable publication time.
+No lane-wide retry sweep or executor-run supersession is performed.
+
+Resume requires the same pinned request and a currently valid pinned quiescence receipt. Only exact
+original or prepared candidate objects are admitted during a journaled mutation. Unknown objects,
+foreign retry claims and unexpected availability replacements stop recovery. All four physical rungs,
+decoded part counts, indexed rows and every referenced evidence digest are re-read before success,
+including when the index reports `skipped_unchanged`. Original false absences remain archived and are
+never restored as truthful current status. `source_complete=false` remains explicit: validated positive
+sensor blocks do not imply a complete station or pagination universe.
+
+The physical layout has mutable keys: readers can observe a temporary incomplete day while the old
+availability pointer remains current. Advisory ownership and journal/pointer CAS do not provide an
+atomic whole-day reader swap or object-store fencing against arbitrary writers ignoring the locks.
+The operation must remain externally quiescent through final verification; its success is not permission
+to mark the held scheduler run successful without the separately reviewed forward check.
+
+Retirement condition: remove this date-pinned operator, `pipeline/parquet/sensor_absence_correction.py`
+and their dedicated tests once the exact September 5/6 correction, completed resume state, all-rung
+physical and availability verification, and acceptance of the previously held forward work are durably
+recorded in the active retirement track. First confirm no unresolved repair journal or operator workflow
+still needs these entrypoints. Preserve the immutable original/candidate/source evidence and acceptance
+receipts with discoverable track links; remove obsolete operational code rather than retaining it as an
+audit archive. Keep the generic writer, finalizer, availability, source-quality and recovery checks that
+remain active. Completing these two dates does not close unrelated sensor gaps or the retirement track.
+
+## Read-only signal coordinate candidates
+
+`preview_signal_coordinates.py --request <json> --request-sha256 <digest> --out <directory>`
+accepts a `signal-coordinate-request-v1` document containing `day` and exact original object
+receipts (`key`, `sha256`, `byte_count`, `etag`, `version_id`). It pins the reviewed canonical
+manifest, completion and spatial-cell dimension, brackets a bounded day inventory with identity
+rechecks, and retains exact source/original bytes plus candidate Parquet in local content-addressed
+`objects/<sha256>` files. The resulting manifest is itself content-addressed and explicitly carries
+`apply_authorized: false`. No bucket write, retraction, database connection, supersession or apply
+flag exists. Availability head/marker observations are informational and require locked revalidation
+before any future mutation. Failed previews may retain local blobs but emit no successful manifest.
+
+Retirement condition: retain this preview and its coordinate-candidate helper through the repair of all
+222 identified legacy signal days and verified availability bootstrap. Once repair, physical readback and
+bootstrap acceptance are durably recorded and no recovery workflow depends on them, review references
+and remove unused preview entrypoints, helper code and dedicated tests as part of closing that repair
+work in the active track. Preserve the pinned dimension, original/candidate artifacts and verification
+receipts; retain ordinary derivation and source-quality checks still used by live writers. Preview success
+alone does not satisfy this condition or establish completion of the wider signal lane.
+
+## Vegetation proof boundaries
+
 `purge_parquet_layout.py` is permanently inventory-only. Its legacy `--confirm` spelling is a
 fail-closed compatibility guard that exits before object-store construction; no script in this
 directory may treat that flag or `--include-unparsable` as deletion authorization.
@@ -802,3 +875,45 @@ When removing obsolete implementation, remove its obsolete tests and update any 
 manifest entries in the same change. Unknown/deleted paths intentionally widen validation rather
 than silently suppressing it. Batch plans are local feedback, not replacements for the full
 release receipt. Tests live in `tests/scripts/test_check_batches.py` and use fake Git/tool runners.
+
+
+## Sensor evidence capture (no publication)
+
+`capture_sensor_evidence.py` defaults to a JSON plan; only `--capture` performs HTTP GETs. Supply
+`--output NEW.tar.gz --start <offset-ISO> --end <offset-ISO> --bbox W,S,E,N`, with explicit
+`--states`/`--networks` when differing from the normal configured-roster defaults. This tool does not
+read a database, invoke publication, or reinterpret existing absence markers. Output is exclusive
+create: existing evidence is never overwritten. Exit 2 retains an incomplete artifact for review.
+
+The versioned `sensor-evidence-capture/v1` artifact stores `manifest.json`, its SHA-256, and exact
+response bytes at `responses/<sequence>.json`. Request receipts bind byte counts, SHA-256, request
+URL, owner, HTTP status, actual start/retrieval times and errors. Publisher timestamp spelling and
+offsets survive in the original body; no station or observation rows are rewritten. Truncated
+response bytes carry a capture error and can never support source completeness. This is not the
+older sensors-rescue archive schema; its validator needs an explicit version adapter.
+
+Pagination must stay on HTTPS api.weather.gov, the exact station observation or roster path, and
+unchanged explicit state/time filters. An opaque cursor may carry filters omitted from the next
+URL; it does not authorize a changed filter. Redirects are not followed. Duplicate URLs, malformed
+payloads or pagination, wrong station identity, nonidentity encoding, HTTP errors and every cap
+leave `source_complete=false`. Empty pages still advertising a next link are also incomplete;
+this preserves the repository's measured NWS endless-empty-cursor caveat without burning the full
+page budget. Selected station identities/metadata and raw roster pages are retained. Sorting before
+the station cap matches deterministic configured-roster selection; the cap is explicitly reported
+and prevents a complete claim. Every artifact always says `upstream_population_complete=false`.
+Even `source_complete=true` means only exhausted transport for the stated configured roster/window,
+not regional coverage, measured-data validity, or proof that a calendar day is empty.
+
+Bounds include per-owner pages, global requests/bytes/observation features/wall time, per-response
+bytes, selected stations, and at most eight concurrent station walks; no automatic retries.
+Request/time ceilings apply before each request and a global deadline also bounds streaming waits.
+All evidence metadata remains local, and source errors remain distinct from station/filter exclusions.
+
+Official documentation checked 2026-09-10: https://www.weather.gov/documentation/services-web-api
+and https://api.weather.gov/openapi.json. The OpenAPI station observation endpoint supports start,
+end, cursor and limit (1..500); PaginationInfo.next is the next-page URI. The public guide states
+rate limits are not published and observations can be delayed. It does not establish a fixed
+observation-retention SLA. The six-day bound is the repository's measured acquisition limit from
+`ingest/sensors.py`, not a newly asserted official guarantee; older windows remain incomplete.
+Captured references live in `.omc/research/nws-official-api-docs-20260910.json` and
+`.omc/research/nws-official-openapi-spec-20260910.json` at repository root.

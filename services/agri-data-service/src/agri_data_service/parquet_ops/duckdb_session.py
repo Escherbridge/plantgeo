@@ -16,6 +16,7 @@ from agri_data_service.foundation.parquet.duckdb_extensions import (
     SERVING_EXTENSION_DIRECTORY as _SERVING_EXTENSION_DIRECTORY,
 )
 from agri_data_service.parquet_ops import faults
+from agri_data_service.parquet_ops.read_telemetry import observe_read, stage
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -139,28 +140,37 @@ async def run_bounded_read[T](
     return await asyncio.wrap_future(future)
 
 
-async def run_serving_read[T](
+async def run_serving_read[T](  # noqa: PLR0913 - existing read scope plus explicit telemetry opt-in
     credentials: ObjectStoreCredentials,
     work: Callable[[ServingSession], T],
     *,
     prefix: str = "",
     operation: str,
     slot_wait_seconds: float = SERVING_SLOT_WAIT_SECONDS,
+    telemetry: bool = False,
 ) -> T:
     """Run one operation in a guarded session acquired only after admission."""
 
-    def with_session() -> T:
-        session = _open_serving_session(credentials, prefix=prefix)
-        try:
-            return work(session)
-        finally:
-            session.close()
+    cancelled = threading.Event()
 
-    return await run_bounded_read(
-        with_session,
-        operation=operation,
-        slot_wait_seconds=slot_wait_seconds,
-    )
+    def with_session() -> T:
+        with observe_read(enabled=telemetry, operation=operation, cancelled=cancelled):
+            with stage("session"):
+                session = _open_serving_session(credentials, prefix=prefix)
+            try:
+                return work(session)
+            finally:
+                session.close()
+
+    try:
+        return await run_bounded_read(
+            with_session,
+            operation=operation,
+            slot_wait_seconds=slot_wait_seconds,
+        )
+    except asyncio.CancelledError:
+        cancelled.set()
+        raise
 
 
 async def _acquire_read_slot(wait_seconds: float) -> bool:
