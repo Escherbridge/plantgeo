@@ -287,12 +287,13 @@ export async function POST(request: NextRequest) {
           };
 
           try {
-            await recordExchange({
+            const saved = await recordExchange({
               conversationId: conversation.id,
               question,
               answer: narration.trim() || parsed.data.riskSummary.headline,
               structuredResponse: answer,
             });
+            send('saved', saved);
           } catch (error) {
             // A persistence failure must not cost the user their answer.
             console.error('[AI] conversation persistence failed', error);

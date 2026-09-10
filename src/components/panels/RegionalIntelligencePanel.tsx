@@ -1,6 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from 'react';
+import Link from 'next/link';
+import { CopyShareText } from './CopyShareText';
+import { MessageFeedback } from './MessageFeedback';
 import {
   X,
   MapPin,
@@ -172,7 +175,7 @@ function RemediationCard({
           {humanize(item.strategy)}
         </span>
         <span className="text-[11px] text-gray-500">
-          {item.confidence} confidence
+          AI confidence: {item.confidence}
         </span>
       </div>
       <h5 className="mt-1.5 text-sm font-semibold">{item.title}</h5>
@@ -225,7 +228,7 @@ function StrategyChips({
 }
 
 /** Renders the report as readable Markdown, mirroring the JSON export's structure. */
-function reportToMarkdown(response: RegionalIntelligenceResponse): string {
+export function reportToMarkdown(response: RegionalIntelligenceResponse): string {
   const lines: string[] = [];
   lines.push(`# Remediation report — ${AI_GENERATED_LABEL}`);
   lines.push('');
@@ -256,7 +259,7 @@ function reportToMarkdown(response: RegionalIntelligenceResponse): string {
       lines.push('');
       lines.push(`### ${item.title}`);
       lines.push(
-        `Strategy: ${humanize(item.strategy)} · Timeframe: ${humanize(item.timeframe)} · Confidence: ${item.confidence}`
+        `Strategy: ${humanize(item.strategy)} · Timeframe: ${humanize(item.timeframe)} · AI confidence: ${item.confidence} (not a measured success probability)`
       );
       lines.push('');
       lines.push(item.rationale);
@@ -420,6 +423,7 @@ export function RegionalIntelligenceReport({ response }: { response: RegionalInt
   return (
     <div className="space-y-3">
       <AiGeneratedBanner />
+      <CopyShareText text={reportToMarkdown(response)} />
       <div className="flex flex-wrap items-start justify-between gap-2">
         <StrategyChips remediation={response.remediation} />
         <div className="flex min-w-0 max-w-full flex-wrap gap-1.5">
@@ -444,6 +448,7 @@ export function RegionalIntelligenceReport({ response }: { response: RegionalInt
           <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500">
             Suggested remediation
           </h4>
+          <p className="text-xs text-gray-500">AI confidence is the model’s assessment, not a measured probability of success.</p>
           {response.remediation.map((item, index) => (
             <RemediationCard key={`${item.strategy}-${index}`} item={item} />
           ))}
@@ -463,18 +468,22 @@ export function RegionalIntelligenceReport({ response }: { response: RegionalInt
   );
 }
 
-function MessageBubble({ message }: { message: ChatMessage }) {
+function MessageBubble({ message, conversationId }: { message: ChatMessage; conversationId: string | null }) {
   if (message.role === 'user') {
     return (
       <div className="flex justify-end">
         <div className="max-w-[85%] rounded-lg bg-blue-600 px-3 py-2 text-sm text-white">
           {message.content}
+          <CopyShareText text={message.content} title="PlantGeo question" />
         </div>
       </div>
     );
   }
 
-  if (message.parsedResponse) return <RegionalIntelligenceReport response={message.parsedResponse} />;
+  if (message.parsedResponse) return <div>
+    <RegionalIntelligenceReport response={message.parsedResponse} />
+    {conversationId && message.savedMessageId && <MessageFeedback conversationId={conversationId} messageId={message.savedMessageId} />}
+  </div>;
 
   return (
     <div
@@ -483,6 +492,8 @@ function MessageBubble({ message }: { message: ChatMessage }) {
     >
       {message.content || (message.isStreaming ? 'Reviewing this location…' : 'No analysis was completed.')}
       {message.isStreaming && <span className="ml-1 animate-pulse">|</span>}
+      {!message.isStreaming && message.content && <CopyShareText text={message.content} title="Saved PlantGeo answer" />}
+      {!message.isStreaming && conversationId && message.savedMessageId && <MessageFeedback conversationId={conversationId} messageId={message.savedMessageId} />}
     </div>
   );
 }
@@ -496,6 +507,8 @@ export default function RegionalIntelligencePanel() {
   const selectedLocation = useRegionalIntelligenceStore((s) => s.selectedLocation);
   const messages = useRegionalIntelligenceStore((s) => s.messages);
   const isLoading = useRegionalIntelligenceStore((s) => s.isLoading);
+  const activity = useRegionalIntelligenceStore((s) => s.activity);
+  const conversationId = useRegionalIntelligenceStore((s) => s.conversationId);
   const error = useRegionalIntelligenceStore((s) => s.error);
   const errorRetryable = useRegionalIntelligenceStore((s) => s.errorRetryable);
   const analysisCancelled = useRegionalIntelligenceStore((s) => s.analysisCancelled);
@@ -586,14 +599,27 @@ export default function RegionalIntelligencePanel() {
       </div>
 
       {/* Messages */}
+      <div className="flex flex-wrap gap-3 border-b px-3 py-2 text-xs">
+        <button type="button" disabled={isLoading} className="text-blue-600 hover:underline disabled:opacity-50" onClick={() => {
+          useRegionalIntelligenceStore.getState().openPanel(selectedLocation.lat, selectedLocation.lon, selectedLocation.precision);
+          setInput('');
+        }}>New chat</button>
+        <Link href="/dashboard/conversations" className="text-blue-600 hover:underline">Chat history</Link>
+        {conversationId && <Link href={`/dashboard/conversations/${conversationId}`} className="text-blue-600 hover:underline">Saved conversation</Link>}
+        <span className="text-gray-500">Private to your account</span>
+      </div>
       <div className="flex-1 space-y-3 overflow-y-auto p-3">
+        {activity.length > 0 && <details className="rounded border p-2 text-xs">
+          <summary className="cursor-pointer font-medium">Activity in this session ({activity.length})</summary>
+          <ol className="mt-2 space-y-1">{activity.map(event => <li key={event.id}><time dateTime={event.at}>{new Date(event.at).toLocaleTimeString()}</time> — {event.label}</li>)}</ol>
+        </details>}
         {messages.length === 0 && !isLoading && (
           <div className="flex h-full items-center justify-center p-4 text-center text-sm text-gray-500">
             Ask about this location to get AI-generated remediation suggestions.
           </div>
         )}
         {messages.map((message) => (
-          <MessageBubble key={message.id} message={message} />
+          <MessageBubble key={message.id} message={message} conversationId={conversationId} />
         ))}
         {toolActivity && isLoading && (
           <p className="flex items-center gap-2 text-xs text-gray-500">

@@ -21,6 +21,7 @@ export default async function ConversationsPage() {
   return (
     <div className="mx-auto max-w-4xl p-6">
       <h1 className="mb-6 text-2xl font-bold">AI Conversations</h1>
+      <p className="mb-4 text-sm text-gray-500">Your 50 most recent private conversations. Open one to read, resume, copy or share its text.</p>
 
       {conversations.length === 0 ? (
         <div className="py-12 text-center text-gray-500">

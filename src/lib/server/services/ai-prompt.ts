@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import { MAX_REPLAYED_TURNS } from './conversation-history';
 import { incompleteReportDiagnostic, providerErrorDiagnostic, reportValidationDiagnostic } from './ai-provider-diagnostics';
 import { geminiReportSchema } from './gemini-report-schema';
 import { reportFlowGroundingIssues } from './report-flow-grounding';
@@ -27,7 +28,7 @@ export type {
 } from '@/lib/regional-intelligence';
 
 /** Conversation turns replayed into the model on a follow-up question. */
-const MAX_HISTORY_TURNS = 8;
+const MAX_HISTORY_TURNS = MAX_REPLAYED_TURNS;
 /** Bounds one request's agentic loop; the last round requires an accepted report. */
 const MAX_TOOL_ROUNDS = 4;
 const MAX_REPORT_CORRECTIONS = 1;

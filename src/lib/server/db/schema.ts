@@ -15,6 +15,7 @@ import {
   unique,
   uniqueIndex,
   index,
+  check,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
@@ -585,6 +586,20 @@ export const aiMessages = pgTable("ai_messages", {
   tokenCount: integer("token_count"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
+
+/** Private helpfulness feedback; never a validated ecological outcome score. */
+export const aiMessageFeedback = pgTable("ai_message_feedback", {
+  messageId: uuid("message_id").notNull().references(() => aiMessages.id, { onDelete: "cascade" }),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  rating: varchar("rating", { length: 16 }).$type<"helpful" | "not_helpful">().notNull(),
+  reason: varchar("reason", { length: 1000 }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  primaryKey({ columns: [table.messageId, table.userId] }),
+  index("ai_message_feedback_user_idx").on(table.userId),
+  check("ai_message_feedback_rating_check", sql`${table.rating} IN ('helpful', 'not_helpful')`),
+]);
 
 // ============================================
 // Historical Data Service (geo schema) -- retired

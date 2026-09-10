@@ -142,3 +142,10 @@ on **every streaming token** (`updateLastMessage`), so an in-flight analysis re-
 already selects its eleven fields individually from the store, and `MapView` only ever
 destructured `queryLocation`. A consumer that needs analysis state selects it from the store
 directly.
+
+The regional intelligence SSE `saved` event names the persisted assistant message
+for private feedback. It is emitted only after recordExchange succeeds; failed
+persistence never invents a saved ID. Session activity reflects received SSE events
+and request outcomes. Every event still checks the active AbortController, so opening
+a saved conversation or starting another chat cannot receive an abandoned request's
+late response or activity update. Report payloads and source metadata remain unchanged.

@@ -5,6 +5,8 @@ import type { RegionalIntelligenceResponse } from "@/lib/regional-intelligence";
 import { readSavedReport } from "@/app/dashboard/conversations/saved-report";
 
 const mocks = vi.hoisted(() => ({ limit: vi.fn(), orderBy: vi.fn() }));
+vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }), redirect: vi.fn(), notFound: vi.fn() }));
+vi.mock('@/components/panels/MessageFeedback', () => ({ MessageFeedback: () => null }));
 vi.mock("@/lib/server/auth", () => ({ getServerSession: async () => ({ user: { id: "owner" } }) }));
 vi.mock("@/lib/server/db", () => ({ db: {
   select: () => ({ from: () => ({ where: () => ({ limit: mocks.limit, orderBy: mocks.orderBy }) }) }),

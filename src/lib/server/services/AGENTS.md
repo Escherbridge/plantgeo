@@ -581,3 +581,24 @@ This flag means incomplete history as well as a row cap; it does not assert comp
 MTBS history when the availability index still records the 2015–2020 publication gap.
 MTBS publication ranges are exact dates: this enumeration must not be generalized to
 release lanes whose coverage ranges represent carried values, such as drought.
+
+## Owned chat replay and feedback identity (2026-09-10)
+
+recordExchange returns the actual inserted assistant ID after persistence succeeds;
+the route emits it in a separate saved SSE event, leaving report evidence unchanged.
+Failures emit no invented ID. Feedback is a separate owner-checked metadata record.
+
+openConversation first verifies ownership, then fetches the newest nine messages:
+eight provider history turns plus one lookahead for an explicit omission notice.
+The query sorts newest-first with role and ID tie breakers; reversal restores user
+before assistant when an exchange shares a creation timestamp. Saved UI and protected
+transcript queries use the corresponding ascending order. The provider and replay
+helper share the eight-turn limit, so no second silent turn drop occurs.
+
+Validated saved reports use the same shared validator as historical rendering. Replay
+retains original source dates and citations with an explicit historical AI-record label;
+it never treats a saved claim as a newly measured fact. Whole structured reports are
+kept within 24,000 characters per turn and 64,000 across history. If a complete report
+cannot fit, its narration and an omission notice are used; structured JSON is never
+silently clipped or reconstructed. Legacy invalid data retains only original text.
+The full owned record remains readable in history even when model replay is bounded.

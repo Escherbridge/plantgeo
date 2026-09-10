@@ -8,6 +8,8 @@ export interface ChatMessage {
   content: string;
   isStreaming?: boolean;
   parsedResponse?: RegionalIntelligenceResponse;
+  savedMessageId?: string;
+  createdAt?: string;
 }
 
 export type LocationPrecision = 'approximate' | 'exact';
@@ -31,6 +33,7 @@ interface RegionalIntelligenceState {
   conversationId: string | null;
   /** Human-readable note about what the agent is doing between text deltas. */
   toolActivity: string | null;
+  activity: { id: string; at: string; label: string }[];
 
   openPanel: (lat: number, lon: number, precision: LocationPrecision) => void;
   closePanel: () => void;
@@ -45,6 +48,8 @@ interface RegionalIntelligenceState {
   setAnalysisCancelled: (cancelled: boolean) => void;
   setConversationId: (id: string | null) => void;
   setToolActivity: (activity: string | null) => void;
+  addActivity: (label: string) => void;
+  resumeConversation: (conversation: { id: string; lat: number; lon: number; messages: ChatMessage[] }) => void;
 }
 
 export const useRegionalIntelligenceStore = create<RegionalIntelligenceState>()(
@@ -61,11 +66,13 @@ export const useRegionalIntelligenceStore = create<RegionalIntelligenceState>()(
       abortController: null,
       conversationId: null,
       toolActivity: null,
+      activity: [],
 
       openPanel: (lat, lon, precision) => {
         get().abortController?.abort();
         set({
           isOpen: true,
+          isLoading: false,
           selectedLocation: { lat, lon, precision },
           messages: [],
           error: null,
@@ -75,6 +82,7 @@ export const useRegionalIntelligenceStore = create<RegionalIntelligenceState>()(
           abortController: null,
           conversationId: null,
           toolActivity: null,
+          activity: [],
         });
       },
 
@@ -92,12 +100,14 @@ export const useRegionalIntelligenceStore = create<RegionalIntelligenceState>()(
           abortController: null,
           conversationId: null,
           toolActivity: null,
+          activity: [],
         });
       },
 
       setLocation: (lat, lon, precision) => {
         get().abortController?.abort();
         set({
+          isLoading: false,
           selectedLocation: { lat, lon, precision },
           messages: [],
           error: null,
@@ -107,6 +117,7 @@ export const useRegionalIntelligenceStore = create<RegionalIntelligenceState>()(
           abortController: null,
           conversationId: null,
           toolActivity: null,
+          activity: [],
         });
       },
 
@@ -131,6 +142,7 @@ export const useRegionalIntelligenceStore = create<RegionalIntelligenceState>()(
       setDataFreshness: (dataFreshness) => set({ dataFreshness }),
       setAbortController: (abortController) => set({ abortController }),
       cancelAnalysis: () => {
+        const wasActive = get().isLoading || get().abortController !== null;
         get().abortController?.abort();
         set((state) => {
           const messages = [...state.messages];
@@ -152,10 +164,21 @@ export const useRegionalIntelligenceStore = create<RegionalIntelligenceState>()(
             toolActivity: null,
           };
         });
+        if (wasActive) get().addActivity('Analysis canceled.');
       },
       setAnalysisCancelled: (analysisCancelled) => set({ analysisCancelled }),
       setConversationId: (conversationId) => set({ conversationId }),
       setToolActivity: (toolActivity) => set({ toolActivity }),
+      addActivity: (label) => set((state) => ({ activity: [...state.activity, { id: crypto.randomUUID(), at: new Date().toISOString(), label }].slice(-40) })),
+      resumeConversation: (conversation) => {
+        get().abortController?.abort();
+        set({ isOpen: true, selectedLocation: { lat: conversation.lat, lon: conversation.lon, precision: 'approximate' },
+          conversationId: conversation.id, messages: conversation.messages, isLoading: false,
+          abortController: null, error: null, errorRetryable: false, analysisCancelled: false,
+          dataFreshness: {}, toolActivity: null, activity: [],
+        });
+        get().addActivity('Saved conversation opened. No new analysis has been requested.');
+      },
     }),
     { name: 'regional-intelligence' }
   )
