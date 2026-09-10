@@ -28,6 +28,8 @@ const mocks = vi.hoisted(() => ({
     analysisCancelled: false,
     dataFreshness: {} as Record<string, string>,
     toolActivity: null as string | null,
+    activity: [],
+    conversationId: null,
     closePanel: vi.fn(),
     cancelAnalysis: vi.fn(),
     setError: vi.fn(),

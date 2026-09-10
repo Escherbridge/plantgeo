@@ -1,13 +1,15 @@
 import { getServerSession } from '@/lib/server/auth';
 import { db } from '@/lib/server/db';
 import { aiConversations, aiMessages } from '@/lib/server/db/schema';
-import { eq, and, asc } from 'drizzle-orm';
+import { eq, and, asc, sql } from 'drizzle-orm';
 import { redirect, notFound } from 'next/navigation';
 import Link from 'next/link';
 import { ArrowLeft, MapPin, ExternalLink } from 'lucide-react';
 import { buildMapFocusHref } from '@/lib/map/focus-params';
 import { RegionalIntelligenceReport } from '@/components/panels/RegionalIntelligencePanel';
 import { readSavedReport } from '../saved-report';
+import { ResumeConversation } from '../ResumeConversation';
+import { MessageFeedback } from '@/components/panels/MessageFeedback';
 
 export default async function ConversationDetailPage({
   params,
@@ -37,7 +39,7 @@ export default async function ConversationDetailPage({
     .select()
     .from(aiMessages)
     .where(eq(aiMessages.conversationId, id))
-    .orderBy(asc(aiMessages.createdAt));
+    .orderBy(asc(aiMessages.createdAt), asc(sql`case when ${aiMessages.role} = 'user' then 0 else 1 end`), asc(aiMessages.id));
 
   return (
     <div className="mx-auto max-w-4xl p-6">
@@ -66,6 +68,11 @@ export default async function ConversationDetailPage({
       </div>
 
       <div className="space-y-4">
+        {mapHref && <ResumeConversation id={conversation.id} lat={conversation.lat} lon={conversation.lon} mapHref={mapHref}
+          messages={messages.filter(msg => msg.role === 'user' || msg.role === 'assistant').map(msg => ({
+            id: msg.id, savedMessageId: msg.id, role: msg.role as 'user' | 'assistant', content: msg.content,
+            createdAt: new Date(msg.createdAt).toISOString(), parsedResponse: readSavedReport(msg.role, msg.structuredResponse) ?? undefined,
+          }))} />}
         {messages.map((msg) => {
           const report = readSavedReport(msg.role, msg.structuredResponse);
           return (
@@ -98,6 +105,7 @@ export default async function ConversationDetailPage({
                 <div className="mt-1 text-xs opacity-60">
                   Saved {new Date(msg.createdAt).toLocaleString()}
                 </div>
+                {msg.role === 'assistant' && <MessageFeedback conversationId={conversation.id} messageId={msg.id} />}
               </div>
             </div>
           );

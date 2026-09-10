@@ -1,10 +1,9 @@
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { db } from "@/lib/server/db";
 import { aiConversations, aiMessages } from "@/lib/server/db/schema";
 import type { ConversationTurn } from "@/lib/regional-intelligence";
+import { conversationHistory, MAX_REPLAYED_TURNS } from './conversation-history';
 
-/** Turns replayed into the model; older turns stay readable in the dashboard. */
-const MAX_REPLAYED_TURNS = 12;
 const TITLE_MAX_LENGTH = 255;
 
 export interface ConversationHandle {
@@ -50,18 +49,13 @@ export async function openConversation(options: {
 
     if (existing) {
       const rows = await db
-        .select({ role: aiMessages.role, content: aiMessages.content })
+        .select({ role: aiMessages.role, content: aiMessages.content, structuredResponse: aiMessages.structuredResponse, createdAt: aiMessages.createdAt })
         .from(aiMessages)
         .where(eq(aiMessages.conversationId, existing.id))
-        .orderBy(asc(aiMessages.createdAt));
+        .orderBy(desc(aiMessages.createdAt), desc(sql`case when ${aiMessages.role} = 'user' then 0 else 1 end`), desc(aiMessages.id))
+        .limit(MAX_REPLAYED_TURNS + 1);
 
-      const history: ConversationTurn[] = rows
-        .filter((row) => row.role === "user" || row.role === "assistant")
-        .map((row) => ({
-          role: row.role as "user" | "assistant",
-          content: row.content,
-        }))
-        .slice(-MAX_REPLAYED_TURNS);
+      const history = conversationHistory([...rows].reverse());
 
       return { id: existing.id, history };
     }
@@ -87,10 +81,10 @@ export async function recordExchange(options: {
   question: string;
   answer: string;
   structuredResponse: unknown;
-}): Promise<void> {
+}): Promise<{ assistantMessageId: string }> {
   const { conversationId, question, answer, structuredResponse } = options;
 
-  await db.insert(aiMessages).values([
+  const inserted = await db.insert(aiMessages).values([
     { conversationId, role: "user", content: question },
     {
       conversationId,
@@ -98,7 +92,7 @@ export async function recordExchange(options: {
       content: answer,
       structuredResponse: structuredResponse as Record<string, unknown>,
     },
-  ]);
+  ]).returning({ id: aiMessages.id, role: aiMessages.role });
 
   await db
     .update(aiConversations)
@@ -107,4 +101,7 @@ export async function recordExchange(options: {
       updatedAt: new Date(),
     })
     .where(eq(aiConversations.id, conversationId));
+  const assistant = inserted.find(message => message.role === 'assistant');
+  if (!assistant) throw new Error('The saved exchange did not return an assistant message');
+  return { assistantMessageId: assistant.id };
 }

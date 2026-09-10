@@ -136,3 +136,18 @@ unreachable from that route. Both now mount under the existing expert/admin serv
 Their backend workflows remain separate and unchanged. Community forms, submission history and
 intervention map rendering remain supported; captions state review/publication and privacy rules
 without describing internal database systems or asserting the map must always be empty.
+
+## Private chat controls (2026-09-10)
+
+The regional panel links to owned chat history and the current saved conversation.
+New chat resets the local transcript at the same location without an automatic request.
+Copy/share controls act only on an explicit click: native share receives report or
+transcript text, never a public conversation URL; its fallback copies text for the
+user to distribute. Exports and historical reports retain source citations and dates.
+AI confidence labels explicitly distinguish model assessment from measured success.
+
+MessageFeedback appears for persisted assistant IDs only. Its protected mutation
+owns authorization and idempotent storage; the UI does not fabricate ratings or mutate
+report evidence. History resumes from ownership-checked server messages. Activity
+lists actual request/context/search/saved/completed/error events in this browser
+session; it is not a reconstructed model reasoning trace or a persistent audit log.

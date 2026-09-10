@@ -3,14 +3,15 @@
 Rationale and constraints that the code's one-line doc comments deliberately omit.
 Add a section per module as it grows; sections are independent.
 
-## §migrations — the tree is a baseline, not a chain
+## §migrations — baseline and additive migrations
 
-Since 2026-09-08 `drizzle/` holds **one** migration, `0000_baseline.sql`, generated from
-production's real schema. The former 0000–0040 chain is retained unedited in `drizzle/archive/`,
+Since 2026-09-08 `drizzle/` begins with `0000_baseline.sql`, generated from
+production's real schema; authorized additive changes follow it. The former 0000–0040 chain is retained unedited in `drizzle/archive/`,
 whose README carries the evidence. **A `drizzle/00NN_*.sql` reference anywhere in this repo now
 resolves to `drizzle/archive/00NN_*.sql`** — those references were left in place deliberately
 rather than rewritten across 127 files, because they are explanatory ("applied by drizzle/0015")
-and the archive is the single place that explains where they went.
+and the archive is the single place that explains where they went. New post-baseline migrations,
+such as `0001_ai_message_feedback.sql`, resolve directly in `drizzle/`.
 
 Two facts about the migrator that are easy to get wrong, both from
 `drizzle-orm/pg-core/dialect.js`:
@@ -36,7 +37,21 @@ drizzle-kit diffs `schema.ts` against an *empty* schema and emits a whole-schema
 `when` above the baseline's — which the next deploy would then try to apply, failing on "relation
 already exists". This repo has not used generated migrations since 0006 (snapshots stop there while
 the chain ran to 0040); migrations are hand-written and parked in `docs/pending-migrations/` until
-they can be applied. Adding one still requires re-pinning `EXPECTED_DRIZZLE_MIGRATION`.
+they can be applied. Authorized deployment migrations enter the journal with a timestamp strictly
+above its current high-water mark. Adding one requires re-pinning `EXPECTED_DRIZZLE_MIGRATION`.
+
+## Assistant feedback
+
+`0001_ai_message_feedback` adds private application metadata, not environmental observations.
+Its journal clock is baseline plus one millisecond because the baseline clock is ahead of the
+wall clock when authored; using today's smaller timestamp would silently skip deployment.
+The baseline file and its archival evidence remain untouched.
+
+Feedback is unique per message/user and cascades with either. Rating values have a database
+check and the optional reason is bounded to 1000 characters. The protected router joins the
+target message to its owning conversation and requires an assistant role before either upsert
+or clear. Reads attach only the current owner's feedback after conversation ownership succeeds.
+Helpfulness is user experience feedback, never validated strategy efficacy or a model score.
 
 ## §geometry-dimension
 

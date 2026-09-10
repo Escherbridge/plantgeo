@@ -137,6 +137,7 @@ export function useRegionalIntelligence() {
         setAnalysisCancelled,
         setConversationId,
         setToolActivity,
+        addActivity,
         conversationId,
       } = useRegionalIntelligenceStore.getState();
 
@@ -146,6 +147,7 @@ export function useRegionalIntelligence() {
       setError(null);
       setAnalysisCancelled(false);
       setToolActivity(null);
+      addActivity('Analysis request started.');
 
       const isCurrentRequest = () =>
         useRegionalIntelligenceStore.getState().abortController === controller;
@@ -237,6 +239,7 @@ export function useRegionalIntelligence() {
 
             switch (eventType) {
               case 'context':
+                addActivity('Source context received.');
                 setDataFreshness(
                   (parsed.dataFreshness as Record<string, string>) ?? {}
                 );
@@ -255,13 +258,21 @@ export function useRegionalIntelligence() {
                 break;
               }
               case 'search':
+                addActivity(`Web search requested: ${String(parsed.query ?? '').slice(0, 80)}`);
                 setToolActivity(
                   `Searching the web: ${String(parsed.query ?? '').slice(0, 80)}`
                 );
                 break;
+              case 'saved':
+                if (typeof parsed.assistantMessageId === 'string') {
+                  updateLastMessage({ savedMessageId: parsed.assistantMessageId });
+                  addActivity('Conversation exchange saved.');
+                }
+                break;
               case 'done':
                 setToolActivity(null);
                 if (isRegionalIntelligenceResponse(parsed)) {
+                  addActivity('Analysis completed.');
                   updateLastMessage({
                     isStreaming: false,
                     parsedResponse: parsed,
@@ -272,6 +283,7 @@ export function useRegionalIntelligence() {
                 }
                 break;
               case 'error':
+                addActivity('Analysis failed.');
                 setToolActivity(null);
                 setError(
                   (parsed.message as string | undefined) ?? 'Unknown error',
@@ -285,6 +297,7 @@ export function useRegionalIntelligence() {
       } catch (err) {
         if (err instanceof Error && err.name === 'AbortError') return;
         if (isCurrentRequest()) {
+          addActivity('Analysis request failed.');
           setError(
             err instanceof Error ? err.message : 'Unknown error',
             err instanceof RegionalIntelligenceRequestError

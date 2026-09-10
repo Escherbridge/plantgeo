@@ -28,3 +28,11 @@ an AI request; location analysis remains an explicit map action.
   content, which silently defeats the overflow.
 - The pages supply their own `mx-auto max-w-4xl p-6` measure, so the layout's
   scroll container deliberately adds no padding of its own.
+
+Resume on map is a separate explicit action from Open on Map. It hydrates the owned
+saved transcript and conversation ID into the shared store, aborts any abandoned
+request, then focuses the original location. It does not call the analysis API;
+only a subsequently submitted follow-up does so, replaying server-owned history.
+Copied/shared transcripts identify themselves as historical and retain saved times.
+Sharing is text-only and user-initiated; the existing ownership rules stay private.
+Message feedback attaches to the saved assistant message ID, not its rendered index.

@@ -8,6 +8,7 @@ vi.mock("@/lib/map/layer-toggle-context", () => ({
 }));
 
 import { useRegionalIntelligence } from "@/hooks/useRegionalIntelligence";
+import { useRegionalIntelligenceStore } from '@/stores/regional-intelligence-store';
 import { useTimeSliderStore } from "@/stores/time-slider-store";
 import type { SliderCapabilities } from "@/types/time-slider";
 
@@ -86,6 +87,24 @@ afterEach(() => {
 });
 
 describe("posting the days the user is viewing with an analysis request", () => {
+  it('replays only the saved conversation ID and records actual SSE activity and persisted answer identity', async () => {
+    useRegionalIntelligenceStore.getState().resumeConversation({ id: 'owned-conversation', lat: 44.66, lon: -118.83, messages: [{ id: 'old', role: 'assistant', content: 'Saved answer' }] });
+    const answer = { aiGenerated: true, riskSummary: { level: 'low' }, observations: [], remediation: [] };
+    const text = `event: context\ndata: ${JSON.stringify({ conversationId: 'owned-conversation', dataFreshness: {} })}\n\nevent: saved\ndata: ${JSON.stringify({ assistantMessageId: 'persisted-answer' })}\n\nevent: done\ndata: ${JSON.stringify(answer)}\n\n`;
+    const read = vi.fn().mockResolvedValueOnce({ done: false, value: new TextEncoder().encode(text) }).mockResolvedValueOnce({ done: true });
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, body: { getReader: () => ({ read }) } });
+    vi.stubGlobal('fetch', fetchMock);
+    const { result } = renderHook(() => useRegionalIntelligence());
+    await act(async () => { await result.current.sendFollowUp('Explain the saved observations'); });
+    const posted = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(posted.conversationId).toBe('owned-conversation');
+    expect(posted).not.toHaveProperty('history');
+    expect(useRegionalIntelligenceStore.getState().messages.at(-1)).toMatchObject({ savedMessageId: 'persisted-answer', parsedResponse: answer, isStreaming: false });
+    expect(useRegionalIntelligenceStore.getState().activity.map(event => event.label)).toEqual([
+      'Saved conversation opened. No new analysis has been requested.', 'Analysis request started.',
+      'Source context received.', 'Conversation exchange saved.', 'Analysis completed.',
+    ]);
+  });
   it("carries every visible layer's own day", async () => {
     const fetchMock = refusingFetch();
     vi.stubGlobal("fetch", fetchMock);
