@@ -12,6 +12,12 @@ depends on C. Each wave ends in one sweep and one adversarial review by a separa
 September 10 preparation checkpoint: [signal/sensor candidates and soil reader validation](evidence/repair-preparation-20260910.md).
 This records bounded preparation, not completed publication or closure of the active repair work.
 
+The [current MTBS capture and four-resolution preparation](evidence/mtbs-current-capture-20260910.md)
+passed independent source and geometry verification. Publication and pre-2018 recovery remain pending.
+
+The [saved static-soil evidence and proposed bucket admission](evidence/soil-static-admission-preparation-20260910.md)
+separately verify local raster artifacts and define a bounded point-reader plan; implementation and admission remain pending.
+
 ## Wave A — unblock the time slider and clear the dead objects
 
 - [ ] **A1 — availability bootstrap compiler (D3).** New `scripts/compile_availability_bootstrap.py`:

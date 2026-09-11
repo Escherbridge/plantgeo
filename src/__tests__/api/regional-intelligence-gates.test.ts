@@ -21,7 +21,7 @@ vi.mock("@/lib/server/security/regional-intelligence-access", async (original) =
 });
 
 import { POST } from "@/app/api/ai/regional-intelligence/route";
-import { regionalEvidenceFreshnessState } from "@/lib/regional-intelligence";
+import { regionalEvidenceFreshnessState, regionalEvidencePublicationDay } from "@/lib/regional-intelligence";
 
 function postRequest(body: unknown): NextRequest {
   return new NextRequest("https://plantgeo.test/api/ai/regional-intelligence", {
@@ -99,4 +99,16 @@ describe("regional intelligence access gates", () => {
     expect(response.status).toBe(429);
     expect(response.headers.get("retry-after")).toBe("42");
   });
+});
+
+
+it("recognizes only valid MTBS publication availability without inventing capture dates", () => {
+  const now = Date.parse("2026-09-11T12:00:00Z");
+  const marker = "publication_available_2026-09-11";
+  expect(regionalEvidencePublicationDay("mtbsPerimeters", marker)).toBe("2026-09-11");
+  expect(regionalEvidenceFreshnessState("mtbsPerimeters", marker, now)).toBe("available");
+  expect(regionalEvidenceFreshnessState("firePerimeters", marker, now)).toBe("unavailable");
+  expect(regionalEvidencePublicationDay("mtbsPerimeters", "publication_available_2026-02-30")).toBeNull();
+  expect(regionalEvidenceFreshnessState("mtbsPerimeters", "publication_available_2026-09-12", now)).toBe("unavailable");
+  expect(regionalEvidenceFreshnessState("mtbsPerimeters", "publication_available_2024-08-22", now)).toBe("stale");
 });

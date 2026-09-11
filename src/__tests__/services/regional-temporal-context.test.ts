@@ -1,3 +1,4 @@
+import { snapshotMetadata } from "./mtbs-snapshot-fixture";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -12,7 +13,7 @@ const mocks = vi.hoisted(() => ({
   getInterventionSuitability: vi.fn(),
   getServerSession: vi.fn(),
   getSoilProperties: vi.fn(),
-  getMTBSPerimeters: vi.fn(),
+  getParquetBurnSeverity: vi.fn(),
   // Consumed in call order by the generic `db.select()`/`db.execute()` stand-ins below, so a
   // test that cares can queue exactly what `readCommunityProposals` and a forbidden legacy strategy read
   // will see on their next call. Left empty, every call resolves to `[]`.
@@ -55,15 +56,9 @@ vi.mock("@/lib/server/db", () => ({
 
 vi.mock("@/lib/server/auth", () => ({ getServerSession: mocks.getServerSession }));
 
-// Live external reads (ISRIC, ArcGIS-hosted MTBS) added to regional-context.ts on 2026-08-14.
-// Mocked at the module boundary so this suite never attempts real network calls; see
-// getSoilProperties/getMTBSPerimeters defaults in beforeEach below.
+// SoilGrids remains external; MTBS uses the mocked governed Parquet reader below.
 vi.mock("@/lib/server/services/soilgrids", () => ({
   getSoilProperties: mocks.getSoilProperties,
-}));
-
-vi.mock("@/lib/server/services/mtbs", () => ({
-  getMTBSPerimeters: mocks.getMTBSPerimeters,
 }));
 
 vi.mock("@/lib/server/services/environmental-read-model", async () => {
@@ -107,6 +102,7 @@ vi.mock("@/lib/server/services/parquet-trpc-readers", async (importOriginal) => 
     ...actual,
     getParquetFireDetections: mocks.getParquetFireDetections,
     getParquetFirePerimeters: mocks.getParquetFirePerimeters,
+    getParquetBurnSeverity: mocks.getParquetBurnSeverity,
   };
 });
 
@@ -305,7 +301,7 @@ beforeEach(() => {
   // Unconfigured by default, same as the pre-2026-08-14 hardcoded nulls this replaced: no test
   // in this file exercises soil/MTBS content unless it explicitly overrides these.
   mocks.getSoilProperties.mockRejectedValue(new Error("No soil fixture configured"));
-  mocks.getMTBSPerimeters.mockResolvedValue({ type: "FeatureCollection", features: [] });
+  mocks.getParquetBurnSeverity.mockResolvedValue({ state: "not_generated", requestedDay: "2026-08-09", reason: "lane_never_written" });
 });
 
 describe("assembling regional context at the days the user is viewing", () => {
@@ -1196,7 +1192,7 @@ describe("community proposals and deferred strategy evidence", () => {
     expect(result.contextIsEmpty).toBe(true);
   });
 
-  it("wires soil properties and MTBS perimeters from their live read paths", async () => {
+  it("wires soil properties and governed Parquet MTBS perimeters", async () => {
     mocks.getSoilProperties.mockResolvedValue({
       ph: 6.8,
       organicCarbon: 12,
@@ -1205,22 +1201,13 @@ describe("community proposals and deferred strategy evidence", () => {
       cec: 14,
       ocd: 3.2,
     });
-    mocks.getMTBSPerimeters.mockResolvedValue({
-      type: "FeatureCollection",
-      features: [
-        {
-          type: "Feature",
-          geometry: { type: "Point", coordinates: [-116.2, 43.6] },
-          properties: {
-            fireName: "Test Fire",
-            fireYear: 2023,
-            acres: 500,
-            severityClass: "high",
-            ignitionDate: "2023-07-04",
-            fireId: "X1",
-          },
-        },
-      ],
+    mocks.getParquetBurnSeverity.mockResolvedValue({
+      state: "ready", requestedDay: "2026-08-09", servedDay: "2024-08-22", truncated: false,
+      data: [{ fireName: "Test Fire", fireYear: 2023, acres: 500, severityClass: null,
+        ignitionDate: "2023-07-04", fireId: "X1", fireType: "Wildfire", assessmentType: "Initial",
+        observedDay: "2024-08-22", dataAvailableAt: "2024-08-22T00:00:00Z",
+        geometry: { type: "Polygon", coordinates: [[[-116.2, 43.6], [-116.1, 43.6], [-116.1, 43.7], [-116.2, 43.6]]] },
+      }],
     });
 
     const result = await assembleRegionalContext(43.6, -116.2);
@@ -1235,7 +1222,7 @@ describe("community proposals and deferred strategy evidence", () => {
     });
     expect(result.dataFreshness.soilProperties).toBe("static_release_untimed");
     expect(result.payload.mtbsPerimeters?.totalCount).toBe(1);
-    expect(result.dataFreshness.mtbsPerimeters).toBe("2023-07-04");
+    expect(result.dataFreshness.mtbsPerimeters).toBe("publication_available_2024-08-22");
     expect(result.contextIsEmpty).toBe(false);
   });
 
@@ -1507,4 +1494,30 @@ describe("fire perimeters, served from the Parquet lane rather than from geo.fea
     expect(rejection.payload.firePerimeters).toBeNull();
     expect(rejection.dataFreshness.firePerimeters).toBe("unavailable");
   });
+});
+
+it("regional MTBS uses the caller-selected day and retains partial-capture provenance even for an empty viewport", async () => {
+  const metadata = { ...snapshotMetadata, availableDay: "2026-08-08", capturedFrom: "2026-08-07T19:00:00Z",
+    capturedThrough: "2026-08-07T19:05:00Z" };
+  mocks.getParquetBurnSeverity.mockResolvedValue({ state: "ready", requestedDay: "2026-08-08", servedDay: "2026-08-08",
+    truncated: true, data: [], mtbsSnapshot: metadata });
+  const result = await assembleRegionalContext(43.6, -116.2, [
+    { layer: "burn-severity", date: "2026-08-08", hasDataOnDate: true },
+  ]);
+  expect(mocks.getParquetBurnSeverity).toHaveBeenCalledWith({ bbox: expect.any(String), date: "2026-08-08", mapZoom: 9 });
+  expect(result.payload.mtbsPerimeters).toEqual({ fires: [], totalCount: 0, truncated: true,
+    servedDay: "2026-08-08", mtbsSnapshot: metadata });
+  expect(result.dataFreshness.mtbsPerimeters).toBe("publication_available_2026-08-08");
+  expect(result.temporalContext.readings[0].outcome).toBe("coverage_unknown_on_viewed_date");
+});
+
+it("regional MTBS reports a refused Parquet read as failed rather than absent", async () => {
+  mocks.getParquetBurnSeverity.mockResolvedValue({
+    state: "upstream_unavailable", requestedDay: "2026-08-08", reason: "read_timed_out",
+  });
+  const result = await assembleRegionalContext(43.6, -116.2, [
+    { layer: "burn-severity", date: "2026-08-08", hasDataOnDate: true },
+  ]);
+  expect(result.payload.mtbsPerimeters).toBeNull();
+  expect(result.temporalContext.readings[0].outcome).toBe("read_failed");
 });

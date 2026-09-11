@@ -708,14 +708,13 @@ def test_the_five_wave_b_direct_writers_take_distinct_slots_sized_to_their_own_s
 
     burn_severity = LANE_SPECS["burn-severity-direct-forward"]
     mtbs = LANE_SPECS["mtbs-forward"]
-    assert burn_severity.cadence_seconds == mtbs.cadence_seconds == 604800, (
-        "MTBS publishes quarterly and its governed release set grows only through a code change, so the "
-        "weekly rhythm mtbs-forward already runs is the honest cadence -- and forward.py's per-turn R2 "
-        "census is explicitly sized for it"
-    )
-    assert burn_severity.phase_offset_seconds == mtbs.phase_offset_seconds + 3600
+    assert burn_severity.cadence_seconds == 86400
+    assert mtbs.cadence_seconds == 604800
+    assert "--current-snapshots" in burn_severity.command
+    assert burn_severity.phase_offset_seconds == 8 * 3600 + 55 * 60
+    assert burn_severity.phase_offset_seconds == (mtbs.phase_offset_seconds + 3600) % 86400
     assert scheduled_bucket(burn_severity, datetime(2026, 9, 10, 12, tzinfo=UTC)) == datetime(
-        2026, 9, 8, 8, 55, tzinfo=UTC
+        2026, 9, 10, 8, 55, tzinfo=UTC
     )
 
 

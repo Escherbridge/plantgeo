@@ -15,6 +15,7 @@ from agri_data_service.parquet_ops import faults
 from agri_data_service.parquet_ops.coverage import CoverageCache, registered_census_lanes
 from agri_data_service.parquet_ops.duckdb_session import run_serving_read
 from agri_data_service.parquet_ops.faults import ServingRefusalError
+from agri_data_service.parquet_ops.mtbs_snapshot_catalog import configured_snapshot_loader
 from agri_data_service.parquet_ops.request_params import (
     RequestError,
     parse_calendar_day,
@@ -161,6 +162,7 @@ async def _row_read(
     listing = ObjectStoreListing(
         backend=BotoObjectStoreBackend.from_credentials(credentials),
         prefix=settings.object_store_prefix,
+        mtbs_snapshot_loader=configured_snapshot_loader(settings),
     )
     async with asyncio.timeout(_ROW_READ_TIMEOUT_SECONDS):
         return await run_serving_read(

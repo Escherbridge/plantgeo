@@ -26,3 +26,12 @@ without a bootstrap still completes its days.
 operations. The 45-day ingestion lookback spans up to 46 inclusive UTC dates; publication rechecks
 that boundary every tick and drains durable pending work independently of whether ingestion emitted
 a callback in that tick.
+
+## Retained MTBS reconciliation reader
+
+`lanes/burn_severity.py` only reads release-scoped PostgreSQL rows and conforms them to the
+registered schema for `validation/burn_severity.py`. Empty results describe that database query;
+they do not prove upstream absence. Its unregistered PostgreSQL-to-Parquet exporter was removed
+on 2026-09-10. Publication belongs to `direct/burn_severity/adapter.py`, whose source evidence,
+all-rung finalization and bounded parts remain unchanged. The SQL and reconciliation reader stay
+until their own retirement proof is discharged.

@@ -571,10 +571,11 @@ coverage to enumerate actual published dates at/before selection. It visits at m
 Every read must return ready at the exact indexed publication day; missing/withheld
 coverage or contradictory release responses fail closed, never fall back to the
 latest cohort. No release day or feature date is inferred from ignition year.
-Governed absence spans cost no row requests. When no indexed release precedes the
-day, the underlying plane's actual absence/not-generated response is preserved.
+Historical governed absence spans cost no per-day row requests. A newer absence span requires
+one budgeted release probe to discover a zero-source current replacement (below). Without such
+a replacement or indexed release, the plane's actual terminal state is preserved.
 
-The response unions the published cohorts and retains each feature's original dates,
+Before an eligible current replacement, the response unions published cohorts and retains each feature's original dates,
 geometry and units. Existing row caps, any owed historical gap at/before selection,
 a selection beyond evaluated coverage, and the release budget mark it truncated.
 This flag means incomplete history as well as a row cap; it does not assert complete
@@ -602,3 +603,38 @@ kept within 24,000 characters per turn and 64,000 across history. If a complete 
 cannot fit, its narration and an omission notice are used; structured JSON is never
 silently clipped or reconstructed. Legacy invalid data retains only original text.
 The full owned record remains readable in history even when model replay is bounded.
+
+## MTBS current snapshot replacement and shared regional evidence
+
+`mtbs-snapshot-contract.ts` validates the optional `mtbs_snapshot` envelope descriptor and normalizes
+it to `mtbsSnapshot`. A descriptor is metadata, not independent publication authority: the Python
+reader must verify its manifest/catalogue/source binding before emitting it. Malformed descriptors
+and mismatched availability refuse rather than lose metadata during decoding. Rows keep the existing
+23-column schema; manifest identity binds `release_identifier` as
+`mtbs-current-snapshot:<manifest_sha256>`. Capture timestamps remain distinct from next-day
+availability. A complete bounded query of partial fire-year mapping is never whole-program completion.
+
+The supported full-current product covers fire years 2018–2026 within the declared capture bbox.
+The newest eligible full replacement supplies that entire set, including revised geometries and
+withdrawals; older overlapping cohorts and snapshots are not concatenated. Empty viewports retain
+metadata and do not bring old fires back. Before its availability, the existing historical cohort
+union remains. Mismatched row years/dates/manifest identity, duplicated Fire_IDs, or invalid
+evidence fail closed. All source values, IDs, geometries and units
+are passed through the existing strict decoder/presenter.
+
+A newer authoritative governed-absence range triggers one latest-release probe, consuming one of
+the existing twelve read slots. This makes a validated zero-source full replacement discoverable;
+it returns ready with no fires and suppresses historical fallback. An ordinary legacy absence with
+no replacement metadata still allows the historical union. Future absence dates are not probed.
+Historical unions retain history-gap and release-count limits. A full replacement resets those superseded limits: only server row truncation, an unevaluated current horizon, or viewport extent outside the fixed captured region marks its output truncated. Pre-2018 and partial mapping years remain declared scope limits, not a claim of complete MTBS history. An outside viewport still receives the exact known intersection.
+
+`regional-context.ts` now reads the same governed Parquet history/snapshot at the viewed burn-history
+day, including empty ready results and partial-capture metadata. Its freshness field labels the
+publication availability rather than repurposing ignition date as acquisition freshness. The regional
+payload's ten-fire display cap is explicit in `truncated`; returned row count is not a claim about
+unseen source fires. SoilGrids and other context blocks retain their existing semantics. Neither this
+change nor the map's concise capture/availability/partial-year notice closes upstream completeness.
+
+Snapshot descriptor capture instants must be UTC, at most 600 seconds apart, with availability
+exactly the following UTC day. Regional empty partial-mapping or truncated results report unknown
+coverage rather than categorical absence; an unwritten rung retains its explicit missing-rung state.

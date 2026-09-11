@@ -1,3 +1,5 @@
+import type { MtbsSnapshotMetadata } from "@/lib/environmental/mtbs-snapshot";
+
 /**
  * The four states one stream-day of the Parquet warehouse can be in, as one discriminated union.
  *
@@ -94,6 +96,7 @@ export interface PublishedParquetPlane<TRow = ParquetPlaneRow> {
   rows: readonly TRow[];
   /** The serving row budget bit, so these rows are a subset the caller must not read as the whole day. */
   truncated: boolean;
+  mtbsSnapshot?: MtbsSnapshotMetadata;
 }
 
 /** The lane looked at this day and the source deliberately had nothing to give. */
@@ -108,6 +111,7 @@ export interface GovernedAbsenceParquetPlane {
    */
   servedDay: string;
   evidence: GovernedAbsenceEvidence;
+  mtbsSnapshot?: MtbsSnapshotMetadata;
 }
 
 /**

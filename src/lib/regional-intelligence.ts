@@ -75,6 +75,21 @@ export function regionalEvidenceSnapshotDay(
     : null;
 }
 
+/** Returns a validated MTBS publication day without relabeling it as capture time. */
+export function regionalEvidencePublicationDay(
+  source: RegionalEvidenceSource,
+  value: string | undefined
+): string | null {
+  if (source !== "mtbsPerimeters" || !value) return null;
+  const match = /^publication_available_(\d{4}-\d{2}-\d{2})$/.exec(value);
+  if (!match) return null;
+  const day = match[1];
+  const timestamp = Date.parse(`${day}T00:00:00Z`);
+  return Number.isFinite(timestamp) && new Date(timestamp).toISOString().slice(0, 10) === day
+    ? day
+    : null;
+}
+
 /** Classifies observation times and source-specific release markers without inventing dates. */
 export function regionalEvidenceFreshnessState(
   source: RegionalEvidenceSource,
@@ -87,8 +102,8 @@ export function regionalEvidenceFreshnessState(
     return source === "soilProperties" ? "available" : "unavailable";
   }
 
-  const snapshotDay = regionalEvidenceSnapshotDay(source, value);
-  const observedAt = Date.parse(snapshotDay === null ? value : `${snapshotDay}T00:00:00Z`);
+  const releaseDay = regionalEvidenceSnapshotDay(source, value) ?? regionalEvidencePublicationDay(source, value);
+  const observedAt = Date.parse(releaseDay === null ? value : `${releaseDay}T00:00:00Z`);
   if (!Number.isFinite(observedAt) || observedAt > now) {
     return "unavailable";
   }

@@ -20,12 +20,13 @@ from agri_data_service.parquet_ops.wire import DeclaredListCell
 from agri_data_service.warehouse.parquet.schema import get_stream_schema
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Mapping
+    from collections.abc import Callable, Iterator, Mapping
     from datetime import date
 
     from agri_data_service.foundation.parquet.paths import PartitionKind
     from agri_data_service.foundation.parquet.zoom import ZoomTier
     from agri_data_service.parquet_ops.duckdb_session import ServingSession
+    from agri_data_service.parquet_ops.mtbs_snapshot_catalog import VerifiedMtbsSnapshot
     from agri_data_service.parquet_ops.request_params import BoundingBox, ReadScope
     from agri_data_service.parquet_ops.wire import ServedRow
     from agri_data_service.pipeline.parquet.objectstore import ObjectStoreBackend
@@ -123,6 +124,7 @@ class ObjectStoreListing:
 
     backend: ObjectStoreBackend
     prefix: str = ""
+    mtbs_snapshot_loader: Callable[[date], VerifiedMtbsSnapshot | None] | None = None
 
     def key_for(self, relative_key: str) -> str:
         """Return the absolute bucket key for a path expressed in the frozen layout."""

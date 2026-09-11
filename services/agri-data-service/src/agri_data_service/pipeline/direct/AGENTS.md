@@ -1,5 +1,38 @@
 # Source-direct Parquet producers
 
+## MTBS immutable current captures
+
+`burn_severity/capture.py` is an explicit bounded public-source capture into new local directories;
+`current_snapshot.py` prepares ordinary base/derived Parquet artifacts only. Neither publishes,
+connects to PostgreSQL, changes active release eligibility, or grants apply authority. The supported
+current footprint is the reviewed bbox [-125,42,-111,49], fire years 2018-2026. A complete query
+capture does not mean the 2023-2026 fire-year mapping is complete. Decoded HTTP entity bytes, exact
+query parameters, source counts and before/after attribute inventories are bound by the source
+manifest. A mutable source without a version token still only proves a bounded capture interval;
+geometry-only changes during that interval cannot be excluded by matching attribute inventories.
+USDA's attributes JSON and GeoJSON serialize latitude/longitude doubles differently (observed
+-122.52854279 versus -122.52854278999999). `capture.attributes_match` permits finite numeric
+differences of at most 1e-12 only for those two named property fields, with exact key sets and exact
+canonical values for every other attribute. It changes neither archived payload nor geometry.
+Both capture and offline replay use the same comparator; substantive coordinate changes refuse.
+Finite JSON integer/float pairs with exactly equal numeric values (for example acres 38159.0
+versus 38159) also compare equal without rounding. Booleans are never numeric for this comparison,
+and numeric strings are not coerced. The 1e-12 tolerance remains exclusive to latitude/longitude.
+
+The source manifest uses `mtbs-current-snapshot/v1`; its full replacement descriptor carries
+covered years, bbox/CRS, exact capture interval, partial fire years and source row count. Availability
+is the UTC day after capture closes. Existing completed-cohort normalization stays unchanged;
+the explicit snapshot normalizer binds the source-manifest hash and the new availability instead.
+No current bytes are labeled as an old official release. Preparation replays the hash-verified
+response graph and derives every rung with the normal geometry repair/simplification machinery.
+
+The intended operational continuation is weekly bounded capture, durable immutable staging, then
+a cheap daily eligibility check that publishes a reviewed stage once its availability day arrives.
+That publication must bind the manifest and all rung receipts under normal locks/finalization and
+advance the validated snapshot catalogue. These operators do not implement or authorize that step.
+The historical seven-day lag cannot silently delay or backdate an explicit current snapshot;
+catalogue admission must use its separately validated availability policy.
+
 Modules here fetch upstream products and publish registered Parquet schemas without staging
 ingested rows in PostgreSQL. PostgreSQL may still supply the shared session-scoped lane-day
 advisory lock during the transition; it is coordination, not a data sink.
@@ -1452,3 +1485,31 @@ Executor lane `evacuation-zones-direct-forward`, **hourly at `:35`** -- the cade
 layer whose whole value is currency, and a tick that finds nothing changed writes nothing. SHADOW. Its activation swaps the adapter AND the watermark
 resolver, and the watermark replacement is a DESIGN DECISION rather than a transcription: this package offers
 a store-only resolver on request, and nobody has asked for one yet.
+## MTBS staged current publication
+
+`burn_severity/daily.py` runs the complete lifecycle in one bounded child with its own
+hard deadline, including when the caller disappears. Daily checks first publish the
+earliest eligible queued capture; source capture runs at most weekly and precedes
+historical cohort repair. A failed phase retains immutable evidence and the pending
+queue for a governed retry. The capture itself retains its 600-second/400-request
+limits. The fixed 2018–2026 query horizon explicitly refuses calendar year 2027.
+
+`stage.py` verifies archived responses and reproduces all candidate rungs before
+archiving and CAS-enqueuing a manifest. At most eight captures may be pending; two
+different captures cannot own one availability day. Identical canonical source
+content retains raw capture/check evidence but skips derivation, rung uploads, and
+another release. Staging is not serving authority.
+
+`publish_snapshot.py` replays archived source evidence before physical publication,
+uses the ordinary lane writer under the shared publication barrier and lane-day
+lock, and binds the manifest through typed availability source evidence. A durable
+attempt fixes run identity, timestamp and source ceiling across retries. Partial
+same-stage writes may resume, but final success requires all physical rungs and
+exact source/terminal evidence rows. Queue removal follows this complete readback.
+The pinned operational connection is checked across asynchronous boundaries; this
+does not claim object-store fencing after an undetectable network partition.
+
+Current captures are eligible on the UTC day after capture, without adding the
+historical seven-day lag. The historical forward path still enumerates only the
+five `governed_release_days()`; the generic burn adapter refuses direct ingestion.
+Neither path authors new nonrelease daily absences that could shadow a snapshot.

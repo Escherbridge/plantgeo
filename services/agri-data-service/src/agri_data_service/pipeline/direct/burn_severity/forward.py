@@ -150,6 +150,7 @@ class BurnSeverityForwardConfig:
     run_id: str | None = None
     bbox: str | None = None
     today: date | None = None
+    current_snapshots: bool = False
 
 
 def emit(payload: Mapping[str, object]) -> None:
@@ -673,6 +674,11 @@ def parser() -> argparse.ArgumentParser:
     built.add_argument("--bbox", default=None)
     built.add_argument("--time-budget-seconds", type=float, default=BURN_SEVERITY_DEFAULT_TIME_BUDGET_SECONDS)
     built.add_argument("--run-id", default=None)
+    built.add_argument(
+        "--current-snapshots",
+        action="store_true",
+        help="daily eligible-stage publication and weekly current-source capture",
+    )
     built.add_argument("--retry-attempts", type=int, default=BURN_SEVERITY_DEFAULT_RETRY_ATTEMPTS)
     built.add_argument("--retry-base-seconds", type=float, default=BURN_SEVERITY_DEFAULT_RETRY_BASE_SECONDS)
     built.add_argument("--retry-max-seconds", type=float, default=BURN_SEVERITY_DEFAULT_RETRY_MAX_SECONDS)
@@ -701,6 +707,7 @@ def parse_args(argv: Sequence[str] | None = None) -> BurnSeverityForwardConfig:
         contention_timeout_seconds=arguments.contention_timeout_seconds,
         run_id=arguments.run_id,
         bbox=arguments.bbox,
+        current_snapshots=arguments.current_snapshots,
     )
     try:
         _validate_config(config)
@@ -713,7 +720,14 @@ async def main(argv: Sequence[str] | None = None) -> int:
     """Run one bounded turn and emit exactly one terminal report on stdout."""
     config = parse_args(argv)
     try:
-        report = await run_burn_severity_forward(config)
+        if config.current_snapshots:
+            from agri_data_service.pipeline.direct.burn_severity.daily import (  # noqa: PLC0415 - reuses historical forward
+                run_daily,
+            )
+
+            report = await run_daily(config)
+        else:
+            report = await run_burn_severity_forward(config)
     except Exception as error:  # the one terminal failure report a caller parses
         print(json.dumps({"status": "failed", "error": f"{type(error).__name__}: {error}"}, sort_keys=True))
         return 1

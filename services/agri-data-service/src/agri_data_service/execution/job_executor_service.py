@@ -42,7 +42,7 @@ from agri_data_service.jobs import (
 from agri_data_service.jobs.lease import apply_statement_timeout, canonical_json, fetch_row, required_column
 from agri_data_service.jobs.matview_refresh import MATVIEW_REFRESH_TIME_BUDGET_SECONDS
 from agri_data_service.jobs.strategy_mv_refresh import STRATEGY_MV_REFRESH_TIME_BUDGET_SECONDS
-from agri_data_service.pipeline.direct.burn_severity.forward import BURN_SEVERITY_DEFAULT_TIME_BUDGET_SECONDS
+from agri_data_service.pipeline.direct.burn_severity.forward import BURN_SEVERITY_MAX_TIME_BUDGET_SECONDS
 from agri_data_service.pipeline.direct.climate.products import (
     CLIMATE_DEFAULT_TIME_BUDGET_SECONDS,
     CLIMATE_FIELD_PRODUCTS,
@@ -932,39 +932,33 @@ _MIGRATION_INPUT_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
     ),
     _spec(
         BURN_SEVERITY_DIRECT_LANE_ID,
-        command=("python", "-m", "agri_data_service.pipeline.direct.burn_severity"),
+        command=(
+            "python",
+            "-m",
+            "agri_data_service.pipeline.direct.burn_severity",
+            "--current-snapshots",
+            "--time-budget-seconds",
+            "1800",
+        ),
         legacy_owners=(),
         conflicts_with=("parquet-burn-severity",),
         disposition="source-specific",
-        cadence_seconds=604800,
-        # Tuesday 08:55 UTC: the same weekly rhythm as `mtbs-forward` (460500, Tuesday 07:55), one hour
-        # later so the two never open a fetch in the same minute during the parity bake, when BOTH are
-        # meant to be running -- one filling geo.features for parity.py to read, one publishing Parquet.
-        phase_offset_seconds=464100,
-        schedule="55 8 * * 2",
-        publication_lag_days=_registration("burn-severity")[0],
-        publication_cadence_days=_registration("burn-severity")[1],
-        publication_lag_source="pipeline/parquet/lane_registry.py burn-severity contract",
-        selection_policy="newest unpublished governed MTBS release day first, one release day per lane-day lock",
-        timeout_seconds=int(BURN_SEVERITY_DEFAULT_TIME_BUDGET_SECONDS) + COMMAND_CLEANUP_MARGIN_SECONDS,
+        cadence_seconds=86400,
+        phase_offset_seconds=32100,
+        schedule="55 8 * * *",
+        publication_lag_days=None,
+        publication_cadence_days=None,
+        publication_lag_source="mixed: historical registered cohorts; current capture D+1 UTC with no extra lag",
+        selection_policy=(
+            "daily earliest eligible staged snapshot; weekly bounded current capture; five historical cohorts retained"
+        ),
+        timeout_seconds=int(BURN_SEVERITY_MAX_TIME_BUDGET_SECONDS) + COMMAND_CLEANUP_MARGIN_SECONDS,
         description=(
-            "Direct MTBS forward writer for burn-severity. ACTIVE since 2026-09-07, and "
-            "LANE_REGISTRY['burn-severity'].adapter became a source-direct refusal in that wave. "
-            "mtbs-forward/ingest-mtbs STILL RUNS and is NOT a second writer of this stream: it writes "
-            "geo.features (ingest/mtbs.py) while this lane writes Parquet. What the swap did was empty "
-            "its consumer set -- parquet-burn-severity is retired and the adapter behind it now refuses "
-            "-- so it is a producer feeding nothing. Retiring it is still gated on parity.py proving D1 "
-            "against what geo.features holds, because it may hold release days this writer has not "
-            "published yet, and it is a two-variable edit (see conductor/RUNBOOK.md: dropping a lane "
-            "without dropping its handoff acknowledgement stops the executor booting). WEEKLY on "
-            "Tuesday 08:55 UTC because MTBS "
-            "publishes quarterly and its governed release set grows only through a code change, never "
-            "through the calendar advancing; forward.py's per-turn R2 census is explicitly sized for "
-            "that weekly cadence. There is no boundary day to abut -- forward.py and backfill.py claim "
-            "the same governed release set the generic lane covers -- so no writer_ceiling can bridge "
-            "them and conflicts_with is the whole guard. backfill.py stays a manual operator command "
-            "and is deliberately not a scheduled lane, matching drought and vegetation. Shadow until "
-            "activated."
+            "Daily 08:55 UTC eligible-stage check and weekly bounded current MTBS capture. "
+            "Current snapshots become eligible the UTC day after capture and replace the current "
+            "2018-2026 footprint; 2023-2026 mapping remains partial. Identical source content records "
+            "a check without another release. Historical five-cohort repair retains its registered "
+            "release dates and lag. The fixed year horizon refuses 2027 until reviewed."
         ),
         # The direct writer's own floor, not a boundary: `products.governed_release_days()` opens at
         # 2020-11-24, which is exactly the day this registration's floor cites (measured 2026-09-06,

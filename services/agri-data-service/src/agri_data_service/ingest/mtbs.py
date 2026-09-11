@@ -50,6 +50,9 @@ from agri_data_service.ingest.source import (
     select_writes,
 )
 from agri_data_service.ingest.writer import FeatureWrite
+from agri_data_service.warehouse.mtbs_releases import (
+    MTBS_ANNUAL_RELEASE_DATES as MTBS_ANNUAL_RELEASE_DATES,  # noqa: PLC0414 - public compatibility reexport
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -98,48 +101,6 @@ MAPPING_REVISION_FIELD_NAMES: Final = ("map_id", "asmnt_type", "pre_id", "post_i
 
 POLYGON_GEOMETRY_TYPES: Final = frozenset({"Polygon", "MultiPolygon"})
 
-# Fire year -> the publication date of the release by which that year's mapping was complete.
-#
-# MTBS does NOT publish one release per fire year. It publishes QUARTERLY (the program states
-# "early February, May, August and November", https://www.mtbs.gov/data-availability), and a single
-# fire year accretes across several quarterly releases spanning two to four calendar years. The only
-# honest single date for a cohort is therefore the date of the LAST release that added fires from
-# that year -- late by construction, which under-claims knowledge but can never leak hindsight.
-#
-# A year still being mapped has no such date and MUST raise. Every entry is a dated release
-# announcement from https://www.mtbs.gov/announcements, cross-checked against the USGS ScienceBase
-# revision history for DOI 10.5066/P9IED7RZ
-# (https://www.sciencebase.gov/catalog/item/5e541969e4b0ff554f753113).
-MTBS_ANNUAL_RELEASE_DATES: Mapping[int, date] = MappingProxyType(
-    {
-        # MTBS Data Release, 24 November 2020: released "the remaining 716 fire mappings for 2018,
-        # bringing the total release for 2018 fires to 1,129". The word "remaining" is an explicit
-        # completion statement -- the strongest evidence in this table.
-        2018: date(2020, 11, 24),
-        # MTBS Data Release, 27 September 2021: released "the remaining 457 fire mappings for 2019,
-        # bringing the total release for 2019 fires to 810" -- the same explicit "remaining" completion
-        # wording that makes 2018 the strongest entry in this table. 353 (21 April 2021) + 457 = 810
-        # matches the announced cumulative total exactly. The next release, the "2020 Interim Data
-        # Release" of 15 February 2022, names only fire year 2020, and no release through 15 July 2026
-        # reopens 2019.
-        2019: date(2021, 9, 27),
-        # "2020 Data Release", 28 April 2022, added 397 fires and closed the cohort opened by the
-        # "2020 Interim Data Release" of 15 February 2022 (417 fires). The next release, 10 August
-        # 2022, had moved on to fire year 2021. 417 + 397 = 814 equals the live national perimeter
-        # count for 2020 exactly.
-        2020: date(2022, 4, 28),
-        # Last of four 2021 quarterly releases: 10 August 2022 (154), 11 January 2023 (393),
-        # 7 April 2023 (222) and 9 August 2023 (257). The next release, 26 October 2023, had moved
-        # on to fire year 2022. The announced total of 1,026 is within six of the live national
-        # perimeter count of 1,020.
-        2021: date(2023, 8, 9),
-        # Last of four 2022 quarterly releases: 26 October 2023 (209), 24 January 2024 (297),
-        # 1 May 2024 (325) and 22 August 2024 (348). The next release, 31 October 2024, had moved on
-        # to fire years 2023 and 2024. The announced total of 1,179 is within two of the live
-        # national perimeter count of 1,177. Corroborated by ScienceBase revision 9.0, 22 August 2024.
-        2022: date(2024, 8, 22),
-    }
-)
 
 MTBS_SOURCE_KEY: Final = "mtbs-burn-severity"
 MTBS_SOURCE_NAME: Final = "MTBS Burned Area Boundaries"
@@ -500,10 +461,33 @@ def _require_polygon_geometry(feature: Mapping[str, object]) -> dict[str, Any]:
 
 def build_mtbs_record(feature: Mapping[str, object], ignition_year: int) -> MtbsBurnSeverityRecord:
     """Normalise one upstream burned-area boundary into the warehouse record for its release."""
+    return _normalise_mtbs_record(
+        feature, ignition_year, build_release_identifier(ignition_year), resolve_data_available_at(ignition_year)
+    )
+
+
+def build_mtbs_snapshot_record(
+    feature: Mapping[str, object], ignition_year: int, *, manifest_sha256: str, available_at: datetime
+) -> MtbsBurnSeverityRecord:
+    """Normalize a current capture with explicit immutable provenance, never a completed-cohort date."""
+    if len(manifest_sha256) != hashlib.sha256().digest_size * 2 or any(
+        char not in "0123456789abcdef" for char in manifest_sha256
+    ):
+        raise ValueError("snapshot manifest requires a lowercase SHA-256")
+    if available_at.utcoffset() != timedelta(0):
+        raise ValueError("snapshot availability must be UTC-aware")
+    record = _normalise_mtbs_record(feature, ignition_year, f"mtbs-current-snapshot:{manifest_sha256}", available_at)
+    if record.ignition_date.year != ignition_year or record.ignition_date >= available_at.date():
+        raise ValueError("snapshot ignition lies outside its year or before-availability contract")
+    return record
+
+
+def _normalise_mtbs_record(
+    feature: Mapping[str, object], ignition_year: int, release_identifier: str, available_at: datetime
+) -> MtbsBurnSeverityRecord:
     raw_properties = feature.get("properties")
     properties: Mapping[str, object] = raw_properties if isinstance(raw_properties, dict) else {}
     identity = build_burn_severity_identity(_identity_properties(properties))
-    release_identifier = build_release_identifier(ignition_year)
     return MtbsBurnSeverityRecord(
         natural_key=identity.natural_key,
         producer=identity.producer,
@@ -511,7 +495,7 @@ def build_mtbs_record(feature: Mapping[str, object], ignition_year: int) -> Mtbs
         geometry=_require_polygon_geometry(feature),
         release_identifier=release_identifier,
         mapping_revision=build_mapping_revision(properties, release_identifier),
-        data_available_at=resolve_data_available_at(ignition_year),
+        data_available_at=available_at,
         ignition_date=parse_mtbs_ignition_date(_first_present(properties, IGNITION_DATE_FIELD_NAMES)),
         ignition_year=ignition_year,
         fire_name=_optional_text(properties, FIRE_NAME_FIELD_NAMES),

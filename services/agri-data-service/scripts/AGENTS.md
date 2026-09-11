@@ -1,5 +1,26 @@
 # Vegetation production proof scripts
 
+## MTBS current snapshot capture and preparation
+
+`prepare_mtbs_current_snapshot.py --capture --out <new-dir>` explicitly fetches only the reviewed
+2018-2026 regional query. It caps rows at 2,000, source requests at 400, each response at 20 MiB,
+aggregate decoded entity bytes at 400 MiB and the portable child process at 600 seconds. Source calls are sequential,
+with geometry pages of 25; a refused or oversized page stops the capture instead of publishing
+partial data. The measured 747-row source requires 70 successful requests at that page size.
+The parent enforces the wall cap on Windows and POSIX, terminating and then killing a stuck child.
+Every response receipt records HTTP status, content encoding/type, query and request/receipt times.
+Archived bodies are decoded HTTP entities, not compressed on-wire bytes. A bounded journal records
+pending requests, completed response provenance and ordinary failures; a killed process can leave
+a pending journal but cannot create a successful manifest. Preparation rechecks canonical geometry
+properties against the pinned attribute inventory, as well as IDs and before/after inventories.
+
+`--from-capture <dir> --manifest-sha256 <reviewed-sha> --out <new-dir>` performs no network I/O.
+It verifies archived bytes and the count/attribute/geometry receipt graph, then prepares four
+ordinary Parquet rungs and a no-apply receipt locally. Do not publish a staged snapshot before its
+next-day availability or use its existence to imply an active catalogue entry. The capture and
+preparation commands have no bucket or database write path. Preserve failed partial directories
+as evidence; they have no successful manifest/preparation receipt and are not resumable stages.
+
 ## Exact September 5/6 sensor false-absence correction
 
 `correct_sensor_absences.py` defaults to read-only preparation with `--candidate <candidate-manifest.json>`,
@@ -917,3 +938,11 @@ observation-retention SLA. The six-day bound is the repository's measured acquis
 `ingest/sensors.py`, not a newly asserted official guarantee; older windows remain incomplete.
 Captured references live in `.omc/research/nws-official-api-docs-20260910.json` and
 `.omc/research/nws-official-openapi-spec-20260910.json` at repository root.
+## Adopt an existing MTBS current capture
+
+`stage_mtbs_current_snapshot.py --capture <dir> --prepared <dir>
+--manifest-sha256 <sha>` defaults to local reproduction and verification only.
+Adding `--stage` explicitly archives the verified raw evidence and prepared ladder
+and enqueues its D+1 availability day. It does not publish serving partitions, connect
+to PostgreSQL, or fetch source geometry. Both modes have a 600-second child-local
+deadline. The ordinary daily executor publishes eligible queued evidence later.

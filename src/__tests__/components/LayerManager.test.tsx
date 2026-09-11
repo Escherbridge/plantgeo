@@ -1,3 +1,4 @@
+import { snapshotMetadata } from "../services/mtbs-snapshot-fixture";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "@testing-library/react";
 import { keepPreviousData } from "@tanstack/react-query";
@@ -2290,4 +2291,18 @@ describe("LayerManager holds the previous day while the next one loads", () => {
 
     expect(useDrawnLayerDayStore.getState().drawnDays).toEqual({});
   });
+});
+
+it("shows MTBS capture, availability and partial mapping separately from row truncation", () => {
+  useMapStore.setState({ activeLayers: ["burn-severity"] });
+  viewportQueries.getBurnSeverity.mockReturnValue(landed({ state: "ready", requestedDay: "2026-09-11",
+    servedDay: "2026-09-11", truncated: false, data: [], mtbsSnapshot: snapshotMetadata }));
+  const fakeMap = createFakeMap();
+  fakeMap.setStyleLoaded(true);
+  const rendered = renderLayerManager(fakeMap);
+  const notice = rendered.getByTestId("parquet-layer-unavailable-burn-severity-capture").textContent;
+  expect(notice).toContain("captured 2026-09-10T19:05:00Z; available 2026-09-11");
+  expect(notice).toContain("Fire years 2018–2026");
+  expect(notice).toContain("Mapping remains incomplete for 2023, 2024, 2025, 2026");
+  expect(notice).not.toContain("row budget");
 });

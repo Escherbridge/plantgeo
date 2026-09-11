@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import date, timedelta
+from dataclasses import dataclass, replace
+from datetime import UTC, date, datetime, time, timedelta
 from typing import TYPE_CHECKING, Final, Protocol
 
 from agri_data_service.foundation.parquet.absence import GovernedAbsence, GovernedAbsenceError
@@ -13,6 +13,7 @@ from agri_data_service.foundation.parquet.paths import (
     tier_day_objects,
 )
 from agri_data_service.parquet_ops import faults
+from agri_data_service.parquet_ops.mtbs_snapshot_catalog import VerifiedMtbsSnapshot, verify_snapshot_absence
 from agri_data_service.parquet_ops.warehouse_reader import RowRead, day_of_part_key, part_keys_for_day
 from agri_data_service.parquet_ops.wire import (
     AbsenceEvidence,
@@ -23,6 +24,8 @@ from agri_data_service.parquet_ops.wire import (
     PublishedDay,
     ServedRow,
 )
+from agri_data_service.warehouse.mtbs_releases import MTBS_ANNUAL_RELEASE_DATES
+from agri_data_service.warehouse.mtbs_snapshots import MTBS_SNAPSHOT_FIRST_DAY
 
 if TYPE_CHECKING:
     from agri_data_service.foundation.parquet.paths import PartitionKind
@@ -32,6 +35,8 @@ if TYPE_CHECKING:
 
 #: Rows one day read may return before it reports itself truncated.
 DAY_ROW_BUDGET: Final = 40_000
+MTBS_FIRST_CAPTURE_YEAR: Final = 2018
+MTBS_LAST_CAPTURE_YEAR: Final = 2026
 
 #: Rows one WINDOW read may return in total, shared across its days in ascending order. The window
 #: is answered by ONE scan, so the budget is the window's and not each day's.
@@ -102,6 +107,9 @@ def resolve_day(
         raise faults.day_conflict(layer=scope.layer, day=day.isoformat())
     if day in statuses.incomplete:
         raise faults.day_incomplete(layer=scope.layer, day=day.isoformat())
+    if _snapshot_scope(scope, day) and day in statuses.data | statuses.absent:
+        snapshot = _exact_snapshot(listing, scope=scope, day=day)
+        return _snapshot_envelope(listing, reader, scope=scope, snapshot=snapshot, requested_day=day, keys=month_keys)
     if day in statuses.absent:
         return GovernedAbsenceDay(
             requested_day=day,
@@ -135,9 +143,16 @@ def resolve_window(
         if day in statuses.incomplete:
             raise faults.day_incomplete(layer=scope.layer, day=day.isoformat())
     published_days = tuple(day for day in span if day in statuses.data)
+    snapshots = {
+        day: _exact_snapshot(listing, scope=scope, day=day)
+        for day in span
+        if _snapshot_scope(scope, day) and day in statuses.data | statuses.absent
+    }
+    for snapshot in snapshots.values():
+        _snapshot_keys(snapshot, scope=scope, keys=keys)
     rows_by_day, truncated_from = _window_rows(reader, scope=scope, keys=keys, published_days=published_days)
     lane_written = bool(keys) or bool(listing.list_keys(scope.layer, scope.kind, scope.tier))
-    return tuple(
+    envelopes = tuple(
         _window_envelope(
             listing,
             scope=scope,
@@ -149,6 +164,20 @@ def resolve_window(
         )
         for day in span
     )
+    return tuple(_attach_window_snapshot(envelope, snapshots, scope=scope) for envelope in envelopes)
+
+
+def _attach_window_snapshot(
+    envelope: DayEnvelope, snapshots: dict[date, VerifiedMtbsSnapshot], *, scope: ReadScope
+) -> DayEnvelope:
+    snapshot = snapshots.get(envelope.requested_day)
+    if snapshot is not None:
+        if isinstance(envelope, PublishedDay):
+            return _snapshot_rows(snapshot, envelope)
+        if isinstance(envelope, GovernedAbsenceDay):
+            _verify_served_absence(snapshot, scope=scope, absence=envelope.absence)
+            return replace(envelope, mtbs_snapshot=snapshot.descriptor)
+    return envelope
 
 
 def resolve_release(
@@ -159,10 +188,18 @@ def resolve_release(
     as_of: date,
 ) -> DayEnvelope:
     """Answer with the newest release at or before `as_of`, reported at the release's OWN day."""
+    snapshot = _latest_snapshot(listing, scope=scope, day=as_of)
+    if snapshot is not None:
+        day = snapshot.descriptor.available_day
+        keys = listing.list_keys(scope.layer, scope.kind, scope.tier, year=day.year, month=day.month)
+        return _snapshot_envelope(listing, reader, scope=scope, snapshot=snapshot, requested_day=as_of, keys=keys)
+    eligible_days = frozenset(MTBS_ANNUAL_RELEASE_DATES.values()) if scope.layer == "burn-severity" else None
     for year in range(as_of.year, as_of.year - RELEASE_LOOKBACK_YEARS, -1):
         keys = listing.list_keys(scope.layer, scope.kind, scope.tier, year=year)
         statuses = day_status_sets(keys, layer=scope.layer, kind=scope.kind, tier=scope.tier)
-        candidates = tuple(day for day in statuses.resolvable if day <= as_of)
+        candidates = tuple(
+            day for day in statuses.resolvable if day <= as_of and (eligible_days is None or day in eligible_days)
+        )
         if not candidates:
             continue
         served_day = max(candidates)
@@ -306,3 +343,102 @@ def _keys_for_months(
         for year, month in months
         for key in listing.list_keys(scope.layer, scope.kind, scope.tier, year=year, month=month)
     )
+
+
+def _snapshot_scope(scope: ReadScope, day: date) -> bool:
+    return scope.layer == "burn-severity" and scope.kind == "observed" and day >= MTBS_SNAPSHOT_FIRST_DAY
+
+
+def _latest_snapshot(listing: WarehouseListing, *, scope: ReadScope, day: date) -> VerifiedMtbsSnapshot | None:
+    if not _snapshot_scope(scope, day):
+        return None
+    loader = getattr(listing, "mtbs_snapshot_loader", None)
+    if loader is None:
+        return None
+    result = loader(day)
+    if result is not None and not isinstance(result, VerifiedMtbsSnapshot):
+        raise faults.ServingRefusalError(
+            "mtbs_snapshot_invalid", "Current MTBS snapshot admission returned invalid metadata"
+        )
+    return result
+
+
+def _exact_snapshot(listing: WarehouseListing, *, scope: ReadScope, day: date) -> VerifiedMtbsSnapshot:
+    result = _latest_snapshot(listing, scope=scope, day=day)
+    if result is None or result.descriptor.available_day != day:
+        raise faults.ServingRefusalError(
+            "mtbs_snapshot_unregistered", "Current MTBS day lacks verified snapshot evidence"
+        )
+    return result
+
+
+def _snapshot_keys(snapshot: VerifiedMtbsSnapshot, *, scope: ReadScope, keys: tuple[str, ...]) -> None:
+    row = snapshot.rung(scope.tier)
+    parts = part_keys_for_day(keys, layer=scope.layer, kind=scope.kind, tier=scope.tier, day=row.day)
+    statuses = day_status_sets(keys, layer=scope.layer, kind=scope.kind, tier=scope.tier)
+    expected_days = statuses.absent if row.terminal_state == "governed_absence" else statuses.data
+    if row.day not in expected_days or tuple(sorted(parts)) != tuple(
+        sorted(receipt.key for receipt in row.data_receipts)
+    ):
+        raise faults.ServingRefusalError(
+            "mtbs_snapshot_stale", "Current MTBS physical partition differs from its availability evidence"
+        )
+
+
+def _snapshot_rows(snapshot: VerifiedMtbsSnapshot, envelope: PublishedDay) -> PublishedDay:
+    descriptor = snapshot.descriptor
+    fire_ids: set[str] = set()
+    if len(envelope.rows) > descriptor.source_row_count:
+        raise faults.ServingRefusalError(
+            "mtbs_snapshot_rows_invalid", "Current MTBS result exceeds captured source count"
+        )
+    for row in envelope.rows:
+        fire_id = row.get("fire_id")
+        if not isinstance(fire_id, str) or not fire_id or fire_id in fire_ids:
+            raise faults.ServingRefusalError(
+                "mtbs_snapshot_rows_invalid", "Current MTBS fire identities are missing or repeated"
+            )
+        fire_ids.add(fire_id)
+        fire_year = row.get("fire_year")
+        if (
+            row.get("release_identifier") != descriptor.release_identifier
+            or row.get("observed_day") != descriptor.available_day
+            or row.get("data_available_at") != datetime.combine(descriptor.available_day, time.min, tzinfo=UTC)
+            or not isinstance(fire_year, int)
+            or isinstance(fire_year, bool)
+            or not MTBS_FIRST_CAPTURE_YEAR <= fire_year <= MTBS_LAST_CAPTURE_YEAR
+        ):
+            raise faults.ServingRefusalError(
+                "mtbs_snapshot_rows_invalid", "Current MTBS rows differ from their captured snapshot identity"
+            )
+    return replace(envelope, mtbs_snapshot=descriptor)
+
+
+def _snapshot_envelope(  # noqa: PLR0913 - one selected proof, physical inventory, and normal read context
+    listing: WarehouseListing,
+    reader: PartitionRowReader,
+    *,
+    scope: ReadScope,
+    snapshot: VerifiedMtbsSnapshot,
+    requested_day: date,
+    keys: tuple[str, ...],
+) -> DayEnvelope:
+    _snapshot_keys(snapshot, scope=scope, keys=keys)
+    day = snapshot.descriptor.available_day
+    if snapshot.rung(scope.tier).terminal_state == "governed_absence":
+        absence = read_absence_evidence(listing, scope=scope, day=day)
+        _verify_served_absence(snapshot, scope=scope, absence=absence)
+        return GovernedAbsenceDay(requested_day, day, absence, snapshot.descriptor)
+    return _snapshot_rows(
+        snapshot, _published(reader, scope=scope, keys=keys, requested_day=requested_day, served_day=day)
+    )
+
+
+def _verify_served_absence(snapshot: VerifiedMtbsSnapshot, *, scope: ReadScope, absence: AbsenceEvidence) -> None:
+    payload = GovernedAbsence(
+        reason=absence.reason,
+        upstream_response=absence.upstream_response,
+        recorded_at=absence.recorded_at,
+        run_id=absence.run_id,
+    ).to_json_bytes()
+    verify_snapshot_absence(snapshot, tier=scope.tier, payload=payload)

@@ -142,3 +142,10 @@ caller's latched tier, because `useParquetFireDetections` holds the last one tha
 landed and a retained frame must not be relabelled with a request still in flight. But each
 cell's own `support.zoomTier` wins where present: a retained frame's cells carry the rung they
 were really aggregated at, which is a stronger claim than the latch and needs no bookkeeping.
+
+## MTBS snapshot metadata
+
+`mtbs-snapshot.ts` is the browser-safe descriptor for governed full replacement publications.
+It separates capture instants, calendar availability, covered fire years and still-partial mapping.
+The optional metadata on ready Parquet results also survives empty viewports. It does not establish
+authority by itself; the serving reader validates its immutable publication evidence.

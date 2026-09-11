@@ -1,3 +1,4 @@
+import type { MtbsSnapshotMetadata } from "@/lib/environmental/mtbs-snapshot";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import {
@@ -211,6 +212,7 @@ export type ParquetReaderResult<T> =
       servedDay: string;
       data: T;
       truncated: boolean;
+      mtbsSnapshot?: MtbsSnapshotMetadata;
     }
   | {
       state: "absent";
@@ -2138,28 +2140,28 @@ export async function getParquetWatersheds(
   );
 }
 
-/**
- * How many MTBS releases one burn-severity answer may union before it reports itself truncated.
- *
- * MTBS publishes roughly one release a year and the warehouse holds four of them, so twelve is
- * several times the standing history rather than a guess at it. It is a CEILING on round trips,
- * not a retention rule: the walk stops at the lane's floor long before it, and a lane that ever
- * grows past it answers `truncated` rather than silently dropping its oldest scars.
- */
+/** Shared ceiling for historical release reads and optional snapshot-absence discovery. */
 const BURN_SEVERITY_MAX_RELEASES = 12;
 
-/**
- * Every MTBS burned-area boundary published at or before the requested day.
- *
- * This is the one reader here that unions several releases, and it does so because the export is
- * SCOPED TO ONE RELEASE DAY -- "the tile function serves the whole layer at every zoom; this query
- * answers only the rows dated to `release_day`"
- * (`sql/pipeline/burn_severity_day_export.sql:20-21`). The 541 published scars are therefore spread
- * across the lane's release days, and a single `getParquetLatestRelease` would draw only the newest
- * release: last year's fire scars would vanish from a map that has always drawn them.
- *
- * Reads only indexed publication dates; see services/AGENTS.md for absence spans and history gaps.
- */
+function validateBurnSnapshotScope(
+  snapshot: MtbsSnapshotMetadata,
+  request: { day: string; servedDay: string; bbox: string | undefined }
+): boolean {
+  if (snapshot.availableDay !== request.servedDay || snapshot.availableDay > request.day
+    || snapshot.coveredYears.from !== 2018 || snapshot.coveredYears.to !== 2026
+    || snapshot.bbox.some((value, index) => value !== [-125, 42, -111, 49][index])) {
+    throw contractError("burn-severity snapshot publication scope is unsupported");
+  }
+  if (request.bbox === undefined) return false;
+  const bounds = request.bbox.split(",").map(Number);
+  if (bounds.length !== 4 || !bounds.every(Number.isFinite)
+    || bounds[0] >= bounds[2] || bounds[1] >= bounds[3]) {
+    throw contractError("burn-severity viewport is malformed");
+  }
+  return bounds[0] < snapshot.bbox[0] || bounds[1] < snapshot.bbox[1]
+    || bounds[2] > snapshot.bbox[2] || bounds[3] > snapshot.bbox[3];
+}
+
 export async function getParquetBurnSeverity(
   input: ParquetViewportRead
 ): Promise<ParquetReaderResult<readonly ParquetBurnScar[]>> {
@@ -2194,36 +2196,96 @@ export async function getParquetBurnSeverity(
     }
     const indexedDays = [...releaseDays].sort().reverse();
     const scars: ParquetBurnScar[] = [];
+    let mtbsSnapshot: MtbsSnapshotMetadata | undefined;
     let newestServedDay: string | null = null;
     let truncated = indexedDays.length > BURN_SEVERITY_MAX_RELEASES
       || lane.gapRanges.some((range) => range.from <= day)
       || coverage.evaluatedThroughDay < day;
 
+    const newerAbsence = lane.governedAbsenceRanges.some((range) => range.from <= day
+      && (range.to < day ? range.to : day) > (indexedDays[0] ?? ""));
+    let remainingReads = BURN_SEVERITY_MAX_RELEASES;
+    let prefetchedRelease: ParquetPlaneEnvelope | undefined;
+    if (newerAbsence) {
+      const latest = await getParquetLatestRelease({ ...releaseRequest, asOfDay: day });
+      remainingReads -= 1;
+      if (latest.state === "day_not_written" || latest.state === "lane_never_written") {
+        throw contractError("burn-severity release discovery disagrees with indexed availability");
+      }
+      if ("mtbsSnapshot" in latest && latest.mtbsSnapshot && "servedDay" in latest) {
+        const outsideScope = validateBurnSnapshotScope(latest.mtbsSnapshot, { day, servedDay: latest.servedDay, bbox: input.bbox });
+        if (latest.state === "governed_absence") {
+          if (latest.mtbsSnapshot.sourceRowCount !== 0) {
+            throw contractError("burn-severity snapshot absence disagrees with its captured source");
+          }
+          return { state: "ready", requestedDay: day, servedDay: latest.servedDay, data: [],
+            truncated: outsideScope || coverage.evaluatedThroughDay < day,
+            mtbsSnapshot: latest.mtbsSnapshot };
+        }
+        if (latest.state !== "published" || !indexedDays.includes(latest.servedDay)) {
+          throw contractError("burn-severity snapshot disagrees with indexed publication");
+        }
+      }
+      if (latest.state === "published" && latest.servedDay === indexedDays[0]) {
+        prefetchedRelease = latest;
+      }
+    }
+    const releaseLimit = remainingReads + (prefetchedRelease ? 1 : 0);
+    truncated ||= indexedDays.length > releaseLimit;
     // MTBS published ranges are release dates, unlike carried drought coverage.
-    for (const asOfDay of (indexedDays.length ? indexedDays.slice(0, BURN_SEVERITY_MAX_RELEASES) : [day])) {
-      const answer = mapEnvelope(
-        await getParquetLatestRelease({ ...releaseRequest, asOfDay }),
-        (rows) =>
-          parseRows(rows, burnSeverityRowSchema, "burn-severity").map((row) => ({
-            fireId: row.fire_id,
-            fireName: row.fire_name,
-            fireYear: row.fire_year,
-            fireType: row.fire_type,
-            assessmentType: row.assessment_type,
-            ignitionDate: row.ignition_date,
-            observedDay: row.observed_day,
-            acres: row.acres,
-            severityClass: row.severity_class,
-            dataAvailableAt: row.data_available_at,
-            geometry: decodePolygonGeometry(row.geom, "burn-severity"),
-          }))
-      );
+    for (const asOfDay of (indexedDays.length ? indexedDays.slice(0, releaseLimit) : [day])) {
+      const envelope = prefetchedRelease?.state === "published" && prefetchedRelease.servedDay === asOfDay
+        ? prefetchedRelease : await getParquetLatestRelease({ ...releaseRequest, asOfDay });
+      const snapshot = "mtbsSnapshot" in envelope ? envelope.mtbsSnapshot : undefined;
+      if (snapshot && "servedDay" in envelope) {
+        validateBurnSnapshotScope(snapshot, { day, servedDay: envelope.servedDay, bbox: input.bbox });
+      }
+      const answer = mapEnvelope(envelope, (rows) => {
+        const parsed = parseRows(rows, burnSeverityRowSchema, "burn-severity");
+        if (snapshot) {
+          const ids = new Set<string>();
+          for (const row of parsed) {
+            if (row.fire_year === null || row.fire_year < snapshot.coveredYears.from
+              || row.fire_year > snapshot.coveredYears.to || ids.has(row.fire_id)
+              || row.observed_day !== snapshot.availableDay
+              || row.release_identifier !== `mtbs-current-snapshot:${snapshot.manifestSha256}`
+              || Date.parse(row.data_available_at) !== Date.parse(`${snapshot.availableDay}T00:00:00Z`)) {
+              throw contractError("burn-severity snapshot rows disagree with publication metadata");
+            }
+            ids.add(row.fire_id);
+          }
+          if (parsed.length > snapshot.sourceRowCount) {
+            throw contractError("burn-severity snapshot exceeds its captured row count");
+          }
+        }
+        return parsed.map((row) => ({
+          fireId: row.fire_id, fireName: row.fire_name, fireYear: row.fire_year,
+          fireType: row.fire_type, assessmentType: row.assessment_type,
+          ignitionDate: row.ignition_date, observedDay: row.observed_day,
+          acres: row.acres, severityClass: row.severity_class, dataAvailableAt: row.data_available_at,
+          geometry: decodePolygonGeometry(row.geom, "burn-severity"),
+        }));
+      });
       if (!indexedDays.length) {
         if (answer.state === "ready") throw contractError("burn-severity publication disagrees with its coverage index");
         return answer;
       }
       if (answer.state !== "ready" || answer.servedDay !== asOfDay) {
         throw contractError("burn-severity indexed release did not serve its exact publication day");
+      }
+      if (snapshot) {
+        // The supported snapshot covers every completed-cohort year; see services/AGENTS.md.
+        if (scars.some((scar) => scar.fireYear === null
+          || scar.fireYear < snapshot.coveredYears.from || scar.fireYear > snapshot.coveredYears.to)) {
+          throw contractError("burn-severity snapshot cannot replace history outside its declared scope");
+        }
+        scars.length = 0;
+        mtbsSnapshot = snapshot;
+        newestServedDay = answer.servedDay;
+        scars.push(...answer.data);
+        truncated = answer.truncated || coverage.evaluatedThroughDay < day
+          || validateBurnSnapshotScope(snapshot, { day, servedDay: answer.servedDay, bbox: input.bbox });
+        break;
       }
       newestServedDay ??= answer.servedDay;
       scars.push(...answer.data);
@@ -2235,7 +2297,8 @@ export async function getParquetBurnSeverity(
     }
     // The served day is the NEWEST release in the union, which is the day the map is drawing: an
     // older member does not make the answer older than its freshest release.
-    return { state: "ready", requestedDay: day, servedDay: newestServedDay, data: scars, truncated };
+    return { state: "ready", requestedDay: day, servedDay: newestServedDay, data: scars, truncated,
+      ...(mtbsSnapshot ? { mtbsSnapshot } : {}) };
   });
 }
 

@@ -71,3 +71,13 @@ rather than on a production bill.
 - `test_a_cold_census_bounds_parallel_r2_listings_without_a_clock` — the first three lane listings
   rendezvous at a barrier, proving the cold path is concurrent and capped at three without asserting
   wall-clock timing.
+
+## MTBS release eligibility regressions
+
+`test_mtbs_release_eligibility.py` uses the actual resolver and in-memory warehouse ports. It pins
+the shared completed-cohort mapping, proves an intervening legacy absence cannot hide earlier
+published rows, retains registered absence/conflict/evidence refusals, checks inclusive and future
+as-of boundaries, and keeps other release layers and exact-day inspection unchanged. These tests
+do not assert that current MTBS partial cohorts are published or that the browser is complete.
+
+`test_mtbs_snapshot_catalog.py` constructs real immutable availability generations and typed source/terminal/completion receipts in memory. It covers positive and zero-source replacements, empty viewports, exact/window descriptor propagation, corrupt evidence, lost heads, D+1 ownership and changed physical inventories/row identities without network or database access.

@@ -3,6 +3,7 @@
 import click
 
 from agri_data_service.execution.job_executor_service import jobs_executor
+from agri_data_service.execution.job_lane_control import jobs_set_lane_enabled
 from agri_data_service.execution.job_run_supersession import jobs_supersede_run
 from agri_data_service.execution.jobs_pulse_command import jobs_pulse
 from agri_data_service.ingest.commands import INGEST_COMMANDS
@@ -32,5 +33,6 @@ register_commands(
         ("jobs-executor", jobs_executor),
         ("jobs-pulse", jobs_pulse),
         ("jobs-supersede-run", jobs_supersede_run),
+        ("jobs-set-lane-enabled", jobs_set_lane_enabled),
     ),
 )

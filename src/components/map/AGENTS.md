@@ -1121,3 +1121,10 @@ with the map so compass directions remain meaningful when the camera bearing cha
 Burn-history incomplete notices name unpublished history or a read limit and clarify
 that available published boundaries are shown; they do not assert a row budget was
 necessarily reached. Other layer notices retain their existing row-cap semantics.
+
+## MTBS capture notice
+
+The burn-history ready result may carry verified `mtbsSnapshot` metadata even when the viewport is
+empty. Show capture time, publication availability, covered fire years and the exact partial-year
+list as a separate notice from row/history truncation. A complete captured query is not evidence
+that MTBS has finished mapping those fire seasons. Only an enabled layer displays this notice.
