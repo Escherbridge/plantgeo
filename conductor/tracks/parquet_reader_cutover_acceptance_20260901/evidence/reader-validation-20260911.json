@@ -1,0 +1,419 @@
+{
+  "schema_version": 1,
+  "captured_at_utc": "2026-09-11T18:52:10.825881+00:00",
+  "baseline_revision": "fa202230958fb55521963e886eb031be5fc266c4",
+  "candidate_revision": "d56b508fb3afe8adb85969ce1553cd739daf779f",
+  "candidate_tree": "e5625b0b683c299f1e9e03d5122529486171038d",
+  "branch": "codex/reader-cutover-acceptance-20260911",
+  "status": "local_verified_production_open",
+  "commands": [
+    {
+      "cwd": ".",
+      "command": "npm run check:data-boundary",
+      "closure_exit_code": 0
+    },
+    {
+      "cwd": ".",
+      "command": "npm run type-check",
+      "closure_exit_code": 0
+    },
+    {
+      "cwd": ".",
+      "command": "npm run lint",
+      "closure_exit_code": 0,
+      "errors": 0,
+      "warnings": 542
+    },
+    {
+      "cwd": ".",
+      "command": "npm run test:changed -- --base fa202230958fb55521963e886eb031be5fc266c4",
+      "closure_exit_code": 0,
+      "mode": "full fallback",
+      "files_passed": 145,
+      "files_skipped": 2,
+      "tests_passed": 2226,
+      "tests_skipped": 13,
+      "duration_seconds": 203.02
+    },
+    {
+      "cwd": "services/agri-data-service",
+      "command": "python scripts/check.py --changed --base fa202230958fb55521963e886eb031be5fc266c4",
+      "closure_exit_code": 0,
+      "mode": "full fallback",
+      "format": "PASS",
+      "lint": "PASS",
+      "mypy": "PASS",
+      "pytest": "PASS",
+      "pytest_duration_seconds": 273.36,
+      "successful_pytest_count": null,
+      "successful_pytest_count_note": "The checker prints only successful check summaries; no exact final pytest count was retained.",
+      "receipt_eligible": false,
+      "environment": {
+        "runtime": "existing development virtual environment via uv run --no-sync",
+        "PYTHONPATH": "src",
+        "removed_test_database_variables": [
+          "AGRI_TEST_DATABASE_URL",
+          "AGRI_CROSS_MAJOR_DATABASE_URL",
+          "PLANTGEO_TEST_DATABASE_URL",
+          "POSTGIS_TEST_DSN"
+        ]
+      }
+    }
+  ],
+  "chronology": [
+    {
+      "stage": "initial diagnostic sweep",
+      "logs": "*-20260911.out without final/closure, Python python-readers",
+      "boundary": "PASS",
+      "typecheck": "PASS",
+      "lint": "PASS",
+      "frontend": {
+        "passed": 2188,
+        "failed": 3,
+        "skipped": 13
+      },
+      "python_reader_batch": {
+        "passed": 260,
+        "failed": 2
+      }
+    },
+    {
+      "stage": "integrated correction sweep",
+      "logs": "*-final-20260911.out",
+      "frontend": {
+        "passed": 2225,
+        "skipped": 13
+      },
+      "python": {
+        "format": "PASS",
+        "lint": "FAIL: PLR0911",
+        "mypy": "PASS",
+        "pytest_passed": 5995,
+        "pytest_failed": 1,
+        "pytest_skipped": 149,
+        "pytest_xfailed": 1
+      }
+    },
+    {
+      "stage": "verified closure sweep",
+      "logs": "*-closure-20260911.out",
+      "all_checks_passed": true,
+      "note": "All remaining corrections, including empty/truncated fire evidence and Python admission/wording, were authored before this sweep."
+    }
+  ],
+  "source_files": [
+    {
+      "path": "services/agri-data-service/src/agri_data_service/agent/AGENTS.md",
+      "git_blob": "50125d17838c4caffa44898002698a6db3557560",
+      "sha256_working_bytes": "40bbf829c5de291a9088fd5826ad9696ffe7372dfde889fe63260ff178f69351",
+      "sha256_lf_bytes": "40bbf829c5de291a9088fd5826ad9696ffe7372dfde889fe63260ff178f69351"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/agent/tools.py",
+      "git_blob": "8cfd702c14c5705a653c571df21236f735239250",
+      "sha256_working_bytes": "123ca470b7701e5a7a6b70b23cbb10f9b55e1720452fe622db4d99a8ae4684a1",
+      "sha256_lf_bytes": "123ca470b7701e5a7a6b70b23cbb10f9b55e1720452fe622db4d99a8ae4684a1"
+    },
+    {
+      "path": "services/agri-data-service/tests/parquet_ops/AGENTS.md",
+      "git_blob": "fe749a9c249a3c8c274b8b659c12a397eb90d155",
+      "sha256_working_bytes": "9d56970c90c5abae874172b5a0b0c641ca25e22ee6b7b3d7050948dd8f31e778",
+      "sha256_lf_bytes": "9d56970c90c5abae874172b5a0b0c641ca25e22ee6b7b3d7050948dd8f31e778"
+    },
+    {
+      "path": "services/agri-data-service/tests/parquet_ops/test_coverage_census.py",
+      "git_blob": "731e075073689cc84765fed7e3322497f0b84fb9",
+      "sha256_working_bytes": "54b7bb9d79d0ef69cce6fe4fddc322817761c713e861d4fede09c3a2d8995f19",
+      "sha256_lf_bytes": "54b7bb9d79d0ef69cce6fe4fddc322817761c713e861d4fede09c3a2d8995f19"
+    },
+    {
+      "path": "services/agri-data-service/tests/test_agent_parquet_reads.py",
+      "git_blob": "5cdeec1b64fbb393c18296ee9d6bb549388cece3",
+      "sha256_working_bytes": "95690ed70d2af1a8460753f47359d7840aae8eb0d5ad72375eca44cadca9bdfa",
+      "sha256_lf_bytes": "95690ed70d2af1a8460753f47359d7840aae8eb0d5ad72375eca44cadca9bdfa"
+    },
+    {
+      "path": "services/agri-data-service/tests/test_agent_parquet_tools.py",
+      "git_blob": "18139ea97ad1a078509ab17e46e8c10f072be403",
+      "sha256_working_bytes": "66e85517183062c6613ba839fb16f3ae239fae895a530cf5489ed3243cf77bac",
+      "sha256_lf_bytes": "66e85517183062c6613ba839fb16f3ae239fae895a530cf5489ed3243cf77bac"
+    },
+    {
+      "path": "services/agri-data-service/tests/test_agent_signal_time_tools.py",
+      "git_blob": "026e6eee548ca1fa10cfcf5dff057b87aba3c98b",
+      "sha256_working_bytes": "679278639a0698cd37b055da751c2e3af6c6ebc2e91075cebb9f2919c12608f1",
+      "sha256_lf_bytes": "679278639a0698cd37b055da751c2e3af6c6ebc2e91075cebb9f2919c12608f1"
+    },
+    {
+      "path": "src/__tests__/api/regional-intelligence-gates.test.ts",
+      "git_blob": "7cf1dfa1416ca2ccaf696eb1085d2252cb959567",
+      "sha256_working_bytes": "d5976651ba1e7eec9a6fbe367a0411321afa08e5917fa7b2239763e7e1b7bb6f",
+      "sha256_lf_bytes": "d5976651ba1e7eec9a6fbe367a0411321afa08e5917fa7b2239763e7e1b7bb6f"
+    },
+    {
+      "path": "src/__tests__/components/LayerTimeSlider.test.tsx",
+      "git_blob": "de0da79ef11cb8637c28516d4aac1244802017f2",
+      "sha256_working_bytes": "dd287f883a0304351be75dd0a11d6716dbdd8740aea3f56c0aa88d454034c1c7",
+      "sha256_lf_bytes": "dd287f883a0304351be75dd0a11d6716dbdd8740aea3f56c0aa88d454034c1c7"
+    },
+    {
+      "path": "src/__tests__/components/layer-time-state.test.ts",
+      "git_blob": "1a4efa48ba09b4ccf86ce14a27bad8e086cb521f",
+      "sha256_working_bytes": "df5bb5e4964eb106c60e7433964232a96eb91bf8918f9ac07ab82291fa2caebc",
+      "sha256_lf_bytes": "df5bb5e4964eb106c60e7433964232a96eb91bf8918f9ac07ab82291fa2caebc"
+    },
+    {
+      "path": "src/__tests__/services/parquet-climate-field.test.ts",
+      "git_blob": "aff352d02dbaae062db6fe2222ba9fa52b9e6a0a",
+      "sha256_working_bytes": "1662f558b7b6a16a44ed59675e9e478c011756371a60e06ae8087f0df12c5262",
+      "sha256_lf_bytes": "1662f558b7b6a16a44ed59675e9e478c011756371a60e06ae8087f0df12c5262"
+    },
+    {
+      "path": "src/__tests__/services/parquet-context-readers.test.ts",
+      "git_blob": "cf650027182de9cf23cb3942128c67a770f162bc",
+      "sha256_working_bytes": "ba7cb683cf6e46393b14a724252d96e69648bb829699d70f2a1e2d9754c03694",
+      "sha256_lf_bytes": "ba7cb683cf6e46393b14a724252d96e69648bb829699d70f2a1e2d9754c03694"
+    },
+    {
+      "path": "src/__tests__/services/parquet-plane-client.test.ts",
+      "git_blob": "de271b0585cca5fa1a5c815373fafb8f9de0cb5a",
+      "sha256_working_bytes": "7dfecf39980f93a874b8e59710c575a75313b408a90fd96313b1f2cdd7b95d49",
+      "sha256_lf_bytes": "7dfecf39980f93a874b8e59710c575a75313b408a90fd96313b1f2cdd7b95d49"
+    },
+    {
+      "path": "src/__tests__/services/parquet-slider-capabilities.test.ts",
+      "git_blob": "16a7068718e256ae6b6c48549ae693de29e19d27",
+      "sha256_working_bytes": "281f121d59ec04a835141f9b84b2d3059f64a7c0ff65ccf89e054e085c2f4ceb",
+      "sha256_lf_bytes": "281f121d59ec04a835141f9b84b2d3059f64a7c0ff65ccf89e054e085c2f4ceb"
+    },
+    {
+      "path": "src/__tests__/services/parquet-trpc-readers.test.ts",
+      "git_blob": "83bd6c92de5d3d27e5d9026d68b3c1f7db106a11",
+      "sha256_working_bytes": "24499b4a42e291ee77847f07383f597c9cf262b64e30b8a30674d63591e8ff20",
+      "sha256_lf_bytes": "24499b4a42e291ee77847f07383f597c9cf262b64e30b8a30674d63591e8ff20"
+    },
+    {
+      "path": "src/__tests__/services/regional-temporal-context.test.ts",
+      "git_blob": "b5530f79331f00bde39d170efa8e5c3fcbd41460",
+      "sha256_working_bytes": "5e0a0e4bd7aa7f414682b9d0bdac4d04f14244571ec88ffa821143b1317f6469",
+      "sha256_lf_bytes": "5e0a0e4bd7aa7f414682b9d0bdac4d04f14244571ec88ffa821143b1317f6469"
+    },
+    {
+      "path": "src/__tests__/services/regional-temporal-neighbors.test.ts",
+      "git_blob": "d0d15daa42d7e72f5e90a0e05d7f5eb1fdce55f2",
+      "sha256_working_bytes": "b393b02bf62867eeedd2228c3465af01184aa825c5b8802266638e9b67142f21",
+      "sha256_lf_bytes": "b393b02bf62867eeedd2228c3465af01184aa825c5b8802266638e9b67142f21"
+    },
+    {
+      "path": "src/__tests__/trpc/wildfire-cancellation.test.ts",
+      "git_blob": "f5b8054df87a271fed03866ac4ec4b576450e8cd",
+      "sha256_working_bytes": "237c684559de07a8e138a267d56da395646a95a7da1497b197ef2847148c928f",
+      "sha256_lf_bytes": "237c684559de07a8e138a267d56da395646a95a7da1497b197ef2847148c928f"
+    },
+    {
+      "path": "src/app/api/ai/regional-intelligence/route.ts",
+      "git_blob": "1b8b8ef2bd2be323e40acefacbc56771dbb5c097",
+      "sha256_working_bytes": "64e0c369329b210175fb6a5be5f8559869bb903df9e35822c2c585df497506ac",
+      "sha256_lf_bytes": "64e0c369329b210175fb6a5be5f8559869bb903df9e35822c2c585df497506ac"
+    },
+    {
+      "path": "src/components/map/AGENTS.md",
+      "git_blob": "942c0e711eca645fd1bef39f237923f1f43a7b57",
+      "sha256_working_bytes": "63c99a3afc31a08b163c073f721498c6bbb98843692295c35a4f278d26666cfb",
+      "sha256_lf_bytes": "63c99a3afc31a08b163c073f721498c6bbb98843692295c35a4f278d26666cfb"
+    },
+    {
+      "path": "src/components/map/layer-panel/LayerTimeSlider.tsx",
+      "git_blob": "07deadfcd757aeeda3c63be11e0b0c35925083d3",
+      "sha256_working_bytes": "c9343ff158aacd9d1ec7b8690541c9fff4c9b37dd1139b46047312c19612d8a9",
+      "sha256_lf_bytes": "c9343ff158aacd9d1ec7b8690541c9fff4c9b37dd1139b46047312c19612d8a9"
+    },
+    {
+      "path": "src/components/map/layer-panel/layer-coverage-track.ts",
+      "git_blob": "86289b199cf0f827e56bb7120aa2135729454082",
+      "sha256_working_bytes": "7312a4edd98da9eab201761289b77a6e6bebeeb3857d40048f608af8bccf97f6",
+      "sha256_lf_bytes": "7312a4edd98da9eab201761289b77a6e6bebeeb3857d40048f608af8bccf97f6"
+    },
+    {
+      "path": "src/components/map/layer-panel/layer-time-state.ts",
+      "git_blob": "a8a52317b433371e8ad5c3b56713c5e05fa381ca",
+      "sha256_working_bytes": "62d418539d2f4b0f3dfd87775e73eb97d743c1a6938af40fa4a7d6eda315573e",
+      "sha256_lf_bytes": "62d418539d2f4b0f3dfd87775e73eb97d743c1a6938af40fa4a7d6eda315573e"
+    },
+    {
+      "path": "src/lib/server/services/AGENTS.md",
+      "git_blob": "c79b45b40241756bfb533850c0fc458c6607225e",
+      "sha256_working_bytes": "f9a3bb913dfd2d7f93b5f4a0cf83c47e3f16d2444c93a79d27d53dda6c8c43e7",
+      "sha256_lf_bytes": "f9a3bb913dfd2d7f93b5f4a0cf83c47e3f16d2444c93a79d27d53dda6c8c43e7"
+    },
+    {
+      "path": "src/lib/server/services/ai-prompt.ts",
+      "git_blob": "8b44bb5ab990c8e42621e04b349b73cf9f888b6d",
+      "sha256_working_bytes": "4bb546fd0d07de9975c0be111d612e60a2613ce744b87a03bd994b9fe96d2d25",
+      "sha256_lf_bytes": "4bb546fd0d07de9975c0be111d612e60a2613ce744b87a03bd994b9fe96d2d25"
+    },
+    {
+      "path": "src/lib/server/services/parquet-climate-field.ts",
+      "git_blob": "c78c407c2930ad3664685c17484d7b6d08f749b7",
+      "sha256_working_bytes": "d33fb41518c55350cd246ef2082ad49a635e8e05181eb13e1c3c9d94fd66342d",
+      "sha256_lf_bytes": "d33fb41518c55350cd246ef2082ad49a635e8e05181eb13e1c3c9d94fd66342d"
+    },
+    {
+      "path": "src/lib/server/services/parquet-context-readers.ts",
+      "git_blob": "a0c7d3e1a5723e9463c061b2597e841495ffd46a",
+      "sha256_working_bytes": "184d93c4226b8dcac06200a90cbbddbb158027c9a697924184378e5cd28e18e9",
+      "sha256_lf_bytes": "184d93c4226b8dcac06200a90cbbddbb158027c9a697924184378e5cd28e18e9"
+    },
+    {
+      "path": "src/lib/server/services/parquet-plane-client.ts",
+      "git_blob": "75dd2beca3f58aebadc95afbbb0c50607c4cc348",
+      "sha256_working_bytes": "cad1d3267eb3dfe90f74410618a9392880f0ba960e0909d4a1c965a4daaa02a1",
+      "sha256_lf_bytes": "cad1d3267eb3dfe90f74410618a9392880f0ba960e0909d4a1c965a4daaa02a1"
+    },
+    {
+      "path": "src/lib/server/services/parquet-slider-capabilities.ts",
+      "git_blob": "9ac96ca71fc03888ad696758673cec1839f29290",
+      "sha256_working_bytes": "aaf2cb3d21c0ae8e36c5fe30bb401acb93493f4c0a14bf0c87ffe6cbc9ca27e5",
+      "sha256_lf_bytes": "aaf2cb3d21c0ae8e36c5fe30bb401acb93493f4c0a14bf0c87ffe6cbc9ca27e5"
+    },
+    {
+      "path": "src/lib/server/services/parquet-trpc-readers.ts",
+      "git_blob": "90c9b5e6a12e0bce960e8e9359960321cee172de",
+      "sha256_working_bytes": "9072f3409ab8b4b3a8b247a527f4a222e94a48ac71528f4186947bc2919b2967",
+      "sha256_lf_bytes": "9072f3409ab8b4b3a8b247a527f4a222e94a48ac71528f4186947bc2919b2967"
+    },
+    {
+      "path": "src/lib/server/services/regional-context.ts",
+      "git_blob": "34550aea8f2ef5875fa0fd2a8631b58f122d7844",
+      "sha256_working_bytes": "ffb422c7d3780cc44c97bf526a46d152c4e5e29538235d08b8c59aaa7279931d",
+      "sha256_lf_bytes": "ffb422c7d3780cc44c97bf526a46d152c4e5e29538235d08b8c59aaa7279931d"
+    },
+    {
+      "path": "src/lib/server/services/regional-temporal-neighbors.ts",
+      "git_blob": "12400ad2d3a3701817f8d911b853b2153ef5abb7",
+      "sha256_working_bytes": "7944bcb395b298f5b79faa65705d13707a14f65598dfe382ae45df05c827adce",
+      "sha256_lf_bytes": "7944bcb395b298f5b79faa65705d13707a14f65598dfe382ae45df05c827adce"
+    },
+    {
+      "path": "src/lib/server/trpc/routers/wildfire.ts",
+      "git_blob": "77bd6f0a29f81a2de98f28c7cbb383729d104587",
+      "sha256_working_bytes": "393b0807748f88430d2039615b17b7c7ae3a3b86daa2ecdda8fe1ac14d4da928",
+      "sha256_lf_bytes": "dbcb6751952d2b3d50b1c14a08b95af38a2173d4013ad743e40b975e4a5fbbbc"
+    }
+  ],
+  "logs": [
+    {
+      "name": "boundary-20260911.out",
+      "bytes": 263,
+      "sha256": "29411c4cb6c8759fccfc523128d4932045b54b6714aa05276869485858d49d69",
+      "archive": "boundary-20260911.out.gz",
+      "archive_sha256": "2e15165fbe15a366f5a29ddab1c70a5ef9b7572efdb5de48986b9925a72450e6"
+    },
+    {
+      "name": "boundary-closure-20260911.out",
+      "bytes": 263,
+      "sha256": "29411c4cb6c8759fccfc523128d4932045b54b6714aa05276869485858d49d69",
+      "archive": "boundary-closure-20260911.out.gz",
+      "archive_sha256": "2e15165fbe15a366f5a29ddab1c70a5ef9b7572efdb5de48986b9925a72450e6"
+    },
+    {
+      "name": "boundary-final-20260911.out",
+      "bytes": 263,
+      "sha256": "29411c4cb6c8759fccfc523128d4932045b54b6714aa05276869485858d49d69",
+      "archive": "boundary-final-20260911.out.gz",
+      "archive_sha256": "2e15165fbe15a366f5a29ddab1c70a5ef9b7572efdb5de48986b9925a72450e6"
+    },
+    {
+      "name": "frontend-20260911.out",
+      "bytes": 364313,
+      "sha256": "7d1dc40556a4ee813627dc016794726b9376c3e21cb6cfcc41cebb4bca8b34af",
+      "archive": "frontend-20260911.out.gz",
+      "archive_sha256": "c04a574b5c820beedbcd204f7cf397dcd8d6bd9cd6147e20235c9e3758c57ef2"
+    },
+    {
+      "name": "frontend-closure-20260911.out",
+      "bytes": 340792,
+      "sha256": "6dbf4b96884e1bfedb729aa04401e199a0114098f7a7de6ec222fe650f151ba4",
+      "archive": "frontend-closure-20260911.out.gz",
+      "archive_sha256": "701ee091677430f749df327c9a21a7c0c26a5074625ef64d0154ca1e649e2499"
+    },
+    {
+      "name": "frontend-final-20260911.out",
+      "bytes": 340830,
+      "sha256": "f715b7e43a08f8b786b49227325e0b8a3705c2eaf823234eec794734d3360c2e",
+      "archive": "frontend-final-20260911.out.gz",
+      "archive_sha256": "e89ce4ee3f88a4e38ca43472d0dc85c06ef26b2838d67bb3a13418cb171cfe79"
+    },
+    {
+      "name": "lint-20260911.out",
+      "bytes": 98448,
+      "sha256": "cc1db0252ba576a5586a08b02be5a48c87b7f0900713d52a48fd345766ec94b0",
+      "archive": "lint-20260911.out.gz",
+      "archive_sha256": "0c22e9c652fbf5b645cbac2fe168f2d4998c9edc0c68306451ccac22f547d8dd"
+    },
+    {
+      "name": "lint-closure-20260911.out",
+      "bytes": 98448,
+      "sha256": "cc1db0252ba576a5586a08b02be5a48c87b7f0900713d52a48fd345766ec94b0",
+      "archive": "lint-closure-20260911.out.gz",
+      "archive_sha256": "0c22e9c652fbf5b645cbac2fe168f2d4998c9edc0c68306451ccac22f547d8dd"
+    },
+    {
+      "name": "lint-final-20260911.out",
+      "bytes": 98448,
+      "sha256": "cc1db0252ba576a5586a08b02be5a48c87b7f0900713d52a48fd345766ec94b0",
+      "archive": "lint-final-20260911.out.gz",
+      "archive_sha256": "0c22e9c652fbf5b645cbac2fe168f2d4998c9edc0c68306451ccac22f547d8dd"
+    },
+    {
+      "name": "python-closure-20260911.out",
+      "bytes": 719,
+      "sha256": "7f0405328064854b579aac5b79cb6a13f71391d0c5ea2896dbb3536db7435bae",
+      "archive": "python-closure-20260911.out.gz",
+      "archive_sha256": "59ffd9fb763a1a024f43f9f559dac4a7418a5a824cdc673dbc228fd40b1a3e4d"
+    },
+    {
+      "name": "python-final-20260911.out",
+      "bytes": 27863,
+      "sha256": "346b2306acd0a8d5acd7172c2ed05257c5cacc4fc76d81946771fb403de6f1ec",
+      "archive": "python-final-20260911.out.gz",
+      "archive_sha256": "f645b6b4999a969c51c4daf637c2e2c72b8703a48b2c0196b1e2aa13536d0ca7"
+    },
+    {
+      "name": "python-readers-20260911.out",
+      "bytes": 4953,
+      "sha256": "c06e826687c22cf1be290c5b6ce4ef410d64b522297ef513d938ad7292b41ec8",
+      "archive": "python-readers-20260911.out.gz",
+      "archive_sha256": "f8ef78e77b4b2e962278d011515971cbf67aab625a85ba24c82737ec60c43469"
+    },
+    {
+      "name": "typecheck-20260911.out",
+      "bytes": 49,
+      "sha256": "4ce128ddb484fe970e5c9944c293f8c99055eb1e8af3fbcbe0132532b2a6d1e1",
+      "archive": "typecheck-20260911.out.gz",
+      "archive_sha256": "913831cac2d2c987d2ef7cb3356d4681de095a5b14f54ff68765d54279def203"
+    },
+    {
+      "name": "typecheck-closure-20260911.out",
+      "bytes": 49,
+      "sha256": "4ce128ddb484fe970e5c9944c293f8c99055eb1e8af3fbcbe0132532b2a6d1e1",
+      "archive": "typecheck-closure-20260911.out.gz",
+      "archive_sha256": "913831cac2d2c987d2ef7cb3356d4681de095a5b14f54ff68765d54279def203"
+    },
+    {
+      "name": "typecheck-final-20260911.out",
+      "bytes": 49,
+      "sha256": "4ce128ddb484fe970e5c9944c293f8c99055eb1e8af3fbcbe0132532b2a6d1e1",
+      "archive": "typecheck-final-20260911.out.gz",
+      "archive_sha256": "913831cac2d2c987d2ef7cb3356d4681de095a5b14f54ff68765d54279def203"
+    }
+  ],
+  "independent_review": "independent-reader-review-20260911.md",
+  "production_evidence": "public-reader-observations-20260911.json",
+  "production_approval_packet": "production-approval-packet-20260911.md",
+  "limitations": [
+    "Production probes describe baseline fa20223, not the candidate.",
+    "No controlled cold/warm object-operation or browser request-to-paint proof.",
+    "No deployment, publication, production mutation, database integration pass, or Python release-quality receipt."
+  ]
+}
