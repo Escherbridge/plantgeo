@@ -15,6 +15,12 @@ adds one bounded production/browser result, including the proved 746-versus-747
 viewport geometry distinction. It does not close the cross-product M3 conservation,
 pixel-continuity, mobile or request-to-paint matrix below.
 
+The September 11 renderer hardening receipt is
+[renderer-verdict-20260911.md](./evidence/renderer-verdict-20260911.md). It closes no M3 visual
+gate: it rejects mixed physical fire rungs, malformed aggregate support and unexpected climate
+point forms locally, while preserving a declared anonymous z13 water observation. The production
+browser matrix remains required.
+
 ## Wave M0 — contract freeze
 
 - [x] Enumerate every production layer's render class and permitted form at each zoom rung

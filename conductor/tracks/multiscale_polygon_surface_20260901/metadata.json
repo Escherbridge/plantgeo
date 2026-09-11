@@ -3,7 +3,7 @@
     "audited_on": "2026-09-11",
     "source_head": "fa20223",
     "status": "active",
-    "next_gate": "Rendering implementation and the bounded MTBS browser rollout are evidenced. Full cross-product pixel continuity, rung conservation, feature/request-to-paint budgets and mobile matrix remain open."
+    "next_gate": "Renderer boundary hardening is evidenced locally (mixed rung, malformed support and unexpected climate point forms fail closed). Full cross-product pixel continuity, rung conservation, feature/request-to-paint budgets and mobile production matrix remain open."
   },
   "slug": "multiscale_polygon_surface_20260901",
   "title": "Multiscale polygon and continuous-surface rendering",

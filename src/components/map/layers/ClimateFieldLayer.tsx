@@ -5,10 +5,8 @@ import type { Map as MapLibreMap, GeoJSONSource } from "maplibre-gl";
 import { getFirstSymbolLayer, safeRemoveLayerAndSource } from "@/lib/map/layer-utils";
 import {
   climateFieldColorStops,
-  climateFieldSignalDefinition,
   CLIMATE_FIELD_ATTRIBUTION,
   type ClimateFieldSignalId,
-  type ClimateRenderForm,
 } from "@/lib/environmental/climate-field";
 import { useStyleReady } from "@/components/map/layers/use-style-ready";
 import { scaleOpacityValue } from "@/lib/map/layer-opacity";
@@ -26,8 +24,8 @@ import type { ExpressionSpecification } from "@/types/map";
  * Every id below is therefore derived from the signal rather than being a module constant.
  *
  * The instances stay composable because they do not all paint the same way. `renderForm`
- * decides the geometry the server sent and the layers drawn from it -- a tessellated wash,
- * dissolved filled bands over it, or points above both. Nine identical washes would be one
+ * decides the geometry the server sent and the layers drawn from it -- a tessellated wash or
+ * dissolved filled bands over it. Nine identical washes would be one
  * visible field and eight buried under it; see `ClimateRenderForm` in
  * lib/environmental/climate-field.ts.
  *
@@ -50,7 +48,6 @@ function layerIdsFor(signal: ClimateFieldSignalId) {
     outlineId: `${sourceId}-outline`,
     isobandFillId: `${sourceId}-isoband-fill`,
     isolineId: `${sourceId}-isoline`,
-    pointId: `${sourceId}-point`,
   };
 }
 
@@ -66,28 +63,6 @@ function fillColorFor(signal: ClimateFieldSignalId): ExpressionSpecification {
     ["linear"],
     ["get", "value"],
     ...climateFieldColorStops(signal),
-  ] as unknown as ExpressionSpecification;
-}
-
-/**
- * Point radius across the signal's own measured domain, in pixels.
- *
- * Both the size AND the colour carry the value, deliberately. Size alone is hard to read
- * against a busy basemap and impossible to match to a legend swatch; colour alone throws away
- * the one advantage a point form has over a fill, which is that magnitude survives being drawn
- * small. The domain is the signal's own p02-p98, so a 30 mm rainfall and a 2 mm one are
- * different marks rather than both saturating the top of a shared scale.
- */
-function pointRadiusFor(signal: ClimateFieldSignalId): ExpressionSpecification {
-  const { domainMinimum, domainMaximum } = climateFieldSignalDefinition(signal);
-  return [
-    "interpolate",
-    ["linear"],
-    ["get", "value"],
-    domainMinimum,
-    MINIMUM_POINT_RADIUS_PX,
-    domainMaximum,
-    MAXIMUM_POINT_RADIUS_PX,
   ] as unknown as ExpressionSpecification;
 }
 
@@ -108,19 +83,8 @@ const OUTLINE_OPACITY = 0.2;
  */
 const ISOLINE_WIDTH_PX = 1.6;
 
-/** Smallest and largest point marks, in pixels, across a signal's measured domain. */
-const MINIMUM_POINT_RADIUS_PX = 3;
-const MAXIMUM_POINT_RADIUS_PX = 13;
-
-/**
- * A dark hairline around each point mark.
- *
- * Needed only by this form: a filled cell is bounded by its neighbours, and a contour is a line
- * already, but a pale point over pale terrain -- a trace-rainfall drop, a low-wind mark -- has
- * nothing to separate it from the ground it sits on.
- */
-const POINT_STROKE_COLOR = "#18181b";
-const POINT_STROKE_WIDTH_PX = 0.8;
+/** The only continuous-field forms this renderer permits from a served response. */
+export type ClimateRenderableForm = "field" | "isoline";
 
 interface ClimateFieldLayerProps {
   map: MapLibreMap | null;
@@ -131,7 +95,7 @@ interface ClimateFieldLayerProps {
    * forms are different MapLibre layer types over different geometry -- the server sends
    * squares, dissolved bands or points depending on this, so a repaint in place is not possible.
    */
-  renderForm: ClimateRenderForm;
+  renderForm: ClimateRenderableForm;
   /**
    * The rung the served collection came from, or NULL while no collection has arrived.
    *
@@ -171,7 +135,6 @@ export function ClimateFieldLayer({
 }: ClimateFieldLayerProps) {
   const ids = useMemo(() => layerIdsFor(signal), [signal]);
   const paintColor = useMemo(() => fillColorFor(signal), [signal]);
-  const pointRadius = useMemo(() => pointRadiusFor(signal), [signal]);
   // Both opacities go through the shared helper, even though both bases are plain numbers:
   // the multiplier rule then has ONE implementation rather than an inline product here and
   // the real rule in `layer-opacity.ts`. For a number the helper is exactly `base * factor`,
@@ -186,7 +149,6 @@ export function ClimateFieldLayer({
   const propsRef = useRef({
     geojson,
     paintColor,
-    pointRadius,
     fillOpacity,
     outlineOpacity,
     markOpacity,
@@ -197,7 +159,6 @@ export function ClimateFieldLayer({
   propsRef.current = {
     geojson,
     paintColor,
-    pointRadius,
     fillOpacity,
     outlineOpacity,
     markOpacity,
@@ -211,7 +172,6 @@ export function ClimateFieldLayer({
     const {
       geojson: currentGeoJson,
       paintColor: currentPaintColor,
-      pointRadius: currentPointRadius,
       fillOpacity: currentFillOpacity,
       outlineOpacity: currentOutlineOpacity,
       markOpacity: currentMarkOpacity,
@@ -302,24 +262,6 @@ export function ClimateFieldLayer({
       return;
     }
 
-    if (!mapInstance.getLayer(currentIds.pointId)) {
-      mapInstance.addLayer(
-        {
-          id: currentIds.pointId,
-          type: "circle",
-          source: currentIds.sourceId,
-          paint: {
-            "circle-color": currentPaintColor,
-            "circle-radius": currentPointRadius,
-            "circle-opacity": currentMarkOpacity,
-            "circle-stroke-color": POINT_STROKE_COLOR,
-            "circle-stroke-width": POINT_STROKE_WIDTH_PX,
-            "circle-stroke-opacity": currentMarkOpacity,
-          },
-        },
-        beforeId
-      );
-    }
   }, []);
 
   const removeLayers = useCallback((mapInstance: MapLibreMap) => {
@@ -334,7 +276,6 @@ export function ClimateFieldLayer({
         currentIds.fillId,
         currentIds.isolineId,
         currentIds.isobandFillId,
-        currentIds.pointId,
       ],
       currentIds.sourceId
     );
@@ -408,18 +349,11 @@ export function ClimateFieldLayer({
       map.setPaintProperty(ids.isolineId, "line-color", paintColor);
       map.setPaintProperty(ids.isolineId, "line-opacity", markOpacity);
     }
-    if (map.getLayer(ids.pointId)) {
-      map.setPaintProperty(ids.pointId, "circle-color", paintColor);
-      map.setPaintProperty(ids.pointId, "circle-radius", pointRadius);
-      map.setPaintProperty(ids.pointId, "circle-opacity", markOpacity);
-      map.setPaintProperty(ids.pointId, "circle-stroke-opacity", markOpacity);
-    }
   }, [
     map,
     ids,
     geojson,
     paintColor,
-    pointRadius,
     fillOpacity,
     outlineOpacity,
     markOpacity,

@@ -17,13 +17,19 @@ import {
   CLIMATE_FIELD_SIGNALS,
   CLIMATE_FIELD_SIGNAL_IDS,
   type ClimateFieldSignalId,
+  type ClimateRenderForm,
 } from "@/lib/environmental/climate-field";
+import type { ClimateRenderableForm } from "@/components/map/layers/ClimateFieldLayer";
 
 /** Empty rather than null, so a switched-off row has something for `setData` to clear with. */
 const EMPTY_FEATURE_COLLECTION: GeoJSON.FeatureCollection = {
   type: "FeatureCollection",
   features: [],
 };
+
+function isClimateRenderableForm(form: ClimateRenderForm): form is ClimateRenderableForm {
+  return form === "field" || form === "isoline";
+}
 
 /**
  * The nine NASA POWER rows, each reading and drawing its own signal on its own day.
@@ -124,7 +130,12 @@ function ClimateSignalLayer({
   // exactly as `ClimateDetails` does, because react-query serves the previous key's data for a
   // frame after a form change and that answer describes a different request.
   const served = query.data?.signal === signal ? query.data : undefined;
-  const servedForm = served?.renderForm ?? renderForm;
+  const servedForm = served?.renderForm;
+  const renderableForm =
+    servedForm === undefined
+      ? (isClimateRenderableForm(renderForm) ? renderForm : "field")
+      : (isClimateRenderableForm(servedForm) ? servedForm : "field");
+  const hasPermittedServedForm = servedForm === undefined || isClimateRenderableForm(servedForm);
   // The rung that ANSWERED, never the rung this row asked for: the two differ for a frame after a
   // zoom, and the layer sizes its outline off this. NULL until a collection lands, rather than the
   // base rung it stood in with until 2026-09-02: `BASE_ZOOM_TIER` is the one value that turns the
@@ -137,11 +148,13 @@ function ClimateSignalLayer({
     <ClimateFieldLayer
       map={map}
       signal={signal}
-      renderForm={servedForm}
+       renderForm={renderableForm}
       zoomTier={servedZoomTier}
-      geojson={query.data ?? EMPTY_FEATURE_COLLECTION}
+       geojson={
+         hasPermittedServedForm ? query.data ?? EMPTY_FEATURE_COLLECTION : EMPTY_FEATURE_COLLECTION
+       }
       opacityScale={layerOpacity[toggleId]}
-      visible={visible}
+       visible={visible && hasPermittedServedForm}
     />
   );
 }

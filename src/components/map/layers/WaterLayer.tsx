@@ -203,12 +203,12 @@ function buildWellGeoJSON(wells: GroundwaterWell[]): GeoJSON.FeatureCollection {
 }
 
 /**
- * Coarse-rung cells as the squares their envelopes declare, or as markers where the envelope
- * declares no footprint.
+ * Coarse-rung cells as the squares their envelopes declare.
  *
  * The square is never buffered from the centroid: `supportCellPolygon` builds it from the
  * envelope's own corner and cell size, and returns null rather than guessing when the envelope
- * carries no size -- which is what an unlocated or raw-point row presents as. `assertNotPerimeter`
+ * carries no size. A coarse aggregate without a footprint is withheld: a marker would claim a
+ * raw observation form the aggregate rung did not publish. `assertNotPerimeter`
  * guards the drawn form because `water` is an `event_point` layer: a mean over a square of ground
  * is no more a watershed boundary than a fire cell is a perimeter.
  */
@@ -216,9 +216,11 @@ function buildAggregateCellGeoJSON(cells: WaterGaugeCell[]): GeoJSON.FeatureColl
   assertNotPerimeter("water", WATER_CELL_DRAWN_FORM);
   return {
     type: "FeatureCollection",
-    features: cells.map((cell) => {
+    features: cells.flatMap((cell) => {
       const support = cell.support;
       const declaredCell = supportCellPolygon(cell.longitude, cell.latitude, support);
+      const isDeclaredRawPoint = support.supportKind === "raw_point";
+      if (declaredCell === null && !isDeclaredRawPoint) return [];
       return {
         type: "Feature" as const,
         id: support.supportId,
@@ -230,7 +232,7 @@ function buildAggregateCellGeoJSON(cells: WaterGaugeCell[]): GeoJSON.FeatureColl
           observedDay: cell.observedDay,
           source: cell.source,
           color: cell.flowCfs === null ? GAUGE_READING_COLORS.no_reading : AGGREGATE_CELL_COLOR,
-          supportKind: declaredCell === null ? null : WATER_CELL_DRAWN_FORM,
+          supportKind: isDeclaredRawPoint ? "raw_point" : WATER_CELL_DRAWN_FORM,
           supportId: support.supportId,
           cellWidthDegrees: support.cellWidthDegrees ?? null,
           cellHeightDegrees: support.cellHeightDegrees ?? null,

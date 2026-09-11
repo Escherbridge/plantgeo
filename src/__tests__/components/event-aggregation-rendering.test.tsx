@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, render } from "@testing-library/react";
 import type { Map as MapLibreMap } from "maplibre-gl";
-import { FireLayer } from "@/components/map/layers/FireLayer";
+import { FireLayer, renderableFireData } from "@/components/map/layers/FireLayer";
 import { WaterLayer } from "@/components/map/layers/WaterLayer";
 import { VegetationLayer } from "@/components/map/layers/VegetationLayer";
 import {
@@ -465,6 +465,16 @@ describe("fire detections at the detail rung", () => {
   });
 });
 
+describe("fire physical-rung guard", () => {
+  it("withholds a malformed frame that mixes aggregate and detail rungs", () => {
+    const mixed = presentParquetFireDetections(
+      readyFireWindow([fireCell({ support: envelope(5) }), fireCell({ support: envelope(13) })])
+    );
+
+    expect(renderableFireData(mixed).features).toEqual([]);
+  });
+});
+
 describe("water gauges across the bands", () => {
   it("draws coarse rungs as declared cells carrying a gauge count", () => {
     const fakeMap = createFakeMap();
@@ -489,6 +499,44 @@ describe("water gauges across the bands", () => {
       ["geometry-type"],
       "Polygon",
     ]);
+  });
+
+  it("withholds a coarse cell whose envelope cannot declare a footprint", () => {
+    const fakeMap = createFakeMap();
+    const presented = presentParquetWater(
+      readyWaterWindow([
+        waterRow({
+          siteNumber: null,
+          siteName: null,
+          support: waterEnvelope(5, -116, 43, {
+            cellWidthDegrees: undefined,
+            cellHeightDegrees: undefined,
+            cellOriginDegrees: undefined,
+          }),
+        }),
+      ])
+    );
+
+    render(
+      <WaterLayer map={asMap(fakeMap)} visible gauges={[]} aggregateCells={presented.cells} />
+    );
+
+    expect(fakeMap.dataOf("water-gauge-cells").features).toEqual([]);
+  });
+
+  it("keeps an anonymous detail observation as its declared raw point", () => {
+    const fakeMap = createFakeMap();
+    const presented = presentParquetWater(
+      readyWaterWindow([waterRow({ siteNumber: null, siteName: null })])
+    );
+
+    render(
+      <WaterLayer map={asMap(fakeMap)} visible gauges={[]} aggregateCells={presented.cells} />
+    );
+
+    const feature = fakeMap.dataOf("water-gauge-cells").features[0];
+    expect(feature.geometry.type).toBe("Point");
+    expect(feature.properties?.supportKind).toBe("raw_point");
   });
 
   it("leaves a real z13 gauge a point, with its own identity", () => {
@@ -619,8 +667,8 @@ describe("nothing drawn is ever a perimeter", () => {
  * the presenter must draw its marker rather than reach for the contract's nominal cell size, which
  * is the fabricated square this whole track exists to prevent.
  */
-describe("no declared footprint, no square", () => {
-  it("degrades every layer to its marker rather than fabricating one", () => {
+describe("no declared footprint, no invented marker", () => {
+  it("withholds malformed aggregate support rather than fabricating a square or a raw point", () => {
     const sizeless = {
       cellWidthDegrees: undefined,
       cellHeightDegrees: undefined,
@@ -631,7 +679,7 @@ describe("no declared footprint, no square", () => {
       readyFireWindow([fireCell({ support: envelope(5, sizeless) })])
     );
     render(<FireLayer map={asMap(fakeMap)} visible geojson={fire} />);
-    expect(fakeMap.dataOf("published-fire-source").features[0].geometry.type).toBe("Point");
+    expect(fakeMap.dataOf("published-fire-source").features).toHaveLength(0);
 
     const vegetationMap = createFakeMap();
     const observation = vegetationObservation(-116.125, 43.625);

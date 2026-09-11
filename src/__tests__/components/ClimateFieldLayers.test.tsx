@@ -6,6 +6,7 @@ import { useClimateStore } from "@/stores/climate-store";
 import { useTimeSliderStore } from "@/stores/time-slider-store";
 import { SCRUB_SETTLE_MS, useDrawnLayerDayStore } from "@/stores/useMetricAtDate";
 import type { Map as MapLibreMap } from "maplibre-gl";
+import type { ClimateRenderableForm } from "@/components/map/layers/ClimateFieldLayer";
 import {
   climateFieldStreamName,
   CLIMATE_FIELD_SIGNALS,
@@ -343,16 +344,18 @@ describe("each climate row draws the form the server actually served", () => {
     return undefined;
   }
 
-  it("paints the degraded points form when a coarse rung answers with Points", () => {
+  it("withholds a legacy points response rather than drawing a continuous field as dots", () => {
     climateQuery.resultBySignal.set(
       "air-temperature",
       servedAs("air-temperature", "symbol")
     );
     renderWithDrawn(["air-temperature"], 9);
 
-    // The request still asks for the reader's chosen form; the SERVED form is what is painted.
+    // The request still asks for the reader's chosen form; an invalid served form clears the
+    // renderer rather than using the pre-contract raw-point fallback.
     expect(inputFor("air-temperature")?.renderForm).toBe("field");
-    expect(lastDrawnFor("air-temperature")?.renderForm).toBe("symbol");
+    expect(lastDrawnFor("air-temperature")?.renderForm).toBe("field");
+    expect(lastDrawnFor("air-temperature")?.visible).toBe(false);
   });
 
   it("paints the requested form once the detail rung answers in it", () => {
@@ -443,7 +446,7 @@ describe("each climate row draws the form the server actually served", () => {
     }
 
     async function renderRealLayer(
-      renderForm: ClimateRenderForm,
+      renderForm: ClimateRenderableForm,
       zoomTier: ZoomTier | null = 13
     ) {
       const { ClimateFieldLayer } = await vi.importActual<
@@ -460,10 +463,6 @@ describe("each climate row draws the form the server actually served", () => {
       );
       return added.map((layer) => layer.type);
     }
-
-    it("builds a circle layer for the served points form, never a fill or a line", async () => {
-      expect(await renderRealLayer("symbol")).toEqual(["circle"]);
-    });
 
     it("builds the fill and its outline only when the served form is the filled one", async () => {
       expect(await renderRealLayer("field")).toEqual(["fill", "line"]);

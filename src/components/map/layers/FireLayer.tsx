@@ -9,6 +9,7 @@ import {
   fireDetectionCellLines,
   FIRE_CELL_CAPTION_TITLE,
 } from "@/lib/map/fire-cell-caption";
+import { zoomBandForTier } from "@/lib/map/layer-render-contract";
 import type { FireDetectionCollection } from "@/lib/environmental/parquet-fire-presentation";
 import type { ExpressionSpecification } from "@/types/map";
 import type { FilterSpecification } from "@maplibre/maplibre-gl-style-spec";
@@ -165,6 +166,22 @@ const FIRE_CELLS_FILL = "published-fire-cells-fill";
 const POLYGON_ONLY: FilterSpecification = ["==", ["geometry-type"], "Polygon"];
 const POINT_ONLY: FilterSpecification = ["==", ["geometry-type"], "Point"];
 
+/** Reject malformed support and mixed physical rungs rather than changing their visual claim. */
+export function renderableFireData(data: FireDetectionCollection): FireDetectionCollection {
+  const tiers = new Set(data.features.map((feature) => feature.properties.zoomTier));
+  if (tiers.size > 1) return EMPTY_FIRE_DATA;
+
+  return {
+    type: "FeatureCollection",
+    features: data.features.filter((feature) => {
+      const band = zoomBandForTier(feature.properties.zoomTier);
+      return band === "detail"
+        ? feature.geometry.type === "Point"
+        : feature.geometry.type === "Polygon";
+    }),
+  };
+}
+
 function escapeHtml(val: unknown): string {
   return String(val ?? "")
     .replace(/&/g, "&amp;")
@@ -199,7 +216,7 @@ export function FireLayer({
 }: FireLayerProps) {
   const popupRef = useRef<Popup | null>(null);
 
-  const fireData = geojson ?? EMPTY_FIRE_DATA;
+  const fireData = renderableFireData(geojson ?? EMPTY_FIRE_DATA);
   const drawnOpacity = opacity * opacityScale;
 
   // Keep latest props in refs so style.load handler uses current values
