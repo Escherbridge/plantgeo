@@ -1,11 +1,41 @@
 ---
 type: plan
 track: offline_export_service_20260908
-status: chartered
+status: active
 created: 2026-09-08
 ---
 
 # Plan — offline export service
+
+## Current scope and remaining ledger — September 11
+
+The September 9 owner decision rejected the standalone `plantgeo-export` service
+and selected the existing in-repository canonical-snapshot builders. Phase 1's
+standalone service and the old “where does the service live” question below are
+superseded design history; do not restart them. The five ERA5 product lanes were
+built in that cutover. All three NASA POWER temperature histories were published
+September 10 with 1,560 fully verified days each across four rungs; see the
+[operational retrospective](../../retros/parquet_operational_checkpoints_20260911/README.md).
+
+The phase verdicts below are still `_pending_`: delivery evidence is not an
+invented retroactive approval of the discarded service. The next work is:
+
+- [ ] Reconcile each original phase with the chosen in-repository builder,
+  evidence and independent review; explicitly mark discarded standalone-service
+  deliverables superseded instead of implementing them again.
+- [ ] Bind the complete eight-lane source/history/rung manifest and verify each
+  declared horizon; do not rebuild the proved temperature window.
+- [ ] Record measured end-to-end staging/build/upload/verification cost against
+  the old baseline. `4b841b3` bounds apply verification to eight tasks while
+  retaining every evidence and publication check.
+- [ ] Recover deferred **relative-humidity 1981–2017** availability history using
+  the supported bounded publication contract and exact receipts. This supersedes
+  the earlier 1981–1985-only deferred window below; no recovery receipt is recorded.
+- [ ] Refresh the warm capability/serving result for the exact candidate and
+  hand remaining runtime/forward gaps to gapless and production acceptance.
+
+Historical phase checkboxes and verdicts below are preserved as the review ledger;
+this checkpoint governs their present scope.
 
 Five phases. Each ends with an adversarial review in a separate context, recorded as a one-line
 verdict. A phase with no verdict is unreviewed, not done.

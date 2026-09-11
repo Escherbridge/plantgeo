@@ -6,6 +6,17 @@ status: active
 
 # Parquet/DuckDB pivot — the twelve-lane warehouse and its serving path
 
+## Current checkpoint — September 11
+
+The [operational retrospective](../../retros/parquet_operational_checkpoints_20260911/README.md) records the completed baseline/rebuild,
+temperature publication and bounded MTBS rollout. It supersedes the old
+“PostgreSQL intact” premise below; it does not close the delegated reader,
+source-direct writer or production acceptance gates. Historical construction
+receipts apply to their pinned windows, not every older task's requested horizon.
+Reconcile still-unclosed soil-wetness, precipitation, dew-point, burn-severity and
+drought session scopes before declaring those full-source histories complete.
+Existing August ownership maps are historical until re-frozen against current code.
+
 Chartered **retroactively on 2026-08-23**. Waves 1–3 already shipped without a track, so the
 largest workstream in this repo was tracked only in RUNBOOK prose and `tracks.md`. This spec
 records where it stands and what wave 4 is.

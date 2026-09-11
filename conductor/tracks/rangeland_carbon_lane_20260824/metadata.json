@@ -1,7 +1,13 @@
 {
+  "reconciliation_20260911": {
+    "audited_on": "2026-09-11",
+    "source_head": "fa20223",
+    "status": "planned",
+    "next_gate": "Charter normalized to planned. Next gate is a source-watermarked static Parquet lane and serving contract; the August 24 database/raster inventory is historical after the September 9 rebuild."
+  },
   "slug": "rangeland_carbon_lane_20260824",
   "title": "Rangeland soil-carbon lane (SoilGrids SOC / OCD)",
-  "status": "chartered",
+  "status": "planned",
   "created_on": "2026-08-24",
   "depends_on": [
     "parquet_duckdb_pivot_20260823"

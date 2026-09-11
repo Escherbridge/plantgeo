@@ -1,7 +1,7 @@
 ---
 type: track-spec
 slug: multiscale_polygon_surface_20260901
-status: planned
+status: active
 ---
 
 # Multiscale polygon and continuous-surface rendering

@@ -1,4 +1,12 @@
 {
+  "reconciliation_20260911": {
+    "audited_on": "2026-09-11",
+    "source_head": "fa20223",
+    "status": "active",
+    "next_gate": "The September 8 baseline collapse and September 9 production rebuild supersede the historical intact-database, no-drop and old P6 sequence. Remaining environmental retirement is owned by environmental_postgres_retirement_20260904; gapless owns writer/repair schedules. Reconcile residual package/removal obligations with those owners before execution.",
+    "evidence": "conductor/retros/parquet_operational_checkpoints_20260911/README.md",
+    "historical_partitions": "Computed ownership/slice fields retain their original dates; re-freeze ownership against current code before execution."
+  },
   "id": "postgres_shrink_ingest_repoint_20260825",
   "description": "Postgres shrink via ingest repoint to Parquet — bridge, then cut per lane",
   "type": "feature",
@@ -62,7 +70,7 @@
     "computed_at": "2026-08-25T02:30:00Z",
     "computed_at_commit": "80ac72a",
     "confidence": "verified",
-    "note": "Prebaked from the planning analysis at 440d9b5; no separate recon pass. Excludes every path owned by parquet_duckdb_pivot_20260823 slices d0-d5. lane_registry.py, interface/cli/data.py, alembic/versions/ and the cron Dockerfile are shared registries with one named owner each: later slices append and must be sequenced, never run concurrently on those files. Re-verify `owns` with a real grep once HEAD moves. RE-VERIFIED at 80ac72a (RUNBOOK 0.42.15): every `owns` path grepped against HEAD -- no drift, every `future` path genuinely absent and every existing one present. s2/s3/s4 overlap on pipeline/direct/ and tests/direct/ (directory owner vs files inside it) but are SEQUENCED by depends_on and all sit in lane A, so that is ordering, not contention. The one real collision is external: pivot d5 creates pipeline/lanes/soil_field.py inside s5's directory -- d5 moves to lane A and lands first. s2a replaced the retired flat CLI with the four-group interface/cli package and retained interface/cli/data.py as the s2b registration point.",
+    "note": "The September 8 baseline collapse and September 9 production rebuild supersede the historical intact-database, no-drop and old P6 sequence. Remaining environmental retirement is owned by environmental_postgres_retirement_20260904; gapless owns writer/repair schedules. Reconcile residual package/removal obligations with those owners before execution.",
     "slices": [
       {
         "id": "s0",

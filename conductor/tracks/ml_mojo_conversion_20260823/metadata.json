@@ -1,7 +1,13 @@
 {
+  "reconciliation_20260911": {
+    "audited_on": "2026-09-11",
+    "source_head": "fa20223",
+    "status": "blocked",
+    "next_gate": "Registered as blocked by the standing owner ML freeze/runtime decision. Next gate is the port/retire/stays-Python inventory and explicit training/runtime disposition; no model promotion is implied."
+  },
   "slug": "ml_mojo_conversion_20260823",
   "title": "ML to Mojo conversion",
-  "status": "chartered",
+  "status": "blocked",
   "created_on": "2026-08-23",
   "depends_on": [],
   "runbook_section": "0.28",

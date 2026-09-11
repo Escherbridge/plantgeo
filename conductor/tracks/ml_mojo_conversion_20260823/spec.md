@@ -1,7 +1,7 @@
 ---
 type: track-spec
 slug: ml_mojo_conversion_20260823
-status: chartered
+status: blocked
 ---
 
 # ML → Mojo conversion

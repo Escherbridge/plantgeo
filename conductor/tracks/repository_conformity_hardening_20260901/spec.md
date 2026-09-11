@@ -1,7 +1,7 @@
 ---
 type: track-spec
 slug: repository_conformity_hardening_20260901
-status: planned
+status: active
 ---
 
 # Repository conformity, reuse, and dead-code hardening

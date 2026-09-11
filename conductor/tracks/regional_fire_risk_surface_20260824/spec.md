@@ -1,7 +1,7 @@
 ---
 type: track-spec
 slug: regional_fire_risk_surface_20260824
-status: chartered
+status: planned
 ---
 
 # Cross-state fire-risk prioritisation surface

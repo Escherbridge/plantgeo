@@ -1,8 +1,14 @@
 {
+  "reconciliation_20260911": {
+    "audited_on": "2026-09-11",
+    "source_head": "fa20223",
+    "status": "active",
+    "next_gate": "Implementation and subsequent frontend releases are evidenced; current full product/day/zoom/cold-warm traces and exact acceptance handoff remain open. Multiscale consumes the frozen support contract."
+  },
   "slug": "parquet_reader_cutover_acceptance_20260901",
   "title": "Parquet reader hard cut and temporal acceptance",
   "type": "feature",
-  "status": "planned",
+  "status": "active",
   "created_on": "2026-09-01",
   "depends_on": [],
   "runbook_section": "LIVE / Repair order and production gates",

@@ -1,7 +1,7 @@
 ---
 type: track-spec
 slug: fire_risk_zone_forecast_20260823
-status: chartered
+status: planned
 ---
 
 # Fire-risk zone forecast — 1–2 weeks ahead

@@ -1,7 +1,13 @@
 {
+  "reconciliation_20260911": {
+    "audited_on": "2026-09-11",
+    "source_head": "fa20223",
+    "status": "planned",
+    "next_gate": "Charter normalized to planned. Next gate is the declared Parquet product/stratum contract plus held-out validation; historical in-sample AUC is not production skill."
+  },
   "slug": "regional_fire_risk_surface_20260824",
   "title": "Cross-state fire-risk prioritisation surface",
-  "status": "chartered",
+  "status": "planned",
   "created_on": "2026-08-24",
   "depends_on": [
     "parquet_duckdb_pivot_20260823"

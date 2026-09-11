@@ -1,7 +1,7 @@
 ---
 type: track-spec
 slug: rangeland_partnership_outreach_20260824
-status: chartered
+status: planned
 ---
 
 # Rangeland partnership and feedstock-policy outreach

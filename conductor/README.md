@@ -17,9 +17,9 @@ receipts remain authoritative for what has actually happened.
    production release is permitted.
 4. [`tracks.md`](./tracks.md) is the sole current work registry. A listed
    track's `metadata.json`, specification, and plan define its scoped work.
-5. The numbered material under `tracks/` is retained product history/backlog;
-   it is never an execution or release authority unless promoted into
-   `tracks.md`.
+5. Completed tracks, superseded session briefs and dated runbook snapshots
+   under `retros/` and the runbook archives are retained history; they become
+   execution authority only if explicitly promoted into `tracks.md`.
 
 ## Status vocabulary
 
@@ -34,3 +34,8 @@ Start from the registry, then the governing track. Preserve historical evidence
 and link to it rather than rewriting it as present state. A track may not
 authorize a Railway mutation, forecast publication, strategy efficacy claim, or
 model promotion unless the release policy says its exact gates are met.
+
+Use the [current runbook](RUNBOOK.md) for operational handoff and the
+[maintenance workflow](workflow.md#session-and-archive-maintenance) when closing
+work. The [September 11 session archive](retros/session_hygiene_20260911/README.md)
+preserves the older session entry points and their original evidence.

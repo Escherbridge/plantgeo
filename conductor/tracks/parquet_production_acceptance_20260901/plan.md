@@ -7,6 +7,16 @@ resource: ./spec.md
 
 # Plan
 
+## Evidence intake — September 11
+
+[Completed operational slices](../../retros/parquet_operational_checkpoints_20260911/README.md) are inputs to this gate, not a GREEN
+all-product verdict. MTBS has a bounded deployed public/browser acceptance receipt;
+three temperature histories have exact availability generation receipts. The full
+matrix, scheduled burn-in and recovery proof remain open. The owner-authorized
+September 9 rebuild already occurred; the old blanket pending-retirement premise
+must not be read as a claim that PostgreSQL is intact or as authorization for
+another mutation.
+
 ## Wave A0 — prepare while authoring runs
 
 - [ ] Freeze the complete product/day/zoom/cold-warm matrix.

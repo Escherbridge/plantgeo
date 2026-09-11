@@ -1,0 +1,108 @@
+{
+  "schema_version": 1,
+  "date": "2026-09-11",
+  "status": "PASS",
+  "reviewer": "Independent verifier lane, separate from documentation and archive authors",
+  "evidence_base": "fa202230958fb55521963e886eb031be5fc266c4",
+  "scope": "Documentation, metadata, archival integrity, local session hygiene and recorded sidebar outcomes",
+  "application_tests_run": false,
+  "production_checks_run": false,
+  "production_mutations_performed": false,
+  "production_acceptance_claim": false,
+  "execution": "One integrated documentation/session verification sweep after the complete author batch; three broken historical citations were repaired together, followed only by targeted verification of the two changed community documents.",
+  "counts": {
+    "conductor/retros/session_hygiene_20260911/archive-manifest.json": 18,
+    ".omc/state/archive/session-hygiene-20260911/manifest.json": 4,
+    "registry_current_entries": 21,
+    "changed_new_json": 24,
+    "maintained_markdown_files": 55,
+    "sidebar_reviewed": 49,
+    "sidebar_archived": 40,
+    "sidebar_retained": 9,
+    "current_track_statuses": {
+      "active": 8,
+      "blocked": 4,
+      "planned": 9
+    }
+  },
+  "checks": [
+    {
+      "name": "Session archive integrity",
+      "status": "PASS",
+      "records": 18,
+      "bytes": 200879,
+      "detail": "Exact archived SHA-256 and byte counts match the manifest; content also matches original tracked source after line-ending normalization."
+    },
+    {
+      "name": "Local recovery state",
+      "status": "PASS",
+      "records": 4,
+      "detail": "Three former session markers and the original log match recorded SHA-256 and byte counts; current markers are inactive historical pointers to their originals."
+    },
+    {
+      "name": "Local session log retention",
+      "status": "PASS",
+      "original_entries": 99,
+      "retained_entries": 10,
+      "retained_since": "2026-09-04",
+      "detail": "Retained entries exactly match the original entries in the retained date range."
+    },
+    {
+      "name": "Runbook preservation",
+      "status": "PASS",
+      "retained_body_sha256": "19e9a68ed0e39d6e0aedaa275ae3cd3fe36e74ffb3cb441e2f774ff5114929af",
+      "detail": "September runbook retains the complete original body; historical-backfill and offline-export incident bodies remain unchanged."
+    },
+    {
+      "name": "Current registry and metadata",
+      "status": "PASS",
+      "tracks": 21,
+      "active": 8,
+      "planned": 9,
+      "blocked": 4,
+      "detail": "Registry rows match track metadata and status-bearing specification/plan frontmatter."
+    },
+    {
+      "name": "JSON and OKF",
+      "status": "PASS",
+      "json_files": 24,
+      "maintained_markdown_files": 55,
+      "detail": "Changed/new JSON parses and maintained Conductor Markdown declares type frontmatter. Immutable original archive records preserve historical source bytes."
+    },
+    {
+      "name": "Maintained local links and anchors",
+      "status": "PASS",
+      "detail": "Integrated sweep checked maintained Markdown links/anchors. Three existing broken community citations were repaired to preserved migrations and the current panel successor; targeted follow-up checked all 15 local links in those two files plus exact cited line content."
+    },
+    {
+      "name": "Sidebar ledger consistency",
+      "status": "PASS",
+      "reviewed": 49,
+      "archived": 40,
+      "retained": 9,
+      "detail": "Tracked ledger exactly matches its original local audit. All 40 archived IDs match recorded archived-list confirmations; no requested archive remains visible and no retained task is missing. Current task remains retained."
+    },
+    {
+      "name": "Whitespace",
+      "status": "PASS",
+      "detail": "git diff --check passed for the integrated batch and for the subsequent two-file citation repair."
+    },
+    {
+      "name": "Independent content review",
+      "status": "PASS",
+      "detail": "No incomplete parent was closed. Current recovery, source-direct ownership, historical-gap, selected-day reader, rendering, burn-in and acceptance gates remain named; completed slices and old operational measurements are dated."
+    }
+  ],
+  "resolved_findings": [
+    "Repointed two old Drizzle migration citations to preserved drizzle/archive originals.",
+    "Replaced the retired CommunityPanel citation with CommunityDetails.tsx query and review-note evidence.",
+    "Added a September 11 community plan notice distinguishing remaining moderation/ML decisions from the historical August 5 phase table and concurrent-session warning."
+  ],
+  "limitations": [
+    "This is a documentation and session-hygiene receipt, not an application test, Python quality, release or production acceptance receipt.",
+    "Sidebar verification checks the independently captured tool audit and outcome ledger; this verifier did not issue fresh sidebar mutations or app listing calls.",
+    "Sidebar discovery is limited to the app's visible window of at most 50 non-pinned tasks without pagination; inaccessible older tasks are not claimed audited.",
+    "Immutable archived historical bodies retain original commands, statuses, relative citations and line references; current entry-point notices define their historical interpretation.",
+    "Ignored local recovery archives and referenced source artifacts remain local; a tracked hash records their identity but does not embed those source artifacts in Git."
+  ]
+}

@@ -1,4 +1,12 @@
 {
+  "reconciliation_20260911": {
+    "audited_on": "2026-09-11",
+    "source_head": "fa20223",
+    "status": "active",
+    "next_gate": "September 9 baseline/rebuild and September 10 temperature-history publication are complete slices; September 11 MTBS deployment/publication/browser rollout is complete for 747 fires in 2018–2026. Signal/sensor admission, soil restoration, older MTBS, effective cutoff, source-direct archive replacements and full acceptance remain open.",
+    "evidence": "conductor/retros/parquet_operational_checkpoints_20260911/README.md",
+    "historical_partitions": "Computed ownership/slice fields retain their original dates; re-freeze ownership against current code before execution."
+  },
   "slug": "environmental_postgres_retirement_20260904",
   "title": "Environmental Postgres retirement — backfill, cut over, drop",
   "type": "infrastructure",
@@ -12,7 +20,7 @@
   "supersedes": {
     "postgres_shrink_ingest_repoint_20260825:p5-p6": "The PostgreSQL retirement scope moves here in full, with the expanded 2026-09-04 charter (feed and social features only) and the per-layer drop gate."
   },
-  "note": "Owner direction 2026-09-04: PostgreSQL keeps feed and social features only. Refined by the same-night second grill into four settled decisions (D1 per-layer drop on a three-part proof, D2 parity-with-Postgres backfill bar, D3 manifest-trust availability bootstrap, D4 full cutover scope). The time-slider startup cost dies at A4.",
+  "note": "September 9 baseline/rebuild and September 10 temperature-history publication are complete slices; September 11 MTBS deployment/publication/browser rollout is complete for 747 fires in 2018–2026. Signal/sensor admission, soil restoration, older MTBS, effective cutoff, source-direct archive replacements and full acceptance remain open.",
   "production_authorization": "Agents prepare, dry-run and record every production action. Railway variable edits, --apply operator verbs, pg_dump archival and every Alembic migration against production are owner-confirmed before they fire. Retirement of an individual relation no longer waits for the global GREEN acceptance verdict, but does require its complete three-part packet.",
   "partitions": {
     "computed_at": "2026-09-04T00:00:00-06:00",

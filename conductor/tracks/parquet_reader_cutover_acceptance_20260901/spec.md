@@ -1,7 +1,7 @@
 ---
 type: track-spec
 slug: parquet_reader_cutover_acceptance_20260901
-status: planned
+status: active
 ---
 
 # Parquet reader hard cut and temporal acceptance

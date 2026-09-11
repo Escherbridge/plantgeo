@@ -1,0 +1,110 @@
+{
+  "slug": "botanical_occurrence_experience_20260911",
+  "title": "Botanical occurrence map layers and agent experience",
+  "type": "feature",
+  "status": "planned",
+  "created_on": "2026-09-11",
+  "depends_on": [
+    "botanical_occurrence_parquet_lane_20260911",
+    "multiscale_polygon_surface_20260901",
+    "parquet_reader_cutover_acceptance_20260901"
+  ],
+  "next_gate": "Freeze three layer semantics, zoom transitions, legends, filters, disclosures and agent answers against the governed occurrence-plane contract.",
+  "layers": [
+    "botanical-specimen-occurrences",
+    "documented-taxon-richness",
+    "collection-evidence-effort"
+  ],
+  "partitions": {
+    "confidence": "planned",
+    "slices": [
+      {
+        "id": "x1",
+        "task": "Detail specimen occurrence layer and record inspection",
+        "model": "gpt-5.6-terra",
+        "depends_on": [],
+        "owns": [
+          {"path": "src/components/map/layers/BotanicalOccurrencesLayer.tsx", "status": "future"},
+          {"path": "src/components/panels/BotanicalOccurrenceDetails.tsx", "status": "future"}
+        ]
+      },
+      {
+        "id": "x2",
+        "task": "Documented-taxon richness aggregate layer",
+        "model": "gpt-5.6-terra",
+        "depends_on": [],
+        "owns": [
+          {"path": "src/components/map/layers/BotanicalRichnessLayer.tsx", "status": "future"}
+        ]
+      },
+      {
+        "id": "x3",
+        "task": "Collection-effort context layer, filters and presentation of the frozen d3 agent schema",
+        "model": "gpt-5.6-sol",
+        "depends_on": [],
+        "consumes_schema_from": "botanical_occurrence_parquet_lane_20260911:d3",
+        "owns": [
+          {"path": "src/components/map/layers/BotanicalCollectionEffortLayer.tsx", "status": "future"},
+          {"path": "src/components/panels/BotanicalFilters.tsx", "status": "future"}
+        ]
+      },
+      {
+        "id": "x4",
+        "task": "Shared capability registration and integrated visual acceptance",
+        "model": "gpt-6-astra",
+        "depends_on": ["x1", "x2", "x3"],
+        "owns": [
+          {"path": "src/__tests__/components/botanical-occurrence-experience.test.tsx", "status": "future"}
+        ]
+      },
+      {
+        "id": "x5",
+        "task": "Independent scientific, design, accessibility and agent-parity verdict",
+        "model": "gpt-6-astra",
+        "depends_on": ["x1", "x2", "x3", "x4"],
+        "owns": [
+          {"path": "conductor/tracks/botanical_occurrence_experience_20260911/evidence/independent-review.md", "status": "future"}
+        ]
+      }
+    ],
+    "shared_writes": [
+      {
+        "path": "src/lib/map/layer-render-contract.ts",
+        "owner": "x4",
+        "serializes_after": "multiscale_polygon_surface_20260901",
+        "reason": "The active multiscale track owns the render contract until completion or explicit transfer."
+      },
+      {
+        "path": "src/lib/map/layer-registry.ts",
+        "owner": "x4",
+        "serializes_after": "multiscale_polygon_surface_20260901",
+        "reason": "Register all three related layers in one integration slice after the active renderer owner transfers the registry."
+      },
+      {
+        "path": "src/types/time-slider.ts",
+        "owner": "x4",
+        "serializes_after": "parquet_reader_cutover_acceptance_20260901",
+        "reason": "Add static source-release/event-window semantics only after the active reader owner freezes or transfers the time contract."
+      },
+      {
+        "path": "src/lib/server/services/parquet-slider-capabilities.ts",
+        "owner": "x4",
+        "serializes_after": "parquet_reader_cutover_acceptance_20260901",
+        "reason": "Register static reference capability only after the active reader owner transfers this registry."
+      },
+      {
+        "path": "src/__tests__/lib/map/layer-registry.test.ts",
+        "owner": "x4",
+        "serializes_after": "multiscale_polygon_surface_20260901",
+        "reason": "Extend registry conformance under the same serialized integration owner."
+      },
+      {
+        "path": "src/__tests__/services/parquet-slider-capabilities.test.ts",
+        "owner": "x4",
+        "serializes_after": "parquet_reader_cutover_acceptance_20260901",
+        "reason": "Extend capability conformance under the same serialized integration owner."
+      }
+    ],
+    "integration_slice": "x5"
+  }
+}
