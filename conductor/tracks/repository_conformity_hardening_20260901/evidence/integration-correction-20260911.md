@@ -38,8 +38,9 @@ outside this correction.
 
 No s2a implementation remains owned by the shrink track. Its unfinished s2b direct-writer registry
 and forward-execution work is separately delegated to `gapless_parquet_publication_20260901`, while
-shrink retains only its later P5/P6 retirement authority. Neither the 18 retained CLI sites nor s2b
-is implementation scope for this conformity correction.
+`environmental_postgres_retirement_20260904` supersedes shrink's environmental P5/P6 scope in full;
+no shrink-owned environmental implementation remains. Neither the 18 retained CLI sites nor s2b is
+implementation scope for this conformity correction.
 
 ## Validation
 
