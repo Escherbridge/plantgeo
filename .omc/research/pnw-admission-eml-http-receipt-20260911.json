@@ -1,0 +1,25 @@
+[
+  {
+    "name": "ubc-eml-16.43",
+    "requested_url": "https://data.canadensys.net/ipt/eml.do?r=ubc-vascular-specimens&v=16.43",
+    "retrieved_at": "2026-09-11T16:59:23.024297-06:00",
+    "method": "GET",
+    "limit_bytes": 1048576,
+    "status": 200,
+    "final_url": "https://data.canadensys.net/ipt/eml.do?r=ubc-vascular-specimens&v=16.43",
+    "headers": {
+      "Server": "nginx",
+      "Date": "Fri, 11 Sep 2026 22:59:26 GMT",
+      "Content-Type": "text/xml;charset=UTF-8",
+      "Transfer-Encoding": "chunked",
+      "Connection": "close",
+      "Last-Modified": "Tue, 01 Sep 2026 12:00:01 GMT",
+      "Content-Disposition": "filename=\"eml-ubc-vascular-specimens-v16.43.xml\"",
+      "Content-Language": "en-GB"
+    },
+    "file": "pnw-ubc-eml-16.43-20260911.xml",
+    "bytes": 14208,
+    "sha256": "e73735e4eafcb1a233514948f72631ceced3dd22e30445d45f34e593f7293654",
+    "outcome": "captured"
+  }
+]

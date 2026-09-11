@@ -1,0 +1,829 @@
+<!DOCTYPE html>
+<html>
+<head>
+
+<title>Datasets - Consortium of PNW Herbaria</title>
+
+<meta name="viewport" content="width=912" />
+<meta http-equiv='Content-Type' content='text/html; charset=utf-8'>
+<meta http-equiv='Content-Language' content='en-us' />
+<meta name='description' content='Provides online access to herbarium specimen collections from participating herbaria throughout the Pacific Northwest United States and Canada.' />
+<meta name='keywords' content='herbaria, herbarium, pacific northwest, specimen, collection, oregon, washington, idaho, montana, british columbia, yukon, alaska' />
+<meta name='author' content='Consortium of Pacific Northwest Herbaria' />
+<meta name='copyright' content='Copyright (c) 2007-2018 Consortium of Pacific Northwest Herbaria' />
+
+<link rel="image_src" href="https://www.pnwherbaria.org/graphics/site_thumbnail-wide.jpg" />
+<meta property="og:image" content="https://www.pnwherbaria.org/graphics/site_thumbnail-wide.jpg" />
+<meta property="og:image:width" content="896" /><meta property="og:image:height" content="504" />
+<meta property="og:description" content="The Consortium of Pacific Northwest Herbaria was created in 2007 to bring together regional herbaria and provide an online portal to the wealth of existing and emerging information about the flora of Pacific Northwest North America. Over 3.6 million specimen records and numerous online electronic resources are managed by the region's 60 herbaria, representing an irreplacable storehouse of information for research and public education." />
+
+<link rel='StyleSheet' href='../css/main.css' type='text/css' />
+
+<script type='text/javascript' src='../js/jquery-1.7.1.min.js'></script>
+
+<link rel='StyleSheet' href='../css/login.css' type='text/css' />
+
+<link type='text/css' rel='stylesheet' href='https://www.pnwherbaria.org/authentication/client/authentication.css' />
+<script type='text/javascript' src='https://www.pnwherbaria.org/authentication/client/authentication.js'></script>
+
+
+<!-- Google Analytics tag (gtag.js) -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-E7ZPWKCLRW"></script>
+<script>
+	window.dataLayer = window.dataLayer || [];
+	function gtag(){dataLayer.push(arguments);} gtag('js', new Date());
+	gtag('config', 'G-E7ZPWKCLRW');
+</script>
+
+</head>
+<body>
+
+<div id='wrap'>
+
+  <div id='header'>
+    <div id='headerimg'></div>
+  </div>
+  <div id='imagebar'><div id='logintoggle' class='logintoggle2' onclick="auth.showLogin({resource: 'PNWHerbaria', message: 'You do not need to log in to search the PNW Herbaria database or view specimen data. The log-in allows authorized users to access restricted data such as localities and coordinates for specimens of rare taxa.<br/><br/><a href=\'http://www.pnwherbaria.org/contacts.php\'>Contact us</a> to request an account.'});">Log In</div></div>
+  <div id='loginstatusbar'></div>
+
+  <div id='pnwmap1'></div>
+  <div id='pnwmap2'></div>
+  <div id='pnwmap3'></div>
+  <div id='statelist'>
+    <a href='../herbaria.php#Alaska' style='text-decoration: none;'>Alaska</a><br/>
+    <a href='../herbaria.php#British Columbia' style='text-decoration: none;'>British Columbia</a><br/>
+    <a href='../herbaria.php#Idaho' style='text-decoration: none;'>Idaho</a><br/>
+    <a href='../herbaria.php#Montana' style='text-decoration: none;'>Montana</a><br/>
+    <a href='../herbaria.php#Oregon' style='text-decoration: none;'>Oregon</a><br/>
+    <a href='../herbaria.php#Washington' style='text-decoration: none;'>Washington</a><br/>
+    <a href='../herbaria.php#Yukon' style='text-decoration: none;'>Yukon Territory</a><br/>
+  </div>
+  <div id='vmenu'>
+    <div class='vmenutop'></div>
+    <div class='vmenuitem'><a href='../index.php'>Home</a></div>
+    <div class='vmenuitemsel'><a href='../data.php'>Specimen Data</a></div>
+<!-- <div class='vmenuitem'><a href='../checklist.php'>PNW Checklist</a></div> -->
+    <div class='vmenuitem'><a href='../resources.php'>Online Resources</a></div>
+    <div class='vmenuitem'><a href='../herbaria.php'>Member Herbaria</a></div>
+    <div class='vmenuitem'><a href='../links.php'>External Links</a></div>
+    <div class='vmenuitem'><a href='../documentation.php'>Documentation</a></div>
+<!-- <div class='vmenuitem'><a href='../news/'>News</a></div> -->
+    <div class='vmenuitem'><a href='../about.php'>About</a></div>
+    <div class='vmenuitem'><a href='../contacts.php'>Contact Us</a></div>
+    <div class='vmenubottom'></div>
+    
+    <a href='../data/results.php?DisplayAs=WebPage&ExcludeCultivated=Y&GroupBy=ungrouped&SortBy=ScientificName&SearchAllHerbaria=Y&QueryCount=1&SciName1=Botrychium hesperium&Zoom=4&Lat=55&Lng=-135&PolygonCount=0'><img src='../photos/Botrychium_hesperium.jpg' width='80px' class='spotlight' /></a>
+    <div class='spotlightcaption'><i>Botrychium hesperium</i></div>
+  </div>  
+<div id='content'>
+
+<div class="sectiontitle">Herbarium Datasets for Download:</div>
+
+<p>The following downloads provide access to entire datasets from individual herbaria, and to the entire Consortium database.  These datasets are intended for those performing large-scale data harvesting or analyses.</p>
+
+<p class="subtitle">Data Formats:</p>
+
+<p>Each dataset is formatted as a ZIP archive containing multiple tab-delimited text files in a simple relational structure. Files listed under the "DwC Archive" column follow the <a href='http://rs.tdwg.org/dwc/terms/guides/text/index.htm'>Darwin Core Archive (DwCA)</a> specifications for field names. Files listed under the "Native Format" column have fields names matching the structure of the underlying Consortium database, and include additional fields that cannot be easily represented by DwCA.</p>
+
+<p>Each dataset contains a text file called "occurrences.txt" (Native) or "occurrence.txt" (DwCA) holding one record per specimen with all core specimen fields (herbarium info, current identification, collector info, dates, location, notes, etc.).  Each occurrence record is uniquely identified within the PNW Herbaria database by a field called OccurrenceID (Native) or id (DwCA).</p>
+
+<p>Each dataset contains a text file called "annotations.txt" (Native) or "identifications.txt" (DwCA) that holds annotations/identifications. There may be multiple annotations/identifications linked to a single specimen record, using the OccurrenceID field (Native) or coreid field (DwCA; coreid = id in occurrence.txt).</p>
+
+<p>Each dataset contains a text file called "media.txt" (Native) or "multimedia.txt" (DwCA) that holds metadata for images and other media associated with each specimen. There may be multiple images linked to a single specimen, again using OccurrenceID (Native) or coreid (DwCA).  The image files themselves are stored on our server and can be access via the URLs defined in media.txt and multimedia.txt.  The Native format media.txt file provides direcct links to three image formats provided by PNW Herbaria: a thumbnail image, a full-resolution JPEG image, and an online image viewer allowing zoom and pan capabilities.  The DwCA format only provides links to the full-resolution JPEG images; however, programmers may readily modify these links to reccreate the links to the thumbnails or online image viewer.</p>
+
+<p>Native format dataset files contain a fourth file, called "types.txt" containing scientific names (basionyms), type designations, and other relevant info for nomenclatural type specimens.  There may be multiple type names associated with each occurrence record, each linked to a record in occurrences.txt by the OccurrenceID field.</p>
+
+<p>DwCA format dataset files also contain two XML files with dataset metadata.  The file "meta.xml" contains ordered lists of field names within each of the enclosed text files.  The file "eml.xml" contains general metadata about the dataset as a whole, including provider and collection information, contact information, and license terms.</p>
+
+<p>All text files are encoded as unicode (UTF-8) text, with Windows-style line endings (CR+LF) and fields separated by tabs. Field names and values are not enclosed in quotes.</p>
+
+<p class="subtitle">Data Usage Policy:</p>
+
+<p>Use of these datasets requires agreement to the terms and conditions in our <a href='datausagepolicy.php'><b>Data Usage Policy</b></a>.</p>
+
+<p>Sensitive data (e.g., localities for rare taxa) are omitted from these datasets. Copies of these files with restricted data intact can be accessed by logging in. Some records in our database are not available for public release; such records are excluded from the datasets and record counts below.</p>
+<br/>
+
+<table cellspacing="0" cellpadding="2" border="0" style="float: left; margin-right: 25px; border-top: 1px solid #A0AF8C; border-left: 1px solid #A0AF8C;">
+<tr>
+<td class="tableheader">Herbarium</td>
+<td class="tableheader">Collection</td>
+<td class="tableheader"># Specimens</td>
+<td class="tableheader"># Images</td>
+<td class="tableheader">DwC Archive</td>
+<td class="tableheader">Native Format</td>
+<td class="tableheader">Last Updated</td>
+</tr>
+
+<tr class='tablerow1'>
+<td class="tabledata"><a href='providermetadata.php?code=ACFS' title='Aurora College - Fort Smith'><b>ACFS</b></a></td>
+<td class="tabledata">Vascular Plants</td>
+<td class="tabledata">0</td>
+<td class="tabledata">0</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=ACFS_Vascular_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(0 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=ACFS_Vascular_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(0 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow2'>
+<td class="tabledata"><a href='providermetadata.php?code=ALA' title='University of Alaska, Fairbanks - Museum of the North'><b>ALA</b></a></td>
+<td class="tabledata">Cryptogams</td>
+<td class="tabledata">62,385</td>
+<td class="tabledata">56,380</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=ALA_Cryptogams_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(7.9 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=ALA_Cryptogams_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(6.5 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow1'>
+<td class="tabledata"><a href='providermetadata.php?code=ALA' title='University of Alaska, Fairbanks - Museum of the North'><b>ALA</b></a></td>
+<td class="tabledata">Vascular Plants</td>
+<td class="tabledata">203,232</td>
+<td class="tabledata">178,713</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=ALA_Vascular_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(29.9 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=ALA_Vascular_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(24.8 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow2'>
+<td class="tabledata"><a href='providermetadata.php?code=BABY' title='B. A. Bennett Herbarium, Yukon'><b>BABY</b></a></td>
+<td class="tabledata">Vascular Plants</td>
+<td class="tabledata">10,888</td>
+<td class="tabledata">2,732</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=BABY_Vascular_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(1.9 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=BABY_Vascular_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(1.8 MB)</span></td>
+<td class="tabledata">2025-07-10</td>
+</tr><tr class='tablerow1'>
+<td class="tabledata"><a href='providermetadata.php?code=BBLM' title='Boise District Bureau of Land Management'><b>BBLM</b></a></td>
+<td class="tabledata">Vascular Plants</td>
+<td class="tabledata">5,612</td>
+<td class="tabledata">6,421</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=BBLM_Vascular_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(1.2 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=BBLM_Vascular_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(1.1 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow2'>
+<td class="tabledata"><a href='providermetadata.php?code=BLMMD' title='Bureau of Land Management, Medford District'><b>BLMMD</b></a></td>
+<td class="tabledata">Bryophytes</td>
+<td class="tabledata">1,323</td>
+<td class="tabledata">25</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=BLMMD_Bryophytes_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(0.2 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=BLMMD_Bryophytes_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(0.1 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow1'>
+<td class="tabledata"><a href='providermetadata.php?code=BLMMD' title='Bureau of Land Management, Medford District'><b>BLMMD</b></a></td>
+<td class="tabledata">Fungi</td>
+<td class="tabledata">4</td>
+<td class="tabledata">0</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=BLMMD_Fungi_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(0.1 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=BLMMD_Fungi_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(0.1 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow2'>
+<td class="tabledata"><a href='providermetadata.php?code=BLMMD' title='Bureau of Land Management, Medford District'><b>BLMMD</b></a></td>
+<td class="tabledata">Lichens</td>
+<td class="tabledata">821</td>
+<td class="tabledata">6</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=BLMMD_Lichens_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(0.1 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=BLMMD_Lichens_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(0.1 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow1'>
+<td class="tabledata"><a href='providermetadata.php?code=BLMMD' title='Bureau of Land Management, Medford District'><b>BLMMD</b></a></td>
+<td class="tabledata">Vascular Plants</td>
+<td class="tabledata">3,335</td>
+<td class="tabledata">3,250</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=BLMMD_Vascular_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(0.6 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=BLMMD_Vascular_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(0.6 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow2'>
+<td class="tabledata"><a href='providermetadata.php?code=BOIS' title='Rocky Mountain Research Station'><b>BOIS</b></a></td>
+<td class="tabledata">Vascular Plants</td>
+<td class="tabledata">13,345</td>
+<td class="tabledata">9,577</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=BOIS_Vascular_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(2.2 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=BOIS_Vascular_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(2.1 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow1'>
+<td class="tabledata"><a href='providermetadata.php?code=CIC' title='College of Idaho, Harold M. Tucker Herbarium'><b>CIC</b></a></td>
+<td class="tabledata">Vascular Plants</td>
+<td class="tabledata">60,082</td>
+<td class="tabledata">60,832</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=CIC_Vascular_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(13.4 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=CIC_Vascular_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(12.8 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow2'>
+<td class="tabledata"><a href='providermetadata.php?code=COCC' title='Central Oregon Community College'><b>COCC</b></a></td>
+<td class="tabledata">Vascular Plants</td>
+<td class="tabledata">6,891</td>
+<td class="tabledata">6,867</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=COCC_Vascular_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(1.3 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=COCC_Vascular_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(1.2 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow1'>
+<td class="tabledata"><a href='providermetadata.php?code=CRMO' title='Craters of the Moon National Monument'><b>CRMO</b></a></td>
+<td class="tabledata">Vascular Plants</td>
+<td class="tabledata">3,257</td>
+<td class="tabledata">3,854</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=CRMO_Vascular_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(0.8 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=CRMO_Vascular_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(0.7 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow2'>
+<td class="tabledata"><a href='providermetadata.php?code=DOUG' title='Collections of David Douglas from Various Herbaria'><b>DOUG</b></a></td>
+<td class="tabledata">Vascular Plants</td>
+<td class="tabledata">0</td>
+<td class="tabledata">0</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=DOUG_Vascular_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(0 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=DOUG_Vascular_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(0 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow1'>
+<td class="tabledata"><a href='providermetadata.php?code=EVE' title='Evergreen State College'><b>EVE</b></a></td>
+<td class="tabledata">Vascular Plants</td>
+<td class="tabledata">563</td>
+<td class="tabledata">300</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=EVE_Vascular_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(0.1 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=EVE_Vascular_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(0.1 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow2'>
+<td class="tabledata"><a href='providermetadata.php?code=EWU' title='Eastern Washington University'><b>EWU</b></a></td>
+<td class="tabledata">Vascular Plants</td>
+<td class="tabledata">10,378</td>
+<td class="tabledata">9,598</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=EWU_Vascular_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(2 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=EWU_Vascular_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(1.9 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow1'>
+<td class="tabledata"><a href='providermetadata.php?code=FHL' title='Friday Harbor Laboratories'><b>FHL</b></a></td>
+<td class="tabledata">Algae</td>
+<td class="tabledata">3,921</td>
+<td class="tabledata">4,116</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=FHL_Algae_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(0.7 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=FHL_Algae_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(0.6 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow2'>
+<td class="tabledata"><a href='providermetadata.php?code=GNWTYEL' title='Parks Canada - Government of the Northwest Territories '><b>GNWTYEL</b></a></td>
+<td class="tabledata">Vascular Plants</td>
+<td class="tabledata">0</td>
+<td class="tabledata">0</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=GNWTYEL_Vascular_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(0 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=GNWTYEL_Vascular_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(0 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow1'>
+<td class="tabledata"><a href='providermetadata.php?code=HAH' title='Hoyt Arboretum and Herbarium'><b>HAH</b></a></td>
+<td class="tabledata">Vascular Plants</td>
+<td class="tabledata">4,906</td>
+<td class="tabledata">0</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=HAH_Vascular_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(0.5 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=HAH_Vascular_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(0.5 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow2'>
+<td class="tabledata"><a href='providermetadata.php?code=HJAEF' title='H.J. Andrews Experimental Forest'><b>HJAEF</b></a></td>
+<td class="tabledata">Vascular Plants</td>
+<td class="tabledata">1,317</td>
+<td class="tabledata">1,194</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=HJAEF_Vascular_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(0.3 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=HJAEF_Vascular_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(0.2 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow1'>
+<td class="tabledata"><a href='providermetadata.php?code=HPSU' title='Portland State University'><b>HPSU</b></a></td>
+<td class="tabledata">Bryophytes</td>
+<td class="tabledata">5,201</td>
+<td class="tabledata">7</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=HPSU_Bryophytes_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(0.9 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=HPSU_Bryophytes_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(0.9 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow2'>
+<td class="tabledata"><a href='providermetadata.php?code=HPSU' title='Portland State University'><b>HPSU</b></a></td>
+<td class="tabledata">Lichens</td>
+<td class="tabledata">641</td>
+<td class="tabledata">4</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=HPSU_Lichens_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(0.1 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=HPSU_Lichens_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(0.1 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow1'>
+<td class="tabledata"><a href='providermetadata.php?code=HPSU' title='Portland State University'><b>HPSU</b></a></td>
+<td class="tabledata">Vascular Plants</td>
+<td class="tabledata">21,880</td>
+<td class="tabledata">20,753</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=HPSU_Vascular_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(4.8 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=HPSU_Vascular_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(4.5 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow2'>
+<td class="tabledata"><a href='providermetadata.php?code=HSC' title='Humboldt State University'><b>HSC</b></a></td>
+<td class="tabledata">Vascular Plants</td>
+<td class="tabledata">1,625</td>
+<td class="tabledata">0</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=HSC_Vascular_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(0.2 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=HSC_Vascular_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(0.2 MB)</span></td>
+<td class="tabledata">2025-07-10</td>
+</tr><tr class='tablerow1'>
+<td class="tabledata"><a href='providermetadata.php?code=ID' title='Stillinger Herbarium, University of Idaho'><b>ID</b></a></td>
+<td class="tabledata">Bryophytes</td>
+<td class="tabledata">4,470</td>
+<td class="tabledata">1</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=ID_Bryophytes_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(0.7 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=ID_Bryophytes_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(0.6 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow2'>
+<td class="tabledata"><a href='providermetadata.php?code=ID' title='Stillinger Herbarium, University of Idaho'><b>ID</b></a></td>
+<td class="tabledata">Fungi</td>
+<td class="tabledata">15,264</td>
+<td class="tabledata">0</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=ID_Fungi_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(2 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=ID_Fungi_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(1.8 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow1'>
+<td class="tabledata"><a href='providermetadata.php?code=ID' title='Stillinger Herbarium, University of Idaho'><b>ID</b></a></td>
+<td class="tabledata">Vascular Plants</td>
+<td class="tabledata">196,298</td>
+<td class="tabledata">192,858</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=ID_Vascular_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(44.3 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=ID_Vascular_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(42.3 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow2'>
+<td class="tabledata"><a href='providermetadata.php?code=IDE' title='Erickson Weed Herbarium, University of Idaho'><b>IDE</b></a></td>
+<td class="tabledata">Vascular Plants</td>
+<td class="tabledata">8,425</td>
+<td class="tabledata">8,271</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=IDE_Vascular_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(1.4 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=IDE_Vascular_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(1.4 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow1'>
+<td class="tabledata"><a href='providermetadata.php?code=IDS' title='Idaho State University, Ray J. Davis Herbarium'><b>IDS</b></a></td>
+<td class="tabledata">Lichens</td>
+<td class="tabledata">547</td>
+<td class="tabledata">973</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=IDS_Lichens_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(0.1 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=IDS_Lichens_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(0.1 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow2'>
+<td class="tabledata"><a href='providermetadata.php?code=IDS' title='Idaho State University, Ray J. Davis Herbarium'><b>IDS</b></a></td>
+<td class="tabledata">Vascular Plants</td>
+<td class="tabledata">76,469</td>
+<td class="tabledata">75,682</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=IDS_Vascular_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(16.6 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=IDS_Vascular_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(15.6 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow1'>
+<td class="tabledata"><a href='providermetadata.php?code=LEA' title='University of Lethbridge'><b>LEA</b></a></td>
+<td class="tabledata">Vascular Plants</td>
+<td class="tabledata">21,640</td>
+<td class="tabledata">21,640</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=LEA_Vascular_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(2.4 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=LEA_Vascular_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(2.3 MB)</span></td>
+<td class="tabledata">2025-07-10</td>
+</tr><tr class='tablerow2'>
+<td class="tabledata"><a href='providermetadata.php?code=LINF' title='Linfield College'><b>LINF</b></a></td>
+<td class="tabledata">Vascular Plants</td>
+<td class="tabledata">4,421</td>
+<td class="tabledata">4,294</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=LINF_Vascular_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(0.8 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=LINF_Vascular_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(0.7 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow1'>
+<td class="tabledata"><a href='providermetadata.php?code=MONT' title='Montana State University'><b>MONT</b></a></td>
+<td class="tabledata">Vascular Plants</td>
+<td class="tabledata">55,008</td>
+<td class="tabledata">55,281</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=MONT_Vascular_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(9.9 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=MONT_Vascular_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(9.6 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow2'>
+<td class="tabledata"><a href='providermetadata.php?code=MONTU' title='University of Montana'><b>MONTU</b></a></td>
+<td class="tabledata">Vascular Plants</td>
+<td class="tabledata">80,723</td>
+<td class="tabledata">76,385</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=MONTU_Vascular_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(23.8 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=MONTU_Vascular_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(22.3 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow1'>
+<td class="tabledata"><a href='providermetadata.php?code=MORA' title='Mount Rainier National Park'><b>MORA</b></a></td>
+<td class="tabledata">Vascular Plants</td>
+<td class="tabledata">5,862</td>
+<td class="tabledata">3,541</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=MORA_Vascular_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(1 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=MORA_Vascular_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(1 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow2'>
+<td class="tabledata"><a href='providermetadata.php?code=NEZ' title='Nez Perce Tribe'><b>NEZ</b></a></td>
+<td class="tabledata">Vascular Plants</td>
+<td class="tabledata">1,329</td>
+<td class="tabledata">1,202</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=NEZ_Vascular_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(0.3 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=NEZ_Vascular_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(0.3 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow1'>
+<td class="tabledata"><a href='providermetadata.php?code=NOCA' title='North Cascades National Park'><b>NOCA</b></a></td>
+<td class="tabledata">Vascular Plants</td>
+<td class="tabledata">8,614</td>
+<td class="tabledata">8,369</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=NOCA_Vascular_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(1.1 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=NOCA_Vascular_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(1 MB)</span></td>
+<td class="tabledata">2025-07-10</td>
+</tr><tr class='tablerow2'>
+<td class="tabledata"><a href='providermetadata.php?code=NY' title='The New York Botanical Garden'><b>NY</b></a></td>
+<td class="tabledata">Algae</td>
+<td class="tabledata">99</td>
+<td class="tabledata">0</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=NY_Algae_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(0.1 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=NY_Algae_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(0.1 MB)</span></td>
+<td class="tabledata">2025-07-10</td>
+</tr><tr class='tablerow1'>
+<td class="tabledata"><a href='providermetadata.php?code=NY' title='The New York Botanical Garden'><b>NY</b></a></td>
+<td class="tabledata">Bryophytes</td>
+<td class="tabledata">58,109</td>
+<td class="tabledata">0</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=NY_Bryophytes_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(5.4 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=NY_Bryophytes_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(5 MB)</span></td>
+<td class="tabledata">2025-07-10</td>
+</tr><tr class='tablerow2'>
+<td class="tabledata"><a href='providermetadata.php?code=NY' title='The New York Botanical Garden'><b>NY</b></a></td>
+<td class="tabledata">Fungi</td>
+<td class="tabledata">3,437</td>
+<td class="tabledata">0</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=NY_Fungi_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(0.4 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=NY_Fungi_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(0.4 MB)</span></td>
+<td class="tabledata">2025-07-10</td>
+</tr><tr class='tablerow1'>
+<td class="tabledata"><a href='providermetadata.php?code=NY' title='The New York Botanical Garden'><b>NY</b></a></td>
+<td class="tabledata">Lichens</td>
+<td class="tabledata">597</td>
+<td class="tabledata">0</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=NY_Lichens_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(0.1 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=NY_Lichens_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(0.1 MB)</span></td>
+<td class="tabledata">2025-07-10</td>
+</tr><tr class='tablerow2'>
+<td class="tabledata"><a href='providermetadata.php?code=NY' title='The New York Botanical Garden'><b>NY</b></a></td>
+<td class="tabledata">Vascular Plants</td>
+<td class="tabledata">29,237</td>
+<td class="tabledata">0</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=NY_Vascular_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(3.8 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=NY_Vascular_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(3.5 MB)</span></td>
+<td class="tabledata">2025-07-10</td>
+</tr><tr class='tablerow1'>
+<td class="tabledata"><a href='providermetadata.php?code=OLYM' title='Olympic National Park'><b>OLYM</b></a></td>
+<td class="tabledata">Vascular Plants</td>
+<td class="tabledata">7,708</td>
+<td class="tabledata">0</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=OLYM_Vascular_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(1 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=OLYM_Vascular_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(1 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow2'>
+<td class="tabledata"><a href='providermetadata.php?code=OSC' title='Oregon State University'><b>OSC</b></a></td>
+<td class="tabledata">Algae</td>
+<td class="tabledata">18,097</td>
+<td class="tabledata">18,222</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=OSC_Algae_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(3 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=OSC_Algae_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(2.8 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow1'>
+<td class="tabledata"><a href='providermetadata.php?code=OSC' title='Oregon State University'><b>OSC</b></a></td>
+<td class="tabledata">Bryophytes</td>
+<td class="tabledata">22,210</td>
+<td class="tabledata">10,311</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=OSC_Bryophytes_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(5 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=OSC_Bryophytes_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(4.7 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow2'>
+<td class="tabledata"><a href='providermetadata.php?code=OSC' title='Oregon State University'><b>OSC</b></a></td>
+<td class="tabledata">Fungi</td>
+<td class="tabledata">39,953</td>
+<td class="tabledata">0</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=OSC_Fungi_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(3.5 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=OSC_Fungi_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(3.3 MB)</span></td>
+<td class="tabledata">2025-07-10</td>
+</tr><tr class='tablerow1'>
+<td class="tabledata"><a href='providermetadata.php?code=OSC' title='Oregon State University'><b>OSC</b></a></td>
+<td class="tabledata">Lichens</td>
+<td class="tabledata">5,197</td>
+<td class="tabledata">0</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=OSC_Lichens_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(0.6 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=OSC_Lichens_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(0.5 MB)</span></td>
+<td class="tabledata">2025-07-10</td>
+</tr><tr class='tablerow2'>
+<td class="tabledata"><a href='providermetadata.php?code=OSC' title='Oregon State University'><b>OSC</b></a></td>
+<td class="tabledata">USFS Lichens</td>
+<td class="tabledata">131,326</td>
+<td class="tabledata">131,407</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=OSC_USFS Lichens_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(17.8 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=OSC_USFS Lichens_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(17.5 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow1'>
+<td class="tabledata"><a href='providermetadata.php?code=OSC' title='Oregon State University'><b>OSC</b></a></td>
+<td class="tabledata">Vascular Plants</td>
+<td class="tabledata">216,783</td>
+<td class="tabledata">94,888</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=OSC_Vascular_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(52.7 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=OSC_Vascular_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(50.9 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow2'>
+<td class="tabledata"><a href='providermetadata.php?code=PCFC' title='Parks Canada - Fort Chipewyan'><b>PCFC</b></a></td>
+<td class="tabledata">Vascular Plants</td>
+<td class="tabledata">0</td>
+<td class="tabledata">0</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=PCFC_Vascular_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(0 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=PCFC_Vascular_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(0 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow1'>
+<td class="tabledata"><a href='providermetadata.php?code=PCFS' title='Parks Canada - Fort Smith'><b>PCFS</b></a></td>
+<td class="tabledata">Vascular Plants</td>
+<td class="tabledata">0</td>
+<td class="tabledata">0</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=PCFS_Vascular_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(0 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=PCFS_Vascular_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(0 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow2'>
+<td class="tabledata"><a href='providermetadata.php?code=PENC' title='Peninsula College'><b>PENC</b></a></td>
+<td class="tabledata">Vascular Plants</td>
+<td class="tabledata">1</td>
+<td class="tabledata">0</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=PENC_Vascular_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(0.1 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=PENC_Vascular_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(0.1 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow1'>
+<td class="tabledata"><a href='providermetadata.php?code=PLU' title='Pacific Lutheran University'><b>PLU</b></a></td>
+<td class="tabledata">Vascular Plants</td>
+<td class="tabledata">8,758</td>
+<td class="tabledata">8,788</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=PLU_Vascular_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(1.3 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=PLU_Vascular_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(1.2 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow2'>
+<td class="tabledata"><a href='providermetadata.php?code=PSM' title='University of Puget Sound'><b>PSM</b></a></td>
+<td class="tabledata">Vascular Plants</td>
+<td class="tabledata">14,246</td>
+<td class="tabledata">13,587</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=PSM_Vascular_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(2.4 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=PSM_Vascular_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(2.3 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow1'>
+<td class="tabledata"><a href='providermetadata.php?code=REED' title='Reed College'><b>REED</b></a></td>
+<td class="tabledata">Vascular Plants</td>
+<td class="tabledata">7,400</td>
+<td class="tabledata">6,854</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=REED_Vascular_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(1.3 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=REED_Vascular_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(1.2 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow2'>
+<td class="tabledata"><a href='providermetadata.php?code=RM' title='University of Wyoming, Rocky Mountain Herbarium'><b>RM</b></a></td>
+<td class="tabledata">Types Specimens</td>
+<td class="tabledata">994</td>
+<td class="tabledata">1,165</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=RM_Types_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(0.1 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=RM_Types_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(0.1 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow1'>
+<td class="tabledata"><a href='providermetadata.php?code=RM' title='University of Wyoming, Rocky Mountain Herbarium'><b>RM</b></a></td>
+<td class="tabledata">Vascular Plants</td>
+<td class="tabledata">154,709</td>
+<td class="tabledata">22,103</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=RM_Vascular_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(4.1 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=RM_Vascular_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(4.3 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow2'>
+<td class="tabledata"><a href='providermetadata.php?code=SAJH' title='San Juan National Historic Site'><b>SAJH</b></a></td>
+<td class="tabledata">Vascular Plants</td>
+<td class="tabledata">603</td>
+<td class="tabledata">603</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=SAJH_Vascular_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(0.1 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=SAJH_Vascular_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(0.1 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow1'>
+<td class="tabledata"><a href='providermetadata.php?code=SBLM' title='Bureau of Land Management, Salmon Office'><b>SBLM</b></a></td>
+<td class="tabledata">Vascular Plants</td>
+<td class="tabledata">1,822</td>
+<td class="tabledata">1,813</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=SBLM_Vascular_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(0.4 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=SBLM_Vascular_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(0.4 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow2'>
+<td class="tabledata"><a href='providermetadata.php?code=SEF' title='Starkey Experimental Forest'><b>SEF</b></a></td>
+<td class="tabledata">Vascular Plants</td>
+<td class="tabledata">887</td>
+<td class="tabledata">903</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=SEF_Vascular_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(0.2 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=SEF_Vascular_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(0.2 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow1'>
+<td class="tabledata"><a href='providermetadata.php?code=SOC' title='Southern Oregon University'><b>SOC</b></a></td>
+<td class="tabledata">Vascular Plants</td>
+<td class="tabledata">26,621</td>
+<td class="tabledata">22,087</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=SOC_Vascular_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(5.7 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=SOC_Vascular_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(5.5 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow2'>
+<td class="tabledata"><a href='providermetadata.php?code=SRP' title='Boise State University, Snake River Plains Herbarium'><b>SRP</b></a></td>
+<td class="tabledata">Vascular Plants</td>
+<td class="tabledata">104,685</td>
+<td class="tabledata">111,788</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=SRP_Vascular_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(23.3 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=SRP_Vascular_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(21.8 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow1'>
+<td class="tabledata"><a href='providermetadata.php?code=TFBLM' title='Twin Falls Bureau of Land Management'><b>TFBLM</b></a></td>
+<td class="tabledata">Vascular Plants</td>
+<td class="tabledata">855</td>
+<td class="tabledata">882</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=TFBLM_Vascular_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(0.2 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=TFBLM_Vascular_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(0.2 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow2'>
+<td class="tabledata"><a href='providermetadata.php?code=UAAH' title='University of Alaska, Anchorage'><b>UAAH</b></a></td>
+<td class="tabledata">Vascular Plants</td>
+<td class="tabledata">20,569</td>
+<td class="tabledata">16,236</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=UAAH_Vascular_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(3.7 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=UAAH_Vascular_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(3.5 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow1'>
+<td class="tabledata"><a href='providermetadata.php?code=UBC' title='University of British Columbia'><b>UBC</b></a></td>
+<td class="tabledata">Algae</td>
+<td class="tabledata">80,632</td>
+<td class="tabledata">3,218</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=UBC_Algae_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(6.1 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=UBC_Algae_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(5.5 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow2'>
+<td class="tabledata"><a href='providermetadata.php?code=UBC' title='University of British Columbia'><b>UBC</b></a></td>
+<td class="tabledata">Bryophytes</td>
+<td class="tabledata">167,849</td>
+<td class="tabledata">0</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=UBC_Bryophytes_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(12.9 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=UBC_Bryophytes_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(11.9 MB)</span></td>
+<td class="tabledata">2025-07-10</td>
+</tr><tr class='tablerow1'>
+<td class="tabledata"><a href='providermetadata.php?code=UBC' title='University of British Columbia'><b>UBC</b></a></td>
+<td class="tabledata">Fungi</td>
+<td class="tabledata">34,867</td>
+<td class="tabledata">947</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=UBC_Fungi_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(5.5 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=UBC_Fungi_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(5.1 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow2'>
+<td class="tabledata"><a href='providermetadata.php?code=UBC' title='University of British Columbia'><b>UBC</b></a></td>
+<td class="tabledata">Lichens</td>
+<td class="tabledata">41,996</td>
+<td class="tabledata">0</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=UBC_Lichens_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(3.9 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=UBC_Lichens_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(3.6 MB)</span></td>
+<td class="tabledata">2025-07-10</td>
+</tr><tr class='tablerow1'>
+<td class="tabledata"><a href='providermetadata.php?code=UBC' title='University of British Columbia'><b>UBC</b></a></td>
+<td class="tabledata">Vascular Plants</td>
+<td class="tabledata">191,189</td>
+<td class="tabledata">44,368</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=UBC_Vascular_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(27 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=UBC_Vascular_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(24.6 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow2'>
+<td class="tabledata"><a href='providermetadata.php?code=UVIC' title='University of Victoria'><b>UVIC</b></a></td>
+<td class="tabledata">Vascular Plants</td>
+<td class="tabledata">0</td>
+<td class="tabledata">0</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=UVIC_Vascular_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(0 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=UVIC_Vascular_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(0 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow1'>
+<td class="tabledata"><a href='providermetadata.php?code=UWB' title='University of Washington Bothell'><b>UWB</b></a></td>
+<td class="tabledata">Vascular Plants</td>
+<td class="tabledata">906</td>
+<td class="tabledata">880</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=UWB_Vascular_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(0.2 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=UWB_Vascular_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(0.2 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow2'>
+<td class="tabledata"><a href='providermetadata.php?code=V' title='Royal British Columbia Museum'><b>V</b></a></td>
+<td class="tabledata">Vascular Plants</td>
+<td class="tabledata">218,884</td>
+<td class="tabledata">0</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=V_Vascular_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(17.8 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=V_Vascular_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(16.3 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow1'>
+<td class="tabledata"><a href='providermetadata.php?code=VALE' title='Bureau of Land Management, Vale District Office'><b>VALE</b></a></td>
+<td class="tabledata">Vascular Plants</td>
+<td class="tabledata">6,152</td>
+<td class="tabledata">6,291</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=VALE_Vascular_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(1.4 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=VALE_Vascular_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(1.3 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow2'>
+<td class="tabledata"><a href='providermetadata.php?code=VIU' title='Milner Gardens and Woodland, Vancouver Island University'><b>VIU</b></a></td>
+<td class="tabledata">Lichens</td>
+<td class="tabledata">330</td>
+<td class="tabledata">0</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=VIU_Lichens_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(0.1 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=VIU_Lichens_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(0.1 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow1'>
+<td class="tabledata"><a href='providermetadata.php?code=WCW' title='Whitman College'><b>WCW</b></a></td>
+<td class="tabledata">Vascular Plants</td>
+<td class="tabledata">13,538</td>
+<td class="tabledata">13,717</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=WCW_Vascular_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(2.5 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=WCW_Vascular_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(2.4 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow2'>
+<td class="tabledata"><a href='providermetadata.php?code=WS' title='Washington State University, Marion Ownbey Herbarium'><b>WS</b></a></td>
+<td class="tabledata">Bryophytes</td>
+<td class="tabledata">13,150</td>
+<td class="tabledata">24</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=WS_Bryophytes_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(1.9 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=WS_Bryophytes_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(1.8 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow1'>
+<td class="tabledata"><a href='providermetadata.php?code=WS' title='Washington State University, Marion Ownbey Herbarium'><b>WS</b></a></td>
+<td class="tabledata">Vascular Plants</td>
+<td class="tabledata">225,932</td>
+<td class="tabledata">68,866</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=WS_Vascular_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(38.7 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=WS_Vascular_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(36.1 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow2'>
+<td class="tabledata"><a href='providermetadata.php?code=WTU' title='University of Washington'><b>WTU</b></a></td>
+<td class="tabledata">Algae</td>
+<td class="tabledata">17,399</td>
+<td class="tabledata">19,065</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=WTU_Algae_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(3 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=WTU_Algae_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(2.9 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow1'>
+<td class="tabledata"><a href='providermetadata.php?code=WTU' title='University of Washington'><b>WTU</b></a></td>
+<td class="tabledata">Bryophytes</td>
+<td class="tabledata">76,711</td>
+<td class="tabledata">26,298</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=WTU_Bryophytes_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(12.1 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=WTU_Bryophytes_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(11.2 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow2'>
+<td class="tabledata"><a href='providermetadata.php?code=WTU' title='University of Washington'><b>WTU</b></a></td>
+<td class="tabledata">Fungi</td>
+<td class="tabledata">80,279</td>
+<td class="tabledata">130,198</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=WTU_Fungi_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(15.1 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=WTU_Fungi_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(15 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow1'>
+<td class="tabledata"><a href='providermetadata.php?code=WTU' title='University of Washington'><b>WTU</b></a></td>
+<td class="tabledata">Lichens</td>
+<td class="tabledata">32,628</td>
+<td class="tabledata">9,659</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=WTU_Lichens_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(5.5 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=WTU_Lichens_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(5.1 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow2'>
+<td class="tabledata"><a href='providermetadata.php?code=WTU' title='University of Washington'><b>WTU</b></a></td>
+<td class="tabledata">Vascular Plants</td>
+<td class="tabledata">267,636</td>
+<td class="tabledata">133,006</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=WTU_Vascular_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(52.9 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=WTU_Vascular_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(50.1 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow1'>
+<td class="tabledata"><a href='providermetadata.php?code=WWB' title='Pacific Northwest Herbarium, Western Washington University'><b>WWB</b></a></td>
+<td class="tabledata">Fungi</td>
+<td class="tabledata">0</td>
+<td class="tabledata">0</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=WWB_Fungi_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(0 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=WWB_Fungi_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(0 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow2'>
+<td class="tabledata"><a href='providermetadata.php?code=WWB' title='Pacific Northwest Herbarium, Western Washington University'><b>WWB</b></a></td>
+<td class="tabledata">Lichens</td>
+<td class="tabledata">1</td>
+<td class="tabledata">1</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=WWB_Lichens_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(0.1 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=WWB_Lichens_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(0.1 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr class='tablerow1'>
+<td class="tabledata"><a href='providermetadata.php?code=WWB' title='Pacific Northwest Herbarium, Western Washington University'><b>WWB</b></a></td>
+<td class="tabledata">Vascular Plants</td>
+<td class="tabledata">20,565</td>
+<td class="tabledata">22,166</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=WWB_Vascular_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(3.6 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=WWB_Vascular_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(3.4 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr><tr style='background-color: #E5EDDA;'>
+<td class="tabledata" colspan='2' style='text-align: center;'><b>ENTIRE CONSORTIUM DATABASE</b></td>
+<td class="tabledata">3,266,234</td>
+<td class="tabledata">1,753,469</td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=CPNWH_DwCA.zip'><b>DwCA</b></a> <span style='font-size: 0.9em; color: #888888;'>(516.4 MB)</span></td>
+<td class="tabledata" nowrap><a href='getdataset.php?File=CPNWH_Native.zip'><b>Native</b></a> <span style='font-size: 0.9em; color: #888888;'>(489.2 MB)</span></td>
+<td class="tabledata">2026-06-04</td>
+</tr>
+</table>
+
+<br style='clear: both;'/>
+
+<!-- end content div -->
+</div>
+
+<div id="footer">
+  <a href="https://www.nsf.gov/"><img src="../graphics/nsf4c_69.png" width="69px" height="69px" border="0" style="float: right; padding-left: 10px;" /></a>
+  <a href="https://www.washington.edu/"><img src="../graphics/UW_W-Logo_smallRGB.png" width="75px" height="50px" border="0" style="float: right; padding-right: 10px; padding-top: 10px;" /></a>
+  <div class="footerlarge">&copy; 2007-2026 Consortium of Pacific Northwest Herbaria</div>
+  <div class="footersmall">Managed by the <a href="https://www.burkemuseum.org/collections-and-research/biology/plants-and-fungi" class='footerlink'>University of Washington Herbarium,</a><br />
+  <a href="https://www.burkemuseum.org/" class='footerlink'>Burke Museum of Natural History and Culture</a>, Box 355325<br />
+  <a href="https://www.washington.edu/" class='footerlink'><b>University of Washington</b></a>, Seattle, WA 98195. 1-206-543-1682.</div>
+  <br/>
+  <!-- <div class="footersmall">You are viewing the desktop-optimized web site (<a href='http://www.pnwherbaria.org/m/index.php?view=mobile' class='footerlink'>switch to mobile web site</a>).</div> -->
+</div>
+
+
+<!-- end wrap div -->
+</div>
+
+</body>
+</html>

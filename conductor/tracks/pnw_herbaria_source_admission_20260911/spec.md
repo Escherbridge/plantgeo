@@ -1,7 +1,7 @@
 ---
 type: track-spec
 slug: pnw_herbaria_source_admission_20260911
-status: planned
+status: blocked
 ---
 
 # PNW Herbaria source admission and release governance
@@ -12,6 +12,29 @@ Establish whether a small, named set of Consortium of Pacific Northwest Herbaria
 collections can be captured, normalized and redistributed as governed specimen
 facts. This track ends with an admission or refusal packet for each collection.
 It publishes no PlantGeo layer.
+
+## September 11 execution boundary
+
+The [admission packet](evidence/admission-packet.md) completes the bounded
+metadata investigation. Both occurrence-release admissions remain blocked;
+standalone UBC EML is captured, but no specimen archive is acquired or admitted.
+See the [source register](evidence/source-register.md),
+[independent verdict](evidence/independent-review.md) and
+[requests and handoff](evidence/requests-and-handoff.md).
+
+The owner subsequently made occurrence ingestion an intended outcome and
+authorized a bounded WTU/UBC data-only pilot after collection redistribution
+rights, stable release identity, attribution, coordinate withholding and archive
+controls pass. Report the permission gate before downloading. Exact archive
+validation follows only a permitted quarantine capture; metadata alone cannot
+certify archive bytes. Images, publication, scheduling, API/UI exposure and
+production changes remain excluded. Runtime/service/frontend work is not part
+of this source-admission evidence pass.
+
+The parent owns a separate nonspatial species-profile track. Its approved
+immutable botanical-species-profile Parquet release is the only serving input;
+agri.species or compatible reviewed authoring may curate draft values, with no
+live database fallback. This track owns source facts and occurrence handoff only.
 
 The source investigation is retained at commit `35624dd`, path
 `conductor/research/pnw-herbaria-source-viability-20260910.md`. That note found a
