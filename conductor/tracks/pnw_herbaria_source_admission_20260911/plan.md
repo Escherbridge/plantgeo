@@ -1,12 +1,16 @@
 ---
 type: track-plan
 track: pnw_herbaria_source_admission_20260911
-status: planned
+status: active
 ---
 
 # Plan
 
-No implementation or source download is part of the September 11 planning pass.
+The authorized admission session may capture one bounded data-only WTU and UBC
+archive into quarantine after the exact collection-level rights, coordinate-
+withholding and archive-safety gates pass. It may inspect, hash and inventory the
+archives and prepare the downstream ingestion handoff. Images, public serving,
+scheduling and production mutation remain excluded.
 
 ## A0 — freeze the candidate set
 

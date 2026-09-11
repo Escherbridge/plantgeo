@@ -1,7 +1,7 @@
 ---
 type: track-spec
 slug: pnw_herbaria_source_admission_20260911
-status: planned
+status: active
 ---
 
 # PNW Herbaria source admission and release governance
@@ -69,7 +69,7 @@ quarantined until the collection's terms and schema are admitted.
 
 ## Acceptance
 
-This track completes when every pilot collection has a dated admission/refusal
+This active track completes when every pilot collection has a dated admission/refusal
 packet, immutable source-release identity, schema/profile receipt, identity
 stability verdict, rights decision, processing budget and rollback/withdrawal
 procedure. Admission authorizes the downstream design tracks to use those exact

@@ -68,6 +68,21 @@ Taxon resolution binds an authority and version, preserves source names and
 determinations, and retains ambiguous/unmatched concepts. Homonyms and
 infraspecific ranks cannot be collapsed by a name-only join.
 
+## Species profile boundary
+
+Every resolved occurrence concept exposes the canonical authority/version/concept
+identifier used by `botanical_species_profile_lookup_20260911`. Occurrence
+publication does not depend on a growth-requirement profile being present; an
+unmatched or missing profile is a declared lookup gap rather than a reason to
+drop the specimen.
+
+Traits and growth requirements do not become columns on spatial occurrence
+records. The occurrence plane preserves documented collection evidence, while
+the nonspatial profile lookup publishes separately reviewed requirements and
+traits. A recommendation API may compose their pinned releases, but the
+occurrence reader must not infer suitability from location or silently join an
+editable database row.
+
 ## Publication and serving
 
 Raw capture is immutable and restricted according to its admission. Derived

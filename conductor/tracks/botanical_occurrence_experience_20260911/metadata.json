@@ -9,6 +9,10 @@
     "multiscale_polygon_surface_20260901",
     "parquet_reader_cutover_acceptance_20260901"
   ],
+  "related_tracks": [
+    "botanical_species_profile_lookup_20260911",
+    "botanical_species_recommendation_validation_20260911"
+  ],
   "next_gate": "Freeze three layer semantics, zoom transitions, legends, filters, disclosures and agent answers against the governed occurrence-plane contract.",
   "layers": [
     "botanical-specimen-occurrences",
