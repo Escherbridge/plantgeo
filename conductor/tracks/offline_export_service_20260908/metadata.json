@@ -2,13 +2,13 @@
   "reconciliation_20260911": {
     "audited_on": "2026-09-11",
     "source_head": "fa20223",
-    "status": "active",
-    "next_gate": "Builder and availability work has executed, including all three NASA POWER historical publications on September 10. Original per-phase review ledger, selected in-repository builder acceptance, deferred relative-humidity 1981–2017 index and measured end-to-end cost comparison remain incomplete. The standalone service was rejected September 9; do not rebuild it or verified temperature history."
+    "status": "ready_for_authorized_publication",
+    "next_gate": "Independent review and the affected Python sweep passed. The gapless availability publication owner may upload the 67,570 immutable evidence documents create-only and apply the three numbered relative-humidity inputs serially only after exact authorization. Capture the immediate prior generation before every apply for rollback. Post-apply warm serving belongs to production acceptance."
   },
   "track": "offline_export_service_20260908",
   "title": "Offline export service — stage locally, transform locally, upload in bulk",
   "created": "2026-09-08",
-  "status": "active",
+  "status": "ready_for_authorized_publication",
   "owner": "atoozmc@gmail.com",
   "premise_corrected": {
     "original": "pull down a database backup and export from it",
@@ -41,14 +41,14 @@
       "support_key": "era5-land-0.1deg",
       "cells_per_day": 1470,
       "reference_builder": "scripts/build_soil_moisture_from_canonical_snapshot.py",
-      "note": "soil-field-vpd already holds 462 correct live day partitions - RESUME, do not rebuild"
+      "note": "The selected builder completed 1,556 frozen history days and the September 11 read-only audit found zero owed history days; do not rebuild the verified window."
     },
     "nasa-power": {
       "lanes": ["climate-field-air-temperature-mean", "climate-field-air-temperature-max", "climate-field-air-temperature-min"],
       "source_key": "nasa-power-daily",
       "support_key": "surface",
       "cells_per_day": 397,
-      "blocked_by": "climate-nasa-power-direct-forward dead-lettered at attempt 6/6 since 2026-09-07T08:32Z"
+      "note": "All three 1,560-day histories were published September 10 and the September 11 read-only audit found zero owed history days; forward/runtime ownership is outside this track."
     }
   },
   "out_of_scope": ["soil-survey", "postgres cost reduction", "serving re-partitioning", "postgres table drops"],
@@ -59,5 +59,16 @@
     "services/agri-data-service/src/agri_data_service/parquet_ops/snapshot_products.py",
     "services/agri-data-service/QUALITY_RECEIPT.json"
   ],
-  "partitions": { "confidence": "none", "note": "phase 0 emits the per-lane manifest that would justify a partition; guessing one now would send two agents at one lane" }
+  "evidence": {
+    "selected_builder_manifest": "evidence/selected-builder-manifest-20260911.json",
+    "selected_builder_audit_receipt": "evidence/selected-builder-audit-receipt-20260911.json",
+    "relative_humidity_candidate": "evidence/relative-humidity-history-candidate-20260911.json",
+    "warm_capability_probe": "evidence/warm-capability-probe-20260911.json",
+    "review": "evidence/review-20260911.md"
+  },
+  "mutation_boundary": {
+    "production_mutations_performed": false,
+    "publication_authorized": false,
+    "quality_receipt_owner": "integration"
+  }
 }
