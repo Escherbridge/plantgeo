@@ -2,16 +2,16 @@
   "slug": "pnw_herbaria_source_admission_20260911",
   "title": "PNW Herbaria source admission and release governance",
   "type": "data-governance",
-  "status": "planned",
+  "status": "active",
   "created_on": "2026-09-11",
   "depends_on": [],
   "research_source": {
     "commit": "35624ddbaf93670b839333ae51d7ef15e1f5a85e",
     "path": "conductor/research/pnw-herbaria-source-viability-20260910.md"
   },
-  "next_gate": "Review WTU and UBC vascular DwCA/EML terms and run a bounded metadata/schema inventory without downloading specimen images or publishing data.",
+  "next_gate": "Resolve WTU and UBC collection-level rights, public-coordinate and archive-safety gates; then capture an exact bounded data-only DwCA pilot with immutable custody and schema receipts. Images and production publication remain excluded.",
   "partitions": {
-    "confidence": "planned",
+    "confidence": "active",
     "slices": [
       {
         "id": "a1",

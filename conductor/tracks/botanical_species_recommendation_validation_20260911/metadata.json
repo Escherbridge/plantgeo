@@ -1,0 +1,102 @@
+{
+  "slug": "botanical_species_recommendation_validation_20260911",
+  "title": "Botanical species recommendation evidence and validation",
+  "type": "feature",
+  "status": "planned",
+  "created_on": "2026-09-11",
+  "depends_on": [
+    "botanical_occurrence_parquet_lane_20260911",
+    "botanical_species_profile_lookup_20260911",
+    "parquet_reader_cutover_acceptance_20260901"
+  ],
+  "related_tracks": [
+    "botanical_occurrence_experience_20260911",
+    "repository_conformity_hardening_20260901"
+  ],
+  "next_gate": "Freeze the documented-occurrence, establishment-compatibility and species-objective-effect evidence contract plus an abstaining validation protocol before fitting or serving a recommendation.",
+  "partitions": {
+    "confidence": "planned",
+    "slices": [
+      {
+        "id": "r1",
+        "task": "Taxon, occurrence, profile and environmental release join plus recommendation receipt schema",
+        "model": "gpt-6-astra",
+        "depends_on": [],
+        "owns": [
+          {"path": "services/agri-data-service/src/agri_data_service/foundation/botanical_recommendations/", "status": "future"}
+        ]
+      },
+      {
+        "id": "r2",
+        "task": "Sampling-aware occurrence associations and blocked scientific validation",
+        "model": "gpt-6-astra",
+        "depends_on": ["r1"],
+        "owns": [
+          {"path": "services/agri-data-service/src/agri_data_service/method/botanical_recommendations/", "status": "future"},
+          {"path": "services/agri-data-service/tests/method/test_botanical_recommendations.py", "status": "future"}
+        ]
+      },
+      {
+        "id": "r3",
+        "task": "Release-pinned recommendation API and agent explanation",
+        "model": "gpt-6-astra",
+        "depends_on": ["r1", "r2"],
+        "owns": [
+          {"path": "services/agri-data-service/src/agri_data_service/agent/botanical_recommendations.py", "status": "future"},
+          {"path": "services/agri-data-service/tests/test_botanical_recommendation_agent.py", "status": "future"}
+        ]
+      },
+      {
+        "id": "r4",
+        "task": "Integrated recommendation candidate and exact-tree receipt",
+        "model": "gpt-6-astra",
+        "depends_on": ["r1", "r2", "r3"],
+        "owns": [
+          {"path": "conductor/tracks/botanical_species_recommendation_validation_20260911/evidence/integration-receipt.json", "status": "future"}
+        ]
+      },
+      {
+        "id": "r5",
+        "task": "Independent botanical, statistical, safety and agent-honesty verdict",
+        "model": "gpt-6-astra",
+        "depends_on": ["r4"],
+        "owns": [
+          {"path": "conductor/tracks/botanical_species_recommendation_validation_20260911/evidence/independent-review.md", "status": "future"}
+        ]
+      }
+    ],
+    "shared_writes": [
+      {
+        "path": "services/agri-data-service/src/agri_data_service/method/ml/recommendation_models.py",
+        "owner": "r2",
+        "serializes_after": "repository_conformity_hardening_20260901",
+        "reason": "Extend the existing species-fit model only after the active conformity owner completes or explicitly transfers this file and the new evidence contract passes review."
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/routes/recommendations.py",
+        "owner": "r3",
+        "serializes_after": "repository_conformity_hardening_20260901",
+        "reason": "Expose recommendation evidence and release identities only after the active route/conformity owner transfers the existing endpoint."
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/agent/tools.py",
+        "owner": "r3",
+        "serializes_after": "botanical_species_profile_lookup_20260911",
+        "reason": "Extend the shared tool registry with recommendation composition only after the species-profile tool and its release contract are accepted; the active reader track is also an explicit dependency."
+      },
+      {
+        "path": "services/agri-data-service/tests/test_agent_parquet_tools.py",
+        "owner": "r3",
+        "serializes_after": "botanical_species_profile_lookup_20260911",
+        "reason": "Add composition, provenance and abstention tests after the profile tool owner transfers this shared surface."
+      },
+      {
+        "path": "services/agri-data-service/tests/test_agent_provider_wiring.py",
+        "owner": "r3",
+        "serializes_after": "botanical_species_profile_lookup_20260911",
+        "reason": "Prove the recommendation tool is reachable through the model-facing provider after the profile tool owner transfers the shared registration surface."
+      }
+    ],
+    "integration_slice": "r4"
+  }
+}
