@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "reviewed_on": "2026-09-11",
+  "base_commit": "fa202230958fb55521963e886eb031be5fc266c4",
+  "branch": "codex/active-track-integration-20260911",
+  "status": "APPROVE",
+  "scope": "Integration preparation only: initial four-document review and the scoped historical-horizon supplement below",
+  "reviewer_task": "/root/integration_packet_review",
+  "reviewer_independent_of_author": true,
+  "reviewed_files": [
+    "conductor/tracks/parquet_duckdb_pivot_20260823/plan.md",
+    "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/integration-ledger-20260911.md",
+    "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/release-packet-20260911.md",
+    "conductor/tracks/postgres_shrink_ingest_repoint_20260825/evidence/residual-handoff-20260911.md"
+  ],
+  "checks": {
+    "local_markdown_links_and_anchors": {
+      "status": "PASS",
+      "count": 24
+    },
+    "okf_frontmatter": {
+      "status": "PASS",
+      "files": 4
+    },
+    "direct_untracked_file_whitespace": {
+      "status": "PASS",
+      "files": 4
+    },
+    "branch_and_base_identity": "PASS",
+    "dated_service_ids_and_fresh_preflight_requirement": "PASS",
+    "full_python_receipt_command_contract": "PASS",
+    "ownership_and_successor_boundaries": "PASS",
+    "baseline_exclusion_and_no_premature_acceptance": "PASS"
+  },
+  "actionable_findings": [],
+  "supplemental_review": {
+    "reviewer_task": "/root/integration_packet_review",
+    "status": "APPROVE",
+    "affected_files": [
+      "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/historical-horizons-20260911.md",
+      "conductor/tracks/parquet_duckdb_pivot_20260823/plan.md",
+      "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/preparation-review-20260911.json"
+    ],
+    "local_links_checked": 7,
+    "prior_review_file_paths_checked": 4,
+    "json_okf_and_whitespace": "PASS",
+    "horizon_source_comparison": "PASS against independent historical_horizons report and cited dated repository evidence",
+    "verdict_boundary": "Only the original-horizon inventory is reconciled; missing parity/publication/current acceptance remains open and peer ownership is not expanded",
+    "actionable_findings": []
+  },
+  "accepted_peer_branches": [],
+  "application_tests_run": false,
+  "combined_quality_sweep_run": false,
+  "production_checks_run": false,
+  "production_mutations_performed": false,
+  "umbrella_closure_approved": false,
+  "production_release_approved": false,
+  "inherited_tracked_patch_sha256": "e0fbeb77a458bf0597f7b9822852e57148a42fd6ed398475878850521c92f1b9",
+  "inherited_untracked_manifest_file_count": 44,
+  "baseline_integrity_note": "Root compared the current tracked diff with its captured inherited patch before this review; the hashes match. No inherited baseline file is part of the reviewed authored scope.",
+  "remaining_gates": [
+    "Resolve six stable peer task IDs and receive reviewed commit/file manifests",
+    "Reconcile parent baseline or isolated patches for already-dirty track documents",
+    "Integrate accepted peer changes and run the final combined sweep and independent review",
+    "Complete exact candidate/runtime/rollback identities and production acceptance evidence"
+  ],
+  "reviewed_document_sha256": {
+    "conductor/tracks/parquet_duckdb_pivot_20260823/plan.md": "9094eeb2329b7f069a2b7b75f25be31fd338788ecb662c91465900a7aaa8cb03",
+    "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/integration-ledger-20260911.md": "278d69c947ef1cb5f3cb1183df9a02197c70c080236504020ad94bc631a3715d",
+    "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/release-packet-20260911.md": "a776e8d1aae56b18ceea41168bd4aa6079048485e0b2d2efc0b313d053bfb1e8",
+    "conductor/tracks/postgres_shrink_ingest_repoint_20260825/evidence/residual-handoff-20260911.md": "4ba05e61d26f9be7003ff4b2ca73248b9c1637a0e711659b78ba224f030318b6",
+    "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/historical-horizons-20260911.md": "1c85104800fbb340fd50787c8ec6e5ae28fef8569c36de08a22c4f0c85ecf8a8"
+  }
+}
