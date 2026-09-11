@@ -13,6 +13,8 @@ No runtime implementation is authorized by this planning pass.
 - [ ] Receive an admitted source release and its collection-level terms.
 - [ ] Freeze every logical grain, release-set identity, taxonomy authority,
   normalization recipe and dual temporal meaning.
+- [ ] Freeze the canonical taxon concept key shared with the nonspatial species
+  profile lookup; keep occurrence publication nonblocking when no profile exists.
 - [ ] Profile spatial uncertainty before selecting detail and aggregate supports.
 - [ ] Wait for the active gapless publication owner to complete or explicitly
   transfer shared direct-pipeline, lane-registry and executor files.
@@ -46,5 +48,7 @@ No runtime implementation is authorized by this planning pass.
   temporal distance, represented spatial support, uncertainty-aware distance and
   no silent substitution.
 - [ ] Hand the frozen contract to the experience track before implementation.
+- [ ] Hand canonical taxon and release identities to the species-profile lookup
+  without adding trait columns or a database fallback to occurrence records.
 - [ ] Obtain a separate data-contract, recovery and scientific-honesty verdict;
   the implementation/integration owner cannot approve its own work.

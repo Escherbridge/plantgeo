@@ -1,7 +1,7 @@
 ---
 type: track-plan
 track: pnw_herbaria_source_admission_20260911
-status: blocked
+status: active
 ---
 
 # Plan
@@ -11,6 +11,14 @@ The owner subsequently authorized a bounded data-only acquisition after the
 pre-acquisition source gates pass. Those gates remain open. The
 [packet](evidence/admission-packet.md) records the measured metadata, unmeasured
 archive obligations and [handoff](evidence/requests-and-handoff.md).
+
+The track is active under `b9b7bf4`; the two collection admissions are blocked.
+The authorized future stage may inspect, hash and inventory permitted archives
+in quarantine and prepare an ingestion handoff after the collection rights,
+withholding and archive-control gates pass. No acquisition occurs during this
+baseline synchronization. The existing two-archive ceiling is unchanged.
+See [baseline synchronization](evidence/baseline-synchronization.md) for current
+track relationships and the verification receipt for this merge.
 
 ## A0 — freeze the candidate set
 

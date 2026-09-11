@@ -2,7 +2,7 @@
   "slug": "pnw_herbaria_source_admission_20260911",
   "title": "PNW Herbaria source admission and release governance",
   "type": "data-governance",
-  "status": "blocked",
+  "status": "active",
   "created_on": "2026-09-11",
   "depends_on": [],
   "research_source": {
@@ -17,7 +17,7 @@
   "execution_scope": "Metadata and source-governance evidence only so far; owner conditionally authorizes a bounded data-only pilot after source gates. No images, publication, scheduling, API/UI, production or runtime changes.",
   "handoff": "evidence/requests-and-handoff.md",
   "partitions": {
-    "confidence": "planned",
+    "confidence": "active",
     "slices": [
       {
         "id": "a1",
@@ -25,28 +25,51 @@
         "model": "gpt-5.6-sol",
         "depends_on": [],
         "owns": [
-          {"path": "conductor/tracks/pnw_herbaria_source_admission_20260911/evidence/", "status": "future"}
+          {
+            "path": "conductor/tracks/pnw_herbaria_source_admission_20260911/evidence/",
+            "status": "future"
+          }
         ]
       },
       {
         "id": "a2",
         "task": "Bounded DwCA/EML schema and identity-stability pilot",
         "model": "gpt-6-astra",
-        "depends_on": ["a1"],
+        "depends_on": [
+          "a1"
+        ],
         "owns": [
-          {"path": "conductor/tracks/pnw_herbaria_source_admission_20260911/evidence/archive-schema-identity-receipt.json", "status": "future"}
+          {
+            "path": "conductor/tracks/pnw_herbaria_source_admission_20260911/evidence/archive-schema-identity-receipt.json",
+            "status": "future"
+          }
         ]
       },
       {
         "id": "a3",
         "task": "Independent source-governance and archive-safety verdict",
         "model": "gpt-6-astra",
-        "depends_on": ["a1", "a2"],
+        "depends_on": [
+          "a1",
+          "a2"
+        ],
         "owns": [
-          {"path": "conductor/tracks/pnw_herbaria_source_admission_20260911/evidence/independent-review.md", "status": "future"}
+          {
+            "path": "conductor/tracks/pnw_herbaria_source_admission_20260911/evidence/independent-review.md",
+            "status": "future"
+          }
         ]
       }
     ],
     "integration_slice": "a3"
-  }
+  },
+  "related_tracks": [
+    "botanical_occurrence_parquet_lane_20260911",
+    "botanical_species_profile_lookup_20260911",
+    "botanical_occurrence_experience_20260911",
+    "botanical_species_recommendation_validation_20260911"
+  ],
+  "admission_status": "blocked",
+  "planning_baseline": "b9b7bf4fcc0c58556d10fc58522edced8962b869",
+  "synchronization_evidence": "evidence/baseline-synchronization.md"
 }

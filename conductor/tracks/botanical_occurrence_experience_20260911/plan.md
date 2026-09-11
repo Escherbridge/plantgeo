@@ -27,6 +27,9 @@ No UI, service or data implementation is part of this planning pass.
   picking and feature budgets.
 - [ ] Define the capability-catalogue and agent-tool schemas without introducing
   a second interpretation of the metrics.
+- [ ] Expose canonical taxon and occurrence-release identities for composition
+  with the nonspatial species-profile API; do not join editable database values
+  or calculate recommendation suitability inside the map layer.
 - [ ] Require explicit neighbour date/interval, temporal and spatial distances,
   uncertainty and no-silent-substitution response states.
 

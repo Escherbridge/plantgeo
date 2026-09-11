@@ -1,7 +1,7 @@
 ---
 type: track-spec
 slug: pnw_herbaria_source_admission_20260911
-status: blocked
+status: active
 ---
 
 # PNW Herbaria source admission and release governance
@@ -12,6 +12,25 @@ Establish whether a small, named set of Consortium of Pacific Northwest Herbaria
 collections can be captured, normalized and redistributed as governed specimen
 facts. This track ends with an admission or refusal packet for each collection.
 It publishes no PlantGeo layer.
+
+## Active track and blocked collection admissions
+
+The track remains active under planning baseline `b9b7bf4`; WTU and UBC
+occurrence-release admissions remain blocked with no admitted releases. Active
+means the source-governance work is open, not that acquisition gates have passed.
+The [synchronization record](evidence/baseline-synchronization.md) preserves the
+historical evidence and distinguishes these two states.
+
+The [occurrence plane](../botanical_occurrence_parquet_lane_20260911/spec.md)
+owns spatial specimen facts. The parent-owned
+[species-profile lookup](../botanical_species_profile_lookup_20260911/spec.md)
+owns nonspatial growth requirements and per-value evidence. They share a pinned
+taxon authority/version/concept key; traits are not occurrence attributes, and a
+missing profile must neither drop specimens nor block an otherwise admitted
+occurrence release. The
+[recommendation-validation track](../botanical_species_recommendation_validation_20260911/spec.md)
+composes documented occurrence, establishment compatibility and separately
+reviewed objective-effect evidence without conflating them.
 
 ## September 11 execution boundary
 
@@ -92,7 +111,7 @@ quarantined until the collection's terms and schema are admitted.
 
 ## Acceptance
 
-This track completes when every pilot collection has a dated admission/refusal
+This active track completes when every pilot collection has a dated admission/refusal
 packet, immutable source-release identity, schema/profile receipt, identity
 stability verdict, rights decision, processing budget and rollback/withdrawal
 procedure. Admission authorizes the downstream design tracks to use those exact

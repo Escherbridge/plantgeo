@@ -78,8 +78,13 @@ substitute; it never silently answers an exact-result request.
 
 The agent refuses abundance, percent cover, present occupancy, suitability,
 surveyed absence and historical-publication claims that specimen evidence cannot
-support. Any future trait, vegetation-community or distribution-model view needs
-its own source, validation and track.
+support. Species profiles belong to
+`botanical_species_profile_lookup_20260911`; recommendation composition belongs
+to `botanical_species_recommendation_validation_20260911`. Both may consume this
+track's pinned occurrence evidence, but must present documented occurrence,
+establishment compatibility and objective effect as separate evidence families.
+A nearby specimen is never a suitability label. Any future vegetation-community
+or distribution-model view still needs its own source, validation and track.
 
 ## Acceptance
 

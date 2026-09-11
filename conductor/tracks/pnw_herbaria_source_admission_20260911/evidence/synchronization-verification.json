@@ -1,0 +1,237 @@
+{
+  "schema_version": 1,
+  "verified_at": "2026-09-11T23:20:07.980161+00:00",
+  "status": "passed",
+  "baseline_commit": "b9b7bf4fcc0c58556d10fc58522edced8962b869",
+  "packet_commit": "f19678c9609c49ad517b5e03554d1cd17bf4ed4e",
+  "track_status": "active",
+  "admission_status": "blocked",
+  "admitted_releases": [],
+  "scope": "Offline documentation and evidence integrity only; no network, acquisition, application tests or runtime certification",
+  "checks": [
+    "Resolved merge and exact parent references",
+    "Baseline files outside source track unchanged",
+    "Historical packet evidence and captures byte-identical in working tree and Git index",
+    "Bounded resolution paths",
+    "OKF/JSON/conflict-marker/whitespace checks",
+    "Local links and external URL syntax only",
+    "Active track and blocked collection decisions",
+    "Profile relationship and Parquet-only serving",
+    "Four captured metadata lengths/SHA256",
+    "All receipt inputs equal staged Git bytes"
+  ],
+  "historical_files_preserved": 22,
+  "baseline_files_inherited_unchanged": 13,
+  "markdown_files_checked": 17,
+  "json_files_checked": 7,
+  "local_links_checked": 105,
+  "external_urls_syntax_checked": 17,
+  "direct_metadata_bytes": 186764,
+  "inputs": [
+    {
+      "path": ".omc/research/.gitattributes",
+      "bytes": 219,
+      "sha256": "c39710520b780fc6b988519b37314a07c558ac8bb64c4ab3ba755ea78a5127bb"
+    },
+    {
+      "path": ".omc/research/pnw-admission-eml-http-receipt-20260911.json",
+      "bytes": 911,
+      "sha256": "98855153071ea173ae2062de5d732fd6d30617f11f78fd096824442504632f35"
+    },
+    {
+      "path": ".omc/research/pnw-admission-eml-standards-20260911.md",
+      "bytes": 37465,
+      "sha256": "f8d862dd3185fdd576d567b2183c01219f6f2885a2bedb55553775b47fc6d434"
+    },
+    {
+      "path": ".omc/research/pnw-admission-fetch-20260911.py",
+      "bytes": 2214,
+      "sha256": "c7387e9b6992169027d4a22625039f06db5fa602d3ec16156f82e2ec3f2e02c8"
+    },
+    {
+      "path": ".omc/research/pnw-admission-http-receipts-20260911.json",
+      "bytes": 2257,
+      "sha256": "e6e3175d2f741decd25060b4f65e252267cd99514d53a28bfb8ca2701c9fb478"
+    },
+    {
+      "path": ".omc/research/pnw-admission-institutional-20260911.md",
+      "bytes": 28184,
+      "sha256": "a3472718464bb9fede6f1ad8124456f311b1081e787df8ab7f37465431a10023"
+    },
+    {
+      "path": ".omc/research/pnw-admission-policy-detail-20260911.md",
+      "bytes": 15080,
+      "sha256": "fe35501032e6498dce6def04f242b74aa2cb19782c0aaa96e07100ae97f60705"
+    },
+    {
+      "path": ".omc/research/pnw-admission-portal-20260911.md",
+      "bytes": 23503,
+      "sha256": "17ad296e4b082e567aa257b03288f936ba92e12b7f17a2355b7c497ee8a2115b"
+    },
+    {
+      "path": ".omc/research/pnw-admission-rights-20260911.md",
+      "bytes": 37222,
+      "sha256": "e56db3f3400b6a102f369debbe1e156f43c55bfa911310678294f224153744e0"
+    },
+    {
+      "path": ".omc/research/pnw-admission-standard-detail-20260911.md",
+      "bytes": 14832,
+      "sha256": "bc913aa7c9a8382897a80f790152da444c24a9d34930e8508668a78ecc3e2890"
+    },
+    {
+      "path": ".omc/research/pnw-admission-sync-verify-20260911.py",
+      "bytes": 7041,
+      "sha256": "5cc08c31b30c24db2f816095387ee0a5b5b32e55d4fd1cb1c84d2791ce616501"
+    },
+    {
+      "path": ".omc/research/pnw-admission-verify-20260911.py",
+      "bytes": 6420,
+      "sha256": "c08264fcd748c96e58096f2588f7d96becddf3074569e190db928960ec816cc4"
+    },
+    {
+      "path": ".omc/research/pnw-policy-independent-20260911.md",
+      "bytes": 232724,
+      "sha256": "bec96b0104987261f6e7c0db7171e0188fcd14283c8eec01639a84b9ce6ea1fc"
+    },
+    {
+      "path": ".omc/research/pnw-portal-inventory-20260911.html",
+      "bytes": 65342,
+      "sha256": "d2fef7a5fb589d10f63929198232dc49885ee9cd3f87691e1affde9e3b8b2bba"
+    },
+    {
+      "path": ".omc/research/pnw-ubc-eml-16.43-20260911.xml",
+      "bytes": 14208,
+      "sha256": "e73735e4eafcb1a233514948f72631ceced3dd22e30445d45f34e593f7293654"
+    },
+    {
+      "path": ".omc/research/pnw-ubc-ipt-20260911.html",
+      "bytes": 86109,
+      "sha256": "21e95a58eea8b31751a8964b22cf1b1136b782595f7c293de11ed9fc89610e23"
+    },
+    {
+      "path": ".omc/research/pnw-wtu-provider-20260911.html",
+      "bytes": 21105,
+      "sha256": "a9f41eca8787e8fee1e8353a34f436045009259b8677a5fd3377dbe2b1425ea9"
+    },
+    {
+      "path": "conductor/tracks.md",
+      "bytes": 11903,
+      "sha256": "5c701c2a46811254219bf12159a96e2fd630fadeada7cbfbfeb47e3998e72e3d"
+    },
+    {
+      "path": "conductor/tracks/botanical_occurrence_experience_20260911/metadata.json",
+      "bytes": 4510,
+      "sha256": "ccdef2081f4f6dcdbc355c2344c84eaf3b38ce8b203e774c76cb9475b1429524"
+    },
+    {
+      "path": "conductor/tracks/botanical_occurrence_experience_20260911/plan.md",
+      "bytes": 2177,
+      "sha256": "0ccb10e670a223cededfd857745152774a7ef2ca02e6fd577aadc77a953829b5"
+    },
+    {
+      "path": "conductor/tracks/botanical_occurrence_experience_20260911/spec.md",
+      "bytes": 5105,
+      "sha256": "9f37f757024e48e96cfb930518cbc2245d47d47105ca332b6637e63700812457"
+    },
+    {
+      "path": "conductor/tracks/botanical_occurrence_parquet_lane_20260911/metadata.json",
+      "bytes": 3819,
+      "sha256": "df04e64c7dd4900c33ef369add8a4cdd40146a5718f1b56b7b0476018e1daf03"
+    },
+    {
+      "path": "conductor/tracks/botanical_occurrence_parquet_lane_20260911/plan.md",
+      "bytes": 2575,
+      "sha256": "c0e5c6fddc325dc90eabc5f5874efc3141b0447cff07899aa914617fdb69cee7"
+    },
+    {
+      "path": "conductor/tracks/botanical_occurrence_parquet_lane_20260911/spec.md",
+      "bytes": 6114,
+      "sha256": "3e30f355724a482328639127564fd484cb7586b16630d459be4c4e5dd896c20c"
+    },
+    {
+      "path": "conductor/tracks/botanical_species_profile_lookup_20260911/metadata.json",
+      "bytes": 6702,
+      "sha256": "0806abc05388f0ebf5f99cbed4131ec9048630d01e2fe16da515cea99ea42133"
+    },
+    {
+      "path": "conductor/tracks/botanical_species_profile_lookup_20260911/plan.md",
+      "bytes": 4093,
+      "sha256": "df2e1ccac6d9c97fe78b6406b8428681076afe3ece4f8be03be391432e6beef6"
+    },
+    {
+      "path": "conductor/tracks/botanical_species_profile_lookup_20260911/spec.md",
+      "bytes": 7292,
+      "sha256": "c4ab73b60349499bac37098724bdade1ef279c67faf3a28145d8cdce8e854b35"
+    },
+    {
+      "path": "conductor/tracks/botanical_species_recommendation_validation_20260911/metadata.json",
+      "bytes": 4701,
+      "sha256": "91606fdabfa65e802fd494e9b86b5acd9cd9fd71dc84a7464595b3b9c2ef4c85"
+    },
+    {
+      "path": "conductor/tracks/botanical_species_recommendation_validation_20260911/plan.md",
+      "bytes": 3105,
+      "sha256": "3e9e20caa8a48e99440b04e46682e79911ace41a5bd6fe68bdd773686e011ec2"
+    },
+    {
+      "path": "conductor/tracks/botanical_species_recommendation_validation_20260911/spec.md",
+      "bytes": 5374,
+      "sha256": "950f27402649c6089e881bdb87cfe3a2566979fc2676535ad58130cc5fe4035c"
+    },
+    {
+      "path": "conductor/tracks/pnw_herbaria_source_admission_20260911/evidence/admission-decisions.json",
+      "bytes": 3700,
+      "sha256": "82d389ca3583a5a3b78e375ae2f82d3f348787c049804cf3e46cf54962553ca6"
+    },
+    {
+      "path": "conductor/tracks/pnw_herbaria_source_admission_20260911/evidence/admission-packet.md",
+      "bytes": 16109,
+      "sha256": "567f4fe238d5716603ccbb867b75229f4eff9ae943536ca9a827323f2e83b3ef"
+    },
+    {
+      "path": "conductor/tracks/pnw_herbaria_source_admission_20260911/evidence/baseline-synchronization.md",
+      "bytes": 4437,
+      "sha256": "116d9c6486cfcc092646de07c1716a2f2a7de1bc8426f1581cdb7a9c455fbab5"
+    },
+    {
+      "path": "conductor/tracks/pnw_herbaria_source_admission_20260911/evidence/independent-review.md",
+      "bytes": 8857,
+      "sha256": "ec1c87a8730ce62cf4477086379f730dc58aabf032e90ca188c4f4aacb5eb7c4"
+    },
+    {
+      "path": "conductor/tracks/pnw_herbaria_source_admission_20260911/evidence/requests-and-handoff.md",
+      "bytes": 7948,
+      "sha256": "845dde8eb226951e22e5f2622a3f99fe633b62f8e6b6278ac1c044911c7e3c8a"
+    },
+    {
+      "path": "conductor/tracks/pnw_herbaria_source_admission_20260911/evidence/source-register.md",
+      "bytes": 5884,
+      "sha256": "a2cf2878a7ab971b49d7dda639f6f65c4ac9161d6153034792eb106cce166ef9"
+    },
+    {
+      "path": "conductor/tracks/pnw_herbaria_source_admission_20260911/evidence/synchronization-review.md",
+      "bytes": 4665,
+      "sha256": "d98784db5931afc284fff10695339767994b831e9ad1cc4dab738ee24a95bb5e"
+    },
+    {
+      "path": "conductor/tracks/pnw_herbaria_source_admission_20260911/evidence/verification.json",
+      "bytes": 5628,
+      "sha256": "0c5335a989b2b6432b7a0908f639f20456c0a4d2c78aeedd7defa2541176d34d"
+    },
+    {
+      "path": "conductor/tracks/pnw_herbaria_source_admission_20260911/metadata.json",
+      "bytes": 2688,
+      "sha256": "16cd9b2d1cf6718ddd29ea2f552c626f9f79de58bca4f9f61f84a23308772c54"
+    },
+    {
+      "path": "conductor/tracks/pnw_herbaria_source_admission_20260911/plan.md",
+      "bytes": 3776,
+      "sha256": "14ad421c90ca3c4a5e6902e528a3c8319117509e8367b36b47ce15418badd38b"
+    },
+    {
+      "path": "conductor/tracks/pnw_herbaria_source_admission_20260911/spec.md",
+      "bytes": 6036,
+      "sha256": "e65cbac7bc2729e825c7913f7e9d19d1f75e036dff0343b70e6bc5bacb9aab07"
+    }
+  ]
+}
