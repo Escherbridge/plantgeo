@@ -6,8 +6,8 @@ NASA POWER response object the value was read from, never a row of `agri.signal_
 
 from __future__ import annotations
 
-from dataclasses import replace
-from typing import Final
+from dataclasses import dataclass, replace
+from typing import Final, Literal
 
 import pyarrow as pa  # type: ignore[import-untyped]
 
@@ -25,6 +25,22 @@ from agri_data_service.warehouse.parquet.tiers import (
 )
 
 SOURCE_MANIFEST_SHA256: Final = "465abc4e813bf28c78acd7f97a4da9d19ad959e525de3eb1f422ca2f6e73e94f"
+
+type SnapshotSchemaFamily = Literal["signal", "soil-wetness", "soil-temperature"]
+
+
+@dataclass(frozen=True, slots=True)
+class SnapshotSchemaDescriptor:
+    """One canonical Arrow shape shared by snapshot writers, registrations, and readers."""
+
+    family: SnapshotSchemaFamily
+    arrow_schema: pa.Schema
+
+    @property
+    def column_names(self) -> tuple[str, ...]:
+        """Return the fields in their immutable physical order."""
+        return tuple(self.arrow_schema.names)
+
 
 SNAPSHOT_LINEAGE_FIELDS: Final[tuple[pa.Field, ...]] = (
     pa.field("support_key", pa.string(), nullable=False),
@@ -151,6 +167,16 @@ SOIL_TEMPERATURE_FIELDS: Final[tuple[pa.Field, ...]] = (
     pa.field("input_manifest_sha256", pa.string(), nullable=False),
 )
 
+SIGNAL_PRODUCT_SCHEMA: Final = SnapshotSchemaDescriptor("signal", SIGNAL_PLANE_SCHEMA.arrow_schema)
+SOIL_WETNESS_PRODUCT_SCHEMA: Final = SnapshotSchemaDescriptor(
+    "soil-wetness",
+    pa.schema(SOIL_TEMPERATURE_FIELDS[2:]),
+)
+SOIL_TEMPERATURE_PRODUCT_SCHEMA: Final = SnapshotSchemaDescriptor(
+    "soil-temperature",
+    pa.schema(SOIL_TEMPERATURE_FIELDS),
+)
+
 SOIL_TEMPERATURE_GRAIN: Final = (
     "data_source_key",
     "source_parameter",
@@ -197,7 +223,9 @@ SOIL_TEMPERATURE_BASE_NON_NULL_COLUMNS: Final = (
 
 def register_signal_plane_product(stream: str) -> tuple[ParquetStreamSchema, TierDerivation]:
     """Register a physical stream that changes only the frozen signal-plane name."""
-    schema = register_stream_schema(replace(SIGNAL_PLANE_SCHEMA, name=stream))
+    schema = register_stream_schema(
+        replace(SIGNAL_PLANE_SCHEMA, name=stream, arrow_schema=SIGNAL_PRODUCT_SCHEMA.arrow_schema)
+    )
     derivation = register_tier_derivation(replace(SIGNAL_PLANE_TIER_DERIVATION, stream=stream))
     return schema, derivation
 
@@ -245,9 +273,8 @@ def register_soil_wetness_product(stream: str) -> tuple[ParquetStreamSchema, Tie
     schema = register_stream_schema(
         ParquetStreamSchema(
             name=stream,
-            arrow_schema=pa.schema(
-                SOIL_TEMPERATURE_FIELDS[2:],
-                metadata={b"plantgeo_contract": b"plantgeo.signal-product-lane.v1"},
+            arrow_schema=SOIL_WETNESS_PRODUCT_SCHEMA.arrow_schema.with_metadata(
+                {b"plantgeo_contract": b"plantgeo.signal-product-lane.v1"}
             ),
             sort_columns=SOIL_TEMPERATURE_GRAIN[2:],
         )
@@ -272,9 +299,8 @@ def register_soil_temperature_product(stream: str) -> tuple[ParquetStreamSchema,
     schema = register_stream_schema(
         ParquetStreamSchema(
             name=stream,
-            arrow_schema=pa.schema(
-                SOIL_TEMPERATURE_FIELDS,
-                metadata={b"plantgeo_contract": b"plantgeo.signal-product-lane.v1"},
+            arrow_schema=SOIL_TEMPERATURE_PRODUCT_SCHEMA.arrow_schema.with_metadata(
+                {b"plantgeo_contract": b"plantgeo.signal-product-lane.v1"}
             ),
             sort_columns=SOIL_TEMPERATURE_GRAIN,
         )
@@ -295,6 +321,7 @@ def register_soil_temperature_product(stream: str) -> tuple[ParquetStreamSchema,
 
 
 __all__ = [
+    "SIGNAL_PRODUCT_SCHEMA",
     "SNAPSHOT_LINEAGE_AGGREGATIONS",
     "SNAPSHOT_LINEAGE_BASE_NON_NULL_COLUMNS",
     "SNAPSHOT_LINEAGE_FIELDS",
@@ -305,7 +332,11 @@ __all__ = [
     "SOIL_TEMPERATURE_FIELDS",
     "SOIL_TEMPERATURE_GRAIN",
     "SOIL_TEMPERATURE_KEY_COLUMNS",
+    "SOIL_TEMPERATURE_PRODUCT_SCHEMA",
+    "SOIL_WETNESS_PRODUCT_SCHEMA",
     "SOURCE_MANIFEST_SHA256",
+    "SnapshotSchemaDescriptor",
+    "SnapshotSchemaFamily",
     "register_signal_plane_product",
     "register_snapshot_lineage_product",
     "register_soil_temperature_product",

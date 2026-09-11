@@ -1,5 +1,25 @@
 # Execution modules
 
+## Forecast command workflows
+
+`forecast_workflows.py` owns the complete evaluation-only forecast operations: their transaction
+boundaries, SQL calls, vegetation orchestration, and result receipts. The Click adapter resolves
+configuration and parses inputs, then dependency-injects its session factory into one workflow;
+this preserves command test seams without hiding domain work behind a generic transaction wrapper.
+Source-product and job-executor transactions remain with their current owners until those lanes
+explicitly hand them off.
+
+## Chunked source-lane workflow
+
+`chunked_lane.py` owns the shared resumable fetch/checkpoint driver used by Open-Meteo, GloFAS,
+CAMS, and ensemble forecast capture. Lane factories remain late-bound by the command module so
+tests and callers can replace individual product seams, while cache-first resume, bounded waves,
+blocked checkpoints, and failure receipts have one implementation. The driver is interface-agnostic:
+the caller supplies the execution root, successful operations return dictionaries, and failed waves
+raise `ChunkedLaneBackfillError` with the same payload. Click rendering, `ClickException`, and exit
+behavior belong to `interface/cli`. New product policy belongs in factory callbacks rather than a
+copied driver.
+
 ## Durable executor lane pause and resume
 
 `job_lane_control.py` implements `ops jobs-set-lane-enabled --definition

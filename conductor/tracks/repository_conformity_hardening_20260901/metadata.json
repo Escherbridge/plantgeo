@@ -2,8 +2,31 @@
   "reconciliation_20260911": {
     "audited_on": "2026-09-11",
     "source_head": "fa20223",
-    "status": "active",
-    "next_gate": "September 10 snapshot-dispatch and unused-MTBS reader cleanup are recorded in the completed-cutover retrospective. Canonical ownership, remaining candidate proofs and final conformity verdict are still open."
+    "status": "bounded_implementation_complete",
+    "next_gate": "The offline-export owner must run its serialized end-of-wave QUALITY_RECEIPT refresh before either image can pass. The registry owner must retain the track as active until that build gate and the recorded reader, builder, publication, product-transaction, telemetry and migration handoffs are reconciled.",
+    "bounded_write_set": [
+      "services/agri-data-service/src/agri_data_service/execution/chunked_lane.py",
+      "services/agri-data-service/src/agri_data_service/execution/forecast_workflows.py",
+      "services/agri-data-service/src/agri_data_service/interface/cli/commands.py",
+      "services/agri-data-service/src/agri_data_service/sql/cli/{materialize_forecast_iteration,forecast_iteration_summary,reconcile_forecast_iteration_actuals,forecast_iteration_outcome_totals}.sql (moved)",
+      "services/agri-data-service/src/agri_data_service/sql/execution/{materialize_forecast_iteration,forecast_iteration_summary,reconcile_forecast_iteration_actuals_command,forecast_iteration_outcome_totals}.sql",
+      "services/agri-data-service/src/agri_data_service/warehouse/parquet/snapshot_signal_product.py",
+      "services/agri-data-service/tests/test_chunked_lane_workflow.py",
+      "services/agri-data-service/tests/test_layer_import_contract.py",
+      "services/agri-data-service/tests/parquet/test_snapshot_signal_product_schemas.py",
+      "services/agri-data-service/tests/test_vegetation_ndvi_cli_payloads.py",
+      "services/agri-data-service/tests/test_vegetation_ndvi_release_materialisation.py",
+      "same-directory AGENTS.md files and this track's plan/metadata/evidence"
+    ],
+    "owner_handoffs": [
+      "reader R2: parquet_ops snapshot/coverage/wire responsibilities and projection derivation",
+      "offline export: canonical snapshot builder receipt/finalization consolidation",
+      "offline export serialized join: regenerate QUALITY_RECEIPT.json over the verified 1310-file service tree",
+      "gapless/environmental owners: generic availability, scheduler and product repair surfaces",
+      "executor/source-product owners: 18 exact non-forecast CLI transaction sites",
+      "product/API owners: geofence disposition and inviteMember telemetry sunset gate",
+      "shrink/migration owners: all Drizzle and Alembic history"
+    ]
   },
   "slug": "repository_conformity_hardening_20260901",
   "title": "Repository conformity, reuse, and dead-code hardening",
@@ -64,7 +87,7 @@
           }
         ],
         "depends_on": [],
-        "status": "planned"
+        "status": "complete"
       },
       {
         "id": "c1",
@@ -80,7 +103,7 @@
           "services/agri-data-service/Dockerfile"
         ],
         "depends_on": [],
-        "status": "planned"
+        "status": "complete"
       },
       {
         "id": "c2",
@@ -101,7 +124,7 @@
         "depends_on": [
           "c1"
         ],
-        "status": "planned"
+        "status": "complete_with_owner_handoffs"
       },
       {
         "id": "c3",
@@ -137,7 +160,7 @@
         "depends_on": [
           "c1"
         ],
-        "status": "planned"
+        "status": "complete_with_retained_candidates"
       },
       {
         "id": "c4",
@@ -153,7 +176,7 @@
           "c2",
           "c3"
         ],
-        "status": "planned"
+        "status": "complete_with_owner_handoffs"
       }
     ],
     "integration_slice": "c4",

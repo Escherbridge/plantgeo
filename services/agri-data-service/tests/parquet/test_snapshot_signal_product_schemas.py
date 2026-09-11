@@ -18,6 +18,11 @@ from agri_data_service.warehouse.parquet.schema import (
     SIGNAL_PLANE_TIER_DERIVATION,
     get_stream_schema,
 )
+from agri_data_service.warehouse.parquet.snapshot_signal_product import (
+    SIGNAL_PRODUCT_SCHEMA,
+    SOIL_TEMPERATURE_PRODUCT_SCHEMA,
+    SOIL_WETNESS_PRODUCT_SCHEMA,
+)
 from agri_data_service.warehouse.parquet.tiers import (
     ColumnAggregation,
     GridAggregation,
@@ -253,6 +258,19 @@ EXPECTED_SOIL_TEMPERATURE_FIELDS: Final = _field_contract(
 )
 
 EXPECTED_SOIL_WETNESS_FIELDS: Final = EXPECTED_SOIL_TEMPERATURE_FIELDS[2:]
+
+
+def test_snapshot_streams_register_from_their_canonical_physical_descriptors() -> None:
+    assert SIGNAL_PRODUCT_SCHEMA.arrow_schema is SIGNAL_PLANE_SCHEMA.arrow_schema
+    assert _field_contract(SOIL_WETNESS_PRODUCT_SCHEMA.arrow_schema) == EXPECTED_SOIL_WETNESS_FIELDS
+    assert _field_contract(SOIL_TEMPERATURE_PRODUCT_SCHEMA.arrow_schema) == EXPECTED_SOIL_TEMPERATURE_FIELDS
+    assert get_stream_schema("climate-field-air-temperature-mean").arrow_schema is SIGNAL_PRODUCT_SCHEMA.arrow_schema
+    assert _field_contract(get_stream_schema("soil-wetness-surface").arrow_schema) == _field_contract(
+        SOIL_WETNESS_PRODUCT_SCHEMA.arrow_schema
+    )
+    assert _field_contract(get_stream_schema("soil-temperature-0-to-7cm").arrow_schema) == _field_contract(
+        SOIL_TEMPERATURE_PRODUCT_SCHEMA.arrow_schema
+    )
 
 
 @pytest.mark.parametrize("stream", ALL_SNAPSHOT_PRODUCT_STREAMS)

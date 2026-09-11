@@ -405,50 +405,38 @@ def test_domain_isolation_actually_has_domains_to_police() -> None:
 
 CLI_ADAPTER_DIRECTORY = "interface/cli"
 
-#: A class named for execution machinery rather than for Click wiring.
+#: A class named for execution machinery rather than for Click wiring. The prefix catches protocol
+#: roles such as LaneChunk/LanePlan as well as concrete classes ending in Lane or Runner.
+CLI_FRAMEWORK_CLASS_PREFIXES: tuple[str, ...] = ("Lane",)
 CLI_FRAMEWORK_CLASS_SUFFIXES: tuple[str, ...] = ("Framework", "Runner", "Lane", "Orchestrator", "Executor")
 
 #: The context-manager method that opens a transaction, whatever it is called on.
 CLI_TRANSACTION_METHOD = "begin"
 
-#: What `c2` still owes, counted at HEAD `ad4e015`: 24 transaction boundaries and 2 framework
-#: classes, all in `commands.py`. The exact sites are pinned rather than only how many there are,
-#: so a PARTIAL extraction and a one-for-one SWAP -- one site extracted, a new one grown elsewhere
-#: -- are both loud; a count alone silently accepts either. `test_cli_is_a_thin_click_adapter` is
-#: `xfail(strict=True)`, so it fails as XPASS the moment the last one lands and the whole block
-#: flips to an enforced rule. The line numbers move whenever `commands.py` does: regenerate this
-#: list from the assertion message below, never by editing entries until the test passes again.
-CLI_ADAPTER_VIOLATIONS: tuple[str, ...] = (
-    "interface/cli/commands.py:623 owns a transaction boundary 'session.begin()'",
-    "interface/cli/commands.py:737 owns a transaction boundary 'session.begin()'",
-    "interface/cli/commands.py:808 owns a transaction boundary 'session.begin()'",
-    "interface/cli/commands.py:983 owns a transaction boundary 'session.begin()'",
-    "interface/cli/commands.py:1066 owns a transaction boundary 'session.begin()'",
-    "interface/cli/commands.py:1177 owns a transaction boundary 'session.begin()'",
-    "interface/cli/commands.py:1583 owns a transaction boundary 'combined_local_engine().begin()'",
-    "interface/cli/commands.py:1859 owns a transaction boundary 'session.begin()'",
-    "interface/cli/commands.py:1953 owns a transaction boundary 'session.begin()'",
-    "interface/cli/commands.py:1962 owns a transaction boundary 'session.begin()'",
-    "interface/cli/commands.py:2050 owns a transaction boundary 'session.begin()'",
-    "interface/cli/commands.py:2168 owns a transaction boundary 'session.begin()'",
-    "interface/cli/commands.py:2172 owns a transaction boundary 'session.begin()'",
-    "interface/cli/commands.py:2231 defines execution machinery 'class LaneChunkRunner'",
-    "interface/cli/commands.py:2244 defines execution machinery 'class ChunkedLane'",
-    "interface/cli/commands.py:2503 owns a transaction boundary 'session.begin()'",
-    "interface/cli/commands.py:2543 owns a transaction boundary 'session.begin()'",
-    "interface/cli/commands.py:2629 owns a transaction boundary 'session.begin()'",
-    "interface/cli/commands.py:2641 owns a transaction boundary 'session.begin()'",
-    "interface/cli/commands.py:2743 owns a transaction boundary 'session.begin()'",
-    "interface/cli/commands.py:2756 owns a transaction boundary 'session.begin()'",
-    "interface/cli/commands.py:2940 owns a transaction boundary 'session.begin()'",
-    "interface/cli/commands.py:2942 owns a transaction boundary 'session.begin()'",
-    "interface/cli/commands.py:2997 owns a transaction boundary 'session.begin()'",
-    "interface/cli/commands.py:3004 owns a transaction boundary 'session.begin()'",
-    "interface/cli/commands.py:3048 owns a transaction boundary 'session.begin()'",
+# These transaction boundaries belong to active executor and source-product lanes. Conformity C2
+# extracted the six forecast boundaries and all shared lane framework definitions; the remaining
+# sites stay pinned until their owners explicitly hand them off. Exact-site pinning refuses both
+# new debt and a sideways one-for-one move while preserving the ownership freeze.
+CLI_ADAPTER_OWNER_CONTINGENT_VIOLATIONS: tuple[str, ...] = (
+    "interface/cli/commands.py:1286 owns a transaction boundary 'combined_local_engine().begin()'",
+    "interface/cli/commands.py:1562 owns a transaction boundary 'session.begin()'",
+    "interface/cli/commands.py:1656 owns a transaction boundary 'session.begin()'",
+    "interface/cli/commands.py:1665 owns a transaction boundary 'session.begin()'",
+    "interface/cli/commands.py:1753 owns a transaction boundary 'session.begin()'",
+    "interface/cli/commands.py:1871 owns a transaction boundary 'session.begin()'",
+    "interface/cli/commands.py:1875 owns a transaction boundary 'session.begin()'",
+    "interface/cli/commands.py:2014 owns a transaction boundary 'session.begin()'",
+    "interface/cli/commands.py:2054 owns a transaction boundary 'session.begin()'",
+    "interface/cli/commands.py:2140 owns a transaction boundary 'session.begin()'",
+    "interface/cli/commands.py:2152 owns a transaction boundary 'session.begin()'",
+    "interface/cli/commands.py:2254 owns a transaction boundary 'session.begin()'",
+    "interface/cli/commands.py:2267 owns a transaction boundary 'session.begin()'",
+    "interface/cli/commands.py:2451 owns a transaction boundary 'session.begin()'",
+    "interface/cli/commands.py:2453 owns a transaction boundary 'session.begin()'",
+    "interface/cli/commands.py:2508 owns a transaction boundary 'session.begin()'",
+    "interface/cli/commands.py:2515 owns a transaction boundary 'session.begin()'",
+    "interface/cli/commands.py:2559 owns a transaction boundary 'session.begin()'",
 )
-
-#: Quoted by the xfail reason below; `CLI_ADAPTER_VIOLATIONS` is the source of truth.
-CLI_ADAPTER_VIOLATION_COUNT = len(CLI_ADAPTER_VIOLATIONS)
 
 
 def _cli_adapter_violations(pkg_root: Path) -> list[str]:
@@ -461,7 +449,9 @@ def _cli_adapter_violations(pkg_root: Path) -> list[str]:
         relative = py_file.relative_to(pkg_root).as_posix()
         tree = ast.parse(py_file.read_text(encoding="utf-8"), filename=str(py_file))
         for node in ast.walk(tree):
-            if isinstance(node, ast.ClassDef) and node.name.endswith(CLI_FRAMEWORK_CLASS_SUFFIXES):
+            if isinstance(node, ast.ClassDef) and (
+                node.name.startswith(CLI_FRAMEWORK_CLASS_PREFIXES) or node.name.endswith(CLI_FRAMEWORK_CLASS_SUFFIXES)
+            ):
                 violations.append((relative, node.lineno, f"defines execution machinery 'class {node.name}'"))
             elif isinstance(node, ast.With | ast.AsyncWith):
                 violations.extend(
@@ -476,10 +466,7 @@ def _cli_adapter_violations(pkg_root: Path) -> list[str]:
 
 @pytest.mark.xfail(
     strict=True,
-    reason=(
-        f"{CLI_ADAPTER_VIOLATION_COUNT} known violations await the wave-C2 extraction; "
-        "the count is pinned by test_cli_adapter_violations_stay_pinned"
-    ),
+    reason="18 owner-contingent transaction boundaries remain outside conformity C2 authority",
 )
 def test_cli_is_a_thin_click_adapter() -> None:
     """`interface/cli` may wire Click to a domain; it may not own transactions or lane frameworks."""
@@ -489,18 +476,64 @@ def test_cli_is_a_thin_click_adapter() -> None:
     assert not violations, "CLI thin-adapter violations found:\n" + "\n".join(violations)
 
 
-def test_cli_adapter_violations_stay_pinned() -> None:
-    """The xfail above only proves 'more than zero'. This pins WHICH sites, in both directions."""
+def test_cli_adapter_debt_is_limited_to_owner_contingent_transactions() -> None:
+    """Pin the frozen-owner remainder exactly; framework debt and forecast transactions are gone."""
     pkg_root = Path(__file__).resolve().parents[1] / "src" / "agri_data_service"
     violations = _cli_adapter_violations(pkg_root)
 
-    assert violations == list(CLI_ADAPTER_VIOLATIONS), (
-        f"the CLI adapter debt moved from {CLI_ADAPTER_VIOLATION_COUNT} sites to {len(violations)}, "
-        "or moved sideways. If c2 extracted work, delete the extracted entries from "
-        "CLI_ADAPTER_VIOLATIONS; if a command grew a new transaction or framework class, put it in a "
-        "domain package instead. A one-for-one swap keeps the count and still fails here, which is "
-        "the point.\nCurrent:\n" + "\n".join(violations)
+    assert violations == list(CLI_ADAPTER_OWNER_CONTINGENT_VIOLATIONS), (
+        "CLI adapter debt changed outside an explicit owner handoff. Current:\n" + "\n".join(violations)
     )
+
+
+def test_forecast_workflows_own_sql_and_transactions() -> None:
+    """The six forecast adapters delegate; their execution module owns SQL and commit boundaries."""
+    pkg_root = Path(__file__).resolve().parents[1] / "src" / "agri_data_service"
+    commands_tree = ast.parse((pkg_root / "interface/cli/commands.py").read_text(encoding="utf-8"))
+    workflow_tree = ast.parse((pkg_root / "execution/forecast_workflows.py").read_text(encoding="utf-8"))
+    helper_names = {
+        "_forecast_refresh_ml_daily",
+        "_forecast_run_iteration",
+        "_forecast_reconcile_actuals",
+        "_forecast_vegetation_register",
+        "_forecast_vegetation_simulate",
+        "_forecast_vegetation_evaluate",
+    }
+    helpers = {
+        node.name: node
+        for node in ast.walk(commands_tree)
+        if isinstance(node, ast.AsyncFunctionDef) and node.name in helper_names
+    }
+
+    assert helpers.keys() == helper_names
+    adapter_database_calls = [
+        (name, node.lineno, node.func.attr)
+        for name, helper in helpers.items()
+        for node in ast.walk(helper)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr in {"begin", "execute"}
+    ]
+    assert not adapter_database_calls
+    workflow_transactions = [
+        node
+        for node in ast.walk(workflow_tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "begin"
+    ]
+    assert len(workflow_transactions) == len(helper_names)
+
+
+def test_shared_chunked_lane_framework_is_interface_agnostic() -> None:
+    """The reusable driver returns native payloads and imports neither Click nor global settings."""
+    pkg_root = Path(__file__).resolve().parents[1] / "src" / "agri_data_service"
+    framework_path = pkg_root / "execution/chunked_lane.py"
+    imports = [name for _line, name in _get_imports(framework_path)]
+
+    assert not [
+        name
+        for name in imports
+        if name in {"click", "agri_data_service.config"} or name.startswith("agri_data_service.interface")
+    ]
 
 
 def test_the_cli_adapter_rule_catches_both_shapes(tmp_path: Path) -> None:
@@ -516,13 +549,17 @@ def test_the_cli_adapter_rule_catches_both_shapes(tmp_path: Path) -> None:
         "        await read_only.execute('select 1')\n"
         "\n"
         "class ChunkedLane:\n"
+        "    pass\n"
+        "\n"
+        "class LaneChunk:\n"
         "    pass\n",
         encoding="utf-8",
     )
 
     violations = _cli_adapter_violations(tmp_path)
 
-    expected_violation_count = 2  # one transaction boundary, one framework class
+    expected_violation_count = 3  # one transaction boundary and both framework naming shapes
     assert len(violations) == expected_violation_count, violations
     assert any("session.begin()" in violation for violation in violations)
     assert any("class ChunkedLane" in violation for violation in violations)
+    assert any("class LaneChunk" in violation for violation in violations)

@@ -8,6 +8,6 @@ Command-line interface wiring (`interface/cli`) and Sanic HTTP API routes (`inte
 
 ## Invariants
 - `agri-service` is the only console script and resolves `agri_data_service.interface.cli:cli`.
-- The four command families are `forecast`, `ml`, `data`, and `ops`; the former flat surface has no aliases.
+- The five command families are `forecast`, `ml`, `data`, `ops`, and `agent`; the former flat surface has no aliases.
 - Every leaf command is registered once and delegates business behavior to a lower layer.
 - No `ingest-*` command import path reads `alembic.ini` or touches `db/agri/**` at import time.

@@ -2,13 +2,18 @@
 
 ## Responsibility
 
-Thin Click adapters for the `agri-service` console script. The root exposes exactly four verb groups:
-`forecast`, `ml`, `data`, and `ops`.
+Thin Click adapters for the `agri-service` console script. The root exposes exactly five verb groups:
+`forecast`, `ml`, `data`, `ops`, and `agent`.
 
 ## Dependency rules
 
 - Command bodies delegate to the retained execution, ingest, pipeline, method, warehouse, and shared
   `parquet_ops` modules; this package does not own business rules.
+- Forecast adapters parse options, resolve a DSN, invoke `execution/forecast_workflows.py`, translate
+  native failures, and echo the returned receipt. Transaction ownership, SQL, and result construction
+  do not live here.
+- Chunked history adapters supply the local execution root to `execution/chunked_lane.py`, render its
+  returned payload, and translate `ChunkedLaneBackfillError`; the shared driver imports no Click or settings.
 - Parquet reads acquire bounded core admission through `parquet_ops`; no CLI adapter opens DuckDB directly.
 - Parquet day/window commands use the live lane for all dates. Coverage remains a registered-lane
   listing audit; frozen snapshot recovery is explicit and is not merged into ordinary CLI answers.

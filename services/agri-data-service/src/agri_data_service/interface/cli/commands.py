@@ -10,10 +10,9 @@ import os
 import tempfile
 import uuid
 from contextlib import suppress
-from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol, Self, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import click
 import httpx
@@ -37,8 +36,8 @@ from agri_data_service.db.maintenance import (
     MaintenanceBusyError,
     maintain_job_event_partitions,
 )
-from agri_data_service.db.sql_queries import load_query_sql
 from agri_data_service.db.vegetation_publication import postgres_vegetation_publication_barrier
+from agri_data_service.execution.chunked_lane import ChunkedLane, ChunkedLaneBackfillError
 from agri_data_service.execution.contracts import ExpectedOutput
 
 # Importing the covariate wind lane is also what REGISTERS its durable handler: `@job_handler`
@@ -100,6 +99,14 @@ from agri_data_service.execution.ensemble_forecast import (
     run_ensemble_forecast_chunks,
     write_ensemble_forecast_checkpoint,
     write_ensemble_forecast_staged_document,
+)
+from agri_data_service.execution.forecast_workflows import (
+    evaluate_vegetation,
+    reconcile_forecast_actuals,
+    refresh_ml_daily,
+    register_vegetation_plane,
+    run_forecast_iteration,
+    simulate_vegetation,
 )
 from agri_data_service.execution.historical_cams import (
     CamsAirQualityChunk,
@@ -230,31 +237,9 @@ from agri_data_service.execution.strategy_selection import (
     train_strategy_models,
 )
 from agri_data_service.execution.vegetation_ndvi_forecast import (
-    METHOD_NAME as VEGETATION_METHOD_NAME,
-)
-from agri_data_service.execution.vegetation_ndvi_forecast import (
     PURPOSE_FORWARD_SIMULATION,
     PURPOSE_HOLDOUT_EVALUATION,
     SimulationRequest,
-)
-from agri_data_service.execution.vegetation_ndvi_plane import (
-    ErrorMetrics,
-    HoldoutEvaluation,
-    IterationOutcome,
-    RegistrationSummary,
-    all_requested_cells_materialised,
-    load_governed_history,
-    load_governed_plane,
-    load_license_snapshots,
-    load_outcome_rows,
-    load_series_identities,
-    pin_determinism,
-    reconcile_actuals,
-    register_governed_plane,
-    release_holds_claimed_corpus,
-    select_candidate_cell_keys,
-    simulate_cells,
-    summarize_holdout,
 )
 from agri_data_service.execution.weather_observations.era5_land import (
     HistoricalOpenMeteoArchivePlan,
@@ -410,18 +395,9 @@ _MAX_RUN_PLAN_KEYS = 10_000
 _MAX_RUN_PLAN_KEY_LENGTH = 500
 _GAP_FILL_FAILED_EXIT_CODE = 1
 
-# Runtime query SQL lives in sql/cli/, loaded once per process; see src/agri_data_service/sql/AGENTS.md.
-_MATERIALIZE_FORECAST_ITERATION = text(load_query_sql("cli/materialize_forecast_iteration.sql"))
-_FORECAST_ITERATION_SUMMARY = text(load_query_sql("cli/forecast_iteration_summary.sql"))
-_RECONCILE_FORECAST_ITERATION_ACTUALS = text(load_query_sql("cli/reconcile_forecast_iteration_actuals.sql"))
-_FORECAST_ITERATION_OUTCOME_TOTALS = text(load_query_sql("cli/forecast_iteration_outcome_totals.sql"))
-
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, Sequence
-
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-    from agri_data_service.execution.vegetation_ndvi_forecast import SeasonalHistory
     from agri_data_service.jobs import JobSliceSummary
     from agri_data_service.pipeline.parquet.lane_registry import LaneRegistration
 
@@ -616,17 +592,7 @@ def _forecast_mv_refresh_database_url() -> str:
 
 
 async def _forecast_refresh_ml_daily() -> int:
-    # No capability-role assumption since 20260808_0019 retired the family: the refresher
-    # function and the matview it refreshes now belong to the owner credential that calls
-    # them, so the refresh is an ordinary owner statement. See alembic/versions/20260808_0019.
-    database_url = _forecast_mv_refresh_database_url()
-    async with forecast_mv_refresh_session(database_url) as session, session.begin():
-        # Non-concurrent REFRESH takes ACCESS EXCLUSIVE on the matview; the timeout is the
-        # same bound every other CLI verb sets so a wedged refresh cannot hold that lock.
-        await session.execute(text("SET LOCAL statement_timeout = '120s'"))
-        await session.execute(text("SELECT agri.refresh_forecast_ml_daily_serving()"))
-        result = await session.execute(text("SELECT count(*) FROM agri.mv_forecast_ml_daily_serving"))
-        return int(result.scalar_one())
+    return await refresh_ml_daily(_forecast_mv_refresh_database_url(), forecast_mv_refresh_session)
 
 
 def _forecast_cli_timestamp(value: str, option_name: str) -> datetime:
@@ -719,50 +685,22 @@ async def _forecast_run_iteration(  # noqa: PLR0913
     lower_bound: float | None,
     upper_bound: float | None,
 ) -> dict[str, Any]:
-    database_url = settings.require_forecast_iteration_database_url()
-    parameters = {
-        "iteration_key": iteration_key,
-        "series_id": series_id,
-        "release_set_id": release_set_id,
-        "as_of_time": as_of_time,
-        "cutoff_time": cutoff_time,
-        "history_start": history_start,
-        "horizon_days": horizon_days,
-        "simulation_count": simulation_count,
-        "seed": seed,
-        "gap_policy": gap_policy,
-        "lower_bound": lower_bound,
-        "upper_bound": upper_bound,
-    }
-    async with forecast_iteration_session(database_url) as session, session.begin():
-        await session.execute(text("SET LOCAL statement_timeout = '120s'"))
-        call_result = await session.execute(_MATERIALIZE_FORECAST_ITERATION, parameters)
-        iteration_id = call_result.scalar_one()
-        summary_result = await session.execute(
-            _FORECAST_ITERATION_SUMMARY,
-            {"iteration_id": iteration_id},
-        )
-        row = summary_result.mappings().one()
-    return {
-        "availability_mode": row["availability_mode"],
-        "cutoff_time": row["cutoff_time"].isoformat(),
-        "gap_policy": row["gap_policy"],
-        "horizon_days": row["horizon_days"],
-        "increment_count": row["increment_count"],
-        "iteration_id": str(row["id"]),
-        "iteration_key": row["iteration_key"],
-        "method": row["method"],
-        "purpose": row["purpose"],
-        "receipt_checksum": row["receipt_checksum"],
-        "recorded_at": row["recorded_at"].isoformat(),
-        "release_set_id": str(row["release_set_id"]),
-        "series_id": str(row["series_id"]),
-        "simulation_count": row["simulation_count"],
-        "simulation_seed": row["simulation_seed"],
-        "state": row["status"],
-        "training_day_count": row["training_day_count"],
-        "value_count": row["value_count"],
-    }
+    return await run_forecast_iteration(
+        database_url=settings.require_forecast_iteration_database_url(),
+        session_factory=forecast_iteration_session,
+        iteration_key=iteration_key,
+        series_id=series_id,
+        release_set_id=release_set_id,
+        as_of_time=as_of_time,
+        cutoff_time=cutoff_time,
+        history_start=history_start,
+        horizon_days=horizon_days,
+        simulation_count=simulation_count,
+        seed=seed,
+        gap_policy=gap_policy,
+        lower_bound=lower_bound,
+        upper_bound=upper_bound,
+    )
 
 
 @click.command("reconcile-actuals")
@@ -804,33 +742,13 @@ async def _forecast_reconcile_actuals(
     actual_release_set_id: uuid.UUID,
     as_of_time: datetime,
 ) -> dict[str, Any]:
-    database_url = settings.require_forecast_iteration_database_url()
-    async with forecast_iteration_session(database_url) as session, session.begin():
-        await session.execute(text("SET LOCAL statement_timeout = '120s'"))
-        call_result = await session.execute(
-            _RECONCILE_FORECAST_ITERATION_ACTUALS,
-            {
-                "iteration_id": iteration_id,
-                "actual_release_set_id": actual_release_set_id,
-                "as_of_time": as_of_time,
-            },
-        )
-        inserted_count = int(call_result.scalar_one())
-        result = await session.execute(
-            _FORECAST_ITERATION_OUTCOME_TOTALS,
-            {"iteration_id": iteration_id},
-        )
-        row = result.mappings().one()
-    return {
-        "actual_count": row["actual_count"],
-        "actual_release_set_id": str(actual_release_set_id),
-        "as_of_time": as_of_time.isoformat(),
-        "inserted_count": inserted_count,
-        "interval_coverage": (float(row["interval_coverage"]) if row["interval_coverage"] is not None else None),
-        "iteration_id": str(iteration_id),
-        "mean_absolute_error": (float(row["mean_absolute_error"]) if row["mean_absolute_error"] is not None else None),
-        "forecast_value_count": row["forecast_value_count"],
-    }
+    return await reconcile_forecast_actuals(
+        database_url=settings.require_forecast_iteration_database_url(),
+        session_factory=forecast_iteration_session,
+        iteration_id=iteration_id,
+        actual_release_set_id=actual_release_set_id,
+        as_of_time=as_of_time,
+    )
 
 
 def _forecast_cli_day(value: str, option_name: str) -> date:
@@ -838,115 +756,6 @@ def _forecast_cli_day(value: str, option_name: str) -> date:
         return date.fromisoformat(value)
     except ValueError as exc:
         raise click.BadParameter("must be an ISO-8601 calendar date", param_hint=option_name) from exc
-
-
-def _resolved_as_of_time(as_of_time: datetime | None, cutoff_day: date) -> datetime:
-    """Resolve the governed availability boundary, refusing a future or pre-cutoff as-of."""
-    resolved = as_of_time if as_of_time is not None else datetime.now(tz=UTC)
-    if resolved > datetime.now(tz=UTC):
-        raise ValueError("as-of boundary cannot be in the future")
-    if resolved < datetime.combine(cutoff_day, datetime.min.time(), tzinfo=UTC):
-        raise ValueError("as-of boundary cannot precede the cutoff day")
-    return resolved
-
-
-VEGETATION_HORIZON_BUCKETS: tuple[tuple[str, int, int], ...] = (
-    ("horizon_1_to_7_days", 1, 7),
-    ("horizon_8_to_14_days", 8, 14),
-    ("horizon_15_to_30_days", 15, 30),
-)
-
-
-def _error_metrics_payload(metrics: ErrorMetrics) -> dict[str, Any]:
-    return {
-        "label": metrics.label,
-        "point_count": metrics.point_count,
-        "mae": (round(metrics.mean_absolute_error, 6) if metrics.point_count else None),
-        "rmse": (round(metrics.root_mean_squared_error, 6) if metrics.point_count else None),
-        "bias": (round(metrics.bias, 6) if metrics.point_count else None),
-    }
-
-
-def _skill_score(method: ErrorMetrics, baseline: ErrorMetrics) -> float | None:
-    if not method.point_count or not baseline.point_count or baseline.root_mean_squared_error == 0.0:
-        return None
-    return round(1.0 - method.root_mean_squared_error / baseline.root_mean_squared_error, 6)
-
-
-def _registration_payload(summary: RegistrationSummary) -> dict[str, Any]:
-    return {
-        "corpus_cell_count": summary.plane.corpus_cell_count,
-        "corpus_cell_day_count": summary.plane.corpus_cell_day_count,
-        "corpus_source_row_count": summary.plane.corpus_row_count,
-        "data_source_id": str(summary.plane.data_source_id),
-        "first_observed_day": summary.plane.first_observed_day.isoformat(),
-        "last_observed_day": summary.plane.last_observed_day.isoformat(),
-        "observation_rows_inserted": summary.observation_count,
-        "release_cell_day_count": summary.materialisation.observation_count,
-        "release_series_count": summary.materialisation.series_count,
-        "release_first_observed_day": (
-            None
-            if summary.materialisation.first_observed_day is None
-            else summary.materialisation.first_observed_day.isoformat()
-        ),
-        "release_last_observed_day": (
-            None
-            if summary.materialisation.last_observed_day is None
-            else summary.materialisation.last_observed_day.isoformat()
-        ),
-        "release_matches_claimed_corpus": release_holds_claimed_corpus(
-            materialisation=summary.materialisation,
-            plane=summary.plane,
-        ),
-        "requested_cells_materialised": summary.selection.series_count,
-        "requested_cell_days_materialised": summary.selection.observation_count,
-        "all_requested_cells_materialised": all_requested_cells_materialised(
-            selection=summary.selection,
-            requested_cell_count=summary.requested_cell_count,
-        ),
-        "payload_checksum": summary.plane.payload_checksum,
-        "release_manifest_checksum": summary.plane.release_manifest_checksum,
-        "release_set_id": str(summary.plane.release_set_id),
-        "requested_cell_count": summary.requested_cell_count,
-        "series_rows_inserted": summary.series_count,
-        "source_release_id": str(summary.plane.source_release_id),
-        "spatial_cell_rows_inserted": summary.spatial_cell_count,
-    }
-
-
-def _iteration_outcome_payload(outcomes: tuple[IterationOutcome, ...]) -> dict[str, Any]:
-    refusals: dict[str, int] = {}
-    for outcome in outcomes:
-        if outcome.skipped_reason_code is not None:
-            refusals[outcome.skipped_reason_code] = refusals.get(outcome.skipped_reason_code, 0) + 1
-    written = tuple(outcome for outcome in outcomes if outcome.iteration_id is not None)
-    return {
-        "candidate_series_count": len(outcomes),
-        "iteration_count": len(written),
-        "iteration_value_count": sum(outcome.value_count for outcome in written),
-        "refusals_by_reason": dict(sorted(refusals.items())),
-        "training_day_count_min": (min((outcome.training_day_count for outcome in written), default=None)),
-        "training_day_count_max": (max((outcome.training_day_count for outcome in written), default=None)),
-    }
-
-
-def _holdout_payload(evaluation: HoldoutEvaluation) -> dict[str, Any]:
-    return {
-        "cutoff_days": [day.isoformat() for day in evaluation.cutoff_days],
-        "interval_coverage_fraction": (
-            round(evaluation.interval_coverage_fraction, 6) if evaluation.reconciled_actual_count else None
-        ),
-        "iteration_count": evaluation.iteration_count,
-        "metrics_by_horizon_bucket": {
-            name: _error_metrics_payload(metrics) for name, metrics in evaluation.metrics_by_horizon_bucket
-        },
-        "method_metrics": _error_metrics_payload(evaluation.method_metrics),
-        "reconciled_actual_count": evaluation.reconciled_actual_count,
-        "baseline_climatology_metrics": _error_metrics_payload(evaluation.climatology_metrics),
-        "baseline_persistence_metrics": _error_metrics_payload(evaluation.persistence_metrics),
-        "skill_versus_climatology": _skill_score(evaluation.method_metrics, evaluation.climatology_metrics),
-        "skill_versus_persistence": _skill_score(evaluation.method_metrics, evaluation.persistence_metrics),
-    }
 
 
 @click.command("vegetation-register")
@@ -979,18 +788,13 @@ async def _forecast_vegetation_register(
     cell_limit: int,
     cell_keys: tuple[str, ...],
 ) -> dict[str, Any]:
-    database_url = settings.require_forecast_iteration_database_url()
-    async with forecast_iteration_session(database_url) as session, session.begin():
-        await pin_determinism(session)
-        selected = cell_keys or await select_candidate_cell_keys(
-            session,
-            cutoff_day=cutoff_day,
-            cell_limit=cell_limit,
-        )
-        summary = await register_governed_plane(session, cutoff_day=cutoff_day, cell_keys=selected)
-    payload = _registration_payload(summary)
-    payload["cutoff_day"] = cutoff_day.isoformat()
-    return payload
+    return await register_vegetation_plane(
+        database_url=settings.require_forecast_iteration_database_url(),
+        session_factory=forecast_iteration_session,
+        cutoff_day=cutoff_day,
+        cell_limit=cell_limit,
+        cell_keys=cell_keys,
+    )
 
 
 @click.command("vegetation-simulate")
@@ -1059,53 +863,16 @@ async def _forecast_vegetation_simulate(  # noqa: PLR0913
     cell_keys: tuple[str, ...],
     as_of_time: datetime | None,
 ) -> dict[str, Any]:
-    if cutoff_day > release_cutoff_day:
-        raise ValueError("simulation cutoff day cannot follow the governed release-set cutoff day")
-    resolved_as_of = _resolved_as_of_time(as_of_time, cutoff_day)
-    database_url = settings.require_forecast_iteration_database_url()
-    async with forecast_iteration_session(database_url) as session, session.begin():
-        await pin_determinism(session)
-        plane = await load_governed_plane(session, cutoff_day=release_cutoff_day)
-        identities = await load_series_identities(session, cell_keys=cell_keys or None)
-        if not identities:
-            raise ValueError("no registered NDVI series match the requested cells")
-        governed_history = await load_governed_history(
-            session,
-            release_set_id=plane.release_set_id,
-            as_of_time=resolved_as_of,
-            cutoff_day=cutoff_day,
-        )
-        license_snapshots = await load_license_snapshots(
-            session,
-            release_set_id=plane.release_set_id,
-            as_of_time=resolved_as_of,
-            cutoff_day=cutoff_day,
-        )
-        outcomes, _histories = await simulate_cells(
-            session,
-            plane=plane,
-            identities=identities,
-            governed_history=governed_history,
-            license_snapshots=license_snapshots,
-            purpose=purpose,
-            as_of_time=resolved_as_of,
-            cutoff_day=cutoff_day,
-            request=request,
-        )
-    payload = _iteration_outcome_payload(outcomes)
-    payload.update(
-        {
-            "as_of_time": resolved_as_of.isoformat(),
-            "cutoff_day": cutoff_day.isoformat(),
-            "horizon_days": request.horizon_days,
-            "method": VEGETATION_METHOD_NAME,
-            "purpose": purpose,
-            "release_set_id": str(plane.release_set_id),
-            "seed": request.seed,
-            "simulation_count": request.simulation_count,
-        }
+    return await simulate_vegetation(
+        database_url=settings.require_forecast_iteration_database_url(),
+        session_factory=forecast_iteration_session,
+        cutoff_day=cutoff_day,
+        release_cutoff_day=release_cutoff_day,
+        request=request,
+        purpose=purpose,
+        cell_keys=cell_keys,
+        as_of_time=as_of_time,
     )
-    return payload
 
 
 @click.command("vegetation-evaluate")
@@ -1169,79 +936,15 @@ async def _forecast_vegetation_evaluate(
     cell_keys: tuple[str, ...],
     as_of_time: datetime | None,
 ) -> dict[str, Any]:
-    ordered_cutoffs = tuple(sorted(set(holdout_cutoff_days)))
-    if any(cutoff >= release_cutoff_day for cutoff in ordered_cutoffs):
-        raise ValueError("every holdout cutoff day must precede the governed release-set cutoff day")
-    resolved_as_of = _resolved_as_of_time(as_of_time, max(ordered_cutoffs))
-    database_url = settings.require_forecast_iteration_database_url()
-    async with forecast_iteration_session(database_url) as session, session.begin():
-        await pin_determinism(session)
-        plane = await load_governed_plane(session, cutoff_day=release_cutoff_day)
-        identities = await load_series_identities(session, cell_keys=cell_keys or None)
-        if not identities:
-            raise ValueError("no registered NDVI series match the requested cells")
-        governed_history = await load_governed_history(
-            session,
-            release_set_id=plane.release_set_id,
-            as_of_time=resolved_as_of,
-            cutoff_day=max(ordered_cutoffs),
-        )
-        license_snapshots = await load_license_snapshots(
-            session,
-            release_set_id=plane.release_set_id,
-            as_of_time=resolved_as_of,
-            cutoff_day=max(ordered_cutoffs),
-        )
-        histories_by_cutoff: dict[date, dict[uuid.UUID, SeasonalHistory]] = {}
-        iteration_ids: list[uuid.UUID] = []
-        refusals: dict[str, int] = {}
-        for cutoff_day in ordered_cutoffs:
-            outcomes, histories = await simulate_cells(
-                session,
-                plane=plane,
-                identities=identities,
-                governed_history=governed_history,
-                license_snapshots=license_snapshots,
-                purpose=PURPOSE_HOLDOUT_EVALUATION,
-                as_of_time=resolved_as_of,
-                cutoff_day=cutoff_day,
-                request=request,
-            )
-            histories_by_cutoff[cutoff_day] = histories
-            iteration_ids.extend(outcome.iteration_id for outcome in outcomes if outcome.iteration_id is not None)
-            for outcome in outcomes:
-                if outcome.skipped_reason_code is not None:
-                    refusals[outcome.skipped_reason_code] = refusals.get(outcome.skipped_reason_code, 0) + 1
-        reconciled = await reconcile_actuals(
-            session,
-            iteration_ids=tuple(iteration_ids),
-            release_set_id=plane.release_set_id,
-            as_of_time=resolved_as_of,
-        )
-        outcome_rows = await load_outcome_rows(session, iteration_ids=tuple(iteration_ids))
-        evaluation = summarize_holdout(
-            cutoff_days=ordered_cutoffs,
-            iteration_count=len(iteration_ids),
-            outcome_rows=outcome_rows,
-            histories_by_cutoff=histories_by_cutoff,
-            horizon_buckets=VEGETATION_HORIZON_BUCKETS,
-        )
-    payload = _holdout_payload(evaluation)
-    payload.update(
-        {
-            "as_of_time": resolved_as_of.isoformat(),
-            "availability_mode": "retrospective_pinned_release",
-            "horizon_days": request.horizon_days,
-            "inserted_actual_count": reconciled,
-            "method": VEGETATION_METHOD_NAME,
-            "refusals_by_reason": dict(sorted(refusals.items())),
-            "release_cutoff_day": release_cutoff_day.isoformat(),
-            "release_set_id": str(plane.release_set_id),
-            "seed": request.seed,
-            "simulation_count": request.simulation_count,
-        }
+    return await evaluate_vegetation(
+        database_url=settings.require_forecast_iteration_database_url(),
+        session_factory=forecast_iteration_session,
+        release_cutoff_day=release_cutoff_day,
+        holdout_cutoff_days=holdout_cutoff_days,
+        request=request,
+        cell_keys=cell_keys,
+        as_of_time=as_of_time,
     )
-    return payload
 
 
 @click.command("train-wind")
@@ -2189,226 +1892,34 @@ async def _historical_era5_persist(plan_path: Path) -> None:
     )
 
 
-class LaneChunk(Protocol):
-    """One bounded unit of work a chunked lane fetches; `key` is the token its receipt cites."""
-
-    @property
-    def key(self) -> str: ...
-
-
-class LaneReceipt(Protocol):
-    """One chunk a lane already completed, as recorded in its checkpoint."""
-
-    @property
-    def chunk_key(self) -> str: ...
+def _report_chunked_lane_status(lane: ChunkedLane[Any, Any, Any, Any], plan_path: Path) -> None:
+    """Render one native chunked-lane status payload as Click output."""
+    try:
+        payload = lane.status_payload(settings.local_execution_root, plan_path)
+    except (OSError, ValueError) as exc:
+        raise click.ClickException(lane.failure_reason(exc)) from exc
+    click.echo(json.dumps(payload, indent=2))
 
 
-class LanePlan[ChunkT: LaneChunk](Protocol):
-    """The reviewed-plan surface the shared chunked-lane driver reads."""
-
-    @property
-    def cells(self) -> Sequence[object]: ...
-
-    @property
-    def chunks(self) -> Sequence[ChunkT]: ...
-
-
-class LaneCheckpoint(Protocol):
-    """The durable resumable state a chunked lane rewrites after every recorded chunk."""
-
-    @property
-    def state(self) -> str: ...
-
-    @property
-    def reason(self) -> str | None: ...
-
-    @property
-    def receipts(self) -> Sequence[LaneReceipt]: ...
-
-    def model_copy(self, *, update: Mapping[str, Any]) -> Self: ...
-
-
-class LaneChunkRunner[PlanT, ChunkT, ResultT](Protocol):
-    """The bounded-concurrency wave runner a chunked lane exposes."""
-
-    async def __call__(
-        self,
-        plan: PlanT,
-        chunks: Sequence[ChunkT],
-        *,
-        concurrency: int,
-    ) -> Sequence[ResultT | BaseException]: ...
-
-
-@dataclass(frozen=True)
-class ChunkedLane[ChunkT: LaneChunk, PlanT: LanePlan[Any], CheckpointT: LaneCheckpoint, ResultT]:
-    """One chunked fetch lane's bindings, so status, resume, wave fetch and blocked-write exist once.
-
-    Open-Meteo, GloFAS, CAMS and Ensemble ran four hand-copied versions of the methods below, which
-    had already drifted; a fix to resume semantics now lands in one place. The per-lane differences
-    that are real -- the failure-reason ladder, the payload keys, the error token -- stay per-lane
-    fields rather than being unified away.
-
-    Every field is filled by a factory called from inside a verb body, never at import, so the
-    module-level name each one names is resolved at call time. That is what keeps a test's
-    `monkeypatch.setattr(agri_data_service.interface.cli.commands, ...)` intercepting: an import-time binding would
-    capture the original function and make the patch a silent no-op.
-
-    The four type parameters are not decoration. They are what makes mypy refuse a cams `record_*`
-    bound into the glofas lane -- exactly the copy-paste mistake this collapse exists to prevent.
-    """
-
-    error_token: str
-    parse_plan: Callable[[bytes], PlanT]
-    plan_checksum: Callable[[PlanT], str]
-    checkpoint_path: Callable[[Path, PlanT], Path]
-    initialize_checkpoint: Callable[[PlanT], CheckpointT]
-    read_checkpoint: Callable[[Path], CheckpointT]
-    rederive_checkpoint: Callable[[PlanT, CheckpointT], CheckpointT]
-    write_checkpoint: Callable[[Path, CheckpointT], None]
-    load_cached_result: Callable[[Path, PlanT, ChunkT], ResultT | None]
-    cache_result: Callable[[Path, PlanT, ResultT], object]
-    record_result: Callable[[PlanT, CheckpointT, ResultT], CheckpointT]
-    run_chunks: LaneChunkRunner[PlanT, ChunkT, ResultT]
-    release_manifest: Callable[[PlanT, CheckpointT], str]
-    failure_reason: Callable[[BaseException], str]
-    status_identity: Callable[[PlanT], dict[str, Any]]
-    status_totals: Callable[[PlanT, CheckpointT], dict[str, Any]]
-    backfill_extras: Callable[[PlanT, CheckpointT], dict[str, Any]]
-
-    def load_checkpoint(self, plan: PlanT, checkpoint_path_value: Path) -> CheckpointT:
-        """Load a plan-bound checkpoint, re-deriving `state` from receipts rather than trusting the file.
-
-        A `blocked` checkpoint whose chunks are all receipted has nothing left to fetch, so trusting
-        the stored value would strand it: nothing would ever move it off `blocked`.
-        """
-        if not checkpoint_path_value.exists():
-            return self.initialize_checkpoint(plan)
-        return self.rederive_checkpoint(plan, self.read_checkpoint(checkpoint_path_value))
-
-    def write_blocked_checkpoint(self, path: Path, checkpoint: CheckpointT, exc: Exception) -> None:
-        """Record why a run stopped so a resume starts from evidence rather than a rerun of everything."""
-        with suppress(OSError, ValueError):
-            self.write_checkpoint(
-                path,
-                checkpoint.model_copy(
-                    update={
-                        "state": "blocked",
-                        "updated_at": datetime.now(UTC),
-                        "reason": self.failure_reason(exc),
-                    }
-                ),
-            )
-
-    async def fetch_chunks(
-        self,
-        plan: PlanT,
-        checkpoint: CheckpointT,
-        checkpoint_path_value: Path,
-        chunks: Sequence[ChunkT],
-        concurrency: int,
-    ) -> tuple[CheckpointT, list[dict[str, str]]]:
-        """Reuse the local cache first, fetch the rest under bounded concurrency, and keep failures visible."""
-        failures: list[dict[str, str]] = []
-        pending: list[ChunkT] = []
-        for chunk in chunks:
-            cached = self.load_cached_result(settings.local_execution_root, plan, chunk)
-            if cached is None:
-                pending.append(chunk)
-                continue
-            checkpoint = self.record_result(plan, checkpoint, cached)
-            self.write_checkpoint(checkpoint_path_value, checkpoint)
-        # Harvested in waves of `concurrency` rather than one gather over everything, so an interrupted
-        # long run keeps every chunk that already answered instead of discarding the whole batch.
-        for start in range(0, len(pending), concurrency):
-            wave = pending[start : start + concurrency]
-            results = await self.run_chunks(plan, wave, concurrency=concurrency)
-            for chunk, result in zip(wave, results, strict=True):
-                if isinstance(result, BaseException):
-                    failures.append({"chunk_key": chunk.key, "reason": self.failure_reason(result)})
-                    continue
-                self.cache_result(settings.local_execution_root, plan, result)
-                checkpoint = self.record_result(plan, checkpoint, result)
-                self.write_checkpoint(checkpoint_path_value, checkpoint)
-            if failures:
-                # A quota wall does not clear inside one run; stop rather than burn the remaining waves.
-                break
-        return checkpoint, failures
-
-    def report_status(self, plan_path: Path) -> None:
-        """Report which chunks are already cached and what a resume would still fetch."""
-        try:
-            plan = self.parse_plan(plan_path.read_bytes())
-            checkpoint_path_value = self.checkpoint_path(settings.local_execution_root, plan)
-            checkpoint = self.load_checkpoint(plan, checkpoint_path_value)
-        except (OSError, ValueError) as exc:
-            raise click.ClickException(self.failure_reason(exc)) from exc
-        completed = {receipt.chunk_key for receipt in checkpoint.receipts}
-        pending = [chunk.key for chunk in plan.chunks if chunk.key not in completed]
-        click.echo(
-            json.dumps(
-                {
-                    "plan_checksum": self.plan_checksum(plan),
-                    "checkpoint": str(checkpoint_path_value),
-                    "state": checkpoint.state,
-                    "reason": checkpoint.reason,
-                    **self.status_identity(plan),
-                    "cell_count": len(plan.cells),
-                    "chunk_count": len(plan.chunks),
-                    "completed_chunk_count": len(completed),
-                    "pending_chunk_count": len(pending),
-                    "pending_chunks": pending[:_OPEN_METEO_PENDING_PREVIEW],
-                    **self.status_totals(plan, checkpoint),
-                },
-                indent=2,
-            )
+async def _run_chunked_lane_backfill(
+    lane: ChunkedLane[Any, Any, Any, Any],
+    plan_path: Path,
+    max_chunks: int | None,
+    concurrency: int,
+) -> None:
+    """Translate native chunk failures into the established Click exit contract."""
+    try:
+        payload = await lane.backfill_payload(
+            settings.local_execution_root,
+            plan_path,
+            max_chunks,
+            concurrency,
         )
-
-    async def run_backfill(self, plan_path: Path, max_chunks: int | None, concurrency: int) -> None:
-        """Resume from the checkpoint, fetch a bounded batch, and never report a partial run as success."""
-        failures: list[dict[str, str]] = []
-        try:
-            plan = self.parse_plan(plan_path.read_bytes())
-            checkpoint_path_value = self.checkpoint_path(settings.local_execution_root, plan)
-            checkpoint = self.load_checkpoint(plan, checkpoint_path_value)
-            self.write_checkpoint(checkpoint_path_value, checkpoint)
-            completed = {receipt.chunk_key for receipt in checkpoint.receipts}
-            outstanding = [chunk for chunk in plan.chunks if chunk.key not in completed]
-            checkpoint, failures = await self.fetch_chunks(
-                plan,
-                checkpoint,
-                checkpoint_path_value,
-                outstanding if max_chunks is None else outstanding[:max_chunks],
-                concurrency,
-            )
-            extras = self.backfill_extras(plan, checkpoint)
-        except Exception as exc:
-            if "checkpoint_path_value" in locals() and "checkpoint" in locals():
-                self.write_blocked_checkpoint(checkpoint_path_value, checkpoint, exc)
-            raise click.ClickException(self.failure_reason(exc)) from exc
-        receipted = {receipt.chunk_key for receipt in checkpoint.receipts}
-        remaining = [chunk.key for chunk in plan.chunks if chunk.key not in receipted]
-        payload = {
-            "checkpoint": str(checkpoint_path_value),
-            "state": checkpoint.state,
-            "completed_chunk_count": len(checkpoint.receipts),
-            "chunk_count": len(plan.chunks),
-            "pending_chunk_count": len(remaining),
-            "failed_chunks": failures,
-            "release_receipt_manifest_checksum": (
-                self.release_manifest(plan, checkpoint) if checkpoint.state == "validated" else None
-            ),
-            **extras,
-        }
-        if failures:
-            # A chunk that dropped records must never read as success: record why, report, exit non-zero.
-            self.write_blocked_checkpoint(
-                checkpoint_path_value,
-                checkpoint,
-                ValueError(f"{len(failures)} chunk(s) failed; first: {failures[0]['reason']}"),
-            )
-            raise click.ClickException(json.dumps({**payload, "error": self.error_token}, indent=2))
-        click.echo(json.dumps(payload, indent=2))
+    except ChunkedLaneBackfillError as exc:
+        raise click.ClickException(json.dumps(exc.payload, indent=2)) from exc
+    except Exception as exc:
+        raise click.ClickException(lane.failure_reason(exc)) from exc
+    click.echo(json.dumps(payload, indent=2))
 
 
 def _open_meteo_lane() -> ChunkedLane[
@@ -2446,7 +1957,7 @@ def _open_meteo_lane() -> ChunkedLane[
 @click.option("--plan", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
 def historical_open_meteo_status(plan: Path) -> None:
     """Report which archive chunks are already cached and what a resume would still fetch."""
-    _open_meteo_lane().report_status(plan)
+    _report_chunked_lane_status(_open_meteo_lane(), plan)
 
 
 @click.command("historical-open-meteo-backfill")
@@ -2455,7 +1966,7 @@ def historical_open_meteo_status(plan: Path) -> None:
 @click.option("--concurrency", type=click.IntRange(min=1, max=4), default=2)
 def historical_open_meteo_backfill(plan: Path, max_chunks: int | None, concurrency: int) -> None:
     """Fetch, validate, and cache reviewed Open-Meteo ERA5-Land archive chunks; resumable and bounded."""
-    asyncio.run(_open_meteo_lane().run_backfill(plan, max_chunks, concurrency))
+    asyncio.run(_run_chunked_lane_backfill(_open_meteo_lane(), plan, max_chunks, concurrency))
 
 
 @click.command("historical-open-meteo-persist")
@@ -2590,7 +2101,7 @@ def _glofas_lane() -> ChunkedLane[
 @click.option("--plan", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
 def historical_glofas_status(plan: Path) -> None:
     """Report which GloFAS flood chunks are already cached and what a resume would still fetch."""
-    _glofas_lane().report_status(plan)
+    _report_chunked_lane_status(_glofas_lane(), plan)
 
 
 @click.command("historical-glofas-backfill")
@@ -2599,7 +2110,7 @@ def historical_glofas_status(plan: Path) -> None:
 @click.option("--concurrency", type=click.IntRange(min=1, max=4), default=2)
 def historical_glofas_backfill(plan: Path, max_chunks: int | None, concurrency: int) -> None:
     """Fetch, validate, and cache reviewed GloFAS river-discharge chunks; resumable and bounded."""
-    asyncio.run(_glofas_lane().run_backfill(plan, max_chunks, concurrency))
+    asyncio.run(_run_chunked_lane_backfill(_glofas_lane(), plan, max_chunks, concurrency))
 
 
 @click.command("historical-glofas-persist")
@@ -2704,7 +2215,7 @@ def _cams_lane() -> ChunkedLane[
 @click.option("--plan", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
 def historical_cams_status(plan: Path) -> None:
     """Report which CAMS air-quality chunks are already cached and what a resume would still fetch."""
-    _cams_lane().report_status(plan)
+    _report_chunked_lane_status(_cams_lane(), plan)
 
 
 @click.command("historical-cams-backfill")
@@ -2713,7 +2224,7 @@ def historical_cams_status(plan: Path) -> None:
 @click.option("--concurrency", type=click.IntRange(min=1, max=4), default=2)
 def historical_cams_backfill(plan: Path, max_chunks: int | None, concurrency: int) -> None:
     """Fetch, validate, and cache reviewed CAMS air-quality chunks; resumable and bounded."""
-    asyncio.run(_cams_lane().run_backfill(plan, max_chunks, concurrency))
+    asyncio.run(_run_chunked_lane_backfill(_cams_lane(), plan, max_chunks, concurrency))
 
 
 @click.command("historical-cams-persist")
@@ -2837,7 +2348,7 @@ def _ensemble_forecast_receipt_totals(checkpoint: EnsembleForecastCheckpoint) ->
 @click.option("--plan", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True)
 def forecast_ensemble_status(plan: Path) -> None:
     """Report which Open-Meteo Ensemble chunks are already cached and what a resume would still fetch."""
-    _ensemble_forecast_lane().report_status(plan)
+    _report_chunked_lane_status(_ensemble_forecast_lane(), plan)
 
 
 @click.command("ensemble-fetch")
@@ -2846,7 +2357,7 @@ def forecast_ensemble_status(plan: Path) -> None:
 @click.option("--concurrency", type=click.IntRange(min=1, max=4), default=2)
 def forecast_ensemble_fetch(plan: Path, max_chunks: int | None, concurrency: int) -> None:
     """Fetch reviewed Open-Meteo Ensemble chunks and stage their quantile receipts; resumable and bounded."""
-    asyncio.run(_ensemble_forecast_lane().run_backfill(plan, max_chunks, concurrency))
+    asyncio.run(_run_chunked_lane_backfill(_ensemble_forecast_lane(), plan, max_chunks, concurrency))
 
 
 def _stage_ensemble_forecast_document(
