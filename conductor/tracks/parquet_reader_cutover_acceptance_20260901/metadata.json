@@ -1,8 +1,35 @@
 {
+  "reader_acceptance_20260911": {
+    "baseline_revision": "fa202230958fb55521963e886eb031be5fc266c4",
+    "candidate_branch": "codex/reader-cutover-acceptance-20260911",
+    "candidate_revision": "d56b508fb3afe8adb85969ce1553cd739daf779f",
+    "status": "local-verified-production-open",
+    "review_verdict": "approved-local-candidate",
+    "handoff": "evidence/reader-local-handoff-20260911.md",
+    "route_evidence": "evidence/reader-route-evidence-20260911.md",
+    "validation": "evidence/reader-validation-20260911.json",
+    "independent_review": "evidence/independent-reader-review-20260911.md",
+    "production_packet": "evidence/production-approval-packet-20260911.md",
+    "public_row_samples": 85,
+    "deployment_mutated": false,
+    "remaining_gates": [
+      "Controlled capability cold/warm cache and object-operation traces; public first/repeat observations are not cache-state proof.",
+      "Static census migration or explicit gate disposition before claiming whole-catalogue zero LIST.",
+      "Missing product/variant/rung/historical-positive samples and browser request-to-paint, selected/painted day, transitions and cancellation.",
+      "MTBS coarse/middle conservation and detail refusal plus watersheds transient failure investigation.",
+      "Python feature selection semantics for carried/cumulative/static/rolling products remain explicitly refused; bounded Next.js neighbours cover three daily families only."
+    ]
+  },
+  "reconciliation_20260911": {
+    "audited_on": "2026-09-11",
+    "source_head": "fa20223",
+    "status": "active",
+    "next_gate": "Implementation and subsequent frontend releases are evidenced; current full product/day/zoom/cold-warm traces and exact acceptance handoff remain open. Multiscale consumes the frozen support contract."
+  },
   "slug": "parquet_reader_cutover_acceptance_20260901",
   "title": "Parquet reader hard cut and temporal acceptance",
   "type": "feature",
-  "status": "planned",
+  "status": "active",
   "created_on": "2026-09-01",
   "depends_on": [],
   "runbook_section": "LIVE / Repair order and production gates",
