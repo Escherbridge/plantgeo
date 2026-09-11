@@ -81,3 +81,9 @@ as-of boundaries, and keeps other release layers and exact-day inspection unchan
 do not assert that current MTBS partial cohorts are published or that the browser is complete.
 
 `test_mtbs_snapshot_catalog.py` constructs real immutable availability generations and typed source/terminal/completion receipts in memory. It covers positive and zero-source replacements, empty viewports, exact/window descriptor propagation, corrupt evidence, lost heads, D+1 ownership and changed physical inventories/row identities without network or database access.
+
+Its positive fixture follows the actual base-v1/derived-v2 completion convention. Digest-valid,
+rebound terminal fixtures retain refusal coverage for missing derived parts, conflicting derived
+or base-v2 digests, and wrong base counts/run identity or noncanonical markers. The ordinary
+publication regression in `tests/direct/test_mtbs_staging.py` calls the catalog on the actual
+gap-fill/derivation/index output for positive, empty and interrupted-then-resumed captures.

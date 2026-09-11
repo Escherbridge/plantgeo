@@ -642,4 +642,10 @@ HTTP and CLI inject a lazy real availability-store reader through `ObjectStoreLi
 
 Runtime proof follows the existing immutable-part reader model: source/terminal/manifest/marker bytes are hashed, but serving does not download each Parquet body a second time solely for cryptographic verification. Full physical/source graph digest verification belongs to staged publication and independent publication readback. An out-of-band same-key Parquet overwrite that preserves row identity is an inherited limitation, not protection claimed by this metadata admission path. Served absence evidence is checked against the indexed terminal receipt. There is currently no additional descriptor cache; each selected proof is freshly bounded, and any future cache must bind genuine object identity.
 
+The ordinary base-z13 writer emits a canonical schema-v1 completion without embedded part digests.
+The catalog accepts that exact marker shape while retaining the indexed typed data receipts and
+completion hash, row/part counts and run identity. Derived nonempty rungs and any base marker carrying
+parts still require exact digest equality with the index. This reader compatibility rule does not
+rewrite a published marker or weaken the publication writer's physical digest verification.
+
 Snapshots have zero additional availability lag after their explicit D+1 date; this admission does not change the historical cohort contract or unrelated lanes. Publication and weekly-capture/daily-ready scheduling belong to the direct producer. Ordinary forward absence authoring must stop at the ownership floor so an unrelated calendar marker cannot shadow a valid replacement.

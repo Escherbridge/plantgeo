@@ -9,7 +9,7 @@ from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING, Final
 
 from agri_data_service.foundation.parquet.absence import GovernedAbsence
-from agri_data_service.foundation.parquet.completion import PartitionCompletion
+from agri_data_service.foundation.parquet.completion import COMPLETION_SCHEMA_VERSION, PartitionCompletion
 from agri_data_service.foundation.parquet.paths import (
     absence_marker_path,
     completion_marker_path,
@@ -231,13 +231,19 @@ def _terminal(
         )
         if completion is None:
             raise ValueError("snapshot completion missing")
-        marker = PartitionCompletion.from_json_bytes(_bytes(budget, completion))
+        marker_payload = _bytes(budget, completion)
+        marker = PartitionCompletion.from_json_bytes(marker_payload)
         _require(
             marker.derived_empty == (row.terminal_state == "published" and row.row_count == 0),
             "snapshot empty marker differs",
         )
         _require(
-            tuple(EvidenceReceipt(key=part.relative_path, sha256=part.sha256) for part in marker.parts)
+            (
+                tier == BASE_ZOOM_TIER
+                and marker.schema_version == COMPLETION_SCHEMA_VERSION
+                and marker.to_json_bytes() == marker_payload
+            )
+            or tuple(EvidenceReceipt(key=part.relative_path, sha256=part.sha256) for part in marker.parts)
             == row.data_receipts,
             "snapshot part digests differ from completion",
         )

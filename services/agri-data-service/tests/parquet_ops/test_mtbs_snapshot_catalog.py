@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import io
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING
 
@@ -17,7 +17,7 @@ from agri_data_service.foundation.parquet.absence import GovernedAbsence
 from agri_data_service.foundation.parquet.completion import CompletedPart, PartitionCompletion
 from agri_data_service.foundation.parquet.paths import absence_marker_path, completion_marker_path, partition_path
 from agri_data_service.parquet_ops.faults import ServingRefusalError
-from agri_data_service.parquet_ops.mtbs_snapshot_catalog import load_latest_mtbs_snapshot
+from agri_data_service.parquet_ops.mtbs_snapshot_catalog import _ReadBudget, _terminal, load_latest_mtbs_snapshot
 from agri_data_service.parquet_ops.request_params import ReadScope
 from agri_data_service.parquet_ops.serving import resolve_day, resolve_release, resolve_window
 from agri_data_service.parquet_ops.wire import GovernedAbsenceDay, PublishedDay
@@ -35,6 +35,7 @@ from agri_data_service.pipeline.parquet.availability_index import (
     build_source_evidence,
     build_terminal_evidence,
     compute_verified_source_inventory_root,
+    read_latest_availability,
 )
 from agri_data_service.pipeline.parquet.availability_index import (
     _bootstrap_availability_owned as bootstrap,
@@ -44,6 +45,7 @@ from agri_data_service.warehouse.mtbs_snapshots import (
     MtbsSnapshotDescriptor,
     descriptor_from_manifest,
 )
+from agri_data_service.warehouse.parquet.tiers import BASE_ZOOM_TIER
 from tests.parquet.test_availability_index import MemoryAvailabilityStorage
 from tests.parquet_ops.fakes import FakeListing, FakeRowReader
 
@@ -139,7 +141,9 @@ def warehouse(
                 count,
                 NOW,
                 "capture-test",
-                parts=(CompletedPart(part.key, count, len(sink.getvalue()), part.sha256),),
+                parts=()
+                if rung == BASE_ZOOM_TIER
+                else (CompletedPart(part.key, count, len(sink.getvalue()), part.sha256),),
             )
             completion = store.seed(
                 completion_marker_path("burn-severity", "observed", rung, DAY), marker.to_json_bytes()
@@ -198,6 +202,57 @@ def test_real_generation_and_evidence_bind_positive_snapshot_and_empty_viewport(
     assert empty.rows == ()
     assert empty.mtbs_snapshot == descriptor
     assert store.objects == before
+
+
+@pytest.mark.parametrize(
+    ("rung", "change", "message"),
+    [
+        (9, "omit_parts", "part digests"),
+        (9, "wrong_digest", "part digests"),
+        (13, "wrong_digest", "part digests"),
+        (13, "wrong_count", "counts/run"),
+        (13, "wrong_run", "counts/run"),
+        (13, "noncanonical", "part digests"),
+    ],
+)
+def test_rebound_completion_preserves_rung_digest_and_base_identity_checks(
+    rung: ZoomTier, change: str, message: str
+) -> None:
+    store, _, _, _ = warehouse()
+    index = read_latest_availability(store, lane_root=MTBS_SNAPSHOT_LANE_ROOT)
+    row = next(row for row in index.rows if row.day == DAY and row.rung == rung)
+    assert row.completion_receipt is not None
+    marker = PartitionCompletion.from_json_bytes(store.objects[row.completion_receipt.key].payload)
+    if change == "omit_parts":
+        marker = replace(marker, parts=())
+    elif change == "wrong_digest":
+        part = row.data_receipts[0]
+        marker = replace(marker, parts=(CompletedPart(part.key, 1, len(store.objects[part.key].payload), "e" * 64),))
+    elif change == "wrong_count":
+        marker = replace(marker, part_count=2)
+    elif change == "wrong_run":
+        marker = replace(marker, run_id="different-capture")
+    payload = marker.to_json_bytes() + (b"\n" if change == "noncanonical" else b"")
+    completion = store.seed(row.completion_receipt.key, payload)
+    evidence = TerminalEvidence(
+        index.pointer.identity,
+        row.day,
+        row.rung,
+        row.terminal_state,
+        row.row_count,
+        row.source_ceiling,
+        row.published_at,
+        row.source_receipt,
+        row.data_receipts,
+        completion,
+        None,
+        None,
+    )
+    terminal = build_terminal_evidence(evidence)
+    store.seed(terminal.receipt.key, terminal.payload)
+    rebound = availability_row_from_terminal_evidence(evidence, terminal_receipt=terminal.receipt)
+    with pytest.raises(ValueError, match=message):
+        _terminal(_ReadBudget(store), index, rebound, {"run_id": "capture-test"})
 
 
 def test_zero_source_replaces_history_and_binds_served_absence() -> None:

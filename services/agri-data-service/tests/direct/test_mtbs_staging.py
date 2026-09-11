@@ -11,6 +11,7 @@ import httpx
 import pytest
 
 from agri_data_service.foundation.parquet.absence import GovernedAbsence
+from agri_data_service.parquet_ops.mtbs_snapshot_catalog import load_latest_mtbs_snapshot
 from agri_data_service.pipeline.direct.burn_severity import capture, stage
 from agri_data_service.pipeline.direct.burn_severity.current_snapshot import canonical_bytes, digest
 from agri_data_service.pipeline.direct.burn_severity.publish_snapshot import _reproduce_stage, publish_stage
@@ -33,6 +34,7 @@ from agri_data_service.pipeline.parquet.availability_index import (
 )
 from agri_data_service.pipeline.parquet.derivation import govern_day_absent
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore, ParquetWriteError
+from agri_data_service.warehouse.parquet.tiers import BASE_ZOOM_TIER
 from tests.direct.test_mtbs_current_snapshot import feature
 from tests.parquet.test_availability_extension import LaneAvailabilityStorage, LoggingBackend
 from tests.scripts import load_scripts_module
@@ -257,6 +259,17 @@ async def test_ordinary_publication_indexes_all_rungs_and_refuses_lost_physical_
     if first_attempt is not None:
         assert storage.backend.objects[attempt_key] == first_attempt
     assert stage.read_queue(storage)[1]["pending"] == []
+    snapshot = load_latest_mtbs_snapshot(storage, as_of=day, now=now)
+    assert snapshot is not None
+    assert snapshot.descriptor.manifest_sha256 == identity
+    assert snapshot.descriptor.available_day == day
+    assert snapshot.descriptor.source_row_count == int(not empty)
+    if not empty:
+        for tier in (0, 5, 9, 13):
+            completion = store.read_completion_receipt("burn-severity", "observed", tier, day)
+            assert completion is not None
+            assert completion.completion.schema_version == (1 if tier == BASE_ZOOM_TIER else 2)
+            assert bool(completion.completion.parts) == (tier != BASE_ZOOM_TIER)
     physical = [
         key
         for key in storage.backend.objects
