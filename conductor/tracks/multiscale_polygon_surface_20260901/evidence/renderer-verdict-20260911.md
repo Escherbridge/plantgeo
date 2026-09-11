@@ -47,4 +47,3 @@ deploy/read-surface gate:
 Known product decisions remain open rather than hidden: soil-survey's wide-view count summary is a
 recorded native-polygon deviation, and MTBS/fire-perimeter/evacuation layers have a z4 visibility
 floor whose z2 payload and product decision are still required.
-
