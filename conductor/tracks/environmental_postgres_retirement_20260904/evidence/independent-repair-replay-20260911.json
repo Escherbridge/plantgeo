@@ -1,0 +1,379 @@
+{
+  "schema_version": "independent-environmental-repair-verification/v1",
+  "status": "source_review_and_scoped_verification_passed",
+  "recorded_at": "2026-09-11T19:27:08.249Z",
+  "review_base": "fa202230958fb55521963e886eb031be5fc266c4",
+  "branch": "codex/environmental-retirement-repairs-20260911",
+  "receipt_eligible": false,
+  "full_suite_pass_on_final_tree": false,
+  "production_mutation": false,
+  "release_or_retirement_approval": false,
+  "review": {
+    "independent_from_implementation_authors": true,
+    "original_findings_resolved": 7,
+    "additional_batched_test_failures_resolved": 2,
+    "report": "independent-repair-review-20260911.md"
+  },
+  "environment": {
+    "python": "C:/Users/atooz/Programming/plantgeo/services/agri-data-service/.venv/Scripts/python.exe",
+    "pythonpath": "C:/Users/atooz/.codex/worktrees/2849/plantgeo/services/agri-data-service/src",
+    "uv_no_sync": true,
+    "dependencies_installed": false,
+    "removed_database_variables": [
+      "AGRI_TEST_DATABASE_URL",
+      "AGRI_CROSS_MAJOR_DATABASE_URL",
+      "PLANTGEO_TEST_DATABASE_URL",
+      "POSTGIS_TEST_DSN"
+    ],
+    "final_basetemp": "C:/Users/atooz/.codex/worktrees/2849/plantgeo/.omc/verification/environmental-repair-20260911/pytest-affected-final"
+  },
+  "verification": {
+    "selector_plan": {
+      "python_command": "python scripts/check.py --changed --base fa202230958fb55521963e886eb031be5fc266c4 --plan",
+      "frontend_command": "npm run test:changed -- --base fa202230958fb55521963e886eb031be5fc266c4 --plan",
+      "python_mode": "conservative_full_fallback_for_new_or_unmapped_product_surfaces",
+      "frontend_mode": "conservative_full_fallback_for_unclassified_shared_changes",
+      "receipt_eligible": false
+    },
+    "first_wave_python": {
+      "command": "python scripts/check.py --changed --base fa202230958fb55521963e886eb031be5fc266c4",
+      "format": "pass",
+      "lint_findings": 63,
+      "mypy_findings": 3,
+      "pytest": {
+        "passed": 5493,
+        "skipped": 147,
+        "xfailed": 1,
+        "setup_errors": 639,
+        "assertion_failures": 0,
+        "seconds": 125.67
+      },
+      "setup_error": "All 639 errors were the same PermissionError on an existing protected host pytest temporary root; affected bodies were not exercised."
+    },
+    "frontend": {
+      "commands": [
+        "npm run check:data-boundary",
+        "npm run type-check",
+        "npm run lint",
+        "npm run test:changed -- --base fa202230958fb55521963e886eb031be5fc266c4"
+      ],
+      "all_exit_codes": 0,
+      "tooling_passed": 6,
+      "vitest": {
+        "files_passed": 144,
+        "files_skipped": 2,
+        "tests_passed": 2151,
+        "tests_skipped": 13,
+        "seconds": 153.07
+      },
+      "skip_scope": "Four real PostGIS and nine reader SQL cases; required database variables were absent.",
+      "repeated_after_python_only_fixes": false
+    },
+    "python_cleanup_retry": {
+      "command": "python scripts/check.py --changed --base fa202230958fb55521963e886eb031be5fc266c4",
+      "format": "pass",
+      "lint": "pass",
+      "mypy": "pass",
+      "mypy_source_files": 491,
+      "pytest": {
+        "passed": 6127,
+        "skipped": 150,
+        "xfailed": 1,
+        "failed": 2,
+        "setup_errors": 0,
+        "seconds": 207.06
+      },
+      "failure_names": [
+        "test_restoration_preserves_native_grain_and_hydric_unknown_at_every_rung",
+        "test_a_root_without_the_marker_paths_is_refused"
+      ],
+      "failures_collected_before_edits": true,
+      "explicit_database_skip_notices": {
+        "agri_db": 127,
+        "migration_rehearsal": 13,
+        "cross_major": 1
+      },
+      "other_skip_or_xfail_reasons": "Not enumerated by the quiet report; no database integration coverage claimed."
+    },
+    "final_affected_retry": {
+      "commands": [
+        "uv run --no-sync ruff format --check src tests scripts",
+        "uv run --no-sync ruff check src tests scripts",
+        "uv run --no-sync mypy src scripts",
+        "uv run --no-sync pytest -q tests/parquet/test_soil_survey_restoration.py tests/retirement"
+      ],
+      "all_exit_codes": 0,
+      "mypy_source_files": 491,
+      "pytest": {
+        "passed": 179,
+        "skipped": 0,
+        "failed": 0,
+        "seconds": 2.76
+      },
+      "started_at": "2026-09-11T19:21:41.9229708Z",
+      "finished_at": "2026-09-11T19:21:52.3918913Z",
+      "only_three_authorized_product_or_test_files_changed_since_cleanup_retry": true,
+      "full_frontend_or_unrelated_python_tests_repeated": false
+    }
+  },
+  "artifact_replay": {
+    "command": "python conductor/tracks/environmental_postgres_retirement_20260904/evidence/independent_repair_replay_20260911.py --root C:/Users/atooz/.codex/worktrees/2849/plantgeo --output C:/Users/atooz/.codex/worktrees/2849/plantgeo/.omc/verification/environmental-repair-20260911/artifact-replay-final",
+    "started_at": "2026-09-11T19:23:10.110151+00:00",
+    "finished_at": "2026-09-11T19:24:58.353352+00:00",
+    "exit_code": 0,
+    "production_state_verified": false,
+    "mtbs": {
+      "status": "pass",
+      "seconds": 70.469,
+      "older_manifest_sha256": "254c92c3d6a1ec243431300a8f7f4fb2125deed92cb4ca347ab53cb737ca4f72",
+      "older_preparation_sha256": "58dbbbd0415cee8b33cd839bdfcefd90a857923b5cd97154990373d0eff003a4",
+      "older_fire_ids_sha256": "101922e57f6f484423c0c4cebe464fd484432b37549eb57d9e5c0c735b73b016",
+      "older_rungs": [
+        {
+          "zoom": 13,
+          "rows": 3077,
+          "parts": 34,
+          "referenced_part_bytes": 44306450
+        },
+        {
+          "zoom": 9,
+          "rows": 3077,
+          "parts": 34,
+          "referenced_part_bytes": 994403
+        },
+        {
+          "zoom": 5,
+          "rows": 3077,
+          "parts": 34,
+          "referenced_part_bytes": 691499
+        },
+        {
+          "zoom": 0,
+          "rows": 3077,
+          "parts": 34,
+          "referenced_part_bytes": 690713
+        }
+      ],
+      "older_unique_blobs": 115,
+      "older_unique_blob_bytes": 46457989,
+      "older_receipt_referenced_artifact_bytes": 46853605,
+      "comparison": "Identical complete source-derived preparation receipt, identical blob population, every stored blob byte and content hash; logical part references may share a blob.",
+      "current_rollback": {
+        "rows": 747,
+        "manifest_sha256": "4690af4629e617ffbde3f5e6ae99be3eb4c1a536fe47a931d7f0a8456c8f6468",
+        "preparation_sha256": "e50bd78582b4e2bb6ce45ba21188d67309edca25d1d3dc7e6d3a71e49e980406",
+        "fire_ids_sha256": "239c80b7f9957d06325f79b6c5ebde804172672b8551a26ca865e5d9c5444f60",
+        "rungs": [
+          {
+            "bytes": 47081269,
+            "rows": 747,
+            "sha256": "9bcbeaf3d9afcc661a78a2fae06bb44ac057eee4149512981b9c4992101dc425",
+            "zoom": 13
+          },
+          {
+            "bytes": 193363,
+            "rows": 747,
+            "sha256": "dee2d7d66c3fc18ffa380f237169eff3dda1bc53d2259aeb9d467f6e6ea98f29",
+            "zoom": 9
+          },
+          {
+            "bytes": 108578,
+            "rows": 747,
+            "sha256": "d0c6c686f4dce1ca4094cbb16f3f3b4375a0f6969bd7b5461fba459b45014984",
+            "zoom": 5
+          },
+          {
+            "bytes": 108354,
+            "rows": 747,
+            "sha256": "beb687772180d3d1fb627ff78fa013c335c7f317f68557c4bd7801e84fd61edf",
+            "zoom": 0
+          }
+        ]
+      },
+      "historical_recovery_packet_regenerated": false
+    },
+    "signal": {
+      "comparison": "full pinned archive validation, exact ordinary request reproduction, every part digest",
+      "days": 222,
+      "duration_seconds": 37.375,
+      "first_day": "2025-12-28",
+      "last_day": "2026-08-06",
+      "logical_rows": {
+        "0": 67464,
+        "5": 3506555,
+        "9": 3506555,
+        "13": 3506555
+      },
+      "parts": {
+        "0": 222,
+        "5": 440,
+        "9": 440,
+        "13": 222
+      },
+      "physical_bytes": 41395777,
+      "physical_objects": 2212,
+      "production_state_verified": false,
+      "request_sha256": "7b9949661c1529650b90e2ea93bc216c27a1312ef6b4ce79af9c463512f5416e",
+      "status": "pass",
+      "multipart_day_counts": {
+        "0": 0,
+        "5": 218,
+        "9": 218,
+        "13": 0
+      },
+      "archive_sha256": "4ca8a36083474d55426d8032275306198af5e30349c22407bc7f13bb6f768124",
+      "verified_ordinary_part_digests": 1324,
+      "fresh_production_prepare": false
+    },
+    "static_soil": {
+      "candidate_sha256": "8bd6d81ef92a0515f8d4133be17ccef247f6e52e01ff307464fef2e997e212dc",
+      "cog_count": 6,
+      "comparison": "complete COG hashes, saved answers and independent base-pixel numeric reads",
+      "duration_seconds": 0.406,
+      "full_hashed_cog_bytes": 63503828,
+      "production_state_verified": false,
+      "raw_pixels_compared": 24,
+      "saved_pixel_evidence_sha256": "72bb00084e1642af2f3099234ebfdaab9e5b34fa605024ac0e4cdb30db8d8d23",
+      "status": "pass",
+      "sample_count": 4,
+      "selected_day": "2026-09-05",
+      "observed_day": null,
+      "temporal_distance_days": null,
+      "pmtiles_rehashed_in_this_replay": false
+    },
+    "nwis_public_response": {
+      "status": "pass",
+      "sha256": "2bc2fcd58e7730ced0fce99c9bd29cbd7e8797a734c9d199cee4dd73e3ec9177",
+      "bytes": 11815,
+      "sites": 7,
+      "time_series": 7,
+      "value_blocks": 7,
+      "daily_readings": 7,
+      "publisher_days": [
+        "2022-08-05"
+      ],
+      "parameter_codes": [
+        "00060"
+      ],
+      "statistic_codes": [
+        "00003"
+      ],
+      "upstream_population_complete": false,
+      "comparison": "complete response hash and independently counted exact saved JSON population; not source/AOI completeness"
+    }
+  },
+  "custody": {
+    "receipt": "preserved-repair-inputs-custody-20260911.json",
+    "sha256": "e1ec87cd0e4e0a71c0344d856e29557325553d2795d86e7286bcf9412dd2a890",
+    "copied_regular_files": 63,
+    "copied_bytes": 239572564,
+    "replay_used_verified_current_worktree_copies": true,
+    "supplemental_sensor": {
+      "receipt": "preserved-sensor-candidate-custody-20260911.json",
+      "sha256": "47f74b97acb4469931a72ca792b4eb6278986e99c17e8d3c0ebe22e0c761ba2c",
+      "independently_rehashed_destination_files": 6,
+      "independently_rehashed_bytes": 9401169,
+      "all_pins_match": true,
+      "admission_or_remote_archive_proven": false
+    }
+  },
+  "limits": [
+    "The verification combines an earlier full fallback with a final affected regression pass; it is not a fresh all-suite pass on the final tree and issues no full Python QUALITY_RECEIPT.",
+    "Signal replay is the exact archived offline request. Fresh production PREPARE, physical APPLY, availability/bootstrap publication and reader acceptance are separate and not attested here.",
+    "MTBS preparation conserves the bounded captured 3077 older and 747 current identities. Shared catalogue and availability representation, admission and production acceptance remain open; no complete upstream fire-season population is claimed.",
+    "SoilGrids remains a local candidate. Soil-survey 959 native parts lack complete population/terminal proof; no complete production restoration is claimed.",
+    "FIRMS has no real archive candidate. Seven captured NWIS daily readings establish this single response only; canonical AOI/history preparation and daily-versus-instantaneous integration remain open.",
+    "Retirement lexical scans and this repair verification do not provide a D1 drop proof. Inherited Conductor baseline remains a separate intake dependency."
+  ],
+  "local_evidence": [
+    {
+      "path": ".omc/verification/environmental-repair-20260911/python-plan.json",
+      "bytes": 5550,
+      "sha256": "299f3f21be6c7334938da90dfa9925d00b93942675965b72240cbd289a5c4a2e"
+    },
+    {
+      "path": ".omc/verification/environmental-repair-20260911/python-check.log",
+      "bytes": 1099892,
+      "sha256": "bd059822a12c99a3608b84b8e2266ccc1537bdabda2b441fe036119c2450b97d"
+    },
+    {
+      "path": ".omc/verification/environmental-repair-20260911/python-failure-classification.json",
+      "bytes": 13170,
+      "sha256": "d886eef141f7fad3cb35915d091000f628d1d8af76164f044e1d89569408ed65"
+    },
+    {
+      "path": ".omc/verification/environmental-repair-20260911/python-check-final.log",
+      "bytes": 35610,
+      "sha256": "404ca08d2c30cc640aae031f7cd290d8bde98411c2804b7917199b0ec8c8cfb3"
+    },
+    {
+      "path": ".omc/verification/environmental-repair-20260911/frontend-status.json",
+      "bytes": 987,
+      "sha256": "02de9324c80aa9abacdfca36c0d6cc722bf0c65ea42795f37ca77c576283512d"
+    },
+    {
+      "path": ".omc/verification/environmental-repair-20260911/frontend-test-changed.log",
+      "bytes": 344202,
+      "sha256": "d86c4f24a6e322a5e4f99832be3f7b780a2f614a145465cd8c7f37ba92e14be1"
+    },
+    {
+      "path": ".omc/verification/environmental-repair-20260911/python-affected-status.json",
+      "bytes": 2378,
+      "sha256": "071a596177ad73a5fccb6c374f4b472e5bb996b79abc69357f7089e143f6a75b"
+    },
+    {
+      "path": ".omc/verification/environmental-repair-20260911/python-affected-format.log",
+      "bytes": 29,
+      "sha256": "9cd1981ef29af02ded207249a66c619ce03cc2871deb80adbc36655effd505b3"
+    },
+    {
+      "path": ".omc/verification/environmental-repair-20260911/python-affected-lint.log",
+      "bytes": 20,
+      "sha256": "a4443afdcfb6d7363adb285762515ccf7cf50473b1a05c20c1a50f6bed4d26b0"
+    },
+    {
+      "path": ".omc/verification/environmental-repair-20260911/python-affected-mypy.log",
+      "bytes": 46,
+      "sha256": "47c474257ae885838ebf86d8e1f24657b9687942e8a5d0c5c751ce09ef89e812"
+    },
+    {
+      "path": ".omc/verification/environmental-repair-20260911/python-affected-pytest.log",
+      "bytes": 264,
+      "sha256": "52f982b2f53114cce621fbd1f0cb34e3d926ccede84ec7f249c77e36af40d04b"
+    },
+    {
+      "path": ".omc/verification/environmental-repair-20260911/affected-source-hashes.json",
+      "bytes": 8702,
+      "sha256": "4dfea2a01a6d9a7d7c6fee37a5a4f1561886a708b010bc3bc4ef6382a3097dfe"
+    },
+    {
+      "path": ".omc/verification/environmental-repair-20260911/replay-source-hash.json",
+      "bytes": 248,
+      "sha256": "9e3bc66da36b6da4e7d6e5531e06e94f5f23906b1aa496e58950e27ac3b1587d"
+    },
+    {
+      "path": ".omc/verification/environmental-repair-20260911/artifact-replay-status.json",
+      "bytes": 495,
+      "sha256": "af9c3df2b120b78d9581a874d903a8731e30d7ffebab5ad1ab2917479aedf8e3"
+    },
+    {
+      "path": ".omc/verification/environmental-repair-20260911/artifact-replay-final/replay.json",
+      "bytes": 73521,
+      "sha256": "f28d2a6a423a69097d96b6bf41766683752a10c225ba06b5506bbf7f01eb485e"
+    }
+  ],
+  "retirement_reinventory": {
+    "receipt": "retirement-reinventory-20260911.json",
+    "sha256": "6e41d7cd7836c635e08dd8d3a9d9ae1835787156d1d36bfdc3d926a364b9eac2",
+    "captured_at": "2026-09-11T19:24:02.267002+00:00",
+    "relations": 27,
+    "blocked": 27,
+    "ready": 0,
+    "present": 25,
+    "absent": 2,
+    "lexical_zero_readers": 4,
+    "drop_authorized": false,
+    "database_mutations": false,
+    "absence_state": "not_in_complete_catalogue"
+  }
+}

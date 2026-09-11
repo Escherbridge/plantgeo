@@ -1,0 +1,2 @@
+# Preserve the exact bytes bound by receipt hashes.
+*.json -text whitespace=cr-at-eol

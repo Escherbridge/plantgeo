@@ -74,6 +74,61 @@ remain active. Completing these two dates does not close unrelated sensor gaps o
 
 ## Read-only signal coordinate candidates
 
+`correct_signal_coordinates.py --archive <saved-archive> --out <new-request.json>` prepares the
+exact 222-day physical correction with two read-only checks of original object identities, all
+four day-prefix inventories, both availability keys and target retry/quarantine objects. It uses
+the current writer/deriver locally, including their 10,000-row part boundaries, and writes only
+the new local request. Its base completion records real part digests. Preparation requires the
+reviewed empty object-store prefix and both availability head and bootstrap marker absent.
+
+Apply requires `--apply <request.json> --archive <saved-archive> --request-sha256 <reviewed-sha>
+--quiescence <proof.json> --quiescence-sha256 <reviewed-proof-sha>`. The versioned external proof
+is `signal-correction-quiescence/v1`, with the exact `request_sha256`, `lane_root=layer=signal/kind=observed`, actual
+`operator` and `evidence`, `writers_stopped=true`, `no_inflight_retry_workers=true`, and timezone
+bearing `observed_at`/`valid_until` spanning no more than one hour. Configuration or an empty
+lease query alone cannot establish these claims. Exact owner authorization is still required.
+
+The operator reconstructs every expected byte from the fixed archive and stable UTC timestamp,
+holds the ordinary publication barrier and each processed lane-day lock on a pinned operational
+database connection, and archives source/request/quiescence and each day's exact new objects
+before mutation. It has no environmental PostgreSQL read. `--max-days` defaults to 8 and is
+bounded to 1..32; resume uses the same request and a fresh, separately pinned quiescence proof.
+Its CAS journal admits only `archived`, `mutating` and `verified` states. Every physical overwrite
+must match prepared bytes; deletions are restricted to known completion markers. Unknown objects,
+changed original ETags/versions, ownership loss, expired quiescence, retry claims or either
+availability key appearing stop it. Previously verified days are physically reread on resume.
+
+The synchronous writer runs on a worker thread; each physical PUT/DELETE marshals an ownership
+check onto the original async loop. The check requires the same session, connection and driver
+before and after a real `pg_backend_pid()` round trip (10-second timeout), rereads head/bootstrap
+and retry/quarantine state, then pings again. The worker waits at most 60 seconds, cancels timed-out
+checks, and an explicit active flag is cleared before lock contexts unwind on cancellation or error.
+This prevents later writes after owner loss even when wrapper flags have not changed. An S3
+request already in flight cannot be cancelled or fenced by the database lock. Physical inventories
+reject unknown keys before fetching bytes and bound each key to its pinned original/replacement
+size, with a 16 MiB aggregate day ceiling; ordinary readback uses the same pinned key sizes.
+
+This operation performs **physical admission only**. It never bootstraps, extends or removes
+availability, resumes/supersedes an executor run, or marks serving accepted. Keep writers paused
+after failure; preserve the journal and exact remote archive, recover the same request and renew
+observed quiescence, then resume. Automatic rollback is unsupported. The rollback packet contains
+every original key/hash/ETag/version and its exact archived bytes; restoration is a separately
+reviewed operation under the same ownership rules, never a blind deletion or database re-export.
+Do not bootstrap partial repair progress. After all 222 days are independently accepted, use the
+supported full-history compiler/bootstrap with the correction source receipt handed to its owner.
+Until that handoff is implemented, plain compiler output does not establish transitive coordinate
+correction provenance. Readers may observe an incomplete physical day during a rewrite; these
+advisory locks do not fence arbitrary object-store writers or atomically swap an entire day.
+
+`verify_signal_candidates.py --archive <signal-coordinate-artifacts-20260910.tar.gz> --out <new-file.json>`
+revalidates the preserved 222-day batch without network I/O or extraction. Its fixed archive/manifest
+pins cannot be overridden by CLI flags. It checks original values and witnessed coordinates and
+reproduces every ordinary rung, then writes a local admission preparation packet containing all
+444 original object identities and 888 candidate identities. The output file uses exclusive create;
+there is no apply option. A valid packet proves preserved candidate integrity only; current locks,
+ownership, availability, durable remote audit/rollback and production authorization remain separate
+gates. See `pipeline/parquet/AGENTS.md` for bounds and the date-pinned retirement condition.
+
 `preview_signal_coordinates.py --request <json> --request-sha256 <digest> --out <directory>`
 accepts a `signal-coordinate-request-v1` document containing `day` and exact original object
 receipts (`key`, `sha256`, `byte_count`, `etag`, `version_id`). It pins the reviewed canonical
@@ -946,3 +1001,29 @@ Adding `--stage` explicitly archives the verified raw evidence and prepared ladd
 and enqueues its D+1 availability day. It does not publish serving partitions, connect
 to PostgreSQL, or fetch source geometry. Both modes have a 600-second child-local
 deadline. The ordinary daily executor publishes eligible queued evidence later.
+
+## Static SoilGrids and soil-survey local preparation
+
+`prepare_static_soil.py prepare` requires explicit source-manifest and independent full-file receipt
+SHA256 pins, verifies the twelve saved local COG/PMTiles objects, and writes a new immutable local
+candidate directory. Its `point` verb requires the candidate digest and returns one saved-grid pixel
+per property with full source hashes, scaled units, nodata/extent status and explicit static temporal
+semantics. It never publishes or registers environmental PostgreSQL data. See
+`src/agri_data_service/pipeline/static_soil/AGENTS.md` for byte/block limits and admission handoff.
+
+`prepare_soil_survey_restoration.py` requires a pinned native Parquet preservation inventory and an
+already-installed DuckDB spatial extension. It prepares z0/z5/z9 generalizations and native z13
+together, retaining release day, delineation identity and nongeometry attributes. Missing preservation
+proof, invalid geometry, row loss or any failed rung leaves no complete candidate. Its bounded local
+scope does not certify a whole-region snapshot; there is no `--apply`. See
+`src/agri_data_service/pipeline/soil_survey_restore/AGENTS.md` for the exact input and owner boundary.
+
+## Historical FIRMS and NWIS source replay
+
+`prepare_fire_detections_recovery.py` and `prepare_water_gauges_recovery.py` accept a supplied
+`--source-root`, independently pinned `--source-manifest-sha256`, and new `--output` directory.
+They preserve complete source response bytes and derive z0/z5/z9/z13 candidates with `apply=false`.
+They do not fetch credentials or sources, construct a FeatureWriter, call old archive commands,
+modify a queue, or publish. The FIRMS replay requires every applicable exact-day product; NWIS
+requires every bounded tile/day and explicit daily-mean discharge support. Product package
+`AGENTS.md` files document caps, source-attestation limits, semantic merge gates and rollback.

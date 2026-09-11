@@ -20,7 +20,95 @@
   "supersedes": {
     "postgres_shrink_ingest_repoint_20260825:p5-p6": "The PostgreSQL retirement scope moves here in full, with the expanded 2026-09-04 charter (feed and social features only) and the per-layer drop gate."
   },
-  "note": "September 9 baseline/rebuild and September 10 temperature-history publication are complete slices; September 11 MTBS deployment/publication/browser rollout is complete for 747 fires in 2018–2026. Signal/sensor admission, soil restoration, older MTBS, effective cutoff, source-direct archive replacements and full acceptance remain open.",
+  "note": "The September 11 read-only runtime confirms the deployed 20-lane allowlist and a later successful current-MTBS scheduled execution. Local signal, soil and older-MTBS preparation is recorded separately from admission. Signal/sensor correction, static-soil admission, complete soil-survey restoration, older-MTBS catalogue/publication, archive recovery ownership, per-relation retirement proof and full production acceptance remain open.",
+  "repair_preparation_20260911": {
+    "status": "reviewed_local_preparation",
+    "source_base": "fa202230958fb55521963e886eb031be5fc266c4",
+    "branch": "codex/environmental-retirement-repairs-20260911",
+    "runtime_evidence": "evidence/runtime-and-retirement-readback-20260911.md",
+    "runtime_receipt": "evidence/retirement-runtime-checkpoint-20260911.json",
+    "retirement_inventory": "evidence/retirement-reinventory-20260911.json",
+    "independent_review": "evidence/independent-repair-review-20260911.md",
+    "integration_handoff": "evidence/repair-handoff-20260911.md",
+    "product_packets": [
+      "evidence/signal-sensor-candidate-revalidation-20260911.md",
+      "evidence/soil-restoration-preparation-20260911.md",
+      "evidence/mtbs-older-recovery-20260911.md",
+      "evidence/archive-source-preparation-20260911.md"
+    ],
+    "runtime_findings": {
+      "deployed_revision": "fa202230958fb55521963e886eb031be5fc266c4",
+      "active_lane_count": 20,
+      "operational_live_leases_at_1807_utc": 0,
+      "database_bytes_at_1802_utc": 1789712063,
+      "catalogue_relations": 150,
+      "later_mtbs_scheduled_run_succeeded": true,
+      "three_new_publication_advances_proven": false,
+      "external_manual_writer_quiescence_proven": false
+    },
+    "remaining_gates": [
+      "Fresh mutation-time owner/quiescence proof and exact authorization, signal physical correction, provenance-bound bootstrap and deployed reader acceptance; the dated read-only PREPARE is complete.",
+      "Sensor correction with explicit incomplete source-population evidence and post-publication readback.",
+      "Static-soil admitted descriptor/reader integration and complete soil-survey source authority plus all-rung restoration.",
+      "Older MTBS admission: distinct-scope catalogue composition, shared lane/day collision policy, ordinary publication and selected-day acceptance.",
+      "Actual FIRMS/NWIS source captures/candidates and generic-owner scheduling/admission with fenced treatment of old enabled backlog.",
+      "Per-relation current reader, exact parity, archive and rollback proof before any destructive retirement.",
+      "Cross-lane deployed/browser acceptance, three scheduled publication advances and final umbrella reconciliation."
+    ],
+    "production_mutations": false,
+    "relation_drop_authorized": false,
+    "track_complete": false,
+    "verification_receipt": "evidence/independent-repair-replay-20260911.json",
+    "input_custody": [
+      "evidence/preserved-repair-inputs-custody-20260911.json",
+      "evidence/preserved-sensor-candidate-custody-20260911.json"
+    ],
+    "verification": {
+      "source_review": "accepted",
+      "python_static_gates": "passed",
+      "python_broad_fallback": {
+        "passed": 6127,
+        "skipped": 150,
+        "xfailed": 1,
+        "failed": 2,
+        "residual_failures_resolved_in_affected_retry": true
+      },
+      "python_final_affected_retry": {
+        "passed": 179,
+        "failed": 0,
+        "skipped": 0
+      },
+      "frontend": {
+        "test_files_passed": 144,
+        "test_files_skipped": 2,
+        "tests_passed": 2151,
+        "tests_skipped": 13,
+        "tooling_tests_passed": 6,
+        "boundary": "passed",
+        "type_check": "passed",
+        "lint": "passed"
+      },
+      "local_artifact_replay": "passed",
+      "full_suite_pass_on_final_tree": false,
+      "full_python_quality_receipt_eligible": false
+    },
+    "signal_current_preparation": {
+      "status": "read_only_prepare_complete",
+      "started_at": "2026-09-11T19:05:31.683232Z",
+      "finished_at": "2026-09-11T19:29:03.640976Z",
+      "days": 222,
+      "passes_per_day": 2,
+      "read_calls": 4446,
+      "body_bytes": 72830360,
+      "original_object_pins": 444,
+      "replacement_object_pins": 2212,
+      "request_sha256": "6d583c672cfb8312e24a75c04cb8bde03aa7d4e2b9852694bfe2daf9cc3fc6ad",
+      "preparation_receipt_sha256": "79265e40bd5386c6531f1fd23cadb7411315d7e742a3716dda8b17441f6c699d",
+      "production_writes": 0,
+      "external_writer_quiescence_proven": false,
+      "apply_authorized": false
+    }
+  },
   "production_authorization": "Agents prepare, dry-run and record every production action. Railway variable edits, --apply operator verbs, pg_dump archival and every Alembic migration against production are owner-confirmed before they fire. Retirement of an individual relation no longer waits for the global GREEN acceptance verdict, but does require its complete three-part packet.",
   "partitions": {
     "computed_at": "2026-09-04T00:00:00-06:00",

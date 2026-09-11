@@ -1,0 +1,114 @@
+{
+  "schema_version": "nwis-single-response-inspection/v1",
+  "apply": false,
+  "source_response_sha256": "2bc2fcd58e7730ced0fce99c9bd29cbd7e8797a734c9d199cee4dd73e3ec9177",
+  "source_response_byte_length": 11815,
+  "capture_receipt_sha256": "47e6f7cd836954917b8a1f18364c34d45bc0ec94d8693fdabd1bce3405d7fcea",
+  "scope": {
+    "bbox": [
+      -122.2,
+      45.3,
+      -122.0,
+      45.5
+    ],
+    "start_day": "2022-08-05",
+    "end_day_inclusive": "2022-08-05"
+  },
+  "counts": {
+    "time_series": 7,
+    "sites": 7,
+    "value_blocks": 7,
+    "readings": 7,
+    "empty_series": 0,
+    "empty_value_blocks": 0,
+    "empty_or_missing_values": 0,
+    "sentinel_readings": 0,
+    "malformed_numeric_readings": 0,
+    "missing_timestamps": 0,
+    "identical_duplicate_grains": 0,
+    "conflicting_duplicate_grains": 0
+  },
+  "parameter_codes": [
+    "00060"
+  ],
+  "statistic_codes": [
+    "00003"
+  ],
+  "units": [
+    "ft3/s"
+  ],
+  "publisher_days": [
+    "2022-08-05"
+  ],
+  "standard_offsets": [
+    "-08:00"
+  ],
+  "returned_readings": [
+    {
+      "site_number": "14137000",
+      "source_timestamp": "2022-08-05T00:00:00.000",
+      "standard_offset": "-08:00",
+      "raw_value": "495",
+      "qualifiers": [
+        "A"
+      ]
+    },
+    {
+      "site_number": "14138850",
+      "source_timestamp": "2022-08-05T00:00:00.000",
+      "standard_offset": "-08:00",
+      "raw_value": "55.4",
+      "qualifiers": [
+        "A"
+      ]
+    },
+    {
+      "site_number": "14138870",
+      "source_timestamp": "2022-08-05T00:00:00.000",
+      "standard_offset": "-08:00",
+      "raw_value": "3.99",
+      "qualifiers": [
+        "A"
+      ]
+    },
+    {
+      "site_number": "14138900",
+      "source_timestamp": "2022-08-05T00:00:00.000",
+      "standard_offset": "-08:00",
+      "raw_value": "14.9",
+      "qualifiers": [
+        "A"
+      ]
+    },
+    {
+      "site_number": "14139800",
+      "source_timestamp": "2022-08-05T00:00:00.000",
+      "standard_offset": "-08:00",
+      "raw_value": "15.7",
+      "qualifiers": [
+        "A"
+      ]
+    },
+    {
+      "site_number": "14140000",
+      "source_timestamp": "2022-08-05T00:00:00.000",
+      "standard_offset": "-08:00",
+      "raw_value": "99.3",
+      "qualifiers": [
+        "A"
+      ]
+    },
+    {
+      "site_number": "14141500",
+      "source_timestamp": "2022-08-05T00:00:00.000",
+      "standard_offset": "-08:00",
+      "raw_value": "19.4",
+      "qualifiers": [
+        "A"
+      ]
+    }
+  ],
+  "canonical_aoi_complete": false,
+  "upstream_population_complete": false,
+  "candidate_prepared": false
+}

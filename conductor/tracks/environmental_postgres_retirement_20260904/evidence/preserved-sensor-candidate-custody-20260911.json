@@ -1,0 +1,53 @@
+{
+  "schema": "environmental-repair-local-custody/v1",
+  "status": "all_bytes_copied_and_verified",
+  "supplements": "preserved-repair-inputs-custody-20260911.json",
+  "supplemented_receipt_sha256": "e1ec87cd0e4e0a71c0344d856e29557325553d2795d86e7286bcf9412dd2a890",
+  "started_at": "2026-09-11T19:26:02.416Z",
+  "finished_at": "2026-09-11T19:26:02.538Z",
+  "source_directory": "C:/Users/atooz/.codex/worktrees/1d40/plantgeo/.omc/research",
+  "destination_directory": "C:\\Users\\atooz\\.codex\\worktrees\\2849\\plantgeo\\.omc\\research\\preserved-repair-inputs-20260911",
+  "file_count": 6,
+  "total_bytes": 9401169,
+  "files": [
+    {
+      "relative_path": "sensors-positive-candidates-20260910/candidate-manifest.json",
+      "bytes": 109754,
+      "sha256": "e99bce200991ea1b57ef4c2e60a6c36598c992c4d7ad27e700962c528cf8dd40",
+      "destination_sha256": "e99bce200991ea1b57ef4c2e60a6c36598c992c4d7ad27e700962c528cf8dd40"
+    },
+    {
+      "relative_path": "sensors-positive-candidates-20260910/observation-audit.json",
+      "bytes": 8019398,
+      "sha256": "41bb08fb2169008b267d893217ec282fc618791f29c5f88317f125d3dfb54390",
+      "destination_sha256": "41bb08fb2169008b267d893217ec282fc618791f29c5f88317f125d3dfb54390"
+    },
+    {
+      "relative_path": "sensors-positive-candidates-20260910/response-audit.json",
+      "bytes": 679109,
+      "sha256": "8190f9859216977de2ee9c1cb29ec640be653a7b8a522af1c541e251da003d42",
+      "destination_sha256": "8190f9859216977de2ee9c1cb29ec640be653a7b8a522af1c541e251da003d42"
+    },
+    {
+      "relative_path": "sensors-positive-candidates-20260910/sensors-2026-09-05-positive-candidate.parquet",
+      "bytes": 46825,
+      "sha256": "457eb9fe150cbd1e786b9b9b3124f4551760f283fee64137893d2b689840848f",
+      "destination_sha256": "457eb9fe150cbd1e786b9b9b3124f4551760f283fee64137893d2b689840848f"
+    },
+    {
+      "relative_path": "sensors-positive-candidates-20260910/sensors-2026-09-06-positive-candidate.parquet",
+      "bytes": 44134,
+      "sha256": "ecf53fcdf09e95174a23b76ad4e7488bc3af4b44b7fe93c0f7cbb46e98d06929",
+      "destination_sha256": "ecf53fcdf09e95174a23b76ad4e7488bc3af4b44b7fe93c0f7cbb46e98d06929"
+    },
+    {
+      "relative_path": "sensors-positive-candidates-20260910/winning-report-provenance.json",
+      "bytes": 501949,
+      "sha256": "c862c833faad15aa47ce97f2fa2244ed88051bd43b617e4463e7c0dd0c99a2f1",
+      "destination_sha256": "c862c833faad15aa47ce97f2fa2244ed88051bd43b617e4463e7c0dd0c99a2f1"
+    }
+  ],
+  "source_transformed": false,
+  "production_state_verified": false,
+  "remote_archival_proven": false
+}

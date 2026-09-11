@@ -36,6 +36,8 @@ BBOX = (-125.0, 42.0, -111.0, 49.0)
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from duckdb import DuckDBPyConnection
+
 
 def attributes_match(actual: list[dict[str, Any]], expected: list[dict[str, Any]]) -> bool:
     """Permit only documented EDW latitude/longitude JSON serialization tails."""
@@ -426,7 +428,13 @@ def validate_capture(capture: Path, expected_sha256: str) -> tuple[dict[str, Any
     return manifest, features
 
 
-def prepare_capture(capture: Path, expected_sha256: str, output: Path) -> dict[str, object]:
+def prepare_capture(
+    capture: Path,
+    expected_sha256: str,
+    output: Path,
+    *,
+    connection: DuckDBPyConnection | None = None,
+) -> dict[str, object]:
     """Prepare only from hash-verified archived responses, never from caller-supplied feature rows."""
     manifest, features = validate_capture(capture, expected_sha256)
-    return prepare_snapshot(manifest, features, output=output)
+    return prepare_snapshot(manifest, features, output=output, connection=connection)
