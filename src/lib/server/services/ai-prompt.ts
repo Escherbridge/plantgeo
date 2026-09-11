@@ -246,6 +246,8 @@ function describeViewedLayerReading(reading: ViewedLayerReading): string {
       return `- ${name} — viewing ${day}; the layer PUBLISHED on this day and none of it falls in this location's window. This is an observed absence: you may say there was none here on ${day}.${contradiction}${setMismatch}`;
     case 'not_published_on_viewed_date':
       return `- ${name} — viewing ${day}; the warehouse PUBLISHED NOTHING for this layer on this day.${because} Its absence from the observations above is a coverage hole, not a measurement. Do not write "0", "none", "no activity", or any other absence for ${day} — say the day was never ingested and that nothing is known about it.${contradiction}${setMismatch}`;
+    case 'governed_absence_on_viewed_date':
+      return `- ${name} — viewing ${day}; the source records a GOVERNED ABSENCE of observations.${because} This is not an observed zero and not an unexplained ingestion hole. Do not say there was no activity or nothing here; state that observations were unavailable for this date.${contradiction}${setMismatch}`;
     case 'rung_not_written':
       return `- ${name} — viewing ${day}; the layer DID publish this day, and the aggregation level this server read has no partition for it, so nothing came back here.${because} The map on the user's screen reads a different aggregation level and may well be drawing this day correctly — do not tell the user their map is empty or wrong. Report this as not readable at your level for ${day}: do not state an absence, do not state a presence, and do not call it a coverage hole.${contradiction}${setMismatch}`;
     case 'coverage_unknown_on_viewed_date':
@@ -321,6 +323,8 @@ latitude ${payload.location.lat.toFixed(4)}, longitude ${payload.location.lon.to
 
 ## Warehouse observations
 ${JSON.stringify({ ...payload, soilProperties: soilAiEvidence(payload.soilProperties) }, null, 2)}
+
+Temporal neighbours are separate evidence, never replacements for the selected-day values. State each neighbour's own observation day and temporal/spatial distance. A sampled candidate day is the nearest globally published day in the reported bounded search, not proof of the nearest local observation over all history. An empty candidate, truncation or refusal does not establish that no neighbour exists elsewhere or beyond the searched bounds.
 
 ${flowGuidance.length ? `## Supplied streamflow evidence limits\n${flowGuidance.join('\n')}` : ''}
 

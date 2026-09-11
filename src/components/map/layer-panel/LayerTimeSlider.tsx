@@ -3,8 +3,10 @@
 import { useEffect, useId, useMemo, useState, type KeyboardEvent } from "react";
 import {
   describeCoverageBand,
+  describeCoverageEvidence,
   describeCoverageTopology,
   describeDayCoverage,
+  describeSourceCeiling,
   describeSyncedDayBand,
   dayCoverageState,
   drawCoverageBands,
@@ -418,15 +420,15 @@ export function LayerTimeSlider({
     ? `Updating ${label}; what's shown may be a moment behind until this finishes.`
     : null;
 
-  // Ordered by urgency, day-first: pending is transient and about to change; the coverage note
-  // is about the day the thumb is on; the staleness note is about the row's relationship to its
-  // own record; the synced note is about local storage, the least time-sensitive of the four.
+  // Day status leads; evidence and source limits precede local storage. See map/AGENTS.md.
   const notes = [
     pendingNote,
     coverageNote === null ? null : `${coverageNote}.`,
     isBehindLatestObservedDate && latestObservedDate !== null
       ? `${daysBehindLatest} ${daysBehindLatest === 1 ? "day" : "days"} behind its latest, ${latestObservedDate}.`
       : null,
+    describeSourceCeiling(capability, selectedDate),
+    describeCoverageEvidence(capability),
     syncedNote,
   ].filter((note): note is string => note !== null);
 

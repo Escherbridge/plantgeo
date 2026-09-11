@@ -72,6 +72,16 @@ rather than on a production bill.
   rendezvous at a barrier, proving the cold path is concurrent and capped at three without asserting
   wall-clock timing.
 
+## Failed-refresh synchronization
+
+The September 11 reader sweep exposed a timing assumption in the failed-refresh concurrency
+test: sleeping for 50 ms did not guarantee every worker had entered the cache. The test now
+wraps the real refresh lock to observe failed nonblocking acquires, and holds the failing listing
+until all three other callers have joined that refresh. The count and shared-exception identity
+assertions remain, with a later-call control proving a new request retries rather than caching
+the fault. The wait timeout is a deadlock guard, not a performance assertion. No production
+cache behavior changes with this test synchronization.
+
 ## MTBS release eligibility regressions
 
 `test_mtbs_release_eligibility.py` uses the actual resolver and in-memory warehouse ports. It pins

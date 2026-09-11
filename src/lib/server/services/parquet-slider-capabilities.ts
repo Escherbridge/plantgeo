@@ -673,11 +673,9 @@ function synthesizeCapability(
   excludedPublishedDayCount: number
 ): ResolvedSliderLayerCapability {
   const coverageEnd = serverCurrentDate < latestDay ? latestDay : serverCurrentDate;
-  // The same bound `coverageTailRanges` clamps each tail to, published rather than kept private:
-  // above it the tail asked no question, so `coverageGaps`' silence there is not a claim that the
-  // days are dense. Without this the client reads the ceiling-to-today span as covered, which
-  // inverts the very reason the tail stops at the ceiling.
-  const describedThroughDay = rowSourceCeilingDay(entries) ?? coverageEnd;
+  // Proven carry can outlive publication; see AGENTS.md §source-ceiling.
+  const sourceHorizon = rowSourceCeilingDay(entries) ?? coverageEnd;
+  const describedThroughDay = latestDay > sourceHorizon ? latestDay : sourceHorizon;
   const allCoverageGaps = mergeDayRanges(
     [
       ...entries.flatMap((entry) => entry.gapRanges),

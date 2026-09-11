@@ -280,7 +280,7 @@ are three tools parameterised by `surface_name`, reading the same relations the 
 |---|---|---|
 | `observation_coverage_on_day` | is this day covered at all, and where does it sit in the surface's history | the surface's published availability indexes |
 | `observation_temporal_neighbors` | nearest covered day each side, with `distance_days` | the same indexes, already in memory |
-| `feature_value_near_point` | nearest published features on that day, with `distance_meters` | the surface's own Parquet lane |
+| `feature_value_near_point` | nearest published features for supported exact-day layers, with `distance_meters`; otherwise a typed semantics refusal | the surface's own Parquet lane |
 
 A surface backed by SEVERAL lanes is covered only on days EVERY one of them published — air
 temperature is three lanes (mean/max/min), soil moisture three depths, soil temperature four — for
@@ -307,6 +307,35 @@ Two design points that are load-bearing rather than incidental:
   surface with no Parquet lane, a lane that cannot prove its coverage and a lane that never wrote
   anything all produce a typed refusal listing what *is* answerable — never an empty result, which
   the model reads as an absence.
+
+### Exact-day feature-tool admission (2026-09-11)
+
+The point tool can reproduce exact daily partitions for fire detections, sensors, water gauges and
+weather observations. It cannot reproduce the map's carried release/static populations, MTBS's
+cumulative releases or current-snapshot replacement, or vegetation's latest observation per cell
+in the trailing 30 days by reading just the selected partition. An empty selected partition for
+one of those layers previously produced a misleading `day_not_written` answer even when the map
+could carry an earlier population.
+
+`_feature_surface_refusal` validates catalogue membership and reads the existing pure lane registration to refuse all
+release/static lanes, vegetation, and any unregistered environmental lane before storage access.
+The payload names `unsupported_feature_temporal_semantics`, the requested day, lane nature and
+required semantics. It has no `features` or `day_state` field: unsupported selection is not an
+absence, even if that exact partition happens to contain rows or an absence marker. The refusal
+does not list objects, read availability or data parts, or query PostgreSQL. This is an explicit
+capability limitation, not evidence of map/agent parity for those layers. The community
+`interventions` path retains its intentional PostgreSQL reader.
+
+The supported daily path retains its bounded radius and row count, partition day, each row's own
+observation dates, and measured distance. Its exact-day tests include both weather observations
+and water gauges. The refusal matrix covers all six unsupported feature surfaces across a
+published, governed-absence and unwritten selected partition while forbidding storage access.
+
+Governed absences carry the recorded reason, which can describe an unavailable upstream; they
+must not be described as measured zero or no activity. The feature tool's returned note and
+model-facing instructions state that limit. Coverage and neighbour tools report exact published
+partitions from availability indexes, without asserting the map's release carry, cumulative or
+rolling-window semantics. Those tools supply partition dates and counts, not nearby feature values.
 
 ### The bounding-box prefilter
 

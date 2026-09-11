@@ -53,6 +53,20 @@ beforeEach(() => {
  * already handle it.
  */
 describe("an aborted wildfire read is thrown, never resolved", () => {
+  it("returns point-weather governed absence with its evidence rather than an internal error", async () => {
+    const day = "2026-08-20";
+    const evidence = { reason: "Upstream history expired", upstreamResponse: "expired", recordedAt: `${day}T12:00:00Z`, runId: "absence" };
+    mockedWeather.mockResolvedValue({ state: "absent", requestedDay: day, servedDay: day, evidence });
+    await expect(caller.getWeatherForPoint({ lat: 43.6, lon: -116.2, date: day })).resolves.toEqual({
+      availability: "unavailable", reason: "governed_absence", servedDay: day, evidence, observation: null,
+    });
+  });
+
+  it("forwards the point-weather selected day through the same bounded reader", async () => {
+    mockedWeather.mockResolvedValue({ state: "ready", requestedDay: "2026-08-20", servedDay: "2026-08-20", data: [], truncated: false });
+    await caller.getWeatherForPoint({ lat: 43.6, lon: -116.2, date: "2026-08-20" });
+    expect(mockedWeather).toHaveBeenCalledWith(expect.objectContaining({ date: "2026-08-20", bbox: "-116.45,43.35,-115.95,43.85", mapZoom: 13 }));
+  });
   it("rejects getFireDetections rather than returning the aborted payload", async () => {
     mockedFire.mockResolvedValue(abortedResult);
 

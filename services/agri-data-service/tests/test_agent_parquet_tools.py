@@ -611,18 +611,18 @@ async def test_the_one_community_layer_is_served_from_postgresql_and_says_so() -
 async def test_a_parquet_feature_layer_carries_its_lanes_own_columns_under_properties() -> None:
     """The Parquet lanes publish typed columns, so the JSON allow-list the old statement needed is gone."""
     source = FakeAgentWarehouse()
-    source.listing_store.write_day("vegetation", "observed", 13, SELECTED_DAY)
+    source.listing_store.write_day("weather-observations", "observed", 13, SELECTED_DAY)
     source.answer(
         "agent_point_lane_rows",
         [
             {
-                "cell_id": "veg-1",
-                "grid_name": "sentinel2-ndvi-0p25deg",
-                "metric_name": "ndvi",
-                "metric_value": 0.62,
+                "external_id": "weather-1",
+                "source": "Open-Meteo",
+                "temperature_c": 18.2,
                 "observed_day": SELECTED_DAY,
-                "cell_longitude": -116.25,
-                "cell_latitude": 43.62,
+                "observed_at": datetime(2026, 3, 14, 18, tzinfo=UTC),
+                "longitude": -116.25,
+                "latitude": 43.62,
                 "distance_meters": 4607.7,
             }
         ],
@@ -630,7 +630,7 @@ async def test_a_parquet_feature_layer_carries_its_lanes_own_columns_under_prope
 
     payload = await call(
         lambda: agent_tools.query_feature_value_near_point(
-            surface_name="vegetation",
+            surface_name="weather-observations",
             day=SELECTED_DAY.isoformat(),
             longitude=BOISE_LONGITUDE,
             latitude=BOISE_LATITUDE,
@@ -642,10 +642,106 @@ async def test_a_parquet_feature_layer_carries_its_lanes_own_columns_under_prope
     assert only["distance_meters"] == 4607.7
     assert only["distance_basis"] == "point"
     assert only["centroid_longitude"] == -116.25
-    assert only["properties"]["metric_name"] == "ndvi"
-    assert only["properties"]["metric_value"] == 0.62
-    assert payload["applied_bounds"]["parquet_lane"] == "vegetation"
-    assert "metric_value" in payload["applied_bounds"]["projected_columns"]
+    assert only["served_day"] == SELECTED_DAY.isoformat()
+    assert only["properties"]["source"] == "Open-Meteo"
+    assert only["properties"]["temperature_c"] == 18.2
+    assert only["properties"]["observed_day"] == SELECTED_DAY.isoformat()
+    assert only["properties"]["observed_at"] == "2026-03-14T18:00:00+00:00"
+    assert payload["applied_bounds"]["parquet_lane"] == "weather-observations"
+    assert "temperature_c" in payload["applied_bounds"]["projected_columns"]
+
+
+async def test_exact_daily_feature_absence_preserves_the_recorded_upstream_failure_reason() -> None:
+    source = FakeAgentWarehouse()
+    source.listing_store.write_absence(
+        "weather-observations",
+        "observed",
+        13,
+        SELECTED_DAY,
+        reason="upstream_unavailable",
+        upstream_response="HTTP 503; no observation was obtained",
+        recorded_at=datetime(2026, 3, 15, 4, tzinfo=UTC),
+        run_id="run-2026-03-15",
+    )
+
+    payload = await call(
+        lambda: agent_tools.query_feature_value_near_point(
+            surface_name="weather-observations",
+            day=SELECTED_DAY.isoformat(),
+            longitude=BOISE_LONGITUDE,
+            latitude=BOISE_LATITUDE,
+        ),
+        source,
+    )
+
+    assert payload["day_state"]["state"] == "governed_absence"
+    assert payload["day_state"]["absence"]["reason"] == "upstream_unavailable"
+    assert payload["day_state"]["absence"]["upstream_response"] == "HTTP 503; no observation was obtained"
+    assert payload["features"] == []
+    assert "cannot establish a measured zero or no activity" in payload["note"]
+    assert source.markers() == []
+
+
+@pytest.mark.parametrize("selected_partition", ["published", "governed_absence", "day_not_written"])
+@pytest.mark.parametrize(
+    ("surface", "nature", "semantics"),
+    [
+        ("burn-severity", "release_series", "cumulative_releases_or_current_snapshot_replacement"),
+        ("evacuation-zones", "static_lookup", "latest_release_at_or_before_selected_day"),
+        ("fire-perimeters", "static_lookup", "latest_release_at_or_before_selected_day"),
+        ("soil-survey", "static_lookup", "latest_release_at_or_before_selected_day"),
+        ("watersheds", "static_lookup", "latest_release_at_or_before_selected_day"),
+        ("vegetation", "daily_series", "latest_observation_per_cell_in_trailing_30_days"),
+    ],
+)
+async def test_feature_tool_refuses_unsupported_map_temporal_semantics_before_storage_access(
+    monkeypatch: pytest.MonkeyPatch, surface: str, nature: str, semantics: str, selected_partition: str
+) -> None:
+    source = FakeAgentWarehouse()
+    session = RecordingSession()
+    source.listing_store.write_day(surface, "observed", 13, SELECTED_DAY - timedelta(days=7))
+    if selected_partition == "published":
+        source.listing_store.write_day(surface, "observed", 13, SELECTED_DAY)
+    elif selected_partition == "governed_absence":
+        source.listing_store.write_absence(
+            surface,
+            "observed",
+            13,
+            SELECTED_DAY,
+            reason="upstream_published_nothing",
+            upstream_response="HTTP 200, zero features",
+            recorded_at=datetime(2026, 3, 15, 4, tzinfo=UTC),
+            run_id="run-2026-03-15",
+        )
+
+    def forbid_storage_access(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("unsupported temporal semantics must refuse before any warehouse access")
+
+    monkeypatch.setattr(source, "listing", forbid_storage_access)
+    monkeypatch.setattr(source, "availability_evidence", forbid_storage_access)
+    payload = await call(
+        lambda: agent_tools.query_feature_value_near_point(
+            surface_name=surface,
+            day=SELECTED_DAY.isoformat(),
+            longitude=BOISE_LONGITUDE,
+            latitude=BOISE_LATITUDE,
+        ),
+        source,
+        session,
+    )
+
+    assert payload["error"] == "parquet_serving_refused"
+    assert payload["refusal_code"] == "unsupported_feature_temporal_semantics"
+    assert payload["requested_day"] == SELECTED_DAY.isoformat()
+    assert payload["surface_name"] == payload["parquet_lane"] == surface
+    assert payload["lane_nature"] == nature
+    assert payload["required_temporal_semantics"] == semantics
+    assert "REFUSAL, not an absence" in payload["note"]
+    assert "features" not in payload
+    assert "day_state" not in payload
+    assert source.operations == []
+    assert source.markers() == []
+    assert session.markers() == []
 
 
 # --- Coverage from the availability index ------------------------------------------

@@ -433,6 +433,29 @@ export function describeDayCoverage(state: DayCoverageState): string | null {
   }
 }
 
+/** Names the evidence behind the dates without upgrading unstated or census authority. */
+export function describeCoverageEvidence(layer: SliderLayerCapability): string {
+  switch (layer.coverageAuthority) {
+    case "availability":
+      return "Coverage verified from the published availability index.";
+    case "census":
+      return "Coverage from an object inventory; published availability verification is not stated.";
+    default:
+      return "Coverage evidence not stated.";
+  }
+}
+
+/** States the source's publication limit without ruling out carried releases on later days. */
+export function describeSourceCeiling(
+  layer: SliderLayerCapability,
+  selectedDate: string
+): string | null {
+  const ceiling = layer.sourceCeilingDay;
+  if (ceiling === undefined || ceiling === null || !isCalendarDate(ceiling)) return null;
+  const selectedBeyondCeiling = isCalendarDate(selectedDate) && selectedDate > ceiling;
+  return `Source publication limit: ${ceiling}.${selectedBeyondCeiling ? " The selected date is later than this publication limit." : ""}`;
+}
+
 /** The four regions a coverage track paints. `future` is the padding right of today, not coverage. */
 export type TrackRegion = CoverageKind | "future";
 

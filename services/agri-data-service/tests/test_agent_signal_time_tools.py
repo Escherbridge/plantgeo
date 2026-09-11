@@ -693,7 +693,7 @@ def test_the_agent_catalogue_is_the_map_catalogue_hand_spelled() -> None:
 
 
 async def test_surface_coverage_reads_the_index_the_slider_reads() -> None:
-    """The agent and the slider must agree about which days exist, so they read one evidence source."""
+    """Shared index evidence describes exact partitions without promising map carry semantics."""
     source = FakeAgentWarehouse()
     source.evidence["vegetation"] = published_lane(
         "vegetation",
@@ -714,6 +714,8 @@ async def test_surface_coverage_reads_the_index_the_slider_reads() -> None:
     assert coverage["latest_observed_day"] == "2026-08-02"
     assert coverage["source_ceiling_day"] == "2026-08-02"
     assert "past what the source itself could have published" in payload["note"]
+    assert "is_covered describes exact published partitions" in payload["note"]
+    assert "false does not prove the map cannot answer the selected day" in payload["note"]
     assert session.statements == [], "coverage is a Parquet question and touches no database"
 
 

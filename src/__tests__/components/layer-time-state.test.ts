@@ -251,11 +251,7 @@ describe("resolveLayerTimeState: the record's own states", () => {
 });
 
 describe("resolveLayerTimeState: a withheld layer is not an error", () => {
-  /**
-   * The distinction the owner asked for by name. Both layers are absent from `layers` in exactly
-   * the same way; only the withheld list tells them apart, and they must not be captioned alike:
-   * one is waiting on a build that is running, the other will never arrive.
-   */
+  /** The named refusals distinguish evidence missing from an unwritten source. */
   it("says something different about an unpublished index and a lane that never wrote", () => {
     const indexing = resolveLayerTimeState({
       warehouseLayerName: "fire-detections",
@@ -280,9 +276,9 @@ describe("resolveLayerTimeState: a withheld layer is not an error", () => {
     expect(indexing.badge).not.toBe(never.badge);
     expect(indexing.detail).not.toBe(never.detail);
 
-    // And the sentences say the two opposite things they mean.
-    expect(indexing.detail).toContain("still being built");
-    expect(indexing.isSettling).toBe(true);
+    expect(indexing.detail).toContain("verified list of available dates has not been published");
+    expect(indexing.detail).not.toContain("being built");
+    expect(indexing.isSettling).toBe(false);
     expect(never.detail).toContain("never published anything");
     // Nothing is coming. Pulsing this row would promise an arrival that is not on its way.
     expect(never.isSettling).toBe(false);
@@ -341,15 +337,12 @@ describe("resolveLayerTimeState: a withheld layer is not an error", () => {
     }
   });
 
-  it("only pulses the two withheld reasons something is actually retrying", () => {
+  it("only pulses a refusal the capability loader is actually retrying", () => {
     const settling = LAYER_WITHHOLDING_REASONS.filter(
       (reason) => describeWithholdingReason(reason).isSettling === true
     );
 
-    // `coverage_unavailable` is the loader's own 30s retry (a cold census that exhausted the 8s
-    // timeout), and `availability_unpublished` is an index build that is running. Everything else
-    // is a settled decision that will not move while the reader watches.
-    expect([...settling].sort()).toEqual(["availability_unpublished", "coverage_unavailable"]);
+    expect(settling).toEqual(["coverage_unavailable"]);
   });
 });
 
@@ -438,7 +431,7 @@ describe("reading the withheld evidence the client type does not declare", () =>
   it("names exactly the reasons the serving side can emit", () => {
     const clientReasonIsServed: WithheldParquetCapabilityReason = "availability_unpublished";
     const servedReasonIsWorded: LayerWithholdingReason = clientReasonIsServed;
-    expect(describeWithholdingReason(servedReasonIsWorded).badge).toBe("Indexing");
+    expect(describeWithholdingReason(servedReasonIsWorded).badge).toBe("Dates unverified");
 
     // Assignable both ways => the two unions are the same set.
     const everyClientReason: WithheldParquetCapabilityReason[] = [...LAYER_WITHHOLDING_REASONS];

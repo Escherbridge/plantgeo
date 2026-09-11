@@ -1122,8 +1122,12 @@ describe("getParquetSliderCapabilities", () => {
       // reach the 28th. Clamping it to the ceiling would shorten the lane by its own lag.
       latestObservedDate: "2026-08-28",
       sourceCeilingDay: "2026-08-24",
+      describedThroughDay: "2026-08-28",
       coverageGaps: [],
     });
+    const capability = result.layers.find((layer) => layer.layerName === "drought-areas")!;
+    expect(isDayDescribed(capability, "2026-08-28")).toBe(true);
+    expect(isDayDescribed(capability, "2026-08-29")).toBe(false);
   });
 
   /**

@@ -35,6 +35,7 @@ from agri_data_service.agent.surfaces import (
 )
 from agri_data_service.db.engine import published_reader_session
 from agri_data_service.db.sql_queries import load_query_sql
+from agri_data_service.parquet_ops.coverage import registered_census_lanes
 from agri_data_service.parquet_ops.faults import ServingRefusalError
 from agri_data_service.parquet_ops.warehouse_reader import (
     GeometrySupport,
@@ -486,6 +487,46 @@ def _feature_surface_error(raw_surface: str) -> str:
                 "individual features to return -- use signal_value_on_day or "
                 "drought_history_at_point for those. Nothing was queried, so nothing follows "
                 "about the surface that was named."
+            ),
+        }
+    )
+
+
+def _feature_surface_refusal(raw_surface: str, day: date) -> str | None:
+    """Validate the surface and its exact-partition feature semantics; see agent/AGENTS.md."""
+    surface = raw_surface.strip()[:MAX_NAME_LENGTH]
+    if surface not in FEATURE_SURFACE_NAMES:
+        return _feature_surface_error(raw_surface)
+    if surface in POSTGRESQL_ONLY_SURFACE_NAMES:
+        return None
+    lane = surface_lanes(surface)[0]
+    nature = next((entry.nature for entry in registered_census_lanes() if entry.layer == lane), None)
+    if nature == "daily_series" and lane != "vegetation":
+        return None
+    semantics = "latest_release_at_or_before_selected_day"
+    if lane == "burn-severity":
+        semantics = "cumulative_releases_or_current_snapshot_replacement"
+    elif lane == "vegetation":
+        semantics = "latest_observation_per_cell_in_trailing_30_days"
+    elif nature is None:
+        semantics = "unregistered_lane"
+    _record("feature_value_near_point", 0, {"error": "unsupported_feature_temporal_semantics", "surface_name": surface})
+    return _payload(
+        {
+            "error": "parquet_serving_refused",
+            "refusal_code": "unsupported_feature_temporal_semantics",
+            "requested_day": day,
+            "surface_name": surface,
+            "parquet_lane": lane,
+            "lane_nature": nature,
+            "required_temporal_semantics": semantics,
+            "refusal_detail": (
+                f"{surface} requires {semantics}; this point tool only implements exact-partition selection."
+            ),
+            "note": (
+                "This is a REFUSAL, not an absence. No object listing, data-part read or database query "
+                "was made. An exact-day empty partition cannot describe this map population. Do not "
+                "report zero features, no data on the selected day, or map/agent parity from this refusal."
             ),
         }
     )
@@ -1496,17 +1537,17 @@ async def query_observation_coverage_on_day(
             "surface_name": surface,
             "coverage": coverage,
             "note": (
-                "Read from each lane's published availability index -- the same evidence the map's "
-                "time slider is built from -- so this cannot disagree with which days the slider "
-                "offers. A surface backed by several lanes is covered only on days EVERY lane "
-                "published, because a day one depth or one statistic is missing is a day the map "
-                "cannot draw. is_covered false is a fact about the day, and the history fields say "
-                "which KIND of absence it is: a day before earliest_observed_day is outside this "
-                "lane's published history, a day after source_ceiling_day is past what the source "
-                "itself could have published and may simply not exist yet, and a day between the "
-                "two is a genuine hole. lane_states names each lane's own verdict for the day, "
-                "including a governed absence's recorded reason. For the nearest days that ARE "
-                "covered call observation_temporal_neighbors."
+                "Read from each lane's published availability index. is_covered describes exact "
+                "published partitions: every required lane must publish on requested_day. It does "
+                "not apply the map's release carry, cumulative snapshot or rolling-window rules, "
+                "so false does not prove the map cannot answer the selected day. The history "
+                "fields locate the day relative to published bounds and the source ceiling; "
+                "a day after source_ceiling_day is past what the source itself could have published. "
+                "That is an exact-partition limit, not a prohibition on carrying an earlier release. "
+                "lane_states gives each lane's own verdict. A governed absence must be reported "
+                "with its recorded reason, and does not establish a measured zero or no activity. "
+                "A missing partition establishes no observation value. For the nearest exact "
+                "published partitions call observation_temporal_neighbors."
             ),
         }
     )
@@ -1680,9 +1721,10 @@ async def query_feature_value_near_point(  # noqa: PLR0913 - the parameter list 
     selected_day = _parse_day(day)
     if selected_day is None:
         return _day_error("feature_value_near_point", day)
+    surface_refusal = _feature_surface_refusal(surface_name, selected_day)
+    if surface_refusal is not None:
+        return surface_refusal
     surface = surface_name.strip()[:MAX_NAME_LENGTH]
-    if surface not in FEATURE_SURFACE_NAMES:
-        return _feature_surface_error(surface_name)
     radius = _clamp(radius_meters, MIN_RADIUS_METERS, MAX_RADIUS_METERS)
     returned_features = _clamp_int(feature_count, 1, MAX_SURFACE_FEATURE_ROWS)
     if surface in POSTGRESQL_ONLY_SURFACE_NAMES:
@@ -1735,8 +1777,7 @@ async def query_feature_value_near_point(  # noqa: PLR0913 - the parameter list 
             "features_truncated": len(features) >= returned_features,
             "note": (
                 "Every feature here is dated to requested_day by the PARTITION it was written "
-                "under, which is the same day key the map's own Parquet client asks for, so a "
-                "feature the map draws on that day is a feature this can return. Each carries "
+                "under. This is an exact-partition answer for supported daily layers. Each carries "
                 "distance_meters and distance_basis: 'point' is the exact geodesic distance to the "
                 "row's own coordinate, 'centroid' is the distance to a polygon's centroid, and for "
                 "a polygon lane covers_probe_point is the exact answer to 'is the point inside "
@@ -1744,7 +1785,8 @@ async def query_feature_value_near_point(  # noqa: PLR0913 - the parameter list 
                 "radius rather than the circle, so a corner feature slightly beyond the radius can "
                 "appear. properties carries the lane's own registered columns, typed, rather than "
                 "a projection of a JSON blob. Read day_state before the list: an empty list on a "
-                "governed_absence day is a measured absence, an empty list on a day_not_written "
+                "governed_absence day must be reported with its recorded reason and cannot "
+                "establish a measured zero or no activity. An empty list on a day_not_written "
                 "day supports no conclusion at all, and an empty list on a published day means "
                 "this layer published nothing inside the search box -- call "
                 "observation_coverage_on_day to tell those apart."
@@ -2091,15 +2133,17 @@ async def observation_coverage_on_day(
     Works for every surface the map publishes, not just the signal grids -- fire detections, burn
     severity, evacuation zones, sensors, vegetation, water gauges, weather observations,
     watersheds, soil survey, fire perimeters, the drought release set, the three soil-field
-    streams and the nine climate-field streams. Answers from the same published availability index
-    the map's time slider is built from, so it can never disagree with which days the slider
-    offers, and it covers the lane's WHOLE history rather than a scan budget.
+    streams and the nine climate-field streams. Answers exact published-partition coverage from
+    the availability indexes across the lane's indexed history. It does not apply the map's
+    release carry, cumulative snapshot or rolling-window rules, so is_covered false does not
+    establish that the map cannot answer the day.
 
     Call this FIRST when you are asked about a layer on a specific day. It tells you whether the
     day is covered, how many rows landed, and where the day sits relative to the layer's earliest
     and latest published days and its source's own ceiling -- which is how you distinguish "before
-    this lane's history begins" from "past what the source could have published" from "a real hole
-    in the middle".
+    this lane's history begins" from "past what the source could have published" from "an exact
+    partition is missing". Report governed absences with their recorded reason; they do not
+    establish measured zero or no activity.
 
     Args:
         surface_name: The map surface to ask about, exactly as the map names it, e.g.
@@ -2118,8 +2162,9 @@ async def observation_temporal_neighbors(
     """Find the nearest observed day before and after a given day, for any map surface.
 
     Call this when observation_coverage_on_day reported the day uncovered. It returns at most two
-    rows -- the closest covered day earlier than the one asked about and the closest one later --
-    each carrying its real gap in days and how many rows that day held.
+    rows -- the closest exact published-partition day earlier than the one asked about and the
+    closest one later -- each carrying its real gap in days and how many rows that day held.
+    It does not retrieve feature values or apply map release carry, snapshots or rolling windows.
 
     These are neighbours, never answers. Report them as "the nearest observation is nine days
     earlier", never as the value on the day requested. A missing side means no covered day exists
@@ -2149,23 +2194,23 @@ async def feature_value_near_point(  # noqa: PLR0913 - the parameter list is the
 ) -> str:
     """List the nearest published features of one map layer dated to ONE specific day.
 
-    The spatial half of answering about a feature-backed layer at the day the map is showing:
-    fire detections, fire perimeters, burn severity, evacuation zones, sensors, vegetation,
-    water gauges, weather observations, watersheds, soil survey and interventions. Each feature
-    comes back with its real distance in metres, the basis that distance was measured on, its
-    centroid, and its lane's own typed columns under properties.
+    Supports exact-day fire detections, sensors, water gauges, weather observations and community
+    interventions. Release/static layers (including MTBS) and trailing-window vegetation return
+    unsupported_feature_temporal_semantics before any data read; this is never an absence.
+    Returned features carry distance_meters, distance_basis and their own dates under properties.
 
-    Features are dated by the partition day the map's own client asks for, so a feature the map
-    draws on that day is a feature this returns. Read day_state before the list: an empty list on
-    a governed_absence day is a measured absence, and an empty list on a day_not_written day
-    supports no conclusion at all. Pair it with observation_coverage_on_day to tell "nothing near
-    this point" apart from "nothing anywhere that day". The cell-grid signal streams and the
+    For supported environmental daily layers, requested_day selects the exact partition.
+    Read day_state before the list: an empty list on
+    a governed_absence day must be reported with its recorded reason and does not establish a
+    measured zero or no activity. An empty list on a day_not_written day supports no conclusion
+    at all. Pair it with observation_coverage_on_day to distinguish an empty local read from a
+    missing or governed-absence partition. The cell-grid signal streams and the
     drought release set have no individual features and are refused by name rather than answered
     with an empty list.
 
     Args:
         surface_name: The feature-backed map layer to ask about, exactly as the map names it,
-            e.g. "fire-detections", "water-gauges", "vegetation".
+            e.g. "fire-detections", "water-gauges", "weather-observations".
         day: The calendar day to answer for, as ISO YYYY-MM-DD. Use the day the caller selected.
         longitude: WGS84 longitude in decimal degrees, -180 to 180.
         latitude: WGS84 latitude in decimal degrees, -90 to 90.

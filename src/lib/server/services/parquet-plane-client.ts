@@ -496,7 +496,13 @@ const wireCoverageSchema = z.object({
 type WireEnvelope = z.infer<typeof wireEnvelopeSchema>;
 
 /** Wire envelope to this codebase's union. The `default` arm is the union's exhaustiveness proof. */
-function toEnvelope(wire: WireEnvelope): ParquetPlaneEnvelope {
+function toEnvelope(wire: WireEnvelope, allowCarry = false): ParquetPlaneEnvelope {
+  if (!CALENDAR_DAY_PATTERN.test(wire.requested_day)
+    || ("served_day" in wire && (!CALENDAR_DAY_PATTERN.test(wire.served_day)
+      || wire.served_day > wire.requested_day
+      || (!allowCarry && wire.served_day !== wire.requested_day)))) {
+    throw new ParquetPlaneContractError("Parquet plane answered invalid or mismatched envelope days");
+  }
   const snapshot = "mtbs_snapshot" in wire ? wire.mtbs_snapshot : undefined;
   if (snapshot && (!("served_day" in wire) || snapshot.available_day !== wire.served_day
     || snapshot.available_day > wire.requested_day)) {
@@ -536,14 +542,19 @@ function toEnvelope(wire: WireEnvelope): ParquetPlaneEnvelope {
 }
 
 /** Parses one envelope, or refuses the whole answer. */
-function decodeEnvelope(payload: unknown): ParquetPlaneEnvelope {
+function decodeEnvelope(payload: unknown, requestedDay: string, allowCarry = false): ParquetPlaneEnvelope {
   const parsed = wireEnvelopeSchema.safeParse(payload);
   if (!parsed.success) {
     throw new ParquetPlaneContractError(
       "Parquet plane answered with an envelope that is not one of the four published states"
     );
   }
-  return toEnvelope(parsed.data);
+  if (parsed.data.requested_day !== requestedDay) {
+    throw new ParquetPlaneContractError(
+      `Parquet plane answered ${parsed.data.requested_day} for requested day ${requestedDay}`
+    );
+  }
+  return toEnvelope(parsed.data, allowCarry);
 }
 
 /**
@@ -608,7 +619,7 @@ function decodeWindow(
       "Parquet plane answered a day window that is not a list of published envelopes"
     );
   }
-  const days = parsed.data.days.map(toEnvelope);
+  const days = parsed.data.days.map((wire) => toEnvelope(wire));
   const first = days.at(0);
   const last = days.at(-1);
   if (first === undefined || last === undefined) {
@@ -745,8 +756,9 @@ export async function getParquetLayerDay(
 ): Promise<ParquetPlaneEnvelope> {
   const url = endpoint(WIRE.routes.day);
   applyReadBase(url, request);
-  url.searchParams.set(WIRE.params.day, requireCalendarDay(request.day, "day"));
-  return decodeEnvelope(await readJson(url, rowReadBounds(request)));
+  const day = requireCalendarDay(request.day, "day");
+  url.searchParams.set(WIRE.params.day, day);
+  return decodeEnvelope(await readJson(url, rowReadBounds(request)), day);
 }
 
 /**
@@ -786,8 +798,9 @@ export async function getParquetLatestRelease(
 ): Promise<ParquetPlaneEnvelope> {
   const url = endpoint(WIRE.routes.release);
   applyReadBase(url, request);
-  url.searchParams.set(WIRE.params.asOfDay, requireCalendarDay(request.asOfDay, "asOfDay"));
-  return decodeEnvelope(await readJson(url, rowReadBounds(request)));
+  const asOfDay = requireCalendarDay(request.asOfDay, "asOfDay");
+  url.searchParams.set(WIRE.params.asOfDay, asOfDay);
+  return decodeEnvelope(await readJson(url, rowReadBounds(request)), asOfDay, true);
 }
 
 /**

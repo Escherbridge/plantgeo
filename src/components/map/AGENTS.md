@@ -1029,15 +1029,15 @@ fact withheld as `availability_unpublished` while its index builds.
 **Uniform is a claim about SHAPE, not about words.** Every non-`ready` state renders the identical
 three parts in the identical order -- chip, placeholder track at the real track's height, one
 sentence -- so the states differ in what they SAY and never in whether they say anything. The
-words must differ: `availability_unpublished` means the data is written and its index is being
-built, `lane_never_written` means the source has never produced a byte, and a caption that told a
-user to come back later would be right about one and wrong about the other. Fifteen withheld
+words must differ: `availability_unpublished` means the verified list of dates has not been
+published; it establishes neither the presence of data nor a running build.
+`lane_never_written` means the source has never produced a byte. Fifteen withheld
 reasons, fifteen distinct sentences; `layer-time-state.test.ts` pins that they stay distinct.
 
 **A withheld layer is not an error and must not read like one.** No reason sentence says "error"
-or "failed to". Only two states pulse (`isSettling`): a first load in flight, and the two reasons
-something is genuinely working on -- `availability_unpublished` (a build that is running) and
-`coverage_unavailable` (the loader's own 30s retry). A settled refusal that animated would promise
+or "failed to". A first load and a failed read that the loader retries can pulse (`isSettling`).
+Among named refusals only `coverage_unavailable` identifies that retry. An unpublished index
+does not identify writer activity and remains settled. A settled refusal that animated would promise
 an arrival that is not on its way.
 
 **The loading block is deferred in CSS, not in JavaScript.** `.layer-time-status-deferred` holds
@@ -1093,6 +1093,27 @@ rules are untouched. Unknown coverage is phrased without assuming it lies before
 whole-range unknown history has no claimed covered tail, and an unknown suffix is named as a range.
 This prevents a history ending today from claiming it is only undescribed before tomorrow and
 then announcing no gaps after that nonexistent boundary.
+
+## Coverage evidence and source publication limits — 2026-09-11
+
+`LayerTimeSlider` includes `coverageAuthority` and `sourceCeilingDay` in its visible caption,
+which the range control also names through `aria-describedby`. `layer-coverage-track` words
+availability authority as verification from the published index, census authority as an object
+inventory with no stated published verification, and an omitted authority as unstated evidence.
+A legacy payload is never silently upgraded to availability authority.
+
+The source publication limit is stated independently from the latest terminal day and the
+selected day's gap, governed absence, sparse or unknown status. It bounds recorded publication,
+not every answerable day: drought can carry an eligible earlier release to a later selected day.
+It also does not promise every preceding day was published. Selecting beyond the publication
+limit adds that factual relation without claiming the selection is unsupported. The existing
+`describedThroughDay` bound governs the coverage track; the caption does not clamp selection or
+redefine the terminal day used by Latest. An object inventory may be cached, so its caption
+does not claim a live read.
+
+`availability_unpublished` remains a named, settled refusal. The capability wire has no writer
+progress field, so neither an animated status nor a sentence claiming an index build is running
+is supported by that reason alone.
 
 ## Weather support fidelity (2026-09-10)
 

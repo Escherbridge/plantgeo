@@ -61,6 +61,9 @@ CELL_POSITIONS: dict[str, tuple[float, float]] = {
 # tolerance is about the reference's own formula, never about disagreement between the two engines.
 SPHERICAL_TO_SPHEROIDAL_TOLERANCE = 2.5e-3
 
+# Ten weighted contributions may be accumulated in different orders; see the reader track's September 11 evidence.
+WEIGHTED_MEAN_MAX_ULPS = 8
+
 
 @dataclass
 class LocalSession:
@@ -188,7 +191,7 @@ def postgresql_window_summary(rows: Sequence[dict[str, Any]]) -> list[dict[str, 
 
 
 def assert_row_matches(measured: dict[str, Any], expected: dict[str, Any]) -> None:
-    """Compare one answered row against the reference, allowing only the stated distance tolerance."""
+    """Compare exact fields, with explicit distance and weighted-mean roundoff tolerances."""
     for column, want in expected.items():
         got = measured[column]
         if column.endswith(("distance_m", "distance_meters")):
@@ -197,7 +200,24 @@ def assert_row_matches(measured: dict[str, Any], expected: dict[str, Any]) -> No
                 "are ellipsoidal and spherical respectively and may differ only by the stated tolerance"
             )
             continue
+        if column == "mean_value":
+            assert math.isclose(got, want, rel_tol=0, abs_tol=WEIGHTED_MEAN_MAX_ULPS * math.ulp(want)), (
+                f"{column}: DuckDB answered {got!r} and the PostgreSQL reference {want!r}; "
+                "the difference exceeds the weighted-sum roundoff allowance"
+            )
+            continue
         assert got == want, f"{column}: DuckDB answered {got!r} and the PostgreSQL reference {want!r}"
+
+
+def test_the_mean_oracle_allows_roundoff_but_rejects_changed_values_and_counts() -> None:
+    expected = {"mean_value": 4.72, "observation_count": 25, "minimum_value": 4.1}
+    assert_row_matches({**expected, "mean_value": math.nextafter(4.72, math.inf)}, expected)
+    with pytest.raises(AssertionError, match="roundoff allowance"):
+        assert_row_matches({**expected, "mean_value": 4.72 + 16 * math.ulp(4.72)}, expected)
+    with pytest.raises(AssertionError, match="observation_count"):
+        assert_row_matches({**expected, "observation_count": 26}, expected)
+    with pytest.raises(AssertionError, match="minimum_value"):
+        assert_row_matches({**expected, "minimum_value": math.nextafter(4.1, math.inf)}, expected)
 
 
 # --- The signal plane --------------------------------------------------------------

@@ -1,5 +1,6 @@
 import { and, eq, sql } from "drizzle-orm";
 import { haversineDistance } from "@/lib/map/measurement";
+import { getRegionalTemporalNeighbours, type RegionalTemporalNeighbour } from "@/lib/server/services/regional-temporal-neighbors";
 import { db } from "@/lib/server/db";
 import { features, layers } from "@/lib/server/db/schema";
 import {
@@ -27,6 +28,9 @@ import {
   getContextWaterGauges,
   getContextWeatherForBbox,
   getContextWeatherForPoint,
+  contextPointProximity,
+  ParquetContextReadError,
+  type ContextPointProximity,
 } from "./parquet-context-readers";
 import type { WaterGauge } from "@/lib/server/services/usgs-water";
 import { firmsDayRange } from "@/lib/server/services/environmental-time";
@@ -34,6 +38,7 @@ import {
   getParquetBurnSeverity,
   getParquetFireDetections,
   getParquetFirePerimeters,
+  rejectAborted,
   type ParquetFirePerimeter,
   type ParquetFireWindow,
   type ParquetReaderResult,
@@ -154,6 +159,7 @@ export interface StrategyContextEntry {
 }
 
 export interface RegionalContextPayload {
+  temporalNeighbours?: RegionalTemporalNeighbour[];
   location: { lat: number; lon: number; geohash: string };
   strategyRecommendations: StrategyScore[] | null;
   /** Reserved for a future published strategy release; currently always empty. */
@@ -163,9 +169,9 @@ export interface RegionalContextPayload {
   soilProperties: SoilProperties | null;
   waterScarcity: {
     droughtClass: string | null;
-    nearestGauge: WaterGauge | null;
+    nearestGauge: (WaterGauge & { proximity?: ContextPointProximity }) | null;
   } | null;
-  weather: PublishedWeatherObservation | null;
+  weather: (PublishedWeatherObservation & { observedDay?: string; proximity?: ContextPointProximity }) | null;
   /** Null whenever the Parquet fire read did not return cells, for ANY reason; `temporalContext` says which. */
   fireDetections: {
     cells: NearbyFireDetection[];
@@ -237,6 +243,8 @@ export type ViewedDateReadOutcome =
    * never observed.
    */
   | "not_published_on_viewed_date"
+  /** Governed unavailable observations do not establish a measured zero. */
+  | "governed_absence_on_viewed_date"
   /**
    * The day IS published, and the one RUNG this server read has no partition for it.
    *
@@ -446,26 +454,24 @@ function settled<T>(result: PromiseSettledResult<T>, fallback: T): T {
   return result.status === "fulfilled" ? result.value : fallback;
 }
 
-/**
- * What the agent may be told about fire near this point, resolved from the Parquet reader's own
- * terminal state rather than from an empty array.
- *
- * Four different things produce zero cells and only two of them are absences, which is the whole
- * reason the reader returns a state instead of a collection:
- *
- * - `ready` with no cells — the day published and nothing fell in this window. A real absence,
- *   and the coverage record in `resolveViewedLayerReading` confirms it before anything is said.
- * - `absent` — the lane looked at the day and the source deliberately had nothing anywhere. Also
- *   a real absence, left to the same coverage lookup rather than asserted here: a governed
- *   absence breaks published continuity, so the capability row is the conservative judge.
- * - `not_generated` — the partition for THIS RUNG was never written. Stated through
- *   `rungNotWrittenReason`, which names the rung, because a capability row that still lists the
- *   day as published would otherwise license "no fires here" for a partition nobody wrote — and
- *   because the rung this assembler reads is its own (`CONTEXT_MAP_ZOOM`) and not the one the
- *   user's map drew from.
- * - `upstream_unavailable`, or the reader raising (a future or malformed day, a contract fault) —
- *   a fault, never an absence. Both land on `failed`, which resolves to `read_failed`.
- */
+/** A missing requested rung can be reconciled with coverage without becoming an outage. */
+function contextReadState(result: PromiseSettledResult<unknown>, hasObservations: boolean): SourceReadState {
+  const missingRung = result.status === "rejected" && result.reason instanceof ParquetContextReadError && result.reason.rungNotWritten;
+  const absence = result.status === "rejected" && result.reason instanceof ParquetContextReadError
+    ? result.reason.governedAbsence : undefined;
+  return {
+    failed: result.status === "rejected" && !missingRung && absence === undefined,
+    hasObservations,
+    ...(missingRung ? { rungNotWrittenReason: result.reason.message } : {}),
+    ...(absence === undefined ? {} : { governedAbsenceReason: absence.evidence.reason }),
+  };
+}
+
+function rejectCancelledContext(signal?: AbortSignal): void {
+  if (signal?.aborted) rejectAborted({ state: "upstream_unavailable", fault: { kind: "aborted", message: "Regional context request was cancelled" } });
+}
+
+/** Fire evidence from terminal state; see AGENTS.md §regional-governed-absence. */
 interface FireReadOutcome {
   /** Newest first, capped at `MAX_FIRE_DETECTION_CELLS`. */
   cells: NearbyFireDetection[];
@@ -542,8 +548,7 @@ function resolveFireRead(
 
 /**
  * What the agent may be told about fire perimeters near this point, resolved from the Parquet
- * reader's terminal state -- the same discipline `resolveFireRead` applies above, for the same
- * reason: four different things produce zero perimeters and only two of them are absences.
+ * reader's terminal state; a governed absence never establishes measured zero.
  *
  * THE FRESHNESS SIGNAL IS THE SNAPSHOT DAY, and that is a different KIND of value from the one
  * this block used to report. The PostgreSQL read this replaced returned `features.updatedAt`,
@@ -709,14 +714,14 @@ async function readNearestWeather(
   lon: number,
   bbox: string,
   date: string | undefined,
-  today: string
+  signal?: AbortSignal
 ): Promise<PublishedWeatherObservation | null> {
-  if (resolveRequestedObservationDay(date, today).kind !== "historical") {
-    return getContextWeatherForPoint(lat, lon);
+  if (date === undefined) {
+    return signal === undefined ? getContextWeatherForPoint(lat, lon) : getContextWeatherForPoint(lat, lon, signal);
   }
   let nearest: PublishedWeatherObservation | null = null;
   let distance = Number.POSITIVE_INFINITY;
-  for (const observation of await getContextWeatherForBbox(bbox, date)) {
+  for (const observation of await (signal === undefined ? getContextWeatherForBbox(bbox, date) : getContextWeatherForBbox(bbox, date, signal))) {
     const candidate = haversineDistance([lon, lat], [observation.lon, observation.lat]);
     if (candidate < distance) {
       nearest = observation;
@@ -729,6 +734,7 @@ async function readNearestWeather(
 /** Whether a layer's own coverage record shows a day as published. */
 type CoverageOnDay =
   | { state: "published" }
+  | { state: "governed_absence"; reason: string }
   | { state: "not_published"; reason: string }
   | { state: "unknown"; reason: string };
 
@@ -759,6 +765,15 @@ function coverageOnDay(
     };
   }
   const capability = capabilityLayers.find((layer) => layer.layerName === layerName);
+  const governedAbsence = capability?.governedAbsenceRanges?.find(
+    (range) => date >= range.from && date <= range.to
+  );
+  if (governedAbsence !== undefined) {
+    return {
+      state: "governed_absence",
+      reason: `${layerName} records a governed absence from ${governedAbsence.from} through ${governedAbsence.to}; no observation was available.`,
+    };
+  }
   if (capability === undefined || capability.earliestObservedDate === null) {
     return {
       state: "unknown",
@@ -848,6 +863,7 @@ function resolveSetCorrespondence(
 /** Whether one payload block's read completed, and whether it returned anything. */
 interface SourceReadState {
   coverageUnknownReason?: string;
+  governedAbsenceReason?: string;
   failed: boolean;
   hasObservations: boolean;
   /**
@@ -881,8 +897,10 @@ interface SourceReadState {
 export async function assembleRegionalContext(
   lat: number,
   lon: number,
-  viewedLayers: ViewedLayerRequest[] = []
+  viewedLayers: ViewedLayerRequest[] = [],
+  signal?: AbortSignal
 ): Promise<RegionalContextResult> {
+  rejectCancelledContext(signal);
   const west = Math.max(-180, lon - CONTEXT_RADIUS_DEGREES);
   const south = Math.max(-90, lat - CONTEXT_RADIUS_DEGREES);
   const east = Math.min(180, lon + CONTEXT_RADIUS_DEGREES);
@@ -910,14 +928,14 @@ export async function assembleRegionalContext(
     mtbs,
     communityProposals,
   ] = await Promise.allSettled([
-    getContextDrought(bbox, dateBySource.get("drought")),
-    getContextWaterGauges(bbox, dateBySource.get("streamflow")),
+    signal === undefined ? getContextDrought(bbox, dateBySource.get("drought")) : getContextDrought(bbox, dateBySource.get("drought"), signal),
+    signal === undefined ? getContextWaterGauges(bbox, dateBySource.get("streamflow")) : getContextWaterGauges(bbox, dateBySource.get("streamflow"), signal),
     readNearestWeather(
       lat,
       lon,
       bbox,
       dateBySource.get("weatherObservations"),
-      today
+      signal
     ),
     // The PARQUET fire reader since 2026-09-02, for the same reason `getParquetSliderCapabilities`
     // is read below: a request-time PostgreSQL read for a map or agent answer is exactly what the
@@ -929,6 +947,7 @@ export async function assembleRegionalContext(
       date: dateBySource.get("fireDetections"),
       mapZoom: CONTEXT_MAP_ZOOM,
       dayRange: firmsDayRange(),
+      ...(signal === undefined ? {} : { signal }),
     }),
     // The PARQUET perimeter reader since 2026-09-07, and it was the last environmental read in
     // this assembler still touching `geo.features` -- acceptance criterion 2 of
@@ -941,7 +960,7 @@ export async function assembleRegionalContext(
     // not in `DATE_PARAMETERISED_SOURCES` and must not become so by the back door -- see the
     // three-part argument there. An omitted day is the live edge: the newest snapshot captured
     // at or before today, which is exactly what `served_as_of_latest` claims about it.
-    getParquetFirePerimeters({ bbox, mapZoom: CONTEXT_MAP_ZOOM }),
+    getParquetFirePerimeters({ bbox, mapZoom: CONTEXT_MAP_ZOOM, ...(signal === undefined ? {} : { signal }) }),
     getInterventionSuitability(lat, lon),
     // The PARQUET resolver, not the PostgreSQL one the browser stopped reading at the 2026-09-01
     // cutover. They answer differently on purpose: a lane whose availability index is withheld is
@@ -951,13 +970,24 @@ export async function assembleRegionalContext(
     // Live external reads, added 2026-08-14 to replace the two fields this assembler used to
     // hardcode to null despite both having a real server-side read path.
     getSoilProperties(lat, lon),
-    getParquetBurnSeverity({ bbox, date: dateBySource.get("mtbsPerimeters"), mapZoom: CONTEXT_MAP_ZOOM }),
+    getParquetBurnSeverity({ bbox, date: dateBySource.get("mtbsPerimeters"), mapZoom: CONTEXT_MAP_ZOOM, ...(signal === undefined ? {} : { signal }) }),
     readCommunityProposals(lat, lon),
   ]);
+
+  rejectCancelledContext(signal);
+  for (const read of [fires, perimeters, mtbs]) {
+    if (read.status === "fulfilled") rejectAborted<unknown>(read.value);
+  }
+  for (const read of [drought, gauges, weather]) {
+    if (read.status === "rejected" && read.reason instanceof Error && "code" in read.reason && read.reason.code === "CLIENT_CLOSED_REQUEST") {
+      throw read.reason;
+    }
+  }
 
   const droughtValue = drought.status === "fulfilled" ? drought.value : null;
   const gaugeValues = settled(gauges, [] as WaterGauge[]);
   const weatherValue = weather.status === "fulfilled" ? weather.value : null;
+  const gaugeValue = nearestGauge(gaugeValues, lat, lon);
   const fireRead = resolveFireRead(fires);
   const perimeterRead = resolveFirePerimeterRead(perimeters);
   const carbonValue = carbon.status === "fulfilled" ? carbon.value : null;
@@ -1017,10 +1047,16 @@ export async function assembleRegionalContext(
             droughtClass: droughtValue
               ? droughtClassAtPoint(droughtValue, lat, lon)
               : null,
-            nearestGauge: nearestGauge(gaugeValues, lat, lon),
+            nearestGauge: gaugeValue === null ? null : {
+              ...gaugeValue,
+              proximity: contextPointProximity(lat, lon, gaugeValue, dateBySource.get("streamflow") ?? today, bbox),
+            },
           }
         : null,
-    weather: weatherValue,
+    weather: weatherValue === null ? null : {
+      ...weatherValue,
+      proximity: contextPointProximity(lat, lon, weatherValue, dateBySource.get("weatherObservations") ?? today, bbox),
+    },
     fireDetections:
       fireRead.window !== null && fireRead.cells.length > 0
         ? {
@@ -1062,6 +1098,8 @@ export async function assembleRegionalContext(
       failed: mtbs.status === "rejected" ||
         (mtbs.status === "fulfilled" && mtbs.value.state === "upstream_unavailable"),
       hasObservations: mtbsRead !== null && mtbsRead.data.length > 0,
+      ...(mtbs.status === "fulfilled" && mtbs.value.state === "absent"
+        ? { governedAbsenceReason: mtbs.value.evidence.reason } : {}),
       ...(mtbs.status === "fulfilled" && mtbs.value.state === "not_generated"
         ? { rungNotWrittenReason: `The MTBS rung at zoom ${CONTEXT_MAP_ZOOM} was not generated for this read.` } : {}),
       ...(mtbsRead !== null && mtbsRead.data.length === 0
@@ -1074,6 +1112,10 @@ export async function assembleRegionalContext(
     fireDetections: {
       failed: fireRead.failed,
       hasObservations: fireRead.cells.length > 0,
+      ...(fireRead.cells.length === 0 && fireRead.truncated
+        ? { coverageUnknownReason: "The fire read returned no positioned rows but was truncated; incomplete viewport evidence cannot establish that no fires occurred here." } : {}),
+      ...(fires.status === "fulfilled" && fires.value.state === "absent"
+        ? { governedAbsenceReason: fires.value.evidence.reason } : {}),
       ...(fireRead.rungNotWrittenReason === null
         ? {}
         : { rungNotWrittenReason: fireRead.rungNotWrittenReason }),
@@ -1087,20 +1129,9 @@ export async function assembleRegionalContext(
       failed: perimeterRead.failed,
       hasObservations: perimeterRead.perimeters.length > 0,
     },
-    streamflow: {
-      failed: gauges.status === "rejected",
-      hasObservations: gaugeValues.length > 0,
-    },
-    drought: {
-      failed: drought.status === "rejected",
-      hasObservations:
-        droughtValue?.availability === "published" &&
-        droughtValue.features.length > 0,
-    },
-    weatherObservations: {
-      failed: weather.status === "rejected",
-      hasObservations: weatherValue !== null,
-    },
+    streamflow: contextReadState(gauges, gaugeValues.length > 0),
+    drought: contextReadState(drought, droughtValue?.availability === "published" && droughtValue.features.length > 0),
+    weatherObservations: contextReadState(weather, weatherValue !== null),
   };
 
   // The whole payload rather than just its layer list: `mapBoundsRowByViewedDay` asks
@@ -1108,6 +1139,11 @@ export async function assembleRegionalContext(
   // way the browser did.
   const capabilityPayload =
     capabilities.status === "fulfilled" ? capabilities.value : null;
+
+  payload.temporalNeighbours = await getRegionalTemporalNeighbours({
+    viewedLayers, capabilities: capabilityPayload, lat, lon, bbox,
+    ...(signal === undefined ? {} : { signal }),
+  });
 
   const readings = viewedLayers.map((row) =>
     resolveViewedLayerReading(row, today, readState, capabilityPayload)
@@ -1193,6 +1229,14 @@ function resolveViewedLayerReading(
       reason: `The ${evidenceSource} read did not complete for this request.`,
     };
   }
+  if (state.governedAbsenceReason !== undefined) {
+    return {
+      ...base,
+      outcome: "governed_absence_on_viewed_date",
+      reason: state.governedAbsenceReason,
+      clientClaimContradicted: row.hasDataOnDate,
+    };
+  }
   if (state.hasObservations) {
     return { ...base, outcome: "observed_on_viewed_date", reason: null };
   }
@@ -1219,6 +1263,13 @@ function resolveViewedLayerReading(
   }
 
   switch (coverage.state) {
+    case "governed_absence":
+      return {
+        ...base,
+        outcome: "governed_absence_on_viewed_date",
+        reason: coverage.reason,
+        clientClaimContradicted: row.hasDataOnDate,
+      };
     case "published":
       return {
         ...base,

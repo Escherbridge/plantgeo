@@ -89,6 +89,22 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 describe("getParquetLayerDay", () => {
+  it.each([
+    wirePublished("2026-08-19"),
+    wireAbsent("2026-08-19"),
+    wireMissing("2026-08-19"),
+    { state: "lane_never_written", requested_day: "2026-08-19" },
+    wirePublished("2026-08-20", "2026-08-21"),
+    wireAbsent("2026-08-20", "2026-08-21"),
+    wirePublished("2026-08-20", "2026-08-19"),
+    wireAbsent("2026-08-20", "2026-08-19"),
+    wirePublished("2026-08-20", "yesterday"),
+  ])("refuses a wrong-day or future-relative answer: %j", async (payload) => {
+    mockedFetch.mockResolvedValue(payload);
+    await expect(getParquetLayerDay({ layer: "vegetation", day: "2026-08-20", zoomTier: 9 }))
+      .rejects.toBeInstanceOf(ParquetPlaneContractError);
+  });
+
   it("addresses the day route with the layer, kind, tier and day", async () => {
     mockedFetch.mockResolvedValue(wirePublished("2026-08-20"));
 
@@ -204,6 +220,22 @@ describe("getParquetLayerDay", () => {
 });
 
 describe("getParquetLayerDayWindow", () => {
+  it.each([wirePublished("2026-08-20", "2026-08-19"), wireAbsent("2026-08-20", "2026-08-19")])(
+    "refuses an older served day in an exact window: %j", async (payload) => {
+      mockedFetch.mockResolvedValue({ days: [payload] });
+      await expect(getParquetLayerDayWindow({
+        layer: "vegetation", firstDay: "2026-08-20", lastDay: "2026-08-20", zoomTier: 9,
+      })).rejects.toBeInstanceOf(ParquetPlaneContractError);
+    }
+  );
+
+  it("refuses future served days even when every requested window day is present", async () => {
+    mockedFetch.mockResolvedValue({ days: [wirePublished("2026-08-20", "2026-08-21")] });
+    await expect(getParquetLayerDayWindow({
+      layer: "vegetation", firstDay: "2026-08-20", lastDay: "2026-08-20", zoomTier: 9,
+    })).rejects.toBeInstanceOf(ParquetPlaneContractError);
+  });
+
   it("addresses the window route with both ends of the closed range", async () => {
     mockedFetch.mockResolvedValue({
       days: [wirePublished("2026-08-18"), wireAbsent("2026-08-19"), wireMissing("2026-08-20")],
@@ -301,6 +333,17 @@ describe("getParquetLayerDayWindow", () => {
 });
 
 describe("getParquetLatestRelease", () => {
+  it.each([
+    wirePublished("2026-08-19", "2026-08-14"),
+    wireAbsent("2026-08-19", "2026-08-14"),
+    wireMissing("2026-08-19"),
+    wirePublished("2026-08-20", "2026-08-21"),
+  ])("refuses a release answering another as-of day or a future release: %j", async (payload) => {
+    mockedFetch.mockResolvedValue(payload);
+    await expect(getParquetLatestRelease({ layer: "drought-areas", asOfDay: "2026-08-20", zoomTier: 9 }))
+      .rejects.toBeInstanceOf(ParquetPlaneContractError);
+  });
+
   it("addresses the release route with the as-of day and reports the release's own day", async () => {
     mockedFetch.mockResolvedValue(wirePublished("2026-08-20", "2026-08-14"));
 
@@ -817,9 +860,9 @@ describe("the frozen wire contract", () => {
     return JSON.parse(readFileSync(`${FIXTURES}/${name}.json`, "utf8"));
   }
 
-  async function decodeDay(name: string) {
+  async function decodeDay(name: string, day = "2026-08-06") {
     mockedFetch.mockResolvedValue(fixture(name));
-    return getParquetLayerDay({ layer: "vegetation", day: "2026-08-06", zoomTier: 9 });
+    return getParquetLayerDay({ layer: "vegetation", day, zoomTier: 9 });
   }
 
   it("maps a published day into the union's published arm", async () => {
@@ -840,7 +883,7 @@ describe("the frozen wire contract", () => {
   });
 
   it("renames every absence field into this codebase's spelling", async () => {
-    expect(await decodeDay("day_governed_absence")).toEqual({
+    expect(await decodeDay("day_governed_absence", "2026-08-09")).toEqual({
       state: "governed_absence",
       requestedDay: "2026-08-09",
       servedDay: "2026-08-09",
@@ -855,7 +898,7 @@ describe("the frozen wire contract", () => {
 
   it("keeps day_not_written and lane_never_written distinct", async () => {
     // They license different sentences: a gap in a record that exists, versus no record at all.
-    expect(await decodeDay("day_not_written")).toEqual({
+    expect(await decodeDay("day_not_written", "2026-08-11")).toEqual({
       state: "day_not_written",
       requestedDay: "2026-08-11",
     });

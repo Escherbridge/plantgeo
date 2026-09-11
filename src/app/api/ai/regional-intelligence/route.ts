@@ -172,7 +172,7 @@ export async function POST(request: NextRequest) {
   try {
     let context: Awaited<ReturnType<typeof assembleRegionalContext>>;
     try {
-      context = await assembleRegionalContext(lat, lon, body.viewedLayers ?? []);
+      context = await assembleRegionalContext(lat, lon, body.viewedLayers ?? [], request.signal);
     } catch (error) {
       console.error('[AI] context assembly failed', error);
       return jsonResponse(

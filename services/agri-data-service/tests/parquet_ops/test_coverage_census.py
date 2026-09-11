@@ -591,12 +591,23 @@ def test_a_failed_refresh_propagates_rather_than_serving_expired_readability_evi
         cache.get(listing, lanes=(SIGNAL_LANE,), now=datetime(2026, 8, 25, 4, 5, tzinfo=UTC))
 
 
-def test_expired_concurrent_callers_share_one_failed_refresh_and_none_receive_stale_evidence() -> None:
-    listing = _CountingListing(delay_seconds=0.05)
+def test_expired_concurrent_callers_share_one_failed_refresh_and_none_receive_stale_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    listing = _CountingListing()
     cache = CoverageCache(ttl_seconds=1)
     cache.get(listing, lanes=(SIGNAL_LANE,), now=datetime(2026, 8, 25, 4, 0, tzinfo=UTC))
     listing.fault = ConnectionError("the object store did not answer")
     expired_at = datetime(2026, 8, 25, 4, 5, tzinfo=UTC)
+    refresh_lock = _ObservedRefreshLock(expected_waiters=CONCURRENT_COLD_LOADS - 1)
+    monkeypatch.setattr(cache, "_refreshing", refresh_lock)
+    before_list = listing._before_list
+
+    def fail_after_waiters_queue() -> None:
+        assert refresh_lock.waiters_ready.wait(timeout=5), "every other caller must join the active refresh"
+        before_list()
+
+    monkeypatch.setattr(listing, "_before_list", fail_after_waiters_queue)
 
     with ThreadPoolExecutor(max_workers=CONCURRENT_COLD_LOADS) as pool:
         futures = [
@@ -611,6 +622,9 @@ def test_expired_concurrent_callers_share_one_failed_refresh_and_none_receive_st
 
     assert listing.calls == LISTINGS_AFTER_A_REBUILD, "one initial census and one shared failed refresh"
     assert all(failure is failures[0] for failure in failures)
+    with pytest.raises(ConnectionError, match="did not answer"):
+        cache.get(listing, lanes=(SIGNAL_LANE,), now=expired_at)
+    assert listing.calls == LISTINGS_AFTER_A_REBUILD + 1, "a later caller retries instead of caching the failure"
 
 
 def test_a_first_census_that_fails_raises_rather_than_inventing_an_empty_one() -> None:
@@ -713,6 +727,29 @@ def _days_in(ranges: object) -> set[date]:
 def _range(entry: object) -> DayRange:
     assert isinstance(entry, dict)
     return DayRange(first_day=date.fromisoformat(entry["from"]), last_day=date.fromisoformat(entry["to"]))
+
+
+class _ObservedRefreshLock:
+    """Observe failed nonblocking acquires while preserving the real lock's behavior."""
+
+    def __init__(self, expected_waiters: int) -> None:
+        self._inner = threading.Lock()
+        self._count_lock = threading.Lock()
+        self._expected_waiters = expected_waiters
+        self._waiters = 0
+        self.waiters_ready = threading.Event()
+
+    def acquire(self, blocking: bool = True) -> bool:
+        acquired = self._inner.acquire(blocking=blocking)
+        if not acquired and not blocking:
+            with self._count_lock:
+                self._waiters += 1
+                if self._waiters == self._expected_waiters:
+                    self.waiters_ready.set()
+        return acquired
+
+    def release(self) -> None:
+        self._inner.release()
 
 
 class _CountingListing:

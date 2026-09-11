@@ -234,6 +234,12 @@ export type ParquetReaderResult<T> =
       };
     };
 
+/** Preserve the plane's terminal evidence alongside legacy GeoJSON fields. */
+export type ParquetCollectionStatus =
+  | { state: "published"; servedDay: string }
+  | { state: "governed_absence"; servedDay: string; evidence: GovernedAbsenceEvidence }
+  | { state: "day_not_written" | "lane_never_written" | "not_forecastable"; servedDay: null };
+
 /**
  * An abandoned read is never an answer: turns an `aborted` fault into a thrown error.
  *
@@ -1411,6 +1417,7 @@ export async function getParquetClimateField(
  * the older reader publishes either. The same trade `ZoomedClimateFieldCollection` makes.
  */
 export interface ZoomedSoilFieldCollection extends PublishedSoilFieldCollection {
+  parquet: ParquetCollectionStatus;
   /** The one physical rung the rows came from; exactly one per request. */
   zoomTier: ZoomTier;
   /**
@@ -1482,10 +1489,12 @@ function emptyParquetSoilField(
   layer: string,
   requestedDay: string,
   zoomTier: ZoomTier,
-  newestAvailableDay: string | null
+  newestAvailableDay: string | null,
+  parquet: ParquetCollectionStatus
 ): ZoomedSoilFieldCollection {
   const definition = soilFieldMeasureDefinition(measure);
   return {
+    parquet,
     type: "FeatureCollection",
     features: [],
     availability: "unavailable",
@@ -1659,7 +1668,8 @@ export async function getParquetSoilField(
       layer,
       requestedDay,
       zoomTier,
-      null
+      null,
+      { state: "not_forecastable", servedDay: null }
     );
   }
   const envelope = await getParquetLayerDay({
@@ -1677,7 +1687,10 @@ export async function getParquetSoilField(
       layer,
       requestedDay,
       zoomTier,
-      null
+      null,
+      envelope.state === "governed_absence"
+        ? { state: envelope.state, servedDay: envelope.servedDay, evidence: envelope.evidence }
+        : { state: envelope.state, servedDay: null }
     );
   }
   if (envelope.servedDay !== requestedDay) {
@@ -1713,18 +1726,8 @@ export async function getParquetSoilField(
       properties,
     };
   });
-  if (features.length === 0) {
-    return emptyParquetSoilField(
-      "not_published",
-      measure,
-      depth,
-      layer,
-      requestedDay,
-      zoomTier,
-      envelope.servedDay
-    );
-  }
   return {
+    parquet: { state: "published", servedDay: envelope.servedDay },
     type: "FeatureCollection",
     features,
     availability: "published",
@@ -1744,7 +1747,7 @@ export async function getParquetSoilField(
     latticeDegrees: lattice.cellSizeDegrees,
     smoothingSigmaDegrees: null,
     bands: definition.bands,
-    sourceClientExposureApproved: rows.every(
+    sourceClientExposureApproved: rows.length > 0 && rows.every(
       (row) => row.allowed_client_exposure === true
     ),
     zoomTier,
@@ -1757,7 +1760,7 @@ export async function getParquetWaterGauges(
 ): Promise<ParquetReaderResult<readonly ParquetWaterGauge[]>> {
   const nowMs = input.nowMs ?? Date.now();
   const { day, request } = commonRequest({ ...input, nowMs }, "water-gauges");
-  if (day !== currentUtcDay(nowMs)) {
+  if (input.date !== undefined) {
     return boundedResult(async () =>
       mapEnvelope(await getParquetLayerDay(request), (rows) =>
         newestWaterRows(decodeWaterRows(rows, request.zoomTier))
@@ -1824,7 +1827,7 @@ export async function getParquetWeatherObservations(
 ): Promise<ParquetReaderResult<readonly ParquetWeatherObservation[]>> {
   const nowMs = input.nowMs ?? Date.now();
   const { day, request } = commonRequest({ ...input, nowMs }, "weather-observations");
-  if (day !== currentUtcDay(nowMs)) {
+  if (input.date !== undefined) {
     return boundedResult(async () =>
       mapEnvelope(await getParquetLayerDay(request), (rows) =>
         newestWeatherRows(decodeWeatherRows(rows, request.zoomTier))
