@@ -1,4 +1,5 @@
 import { snapshotMetadata } from "./mtbs-snapshot-fixture";
+import { ParquetContextReadError } from "@/lib/server/services/parquet-context-readers";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -78,7 +79,8 @@ vi.mock("@/lib/server/services/environmental-read-model", async () => {
   };
 });
 
-vi.mock("@/lib/server/services/parquet-context-readers", () => ({
+vi.mock("@/lib/server/services/parquet-context-readers", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/lib/server/services/parquet-context-readers")>(),
   getContextDrought: mocks.getPublishedDroughtClassification,
   getContextWaterGauges: mocks.getPublishedStreamflowGauges,
   getContextWeatherForPoint: mocks.getPublishedWeatherForPoint,
@@ -305,6 +307,63 @@ beforeEach(() => {
 });
 
 describe("assembling regional context at the days the user is viewing", () => {
+  it("withholds an observed-zero claim for an empty truncated fire viewport", async () => {
+    mocks.getParquetFireDetections.mockResolvedValue({ ...readyFireWindow(SERVER_TODAY), truncated: true });
+    const result = await assembleRegionalContext(43.6, -116.2, [{ layer: "fire", date: SERVER_TODAY, hasDataOnDate: false }]);
+    expect(result.temporalContext.readings[0]).toMatchObject({
+      outcome: "coverage_unknown_on_viewed_date",
+      reason: expect.stringContaining("was truncated"),
+    });
+    const prompt = buildTemporalSection(result.temporalContext);
+    expect(prompt).toContain("Do not state an absence and do not state a presence");
+    expect(prompt).not.toContain("you may say there was none here");
+  });
+
+  it("prefers direct governed absence over a cached published capability for fire, gauges and weather", async () => {
+    const date = SERVER_TODAY;
+    const evidence = { reason: "Upstream history expired", upstreamResponse: "expired", recordedAt: `${date}T12:00:00Z`, runId: "absence" };
+    mocks.getParquetFireDetections.mockResolvedValue({ state: "absent", requestedDay: date, servedDay: date, evidence });
+    const absence = new ParquetContextReadError(evidence.reason, false, { servedDay: date, evidence });
+    mocks.getPublishedStreamflowGauges.mockRejectedValue(absence);
+    mocks.getPublishedWeatherForBbox.mockRejectedValue(absence);
+    mocks.getPublishedWeatherForPoint.mockRejectedValue(absence);
+    const result = await assembleRegionalContext(43.6, -116.2, ["fire", "water", "weather"].map((layer) => ({ layer, date, hasDataOnDate: true })));
+    expect(result.temporalContext.readings.map((reading) => [reading.outcome, reading.reason])).toEqual([
+      ["governed_absence_on_viewed_date", evidence.reason],
+      ["governed_absence_on_viewed_date", evidence.reason],
+      ["governed_absence_on_viewed_date", evidence.reason],
+    ]);
+  });
+
+  it.each(["absent", "not_generated", "ready"])(
+    "keeps an interior governed absence unmeasured when the detail result is %s", async (state) => {
+      const date = "2026-03-02";
+      const capabilities = sliderCapabilities();
+      mocks.getParquetSliderCapabilities.mockResolvedValue({
+        ...capabilities,
+        layers: capabilities.layers.map((layer) => ({
+          ...layer, coverageGaps: [], governedAbsenceRanges: [{ from: date, to: date }],
+        })),
+      });
+      mocks.getParquetFireDetections.mockResolvedValue(state === "ready" ? readyFireWindow(date)
+        : state === "not_generated" ? { state, requestedDay: date, reason: "day_not_written" }
+        : { state, requestedDay: date, servedDay: date, evidence: {
+          reason: "upstream history unavailable", upstreamResponse: "expired", recordedAt: `${date}T12:00:00Z`, runId: "governed-absence",
+        } });
+      const result = await assembleRegionalContext(43.6, -116.2, [
+        { layer: "fire", date, hasDataOnDate: false },
+        { layer: "water", date, hasDataOnDate: false },
+      ]);
+      expect(result.temporalContext.readings.map((reading) => reading.outcome)).toEqual([
+        "governed_absence_on_viewed_date", "governed_absence_on_viewed_date",
+      ]);
+      const prompt = buildTemporalSection(result.temporalContext);
+      expect(prompt).toContain("GOVERNED ABSENCE");
+      expect(prompt).toContain("not an observed zero");
+      expect(prompt).not.toContain("you may say there was none here");
+    }
+  );
+
   it("reads each warehouse source at the day its own layer row is scrubbed to", async () => {
     await assembleRegionalContext(43.6, -116.2, [
       { layer: "fire", date: "2025-08-14", hasDataOnDate: true },
@@ -378,12 +437,17 @@ describe("assembling regional context at the days the user is viewing", () => {
     expect(result.payload.location.lat).toBe(43.6);
   });
 
-  it("reads weather through the point reader at the live edge and the bbox reader on a past day", async () => {
+  it("uses point weather only when no day is named and retains selected today", async () => {
+    await assembleRegionalContext(43.6, -116.2);
+    expect(mocks.getPublishedWeatherForPoint).toHaveBeenCalledTimes(1);
+    expect(mocks.getPublishedWeatherForBbox).not.toHaveBeenCalled();
+
+    vi.clearAllMocks();
     await assembleRegionalContext(43.6, -116.2, [
       { layer: "weather", date: SERVER_TODAY, hasDataOnDate: true },
     ]);
-    expect(mocks.getPublishedWeatherForPoint).toHaveBeenCalledTimes(1);
-    expect(mocks.getPublishedWeatherForBbox).not.toHaveBeenCalled();
+    expect(mocks.getPublishedWeatherForPoint).not.toHaveBeenCalled();
+    expect(mocks.getPublishedWeatherForBbox).toHaveBeenCalledWith(expect.any(String), SERVER_TODAY);
 
     vi.clearAllMocks();
     mocks.getParquetSliderCapabilities.mockResolvedValue(sliderCapabilities());
@@ -394,7 +458,7 @@ describe("assembling regional context at the days the user is viewing", () => {
     mocks.getInterventionSuitability.mockResolvedValue({ availability: "unavailable" });
     mocks.getPublishedWeatherForBbox.mockResolvedValue([
       { lat: 43.7, lon: -116.3, observedAt: "2026-03-02T12:00:00Z" },
-      { lat: 43.61, lon: -116.21, observedAt: "2026-03-02T12:00:00Z" },
+      { lat: 43.61, lon: -116.21, observedDay: "2026-03-02", observedAt: "2026-03-02T12:00:00Z" },
     ]);
 
     const result = await assembleRegionalContext(43.6, -116.2, [
@@ -407,6 +471,49 @@ describe("assembling regional context at the days the user is viewing", () => {
     );
     // The nearest of the two bbox samples, not the first one returned.
     expect(result.payload.weather?.lat).toBe(43.61);
+    expect(result.payload.weather?.proximity).toMatchObject({ requestedDay: "2026-03-02", observedDay: "2026-03-02", distanceDays: 0, dayOffset: 0 });
+    expect(result.payload.weather?.proximity?.distanceMeters).toBeGreaterThan(1300);
+    expect(result.payload.weather?.proximity?.distanceMeters).toBeLessThan(1400);
+  });
+
+  it("threads request cancellation to environmental readers while shielding shared capabilities", async () => {
+    const signal = new AbortController().signal;
+    await assembleRegionalContext(43.6, -116.2, [{ layer: "weather", date: SERVER_TODAY, hasDataOnDate: true }], signal);
+    expect(mocks.getPublishedStreamflowGauges).toHaveBeenCalledWith(expect.any(String), undefined, signal);
+    expect(mocks.getPublishedDroughtClassification).toHaveBeenCalledWith(expect.any(String), undefined, signal);
+    expect(mocks.getPublishedWeatherForBbox).toHaveBeenCalledWith(expect.any(String), SERVER_TODAY, signal);
+    for (const reader of [mocks.getParquetFireDetections, mocks.getParquetFirePerimeters, mocks.getParquetBurnSeverity]) {
+      expect(reader).toHaveBeenCalledWith(expect.objectContaining({ signal }));
+    }
+    expect(mocks.getParquetSliderCapabilities).toHaveBeenCalledWith();
+  });
+
+  it("rejects aborted environmental context instead of passing a partial report to the model", async () => {
+    mocks.getParquetFireDetections.mockResolvedValue({ state: "upstream_unavailable", fault: { kind: "aborted", message: "cancelled" } });
+    await expect(assembleRegionalContext(43.6, -116.2)).rejects.toMatchObject({ code: "CLIENT_CLOSED_REQUEST" });
+  });
+
+  it("preserves missing gauge rung evidence when the selected day is published", async () => {
+    mocks.getPublishedStreamflowGauges.mockRejectedValue(new ParquetContextReadError("Detail gauge rung is missing", true));
+    const result = await assembleRegionalContext(43.6, -116.2, [{ layer: "water-gauges", date: "2026-08-08", hasDataOnDate: true }]);
+    expect(result.temporalContext.readings[0]).toMatchObject({ outcome: "rung_not_written", reason: "Detail gauge rung is missing", clientClaimContradicted: false });
+  });
+
+  it("performs no reader work when the context request was already cancelled", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    await expect(assembleRegionalContext(43.6, -116.2, [], controller.signal)).rejects.toMatchObject({ code: "CLIENT_CLOSED_REQUEST" });
+    expect(mocks.getParquetFireDetections).not.toHaveBeenCalled();
+    expect(mocks.getParquetSliderCapabilities).not.toHaveBeenCalled();
+  });
+
+  it("measures gauge distance from its coordinate and publisher day instead of its next-UTC-day instant", async () => {
+    mocks.getPublishedStreamflowGauges.mockResolvedValue([{ lat: 43.6, lon: -116.2, observedDay: "2026-08-08", updatedAt: "2026-08-09T06:45:00Z" }]);
+    const result = await assembleRegionalContext(43.6, -116.2, [{ layer: "water-gauges", date: "2026-08-08", hasDataOnDate: true }]);
+    expect(result.payload.waterScarcity?.nearestGauge).toMatchObject({
+      observedDay: "2026-08-08", updatedAt: "2026-08-09T06:45:00Z",
+      proximity: { requestedDay: "2026-08-08", observedDay: "2026-08-08", dayOffset: 0, distanceDays: 0, distanceMeters: 0 },
+    });
   });
 
   it("separates a day the warehouse never ingested from a day it published with nothing here", async () => {
@@ -1513,7 +1620,7 @@ it("regional MTBS uses the caller-selected day and retains partial-capture prove
 
 it("regional MTBS reports a refused Parquet read as failed rather than absent", async () => {
   mocks.getParquetBurnSeverity.mockResolvedValue({
-    state: "upstream_unavailable", requestedDay: "2026-08-08", reason: "read_timed_out",
+    state: "upstream_unavailable", fault: { kind: "timeout", message: "read timed out" },
   });
   const result = await assembleRegionalContext(43.6, -116.2, [
     { layer: "burn-severity", date: "2026-08-08", hasDataOnDate: true },

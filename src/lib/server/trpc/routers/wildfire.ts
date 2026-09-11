@@ -3,7 +3,7 @@ import { TRPCError } from "@trpc/server";
 import { router, publicProcedure, type Context } from "@/lib/server/trpc/init";
 import { features, layers } from "@/lib/server/db/schema";
 import { eq, and } from "drizzle-orm";
-import { getContextWeatherForPoint } from "@/lib/server/services/parquet-context-readers";
+import { getContextWeatherForPoint, ParquetContextReadError } from "@/lib/server/services/parquet-context-readers";
 import {
   getParquetFireDetections,
   getParquetWeatherObservations,
@@ -182,14 +182,29 @@ export const wildfireRouter = router({
       z.object({
         lat: z.number().min(-90).max(90),
         lon: z.number().min(-180).max(180),
+        date: observationDateSchema.optional(),
       })
     )
     .query(async ({ input, signal }) => {
       const observation = await getContextWeatherForPoint(
         input.lat,
         input.lon,
-        signal
-      );
+        signal,
+        input.date
+      ).catch((error: unknown) => {
+        if (error instanceof ParquetContextReadError && error.governedAbsence !== undefined) {
+          return { governedAbsence: error.governedAbsence };
+        }
+        throw error;
+      });
+      if (observation !== null && "governedAbsence" in observation) {
+        return {
+          availability: "unavailable" as const,
+          reason: "governed_absence" as const,
+          ...observation.governedAbsence,
+          observation: null,
+        };
+      }
       return observation
         ? { availability: "published" as const, observation }
         : {

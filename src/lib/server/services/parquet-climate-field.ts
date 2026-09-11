@@ -30,6 +30,7 @@ import {
 import { granularityForZoomTier } from "@/lib/server/services/zoom-granularity";
 import type {
   ParquetClimateFieldObservation,
+  ParquetCollectionStatus,
   ParquetReaderResult,
 } from "@/lib/server/services/parquet-trpc-readers";
 
@@ -148,6 +149,7 @@ export function climateFieldLatticeCellCount(bbox: string, zoomTier: ZoomTier): 
  * locally keeps the tier on every Parquet answer without asserting the older reader publishes one.
  */
 export interface ZoomedClimateFieldCollection extends PublishedClimateFieldCollection {
+  parquet: ParquetCollectionStatus;
   /** The one physical rung the rows came from; exactly one per request. */
   zoomTier: ZoomTier;
   /**
@@ -224,10 +226,12 @@ function emptyCollection(
   renderForm: ClimateRenderForm,
   requestedDay: string,
   latticeCellCount: number,
-  zoomTier: ZoomTier
+  zoomTier: ZoomTier,
+  parquet: ParquetCollectionStatus
 ): ZoomedClimateFieldCollection {
   const definition = climateFieldSignalDefinition(signal);
   return {
+    parquet,
     type: "FeatureCollection",
     features: [],
     availability: "unavailable",
@@ -353,31 +357,25 @@ export function parquetClimateFieldCollection(
 ): ZoomedClimateFieldCollection {
   const renderForm = tierRenderForm(zoomTier, signal, requestedRenderForm);
   const latticeCellCount = climateFieldLatticeCellCount(bbox, zoomTier);
-  if (result.state !== "ready" || result.data.length === 0) {
+  if (result.state !== "ready") {
     return emptyCollection(
       signal,
       variant,
       renderForm,
       result.requestedDay,
       latticeCellCount,
-      zoomTier
+      zoomTier,
+      result.state === "absent"
+        ? { state: "governed_absence", servedDay: result.servedDay, evidence: result.evidence }
+        : { state: result.reason, servedDay: null }
     );
   }
   const definition = climateFieldSignalDefinition(signal);
   const lattice = servedCellLattice(zoomTier, CLIMATE_FIELD_LANE);
   const rows = result.data.slice(0, CLIMATE_FIELD_MAX_CELLS);
   const features = cellFeatures(signal, renderForm, lattice, rows);
-  if (features.length === 0) {
-    return emptyCollection(
-      signal,
-      variant,
-      renderForm,
-      result.requestedDay,
-      latticeCellCount,
-      zoomTier
-    );
-  }
   return {
+    parquet: { state: "published", servedDay: result.servedDay },
     type: "FeatureCollection",
     features,
     availability: "published",
@@ -398,7 +396,7 @@ export function parquetClimateFieldCollection(
     maxCellCount: CLIMATE_FIELD_MAX_CELLS,
     maxObservationAgeDays: 0,
     bands: definition.bands,
-    sourceClientExposureApproved: rows.every((row) => row.allowedClientExposure === true),
+    sourceClientExposureApproved: rows.length > 0 && rows.every((row) => row.allowedClientExposure === true),
     support: collectionSupport(signal, zoomTier, renderForm, result.servedDay, rows),
   };
 }

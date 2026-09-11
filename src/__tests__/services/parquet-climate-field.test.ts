@@ -78,6 +78,31 @@ function ringArea(ring: number[][]): number {
 }
 
 describe("Parquet climate-field collection adapter", () => {
+  it.each([false, true])("preserves publication and truncation on an empty viewport (%s)", (truncated) => {
+    expect(parquetClimateFieldCollection({ ...ready([]), truncated }, "precipitation", "mean", "-116,43,-115,44", 13)).toMatchObject({
+      availability: "published", reason: null, observedDay: "2026-08-06", truncated,
+      parquet: { state: "published", servedDay: "2026-08-06" }, features: [],
+    });
+  });
+
+  it.each(["day_not_written", "lane_never_written"] as const)("preserves %s as its own terminal reason", (reason) => {
+    expect(parquetClimateFieldCollection({ state: "not_generated", requestedDay: "2026-08-06", reason }, "precipitation", "mean", "-116,43,-115,44", 13)).toMatchObject({
+      parquet: { state: reason, servedDay: null }, availability: "unavailable", features: [],
+    });
+  });
+
+  it("retains governed absence evidence and its served day", () => {
+    const evidence = { reason: "No source observations", upstreamResponse: "200 []", recordedAt: "2026-08-07T00:00:00Z", runId: "absence-1" };
+    expect(parquetClimateFieldCollection({ state: "absent", requestedDay: "2026-08-06", servedDay: "2026-08-06", evidence }, "precipitation", "mean", "-116,43,-115,44", 13)).toMatchObject({
+      parquet: { state: "governed_absence", servedDay: "2026-08-06", evidence }, availability: "unavailable", features: [],
+    });
+  });
+
+  it("retains published source cells and truncation when contour construction has no polygons", () => {
+    expect(parquetClimateFieldCollection({ ...ready([row(9)]), truncated: true }, "air-temperature", "mean", "-116,43,-114,44", 9, "isoline")).toMatchObject({
+      parquet: { state: "published", servedDay: "2026-08-06" }, availability: "published", cellCount: 1, truncated: true,
+    });
+  });
   it("preserves the existing GeoJSON contract from an exact Parquet day", () => {
     const collection = parquetClimateFieldCollection(
       ready([row(13)]),

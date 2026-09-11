@@ -7,8 +7,10 @@ import {
   buildSyncedDayRuns,
   dayCoverageState,
   describeCoverageBand,
+  describeCoverageEvidence,
   describeCoverageTopology,
   describeDayCoverage,
+  describeSourceCeiling,
   describeSyncedDayBand,
   drawCoverageBands,
   drawSyncedDayBands,
@@ -363,6 +365,82 @@ describe("LayerTimeSlider", () => {
     expect(
       screen.getByTestId("layer-time-slider-range-vegetation").getAttribute("aria-valuetext")
     ).toBe(`${LAST_DAY}, Beyond the record; nothing is published after today`);
+  });
+
+  describe("coverage authority and source publication limits", () => {
+    it.each([
+      ["availability", "Coverage verified from the published availability index."],
+      ["census", "Coverage from an object inventory; published availability verification is not stated."],
+      [undefined, "Coverage evidence not stated."],
+    ] as const)("names %s evidence in the visible and accessible caption", (authority, expected) => {
+      useTimeSliderStore.setState({
+        capabilities: {
+          ...CAPABILITIES,
+          layers: [vegetationCapability({ coverageAuthority: authority })],
+        },
+      });
+      renderWithProviders(<LayerTimeSlider layerId="vegetation" />);
+
+      const note = screen.getByTestId("layer-time-slider-note-vegetation");
+      expect(note.textContent).toContain(expected);
+      expect(screen.getByTestId("layer-time-slider-range-vegetation").getAttribute("aria-describedby")?.split(" "))
+        .toContain(note.id);
+    });
+
+    it("does not upgrade unstated authority or invent a source publication limit", () => {
+      const unstated = vegetationCapability();
+      expect(describeCoverageEvidence(unstated)).toBe("Coverage evidence not stated.");
+      expect(describeSourceCeiling(unstated, SERVER_CURRENT_DATE)).toBeNull();
+      expect(describeSourceCeiling(vegetationCapability({ sourceCeilingDay: null }), SERVER_CURRENT_DATE))
+        .toBeNull();
+      expect(describeSourceCeiling(vegetationCapability({ sourceCeilingDay: "not-a-date" }), SERVER_CURRENT_DATE))
+        .toBeNull();
+    });
+
+    it("distinguishes a selected gap within the source limit from an unknown day beyond it", () => {
+      useTimeSliderStore.setState({
+        layerDates: { vegetation: VEGETATION_GAP.from },
+        capabilities: {
+          ...CAPABILITIES,
+          layers: [vegetationCapability({
+            coverageAuthority: "availability",
+            sourceCeilingDay: VEGETATION_LATEST_DATE,
+            describedThroughDay: VEGETATION_LATEST_DATE,
+          })],
+        },
+      });
+      renderWithProviders(<LayerTimeSlider layerId="vegetation" />);
+
+      const note = screen.getByTestId("layer-time-slider-note-vegetation");
+      expect(note.textContent).toContain("Coverage incomplete on this date");
+      expect(note.textContent).toContain(`Source publication limit: ${VEGETATION_LATEST_DATE}.`);
+      expect(note.textContent).not.toContain("The selected date is later");
+
+      fireEvent.change(screen.getByTestId("layer-time-slider-range-vegetation"), {
+        target: { value: dayOffset(FIRST_DAY, SERVER_CURRENT_DATE) },
+      });
+      expect(useTimeSliderStore.getState().layerDates.vegetation).toBe(SERVER_CURRENT_DATE);
+      expect(note.textContent).toContain("Coverage on this date is unknown");
+      expect(note.textContent).toContain("The selected date is later than this publication limit.");
+      expect(note.textContent).not.toContain("Coverage incomplete on this date");
+
+      fireEvent.click(screen.getByTestId("layer-time-slider-latest-button-vegetation"));
+      expect(useTimeSliderStore.getState().layerDates.vegetation).toBeUndefined();
+      expect(note.textContent).not.toContain("The selected date is later");
+    });
+
+    it("does not label a carried release unsupported when selection follows its publication limit", () => {
+      const carriedRelease = vegetationCapability({
+        sourceCeilingDay: VEGETATION_LATEST_DATE,
+        describedThroughDay: SERVER_CURRENT_DATE,
+        coverageGaps: [],
+        thinRanges: [],
+      });
+      expect(dayCoverageState(VEGETATION_DOMAIN, carriedRelease, SERVER_CURRENT_DATE)).toBe("dense");
+      expect(describeSourceCeiling(carriedRelease, SERVER_CURRENT_DATE)).toBe(
+        `Source publication limit: ${VEGETATION_LATEST_DATE}. The selected date is later than this publication limit.`
+      );
+    });
   });
 
   /**
@@ -1219,7 +1297,7 @@ describe("LayerTimeSlider", () => {
      * the same way and only the withheld list separates them -- so this asserts the two rows do
      * not read alike, token by token.
      */
-    it("says different things about an index being built and a source that never published", () => {
+    it("distinguishes an unpublished index from an unwritten source without promising a build", () => {
       withCapabilities({
         layers: [],
         withheld: [
@@ -1239,14 +1317,13 @@ describe("LayerTimeSlider", () => {
       expect(indexing?.state).toBe("withheld");
       expect(never?.state).toBe("withheld");
 
-      expect(indexing?.detail).toContain("still being built");
+      expect(indexing?.detail).toContain("verified list of available dates has not been published");
       expect(never?.detail).toContain("never published anything");
       expect(indexing?.badge).not.toBe(never?.badge);
       expect(indexing?.detail).not.toBe(never?.detail);
 
-      // An index that is building is on its way; a lane that never wrote is not. Only the first
-      // is allowed to look like it is working on it.
-      expect(screen.getByTestId("layer-time-status-fire").getAttribute("aria-busy")).toBe("true");
+      // Neither refusal proves a writer is running.
+      expect(screen.getByTestId("layer-time-status-fire").getAttribute("aria-busy")).toBeNull();
       expect(
         screen.getByTestId("layer-time-status-vegetation").getAttribute("aria-busy")
       ).toBeNull();

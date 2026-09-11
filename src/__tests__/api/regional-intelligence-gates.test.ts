@@ -4,12 +4,14 @@ import { NextRequest } from "next/server";
 const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
   reserveRegionalIntelligenceUsage: vi.fn(),
+  assembleRegionalContext: vi.fn(),
 }));
 
 vi.mock("@/lib/server/db", () => ({ db: {} }));
 vi.mock("@/lib/server/auth", () => ({
   getServerSession: mocks.getServerSession,
 }));
+vi.mock("@/lib/server/services/regional-context", () => ({ assembleRegionalContext: mocks.assembleRegionalContext }));
 vi.mock("@/lib/server/security/regional-intelligence-access", async (original) => {
   const actual = await original<
     typeof import("@/lib/server/security/regional-intelligence-access")
@@ -38,6 +40,20 @@ describe("regional intelligence access gates", () => {
     // OpenRouter. Setting the old name here would 503 every request before it reached the gate
     // each test below is actually about.
     process.env.OPENROUTER_API_KEY = "test-key";
+  });
+
+  it("passes the HTTP request cancellation signal into context assembly", async () => {
+    mocks.getServerSession.mockResolvedValue({ user: { id: "user-1" } });
+    mocks.reserveRegionalIntelligenceUsage.mockResolvedValue({ allowed: true, tier: "signed_in", remaining: 1, retryAfterSeconds: null, resetAt: null });
+    mocks.assembleRegionalContext.mockRejectedValue(new Error("context stopped"));
+    const request = postRequest({ lat: 44, lon: -116, locationConsent: { precision: "approximate", confirmed: true } });
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect((await POST(request)).status).toBe(503);
+      expect(mocks.assembleRegionalContext).toHaveBeenCalledWith(44, -116, [], request.signal);
+    } finally {
+      log.mockRestore();
+    }
   });
 
   it("classifies future evidence timestamps as unavailable", () => {

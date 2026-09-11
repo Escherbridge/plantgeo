@@ -813,6 +813,42 @@ describe("Parquet tRPC state adapter", () => {
 });
 
 describe("lane day and release semantics", () => {
+  it.each(["day_not_written", "lane_never_written"] as const)("retains soil %s instead of flattening terminal evidence", async (state) => {
+    mockedDay.mockResolvedValue({ state, requestedDay: "2026-08-02" });
+    expect(await getParquetSoilField("-125,42,-111,49", { date: "2026-08-02", zoom: 9 })).toMatchObject({
+      parquet: { state, servedDay: null }, availability: "unavailable", features: [], zoomTier: 9,
+    });
+  });
+
+  it("retains soil governed absence evidence", async () => {
+    mockedDay.mockResolvedValue({ state: "governed_absence", requestedDay: "2026-08-02", servedDay: "2026-08-02", evidence });
+    expect(await getParquetSoilField("-125,42,-111,49", { date: "2026-08-02", zoom: 9 })).toMatchObject({
+      parquet: { state: "governed_absence", servedDay: "2026-08-02", evidence }, availability: "unavailable", features: [],
+    });
+  });
+
+  it.each([false, true])("retains soil published-empty status and truncation (%s)", async (truncated) => {
+    mockedDay.mockResolvedValue({ ...published("2026-08-02", []), truncated });
+    expect(await getParquetSoilField("-125,42,-111,49", { date: "2026-08-02", zoom: 9 })).toMatchObject({
+      parquet: { state: "published", servedDay: "2026-08-02" }, availability: "published", reason: null,
+      observedDay: "2026-08-02", truncated, features: [],
+    });
+  });
+
+  it("reads selected today exactly for gauges, even when its newest reading is outside live freshness", async () => {
+    mockedDay.mockResolvedValue(published("2026-08-20", [{ ...waterRow(), observed_at: "2026-08-20T08:15:00Z" }]));
+    const result = await getParquetWaterGauges({ bbox: "-125,42,-111,49", date: "2026-08-20", mapZoom: 13, nowMs: Date.parse("2026-08-20T23:59:00Z") });
+    expect(result).toMatchObject({ state: "ready", requestedDay: "2026-08-20", servedDay: "2026-08-20", data: [{ observedDay: "2026-08-20", observedAt: "2026-08-20T08:15:00Z" }] });
+    expect(mockedWindow).not.toHaveBeenCalled();
+    expect(mockedDay).toHaveBeenCalledWith(expect.objectContaining({ day: "2026-08-20", zoomTier: 13 }));
+  });
+
+  it("reads selected today exactly for weather and retains its terminal absence", async () => {
+    mockedDay.mockResolvedValue({ state: "governed_absence", requestedDay: "2026-08-20", servedDay: "2026-08-20", evidence });
+    expect(await getParquetWeatherObservations({ bbox: "-125,42,-111,49", date: "2026-08-20", mapZoom: 13, nowMs: Date.parse("2026-08-20T01:00:00Z") })).toMatchObject({ state: "absent", requestedDay: "2026-08-20", servedDay: "2026-08-20", evidence });
+    expect(mockedWindow).not.toHaveBeenCalled();
+  });
+
   it("retains today's not-generated state when yesterday has no fresh water row", async () => {
     mockedWindow.mockResolvedValue([
       published("2026-08-19", [
@@ -828,7 +864,6 @@ describe("lane day and release semantics", () => {
     await expect(
       getParquetWaterGauges({
         bbox: "-125,42,-111,49",
-        date: "2026-08-20",
         mapZoom: 13,
         nowMs: Date.parse("2026-08-20T20:00:00Z"),
       })
@@ -854,7 +889,6 @@ describe("lane day and release semantics", () => {
     await expect(
       getParquetWaterGauges({
         bbox: "-125,42,-111,49",
-        date: "2026-08-20",
         mapZoom: 13,
         nowMs: Date.parse("2026-08-20T02:00:00Z"),
       })
@@ -938,7 +972,6 @@ describe("lane day and release semantics", () => {
 
     const result = await getParquetWeatherObservations({
       bbox: "-125,42,-111,49",
-      date: "2026-08-20",
       mapZoom: 13,
       nowMs: Date.parse("2026-08-20T20:00:00Z"),
     });

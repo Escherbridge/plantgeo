@@ -162,7 +162,7 @@ export interface LayerTimeState {
   kind: LayerTimeStateKind;
   /**
    * The chip. Two words at most so it occupies the same slot on every row, and a NOUN PHRASE
-   * about the layer rather than a verb about us -- "Indexing", not "Please wait".
+   * about the layer rather than a verb about us -- "Dates unverified", not "Please wait".
    */
   badge: string;
   /** One sentence naming the cause, in the terms a reader of the map has. */
@@ -188,24 +188,11 @@ export interface ReasonWording {
   isSettling?: true;
 }
 
-/**
- * One sentence per withheld reason, and every one of them different.
- *
- * The distinction the owner asked for explicitly is `availability_unpublished` versus
- * `lane_never_written`, and it is the widest gap in the list: the first layer HAS its data and is
- * waiting on an index build that is running, the second has never had a single byte written for
- * it. Captioning both "unavailable" tells a user to come back tomorrow for one thing that will
- * arrive and one that never will.
- *
- * Wording rules these all follow: name the thing that is missing, say whether waiting helps, and
- * never imply the map is broken. A withheld layer is not an error and must not read like one.
- */
+/** Names each refusal without inferring writer activity; see map/AGENTS.md §layer-time-state. */
 const WITHHOLDING_WORDING: Record<LayerWithholdingReason, ReasonWording> = {
   availability_unpublished: {
-    badge: "Indexing",
-    detail:
-      "Its list of available dates is still being built.",
-    isSettling: true,
+    badge: "Dates unverified",
+    detail: "Its verified list of available dates has not been published yet.",
   },
   availability_stale: {
     badge: "Index behind",

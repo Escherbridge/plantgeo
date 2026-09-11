@@ -1,5 +1,49 @@
 # Parquet reader services — rationale
 
+## §regional-temporal-neighbours — September 11 acceptance
+
+`regional-temporal-neighbors.ts` selects before/after candidates only from described,
+availability-backed daily capabilities, excluding gaps and governed absences. It
+then reads the candidate day using the existing bounded viewport/detail reader.
+At most three daily source families and two candidates per family are read in a
+request, with at most three concurrent reads and sequential sides per source.
+Candidate publication is global evidence: an empty local candidate does
+not prove no local neighbour exists elsewhere in the search window. Each returned
+value retains its own date and measured temporal/spatial distance. Unsupported
+release/snapshot semantics, absent authority, conflicts, truncation and failures
+remain typed outcomes, and neighbours never replace the selected-day payload.
+
+The prompt serializes these records separately and states their scope. Existing
+Python tools remain the wider bounded temporal-search interface; this local helper
+does not create an all-history or all-product nearest-observation claim.
+
+## §regional-governed-absence — September 11 acceptance
+
+The regional coverage classifier consults explicit governed-absence ranges before
+ordinary gaps and unknown boundaries. An empty or unwritten detail read inside a
+governed absence yields `governed_absence_on_viewed_date`, never a measured local
+zero. The prompt names unavailable observations separately from ingestion holes
+and forbids inferring no activity. A real returned observation or a read failure
+retains its existing precedence over empty-result coverage classification.
+Direct `absent` terminals retain their reason across settled adapter calls and
+take precedence over cached coverage, which may still describe the day as published.
+The public point-weather boundary returns this terminal as explicit unavailable
+evidence rather than throwing an internal server error.
+An empty truncated fire viewport remains coverage-unknown: unpositioned source
+rows or a spent serving budget can yield that valid terminal combination. It
+cannot authorize observed zero even when cached coverage says the day published.
+
+## §envelope-day-binding — September 11 reader acceptance
+
+Day and release responses must echo the caller's requested day in every terminal
+state. A mismatched echo is a contract fault, including a missing-day response;
+otherwise the client could label another day's absence as the selected day's answer.
+Every served day must have the calendar-day shape. Exact day and window reads must
+serve that member's requested day. Only the release endpoint admits earlier served
+dates for bounded carry and static snapshots; future releases are refused. Window
+reads retain their complete ordered-day check. These checks use day strings without
+timezone conversion.
+
 ## §soil-direct-lineage — preserve both registered source namespaces
 
 The ERA5-Land soil writer owns days beginning 2026-08-03; frozen moisture and
@@ -112,6 +156,13 @@ string. Precedence, when rungs disagree, is the wire's own declaration order
 (`PARQUET_AVAILABILITY_WITHHELD_REASONS`) — one list, so there is no second ordering to diverge.
 
 ## §source-ceiling — withheld, never clamped, and weighed against the RECORDED day
+
+The described coverage boundary reaches the later of the source publication ceiling
+and the last day proved answerable by every required rung. A release carried beyond
+its publication ceiling is still described on that proved day. Daily lanes retain
+the source-ceiling boundary, and days beyond both limits remain undescribed. The
+September 11 regression uses the synthesized drought capability in `isDayDescribed`,
+so a selectable Latest day cannot silently become an unknown-coverage caption.
 
 `sourceCeilingDay` is the newest day the **source** can offer. The warehouse states two upper
 edges against it, and which one the gate reads is load-bearing:
@@ -638,3 +689,29 @@ change nor the map's concise capture/availability/partial-year notice closes ups
 Snapshot descriptor capture instants must be UTC, at most 600 seconds apart, with availability
 exactly the following UTC day. Regional empty partial-mapping or truncated results report unknown
 coverage rather than categorical absence; an unwritten rung retains its explicit missing-rung state.
+
+## Reader selected-day and terminal metadata (2026-09-11)
+
+An explicit water/weather date always reads exactly that publisher partition, including UTC
+today. Only an omitted date enables the two-publisher-day live freshness window. Regional weather
+uses this same rule instead of dropping a selection that happens to equal today. Point-weather
+also accepts a named date. Weather context retains `observedDay` separately from its UTC instant.
+The regional nearest gauge/weather values carry `proximity`: the selected day, the observation's
+own publisher day, signed `dayOffset`, absolute `distanceDays`, geodesic `distanceMeters`, and
+the exact half-degree `searchBbox`. Missing publisher dates remain null in proximity metadata;
+they are never inferred from timestamps. These distances describe existing returned observations,
+not an additional historical neighbour search or a claim of global nearest coverage.
+
+Climate and soil GeoJSON keep their existing availability/reason compatibility fields and add
+`parquet` terminal metadata. It distinguishes `published`, `governed_absence`, `day_not_written`
+and `lane_never_written`; absence retains its evidence and served day. Soil's future-date refusal
+is `not_forecastable`. A published empty viewport is still published and retains truncation. A
+climate contour with no generated polygons does not erase the source cell count or publication.
+Consumers must inspect terminal metadata before treating an unavailable collection as an absence.
+
+The regional HTTP request now passes its cancellation signal into context assembly and every
+Parquet row reader. An aborted result rejects rather than becoming partial model evidence.
+Shared capabilities remain cancellation-shielded. Community database reads, static SoilGrids,
+and other non-Parquet blocks retain their own existing bounds; their work is not cancelled by
+this propagation. Context assembly waits for its settled fanout before rejecting a mid-flight
+abort, so cancellation of the Parquet sockets does not promise immediate assembly completion.

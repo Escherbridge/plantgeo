@@ -7,15 +7,22 @@ vi.mock("@/lib/server/services/parquet-trpc-readers", async (importOriginal) => 
   getParquetWeatherObservations: mocks.weather,
   getParquetDrought: mocks.drought,
 }));
-import { getContextDrought, getContextWaterGauges, getContextWeatherForBbox, getContextWeatherForPoint } from "@/lib/server/services/parquet-context-readers";
+import { contextPointProximity, getContextDrought, getContextWaterGauges, getContextWeatherForBbox, getContextWeatherForPoint } from "@/lib/server/services/parquet-context-readers";
 
 const day = "2026-09-01";
 const ready = (data: unknown[]) => ({ state: "ready", requestedDay: day, servedDay: day, truncated: false, data });
-const weather = { latitude: 43.6, longitude: -116.2, observedAt: `${day}T12:00:00Z`, temperatureC: 21, relativeHumidityPct: 33, windSpeedMs: 4, windDirectionDeg: null, precipitationMm: 0 };
+const weather = { latitude: 43.6, longitude: -116.2, observedDay: day, observedAt: `${day}T12:00:00Z`, temperatureC: 21, relativeHumidityPct: 33, windSpeedMs: 4, windDirectionDeg: null, precipitationMm: 0 };
 
 beforeEach(() => vi.clearAllMocks());
 
 describe("Parquet context adapters", () => {
+  it.each(["water", "weather", "drought"] as const)("preserves direct %s governed absence for the assembler", async (source) => {
+    const evidence = { reason: "Upstream history expired", upstreamResponse: "expired", recordedAt: `${day}T12:00:00Z`, runId: "absence" };
+    mocks[source].mockResolvedValue({ state: "absent", requestedDay: day, servedDay: day, evidence });
+    const read = source === "water" ? getContextWaterGauges : source === "weather" ? getContextWeatherForBbox : getContextDrought;
+    await expect(read("-117,43,-116,44", day)).rejects.toMatchObject({ governedAbsence: { servedDay: day, evidence }, rungNotWritten: false });
+  });
+
   it("preserves the publisher day when a late Pacific gauge instant falls on the next UTC day", async () => {
     const observedAt = "2026-09-10T06:45:00Z";
     mocks.water.mockResolvedValue(ready([{ siteNumber: "13334300", siteName: "Snake River McDuff", latitude: 45.94, longitude: -116.78, flowCfs: 14100, percentile: null, condition: null, observedDay: "2026-09-09", observedAt }]));
@@ -44,7 +51,7 @@ describe("Parquet context adapters", () => {
 
   it("preserves weather units and nullable direction on the requested day", async () => {
     mocks.weather.mockResolvedValue(ready([weather]));
-    expect(await getContextWeatherForBbox("-117,43,-116,44", day)).toEqual([{ lat: 43.6, lon: -116.2, observedAt: weather.observedAt, temperature: 21, humidity: 33, windSpeed: 4, windDirection: null, precipitation: 0 }]);
+    expect(await getContextWeatherForBbox("-117,43,-116,44", day)).toEqual([{ lat: 43.6, lon: -116.2, observedDay: day, observedAt: weather.observedAt, temperature: 21, humidity: 33, windSpeed: 4, windDirection: null, precipitation: 0 }]);
     expect(mocks.weather).toHaveBeenCalledWith(expect.objectContaining({ date: day, mapZoom: 13 }));
   });
 
@@ -53,6 +60,27 @@ describe("Parquet context adapters", () => {
     const signal = new AbortController().signal;
     expect(await getContextWeatherForPoint(43.6, -116.2, signal)).toMatchObject({ lat: 43.6 });
     expect(mocks.weather).toHaveBeenCalledWith({ bbox: "-116.45,43.35,-115.95,43.85", date: undefined, mapZoom: 13, signal });
+  });
+
+  it("retains a named point-weather day and reports actual spatial and temporal distances", async () => {
+    mocks.weather.mockResolvedValue(ready([weather]));
+    expect(await getContextWeatherForPoint(43.6, -116.2, undefined, day)).toMatchObject({
+      observedDay: day,
+      proximity: { requestedDay: day, observedDay: day, distanceMeters: 0, dayOffset: 0, distanceDays: 0 },
+    });
+    expect(mocks.weather).toHaveBeenCalledWith(expect.objectContaining({ date: day, mapZoom: 13 }));
+    expect(contextPointProximity(0, 0, { lat: 1, lon: 0, observedDay: "2026-08-26" }, day, "-1,-1,1,1")).toMatchObject({ dayOffset: -6, distanceDays: 6 });
+    expect(contextPointProximity(0, 0, { lat: 1, lon: 0 }, day, "-1,-1,1,1").distanceMeters).toBeCloseTo(111194.9266, 3);
+  });
+
+  it("forwards cancellation through gauge and drought context reads", async () => {
+    const signal = new AbortController().signal;
+    mocks.water.mockResolvedValue(ready([]));
+    mocks.drought.mockResolvedValue(ready([]));
+    await getContextWaterGauges("-117,43,-116,44", day, signal);
+    await getContextDrought("-117,43,-116,44", day, signal);
+    expect(mocks.water).toHaveBeenCalledWith(expect.objectContaining({ signal }));
+    expect(mocks.drought).toHaveBeenCalledWith(expect.objectContaining({ signal }));
   });
 
   it("keeps a drought release's date and category for point containment", async () => {
