@@ -47,6 +47,7 @@ if TYPE_CHECKING:
     from agri_data_service.execution.vegetation_ndvi_forecast import SeasonalHistory
 
 SessionScopeFactory = Callable[[str], AbstractAsyncContextManager[AsyncSession]]
+DatabaseUrlFactory = Callable[[], str]
 
 _MATERIALIZE_FORECAST_ITERATION = text(load_query_sql("execution/materialize_forecast_iteration.sql"))
 _FORECAST_ITERATION_SUMMARY = text(load_query_sql("execution/forecast_iteration_summary.sql"))
@@ -286,7 +287,7 @@ async def register_vegetation_plane(
 
 async def simulate_vegetation(  # noqa: PLR0913
     *,
-    database_url: str,
+    database_url_factory: DatabaseUrlFactory,
     session_factory: SessionScopeFactory,
     cutoff_day: date,
     release_cutoff_day: date,
@@ -299,6 +300,7 @@ async def simulate_vegetation(  # noqa: PLR0913
     if cutoff_day > release_cutoff_day:
         raise ValueError("simulation cutoff day cannot follow the governed release-set cutoff day")
     resolved_as_of = _resolved_as_of_time(as_of_time, cutoff_day)
+    database_url = database_url_factory()
     async with session_factory(database_url) as session, session.begin():
         await pin_determinism(session)
         plane = await load_governed_plane(session, cutoff_day=release_cutoff_day)
@@ -346,7 +348,7 @@ async def simulate_vegetation(  # noqa: PLR0913
 
 async def evaluate_vegetation(  # noqa: PLR0913
     *,
-    database_url: str,
+    database_url_factory: DatabaseUrlFactory,
     session_factory: SessionScopeFactory,
     release_cutoff_day: date,
     holdout_cutoff_days: tuple[date, ...],
@@ -359,6 +361,7 @@ async def evaluate_vegetation(  # noqa: PLR0913
     if any(cutoff >= release_cutoff_day for cutoff in ordered_cutoffs):
         raise ValueError("every holdout cutoff day must precede the governed release-set cutoff day")
     resolved_as_of = _resolved_as_of_time(as_of_time, max(ordered_cutoffs))
+    database_url = database_url_factory()
     async with session_factory(database_url) as session, session.begin():
         await pin_determinism(session)
         plane = await load_governed_plane(session, cutoff_day=release_cutoff_day)

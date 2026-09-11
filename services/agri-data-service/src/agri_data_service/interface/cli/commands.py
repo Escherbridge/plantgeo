@@ -864,7 +864,7 @@ async def _forecast_vegetation_simulate(  # noqa: PLR0913
     as_of_time: datetime | None,
 ) -> dict[str, Any]:
     return await simulate_vegetation(
-        database_url=settings.require_forecast_iteration_database_url(),
+        database_url_factory=settings.require_forecast_iteration_database_url,
         session_factory=forecast_iteration_session,
         cutoff_day=cutoff_day,
         release_cutoff_day=release_cutoff_day,
@@ -937,7 +937,7 @@ async def _forecast_vegetation_evaluate(
     as_of_time: datetime | None,
 ) -> dict[str, Any]:
     return await evaluate_vegetation(
-        database_url=settings.require_forecast_iteration_database_url(),
+        database_url_factory=settings.require_forecast_iteration_database_url,
         session_factory=forecast_iteration_session,
         release_cutoff_day=release_cutoff_day,
         holdout_cutoff_days=holdout_cutoff_days,

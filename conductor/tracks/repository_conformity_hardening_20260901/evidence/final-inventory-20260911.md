@@ -94,12 +94,14 @@ the table row above plus the owning track and exact acceptance condition. Histor
 receipts, and reproduction modules are retained in place, so rollback never depends on reconstructing
 deleted evidence.
 
-## Final verification and independent review
+## Layered validation and independent review
 
-The verification sweep ran on the complete local edit batch. Initial sandbox-only failures were
+The broad verification sweep ran before the review-required SQL resource move. Initial sandbox-only failures were
 retried with host access when npm/uv/Podman needed their normal caches, managed runtime, network,
 or WSL socket. The first Python sweep exposed moved-test imports and Ruff formatting; those tests
 now import the helpers from their new execution owner, and the full gate was rerun after the fix.
+After the SQL path/header move, only the focused revalidation below ran. These are attributable
+layered results, not a final combined-tree receipt; integration owns that final sweep.
 
 | Gate | Result |
 | --- | --- |
@@ -109,12 +111,13 @@ now import the helpers from their new execution owner, and the full gate was rer
 | `npm test` | **PASS** — six tooling tests plus 2,151 Vitest tests passed; 13 database tests skipped because `PLANTGEO_TEST_DATABASE_URL` and `POSTGIS_TEST_DSN` were absent. |
 | `npm run build` | **PASS** after granting the build access to fetch its configured Google Fonts. The middleware-to-proxy deprecation warning remains outside this track. |
 | `UV_NO_SYNC=1 uv run --no-sync python scripts/check.py` | **PASS** — format 0.12s, Ruff 0.13s, mypy 4.47s and full pytest 258.44s. No database DSN was present, so this is not a live-database acceptance claim. |
-| Agri service and job-executor Podman builds | **EXPECTED OWNER-HANDOFF REFUSAL** — both reached `verify_quality_receipt.py`; the frozen receipt covers digest `c9739cb7…` over 1,307 files while the pre-review tree held 1,310 files. After the review-required SQL ownership move, a direct verifier rerun records the final digest `7800c519…` over the same 1,310-file domain. `offline_export_service_20260908/metadata.json` lists `QUALITY_RECEIPT.json` as serialized, and environmental retirement requires exactly one end-of-wave writer, so this lane did not rewrite or bypass it. |
+| Agri service and job-executor Podman builds | **EXPECTED PRE-INTEGRATION REFUSAL** — both reached `verify_quality_receipt.py`; the receipt covered digest `c9739cb7…` over 1,307 files while the pre-review tree held 1,310 files. After the SQL ownership move, a direct verifier recorded the intermediate digest `7800c519…` over 1,310 files. This correction changes that tree again; integration owns the final combined receipt and both image proofs. |
 
 The review-required SQL ownership correction then passed a narrow revalidation: Ruff format and
 lint, mypy over both affected source modules, and 47 forecast/CLI/vegetation/layer/SQL-loader tests
-passed with the single intentional thin-CLI xfail. The whole-suite results above predate only this
-path/header move; query text and runtime behavior were unchanged.
+passed with the single intentional thin-CLI xfail. The whole-suite results above predate that
+path/header move and the later validation-order correction; they must not be presented as the final
+combined-tree sweep.
 
 No deployment, image push, database access, migration, service mutation or production probe was
 performed.
@@ -124,6 +127,8 @@ lived under `sql/cli/` and named the old interface owner. The resources and thei
 were moved to `sql/execution/`; the already-existing vegetation reconciliation query stayed
 byte-for-byte unchanged, while the command variant received a distinct resource/constant name.
 After the focused revalidation above, the reviewer returned **APPROVE** with no remaining security,
-correctness, performance, maintainability, test-coverage or ownership blocker for this bounded
-commit. The reviewer also confirmed that frozen reader/builder/registry/migration/receipt files
-were not edited. Overall track status remains `active` until the recorded owners close those gates.
+correctness, performance, maintainability, test-coverage or ownership blocker for `cff1144`.
+Integration subsequently identified the validation-order and evidence-ownership corrections
+recorded in `integration-correction-20260911.md`; that correction requires its own attributable
+validation and independent review. Overall track status remains `active` until integration runs
+the final combined sweep and the recorded owners close the remaining gates.

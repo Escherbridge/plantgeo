@@ -65,12 +65,16 @@ prevents either new debt or a sideways move while those handoffs are pending.
 - [x] Publish an explicit dormant-migration evidence manifest with state, reason and production
   fingerprint (2026-09-02, `evidence/dormant-migrations.md`); any migration edit or movement requires a shrink `s6` handoff.
 - [x] Reconcile the Python guide's least-privilege checklist with its recorded DSN-custody retirement (2026-09-02).
-- [x] Run the final exact-tree frontend/Python/type/lint/test/build sweep. Frontend and Python
-  gates passed; both image builds reached and correctly refused the offline-owner-serialized stale
-  `QUALITY_RECEIPT.json`, which must be refreshed by that owner's end-of-wave sweep.
+- [x] Supply layered validation for the bounded implementation: a broad frontend/Python sweep
+  before the review-required SQL resource move, followed by focused formatter/lint/type/test checks
+  over that move. This is not a final combined-tree sweep.
+- [ ] Integration runs the final combined exact-tree sweep, regenerates `QUALITY_RECEIPT.json`
+  exactly once, and proves both images against that receipt.
 - [x] Obtain separate review and publish retained/removal evidence plus rollback notes. The first
   review blocked on SQL resource ownership; after the four forecast resources moved with their
-  execution call site, the independent re-review approved the bounded implementation.
+  execution call site, the independent re-review approved the bounded implementation. The later
+  validation-order/evidence correction was independently approved by `/root/independent_review`
+  after its focused 45-pass/1-intentional-xfail validation.
 
 ## September 11 bounded closure
 
@@ -79,4 +83,5 @@ Current owner freezes supersede that proposed partition. The reader-owned `parqu
 offline snapshot builders, generic availability/scheduler registries, migration/history files,
 frontend renderer/readers, and non-forecast product transaction sites remain in their owning
 tracks. Completion here means the safe conformity slice is implemented and independently
-verified; the track stays `active` until the registry owner reconciles those recorded handoffs.
+verified; the track stays `active` until integration completes its combined-tree validation and
+the registry owner reconciles the recorded handoffs.

@@ -4,8 +4,11 @@
 
 `forecast_workflows.py` owns the complete evaluation-only forecast operations: their transaction
 boundaries, SQL calls, vegetation orchestration, and result receipts. The Click adapter resolves
-configuration and parses inputs, then dependency-injects its session factory into one workflow;
-this preserves command test seams without hiding domain work behind a generic transaction wrapper.
+configuration and parses inputs, then dependency-injects its session factory into one workflow.
+Vegetation simulation/evaluation receive a lazy DSN resolver so their historical cutoff and as-of
+validation still runs before configuration resolution; this preserves command error precedence
+without moving business validation back into Click. These seams keep command tests replaceable
+without hiding domain work behind a generic transaction wrapper.
 Source-product and job-executor transactions remain with their current owners until those lanes
 explicitly hand them off.
 

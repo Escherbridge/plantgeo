@@ -9,13 +9,19 @@ much as the presence of the refresh.
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 import pytest
 
 import agri_data_service.interface.cli.commands as cli_module
+from agri_data_service.execution.vegetation_ndvi_forecast import (
+    PURPOSE_FORWARD_SIMULATION,
+    SimulationRequest,
+)
 
 _EXPECTED_ROW_COUNT = 11
+_SIMULATION_REQUEST = SimulationRequest(horizon_days=30, simulation_count=100, seed=0)
 
 
 class _Result:
@@ -100,3 +106,61 @@ async def test_refresh_propagates_a_database_failure_without_reporting_a_count(
         await cli_module._forecast_refresh_ml_daily()
 
     assert not any("count(*)" in sql for sql in session.statements)
+
+
+@pytest.mark.asyncio
+async def test_vegetation_simulation_validates_cutoff_and_as_of_before_resolving_dsn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unexpected_dsn(_self: object) -> str:
+        raise AssertionError("DSN resolved before simulation input validation")
+
+    monkeypatch.setattr(type(cli_module.settings), "require_forecast_iteration_database_url", unexpected_dsn)
+
+    with pytest.raises(ValueError, match="simulation cutoff day cannot follow"):
+        await cli_module._forecast_vegetation_simulate(
+            cutoff_day=date(2026, 7, 2),
+            release_cutoff_day=date(2026, 7, 1),
+            request=_SIMULATION_REQUEST,
+            purpose=PURPOSE_FORWARD_SIMULATION,
+            cell_keys=(),
+            as_of_time=None,
+        )
+
+    with pytest.raises(ValueError, match="cannot be in the future"):
+        await cli_module._forecast_vegetation_simulate(
+            cutoff_day=date(2026, 7, 1),
+            release_cutoff_day=date(2026, 7, 1),
+            request=_SIMULATION_REQUEST,
+            purpose=PURPOSE_FORWARD_SIMULATION,
+            cell_keys=(),
+            as_of_time=datetime.now(tz=UTC) + timedelta(days=1),
+        )
+
+
+@pytest.mark.asyncio
+async def test_vegetation_evaluation_validates_cutoff_and_as_of_before_resolving_dsn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unexpected_dsn(_self: object) -> str:
+        raise AssertionError("DSN resolved before evaluation input validation")
+
+    monkeypatch.setattr(type(cli_module.settings), "require_forecast_iteration_database_url", unexpected_dsn)
+
+    with pytest.raises(ValueError, match="every holdout cutoff day must precede"):
+        await cli_module._forecast_vegetation_evaluate(
+            release_cutoff_day=date(2026, 7, 1),
+            holdout_cutoff_days=(date(2026, 7, 1),),
+            request=_SIMULATION_REQUEST,
+            cell_keys=(),
+            as_of_time=None,
+        )
+
+    with pytest.raises(ValueError, match="cannot be in the future"):
+        await cli_module._forecast_vegetation_evaluate(
+            release_cutoff_day=date(2026, 7, 2),
+            holdout_cutoff_days=(date(2026, 7, 1),),
+            request=_SIMULATION_REQUEST,
+            cell_keys=(),
+            as_of_time=datetime.now(tz=UTC) + timedelta(days=1),
+        )

@@ -9,9 +9,11 @@ Thin Click adapters for the `agri-service` console script. The root exposes exac
 
 - Command bodies delegate to the retained execution, ingest, pipeline, method, warehouse, and shared
   `parquet_ops` modules; this package does not own business rules.
-- Forecast adapters parse options, resolve a DSN, invoke `execution/forecast_workflows.py`, translate
-  native failures, and echo the returned receipt. Transaction ownership, SQL, and result construction
-  do not live here.
+- Forecast adapters parse options, inject configuration/session seams, invoke
+  `execution/forecast_workflows.py`, translate native failures, and echo the returned receipt.
+  Vegetation workflows resolve the injected DSN only after domain input validation so historical
+  error precedence is stable. Transaction ownership, SQL, validation, and result construction do
+  not live here.
 - Chunked history adapters supply the local execution root to `execution/chunked_lane.py`, render its
   returned payload, and translate `ChunkedLaneBackfillError`; the shared driver imports no Click or settings.
 - Parquet reads acquire bounded core admission through `parquet_ops`; no CLI adapter opens DuckDB directly.
