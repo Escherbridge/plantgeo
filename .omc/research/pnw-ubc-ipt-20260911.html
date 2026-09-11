@@ -1,0 +1,1506 @@
+<!DOCTYPE html>
+<html lang="en" class="h-100">
+<head>
+
+    <!-- Bootstrap CSS -->
+    <link rel="stylesheet" type="text/css" href="https://data.canadensys.net/ipt/styles/bootstrap/bootstrap.min.css" />
+    <link rel="stylesheet" type="text/css" href="https://data.canadensys.net/ipt/styles/bootstrap/bootstrap-borders.css" />
+    <link rel="stylesheet" type="text/css" href="https://data.canadensys.net/ipt/styles/dataTables/jquery.dataTables-1.13.6.min.css" />
+    <link rel="stylesheet" type="text/css" href="https://data.canadensys.net/ipt/styles/dataTables/responsive.dataTables-2.5.0.min.css" />
+
+    <!-- Bootstrap icons -->
+    <link rel="stylesheet" type="text/css" href="https://data.canadensys.net/ipt/styles/bootstrap-icons/font/bootstrap-icons.css" />
+
+    <!-- Google fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:ital,wght@0,100;0,300;0,400;0,500;0,700;0,900;1,100;1,300;1,400;1,500;1,700;1,900&display=swap" rel="stylesheet">
+
+    <!-- IPT CSS -->
+    <style>
+        :root {
+            --color-gbif-primary: 168,36,0;
+            --color-gbif-danger: 227, 99, 112;
+            --color-gbif-secondary: 78, 86, 95;
+            --color-gbif-warning: 255, 193, 8;
+            --navbar-color: 255,255,255;
+            --navbar-link-color: 74,74,74;
+            --navbar-gbif-logo-color: 255,255,255;
+            --navbar-active-tab-color: 255,255,255;
+            --link-color: 168,36,0;
+        }
+    </style>
+    <link rel="stylesheet" type="text/css" href="https://data.canadensys.net/ipt/styles/main.css" />
+
+    <!-- Custom CSS for customizations -->
+    <link rel="stylesheet" type="text/css" href="https://data.canadensys.net/ipt/styles/custom.css" />
+
+    <link rel="shortcut icon" href="https://data.canadensys.net/ipt/images/icons/favicon-16x16.png" type="image/x-icon" />
+    <link href="https://data.canadensys.net/ipt/rss.do" title="Latest Resources" rel="alternate" type="application/rss+xml" />
+
+    <!-- for support of old browsers, like IE8. See http://modernizr.com/docs/#html5inie -->
+    <script src="https://data.canadensys.net/ipt/js/modernizr.js"></script>
+    <script src="https://data.canadensys.net/ipt/js/jquery/jquery-3.7.0.min.js"></script>
+    <script src="https://data.canadensys.net/ipt/js/jquery/jquery-ui.min-1.12.1.js"></script>
+    <script src="https://data.canadensys.net/ipt/js/global.js"></script>
+
+    <script>
+        window.addEventListener("scroll", () => {
+            const header = document.querySelector("header");
+            const scrollY = window.scrollY;
+
+            if (scrollY > 100) { // Adjust the scroll position where the header should shrink
+                header.classList.add("shrink");
+            } else {
+                header.classList.remove("shrink");
+            }
+        });
+    </script>
+
+
+        <script async src="https://www.googletagmanager.com/gtag/js?id=G-0JRK17386X"></script>
+        <script>
+            window.dataLayer = window.dataLayer || [];
+            function gtag(){dataLayer.push(arguments);}
+            gtag('js', new Date());
+            gtag('config', 'G-0JRK17386X');
+        </script>
+
+      <script>
+        setTimeout(function(){
+          window.location.reload();
+        }, 600000);
+      </script>
+
+        <meta name="description" content="&lt;para&gt;This dataset includes all digitized vascular plants in the UBC collection, encompassing approximately 68% of the collection.
+
+The UBC Herbarium has one of the world&#39;s largest collections of British Columbia vascular plants and is worldwide in scope. At present, the collection includes more than 235,000 accessioned specimens.&lt;/para&gt;" />
+            <meta name="keywords" content="UBC, University of British Columbia Herbarium, Beaty Biodiversity Museum, Canadensys, Canada, British Columbia, collection, herbarium, specimens, vascular plants, Occurrence, Specimen, Occurrence" />
+        <meta name="foaf:topic" content="https://data.canadensys.net/ipt/resource?r=ubc-vascular-specimens/#dataset"/>
+        <meta name="foaf:isPrimaryTopicOf" content="https://data.canadensys.net/ipt/resource?r=ubc-vascular-specimens">
+    <meta name="generator" content="IPT 3.2.3-r7b3c98c" />
+    <meta name="inventory" content="https://data.canadensys.net/ipt/inventory/dataset"/>
+    <meta name="foaf:seeAlso" content="https://data.canadensys.net/ipt/dcat"/>
+    <meta http-equiv="X-UA-Compatible" content="IE=Edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+<title>University of British Columbia Herbarium (UBC) - Vascular Plant Collection</title>
+</head>
+
+<script>
+    function handleCustomLogoError() {
+        document.getElementById("gbif-logo-custom").style = "display: none;";
+        document.getElementById("gbif-logo").style = "display: inline-block;";
+
+        var loginPageLogoCustom = document.getElementById("login-page-logo-custom");
+        if (loginPageLogoCustom) {
+            loginPageLogoCustom.style = "display: none;";
+        }
+
+        var loginPageLogo = document.getElementById("login-page-logo");
+        if (loginPageLogo) {
+            loginPageLogo.style = "display: inline-block;";
+        }
+    }
+</script>
+<script>
+    // Check if the public URL is correct, otherwise display the fallback page
+    document.addEventListener("DOMContentLoaded", function() {
+        var xhr = new XMLHttpRequest();
+        xhr.open("GET", "https://data.canadensys.net/ipt/styles/main.css");
+        xhr.onload = function() {
+            if (xhr.status !== 200) {
+                window.location.href = "/fallback.do";
+            }
+        };
+        xhr.onerror = function() {
+            window.location.href = "/fallback.do";
+        };
+        xhr.send();
+    });
+</script>
+
+<body class="bg-body d-flex flex-column h-100">
+
+
+<header>
+    <nav class="main-nav navbar navbar-expand-xl navbar-dark bg-gbif-main-navbar fixed-top py-0 border-bottom">
+        <div class="container-fluid">
+            <a href="https://www.canadensys.net/" rel="home" title="Logo" class="navbar-brand" >
+                <svg id="gbif-logo" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" x="0px" y="0px" viewBox="0 0 539.7 523.9" style="enable-background:new 0 0 539.7 523.9;" xml:space="preserve">
+                    <path class="ipt-icon-piece" d="M230.7,255.5c0-102.2,49.9-190.7,198.4-190.7C429.1,167.2,361.7,255.5,230.7,255.5"/>
+                    <path class="ipt-icon-piece" d="M468.6,523.9c27.8,0,49.2-4,71.1-12c0-80.9-48.3-138.7-133.5-180.4c-65.2-32.7-145.5-49.7-218.8-49.7C219.5,185.4,196.1,65.7,165,0c-34.5,68.8-56,186.8-22.9,282.8C77,287.6,25.4,315.9,3.6,353.3c-1.6,2.8-5,8.9-3,10c1.6,0.8,4.1-1.7,5.6-3.1c23.5-21.8,54.6-32.4,84.5-32.4c69.1,0,117.8,57.3,152.3,91.7C317.1,493.5,389.4,524.1,468.6,523.9"/>
+                </svg>
+                <img id="gbif-logo-custom" src="https://data.canadensys.net/ipt/appLogo.do" onerror="handleCustomLogoError()" />
+            </a>
+            <button class="navbar-toggler my-2" type="button" data-bs-toggle="collapse" data-bs-target="#navbarCollapse" aria-controls="navbarCollapse" aria-expanded="false" aria-label="Toggle navigation">
+                <svg class="navbar-toggler-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 30 30"><path stroke="rgba(var(--navbar-link-color), 0.75)" stroke-linecap="round" stroke-miterlimit="10" stroke-width="2" d="M4 7h22M4 15h22M4 23h22"/></svg>
+            </button>
+            <div class="collapse navbar-collapse ps-2" id="navbarCollapse">
+                <!-- Navbar -->
+                <ul class="navbar-nav mx-auto mb-md-0">
+                    <li class="nav-item nav-item-border-bottom">
+                        <a class="nav-link custom-nav-link active" href="https://data.canadensys.net/ipt/">Home</a>
+                    </li>
+                    <li class="nav-item nav-item-border-bottom">
+                        <a class="nav-link custom-nav-link " href="https://data.canadensys.net/ipt/about.do">About</a>
+                    </li>
+                </ul>
+
+                <div class="d-xl-flex align-content-between">
+                    <!-- Health -->
+                    <div class="navbar-nav nav-item-border-bottom">
+                      <a href="https://data.canadensys.net/ipt/health.do" class="nav-link position-relative health-link" title="Health status">
+                          <svg class="gbif-heartbeat-icon " height="20" width="20" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" x="0px" y="0px" viewBox="-356 246.5 90 77.6"  xml:space="preserve">
+                              <path d="M-277.2,286.2h-22.9l-5,11l-10.1-43.8l-10.9,32.8h-18.6c-1.8,0-3.2,1.4-3.2,3.2c0,1.8,1.4,3.2,3.2,3.2h23.3l5.2-15.5l9.2,40l11.1-24.5h18.7c1.8,0,3.2-1.4,3.2-3.2C-274,287.7-275.4,286.2-277.2,286.2z"/>
+                          </svg>
+                      </a>
+                    </div>
+
+                    <!-- Languages -->
+                    <div id="navbarNavDropdown">
+
+<ul class="navbar-nav">
+    <!-- add more languages as translations become available. -->
+
+    <li class="nav-item dropdown">
+        <a class="nav-link" href="#" id="languageDropdownLink" role="button" data-bs-toggle="dropdown" aria-expanded="false" title="Select language">
+            <svg class="gbif-translate-icon" height="20" viewBox="0 0 24 24" width="20" xmlns="http://www.w3.org/2000/svg">
+                <path d="M0 0h24v24H0z" fill="none"/>
+                <path d="M12.87 15.07l-2.54-2.51.03-.03c1.74-1.94 2.98-4.17 3.71-6.53H17V4h-7V2H8v2H1v1.99h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11.76-2.04zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2l-4.5-12zm-2.62 7l1.62-4.33L19.12 17h-3.24z"/>
+            </svg>
+        </a>
+        <ul class="dropdown-menu dropdown-menu-end dropdown-menu-light text-light fs-smaller" aria-labelledby="languageDropdownLink">
+                    <li>
+                        <a class="dropdown-item dropdown-item-active menu-link" >
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-check text-gbif-primary" viewBox="0 0 16 16">
+                                <path d="M10.97 4.97a.75.75 0 0 1 1.07 1.05l-3.99 4.99a.75.75 0 0 1-1.08.02L4.324 8.384a.75.75 0 1 1 1.06-1.06l2.094 2.093 3.473-4.425a.267.267 0 0 1 .02-.022z"/>
+                            </svg>
+                            English
+                        </a>
+                    </li>
+                    <li>
+                        <a class="dropdown-item menu-link" href="https://data.canadensys.net/ipt/resource?r=ubc-vascular-specimens&amp;request_locale=fr">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="#ffffff" class="bi bi-check" viewBox="0 0 16 16">
+                                <path d="M10.97 4.97a.75.75 0 0 1 1.07 1.05l-3.99 4.99a.75.75 0 0 1-1.08.02L4.324 8.384a.75.75 0 1 1 1.06-1.06l2.094 2.093 3.473-4.425a.267.267 0 0 1 .02-.022z"/>
+                            </svg>
+                            Française
+                        </a>
+                    </li>
+                    <li>
+                        <a class="dropdown-item menu-link" href="https://data.canadensys.net/ipt/resource?r=ubc-vascular-specimens&amp;request_locale=es">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="#ffffff" class="bi bi-check" viewBox="0 0 16 16">
+                                <path d="M10.97 4.97a.75.75 0 0 1 1.07 1.05l-3.99 4.99a.75.75 0 0 1-1.08.02L4.324 8.384a.75.75 0 1 1 1.06-1.06l2.094 2.093 3.473-4.425a.267.267 0 0 1 .02-.022z"/>
+                            </svg>
+                            Español
+                        </a>
+                    </li>
+                    <li>
+                        <a class="dropdown-item menu-link" href="https://data.canadensys.net/ipt/resource?r=ubc-vascular-specimens&amp;request_locale=zh">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="#ffffff" class="bi bi-check" viewBox="0 0 16 16">
+                                <path d="M10.97 4.97a.75.75 0 0 1 1.07 1.05l-3.99 4.99a.75.75 0 0 1-1.08.02L4.324 8.384a.75.75 0 1 1 1.06-1.06l2.094 2.093 3.473-4.425a.267.267 0 0 1 .02-.022z"/>
+                            </svg>
+                            繁體中文
+                        </a>
+                    </li>
+                    <li>
+                        <a class="dropdown-item menu-link" href="https://data.canadensys.net/ipt/resource?r=ubc-vascular-specimens&amp;request_locale=pt">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="#ffffff" class="bi bi-check" viewBox="0 0 16 16">
+                                <path d="M10.97 4.97a.75.75 0 0 1 1.07 1.05l-3.99 4.99a.75.75 0 0 1-1.08.02L4.324 8.384a.75.75 0 1 1 1.06-1.06l2.094 2.093 3.473-4.425a.267.267 0 0 1 .02-.022z"/>
+                            </svg>
+                            Português
+                        </a>
+                    </li>
+                    <li>
+                        <a class="dropdown-item menu-link" href="https://data.canadensys.net/ipt/resource?r=ubc-vascular-specimens&amp;request_locale=ja">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="#ffffff" class="bi bi-check" viewBox="0 0 16 16">
+                                <path d="M10.97 4.97a.75.75 0 0 1 1.07 1.05l-3.99 4.99a.75.75 0 0 1-1.08.02L4.324 8.384a.75.75 0 1 1 1.06-1.06l2.094 2.093 3.473-4.425a.267.267 0 0 1 .02-.022z"/>
+                            </svg>
+                            日本語
+                        </a>
+                    </li>
+                    <li>
+                        <a class="dropdown-item menu-link" href="https://data.canadensys.net/ipt/resource?r=ubc-vascular-specimens&amp;request_locale=ru">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="#ffffff" class="bi bi-check" viewBox="0 0 16 16">
+                                <path d="M10.97 4.97a.75.75 0 0 1 1.07 1.05l-3.99 4.99a.75.75 0 0 1-1.08.02L4.324 8.384a.75.75 0 1 1 1.06-1.06l2.094 2.093 3.473-4.425a.267.267 0 0 1 .02-.022z"/>
+                            </svg>
+                            Русский
+                        </a>
+                    </li>
+        </ul>
+    </li>
+</ul>
+                    </div>
+
+                    <!-- Login, account -->
+                        <form action="https://data.canadensys.net/ipt/login.do" method="post" class="d-xl-flex align-content-xl-center">
+                            <button id="login-button" class="btn btn-sm m-xl-auto navbar-button text-capitalize show-xl-bigger" type="submit" name="login-submit">
+login                            </button>
+                            <div class="navbar-nav show-xl-smaller nav-item-border-top">
+                                <a href="javascript:{}" class="nav-link text-capitalize" onclick="this.closest('form').submit();return false;">
+login                                </a>
+                            </div>
+                        </form>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+</header>
+
+<div id="dialog-confirm" class="modal fade" tabindex="-1" aria-labelledby="staticBackdropLabel" aria-hidden="true"></div>
+
+
+
+<style>
+    h1, h2, h3, h4, h5 {
+        font-size: 1.25rem !important;
+    }
+</style>
+
+<script src="https://data.canadensys.net/ipt/js/jquery/jquery-3.7.0.min.js"></script>
+<script src="https://data.canadensys.net/ipt/js/jquery/jquery.dataTables-1.13.6.min.js"></script>
+<script src="https://data.canadensys.net/ipt/js/docbook/docbook-v2.js"></script>
+<script>
+    $(document).ready(function() {
+        // spy scroll and manage sidebar menu
+        $(window).scroll(function () {
+            var scrollPosition = $(document).scrollTop();
+
+            $('.bd-toc nav a').each(function () {
+                var currentLink = $(this);
+                var anchor = $(currentLink.attr("href"));
+                var sectionId = anchor[0].id.replace("anchor-", "");
+                var section = $("#" + sectionId);
+
+                var sectionsContainer = $("#sections");
+
+                if (sectionsContainer.position().top - 120 > scrollPosition) {
+                    var removeActiveFromThisLink = $('.bd-toc nav a.active');
+                    removeActiveFromThisLink.removeClass('active');
+                } else if (section.position().top - 120 <= scrollPosition
+                    && section.position().top + section.height() > scrollPosition) {
+                    if (!currentLink.hasClass("active")) {
+                        var removeFromThisLink = $('.bd-toc nav a.active');
+                        removeFromThisLink.removeClass('active');
+                        $(this).addClass('active');
+                    }
+                }
+            });
+        })
+
+        function renderDocBook(fieldValue, elementId) {
+            if (!fieldValue || fieldValue.trim().length === 0) return;
+
+            const el = document.getElementById(elementId);
+            if (el) el.innerHTML = convertToHtml(fieldValue);
+        }
+
+        const fields = [
+            { value: '&lt;para&gt;This dataset includes all digitized vascular plants in the UBC collection, encompassing approximately 68% of the collection.
+
+The UBC Herbarium has one of the world&#39;s largest collections of British Columbia vascular plants and is worldwide in scope. At present, the collection includes more than 235,000 accessioned specimens.&lt;/para&gt;',      id: 'description-container' },
+            { value: '',     id: 'introduction-container' },
+            { value: '',          id: 'purpose-container' },
+            { value: '', id: 'acknowledgements-container' },
+            { value: '',   id: 'gettingStarted-container' }
+        ];
+
+        fields.forEach(f => renderDocBook(f.value, f.id));
+    })
+</script>
+
+<div class="container px-0">
+
+
+
+
+
+
+</div>
+
+<div class="container-fluid bg-body border-bottom">
+
+    <div class="container border rounded-2 mb-4">
+        <div class="container my-3 p-3">
+            <div class="text-center fs-smaller">
+                <nav style="--bs-breadcrumb-divider: url(&#34;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='8'%3E%3Cpath d='M2.5 0L1 1.5 3.5 4 1 6.5 2.5 8l4-4-4-4z' fill='currentColor'/%3E%3C/svg%3E&#34;);" aria-label="breadcrumb">
+                    <ol class="breadcrumb justify-content-center mb-0">
+                        <li class="breadcrumb-item"><a href="https://data.canadensys.net/ipt">Home</a></li>
+                        <li class="breadcrumb-item active" aria-current="page">Resource</li>
+                    </ol>
+                </nav>
+            </div>
+
+            <div class="text-center">
+                <h1 property="dc:title" class="rtitle pb-2 mb-0 pt-2 text-gbif-header fs-2 fw-normal">
+                    University of British Columbia Herbarium (UBC) - Vascular Plant Collection
+                </h1>
+
+                <div class="text-center">
+                    <span class="fs-smaller-2 text-nowrap dt-content-link dt-content-pill type-occurrence me-1">Occurrence</span>
+                        <span class="fs-smaller-2 text-nowrap dt-content-link dt-content-pill type-specimen me-1">Specimen</span>
+                </div>
+
+                    <div class="text-gbif-primary fs-smaller-2 mt-2">
+                        <span>
+Latest version
+                                published by <b>University of British Columbia</b> on <span property="dc:issued">Sep 1, 2026</span>
+                                <span property="dc:publisher" style="display: none">University of British Columbia</span>
+                        </span>
+                    </div>
+
+                    <div class="mt-2">
+
+                    </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+
+<div class="container-fluid bg-light border-bottom">
+    <div class="container px-0">
+        <div class="my-4 px-4 py-4 bg-body border rounded shadow-sm">
+            <span class="anchor anchor-home-resource-page-2 mb-3" id="anchor-downloads"></span>
+            <div class="mx-md-4 mx-2">
+                <div class="row">
+                    <div class="col-lg-3-5 col-md-10 col-sm-9 col-8 text-smaller px-0 pb-lg-max-3 ps-lg-3 order-lg-2">
+                        <dl class="inline mb-0">
+                                <div class="text-truncate">
+                                    <dt>Home:</dt>
+                                    <dd><a href="https://collections.beatymuseum.ubc.ca/dataset/07fd0d79-4883-435f-bba1-58fef110cd13">https://collections.beatymuseum.ubc.ca/dataset/07fd0d79-4883-435f-bba1-58fef110cd13</a></dd>
+                                </div>
+
+                                <div>
+                                    <dt>GBIF UUID:</dt>
+                                    <dd><a href="https://www.gbif.org/dataset/07fd0d79-4883-435f-bba1-58fef110cd13">07fd0d79-4883-435f-bba1-58fef110cd13</a></dd>
+                                </div>
+
+                                <div>
+                                    <dt>Publication date:</dt>
+                                    <dd>1 September 2026</dd>
+                                </div>
+
+                                <div>
+                                    <dt>Published by:</dt>
+                                    <dd>
+                                        <a href="https://www.gbif.org/publisher/b542788f-0dc2-4a2b-b652-fceced449591" target="_blank">University of British Columbia</a>
+                                    </dd>
+                                </div>
+
+                                <div>
+                                    <dt>License:</dt>
+                                    <dd>
+                                            <a href="http://creativecommons.org/publicdomain/zero/1.0/legalcode" target="_blank">CC0 1.0</a>
+                                    </dd>
+                                </div>
+
+                            <div>
+                                    <a href="#anchor-citation" class="doi" dir="ltr">
+                                        <span class="gb-icon gb-icon-quote"></span>
+                                        <span dir="auto">How to cite</span>
+                                    </a>
+
+
+                            </div>
+                        </dl>
+                    </div>
+
+                        <div class="col-lg-1-5 col-md-2 col-sm-3 col-4 text-smaller px-0 pb-lg-max-3 order-lg-3">
+                            <div class="logoImg text-end">
+                                <img src="http://data.canadensys.net/ipt/logo.do?r=ubc-vascular-specimens"/>
+                            </div>
+                        </div>
+
+                    <div class="col-lg-7 text-smaller px-0 pt-lg-max-3 border-lg-max-top order-lg-1">
+                            <p class="mb-1">Download the latest version of this resource data as a Darwin Core Archive (DwC-A) or the resource metadata as EML or RTF:</p>
+
+                        <div class="table-responsive">
+                            <table class="downloads text-smaller table table-sm table-borderless mb-0">
+                                    <tr>
+                                        <th class="col-4 p-0">
+Data as a DwC-A file                                        </th>
+                                            <td class="p-0">
+                                                <a href="https://data.canadensys.net/ipt/archive.do?r=ubc-vascular-specimens&v=16.43" onClick="_gaq.push(['_trackEvent', 'Archive', 'Download', 'ubc-vascular-specimens', 192,948 ]);">
+                                                    <svg class="link-icon" focusable="false" aria-hidden="true" viewBox="0 0 24 24" data-testid="DownloadIcon"><path d="M5 20h14v-2H5v2zM19 9h-4V3H9v6H5l7 7 7-7z"></path></svg>
+download                                                </a>
+                                                192,948 records&nbsp;in English (31 MB)&nbsp;-&nbsp;Update frequency:&nbsp;unknown
+                                            </td>
+                                    </tr>
+                                <tr>
+                                    <th class="p-0">Metadata as an EML file</th>
+                                    <td class="p-0">
+                                        <a href="https://data.canadensys.net/ipt/eml.do?r=ubc-vascular-specimens&v=16.43" onClick="_gaq.push(['_trackEvent', 'EML', 'Download', 'ubc-vascular-specimens']);" download>
+                                            <svg class="link-icon" focusable="false" aria-hidden="true" viewBox="0 0 24 24" data-testid="DownloadIcon"><path d="M5 20h14v-2H5v2zM19 9h-4V3H9v6H5l7 7 7-7z"></path></svg>
+download                                        </a>
+                                        in English (14 KB)
+                                    </td>
+                                </tr>
+
+                                <tr>
+                                    <th class="p-0">Metadata as an RTF file</th>
+                                    <td class="p-0">
+                                        <a href="https://data.canadensys.net/ipt/rtf.do?r=ubc-vascular-specimens&v=16.43" onClick="_gaq.push(['_trackEvent', 'RTF', 'Download', 'ubc-vascular-specimens']);">
+                                            <svg class="link-icon" focusable="false" aria-hidden="true" viewBox="0 0 24 24" data-testid="DownloadIcon"><path d="M5 20h14v-2H5v2zM19 9h-4V3H9v6H5l7 7 7-7z"></path></svg>
+download                                        </a>
+                                        in English (10 KB)
+                                    </td>
+                                </tr>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+
+<div id="sections" class="container-fluid bg-body">
+    <div class="container mb-md-4 bd-layout main-content-container">
+        <main class="bd-main">
+            <div class="bd-toc mt-4 pt-3 ps-3 mb-lg-5 text-muted">
+                <nav id="sidebar-content">
+                    <ul>
+                        <li><a href="#anchor-description" class="sidebar-navigation-link">Description</a></li>
+                                <li><a href="#anchor-dataRecords" class="sidebar-navigation-link">Data Records</a></li>
+                                <li><a href="#anchor-versions" class="sidebar-navigation-link">Versions</a></li>
+                                <li><a href="#anchor-citation" class="sidebar-navigation-link">How to cite</a></li>
+                                <li><a href="#anchor-rights" class="sidebar-navigation-link">Rights</a></li>
+                            <li><a href="#anchor-gbif" class="sidebar-navigation-link">GBIF Registration</a></li>
+                                <li><a href="#anchor-keywords" class="sidebar-navigation-link">Keywords</a></li>
+                                <li><a href="#anchor-contacts" class="sidebar-navigation-link">Contacts</a></li>
+                                <li><a href="#anchor-geospatial" class="sidebar-navigation-link">Geographic Coverage</a></li>
+                                <li><a href="#anchor-taxanomic" class="sidebar-navigation-link">Taxonomic Coverage</a></li>
+                                <li><a href="#anchor-temporal" class="sidebar-navigation-link">Temporal Coverage</a></li>
+                                <li><a href="#anchor-collection" class="sidebar-navigation-link">Collection Data</a></li>
+                                <li><a href="#anchor-reference" class="sidebar-navigation-link">Bibliographic Citations</a></li>
+                        <li><a href="#anchor-additional" class="sidebar-navigation-link">Additional Metadata</a></li>
+                    </ul>
+                </nav>
+            </div>
+
+            <div class="bd-content ps-lg-4">
+                <span class="anchor anchor-home-resource-page" id="anchor-description"></span>
+                <div id="description" class="py-5 section">
+                    <h4 class="pb-2 mb-2 pt-2 text-gbif-header-2 fw-400">
+Description                    </h4>
+                    <div id="description-container" property="dc:abstract" class="mt-3 overflow-x-auto">
+<para>This dataset includes all digitized vascular plants in the UBC collection, encompassing approximately 68% of the collection.
+
+The UBC Herbarium has one of the world's largest collections of British Columbia vascular plants and is worldwide in scope. At present, the collection includes more than 235,000 accessioned specimens.</para>                    </div>
+                </div>
+
+
+                <!-- Dataset must have been published for versions, downloads, and how to cite sections to show -->
+
+                    <!-- data records section, not shown for metadata-only resources -->
+
+                        <span class="anchor anchor-home-resource-page" id="anchor-dataRecords"></span>
+                        <div id="dataRecords" class="pb-5 section">
+                            <h4 class="pb-2 mb-2 pt-2 text-gbif-header-2 fw-400">
+Data Records                            </h4>
+
+                            <p>
+                                    The data in this occurrence resource has been published as a Darwin Core Archive (DwC-A), which is a standardized format for sharing biodiversity data as a set of one or more data tables.
+                                    The core data table contains 192,948 records.
+                            </p>
+
+
+                            <p>
+This IPT archives the data and thus serves as the data repository. The data and resource metadata are available for download in the <a href="#anchor-downloads">downloads</a> section. The <a href="#anchor-versions">versions</a> table lists other versions of the resource that have been made publicly available and allows tracking changes made to the resource over time.                            </p>
+                        </div>
+
+                    <!-- versions section -->
+                        <span class="anchor anchor-home-resource-page" id="anchor-versions"></span>
+                        <div id ="versions" class="pb-5 section">
+                            <h4 class="pb-2 mb-2 pt-2 text-gbif-header-2 fw-400">
+Versions                            </h4>
+
+                                <p>The table below shows only published versions of the resource that are publicly accessible.</p>
+    <script charset="utf-8">
+
+
+        /* version history list */
+        var aDataSet = [
+            /* only show released versions. The version must be public unless user has manager rights in which case they can see all released versions */
+            ['<img class="latestVersion" src="https://data.canadensys.net/ipt/images/dataTables/forward_enabled_hover.png"/>16.43',
+                '2026-09-01 12:00:36',
+                '192,948',
+                "None provided&nbsp;",
+                '',
+                ""],
+            /* only show released versions. The version must be public unless user has manager rights in which case they can see all released versions */
+            ['<img class="latestVersionHidden" src="https://data.canadensys.net/ipt/images/dataTables/forward_enabled_hover.png"/><a href="https://data.canadensys.net/ipt/resource?r=ubc-vascular-specimens&amp;v=16.42">16.42</a>',
+                '2026-07-29 20:08:30',
+                '192,783',
+                "None provided&nbsp;",
+                '',
+                'Paul Bucci'],
+            /* only show released versions. The version must be public unless user has manager rights in which case they can see all released versions */
+            ['<img class="latestVersionHidden" src="https://data.canadensys.net/ipt/images/dataTables/forward_enabled_hover.png"/><a href="https://data.canadensys.net/ipt/resource?r=ubc-vascular-specimens&amp;v=16.41">16.41</a>',
+                '2026-03-24 00:24:25',
+                '191,189',
+                "None provided&nbsp;",
+                '',
+                'Paul Bucci'],
+            /* only show released versions. The version must be public unless user has manager rights in which case they can see all released versions */
+            ['<img class="latestVersionHidden" src="https://data.canadensys.net/ipt/images/dataTables/forward_enabled_hover.png"/><a href="https://data.canadensys.net/ipt/resource?r=ubc-vascular-specimens&amp;v=16.40">16.40</a>',
+                '2026-03-19 23:21:19',
+                '191,187',
+                "None provided&nbsp;",
+                '',
+                'Paul Bucci'],
+            /* only show released versions. The version must be public unless user has manager rights in which case they can see all released versions */
+            ['<img class="latestVersionHidden" src="https://data.canadensys.net/ipt/images/dataTables/forward_enabled_hover.png"/><a href="https://data.canadensys.net/ipt/resource?r=ubc-vascular-specimens&amp;v=16.39">16.39</a>',
+                '2026-02-02 18:39:27',
+                '190,958',
+                "None provided&nbsp;",
+                '',
+                'Paul Bucci'],
+            /* only show released versions. The version must be public unless user has manager rights in which case they can see all released versions */
+            ['<img class="latestVersionHidden" src="https://data.canadensys.net/ipt/images/dataTables/forward_enabled_hover.png"/><a href="https://data.canadensys.net/ipt/resource?r=ubc-vascular-specimens&amp;v=16.38">16.38</a>',
+                '2025-12-01 23:47:29',
+                '190,475',
+                "Regular data update&nbsp;",
+                '',
+                'Paul Bucci'],
+            /* only show released versions. The version must be public unless user has manager rights in which case they can see all released versions */
+            ['<img class="latestVersionHidden" src="https://data.canadensys.net/ipt/images/dataTables/forward_enabled_hover.png"/><a href="https://data.canadensys.net/ipt/resource?r=ubc-vascular-specimens&amp;v=16.37">16.37</a>',
+                '2025-10-31 00:21:20',
+                '189,930',
+                "Regular data update&nbsp;",
+                '',
+                'Paul Bucci'],
+            /* only show released versions. The version must be public unless user has manager rights in which case they can see all released versions */
+            ['<img class="latestVersionHidden" src="https://data.canadensys.net/ipt/images/dataTables/forward_enabled_hover.png"/><a href="https://data.canadensys.net/ipt/resource?r=ubc-vascular-specimens&amp;v=16.36">16.36</a>',
+                '2025-10-30 23:24:37',
+                '189,930',
+                "Regular data update&nbsp;",
+                '',
+                'Paul Bucci'],
+            /* only show released versions. The version must be public unless user has manager rights in which case they can see all released versions */
+            ['<img class="latestVersionHidden" src="https://data.canadensys.net/ipt/images/dataTables/forward_enabled_hover.png"/><a href="https://data.canadensys.net/ipt/resource?r=ubc-vascular-specimens&amp;v=16.35">16.35</a>',
+                '2025-10-24 20:57:27',
+                '189,930',
+                "Regular data update&nbsp;",
+                '',
+                'Paul Bucci'],
+            /* only show released versions. The version must be public unless user has manager rights in which case they can see all released versions */
+            ['<img class="latestVersionHidden" src="https://data.canadensys.net/ipt/images/dataTables/forward_enabled_hover.png"/><a href="https://data.canadensys.net/ipt/resource?r=ubc-vascular-specimens&amp;v=16.34">16.34</a>',
+                '2025-06-23 21:17:10',
+                '188,222',
+                "Regular data update&nbsp;",
+                '',
+                'Mark Pitblado'],
+            /* only show released versions. The version must be public unless user has manager rights in which case they can see all released versions */
+            ['<img class="latestVersionHidden" src="https://data.canadensys.net/ipt/images/dataTables/forward_enabled_hover.png"/><a href="https://data.canadensys.net/ipt/resource?r=ubc-vascular-specimens&amp;v=16.33">16.33</a>',
+                '2025-06-12 16:36:59',
+                '188,043',
+                "Additional images&nbsp;",
+                '',
+                'Mark Pitblado'],
+            /* only show released versions. The version must be public unless user has manager rights in which case they can see all released versions */
+            ['<img class="latestVersionHidden" src="https://data.canadensys.net/ipt/images/dataTables/forward_enabled_hover.png"/><a href="https://data.canadensys.net/ipt/resource?r=ubc-vascular-specimens&amp;v=16.32">16.32</a>',
+                '2025-06-05 22:10:41',
+                '187,960',
+                "Add additional images&nbsp;",
+                '',
+                'Mark Pitblado'],
+            /* only show released versions. The version must be public unless user has manager rights in which case they can see all released versions */
+            ['<img class="latestVersionHidden" src="https://data.canadensys.net/ipt/images/dataTables/forward_enabled_hover.png"/><a href="https://data.canadensys.net/ipt/resource?r=ubc-vascular-specimens&amp;v=16.31">16.31</a>',
+                '2025-06-04 21:27:52',
+                '187,960',
+                "Regular monthly update&nbsp;",
+                '',
+                'Mark Pitblado'],
+            /* only show released versions. The version must be public unless user has manager rights in which case they can see all released versions */
+            ['<img class="latestVersionHidden" src="https://data.canadensys.net/ipt/images/dataTables/forward_enabled_hover.png"/><a href="https://data.canadensys.net/ipt/resource?r=ubc-vascular-specimens&amp;v=16.30">16.30</a>',
+                '2025-05-09 21:36:44',
+                '187,705',
+                "None provided&nbsp;",
+                '',
+                'Mark Pitblado'],
+            /* only show released versions. The version must be public unless user has manager rights in which case they can see all released versions */
+            ['<img class="latestVersionHidden" src="https://data.canadensys.net/ipt/images/dataTables/forward_enabled_hover.png"/><a href="https://data.canadensys.net/ipt/resource?r=ubc-vascular-specimens&amp;v=16.29">16.29</a>',
+                '2025-04-30 19:15:55',
+                '187,691',
+                "Monthly data update.&nbsp;",
+                '',
+                'Mark Pitblado'],
+            /* only show released versions. The version must be public unless user has manager rights in which case they can see all released versions */
+            ['<img class="latestVersionHidden" src="https://data.canadensys.net/ipt/images/dataTables/forward_enabled_hover.png"/><a href="https://data.canadensys.net/ipt/resource?r=ubc-vascular-specimens&amp;v=16.28">16.28</a>',
+                '2025-04-02 21:20:21',
+                '187,673',
+                "Data update, additional images&nbsp;",
+                '',
+                'Mark Pitblado'],
+            /* only show released versions. The version must be public unless user has manager rights in which case they can see all released versions */
+            ['<img class="latestVersionHidden" src="https://data.canadensys.net/ipt/images/dataTables/forward_enabled_hover.png"/><a href="https://data.canadensys.net/ipt/resource?r=ubc-vascular-specimens&amp;v=16.27">16.27</a>',
+                '2025-03-18 20:52:58',
+                '187,523',
+                "Regular data update. Approximately 1,800 new images&nbsp;",
+                '',
+                'Mark Pitblado'],
+            /* only show released versions. The version must be public unless user has manager rights in which case they can see all released versions */
+            ['<img class="latestVersionHidden" src="https://data.canadensys.net/ipt/images/dataTables/forward_enabled_hover.png"/><a href="https://data.canadensys.net/ipt/resource?r=ubc-vascular-specimens&amp;v=16.26">16.26</a>',
+                '2024-12-02 18:46:37',
+                '187,380',
+                "Correction of multi-value delimiter in recordedBy&nbsp;",
+                '',
+                'Mark Pitblado'],
+            /* only show released versions. The version must be public unless user has manager rights in which case they can see all released versions */
+            ['<img class="latestVersionHidden" src="https://data.canadensys.net/ipt/images/dataTables/forward_enabled_hover.png"/><a href="https://data.canadensys.net/ipt/resource?r=ubc-vascular-specimens&amp;v=16.25">16.25</a>',
+                '2024-11-25 22:34:14',
+                '187,353',
+                "Monthly update of data and images&nbsp;",
+                '',
+                'Mark Pitblado'],
+            /* only show released versions. The version must be public unless user has manager rights in which case they can see all released versions */
+            ['<img class="latestVersionHidden" src="https://data.canadensys.net/ipt/images/dataTables/forward_enabled_hover.png"/><a href="https://data.canadensys.net/ipt/resource?r=ubc-vascular-specimens&amp;v=16.24">16.24</a>',
+                '2024-10-24 16:19:05',
+                '187,310',
+                "Restore taxonRank from 16.22 for infraspecificEpithet&nbsp;",
+                '',
+                'Mark Pitblado'],
+            /* only show released versions. The version must be public unless user has manager rights in which case they can see all released versions */
+            ['<img class="latestVersionHidden" src="https://data.canadensys.net/ipt/images/dataTables/forward_enabled_hover.png"/><a href="https://data.canadensys.net/ipt/resource?r=ubc-vascular-specimens&amp;v=16.23">16.23</a>',
+                '2024-10-23 18:28:39',
+                '187,310',
+                "Regular data update.&nbsp;",
+                '',
+                'Mark Pitblado'],
+            /* only show released versions. The version must be public unless user has manager rights in which case they can see all released versions */
+            ['<img class="latestVersionHidden" src="https://data.canadensys.net/ipt/images/dataTables/forward_enabled_hover.png"/><a href="https://data.canadensys.net/ipt/resource?r=ubc-vascular-specimens&amp;v=16.22">16.22</a>',
+                '2024-09-20 20:55:39',
+                '186,869',
+                "Add taxonRank. Describes those records that have a value in subspecies.&nbsp;",
+                '',
+                'Mark Pitblado'],
+            /* only show released versions. The version must be public unless user has manager rights in which case they can see all released versions */
+            ['<img class="latestVersionHidden" src="https://data.canadensys.net/ipt/images/dataTables/forward_enabled_hover.png"/><a href="https://data.canadensys.net/ipt/resource?r=ubc-vascular-specimens&amp;v=16.21">16.21</a>',
+                '2024-07-24 16:37:55',
+                '186,869',
+                "Regular update for publication of new/edited records.&nbsp;",
+                '',
+                'Mark Pitblado'],
+            /* only show released versions. The version must be public unless user has manager rights in which case they can see all released versions */
+            ['<img class="latestVersionHidden" src="https://data.canadensys.net/ipt/images/dataTables/forward_enabled_hover.png"/><a href="https://data.canadensys.net/ipt/resource?r=ubc-vascular-specimens&amp;v=16.20">16.20</a>',
+                '2024-06-27 17:43:53',
+                '186,788',
+                "Addition of recordNumber, fix utf-8 encoding, update of records since last release&nbsp;",
+                '',
+                'Mark Pitblado'],
+            /* only show released versions. The version must be public unless user has manager rights in which case they can see all released versions */
+            ['<img class="latestVersionHidden" src="https://data.canadensys.net/ipt/images/dataTables/forward_enabled_hover.png"/><a href="https://data.canadensys.net/ipt/resource?r=ubc-vascular-specimens&amp;v=16.19">16.19</a>',
+                '2024-05-10 18:02:24',
+                '186,773',
+                "Add additional images&nbsp;",
+                '',
+                'Mark Pitblado'],
+            /* only show released versions. The version must be public unless user has manager rights in which case they can see all released versions */
+            ['<img class="latestVersionHidden" src="https://data.canadensys.net/ipt/images/dataTables/forward_enabled_hover.png"/><a href="https://data.canadensys.net/ipt/resource?r=ubc-vascular-specimens&amp;v=16.18">16.18</a>',
+                '2024-04-30 16:21:03',
+                '186,773',
+                "Add recordNumber&nbsp;",
+                '',
+                'Mark Pitblado'],
+            /* only show released versions. The version must be public unless user has manager rights in which case they can see all released versions */
+            ['<img class="latestVersionHidden" src="https://data.canadensys.net/ipt/images/dataTables/forward_enabled_hover.png"/><a href="https://data.canadensys.net/ipt/resource?r=ubc-vascular-specimens&amp;v=16.17">16.17</a>',
+                '2024-02-20 17:11:40',
+                '186,773',
+                "Change last name of Linda from Jennings to PJ Lipsen&nbsp;",
+                '',
+                'Mark Pitblado'],
+            /* only show released versions. The version must be public unless user has manager rights in which case they can see all released versions */
+            ['<img class="latestVersionHidden" src="https://data.canadensys.net/ipt/images/dataTables/forward_enabled_hover.png"/><a href="https://data.canadensys.net/ipt/resource?r=ubc-vascular-specimens&amp;v=16.16">16.16</a>',
+                '2024-02-07 17:21:25',
+                '186,773',
+                "None provided&nbsp;",
+                '',
+                'Mark Pitblado'],
+            /* only show released versions. The version must be public unless user has manager rights in which case they can see all released versions */
+            ['<img class="latestVersionHidden" src="https://data.canadensys.net/ipt/images/dataTables/forward_enabled_hover.png"/><a href="https://data.canadensys.net/ipt/resource?r=ubc-vascular-specimens&amp;v=16.15">16.15</a>',
+                '2024-01-11 18:41:19',
+                '187,269',
+                "Image rerouting, 1000 image test&nbsp;",
+                '',
+                'Mark Pitblado'],
+            /* only show released versions. The version must be public unless user has manager rights in which case they can see all released versions */
+            ['<img class="latestVersionHidden" src="https://data.canadensys.net/ipt/images/dataTables/forward_enabled_hover.png"/><a href="https://data.canadensys.net/ipt/resource?r=ubc-vascular-specimens&amp;v=16.14">16.14</a>',
+                '2024-01-10 17:56:41',
+                '187,269',
+                "Test of new image routing&nbsp;",
+                '',
+                'Mark Pitblado'],
+            /* only show released versions. The version must be public unless user has manager rights in which case they can see all released versions */
+            ['<img class="latestVersionHidden" src="https://data.canadensys.net/ipt/images/dataTables/forward_enabled_hover.png"/><a href="https://data.canadensys.net/ipt/resource?r=ubc-vascular-specimens&amp;v=16.13">16.13</a>',
+                '2023-11-29 22:44:26',
+                '187,269',
+                "Update resource metadata&nbsp;",
+                '',
+                'Mark Pitblado'],
+            /* only show released versions. The version must be public unless user has manager rights in which case they can see all released versions */
+            ['<img class="latestVersionHidden" src="https://data.canadensys.net/ipt/images/dataTables/forward_enabled_hover.png"/><a href="https://data.canadensys.net/ipt/resource?r=ubc-vascular-specimens&amp;v=16.12">16.12</a>',
+                '2023-10-25 16:04:23',
+                '187,269',
+                "Edited institution and collection IDs&nbsp;",
+                '',
+                'Carole Sinou'],
+            /* only show released versions. The version must be public unless user has manager rights in which case they can see all released versions */
+            ['<img class="latestVersionHidden" src="https://data.canadensys.net/ipt/images/dataTables/forward_enabled_hover.png"/><a href="https://data.canadensys.net/ipt/resource?r=ubc-vascular-specimens&amp;v=16.11">16.11</a>',
+                '2023-10-25 15:03:38',
+                '187,269',
+                "Modification of ownerInstitutionCode&nbsp;",
+                '',
+                'Carole Sinou'],
+            /* only show released versions. The version must be public unless user has manager rights in which case they can see all released versions */
+            ['<img class="latestVersionHidden" src="https://data.canadensys.net/ipt/images/dataTables/forward_enabled_hover.png"/><a href="https://data.canadensys.net/ipt/resource?r=ubc-vascular-specimens&amp;v=16.10">16.10</a>',
+                '2023-10-24 14:52:29',
+                '187,269',
+                "Modification of institutionID, institutionCode, collectionID, collectionCode&nbsp;",
+                '',
+                'Carole Sinou'],
+            /* only show released versions. The version must be public unless user has manager rights in which case they can see all released versions */
+            ['<img class="latestVersionHidden" src="https://data.canadensys.net/ipt/images/dataTables/forward_enabled_hover.png"/><a href="https://data.canadensys.net/ipt/resource?r=ubc-vascular-specimens&amp;v=16.9">16.9</a>',
+                '2022-08-24 18:14:13',
+                '187,269',
+                "Updating records&nbsp;",
+                '',
+                'Linda Jennings'],
+            /* only show released versions. The version must be public unless user has manager rights in which case they can see all released versions */
+            /* only show released versions. The version must be public unless user has manager rights in which case they can see all released versions */
+            ['<img class="latestVersionHidden" src="https://data.canadensys.net/ipt/images/dataTables/forward_enabled_hover.png"/><a href="https://data.canadensys.net/ipt/resource?r=ubc-vascular-specimens&amp;v=16.7">16.7</a>',
+                '2021-12-03 20:10:16',
+                '185,604',
+                "Updating records&nbsp;",
+                '',
+                'Linda Jennings'],
+            /* only show released versions. The version must be public unless user has manager rights in which case they can see all released versions */
+            ['<img class="latestVersionHidden" src="https://data.canadensys.net/ipt/images/dataTables/forward_enabled_hover.png"/><a href="https://data.canadensys.net/ipt/resource?r=ubc-vascular-specimens&amp;v=16.6">16.6</a>',
+                '2019-05-16 03:14:06',
+                '181,857',
+                "Update to add more records&nbsp;",
+                '',
+                'Linda Jennings'],
+            /* only show released versions. The version must be public unless user has manager rights in which case they can see all released versions */
+            ['<img class="latestVersionHidden" src="https://data.canadensys.net/ipt/images/dataTables/forward_enabled_hover.png"/><a href="https://data.canadensys.net/ipt/resource?r=ubc-vascular-specimens&amp;v=16.5">16.5</a>',
+                '2019-01-18 20:12:50',
+                '181,455',
+                "Updating records&nbsp;",
+                '',
+                'Linda Jennings'],
+            /* only show released versions. The version must be public unless user has manager rights in which case they can see all released versions */
+            ['<img class="latestVersionHidden" src="https://data.canadensys.net/ipt/images/dataTables/forward_enabled_hover.png"/><a href="https://data.canadensys.net/ipt/resource?r=ubc-vascular-specimens&amp;v=16.4">16.4</a>',
+                '2018-08-25 02:48:47',
+                '180,614',
+                "Updated with more records&nbsp;",
+                '',
+                'Linda Jennings'],
+            /* only show released versions. The version must be public unless user has manager rights in which case they can see all released versions */
+            ['<img class="latestVersionHidden" src="https://data.canadensys.net/ipt/images/dataTables/forward_enabled_hover.png"/><a href="https://data.canadensys.net/ipt/resource?r=ubc-vascular-specimens&amp;v=16.3">16.3</a>',
+                '2018-08-24 04:11:19',
+                '176,400',
+                "Updates to the occurenceID, geolocation data, and columns named and updated properly.&nbsp;",
+                '',
+                'Linda Jennings'],
+            /* only show released versions. The version must be public unless user has manager rights in which case they can see all released versions */
+            ['<img class="latestVersionHidden" src="https://data.canadensys.net/ipt/images/dataTables/forward_enabled_hover.png"/><a href="https://data.canadensys.net/ipt/resource?r=ubc-vascular-specimens&amp;v=16.1">16.1</a>',
+                '2016-02-15 17:07:28',
+                '168,966',
+                "None provided&nbsp;",
+                '',
+                ""],
+            /* only show released versions. The version must be public unless user has manager rights in which case they can see all released versions */
+            ['<img class="latestVersionHidden" src="https://data.canadensys.net/ipt/images/dataTables/forward_enabled_hover.png"/><a href="https://data.canadensys.net/ipt/resource?r=ubc-vascular-specimens&amp;v=16.0">16.0</a>',
+                '2015-10-22 16:51:12',
+                '168,966',
+                "None provided&nbsp;",
+                '',
+                ""]
+        ];
+
+        $(document).ready(function() {
+            $('#vtableContainer').html( '<table class="hover row-border dataTable compact" id="rtable"></table>' );
+            $('#rtable').dataTable( {
+                "bFilter": false,
+                "aaData": aDataSet,
+                "iDisplayLength": 3,
+                "bLengthChange": false,
+                "bAutoWidth": false,
+                "bSort": false,
+                "oLanguage": {
+                    "sEmptyTable": "No versions are currently available",
+                    "sZeroRecords": "No versions were found",
+                    "sInfo": "Showing _START_ to _END_ of _TOTAL_",
+                    "sInfoEmpty": "Showing 0 to 0 of 0",
+                    "sInfoFiltered": "(filtered from _MAX_ total)",
+                    "oPaginate": {
+                        "sNext": "next",
+                        "sPrevious": "previous"
+
+                    }
+                },
+                "aoColumns": [
+                    { "sTitle": "Version", "bSearchable": false},
+                    { "sTitle": "Published on", "bSearchable": false},
+                    { "sTitle": "Records", "bSearchable": false},
+                    { "sTitle": "Change summary", "bSearchable": false},
+                    { "sTitle": "DOI handle", "bSearchable": false},
+                    { "sTitle": "Last modified by", "bSearchable": false}
+                ],
+                "aoColumnDefs": [
+                    { 'bSortable': false, 'aTargets': [ 0,1,2,3,4,5] }
+                ]
+            } );
+        } );
+    </script>
+                            <div id="vtableContainer" class="table-responsive text-smaller"></div>
+                        </div>
+
+                    <!-- citation section -->
+                        <span class="anchor anchor-home-resource-page" id="anchor-citation"></span>
+                        <div id="citation" class="pb-5 section">
+                            <h4 class="pb-2 mb-2 pt-2 text-gbif-header-2 fw-400">
+How to cite                            </h4>
+
+                            <p>
+                                Researchers should cite this work as follows:
+                            </p>
+                            <p property="dc:bibliographicCitation" class="howtocite mt-3 p-3 overflow-x-auto">
+University of British Columbia Herbarium (UBC). <a href="http://dx.doi.org/10.5886/rtt57cc9.">http://dx.doi.org/10.5886/rtt57cc9.</a>  (consulted on [date])                             </p>
+                        </div>
+
+                    <!-- rights section -->
+                        <span class="anchor anchor-home-resource-page" id="anchor-rights"></span>
+                        <div id="rights" class="pb-5 section">
+                            <h4 class="pb-2 mb-2 pt-2 text-gbif-header-2 fw-400">
+Rights                            </h4>
+
+                            <p>Researchers should respect the following rights statement:</p>
+            <a rel="license" id="cc_zero" class="cc_logo cc_zero"
+               href="http://creativecommons.org/publicdomain/zero/1.0/legalcode"
+               title="Creative Commons CCZero (CC0) 1.0 License">
+                <img src="https://data.canadensys.net/ipt/images/icons/cc-by-nc.svg" alt="Sample Image">
+            </a>
+                            <p property="dc:license">
+                                    The publisher and rights holder of this work is University of British Columbia.
+To the extent possible under law, the publisher has waived all rights to these data and has dedicated them to the <a href="http://creativecommons.org/publicdomain/zero/1.0/legalcode">Public Domain (CC0 1.0)</a>. Users may copy, modify, distribute and use the work, including for commercial purposes, without restriction.                            </p>
+                        </div>
+
+                    <!-- GBIF Registration section -->
+                    <span class="anchor anchor-home-resource-page" id="anchor-gbif"></span>
+                    <div id="gbif" class="pb-5 section">
+                        <h4 class="pb-2 mb-2 pt-2 text-gbif-header-2 fw-400">
+GBIF Registration                        </h4>
+
+                            <p>
+                                This resource has been registered with GBIF, and assigned the following GBIF UUID: <a href="https://www.gbif.org/dataset/07fd0d79-4883-435f-bba1-58fef110cd13">07fd0d79-4883-435f-bba1-58fef110cd13</a>.
+                                &nbsp;<a href="https://www.gbif.org/publisher/b542788f-0dc2-4a2b-b652-fceced449591">University of British Columbia</a> publishes this resource, and is itself registered in GBIF as a data publisher endorsed by <a href="https://www.gbif.org/node/8f83fc96-c966-4126-83f7-bf044dc49efa">Canada Biodiversity Information Facility</a>.
+                            </p>
+                    </div>
+
+                    <!-- Keywords section -->
+                        <span class="anchor anchor-home-resource-page" id="anchor-keywords"></span>
+                        <div id="keywords" class="pb-5 section">
+                            <h4 class="pb-2 mb-2 pt-2 text-gbif-header-2 fw-400">
+Keywords                            </h4>
+
+                            <p property="dc:subject">
+UBC; University of British Columbia Herbarium; Beaty Biodiversity Museum; Canadensys; Canada; British Columbia; collection; herbarium; specimens; vascular plants; Occurrence; Specimen; Occurrence                            </p>
+                        </div>
+
+                    <!-- External data section -->
+
+                    <!-- Contacts section -->
+                        <span class="anchor anchor-home-resource-page" id="anchor-contacts"></span>
+                        <div id="contacts" class="pb-5 section">
+                            <h4 class="pb-2 mb-4 pt-2 text-gbif-header-2 fw-400">
+Contacts                            </h4>
+
+                            <div class="row g-3 border">
+                                        <div class="col-lg-4 mt-0">    <div class="contact">
+
+        <div  class="contactName mb-1">
+                Linda PJ Lipsen
+        </div>
+        <div class="text-smaller text-discreet">
+            <div class="contactType fst-italic">
+                    <ul class="inline-bullet-list list-unstyled mb-1">
+                                <li class="mx-0">Originator <span class="contacts-circle">●</span></li>
+                                <li class="mx-0">Point Of Contact </li>
+                    </ul>
+            </div>
+
+                <ul class="contactPosition ul-contact-info">
+                    <li >Collections Curator, Vascular Plants &amp; Algae</li>
+                </ul>
+
+            <div class="address">
+                    <div>University of British Columbia Herbarium</div>
+
+                    <ul class="address ul-contact-info">
+                        <li >2212 Main Mall</li>
+                    </ul>
+
+                    <div class="city">
+                           V6T 1Z4
+                        Vancouver
+                    </div>
+
+                    <div class="province">British Columbia</div>
+
+                    <div class="country">CA</div>
+
+                    <ul class="email ul-contact-info">
+                        <li ><a href="mailto:linda.jennings@ubc.ca" title="email" class="break-all">linda.jennings@ubc.ca</a></li>
+                    </ul>
+
+            </div>
+
+                <ul class="ul-contact-info">
+                    <li ><a href="https://beatymuseum.ubc.ca/research-2/collections/herbarium/herbarium-vascular-plants/" class="break-all">https://beatymuseum.ubc.ca/research-2/collections/herbarium/herbarium-vascular-plants/</a></li>
+                </ul>
+
+        </div>
+    </div>
+</div>
+                                        <div class="col-lg-4 mt-0">    <div class="contact">
+
+        <div  class="contactName mb-1">
+                Paul Bucci
+        </div>
+        <div class="text-smaller text-discreet">
+            <div class="contactType fst-italic">
+                    <ul class="inline-bullet-list list-unstyled mb-1">
+                                <li class="mx-0">Metadata Provider </li>
+                    </ul>
+            </div>
+
+                <ul class="contactPosition ul-contact-info">
+                    <li >Collections Curator, Biodiversity Informatics</li>
+                </ul>
+
+            <div class="address">
+                    <div>Beaty Biodiversity Museum</div>
+
+                    <ul class="address ul-contact-info">
+                        <li >2212 Main Mall</li>
+                    </ul>
+
+                    <div class="city">
+                           V6T 1Z4
+                        Vancouver
+                    </div>
+
+                    <div class="province">British Columbia</div>
+
+                    <div class="country">CA</div>
+
+                    <ul class="email ul-contact-info">
+                        <li ><a href="mailto:paul.bucci@ubc.ca" title="email" class="break-all">paul.bucci@ubc.ca</a></li>
+                    </ul>
+
+            </div>
+
+
+                <div>
+                    <ul class="ul-contact-info">
+                                <li >
+                                    <a href="https://orcid.org/0000-0002-8646-7730" class="break-all" target="_blank">
+                                            <img src="https://data.canadensys.net/ipt/images/icons/orcid_16x16.gif" class="orcid-small">
+                                        https://orcid.org/0000-0002-8646-7730
+                                    </a>
+                                </li>
+                    </ul>
+                </div>
+        </div>
+    </div>
+</div>
+                                        <div class="col-lg-4 mt-0">    <div class="contact">
+
+        <div  class="contactName mb-1">
+                Jeannette Whitton
+        </div>
+        <div class="text-smaller text-discreet">
+            <div class="contactType fst-italic">
+                    <ul class="inline-bullet-list list-unstyled mb-1">
+                                <li class="mx-0">Principal Investigator </li>
+                    </ul>
+            </div>
+
+                <ul class="contactPosition ul-contact-info">
+                    <li >Herbarium Director</li>
+                </ul>
+
+            <div class="address">
+                    <div>University of British Columbia Herbarium</div>
+
+                    <ul class="address ul-contact-info">
+                        <li >3529-6270 University Boulevard</li>
+                    </ul>
+
+                    <div class="city">
+                           V6T 1Z4
+                        Vancouver
+                    </div>
+
+                    <div class="province">British Columbia</div>
+
+                    <div class="country">CA</div>
+
+                    <ul class="email ul-contact-info">
+                        <li ><a href="mailto:jeannette.whitton@botany.ubc.ca" title="email" class="break-all">jeannette.whitton@botany.ubc.ca</a></li>
+                    </ul>
+
+            </div>
+
+                <ul class="ul-contact-info">
+                    <li ><a href="http://www.botany.ubc.ca/people/jwhitton.html" class="break-all">http://www.botany.ubc.ca/people/jwhitton.html</a></li>
+                </ul>
+
+        </div>
+    </div>
+</div>
+                                        <div class="col-lg-4 mt-0">    <div class="contact">
+
+        <div  class="contactName mb-1">
+                Sean Graham
+        </div>
+        <div class="text-smaller text-discreet">
+            <div class="contactType fst-italic">
+                    <ul class="inline-bullet-list list-unstyled mb-1">
+                                <li class="mx-0">Curator </li>
+                    </ul>
+            </div>
+
+                <ul class="contactPosition ul-contact-info">
+                    <li >Curator, Monocots and Basal Angiosperms</li>
+                </ul>
+
+            <div class="address">
+                    <div>University of British Columbia Herbarium</div>
+
+                    <ul class="address ul-contact-info">
+                        <li >3529-6270 University Boulevard</li>
+                    </ul>
+
+                    <div class="city">
+                           V6T 1Z4
+                        Vancouver
+                    </div>
+
+                    <div class="province">British Columbia</div>
+
+                    <div class="country">CA</div>
+
+                    <ul class="email ul-contact-info">
+                        <li ><a href="mailto:sean.graham@ubc.ca" title="email" class="break-all">sean.graham@ubc.ca</a></li>
+                    </ul>
+
+            </div>
+
+                <ul class="ul-contact-info">
+                    <li ><a href="http://www.botany.ubc.ca/people/sgraham.html" class="break-all">http://www.botany.ubc.ca/people/sgraham.html</a></li>
+                </ul>
+
+        </div>
+    </div>
+</div>
+                                        <div class="col-lg-4 mt-0">    <div class="contact">
+
+        <div  class="contactName mb-1">
+                Quentin Cronk
+        </div>
+        <div class="text-smaller text-discreet">
+            <div class="contactType fst-italic">
+                    <ul class="inline-bullet-list list-unstyled mb-1">
+                                <li class="mx-0">Curator </li>
+                    </ul>
+            </div>
+
+                <ul class="contactPosition ul-contact-info">
+                    <li >Curator, Eudicots</li>
+                </ul>
+
+            <div class="address">
+                    <div>University of British Columbia Herbarium</div>
+
+                    <ul class="address ul-contact-info">
+                        <li >2212 Main Mall</li>
+                    </ul>
+
+                    <div class="city">
+                           V6T 1Z4
+                        Vancouver
+                    </div>
+
+                    <div class="province">British Columbia</div>
+
+                    <div class="country">CA</div>
+
+                    <ul class="email ul-contact-info">
+                        <li ><a href="mailto:quentin.cronk@ubc.ca" title="email" class="break-all">quentin.cronk@ubc.ca</a></li>
+                    </ul>
+
+            </div>
+
+                <ul class="ul-contact-info">
+                    <li ><a href="http://cronklab.wikidot.com/" class="break-all">http://cronklab.wikidot.com/</a></li>
+                </ul>
+
+        </div>
+    </div>
+</div>
+                            </div>
+                        </div>
+
+                    <!-- Geo coverage section -->
+                        <span class="anchor anchor-home-resource-page" id="anchor-geospatial"></span>
+                        <div id="geospatial" class="pb-5 section">
+                            <h4 class="pb-2 mb-2 pt-2 text-gbif-header-2 fw-400">
+Geographic Coverage                            </h4>
+
+                            <p property="dc:spatial">
+The UBC Herbarium has one of the world's largest collections of British Columbia vascular plants and is worldwide in scope. Of the 235,000 vascular plant specimens, about 52% are from British Columbia. About 18% are from the rest of Canada, with the Northwest Territories and Yukon especially well represented. Specimens from the United States make up about 15% of the collection, with 8% from the five Pacific Coast states (California, Hawaii, Oregon, Washington, and Alaska) and 7% from the rest of the United States. Hawaiian plants are especially well represented. About 15% of the collection is from the rest of the world, with the largest numbers from Great Britain, Finland, China, Australia, Denmark, Japan, South Africa, Taiwan, Russia, Greenland, and Sweden.                            </p>
+
+                            <div class="table-responsive">
+                                <table class="text-smaller table table-sm table-borderless">
+                                    <tr>
+                                        <th class="col-4">Bounding Coordinates</th>
+                                        <td>South&nbsp;West&nbsp;&#91;-90,&nbsp;-180&#93;&#44;&nbsp;North&nbsp;East&nbsp;&#91;90,&nbsp;180&#93;</td>
+                                    </tr>
+                                </table>
+                            </div>
+                        </div>
+
+                    <!-- Taxonomic coverage sections -->
+                        <span class="anchor anchor-home-resource-page" id="anchor-taxanomic"></span>
+                        <div id="taxanomic" class="pb-5 section">
+                            <h4 class="pb-2 mb-2 pt-2 text-gbif-header-2 fw-400">
+Taxonomic Coverage                            </h4>
+
+                                <p>
+                                        No Description available
+                                </p>
+
+                                <div class="table-responsive">
+                                    <table class="text-smaller table table-sm table-borderless">
+                                                <tr>
+                                                        <th class="col-4">Kingdom</th>
+                                                    <td>
+                                                            Plantae (Plants)
+                                                    </td>
+                                                </tr>
+                                    </table>
+                                </div>
+                                
+                        </div>
+
+                    <!-- Temporal coverages section -->
+                        <span class="anchor anchor-home-resource-page" id="anchor-temporal"></span>
+                        <div id="temporal" class="pb-5 section">
+                            <h4 class="pb-2 mb-2 pt-2 text-gbif-header-2 fw-400">
+Temporal Coverage                            </h4>
+
+                                <div class="table-responsive">
+                                    <table class="text-smaller table table-sm table-borderless">
+                                            <tr>
+                                                <th class="col-4">Formation Period</th>
+                                                <td property="dc:temporal">early 1800s-present</td>
+                                            </tr>
+                                                                            </table>
+                                </div>
+                        </div>
+
+                    <!-- Project section -->
+
+                    <!-- Sampling methods section -->
+
+                    <!-- Collections section -->
+                        <span class="anchor anchor-home-resource-page" id="anchor-collection"></span>
+                        <div id="collection" class="pb-5 section">
+                            <h4 class="pb-2 mb-2 pt-2 text-gbif-header-2 fw-400">
+Collection Data                            </h4>
+
+                                <div class="table-responsive">
+                                    <table class="text-smaller table table-sm table-borderless">
+                                            <tr>
+                                                <th class="col-4">Collection Name</th>
+                                                <td>University of British Columbia Herbarium (UBC) - Vascular Plant Collection</td>
+                                            </tr>
+                                            <tr>
+                                                <th class="col-4">Collection Identifier</th>
+                                                <td>UBC</td>
+                                            </tr>
+                                            <tr>
+                                                <th class="col-4">Parent Collection Identifier</th>
+                                                <td>UBC</td>
+                                            </tr>
+                                    </table>
+                                </div>
+
+                                <div class="table-responsive">
+                                    <table class="text-smaller table table-sm table-borderless">
+                                            <tr>
+                                                <th class="col-4">Specimen preservation methods</th>
+                                                <td>
+                                                        Mounted
+                                                </td>
+                                            </tr>
+                                        </table>
+                                </div>
+
+                        </div>
+
+                    <!-- bibliographic citations section -->
+                        <span class="anchor anchor-home-resource-page" id="anchor-reference"></span>
+                        <div id="reference" class="pb-5 section">
+                            <h4 class="pb-2 mb-2 pt-2 text-gbif-header-2 fw-400">
+Bibliographic Citations                            </h4>
+
+                            <ol class="overflow-x-auto">
+                                        <li property="dc:references">
+                                            Smith, A.R., Pryer, K.M., Schuettpelz, E., Korall, P., Schneider, H., Wolf, P.G. 2006. A classification for extant ferns. Taxon 55(3): 705-731. <a href="http://www.ingentaconnect.com/content/iapt/tax/2006/00000055/00000003/art00017">http://www.ingentaconnect.com/content/iapt/tax/2006/00000055/00000003/art00017</a>  
+                                        </li>
+                                        <li property="dc:references">
+                                            Rai, H.S., Reeves, P.A., Peakall, R., Olmstead, R.G., Graham, S.W. 2008. Inference of higher-order conifer relationships from a multi-locus plastid data set. Botany 86(7): 658-669. <a href="http://www.nrcresearchpress.com/doi/abs/10.1139/B08-062">http://www.nrcresearchpress.com/doi/abs/10.1139/B08-062</a>  
+                                        </li>
+                                        <li property="dc:references">
+                                            The Angiosperm Phylogeny Group. 2009. An update of the Angiosperm Phylogeny Group classification for the orders and families of flowering plants: APG III. Botanical Journal of the Linnaen Society 161(2): 105-121. <a href="http://onlinelibrary.wiley.com/doi/10.1111/j.1095-8339.2009.00996.x/abstract">http://onlinelibrary.wiley.com/doi/10.1111/j.1095-8339.2009.00996.x/abstract</a>  
+                                        </li>
+                                        <li property="dc:references">
+                                            Haston, E., Richardson, J.E., Stevens, P.F., Chase, M.W., Harris, D.J. 2009. The Linear Angiosperm Phylogeny Group (LAPG) III: a linear sequence of the families in APG III. Botanical Journal of the Linnaen Society 161(2): 128-131. <a href="http://onlinelibrary.wiley.com/doi/10.1111/j.1095-8339.2009.01000.x/abstract">http://onlinelibrary.wiley.com/doi/10.1111/j.1095-8339.2009.01000.x/abstract</a>  
+                                        </li>
+                            </ol>
+                        </div>
+
+                <!-- Additional metadata section -->
+                    <span class="anchor anchor-home-resource-page" id="anchor-additional"></span>
+                    <div id="additional" class="pb-5 section">
+
+                        <h4 class="pb-2 mb-2 pt-2 text-gbif-header-2 fw-400">
+Additional Metadata                        </h4>
+
+                        <div>
+                            <div class="table-responsive">
+                                <table class="text-smaller table table-sm table-borderless">
+                                            <tr>
+                                                <th class="col-4">Alternative Identifiers</th>
+                                                <td>07fd0d79-4883-435f-bba1-58fef110cd13 </td>
+                                            </tr>
+                                            <tr>
+                                                <th class="col-4"></th>
+                                                <td><a href="https://data.canadensys.net/ipt/resource?r=ubc-vascular-specimens">https://data.canadensys.net/ipt/resource?r=ubc-vascular-specimens</a>  </td>
+                                            </tr>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+            </div>
+        </main>
+    </div>
+</div>
+
+
+<footer class="footer bg-light border-top mt-auto text-center text-smaller py-3">
+    <div class="container">
+        <div class="mb-1 footer-text">
+            <img title="IPT 3.2.3-r7b3c98c" class="footer-gbif-logo" alt="GBIF" src="https://data.canadensys.net/ipt/images/GBIF-2015-standard-ipt.png"/>
+            Integrated Publishing Toolkit (IPT) Version 3.2.3
+        </div>
+        <ul class="list-inline mb-0">
+            <li class="list-inline-item ipt-footer-item">
+                <a class="footer-link" href="https://www.gbif.org/ipt"><small>About the IPT</small></a>
+            </li>
+            <li class="list-inline-item ipt-footer-item">
+                <a class="footer-link" href="https://ipt.gbif.org/manual/" target="_blank"><small>User manual</small></a>
+            </li>
+            <li class="list-inline-item ipt-footer-item">
+                <a class="footer-link" href="https://github.com/gbif/ipt/issues/new" target="_blank"><small>Report a bug</small></a>
+            </li>
+            <li class="list-inline-item">
+                <a class="footer-link" href="https://github.com/gbif/ipt/issues/new" target="_blank"><small>Request new feature</small></a>
+            </li>
+        </ul>
+    </div>
+</footer>
+
+<div class="dataTables_processing" style="display: none;">
+    <div><div></div><div></div><div></div><div></div></div>
+</div>
+
+<div id="modalbox">
+    <div id="modalback"></div>
+    <div id="modalcontainer">
+        <div id="modalcontent" class="container-fluid"></div>
+    </div>
+</div>
+
+<script src="https://data.canadensys.net/ipt/js/bootstrap/bootstrap.bundle.min.js"></script>
+<script src="https://data.canadensys.net/ipt/js/form-validation.js"></script>
+<script src='https://data.canadensys.net/ipt/js/sortable/html5sortable-0.13.3.js'></script>
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const modalEl = document.getElementById('unsavedChangesModal');
+        const stayButton = document.getElementById('stayButton');
+        const leaveButton = document.getElementById('leaveButton');
+
+        if (!modalEl || !leaveButton) {
+            console.warn("Unsaved changes modal not found.");
+            return;
+        }
+
+        const bsModal = new bootstrap.Modal(modalEl);
+        let hasUnsavedChanges = false;
+        let redirectUrl = null;
+        let isIntentionalUnload = false;
+
+        // Track form changes
+        const form = document.querySelector('.track-unsaved');
+
+        form.querySelectorAll('button[type="submit"], input[type="submit"]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                isIntentionalUnload = true;
+                hasUnsavedChanges = false;
+            });
+        });
+
+        if (form) {
+            // inputs
+            form.addEventListener('input', () => {
+                hasUnsavedChanges = true;
+            });
+
+            // dropdowns (select2)
+            $(document).on('select2:select select2:unselect change', 'select', function () {
+                if ($(this).data('select2')) {
+                    hasUnsavedChanges = true;
+                }
+            });
+
+            // copy agent button
+            document.getElementById('copy-agent-button')?.addEventListener('click', () => {
+                hasUnsavedChanges = true;
+            });
+
+            // Disable warning before submitting the form
+            form.addEventListener('submit', () => {
+                isIntentionalUnload = true;
+                hasUnsavedChanges = false;
+            });
+        }
+
+        // Warn before browser unload (refresh, close tab)
+        window.addEventListener('beforeunload', (e) => {
+            if (!hasUnsavedChanges || isIntentionalUnload) {
+                return;
+            }
+
+            e.preventDefault();
+            e.returnValue = '';
+        });
+
+        // Intercept internal link clicks
+        document.querySelectorAll('a[href]').forEach(link => {
+            link.addEventListener('click', (e) => {
+                // Skip links that should not trigger the unsaved-changes modal
+                if (link.id === 're-infer-link') {
+                    console.log("link.id=" + link.id);
+                    console.log("skipping!")
+                    isIntentionalUnload = true;
+                    hasUnsavedChanges = false;
+                    return;
+                }
+
+                const href = link.getAttribute('href');
+
+                // Ignore non-links and JS links
+                if (!href ||
+                    href === '#' ||
+                    href.startsWith('#') ||
+                    href.startsWith('javascript:') ||
+                    link.target === '_blank') {
+                    return;
+                }
+
+                // Compute resolved URL
+                const targetUrl = new URL(link.href);
+                const currentUrl = new URL(window.location.href);
+
+                // Only warn if the target is a DIFFERENT page
+                const isRealNavigation =
+                    targetUrl.pathname !== currentUrl.pathname ||
+                    targetUrl.search !== currentUrl.search ||
+                    targetUrl.hash === '' && currentUrl.hash !== '';
+
+                if (!isRealNavigation) {
+                    return;
+                }
+
+                if (hasUnsavedChanges) {
+                    e.preventDefault();
+                    redirectUrl = link.href;
+                    bsModal.show();
+                }
+            });
+        });
+
+        // Stay -> close modal only
+        if (stayButton) {
+            stayButton.addEventListener('click', () => {
+                redirectUrl = null;
+            });
+        }
+
+        // Leave -> proceed to stored URL
+        leaveButton.addEventListener('click', () => {
+            if (redirectUrl) {
+                isIntentionalUnload = true;
+                hasUnsavedChanges = false;
+                window.location.href = redirectUrl;
+            }
+        });
+    });
+</script>
+<script>
+    var popoverTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="popover"]'))
+    var popoverList = popoverTriggerList.map(function (popoverTriggerEl) {
+        return new bootstrap.Popover(popoverTriggerEl)
+    })
+    try {
+        var popover = new bootstrap.Popover(document.querySelector('.popover-dismiss'), {
+            trigger: 'focus'
+        })
+    } catch (TypeError) {}
+</script>
+
+</body>
+</html>
+
+<!-- data record line chart -->
+<script src="https://data.canadensys.net/ipt/js/graphs.js"></script>
+
+<script src="https://data.canadensys.net/ipt/js/jconfirmation.jquery.js"></script>
+
+<script>
+    $('.confirmDeleteVersion').jConfirmAction({
+        titleQuestion : "Are you sure?",
+        question : "Do you still want to delete this archived version?</br></br>Please ensure this version has not been cited in a scientific publication.</br></br>This operation cannot be reverted.",
+        yesAnswer : "Yes",
+        cancelAnswer : "No",
+        buttonType: "danger"
+    });
+
+    $(function() {
+    });
+
+    // show extension description in tooltip in data records section
+    $(function() {
+        $('.ext-tooltip').tooltip({track: true});
+    });
+
+</script>
+

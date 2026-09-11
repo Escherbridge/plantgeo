@@ -1,0 +1,144 @@
+{
+  "schema_version": 1,
+  "verified_at": "2026-09-11T23:12:12.847126+00:00",
+  "status": "passed",
+  "scope": "Documentation and metadata only; no application test suite, corpus/schema profile, archive-safety execution or production certification",
+  "checks": [
+    "Track Markdown OKF type",
+    "Authored Markdown whitespace",
+    "Linked JSON parsing",
+    "Local file links",
+    "External URL syntax only; archive URLs deliberately not probed",
+    "Four direct capture lengths and SHA256 in working tree AND staged Git blobs",
+    "UBC EML well-formedness/package/CC0 evidence (not full XSD validation)",
+    "Blocked admission consistency",
+    "Bounded staged paths",
+    "git diff --cached --check for authored track and research scripts"
+  ],
+  "local_links_checked": 45,
+  "external_urls_syntax_checked": 17,
+  "direct_metadata_bytes": 186764,
+  "raw_capture_whitespace": "Preserved verbatim; excluded from authored whitespace check to retain source hashes",
+  "inputs": [
+    {
+      "path": ".omc/research/.gitattributes",
+      "bytes": 219,
+      "sha256": "c39710520b780fc6b988519b37314a07c558ac8bb64c4ab3ba755ea78a5127bb"
+    },
+    {
+      "path": ".omc/research/pnw-admission-eml-http-receipt-20260911.json",
+      "bytes": 911,
+      "sha256": "98855153071ea173ae2062de5d732fd6d30617f11f78fd096824442504632f35"
+    },
+    {
+      "path": ".omc/research/pnw-admission-eml-standards-20260911.md",
+      "bytes": 37465,
+      "sha256": "f8d862dd3185fdd576d567b2183c01219f6f2885a2bedb55553775b47fc6d434"
+    },
+    {
+      "path": ".omc/research/pnw-admission-fetch-20260911.py",
+      "bytes": 2214,
+      "sha256": "c7387e9b6992169027d4a22625039f06db5fa602d3ec16156f82e2ec3f2e02c8"
+    },
+    {
+      "path": ".omc/research/pnw-admission-http-receipts-20260911.json",
+      "bytes": 2257,
+      "sha256": "e6e3175d2f741decd25060b4f65e252267cd99514d53a28bfb8ca2701c9fb478"
+    },
+    {
+      "path": ".omc/research/pnw-admission-institutional-20260911.md",
+      "bytes": 28184,
+      "sha256": "a3472718464bb9fede6f1ad8124456f311b1081e787df8ab7f37465431a10023"
+    },
+    {
+      "path": ".omc/research/pnw-admission-policy-detail-20260911.md",
+      "bytes": 15080,
+      "sha256": "fe35501032e6498dce6def04f242b74aa2cb19782c0aaa96e07100ae97f60705"
+    },
+    {
+      "path": ".omc/research/pnw-admission-portal-20260911.md",
+      "bytes": 23503,
+      "sha256": "17ad296e4b082e567aa257b03288f936ba92e12b7f17a2355b7c497ee8a2115b"
+    },
+    {
+      "path": ".omc/research/pnw-admission-rights-20260911.md",
+      "bytes": 37222,
+      "sha256": "e56db3f3400b6a102f369debbe1e156f43c55bfa911310678294f224153744e0"
+    },
+    {
+      "path": ".omc/research/pnw-admission-standard-detail-20260911.md",
+      "bytes": 14832,
+      "sha256": "bc913aa7c9a8382897a80f790152da444c24a9d34930e8508668a78ecc3e2890"
+    },
+    {
+      "path": ".omc/research/pnw-admission-verify-20260911.py",
+      "bytes": 6420,
+      "sha256": "c08264fcd748c96e58096f2588f7d96becddf3074569e190db928960ec816cc4"
+    },
+    {
+      "path": ".omc/research/pnw-policy-independent-20260911.md",
+      "bytes": 232724,
+      "sha256": "bec96b0104987261f6e7c0db7171e0188fcd14283c8eec01639a84b9ce6ea1fc"
+    },
+    {
+      "path": ".omc/research/pnw-portal-inventory-20260911.html",
+      "bytes": 65342,
+      "sha256": "d2fef7a5fb589d10f63929198232dc49885ee9cd3f87691e1affde9e3b8b2bba"
+    },
+    {
+      "path": ".omc/research/pnw-ubc-eml-16.43-20260911.xml",
+      "bytes": 14208,
+      "sha256": "e73735e4eafcb1a233514948f72631ceced3dd22e30445d45f34e593f7293654"
+    },
+    {
+      "path": ".omc/research/pnw-ubc-ipt-20260911.html",
+      "bytes": 86109,
+      "sha256": "21e95a58eea8b31751a8964b22cf1b1136b782595f7c293de11ed9fc89610e23"
+    },
+    {
+      "path": ".omc/research/pnw-wtu-provider-20260911.html",
+      "bytes": 21105,
+      "sha256": "a9f41eca8787e8fee1e8353a34f436045009259b8677a5fd3377dbe2b1425ea9"
+    },
+    {
+      "path": "conductor/tracks/pnw_herbaria_source_admission_20260911/evidence/admission-decisions.json",
+      "bytes": 3700,
+      "sha256": "82d389ca3583a5a3b78e375ae2f82d3f348787c049804cf3e46cf54962553ca6"
+    },
+    {
+      "path": "conductor/tracks/pnw_herbaria_source_admission_20260911/evidence/admission-packet.md",
+      "bytes": 16109,
+      "sha256": "567f4fe238d5716603ccbb867b75229f4eff9ae943536ca9a827323f2e83b3ef"
+    },
+    {
+      "path": "conductor/tracks/pnw_herbaria_source_admission_20260911/evidence/independent-review.md",
+      "bytes": 8857,
+      "sha256": "ec1c87a8730ce62cf4477086379f730dc58aabf032e90ca188c4f4aacb5eb7c4"
+    },
+    {
+      "path": "conductor/tracks/pnw_herbaria_source_admission_20260911/evidence/requests-and-handoff.md",
+      "bytes": 7948,
+      "sha256": "845dde8eb226951e22e5f2622a3f99fe633b62f8e6b6278ac1c044911c7e3c8a"
+    },
+    {
+      "path": "conductor/tracks/pnw_herbaria_source_admission_20260911/evidence/source-register.md",
+      "bytes": 5884,
+      "sha256": "a2cf2878a7ab971b49d7dda639f6f65c4ac9161d6153034792eb106cce166ef9"
+    },
+    {
+      "path": "conductor/tracks/pnw_herbaria_source_admission_20260911/metadata.json",
+      "bytes": 2129,
+      "sha256": "af862e39fe9a6518e128539e09bed68052362a1ed6f5349f37c1df09fb27cf05"
+    },
+    {
+      "path": "conductor/tracks/pnw_herbaria_source_admission_20260911/plan.md",
+      "bytes": 3244,
+      "sha256": "accfd6def3e900500edb9d9312bbd832531bf11614480c3671139bd6a97bda37"
+    },
+    {
+      "path": "conductor/tracks/pnw_herbaria_source_admission_20260911/spec.md",
+      "bytes": 4909,
+      "sha256": "a64bbdee59e26a5411fae4a03014ea56b0433c0c803e2c7875f6c84273607435"
+    }
+  ]
+}

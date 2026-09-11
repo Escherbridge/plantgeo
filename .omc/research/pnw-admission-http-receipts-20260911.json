@@ -1,0 +1,65 @@
+[
+  {
+    "name": "ubc-ipt",
+    "requested_url": "https://data.canadensys.net/ipt/resource?r=ubc-vascular-specimens",
+    "retrieved_at": "2026-09-11T16:58:36.961073-06:00",
+    "method": "GET",
+    "limit_bytes": 1048576,
+    "status": 200,
+    "final_url": "https://data.canadensys.net/ipt/resource?r=ubc-vascular-specimens",
+    "headers": {
+      "Server": "nginx",
+      "Date": "Fri, 11 Sep 2026 22:58:40 GMT",
+      "Content-Type": "text/html;charset=UTF-8",
+      "Transfer-Encoding": "chunked",
+      "Connection": "close",
+      "Content-Language": "en-GB"
+    },
+    "file": "pnw-ubc-ipt-20260911.html",
+    "bytes": 86109,
+    "sha256": "21e95a58eea8b31751a8964b22cf1b1136b782595f7c293de11ed9fc89610e23",
+    "outcome": "captured"
+  },
+  {
+    "name": "wtu-provider",
+    "requested_url": "https://www.pnwherbaria.org/data/providermetadata.php?code=WTU",
+    "retrieved_at": "2026-09-11T16:58:37.654924-06:00",
+    "method": "GET",
+    "limit_bytes": 1048576,
+    "status": 200,
+    "final_url": "https://www.pnwherbaria.org/data/providermetadata.php?code=WTU",
+    "headers": {
+      "Date": "Fri, 11 Sep 2026 22:58:40 GMT",
+      "Server": "Apache/2.4.52 (Ubuntu)",
+      "Vary": "Accept-Encoding",
+      "Connection": "close",
+      "Transfer-Encoding": "chunked",
+      "Content-Type": "text/html; charset=UTF-8"
+    },
+    "file": "pnw-wtu-provider-20260911.html",
+    "bytes": 21105,
+    "sha256": "a9f41eca8787e8fee1e8353a34f436045009259b8677a5fd3377dbe2b1425ea9",
+    "outcome": "captured"
+  },
+  {
+    "name": "portal-inventory",
+    "requested_url": "https://www.pnwherbaria.org/data/datasets.php",
+    "retrieved_at": "2026-09-11T16:58:37.95902-06:00",
+    "method": "GET",
+    "limit_bytes": 1048576,
+    "status": 200,
+    "final_url": "https://www.pnwherbaria.org/data/datasets.php",
+    "headers": {
+      "Date": "Fri, 11 Sep 2026 22:58:41 GMT",
+      "Server": "Apache/2.4.52 (Ubuntu)",
+      "Vary": "Accept-Encoding",
+      "Connection": "close",
+      "Transfer-Encoding": "chunked",
+      "Content-Type": "text/html; charset=UTF-8"
+    },
+    "file": "pnw-portal-inventory-20260911.html",
+    "bytes": 65342,
+    "sha256": "d2fef7a5fb589d10f63929198232dc49885ee9cd3f87691e1affde9e3b8b2bba",
+    "outcome": "captured"
+  }
+]

@@ -1,0 +1,5 @@
+# Preserve exact bytes for the four September 11 PNW metadata receipts.
+pnw-wtu-provider-20260911.html -text
+pnw-portal-inventory-20260911.html -text
+pnw-ubc-ipt-20260911.html -text
+pnw-ubc-eml-16.43-20260911.xml -text

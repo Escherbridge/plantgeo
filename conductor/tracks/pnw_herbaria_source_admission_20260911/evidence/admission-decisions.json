@@ -1,0 +1,102 @@
+{
+  "schema_version": 1,
+  "assessed_on": "2026-09-11",
+  "status": "blocked",
+  "scope": "metadata-only",
+  "admitted_releases": [],
+  "corpus_downloaded": false,
+  "images_downloaded": false,
+  "collections": [
+    {
+      "collection_key": "pnw:WTU:vascular",
+      "key_authority": "PlantGeo proposed namespace, not publisher GUID",
+      "provider_code": "WTU",
+      "distribution": "CPNWH public vascular export",
+      "candidate_archive_url": "https://www.pnwherbaria.org/data/getdataset.php?File=WTU_Vascular_DwCA.zip",
+      "advertised": {
+        "records": 267636,
+        "size_mb": 52.9,
+        "updated_on": "2026-06-04"
+      },
+      "rights_label": "CC0 1.0 specimen facts on provider page",
+      "source_version": null,
+      "archive_sha256": null,
+      "archive_bytes": null,
+      "member_receipts": null,
+      "eml_sha256": null,
+      "schema_profile": null,
+      "identity_stability": "unmeasured",
+      "decision": "blocked",
+      "pre_acquisition_gates": [
+        "exact collection EML and release identity evidence",
+        "public-coordinate and terms binding to exact export",
+        "reviewed custody and archive-control preflight"
+      ],
+      "post_capture_gates": [
+        "archive/member safety and hashes",
+        "field map and reconciled complete population",
+        "two complete equivalent release native-ID comparison"
+      ]
+    },
+    {
+      "collection_key": "pnw:UBC:vascular",
+      "key_authority": "PlantGeo proposed namespace; publisher EML collection identifier UBC",
+      "provider_code": "UBC",
+      "distribution": "Canadensys institutional IPT, candidate only",
+      "dataset_uuid": "07fd0d79-4883-435f-bba1-58fef110cd13",
+      "source_version": "16.43",
+      "candidate_archive_url": "https://data.canadensys.net/ipt/archive.do?r=ubc-vascular-specimens&v=16.43",
+      "advertised": {
+        "records": 192948,
+        "size_mb": 31,
+        "published_on": "2026-09-01"
+      },
+      "rights_label": "CC0 1.0 in standalone versioned EML, including commercial redistribution",
+      "eml_package_id": "07fd0d79-4883-435f-bba1-58fef110cd13/v16.43",
+      "eml_sha256": "e73735e4eafcb1a233514948f72631ceced3dd22e30445d45f34e593f7293654",
+      "eml_bytes": 14208,
+      "archive_sha256": null,
+      "archive_bytes": null,
+      "member_receipts": null,
+      "schema_profile": null,
+      "identity_stability": "unmeasured",
+      "comparison_candidate": {
+        "version": "16.42",
+        "advertised_records": 192783,
+        "published_on": "2026-07-29",
+        "acquired": false
+      },
+      "decision": "blocked",
+      "pre_acquisition_gates": [
+        "institutional public-coordinate/withholding policy applicability",
+        "reviewed custody and archive-control preflight"
+      ],
+      "post_capture_gates": [
+        "archive EML/record terms agree with standalone EML",
+        "archive/member safety and hashes",
+        "field map and reconciled complete population",
+        "two complete equivalent release native-ID comparison"
+      ]
+    }
+  ],
+  "limits": {
+    "archives": 2,
+    "concurrent_transfers": 1,
+    "compressed_bytes_per_archive": 67108864,
+    "compressed_bytes_total": 134217728,
+    "decompressed_bytes_total": 2147483648,
+    "members": 32,
+    "core_rows": 600000,
+    "extension_rows": 2000000,
+    "http_attempts": 8,
+    "request_seconds": 30,
+    "wall_seconds": 600
+  },
+  "handoff": {
+    "occurrence_track": "botanical_occurrence_parquet_lane_20260911",
+    "state": "blocked",
+    "species_profile_track_owner": "parent",
+    "profile_serving": "approved immutable botanical-species-profile Parquet release only",
+    "live_database_profile_fallback": false
+  }
+}
