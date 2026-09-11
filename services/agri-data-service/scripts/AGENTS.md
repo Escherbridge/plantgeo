@@ -667,6 +667,44 @@ Coarse z09/z05/z00 rows derive directly from each z13 day. Row-level winner prov
 after aggregation because a coarse cell has no single physical source row; each day checkpoint
 instead binds every derived object to the exact z13 part key and SHA-256 from which it was derived.
 
+### Deferred 1981–2017 availability candidate
+
+`compile_relative_humidity_availability_history.py` is a date-pinned, offline-only recovery wrapper
+for the already-written live relative-humidity ladder. It reuses
+`compile_availability_bootstrap.py`'s bounded listing, marker and part-binding seams, but renders an
+`availability-publication-input-v1` append against the current pointer identity and immutable
+bootstrap receipt. It excludes complete grains already present in the verified generation, refuses
+partial overlap, requires every missing day to bind all four rungs, and forces actual part digests
+for every positive row; `manifest_trusted` can never reach its output. The exact 54,056-row document
+exceeds the hard 64 MiB input cap when every row carries real receipts, so the wrapper emits an
+ordered sequence of complete-day `availability-publication-input-v1` documents, each covering at
+most 6,000 days and independently below the cap. A future owner uploads the shared evidence once
+and applies the inputs serially in filename order.
+
+The script brackets construction with the exact pointer bytes, ETag and version ID. A changed pointer
+may be rebased before local output only when lane identity, bootstrap receipt, source ceiling, and the
+entire 1981–2017 coverage are unchanged; semantic drift still refuses the candidate. The receipt records
+both the pointer used to compile and the compatible pointer used as the publication base. `--out` must
+not exist, and the only writes are local:
+content-addressed source/terminal evidence, exact content-addressed copies of the prior pointer and
+bootstrap receipt, canonical numbered publication inputs, and a receipt with row/object/byte/timing,
+peak-memory and rollback-generation coordinates. There is no upload, apply, overwrite, delete,
+database or publication call. A successful candidate is parsed again through
+`load_publication_request`; uploading its evidence or applying its request remains a separate,
+explicitly reviewed owner action.
+
+The wrapper adds six bounded exponential-backoff attempts around GET/LIST transport failures and records
+the retry count. This is intentionally wrapper-local: checksum, marker, row-count and semantic failures
+are not retried, and the shared object-store/publication core remains unchanged.
+
+If an older run completed physical binding but left a canonical `publication-input.json` that the
+64 MiB loader rejected, `--resume-from-oversized <directory>` performs no physical object reads. It
+splits those exact rows into numbered inputs, reloads every chunk through the supported parser,
+checksum-verifies the complete local content-addressed evidence inventory, rechecks current pointer
+identity and recovery-window coverage before and after the local copy, and writes only to a fresh
+`--out`. The receipt labels the original physical-read timing unavailable when the rejected run ended
+before writing it; never infer that timing from the resume duration.
+
 ## Solar radiation
 
 `build_shortwave_radiation_from_canonical_snapshot.py` is the sole historical writer for
@@ -866,6 +904,33 @@ bytes, source identity, and the rule that a refused final rung discards its enti
 Only surviving days enter the source inventory. Unexpected worker errors still abort compilation
 before output files are written; concurrency does not change refusal or digest policy.
 
+
+## Offline canonical export audit
+
+`audit_offline_canonical_exports.py` is the read-only receipt generator for the five ERA5-Land
+and three NASA POWER day-grain exports. Its authority is loaded directly from
+`build_era5_land_from_canonical_snapshot.py` and
+`build_nasa_power_from_canonical_snapshot.py`; do not maintain a second table of lane, source,
+frozen-manifest, history-window, lattice, or rung-height pins in the auditor.
+
+The production adapter exposes only object-store GET and LIST. The audit lists each lane's selected
+canonical source prefix, complete frozen root, and live observed root, then reports exact object and
+byte counts. It checksum-checks source and frozen manifests and their completion bindings, censuses
+the expected one-part/one-marker history ladder, and reads the availability pointer plus the immutable
+bootstrap and generation receipts named by it. Forward objects after the frozen history window are
+reported, not rejected. An unexpected live-layout object or an incomplete historical rung fails the
+receipt.
+
+Historical stage, build, and upload durations were not captured by the selected builders. Their
+fields therefore remain explicitly `unavailable`; never estimate them from current object sizes or
+the verifier's runtime. `measurement.audit_elapsed_wall_seconds` prices only the current audit.
+Peak RSS uses the process peak working set on Windows and `ru_maxrss` on POSIX, with a named
+`unavailable` result if the platform cannot measure it safely.
+
+Without `--out`, the JSON exists only on stdout. `--out <new-file>` is the sole write surface and is
+exclusive-create: an existing local receipt is never overwritten and parent directories are not
+created implicitly. There is no apply, upload, delete, or overwrite mode. Tests inject an in-memory
+GET/LIST fake and must keep the production store free of mutation methods.
 
 ## Python validation batches
 

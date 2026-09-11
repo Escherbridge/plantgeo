@@ -1,0 +1,100 @@
+{
+  "schema_version": "plantgeo.offline-export.relative-humidity-handoff.v1",
+  "status": "candidate_complete_not_authorized_for_apply",
+  "lane": "climate-field-relative-humidity",
+  "history_window": {
+    "first_day": "1981-01-01",
+    "last_day": "2017-12-31",
+    "day_count": 13514,
+    "required_rungs": [0, 5, 9, 13],
+    "publication_row_count": 54056,
+    "fully_digested_row_count": 54056,
+    "already_indexed_day_count": 0
+  },
+  "local_packet": {
+    "path": "services/agri-data-service/.agri-local-runs/relative-humidity-availability-history-20260911-v3",
+    "absolute_custody_path": "C:/Users/atooz/.codex/worktrees/a7cc/plantgeo/services/agri-data-service/.agri-local-runs/relative-humidity-availability-history-20260911-v3",
+    "git_tracked": false,
+    "receipt_sha256": "05be63c4fb3d2afa91f3ca83144fc36cba3cc86d5d04f5e0c866408b0f8de6f3",
+    "receipt_byte_count": 4567,
+    "evidence_object_count": 67570,
+    "evidence_byte_count": 81624560,
+    "total_file_count": 67578,
+    "total_byte_count": 150236825,
+    "sha256_manifest": {
+      "path": "services/agri-data-service/.agri-local-runs/relative-humidity-availability-history-20260911-v3.sha256",
+      "absolute_custody_path": "C:/Users/atooz/.codex/worktrees/a7cc/plantgeo/services/agri-data-service/.agri-local-runs/relative-humidity-availability-history-20260911-v3.sha256",
+      "entry_count": 67578,
+      "byte_count": 15379894,
+      "sha256": "d644501b608051b230d5a94ea8b22f339624c6d43496aa14837f65211b6b3f70",
+      "line_format": "<sha256><two spaces><packet-relative POSIX path>"
+    },
+    "resume_validation_seconds": 511.51963950000936,
+    "peak_traced_memory_bytes": 469711845,
+    "physical_digest_timing": "unavailable: the complete physical pass ended at the single-input 64 MiB rejection before its receipt write"
+  },
+  "bootstrap_receipt": {
+    "key": "layer=climate-field-relative-humidity/kind=observed/availability/bootstrap/receipt=9c9334b62424cf42cab33654f76bedea63cc04ea6dfe2246106f4f3dcbba8ffd.json",
+    "sha256": "9c9334b62424cf42cab33654f76bedea63cc04ea6dfe2246106f4f3dcbba8ffd",
+    "byte_count": 1079
+  },
+  "publication_identity": {
+    "lane_root": "layer=climate-field-relative-humidity/kind=observed",
+    "product": "climate-field-relative-humidity",
+    "nature": "daily_series",
+    "source_ceiling": "2026-09-06",
+    "verified_source_inventory_root": "6d1bb64dae30af098d425f840b25709352eef4a31510df76646de1f9a2723e3e"
+  },
+  "publication_inputs": [
+    {
+      "order": 1,
+      "path": "publication-input-001.json",
+      "first_day": "1981-01-01",
+      "last_day": "1997-06-05",
+      "row_count": 24000,
+      "byte_count": 30456712,
+      "sha256": "2ea68f2fba06843337bb377480a04340b5eb43c5632ec1bdca3116d958b71f51"
+    },
+    {
+      "order": 2,
+      "path": "publication-input-002.json",
+      "first_day": "1997-06-06",
+      "last_day": "2013-11-08",
+      "row_count": 24000,
+      "byte_count": 30456712,
+      "sha256": "6adff99bcc0c42aaad58c58fc81b739644cccc5182fed7faf5a06f668ceb6f39"
+    },
+    {
+      "order": 3,
+      "path": "publication-input-003.json",
+      "first_day": "2013-11-09",
+      "last_day": "2017-12-31",
+      "row_count": 6056,
+      "byte_count": 7685776,
+      "sha256": "6280330cc0a814c600f9869387e431f8d1b97e3490dc2dbfb6ac54ce18fe7282"
+    }
+  ],
+  "publication_base": {
+    "pointer_sha256": "4555166e2ee9654ecd513e67b3feb2ed981846838f9f798491eaa577a37c91e3",
+    "pointer_etag": "\"3bfa04008060feec0610ea1af116db17\"",
+    "generation_key": "layer=climate-field-relative-humidity/kind=observed/availability/generation=fcfed3baf7f93bb80aaaee6932ccc47bc302e16f94150b4fd8b302f65b46d38f/availability.parquet",
+    "generation_sha256": "fcfed3baf7f93bb80aaaee6932ccc47bc302e16f94150b4fd8b302f65b46d38f",
+    "generation_receipt_sha256": "037917c3360a286dd2d1219a21599eda761e0745f4f27f2c872eb7fe18dd96e6",
+    "generation_byte_count": 1445330,
+    "generation_row_count": 12424,
+    "prior_generation_key": "layer=climate-field-relative-humidity/kind=observed/availability/generation=5cfeab5f9b560f37dfbbfe6433aa5cb93ded329d5c83cf92ba41dab0a264f514/availability.parquet",
+    "prior_generation_sha256": "5cfeab5f9b560f37dfbbfe6433aa5cb93ded329d5c83cf92ba41dab0a264f514"
+  },
+  "apply_handoff": {
+    "authorized": false,
+    "owner": "gapless availability publication owner",
+    "requirements": [
+      "Re-read and record the current pointer/generation immediately before apply; the publisher merges and conditionally advances the latest compatible generation.",
+      "Upload all 67570 content-addressed evidence documents create-only and verify their SHA-256 values before publication.",
+      "Run availability-publish offline for each numbered input with its exact SHA-256 and row count.",
+      "Obtain exact owner authorization, then apply the numbered inputs serially in filename order.",
+      "After each apply, record the prior and new generation identities; those immediate prior identities are the rollback targets.",
+      "Re-probe warm serving after the third apply and hand remaining forward gaps to gapless/production acceptance."
+    ]
+  }
+}

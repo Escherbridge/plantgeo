@@ -1,0 +1,83 @@
+{
+  "schema_version": "plantgeo.offline-export.warm-capability-probe.v1",
+  "captured_at_utc": "2026-09-11T23:25:50.8160690Z",
+  "request": {
+    "method": "GET",
+    "url": "https://plantgeo-main-production.up.railway.app/api/trpc/environmental.getSliderCapabilities"
+  },
+  "measurement": {
+    "http_status": 200,
+    "elapsed_ms": 634
+  },
+  "response": {
+    "server_current_date": "2026-09-11",
+    "future_axis_days": 30,
+    "serving_capability_count": 22,
+    "streams_unavailable": false,
+    "parquet_coverage_generated_at": "2026-09-11T23:24:35.2261900Z",
+    "parquet_coverage_evaluated_through_day": "2026-09-11",
+    "parquet_coverage_unavailable": false,
+    "withheld_parquet_capabilities": [
+      {
+        "layerName": "soil-survey",
+        "parquetLanes": [
+          "soil-survey"
+        ],
+        "reason": "lane_never_written",
+        "missingEvidence": [
+          {
+            "parquetLane": "soil-survey",
+            "zoomTier": null
+          }
+        ]
+      }
+    ],
+    "relative_humidity": {
+      "layerName": "climate-field-relative-humidity",
+      "temporalKind": "daily_series",
+      "forecastHorizonDays": 0,
+      "forecastVariants": [],
+      "earliestObservedDate": "2018-01-01",
+      "latestObservedDate": "2026-09-06",
+      "coverageGaps": [
+        {
+          "from": "2022-02-09",
+          "to": "2022-02-09"
+        },
+        {
+          "from": "2022-03-06",
+          "to": "2022-04-29"
+        },
+        {
+          "from": "2026-08-07",
+          "to": "2026-08-15"
+        }
+      ],
+      "governedAbsenceRanges": [],
+      "thinRanges": [],
+      "describedFromDay": null,
+      "describedThroughDay": "2026-09-06",
+      "coverageGapsTruncated": false,
+      "coverageGapsDescribedFromDay": null,
+      "thinRangesTruncated": false,
+      "thinRangesDescribedFromDay": null,
+      "earliestObservedDateRule": "warehouse_coverage",
+      "earliestRecordedObservationDate": "2018-01-01",
+      "earliestContinuousObservationDate": "2026-08-16",
+      "latestRecordedObservationDate": "2026-09-06",
+      "observedDayCount": 3106,
+      "excludedObservedDayCount": 0,
+      "gapExcludedObservedDayCount": 0,
+      "densityExcludedObservedDayCount": 0,
+      "minimumDailyObservationCount": null,
+      "coverageAuthority": "availability",
+      "sourceCeilingDay": "2026-09-06",
+      "requiredRungs": [
+        0,
+        5,
+        9,
+        13
+      ]
+    }
+  }
+}
