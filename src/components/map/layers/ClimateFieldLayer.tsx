@@ -13,6 +13,7 @@ import {
 import { useStyleReady } from "@/components/map/layers/use-style-ready";
 import { scaleOpacityValue } from "@/lib/map/layer-opacity";
 import { BASE_ZOOM_TIER, type ZoomTier } from "@/lib/map/zoom-tiers";
+import { climateFieldLayerIds } from "@/lib/map/climate-layer-ids";
 import type { ExpressionSpecification } from "@/types/map";
 
 /**
@@ -40,19 +41,6 @@ const EMPTY_COLLECTION: GeoJSON.FeatureCollection = {
   type: "FeatureCollection",
   features: [],
 };
-
-/** Every id one signal's instance owns. Derived, so two instances can never collide. */
-function layerIdsFor(signal: ClimateFieldSignalId) {
-  const sourceId = `climate-field-${signal}`;
-  return {
-    sourceId,
-    fillId: `${sourceId}-fill`,
-    outlineId: `${sourceId}-outline`,
-    isobandFillId: `${sourceId}-isoband-fill`,
-    isolineId: `${sourceId}-isoline`,
-    pointId: `${sourceId}-point`,
-  };
-}
 
 /**
  * Interpolated over the selected signal's own band table, so a fill and the panel's legend
@@ -169,7 +157,7 @@ export function ClimateFieldLayer({
   opacityScale = 1,
   visible = true,
 }: ClimateFieldLayerProps) {
-  const ids = useMemo(() => layerIdsFor(signal), [signal]);
+  const ids = useMemo(() => climateFieldLayerIds(signal), [signal]);
   const paintColor = useMemo(() => fillColorFor(signal), [signal]);
   const pointRadius = useMemo(() => pointRadiusFor(signal), [signal]);
   // Both opacities go through the shared helper, even though both bases are plain numbers:

@@ -90,6 +90,18 @@ async def test_status_is_raised_before_a_body_failure() -> None:
     assert failure.value.status == 429
 
 
+@pytest.mark.parametrize("retry_after", ["120", "Fri, 11 Sep 2026 04:00:00 GMT", "x" * 129, None])
+async def test_retry_after_is_bounded_and_survives_a_refused_body(retry_after: str | None) -> None:
+    headers = {"Retry-After": retry_after} if retry_after is not None else {}
+    response = httpx.Response(429, content=b"x" * 100, headers=headers)
+    async with client_for(responding(response)) as client:
+        result = await fetch_bounded(client, UPSTREAM_URL, TINY_BOUNDS)
+    assert result.status == 429
+    assert isinstance(result.payload_error, UpstreamPayloadError)
+    assert result.retry_after == (retry_after if retry_after is None or len(retry_after) <= 128 else None)
+    assert result.text == ""
+
+
 async def test_a_non_json_content_type_is_a_payload_error() -> None:
     """An HTML error page served with a 200 is a payload failure, not a successful parse."""
     response = httpx.Response(200, content=b"<html></html>", headers={"content-type": "text/html"})
@@ -199,6 +211,33 @@ async def test_a_transport_failure_never_echoes_the_url() -> None:
     assert "secret-api-key" not in message
     assert "upstream.test" not in message
     assert "ConnectError" in message
+
+
+async def test_a_single_transport_attempt_does_not_sleep_or_retry(monkeypatch: pytest.MonkeyPatch) -> None:
+    attempts: list[httpx.Request] = []
+
+    def fail(request: httpx.Request) -> httpx.Response:
+        attempts.append(request)
+        raise httpx.ConnectError("no connection")
+
+    async def no_sleep(_delay: float) -> None:
+        pytest.fail("single-attempt captures must not retry internally")
+
+    monkeypatch.setattr("agri_data_service.ingest.http.asyncio.sleep", no_sleep)
+    async with client_for(fail) as client:
+        with pytest.raises(UpstreamTransportError):
+            await fetch_bounded(client, UPSTREAM_URL, SMALL_BOUNDS, transport_attempts=1)
+    assert len(attempts) == 1
+
+
+@pytest.mark.parametrize("attempts", [0, -1, 4, True])
+async def test_transport_attempt_bounds_refuse_before_requesting(attempts: int) -> None:
+    def no_request(_request: httpx.Request) -> httpx.Response:
+        pytest.fail("invalid retry bounds must not issue a request")
+
+    async with client_for(no_request) as client:
+        with pytest.raises(ValueError, match="transport_attempts"):
+            await fetch_bounded(client, UPSTREAM_URL, SMALL_BOUNDS, transport_attempts=attempts)
 
 
 # --- client construction ---------------------------------------------------------------------------

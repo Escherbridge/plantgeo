@@ -1,4 +1,5 @@
 import type { MtbsSnapshotMetadata } from "@/lib/environmental/mtbs-snapshot";
+import { climateFieldReadBbox } from "@/lib/map/climate-viewport";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import {
@@ -1393,7 +1394,7 @@ export async function getParquetClimateField(
         layer,
         day,
         zoomTier,
-        bbox: input.bbox,
+        bbox: climateFieldReadBbox(input.bbox, zoomTier),
         ...(input.abortSignal === undefined ? {} : { signal: input.abortSignal }),
       }),
       (rows) => decodeClimateFieldRows(rows, signal, input.variant, day, zoomTier)

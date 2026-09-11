@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, screen } from "@testing-library/react";
+import { act, fireEvent, screen, within } from "@testing-library/react";
 import { renderWithProviders } from "@/test/utils";
 import { LayerRow } from "@/components/map/layer-panel/LayerRow";
 import { DEFAULT_LEGEND_CONTEXT } from "@/lib/map/layer-legends";
+import { CLIMATE_FIELD_SIGNALS } from "@/lib/environmental/climate-field";
 import { LAYER_PUBLICATION_STANDINGS } from "@/lib/map/layer-publication-standing";
 import {
   LAYER_REGISTRY,
@@ -120,6 +121,119 @@ function timeRangeInputFor(layerId: LayerToggleId): HTMLElement | null {
 function timeStatusStateFor(layerId: LayerToggleId): string | null {
   return screen.queryByTestId(`layer-time-status-${layerId}`)?.dataset.state ?? null;
 }
+
+describe("LayerRow legend access", () => {
+  beforeEach(() => {
+    useMapStore.setState({ activeLayers: [] });
+    useLayerStore.setState({ layerOpacity: {} });
+    useTimeSliderStore.setState({
+      layerDates: {},
+      capabilities: CAPABILITIES,
+      capabilitiesUnavailable: false,
+    });
+  });
+
+  it("opens the active solar layer's numeric scale, units and renderer colors in its row", () => {
+    useMapStore.setState({ activeLayers: ["climate-shortwave-radiation"] });
+    renderRow("climate-shortwave-radiation");
+    const trigger = screen.getByRole("button", { name: "Legend for Solar radiation" });
+
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    expect(trigger.hasAttribute("aria-controls")).toBe(false);
+    expect(screen.queryByRole("region", { name: "Legend for Solar radiation" })).toBeNull();
+
+    fireEvent.click(trigger);
+
+    const legend = screen.getByRole("region", { name: "Legend for Solar radiation" });
+    expect(trigger.getAttribute("aria-expanded")).toBe("true");
+    expect(document.getElementById(trigger.getAttribute("aria-controls") ?? "")).toBe(legend);
+    expect(within(legend).getByRole("heading").textContent).toBe(
+      "Surface shortwave radiation (MJ/m²/day)"
+    );
+    expect(within(legend).getByText("< 4")).toBeTruthy();
+    expect(within(legend).getByText("16 to 20")).toBeTruthy();
+    expect(within(legend).getByText(">= 28")).toBeTruthy();
+    expect(within(legend).getByText("Display setting: Contours")).toBeTruthy();
+    const gradient =
+      legend.querySelector<HTMLElement>('span[aria-hidden="true"]')?.style.backgroundImage ??
+      "";
+    for (const band of CLIMATE_FIELD_SIGNALS["shortwave-radiation"].bands) {
+      const probe = document.createElement("span");
+      probe.style.backgroundColor = band.color;
+      expect(gradient).toContain(probe.style.backgroundColor);
+    }
+  });
+
+  it("closes with the button or Escape and retains keyboard focus on the trigger", () => {
+    useMapStore.setState({ activeLayers: ["climate-shortwave-radiation"] });
+    renderRow("climate-shortwave-radiation");
+    const trigger = screen.getByRole("button", { name: "Legend for Solar radiation" });
+    act(() => trigger.focus());
+    fireEvent.click(trigger);
+    fireEvent.click(trigger);
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+
+    fireEvent.click(trigger);
+    fireEvent.keyDown(trigger, { key: "Escape" });
+
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    expect(trigger.hasAttribute("aria-controls")).toBe(false);
+    expect(screen.queryByRole("region", { name: "Legend for Solar radiation" })).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it("updates an open legend when its selected statistic or render form changes", () => {
+    useMapStore.setState({ activeLayers: ["climate-air-temperature"] });
+    const { rerender } = renderRow("climate-air-temperature");
+    fireEvent.click(screen.getByRole("button", { name: "Legend for Air temperature" }));
+    expect(screen.getByText("Daily mean · Display setting: Filled")).toBeTruthy();
+
+    rerender(
+      <ul>
+        <LayerRow
+          layerId="climate-air-temperature"
+          legendContext={{
+            ...DEFAULT_LEGEND_CONTEXT,
+            climateFieldVariant: "max",
+            climateRenderForms: { "air-temperature": "isoline" },
+          }}
+        />
+      </ul>
+    );
+
+    expect(screen.getByText("Daily max · Display setting: Contours")).toBeTruthy();
+    expect(screen.queryByText("Daily mean · Display setting: Filled")).toBeNull();
+    expect(screen.getByRole("heading").textContent).toBe("Air temperature (°C)");
+  });
+
+  it("removes the legend when the layer is switched off and reopens the row collapsed", () => {
+    useMapStore.setState({ activeLayers: ["climate-shortwave-radiation"] });
+    renderRow("climate-shortwave-radiation");
+    fireEvent.click(screen.getByRole("button", { name: "Legend for Solar radiation" }));
+    const layerSwitch = screen.getByRole("switch", { name: "Show Solar radiation on map" });
+
+    fireEvent.click(layerSwitch);
+    expect(screen.queryByRole("button", { name: "Legend for Solar radiation" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "Legend for Solar radiation" })).toBeNull();
+
+    fireEvent.click(layerSwitch);
+    expect(
+      screen.getByRole("button", { name: "Legend for Solar radiation" })
+        .getAttribute("aria-expanded")
+    ).toBe("false");
+  });
+
+  it("exposes class legends too, while withholding a control for layers with no encoding", () => {
+    useMapStore.setState({ activeLayers: ["drought", "soil"] });
+    renderEveryRow();
+    fireEvent.click(screen.getByRole("button", { name: "Legend for Drought Monitor" }));
+    const legend = screen.getByRole("region", { name: "Legend for Drought Monitor" });
+
+    expect(within(legend).getByText("D0 — Abnormally dry")).toBeTruthy();
+    expect(within(legend).getByText("D4 — Exceptional drought")).toBeTruthy();
+    expect(screen.getAllByRole("button", { name: /^Legend for / })).toHaveLength(1);
+  });
+});
 
 describe("LayerRow time control gate", () => {
   beforeEach(() => {

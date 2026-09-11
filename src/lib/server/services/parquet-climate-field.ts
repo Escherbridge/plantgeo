@@ -10,6 +10,12 @@ import {
 } from "@/lib/environmental/climate-field";
 import { buildIsobands } from "@/lib/geo/isobands";
 import {
+  climateBoundsOverlap,
+  climateCellBounds,
+  climateGeometryOverlapsViewport,
+  climateViewportBounds,
+} from "@/lib/map/climate-viewport";
+import {
   CLIMATE_FIELD_MAX_CELLS,
   type ClimateFieldFeatureProperties,
   type PublishedClimateFieldCollection,
@@ -22,6 +28,7 @@ import {
   BASE_ZOOM_TIER,
   LANE_BASE_LATTICES,
   latticeCellIndexContaining,
+  latticeCellSpan,
   servedCellLattice,
   tessellatedCellPolygon,
   type ServedCellLattice,
@@ -82,58 +89,22 @@ const CLIMATE_FIELD_LATTICE_ROWS = [
   [51, -125, -104],
 ] as const satisfies readonly ClimateLatticeRow[];
 
-function parseBbox(bbox: string): readonly [number, number, number, number] {
-  const bounds = bbox.split(",").map(Number);
-  if (
-    bounds.length !== 4 ||
-    bounds.some((value) => !Number.isFinite(value)) ||
-    bounds[0] < -180 ||
-    bounds[2] > 180 ||
-    bounds[1] < -90 ||
-    bounds[3] > 90 ||
-    bounds[0] >= bounds[2] ||
-    bounds[1] >= bounds[3]
-  ) {
-    throw new TypeError('Invalid bbox: expected positive WGS84 "west,south,east,north" bounds');
-  }
-  return bounds as [number, number, number, number];
-}
-
-/**
- * How many cells of the SERVED rung's lattice this viewport could be filled with.
- *
- * The denominator the panel's "N of M cells in view" sentence is measured against, and it now has
- * a value at every rung instead of only the detail one. Wave 1 published 0 below z13 -- correctly,
- * because the number it had was the detail lattice's own count and a coarse rung is not drawn from
- * it -- but the fix for a denominator measured on the wrong lattice is to measure it on the right
- * one, not to withhold it. Frozen lattice centres are folded onto the served rung's cells and the
- * DISTINCT cells are counted, so at z0 a whole viewport of samples collapses into the handful of
- * five-degree cells that actually get drawn.
- *
- * Counted by CENTRE, never by footprint: a cell whose centre is outside the bbox is not in view
- * for this purpose, which is the rule that keeps the numerator and denominator on the same test.
- *
- * `latticeCellIndexContaining`, not `latticeCellIndex`: a frozen lattice centre means only itself
- * and was never floored onto a rung's grid, so the served-coordinate recovery would push it into
- * the next cell up whenever it sits past that cell's midpoint.
- */
+/** Count distinct published-lattice footprints overlapping the requested view, excluding the read halo. */
 export function climateFieldLatticeCellCount(bbox: string, zoomTier: ZoomTier): number {
-  const [west, south, east, north] = parseBbox(bbox);
+  const viewport = climateViewportBounds(bbox);
   const lattice = servedCellLattice(zoomTier, CLIMATE_FIELD_LANE);
   const servedCells = new Set<string>();
   for (const [latitude, minimumLongitude, maximumLongitude, excluded = []] of
     CLIMATE_FIELD_LATTICE_ROWS) {
     const excludedLongitudes: readonly number[] = excluded;
-    if (latitude < south || latitude > north) {
-      continue;
-    }
     for (let longitude = minimumLongitude; longitude <= maximumLongitude; longitude += 1) {
       if (excludedLongitudes.includes(longitude)) continue;
-      if (longitude >= west && longitude <= east) {
-        servedCells.add(
-          `${latticeCellIndexContaining(longitude, lattice)}:` +
-            `${latticeCellIndexContaining(latitude, lattice)}`
-        );
+      const column = latticeCellIndexContaining(longitude, lattice);
+      const row = latticeCellIndexContaining(latitude, lattice);
+      const [west, east] = latticeCellSpan(column, lattice);
+      const [south, north] = latticeCellSpan(row, lattice);
+      if (climateBoundsOverlap([west, south, east, north], viewport)) {
+        servedCells.add(`${column}:${row}`);
       }
     }
   }
@@ -148,6 +119,7 @@ export function climateFieldLatticeCellCount(bbox: string, zoomTier: ZoomTier): 
  * locally keeps the tier on every Parquet answer without asserting the older reader publishes one.
  */
 export interface ZoomedClimateFieldCollection extends PublishedClimateFieldCollection {
+  renderStatus: "drawn" | "no_cells_in_view" | "insufficient_contour_neighbors" | "unavailable";
   /** The one physical rung the rows came from; exactly one per request. */
   zoomTier: ZoomTier;
   /**
@@ -231,6 +203,7 @@ function emptyCollection(
     type: "FeatureCollection",
     features: [],
     availability: "unavailable",
+    renderStatus: "unavailable",
     reason: "not_published",
     granularity: granularityForZoomTier(zoomTier),
     zoomTier,
@@ -353,7 +326,7 @@ export function parquetClimateFieldCollection(
 ): ZoomedClimateFieldCollection {
   const renderForm = tierRenderForm(zoomTier, signal, requestedRenderForm);
   const latticeCellCount = climateFieldLatticeCellCount(bbox, zoomTier);
-  if (result.state !== "ready" || result.data.length === 0) {
+  if (result.state !== "ready") {
     return emptyCollection(
       signal,
       variant,
@@ -366,21 +339,19 @@ export function parquetClimateFieldCollection(
   const definition = climateFieldSignalDefinition(signal);
   const lattice = servedCellLattice(zoomTier, CLIMATE_FIELD_LANE);
   const rows = result.data.slice(0, CLIMATE_FIELD_MAX_CELLS);
-  const features = cellFeatures(signal, renderForm, lattice, rows);
-  if (features.length === 0) {
-    return emptyCollection(
-      signal,
-      variant,
-      renderForm,
-      result.requestedDay,
-      latticeCellCount,
-      zoomTier
-    );
-  }
+  const viewport = climateViewportBounds(bbox);
+  const visibleRows = rows.filter((row) =>
+    climateBoundsOverlap(climateCellBounds(row.longitude, row.latitude, lattice), viewport)
+  );
+  const drawingRows = visibleRows.length === 0 ? [] : renderForm === "isoline" ? rows : visibleRows;
+  const features = visibleRows.length === 0 ? [] : cellFeatures(signal, renderForm, lattice, drawingRows)
+    .filter((feature) => climateGeometryOverlapsViewport(feature.geometry, viewport));
   return {
     type: "FeatureCollection",
     features,
     availability: "published",
+    renderStatus: visibleRows.length === 0 ? "no_cells_in_view"
+      : features.length === 0 ? "insufficient_contour_neighbors" : "drawn",
     reason: null,
     granularity: granularityForZoomTier(zoomTier),
     zoomTier,
@@ -391,14 +362,14 @@ export function parquetClimateFieldCollection(
     observedDay: result.servedDay,
     requestedDay: result.requestedDay,
     newestAvailableDay: null,
-    cellCount: rows.length,
+    cellCount: visibleRows.length,
     latticeCellCount,
     renderForm,
     truncated: result.truncated || result.data.length > CLIMATE_FIELD_MAX_CELLS,
     maxCellCount: CLIMATE_FIELD_MAX_CELLS,
     maxObservationAgeDays: 0,
     bands: definition.bands,
-    sourceClientExposureApproved: rows.every((row) => row.allowedClientExposure === true),
-    support: collectionSupport(signal, zoomTier, renderForm, result.servedDay, rows),
+    sourceClientExposureApproved: drawingRows.length > 0 && drawingRows.every((row) => row.allowedClientExposure === true),
+    support: collectionSupport(signal, zoomTier, renderForm, result.servedDay, drawingRows),
   };
 }

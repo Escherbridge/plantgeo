@@ -343,6 +343,14 @@ describe("each climate row draws the form the server actually served", () => {
     return undefined;
   }
 
+  it("draws the served filled cells at high zoom while the selected setting remains contours", () => {
+    climateQuery.resultBySignal.set("dew-point", servedAs("dew-point", "field", 13));
+    renderWithDrawn(["dew-point"], 14);
+
+    expect(inputFor("dew-point")?.renderForm).toBe("isoline");
+    expect(lastDrawnFor("dew-point")).toMatchObject({ renderForm: "field", zoomTier: 13 });
+  });
+
   it("paints the degraded points form when a coarse rung answers with Points", () => {
     climateQuery.resultBySignal.set(
       "air-temperature",

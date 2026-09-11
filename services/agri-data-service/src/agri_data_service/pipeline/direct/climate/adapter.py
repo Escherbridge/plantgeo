@@ -10,11 +10,13 @@ from typing import TYPE_CHECKING, Final
 
 from agri_data_service.foundation.parquet.absence import GovernedAbsence
 from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
+from agri_data_service.pipeline.direct.climate.cooldown import ClimateCooldownError
 from agri_data_service.pipeline.direct.climate.rows import climate_day_table
 from agri_data_service.pipeline.direct.climate.source import (
     ClimateProviderDeferredError,
     ClimateSourceError,
     ClimateSourceUnsettledError,
+    ClimateTimeBudgetExhaustedError,
 )
 from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.parquet.derivation import govern_day_absent
@@ -73,6 +75,9 @@ class DirectClimateFieldAdapter:
     #: as raised because `gap_fill._export_one_day` turns every adapter exception into `raised`, and
     #: the forward walk has to tell "not settled yet, come back next tick" from a real failure.
     unsettled_refusal: ClimateSourceUnsettledError | None = field(default=None, init=False)
+    provider_refusal: ClimateProviderDeferredError | None = field(default=None, init=False)
+    time_budget_refusal: ClimateTimeBudgetExhaustedError | None = field(default=None, init=False)
+    cooldown_failure: ClimateCooldownError | None = field(default=None, init=False)
 
     async def __call__(
         self,
@@ -88,7 +93,13 @@ class DirectClimateFieldAdapter:
         try:
             source = await self.fetch_source()
         except ClimateProviderDeferredError as error:
-            self.unsettled_refusal = error
+            self.provider_refusal = error
+            raise
+        except ClimateTimeBudgetExhaustedError as error:
+            self.time_budget_refusal = error
+            raise
+        except ClimateCooldownError as error:
+            self.cooldown_failure = error
             raise
         except ClimateSourceError as error:
             raise DirectClimateFieldError(f"{self.product.stream} {day.isoformat()}: {error}") from error

@@ -2,6 +2,13 @@
 // No React, no maplibre imports (types only) -- keeps this testable in isolation.
 
 import {
+  CLIMATE_FIELD_ATTRIBUTION,
+  CLIMATE_FIELD_SIGNAL_IDS,
+  climateFieldSignalDefinition,
+  type ClimateFieldSignalId,
+} from "@/lib/environmental/climate-field";
+import { climateFieldLayerIds } from "@/lib/map/climate-layer-ids";
+import {
   fireCellCaptionText,
   fireDetectionCellLines,
   FIRE_CELL_CAPTION_TITLE,
@@ -49,6 +56,10 @@ export const HOVERABLE_LAYER_IDS: string[] = [
   "soil-survey-summary",
   "weather-temperature",
   "weather-temperature-cells",
+  ...CLIMATE_FIELD_SIGNAL_IDS.flatMap((signal) => {
+    const ids = climateFieldLayerIds(signal);
+    return [ids.fillId, ids.isobandFillId, ids.isolineId, ids.pointId];
+  }),
   "osm-roads",
   "osm-waterways",
 ];
@@ -480,6 +491,30 @@ function formatWeatherObservation(props: Properties): HoverContent | null {
   ]);
 }
 
+/** Caption cell readings and interpolated color bands without turning a band midpoint into a reading. */
+function formatClimateField(
+  props: Properties,
+  signal: ClimateFieldSignalId,
+  isBand: boolean
+): HoverContent | null {
+  const definition = climateFieldSignalDefinition(signal);
+  const band = stringField(props.bandLabel);
+  const value = toFiniteNumber(props.value);
+  if (isBand ? band === null : value === null) return null;
+  const observedDay = formatCalendarDay(stringField(props.observedDay));
+  const reading = value === null ? null
+    : `${props.aggregated === true ? "Cell mean" : "Cell value"}: ${Number(value.toFixed(2))} ${definition.unitLabel}`;
+  return buildContent(definition.label, [
+    isBand
+      ? `Color band: ${band} ${definition.unitLabel}`
+      : reading,
+    isBand ? "Interpolated between published samples; the band is a value range." : null,
+    !isBand && band !== null ? `Color band: ${band} ${definition.unitLabel}` : null,
+    observedDay ? `Source day: ${observedDay}` : null,
+    CLIMATE_FIELD_ATTRIBUTION,
+  ]);
+}
+
 function formatRoad(props: Properties): HoverContent | null {
   const title = stringField(props.name) ?? stringField(props.highway) ?? "Road";
   const highway = stringField(props.highway);
@@ -503,6 +538,15 @@ function formatWaterway(props: Properties): HoverContent | null {
 }
 
 const FORMATTERS: Record<string, (props: Properties) => HoverContent | null> = {
+  ...Object.fromEntries(CLIMATE_FIELD_SIGNAL_IDS.flatMap((signal) => {
+    const ids = climateFieldLayerIds(signal);
+    return [
+      [ids.fillId, (props: Properties) => formatClimateField(props, signal, false)],
+      [ids.pointId, (props: Properties) => formatClimateField(props, signal, false)],
+      [ids.isobandFillId, (props: Properties) => formatClimateField(props, signal, true)],
+      [ids.isolineId, (props: Properties) => formatClimateField(props, signal, true)],
+    ];
+  })),
   "published-fire-circles": formatFireDetection,
   // The same formatter for both of the cell's shapes: the square at coarse and middle zoom and
   // the dot at detail zoom are one cell, and `fireDetectionCellLines` already says which rung it

@@ -450,5 +450,6 @@ async def test_provider_budget_refusal_is_reported_for_deferral_without_publishi
     adapter = DirectClimateFieldAdapter(product=product_for(PLANE_STREAM), fetch_source=fetch)
     with pytest.raises(ClimateProviderDeferredError):
         await adapter(SessionDouble(), ObjectStore(RecordingBackend()), day=DAY, run_id="quota-test")
-    assert adapter.unsettled_refusal is refusal
+    assert adapter.provider_refusal is refusal
+    assert adapter.unsettled_refusal is None
     assert adapter.source is None

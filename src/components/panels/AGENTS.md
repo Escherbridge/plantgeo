@@ -17,6 +17,12 @@ Its synthetic UTC midnight is not localized into the previous evening in western
 
 ## Narrow dock controls and status copy
 
+Climate details read the collection's presentation status separately from publication. A
+published day with no overlapping cells states a spatial gap; a published day with too few
+neighbors for contours offers the filled form. Neither may be captioned as an unpublished day.
+Legacy cached collections without `renderStatus` remain readable. An actual unpublished answer
+names its requested day rather than claiming the whole product never covers that geography.
+
 The shared tab list wraps when its labels do not fit the dock. Tabs retain enough intrinsic
 width for their icons and labels, and the list grows in height rather than clipping a fixed
 row. Keep one opacity control on each layer row; details sections must not duplicate it.

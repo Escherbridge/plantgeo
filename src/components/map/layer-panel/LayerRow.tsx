@@ -2,14 +2,16 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 import type maplibregl from "maplibre-gl";
-import { Eye, EyeOff, RefreshCw, Trash2 } from "lucide-react";
+import { ChevronDown, Eye, EyeOff, RefreshCw, Trash2 } from "lucide-react";
 import { LayerIcon } from "@/components/map/layer-panel/layer-icons";
 import { LayerSwatch } from "@/components/map/layer-panel/LayerSwatch";
+import { LegendBlockView } from "@/components/map/layer-panel/LegendBlockView";
 import { LayerTimeSlider } from "@/components/map/layer-panel/LayerTimeSlider";
 import { LayerOpacitySlider } from "@/components/ui/layer-opacity-slider";
 import {
   layerLegendSpec,
   LEGENDLESS_TOGGLE_REASONS,
+  type LayerLegendSpec,
   type LegendContext,
 } from "@/lib/map/layer-legends";
 import { layerPublicationStandingCaption } from "@/lib/map/layer-publication-standing";
@@ -47,6 +49,55 @@ interface LayerRowProps {
    * `LayerTimeSlider`'s own doc and src/components/map/AGENTS.md §synced-days-track.
    */
   isFetchingSelectedDay?: boolean;
+}
+
+/** The active row's complete legend; see src/components/map/AGENTS.md. */
+function LayerRowLegend({ label, spec }: { label: string; spec: LayerLegendSpec }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const legendId = useId();
+  const triggerRef = useRef<HTMLButtonElement>(null);
+
+  return (
+    <div
+      className="flex flex-col gap-1.5"
+      onKeyDown={(event) => {
+        if (event.key !== "Escape" || !isOpen) return;
+        event.stopPropagation();
+        setIsOpen(false);
+        triggerRef.current?.focus();
+      }}
+    >
+      <button
+        type="button"
+        ref={triggerRef}
+        aria-label={`Legend for ${label}`}
+        aria-expanded={isOpen}
+        aria-controls={isOpen ? legendId : undefined}
+        onClick={() => setIsOpen((open) => !open)}
+        className="inline-flex w-fit items-center gap-1 rounded px-1 py-1 text-[10px] text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))] max-sm:min-h-11 max-sm:px-3"
+      >
+        <ChevronDown
+          aria-hidden="true"
+          className={cn("h-3 w-3 shrink-0", isOpen && "rotate-180")}
+        />
+        <span>Legend</span>
+      </button>
+      {isOpen && (
+        <section
+          id={legendId}
+          aria-label={`Legend for ${label}`}
+          className="flex flex-col gap-1.5 rounded-md border border-[hsl(var(--border))] p-2"
+        >
+          <h4 className="text-xs font-semibold text-[hsl(var(--foreground))]">
+            {spec.title}
+          </h4>
+          {spec.blocks.map((block, blockIndex) => (
+            <LegendBlockView key={blockIndex} block={block} />
+          ))}
+        </section>
+      )}
+    </div>
+  );
 }
 
 /** Bytes as a short, human count -- "0 B", "482 B", "3.2 MB". */
@@ -483,6 +534,7 @@ export function LayerRow({ layerId, legendContext, isFetchingSelectedDay }: Laye
           track under 7rem, where a four-year axis cannot address a day at all. */}
       {isActive && (
         <div className="flex flex-col gap-1 pl-[3.5rem] pr-1">
+          {spec !== null && <LayerRowLegend label={entry.label} spec={spec} />}
           <LayerOpacitySlider
             layerId={layerId}
             showCaption={false}

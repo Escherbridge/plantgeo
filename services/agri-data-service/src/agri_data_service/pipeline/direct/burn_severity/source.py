@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 from agri_data_service.ingest.http import upstream_client
 from agri_data_service.ingest.mtbs import (
     MTBS_BOUNDS,
+    MtbsProviderRefusalError,
     build_mtbs_record,
     fetch_release_features,
     release_observation_window,
@@ -129,6 +130,8 @@ async def _retry_async[T](
     for attempt in range(1, attempts + 1):
         try:
             return await operation()
+        except MtbsProviderRefusalError:
+            raise
         except Exception as error:  # every transport/parse failure is retried the same way
             last_error = error
             if attempt >= attempts:

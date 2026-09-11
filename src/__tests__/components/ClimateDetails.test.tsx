@@ -35,6 +35,7 @@ type ClimateFieldResult = {
         latticeCellCount: number;
         maxObservationAgeDays: number;
         renderForm: ClimateRenderForm;
+        renderStatus?: "drawn" | "no_cells_in_view" | "insufficient_contour_neighbors" | "unavailable";
         truncated: boolean;
         bands: { bandIndex: number; color: string; label: string }[];
         /** The one rung that answered; the caption names it rather than inferring it. */
@@ -216,10 +217,33 @@ describe("ClimateDetails notices", () => {
 
     renderPanel();
 
-    expect(screen.getByText(/does not cover this view/)).toBeTruthy();
+    expect(screen.getByText(/not published for this view on 2026-08-30/)).toBeTruthy();
     expect(
       screen.getByText(new RegExp(AIR_TEMPERATURE.blankGroundMisreading))
     ).toBeTruthy();
+  });
+
+  it("distinguishes published samples without contour neighbors from an unpublished day", () => {
+    queries.getClimateField.mockReturnValue({
+      data: collection({ renderForm: "isoline", renderStatus: "insufficient_contour_neighbors", cellCount: 1 }),
+    });
+
+    renderPanel(9);
+
+    expect(screen.getByText(/too few neighboring samples to draw contours/)).toBeTruthy();
+    expect(screen.getByText(/Choose filled to inspect/)).toBeTruthy();
+    expect(screen.queryByText(/not published for this view/)).toBeNull();
+  });
+
+  it("explains an empty viewport without denying publication of the selected day", () => {
+    queries.getClimateField.mockReturnValue({
+      data: collection({ renderStatus: "no_cells_in_view", cellCount: 0, latticeCellCount: 0 }),
+    });
+
+    renderPanel();
+
+    expect(screen.getByText(/This day is published, but no available climate cells overlap/)).toBeTruthy();
+    expect(screen.queryByText(/not published for this view/)).toBeNull();
   });
 
   it("reports a truncated read as part of the view rather than as the view", () => {

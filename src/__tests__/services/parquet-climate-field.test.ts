@@ -6,6 +6,7 @@ import {
 import { LANE_BASE_LATTICES, servedCellLattice, type ZoomTier } from "@/lib/map/zoom-tiers";
 import { UnpermittedRenderFormError } from "@/lib/map/layer-render-contract";
 import type { ParquetClimateFieldObservation } from "@/lib/server/services/parquet-trpc-readers";
+import { climateFieldReadBbox, climateGeometryOverlapsViewport } from "@/lib/map/climate-viewport";
 
 /** The support envelope the reader now attaches to every row, built the way the reader builds it. */
 function support(zoomTier: ZoomTier, cellId: string | null, longitude: number, latitude: number) {
@@ -28,7 +29,7 @@ function support(zoomTier: ZoomTier, cellId: string | null, longitude: number, l
   };
 }
 
-/** One stored cell at the rung named, with the identity rule that rung publishes. */
+/** One stored cell; derived-rung coordinates must already be floored origins. */
 function row(
   zoomTier: ZoomTier,
   longitude = -115,
@@ -141,14 +142,14 @@ describe("Parquet climate-field collection adapter", () => {
    * tier table now, so a coarse rung draws the ground it stands for instead of a dot on it.
    */
   it.each([
-    [0, "coarse-average", 5],
-    [5, "coarse-average", 1],
-    [9, "regional-average", 1],
+    [0, "coarse-average", 5, 40],
+    [5, "coarse-average", 1, 43],
+    [9, "regional-average", 1, 43],
   ] as const)(
     "draws the z%s aggregate as a %s tessellation of %s-degree cells",
-    (zoomTier, granularity, cellDegrees) => {
+    (zoomTier, granularity, cellDegrees, storedLatitude) => {
       const collection = parquetClimateFieldCollection(
-        ready([row(zoomTier)]),
+        ready([row(zoomTier, -115, storedLatitude)]),
         "precipitation",
         "mean",
         "-116.1,42.9,-114.9,44.1",
@@ -171,7 +172,7 @@ describe("Parquet climate-field collection adapter", () => {
       // Read off the DECLARED rung, never off a null cell id, and keyed on the row's own support
       // id so the feature survives a pan.
       expect(feature.properties).toMatchObject({ aggregated: true, cellKey: null });
-      expect(feature.id).toBe(`${zoomTier}:-115:43`);
+      expect(feature.id).toBe(`${zoomTier}:-115:${storedLatitude}`);
       expect(Math.abs(ringArea(ringsOf(feature)[0]))).toBeCloseTo(cellDegrees * cellDegrees, 9);
     }
   );
@@ -241,7 +242,7 @@ describe("Parquet climate-field collection adapter", () => {
     expect(climateFieldLatticeCellCount(bbox, 0)).toBe(2);
   });
 
-  it("uses centers rather than intersecting cell footprints at viewport edges", () => {
+  it("counts overlapping support footprints even when their centers are outside the viewport", () => {
     const bbox = "-115.75,42.75,-114.25,43.25";
     const collection = parquetClimateFieldCollection(
       ready([row(13)]),
@@ -252,8 +253,8 @@ describe("Parquet climate-field collection adapter", () => {
       "field"
     );
 
-    expect(climateFieldLatticeCellCount(bbox, 13)).toBe(1);
-    expect(collection).toMatchObject({ cellCount: 1, latticeCellCount: 1 });
+    expect(climateFieldLatticeCellCount(bbox, 13)).toBe(3);
+    expect(collection).toMatchObject({ cellCount: 1, latticeCellCount: 3 });
   });
 
   it("includes a lattice center exactly on the east and north bbox corner", () => {
@@ -271,9 +272,79 @@ describe("Parquet climate-field collection adapter", () => {
     expect(collection).toMatchObject({ cellCount: 1, latticeCellCount: 1 });
   });
 
-  it("counts the full frozen lattice and ordinary partial viewports by center", () => {
+  it("counts the full frozen lattice and ordinary partial viewports by support overlap", () => {
     expect(climateFieldLatticeCellCount("-180,-90,180,90", 13)).toBe(397);
     expect(climateFieldLatticeCellCount("-116.1,42.9,-114.9,44.1", 13)).toBe(4);
+  });
+
+  it.each([[13, 43], [9, 43], [5, 43], [0, 40]] as const)("retains a supported z%s cell in a view between sample centers", (zoomTier, storedLatitude) => {
+    const collection = parquetClimateFieldCollection(
+      ready([row(zoomTier, -115, storedLatitude), row(zoomTier, -120, storedLatitude)]),
+      "precipitation", "mean", "-114.9,43.1,-114.8,43.2", zoomTier, "field"
+    );
+    expect(collection).toMatchObject({ availability: "published", renderStatus: "drawn", cellCount: 1, latticeCellCount: 1 });
+    expect(collection.features).toHaveLength(1);
+    if (zoomTier === 0) {
+      expect(collection.features[0].geometry).toEqual({
+        type: "Polygon",
+        coordinates: [[[-115, 40], [-110, 40], [-110, 45], [-115, 45], [-115, 40]]],
+      });
+    }
+  });
+
+  it("includes contour neighbors outside the visible support count", () => {
+    const samples = [-116, -115, -114].flatMap((longitude) =>
+      [42, 43, 44].map((latitude) => row(9, longitude, latitude, 12))
+    );
+    const collection = parquetClimateFieldCollection(
+      ready(samples), "dew-point", "mean", "-114.9,43.1,-114.8,43.2", 9, "isoline"
+    );
+    expect(collection).toMatchObject({ availability: "published", renderStatus: "drawn", cellCount: 1, latticeCellCount: 1 });
+    expect(collection.features).toHaveLength(1);
+    expect(Math.abs(ringArea(ringsOf(collection.features[0])[0]))).toBeCloseTo(4, 9);
+  });
+
+  it("keeps a ready day and its samples published when contours lack neighboring corners", () => {
+    const collection = parquetClimateFieldCollection(
+      ready([row(9)]), "relative-humidity", "mean", "-114.9,43.1,-114.8,43.2", 9, "isoline"
+    );
+    expect(collection).toMatchObject({
+      availability: "published", reason: null, renderStatus: "insufficient_contour_neighbors",
+      observedDay: "2026-08-06", cellCount: 1, features: [],
+    });
+  });
+
+  it("does not claim a visible contour when only the halo contains constructed bands", () => {
+    const samples = [-115, -114].flatMap((longitude) =>
+      [43, 44].map((latitude) => row(9, longitude, latitude, 12))
+    );
+    const collection = parquetClimateFieldCollection(
+      ready(samples), "dew-point", "mean", "-113.8,43.1,-113.7,43.2", 9, "isoline"
+    );
+    expect(collection).toMatchObject({
+      availability: "published", renderStatus: "insufficient_contour_neighbors", cellCount: 1, features: [],
+    });
+  });
+
+  it("does not turn an empty viewport on a published day into an unpublished day", () => {
+    const collection = parquetClimateFieldCollection(
+      ready([]), "relative-humidity", "mean", "-103.4,43.1,-103.3,43.2", 13, "field"
+    );
+    expect(collection).toMatchObject({
+      availability: "published", reason: null, renderStatus: "no_cells_in_view",
+      observedDay: "2026-08-06", cellCount: 0, latticeCellCount: 0, features: [],
+    });
+  });
+
+  it("keeps the eastern sample's footprint without extending the published lattice", () => {
+    const overlapping = parquetClimateFieldCollection(
+      ready([row(13, -104, 43)]), "precipitation", "mean", "-103.7,43.1,-103.6,43.2", 13, "field"
+    );
+    const outside = parquetClimateFieldCollection(
+      ready([row(13, -104, 43)]), "precipitation", "mean", "-103.4,43.1,-103.3,43.2", 13, "field"
+    );
+    expect(overlapping).toMatchObject({ cellCount: 1, latticeCellCount: 1, renderStatus: "drawn" });
+    expect(outside).toMatchObject({ cellCount: 0, latticeCellCount: 0, renderStatus: "no_cells_in_view", features: [] });
   });
 
   /**
@@ -324,6 +395,32 @@ describe("Parquet climate-field collection adapter", () => {
     // A wrong step would drop every square and leave nothing to draw.
     expect(collection.features).toHaveLength(1);
     expect(Math.abs(ringArea(ringsOf(collection.features[0])[0]))).toBeCloseTo(4, 9);
+  });
+});
+
+describe("bounded climate read halo", () => {
+  it("does not treat a contour hole or an edge-only touch as visible area", () => {
+    const geometry: GeoJSON.Polygon = {
+      type: "Polygon", coordinates: [
+        [[-116, 42], [-114, 42], [-114, 44], [-116, 44], [-116, 42]],
+        [[-115.8, 42.2], [-115.8, 43.8], [-114.2, 43.8], [-114.2, 42.2], [-115.8, 42.2]],
+      ],
+    };
+    expect(climateGeometryOverlapsViewport(geometry, [-115.1, 42.9, -114.9, 43.1])).toBe(false);
+    expect(climateGeometryOverlapsViewport(geometry, [-114, 42, -113, 43])).toBe(false);
+    expect(climateGeometryOverlapsViewport(geometry, [-116.1, 42.9, -115.9, 43.1])).toBe(true);
+  });
+
+  it.each([13, 9, 5] as const)("adds a one-degree neighbor halo at z%s", (zoomTier) => {
+    expect(climateFieldReadBbox("-114.9,43.1,-114.8,43.2", zoomTier)).toBe("-115.9,42.1,-113.8,44.2");
+  });
+
+  it("uses the served five-degree pitch at the coarse rung", () => {
+    expect(climateFieldReadBbox("-114.9,43.1,-114.8,43.2", 0)).toBe("-119.9,38.1,-109.8,48.2");
+  });
+
+  it("bounds the halo to valid WGS84 coordinates", () => {
+    expect(climateFieldReadBbox("-179,-89,179,89", 0)).toBe("-180,-90,180,90");
   });
 });
 

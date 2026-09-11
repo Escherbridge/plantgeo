@@ -375,7 +375,7 @@ describe("Parquet tRPC state adapter", () => {
       layer: "climate-field-precipitation",
       day: "2026-08-06",
       zoomTier: 13,
-      bbox: "-125,42,-111,49",
+      bbox: "-126,41,-110,50",
     });
     // The rung is reported back, not inferred by the caller: the renderer must be able to say
     // whether it is drawing stored cells or an aggregate without re-resolving the ladder.
@@ -560,7 +560,7 @@ describe("Parquet tRPC state adapter", () => {
         layer,
         day: "2026-08-02",
         zoomTier: 13,
-        bbox: "-125,42,-111,49",
+        bbox: "-126,41,-110,50",
       });
       expect(result).toMatchObject({ state: "ready", data: [{ value: 21.5 }] });
     }
@@ -581,7 +581,7 @@ describe("Parquet tRPC state adapter", () => {
       layer: "soil-wetness-root-zone",
       day: "2026-08-02",
       zoomTier: 13,
-      bbox: "-125,42,-111,49",
+      bbox: "-126,41,-110,50",
     });
     expect(result).toMatchObject({ state: "ready", data: [{ value: 0.42 }] });
   });

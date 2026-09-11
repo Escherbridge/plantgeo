@@ -61,6 +61,9 @@ CELL_POSITIONS: dict[str, tuple[float, float]] = {
 # tolerance is about the reference's own formula, never about disagreement between the two engines.
 SPHERICAL_TO_SPHEROIDAL_TOLERANCE = 2.5e-3
 
+# Weighted float64 sums can differ by a few ULPs when partial aggregates combine in another order.
+WEIGHTED_MEAN_MAX_ULPS = 4
+
 
 @dataclass
 class LocalSession:
@@ -188,9 +191,17 @@ def postgresql_window_summary(rows: Sequence[dict[str, Any]]) -> list[dict[str, 
 
 
 def assert_row_matches(measured: dict[str, Any], expected: dict[str, Any]) -> None:
-    """Compare one answered row against the reference, allowing only the stated distance tolerance."""
+    """Compare one row with separate weighted-mean rounding and physical-distance tolerances."""
     for column, want in expected.items():
         got = measured[column]
+        if column == "mean_value":
+            assert math.isfinite(got)
+            assert math.isfinite(want)
+            assert math.isclose(got, want, rel_tol=0.0, abs_tol=WEIGHTED_MEAN_MAX_ULPS * math.ulp(want)), (
+                f"{column}: DuckDB answered {got!r} and the PostgreSQL reference {want!r}; "
+                f"weighted float64 means may differ by at most {WEIGHTED_MEAN_MAX_ULPS} ULPs"
+            )
+            continue
         if column.endswith(("distance_m", "distance_meters")):
             assert math.isclose(got, want, rel_tol=SPHERICAL_TO_SPHEROIDAL_TOLERANCE), (
                 f"{column}: DuckDB answered {got} and the spherical reference {want}; the two engines "

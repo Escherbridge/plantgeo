@@ -104,7 +104,7 @@ async def test_provider_quota_passes_through_gap_fill_as_one_deferred_attempt(
         mirrored_past=None,
     )
 
-    assert result["outcome"] == forward.CLIMATE_SOURCE_UNSETTLED_OUTCOME
+    assert result["outcome"] == "provider_rate_limited"
     assert result["attempts"] == 1
     assert fetch.await_count == 1
     sleep.assert_not_awaited()
@@ -297,6 +297,9 @@ async def test_a_day_the_request_budget_cannot_cover_is_reported_rather_than_hal
     assert isinstance(days, list)
     assert [day["outcome"] for day in days] == [forward.CLIMATE_REQUEST_BUDGET_OUTCOME]
     assert days[0]["source_receipt"] is None
+    assert result["outcome"] == "incomplete"
+    assert result["written_days"] == 0
+    assert result["deferred_days"] == 1
 
 
 @pytest.mark.asyncio
@@ -556,8 +559,10 @@ async def test_an_owed_retry_is_not_started_after_the_turn_deadline(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("product_outcome", ["published", "incomplete"])
 async def test_the_climate_run_report_states_its_availability_verdicts_as_numbers(
     monkeypatch: pytest.MonkeyPatch,
+    product_outcome: str,
 ) -> None:
     """A verdict that lives only in a day's detail string reports a permanently unindexed day as green."""
 
@@ -572,7 +577,7 @@ async def test_the_climate_run_report_states_its_availability_verdicts_as_number
                 reason="the day is terminal and cannot form the required ladder",
             )
         )
-        return {"layer": "climate-field-dew-point", "days": []}
+        return {"layer": "climate-field-dew-point", "outcome": product_outcome, "days": []}
 
     @asynccontextmanager
     async def session(_url: str) -> AsyncIterator[SessionDouble]:
@@ -600,6 +605,8 @@ async def test_the_climate_run_report_states_its_availability_verdicts_as_number
 
     assert report["availability_ladder_incomplete"] == 1, "the loss is a counter, not a sentence in one day"
     assert report["availability_extended"] == 0
+    assert report["status"] == ("partial" if product_outcome == "incomplete" else "completed")
+    assert report["incomplete_products"] == (1 if product_outcome == "incomplete" else 0)
 
 
 # --- Absences are re-examined, and an all-fill day needs the release proven past it ----------------

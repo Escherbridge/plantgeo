@@ -248,8 +248,22 @@ function ClimateSignalReport({
 
       {field?.reason === "not_published" && (
         <p role="status" aria-live="polite" className={NOTICE_CLASS_NAME}>
-          The NASA POWER {definition.fieldLabel} lane does not cover this view. Blank ground here
+          NASA POWER {definition.fieldLabel} values are not published for this view on {field.requestedDay}. Blank ground here
           is missing coverage on our side, not {definition.blankGroundMisreading}.
+        </p>
+      )}
+
+      {field?.renderStatus === "insufficient_contour_neighbors" && (
+        <p role="status" aria-live="polite" className={NOTICE_CLASS_NAME}>
+          Published values are available for {field.observedDay}, but there are too few neighboring
+          samples to draw contours here. Choose {CLIMATE_RENDER_FORM_LABELS.field.toLowerCase()} to inspect the available cells.
+        </p>
+      )}
+
+      {field?.renderStatus === "no_cells_in_view" && (
+        <p role="status" aria-live="polite" className={NOTICE_CLASS_NAME}>
+          This day is published, but no available climate cells overlap this view. Blank ground is
+          missing spatial coverage, not {definition.blankGroundMisreading}.
         </p>
       )}
 

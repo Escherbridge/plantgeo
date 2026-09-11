@@ -18,6 +18,12 @@ passed independent source and geometry verification. Publication and pre-2018 re
 The [saved static-soil evidence and proposed bucket admission](evidence/soil-static-admission-preparation-20260910.md)
 separately verify local raster artifacts and define a bounded point-reader plan; implementation and admission remain pending.
 
+September 11 [ingestion throttle evidence](evidence/ingestion-throttle-audit-20260911.md)
+identifies NASA POWER solar HTTP 429 separately from MTBS discovery limits and the held
+sensor/signal jobs. The source retry and climate presentation fixes passed independent
+review and full local checks; they are not deployed and do not close the pending
+publication or recovery work.
+
 ## Wave A — unblock the time slider and clear the dead objects
 
 - [ ] **A1 — availability bootstrap compiler (D3).** New `scripts/compile_availability_bootstrap.py`:

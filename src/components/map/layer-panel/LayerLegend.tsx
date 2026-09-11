@@ -3,13 +3,12 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { ChevronUp } from "lucide-react";
 import { LayerSwatch } from "@/components/map/layer-panel/LayerSwatch";
+import { LegendBlockView } from "@/components/map/layer-panel/LegendBlockView";
 import { GROUP_LABELS } from "@/components/map/layer-panel/dock-sections";
 import {
   activeLegendEntries,
-  type LegendBlock,
   type LegendContext,
   type LegendEntry,
-  type LegendRampStop,
 } from "@/lib/map/layer-legends";
 import { LAYER_REGISTRY, layerLabel } from "@/lib/map/layer-registry";
 import {
@@ -49,25 +48,7 @@ function groupByCategory(entries: readonly LegendEntry[]): LegendCategory[] {
   return categories;
 }
 
-/**
- * The legend AND the collapsed manager's active-layer chips, in one component.
- *
- * They are one component because they are one fact. A chip strip that named the drawn layers
- * and a legend card that explained their colours were two renderings of `activeLayers`, and a
- * second rendering is a thing to keep in sync; here the chips ARE the collapsed state of the
- * legend and the taxonomy IS its expanded state, resolved once from `activeLegendEntries`.
- *
- * Collapsed it is one compact row: a swatch and a name per drawn layer, scrolling sideways with
- * no painted scrollbar when there are more than fit. Expanded -- on hover, on focus and on
- * click, because a pointer, a keyboard and a touch screen each have exactly one of those -- it
- * opens the category taxonomy above the row, each layer with the blocks that say what its
- * colours mean.
- *
- * It renders nothing while every toggle is off, which is how the map starts, and it renders
- * nothing while the manager is open: the layer tree in there already carries a swatch, a name
- * and a category heading per layer, and showing both would be the duplicate this component
- * exists to end. See src/components/map/AGENTS.md "One manager, no floating surfaces".
- */
+/** Active-layer chips and their complete legend; see src/components/map/AGENTS.md. */
 export function LayerLegend() {
   const layerVisibility = useLayerVisibility();
   const soilDisplayMode = useSoilDisplayMode();
@@ -213,105 +194,6 @@ export function LayerLegend() {
           </span>
         ))}
       </button>
-    </div>
-  );
-}
-
-/**
- * Evenly spaced CSS stops. Position is deliberately not the stop's value -- see the
- * `LegendRampBlock` note in src/lib/map/layer-legends.ts.
- */
-function rampGradient(stops: readonly LegendRampStop[]): string {
-  if (stops.length < 2) return stops[0]?.color ?? "transparent";
-  const lastIndex = stops.length - 1;
-  const positioned = stops.map(
-    (stop, index) => `${stop.color} ${((index / lastIndex) * 100).toFixed(2)}%`
-  );
-  return `linear-gradient(to right, ${positioned.join(", ")})`;
-}
-
-/** A bar's captions: its two ends, plus its middle stop when that one is captioned. */
-function rampCaptions(stops: readonly LegendRampStop[]): string[] {
-  const middle = stops.length >= 3 ? stops[Math.floor(stops.length / 2)].label : undefined;
-  return [stops[0]?.label, middle, stops[stops.length - 1]?.label].filter(
-    (label): label is string => label !== undefined
-  );
-}
-
-function LegendBlockView({ block }: { block: LegendBlock }) {
-  if (block.kind === "note") {
-    return (
-      <p className="text-[10px] leading-snug text-[hsl(var(--muted-foreground))]">
-        {block.text}
-      </p>
-    );
-  }
-
-  if (block.kind === "swatch") {
-    return (
-      <div className="flex items-center gap-2">
-        <span
-          aria-hidden="true"
-          className="h-3 w-3 shrink-0 rounded-sm border"
-          style={{
-            backgroundColor: block.fillColor ?? "transparent",
-            borderColor: block.outlineColor,
-          }}
-        />
-        <span className="text-xs text-[hsl(var(--foreground))]">{block.label}</span>
-      </div>
-    );
-  }
-
-  if (block.kind === "ramp") {
-    const captions = rampCaptions(block.stops);
-    return (
-      <div className="flex flex-col gap-1">
-        {block.caption !== undefined && (
-          <span className="text-[10px] text-[hsl(var(--muted-foreground))]">
-            {block.caption}
-          </span>
-        )}
-        {/* The bar itself carries no accessible meaning; the captions below it do. */}
-        <span
-          aria-hidden="true"
-          className="block h-2 w-full rounded-full"
-          style={{ backgroundImage: rampGradient(block.stops) }}
-        />
-        {captions.length > 0 && (
-          <div className="flex justify-between gap-2 text-[10px] text-[hsl(var(--muted-foreground))]">
-            {captions.map((caption) => (
-              <span key={caption}>{caption}</span>
-            ))}
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex flex-col gap-1">
-      {block.caption !== undefined && (
-        <span className="text-[10px] text-[hsl(var(--muted-foreground))]">
-          {block.caption}
-        </span>
-      )}
-      <ul className="flex flex-col gap-1">
-        {block.classes.map((legendClass) => (
-          <li key={legendClass.label} className="flex items-center gap-2">
-            <span
-              aria-hidden="true"
-              className={`h-3 w-3 shrink-0 border border-black/10 ${
-                block.shape === "dot" ? "rounded-full" : "rounded-sm"
-              }`}
-              style={{ backgroundColor: legendClass.color }}
-            />
-            <span className="text-xs leading-snug text-[hsl(var(--foreground))]">
-              {legendClass.label}
-            </span>
-          </li>
-        ))}
-      </ul>
     </div>
   );
 }

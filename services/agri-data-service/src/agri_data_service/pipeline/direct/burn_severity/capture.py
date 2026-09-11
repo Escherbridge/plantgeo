@@ -12,7 +12,13 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
-from agri_data_service.ingest.mtbs import MTBS_FEATURE_SERVICE_QUERY_URL
+from agri_data_service.ingest.mtbs import (
+    HTTP_FORBIDDEN,
+    HTTP_TOO_MANY_REQUESTS,
+    MTBS_FEATURE_SERVICE_QUERY_URL,
+    MtbsProviderRefusalError,
+    bounded_retry_after,
+)
 from agri_data_service.pipeline.direct.burn_severity.current_snapshot import (
     MAX_CAPTURE_ROWS,
     canonical_bytes,
@@ -122,6 +128,24 @@ def _query(  # noqa: PLR0913 - transport, budget, archive, receipt sink, query a
     with client.stream(
         "GET", MTBS_FEATURE_SERVICE_QUERY_URL, params=parameters, timeout=min(30.0, budget.remaining())
     ) as response:
+        if response.status_code != HTTPStatus.OK:
+            journal.write_bytes(
+                canonical_bytes(
+                    {
+                        "status": "pending",
+                        "receipts": receipts,
+                        "failure_http": {
+                            "status": response.status_code,
+                            "retry_after": bounded_retry_after(response.headers.get("retry-after")),
+                            "role": role[:80],
+                            "started_at": started,
+                            "received_at": datetime.now(UTC).isoformat(),
+                        },
+                    }
+                )
+            )
+            if response.status_code in {HTTP_FORBIDDEN, HTTP_TOO_MANY_REQUESTS}:
+                raise MtbsProviderRefusalError(response.status_code, response.headers.get("retry-after"))
         response.raise_for_status()
         if response.status_code != HTTPStatus.OK:
             raise ValueError("MTBS response status is not a complete HTTP 200 entity")

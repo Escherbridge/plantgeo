@@ -11,6 +11,7 @@ import {
   WATER_CELL_CAPTION_TITLE,
 } from "@/lib/map/water-cell-caption";
 import { FIRE_CELL_NOT_A_PERIMETER_NOTE } from "@/lib/map/fire-cell-caption";
+import { CLIMATE_FIELD_SIGNAL_IDS } from "@/lib/environmental/climate-field";
 
 /** Fails if any rendered string ever leaks a raw null/undefined/NaN sentinel. */
 function assertNoSentinels(content: { title: string; lines: string[] } | null) {
@@ -59,9 +60,53 @@ describe("HOVERABLE_LAYER_IDS", () => {
       // placement collides away at density.
       "weather-temperature",
       "weather-temperature-cells",
+      ...CLIMATE_FIELD_SIGNAL_IDS.flatMap((signal) => [
+        `climate-field-${signal}-fill`,
+        `climate-field-${signal}-isoband-fill`,
+        `climate-field-${signal}-isoline`,
+        `climate-field-${signal}-point`,
+      ]),
       "osm-roads",
       "osm-waterways",
     ]);
+  });
+});
+
+describe("climate hover readings", () => {
+  it.each([
+    ["shortwave-radiation", "Solar radiation", "MJ/m²/day"],
+    ["relative-humidity", "Relative humidity", "%"],
+    ["wind-speed", "Wind speed", "m/s"],
+    ["soil-wetness-root-zone", "Soil wetness (root zone)", "fraction of saturation"],
+  ])("shows the %s cell value, unit and publisher calendar day", (signal, title, unit) => {
+    const content = formatHoverContent(`climate-field-${signal}-fill`, {
+      value: 0.37, observedDay: "2026-09-01", aggregated: false,
+    });
+    expect(content?.title).toBe(title);
+    expect(content?.lines).toContain(`Cell value: 0.37 ${unit}`);
+    expect(content?.lines).toContain("Source day: Sep 1, 2026");
+    expect(content?.lines.join(" ")).toContain("NASA POWER");
+    expect(TOOLTIP_TAP_LAYER_IDS).toContain(`climate-field-${signal}-fill`);
+    assertNoSentinels(content);
+  });
+
+  it("labels a coarse cell reading as a mean and preserves zero", () => {
+    expect(formatHoverContent("climate-field-wind-speed-fill", { value: 0, aggregated: true })?.lines)
+      .toContain("Cell mean: 0 m/s");
+  });
+
+  it.each(["isoband-fill", "isoline"])("shows a range rather than the representative midpoint for %s", (shape) => {
+    const content = formatHoverContent(`climate-field-relative-humidity-${shape}`, {
+      value: 55, bandLabel: "50 to 60", observedDay: "2026-09-01", aggregated: true,
+    });
+    expect(content?.lines).toContain("Color band: 50 to 60 %");
+    expect(content?.lines.join(" ")).toContain("Interpolated between published samples");
+    expect(content?.lines.join(" ")).not.toMatch(/55|Cell (?:mean|value)/);
+  });
+
+  it("withholds a tooltip when the relevant reading or band range is absent", () => {
+    expect(formatHoverContent("climate-field-relative-humidity-fill", { value: null })).toBeNull();
+    expect(formatHoverContent("climate-field-relative-humidity-isoband-fill", { value: 55 })).toBeNull();
   });
 });
 
