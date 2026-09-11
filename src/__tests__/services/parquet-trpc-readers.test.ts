@@ -1,3 +1,4 @@
+import { snapshotMetadata } from "./mtbs-snapshot-fixture";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/server/services/parquet-plane-client", async (importOriginal) => {
@@ -2335,4 +2336,104 @@ describe("the five layers that left Martin's tile functions", () => {
       fault: { kind: "timeout" },
     });
   });
+});
+
+describe("governed full MTBS current snapshots", () => {
+  const snapshotDay = snapshotMetadata.availableDay;
+  const snapshotNow = Date.parse(`${snapshotDay}T12:00:00Z`);
+  const snapshotRow = (overrides: Record<string, unknown> = {}) => burnScarRow({
+    observed_day: snapshotDay, data_available_at: `${snapshotDay}T00:00:00Z`,
+    release_identifier: `mtbs-current-snapshot:${snapshotMetadata.manifestSha256}`, ...overrides,
+  });
+
+  it("replaces old cohorts and withdrawn fires with the newest captured set, preserving exact values", async () => {
+    mockedCoverage.mockResolvedValue(burnCoverage([snapshotDay, "2024-08-22", "2023-08-09"]));
+    const row = snapshotRow({ fire_id: "revised-fire", acres: 12.75 });
+    mockedRelease.mockResolvedValue({ ...published(snapshotDay, [row]), mtbsSnapshot: snapshotMetadata });
+    const result = await getParquetBurnSeverity({ date: snapshotDay, mapZoom: 13, nowMs: snapshotNow });
+    expect(result).toMatchObject({ state: "ready", servedDay: snapshotDay, mtbsSnapshot: snapshotMetadata,
+      data: [{ fireId: "revised-fire", acres: 12.75, geometry: JSON.parse(row.geom) }] });
+    expect(readyData(result)).toHaveLength(1);
+    expect(mockedRelease).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the historical union before snapshot availability without requesting the future snapshot", async () => {
+    mockedCoverage.mockResolvedValue(burnCoverage([snapshotDay, "2024-08-22", "2023-08-09"]));
+    mockedRelease.mockImplementation(async ({ asOfDay }) => published(asOfDay, [burnScarRow({ fire_id: asOfDay })]));
+    const result = await getParquetBurnSeverity({ date: "2026-09-10", mapZoom: 13, nowMs: snapshotNow });
+    expect(readyData(result).map((row) => row.fireId)).toEqual(["2024-08-22", "2023-08-09"]);
+    expect(mockedRelease.mock.calls.map(([request]) => request.asOfDay)).not.toContain(snapshotDay);
+  });
+
+  it("keeps a zero-row viewport empty without bringing back older overlapping fires", async () => {
+    mockedCoverage.mockResolvedValue(burnCoverage([snapshotDay, "2024-08-22"]));
+    mockedRelease.mockResolvedValue({ ...published(snapshotDay, []), mtbsSnapshot: snapshotMetadata });
+    const result = await getParquetBurnSeverity({ date: snapshotDay, mapZoom: 13, nowMs: snapshotNow });
+    expect(result).toMatchObject({ state: "ready", data: [], mtbsSnapshot: snapshotMetadata });
+    expect(mockedRelease).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    [snapshotRow({ fire_year: 2017 })], [snapshotRow({ fire_year: null })],
+    [snapshotRow(), snapshotRow()], [snapshotRow({ observed_day: "2024-08-22" })],
+    [snapshotRow({ data_available_at: "2026-09-10T23:59:59Z" })],
+    [snapshotRow({ release_identifier: "mtbs-current-snapshot:" + "b".repeat(64) })],
+  ])("refuses snapshot row-scope contradictions instead of falling back", async (...rows) => {
+    mockedCoverage.mockResolvedValue(burnCoverage([snapshotDay, "2024-08-22"]));
+    mockedRelease.mockResolvedValue({ ...published(snapshotDay, rows), mtbsSnapshot: snapshotMetadata });
+    expect(await getParquetBurnSeverity({ date: snapshotDay, mapZoom: 13, nowMs: snapshotNow }))
+      .toMatchObject({ state: "upstream_unavailable", fault: { kind: "contract" } });
+    expect(mockedRelease).toHaveBeenCalledTimes(1);
+  });
+
+  it("retains the known intersection and flags an outside-scope viewport", async () => {
+    mockedCoverage.mockResolvedValue(burnCoverage([snapshotDay]));
+    mockedRelease.mockResolvedValue({ ...published(snapshotDay, []), mtbsSnapshot: snapshotMetadata });
+    expect(await getParquetBurnSeverity({ date: snapshotDay, mapZoom: 13, nowMs: snapshotNow, bbox: "-126,42,-111,49" }))
+      .toMatchObject({ state: "ready", data: [], truncated: true });
+  });
+
+  it("retains the older historical-gap and row-cap limitations on a current snapshot", async () => {
+    const coverage = burnCoverage([snapshotDay]);
+    coverage.evaluatedThroughDay = snapshotDay;
+    coverage.lanes[0].gapRanges = [{ from: "2015-04-02", to: "2020-11-23" }];
+    mockedCoverage.mockResolvedValue(coverage);
+    mockedRelease.mockResolvedValue({ ...published(snapshotDay, [snapshotRow()]), truncated: true, mtbsSnapshot: snapshotMetadata });
+    expect(await getParquetBurnSeverity({ date: snapshotDay, mapZoom: 13, nowMs: snapshotNow }))
+      .toMatchObject({ state: "ready", truncated: true, mtbsSnapshot: snapshotMetadata });
+  });
+});
+
+it("discovers a zero-source replacement through newer indexed absence and never resurrects withdrawn fires", async () => {
+  const coverage = burnCoverage(["2024-08-22"]);
+  coverage.lanes[0].governedAbsenceRanges = [{ from: "2026-09-11", to: "2026-09-11" }];
+  mockedCoverage.mockResolvedValue(coverage);
+  mockedRelease.mockResolvedValue({ state: "governed_absence", requestedDay: "2026-09-11", servedDay: "2026-09-11",
+    evidence, mtbsSnapshot: { ...snapshotMetadata, sourceRowCount: 0 } });
+  const result = await getParquetBurnSeverity({ date: "2026-09-11", mapZoom: 13, nowMs: Date.parse("2026-09-11T12:00:00Z") });
+  expect(result).toMatchObject({ state: "ready", data: [], mtbsSnapshot: { sourceRowCount: 0 } });
+  expect(mockedRelease).toHaveBeenCalledTimes(1);
+});
+
+it("a legacy absence after a valid current snapshot does not mask that snapshot or repeat its row read", async () => {
+  const coverage = burnCoverage([snapshotMetadata.availableDay]);
+  coverage.lanes[0].governedAbsenceRanges = [{ from: "2026-09-12", to: "2026-09-12" }];
+  mockedCoverage.mockResolvedValue(coverage);
+  mockedRelease.mockResolvedValue({ ...published("2026-09-12", [], snapshotMetadata.availableDay), mtbsSnapshot: snapshotMetadata });
+  expect(await getParquetBurnSeverity({ date: "2026-09-12", mapZoom: 13, nowMs: Date.parse("2026-09-12T12:00:00Z") }))
+    .toMatchObject({ state: "ready", data: [], servedDay: snapshotMetadata.availableDay, mtbsSnapshot: snapshotMetadata });
+  expect(mockedRelease).toHaveBeenCalledTimes(1);
+});
+
+
+it("a full snapshot does not inherit superseded release-count or old history gaps", async () => {
+  const days = Array.from({ length: 13 }, (_, index) => `2026-08-${String(index + 1).padStart(2, "0")}`);
+  const coverage = burnCoverage([...days, snapshotMetadata.availableDay]);
+  coverage.evaluatedThroughDay = snapshotMetadata.availableDay;
+  coverage.lanes[0].gapRanges = [{ from: "2015-04-02", to: "2020-11-23" }];
+  mockedCoverage.mockResolvedValue(coverage);
+  mockedRelease.mockResolvedValue({ ...published(snapshotMetadata.availableDay, []), mtbsSnapshot: snapshotMetadata });
+  expect(await getParquetBurnSeverity({ date: snapshotMetadata.availableDay, mapZoom: 13, nowMs: Date.parse("2026-09-11T12:00:00Z") }))
+    .toMatchObject({ state: "ready", data: [], truncated: false, mtbsSnapshot: snapshotMetadata });
+  expect(mockedRelease).toHaveBeenCalledTimes(1);
 });

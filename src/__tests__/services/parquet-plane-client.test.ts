@@ -1,3 +1,4 @@
+import { snapshotWire, snapshotMetadata } from "./mtbs-snapshot-fixture";
 import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -1024,5 +1025,25 @@ describe("the frozen wire contract", () => {
       latestDay: null,
       requiredRungs: [],
     });
+  });
+});
+
+describe("MTBS snapshot envelope provenance", () => {
+  it("retains validated metadata on an empty published viewport", async () => {
+    mockedFetch.mockResolvedValue({ state: "published", requested_day: "2026-09-11", served_day: "2026-09-11",
+      rows: [], truncated: false, mtbs_snapshot: snapshotWire });
+    expect(await getParquetLatestRelease({ layer: "burn-severity", zoomTier: 13, asOfDay: "2026-09-11" }))
+      .toMatchObject({ state: "published", rows: [], mtbsSnapshot: snapshotMetadata });
+  });
+
+  it.each([
+    { mtbs_snapshot: { ...snapshotWire, capture_complete: false } },
+    { served_day: "2026-09-10" }, { requested_day: "2026-09-10" },
+    { mtbs_snapshot: null },
+  ])("refuses invalid or temporally mismatched snapshot envelopes %j", async (change) => {
+    mockedFetch.mockResolvedValue({ state: "published", requested_day: "2026-09-11", served_day: "2026-09-11",
+      rows: [], truncated: false, mtbs_snapshot: snapshotWire, ...change });
+    await expect(getParquetLatestRelease({ layer: "burn-severity", zoomTier: 13, asOfDay: "2026-09-11" }))
+      .rejects.toBeInstanceOf(ParquetPlaneContractError);
   });
 });

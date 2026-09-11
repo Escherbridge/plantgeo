@@ -31,9 +31,18 @@ the exact verified manifest/checkpoint receipts.
 
 ## Executor operator inputs
 
+`ops jobs-set-lane-enabled` previews or applies an exact registered executor definition's durable
+all-version pause/resume. Required inputs are `--definition plantgeo.executor.<lane>`, one of
+`--enabled`/`--disabled`, `--operator` and `--reason`; only `--apply` writes. The implementation and
+atomic audit live in `execution/job_lane_control.py`. It neither releases failed runs nor cancels
+workers, and its receipt explicitly does not prove quiescence. See execution/AGENTS.md,
+"Durable executor lane pause and resume".
+
 `ops jobs-supersede-run` records an operator's evidence that the failed or partial checkpoint run holding
 an executor lane may be superseded, so the scheduler resumes the lane at the current bucket. It is a dry
 run without `--apply`, writes one resolved `agri.job_incident` row and nothing else, refuses a lane the
 clock will release by itself (a `coalesce_latest` lane below its three-failure breaker), and prints one
 JSON receipt that names the ledger it wrote. The body lives in `execution/job_run_supersession.py`; see
 `execution/AGENTS.md`, "Failed checkpoints are superseded by the clock or by an operator".
+
+Parquet row commands inject the same lazy MTBS availability metadata loader used by HTTP. Exact-day, release and window responses preserve the common optional `mtbs_snapshot` descriptor; no CLI-specific snapshot catalogue or database fallback is introduced.

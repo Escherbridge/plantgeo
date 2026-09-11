@@ -1,3 +1,4 @@
+import type { MtbsSnapshotMetadata } from "@/lib/environmental/mtbs-snapshot";
 import type { WaterGauge } from "@/lib/environmental/water";
 import {
   isAggregateSupportKind,
@@ -14,6 +15,7 @@ export type ParquetBrowserReaderResult<T> =
       servedDay: string;
       data: T;
       truncated: boolean;
+      mtbsSnapshot?: MtbsSnapshotMetadata;
     }
   | {
       state: "absent";

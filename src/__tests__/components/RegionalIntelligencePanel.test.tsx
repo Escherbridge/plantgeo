@@ -161,6 +161,17 @@ describe("RegionalIntelligencePanel strategy chips", () => {
     expect(screen.queryByText("Not observed")).toBeNull();
   });
 
+  it("labels MTBS publication availability separately from snapshot capture or ignition", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-11T12:00:00Z"));
+    mocks.state.dataFreshness = { mtbsPerimeters: "publication_available_2026-09-11" };
+    renderWithProviders(<RegionalIntelligencePanel />);
+    fireEvent.click(screen.getByRole("button", { name: "Data sources (1)" }));
+    expect(screen.getByText("Publication available 2026-09-11")).toBeTruthy();
+    expect(screen.queryByText("Snapshot captured 2026-09-11")).toBeNull();
+    expect(screen.queryByText("Not observed")).toBeNull();
+  });
+
   it("keeps an old perimeter snapshot stale while displaying its actual capture day", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-09-10T12:00:00Z"));

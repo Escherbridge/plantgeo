@@ -72,3 +72,62 @@ No test suite was run during authoring. Import cleanup and Ruff formatting compl
 touched Python files. Parent will run the relevant-surface integrated checks after all edits.
 Independent review is required before release. A source revert restores the adapters; no data or
 configuration rollback is required because this patch changes neither.
+
+## Follow-up: unused MTBS PostgreSQL exporter â€” 2026-09-10
+
+This additional source cleanup removes only
+`pipeline/lanes/burn_severity.py::export_burn_severity_release_day`, its private part-size constant
+and exclusive imports, plus the three tests that invoked that exporter. It does not change the
+MTBS source registry, cadence, data, live service configuration or source fetcher.
+
+Repository-wide reference inspection before removal found exactly three executable call sites,
+all in `tests/parquet/test_burn_severity_lane.py`; other matches were the definition and historical
+module documentation. There was no registered command, dynamic import or operator-script call to
+this function. `pipeline/parquet/lane_registry.py` already binds burn-severity to
+`_refuse_burn_severity_direct_export`, which names the canonical direct writer. The scheduled
+`burn-severity-direct-forward` uses that direct writer; no registration was changed here. The
+parent's prior deployed-source and QA evidence remains a prerequisite for release acceptance,
+not a new production observation made by this deletion pass.
+
+The replacement `pipeline/direct/burn_severity/adapter.py` owns its independent 100-row part cap,
+sorting, upstream-evidenced governed absence and ordinary all-rung finalization. Retained
+`tests/direct/test_burn_severity_direct_adapter.py` exercises complete publication, genuine
+zero-fire source results, disproven-absence correction, wrong-day refusal and multipart spill.
+Existing direct parity and registry-refusal tests remain. We do not carry forward the removed
+exporter's inference that zero PostgreSQL rows by themselves establish an upstream absence.
+
+The deleted test intent is retained in the [retrospective index](README.md#removed-mtbs-exporter-test-intent--2026-09-10).
+The same-file `read_burn_severity_release_day`, SQL, row fixture, fake session and schema/day-binding
+test remain unchanged in behavior: `pipeline/validation/burn_severity.py` still imports and calls
+that reader. Reconciliation is retained machinery, not evidence of a currently scheduled caller.
+The live MTBS parsing/capture module, registered `ingest-mtbs` command, TypeScript regional-context
+consumer, frozen snapshot recovery, signal/sensor correction operators and migrations all remain.
+Historical references to the replaced exporter describe the prior implementation.
+
+No tests were executed during this follow-up authoring. `check.py --changed --plan` is expected to
+select the full suite because `pipeline/lanes/` is shared/unmapped; the explicitly scoped
+`--batch direct` includes relevant Parquet/direct/ingest/executor/import contracts but cannot mint
+a full quality receipt. Parent owns the final integrated validation and independent review.
+Rollback is a source revert; this cleanup requires no data or configuration rollback and does
+not close any remaining ingestion, completeness, or retirement work.
+
+
+### MTBS regional reader replacement and dead service removal — 2026-09-10
+
+The regional-context burn-history subsection now calls the same selected-day governed
+Parquet reader as the map. A repository-wide source reference check found no remaining
+imports of `services/mtbs` or `environmental/wildfire`; `BurnSeverityClass` and
+`MTBSFireProperties` occurred only in those two obsolete files. Both files were removed.
+No dedicated tests imported that reader; the regional tests now assert the governed
+reader's selected-day call, retained capture metadata, empty output and failure state.
+The old reader's private severity mapping, Redis cache and live ArcGIS query therefore
+have no surviving registration. The independently implemented public
+`wildfire.getMTBSPerimeters` unpublished-risk procedure remains; its matching name is
+not a call to the deleted module. Python MTBS parsing, its severity regression tests,
+reconciliation SQL, and pending publication/recovery operators remain.
+
+This follow-up supersedes only the earlier paragraph's claim that the TypeScript
+regional consumer remained on the old module. It does not claim any new snapshot has
+been published, full mapping is complete, or the active retirement track is closed.
+Historical source references preserve the old behavior's intent. Root owns the combined
+validation and independent approval; no tests were run during this authoring pass.

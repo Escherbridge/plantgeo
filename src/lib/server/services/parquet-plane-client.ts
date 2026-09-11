@@ -1,3 +1,4 @@
+import { mtbsSnapshotWireSchema, normalizeMtbsSnapshot } from "@/lib/server/services/mtbs-snapshot-contract";
 import { z } from "zod";
 import { isReusableSliderCoverage } from "@/lib/environmental/slider-policy";
 import { fetchBoundedJson, providerUrl } from "@/lib/server/http/bounded-upstream";
@@ -404,12 +405,14 @@ const wireEnvelopeSchema = z.discriminatedUnion("state", [
     // kind, so narrowing a row belongs to the caller that knows which layer it asked for.
     rows: z.array(z.record(z.unknown())),
     truncated: z.boolean(),
+    mtbs_snapshot: mtbsSnapshotWireSchema.optional(),
   }),
   z.object({
     state: z.literal("governed_absence"),
     requested_day: z.string(),
     served_day: z.string(),
     absence: wireAbsenceSchema,
+    mtbs_snapshot: mtbsSnapshotWireSchema.optional(),
   }),
   z.object({
     state: z.literal("day_not_written"),
@@ -494,6 +497,12 @@ type WireEnvelope = z.infer<typeof wireEnvelopeSchema>;
 
 /** Wire envelope to this codebase's union. The `default` arm is the union's exhaustiveness proof. */
 function toEnvelope(wire: WireEnvelope): ParquetPlaneEnvelope {
+  const snapshot = "mtbs_snapshot" in wire ? wire.mtbs_snapshot : undefined;
+  if (snapshot && (!("served_day" in wire) || snapshot.available_day !== wire.served_day
+    || snapshot.available_day > wire.requested_day)) {
+    throw new ParquetPlaneContractError("MTBS snapshot availability disagrees with its envelope");
+  }
+  const snapshotMetadata = snapshot ? { mtbsSnapshot: normalizeMtbsSnapshot(snapshot) } : {};
   switch (wire.state) {
     case "published":
       return {
@@ -502,10 +511,12 @@ function toEnvelope(wire: WireEnvelope): ParquetPlaneEnvelope {
         servedDay: wire.served_day,
         rows: wire.rows,
         truncated: wire.truncated,
+        ...snapshotMetadata,
       };
     case "governed_absence":
       return {
         state: "governed_absence",
+        ...snapshotMetadata,
         requestedDay: wire.requested_day,
         servedDay: wire.served_day,
         evidence: {

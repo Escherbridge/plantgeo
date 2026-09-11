@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from agri_data_service.foundation.parquet.lane_contract import LaneNature
     from agri_data_service.foundation.parquet.paths import PartitionKind
     from agri_data_service.foundation.parquet.zoom import ZoomTier
+    from agri_data_service.warehouse.mtbs_snapshots import MtbsSnapshotDescriptor
 
 #: Route segments and query parameter names, spelled ONCE on the serving side.
 #: `tests/interface/test_wire_agreement.py` compares every name here against
@@ -137,6 +138,7 @@ class PublishedDay:
     served_day: date
     rows: tuple[ServedRow, ...]
     truncated: bool
+    mtbs_snapshot: MtbsSnapshotDescriptor | None = None
 
     def to_wire(self) -> dict[str, object]:
         """Render the `published` envelope."""
@@ -146,6 +148,7 @@ class PublishedDay:
             "served_day": render_day(self.served_day),
             "rows": [render_row(row) for row in self.rows],
             "truncated": self.truncated,
+            **({"mtbs_snapshot": self.mtbs_snapshot.to_wire()} if self.mtbs_snapshot is not None else {}),
         }
 
 
@@ -175,6 +178,7 @@ class GovernedAbsenceDay:
     requested_day: date
     served_day: date
     absence: AbsenceEvidence
+    mtbs_snapshot: MtbsSnapshotDescriptor | None = None
 
     def to_wire(self) -> dict[str, object]:
         """Render the `governed_absence` envelope."""
@@ -183,6 +187,7 @@ class GovernedAbsenceDay:
             "requested_day": render_day(self.requested_day),
             "served_day": render_day(self.served_day),
             "absence": self.absence.to_wire(),
+            **({"mtbs_snapshot": self.mtbs_snapshot.to_wire()} if self.mtbs_snapshot is not None else {}),
         }
 
 

@@ -2,6 +2,11 @@
 
 ## Regional evidence release labels
 
+MTBS `publication_available_YYYY-MM-DD` is validated only for the MTBS source and
+labeled as publication availability. It participates in the existing source-age
+classification without being relabeled as ignition or source capture time. Invalid
+calendar days and future availability remain unavailable.
+
 The AI footer recognizes `static_release_untimed` only for soil properties and displays
 "Static release (undated)". Availability does not imply a recent observation. Fire perimeter
 `snapshot_captured_YYYY-MM-DD` markers display their validated capture day, not a measurement

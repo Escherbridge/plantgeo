@@ -240,11 +240,53 @@ allows at most four sequential requests in a ten-minute sampling window, with
 API-only activation and deactivation deployments. Automatic approval review
 rejected the attempted dedicated one-variable activation before mutation because
 the user's existing deployment approval did not explicitly cover the logging
-side effects. Explicit approval has been requested; no diagnostic request ran.
+side effects. At that checkpoint explicit approval had been requested and no
+diagnostic request had run. The later approved diagnostic is recorded below.
 The [subsequent runtime check](../../../../.omc/research/telemetry-disabled-verification-20260910.log)
 verified the original API deployment, tested commit and effective configuration
 flag `false`. The unrelated 156-change pending patch remained identical after
 normalizing response ordering; it was not applied or amended.
+
+### Approved diagnostic completed; telemetry disabled again
+
+The user's subsequent explicit approval authorized the isolated diagnostic.
+The [completed lifecycle receipt](../../../../.omc/research/telemetry-lifecycle-completed-20260910.json)
+records activation at 19:26:35 UTC and the same tested source `0ae1528` on API
+deployment `df02647b-6db6-456f-8626-7028bc51b45c`, ready at 19:27:36.057 UTC.
+Exactly four sequential release requests completed with HTTP 200; the first two
+read the 2024-08-22 cohort and the next two read 2023-08-09 in the same bounded
+northern Washington viewport. No retry or fifth diagnostic request was added.
+
+| Request | HTTP elapsed seconds | Returned rows | Worker elapsed seconds | Data-scan elapsed seconds | Scan worker-thread CPU seconds |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 1 | 2.168168 | 0 | 1.965726 | 0.649398 | 0.102484 |
+| 2 | 2.486373 | 0 | 2.482819 | 1.600209 | 1.357027 |
+| 3 | 1.022195 | 4 | 1.005689 | 0.471662 | 0.198915 |
+| 4 | 8.686929 | 4 | 8.672994 | 8.257521 | 0.035078 |
+
+The [four structured stage events](../../../../.omc/research/telemetry-serving-stage-events-20260910.json)
+record completed workers without cancellation. Their random read identifiers are
+not HTTP correlation identifiers; the four non-overlapping event windows support
+the association shown here. The slowest scan used 0.061950 seconds of whole-process
+CPU while taking 8.257521 seconds elapsed. That sample was dominated by waiting;
+it does not identify the cause of the wait or establish a cold-cache guarantee.
+Transfer counters remain unavailable, and the earlier 14-second failure was not
+reproduced. No reliability or timeout remedy is certified by this sample.
+
+The flag was set back to `false` at 19:33:05 UTC. Replacement API deployment
+`32382dc3-80f8-4ba6-b633-ba52e8fe72cf` became ready at 19:34:26.837 UTC with the
+same source commit. The [replacement configuration check](../../../../.omc/research/telemetry-rollback-serving-process-proof-20260910.log)
+verified `false`; process inspection returned no matching worker flags and is
+not evidence of worker-memory inspection. All four enabled diagnostic workers
+had completed before deactivation. No further diagnostic request was necessary
+to claim configuration rollback.
+
+Pending patch `98e5fac7-404e-4894-85aa-9e6ace33ab5b` was neither changed nor
+committed. Its computed diff grew from 156 to 157 because the pre-existing staged
+snapshot lacks the newly created live `PARQUET_READ_TELEMETRY` variable. The sole
+additional computed change is removal of that API variable from the staged
+snapshot; all 156 unrelated changes remain identical. This is not a claim that
+the entire displayed patch payload stayed byte-identical.
 
 ## Limited fidelity follow-ups
 

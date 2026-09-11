@@ -4,7 +4,7 @@
 PlantGeo is an enterprise-grade open-source 3D mapping platform built to provide feature parity with Google Maps Platform using entirely open-source technologies.
 
 ## Tech Stack
-- **Frontend**: Next.js 15 (App Router) + React 19 + TypeScript
+- **Frontend**: Next.js 16 (App Router) + React 19 + TypeScript
 - **3D Map Rendering**: MapLibre GL JS v5 (globe, terrain, fill-extrusion)
 - **Data Visualization**: deck.gl v9 (interleaved mode with MapLibre)
 - **Custom 3D**: Three.js via CustomLayerInterface
@@ -13,6 +13,7 @@ PlantGeo is an enterprise-grade open-source 3D mapping platform built to provide
 - **Routing**: Valhalla (multi-modal, isochrones, turn-by-turn)
 - **Geocoding**: Photon (autocomplete) backed by Nominatim
 - **Database**: PostgreSQL 16 + PostGIS 3.4
+- **Environmental data**: governed Parquet on object storage, served by the Python data service
 - **ORM**: Drizzle ORM
 - **API**: tRPC v11
 - **State**: Zustand (global)
@@ -35,8 +36,11 @@ PlantGeo is an enterprise-grade open-source 3D mapping platform built to provide
 ## Conventions
 - Use `"use client"` only when needed (map components, interactive UI)
 - Dynamic import MapLibre components with `ssr: false`
-- All geospatial queries go through PostGIS, never client-side for large datasets
-- Use PMTiles for basemap tiles, Martin for dynamic overlay tiles
+- Route environmental reads through the governed Parquet serving plane and its selected-day
+  availability contract. Do not introduce new PostgreSQL observation queries or ingestion
+  fallbacks; remaining reconciliation and recovery paths are tracked explicitly in Conductor.
+- Use PMTiles for basemap tiles; environmental overlays use their declared renderer and
+  serving reader in the layer capability catalogue. Keep large data processing server-side.
 - Redis for caching GeoJSON responses and pub/sub for real-time updates
 - SSE for broadcast updates (fire alerts), WebSocket for bidirectional (tracking)
 

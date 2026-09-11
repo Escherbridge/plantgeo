@@ -25,3 +25,5 @@ rendering live in top-level `agri_data_service.parquet_ops`.
 - The private origin and route spelling remain frozen by `tests/contract/wire_contract.py` and the
   TypeScript client contract.
 - Timeouts stay below the caller budgets so the adapter can return the typed reason.
+
+Current MTBS reads inject the existing availability object-store adapter lazily into the common listing. The common resolver owns snapshot evidence and optional `mtbs_snapshot` wire metadata, including empty viewports; the HTTP adapter has no independent release authority.

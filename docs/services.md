@@ -119,24 +119,15 @@ Get vegetation and fuel data from LANDFIRE dataset.
 
 ---
 
-### mtbs.ts
+### Governed MTBS burn history
 
-Get Monitoring Trends in Burn Severity (MTBS) data.
-
-**Key Functions:**
-- `getMTBSPerimeters(bbox?: string): Promise<GeoJSON.FeatureCollection>`
-
-**Purpose:** Access historical burn perimeters and severity data.
-
-**External API:** USGS MTBS
-- Endpoint: `https://www.mtbs.gov/api`
-
-**Data returned:**
-- Burn perimeters (polygons)
-- Severity classification (low, medium, high, increased greenness)
-- Burn year and date
-
-**Caching:** Redis key `mtbs:perimeters:{bbox}`, TTL 24 hours
+`getParquetBurnSeverity` in `parquet-trpc-readers.ts` serves both the map and
+regional context at the selected day. Historical cohort publications are unioned;
+an eligible governed current snapshot replaces its entire declared fire-year scope.
+Capture availability, source capture time, and partial mapping years remain separate
+metadata, including for an empty viewport or a captured zero-fire replacement.
+The retired direct ArcGIS/Redis reader and its exclusively owned types have no runtime
+consumers; the public unpublished-risk procedure is retained independently.
 
 ---
 

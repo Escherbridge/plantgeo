@@ -58,3 +58,22 @@ passing test result.
 The coordinating lane's subsequent [local verification record](verification.md)
 records the completed checks and corrected environment setup without changing the
 original authoring-time audit.
+
+## Removed MTBS exporter test intent — 2026-09-10
+
+The follow-up [removal proof](cleanup-proof.md#follow-up-unused-mtbs-postgresql-exporter--2026-09-10)
+records removal of the unregistered `export_burn_severity_release_day` function and exactly three
+exporter-only tests from `tests/parquet/test_burn_severity_lane.py`:
+
+- `test_a_release_day_the_source_cannot_serve_is_a_governed_absence_not_an_empty_write` checked the
+  old PostgreSQL-zero-row absence branch. Its historical assertion is not a current claim that
+  an empty database proves upstream absence.
+- `test_the_export_lands_at_the_observed_partition_sorted_to_the_grain` checked the old exported
+  partition path and row count.
+- `test_a_release_day_larger_than_the_row_cap_spills_across_part_files` checked the old 100-row
+  splitting behavior and indexed part paths.
+
+The direct writer's source-evidence, all-rung publication and multipart tests remain; the retained
+PostgreSQL reconciliation reader still has its schema and bound-release-day test. This entry
+preserves removed test intent without declaring the current cleanup validated or deployed,
+or closing MTBS completeness and the active retirement track.

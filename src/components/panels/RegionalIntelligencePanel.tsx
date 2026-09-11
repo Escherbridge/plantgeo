@@ -24,6 +24,7 @@ import {
   isRegionalEvidenceSource,
   regionalEvidenceFreshnessState,
   regionalEvidenceSnapshotDay,
+  regionalEvidencePublicationDay,
   type EvidenceOrigin,
   type RegionalIntelligenceResponse,
 } from '@/lib/regional-intelligence';
@@ -358,14 +359,19 @@ function DataFreshnessFooter({ freshness }: { freshness: Record<string, string> 
             const snapshotDay = isRegionalEvidenceSource(source)
               ? regionalEvidenceSnapshotDay(source, value)
               : null;
+            const publicationDay = isRegionalEvidenceSource(source)
+              ? regionalEvidencePublicationDay(source, value)
+              : null;
             const releaseDay = source === 'drought' ? formatCalendarDay(value.slice(0, 10)) : null;
             const evidenceLabel = source === 'soilProperties' && value === 'static_release_untimed'
               ? 'Static release (undated)'
               : snapshotDay !== null
                 ? `Snapshot captured ${snapshotDay}`
-                : releaseDay !== null
-                  ? `Release ${releaseDay}`
-                  : observedAt;
+                : publicationDay !== null
+                  ? `Publication available ${publicationDay}`
+                  : releaseDay !== null
+                    ? `Release ${releaseDay}`
+                    : observedAt;
             const state =
               freshnessState === 'available'
                 ? {

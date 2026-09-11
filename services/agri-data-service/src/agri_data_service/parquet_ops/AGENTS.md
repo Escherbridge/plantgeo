@@ -622,3 +622,24 @@ local parts: one row came back out of two.
   `publication_lag_days`. A `daily_series` closes against TODAY and ignores its lag: every day up to
   today was owed an observation, and the lag says when the driver gets to it rather than whether it
   is owed. This is what the client's own `closeCoverageGapsAtLiveEdge` already assumes.
+
+## MTBS completed-cohort release eligibility
+
+`serving.resolve_release` restricts burn-severity candidates to the immutable completed-cohort
+publication dates in `warehouse/mtbs_releases.py`, shared with the producer. Legacy absence markers
+on intervening calendar days cannot shadow an earlier real publication. Registered release-day
+absences still carry their original evidence and supersede earlier data; conflicts and unreadable
+absence evidence still refuse. Exact-day/window diagnosis remains unchanged, as do all other
+layers, lookback limits, schema checks, geometry clipping and read budgets. This filter neither
+deletes old objects nor admits newer partial MTBS cohorts; source freshness and cumulative browser
+revision semantics are separate work.
+
+## Verified current MTBS replacements
+
+`mtbs_snapshot_catalog.py` admits the newest indexed day at or after 2026-09-11 and no later than the request or current UTC day. It verifies the actual availability pointer/generation, exact burn-severity/observed release identity, all four typed source/terminal receipts, canonical captured manifest, and completion/absence markers. Invalid newest evidence refuses rather than returning an older cohort. Metadata reads are bounded to 20 calls and 8 MiB per selected proof; legitimate lifetime dates have no separate count cap.
+
+HTTP and CLI inject a lazy real availability-store reader through `ObjectStoreListing`; catalog verification never writes or invents ETags. A descriptor accompanies both published results (including empty viewports) and a verified zero-source governed absence. Exact day and window reads also validate snapshot metadata, physical key sets and returned release/day/year/unique-fire identities. The same bounded normal warehouse row reader remains responsible for data reads. Intersecting viewports may extend beyond the declared capture footprint; the descriptor states that footprint.
+
+Runtime proof follows the existing immutable-part reader model: source/terminal/manifest/marker bytes are hashed, but serving does not download each Parquet body a second time solely for cryptographic verification. Full physical/source graph digest verification belongs to staged publication and independent publication readback. An out-of-band same-key Parquet overwrite that preserves row identity is an inherited limitation, not protection claimed by this metadata admission path. Served absence evidence is checked against the indexed terminal receipt. There is currently no additional descriptor cache; each selected proof is freshly bounded, and any future cache must bind genuine object identity.
+
+Snapshots have zero additional availability lag after their explicit D+1 date; this admission does not change the historical cohort contract or unrelated lanes. Publication and weekly-capture/daily-ready scheduling belong to the direct producer. Ordinary forward absence authoring must stop at the ownership floor so an unrelated calendar marker cannot shadow a valid replacement.

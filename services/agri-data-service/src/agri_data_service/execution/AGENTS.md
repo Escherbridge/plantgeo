@@ -1,5 +1,36 @@
 # Execution modules
 
+## Durable executor lane pause and resume
+
+`job_lane_control.py` implements `ops jobs-set-lane-enabled --definition
+plantgeo.executor.sensors-direct-forward --disabled --operator <identity> --reason <evidence>`.
+Use `--enabled` for resume. The default reads and reports without locking or writing; `--apply`
+uses the same operational service credentials as `jobs-supersede-run`, not a fabricated web-admin
+session. Only exact, unique, executable definitions in `LANE_SPECS` are accepted. The ledger must
+contain the current executor version; missing, duplicate or more than 32 versions refuse.
+
+Apply locks the existing definition rows, updates every version of that exact name, compares the
+returned identities and reads all states back. An informational resolved `agri.job_incident` with
+fingerprint `executor-lane-control:<control UUID>` records operator, reason and before/after states
+in the same transaction. It has no run/work-item links and is not a run-supersession incident.
+Repeating an already-set state leaves definition timestamps unchanged while appending an audit of
+the operator's confirmation. The receipt reports success only after commit returns; a database
+failure reports `write_unconfirmed` and the control UUID, requiring audit/state inspection before
+retry. No credential is included in the ledger label.
+
+The command preserves existing runs, work items, attempts, lease fields and failed-run holds.
+Pause prevents future cooperating dispatch; it does not cancel already planned/running workers,
+prevent arbitrary manual CLI writers or prove quiescence. Before a governed sensor correction,
+pause, observe executor readback, drain and identify every prior writer/retry worker, and record
+fresh external quiescence evidence separately. Existing registration makes later versions of an
+already-registered lane disabled by default; this command does not change that policy. Other
+administrators can still change enable state and must cooperate during the repair window.
+
+Resume does not release a failed checkpoint. After verified repair, resume the definition and use
+the existing separately evidenced `jobs-supersede-run` procedure if the failed hold requires it;
+that procedure refuses paused definitions. This operator command never claims data completeness.
+
+
 `source_ingestion.py` is the phase-one operational vertical slice for a governed, locally captured current-observation release: a bounded GeoJSON payload is structurally validated, checkpointed locally, then persisted idempotently as a source release, content-addressed artifact, and validated release set. It is intentionally not an upstream fetcher, generic data loader, forecast, trainer, or public prediction publisher. See `docs/data-ingestion-and-serving-contract.md` for the server/local ownership boundary.
 
 Source-ingestion checkpoint v2 binds both the complete reviewed plan and the release-set content checksum. New release sets must be populated while `draft` and transition to `validated` only after their membership is flushed, because the warehouse trigger freezes membership after validation.
@@ -1992,4 +2023,3 @@ What it does need before activation is the ordinary object-store settings, a
 `LOCAL_SOURCE_LOADER_DATABASE_URL` reaching a database whose `agri.spatial_cell` holds the
 `sentinel2-ndvi-0p25deg` lattice, and -- like every forward writer -- a reader that can see forward
 days, since the five snapshot-rooted soil products now carry a `forward_first_day`.
-

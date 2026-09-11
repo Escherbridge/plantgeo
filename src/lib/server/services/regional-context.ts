@@ -6,10 +6,8 @@ import {
   getSoilProperties,
   type SoilProperties,
 } from "@/lib/server/services/soilgrids";
-import {
-  getMTBSPerimeters,
-  type MTBSFireProperties,
-} from "@/lib/server/services/mtbs";
+import { presentParquetBurnSeverity } from "@/lib/environmental/parquet-presentation";
+import type { MtbsSnapshotMetadata } from "@/lib/environmental/mtbs-snapshot";
 import {
   type StrategyScore,
 } from "@/lib/server/services/strategy-scoring";
@@ -33,6 +31,7 @@ import {
 import type { WaterGauge } from "@/lib/server/services/usgs-water";
 import { firmsDayRange } from "@/lib/server/services/environmental-time";
 import {
+  getParquetBurnSeverity,
   getParquetFireDetections,
   getParquetFirePerimeters,
   type ParquetFirePerimeter,
@@ -192,7 +191,13 @@ export interface RegionalContextPayload {
      */
     snapshotDay: string;
   } | null;
-  mtbsPerimeters: { fires: GeoJSON.Feature[]; totalCount: number } | null;
+  mtbsPerimeters: {
+    fires: GeoJSON.Feature[];
+    totalCount: number;
+    truncated: boolean;
+    servedDay: string;
+    mtbsSnapshot?: MtbsSnapshotMetadata;
+  } | null;
   carbonPotential: InterventionSuitability | null;
 }
 
@@ -339,6 +344,7 @@ const EVIDENCE_SOURCE_BY_VIEWED_LAYER: Record<string, RegionalEvidenceSource> = 
   fire: "fireDetections",
   "fire-detections": "fireDetections",
   "fire-perimeters": "firePerimeters",
+  "burn-severity": "mtbsPerimeters",
   water: "streamflow",
   "water-gauges": "streamflow",
   drought: "drought",
@@ -376,13 +382,12 @@ const EVIDENCE_SOURCE_BY_VIEWED_LAYER: Record<string, RegionalEvidenceSource> = 
  *
  * Strategy recommendations are deferred and always unavailable; carbon potential keeps its
  * separate publication gate.
- * `soilProperties` (SoilGrids, via `getSoilProperties`) and `mtbsPerimeters` (via
- * `getMTBSPerimeters`) are populated from live external reads as of 2026-08-14, but neither
- * upstream accepts a historical day, so both are always served as-of-latest.
+ * SoilGrids remains an undated external release. MTBS uses the same day-selected governed
+ * Parquet history/snapshot reader as the map; see services/AGENTS.md.
  */
 const DATE_PARAMETERISED_SOURCES: ReadonlySet<RegionalEvidenceSource> = new Set<
   RegionalEvidenceSource
->(["fireDetections", "streamflow", "drought", "weatherObservations"]);
+>(["fireDetections", "streamflow", "drought", "weatherObservations", "mtbsPerimeters"]);
 
 /**
  * The warehouse stream whose coverage record answers for a block, when one does.
@@ -398,6 +403,7 @@ const COVERAGE_LAYER_BY_EVIDENCE_SOURCE: Partial<
 > = {
   fireDetections: "fire-detections",
   firePerimeters: "fire-perimeters",
+  mtbsPerimeters: "burn-severity",
   streamflow: "water-gauges",
   weatherObservations: "weather-observations",
   drought: SLIDER_STREAM_LAYER_NAMES.drought,
@@ -841,6 +847,7 @@ function resolveSetCorrespondence(
 
 /** Whether one payload block's read completed, and whether it returned anything. */
 interface SourceReadState {
+  coverageUnknownReason?: string;
   failed: boolean;
   hasObservations: boolean;
   /**
@@ -944,7 +951,7 @@ export async function assembleRegionalContext(
     // Live external reads, added 2026-08-14 to replace the two fields this assembler used to
     // hardcode to null despite both having a real server-side read path.
     getSoilProperties(lat, lon),
-    getMTBSPerimeters(bbox),
+    getParquetBurnSeverity({ bbox, date: dateBySource.get("mtbsPerimeters"), mapZoom: CONTEXT_MAP_ZOOM }),
     readCommunityProposals(lat, lon),
   ]);
 
@@ -955,23 +962,12 @@ export async function assembleRegionalContext(
   const perimeterRead = resolveFirePerimeterRead(perimeters);
   const carbonValue = carbon.status === "fulfilled" ? carbon.value : null;
   const soilValue = soil.status === "fulfilled" ? soil.value : null;
-  const mtbsCollection = settled(mtbs, {
-    type: "FeatureCollection",
-    features: [],
-  } as GeoJSON.FeatureCollection);
+  const mtbsRead = mtbs.status === "fulfilled" && mtbs.value.state === "ready" ? mtbs.value : null;
+  const mtbsCollection = presentParquetBurnSeverity(mtbsRead ?? undefined);
   const communityProposalsValue = settled(
     communityProposals,
     [] as CommunityProposal[]
   );
-  const latestMtbsIgnitionDate = mtbsCollection.features
-    .map((feature) => {
-      const properties = feature.properties as MTBSFireProperties | null;
-      return typeof properties?.ignitionDate === "string" ? properties.ignitionDate : null;
-    })
-    .filter((value): value is string => value !== null && Number.isFinite(Date.parse(value)))
-    .sort()
-    .at(-1);
-
   const latestDetectionAt = fireRead.cells.at(0)?.observedAt;
 
   const dataFreshness: Record<string, string> = {
@@ -1002,7 +998,7 @@ export async function assembleRegionalContext(
     // date. It still resolves `contextIsEmpty` and the freshness footer correctly to "available
     // data exists" vs "unavailable" -- the one thing it cannot claim is a specific age.
     soilProperties: soilValue !== null ? "static_release_untimed" : "unavailable",
-    mtbsPerimeters: latestMtbsIgnitionDate ?? "unavailable",
+    mtbsPerimeters: mtbsRead ? `publication_available_${mtbsRead.servedDay}` : "unavailable",
     carbonPotential:
       carbonValue?.availability === "published"
         ? "published_revision_required"
@@ -1043,10 +1039,13 @@ export async function assembleRegionalContext(
             snapshotDay: perimeterRead.snapshotDay,
           }
         : null,
-    mtbsPerimeters: mtbsCollection.features.length
+    mtbsPerimeters: mtbsRead
       ? {
           fires: mtbsCollection.features.slice(0, MAX_MTBS_FIRES),
           totalCount: mtbsCollection.features.length,
+          truncated: mtbsRead.truncated || mtbsCollection.features.length > MAX_MTBS_FIRES,
+          servedDay: mtbsRead.servedDay,
+          ...(mtbsRead.mtbsSnapshot ? { mtbsSnapshot: mtbsRead.mtbsSnapshot } : {}),
         }
       : null,
     carbonPotential:
@@ -1059,6 +1058,16 @@ export async function assembleRegionalContext(
 
   // Track read failures only for viewed sources; deferred strategy evidence makes no read.
   const readState: Partial<Record<RegionalEvidenceSource, SourceReadState>> = {
+    mtbsPerimeters: {
+      failed: mtbs.status === "rejected" ||
+        (mtbs.status === "fulfilled" && mtbs.value.state === "upstream_unavailable"),
+      hasObservations: mtbsRead !== null && mtbsRead.data.length > 0,
+      ...(mtbs.status === "fulfilled" && mtbs.value.state === "not_generated"
+        ? { rungNotWrittenReason: `The MTBS rung at zoom ${CONTEXT_MAP_ZOOM} was not generated for this read.` } : {}),
+      ...(mtbsRead !== null && mtbsRead.data.length === 0
+        && (mtbsRead.truncated || (mtbsRead.mtbsSnapshot?.partialFireYears.length ?? 0) > 0)
+        ? { coverageUnknownReason: "No captured MTBS rows intersect this viewport; incomplete capture coverage or partial fire-year mapping cannot establish that no fires occurred here." } : {}),
+    },
     // `failed` is NOT `fires.status === "rejected"` the way its neighbours are: the Parquet
     // reader returns an outage as DATA (`upstream_unavailable`), so a status check alone would
     // read a down warehouse as the warehouse having published nothing. See `resolveFireRead`.
@@ -1186,6 +1195,9 @@ function resolveViewedLayerReading(
   }
   if (state.hasObservations) {
     return { ...base, outcome: "observed_on_viewed_date", reason: null };
+  }
+  if (state.coverageUnknownReason !== undefined) {
+    return { ...base, outcome: "coverage_unknown_on_viewed_date", reason: state.coverageUnknownReason };
   }
   const coverage = coverageOnDay(capabilityLayers, evidenceSource, row.date);
 

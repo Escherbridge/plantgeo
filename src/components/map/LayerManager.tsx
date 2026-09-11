@@ -535,7 +535,20 @@ export default function LayerManager() {
     },
   ];
 
+  const burnSnapshot = burnSeverityQuery.data?.state === "ready"
+    ? burnSeverityQuery.data.mtbsSnapshot : undefined;
   const parquetLayerFaults = [
+    burnSeverityEnabled && burnSnapshot
+      ? {
+          layerId: "burn-severity-capture",
+          tone: "notice" as const,
+          message: `MTBS captured ${burnSnapshot.capturedThrough}; available ${burnSnapshot.availableDay}. `
+            + `Fire years ${burnSnapshot.coveredYears.from}–${burnSnapshot.coveredYears.to}. `
+            + (burnSnapshot.partialFireYears.length
+              ? `Mapping remains incomplete for ${burnSnapshot.partialFireYears.join(", ")}.`
+              : "The captured query scope is complete."),
+        }
+      : null,
     ...wavecLanes.map((lane) =>
       lane.isDrawn && lane.data?.state === "upstream_unavailable"
         ? {
