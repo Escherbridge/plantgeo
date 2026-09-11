@@ -406,7 +406,7 @@ class _EmptyLane:
 
 
 class _RollbackSession:
-    """The only session behaviour `_govern_absent_day`'s caller needs: a rollback that succeeds."""
+    """A session that accepts the export boundary and its rollback."""
 
     async def execute(self, *_args: object, **_kwargs: object) -> None:
         return None
@@ -428,16 +428,11 @@ def _absence_lane() -> LaneRegistration:
 
 
 @pytest.mark.asyncio
-async def test_a_rung_holding_parts_refuses_the_whole_ladder_before_any_marker_is_written() -> None:
-    """Coarse-first-and-refuse-on-conflict left z0 and z5 governed-absent while z13 served its rows.
-
-    That day is base-complete, so `build_gap_census` never selects it again: the lie is stable and
-    invisible. The ladder is therefore pre-checked at every rung and refused as a whole.
-    """
+async def test_an_unproved_empty_export_preserves_every_existing_object() -> None:
+    """A query with zero rows supplies no authority to change existing publication evidence."""
     backend = RecordingBackend()
     store = ObjectStore(backend)
-    # ONE rung holds data. It is not the censused base rung, so a first-conflict refusal would have
-    # already written the coarser markers by the time it was found.
+    # Retain even a coarse fragment when the export supplies no source evidence.
     store.write_partition(
         signal_rows(),
         layer=SIGNAL_PLANE_STREAM,
@@ -446,6 +441,7 @@ async def test_a_rung_holding_parts_refuses_the_whole_ladder_before_any_marker_i
         day=JULY_FOURTH,
     )
 
+    before = dict(backend.objects)
     outcome, _parts, _rows, marked_bytes, detail = await _export_one_day(
         cast("AsyncSession", _RollbackSession()),
         store,
@@ -458,6 +454,7 @@ async def test_a_rung_holding_parts_refuses_the_whole_ladder_before_any_marker_i
     assert outcome == "blocked"
     assert marked_bytes == 0
     assert detail is not None
-    assert f"z{CONFLICTING_TIER}" in detail, "the note must name the rung an admin has to look at"
+    assert "source receipt" in detail
+    assert backend.objects == before
     written_markers = [key for key in backend.objects if key.endswith(ABSENCE_FILE_NAME)]
     assert written_markers == [], "a refused ladder writes no marker at ANY rung, coarse ones included"

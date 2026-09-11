@@ -27,6 +27,7 @@ from agri_data_service.ingest.archive_walk import ARCHIVE_WALK_TIME_BUDGET_SECON
 from agri_data_service.jobs import (
     JobDefinitionRecord,
     JobDefinitionSpec,
+    JobExecutionAbortError,
     JobHandlerOutcome,
     JobInvocation,
     JobWorkItemSpec,
@@ -1832,6 +1833,8 @@ async def run_executor_tick(
                 break
             try:
                 results.append(await _execute_due_lane(session, candidate, stop=stop))
+            except JobExecutionAbortError:
+                raise
             except Exception as error:  # isolate lane-local faults only while the pinned backend is intact
                 await session.rollback()
                 if isinstance(error, SQLAlchemyError) or _pinned_connection_invalidated(session):
@@ -1892,29 +1895,76 @@ async def run_executor_tick(
             raise unlock_error
 
 
+def _observe_process_waiter(wait_task: asyncio.Task[int]) -> None:
+    """Consume a retired waiter's outcome without overriding the cleanup diagnostic."""
+    with suppress(BaseException):
+        wait_task.result()
+
+
+def _retire_process_waiter(wait_task: asyncio.Task[int]) -> None:
+    """Cancel and observe a waiter without adding another unbounded cleanup wait."""
+    wait_task.add_done_callback(_observe_process_waiter)
+    wait_task.cancel()
+
+
 async def _stop_process(
     process: asyncio.subprocess.Process,
     wait_task: asyncio.Task[int],
 ) -> None:
-    if process.returncode is None:
-        with suppress(ProcessLookupError):
-            process.terminate()
+    """Stop one child, refusing every cleanup path that cannot confirm its exit."""
     try:
-        await asyncio.wait_for(asyncio.shield(wait_task), timeout=COMMAND_TERMINATE_GRACE_SECONDS)
-    except TimeoutError:
         if process.returncode is None:
             with suppress(ProcessLookupError):
-                process.kill()
+                process.terminate()
         try:
-            await asyncio.wait_for(asyncio.shield(wait_task), timeout=COMMAND_KILL_WAIT_SECONDS)
+            await asyncio.wait_for(asyncio.shield(wait_task), timeout=COMMAND_TERMINATE_GRACE_SECONDS)
         except TimeoutError:
-            logger.error("plantgeo_job_executor_subprocess_reap_timeout")
-            wait_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await wait_task
+            if process.returncode is None:
+                with suppress(ProcessLookupError):
+                    process.kill()
+            await asyncio.wait_for(asyncio.shield(wait_task), timeout=COMMAND_KILL_WAIT_SECONDS)
+    except BaseException as error:
+        _retire_process_waiter(wait_task)
+        if process.returncode is None:
+            logger.error(
+                "plantgeo_job_executor_subprocess_reap_timeout"
+                if isinstance(error, TimeoutError)
+                else "plantgeo_job_executor_subprocess_cleanup_failed",
+                error_type=type(error).__name__,
+            )
+            raise JobExecutionAbortError("scheduled command termination was not confirmed during cleanup") from error
+        raise
+    if process.returncode is None:
+        _retire_process_waiter(wait_task)
+        raise JobExecutionAbortError("scheduled command wait completed without confirming process exit")
 
 
 CommandMonitorState = Literal["exited", "shutdown", "fence_lost", "timeout"]
+
+
+async def _cleanup_after_monitor_error(
+    process: asyncio.subprocess.Process,
+    wait_task: asyncio.Task[int],
+    error: BaseException,
+) -> None:
+    """Confirm exit before preserving a monitor's original exception or cancellation."""
+    if process.returncode is not None:
+        _retire_process_waiter(wait_task)
+        return
+    try:
+        await _stop_process(process, wait_task)
+    except JobExecutionAbortError:
+        raise
+    except BaseException as cleanup_error:
+        if process.returncode is None:
+            raise JobExecutionAbortError(
+                "scheduled command termination was not confirmed during error cleanup"
+            ) from cleanup_error
+        logger.warning(
+            "plantgeo_job_executor_cleanup_error_after_exit",
+            error_type=type(error).__name__,
+            cleanup_error_type=type(cleanup_error).__name__,
+        )
 
 
 async def _monitor_subprocess(
@@ -1939,15 +1989,20 @@ async def _monitor_subprocess(
             wait_seconds = min(0.25, deadline - now, max(next_heartbeat - now, 0.0))
             done, _ = await asyncio.wait((wait_task,), timeout=wait_seconds)
             if done:
-                return "exited", wait_task.result()
+                return_code = wait_task.result()
+                if process.returncode is None:
+                    raise JobExecutionAbortError("scheduled command wait completed without confirming process exit")
+                return "exited", return_code
             now = time.monotonic()
             if now >= next_heartbeat:
                 if not await invocation.heartbeat():
                     await _stop_process(process, wait_task)
                     return "fence_lost", process.returncode
                 next_heartbeat = time.monotonic() + COMMAND_HEARTBEAT_SECONDS
-    except BaseException:
-        await _stop_process(process, wait_task)
+    except JobExecutionAbortError:
+        raise
+    except BaseException as error:
+        await _cleanup_after_monitor_error(process, wait_task, error)
         raise
 
 
@@ -2105,6 +2160,9 @@ async def _service_loop(
                     return 1 if summary.failed else 0
                 if await _wait_for_shutdown(stop, poll_seconds):
                     break
+            except JobExecutionAbortError as error:
+                logger.error("plantgeo_job_executor_execution_aborted", error_type=type(error).__name__)
+                return 1
             except Exception as error:
                 failures += 1
                 delay = min(poll_seconds * (2 ** (failures - 1)), MAX_LOOP_BACKOFF_SECONDS)

@@ -1,5 +1,44 @@
 # `pipeline/parquet` — the object store and the partition writer
 
+## September 11 publication recovery
+
+An `EmptyPartitionError` is an explicit blocked gap. The generic exporter does not contact the
+source and cannot turn an empty warehouse query into governed source absence. It leaves every
+existing object untouched and continues other bounded work. Source adapters must supply their own
+`GovernedAbsence` evidence through the shared ladder writer. `zero_row_absence` and its reason
+formatter remain only to reconstruct historical receipt bytes, including the reviewed sensor
+correction fixtures; the export path never calls them. Recovery refuses to copy a recognized
+historical query-zero marker into additional rungs.
+
+`AbsenceWriteReceipt.reason` comes from the bytes actually retained or written. Availability reads
+that receipt from `WrittenObjectLedger`, without a marker GET before its durable retry claim and
+without inventing a fallback reason. Each rung's receipt reason must agree with the terminal claim.
+A read outage after terminal publication therefore cannot lose the day before the claim is stored.
+
+An absence recheck with the same reason retains the exact original marker bytes, source response,
+timestamp and digest. The existing receipt enters the current ledger without a replacement PUT.
+`write_absence_ladder` checks every rung for data, published-empty completion evidence, malformed
+absence evidence and conflicting reasons before any mutation. Missing rungs inherit the retained
+base evidence, or the first retained rung when a source writer is finishing an interrupted ladder.
+Each preexisting rung keeps its own exact bytes. A failed ladder write removes only newly created
+markers. A different reason requires the reviewed explicit correction path.
+
+The gap census now includes base-absent days whose coarse rungs are missing or disagree, using only
+the existing rung listings. These days enter the same bounded repair queue as data ladder gaps.
+Under the lane-day lock, repair rechecks all four rung states. A complete immutable ladder returns
+`skipped_unchanged` without counting a write or retrying contention. A nonterminal base is blocked;
+source-backed absent bases restore missing rungs through the shared absence writer. Product-specific
+source corrections remain with their owning lane.
+
+When availability is wired, absence repair stores a durable intent after all-rung conflict checks
+and before the first missing marker. `plan_absence_receipt` binds exact retained bytes and the
+deterministic bytes intended for missing rungs. This pending claim cannot establish coverage: the
+ordinary availability retry verifies every referenced physical marker before pointer publication.
+A refused claim write leaves the ladder partial and selectable by the next census. An interrupted
+physical repair keeps the claim and its original source receipts; retry can report missing physical
+evidence while the next repair completes it. Existing indexed source evidence and its ceiling are
+reused by the repair publication path.
+
 ## Sensor false-absence correction evidence
 
 `sensor_absence_correction.py` is scoped to September 5/6, 2026 and the fixed reviewed rescue candidate.
@@ -1123,32 +1162,14 @@ drain and the hourly cron are designed to overlap.
 
 ## Governed absences settle the whole ladder, not just the censused rung
 
-`_export_one_day` writes the governed-absence marker at EVERY zoom tier, coarse rungs first and the
-censused base rung LAST — the same ordering `_finalize_written_day` uses for exactly the same
-reason. An empty day is empty at every RESOLUTION of itself, and a reader at z9 must be able to tell
-a governed emptiness from a rung nobody ever wrote. Only the base rung is censused, so writing it
-first and then dying would leave a covered day that is never revisited and silent above z13.
+Source adapters own absence evidence and call `derivation.write_absence_ladder` through
+`govern_day_absent`. The generic exporter's former query-zero fallback is retired: an empty result
+alone stays a blocked gap. See the September 11 recovery contract above for conflict preflight,
+receipt preservation, durable repair intent and repair of partial source-backed absence ladders.
 
-THE WHOLE LADDER IS CHECKED BEFORE THE FIRST MARKER IS WRITTEN. `_govern_absent_day` asks
-`ObjectStore.part_blocking_absence` about every rung first and refuses the ladder atomically when
-any rung still holds parts: the day is `blocked`, the note names every conflicting rung and its
-blocking part key, and NO marker exists at any rung. Refusing on the first conflict instead left the
-coarser rungs marked absent while z13 went on serving rows - and nothing brings that day back, since
-the base tier is already complete. If a write still fails mid-ladder, the markers this attempt had
-written are DELETED before the day is failed; a rollback that cannot itself complete says so and
-needs an admin. Coarse-first ordering still keeps the censused base rung out of the conflict window.
-
-The REASON is therefore rung-independent (`zero_row_absence_reason`), while the tier stays named in
-`upstream_response` and in the key. One absent day whose rungs disagreed about why could never be
-bound into an availability ladder, which requires a single reason across the four rows.
-
-The cost is that retracting an absence is now a four-rung action. `write_partition` refuses a rung
-carrying an absence claim, so a base-only retraction — an admin's, or a direct writer's automatic
-`clear_absence_marker` when its source starts publishing a day — would strand the day failing at z9
-forever. `_finalize_written_day` closes that: a `GovernedAbsenceConflictError` out of the derivation
-means a coarse rung still claims a day whose base rung now holds data, which the successful base
-write already PROVED retracted, so the surviving coarse markers are removed and the day is left
-unfinished for the next tick to rebuild. It decides nothing an admin had not already decided.
+Data replacement after a reviewed or source-backed retraction still owes the whole ladder.
+`_finalize_written_day` and `_derive_repaired_rungs` finish stranded coarse-absence retraction only
+when the base rung already holds data. This does not authorize a new source correction.
 
 ## A ladder repair that cannot succeed is `blocked`, not silently dropped (measured 2026-09-06)
 
@@ -1235,25 +1256,17 @@ is a correct per-tier primitive and keeps its documented single-tier contract.
 - **`_complete.empty.json` is never used for this.** `_is_published_empty_rung` reserves that name
   for a coarse rung whose NON-EMPTY base generalised away; here nothing existed to generalise, and
   `write_completion_marker` refuses one at the base rung anyway.
-- **Every rung is written every time, including one already holding these bytes.**
-  `availability_extension._rung_objects` binds an absent day from THIS RUN's written-object ledger,
-  so a rung skipped as unchanged becomes "z<n> carries no governed-absence marker from this run" and
-  the day is a ladder gap again. Re-putting identical bytes at one key is the store's own no-op.
-  `scripts/backfill_absence_ladder.py` owes no ledger and therefore does skip: it passes `tiers=`
-  naming only the missing rungs, and a second pass over a marked day costs zero PUTs.
+- **Every rung supplies a receipt, including a rung whose original evidence is retained.**
+  `availability_extension._rung_objects` binds an absent day from the current ledger. An unchanged
+  rung records its retained receipt without a PUT; skipping its receipt would make the day a ladder
+  gap again. `scripts/backfill_absence_ladder.py` may still pass only its explicitly missing rungs.
 - `direct/evacuation_zones/adapter.py` already wrote its own four-rung ladder by hand and now calls
   the shared writer; its life-safety pre-flight refusal stays local, because the shared helper's
   `GovernedAbsenceConflictError` cannot name a same-day stand-down.
 
-**One consequence to watch, and it is NOT closed by this lane.** With the ladder whole, a
-direct-adapter absence day now reaches `publish_availability` instead of stopping at a `_LadderGap`,
-and `gap_fill._extend_availability_for_result` passes `absence_reason=zero_row_absence_reason(slug,
-day)` for EVERY absent outcome — a synthesised sentence, while a direct adapter's marker carries its
-own lane-specific reason. `availability_index._verify_absence_object` compares the two
-("absence marker reason does not match terminal evidence"), so those days will fail verification
-until the reason is taken from the marker. That is a `gap_fill.py` change and this lane does not own
-that file; the failure is caught and appended as a note ("the availability step raised and the day
-stays terminal"), so it costs an index row, never a published lie.
+The direct-adapter reason mismatch described by the original September 6 handoff is closed.
+The September 11 recovery contract above now takes the exact reason from the retained write receipt,
+so fixing that mismatch does not introduce a marker GET before the durable availability claim.
 
 Pinned in `tests/parquet/test_absence_ladder.py`, including
 `test_no_lane_writer_marks_one_rung_directly_any_more` — an AST walk of `pipeline/direct/` and

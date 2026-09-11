@@ -1,5 +1,4 @@
-"""What the direct watersheds adapter publishes, and what it governs absent -- through the real
-shared `fill_one_lane_day` finalizer, never through a hand-rolled substitute.
+"""What the direct watersheds adapter publishes or leaves as a gap through the shared finalizer.
 
 NEEDS DuckDB's `spatial` extension twice over: once for `support.py`'s base-rung conversion and once
 for `fill_one_lane_day`'s own z9/z5/z0 `HierarchicalDissolve` derivation
@@ -122,12 +121,13 @@ async def test_a_snapshot_writes_every_rung_and_marks_the_base_last() -> None:
 
 
 @pytest.mark.asyncio
-async def test_an_empty_snapshot_governs_a_zero_row_day_absent_at_every_rung() -> None:
+async def test_an_empty_snapshot_without_absence_evidence_remains_a_gap() -> None:
+    """An empty accepted population supplies no governed source-absence receipt to the finalizer."""
     backend = RecordingBackend()
     store = ObjectStore(backend)
     adapter = adapter_for(snapshot())
 
-    outcome, parts, rows, _written_bytes, _detail = await fill_one_lane_day(
+    outcome, parts, rows, written_bytes, detail = await fill_one_lane_day(
         SessionDouble(),
         store,
         direct_lane(adapter),
@@ -139,11 +139,12 @@ async def test_an_empty_snapshot_governs_a_zero_row_day_absent_at_every_rung() -
         extend_availability=False,
     )
 
-    assert outcome == "absent"
+    assert outcome == "blocked"
     assert parts == 0
     assert rows == 0
-    for tier in ZOOM_TIERS:
-        assert store.absence_exists(WATERSHEDS_STREAM, WATERSHEDS_DIRECT_KIND, tier, DAY), tier
+    assert written_bytes == 0
+    assert "source receipt" in (detail or "")
+    assert backend.objects == {}
 
 
 @pytest.mark.asyncio

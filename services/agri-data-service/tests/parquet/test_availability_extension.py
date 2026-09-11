@@ -1214,6 +1214,8 @@ async def repair(
     not postdate the ones they replace is refused as a stale publication, which is the contract doing
     its job -- an out-of-order retry must never overwrite a newer generation.
     """
+    # An interrupted coarse rewrite needs repair; a complete immutable ladder is now a no-op.
+    store.clear_completion_marker(LANE, GAP_FILL_PARTITION_KIND, WHOLE_WORLD_TIER, day)
     return await repair_one_lane_day(
         cast("AsyncSession", RecordingSession()),
         store,

@@ -12,12 +12,17 @@ import asyncio
 import json
 import re
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
+from unittest.mock import Mock
 
 import pytest
 from sqlalchemy.exc import OperationalError
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
+from agri_data_service.execution import job_executor_service
+from agri_data_service.jobs.errors import JobExecutionAbortError
 from agri_data_service.jobs.registry import (
     JobDefinitionSpec,
     JobHandlerOutcome,
@@ -45,7 +50,10 @@ from agri_data_service.jobs.worker import (
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
+    from sqlalchemy.ext.asyncio import AsyncSession
+
     from agri_data_service.jobs.registry import JobInvocation
+    from agri_data_service.jobs.worker import JobSliceSummary
 
 _MARKER = re.compile(r"^--\s+(\w+)\s*$", re.MULTILINE)
 
@@ -515,6 +523,192 @@ async def test_a_handler_that_left_the_shared_transaction_aborted_still_fails_on
     assert (summary.claimed, summary.retried, summary.succeeded) == (2, 1, 1)
     assert session.emitted("close_attempt_failed") is True
     assert session.emitted("refresh_job_run_rollup") is True
+
+
+@pytest.mark.parametrize(
+    ("invalidated", "database_error"),
+    [(False, True), (True, True), (True, False)],
+)
+async def test_pinned_connection_errors_escape_before_worker_rollback_or_reconnect(
+    monkeypatch: pytest.MonkeyPatch,
+    invalidated: bool,
+    database_error: bool,
+) -> None:
+    session = _slice_session()
+    monkeypatch.setattr(session, "bind", Mock(spec=AsyncConnection, invalidated=invalidated), raising=False)
+    error = (
+        OperationalError("SELECT 1", {}, RuntimeError("connection lost"))
+        if database_error
+        else RuntimeError("pinned backend lost during the handler")
+    )
+    before_error: list[tuple[int, int]] = []
+
+    async def handler(_invocation: JobInvocation) -> JobHandlerOutcome:
+        before_error.append((session.rollbacks, len(session.statements)))
+        raise error
+
+    with pytest.raises(type(error)) as raised:
+        await run_job_slice(
+            cast("AsyncSession", session),
+            definition_name=DEFINITION_NAME,
+            worker_id="executor-worker",
+            registry=_registry(handler),
+            monotonic=ManualClock(),
+        )
+
+    assert raised.value is error
+    assert before_error == [(session.rollbacks, len(session.statements))]
+    assert not session.emitted("close_attempt_failed")
+    assert not session.emitted("retry_work_item")
+    assert not session.emitted("refresh_job_run_rollup")
+
+
+async def test_engine_bound_database_errors_keep_the_existing_lane_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = _slice_session()
+    monkeypatch.setattr(session, "bind", Mock(spec=AsyncEngine), raising=False)
+    session.answer("close_attempt_failed", [{"id": ATTEMPT_ID}])
+    session.answer("retry_work_item", [{"id": WORK_ITEM_ID}])
+
+    async def handler(_invocation: JobInvocation) -> JobHandlerOutcome:
+        session.aborted = True
+        raise OperationalError("SELECT 1", {}, RuntimeError("transaction aborted"))
+
+    summary = await run_job_slice(
+        cast("AsyncSession", session),
+        definition_name=DEFINITION_NAME,
+        worker_id="domain-worker",
+        registry=_registry(handler),
+        monotonic=ManualClock(),
+    )
+
+    assert summary.retried == 1
+    assert summary.dead_lettered == 0
+    assert session.emitted("close_attempt_failed")
+    assert session.emitted("retry_work_item")
+    assert session.emitted("refresh_job_run_rollup")
+
+
+async def test_execution_abort_keeps_unconfirmed_work_leased_without_an_attempt_outcome() -> None:
+    session = _slice_session()
+    error = OSError("child termination was not confirmed")
+    before_error: list[tuple[int, int]] = []
+
+    class _TerminationFailureProcess:
+        returncode: int | None = None
+
+        def __init__(self) -> None:
+            self.terminate_calls = 0
+
+        async def wait(self) -> int:
+            await asyncio.Event().wait()
+            return 0
+
+        def terminate(self) -> None:
+            self.terminate_calls += 1
+            raise error
+
+        def kill(self) -> None:
+            raise AssertionError("a fatal cleanup must not be retried")
+
+    process = _TerminationFailureProcess()
+
+    async def handler(invocation: JobInvocation) -> JobHandlerOutcome:
+        before_error.append((session.rollbacks, len(session.statements)))
+        await job_executor_service._monitor_subprocess(
+            cast("asyncio.subprocess.Process", process), invocation, timeout=0
+        )
+        return JobHandlerOutcome.completed()
+
+    with pytest.raises(JobExecutionAbortError) as raised:
+        await run_job_slice(
+            cast("AsyncSession", session),
+            definition_name=DEFINITION_NAME,
+            worker_id="executor-worker",
+            registry=_registry(handler),
+            monotonic=ManualClock(),
+        )
+
+    await asyncio.sleep(0)
+    assert raised.value.__cause__ is error
+    assert process.terminate_calls == 1
+    assert before_error == [(session.rollbacks, len(session.statements))]
+    assert not session.emitted("close_attempt_failed")
+    assert not session.emitted("close_attempt_deferred")
+    assert not session.emitted("close_attempt_lost")
+    assert not session.emitted("refresh_job_run_rollup")
+
+
+async def test_worker_database_failure_stops_the_executor_before_its_peer_command(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = _slice_session()
+    monkeypatch.setattr(session, "bind", Mock(spec=AsyncConnection, invalidated=False), raising=False)
+    session.answer("close_attempt_failed", [{"id": ATTEMPT_ID}])
+    session.answer("retry_work_item", [{"id": WORK_ITEM_ID}])
+    bucket = datetime(2026, 9, 11, 18, tzinfo=UTC)
+    candidates = [
+        job_executor_service.DueLane(
+            spec=spec,
+            definition=replace(DEFINITION, name=spec.definition_name),
+            scheduled_for=bucket,
+            existing_run_id=JOB_RUN_ID,
+            last_scheduled_for=bucket,
+        )
+        for spec in (
+            job_executor_service.LANE_SPECS["fire-detections-direct-forward"],
+            job_executor_service.LANE_SPECS["jobs-firms-archive"],
+        )
+    ]
+    error = OperationalError("SELECT 1", {}, RuntimeError("executor heartbeat disconnected"))
+    attempted: list[str] = []
+
+    async def handler(_invocation: JobInvocation) -> JobHandlerOutcome:
+        raise error
+
+    async def _slice(
+        worker_session: AsyncSession,
+        *,
+        definition_name: str,
+        **_kwargs: object,
+    ) -> JobSliceSummary:
+        attempted.append(definition_name)
+        return await run_job_slice(
+            worker_session,
+            definition_name=definition_name,
+            worker_id="executor-worker",
+            registry=_registry(handler),
+            monotonic=ManualClock(),
+        )
+
+    async def _leader(_session: AsyncSession) -> bool:
+        return True
+
+    async def _plan(
+        *_args: object,
+    ) -> tuple[list[job_executor_service.LaneTickResult], list[job_executor_service.DueLane]]:
+        return [], candidates
+
+    async def _unlock(_session: AsyncSession) -> None:
+        return None
+
+    monkeypatch.setattr(job_executor_service, "run_job_slice", _slice)
+    monkeypatch.setattr(job_executor_service, "_try_leader_lock", _leader)
+    monkeypatch.setattr(job_executor_service, "_plan_active_lanes", _plan)
+    monkeypatch.setattr(job_executor_service, "_release_leader_lock", _unlock)
+
+    with pytest.raises(OperationalError) as raised:
+        await job_executor_service.run_executor_tick(
+            cast("AsyncSession", session),
+            activation=job_executor_service.ActivationConfig(frozenset()),
+            now=bucket,
+            max_lanes_per_tick=2,
+        )
+
+    assert raised.value is error
+    assert attempted == [candidates[0].spec.definition_name]
+    assert not session.emitted("close_attempt_failed")
 
 
 async def test_a_failure_written_after_an_aborted_transaction_names_the_error_class_not_its_statement() -> None:

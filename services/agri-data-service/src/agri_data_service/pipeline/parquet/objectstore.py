@@ -276,6 +276,7 @@ class AbsenceWriteReceipt:
     day: date
     byte_count: int
     sha256: str
+    reason: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -582,6 +583,36 @@ class ObjectStore:
             )
         )
 
+    def plan_absence_receipt(
+        self,
+        absence: GovernedAbsence,
+        *,
+        layer: str,
+        kind: PartitionKind,
+        zoom: ZoomTier,
+        day: date,
+    ) -> AbsenceWriteReceipt:
+        """Bind retained or intended absence bytes for a durable repair claim without writing them."""
+        relative_path = absence_marker_path(layer, kind, zoom, day)
+        key = self.key_for(relative_path)
+        payload = self._backend.get(key)
+        if payload is None:
+            payload = absence.to_json_bytes()
+        else:
+            held = GovernedAbsence.from_json_bytes(payload)
+            if held.reason != absence.reason:
+                raise GovernedAbsenceConflictError(f"{layer!r} {kind} z{zoom} {day} carries different absence evidence")
+        return AbsenceWriteReceipt(
+            key=key,
+            relative_path=relative_path,
+            kind=kind,
+            zoom=zoom,
+            day=day,
+            byte_count=len(payload),
+            sha256=sha256_digest(payload),
+            reason=absence.reason,
+        )
+
     def write_absence(
         self,
         absence: GovernedAbsence,
@@ -591,7 +622,7 @@ class ObjectStore:
         zoom: ZoomTier,
         day: date,
     ) -> AbsenceWriteReceipt:
-        """Mark one stream-day AT ONE TIER as deliberately empty, refusing when data already covers it."""
+        """Record one rung's absence, retaining compatible existing proof; see AGENTS.md."""
         day_scope = self.key_for(day_prefix(layer, kind, zoom, day))
         for existing in self._backend.list_objects(day_scope):
             if try_parse_partition_path(self.relative_key(existing.key)) is not None:
@@ -599,14 +630,27 @@ class ObjectStore:
                     f"{layer!r} {kind} z{zoom} {day} already holds data ({self.relative_key(existing.key)}); "
                     "correcting a completed record is a manual admin action"
                 )
-        # A day cannot be both deliberately empty and a finished export. The refusal above already
-        # rules out parts, so any completion marker still here is residue from a day whose parts were
-        # removed -- retract it rather than leave two markers making opposite claims about one day.
-        self.clear_completion_marker(layer, kind, zoom, day)
-        payload = absence.to_json_bytes()
         relative_path = absence_marker_path(layer, kind, zoom, day)
         key = self.key_for(relative_path)
-        self._backend.put(key, payload, content_type=ABSENCE_CONTENT_TYPE)
+        payload = self._backend.get(key)
+        if payload is not None:
+            held = GovernedAbsence.from_json_bytes(payload)
+            if held.reason != absence.reason:
+                raise GovernedAbsenceConflictError(
+                    f"{layer!r} {kind} z{zoom} {day} already carries different governed-absence evidence; "
+                    "correcting it requires an explicit reviewed retraction"
+                )
+            absence = held
+        else:
+            completion = self.read_completion_marker(layer, kind, zoom, day)
+            if completion is not None and completion.derived_empty:
+                raise GovernedAbsenceConflictError(
+                    f"{layer!r} {kind} z{zoom} {day} already has published-empty completion evidence; "
+                    "correcting it requires an explicit reviewed retraction"
+                )
+            self.clear_completion_marker(layer, kind, zoom, day)
+            payload = absence.to_json_bytes()
+            self._backend.put(key, payload, content_type=ABSENCE_CONTENT_TYPE)
         return self._record_absence(
             AbsenceWriteReceipt(
                 key=key,
@@ -616,6 +660,7 @@ class ObjectStore:
                 day=day,
                 byte_count=len(payload),
                 sha256=sha256_digest(payload),
+                reason=absence.reason,
             )
         )
 

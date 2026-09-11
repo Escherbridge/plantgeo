@@ -1,0 +1,153 @@
+{
+  "type": "track-verification",
+  "track": "gapless_parquet_publication_20260901",
+  "base_revision": "fa202230958fb55521963e886eb031be5fc266c4",
+  "completed_at": "2026-09-11T19:10:04.275711Z",
+  "command": "uv run --no-sync python scripts/check.py --write-receipt",
+  "pytest_report_option": "PYTEST_ADDOPTS=--junitxml=<workspace>/.omc/research/gapless-python-final-verified-20260911.xml",
+  "scope": "full Python format, lint, mypy and pytest sweep; database test DSNs unset",
+  "quality_receipt": {
+    "checks": [
+      {
+        "command": "ruff format --check src tests scripts",
+        "duration_seconds": 0.071,
+        "name": "format",
+        "status": "pass"
+      },
+      {
+        "command": "ruff check src tests scripts",
+        "duration_seconds": 0.078,
+        "name": "lint",
+        "status": "pass"
+      },
+      {
+        "command": "mypy src scripts",
+        "duration_seconds": 1.48,
+        "name": "mypy",
+        "status": "pass"
+      },
+      {
+        "command": "pytest -q",
+        "duration_seconds": 195.979,
+        "name": "pytest",
+        "status": "pass"
+      }
+    ],
+    "digest_domain": "plantgeo.agri-data-service.quality-receipt.v2",
+    "digest_file_count": 1309,
+    "generated_at": "2026-09-11T19:10:04.275711Z",
+    "schema_version": 2,
+    "tools": {
+      "mypy": "mypy 2.3.0 (compiled: yes)",
+      "pytest": "pytest 9.1.1",
+      "python": "3.12.10",
+      "ruff": "ruff 0.15.22",
+      "uv": "uv 0.11.1 (a6042f67f 2026-03-24 x86_64-pc-windows-msvc)"
+    },
+    "tree_digest": "sha256:d2c093db5ae5e396ce64f2c11e7e78dacfbac43b36092d0e6a5464e69482ba5b"
+  },
+  "repository_boundary_check": {
+    "command": "node scripts/check-data-boundaries.mjs",
+    "status": "pass",
+    "exit_code": 0,
+    "checks": [
+      "client provider URLs",
+      "restricted client/server imports",
+      "fabricated observations"
+    ]
+  },
+  "focused_harness_exception": {
+    "command": "uv run --no-sync python -m pytest tests/test_job_executor_service.py -q --junitxml=<workspace>/.omc/research/gapless-executor-harness-20260911.xml",
+    "passed": 114,
+    "duration_seconds": 1.27,
+    "exit_code": 0,
+    "scope": "single authorized focused run after the complete mock-infrastructure correction, not a full-suite receipt"
+  },
+  "pytest": {
+    "reported_testcases": 6166,
+    "passed": 6016,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 149,
+    "xfailed": 1
+  },
+  "prior_batches": [
+    "Initial complete batch: format/mypy passed, two lint findings and three integration fixture failures; no receipt issued.",
+    "Complete fixture/lint correction: all four gates passed; independent review subsequently identified the non-timeout unknown-child-exit gap.",
+    "Independent-review correction: static gates passed; six new mock cases raced their 1 ms timers, while unknown exit remained fatal. All timing fixtures were stabilized as one batch, with one focused harness check before the final full sweep.",
+    "Final full sweep verifies all unknown-exit signal/wait paths and nominal completion postconditions together with the entire Python service."
+  ],
+  "independent_review": {
+    "verdict": "approved_scoped_local_commit",
+    "reviewer": "independent verifier agent",
+    "remaining_actionable_findings": 0,
+    "working_tree_and_index_digest": "sha256:d2c093db5ae5e396ce64f2c11e7e78dacfbac43b36092d0e6a5464e69482ba5b",
+    "verified_inputs": 1309,
+    "junit_counts_independently_verified": true,
+    "all_capture_digests_verified": true,
+    "production_acceptance": false
+  },
+  "production_mutations": false,
+  "limits": [
+    "Database integration tests were not configured; skips are explicit.",
+    "No deployed retry/restart/expired-lease/disable exercise is certified by this local receipt.",
+    "Runtime census and scheduled-publication evidence retain their own capture times and narrower physical/source limits."
+  ],
+  "capture_digests": [
+    {
+      "path": ".omc/research/gapless-python-final-20260911.log",
+      "sha256": "cfb2a6030e469f6b3714f79ffb6c21d10182d07481cb7b816f320a4b0c4087b1",
+      "bytes": 29933
+    },
+    {
+      "path": ".omc/research/gapless-python-final-corrected-20260911.log",
+      "sha256": "4f375a94db27779d3c9dc3f6ea88a3d7d385ffa0b40093d28b11bacd3efa4f85",
+      "bytes": 362
+    },
+    {
+      "path": ".omc/research/gapless-quality-corrected-20260911.json",
+      "sha256": "ee389146a7e4e0813a0f707f3efcbde47df7c401fdb1bca99c36c6a6c26c73da",
+      "bytes": 1037
+    },
+    {
+      "path": ".omc/research/gapless-python-reviewed-20260911.log",
+      "sha256": "238845dd2174ba6039650098d41e67823e1094c89874c2ec758978535c347144",
+      "bytes": 40897
+    },
+    {
+      "path": ".omc/research/gapless-python-reviewed-20260911.xml",
+      "sha256": "8e2f25638d7abc3465f8d647d5f9a578f60a40f4f0e4a575d0f73c3724bda6ba",
+      "bytes": 995583
+    },
+    {
+      "path": ".omc/research/gapless-executor-harness-20260911.log",
+      "sha256": "233207cad9ad5fd210cae75114a85e0b55e85f45678f302769fe99c0aff598d8",
+      "bytes": 183
+    },
+    {
+      "path": ".omc/research/gapless-executor-harness-20260911.xml",
+      "sha256": "bb779c616f61c1e88feae6b2d9a954daef485fa8f3279197409e5fd659814c9f",
+      "bytes": 17483
+    },
+    {
+      "path": ".omc/research/gapless-data-boundary-20260911.log",
+      "sha256": "2b7932a4819edb8f395fb4c5d88a0cce7a1d2934559bf5db3f4fc8116f49e1cc",
+      "bytes": 179
+    },
+    {
+      "path": ".omc/research/gapless-python-final-verified-20260911.log",
+      "sha256": "713ba5cdd4690ff0bf419700ba2e74454d75cd1418a4dd95c51ee3da923db14d",
+      "bytes": 362
+    },
+    {
+      "path": ".omc/research/gapless-python-final-verified-20260911.xml",
+      "sha256": "4eaab3bff52acf6b38807b18c329a1c7049d9dca789074c7814e89203b3fd25c",
+      "bytes": 980226
+    },
+    {
+      "path": "services/agri-data-service/QUALITY_RECEIPT.json",
+      "sha256": "e2e7c51c6ead7aaa28939ce98cb5c45b3456779507ef3fa77993e325cd86e9f3",
+      "bytes": 1036
+    }
+  ]
+}

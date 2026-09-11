@@ -432,6 +432,45 @@ def claim_repaired_lane_day(  # noqa: PLR0913 - one coordinate of the repaired d
     )
 
 
+def claim_repaired_absence_day(
+    store: ObjectStore,
+    *,
+    lane: str,
+    kind: PartitionKind,
+    outcome: FinalizedLaneDay,
+) -> AvailabilityExtensionOutcome:
+    """Persist an absence repair intent before physical writes; see AGENTS.md, September 11 recovery."""
+    lane_root = availability_lane_root(lane, kind)
+    claim = _claim_from_finalized(outcome, lane=lane, kind=kind, lane_root=lane_root, day=outcome.day)
+    if isinstance(claim, _LadderGap):
+        return AvailabilityExtensionOutcome(
+            state="ladder_incomplete",
+            lane_root=lane_root,
+            day=outcome.day,
+            reason=claim.reason,
+            error_kind=claim.kind,
+        )
+    claimed = _write_claim(
+        store,
+        claim,
+        lane=lane,
+        kind=kind,
+        error_kind="repair_pending",
+        recorded_at=outcome.published_at,
+        repair_intent=True,
+    )
+    if isinstance(claimed, AvailabilityExtensionOutcome):
+        return claimed
+    return AvailabilityExtensionOutcome(
+        state="retry_owed",
+        lane_root=lane_root,
+        day=outcome.day,
+        reason="the absence repair intent retains its source evidence and awaits physical ladder verification",
+        error_kind="repair_pending",
+        retry_marker=claimed,
+    )
+
+
 async def retry_pending_availability(  # noqa: PLR0913 - one lane coordinate or seam per arg
     session: AsyncSession,
     store: ObjectStore,
@@ -802,6 +841,8 @@ def _rung_objects(
                     f"as absent at every required rung"
                 )
             )
+        if absence.reason is not None and absence.reason != outcome.absence_reason:
+            return _LadderGap(reason=f"z{rung} carries a different reason from the finalized governed absence")
         return _RungObjects(
             rung=rung,
             row_count=0,
@@ -1030,6 +1071,7 @@ def _write_claim(  # noqa: PLR0913 - one lane-day coordinate per arg
     kind: PartitionKind,
     error_kind: str,
     recorded_at: datetime,
+    repair_intent: bool = False,
 ) -> str | AvailabilityExtensionOutcome:
     """Record that this terminal day owes its availability step; a failure here is its OWN outcome."""
     try:
@@ -1045,10 +1087,13 @@ def _write_claim(  # noqa: PLR0913 - one lane-day coordinate per arg
             lane_root=claim.lane_root,
             day=claim.day,
             reason=(
-                f"the day is terminal and no retry claim could be recorded for it, so nothing will bring it "
-                f"back: the base-tier census never revisits a completed day. "
-                f"{type(error).__name__}: {error}"
-            ),
+                "the repair intent could not be recorded; no rung was changed and the partial ladder remains "
+                "selectable by a later census. "
+                if repair_intent
+                else "the day is terminal and no retry claim could be recorded for it, so nothing will bring it "
+                "back: the base-tier census never revisits a completed day. "
+            )
+            + f"{type(error).__name__}: {error}",
             error_kind="retry_claim_unwritable",
         )
 
@@ -1389,6 +1434,7 @@ __all__ = [
     "FinalizedLaneDay",
     "LaneDaySource",
     "RepairedBaseRung",
+    "claim_repaired_absence_day",
     "claim_repaired_lane_day",
     "extend_availability_for_lane_day",
     "retry_pending_availability",

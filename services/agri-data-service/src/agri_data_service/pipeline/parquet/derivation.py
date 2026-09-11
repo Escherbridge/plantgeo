@@ -87,11 +87,7 @@ if TYPE_CHECKING:
     from agri_data_service.foundation.parquet.zoom import ZoomTier
     from agri_data_service.pipeline.parquet.objectstore import AbsenceWriteReceipt, ObjectStore
 
-#: The whole ladder one governed absence settles, COARSE RUNGS FIRST AND THE BASE RUNG LAST. Spelled
-#: exactly as `gap_fill.py::_ABSENCE_LADDER_TIERS` and `direct/evacuation_zones/adapter.py` already
-#: spell it, and ordered for the reason this module's docstring gives: only the base rung is censused,
-#: so a run that dies mid-ladder must leave the day re-selectable rather than covered above a base
-#: rung that says nothing.
+#: Coarse rungs first, base last; see AGENTS.md for absence publication and repair ordering.
 ABSENCE_LADDER_TIERS: Final[tuple[ZoomTier, ...]] = (*DERIVED_ZOOM_TIERS, BASE_ZOOM_TIER)
 
 # How many rows one derived part file holds. Matched to `pipeline/lanes/calendar.py:36`'s
@@ -352,35 +348,9 @@ def write_absence_ladder(  # noqa: PLR0913 - one coordinate of the day being gov
     kind: PartitionKind,
     day: date,
     tiers: Sequence[ZoomTier] = ABSENCE_LADDER_TIERS,
+    before_write: Callable[[tuple[AbsenceWriteReceipt, ...]], bool] | None = None,
 ) -> tuple[AbsenceWriteReceipt, ...]:
-    """Mark one lane-day absent at EVERY named rung with ONE piece of evidence, or mark none of them.
-
-    THE WHOLE LADDER IS CHECKED BEFORE THE FIRST MARKER IS WRITTEN, and a rung that fails after an
-    earlier one succeeded is ROLLED BACK. Writing rung by rung and refusing on the first conflict
-    leaves coarse rungs governing a day whose base rung still serves rows -- the exact stable lie the
-    marker contract exists to prevent, and one no census brings back, because `build_gap_census`
-    walks the base tier and finds its parts and its completion marker intact.
-
-    ONE `GovernedAbsence` FOR THE WHOLE LADDER, NEVER ONE PER RUNG. Every rung is handed the same
-    object and therefore the same canonical bytes, which is what
-    `availability_index.py::_validate_generation_day` requires -- "availability day ... mixes absence
-    reasons across its ladder" is raised on a day whose rungs disagree -- and what
-    `_verify_absence_object` re-proves per rung against the row's own `absence_reason`. A caller
-    minting a fresh reason per rung would publish four markers no generation can carry.
-
-    THE ROLLBACK NEVER REMOVES A MARKER IT DID NOT CREATE. Which rungs already carried a marker is
-    read BEFORE the first write, so a re-run over an already-governed day that fails part way leaves
-    that day exactly as governed as it found it, rather than stripping rungs a previous run proved.
-
-    EVERY NAMED RUNG IS WRITTEN, INCLUDING ONE THAT ALREADY HOLDS THESE BYTES, and that is deliberate
-    rather than lazy: `availability_extension.py::_rung_objects` binds an absent day from THIS RUN'S
-    written-object ledger, so a rung skipped as unchanged is a rung the availability step then reports
-    as "carries no governed-absence marker from this run" and the day goes back to being a ladder gap.
-    Re-putting identical bytes at the same key is the object store's own no-op -- one key, one object,
-    the same digest before and after -- so nothing is duplicated by writing it. A caller that must not
-    pay for the redundant writes passes `tiers` naming only the rungs it knows are missing;
-    `scripts/backfill_absence_ladder.py` is exactly that caller.
-    """
+    """Settle one absence ladder while preserving existing proof; see AGENTS.md, September 11 recovery."""
     ordered = tuple(tiers)
     if not ordered:
         raise AbsenceLadderError(
@@ -401,9 +371,35 @@ def write_absence_ladder(  # noqa: PLR0913 - one coordinate of the day being gov
             f"{layer!r} {kind} {day.isoformat()} still holds part files at {rungs}, so it can be governed absent "
             f"at no rung: correcting a completed record is a manual admin action, and no marker was written"
         )
-    # Read BEFORE the loop, so the rollback below can tell a rung this call created from one it merely
-    # rewrote. Deleting the latter would make a failed re-run worse than the state it started from.
-    preexisting = frozenset(tier for tier in ordered if store.absence_exists(layer, kind, tier, day))
+    completed_empty = [
+        tier
+        for tier in ordered
+        if (completion := store.read_completion_marker(layer, kind, tier, day)) is not None and completion.derived_empty
+    ]
+    if completed_empty:
+        raise GovernedAbsenceConflictError(
+            f"{layer!r} {kind} {day} already has published-empty completion evidence at "
+            f"{', '.join(f'z{tier}' for tier in completed_empty)}; no rung was changed"
+        )
+    held = {tier: store.read_absence(layer, kind, tier, day) for tier in ordered}
+    conflicting = [
+        tier for tier, evidence in held.items() if evidence is not None and evidence.reason != absence.reason
+    ]
+    if conflicting:
+        raise GovernedAbsenceConflictError(
+            f"{layer!r} {kind} {day} carries different governed-absence evidence at "
+            f"{', '.join(f'z{tier}' for tier in conflicting)}; no rung was changed"
+        )
+    preexisting = frozenset(tier for tier, evidence in held.items() if evidence is not None)
+    absence = held.get(BASE_ZOOM_TIER) or next(
+        (evidence for evidence in held.values() if evidence is not None), absence
+    )
+    if before_write is not None:
+        planned = tuple(
+            store.plan_absence_receipt(absence, layer=layer, kind=kind, zoom=tier, day=day) for tier in ordered
+        )
+        if not before_write(planned):
+            raise AbsenceLadderError(f"{layer} {day}: the durable repair claim was refused; no rung was changed")
     receipts: list[AbsenceWriteReceipt] = []
     for tier in ordered:
         try:

@@ -229,7 +229,7 @@ class _DayResult:
     one dataclass with a documented default.
     """
 
-    outcome: LaneDayOutcome
+    outcome: LaneDayOutcome | Literal["skipped_unchanged"]
     parts: int
     rows: int
     written_bytes: int
@@ -264,10 +264,7 @@ class LaneLadderCensus:
     # than a day written before the fusion existed. Reported apart because they are different
     # incidents: one is expected backlog, the other is a run dying mid-ladder and worth chasing.
     partial_ladder_days: tuple[date, ...]
-    # Days the base rung governs as ABSENT. They can never carry a coarse rung, and this driver
-    # cannot give them one: `write_absence` is a governed statement per tier and minting three more
-    # of them per day from a repair sweep is an admin decision, not a drain's. Counted so the gap is
-    # visible rather than silently folded into "not complete".
+    # Base absences are reported here; the scheduled gap census owns their receipt-preserving repair.
     base_absent_days: int
     # Days holding both parts and a governed absence: an admin-only anomaly, never touched here.
     base_conflict_days: int
@@ -551,8 +548,7 @@ def ladder_census_report(census: Sequence[LaneLadderCensus]) -> dict[str, object
         # Named, not just summed: a day carrying SOME rungs is a run that died mid-ladder, which
         # reads as ordinary backlog in a total and is a different incident.
         "lanes_with_partial_ladders": [entry.slug for entry in census if entry.partial_ladder_days],
-        # Days no coarse rung can ever cover through this driver. A reader at z9 on such a day finds
-        # nothing and cannot tell "deliberately empty" from "never written" -- see `LaneLadderCensus`.
+        # Absence repair is selected by the scheduled gap census, outside this bulk data census.
         "base_absent_days": sum(entry.base_absent_days for entry in census),
         "lanes_with_errors": [entry.slug for entry in census if entry.error is not None],
     }
