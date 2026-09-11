@@ -478,6 +478,20 @@ is correct, not a loss: no checkpoint recorded it, so the next claim re-walks th
 committing it *alongside* a failure would be the one thing this ledger exists to prevent — data landing
 that the ledger cannot account for.
 
+### A pinned scheduler connection cannot recover inside a worker
+
+The unified executor binds its session to one external `AsyncConnection` because that exact PostgreSQL
+backend owns its advisory leader lock. For this bound session, `_fail_after_error` re-raises SQLAlchemy
+errors and any error accompanied by an invalidated connection before rollback or another statement.
+Otherwise the worker could reconnect, record an ordinary lane retry and let the scheduler run another
+command on a backend that never acquired leadership. The scheduler ends the tick; a later tick must
+acquire a new leader lock. Engine-bound domain handlers retain their ordinary rollback and retry path.
+
+`JobExecutionAbortError` marks external work whose termination could not be confirmed. It escapes the worker
+without closing the attempt, releasing its lease or recording a retry. The executor must stop its
+service, preserving the existing attempt and lease for subsequent recovery and inspection. A handler
+that merely failed should return `JobHandlerOutcome.failed` or raise an ordinary exception instead.
+
 ## Redaction
 
 Redaction lives at the **chokepoint**, not at the call sites. `fail_work_item` and `defer_work_item` run

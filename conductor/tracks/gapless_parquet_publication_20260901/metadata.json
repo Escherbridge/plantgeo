@@ -1,4 +1,12 @@
 {
+  "reconciliation_20260911": {
+    "audited_on": "2026-09-11",
+    "source_head": "fa202230958fb55521963e886eb031be5fc266c4",
+    "status": "active",
+    "next_gate": "Generic publication/executor recovery is locally complete with a full Python quality receipt and independent exact-tree approval: 6016 passed, 149 skipped, one xfailed. September 11 read-only inventory establishes 32 physical registrations, 27 time-bearing products, the effective eight-lane cutoff, and three scheduled backlog advances for six soil products. Full-horizon source conservation, every-product burn-in, live recovery/disable and exact production handoff remain open.",
+    "evidence": "conductor/tracks/gapless_parquet_publication_20260901/evidence/generic-recovery-20260911.md",
+    "historical_partitions": "Historical ownership/slice fields retain their original dates; current authority and measured ownership are in the September 11 evidence packet. Do not execute stale PostgreSQL writer recovery commands."
+  },
   "slug": "gapless_parquet_publication_20260901",
   "title": "Gapless Parquet forward publication and scheduler ownership",
   "type": "infrastructure",
@@ -17,7 +25,7 @@
   "supersedes": {
     "postgres_shrink_ingest_repoint_20260825:s2b-s4-forward-scope": "Direct forward publication, gap authoring and executor activation move here. PostgreSQL P5/P6 retirement stays in the older track."
   },
-  "note": "Give every time-bearing product one durable source owner for forward refresh, repair and coverage status under the stateful executor. Historical completeness does not satisfy this track.",
+  "note": "Generic publication/executor recovery is locally complete with a full Python quality receipt and independent exact-tree approval: 6016 passed, 149 skipped, one xfailed. September 11 read-only inventory establishes 32 physical registrations, 27 time-bearing products, the effective eight-lane cutoff, and three scheduled backlog advances for six soil products. Full-horizon source conservation, every-product burn-in, live recovery/disable and exact production handoff remain open.",
   "production_authorization": "Owner directive 2026-09-02 authorizes an executor-only repository release and eventual controlled removal of the six inventoried Railway writer objects. Feature-branch activation/removal remains forbidden. After merge, the exact main executor deployment must reach SUCCESS and the orchestration task must explicitly resume the production handoff before any fencing, activation, or service deletion.",
   "partitions": {
     "computed_at": "2026-09-02T00:00:00-06:00",
@@ -354,5 +362,25 @@
         ]
       }
     }
+  },
+  "generic_recovery_20260911": {
+    "status": "local_verified_production_gated",
+    "production_mutations": false,
+    "live_inventory": "evidence/live-reinventory-20260911.json",
+    "scheduled_advancements": "evidence/scheduled-soil-advances-20260911.json",
+    "physically_verified_products": 6,
+    "verified_product_days": 18,
+    "verified_rungs": 72,
+    "cutoff": "effective_on_captured_deployment_and_lease_snapshot",
+    "remaining_gates": [
+      "full-horizon upstream coverage and rung conservation",
+      "three scheduled advancements for every activated product",
+      "exact reviewed main deployment and explicit production handoff",
+      "live retry/restart/expired-lease and rollback-by-disable receipts",
+      "product-owned repairs and separately authorized service removals"
+    ],
+    "validation": "evidence/validation-20260911.json",
+    "quality_tree_digest": "sha256:d2c093db5ae5e396ce64f2c11e7e78dacfbac43b36092d0e6a5464e69482ba5b",
+    "independent_review": "approved_scoped_local_commit_no_remaining_findings"
   }
 }

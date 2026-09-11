@@ -13,6 +13,7 @@ from agri_data_service.jobs.dispatch import (
     read_lane_pause_state,
     register_dispatchable_lane,
 )
+from agri_data_service.jobs.errors import JobExecutionAbortError
 from agri_data_service.jobs.lease import (
     CheckpointRecord,
     ClaimedWorkItem,
@@ -77,6 +78,7 @@ __all__ = [
     "JobDefinitionNotFoundError",
     "JobDefinitionRecord",
     "JobDefinitionSpec",
+    "JobExecutionAbortError",
     "JobHandler",
     "JobHandlerOutcome",
     "JobHandlerRegistry",

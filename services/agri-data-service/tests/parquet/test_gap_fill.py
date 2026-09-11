@@ -38,7 +38,7 @@ from agri_data_service.interface.cli import cli
 from agri_data_service.pipeline.direct.evacuation_zones.watermark import (
     EvacuationZonesWatermarkError,
 )
-from agri_data_service.pipeline.parquet.derivation import DerivationResult, TierWriteError
+from agri_data_service.pipeline.parquet.derivation import DerivationResult, TierWriteError, govern_day_absent
 from agri_data_service.pipeline.parquet.gap_fill import (
     GAP_FILL_ZOOM_TIER,
     GapFillContractError,
@@ -69,6 +69,7 @@ from agri_data_service.pipeline.parquet.objectstore import (
     EmptyPartitionError,
     ListedObject,
     ObjectStore,
+    WrittenObjectLedger,
 )
 from agri_data_service.warehouse.parquet.tiers import TierDerivationError
 from tests.parquet.test_objectstore_writer import BASE_TIER, WHOLE_WORLD_TIER, RecordingBackend, signal_rows
@@ -176,6 +177,7 @@ def stub_lane(  # noqa: PLR0913 - one knob per behaviour a driver test needs to 
     nature: LaneNature = "daily_series",
     raises_on: Collection[date] = (),
     empty_on: Collection[date] = (),
+    absent_on: Collection[date] = (),
     watermark_day: date | None = None,
     watermark_raises: bool = False,
 ) -> LaneRegistration:
@@ -191,6 +193,20 @@ def stub_lane(  # noqa: PLR0913 - one knob per behaviour a driver test needs to 
         calls.append(LaneCall(slug=slug, day=day, run_id=run_id, store=store, session=session))
         if day in empty_on:
             raise EmptyPartitionError(f"refusing to write a zero-row {slug!r} observed partition for {day}")
+        if day in absent_on:
+            receipt = govern_day_absent(
+                store,
+                GovernedAbsence(
+                    reason=f"the source served no records for {slug} on {day}",
+                    upstream_response="HTTP 200, complete settled source response with no records",
+                    recorded_at=FROZEN_NOW,
+                    run_id=run_id,
+                ),
+                layer=slug,
+                kind="observed",
+                day=day,
+            )
+            return LaneRunResult(part_count=0, row_count=0, byte_count=receipt.byte_count, absence_recorded=True)
         if day in raises_on:
             raise RuntimeError(f"{slug} export blew up on {day}")
         return LaneRunResult(part_count=1, row_count=5, byte_count=50, absence_recorded=False)
@@ -534,53 +550,35 @@ async def test_a_raised_lane_stops_taking_turns_rather_than_burning_the_tick() -
 
 
 @pytest.mark.asyncio
-async def test_a_zero_row_day_becomes_an_absence_that_never_claims_the_upstream_was_asked() -> None:
+async def test_an_unproved_zero_row_export_remains_a_gap() -> None:
     calls: list[LaneCall] = []
     backend = RecordingBackend()
     newest = days_newest_first(1)[0]
 
     summary = await drive([stub_lane("signal", calls, empty_on={newest})], ObjectStore(backend))
 
-    marker_key = absence_marker_path("signal", "observed", BASE_TIER, newest)
-    assert backend.content_types[marker_key] == ABSENCE_CONTENT_TYPE
-    absence = GovernedAbsence.from_json_bytes(backend.objects[marker_key])
-    assert absence.run_id == RUN_ID
-    assert absence.recorded_at == FROZEN_NOW
-    assert newest.isoformat() in absence.reason
-    assert "returned 0 rows" in absence.upstream_response
-    # The key already carries the tier; the evidence repeats it, so a marker read on its own still
-    # settles one rung rather than reading as a claim about the whole ladder. The REASON does not
-    # repeat it: every rung of one absent day must agree on why, or no availability ladder can bind
-    # them together as one outcome.
-    assert f"zoom tier {GAP_FILL_ZOOM_TIER}" in absence.upstream_response
-    assert f"z{GAP_FILL_ZOOM_TIER}" not in absence.reason
-    assert "DID NOT CONTACT THE UPSTREAM SOURCE SYSTEM" in absence.upstream_response
-    assert summary.lanes[0].absent == 1
+    assert not any(try_parse_absence_marker_path(key) is not None for key in backend.objects)
+    assert summary.lanes[0].absent == 0
+    assert summary.lanes[0].blocked == 1
     assert summary.lanes[0].written == WINDOW_DAYS - 1
-    assert not summary.failed
+    assert summary.failed
+    assert "source receipt" in (summary.lanes[0].detail or "")
 
 
 @pytest.mark.asyncio
 async def test_an_absent_day_is_marked_absent_at_every_rung_with_the_censused_one_last() -> None:
-    """An empty day is empty at every RESOLUTION of itself, and a z9 reader must be told so.
-
-    The base rung goes LAST for the reason `_finalize_written_day` derives before it marks: the
-    census reads the base tier alone, so a run that died after the base marker would leave a day
-    that is covered, never revisited, and silent at every rung above it.
-    """
+    """Every rung receives source-absence evidence before the censused base rung settles the day."""
     calls: list[LaneCall] = []
     backend = RecordingBackend()
     newest = days_newest_first(1)[0]
 
-    summary = await drive([stub_lane("signal", calls, empty_on={newest})], ObjectStore(backend))
+    summary = await drive([stub_lane("signal", calls, absent_on={newest})], ObjectStore(backend))
 
     written_order = [key for key in backend.objects if try_parse_absence_marker_path(key) is not None]
-    assert written_order == [
-        absence_marker_path("signal", "observed", tier, newest)
-        for tier in (*(rung for rung in ZOOM_TIERS if rung != BASE_TIER), BASE_TIER)
-    ]
+    assert set(written_order) == {absence_marker_path("signal", "observed", tier, newest) for tier in ZOOM_TIERS}
+    assert written_order[-1] == absence_marker_path("signal", "observed", BASE_TIER, newest)
     reasons = {GovernedAbsence.from_json_bytes(backend.objects[key]).reason for key in written_order}
-    assert reasons == {zero_row_absence_reason("signal", newest)}
+    assert reasons == {f"the source served no records for signal on {newest}"}
     assert summary.lanes[0].absent == 1
 
 
@@ -601,7 +599,7 @@ async def test_every_terminal_day_reaches_the_availability_step_exactly_once() -
     availability = EmptyAvailabilityStorage()
 
     summary = await drive(
-        [stub_lane("signal", calls, empty_on={newest})],
+        [stub_lane("signal", calls, absent_on={newest})],
         ObjectStore(backend),
         availability_storage=availability,
     )
@@ -645,10 +643,10 @@ async def test_a_recorded_absence_is_covered_on_the_next_tick() -> None:
     store = ObjectStore(backend)
     newest = days_newest_first(1)[0]
     first_calls: list[LaneCall] = []
-    await drive([stub_lane("signal", first_calls, empty_on={newest})], store)
+    await drive([stub_lane("signal", first_calls, absent_on={newest})], store)
 
     second_calls: list[LaneCall] = []
-    await drive([stub_lane("signal", second_calls, empty_on={newest})], store)
+    await drive([stub_lane("signal", second_calls, absent_on={newest})], store)
 
     # The stub writes no part file, so the other four days stay missing on purpose -- what this pins
     # is that the ONE day the driver marked absent is now covered and is never handed to a lane again.
@@ -1964,7 +1962,7 @@ async def test_a_second_absence_conflict_is_reported_rather_than_looped_on() -> 
     assert "an admin must remove it" in outcome.detail
 
 
-def test_the_absence_reason_is_read_off_the_marker_a_direct_writer_left() -> None:
+def test_the_absence_reason_comes_from_the_receipt_a_direct_writer_recorded() -> None:
     """A direct writer's own sentence must survive into the availability row, unaltered.
 
     Every `pipeline/direct/*` adapter writes `kind="observed"` under the same `layer=<slug>/`
@@ -1983,19 +1981,12 @@ def test_the_absence_reason_is_read_off_the_marker_a_direct_writer_left() -> Non
         recorded_at=FROZEN_NOW,
         run_id="fire-detections-forward:seed",
     )
-    backend.put(
-        absence_marker_path("fire-detections", "observed", BASE_TIER, day),
-        marker.to_json_bytes(),
-        content_type=ABSENCE_CONTENT_TYPE,
-    )
-
-    assert _absence_reason_of_record(store, "fire-detections", day) == written_by_a_direct_writer
-    # And it is genuinely a READ, not a coincidence: the synthesised sentence is a different string.
-    assert _absence_reason_of_record(store, "fire-detections", day) != zero_row_absence_reason("fire-detections", day)
+    with store.recording_written_objects() as written:
+        store.write_absence(marker, layer="fire-detections", kind="observed", zoom=BASE_TIER, day=day)
+    assert _absence_reason_of_record(written, day) == written_by_a_direct_writer
+    assert _absence_reason_of_record(written, day) != zero_row_absence_reason("fire-detections", day)
 
 
-def test_the_synthesised_reason_still_answers_a_day_with_no_marker() -> None:
-    """The fallback is the case this driver itself creates, and it must not regress."""
-    store = ObjectStore(RecordingBackend())
+def test_a_missing_receipt_never_synthesizes_an_absence_reason() -> None:
     day = date(2026, 8, 14)
-    assert _absence_reason_of_record(store, "signal", day) == zero_row_absence_reason("signal", day)
+    assert _absence_reason_of_record(WrittenObjectLedger(), day) is None

@@ -33,13 +33,19 @@ from agri_data_service.execution.job_executor_service import (
     run_scheduled_command,
     scheduled_bucket,
 )
-from agri_data_service.jobs import JobDefinitionRecord, JobInvocation, RetryPolicy, ShutdownSignal
+from agri_data_service.jobs import (
+    JobDefinitionRecord,
+    JobExecutionAbortError,
+    JobInvocation,
+    RetryPolicy,
+    ShutdownSignal,
+)
 from agri_data_service.pipeline.direct.burn_severity.products import governed_release_days
 from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRATIONS, LANE_REGISTRY
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
-    from typing import Any
+    from typing import Any, NoReturn
 
 _DEFINITION_ID = uuid.UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
 _INGEST_OWNER = "plantgeo-ingest-cron"
@@ -1712,8 +1718,10 @@ async def test_unlock_failure_without_primary_error_invalidates_and_fails_tick(
     assert invalidated
 
 
-async def test_invalidated_pinned_connection_aborts_before_a_second_candidate(
+@pytest.mark.parametrize("unconfirmed_child", [False, True])
+async def test_unsafe_execution_aborts_before_a_second_candidate(
     monkeypatch: pytest.MonkeyPatch,
+    unconfirmed_child: bool,
 ) -> None:
     session = _ShadowSession()
     session.bind = SimpleNamespace(invalidated=False)  # type: ignore[attr-defined]
@@ -1731,6 +1739,8 @@ async def test_invalidated_pinned_connection_aborts_before_a_second_candidate(
 
     async def _execute(_session: object, candidate: DueLane, **_kwargs: object) -> object:
         attempted.append(candidate.spec.lane_id)
+        if unconfirmed_child:
+            raise JobExecutionAbortError("child termination was not confirmed")
         session.bind.invalidated = True  # type: ignore[attr-defined]
         raise RuntimeError("backend disconnected")
 
@@ -1743,7 +1753,8 @@ async def test_invalidated_pinned_connection_aborts_before_a_second_candidate(
     monkeypatch.setattr(job_executor_service, "_execute_due_lane", _execute)
     monkeypatch.setattr(job_executor_service, "_release_leader_lock", _unlock)
 
-    with pytest.raises(RuntimeError, match="backend disconnected"):
+    expected_error = JobExecutionAbortError if unconfirmed_child else RuntimeError
+    with pytest.raises(expected_error):
         await run_executor_tick(
             session,  # type: ignore[arg-type]
             activation=ActivationConfig(frozenset()),
@@ -2172,6 +2183,351 @@ class _FakeProcess:
         self.killed = True
         self.returncode = -9
         self._done.set()
+
+
+class _UnresponsiveProcess(_FakeProcess):
+    def __init__(self, *, exits_on_kill: bool) -> None:
+        super().__init__()
+        self.exits_on_kill = exits_on_kill
+        self.terminate_calls = 0
+        self.kill_calls = 0
+        self.wait_started = asyncio.Event()
+        self.wait_finished = False
+
+    async def wait(self) -> int:
+        self.wait_started.set()
+        try:
+            return await super().wait()
+        finally:
+            self.wait_finished = True
+
+    def terminate(self) -> None:
+        self.terminate_calls += 1
+        self.terminated = True
+
+    def kill(self) -> None:
+        self.kill_calls += 1
+        if self.exits_on_kill:
+            super().kill()
+
+
+class _CleanupFaultProcess(_UnresponsiveProcess):
+    def __init__(self, *, stage: str, error: BaseException, exit_confirmed: bool) -> None:
+        super().__init__(exits_on_kill=False)
+        self.stage = stage
+        self.error = error
+        self.exit_confirmed = exit_confirmed
+        self._kill_received = asyncio.Event()
+
+    def _fail(self, return_code: int) -> NoReturn:
+        if self.exit_confirmed:
+            self.returncode = return_code
+        raise self.error
+
+    async def wait(self) -> int:
+        self.wait_started.set()
+        try:
+            if self.stage == "wait":
+                self._fail(0)
+            if self.stage == "kill_wait":
+                await self._kill_received.wait()
+                self._fail(-9)
+            return await super().wait()
+        finally:
+            self.wait_finished = True
+
+    def terminate(self) -> None:
+        if self.stage == "terminate":
+            self.terminate_calls += 1
+            self._fail(-15)
+        super().terminate()
+
+    def kill(self) -> None:
+        if self.stage == "kill":
+            self.kill_calls += 1
+            self._fail(-9)
+        if self.stage == "kill_wait":
+            self.kill_calls += 1
+            self._kill_received.set()
+            return
+        super().kill()
+
+
+def _script_cleanup_waits(
+    monkeypatch: pytest.MonkeyPatch,
+    process: _UnresponsiveProcess,
+    *,
+    force_timeouts: tuple[bool, ...],
+) -> None:
+    """Control cleanup deadlines while real waiter faults retain a bounded watchdog."""
+    original_wait_for = asyncio.wait_for
+    phases = iter(
+        zip(
+            (job_executor_service.COMMAND_TERMINATE_GRACE_SECONDS, job_executor_service.COMMAND_KILL_WAIT_SECONDS),
+            force_timeouts,
+            strict=False,
+        )
+    )
+
+    def _observe_shield(waiter: asyncio.Future[int]) -> None:
+        if not waiter.cancelled():
+            waiter.exception()
+
+    async def _wait_for(waiter: asyncio.Future[int], timeout: float | None) -> int:
+        phase = next(phases, None)
+        assert phase is not None, "unexpected cleanup wait"
+        expected_timeout, force_timeout = phase
+        assert timeout == expected_timeout
+        waiter.add_done_callback(_observe_shield)
+        if force_timeout:
+            try:
+                await original_wait_for(process.wait_started.wait(), timeout=5)
+            finally:
+                waiter.cancel()
+            raise TimeoutError("scripted cleanup deadline")
+        return await original_wait_for(waiter, timeout=5)
+
+    monkeypatch.setattr(job_executor_service.asyncio, "wait_for", _wait_for)
+
+
+@pytest.mark.parametrize(
+    ("stage", "cancelled"),
+    [("terminate", False), ("kill", False), ("wait", False), ("kill_wait", False), ("wait", True)],
+)
+@pytest.mark.parametrize("exit_confirmed", [False, True])
+async def test_cleanup_errors_are_fatal_only_without_confirmed_exit(
+    monkeypatch: pytest.MonkeyPatch,
+    stage: str,
+    cancelled: bool,
+    exit_confirmed: bool,
+) -> None:
+    error = asyncio.CancelledError("wait cancelled") if cancelled else OSError("cleanup failed")
+    process = _CleanupFaultProcess(stage=stage, error=error, exit_confirmed=exit_confirmed)
+    _script_cleanup_waits(
+        monkeypatch,
+        process,
+        force_timeouts={"terminate": (), "kill": (True,), "wait": (False,), "kill_wait": (True, False)}[stage],
+    )
+    wait_task = asyncio.create_task(process.wait())
+    expected_error = type(error) if exit_confirmed else JobExecutionAbortError
+
+    with pytest.raises(expected_error) as raised:
+        await job_executor_service._stop_process(cast("asyncio.subprocess.Process", process), wait_task)
+    await asyncio.gather(wait_task, return_exceptions=True)
+
+    if exit_confirmed:
+        assert process.returncode is not None
+        assert not isinstance(raised.value, JobExecutionAbortError)
+        if not cancelled:
+            assert raised.value is error
+    else:
+        assert process.returncode is None
+        assert isinstance(raised.value.__cause__, type(error))
+        if not cancelled:
+            assert raised.value.__cause__ is error
+    assert process.terminate_calls == 1
+    assert process.kill_calls == (1 if stage in {"kill", "kill_wait"} else 0)
+    assert wait_task.done()
+
+
+@pytest.mark.parametrize("exit_confirmed", [False, True])
+async def test_process_lookup_races_still_require_exit_confirmation(
+    monkeypatch: pytest.MonkeyPatch,
+    exit_confirmed: bool,
+) -> None:
+    class _LookupRaceProcess(_UnresponsiveProcess):
+        async def wait(self) -> int:
+            if exit_confirmed:
+                self.returncode = 0
+                return 0
+            return await super().wait()
+
+        def terminate(self) -> None:
+            self.terminate_calls += 1
+            raise ProcessLookupError("child no longer addressable")
+
+        def kill(self) -> None:
+            self.kill_calls += 1
+            raise ProcessLookupError("child no longer addressable")
+
+    process = _LookupRaceProcess(exits_on_kill=False)
+    _script_cleanup_waits(monkeypatch, process, force_timeouts=(False,) if exit_confirmed else (True, True))
+    wait_task = asyncio.create_task(process.wait())
+
+    if exit_confirmed:
+        await job_executor_service._stop_process(cast("asyncio.subprocess.Process", process), wait_task)
+    else:
+        with pytest.raises(JobExecutionAbortError) as raised:
+            await job_executor_service._stop_process(cast("asyncio.subprocess.Process", process), wait_task)
+        assert isinstance(raised.value.__cause__, TimeoutError)
+    await asyncio.gather(wait_task, return_exceptions=True)
+
+    assert process.terminate_calls == 1
+    assert process.kill_calls == (0 if exit_confirmed else 1)
+    assert (process.returncode is not None) == exit_confirmed
+
+
+@pytest.mark.parametrize("direct_monitor_exit", [False, True])
+async def test_successful_wait_without_exit_confirmation_never_completes_a_command(
+    monkeypatch: pytest.MonkeyPatch,
+    direct_monitor_exit: bool,
+) -> None:
+    class _UnconfirmedWaitProcess(_UnresponsiveProcess):
+        async def wait(self) -> int:
+            return 0
+
+    process = _UnconfirmedWaitProcess(exits_on_kill=False)
+    _script_cleanup_waits(monkeypatch, process, force_timeouts=() if direct_monitor_exit else (False,))
+
+    async def _heartbeat() -> bool:
+        return True
+
+    invocation = JobInvocation(
+        shard_key="2026-09-11T18:15:00+00:00",
+        kind="scheduled-command",
+        payload={},
+        cursor={"state": "ready"},
+        parameters={},
+        attempt_number=1,
+        max_attempts=5,
+        progress_fraction=0.01,
+        seconds_remaining=900,
+        heartbeat=_heartbeat,
+    )
+    monkeypatch.setattr(job_executor_service, "COMMAND_HEARTBEAT_SECONDS", 30)
+
+    with pytest.raises(JobExecutionAbortError, match="without confirming process exit"):
+        await job_executor_service._monitor_subprocess(
+            cast("asyncio.subprocess.Process", process),
+            invocation,
+            timeout=60 if direct_monitor_exit else 0,
+        )
+
+    assert process.returncode is None
+    assert process.terminate_calls == (0 if direct_monitor_exit else 1)
+    assert process.kill_calls == 0
+
+
+@pytest.mark.parametrize("cancelled", [False, True])
+@pytest.mark.parametrize("exit_confirmed", [False, True])
+async def test_monitor_preserves_original_diagnostics_only_after_confirmed_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+    cancelled: bool,
+    exit_confirmed: bool,
+) -> None:
+    monkeypatch.setattr(job_executor_service, "COMMAND_HEARTBEAT_SECONDS", 0)
+    original = asyncio.CancelledError("monitor cancelled") if cancelled else RuntimeError("heartbeat failed")
+    cleanup_error = OSError("wait failed after kill")
+    process = _CleanupFaultProcess(stage="kill_wait", error=cleanup_error, exit_confirmed=exit_confirmed)
+    _script_cleanup_waits(monkeypatch, process, force_timeouts=(True, False))
+
+    async def _heartbeat() -> bool:
+        raise original
+
+    invocation = JobInvocation(
+        shard_key="2026-09-11T18:15:00+00:00",
+        kind="scheduled-command",
+        payload={},
+        cursor={"state": "ready"},
+        parameters={},
+        attempt_number=1,
+        max_attempts=5,
+        progress_fraction=0.01,
+        seconds_remaining=900,
+        heartbeat=_heartbeat,
+    )
+    expected_error = type(original) if exit_confirmed else JobExecutionAbortError
+
+    with pytest.raises(expected_error) as raised:
+        await job_executor_service._monitor_subprocess(
+            cast("asyncio.subprocess.Process", process), invocation, timeout=60
+        )
+
+    if exit_confirmed:
+        assert raised.value is original
+    else:
+        assert raised.value.__cause__ is cleanup_error
+    assert process.terminate_calls == 1
+    assert process.kill_calls == 1
+
+
+async def test_termination_timeout_uses_kill_and_confirms_the_child_exited(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    process = _UnresponsiveProcess(exits_on_kill=True)
+    _script_cleanup_waits(monkeypatch, process, force_timeouts=(True, False))
+    wait_task = asyncio.create_task(process.wait())
+
+    await job_executor_service._stop_process(cast("asyncio.subprocess.Process", process), wait_task)
+
+    assert process.terminate_calls == 1
+    assert process.kill_calls == 1
+    assert process.returncode == -9
+    assert process.wait_finished
+    assert wait_task.result() == -9
+
+
+@pytest.mark.parametrize("stop_reason", ["shutdown", "timeout", "fence_lost"])
+async def test_unconfirmed_child_termination_aborts_every_monitor_stop_path(
+    monkeypatch: pytest.MonkeyPatch,
+    stop_reason: str,
+) -> None:
+    monkeypatch.setattr(job_executor_service, "COMMAND_HEARTBEAT_SECONDS", 0)
+    process = _UnresponsiveProcess(exits_on_kill=False)
+    _script_cleanup_waits(monkeypatch, process, force_timeouts=(True, True))
+
+    async def _heartbeat() -> bool:
+        return False
+
+    invocation = JobInvocation(
+        shard_key="2026-09-11T18:15:00+00:00",
+        kind="scheduled-command",
+        payload={},
+        cursor={"state": "ready"},
+        parameters={},
+        attempt_number=1,
+        max_attempts=5,
+        progress_fraction=0.01,
+        seconds_remaining=900,
+        heartbeat=_heartbeat,
+        shutdown_requested=lambda: stop_reason == "shutdown",
+    )
+
+    with pytest.raises(JobExecutionAbortError, match="termination was not confirmed"):
+        await job_executor_service._monitor_subprocess(
+            cast("asyncio.subprocess.Process", process),
+            invocation,
+            timeout=0 if stop_reason == "timeout" else 60,
+        )
+    await asyncio.sleep(0)
+
+    assert process.terminate_calls == 1
+    assert process.kill_calls == 1
+    assert process.returncode is None
+    assert process.wait_finished
+
+
+async def test_execution_abort_exits_service_without_a_backoff_or_another_tick(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stop = _ObservedShutdownSignal()
+    ticks: list[int] = []
+
+    async def _tick(*_args: object, **_kwargs: object) -> job_executor_service.ExecutorTickSummary:
+        ticks.append(1)
+        raise JobExecutionAbortError("child termination was not confirmed")
+
+    _install_service_loop_harness(monkeypatch, stop=stop, tick=_tick)
+    exit_code = await job_executor_service._service_loop(
+        activation=ActivationConfig(frozenset()),
+        poll_seconds=0.001,
+        max_lanes_per_tick=2,
+        once=False,
+    )
+
+    assert exit_code == 1
+    assert ticks == [1]
+    assert not stop.wait_entered.is_set()
 
 
 async def test_running_subprocess_terminates_and_yields_on_shutdown(

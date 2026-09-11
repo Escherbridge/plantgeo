@@ -15,8 +15,11 @@ from typing import TYPE_CHECKING, Final, Literal
 
 import structlog
 from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncConnection
 
 from agri_data_service.db.sql_queries import load_query_sql
+from agri_data_service.jobs.errors import JobExecutionAbortError
 from agri_data_service.jobs.lease import (
     apply_statement_timeout,
     canonical_json,
@@ -887,6 +890,9 @@ async def _fail_after_error(  # noqa: PLR0913 - the claim, its definition, its g
     metrics: Mapping[str, object],
 ) -> ItemLanding:
     """Land a raised step as this shard's failure, on a session the exception may have left aborted."""
+    bind = getattr(session, "bind", None)
+    if isinstance(bind, AsyncConnection) and (isinstance(error, SQLAlchemyError) or bind.invalidated):
+        raise error
     # _reset FIRST, unconditionally, exactly as _abandon opens. The handler shares this session, and a
     # connection reset, a lock timeout or the statement timeout leaves it in InFailedSQLTransaction --
     # in which every subsequent statement raises. Recording the failure on an aborted transaction would
@@ -949,6 +955,8 @@ async def _invoke_handler(  # noqa: PLR0913 - one parameter per collaborator thi
             return _HandlerStep(landing=await _abandon(session, claim))
         merged: Mapping[str, object] = {**metrics, **outcome.metrics}
         applied = await _apply_outcome(session, definition, claim, outcome, merged)
+    except JobExecutionAbortError:
+        raise
     except asyncio.CancelledError:
         # CancelledError derives from BaseException, so the `except Exception` below never saw it. A
         # cancelled slice therefore unwound with its shard still 'running' behind a live lease -- the

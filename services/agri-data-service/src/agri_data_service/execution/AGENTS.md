@@ -1855,6 +1855,23 @@ not killed merely because its parent used the old 900-second default. The inner 
 cooperative: a handler already inside one unit releases only when it returns to a transaction-safe
 boundary, after which the parent's bounded kill is still the final fallback.
 
+Every cleanup exception from termination, kill or either wait is classified by the child's exit state.
+If `process.returncode` remains unknown, `_stop_process` raises `JobExecutionAbortError` with the triggering
+error as its cause. The same refusal applies when a wait returns successfully without confirming exit,
+including the monitor's direct command-completion path. A `ProcessLookupError` while signalling remains
+only a race to resolve through the bounded wait, never proof of exit.
+
+The monitor does not retry fatal cleanup, the worker leaves the attempt and lease intact, the tick does
+not dispatch another candidate and the service exits with status 1 without another poll or backoff.
+Retired waiter tasks are cancelled and observed through a completion callback so a secondary task error
+cannot mask the exit-state refusal or introduce an unbounded cleanup wait. Once exit is confirmed,
+cleanup exceptions keep their ordinary diagnostic or cancellation. If cleanup itself raises after a
+primary monitor error or cancellation, the monitor preserves the primary exception and records only the
+secondary error's type. Confirmed exit is required before a normal timeout retry or shutdown yield.
+
+Database failures in the pinned worker session also escape before its generic failure recovery can
+reconnect; see jobs/AGENTS.md, "A pinned scheduler connection cannot recover inside a worker".
+
 ### Failed checkpoints are superseded by the clock or by an operator
 
 Observed 2026-09-03: under the new executor, ten active lanes sat frozen at their 2026-09-02 buckets.

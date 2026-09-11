@@ -331,9 +331,10 @@ async def test_max_days_reports_unvisited_candidate_days_as_remaining() -> None:
 
 @pytest.mark.asyncio
 async def test_transient_absence_read_uses_bounded_retry_budget() -> None:
-    backend = _FlakyGetBackend(failures=2)
+    backend = _FlakyGetBackend(failures=0)
     store = ObjectStore(backend)
     store.write_absence(EVIDENCE, layer="vegetation", kind="observed", zoom=13, day=DAY)
+    backend.failures = 2
     sleeps: list[float] = []
 
     report = await propagate_vegetation_absence_ladders(

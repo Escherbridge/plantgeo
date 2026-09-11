@@ -103,23 +103,31 @@ from agri_data_service.foundation.parquet.paths import (
 )
 from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
 from agri_data_service.pipeline.parquet.availability_extension import (
+    LADDER_REPAIR_ORIGIN,
     POSTGRES_DAY_EXPORT_ORIGIN,
     AvailabilityExtensionOutcome,
     AvailabilityExtensionTally,
     FinalizedLaneDay,
     LaneDaySource,
     RepairedBaseRung,
+    claim_repaired_absence_day,
     claim_repaired_lane_day,
     extend_availability_for_lane_day,
     retry_pending_availability,
 )
 from agri_data_service.pipeline.parquet.availability_index import EvidenceReceipt
-from agri_data_service.pipeline.parquet.derivation import DerivationResult, derive_and_write_day_tiers
+from agri_data_service.pipeline.parquet.derivation import (
+    AbsenceLadderError,
+    DerivationResult,
+    derive_and_write_day_tiers,
+    write_absence_ladder,
+)
 from agri_data_service.pipeline.parquet.lane_ceiling import allowed_source_ceiling
 from agri_data_service.pipeline.parquet.objectstore import (
     EmptyPartitionError,
     GovernedAbsenceConflictError,
     SurplusPruneResult,
+    WrittenObjectLedger,
     availability_lane_root,
     oldest_export_instant,
 )
@@ -141,11 +149,11 @@ if TYPE_CHECKING:
         SourceWatermark,
         StaticLaneState,
     )
-    from agri_data_service.foundation.parquet.paths import PartitionKind
+    from agri_data_service.foundation.parquet.paths import PartitionDayStatus, PartitionKind
     from agri_data_service.foundation.parquet.zoom import ZoomTier
     from agri_data_service.pipeline.parquet.availability_index import AvailabilityStorage
     from agri_data_service.pipeline.parquet.lane_registry import LaneRegistration
-    from agri_data_service.pipeline.parquet.objectstore import ObjectStore, PartitionRead, WrittenObjectLedger
+    from agri_data_service.pipeline.parquet.objectstore import AbsenceWriteReceipt, ObjectStore, PartitionRead
 
     # One lane-day's mutual exclusion, injectable so a test need not fake Postgres advisory
     # functions. Yields whether the lock was granted, and releases on exit; the real one is
@@ -169,10 +177,6 @@ GAP_FILL_ZOOM_TIER: Final[ZoomTier] = ZOOM_TIERS[-1]
 # The rungs DERIVED from the base one, taken from the ladder rather than listed, so a rung added to
 # `ZOOM_TIERS` is covered by the governed-absence ladder without a second edit anywhere.
 _DERIVED_GAP_FILL_TIERS: Final[tuple[ZoomTier, ...]] = tuple(tier for tier in ZOOM_TIERS if tier != GAP_FILL_ZOOM_TIER)
-
-# Coarse rungs FIRST, the censused base rung LAST: a governed-absence ladder written in this order
-# leaves an interrupted run's day `missing` rather than covered-but-empty above z13.
-_ABSENCE_LADDER_TIERS: Final[tuple[ZoomTier, ...]] = (*_DERIVED_GAP_FILL_TIERS, GAP_FILL_ZOOM_TIER)
 
 # Matches `jobs-pulse`'s own tick budget: generous enough that a healthy incremental tick never trips
 # it, short enough that one stuck lane cannot consume an entire hourly cadence.
@@ -359,7 +363,7 @@ class LaneFillVerdict:
     ladder_remaining: int
     # Days this driver may not resolve on its own. Reported apart from `written`/`absent` because
     # they are neither, and apart from a raised lane because the lane kept working. Counts BOTH an
-    # export day blocked by stray parts (`_govern_absent_day`) and a ladder day blocked by an
+    # export day blocked by missing source evidence and a ladder day blocked by an
     # unrepairable schema mismatch (`ladder_unrepairable` is the ladder-only subset of this).
     blocked: int
     # Days another run was already writing. Not failure, not progress -- see `postgres_lane_day_lock`.
@@ -584,6 +588,29 @@ def _base_published_days(keys: Sequence[str], *, layer: str, zoom: ZoomTier) -> 
     return {day for day, status in statuses.items() if status == "data"}
 
 
+def _rung_absent_days(keys: Sequence[str], *, layer: str, zoom: ZoomTier) -> set[date]:
+    """Find conflict-free absent days from one rung's listing without opening source evidence."""
+    days = {
+        parsed.day
+        for key in keys
+        if (parsed := try_parse_absence_marker_path(key)) is not None
+        and parsed.layer == layer
+        and parsed.kind == GAP_FILL_PARTITION_KIND
+        and parsed.zoom == zoom
+    }
+    if not days:
+        return set()
+    statuses = partition_day_statuses(
+        layer=layer,
+        kind=GAP_FILL_PARTITION_KIND,
+        zoom=zoom,
+        first_day=min(days),
+        last_day=max(days),
+        keys=keys,
+    )
+    return {day for day, status in statuses.items() if status == "absent"}
+
+
 @dataclass(frozen=True, slots=True)
 class _LadderRepairCensus:
     """One lane's ladder half: the days this TICK may repair, and the ones only the bulk drain reaches."""
@@ -618,9 +645,15 @@ def _ladder_repair_census(  # noqa: PLR0913 - one census coordinate per arg, non
     """
     try:
         base_data_days = _base_published_days(base_keys, layer=lane.slug, zoom=zoom)
-        if not base_data_days:
+        base_absent_days = _rung_absent_days(base_keys, layer=lane.slug, zoom=zoom)
+        if not base_data_days and not base_absent_days:
             return _LadderRepairCensus(days=())
-        completions = derived_rung_completions(store, layer=lane.slug, kind=GAP_FILL_PARTITION_KIND)
+        complete_data = set(base_data_days)
+        complete_absent = set(base_absent_days)
+        for tier in _DERIVED_GAP_FILL_TIERS:
+            keys = store.list_partition_keys(lane.slug, GAP_FILL_PARTITION_KIND, tier)
+            complete_data &= completed_rung_days(keys, layer=lane.slug, kind=GAP_FILL_PARTITION_KIND, zoom=tier)
+            complete_absent &= _rung_absent_days(keys, layer=lane.slug, zoom=tier)
     except Exception as error:  # per-lane isolation: an unreadable rung listing must not end the census
         return _LadderRepairCensus(
             days=(), error=f"censusing {lane.slug!r} derived rungs failed: {type(error).__name__}: {error}"
@@ -628,10 +661,7 @@ def _ladder_repair_census(  # noqa: PLR0913 - one census coordinate per arg, non
     # INTERSECTED, NEVER UNIONED: a day is ladder-complete only when EVERY rung holds it, so the
     # complete set is the intersection and everything else owes a re-derivation. A union would call a
     # day whole because one of its three rungs landed.
-    complete = set(base_data_days)
-    for marked in completions.values():
-        complete &= marked
-    incomplete = base_data_days - complete
+    incomplete = (base_data_days - complete_data) | (base_absent_days - complete_absent)
     in_scope = incomplete if scope is None else {day for day in incomplete if scope[0] <= day <= scope[1]}
     ordered = tuple(sorted(in_scope, reverse=True))
     out_of_scope = len(incomplete) - len(in_scope)
@@ -933,7 +963,7 @@ def gap_census_report(census: Sequence[LaneGapCensus]) -> dict[str, object]:
 
 
 def zero_row_absence_reason(slug: str, day: date) -> str:
-    """Return the ONE reason every rung of one absent lane-day carries; the ladder requires they agree."""
+    """Reconstruct the reason in a historical query-zero receipt; never author new source evidence."""
     return f"the {slug} day export returned zero rows for {day.isoformat()}"
 
 
@@ -946,16 +976,7 @@ def zero_row_absence(  # noqa: PLR0913 - one coordinate of the marked day per ar
     observed: str,
     recorded_at: datetime,
 ) -> GovernedAbsence:
-    """Build the evidence for a day whose export query genuinely returned nothing, at the tier it was asked of.
-
-    THE PAYLOAD CLAIMS ONLY WHAT THIS RUN OBSERVED. It says the day-scoped export query over this
-    warehouse's own tables returned zero rows; it never says the upstream source system was asked,
-    because this driver does not contact one. Reconciling the two is `pipeline/validation/<slug>.py`.
-    The tier is named in the `upstream_response` as well as in the key, because a marker lifted out
-    of its path would otherwise read as a claim about the whole ladder when it settles one rung --
-    while the REASON stays rung-independent, because it is the one field the availability ladder
-    requires every rung of one absent day to agree on.
-    """
+    """Reconstruct historical query-zero marker bytes for recovery; see AGENTS.md."""
     return GovernedAbsence(
         reason=zero_row_absence_reason(slug, day),
         upstream_response=(
@@ -1106,7 +1127,7 @@ def _record_repair_outcome(entry: _LaneProgress, result: LadderRepairOutcome) ->
             entry.detail,
             f"{', '.join(f'z{tier}' for tier in result.emptied_tiers)} derived to no rows and are published empty",
         )
-    if result.outcome == "written":
+    if result.outcome in ("written", "absent"):
         entry.repaired += 1
     elif result.outcome == "contended":
         entry.contended += 1
@@ -1222,15 +1243,20 @@ async def _export_one_day(  # noqa: PLR0913 - one caller-supplied coordinate per
         result = await lane.adapter(session, store, day=day, run_id=run_id)
     except EmptyPartitionError as empty:
         await session.rollback()
-        return _govern_absent_day(store, lane, day=day, run_id=run_id, now=now, observed=str(empty))
+        return (
+            "blocked",
+            0,
+            0,
+            0,
+            f"{day.isoformat()}: the export returned zero rows without a source receipt proving governed "
+            f"absence; the day remains an explicit gap and no absence marker was written: {empty}",
+        )
     except Exception as error:  # per-lane isolation: one lane's fault must not end the tick
         await session.rollback()
         return "raised", 0, 0, 0, f"{day.isoformat()}: {type(error).__name__}: {error}"
     await session.rollback()
     if result.absence_recorded:
-        # A governed absence is ONE object and cannot be half-written, so it asserts its own
-        # completion and never gets a marker. Writing one here would put two markers on a day whose
-        # only honest reading is `absent`.
+        # Source adapters settle the absence ladder; availability verifies every retained receipt.
         return "absent", result.part_count, result.row_count, result.byte_count, None
     return _finalize_written_day(
         store,
@@ -1243,102 +1269,6 @@ async def _export_one_day(  # noqa: PLR0913 - one caller-supplied coordinate per
         now=now,
         derive_tiers=derive_tiers,
     )
-
-
-def _govern_absent_day(  # noqa: PLR0913 - one coordinate of the day being governed per arg
-    store: ObjectStore,
-    lane: LaneRegistration,
-    *,
-    day: date,
-    run_id: str,
-    now: Callable[[], datetime],
-    observed: str,
-) -> tuple[LaneDayOutcome, int, int, int, str | None]:
-    """Govern one whole day as absent at EVERY rung, or write no marker at any rung at all.
-
-    THE WHOLE LADDER IS CHECKED BEFORE THE FIRST MARKER IS WRITTEN. Writing coarse-first and
-    refusing on the first conflict left the earlier rungs marked absent while z13 went on serving
-    rows -- the exact stable lie the marker contract exists to prevent, and one no census brings
-    back: `build_gap_census` walks the base tier, which still holds its parts and its completion.
-    A rung that a later write still fails on is ROLLED BACK, marker by marker, for the same reason.
-
-    THE COARSE RUNGS FIRST, THE BASE RUNG LAST, for the reason `_finalize_written_day` derives
-    before it marks: only the base tier is censused, so a run that died after the base marker would
-    leave a day covered and never revisited while every rung above it said nothing at all.
-    """
-    blocked = tuple(
-        (zoom, part)
-        for zoom in _ABSENCE_LADDER_TIERS
-        if (part := store.part_blocking_absence(lane.slug, GAP_FILL_PARTITION_KIND, zoom, day)) is not None
-    )
-    if blocked:
-        # Only an admin can say whether those parts remain valid, so this driver refuses to guess --
-        # but it also refuses to stop the lane over it, because this day is the NEWEST one and every
-        # older gap sits behind it. See FAILING_LANE_OUTCOMES.
-        rungs = ", ".join(f"z{zoom} ({part})" for zoom, part in blocked)
-        return (
-            "blocked",
-            0,
-            0,
-            0,
-            f"{day.isoformat()}: the export returned zero rows but {rungs} still holds part files, so the day "
-            f"can be neither written nor governed as absent without an admin deciding whether those parts are "
-            f"still valid; no absence marker was written at any rung",
-        )
-    marked = 0
-    written: list[ZoomTier] = []
-    for zoom in _ABSENCE_LADDER_TIERS:
-        try:
-            receipt = store.write_absence(
-                zero_row_absence(
-                    lane.slug,
-                    zoom=zoom,
-                    day=day,
-                    run_id=run_id,
-                    observed=observed,
-                    recorded_at=now(),
-                ),
-                layer=lane.slug,
-                kind=GAP_FILL_PARTITION_KIND,
-                zoom=zoom,
-                day=day,
-            )
-        except Exception as refusal:  # a marker that cannot be written is a real failure, not an absence
-            rolled_back = _retract_absence_ladder(store, lane, day=day, written=tuple(written))
-            return (
-                "raised",
-                0,
-                0,
-                marked,
-                f"{day.isoformat()}: z{zoom} absence marker refused: {refusal}. {rolled_back}",
-            )
-        written.append(zoom)
-        marked += receipt.byte_count
-    return "absent", 0, 0, marked, None
-
-
-def _retract_absence_ladder(
-    store: ObjectStore,
-    lane: LaneRegistration,
-    *,
-    day: date,
-    written: tuple[ZoomTier, ...],
-) -> str:
-    """Undo a partly-written absence ladder, so no rung governs a day the others do not."""
-    if not written:
-        return "no rung had been marked, so the day is exactly as this attempt found it"
-    failures: list[str] = []
-    for zoom in written:
-        try:
-            store.clear_absence_marker(lane.slug, GAP_FILL_PARTITION_KIND, zoom, day)
-        except Exception as error:  # one rung's rollback must not skip the rest
-            failures.append(f"z{zoom}: {type(error).__name__}: {error}")
-    if failures:
-        return (
-            "the markers this attempt had already written could NOT all be retracted, so the day now "
-            f"governs some rungs and not others and needs an admin: {'; '.join(failures)}"
-        )
-    return f"the {len(written)} marker(s) this attempt had written were retracted, leaving the day unmarked"
 
 
 def _finalize_written_day(  # noqa: PLR0913 - one coordinate of the day being closed per arg
@@ -1716,23 +1646,10 @@ def _append_note(detail: str | None, note: str) -> str:
     return note if detail is None else f"{detail}; {note}"
 
 
-def _absence_reason_of_record(store: ObjectStore, slug: str, day: date) -> str:
-    """Return the reason the day's BASE marker actually carries, never a second guess at it.
-
-    THIS DRIVER IS NOT THE ONLY WRITER OF THIS NAMESPACE. Every `pipeline/direct/*` adapter writes
-    `kind="observed"` under the same `layer=<slug>/` prefix this lane fills, so a day marked absent
-    by a direct writer carries THAT lane's own sentence -- "the source served no fire detections in
-    the requested extent", say -- not this driver's zero-row phrasing. `availability_index.py:2320`
-    compares the two: `if absence.reason != evidence.absence_reason: raise AvailabilityConflictError`.
-    Synthesising the reason here therefore refused to index exactly the days the direct writers had
-    just governed, and did it in a `try` whose except keeps the day terminal -- so the failure showed
-    up as a missing index row and a note, never as a wrong answer, which is why it survived.
-
-    Falls back to the synthesised sentence only when no marker can be read, which is the case this
-    driver itself creates and the one `zero_row_absence_reason` was written for.
-    """
-    absence = store.read_absence(slug, GAP_FILL_PARTITION_KIND, GAP_FILL_ZOOM_TIER, day)
-    return zero_row_absence_reason(slug, day) if absence is None else absence.reason
+def _absence_reason_of_record(written: WrittenObjectLedger, day: date) -> str | None:
+    """Read the retained base receipt's reason without I/O before the durable retry claim."""
+    absence = written.absence_for(kind=GAP_FILL_PARTITION_KIND, zoom=GAP_FILL_ZOOM_TIER, day=day)
+    return None if absence is None else absence.reason
 
 
 async def _extend_availability_for_result(  # noqa: PLR0913 - one coordinate of the finished day per arg
@@ -1784,9 +1701,7 @@ async def _extend_availability_for_result(  # noqa: PLR0913 - one coordinate of 
                 ),
                 published_at=published_at,
                 source_ceiling=source_ceiling,
-                absence_reason=(
-                    None if terminal_state == "published" else _absence_reason_of_record(store, lane.slug, day)
-                ),
+                absence_reason=(None if terminal_state == "published" else _absence_reason_of_record(written, day)),
             ),
             availability=availability_storage,
             now=now,
@@ -1922,7 +1837,7 @@ class LadderRepairOutcome:
     `DerivationResult.emptied` -- so a caller cannot infer it from the day's part count.
     """
 
-    outcome: LaneDayOutcome
+    outcome: LaneDayOutcome | Literal["skipped_unchanged"]
     parts: int
     rows: int
     written_bytes: int
@@ -1959,6 +1874,141 @@ def _ladder_schema_mismatch(error: BaseException) -> bool:
     return False
 
 
+def _locked_ladder_statuses(
+    store: ObjectStore, lane: LaneRegistration, day: date
+) -> dict[ZoomTier, PartitionDayStatus]:
+    """Recheck this month's keys under the day lock before acting on an earlier census."""
+    return {
+        tier: partition_day_statuses(
+            layer=lane.slug,
+            kind=GAP_FILL_PARTITION_KIND,
+            zoom=tier,
+            first_day=day,
+            last_day=day,
+            keys=store.list_partition_keys(lane.slug, GAP_FILL_PARTITION_KIND, tier, year=day.year, month=day.month),
+        )[day]
+        for tier in ZOOM_TIERS
+    }
+
+
+def _repair_absent_lane_day(  # noqa: PLR0913 - one coordinate of the retained proof and its repair
+    store: ObjectStore,
+    lane: LaneRegistration,
+    *,
+    day: date,
+    today: date | None,
+    now: Callable[[], datetime],
+    statuses: Mapping[ZoomTier, PartitionDayStatus],
+    availability_storage: AvailabilityStorage | None,
+) -> LadderRepairOutcome:
+    """Restore missing absence rungs from their retained base proof and durably claim the repaired day."""
+    absence = store.read_absence(lane.slug, GAP_FILL_PARTITION_KIND, GAP_FILL_ZOOM_TIER, day)
+    if absence is None:
+        raise GapFillContractError(f"{lane.slug} {day}: the retained base absence disappeared under its day lock")
+    if absence.reason == zero_row_absence_reason(lane.slug, day):
+        return LadderRepairOutcome(
+            "blocked",
+            0,
+            0,
+            0,
+            f"{day}: the retained marker proves only a zero-row warehouse query, not source absence; "
+            "its original evidence was preserved and the product owner must reconcile it",
+        )
+    extension: AvailabilityExtensionOutcome | None = None
+
+    def claim_before_write(planned: tuple[AbsenceWriteReceipt, ...]) -> bool:
+        nonlocal extension
+        published_at = now()
+        extension = claim_repaired_absence_day(
+            store,
+            lane=lane.slug,
+            kind=GAP_FILL_PARTITION_KIND,
+            outcome=FinalizedLaneDay(
+                terminal_state="governed_absence",
+                day=day,
+                written=WrittenObjectLedger(absences={receipt.relative_path: receipt for receipt in planned}),
+                source=LaneDaySource(
+                    origin=LADDER_REPAIR_ORIGIN,
+                    run_id=absence.run_id,
+                    row_count=0,
+                    part_count=0,
+                    exported_at=absence.recorded_at,
+                    detail=f"{lane.slug} missing absence rungs restored from the retained base source receipt",
+                ),
+                published_at=published_at,
+                source_ceiling=max(allowed_source_ceiling(lane, today=today or published_at.date()), day),
+                absence_reason=absence.reason,
+            ),
+        )
+        return extension.state == "retry_owed"
+
+    try:
+        receipts = write_absence_ladder(
+            store,
+            absence,
+            layer=lane.slug,
+            kind=GAP_FILL_PARTITION_KIND,
+            day=day,
+            before_write=claim_before_write if availability_storage is not None else None,
+        )
+    except GovernedAbsenceConflictError as conflict:
+        return LadderRepairOutcome("blocked", 0, 0, 0, f"{day}: absence ladder repair refused: {conflict}")
+    except AbsenceLadderError as failure:
+        return LadderRepairOutcome("raised", 0, 0, 0, str(failure), availability=extension)
+    detail = f"{day}: missing absence rungs restored; original source evidence retained"
+    if extension is not None:
+        detail = _append_note(detail, extension.note)
+    return LadderRepairOutcome(
+        "absent",
+        0,
+        0,
+        sum(receipt.byte_count for receipt in receipts if statuses[receipt.zoom] != "absent"),
+        detail,
+        availability=extension,
+    )
+
+
+def _settle_locked_terminal_day(  # noqa: PLR0913 - one coordinate of the locked repair
+    store: ObjectStore,
+    lane: LaneRegistration,
+    *,
+    day: date,
+    today: date | None,
+    now: Callable[[], datetime],
+    availability_storage: AvailabilityStorage | None,
+) -> LadderRepairOutcome | None:
+    """Handle completed, absent or nonterminal bases before a data rung can be derived."""
+    statuses = _locked_ladder_statuses(store, lane, day)
+    if set(statuses.values()) in ({"data"}, {"absent"}):
+        return LadderRepairOutcome(
+            "skipped_unchanged",
+            0,
+            0,
+            0,
+            f"{day}: every rung is already terminal under the day lock; no immutable output was changed",
+        )
+    if statuses[GAP_FILL_ZOOM_TIER] == "absent":
+        return _repair_absent_lane_day(
+            store,
+            lane,
+            day=day,
+            today=today,
+            now=now,
+            statuses=statuses,
+            availability_storage=availability_storage,
+        )
+    if statuses[GAP_FILL_ZOOM_TIER] != "data":
+        return LadderRepairOutcome(
+            "blocked",
+            0,
+            0,
+            0,
+            f"{day}: base rung is {statuses[GAP_FILL_ZOOM_TIER]} under the day lock; "
+            "repair requires a terminal base receipt and changed no objects",
+        )
+    return None
+
+
 async def repair_one_lane_day(  # noqa: PLR0913 - one caller-supplied coordinate per arg, none foldable
     session: AsyncSession,
     store: ObjectStore,
@@ -1974,14 +2024,7 @@ async def repair_one_lane_day(  # noqa: PLR0913 - one caller-supplied coordinate
     connection: DuckDBPyConnection | None = None,
     availability_storage: AvailabilityStorage | None = None,
 ) -> LadderRepairOutcome:
-    """Re-derive one published day's coarse rungs from its base rung, then CLAIM the day for the index.
-
-    THE CLAIM IS NOT OPTIONAL BOOKKEEPING. A repair rewrites three of the day's four rungs, so their
-    receipts change; without a claim the day stays complete at every rung, is never re-selected, and
-    sits outside the availability generation for good while the tick reports `repaired: 1`. See
-    `AGENTS.md`, "A repaired day joins the index through a claim", for the lock, the read-back, the
-    stranded-absence retraction and the session discipline.
-    """
+    """Repair an incomplete terminal ladder under its day lock; see AGENTS.md, September 11 recovery."""
     barrier = (
         vegetation_publication_barrier
         if lane.slug == VEGETATION_PLANE_STREAM
@@ -2008,6 +2051,16 @@ async def repair_one_lane_day(  # noqa: PLR0913 - one caller-supplied coordinate
                         f"{day.isoformat()}: another run holds this lane-day, so its coarse rungs were left alone "
                         "rather than derived beside a base rung being rewritten; a later turn will take it",
                     )
+                settled = _settle_locked_terminal_day(
+                    store,
+                    lane,
+                    day=day,
+                    today=today,
+                    now=now,
+                    availability_storage=availability_storage,
+                )
+                if settled is not None:
+                    return settled
                 # ONE READ OF THE BASE RUNG SERVES BOTH HALVES: the derivation gets the rows and the
                 # claim gets the key and digest of every part it cites. Letting the deriver read the
                 # day again, or hashing the parts afterwards, would download it twice.
