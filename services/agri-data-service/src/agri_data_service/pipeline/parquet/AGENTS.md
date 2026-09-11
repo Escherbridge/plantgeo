@@ -1,5 +1,44 @@
 # `pipeline/parquet` — the object store and the partition writer
 
+## Preserved signal candidate admission evidence
+
+`signal_candidate_admission.py` revalidates the exact September 10 archive entirely locally.
+It checks its outer checksum, every regular content-addressed member, exact day/source/target
+identities, original completion counts and per-part receipts, every original column in row order,
+the canonical coordinate witness and all four rungs reproduced by the current ordinary deriver.
+It never extracts archive paths or imports an execution interface, opens a database, or constructs
+an object-store client. Rehashed candidate values and target-key changes still fail semantic checks.
+
+The measured archive bounds are 54,850,520 compressed bytes, 1,555 regular members and 65,008,613
+expanded bytes; its pinned batch has 222 days, 2025-12-28 through 2026-08-06, with exactly two old
+base objects and four candidate parts per day. The 8 MiB member ceiling exceeds its largest
+5,501,822-byte manifest. Pins and totals come from the September 10 preservation receipt and were
+revalidated on September 11 in this track's `signal-sensor-candidate-revalidation-20260911.md`.
+
+The output is an admission preparation packet, never an apply request. It carries exact original
+and candidate identities while separately leaving runtime ownership, current object-store state,
+publication, availability, selected-day serving, schedule execution and relation retirement
+unproved. The old `signal_rewrite.py` retraction/database-export workflow cannot consume it.
+An actual candidate correction still needs its independently reviewed operator, ordinary locks
+and publication barrier, current quiescence and state pins, durable audit/journal and rollback,
+and exact owner authorization. Remove this date-pinned verifier only after the full 222-day
+admission and acceptance packet is durable and no remaining recovery workflow needs it.
+
+`signal_coordinate_correction.py` supplies the physical-only apply guards used by
+`scripts/correct_signal_coordinates.py`. It reproduces the ordinary 10,000-row derivation parts,
+stores compressed candidates while decoding only one day, and bounds each exact day inventory to
+40 objects: a 100,000-row base, at most ten parts in each of three derived rungs, and four completion
+markers require no more than 35. These are bounds from the current writer constants, not a new
+publication layout. Every part and checksum-bearing marker is independently decoded on completion.
+Current bucket inventories refuse unexpected keys before fetching; each allowed read is bounded
+by its exact original/replacement byte sizes and the whole day is capped at 16 MiB. The operator
+marshals a live pinned-backend check and current head/bootstrap/retry checks before every physical
+mutation. Cancellation disarms its worker before locks unwind; an already in-flight object request
+remains outside database fencing. See `scripts/AGENTS.md` for timeouts and recovery sequencing.
+The unbootstrapped precondition is strict; a surviving marker with no head is pointer recovery.
+The source archive and reviewed request are preserved separately from physical completion so the
+bootstrap compiler owner can bind them as source evidence before availability is admitted.
+
 ## Sensor false-absence correction evidence
 
 `sensor_absence_correction.py` is scoped to September 5/6, 2026 and the fixed reviewed rescue candidate.

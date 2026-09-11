@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     import pyarrow as pa
+    from duckdb import DuckDBPyConnection
 
 MAX_CAPTURE_ROWS = 2000
 MAX_ARTIFACT_BYTES = 600 * 1024 * 1024
@@ -134,7 +135,11 @@ def validate_source_manifest(manifest: object) -> dict[str, Any]:
 
 
 def prepare_snapshot(  # noqa: PLR0912, PLR0915 - validate the complete source contract before producing bounded artifacts
-    manifest: Mapping[str, Any], features: Sequence[Mapping[str, object]], *, output: Path
+    manifest: Mapping[str, Any],
+    features: Sequence[Mapping[str, object]],
+    *,
+    output: Path,
+    connection: DuckDBPyConnection | None = None,
 ) -> dict[str, object]:
     """Create a no-apply candidate with normal four-rung geometry derivation."""
     if output.exists():
@@ -174,7 +179,8 @@ def prepare_snapshot(  # noqa: PLR0912, PLR0915 - validate the complete source c
         raise ValueError("candidate did not produce a dataframe")
     tables: list[tuple[int, pa.Table]] = [(13, table)]
     tables.extend(
-        (tier, derive_tier(frame, stream="burn-severity", tier=tier).to_arrow()) for tier in DERIVED_ZOOM_TIERS
+        (tier, derive_tier(frame, stream="burn-severity", tier=tier, connection=connection).to_arrow())
+        for tier in DERIVED_ZOOM_TIERS
     )
     output.mkdir(parents=True)
     blobs = output / "blobs"

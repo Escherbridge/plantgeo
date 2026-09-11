@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Final
 
 import pytest
 
+from agri_data_service.retirement import readers
 from agri_data_service.retirement.readers import (
     EXCLUDED_DIRECTORY_NAMES,
     SCAN_SURFACES,
@@ -67,6 +68,98 @@ def test_a_live_reference_in_app_code_is_a_consumer(tmp_path: Path) -> None:
     assert scan.zero_readers is False
     assert scan.consumer_paths() == ("src/lib/server/read-model.ts",)
     assert scan.consumers[0].surface == "nextjs_app"
+
+
+@pytest.mark.parametrize(
+    ("directory", "surface"),
+    [("scripts", "repository_scripts"), ("services/agri-data-service/scripts", "service_scripts")],
+)
+@pytest.mark.parametrize(
+    "suffix",
+    [".py", ".sql", ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".sh", ".bash", ".ps1", ".psm1", ".bat", ".cmd"],
+)
+def test_operator_script_references_block_retirement_across_execution_languages(
+    tmp_path: Path, directory: str, surface: str, suffix: str
+) -> None:
+    """The production command's location or executable suffix cannot hide a relation reader."""
+    path = f"{directory}/nested/recover{suffix}"
+    root = build_checkout(tmp_path, files={path: "SELECT * FROM geo.mv_reader_probe;\n"})
+
+    scan = _scan(root)
+
+    assert scan.zero_readers is False
+    assert scan.consumer_paths() == (path,)
+    assert scan.consumers[0].surface == surface
+
+
+@pytest.mark.parametrize("directory", ["scripts", "services/agri-data-service/scripts"])
+@pytest.mark.parametrize(
+    ("suffix", "comment"), [(".py", "#"), (".sql", "--"), (".mjs", "//"), (".sh", "#"), (".ps1", "#")]
+)
+def test_operator_script_comments_are_evidence_without_becoming_readers(
+    tmp_path: Path, directory: str, suffix: str, comment: str
+) -> None:
+    """Documenting a retired reader remains separate from a live recovery statement."""
+    path = f"{directory}/recover{suffix}"
+    root = build_checkout(tmp_path, files={path: f"{comment} formerly read geo.mv_reader_probe\n"})
+
+    scan = _scan(root)
+
+    assert scan.zero_readers is True
+    assert [hit.path for hit in scan.documentation] == [path]
+
+
+def test_root_operator_sql_is_a_consumer_even_when_it_creates_a_relation(tmp_path: Path) -> None:
+    """A manual backfill outside a migration tree is executable operator code."""
+    path = "scripts/rekey-geometry.sql"
+    root = build_checkout(
+        tmp_path,
+        files={
+            path: (
+                "-- geo.mv_reader_probe is still needed\nCREATE TABLE recovery AS SELECT * FROM geo.mv_reader_probe;\n"
+            )
+        },
+    )
+
+    scan = _scan(root)
+
+    assert scan.zero_readers is False
+    expected_consumer_line = 2
+    assert scan.consumers[0].line == expected_consumer_line
+    assert scan.consumers[0].surface == "repository_scripts"
+    assert scan.documentation[0].line == 1
+    assert not scan.schema_definitions
+
+
+@pytest.mark.parametrize("script_root", ["scripts", "services/agri-data-service/scripts"])
+@pytest.mark.parametrize("suffix", [".sh", ".bash", ".ps1", ".psm1"])
+@pytest.mark.parametrize(
+    "command",
+    [
+        "psql -c \"SELECT payload #>> '{path}' FROM geo.mv_reader_probe;\"\n",
+        "psql -c \"SELECT payload\n#>> '{path}' FROM geo.mv_reader_probe;\"\n",
+        "psql <<SQL\nSELECT payload\n#>> '{path}' FROM geo.mv_reader_probe;\nSQL\n",
+        "$query = @\"\nSELECT payload\n#>> '{path}' FROM geo.mv_reader_probe;\n\"@\n",
+    ],
+)
+def test_shell_quoted_sql_json_operators_cannot_hide_readers(
+    tmp_path: Path, script_root: str, suffix: str, command: str
+) -> None:
+    """Retain quoted and multiline SQL as code across both operator roots."""
+    path = f"{script_root}/recover{suffix}"
+    scan = _scan(build_checkout(tmp_path, files={path: command}))
+
+    assert scan.zero_readers is False
+    assert scan.consumer_paths() == (path,)
+
+
+@pytest.mark.parametrize("suffix", [".sh", ".bash", ".ps1", ".psm1"])
+def test_unambiguous_shell_full_line_comment_remains_documentation(tmp_path: Path, suffix: str) -> None:
+    """A plain comment in an unquoted script is still documentation."""
+    scan = _scan(build_checkout(tmp_path, files={f"scripts/notes{suffix}": "  # geo.mv_reader_probe retired\n"}))
+
+    assert scan.zero_readers is True
+    assert len(scan.documentation) == 1
 
 
 def test_a_migration_hit_is_a_schema_definition_and_does_not_block_alone(tmp_path: Path) -> None:
@@ -419,8 +512,14 @@ def test_a_single_file_surface_root_is_honoured(tmp_path: Path) -> None:
     assert scan.documentation[0].surface == "drop_packet_script"
 
 
-def test_a_root_without_the_marker_paths_is_refused(tmp_path: Path) -> None:
-    """A scan rooted one directory off reports zero readers, the one wrong answer that must be loud."""
+def test_a_root_without_the_marker_paths_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Missing fixture markers refuse discovery even when the temporary path lives inside a checkout."""
+    marker_prefix = f".missing-retirement-root-{tmp_path.name}"
+    monkeypatch.setattr(
+        readers,
+        "REPOSITORY_ROOT_MARKERS",
+        tuple(f"{marker_prefix}/{marker}" for marker in readers.REPOSITORY_ROOT_MARKERS),
+    )
     with pytest.raises(ReaderScanError, match="no repository root"):
         find_repository_root(tmp_path / "nowhere")
 

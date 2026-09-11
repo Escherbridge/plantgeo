@@ -82,6 +82,11 @@ MATCH_EXCERPT_LIMIT: Final = 160
 #: Files that are markers of the repository root, used to refuse a root that is not one.
 REPOSITORY_ROOT_MARKERS: Final[tuple[str, ...]] = ("drizzle", "services/agri-data-service", "src")
 
+#: Operator entry points and executable SQL, including Windows and POSIX wrappers; see AGENTS.md.
+OPERATOR_SCRIPT_SUFFIXES: Final[frozenset[str]] = frozenset(
+    {".py", ".sql", ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".sh", ".bash", ".ps1", ".psm1", ".bat", ".cmd"}
+)
+
 
 class ReaderScanError(RuntimeError):
     """Raised when the scan cannot be performed at all -- a bad root, an unreadable surface."""
@@ -207,9 +212,16 @@ SCAN_SURFACES: Final[tuple[ReaderSurface, ...]] = (
     ReaderSurface(
         name="service_scripts",
         root="services/agri-data-service/scripts",
-        suffixes=frozenset({".py"}),
+        suffixes=OPERATOR_SCRIPT_SUFFIXES,
         disposition=ReaderDisposition.CONSUMER,
         why="operator scripts run against production and break exactly like service code",
+    ),
+    ReaderSurface(
+        name="repository_scripts",
+        root="scripts",
+        suffixes=OPERATOR_SCRIPT_SUFFIXES,
+        disposition=ReaderDisposition.CONSUMER,
+        why="root operator scripts and executable SQL are database consumers regardless of service ownership",
     ),
     ReaderSurface(
         name="declarative_schema",
@@ -463,6 +475,7 @@ class _CommentSyntax:
     line_markers: tuple[str, ...]
     block: tuple[str, str] | None
     docstring_delimiters: tuple[str, ...] = ()
+    full_line_markers: tuple[str, ...] = ()
 
 
 #: Comment syntax by file suffix, for the surfaces this repository actually scans. A suffix absent
@@ -476,6 +489,10 @@ _COMMENT_SYNTAX_BY_SUFFIX: Final[dict[str, _CommentSyntax]] = {
     ".mjs": _CommentSyntax(line_markers=("//",), block=("/*", "*/")),
     ".cjs": _CommentSyntax(line_markers=("//",), block=("/*", "*/")),
     ".py": _CommentSyntax(line_markers=("#",), block=None, docstring_delimiters=('"""', "'''")),
+    ".sh": _CommentSyntax(line_markers=(), block=None, full_line_markers=("#",)),
+    ".bash": _CommentSyntax(line_markers=(), block=None, full_line_markers=("#",)),
+    ".ps1": _CommentSyntax(line_markers=(), block=None, full_line_markers=("#",)),
+    ".psm1": _CommentSyntax(line_markers=(), block=None, full_line_markers=("#",)),
     ".yaml": _CommentSyntax(line_markers=("#",), block=None),
     ".yml": _CommentSyntax(line_markers=("#",), block=None),
     ".sql": _CommentSyntax(line_markers=("--",), block=("/*", "*/")),
@@ -595,6 +612,11 @@ def _code_only_lines(lines: Sequence[str], syntax: _CommentSyntax | None) -> lis
     """
     if syntax is None:
         return list(lines)
+    if syntax.full_line_markers:
+        # Quoted or here-document shell data stays code; see AGENTS.md's operator-script section.
+        if any(token in line for line in lines for token in ("'", '"', "`", "<<")):
+            return list(lines)
+        return ["" if line.lstrip().startswith(syntax.full_line_markers) else line for line in lines]
     visible: list[str] = []
     awaiting: str | None = None
     seen_a_code_line = False

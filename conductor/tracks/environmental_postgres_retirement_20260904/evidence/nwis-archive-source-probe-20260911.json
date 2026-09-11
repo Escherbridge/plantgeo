@@ -1,0 +1,20 @@
+{
+  "apply": false,
+  "endpoint": "https://waterservices.usgs.gov/nwis/dv/",
+  "parameters": {
+    "format": "json",
+    "bBox": "-122.2,45.3,-122,45.5",
+    "parameterCd": "00060",
+    "statisticCd": "00003",
+    "siteType": "ST",
+    "startDT": "2022-08-05",
+    "endDT": "2022-08-05"
+  },
+  "started_at": "2026-09-11T18:35:42.830191+00:00",
+  "max_requests": 1,
+  "max_bytes": 2097152,
+  "max_elapsed_seconds": 30,
+  "error_type": "ConnectError",
+  "finished_at": "2026-09-11T18:35:43.426016+00:00",
+  "elapsed_seconds": 0.5929999999934807
+}

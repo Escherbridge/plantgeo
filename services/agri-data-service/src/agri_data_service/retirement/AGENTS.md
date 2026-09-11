@@ -22,7 +22,31 @@ itself as a reader of every relation it ledgers. `tests/retirement/test_readers.
 test_the_retirement_package_cannot_reach_production` asserts the exemption against the imports rather
 than trusting this paragraph.
 
-## Module boundaries
+## Operator script coverage — September 11
+
+The zero-reader scan includes both repository-root `scripts/` and the data-service
+`scripts/` tree. Root commands such as `data-quality-report.mjs`,
+`warm-soilgrids.mjs`, `export-ndvi-grid-tiles.py` and the geometry backfill/rekey SQL
+still reference environmental relations. Omitting that entire root, or treating
+service scripts as Python-only, could report zero readers while a supported
+operator command still depends on the relation.
+
+Both roots share explicit Python, SQL, JavaScript/TypeScript, POSIX-shell,
+PowerShell and batch suffixes. Executable SQL here is a consumer even when it
+contains DDL; it is not migration-history evidence. The narrow existing
+`build_drop_packet.py` exemption still precedes the broader service-script root,
+and nested files are claimed only once. Recognized comments remain documentation.
+Shell/PowerShell line comments use the existing conservative heuristic; batch
+comments and unrecognized block forms are not interpreted and remain references.
+The scanner remains a lexical inventory, not proof that dynamic SQL cannot exist.
+The existing JS-template false-clear guard now also inspects these operator roots.
+
+Regression coverage hand-spells every supported suffix, checks both roots, and
+verifies that comments alone do not block while executable backfill SQL does.
+These tests protect the retirement decision, not the contents of any one caller;
+the callers themselves require their own ownership and preservation review.
+
+## Package modules
 
 `ledger.py` PARSES the A3 inventory rather than transcribing it, so the tool cannot drift away from
 the evidence file the track cites; a relation absent from it is refused rather than synthesised.
@@ -176,6 +200,17 @@ all refused, because the track's tripwire is "never emit a digest that was not c
 object it describes".
 
 ## The limit this package will not paper over
+
+### Operator-script hash characters
+
+Shell and PowerShell operator scripts never strip inline `#`: SQL JSON operators
+such as `payload #>> '{path}' FROM geo.features` are executable query text, not
+shell comments. A full-line hash comment is treated as documentation only in a
+script with no quote, backtick or here-document indicator. Otherwise every line
+is conservatively retained as code, including hash-prefixed lines inside a
+multiline SQL literal. This can report real comments as consumers; it cannot
+clear a relation by guessing where shell quoting ends. Root and service script
+regressions cover inline SQL, multiline strings, heredocs and plain comments.
 
 For a row-delete, a name-level grep cannot separate "reads the fire-perimeters rows from PostgreSQL"
 from "publishes the fire-perimeters Parquet lane": the layer name and the lane slug are the identical

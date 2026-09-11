@@ -1,0 +1,3958 @@
+{
+  "active_lanes": [
+    "burn-severity-direct-forward",
+    "climate-nasa-power-direct-forward",
+    "drought-direct-forward",
+    "evacuation-zones-direct-forward",
+    "fire-detections-direct-forward",
+    "jobs-matview-refresh",
+    "jobs-strategy-mv-refresh",
+    "maintenance-validate-streams",
+    "parquet-calendar",
+    "parquet-fire-detections",
+    "parquet-fire-perimeters",
+    "parquet-signal",
+    "parquet-soil-survey",
+    "parquet-water-gauges",
+    "sensors-direct-forward",
+    "soil-era5-land-direct-forward",
+    "vegetation-sentinel2-ndvi-direct-forward",
+    "water-gauges-direct-forward",
+    "watersheds-direct-forward",
+    "weather-observations-direct-forward"
+  ],
+  "agent_baseline": {
+    "after_repair_acceptance": false,
+    "browser_or_public_http_acceptance": false,
+    "metadata": {
+      "captured_at": "2026-09-11T18:09:58.216643+00:00",
+      "deployment": "9b65d7b8-40e0-4dac-9b74-1744b2ffd8fc",
+      "mutations": false,
+      "revision": "fa202230958fb55521963e886eb031be5fc266c4",
+      "schema": "retirement-agent-readonly/v1",
+      "spatial_probe": {
+        "latitude": 43.6,
+        "longitude": -116.2,
+        "radius_meters": 25000
+      }
+    },
+    "observations": [
+      {
+        "arguments": {
+          "day": "2026-09-05",
+          "surface_name": "sensors"
+        },
+        "elapsed_seconds": 0.1314,
+        "result": {
+          "coverage": {
+            "coverage_authority": "availability",
+            "earliest_observed_day": "2026-08-24",
+            "is_covered": false,
+            "lane_states": [
+              {
+                "absence_reason": "the sensors day export returned zero rows for 2026-09-05",
+                "lane": "sensors",
+                "lane_nature": "daily_series",
+                "published_at": "2026-09-06T22:07:56.751920+00:00",
+                "row_count": 0,
+                "source_ceiling_day": "2026-09-09",
+                "state": "governed_absence"
+              }
+            ],
+            "latest_observed_day": "2026-09-09",
+            "observation_count": 0,
+            "observed_day_count": 15,
+            "requested_day": "2026-09-05",
+            "source_ceiling_day": "2026-09-09",
+            "surface_name": "sensors"
+          }
+        },
+        "tool": "observation_coverage_on_day"
+      },
+      {
+        "arguments": {
+          "day": "2026-09-05",
+          "neighbor_days": 7,
+          "surface_name": "sensors"
+        },
+        "elapsed_seconds": 0.0012,
+        "result": {
+          "applied_bounds": {
+            "neighbor_days": 7,
+            "requested_day": "2026-09-05",
+            "searched_from": "2026-08-29",
+            "searched_through": "2026-09-12"
+          },
+          "temporal_neighbors": [
+            {
+              "day_offset": -1,
+              "distance_days": 1,
+              "lane_count": 1,
+              "observation_count": 3612,
+              "observed_day": "2026-09-04",
+              "side": "before",
+              "surface_name": "sensors"
+            },
+            {
+              "day_offset": 2,
+              "distance_days": 2,
+              "lane_count": 1,
+              "observation_count": 2821,
+              "observed_day": "2026-09-07",
+              "side": "after",
+              "surface_name": "sensors"
+            }
+          ]
+        },
+        "tool": "observation_temporal_neighbors"
+      },
+      {
+        "arguments": {
+          "day": "2026-09-05",
+          "feature_count": 5,
+          "latitude": 43.6,
+          "longitude": -116.2,
+          "radius_meters": 25000,
+          "surface_name": "sensors"
+        },
+        "elapsed_seconds": 0.2136,
+        "result": {
+          "applied_bounds": {
+            "feature_count": 5,
+            "max_feature_rows": 50,
+            "parquet_lane": "sensors",
+            "projected_columns": [
+              "sensor_id",
+              "station_name",
+              "network",
+              "observed_day",
+              "observed_at",
+              "measurement_name",
+              "value",
+              "unit_code",
+              "quality_control",
+              "feature_id",
+              "data_available_at",
+              "station_longitude",
+              "station_latitude"
+            ],
+            "radius_meters": 25000,
+            "requested_day": "2026-09-05",
+            "search_shape": "radius"
+          },
+          "day_state": {
+            "absence": {
+              "reason": "the sensors day export returned zero rows for 2026-09-05",
+              "recorded_at": "2026-09-06T22:07:56.751920+00:00",
+              "run_id": "parquet-gap-fill:b9f390db-5b09-4232-8cad-ed3106ec0f6d",
+              "upstream_response": "pipeline/lanes/sensors.py's day-scoped export query over this warehouse's own tables returned 0 rows for 2026-09-05 at zoom tier 13, and the writer refused it: refusing to write a zero-row 'sensors' observed partition for 2026-09-05: the warehouse held no qualifying station reading for this day, and an empty file reads as a present day and hides the gap. THIS RUN DID NOT CONTACT THE UPSTREAM SOURCE SYSTEM -- this records what Postgres held at export time, never a claim about what sensors's source published. Reconciling the two against the live source is pipeline/validation's job, not this driver's."
+            },
+            "lane": "sensors",
+            "state": "governed_absence",
+            "zoom_tier": 13
+          },
+          "feature_evidence": [],
+          "features_truncated": false,
+          "returned_features": 0
+        },
+        "tool": "feature_value_near_point"
+      },
+      {
+        "arguments": {
+          "day": "2026-09-06",
+          "surface_name": "sensors"
+        },
+        "elapsed_seconds": 0.0011,
+        "result": {
+          "coverage": {
+            "coverage_authority": "availability",
+            "earliest_observed_day": "2026-08-24",
+            "is_covered": false,
+            "lane_states": [
+              {
+                "absence_reason": "the sensors day export returned zero rows for 2026-09-06",
+                "lane": "sensors",
+                "lane_nature": "daily_series",
+                "published_at": "2026-09-07T00:08:07.658460+00:00",
+                "row_count": 0,
+                "source_ceiling_day": "2026-09-09",
+                "state": "governed_absence"
+              }
+            ],
+            "latest_observed_day": "2026-09-09",
+            "observation_count": 0,
+            "observed_day_count": 15,
+            "requested_day": "2026-09-06",
+            "source_ceiling_day": "2026-09-09",
+            "surface_name": "sensors"
+          }
+        },
+        "tool": "observation_coverage_on_day"
+      },
+      {
+        "arguments": {
+          "day": "2026-09-06",
+          "neighbor_days": 7,
+          "surface_name": "sensors"
+        },
+        "elapsed_seconds": 0.0009,
+        "result": {
+          "applied_bounds": {
+            "neighbor_days": 7,
+            "requested_day": "2026-09-06",
+            "searched_from": "2026-08-30",
+            "searched_through": "2026-09-13"
+          },
+          "temporal_neighbors": [
+            {
+              "day_offset": 1,
+              "distance_days": 1,
+              "lane_count": 1,
+              "observation_count": 2821,
+              "observed_day": "2026-09-07",
+              "side": "after",
+              "surface_name": "sensors"
+            },
+            {
+              "day_offset": -2,
+              "distance_days": 2,
+              "lane_count": 1,
+              "observation_count": 3612,
+              "observed_day": "2026-09-04",
+              "side": "before",
+              "surface_name": "sensors"
+            }
+          ]
+        },
+        "tool": "observation_temporal_neighbors"
+      },
+      {
+        "arguments": {
+          "day": "2026-09-06",
+          "feature_count": 5,
+          "latitude": 43.6,
+          "longitude": -116.2,
+          "radius_meters": 25000,
+          "surface_name": "sensors"
+        },
+        "elapsed_seconds": 1.2366,
+        "result": {
+          "applied_bounds": {
+            "feature_count": 5,
+            "max_feature_rows": 50,
+            "parquet_lane": "sensors",
+            "projected_columns": [
+              "sensor_id",
+              "station_name",
+              "network",
+              "observed_day",
+              "observed_at",
+              "measurement_name",
+              "value",
+              "unit_code",
+              "quality_control",
+              "feature_id",
+              "data_available_at",
+              "station_longitude",
+              "station_latitude"
+            ],
+            "radius_meters": 25000,
+            "requested_day": "2026-09-06",
+            "search_shape": "radius"
+          },
+          "day_state": {
+            "absence": {
+              "reason": "the sensors day export returned zero rows for 2026-09-06",
+              "recorded_at": "2026-09-07T00:08:07.658460+00:00",
+              "run_id": "parquet-gap-fill:0ef87f10-aab0-4362-8424-8fd085185047",
+              "upstream_response": "pipeline/lanes/sensors.py's day-scoped export query over this warehouse's own tables returned 0 rows for 2026-09-06 at zoom tier 13, and the writer refused it: refusing to write a zero-row 'sensors' observed partition for 2026-09-06: the warehouse held no qualifying station reading for this day, and an empty file reads as a present day and hides the gap. THIS RUN DID NOT CONTACT THE UPSTREAM SOURCE SYSTEM -- this records what Postgres held at export time, never a claim about what sensors's source published. Reconciling the two against the live source is pipeline/validation's job, not this driver's."
+            },
+            "lane": "sensors",
+            "state": "governed_absence",
+            "zoom_tier": 13
+          },
+          "feature_evidence": [],
+          "features_truncated": false,
+          "returned_features": 0
+        },
+        "tool": "feature_value_near_point"
+      },
+      {
+        "arguments": {
+          "day": "2026-09-11",
+          "surface_name": "soil-survey"
+        },
+        "elapsed_seconds": 0.0003,
+        "result": {
+          "error": "parquet_availability_withheld"
+        },
+        "tool": "observation_coverage_on_day"
+      },
+      {
+        "arguments": {
+          "day": "2026-09-11",
+          "neighbor_days": 7,
+          "surface_name": "soil-survey"
+        },
+        "elapsed_seconds": 0.0002,
+        "result": {
+          "error": "parquet_availability_withheld"
+        },
+        "tool": "observation_temporal_neighbors"
+      },
+      {
+        "arguments": {
+          "day": "2026-09-11",
+          "feature_count": 5,
+          "latitude": 43.6,
+          "longitude": -116.2,
+          "radius_meters": 25000,
+          "surface_name": "soil-survey"
+        },
+        "elapsed_seconds": 0.1731,
+        "result": {
+          "applied_bounds": {
+            "feature_count": 5,
+            "max_feature_rows": 50,
+            "parquet_lane": "soil-survey",
+            "projected_columns": [
+              "natural_key",
+              "mupolygonkey",
+              "mukey",
+              "map_unit_name",
+              "soil_series",
+              "drainage_class",
+              "hydric_rating",
+              "land_capability_class",
+              "survey_area_symbol",
+              "survey_area_vintage",
+              "geometry_id",
+              "last_confirmed_at",
+              "release_day",
+              "geometry_wkb",
+              "producer"
+            ],
+            "radius_meters": 25000,
+            "requested_day": "2026-09-11",
+            "search_shape": "bounding_box"
+          },
+          "day_state": {
+            "lane": "soil-survey",
+            "state": "day_not_written",
+            "zoom_tier": 13
+          },
+          "feature_evidence": [],
+          "features_truncated": false,
+          "returned_features": 0
+        },
+        "tool": "feature_value_near_point"
+      },
+      {
+        "arguments": {
+          "day": "2026-09-11",
+          "surface_name": "burn-severity"
+        },
+        "elapsed_seconds": 0.3872,
+        "result": {
+          "coverage": {
+            "coverage_authority": "availability",
+            "earliest_observed_day": "2020-11-24",
+            "is_covered": true,
+            "lane_states": [
+              {
+                "absence_reason": null,
+                "lane": "burn-severity",
+                "lane_nature": "release_series",
+                "published_at": "2026-09-11T05:35:41.695810+00:00",
+                "row_count": 747,
+                "source_ceiling_day": "2026-09-11",
+                "state": "published"
+              }
+            ],
+            "latest_observed_day": "2026-09-11",
+            "observation_count": 747,
+            "observed_day_count": 6,
+            "requested_day": "2026-09-11",
+            "source_ceiling_day": "2026-09-11",
+            "surface_name": "burn-severity"
+          }
+        },
+        "tool": "observation_coverage_on_day"
+      },
+      {
+        "arguments": {
+          "day": "2026-09-11",
+          "neighbor_days": 7,
+          "surface_name": "burn-severity"
+        },
+        "elapsed_seconds": 0.0215,
+        "result": {
+          "applied_bounds": {
+            "neighbor_days": 7,
+            "requested_day": "2026-09-11",
+            "searched_from": "2026-09-04",
+            "searched_through": "2026-09-18"
+          },
+          "temporal_neighbors": []
+        },
+        "tool": "observation_temporal_neighbors"
+      },
+      {
+        "arguments": {
+          "day": "2026-09-11",
+          "feature_count": 5,
+          "latitude": 43.6,
+          "longitude": -116.2,
+          "radius_meters": 25000,
+          "surface_name": "burn-severity"
+        },
+        "elapsed_seconds": 2.4194,
+        "result": {
+          "applied_bounds": {
+            "feature_count": 5,
+            "max_feature_rows": 50,
+            "parquet_lane": "burn-severity",
+            "projected_columns": [
+              "feature_id",
+              "fire_id",
+              "natural_key",
+              "release_identifier",
+              "mapping_revision",
+              "fire_year",
+              "ignition_date",
+              "observed_day",
+              "data_available_at",
+              "fire_name",
+              "fire_type",
+              "assessment_type",
+              "acres",
+              "severity_class",
+              "dnbr_offset",
+              "dnbr_standard_deviation",
+              "nodata_threshold",
+              "greenness_threshold",
+              "low_threshold",
+              "moderate_threshold",
+              "high_threshold",
+              "allowed_client_exposure",
+              "geom"
+            ],
+            "radius_meters": 25000,
+            "requested_day": "2026-09-11",
+            "search_shape": "bounding_box"
+          },
+          "day_state": {
+            "lane": "burn-severity",
+            "state": "published",
+            "zoom_tier": 13
+          },
+          "feature_evidence": [
+            {
+              "covers_probe_point": false,
+              "distance_basis": "centroid",
+              "distance_meters": 10554.39878641162,
+              "properties": {
+                "data_available_at": "2026-09-11T00:00:00+00:00",
+                "fire_id": "ID4356111605520241004",
+                "fire_year": 2024,
+                "observed_day": "2026-09-11",
+                "release_identifier": "mtbs-current-snapshot:4690af4629e617ffbde3f5e6ae99be3eb4c1a536fe47a931d7f0a8456c8f6468",
+                "severity_class": null
+              },
+              "served_day": "2026-09-11"
+            },
+            {
+              "covers_probe_point": false,
+              "distance_basis": "centroid",
+              "distance_meters": 19913.755514228997,
+              "properties": {
+                "data_available_at": "2026-09-11T00:00:00+00:00",
+                "fire_id": "ID4345411616520220716",
+                "fire_year": 2022,
+                "observed_day": "2026-09-11",
+                "release_identifier": "mtbs-current-snapshot:4690af4629e617ffbde3f5e6ae99be3eb4c1a536fe47a931d7f0a8456c8f6468",
+                "severity_class": null
+              },
+              "served_day": "2026-09-11"
+            },
+            {
+              "covers_probe_point": false,
+              "distance_basis": "centroid",
+              "distance_meters": 20628.175257094397,
+              "properties": {
+                "data_available_at": "2026-09-11T00:00:00+00:00",
+                "fire_id": "ID4344911614820180722",
+                "fire_year": 2018,
+                "observed_day": "2026-09-11",
+                "release_identifier": "mtbs-current-snapshot:4690af4629e617ffbde3f5e6ae99be3eb4c1a536fe47a931d7f0a8456c8f6468",
+                "severity_class": null
+              },
+              "served_day": "2026-09-11"
+            },
+            {
+              "covers_probe_point": false,
+              "distance_basis": "centroid",
+              "distance_meters": 24319.483457965947,
+              "properties": {
+                "data_available_at": "2026-09-11T00:00:00+00:00",
+                "fire_id": "ID4343911641420240706",
+                "fire_year": 2024,
+                "observed_day": "2026-09-11",
+                "release_identifier": "mtbs-current-snapshot:4690af4629e617ffbde3f5e6ae99be3eb4c1a536fe47a931d7f0a8456c8f6468",
+                "severity_class": null
+              },
+              "served_day": "2026-09-11"
+            },
+            {
+              "covers_probe_point": false,
+              "distance_basis": "centroid",
+              "distance_meters": 27434.75903534033,
+              "properties": {
+                "data_available_at": "2026-09-11T00:00:00+00:00",
+                "fire_id": "ID4337111619520230710",
+                "fire_year": 2023,
+                "observed_day": "2026-09-11",
+                "release_identifier": "mtbs-current-snapshot:4690af4629e617ffbde3f5e6ae99be3eb4c1a536fe47a931d7f0a8456c8f6468",
+                "severity_class": null
+              },
+              "served_day": "2026-09-11"
+            }
+          ],
+          "features_truncated": true,
+          "returned_features": 5
+        },
+        "tool": "feature_value_near_point"
+      },
+      {
+        "arguments": {
+          "day": "2026-08-06",
+          "latitude": 43.6,
+          "longitude": -116.2,
+          "neighbor_days": 3,
+          "radius_meters": 25000
+        },
+        "elapsed_seconds": 0.9585,
+        "result": {
+          "error": "parquet_serving_refused",
+          "refusal_code": "lane_columns_absent",
+          "refusal_detail": "signal declares cell_latitude, cell_longitude in its registered schema and the published objects (for example layer=signal/kind=observed/zoom=13/year=2026/month=08/day=03/part-0.parquet) do not carry them, so this question cannot be asked of the bytes that exist. The lane owes a re-export; this is a statement about the published objects and says nothing about whether the data exists"
+        },
+        "tool": "signal_neighbors_in_time"
+      }
+    ]
+  },
+  "catalogue": {
+    "complete_within_selected_schemas_and_relation_kinds": true,
+    "count": 150,
+    "kind_counts": {
+      "materialized_view": 13,
+      "partitioned_table": 1,
+      "table": 121,
+      "view": 15
+    },
+    "kind_encoding": "Original asyncpg internal-char bytes retained as strings; kind_counts use explicit labels.",
+    "query": "SELECT n.nspname || '.' || c.relname AS relation, c.relkind AS kind, c.relispartition AS is_partition, c.reltuples AS estimated_rows, pg_total_relation_size(c.oid) AS bytes FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname IN ('agri','geo','public') AND c.relkind IN ('r','p','m','v') ORDER BY 1 LIMIT 1201",
+    "relations": [
+      {
+        "bytes": 40960,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.analysis_subject"
+      },
+      {
+        "bytes": 24576,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.artifact"
+      },
+      {
+        "bytes": 40960,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.cell_source_crosswalk"
+      },
+      {
+        "bytes": 24576,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.climate_profiles"
+      },
+      {
+        "bytes": 40960,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.companion_relationships"
+      },
+      {
+        "bytes": 49152,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.data_source"
+      },
+      {
+        "bytes": 40960,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.drought_polygon_snapshot"
+      },
+      {
+        "bytes": 212992,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.expert_label"
+      },
+      {
+        "bytes": 49152,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.expert_label_release"
+      },
+      {
+        "bytes": 98304,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.expert_label_source"
+      },
+      {
+        "bytes": 32768,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.expert_label_training_instance"
+      },
+      {
+        "bytes": 16384,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.forecast_backtest_metric"
+      },
+      {
+        "bytes": 32768,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.forecast_candidate_evaluation"
+      },
+      {
+        "bytes": 16384,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.forecast_candidate_evaluation_origin"
+      },
+      {
+        "bytes": 49152,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.forecast_derived_signal_value"
+      },
+      {
+        "bytes": 40960,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.forecast_entity_state"
+      },
+      {
+        "bytes": 24576,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.forecast_feature_snapshot"
+      },
+      {
+        "bytes": 16384,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.forecast_input_recorded_at"
+      },
+      {
+        "bytes": 32768,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.forecast_iteration"
+      },
+      {
+        "bytes": 16384,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.forecast_iteration_actual"
+      },
+      {
+        "bytes": 16384,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.forecast_iteration_actual_input"
+      },
+      {
+        "bytes": 32768,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.forecast_iteration_value"
+      },
+      {
+        "bytes": 24576,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.forecast_model"
+      },
+      {
+        "bytes": 40960,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.forecast_observation"
+      },
+      {
+        "bytes": 40960,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.forecast_publication"
+      },
+      {
+        "bytes": 8192,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.forecast_publication_item"
+      },
+      {
+        "bytes": 24576,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.forecast_quality_policy"
+      },
+      {
+        "bytes": 24576,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.forecast_receipt"
+      },
+      {
+        "bytes": 32768,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.forecast_run"
+      },
+      {
+        "bytes": 49152,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.forecast_series"
+      },
+      {
+        "bytes": 32768,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.forecast_signal_definition"
+      },
+      {
+        "bytes": 24576,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.forecast_signal_lineage_edge"
+      },
+      {
+        "bytes": 24576,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.forecast_training_run"
+      },
+      {
+        "bytes": 40960,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.forecast_value"
+      },
+      {
+        "bytes": 32768,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.historical_promotion_artifact_receipt"
+      },
+      {
+        "bytes": 32768,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.historical_promotion_bundle"
+      },
+      {
+        "bytes": 8192,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.historical_promotion_chunk_receipt"
+      },
+      {
+        "bytes": 8192,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.historical_promotion_data_source_receipt"
+      },
+      {
+        "bytes": 8192,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.historical_promotion_source_release_receipt"
+      },
+      {
+        "bytes": 32768,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.intervention_analysis_run"
+      },
+      {
+        "bytes": 40960,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.intervention_evidence_input"
+      },
+      {
+        "bytes": 24576,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.intervention_evidence_lineage"
+      },
+      {
+        "bytes": 1540096,
+        "estimated_rows": 1769.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.job_attempt"
+      },
+      {
+        "bytes": 1236992,
+        "estimated_rows": 2723.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.job_checkpoint"
+      },
+      {
+        "bytes": 122880,
+        "estimated_rows": 50.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.job_definition"
+      },
+      {
+        "bytes": 16384,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.job_dependency"
+      },
+      {
+        "bytes": 0,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'p'",
+        "relation": "agri.job_event"
+      },
+      {
+        "bytes": 1744896,
+        "estimated_rows": 1437.0,
+        "is_partition": true,
+        "kind": "b'r'",
+        "relation": "agri.job_event_default"
+      },
+      {
+        "bytes": 65536,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.job_incident"
+      },
+      {
+        "bytes": 32768,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.job_outbox"
+      },
+      {
+        "bytes": 32768,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.job_output"
+      },
+      {
+        "bytes": 1007616,
+        "estimated_rows": 1339.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.job_run"
+      },
+      {
+        "bytes": 2367488,
+        "estimated_rows": 3336.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.job_work_item"
+      },
+      {
+        "bytes": 40960,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.knowledge_chunks"
+      },
+      {
+        "bytes": 24576,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.land_use_snapshots"
+      },
+      {
+        "bytes": 32768,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.locations"
+      },
+      {
+        "bytes": 32768,
+        "estimated_rows": 15.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.matview_refresh_state"
+      },
+      {
+        "bytes": 16384,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'm'",
+        "relation": "agri.mv_forecast_ml_daily_serving"
+      },
+      {
+        "bytes": 57344,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.normalized_source_feature"
+      },
+      {
+        "bytes": 24576,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.publication_pointer"
+      },
+      {
+        "bytes": 32768,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.recommendation_training_receipt"
+      },
+      {
+        "bytes": 32768,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.release_set"
+      },
+      {
+        "bytes": 8192,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.release_set_item"
+      },
+      {
+        "bytes": 24576,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.signal_coverage_audit"
+      },
+      {
+        "bytes": 40960,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.signal_observation"
+      },
+      {
+        "bytes": 16384,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.soil_profiles"
+      },
+      {
+        "bytes": 32768,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.source_coverage_audit"
+      },
+      {
+        "bytes": 32768,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.source_release"
+      },
+      {
+        "bytes": 1073152,
+        "estimated_rows": 1965.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.spatial_cell"
+      },
+      {
+        "bytes": 24576,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.species"
+      },
+      {
+        "bytes": 40960,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.strategies"
+      },
+      {
+        "bytes": 49152,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.strategy_label_episode"
+      },
+      {
+        "bytes": 32768,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.strategy_label_release"
+      },
+      {
+        "bytes": 24576,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.strategy_outcome_definition"
+      },
+      {
+        "bytes": 40960,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.strategy_selection_candidate"
+      },
+      {
+        "bytes": 24576,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.strategy_selection_policy"
+      },
+      {
+        "bytes": 32768,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.strategy_selection_receipt"
+      },
+      {
+        "bytes": 16384,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.topography_profiles"
+      },
+      {
+        "bytes": 0,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'v'",
+        "relation": "agri.v_forecast_iteration_outcome"
+      },
+      {
+        "bytes": 0,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'v'",
+        "relation": "agri.v_forecast_series_serving"
+      },
+      {
+        "bytes": 0,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'v'",
+        "relation": "agri.v_forecast_timeseries_contract"
+      },
+      {
+        "bytes": 24576,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.vegetation_publication_day"
+      },
+      {
+        "bytes": 24576,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "agri.water_profiles"
+      },
+      {
+        "bytes": 0,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'v'",
+        "relation": "geo.climate_field_observation"
+      },
+      {
+        "bytes": 40960,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "geo.drought_areas"
+      },
+      {
+        "bytes": 1341440000,
+        "estimated_rows": 878824.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "geo.features"
+      },
+      {
+        "bytes": 408420352,
+        "estimated_rows": 561282.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "geo.geometry"
+      },
+      {
+        "bytes": 0,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'v'",
+        "relation": "geo.geometry_current"
+      },
+      {
+        "bytes": 32768,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "geo.historical_fire_data"
+      },
+      {
+        "bytes": 32768,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "geo.historical_vegetation"
+      },
+      {
+        "bytes": 32768,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "geo.historical_water_drought"
+      },
+      {
+        "bytes": 49152,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "geo.layers"
+      },
+      {
+        "bytes": 16384,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'm'",
+        "relation": "geo.mv_drought_observation_day"
+      },
+      {
+        "bytes": 8192,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'm'",
+        "relation": "geo.mv_drought_release_index"
+      },
+      {
+        "bytes": 376832,
+        "estimated_rows": 1056.0,
+        "is_partition": false,
+        "kind": "b'm'",
+        "relation": "geo.mv_feature_observation_day"
+      },
+      {
+        "bytes": 32768,
+        "estimated_rows": 11.0,
+        "is_partition": false,
+        "kind": "b'm'",
+        "relation": "geo.mv_layer_feature_stats"
+      },
+      {
+        "bytes": 24576,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'm'",
+        "relation": "geo.mv_layer_hourly_activity"
+      },
+      {
+        "bytes": 16384,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'm'",
+        "relation": "geo.mv_signal_observation_day"
+      },
+      {
+        "bytes": 16384,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'm'",
+        "relation": "geo.mv_soil_survey_grid"
+      },
+      {
+        "bytes": 24576,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'm'",
+        "relation": "geo.mv_soil_survey_union"
+      },
+      {
+        "bytes": 24576,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'm'",
+        "relation": "geo.mv_strategy_recommendations_coarse"
+      },
+      {
+        "bytes": 24576,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'm'",
+        "relation": "geo.mv_strategy_recommendations_detail"
+      },
+      {
+        "bytes": 24576,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'm'",
+        "relation": "geo.mv_strategy_recommendations_regional"
+      },
+      {
+        "bytes": 24576,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "geo.osm_buildings"
+      },
+      {
+        "bytes": 24576,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "geo.osm_landuse"
+      },
+      {
+        "bytes": 32768,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "geo.osm_pois"
+      },
+      {
+        "bytes": 32768,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "geo.osm_roads"
+      },
+      {
+        "bytes": 24576,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "geo.osm_waterways"
+      },
+      {
+        "bytes": 24576,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "geo.poi"
+      },
+      {
+        "bytes": 0,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'v'",
+        "relation": "geo.published_raster"
+      },
+      {
+        "bytes": 98304,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "geo.raster_release"
+      },
+      {
+        "bytes": 0,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'v'",
+        "relation": "geo.soil_field_observation"
+      },
+      {
+        "bytes": 16384,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "geo.soil_survey_coverage"
+      },
+      {
+        "bytes": 0,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'v'",
+        "relation": "geo.v_observation_day_census"
+      },
+      {
+        "bytes": 0,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'v'",
+        "relation": "geo.v_strategy_recommendation_cells"
+      },
+      {
+        "bytes": 24576,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'm'",
+        "relation": "geo.watershed_rollup"
+      },
+      {
+        "bytes": 16384,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "public.accounts"
+      },
+      {
+        "bytes": 24576,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "public.agricultural_solutions"
+      },
+      {
+        "bytes": 24576,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "public.ai_conversations"
+      },
+      {
+        "bytes": 24576,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "public.ai_message_feedback"
+      },
+      {
+        "bytes": 131072,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "public.ai_messages"
+      },
+      {
+        "bytes": 24576,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "public.alembic_version"
+      },
+      {
+        "bytes": 16384,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "public.alert_subscriptions"
+      },
+      {
+        "bytes": 24576,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "public.api_keys"
+      },
+      {
+        "bytes": 24576,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "public.drought_data"
+      },
+      {
+        "bytes": 65536,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "public.email_verification_tokens"
+      },
+      {
+        "bytes": 24576,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "public.environmental_alerts"
+      },
+      {
+        "bytes": 0,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'v'",
+        "relation": "public.geography_columns"
+      },
+      {
+        "bytes": 0,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'v'",
+        "relation": "public.geometry_columns"
+      },
+      {
+        "bytes": 0,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'v'",
+        "relation": "public.hypopg_hidden_indexes"
+      },
+      {
+        "bytes": 0,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'v'",
+        "relation": "public.hypopg_list_indexes"
+      },
+      {
+        "bytes": 16384,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "public.open_plant_data"
+      },
+      {
+        "bytes": 16384,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "public.open_tooling_data"
+      },
+      {
+        "bytes": 32768,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "public.password_reset_tokens"
+      },
+      {
+        "bytes": 0,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'v'",
+        "relation": "public.pg_buffercache"
+      },
+      {
+        "bytes": 0,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'v'",
+        "relation": "public.pg_buffercache_numa"
+      },
+      {
+        "bytes": 16384,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "public.priority_zones"
+      },
+      {
+        "bytes": 8192,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "public.request_votes"
+      },
+      {
+        "bytes": 16384,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "public.sessions"
+      },
+      {
+        "bytes": 712704,
+        "estimated_rows": 1583.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "public.soil_grid_cache"
+      },
+      {
+        "bytes": 7315456,
+        "estimated_rows": 8500.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "public.spatial_ref_sys"
+      },
+      {
+        "bytes": 32768,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "public.strategy_requests"
+      },
+      {
+        "bytes": 40960,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "public.team_invitations"
+      },
+      {
+        "bytes": 32768,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "public.team_join_links"
+      },
+      {
+        "bytes": 24576,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "public.team_members"
+      },
+      {
+        "bytes": 49152,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "public.teams"
+      },
+      {
+        "bytes": 49152,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "public.users"
+      },
+      {
+        "bytes": 16384,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "public.verification_tokens"
+      },
+      {
+        "bytes": 16384,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "public.watched_locations"
+      },
+      {
+        "bytes": 24576,
+        "estimated_rows": -1.0,
+        "is_partition": false,
+        "kind": "b'r'",
+        "relation": "public.water_gauges"
+      }
+    ],
+    "row_estimates_are_not_exact_counts_or_parity": true,
+    "row_limit": 1201
+  },
+  "database": [
+    {
+      "database": "plantgeo",
+      "database_bytes": 1789712063,
+      "read_only": "on",
+      "server_version": "PostgreSQL 18.4 (Ubuntu 18.4-1.pgdg22.04+1) on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0, 64-bit"
+    }
+  ],
+  "executor_deployment": "95304e24-16ed-4705-a615-c60b0e368a08",
+  "foreign_keys": {
+    "count": 171,
+    "query": "SELECT conrelid::regclass::text AS relation, confrelid::regclass::text AS referenced_relation, conname AS name FROM pg_catalog.pg_constraint WHERE contype='f' AND connamespace IN (SELECT oid FROM pg_catalog.pg_namespace WHERE nspname IN ('agri','geo','public')) ORDER BY 1,2,3 LIMIT 1201",
+    "relations": [
+      {
+        "name": "accounts_user_id_users_id_fk",
+        "referenced_relation": "users",
+        "relation": "accounts"
+      },
+      {
+        "name": "fk_analysis_subject_parent_subject_id_analysis_subject",
+        "referenced_relation": "agri.analysis_subject",
+        "relation": "agri.analysis_subject"
+      },
+      {
+        "name": "fk_analysis_subject_supersedes_subject_id_analysis_subject",
+        "referenced_relation": "agri.analysis_subject",
+        "relation": "agri.analysis_subject"
+      },
+      {
+        "name": "fk_analysis_subject_artifact_id_artifact",
+        "referenced_relation": "agri.artifact",
+        "relation": "agri.analysis_subject"
+      },
+      {
+        "name": "fk_analysis_subject_feature_release_artifact",
+        "referenced_relation": "agri.normalized_source_feature",
+        "relation": "agri.analysis_subject"
+      },
+      {
+        "name": "fk_analysis_subject_source_release_id_source_release",
+        "referenced_relation": "agri.source_release",
+        "relation": "agri.analysis_subject"
+      },
+      {
+        "name": "fk_artifact_source_release_id_source_release",
+        "referenced_relation": "agri.source_release",
+        "relation": "agri.artifact"
+      },
+      {
+        "name": "fk_cell_source_crosswalk_source_release_id_source_release",
+        "referenced_relation": "agri.source_release",
+        "relation": "agri.cell_source_crosswalk"
+      },
+      {
+        "name": "fk_cell_source_crosswalk_cell_id_spatial_cell",
+        "referenced_relation": "agri.spatial_cell",
+        "relation": "agri.cell_source_crosswalk"
+      },
+      {
+        "name": "fk_climate_profiles_location_id_locations",
+        "referenced_relation": "agri.locations",
+        "relation": "agri.climate_profiles"
+      },
+      {
+        "name": "fk_companion_relationships_species_a_id_species",
+        "referenced_relation": "agri.species",
+        "relation": "agri.companion_relationships"
+      },
+      {
+        "name": "fk_companion_relationships_species_b_id_species",
+        "referenced_relation": "agri.species",
+        "relation": "agri.companion_relationships"
+      },
+      {
+        "name": "fk_drought_polygon_snapshot_source_release_id_source_release",
+        "referenced_relation": "agri.source_release",
+        "relation": "agri.drought_polygon_snapshot"
+      },
+      {
+        "name": "fk_expert_label_release",
+        "referenced_relation": "agri.expert_label_release",
+        "relation": "agri.expert_label"
+      },
+      {
+        "name": "fk_expert_label_source",
+        "referenced_relation": "agri.expert_label_source",
+        "relation": "agri.expert_label"
+      },
+      {
+        "name": "fk_expert_label_training_instance_label",
+        "referenced_relation": "agri.expert_label",
+        "relation": "agri.expert_label_training_instance"
+      },
+      {
+        "name": "fk_expert_label_training_instance_release",
+        "referenced_relation": "agri.expert_label_release",
+        "relation": "agri.expert_label_training_instance"
+      },
+      {
+        "name": "fk_expert_label_training_instance_spatial_cell",
+        "referenced_relation": "agri.spatial_cell",
+        "relation": "agri.expert_label_training_instance"
+      },
+      {
+        "name": "forecast_backtest_metric_forecast_run_id_fkey",
+        "referenced_relation": "agri.forecast_run",
+        "relation": "agri.forecast_backtest_metric"
+      },
+      {
+        "name": "forecast_backtest_metric_series_id_fkey",
+        "referenced_relation": "agri.forecast_series",
+        "relation": "agri.forecast_backtest_metric"
+      },
+      {
+        "name": "forecast_backtest_metric_job_output_id_fkey",
+        "referenced_relation": "agri.job_output",
+        "relation": "agri.forecast_backtest_metric"
+      },
+      {
+        "name": "fk_forecast_candidate_evaluation_series",
+        "referenced_relation": "agri.forecast_series",
+        "relation": "agri.forecast_candidate_evaluation"
+      },
+      {
+        "name": "fk_forecast_candidate_evaluation_definition",
+        "referenced_relation": "agri.forecast_signal_definition",
+        "relation": "agri.forecast_candidate_evaluation"
+      },
+      {
+        "name": "fk_forecast_candidate_evaluation_origin_evaluation",
+        "referenced_relation": "agri.forecast_candidate_evaluation",
+        "relation": "agri.forecast_candidate_evaluation_origin"
+      },
+      {
+        "name": "fk_forecast_derived_signal_value_series",
+        "referenced_relation": "agri.forecast_series",
+        "relation": "agri.forecast_derived_signal_value"
+      },
+      {
+        "name": "fk_forecast_derived_signal_value_definition",
+        "referenced_relation": "agri.forecast_signal_definition",
+        "relation": "agri.forecast_derived_signal_value"
+      },
+      {
+        "name": "forecast_entity_state_series_id_fkey",
+        "referenced_relation": "agri.forecast_series",
+        "relation": "agri.forecast_entity_state"
+      },
+      {
+        "name": "forecast_entity_state_source_release_id_fkey",
+        "referenced_relation": "agri.source_release",
+        "relation": "agri.forecast_entity_state"
+      },
+      {
+        "name": "fk_forecast_feature_snapshot_job_output_id_job_output",
+        "referenced_relation": "agri.job_output",
+        "relation": "agri.forecast_feature_snapshot"
+      },
+      {
+        "name": "forecast_feature_snapshot_job_run_id_fkey",
+        "referenced_relation": "agri.job_run",
+        "relation": "agri.forecast_feature_snapshot"
+      },
+      {
+        "name": "forecast_feature_snapshot_release_set_id_fkey",
+        "referenced_relation": "agri.release_set",
+        "relation": "agri.forecast_feature_snapshot"
+      },
+      {
+        "name": "forecast_iteration_series_id_fkey",
+        "referenced_relation": "agri.forecast_series",
+        "relation": "agri.forecast_iteration"
+      },
+      {
+        "name": "forecast_iteration_release_set_id_fkey",
+        "referenced_relation": "agri.release_set",
+        "relation": "agri.forecast_iteration"
+      },
+      {
+        "name": "forecast_iteration_actual_iteration_value_id_fkey",
+        "referenced_relation": "agri.forecast_iteration_value",
+        "relation": "agri.forecast_iteration_actual"
+      },
+      {
+        "name": "forecast_iteration_actual_actual_release_set_id_fkey",
+        "referenced_relation": "agri.release_set",
+        "relation": "agri.forecast_iteration_actual"
+      },
+      {
+        "name": "forecast_iteration_actual_input_actual_id_fkey",
+        "referenced_relation": "agri.forecast_iteration_actual",
+        "relation": "agri.forecast_iteration_actual_input"
+      },
+      {
+        "name": "forecast_iteration_actual_input_source_release_id_fkey",
+        "referenced_relation": "agri.source_release",
+        "relation": "agri.forecast_iteration_actual_input"
+      },
+      {
+        "name": "forecast_iteration_value_iteration_id_fkey",
+        "referenced_relation": "agri.forecast_iteration",
+        "relation": "agri.forecast_iteration_value"
+      },
+      {
+        "name": "forecast_model_artifact_id_fkey",
+        "referenced_relation": "agri.artifact",
+        "relation": "agri.forecast_model"
+      },
+      {
+        "name": "forecast_observation_entity_state_id_fkey",
+        "referenced_relation": "agri.forecast_entity_state",
+        "relation": "agri.forecast_observation"
+      },
+      {
+        "name": "forecast_observation_series_id_fkey",
+        "referenced_relation": "agri.forecast_series",
+        "relation": "agri.forecast_observation"
+      },
+      {
+        "name": "forecast_observation_source_release_id_fkey",
+        "referenced_relation": "agri.source_release",
+        "relation": "agri.forecast_observation"
+      },
+      {
+        "name": "forecast_publication_job_output_id_fkey",
+        "referenced_relation": "agri.job_output",
+        "relation": "agri.forecast_publication"
+      },
+      {
+        "name": "forecast_publication_job_run_id_fkey",
+        "referenced_relation": "agri.job_run",
+        "relation": "agri.forecast_publication"
+      },
+      {
+        "name": "forecast_publication_release_set_id_fkey",
+        "referenced_relation": "agri.release_set",
+        "relation": "agri.forecast_publication"
+      },
+      {
+        "name": "forecast_publication_item_publication_id_fkey",
+        "referenced_relation": "agri.forecast_publication",
+        "relation": "agri.forecast_publication_item"
+      },
+      {
+        "name": "forecast_publication_item_forecast_receipt_id_fkey",
+        "referenced_relation": "agri.forecast_receipt",
+        "relation": "agri.forecast_publication_item"
+      },
+      {
+        "name": "forecast_receipt_entity_state_id_fkey",
+        "referenced_relation": "agri.forecast_entity_state",
+        "relation": "agri.forecast_receipt"
+      },
+      {
+        "name": "forecast_receipt_forecast_run_id_fkey",
+        "referenced_relation": "agri.forecast_run",
+        "relation": "agri.forecast_receipt"
+      },
+      {
+        "name": "forecast_receipt_series_id_fkey",
+        "referenced_relation": "agri.forecast_series",
+        "relation": "agri.forecast_receipt"
+      },
+      {
+        "name": "forecast_receipt_job_output_id_fkey",
+        "referenced_relation": "agri.job_output",
+        "relation": "agri.forecast_receipt"
+      },
+      {
+        "name": "forecast_run_feature_snapshot_id_fkey",
+        "referenced_relation": "agri.forecast_feature_snapshot",
+        "relation": "agri.forecast_run"
+      },
+      {
+        "name": "forecast_run_model_id_fkey",
+        "referenced_relation": "agri.forecast_model",
+        "relation": "agri.forecast_run"
+      },
+      {
+        "name": "forecast_run_quality_policy_id_fkey",
+        "referenced_relation": "agri.forecast_quality_policy",
+        "relation": "agri.forecast_run"
+      },
+      {
+        "name": "forecast_run_training_run_id_fkey",
+        "referenced_relation": "agri.forecast_training_run",
+        "relation": "agri.forecast_run"
+      },
+      {
+        "name": "forecast_run_job_run_id_fkey",
+        "referenced_relation": "agri.job_run",
+        "relation": "agri.forecast_run"
+      },
+      {
+        "name": "forecast_series_data_source_id_fkey",
+        "referenced_relation": "agri.data_source",
+        "relation": "agri.forecast_series"
+      },
+      {
+        "name": "forecast_series_spatial_cell_id_fkey",
+        "referenced_relation": "agri.spatial_cell",
+        "relation": "agri.forecast_series"
+      },
+      {
+        "name": "fk_forecast_signal_lineage_edge_child",
+        "referenced_relation": "agri.forecast_derived_signal_value",
+        "relation": "agri.forecast_signal_lineage_edge"
+      },
+      {
+        "name": "fk_forecast_signal_lineage_edge_parent",
+        "referenced_relation": "agri.forecast_derived_signal_value",
+        "relation": "agri.forecast_signal_lineage_edge"
+      },
+      {
+        "name": "forecast_training_run_feature_snapshot_id_fkey",
+        "referenced_relation": "agri.forecast_feature_snapshot",
+        "relation": "agri.forecast_training_run"
+      },
+      {
+        "name": "forecast_training_run_model_id_fkey",
+        "referenced_relation": "agri.forecast_model",
+        "relation": "agri.forecast_training_run"
+      },
+      {
+        "name": "forecast_training_run_job_output_id_fkey",
+        "referenced_relation": "agri.job_output",
+        "relation": "agri.forecast_training_run"
+      },
+      {
+        "name": "forecast_training_run_job_run_id_fkey",
+        "referenced_relation": "agri.job_run",
+        "relation": "agri.forecast_training_run"
+      },
+      {
+        "name": "fk_forecast_training_run_strategy_label_release_id_stra_4f7c",
+        "referenced_relation": "agri.strategy_label_release",
+        "relation": "agri.forecast_training_run"
+      },
+      {
+        "name": "forecast_value_forecast_receipt_id_fkey",
+        "referenced_relation": "agri.forecast_receipt",
+        "relation": "agri.forecast_value"
+      },
+      {
+        "name": "fk_historical_promotion_artifact_receipt_artifact_id_artifact",
+        "referenced_relation": "agri.artifact",
+        "relation": "agri.historical_promotion_artifact_receipt"
+      },
+      {
+        "name": "fk_historical_promotion_artifact_receipt_bundle_id_hist_c1b6",
+        "referenced_relation": "agri.historical_promotion_bundle",
+        "relation": "agri.historical_promotion_artifact_receipt"
+      },
+      {
+        "name": "fk_historical_promotion_artifact_receipt_source_release_d18c",
+        "referenced_relation": "agri.source_release",
+        "relation": "agri.historical_promotion_artifact_receipt"
+      },
+      {
+        "name": "fk_historical_promotion_bundle_release_set_id_release_set",
+        "referenced_relation": "agri.release_set",
+        "relation": "agri.historical_promotion_bundle"
+      },
+      {
+        "name": "fk_historical_promotion_chunk_receipt_bundle_id_histori_eddc",
+        "referenced_relation": "agri.historical_promotion_bundle",
+        "relation": "agri.historical_promotion_chunk_receipt"
+      },
+      {
+        "name": "fk_historical_promotion_data_source_receipt_bundle_id_h_db07",
+        "referenced_relation": "agri.historical_promotion_bundle",
+        "relation": "agri.historical_promotion_data_source_receipt"
+      },
+      {
+        "name": "fk_historical_promotion_source_release_receipt_bundle_i_3038",
+        "referenced_relation": "agri.historical_promotion_bundle",
+        "relation": "agri.historical_promotion_source_release_receipt"
+      },
+      {
+        "name": "fk_historical_promotion_source_release_receipt_source_r_e24c",
+        "referenced_relation": "agri.source_release",
+        "relation": "agri.historical_promotion_source_release_receipt"
+      },
+      {
+        "name": "fk_intervention_analysis_run_release_set_id_release_set",
+        "referenced_relation": "agri.release_set",
+        "relation": "agri.intervention_analysis_run"
+      },
+      {
+        "name": "fk_intervention_evidence_input_analysis_subject_id_anal_9de5",
+        "referenced_relation": "agri.analysis_subject",
+        "relation": "agri.intervention_evidence_input"
+      },
+      {
+        "name": "fk_intervention_evidence_input_intervention_analysis_ru_8575",
+        "referenced_relation": "agri.intervention_analysis_run",
+        "relation": "agri.intervention_evidence_input"
+      },
+      {
+        "name": "fk_intervention_evidence_input_release_set_id_release_set",
+        "referenced_relation": "agri.release_set",
+        "relation": "agri.intervention_evidence_input"
+      },
+      {
+        "name": "fk_intervention_evidence_lineage_evidence_input_id_inte_2b5e",
+        "referenced_relation": "agri.intervention_evidence_input",
+        "relation": "agri.intervention_evidence_lineage"
+      },
+      {
+        "name": "fk_intervention_evidence_lineage_feature_release",
+        "referenced_relation": "agri.normalized_source_feature",
+        "relation": "agri.intervention_evidence_lineage"
+      },
+      {
+        "name": "fk_intervention_evidence_lineage_source_release_id_sour_bfaa",
+        "referenced_relation": "agri.source_release",
+        "relation": "agri.intervention_evidence_lineage"
+      },
+      {
+        "name": "fk_job_attempt_job_work_item_id_job_work_item",
+        "referenced_relation": "agri.job_work_item",
+        "relation": "agri.job_attempt"
+      },
+      {
+        "name": "fk_job_checkpoint_attempt_fence",
+        "referenced_relation": "agri.job_attempt",
+        "relation": "agri.job_checkpoint"
+      },
+      {
+        "name": "fk_job_checkpoint_job_work_item_id_job_work_item",
+        "referenced_relation": "agri.job_work_item",
+        "relation": "agri.job_checkpoint"
+      },
+      {
+        "name": "fk_job_dependency_depends_on_run_id_job_run",
+        "referenced_relation": "agri.job_run",
+        "relation": "agri.job_dependency"
+      },
+      {
+        "name": "fk_job_dependency_job_run_id_job_run",
+        "referenced_relation": "agri.job_run",
+        "relation": "agri.job_dependency"
+      },
+      {
+        "name": "fk_job_event_job_attempt_id_job_attempt",
+        "referenced_relation": "agri.job_attempt",
+        "relation": "agri.job_event"
+      },
+      {
+        "name": "fk_job_event_job_run_id_job_run",
+        "referenced_relation": "agri.job_run",
+        "relation": "agri.job_event"
+      },
+      {
+        "name": "fk_job_event_job_work_item_id_job_work_item",
+        "referenced_relation": "agri.job_work_item",
+        "relation": "agri.job_event"
+      },
+      {
+        "name": "fk_job_event_job_attempt_id_job_attempt",
+        "referenced_relation": "agri.job_attempt",
+        "relation": "agri.job_event_default"
+      },
+      {
+        "name": "fk_job_event_job_run_id_job_run",
+        "referenced_relation": "agri.job_run",
+        "relation": "agri.job_event_default"
+      },
+      {
+        "name": "fk_job_event_job_work_item_id_job_work_item",
+        "referenced_relation": "agri.job_work_item",
+        "relation": "agri.job_event_default"
+      },
+      {
+        "name": "fk_job_incident_job_run_id_job_run",
+        "referenced_relation": "agri.job_run",
+        "relation": "agri.job_incident"
+      },
+      {
+        "name": "fk_job_incident_job_work_item_id_job_work_item",
+        "referenced_relation": "agri.job_work_item",
+        "relation": "agri.job_incident"
+      },
+      {
+        "name": "fk_job_output_artifact_id_artifact",
+        "referenced_relation": "agri.artifact",
+        "relation": "agri.job_output"
+      },
+      {
+        "name": "fk_job_output_attempt_fence",
+        "referenced_relation": "agri.job_attempt",
+        "relation": "agri.job_output"
+      },
+      {
+        "name": "fk_job_output_job_run_id_job_run",
+        "referenced_relation": "agri.job_run",
+        "relation": "agri.job_output"
+      },
+      {
+        "name": "fk_job_output_work_item_run",
+        "referenced_relation": "agri.job_work_item",
+        "relation": "agri.job_output"
+      },
+      {
+        "name": "fk_job_run_job_definition_id_job_definition",
+        "referenced_relation": "agri.job_definition",
+        "relation": "agri.job_run"
+      },
+      {
+        "name": "fk_job_run_release_set_id_release_set",
+        "referenced_relation": "agri.release_set",
+        "relation": "agri.job_run"
+      },
+      {
+        "name": "fk_job_work_item_job_run_id_job_run",
+        "referenced_relation": "agri.job_run",
+        "relation": "agri.job_work_item"
+      },
+      {
+        "name": "fk_knowledge_chunks_strategy_id_strategies",
+        "referenced_relation": "agri.strategies",
+        "relation": "agri.knowledge_chunks"
+      },
+      {
+        "name": "fk_land_use_snapshots_location_id_locations",
+        "referenced_relation": "agri.locations",
+        "relation": "agri.land_use_snapshots"
+      },
+      {
+        "name": "fk_normalized_source_feature_artifact_id_artifact",
+        "referenced_relation": "agri.artifact",
+        "relation": "agri.normalized_source_feature"
+      },
+      {
+        "name": "fk_normalized_source_feature_source_release_id_source_release",
+        "referenced_relation": "agri.source_release",
+        "relation": "agri.normalized_source_feature"
+      },
+      {
+        "name": "fk_publication_pointer_job_output_id_job_output",
+        "referenced_relation": "agri.job_output",
+        "relation": "agri.publication_pointer"
+      },
+      {
+        "name": "fk_publication_pointer_previous_job_output_id_job_output",
+        "referenced_relation": "agri.job_output",
+        "relation": "agri.publication_pointer"
+      },
+      {
+        "name": "fk_publication_pointer_release_set_id_release_set",
+        "referenced_relation": "agri.release_set",
+        "relation": "agri.publication_pointer"
+      },
+      {
+        "name": "fk_recommendation_training_receipt_artifact",
+        "referenced_relation": "agri.artifact",
+        "relation": "agri.recommendation_training_receipt"
+      },
+      {
+        "name": "fk_recommendation_training_receipt_release",
+        "referenced_relation": "agri.expert_label_release",
+        "relation": "agri.recommendation_training_receipt"
+      },
+      {
+        "name": "fk_recommendation_training_receipt_job_output",
+        "referenced_relation": "agri.job_output",
+        "relation": "agri.recommendation_training_receipt"
+      },
+      {
+        "name": "fk_recommendation_training_receipt_job_run",
+        "referenced_relation": "agri.job_run",
+        "relation": "agri.recommendation_training_receipt"
+      },
+      {
+        "name": "fk_release_set_item_release_set_id_release_set",
+        "referenced_relation": "agri.release_set",
+        "relation": "agri.release_set_item"
+      },
+      {
+        "name": "fk_release_set_item_source_release_id_source_release",
+        "referenced_relation": "agri.source_release",
+        "relation": "agri.release_set_item"
+      },
+      {
+        "name": "fk_signal_coverage_audit_source_release_id_source_release",
+        "referenced_relation": "agri.source_release",
+        "relation": "agri.signal_coverage_audit"
+      },
+      {
+        "name": "fk_signal_coverage_audit_cell_id_spatial_cell",
+        "referenced_relation": "agri.spatial_cell",
+        "relation": "agri.signal_coverage_audit"
+      },
+      {
+        "name": "fk_signal_observation_source_release_id_source_release",
+        "referenced_relation": "agri.source_release",
+        "relation": "agri.signal_observation"
+      },
+      {
+        "name": "fk_signal_observation_cell_id_spatial_cell",
+        "referenced_relation": "agri.spatial_cell",
+        "relation": "agri.signal_observation"
+      },
+      {
+        "name": "fk_soil_profiles_location_id_locations",
+        "referenced_relation": "agri.locations",
+        "relation": "agri.soil_profiles"
+      },
+      {
+        "name": "fk_source_coverage_audit_source_release_id_source_release",
+        "referenced_relation": "agri.source_release",
+        "relation": "agri.source_coverage_audit"
+      },
+      {
+        "name": "fk_source_release_data_source_id_data_source",
+        "referenced_relation": "agri.data_source",
+        "relation": "agri.source_release"
+      },
+      {
+        "name": "fk_source_release_supersedes_release_id_source_release",
+        "referenced_relation": "agri.source_release",
+        "relation": "agri.source_release"
+      },
+      {
+        "name": "fk_spatial_cell_parent_cell_id_spatial_cell",
+        "referenced_relation": "agri.spatial_cell",
+        "relation": "agri.spatial_cell"
+      },
+      {
+        "name": "fk_strategy_label_episode_analysis_subject_id_analysis_subject",
+        "referenced_relation": "agri.analysis_subject",
+        "relation": "agri.strategy_label_episode"
+      },
+      {
+        "name": "fk_strategy_label_episode_baseline_evidence_input_id_in_d3ac",
+        "referenced_relation": "agri.intervention_evidence_input",
+        "relation": "agri.strategy_label_episode"
+      },
+      {
+        "name": "fk_strategy_label_episode_outcome_evidence_input_id_int_8116",
+        "referenced_relation": "agri.intervention_evidence_input",
+        "relation": "agri.strategy_label_episode"
+      },
+      {
+        "name": "fk_strategy_label_episode_strategy_id_strategies",
+        "referenced_relation": "agri.strategies",
+        "relation": "agri.strategy_label_episode"
+      },
+      {
+        "name": "fk_strategy_label_episode_label_release_id_strategy_lab_b3d1",
+        "referenced_relation": "agri.strategy_label_release",
+        "relation": "agri.strategy_label_episode"
+      },
+      {
+        "name": "fk_strategy_label_release_release_set_id_release_set",
+        "referenced_relation": "agri.release_set",
+        "relation": "agri.strategy_label_release"
+      },
+      {
+        "name": "fk_strategy_label_release_outcome_definition_id_strateg_f9fc",
+        "referenced_relation": "agri.strategy_outcome_definition",
+        "relation": "agri.strategy_label_release"
+      },
+      {
+        "name": "fk_strategy_selection_candidate_strategy_id_strategies",
+        "referenced_relation": "agri.strategies",
+        "relation": "agri.strategy_selection_candidate"
+      },
+      {
+        "name": "fk_strategy_selection_candidate_selection_receipt_id_st_d3e8",
+        "referenced_relation": "agri.strategy_selection_receipt",
+        "relation": "agri.strategy_selection_candidate"
+      },
+      {
+        "name": "fk_strategy_selection_receipt_analysis_subject_id_analy_120b",
+        "referenced_relation": "agri.analysis_subject",
+        "relation": "agri.strategy_selection_receipt"
+      },
+      {
+        "name": "fk_strategy_selection_receipt_feature_snapshot_id_forec_747a",
+        "referenced_relation": "agri.forecast_feature_snapshot",
+        "relation": "agri.strategy_selection_receipt"
+      },
+      {
+        "name": "fk_strategy_selection_receipt_forecast_iteration_id_for_75fe",
+        "referenced_relation": "agri.forecast_iteration",
+        "relation": "agri.strategy_selection_receipt"
+      },
+      {
+        "name": "fk_strategy_selection_receipt_forecast_receipt_id_forec_2cb1",
+        "referenced_relation": "agri.forecast_receipt",
+        "relation": "agri.strategy_selection_receipt"
+      },
+      {
+        "name": "fk_strategy_selection_receipt_training_run_id_forecast__dc00",
+        "referenced_relation": "agri.forecast_training_run",
+        "relation": "agri.strategy_selection_receipt"
+      },
+      {
+        "name": "fk_strategy_selection_receipt_selection_policy_id_strat_e95e",
+        "referenced_relation": "agri.strategy_selection_policy",
+        "relation": "agri.strategy_selection_receipt"
+      },
+      {
+        "name": "fk_topography_profiles_location_id_locations",
+        "referenced_relation": "agri.locations",
+        "relation": "agri.topography_profiles"
+      },
+      {
+        "name": "fk_water_profiles_location_id_locations",
+        "referenced_relation": "agri.locations",
+        "relation": "agri.water_profiles"
+      },
+      {
+        "name": "ai_conversations_user_id_users_id_fk",
+        "referenced_relation": "users",
+        "relation": "ai_conversations"
+      },
+      {
+        "name": "ai_message_feedback_message_id_fkey",
+        "referenced_relation": "ai_messages",
+        "relation": "ai_message_feedback"
+      },
+      {
+        "name": "ai_message_feedback_user_id_fkey",
+        "referenced_relation": "users",
+        "relation": "ai_message_feedback"
+      },
+      {
+        "name": "ai_messages_conversation_id_ai_conversations_id_fk",
+        "referenced_relation": "ai_conversations",
+        "relation": "ai_messages"
+      },
+      {
+        "name": "alert_subscriptions_user_id_users_id_fk",
+        "referenced_relation": "users",
+        "relation": "alert_subscriptions"
+      },
+      {
+        "name": "alert_subscriptions_watched_location_id_watched_locations_id_fk",
+        "referenced_relation": "watched_locations",
+        "relation": "alert_subscriptions"
+      },
+      {
+        "name": "api_keys_team_id_teams_id_fk",
+        "referenced_relation": "teams",
+        "relation": "api_keys"
+      },
+      {
+        "name": "api_keys_user_id_users_id_fk",
+        "referenced_relation": "users",
+        "relation": "api_keys"
+      },
+      {
+        "name": "email_verification_tokens_user_id_users_id_fk",
+        "referenced_relation": "users",
+        "relation": "email_verification_tokens"
+      },
+      {
+        "name": "environmental_alerts_user_id_users_id_fk",
+        "referenced_relation": "users",
+        "relation": "environmental_alerts"
+      },
+      {
+        "name": "features_geometry_id_fkey",
+        "referenced_relation": "geo.geometry",
+        "relation": "geo.features"
+      },
+      {
+        "name": "features_layer_id_layers_id_fk",
+        "referenced_relation": "geo.layers",
+        "relation": "geo.features"
+      },
+      {
+        "name": "geometry_superseded_by_fkey",
+        "referenced_relation": "geo.geometry",
+        "relation": "geo.geometry"
+      },
+      {
+        "name": "layers_team_id_teams_id_fk",
+        "referenced_relation": "teams",
+        "relation": "geo.layers"
+      },
+      {
+        "name": "open_plant_data_solution_id_agricultural_solutions_id_fk",
+        "referenced_relation": "agricultural_solutions",
+        "relation": "open_plant_data"
+      },
+      {
+        "name": "open_tooling_data_solution_id_agricultural_solutions_id_fk",
+        "referenced_relation": "agricultural_solutions",
+        "relation": "open_tooling_data"
+      },
+      {
+        "name": "password_reset_tokens_user_id_users_id_fk",
+        "referenced_relation": "users",
+        "relation": "password_reset_tokens"
+      },
+      {
+        "name": "request_votes_request_id_strategy_requests_id_fk",
+        "referenced_relation": "strategy_requests",
+        "relation": "request_votes"
+      },
+      {
+        "name": "request_votes_user_id_users_id_fk",
+        "referenced_relation": "users",
+        "relation": "request_votes"
+      },
+      {
+        "name": "sessions_user_id_users_id_fk",
+        "referenced_relation": "users",
+        "relation": "sessions"
+      },
+      {
+        "name": "strategy_requests_team_id_teams_id_fk",
+        "referenced_relation": "teams",
+        "relation": "strategy_requests"
+      },
+      {
+        "name": "strategy_requests_user_id_users_id_fk",
+        "referenced_relation": "users",
+        "relation": "strategy_requests"
+      },
+      {
+        "name": "team_invitations_team_id_teams_id_fk",
+        "referenced_relation": "teams",
+        "relation": "team_invitations"
+      },
+      {
+        "name": "team_invitations_accepted_by_users_id_fk",
+        "referenced_relation": "users",
+        "relation": "team_invitations"
+      },
+      {
+        "name": "team_invitations_invited_by_users_id_fk",
+        "referenced_relation": "users",
+        "relation": "team_invitations"
+      },
+      {
+        "name": "team_join_links_team_id_teams_id_fk",
+        "referenced_relation": "teams",
+        "relation": "team_join_links"
+      },
+      {
+        "name": "team_join_links_created_by_users_id_fk",
+        "referenced_relation": "users",
+        "relation": "team_join_links"
+      },
+      {
+        "name": "team_members_team_id_teams_id_fk",
+        "referenced_relation": "teams",
+        "relation": "team_members"
+      },
+      {
+        "name": "team_members_user_id_users_id_fk",
+        "referenced_relation": "users",
+        "relation": "team_members"
+      },
+      {
+        "name": "teams_created_by_users_id_fk",
+        "referenced_relation": "users",
+        "relation": "teams"
+      },
+      {
+        "name": "watched_locations_user_id_users_id_fk",
+        "referenced_relation": "users",
+        "relation": "watched_locations"
+      }
+    ],
+    "row_limit": 1201
+  },
+  "handoff_acknowledgements": [
+    "fire-detections-direct-forward=plantgeo-fire-detections-forward:disabled-and-no-run-in-flight",
+    "jobs-matview-refresh=plantgeo-ingest-cron:disabled-and-no-run-in-flight",
+    "jobs-strategy-mv-refresh=plantgeo-ingest-cron:disabled-and-no-run-in-flight",
+    "maintenance-validate-streams=plantgeo-ingest-cron:disabled-and-no-run-in-flight",
+    "parquet-calendar=plantgeo-ingest-cron:disabled-and-no-run-in-flight",
+    "parquet-fire-detections=plantgeo-ingest-cron:disabled-and-no-run-in-flight",
+    "parquet-fire-perimeters=plantgeo-ingest-cron:disabled-and-no-run-in-flight",
+    "parquet-signal=plantgeo-ingest-cron:disabled-and-no-run-in-flight",
+    "parquet-soil-survey=plantgeo-ingest-cron:disabled-and-no-run-in-flight",
+    "parquet-water-gauges=plantgeo-ingest-cron:disabled-and-no-run-in-flight",
+    "water-gauges-direct-forward=plantgeo-water-gauges-forward:disabled-and-no-run-in-flight"
+  ],
+  "job_definitions": [
+    {
+      "enabled": true,
+      "handler": "ingest.archive_walk",
+      "id": "a8fbe130-3600-492f-8c3c-beb507007d9b",
+      "lease_seconds": 2400,
+      "name": "agri.ingest.archive_walk.firms-archive",
+      "schedule": null,
+      "schedule_timezone": "UTC",
+      "time_budget_seconds": 780,
+      "updated_at": "2026-09-09 13:08:41.745467+00:00",
+      "version": "2026-08-08"
+    },
+    {
+      "enabled": true,
+      "handler": "ingest.archive_walk",
+      "id": "3422cd25-52f8-4d13-aacb-77613b894842",
+      "lease_seconds": 2400,
+      "name": "agri.ingest.archive_walk.streamflow-archive",
+      "schedule": null,
+      "schedule_timezone": "UTC",
+      "time_budget_seconds": 780,
+      "updated_at": "2026-09-09 13:12:44.298600+00:00",
+      "version": "2026-08-08"
+    },
+    {
+      "enabled": true,
+      "handler": "jobs.matview_refresh",
+      "id": "82a92a5d-1c64-4e29-ac60-5c633553d890",
+      "lease_seconds": 2700,
+      "name": "matview-refresh",
+      "schedule": "0 * * * *",
+      "schedule_timezone": "UTC",
+      "time_budget_seconds": 2100,
+      "updated_at": "2026-09-11 18:00:19.145365+00:00",
+      "version": "v1"
+    },
+    {
+      "enabled": true,
+      "handler": "plantgeo.executor.command.v1",
+      "id": "ddbf77a3-3ef8-416b-85c0-9d8a11148575",
+      "lease_seconds": 2220,
+      "name": "plantgeo.executor.burn-severity-direct-forward",
+      "schedule": "55 8 * * *",
+      "schedule_timezone": "UTC",
+      "time_budget_seconds": 2130,
+      "updated_at": "2026-09-11 05:54:46.032404+00:00",
+      "version": "2"
+    },
+    {
+      "enabled": true,
+      "handler": "plantgeo.executor.command.v1",
+      "id": "1a444af5-9ef1-4e47-b230-9e7f4ac7d09b",
+      "lease_seconds": 1320,
+      "name": "plantgeo.executor.climate-nasa-power-direct-forward",
+      "schedule": "40 * * * *",
+      "schedule_timezone": "UTC",
+      "time_budget_seconds": 1230,
+      "updated_at": "2026-09-07 08:32:43.469820+00:00",
+      "version": "2"
+    },
+    {
+      "enabled": true,
+      "handler": "plantgeo.executor.command.v1",
+      "id": "79653f4a-5b19-423a-ad4d-4d629862153e",
+      "lease_seconds": 720,
+      "name": "plantgeo.executor.drought-direct-forward",
+      "schedule": "45 * * * *",
+      "schedule_timezone": "UTC",
+      "time_budget_seconds": 630,
+      "updated_at": "2026-09-07 11:56:43.507200+00:00",
+      "version": "2"
+    },
+    {
+      "enabled": true,
+      "handler": "plantgeo.executor.command.v1",
+      "id": "3686bde8-8cdf-45d4-bf3c-483606a68b67",
+      "lease_seconds": 720,
+      "name": "plantgeo.executor.evacuation-zones-direct-forward",
+      "schedule": "35 * * * *",
+      "schedule_timezone": "UTC",
+      "time_budget_seconds": 630,
+      "updated_at": "2026-09-07 08:32:43.516093+00:00",
+      "version": "2"
+    },
+    {
+      "enabled": true,
+      "handler": "plantgeo.executor.command.v1",
+      "id": "b7a3a362-aed4-471a-8a0b-949b15d7a6da",
+      "lease_seconds": 1020,
+      "name": "plantgeo.executor.fire-detections-direct-forward",
+      "schedule": "15 * * * *",
+      "schedule_timezone": "UTC",
+      "time_budget_seconds": 930,
+      "updated_at": "2026-09-02 17:54:02.477402+00:00",
+      "version": "2"
+    },
+    {
+      "enabled": true,
+      "handler": "plantgeo.executor.command.v1",
+      "id": "0147e6aa-b641-458c-9bc5-dcc68fb6869b",
+      "lease_seconds": 1200,
+      "name": "plantgeo.executor.jobs-firms-archive",
+      "schedule": "0 * * * *",
+      "schedule_timezone": "UTC",
+      "time_budget_seconds": 1110,
+      "updated_at": "2026-09-02 17:54:01.682764+00:00",
+      "version": "2"
+    },
+    {
+      "enabled": true,
+      "handler": "plantgeo.executor.command.v1",
+      "id": "1863059c-79ce-4b35-9839-d8c16b2440c3",
+      "lease_seconds": 2520,
+      "name": "plantgeo.executor.jobs-matview-refresh",
+      "schedule": "0 * * * *",
+      "schedule_timezone": "UTC",
+      "time_budget_seconds": 2430,
+      "updated_at": "2026-09-02 17:54:01.603376+00:00",
+      "version": "2"
+    },
+    {
+      "enabled": true,
+      "handler": "plantgeo.executor.command.v1",
+      "id": "fa7ddef1-0d38-478c-ace6-b22a332449fd",
+      "lease_seconds": 1020,
+      "name": "plantgeo.executor.jobs-strategy-mv-refresh",
+      "schedule": "*/15 * * * *",
+      "schedule_timezone": "UTC",
+      "time_budget_seconds": 930,
+      "updated_at": "2026-09-02 17:54:01.646729+00:00",
+      "version": "2"
+    },
+    {
+      "enabled": true,
+      "handler": "plantgeo.executor.command.v1",
+      "id": "b4439bc0-9916-4863-88cd-28e34b59ff5d",
+      "lease_seconds": 1200,
+      "name": "plantgeo.executor.jobs-streamflow-archive",
+      "schedule": "0 * * * *",
+      "schedule_timezone": "UTC",
+      "time_budget_seconds": 1110,
+      "updated_at": "2026-09-02 17:54:01.717451+00:00",
+      "version": "2"
+    },
+    {
+      "enabled": true,
+      "handler": "plantgeo.executor.command.v1",
+      "id": "822b9d6f-a251-470a-8f51-41860e443344",
+      "lease_seconds": 1020,
+      "name": "plantgeo.executor.maintenance-firms-archive-plan-gaps",
+      "schedule": "0 * * * *",
+      "schedule_timezone": "UTC",
+      "time_budget_seconds": 930,
+      "updated_at": "2026-09-02 17:54:01.789855+00:00",
+      "version": "2"
+    },
+    {
+      "enabled": true,
+      "handler": "plantgeo.executor.command.v1",
+      "id": "52791359-a366-4013-a613-5d00249ca9a0",
+      "lease_seconds": 1020,
+      "name": "plantgeo.executor.maintenance-firms-archive-reconcile",
+      "schedule": "0 * * * *",
+      "schedule_timezone": "UTC",
+      "time_budget_seconds": 930,
+      "updated_at": "2026-09-02 17:54:01.756088+00:00",
+      "version": "2"
+    },
+    {
+      "enabled": true,
+      "handler": "plantgeo.executor.command.v1",
+      "id": "0e7c02df-378c-42d3-bed7-1e8ab1fb55ef",
+      "lease_seconds": 1020,
+      "name": "plantgeo.executor.maintenance-streamflow-archive-plan-gaps",
+      "schedule": "0 * * * *",
+      "schedule_timezone": "UTC",
+      "time_budget_seconds": 930,
+      "updated_at": "2026-09-02 17:54:01.872337+00:00",
+      "version": "2"
+    },
+    {
+      "enabled": true,
+      "handler": "plantgeo.executor.command.v1",
+      "id": "0ad093a9-2ec4-4d0c-94ef-7f2a79992a55",
+      "lease_seconds": 1020,
+      "name": "plantgeo.executor.maintenance-streamflow-archive-reconcile",
+      "schedule": "0 * * * *",
+      "schedule_timezone": "UTC",
+      "time_budget_seconds": 930,
+      "updated_at": "2026-09-02 17:54:01.831309+00:00",
+      "version": "2"
+    },
+    {
+      "enabled": true,
+      "handler": "plantgeo.executor.command.v1",
+      "id": "8cb7566c-19aa-42ef-8927-b55a994c1b89",
+      "lease_seconds": 1020,
+      "name": "plantgeo.executor.maintenance-validate-streams",
+      "schedule": "0 * * * *",
+      "schedule_timezone": "UTC",
+      "time_budget_seconds": 930,
+      "updated_at": "2026-09-02 17:54:01.914229+00:00",
+      "version": "2"
+    },
+    {
+      "enabled": true,
+      "handler": "plantgeo.executor.command.v1",
+      "id": "364bcd7b-f904-4512-aa41-eeb723f85b95",
+      "lease_seconds": 1920,
+      "name": "plantgeo.executor.mtbs-forward",
+      "schedule": "55 7 * * 2",
+      "schedule_timezone": "UTC",
+      "time_budget_seconds": 1830,
+      "updated_at": "2026-09-02 17:54:02.554101+00:00",
+      "version": "2"
+    },
+    {
+      "enabled": true,
+      "handler": "plantgeo.executor.command.v1",
+      "id": "17da185a-f996-4e6b-845f-82bea24066b0",
+      "lease_seconds": 1320,
+      "name": "plantgeo.executor.parquet-burn-severity",
+      "schedule": "0 * * * *",
+      "schedule_timezone": "UTC",
+      "time_budget_seconds": 1230,
+      "updated_at": "2026-09-02 17:54:01.958950+00:00",
+      "version": "2"
+    },
+    {
+      "enabled": true,
+      "handler": "plantgeo.executor.command.v1",
+      "id": "21daf628-1074-435d-9498-d08498e1d9a1",
+      "lease_seconds": 1320,
+      "name": "plantgeo.executor.parquet-calendar",
+      "schedule": "0 * * * *",
+      "schedule_timezone": "UTC",
+      "time_budget_seconds": 1230,
+      "updated_at": "2026-09-02 17:54:01.993043+00:00",
+      "version": "2"
+    },
+    {
+      "enabled": true,
+      "handler": "plantgeo.executor.command.v1",
+      "id": "e42e2a66-e80e-4045-b0de-5b436c22fd38",
+      "lease_seconds": 1320,
+      "name": "plantgeo.executor.parquet-drought",
+      "schedule": "0 * * * *",
+      "schedule_timezone": "UTC",
+      "time_budget_seconds": 1230,
+      "updated_at": "2026-09-02 17:54:02.035492+00:00",
+      "version": "2"
+    },
+    {
+      "enabled": true,
+      "handler": "plantgeo.executor.command.v1",
+      "id": "98edcc3a-8e00-4931-ba8c-2d0513f6ebed",
+      "lease_seconds": 1320,
+      "name": "plantgeo.executor.parquet-evacuation-zones",
+      "schedule": "0 * * * *",
+      "schedule_timezone": "UTC",
+      "time_budget_seconds": 1230,
+      "updated_at": "2026-09-02 17:54:02.076719+00:00",
+      "version": "2"
+    },
+    {
+      "enabled": true,
+      "handler": "plantgeo.executor.command.v1",
+      "id": "bfa04573-577e-486f-9f69-d8df17feed65",
+      "lease_seconds": 1320,
+      "name": "plantgeo.executor.parquet-fire-detections",
+      "schedule": "0 * * * *",
+      "schedule_timezone": "UTC",
+      "time_budget_seconds": 1230,
+      "updated_at": "2026-09-02 17:54:02.118680+00:00",
+      "version": "2"
+    },
+    {
+      "enabled": true,
+      "handler": "plantgeo.executor.command.v1",
+      "id": "7af39f7c-4d4a-4783-ae99-6859b87eabe6",
+      "lease_seconds": 1320,
+      "name": "plantgeo.executor.parquet-fire-perimeters",
+      "schedule": "0 * * * *",
+      "schedule_timezone": "UTC",
+      "time_budget_seconds": 1230,
+      "updated_at": "2026-09-02 17:54:02.163849+00:00",
+      "version": "2"
+    },
+    {
+      "enabled": true,
+      "handler": "plantgeo.executor.command.v1",
+      "id": "6ddc4127-25d1-4ec5-b1c9-8821eb818302",
+      "lease_seconds": 1320,
+      "name": "plantgeo.executor.parquet-sensors",
+      "schedule": "0 * * * *",
+      "schedule_timezone": "UTC",
+      "time_budget_seconds": 1230,
+      "updated_at": "2026-09-02 17:54:02.203054+00:00",
+      "version": "2"
+    },
+    {
+      "enabled": true,
+      "handler": "plantgeo.executor.command.v1",
+      "id": "0c87b11b-9848-4e91-b5ac-130ecd43c358",
+      "lease_seconds": 1320,
+      "name": "plantgeo.executor.parquet-signal",
+      "schedule": "0 * * * *",
+      "schedule_timezone": "UTC",
+      "time_budget_seconds": 1230,
+      "updated_at": "2026-09-02 17:54:02.241580+00:00",
+      "version": "2"
+    },
+    {
+      "enabled": true,
+      "handler": "plantgeo.executor.command.v1",
+      "id": "3c4dbb7d-d924-4003-bf50-213afa7fa6ed",
+      "lease_seconds": 1320,
+      "name": "plantgeo.executor.parquet-soil-survey",
+      "schedule": "0 * * * *",
+      "schedule_timezone": "UTC",
+      "time_budget_seconds": 1230,
+      "updated_at": "2026-09-02 17:54:02.281688+00:00",
+      "version": "2"
+    },
+    {
+      "enabled": true,
+      "handler": "plantgeo.executor.command.v1",
+      "id": "032894fa-021f-46aa-907c-4b68ae8125a6",
+      "lease_seconds": 1320,
+      "name": "plantgeo.executor.parquet-vegetation",
+      "schedule": "0 * * * *",
+      "schedule_timezone": "UTC",
+      "time_budget_seconds": 1230,
+      "updated_at": "2026-09-02 17:54:02.328051+00:00",
+      "version": "2"
+    },
+    {
+      "enabled": true,
+      "handler": "plantgeo.executor.command.v1",
+      "id": "689fd6f3-a9f1-43c7-9720-e3140282ed29",
+      "lease_seconds": 1320,
+      "name": "plantgeo.executor.parquet-water-gauges",
+      "schedule": "0 * * * *",
+      "schedule_timezone": "UTC",
+      "time_budget_seconds": 1230,
+      "updated_at": "2026-09-02 17:54:02.369893+00:00",
+      "version": "2"
+    },
+    {
+      "enabled": true,
+      "handler": "plantgeo.executor.command.v1",
+      "id": "e58a1b0b-7b09-42ab-8c4b-81f1600761d0",
+      "lease_seconds": 1320,
+      "name": "plantgeo.executor.parquet-watersheds",
+      "schedule": "0 * * * *",
+      "schedule_timezone": "UTC",
+      "time_budget_seconds": 1230,
+      "updated_at": "2026-09-02 17:54:02.404107+00:00",
+      "version": "2"
+    },
+    {
+      "enabled": true,
+      "handler": "plantgeo.executor.command.v1",
+      "id": "60857e81-efd0-4550-90ee-492358f4f484",
+      "lease_seconds": 1320,
+      "name": "plantgeo.executor.parquet-weather-observations",
+      "schedule": "0 * * * *",
+      "schedule_timezone": "UTC",
+      "time_budget_seconds": 1230,
+      "updated_at": "2026-09-02 17:54:02.437735+00:00",
+      "version": "2"
+    },
+    {
+      "enabled": true,
+      "handler": "plantgeo.executor.command.v1",
+      "id": "63d8f3f4-02d5-4440-b312-cbc057275043",
+      "lease_seconds": 1020,
+      "name": "plantgeo.executor.postgres-drought",
+      "schedule": "0 12 * * *",
+      "schedule_timezone": "UTC",
+      "time_budget_seconds": 930,
+      "updated_at": "2026-09-02 17:54:01.339349+00:00",
+      "version": "2"
+    },
+    {
+      "enabled": true,
+      "handler": "plantgeo.executor.command.v1",
+      "id": "c3132124-289c-4dc4-b25f-3c8ff6d1807c",
+      "lease_seconds": 1020,
+      "name": "plantgeo.executor.postgres-evacuation-zones",
+      "schedule": "0 * * * *",
+      "schedule_timezone": "UTC",
+      "time_budget_seconds": 930,
+      "updated_at": "2026-09-02 17:54:01.497546+00:00",
+      "version": "2"
+    },
+    {
+      "enabled": true,
+      "handler": "plantgeo.executor.command.v1",
+      "id": "0f395838-c6a0-454a-ba80-3b960c6ad353",
+      "lease_seconds": 1020,
+      "name": "plantgeo.executor.postgres-fire-perimeters",
+      "schedule": "0 * * * *",
+      "schedule_timezone": "UTC",
+      "time_budget_seconds": 930,
+      "updated_at": "2026-09-02 17:54:01.302472+00:00",
+      "version": "2"
+    },
+    {
+      "enabled": true,
+      "handler": "plantgeo.executor.command.v1",
+      "id": "1c4526c8-0565-405f-b5d1-3deafd9931e5",
+      "lease_seconds": 1020,
+      "name": "plantgeo.executor.postgres-firms",
+      "schedule": "0 * * * *",
+      "schedule_timezone": "UTC",
+      "time_budget_seconds": 930,
+      "updated_at": "2026-09-02 17:54:01.104226+00:00",
+      "version": "2"
+    },
+    {
+      "enabled": true,
+      "handler": "plantgeo.executor.command.v1",
+      "id": "7c2ddeb8-aba8-4771-a84b-48703ee73d5f",
+      "lease_seconds": 1020,
+      "name": "plantgeo.executor.postgres-geometry-repair",
+      "schedule": "0 * * * *",
+      "schedule_timezone": "UTC",
+      "time_budget_seconds": 930,
+      "updated_at": "2026-09-02 17:54:01.530999+00:00",
+      "version": "2"
+    },
+    {
+      "enabled": true,
+      "handler": "plantgeo.executor.command.v1",
+      "id": "1902e5c4-8d02-4130-9fc3-8dc282df29a9",
+      "lease_seconds": 1020,
+      "name": "plantgeo.executor.postgres-sensors",
+      "schedule": "0 * * * *",
+      "schedule_timezone": "UTC",
+      "time_budget_seconds": 930,
+      "updated_at": "2026-09-02 17:54:01.461019+00:00",
+      "version": "2"
+    },
+    {
+      "enabled": true,
+      "handler": "plantgeo.executor.command.v1",
+      "id": "40b683e0-3ee7-4b3d-ab5e-9179d3ddb075",
+      "lease_seconds": 1020,
+      "name": "plantgeo.executor.postgres-streamflow",
+      "schedule": "0 * * * *",
+      "schedule_timezone": "UTC",
+      "time_budget_seconds": 930,
+      "updated_at": "2026-09-02 17:54:01.206077+00:00",
+      "version": "2"
+    },
+    {
+      "enabled": true,
+      "handler": "plantgeo.executor.command.v1",
+      "id": "3661a022-6fdb-4ca2-98d4-f9bbda5fd79a",
+      "lease_seconds": 1020,
+      "name": "plantgeo.executor.postgres-vegetation",
+      "schedule": "0 * * * *",
+      "schedule_timezone": "UTC",
+      "time_budget_seconds": 930,
+      "updated_at": "2026-09-02 17:54:01.381948+00:00",
+      "version": "2"
+    },
+    {
+      "enabled": true,
+      "handler": "plantgeo.executor.command.v1",
+      "id": "c29b857c-b9d5-4d36-a873-2290df461d04",
+      "lease_seconds": 1020,
+      "name": "plantgeo.executor.postgres-watersheds",
+      "schedule": "0 2 * * *",
+      "schedule_timezone": "UTC",
+      "time_budget_seconds": 930,
+      "updated_at": "2026-09-02 17:54:01.569598+00:00",
+      "version": "2"
+    },
+    {
+      "enabled": true,
+      "handler": "plantgeo.executor.command.v1",
+      "id": "26c62f88-e883-4fb5-afe1-cc354c608ba0",
+      "lease_seconds": 1020,
+      "name": "plantgeo.executor.postgres-weather",
+      "schedule": "0 * * * *",
+      "schedule_timezone": "UTC",
+      "time_budget_seconds": 930,
+      "updated_at": "2026-09-02 17:54:01.254901+00:00",
+      "version": "2"
+    },
+    {
+      "enabled": true,
+      "handler": "plantgeo.executor.command.v1",
+      "id": "36b8496e-1ed5-40d0-880f-7a0e17dc9fc0",
+      "lease_seconds": 720,
+      "name": "plantgeo.executor.sensors-direct-forward",
+      "schedule": "20 * * * *",
+      "schedule_timezone": "UTC",
+      "time_budget_seconds": 630,
+      "updated_at": "2026-09-07 08:32:43.500966+00:00",
+      "version": "2"
+    },
+    {
+      "enabled": true,
+      "handler": "plantgeo.executor.command.v1",
+      "id": "05c49beb-0aea-4b65-bb62-ff1e6944e75c",
+      "lease_seconds": 1320,
+      "name": "plantgeo.executor.soil-era5-land-direct-forward",
+      "schedule": "50 * * * *",
+      "schedule_timezone": "UTC",
+      "time_budget_seconds": 1230,
+      "updated_at": "2026-09-07 08:32:43.482827+00:00",
+      "version": "2"
+    },
+    {
+      "enabled": true,
+      "handler": "plantgeo.executor.command.v1",
+      "id": "e4de8b0b-64a9-4670-b7e9-3b1b888960c9",
+      "lease_seconds": 3120,
+      "name": "plantgeo.executor.soilgrids-cache-warm",
+      "schedule": "25 * * * *",
+      "schedule_timezone": "UTC",
+      "time_budget_seconds": 3030,
+      "updated_at": "2026-09-02 17:54:02.592608+00:00",
+      "version": "2"
+    },
+    {
+      "enabled": true,
+      "handler": "plantgeo.executor.command.v1",
+      "id": "6834a067-84c0-4b59-be14-b2100ac1e80e",
+      "lease_seconds": 1020,
+      "name": "plantgeo.executor.vegetation-catch-up",
+      "schedule": "0 * * * *",
+      "schedule_timezone": "UTC",
+      "time_budget_seconds": 930,
+      "updated_at": "2026-09-02 17:54:01.421043+00:00",
+      "version": "2"
+    },
+    {
+      "enabled": true,
+      "handler": "plantgeo.executor.command.v1",
+      "id": "c9309ff4-744e-4a21-8cd0-6167c53d7a64",
+      "lease_seconds": 1320,
+      "name": "plantgeo.executor.vegetation-sentinel2-ndvi-direct-forward",
+      "schedule": "5 * * * *",
+      "schedule_timezone": "UTC",
+      "time_budget_seconds": 1230,
+      "updated_at": "2026-09-07 11:56:43.490617+00:00",
+      "version": "2"
+    },
+    {
+      "enabled": true,
+      "handler": "plantgeo.executor.command.v1",
+      "id": "142da6c3-ca32-4fda-ac6a-216803b71907",
+      "lease_seconds": 1920,
+      "name": "plantgeo.executor.water-gauges-direct-forward",
+      "schedule": "15 * * * *",
+      "schedule_timezone": "UTC",
+      "time_budget_seconds": 1830,
+      "updated_at": "2026-09-02 17:54:02.512860+00:00",
+      "version": "2"
+    },
+    {
+      "enabled": true,
+      "handler": "plantgeo.executor.command.v1",
+      "id": "03e3ef5a-e044-45e0-a036-342ec21bcd6c",
+      "lease_seconds": 1920,
+      "name": "plantgeo.executor.watersheds-direct-forward",
+      "schedule": "0 3 * * *",
+      "schedule_timezone": "UTC",
+      "time_budget_seconds": 1830,
+      "updated_at": "2026-09-07 08:32:43.508975+00:00",
+      "version": "2"
+    },
+    {
+      "enabled": true,
+      "handler": "plantgeo.executor.command.v1",
+      "id": "5b7e3d09-4c29-4cee-926c-343b44a694a7",
+      "lease_seconds": 540,
+      "name": "plantgeo.executor.weather-observations-direct-forward",
+      "schedule": "30 * * * *",
+      "schedule_timezone": "UTC",
+      "time_budget_seconds": 450,
+      "updated_at": "2026-09-07 11:56:43.500077+00:00",
+      "version": "2"
+    },
+    {
+      "enabled": true,
+      "handler": "jobs.strategy_mv_refresh",
+      "id": "b5afd644-8ed7-4eea-9568-d3622b07d81d",
+      "lease_seconds": 900,
+      "name": "strategy-mv-refresh",
+      "schedule": "*/15 * * * *",
+      "schedule_timezone": "UTC",
+      "time_budget_seconds": 600,
+      "updated_at": "2026-09-11 17:47:35.854576+00:00",
+      "version": "v1"
+    }
+  ],
+  "observation_window": {
+    "last_pointer_probe_at": "2026-09-11T18:22:18.217088+00:00",
+    "started_at": "2026-09-11T18:02:11.545655+00:00"
+  },
+  "operational_ownership": {
+    "active_leases": [],
+    "first_capped_queue_sample_is_not_a_lease_census": true,
+    "observed_at": "2026-09-11T18:07:55.247616+00:00",
+    "queries": {
+      "active_leases": "SELECT d.name,w.id AS work_id,r.id AS run_id,w.status,w.lease_owner,w.lease_expires_at,w.heartbeat_at FROM agri.job_work_item w JOIN agri.job_run r ON r.id=w.job_run_id JOIN agri.job_definition d ON d.id=r.job_definition_id WHERE w.status IN ('leased','running') OR w.lease_expires_at > now() ORDER BY d.name,w.id LIMIT 201",
+      "read_only": "SELECT current_setting('transaction_read_only') AS read_only, now() AS observed_at",
+      "work_counts": "SELECT d.name,w.status,count(*) AS item_count,max(w.lease_expires_at) AS latest_lease_expiry FROM agri.job_work_item w JOIN agri.job_run r ON r.id=w.job_run_id JOIN agri.job_definition d ON d.id=r.job_definition_id GROUP BY d.name,w.status ORDER BY d.name,w.status"
+    },
+    "read_only": [
+      {
+        "observed_at": "2026-09-11 18:07:55.292764+00:00",
+        "read_only": "on"
+      }
+    ],
+    "scope": "Complete operational job-ledger lease query; does not establish external/manual writer quiescence.",
+    "work_counts": [
+      {
+        "item_count": 1,
+        "latest_lease_expiry": null,
+        "name": "agri.ingest.archive_walk.firms-archive",
+        "status": "deferred"
+      },
+      {
+        "item_count": 1757,
+        "latest_lease_expiry": null,
+        "name": "agri.ingest.archive_walk.firms-archive",
+        "status": "queued"
+      },
+      {
+        "item_count": 130,
+        "latest_lease_expiry": null,
+        "name": "agri.ingest.archive_walk.firms-archive",
+        "status": "succeeded"
+      },
+      {
+        "item_count": 1,
+        "latest_lease_expiry": null,
+        "name": "agri.ingest.archive_walk.streamflow-archive",
+        "status": "dead_letter"
+      },
+      {
+        "item_count": 2,
+        "latest_lease_expiry": null,
+        "name": "agri.ingest.archive_walk.streamflow-archive",
+        "status": "deferred"
+      },
+      {
+        "item_count": 14,
+        "latest_lease_expiry": null,
+        "name": "agri.ingest.archive_walk.streamflow-archive",
+        "status": "queued"
+      },
+      {
+        "item_count": 21,
+        "latest_lease_expiry": null,
+        "name": "agri.ingest.archive_walk.streamflow-archive",
+        "status": "retry_wait"
+      },
+      {
+        "item_count": 11,
+        "latest_lease_expiry": null,
+        "name": "agri.ingest.archive_walk.streamflow-archive",
+        "status": "succeeded"
+      },
+      {
+        "item_count": 54,
+        "latest_lease_expiry": null,
+        "name": "matview-refresh",
+        "status": "succeeded"
+      },
+      {
+        "item_count": 3,
+        "latest_lease_expiry": null,
+        "name": "plantgeo.executor.burn-severity-direct-forward",
+        "status": "succeeded"
+      },
+      {
+        "item_count": 6,
+        "latest_lease_expiry": null,
+        "name": "plantgeo.executor.climate-nasa-power-direct-forward",
+        "status": "dead_letter"
+      },
+      {
+        "item_count": 31,
+        "latest_lease_expiry": null,
+        "name": "plantgeo.executor.climate-nasa-power-direct-forward",
+        "status": "succeeded"
+      },
+      {
+        "item_count": 54,
+        "latest_lease_expiry": null,
+        "name": "plantgeo.executor.drought-direct-forward",
+        "status": "succeeded"
+      },
+      {
+        "item_count": 54,
+        "latest_lease_expiry": null,
+        "name": "plantgeo.executor.evacuation-zones-direct-forward",
+        "status": "succeeded"
+      },
+      {
+        "item_count": 54,
+        "latest_lease_expiry": null,
+        "name": "plantgeo.executor.fire-detections-direct-forward",
+        "status": "succeeded"
+      },
+      {
+        "item_count": 25,
+        "latest_lease_expiry": null,
+        "name": "plantgeo.executor.jobs-firms-archive",
+        "status": "succeeded"
+      },
+      {
+        "item_count": 54,
+        "latest_lease_expiry": null,
+        "name": "plantgeo.executor.jobs-matview-refresh",
+        "status": "succeeded"
+      },
+      {
+        "item_count": 209,
+        "latest_lease_expiry": null,
+        "name": "plantgeo.executor.jobs-strategy-mv-refresh",
+        "status": "succeeded"
+      },
+      {
+        "item_count": 1,
+        "latest_lease_expiry": null,
+        "name": "plantgeo.executor.jobs-streamflow-archive",
+        "status": "dead_letter"
+      },
+      {
+        "item_count": 18,
+        "latest_lease_expiry": null,
+        "name": "plantgeo.executor.jobs-streamflow-archive",
+        "status": "succeeded"
+      },
+      {
+        "item_count": 25,
+        "latest_lease_expiry": null,
+        "name": "plantgeo.executor.maintenance-firms-archive-plan-gaps",
+        "status": "succeeded"
+      },
+      {
+        "item_count": 25,
+        "latest_lease_expiry": null,
+        "name": "plantgeo.executor.maintenance-firms-archive-reconcile",
+        "status": "succeeded"
+      },
+      {
+        "item_count": 25,
+        "latest_lease_expiry": null,
+        "name": "plantgeo.executor.maintenance-streamflow-archive-plan-gaps",
+        "status": "succeeded"
+      },
+      {
+        "item_count": 25,
+        "latest_lease_expiry": null,
+        "name": "plantgeo.executor.maintenance-streamflow-archive-reconcile",
+        "status": "succeeded"
+      },
+      {
+        "item_count": 54,
+        "latest_lease_expiry": null,
+        "name": "plantgeo.executor.maintenance-validate-streams",
+        "status": "succeeded"
+      },
+      {
+        "item_count": 1,
+        "latest_lease_expiry": null,
+        "name": "plantgeo.executor.mtbs-forward",
+        "status": "succeeded"
+      },
+      {
+        "item_count": 54,
+        "latest_lease_expiry": null,
+        "name": "plantgeo.executor.parquet-calendar",
+        "status": "succeeded"
+      },
+      {
+        "item_count": 54,
+        "latest_lease_expiry": null,
+        "name": "plantgeo.executor.parquet-fire-detections",
+        "status": "succeeded"
+      },
+      {
+        "item_count": 54,
+        "latest_lease_expiry": null,
+        "name": "plantgeo.executor.parquet-fire-perimeters",
+        "status": "succeeded"
+      },
+      {
+        "item_count": 1,
+        "latest_lease_expiry": null,
+        "name": "plantgeo.executor.parquet-signal",
+        "status": "dead_letter"
+      },
+      {
+        "item_count": 54,
+        "latest_lease_expiry": null,
+        "name": "plantgeo.executor.parquet-soil-survey",
+        "status": "succeeded"
+      },
+      {
+        "item_count": 54,
+        "latest_lease_expiry": null,
+        "name": "plantgeo.executor.parquet-water-gauges",
+        "status": "succeeded"
+      },
+      {
+        "item_count": 3,
+        "latest_lease_expiry": null,
+        "name": "plantgeo.executor.sensors-direct-forward",
+        "status": "dead_letter"
+      },
+      {
+        "item_count": 3,
+        "latest_lease_expiry": null,
+        "name": "plantgeo.executor.soil-era5-land-direct-forward",
+        "status": "dead_letter"
+      },
+      {
+        "item_count": 35,
+        "latest_lease_expiry": null,
+        "name": "plantgeo.executor.soil-era5-land-direct-forward",
+        "status": "succeeded"
+      },
+      {
+        "item_count": 25,
+        "latest_lease_expiry": null,
+        "name": "plantgeo.executor.vegetation-catch-up",
+        "status": "succeeded"
+      },
+      {
+        "item_count": 54,
+        "latest_lease_expiry": null,
+        "name": "plantgeo.executor.vegetation-sentinel2-ndvi-direct-forward",
+        "status": "succeeded"
+      },
+      {
+        "item_count": 1,
+        "latest_lease_expiry": null,
+        "name": "plantgeo.executor.water-gauges-direct-forward",
+        "status": "dead_letter"
+      },
+      {
+        "item_count": 52,
+        "latest_lease_expiry": null,
+        "name": "plantgeo.executor.water-gauges-direct-forward",
+        "status": "succeeded"
+      },
+      {
+        "item_count": 3,
+        "latest_lease_expiry": null,
+        "name": "plantgeo.executor.watersheds-direct-forward",
+        "status": "succeeded"
+      },
+      {
+        "item_count": 54,
+        "latest_lease_expiry": null,
+        "name": "plantgeo.executor.weather-observations-direct-forward",
+        "status": "succeeded"
+      },
+      {
+        "item_count": 208,
+        "latest_lease_expiry": null,
+        "name": "strategy-mv-refresh",
+        "status": "retry_wait"
+      }
+    ]
+  },
+  "production_mutations": false,
+  "publication_objects": {
+    "no_listing_or_marker_alone_is_source_population_proof": true,
+    "observed_at": "2026-09-11T18:07:55.247616+00:00",
+    "receipts": [
+      {
+        "key": "layer=signal/kind=observed/availability/_LATEST.json",
+        "status": "NoSuchKey"
+      },
+      {
+        "key": "layer=signal/kind=observed/availability/bootstrap/_BOOTSTRAPPED.json",
+        "status": "NoSuchKey"
+      },
+      {
+        "bytes": 177,
+        "etag": "\"2de85bed44b4a15bb556e3039fcbd739\"",
+        "key": "layer=signal/kind=observed/zoom=13/year=2025/month=12/day=28/_complete.json",
+        "sha256": "e64909fe397ffc3d0a6d724549e9dab4eade650545d053e1467ba1bf9c01a91d",
+        "status": "read"
+      },
+      {
+        "bytes": 176,
+        "etag": "\"e7c3a6d29487f55482496625159e4afb\"",
+        "key": "layer=signal/kind=observed/zoom=13/year=2026/month=08/day=06/_complete.json",
+        "sha256": "26086a8331aef34dc6fa6f8bf5394c71638b006b710881c41cac87be8398a392",
+        "status": "read"
+      },
+      {
+        "bytes": 1277,
+        "etag": "\"0be915f9a6a5bed9343284b1808f2235\"",
+        "key": "layer=sensors/kind=observed/availability/_LATEST.json",
+        "sha256": "5eaded6386fb3b9a01ee69539904c40163061ae73171613bf108d6807bb8bacf",
+        "status": "read"
+      },
+      {
+        "bytes": 344,
+        "etag": "\"3b0444430d167c7548ccb135b5b34015\"",
+        "key": "layer=sensors/kind=observed/availability/bootstrap/_BOOTSTRAPPED.json",
+        "sha256": "686f4bbb1769bd2916f3bdff9a87d7c28ab6ad2ab155004e6a1d252fd89ca800",
+        "status": "read"
+      },
+      {
+        "bytes": 838,
+        "etag": "\"ed77c73127c167cda1136df0b04ae70a\"",
+        "key": "layer=sensors/kind=observed/zoom=00/year=2026/month=09/day=05/absent.json",
+        "sha256": "f0e79ad5eb160e4a0cabe8360c3651f6e417814fdf514e8645d0ff9777d96704",
+        "status": "read"
+      },
+      {
+        "bytes": 838,
+        "etag": "\"67c7a8d802f1511393c5ca6d8b5862a6\"",
+        "key": "layer=sensors/kind=observed/zoom=05/year=2026/month=09/day=05/absent.json",
+        "sha256": "1bb535e6e47ad4081f1d5d3509bcd3944e0428d68bf9af215ed7b20345be00e4",
+        "status": "read"
+      },
+      {
+        "bytes": 838,
+        "etag": "\"6baa64e69d0208d8b164635c6af0a635\"",
+        "key": "layer=sensors/kind=observed/zoom=09/year=2026/month=09/day=05/absent.json",
+        "sha256": "20016c031f36cdd52ac81e900309e4ac00c68d7305b5edfae2fff84df4322092",
+        "status": "read"
+      },
+      {
+        "bytes": 839,
+        "etag": "\"48e7cfec1be319d6c8fc87ec8143452e\"",
+        "key": "layer=sensors/kind=observed/zoom=13/year=2026/month=09/day=05/absent.json",
+        "sha256": "84423207caf1175e323052ff8cd0387e71980fe2cc3b9da6dd73a3a31db92c9f",
+        "status": "read"
+      },
+      {
+        "bytes": 838,
+        "etag": "\"874edc8328e38c77fa98c164fbee36e3\"",
+        "key": "layer=sensors/kind=observed/zoom=00/year=2026/month=09/day=06/absent.json",
+        "sha256": "0cef3454e0ac65905f2e07b86de1c90b4720abd5a4520470c88ab86142b42e79",
+        "status": "read"
+      },
+      {
+        "bytes": 838,
+        "etag": "\"b1e57923694e6b5bde3457da1dbb5c44\"",
+        "key": "layer=sensors/kind=observed/zoom=05/year=2026/month=09/day=06/absent.json",
+        "sha256": "1b372f743a7870744aeb60503032e1c3e6d35e63809f30d547a4900cd41a1a75",
+        "status": "read"
+      },
+      {
+        "bytes": 838,
+        "etag": "\"585c38013f5b1be5ed220823e387d162\"",
+        "key": "layer=sensors/kind=observed/zoom=09/year=2026/month=09/day=06/absent.json",
+        "sha256": "7ec7fc922a9d390f626fa434c62f7fe66e3f1afd6f109df20231490a0e2f4361",
+        "status": "read"
+      },
+      {
+        "bytes": 839,
+        "etag": "\"70c55461eadfcecae643bbe609b1f0a2\"",
+        "key": "layer=sensors/kind=observed/zoom=13/year=2026/month=09/day=06/absent.json",
+        "sha256": "a4a2d8a03f62bb7abce88ea7fcd4689e330d298d8523f1ff3893a505d7745546",
+        "status": "read"
+      },
+      {
+        "bytes": 1318,
+        "etag": "\"47fe4ba7f1dc3afe850da027c7858d3e\"",
+        "key": "layer=burn-severity/kind=observed/availability/_LATEST.json",
+        "sha256": "9ba7704de9cbae3cc93232612e25e7f42ef97de62fa76c48287de6934130a07e",
+        "status": "read"
+      },
+      {
+        "bytes": 356,
+        "etag": "\"13837c35430ce03545948a5e965039c6\"",
+        "key": "layer=burn-severity/kind=observed/availability/bootstrap/_BOOTSTRAPPED.json",
+        "sha256": "bf4166fb51401efffd506bb77743b4eff760a089a383a1b01d60e633bca78cde",
+        "status": "read"
+      },
+      {
+        "bytes": 442,
+        "etag": "\"b39bb22a948c23b4946f7b469e1e051d\"",
+        "key": "layer=burn-severity/kind=observed/zoom=00/year=2026/month=09/day=11/_complete.json",
+        "sha256": "d99774d55b6fa4761788cba744b7b9c8cc1820b263688024473ed92ddbea3df6",
+        "status": "read"
+      },
+      {
+        "bytes": 442,
+        "etag": "\"f7bd65145346d3f08bdc4910cbf2f91f\"",
+        "key": "layer=burn-severity/kind=observed/zoom=05/year=2026/month=09/day=11/_complete.json",
+        "sha256": "d44e0a8dee66823ae72f4342a9de0bb14d5f2609a9721c4c4a7fa373b651fa81",
+        "status": "read"
+      },
+      {
+        "bytes": 442,
+        "etag": "\"3e1da27996304a68f9df972e8f48de3a\"",
+        "key": "layer=burn-severity/kind=observed/zoom=09/year=2026/month=09/day=11/_complete.json",
+        "sha256": "cf845b0047a6672815b63c44f728ef24b59a45329f70abb6f0f6431acb8a282b",
+        "status": "read"
+      },
+      {
+        "bytes": 208,
+        "etag": "\"ba9621a8e33c95cd7149e8b94f9a0303\"",
+        "key": "layer=burn-severity/kind=observed/zoom=13/year=2026/month=09/day=11/_complete.json",
+        "sha256": "2ab0b19fb3bdc14ef3efbb19775f85b2c5ed4c0ff18a8bd60c3d73b9ad7f069f",
+        "status": "read"
+      }
+    ]
+  },
+  "recent_product_runs": [
+    {
+      "completed_at": null,
+      "failed_work_items": 0,
+      "id": "6a7ca624-73a4-498d-92d4-40a1fc720678",
+      "name": "agri.ingest.archive_walk.firms-archive",
+      "recency": 1,
+      "scheduled_for": "2026-09-09 13:08:41.745467+00:00",
+      "started_at": "2026-09-09 13:08:41.745467+00:00",
+      "status": "running",
+      "succeeded_work_items": 130
+    },
+    {
+      "completed_at": null,
+      "failed_work_items": 1,
+      "id": "cb991894-cb8b-4b50-b30b-e36adcf14a0b",
+      "name": "agri.ingest.archive_walk.streamflow-archive",
+      "recency": 1,
+      "scheduled_for": "2026-09-09 13:12:44.298600+00:00",
+      "started_at": "2026-09-09 13:12:44.298600+00:00",
+      "status": "running",
+      "succeeded_work_items": 11
+    },
+    {
+      "completed_at": "2026-09-11 08:55:30.347203+00:00",
+      "failed_work_items": 0,
+      "id": "558248db-8bd8-44f9-b437-b05cfa48c226",
+      "name": "plantgeo.executor.burn-severity-direct-forward",
+      "recency": 1,
+      "scheduled_for": "2026-09-11 08:55:00+00:00",
+      "started_at": "2026-09-11 08:55:26.661168+00:00",
+      "status": "succeeded",
+      "succeeded_work_items": 1
+    },
+    {
+      "completed_at": "2026-09-11 05:57:30.211431+00:00",
+      "failed_work_items": 0,
+      "id": "836f31b3-8621-491d-967c-00d8dce900b9",
+      "name": "plantgeo.executor.burn-severity-direct-forward",
+      "recency": 2,
+      "scheduled_for": "2026-09-10 08:55:00+00:00",
+      "started_at": "2026-09-11 05:57:26.514080+00:00",
+      "status": "succeeded",
+      "succeeded_work_items": 1
+    },
+    {
+      "completed_at": "2026-09-09 13:01:38.207069+00:00",
+      "failed_work_items": 0,
+      "id": "3b1abed1-93f0-4287-8de8-0c7d83489c27",
+      "name": "plantgeo.executor.burn-severity-direct-forward",
+      "recency": 3,
+      "scheduled_for": "2026-09-08 08:55:00+00:00",
+      "started_at": "2026-09-09 13:01:08.224020+00:00",
+      "status": "succeeded",
+      "succeeded_work_items": 1
+    },
+    {
+      "completed_at": "2026-09-10 13:01:50.174024+00:00",
+      "failed_work_items": 0,
+      "id": "5373e76a-c843-4437-a1e0-c166a9267324",
+      "name": "plantgeo.executor.jobs-firms-archive",
+      "recency": 1,
+      "scheduled_for": "2026-09-10 13:00:00+00:00",
+      "started_at": "2026-09-10 13:00:06.005485+00:00",
+      "status": "succeeded",
+      "succeeded_work_items": 1
+    },
+    {
+      "completed_at": "2026-09-10 12:01:42.822532+00:00",
+      "failed_work_items": 0,
+      "id": "3821a0a9-8ab0-4c26-9bb0-ab7fce7bb31c",
+      "name": "plantgeo.executor.jobs-firms-archive",
+      "recency": 2,
+      "scheduled_for": "2026-09-10 12:00:00+00:00",
+      "started_at": "2026-09-10 12:00:00.987704+00:00",
+      "status": "succeeded",
+      "succeeded_work_items": 1
+    },
+    {
+      "completed_at": "2026-09-10 11:01:51.395657+00:00",
+      "failed_work_items": 0,
+      "id": "d7140b75-189b-41d1-908d-88525d2c6c60",
+      "name": "plantgeo.executor.jobs-firms-archive",
+      "recency": 3,
+      "scheduled_for": "2026-09-10 11:00:00+00:00",
+      "started_at": "2026-09-10 11:00:09.631302+00:00",
+      "status": "succeeded",
+      "succeeded_work_items": 1
+    },
+    {
+      "completed_at": "2026-09-10 07:32:11.961416+00:00",
+      "failed_work_items": 1,
+      "id": "6b7dbbf7-65d1-49b4-b255-1e560112524c",
+      "name": "plantgeo.executor.jobs-streamflow-archive",
+      "recency": 1,
+      "scheduled_for": "2026-09-10 07:00:00+00:00",
+      "started_at": "2026-09-10 07:02:35.653088+00:00",
+      "status": "failed",
+      "succeeded_work_items": 0
+    },
+    {
+      "completed_at": "2026-09-10 06:05:42.822722+00:00",
+      "failed_work_items": 0,
+      "id": "efb07b54-1257-4b3a-b10b-46a978f86b02",
+      "name": "plantgeo.executor.jobs-streamflow-archive",
+      "recency": 2,
+      "scheduled_for": "2026-09-10 06:00:00+00:00",
+      "started_at": "2026-09-10 06:02:32.135958+00:00",
+      "status": "succeeded",
+      "succeeded_work_items": 1
+    },
+    {
+      "completed_at": "2026-09-10 05:09:06.030990+00:00",
+      "failed_work_items": 0,
+      "id": "08687256-dbee-4e59-9502-853391b16226",
+      "name": "plantgeo.executor.jobs-streamflow-archive",
+      "recency": 3,
+      "scheduled_for": "2026-09-10 05:00:00+00:00",
+      "started_at": "2026-09-10 05:02:39.775059+00:00",
+      "status": "succeeded",
+      "succeeded_work_items": 1
+    },
+    {
+      "completed_at": "2026-09-10 13:02:34.550879+00:00",
+      "failed_work_items": 0,
+      "id": "de44f3d5-666f-4a7d-92b8-a25e512098b6",
+      "name": "plantgeo.executor.maintenance-firms-archive-plan-gaps",
+      "recency": 1,
+      "scheduled_for": "2026-09-10 13:00:00+00:00",
+      "started_at": "2026-09-10 13:02:27.411428+00:00",
+      "status": "succeeded",
+      "succeeded_work_items": 1
+    },
+    {
+      "completed_at": "2026-09-10 12:02:27.300312+00:00",
+      "failed_work_items": 0,
+      "id": "5d322454-0562-4d25-8961-ede3a0bdd1f7",
+      "name": "plantgeo.executor.maintenance-firms-archive-plan-gaps",
+      "recency": 2,
+      "scheduled_for": "2026-09-10 12:00:00+00:00",
+      "started_at": "2026-09-10 12:02:19.796592+00:00",
+      "status": "succeeded",
+      "succeeded_work_items": 1
+    },
+    {
+      "completed_at": "2026-09-10 11:02:37.041566+00:00",
+      "failed_work_items": 0,
+      "id": "6cea5a1f-2cce-458c-934a-34256cbcebec",
+      "name": "plantgeo.executor.maintenance-firms-archive-plan-gaps",
+      "recency": 3,
+      "scheduled_for": "2026-09-10 11:00:00+00:00",
+      "started_at": "2026-09-10 11:02:29.268399+00:00",
+      "status": "succeeded",
+      "succeeded_work_items": 1
+    },
+    {
+      "completed_at": "2026-09-10 13:02:41.222501+00:00",
+      "failed_work_items": 0,
+      "id": "f2d7d180-dc7c-4570-9db7-c633da284d86",
+      "name": "plantgeo.executor.maintenance-firms-archive-reconcile",
+      "recency": 1,
+      "scheduled_for": "2026-09-10 13:00:00+00:00",
+      "started_at": "2026-09-10 13:02:34.566351+00:00",
+      "status": "succeeded",
+      "succeeded_work_items": 1
+    },
+    {
+      "completed_at": "2026-09-10 12:02:33.944453+00:00",
+      "failed_work_items": 0,
+      "id": "6b012c57-4a98-46a0-b1c0-b146b60beebd",
+      "name": "plantgeo.executor.maintenance-firms-archive-reconcile",
+      "recency": 2,
+      "scheduled_for": "2026-09-10 12:00:00+00:00",
+      "started_at": "2026-09-10 12:02:27.314854+00:00",
+      "status": "succeeded",
+      "succeeded_work_items": 1
+    },
+    {
+      "completed_at": "2026-09-10 11:02:43.819127+00:00",
+      "failed_work_items": 0,
+      "id": "11a643c7-972c-439b-ae4b-81c49cb5e997",
+      "name": "plantgeo.executor.maintenance-firms-archive-reconcile",
+      "recency": 3,
+      "scheduled_for": "2026-09-10 11:00:00+00:00",
+      "started_at": "2026-09-10 11:02:37.058828+00:00",
+      "status": "succeeded",
+      "succeeded_work_items": 1
+    },
+    {
+      "completed_at": "2026-09-10 13:03:17.795488+00:00",
+      "failed_work_items": 0,
+      "id": "1df5f314-dfd6-4a20-a143-c253437ec258",
+      "name": "plantgeo.executor.maintenance-streamflow-archive-plan-gaps",
+      "recency": 1,
+      "scheduled_for": "2026-09-10 13:00:00+00:00",
+      "started_at": "2026-09-10 13:03:12.003449+00:00",
+      "status": "succeeded",
+      "succeeded_work_items": 1
+    },
+    {
+      "completed_at": "2026-09-10 12:03:10.721374+00:00",
+      "failed_work_items": 0,
+      "id": "19a0b687-a944-4aca-8820-1d3c8ed826f4",
+      "name": "plantgeo.executor.maintenance-streamflow-archive-plan-gaps",
+      "recency": 2,
+      "scheduled_for": "2026-09-10 12:00:00+00:00",
+      "started_at": "2026-09-10 12:03:04.673731+00:00",
+      "status": "succeeded",
+      "succeeded_work_items": 1
+    },
+    {
+      "completed_at": "2026-09-10 11:03:21.102193+00:00",
+      "failed_work_items": 0,
+      "id": "f2cc402e-c39a-4db0-8295-0d2761e74dca",
+      "name": "plantgeo.executor.maintenance-streamflow-archive-plan-gaps",
+      "recency": 3,
+      "scheduled_for": "2026-09-10 11:00:00+00:00",
+      "started_at": "2026-09-10 11:03:14.754516+00:00",
+      "status": "succeeded",
+      "succeeded_work_items": 1
+    },
+    {
+      "completed_at": "2026-09-10 13:03:23.557146+00:00",
+      "failed_work_items": 0,
+      "id": "da4a0adc-2476-4fd3-9887-2b7a187162af",
+      "name": "plantgeo.executor.maintenance-streamflow-archive-reconcile",
+      "recency": 1,
+      "scheduled_for": "2026-09-10 13:00:00+00:00",
+      "started_at": "2026-09-10 13:03:17.808779+00:00",
+      "status": "succeeded",
+      "succeeded_work_items": 1
+    },
+    {
+      "completed_at": "2026-09-10 12:03:16.643174+00:00",
+      "failed_work_items": 0,
+      "id": "efb70ac5-e5b5-476c-b544-7bff3637d8c0",
+      "name": "plantgeo.executor.maintenance-streamflow-archive-reconcile",
+      "recency": 2,
+      "scheduled_for": "2026-09-10 12:00:00+00:00",
+      "started_at": "2026-09-10 12:03:10.747049+00:00",
+      "status": "succeeded",
+      "succeeded_work_items": 1
+    },
+    {
+      "completed_at": "2026-09-10 11:03:27.499804+00:00",
+      "failed_work_items": 0,
+      "id": "70cc693c-7051-446a-9a60-ac75c360982e",
+      "name": "plantgeo.executor.maintenance-streamflow-archive-reconcile",
+      "recency": 3,
+      "scheduled_for": "2026-09-10 11:00:00+00:00",
+      "started_at": "2026-09-10 11:03:21.278572+00:00",
+      "status": "succeeded",
+      "succeeded_work_items": 1
+    },
+    {
+      "completed_at": "2026-09-09 13:10:16.570140+00:00",
+      "failed_work_items": 0,
+      "id": "179e60fd-9341-4005-8174-fe68169e7b89",
+      "name": "plantgeo.executor.mtbs-forward",
+      "recency": 1,
+      "scheduled_for": "2026-09-08 07:55:00+00:00",
+      "started_at": "2026-09-09 13:09:13.423824+00:00",
+      "status": "succeeded",
+      "succeeded_work_items": 1
+    },
+    {
+      "completed_at": "2026-09-09 13:53:52.300242+00:00",
+      "failed_work_items": 1,
+      "id": "cd60d5d0-d077-47fa-b51c-2587110c729e",
+      "name": "plantgeo.executor.parquet-signal",
+      "recency": 1,
+      "scheduled_for": "2026-09-09 13:00:00+00:00",
+      "started_at": "2026-09-09 13:27:01.565963+00:00",
+      "status": "failed",
+      "succeeded_work_items": 0
+    },
+    {
+      "completed_at": "2026-09-11 17:02:21.016775+00:00",
+      "failed_work_items": 0,
+      "id": "f51cea34-2dc8-4be7-bc8a-4ce8ca2ef22a",
+      "name": "plantgeo.executor.parquet-soil-survey",
+      "recency": 1,
+      "scheduled_for": "2026-09-11 17:00:00+00:00",
+      "started_at": "2026-09-11 17:02:15.849547+00:00",
+      "status": "succeeded",
+      "succeeded_work_items": 1
+    },
+    {
+      "completed_at": "2026-09-11 16:02:28.367455+00:00",
+      "failed_work_items": 0,
+      "id": "ebc67c1b-9fa3-48d7-a5ea-0e562ba49e7a",
+      "name": "plantgeo.executor.parquet-soil-survey",
+      "recency": 2,
+      "scheduled_for": "2026-09-11 16:00:00+00:00",
+      "started_at": "2026-09-11 16:02:18.755404+00:00",
+      "status": "succeeded",
+      "succeeded_work_items": 1
+    },
+    {
+      "completed_at": "2026-09-11 15:02:30.813671+00:00",
+      "failed_work_items": 0,
+      "id": "2a667556-21b9-4ca5-b934-c2882871b3a0",
+      "name": "plantgeo.executor.parquet-soil-survey",
+      "recency": 3,
+      "scheduled_for": "2026-09-11 15:00:00+00:00",
+      "started_at": "2026-09-11 15:02:24.920990+00:00",
+      "status": "succeeded",
+      "succeeded_work_items": 1
+    },
+    {
+      "completed_at": "2026-09-09 14:57:26.690329+00:00",
+      "failed_work_items": 1,
+      "id": "def58693-a0b6-4d97-90f2-3127bfc9b418",
+      "name": "plantgeo.executor.sensors-direct-forward",
+      "recency": 1,
+      "scheduled_for": "2026-09-09 14:20:00+00:00",
+      "started_at": "2026-09-09 14:24:04.939417+00:00",
+      "status": "failed",
+      "succeeded_work_items": 0
+    },
+    {
+      "completed_at": "2026-09-09 14:17:01.757547+00:00",
+      "failed_work_items": 1,
+      "id": "c9fbe1e2-9eea-4303-8498-698b7e242794",
+      "name": "plantgeo.executor.sensors-direct-forward",
+      "recency": 2,
+      "scheduled_for": "2026-09-09 13:20:00+00:00",
+      "started_at": "2026-09-09 13:47:36.436600+00:00",
+      "status": "failed",
+      "succeeded_work_items": 0
+    },
+    {
+      "completed_at": "2026-09-09 13:46:37.126362+00:00",
+      "failed_work_items": 1,
+      "id": "7b79d35e-00a3-40bd-9c19-1dde0dd15d0a",
+      "name": "plantgeo.executor.sensors-direct-forward",
+      "recency": 3,
+      "scheduled_for": "2026-09-09 12:20:00+00:00",
+      "started_at": "2026-09-09 13:10:53.504179+00:00",
+      "status": "failed",
+      "succeeded_work_items": 0
+    }
+  ],
+  "release_revision": "fa202230958fb55521963e886eb031be5fc266c4",
+  "retirement_verdict": {
+    "drop_authorized": false,
+    "exact_relation_or_day_parity_measured": false,
+    "manual_writer_quiescence_proven": false,
+    "new_pg_dump_archives_written": false,
+    "three_scheduled_publication_advances_proven": false
+  },
+  "schema": "environmental-retirement-runtime-checkpoint/v1",
+  "soil_survey": {
+    "json_marker_count": 0,
+    "listing_truncated": false,
+    "object_count": 959,
+    "observed_at": "2026-09-11T18:17:40.397394+00:00",
+    "partitions": {
+      "layer=soil-survey/kind=observed/zoom=13/year=2026/month=08/day=10": {
+        "compressed_bytes": 478154389,
+        "parts": 478
+      },
+      "layer=soil-survey/kind=observed/zoom=13/year=2026/month=08/day=28": {
+        "compressed_bytes": 479302736,
+        "parts": 481
+      }
+    },
+    "population_proven": false,
+    "release_proven": false,
+    "sampled_parts": [
+      {
+        "bytes": 849629,
+        "etag": "\"dfb24c0f9d139b8ff8223d5aadb251cc\"",
+        "key": "layer=soil-survey/kind=observed/zoom=13/year=2026/month=08/day=10/part-0.parquet",
+        "row_groups": 1,
+        "rows": 500,
+        "schema": "natural_key: string not null\nmupolygonkey: string not null\nmukey: string not null\nmap_unit_name: string\nsoil_series: string\ndrainage_class: string\nhydric_rating: bool\nland_capability_class: string\nsurvey_area_symbol: string\nsurvey_area_vintage: timestamp[us, tz=UTC] not null\ngeometry_id: string not null\nlast_confirmed_at: timestamp[us, tz=UTC] not null\nrelease_day: date32[day] not null\ngeometry_wkb: binary not null\nproducer: string not null",
+        "schema_metadata": {},
+        "sha256": "36519207e500e6b68875bf83d35a164b71afdee0746d16c46e885f19a8b9432d"
+      },
+      {
+        "bytes": 849629,
+        "etag": "\"d5dc50ba76d016b5510248d764d3f265\"",
+        "key": "layer=soil-survey/kind=observed/zoom=13/year=2026/month=08/day=28/part-0.parquet",
+        "row_groups": 1,
+        "rows": 500,
+        "schema": "natural_key: string not null\nmupolygonkey: string not null\nmukey: string not null\nmap_unit_name: string\nsoil_series: string\ndrainage_class: string\nhydric_rating: bool\nland_capability_class: string\nsurvey_area_symbol: string\nsurvey_area_vintage: timestamp[us, tz=UTC] not null\ngeometry_id: string not null\nlast_confirmed_at: timestamp[us, tz=UTC] not null\nrelease_day: date32[day] not null\ngeometry_wkb: binary not null\nproducer: string not null",
+        "schema_metadata": {},
+        "sha256": "71bda3e45d5c7d2fd97fb4b637e2cd74e4cc2007ce69671a64715082fd685058"
+      }
+    ],
+    "sampled_parts_do_not_prove_whole_partition": true
+  },
+  "source_receipts": [
+    {
+      "bytes": 192064,
+      "path": ".omc/research/retirement-runtime-readonly-20260911.json",
+      "sha256": "cf81fedc00bc20d4aeb6d768573c260d5168bac92fb2b26f27f3068772a1f1c3"
+    },
+    {
+      "bytes": 50181,
+      "path": ".omc/research/retirement-ownership-objects-20260911.json",
+      "sha256": "db0c2f07bced22ef614de0b3b0831e6a9f0f19670c448088d3597a975fffa525"
+    },
+    {
+      "bytes": 196116,
+      "path": ".omc/research/retirement-soil-census-20260911.json",
+      "sha256": "7f2e8c4e47b363043fe4b2367431c9fa4de5a45969ead6da33784558f13e95bb"
+    },
+    {
+      "bytes": 1919,
+      "path": ".omc/research/retirement-soil-footer-20260911.json",
+      "sha256": "fb8182cfb2591ee3ab35ba29bbc83d9f8f4d217ef2d92782bc8453b24987581b"
+    },
+    {
+      "bytes": 1135,
+      "path": ".omc/research/retirement-static-pointer-20260911.json",
+      "sha256": "0c69ff2ea117fe52aef8c3f742ad6d8543702f049c0d025b162c87645fe28e2d"
+    },
+    {
+      "bytes": 25802,
+      "path": ".omc/research/retirement-agent-readonly-20260911.jsonl",
+      "sha256": "628ae98024d865d38301929b6b027e22b24b5c3f02ebe1cb100b0b50c24c2066"
+    },
+    {
+      "bytes": 5787,
+      "path": ".omc/research/retirement-railway-status-20260911.json",
+      "sha256": "ad3b694d8ed2f1cf9aac916f28c008d7245c8c13a870bd87be709fac2a063b4b"
+    },
+    {
+      "bytes": 9014,
+      "path": ".omc/research/retirement-railway-deployments-20260911.json",
+      "sha256": "e2d97fa353d3abfe8e3278a8a74c8b428701eac77aa4e5146cc4841ad26804f1"
+    }
+  ],
+  "static_soil_pointer": {
+    "bucket": "plantgeo-parquet-9ymvp7gv",
+    "captured_at": "2026-09-11T18:22:18.217088+00:00",
+    "handoff_acknowledgements": "fire-detections-direct-forward=plantgeo-fire-detections-forward:disabled-and-no-run-in-flight,jobs-matview-refresh=plantgeo-ingest-cron:disabled-and-no-run-in-flight,jobs-strategy-mv-refresh=plantgeo-ingest-cron:disabled-and-no-run-in-flight,maintenance-validate-streams=plantgeo-ingest-cron:disabled-and-no-run-in-flight,parquet-calendar=plantgeo-ingest-cron:disabled-and-no-run-in-flight,parquet-fire-detections=plantgeo-ingest-cron:disabled-and-no-run-in-flight,parquet-fire-perimeters=plantgeo-ingest-cron:disabled-and-no-run-in-flight,parquet-signal=plantgeo-ingest-cron:disabled-and-no-run-in-flight,parquet-soil-survey=plantgeo-ingest-cron:disabled-and-no-run-in-flight,parquet-water-gauges=plantgeo-ingest-cron:disabled-and-no-run-in-flight,water-gauges-direct-forward=plantgeo-water-gauges-forward:disabled-and-no-run-in-flight",
+    "key": "static-soil/_LATEST.json",
+    "mutations": false,
+    "revision": "fa202230958fb55521963e886eb031be5fc266c4",
+    "schema": "retirement-static-pointer/v1",
+    "status": "NoSuchKey"
+  },
+  "status": "repair_preparation_not_retirement_acceptance"
+}
