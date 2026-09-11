@@ -7,6 +7,24 @@ resource: ./spec.md
 
 # Plan
 
+## Current checkpoint — September 11
+
+The [operational retrospective](../../retros/parquet_operational_checkpoints_20260911/README.md) archives completed temperature-history
+publication and the 747-fire current MTBS rollout. Daily MTBS publication and
+weekly capture configuration were reconciled; future scheduled execution was not
+yet observed. Three advances, retry/restart/lease recovery and the complete gap
+census remain open. September 10's eight-lane pause was recorded as
+`configured_pending_deployment`; a later release alone does not prove the exact
+runtime cutoff without active-definition and lease readback.
+
+Before executing the historical P3 recovery checklist below, use the current
+[retirement plan](../environmental_postgres_retirement_20260904/plan.md): the rebuild
+and later source-direct replacements changed the old lane/command identities.
+Do not resume database-writing archive lanes from a dated dead-letter list.
+Reconcile older unclosed soil-wetness, precipitation, dew-point, burn-severity and
+drought session horizons against their own source coverage requirements; a newer
+canonical snapshot does not automatically discharge broader older requests.
+
 ## Wave P0 — inventory and contract freeze
 
 - [x] Enumerate the 28 current time-bearing physical product identities and canonical rung set.

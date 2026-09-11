@@ -1,7 +1,7 @@
 ---
 type: track-spec
 track: community_engagement_completion_20260805
-status: active
+status: planned
 ---
 
 # Community engagement completion — specification
@@ -71,7 +71,11 @@ be deleted with it rather than left to mislead the next reader.
 
 **3. Evacuation-zones has data and no path to a screen.** 381 published rows and
 a seeded `geo.layers` row
-([drizzle/0001_handy_riptide.sql:313](../../../drizzle/0001_handy_riptide.sql#L313)).
+([archived initial layer seed:313](../../../drizzle/archive/0001_handy_riptide.sql#L313)).
+September 11 citation reconciliation: the seed and counts describe the August 5
+starting state; the migration is preserved historical evidence. This slice later
+shipped, and current environmental serving is owned by the
+[retirement plan](../environmental_postgres_retirement_20260904/plan.md).
 There is no tile function, no `martin.yaml` entry, no style layer, no toggle and
 no component. This is the one item here that is a genuine build rather than a
 re-connection.

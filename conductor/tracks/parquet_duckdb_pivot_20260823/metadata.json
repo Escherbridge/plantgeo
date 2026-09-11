@@ -1,4 +1,12 @@
 {
+  "reconciliation_20260911": {
+    "audited_on": "2026-09-11",
+    "source_head": "fa20223",
+    "status": "active",
+    "next_gate": "Historical construction is complete within its exact receipts, not every older session horizon. The September 9 rebuild supersedes PostgreSQL-intact language. Current work is the delegated reader/writer/acceptance fan-in and remaining product/static-lane scope.",
+    "evidence": "conductor/retros/parquet_operational_checkpoints_20260911/README.md",
+    "historical_partitions": "Computed ownership/slice fields retain their original dates; re-freeze ownership against current code before execution."
+  },
   "slug": "parquet_duckdb_pivot_20260823",
   "title": "Parquet/DuckDB pivot — the twelve-lane warehouse and its serving path",
   "status": "active",
@@ -6,7 +14,7 @@
   "created_on": "2026-08-23",
   "depends_on": [],
   "runbook_section": "0.35",
-  "note": "Updated 2026-09-01. Historical Parquet construction and reusable artifacts are complete. Production reader/capability/browser slice d4 is delegated to parquet_reader_cutover_acceptance_20260901; final cross-product evidence is delegated to parquet_production_acceptance_20260901. PostgreSQL remains intact until the successor repoint track clears each lane.",
+  "note": "Historical construction is complete within its exact receipts, not every older session horizon. The September 9 rebuild supersedes PostgreSQL-intact language. Current work is the delegated reader/writer/acceptance fan-in and remaining product/static-lane scope.",
   "shipped_before_this_track": [
     "Twelve lanes with validation, serving and forecasters (abf777f)",
     "Lane natures, watermark-driven static lanes, conformed calendar dimension (b794e98)",

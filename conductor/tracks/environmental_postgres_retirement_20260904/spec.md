@@ -6,6 +6,15 @@ status: active
 
 # Environmental Postgres retirement — backfill, cut over, drop
 
+## Current execution checkpoint — September 11
+
+The [current plan](plan.md) supersedes the original starting state and wave
+sequence below. The September 9 owner-authorized rebuild, completed temperature
+history and September 11 bounded MTBS rollout are recorded in the
+[operational retrospective](../../retros/parquet_operational_checkpoints_20260911/README.md). Remaining repair, source-direct
+ownership and acceptance work stays active. Historical drop/backfill instructions
+must not be resumed as environmental PostgreSQL ingestion or export work.
+
 ## Purpose
 
 PostgreSQL becomes a database of feed and social features only. Every environmental relation, every

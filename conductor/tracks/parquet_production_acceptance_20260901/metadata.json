@@ -1,4 +1,12 @@
 {
+  "reconciliation_20260911": {
+    "audited_on": "2026-09-11",
+    "source_head": "fa20223",
+    "status": "blocked",
+    "next_gate": "The exact all-product acceptance matrix and three-schedule burn-in remain incomplete. Bounded MTBS public/browser acceptance and temperature publication are evidence inputs only. The September 9 owner-authorized rebuild supersedes the old blanket pending-retirement premise; further mutations retain their own authorization/proof gates.",
+    "evidence": "conductor/retros/parquet_operational_checkpoints_20260911/README.md",
+    "historical_partitions": "Computed ownership/slice fields retain their original dates; re-freeze ownership against current code before execution."
+  },
   "slug": "parquet_production_acceptance_20260901",
   "title": "Production Parquet temporal and spatial acceptance",
   "type": "verification",
@@ -10,7 +18,7 @@
     "multiscale_polygon_surface_20260901"
   ],
   "runbook_section": "LIVE / Repair order and production gates",
-  "note": "Evidence-only fan-in gate. It performs no repair. A RED finding returns to the owning track and PostgreSQL retirement remains blocked.",
+  "note": "The exact all-product acceptance matrix and three-schedule burn-in remain incomplete. Bounded MTBS public/browser acceptance and temperature publication are evidence inputs only. The September 9 owner-authorized rebuild supersedes the old blanket pending-retirement premise; further mutations retain their own authorization/proof gates.",
   "partitions": {
     "computed_at": "2026-09-01T00:00:00-06:00",
     "computed_at_commit": "269cc4224ff419c273bed5b660837c5b7f66caa3",

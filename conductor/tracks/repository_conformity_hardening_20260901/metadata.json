@@ -1,8 +1,14 @@
 {
+  "reconciliation_20260911": {
+    "audited_on": "2026-09-11",
+    "source_head": "fa20223",
+    "status": "active",
+    "next_gate": "September 10 snapshot-dispatch and unused-MTBS reader cleanup are recorded in the completed-cutover retrospective. Canonical ownership, remaining candidate proofs and final conformity verdict are still open."
+  },
   "slug": "repository_conformity_hardening_20260901",
   "title": "Repository conformity, reuse, and dead-code hardening",
   "type": "refactor",
-  "status": "planned",
+  "status": "active",
   "created_on": "2026-09-01",
   "depends_on": [],
   "runbook_section": "LIVE / Repository conformity and removal audit",

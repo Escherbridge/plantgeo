@@ -1,7 +1,7 @@
 ---
 type: track-spec
 slug: rangeland_carbon_lane_20260824
-status: chartered
+status: planned
 ---
 
 # Rangeland soil-carbon lane — SoilGrids SOC / OCD

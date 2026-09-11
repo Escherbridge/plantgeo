@@ -1,11 +1,19 @@
 ---
 type: spec
 track: offline_export_service_20260908
-status: chartered
+status: active
 created: 2026-09-08
 ---
 
 # Offline export service — stage locally, transform locally, upload in bulk
+
+## Scope correction — September 11
+
+The [current plan](plan.md) records the owner-selected in-repository builders and
+completed historical publication. The standalone service was rejected September
+9; its implementation design below is historical, not a new deliverable. Remaining
+work is phase/evidence/performance reconciliation and deferred availability history,
+with forward and full production acceptance owned by their existing tracks.
 
 ## Why this track exists
 

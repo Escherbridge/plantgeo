@@ -1,0 +1,47 @@
+{
+  "slug": "pnw_herbaria_source_admission_20260911",
+  "title": "PNW Herbaria source admission and release governance",
+  "type": "data-governance",
+  "status": "planned",
+  "created_on": "2026-09-11",
+  "depends_on": [],
+  "research_source": {
+    "commit": "35624ddbaf93670b839333ae51d7ef15e1f5a85e",
+    "path": "conductor/research/pnw-herbaria-source-viability-20260910.md"
+  },
+  "next_gate": "Review WTU and UBC vascular DwCA/EML terms and run a bounded metadata/schema inventory without downloading specimen images or publishing data.",
+  "partitions": {
+    "confidence": "planned",
+    "slices": [
+      {
+        "id": "a1",
+        "task": "Collection, rights and access-point admission inventory",
+        "model": "gpt-5.6-sol",
+        "depends_on": [],
+        "owns": [
+          {"path": "conductor/tracks/pnw_herbaria_source_admission_20260911/evidence/", "status": "future"}
+        ]
+      },
+      {
+        "id": "a2",
+        "task": "Bounded DwCA/EML schema and identity-stability pilot",
+        "model": "gpt-6-astra",
+        "depends_on": ["a1"],
+        "owns": [
+          {"path": "services/agri-data-service/src/agri_data_service/ingest/botanical_occurrences/", "status": "future"},
+          {"path": "services/agri-data-service/tests/botanical_occurrences/", "status": "future"}
+        ]
+      },
+      {
+        "id": "a3",
+        "task": "Independent source-governance and archive-safety verdict",
+        "model": "gpt-6-astra",
+        "depends_on": ["a1", "a2"],
+        "owns": [
+          {"path": "conductor/tracks/pnw_herbaria_source_admission_20260911/evidence/independent-review.md", "status": "future"}
+        ]
+      }
+    ],
+    "integration_slice": "a3"
+  }
+}

@@ -1,3 +1,8 @@
+---
+type: track-spec
+status: planned
+---
+
 # Conductor Track Specification: IndexedDB SWR & Data Warehouse Reconciliation
 
 ## Track ID: `swr_indexeddb_dw_reconciliation_20260814`

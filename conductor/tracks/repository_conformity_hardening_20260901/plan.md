@@ -1,16 +1,27 @@
 ---
 type: track-plan
 slug: repository_conformity_hardening_20260901
-status: planned
+status: active
 resource: ./spec.md
 ---
 
 # Plan
 
+## Current checkpoint — September 11
+
+`9b239fa` retired obsolete snapshot dispatch and `3632d61` retired unused MTBS
+readers; the [cleanup proof](../../retros/parquet_cutover_completed_slices_20260910/cleanup-proof.md)
+and [verification record](../../retros/parquet_cutover_completed_slices_20260910/verification.md)
+preserve those completed removals. The September 8–9 baseline/rebuild also
+supersedes old dormant-migration filenames as live deployment instructions.
+Remaining CLI/core extraction and removal candidates below still require their
+own evidence. The thin-CLI strict xfail is still present; it is not a pass.
+
 ## Wave C0 — safety and evidence freeze
 
 - [x] Remove the fabricated moderation scorecard; show unavailable evidence honestly
-  (2026-09-02, `2b4cfef`; `interventions.ts` `causalTauEst ?? 0.15` submission default still open).
+  (2026-09-02, `2b4cfef`; the fabricated `causalTauEst ?? 0.15` submission
+  default was subsequently removed in `ad4e015`, with absent estimates omitted).
 - [ ] Store the audit inventory with each candidate classified as immediate, confirmed, contingent,
   refactor, enforcement gap, or protected evidence.
 - [ ] Freeze file ownership with the four active Parquet tracks before shared edits.

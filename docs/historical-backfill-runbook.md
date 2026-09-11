@@ -1,12 +1,27 @@
+---
+type: runbook-archive
+reviewed: 2026-09-11
+---
+
 # Historical ingestion runbook
 
-> **STATUS — 2026-08-22, body below untouched.** The architecture pivot
-> (`conductor/RUNBOOK.md` §0.23/§0.24) replaces the local-Podman-warehouse ->
-> Railway-serving-plane split described below with day-partitioned Parquet
-> written directly to Railway object storage, computed at ingestion time. New
-> backfills should follow RUNBOOK §0.23.8's continuation plan and the lane
-> contract in `conductor/code_styleguides/layer-lanes.md`, not the Postgres
-> warehouse path this runbook documents. Read RUNBOOK §0.23/§0.24 first.
+This is retained evidence of the retired local-warehouse and rolling PostgreSQL
+projection design. The procedural body below remains unchanged. Its database
+bootstrap, four-year global window, local scheduling and Railway promotion
+instructions are historical and are not the current backfill procedure.
+
+For current work, start with the [operational runbook](../conductor/RUNBOOK.md),
+[work registry](../conductor/tracks.md), [Parquet lane structure](../conductor/code_styleguides/layer-lanes.md)
+and [layer completion outcomes](layer-lane-standard.md). Environmental history
+belongs in governed Parquet with per-lane horizons, receipts and selected-day
+availability. Forward refresh, gap authoring and coverage status belong to the
+single durable executor; do not restart the local scheduler described below.
+
+The August 22 architecture decision and its original continuation plan are
+preserved as §0.23–§0.24 in the [August runbook archive](../conductor/RUNBOOK-archive-2026-08.md).
+Use that material to understand the change, then follow the current owning track.
+
+## Preserved historical procedure
 
 ## Status and definition of done
 

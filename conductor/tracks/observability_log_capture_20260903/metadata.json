@@ -1,0 +1,11 @@
+{
+  "slug": "observability_log_capture_20260903",
+  "title": "Durable operator error and warning capture",
+  "type": "infrastructure",
+  "status": "blocked",
+  "created_on": "2026-09-03",
+  "updated_on": "2026-09-11",
+  "blocked_by": "Six charter decisions D2-D7 remain unrecorded: bucket provider, operator auth, tail cap, healthy keepalive, retention and platform tap scope.",
+  "next_gate": "Resolve the D2-D7 dispositions, refresh implementation ownership, and verify current structured logging and operator access before scheduling W1-W7.",
+  "note": "Registered during the September 11 hygiene audit. The September 4 private-ingress check is historical evidence, not a fresh security or deployment measurement."
+}

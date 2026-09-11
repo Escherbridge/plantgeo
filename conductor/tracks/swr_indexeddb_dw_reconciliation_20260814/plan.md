@@ -1,3 +1,8 @@
+---
+type: track-plan
+status: planned
+---
+
 # Conductor Track Execution Plan: IndexedDB SWR & Data Warehouse Reconciliation
 
 ## Phase 1: Allowlist Expansion & SWR Engine

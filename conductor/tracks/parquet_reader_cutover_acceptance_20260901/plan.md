@@ -1,11 +1,21 @@
 ---
 type: track-plan
 slug: parquet_reader_cutover_acceptance_20260901
-status: planned
+status: active
 resource: ./spec.md
 ---
 
 # Plan
+
+## Current checkpoint — September 11
+
+The [MTBS rollout](../environmental_postgres_retirement_20260904/evidence/mtbs-live-rollout-20260911.md)
+records deployed `fa20223`, selected-day public/browser checks and the prior
+frontend release sweep. The [completed-cutover verification](../../retros/parquet_cutover_completed_slices_20260910/verification.md)
+records later cleanup checks. These supersede “no later sweep exists” as a general
+claim; the unchecked final handoff still requires the exact current all-reader
+packet. Original wave comments retain their dates. The support contract was
+consumed by multiscale implementation on September 2.
 
 ## Wave R0 — evidence and wire freeze
 
@@ -64,4 +74,5 @@ and shared capability registry have one serialized owner.
   `2b4cfef..HEAD` revert). Request TRACES are the one item not published — they are wall-clock
   production evidence, and gates 7 and 9 are handed to
   `parquet_production_acceptance_20260901` with the browser halves of gates 1 and 4.
-- [ ] Release the frozen support contract to the spatial-rendering track.
+- [x] Release the frozen support contract to the spatial-rendering track (consumed by
+  multiscale M1/M2 on 2026-09-02; see that track's checked implementation items).

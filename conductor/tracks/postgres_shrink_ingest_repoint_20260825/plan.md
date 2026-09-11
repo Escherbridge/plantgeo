@@ -7,6 +7,17 @@ resource: ./spec.md
 
 # Implementation Plan: Postgres shrink via ingest repoint to Parquet
 
+## Current execution authority — September 11
+
+The [operational retrospective](../../retros/parquet_operational_checkpoints_20260911/README.md) records the completed baseline/rebuild
+slice. The September 4 successor already transferred **all P5/P6 environmental
+retirement** to [environmental retirement](../environmental_postgres_retirement_20260904/plan.md).
+The September 9 rebuild supersedes the old “no deletion”, intact-database and
+pending-shrink checkpoints below. They remain historical evidence, not current
+commands. Gapless owns direct-writer and repair schedules. Before residual
+package/removal work, reconcile current ownership and proof with those successors;
+never restart the old PostgreSQL bridge, shared drain or Railway cron plan.
+
 > **CURRENT EXECUTION AUTHORITY — 2026-09-01:** P2-P4 tasks, dependency arrows and file ownership
 > below are historical provenance and **MUST NOT be executed from this plan**. Forward writers, gap
 > authoring, governed absences and executor handoff are solely owned by

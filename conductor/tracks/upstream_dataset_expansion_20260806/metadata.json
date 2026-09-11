@@ -1,9 +1,15 @@
 {
+  "reconciliation_20260911": {
+    "audited_on": "2026-09-11",
+    "source_head": "fa20223",
+    "status": "planned",
+    "next_gate": "Planned, reflecting the August 23 owner authorization already recorded in unblock_note. Historical PostgreSQL persist/constraint tasks need Parquet source/serving and executor ownership definitions; authorization to ingest does not prove those definitions or runtime delivery."
+  },
   "id": "upstream_dataset_expansion_20260806",
   "description": "Retire the CDS ERA5-Land soil lane for its keyless Open-Meteo equivalent, close the et0-model trap that would silently persist an all-NULL signal, and add four new upstream datasets -- fire-weather VPD, GloFAS river discharge, CAMS air quality, and ensemble forecast uncertainty -- through the durable-backfill and Railway-cron standards already established",
   "type": "feature",
   "created_at": "2026-08-06T00:00:00Z",
-  "status": "active",
+  "status": "planned",
   "pivot_reconciliation_20260822": {
     "reconciled_at": "2026-08-22T00:00:00Z",
     "verdict": "still valid, needs rescoping. Status changed from the registry's stale 'planned' to 'blocked': the track's OWN plan.md already carries a detailed, honest 2026-08-06 post-implementation review recording specific, still-open blockers -- this is not new information, it was simply never propagated to tracks.md.",
