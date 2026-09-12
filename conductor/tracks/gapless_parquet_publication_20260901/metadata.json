@@ -1,4 +1,14 @@
 {
+  "reconciliation_20260912": {
+    "audited_on": "2026-09-12",
+    "source_head": "8c14ea0117ba14d5584f737b793f989566102514",
+    "source_tree": "de840fb558a110e0aded8f2baf44a39b9717f0d7",
+    "status": "active",
+    "scope": "Static local source and test-definition inspection only; derived-empty publication is implemented, bounded forward lookbacks do not close full historical gaps, and recovery implementations are not observed runtime recovery.",
+    "next_gate": "Bind remaining historical horizons to source-direct or preserved-Parquet owners; obtain current deployed ownership/cutoff and lease evidence, recovery receipts and three scheduled advances per activated lane. No production gate closed.",
+    "evidence": "conductor/tracks/gapless_parquet_publication_20260901/evidence/local-ownership-audit-20260912.md",
+    "historical_partitions": "September 2 computed ownership/slice fields are preserved as dated history; they do not authorize current execution or activation."
+  },
   "reconciliation_20260911": {
     "audited_on": "2026-09-11",
     "source_head": "fa20223",

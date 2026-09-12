@@ -7,7 +7,22 @@ resource: ./spec.md
 
 # Plan
 
-## Current checkpoint — September 11
+## Current checkpoint — September 12
+
+The [local availability contract reconciliation](evidence/local-availability-contract-20260912.md)
+freezes the current coverage v3 wire, checksum/refusal semantics and actual cache/policy
+boundaries against `8c14ea0117ba14d5584f737b793f989566102514`. This closes only the local
+R0 contract-definition item. The default transitional policy still permits census for
+never-bootstrapped lanes; static lookups use census under both policies. Rollup hits,
+full-index reads and bootstrap-marker checks have different request classes. The
+original literal pair-of-GETs gate remains unmeasured and must be reconciled in its
+production trace. The [root integrated receipt](../platform_experience_qa_20260911/evidence/root-integrated-checks-20260912.md)
+records earlier validation and environment limits, including the missing local
+frontend toolchain; it does not certify this new documentation candidate. This
+continuation's final handoff owns its independent documentation review, validation
+and exact commit/tree; the root [task ledger](../platform_experience_qa_20260911/evidence/task-ledger.md)
+retains ownership. No fresh runtime pass or production policy is claimed here.
+The UI provenance/ceiling caption remains open.
 
 The [MTBS rollout](../environmental_postgres_retirement_20260904/evidence/mtbs-live-rollout-20260911.md)
 records deployed `fa20223`, selected-day public/browser checks and the prior
@@ -21,9 +36,13 @@ consumed by multiscale implementation on September 2.
 
 - [ ] Capture the current request route and one cold/warm timing packet at coarse, middle and detail zoom.
 - [x] Freeze temporal state, rung, support kind, cell extent/resolution, receipts and truncation
-  (`src/lib/map/layer-render-contract.ts`, `coverage_schema_version` 2; 2026-09-02).
-- [ ] Freeze the availability-index wire, checksum/ETag cache behavior and fail-closed response when
-  a lane has not yet published its index.
+  (`src/lib/map/layer-render-contract.ts`, historical `coverage_schema_version` 2;
+  2026-09-02). Current coverage wire v3 adds `latest_recorded_day`; see the September 12 receipt.
+- [x] Freeze the availability-index wire, checksum/ETag cache behavior and fail-closed response when
+  a lane has not yet published its index (2026-09-12, source contract only;
+  [receipt](evidence/local-availability-contract-20260912.md)). Conditional GET is absent;
+  unpublished lanes fail closed under `availability`, while the transitional policy can
+  census never-bootstrapped lanes. This check does not certify production bootstrap or policy.
 - [x] Record exact rollback and no-live-request evidence requirements before editing
   (2026-09-02, `evidence/reader-cutover-verdict.md` §Rollback and §gate 1; the static, unit and
   browser tiers of the no-live-request proof were first stated in `evidence/r1-fire-hard-cut.md`).

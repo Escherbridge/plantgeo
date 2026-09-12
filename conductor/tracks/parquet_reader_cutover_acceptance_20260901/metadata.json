@@ -1,4 +1,14 @@
 {
+  "reconciliation_20260912": {
+    "audited_on": "2026-09-12",
+    "source_head": "8c14ea0117ba14d5584f737b793f989566102514",
+    "source_tree": "de840fb558a110e0aded8f2baf44a39b9717f0d7",
+    "status": "active",
+    "evidence": "evidence/local-availability-contract-20260912.md",
+    "closed_scope": "R0 local availability contract definition: coverage wire v3, checksum/refusal rules, unconditional GET/ETag distinction, cache layers, rollup/full-read request classes and policy-dependent census ownership.",
+    "validation_scope": "Source inspection only in this slice. The existing root integrated receipt records earlier validation and environment limits; it does not certify this candidate. This continuation's final handoff owns independent documentation review, documentation validation and exact commit/tree. Frontend dependencies are absent. Historical partitions remain unchanged.",
+    "next_gate": "UI provenance/source-ceiling caption, current all-reader checks, per-lane production bootstrap and policy proof, request counts/timings, browser traces and exact deployment/rollback handoff remain open."
+  },
   "reconciliation_20260911": {
     "audited_on": "2026-09-11",
     "source_head": "fa20223",
