@@ -1,0 +1,494 @@
+{
+  "type": "combined-validation",
+  "date": "2026-09-11",
+  "source_commit": "89e8494422b8232c8f16dbffdcf2321c7ea17bc8",
+  "source_tree": "777fe20689dd68c337677cc49e3fd4e63bfd4bcc",
+  "started_at": "2026-09-12T00:59:05.091184+00:00",
+  "finished_at": "2026-09-12T01:26:58.469300+00:00",
+  "passed": true,
+  "database_integration": "four optional database environment variables removed",
+  "runner_sha256": "3639fbe1360888371ba905477f5fb17d2fcafdad164b8b065fe4d079b156aa4b",
+  "continuation": {
+    "original_wrapper_exit_code": 1,
+    "original_stop": "Source identity guard rejected the generated JUnit report at a malformed Windows relative path after all six local gates passed.",
+    "cause": "PYTEST_ADDOPTS applies shell-like parsing to an unquoted Windows path; backslashes were consumed.",
+    "junit_original_path": "services/agri-data-service/Usersatooz.codexworktrees4ccbplantgeo.omcverificationactive-track-integration-20260911python-junit.xml",
+    "junit_retained_path": ".omc/verification/active-track-integration-20260911/python-junit.xml",
+    "junit_bytes": 1027983,
+    "junit_sha256": "bc893032b00751cd2b89df497b46a8f7b19469a2f5535a37ee2395b7a8fab99c",
+    "junit_cases": 6422,
+    "started_at": "2026-09-12T01:10:06.357492+00:00",
+    "continuation_runner_sha256": "71ef516d45d01520acc77d4de975fe9800fc39f4ff007fcf77ade163a9d580e4",
+    "tests_repeated": false
+  },
+  "continuation_error": null,
+  "checks": [
+    {
+      "name": "frontend-check-data-boundary",
+      "exit_code": 0,
+      "duration_seconds": 0.438
+    },
+    {
+      "name": "frontend-type-check",
+      "exit_code": 0,
+      "duration_seconds": 14.984
+    },
+    {
+      "name": "frontend-lint",
+      "exit_code": 0,
+      "duration_seconds": 17.922
+    },
+    {
+      "name": "frontend-test",
+      "exit_code": 0,
+      "duration_seconds": 180.016
+    },
+    {
+      "name": "python-full",
+      "exit_code": 0,
+      "duration_seconds": 264.813
+    },
+    {
+      "name": "python-receipt-verify",
+      "exit_code": 0,
+      "duration_seconds": 0.594
+    },
+    {
+      "name": "archived-source-receipt-verify",
+      "exit_code": 0,
+      "duration_seconds": 6.969
+    },
+    {
+      "name": "image-web",
+      "exit_code": 0,
+      "duration_seconds": 348.812
+    },
+    {
+      "name": "image-web-smoke",
+      "exit_code": 0,
+      "duration_seconds": 0.844
+    },
+    {
+      "name": "image-web-identity",
+      "exit_code": 0,
+      "duration_seconds": 0.453
+    },
+    {
+      "name": "image-data-service",
+      "exit_code": 0,
+      "duration_seconds": 252.828
+    },
+    {
+      "name": "image-data-service-smoke",
+      "exit_code": 0,
+      "duration_seconds": 7.344
+    },
+    {
+      "name": "image-data-service-identity",
+      "exit_code": 0,
+      "duration_seconds": 0.469
+    },
+    {
+      "name": "image-job-executor",
+      "exit_code": 0,
+      "duration_seconds": 374.562
+    },
+    {
+      "name": "image-job-executor-smoke",
+      "exit_code": 0,
+      "duration_seconds": 13.094
+    },
+    {
+      "name": "image-job-executor-identity",
+      "exit_code": 0,
+      "duration_seconds": 2.438
+    }
+  ],
+  "python_junit": {
+    "test_cases": 6422,
+    "passed": 6272,
+    "skipped_by_type": {
+      "pytest.skip": 149,
+      "pytest.xfail": 1
+    },
+    "failures": 0,
+    "errors": 0
+  },
+  "frontend_summaries": [
+    "\u2139 tests 6",
+    "\u2139 pass 6",
+    "\u2139 fail 0",
+    "\u2139 skipped 0",
+    "Test Files  145 passed | 2 skipped (147)",
+    "Tests  2260 passed | 13 skipped (2273)",
+    "Duration  174.91s (transform 3.47s, setup 2.63s, collect 52.25s, tests 19.44s, environment 232.07s, prepare 17.88s)"
+  ],
+  "python_quality_receipt": {
+    "checks": [
+      {
+        "command": "ruff format --check src tests scripts",
+        "duration_seconds": 0.184,
+        "name": "format",
+        "status": "pass"
+      },
+      {
+        "command": "ruff check src tests scripts",
+        "duration_seconds": 0.213,
+        "name": "lint",
+        "status": "pass"
+      },
+      {
+        "command": "mypy src scripts",
+        "duration_seconds": 29.997,
+        "name": "mypy",
+        "status": "pass"
+      },
+      {
+        "command": "pytest -q",
+        "duration_seconds": 224.845,
+        "name": "pytest",
+        "status": "pass"
+      }
+    ],
+    "digest_domain": "plantgeo.agri-data-service.quality-receipt.v2",
+    "digest_file_count": 1359,
+    "generated_at": "2026-09-12T01:03:29.273452Z",
+    "schema_version": 2,
+    "tools": {
+      "mypy": "mypy 2.3.0 (compiled: yes)",
+      "pytest": "pytest 9.1.1",
+      "python": "3.12.10",
+      "ruff": "ruff 0.15.22",
+      "uv": "uv 0.9.18 (0cee76417 2025-12-16)"
+    },
+    "tree_digest": "sha256:5bd47b38781161e3bd35e22ff38cb58a0a826516477ba4460dd4e7c5716bdfce"
+  },
+  "local_image_ids": {
+    "web": "32c5b47e63bafa03e527e17ae7afb2587f5093937a36afa6336f0b31b18e71c9",
+    "data-service": "0a6191c96386741ff1fcb69553e5e82c804ab4b4ba082d6bf42ceb425096707a",
+    "job-executor": "026002869ce39ade5a1af70b36ba8ad64f5eaf0651738b16ab8fa293ebba2608"
+  },
+  "production_deployment": false,
+  "retained_artifacts": [
+    {
+      "source": ".omc/verification/active-track-integration-20260911/invocation.json",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-20260911/invocation.json.gz",
+      "bytes": 592,
+      "sha256": "59518b2782cb9e3cb1bd9891efc5c7429c197d06f1c11bb5c460e91045b7d3be",
+      "gzip_bytes": 413,
+      "gzip_sha256": "336fb69e7de7b9b38f89c423e8c00de6fbfa61613197fdf9d227ec4e38d43da6"
+    },
+    {
+      "source": ".omc/verification/active-track-integration-20260911/result.json",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-20260911/result.json.gz",
+      "bytes": 14587,
+      "sha256": "e362aa37d7758907486141c8aeb638c32f17cdf48f2247c18afce035ead68378",
+      "gzip_bytes": 2678,
+      "gzip_sha256": "9c335818a2c018ced9d80505df7c8ce19676efccce9ebeaaff031ee7aa20db08"
+    },
+    {
+      "source": ".omc/verification/active-track-integration-20260911/resume-invocation.json",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-20260911/resume-invocation.json.gz",
+      "bytes": 883,
+      "sha256": "1edfff7a821f91348f79117857c2a495eb06a8a5924aa7cdf70be22b07ce65bc",
+      "gzip_bytes": 545,
+      "gzip_sha256": "54051b12046ad5301244e80db9d027d06f0c1ff3b7011826930a0a2b5ec64c8d"
+    },
+    {
+      "source": ".omc/research/active-track-integration-20260911/resume_final_checks.py",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-20260911/resume_final_checks.py.gz",
+      "bytes": 6412,
+      "sha256": "71ef516d45d01520acc77d4de975fe9800fc39f4ff007fcf77ade163a9d580e4",
+      "gzip_bytes": 2286,
+      "gzip_sha256": "6b380104611aed0bc1a337ac568c50f5b570b4fefbfe4a099f5430282a95a054"
+    },
+    {
+      "source": ".omc/verification/active-track-integration-20260911/frontend-check-data-boundary.log",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-20260911/frontend-check-data-boundary.log.gz",
+      "bytes": 256,
+      "sha256": "7cd85c42797a9825c40dc47c5e7c8add2f0961f0af9b39ab9109f3182a10231a",
+      "gzip_bytes": 185,
+      "gzip_sha256": "d27c6c81a40186e5ec057f0dce47bdfd5371cf1a6e4f3087c3c9ac9b2e2f552c"
+    },
+    {
+      "source": ".omc/verification/active-track-integration-20260911/frontend-type-check.log",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-20260911/frontend-type-check.log.gz",
+      "bytes": 45,
+      "sha256": "14a8d580c8ca9cbb71db2a138d653ce4622f0d23b39cc953fa285f60f58d26f5",
+      "gzip_bytes": 65,
+      "gzip_sha256": "27716c1e8c4bf6d6d8cbd90f8a906074caf8b93ed66553d7d7269e4765fad224"
+    },
+    {
+      "source": ".omc/verification/active-track-integration-20260911/frontend-lint.log",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-20260911/frontend-lint.log.gz",
+      "bytes": 97352,
+      "sha256": "954af6894b02837cd2b62d5fb4d41643fd025d426525558e6efe0bf9ea064d6e",
+      "gzip_bytes": 8571,
+      "gzip_sha256": "8b871e2fed49a90b2493c0fb839f0eab7f80713cea1a90a67ffcccab702275a6"
+    },
+    {
+      "source": ".omc/verification/active-track-integration-20260911/frontend-test.log",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-20260911/frontend-test.log.gz",
+      "bytes": 331421,
+      "sha256": "f48c85a9f8557d29e3b45ae56e588cc985f2ff5689449619952ea91cf91202a6",
+      "gzip_bytes": 12871,
+      "gzip_sha256": "00cfcbcf9d87214dbaedb6d1cc0266c18514db6b39b81cee87db2aef9a234fee"
+    },
+    {
+      "source": ".omc/verification/active-track-integration-20260911/python-full.log",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-20260911/python-full.log.gz",
+      "bytes": 363,
+      "sha256": "66dcf65f138713b0877004462a7e90a5935e016ba5fef1d66717bcefe2dd9ceb",
+      "gzip_bytes": 255,
+      "gzip_sha256": "4d57bb93503b2b3b68f686b80d044e763ad43597bd33b151b10a0dd420b43dd0"
+    },
+    {
+      "source": ".omc/verification/active-track-integration-20260911/python-receipt-verify.log",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-20260911/python-receipt-verify.log.gz",
+      "bytes": 154,
+      "sha256": "e3037072c9e13c7115460d0bbd28c293ae9e875aa8dbf08a951ccc747564d55c",
+      "gzip_bytes": 149,
+      "gzip_sha256": "cf0e047c7fec82132e24f35432d13bc666877022ae1fda0e645c3fce1c57fce2"
+    },
+    {
+      "source": ".omc/verification/active-track-integration-20260911/archived-source-receipt-verify.log",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-20260911/archived-source-receipt-verify.log.gz",
+      "bytes": 154,
+      "sha256": "e3037072c9e13c7115460d0bbd28c293ae9e875aa8dbf08a951ccc747564d55c",
+      "gzip_bytes": 149,
+      "gzip_sha256": "cf0e047c7fec82132e24f35432d13bc666877022ae1fda0e645c3fce1c57fce2"
+    },
+    {
+      "source": ".omc/verification/active-track-integration-20260911/image-web.log",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-20260911/image-web.log.gz",
+      "bytes": 443453,
+      "sha256": "6e7f45b1244149d75b6ff0ac20ad811663b21ec5c8d1742457cf6c92a3262782",
+      "gzip_bytes": 26417,
+      "gzip_sha256": "29c18f2f630248bda7694b24c204f73f2636f47afd7ccc7b22cc96de0dacf675"
+    },
+    {
+      "source": ".omc/verification/active-track-integration-20260911/image-web-smoke.log",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-20260911/image-web-smoke.log.gz",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzip_bytes": 20,
+      "gzip_sha256": "46b50c321b39e89a491b6727a01628c34245605a30beb3e7414c5e01cff90e6e"
+    },
+    {
+      "source": ".omc/verification/active-track-integration-20260911/image-web-identity.log",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-20260911/image-web-identity.log.gz",
+      "bytes": 65,
+      "sha256": "d687a999e8958855f4291b2432b6773b5cf278bedbc5a5b2e84afdcc0a6dd78d",
+      "gzip_bytes": 73,
+      "gzip_sha256": "1f45b3b115c5aab1e57fca14afba3f2a02000950fd8faa83218b8125b96c4748"
+    },
+    {
+      "source": ".omc/verification/active-track-integration-20260911/image-data-service.log",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-20260911/image-data-service.log.gz",
+      "bytes": 6362,
+      "sha256": "485ef076d0d77712e183638bda90a8d51e950635a2037d52a822c99178b75f56",
+      "gzip_bytes": 2743,
+      "gzip_sha256": "bb89a881033e3b09435e97823bed10cea137272263033de5acc9525ea50f80ce"
+    },
+    {
+      "source": ".omc/verification/active-track-integration-20260911/image-data-service-smoke.log",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-20260911/image-data-service-smoke.log.gz",
+      "bytes": 486,
+      "sha256": "60270ce6fbf4409b3b471f411846fd56099ff71102b6736e8af670166c64247e",
+      "gzip_bytes": 307,
+      "gzip_sha256": "9231fe606d149ccb3c48888771632f8db70a83488d568727320aaa7b54bac666"
+    },
+    {
+      "source": ".omc/verification/active-track-integration-20260911/image-data-service-identity.log",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-20260911/image-data-service-identity.log.gz",
+      "bytes": 65,
+      "sha256": "3c552d9a80398f496faf78dc56680d82a8046d2b06528485fe42027571d4a68c",
+      "gzip_bytes": 72,
+      "gzip_sha256": "0ffcf6694b291ac8d101af2aac5326fb4d390a9c51895934cd4b75a23e29ab19"
+    },
+    {
+      "source": ".omc/verification/active-track-integration-20260911/image-job-executor.log",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-20260911/image-job-executor.log.gz",
+      "bytes": 8236,
+      "sha256": "a56066ef6772ca8ce9378943167ac3b9ef264d6ab434a7ca2a8992c31d73da00",
+      "gzip_bytes": 3372,
+      "gzip_sha256": "1da90ae6cce7873b868035e86b840d8b8a12525fadacff5b8f1b38d1011c4bd9"
+    },
+    {
+      "source": ".omc/verification/active-track-integration-20260911/image-job-executor-smoke.log",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-20260911/image-job-executor-smoke.log.gz",
+      "bytes": 486,
+      "sha256": "60270ce6fbf4409b3b471f411846fd56099ff71102b6736e8af670166c64247e",
+      "gzip_bytes": 307,
+      "gzip_sha256": "9231fe606d149ccb3c48888771632f8db70a83488d568727320aaa7b54bac666"
+    },
+    {
+      "source": ".omc/verification/active-track-integration-20260911/image-job-executor-identity.log",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-20260911/image-job-executor-identity.log.gz",
+      "bytes": 65,
+      "sha256": "d255cf2a98f3ad45485c2ca7558bf811ef1dcdd981e14caab4b5c4b1a9283d68",
+      "gzip_bytes": 73,
+      "gzip_sha256": "36606d5c6e34cf2d3459e12e0f4504c0cbf82eecf2ef48fc2f2812e57d4aa25e"
+    },
+    {
+      "source": ".omc/verification/active-track-integration-20260911/frontend-check-data-boundary.json",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-20260911/frontend-check-data-boundary.json.gz",
+      "bytes": 648,
+      "sha256": "fc763175db3b1d14cd38f10baf5007cdebc810363745a22d918aed35e5438671",
+      "gzip_bytes": 377,
+      "gzip_sha256": "a8ee79d59cda39db53d912e2ab0cf81587d3fd32bdd6946b38dd4f9fd0544ef1"
+    },
+    {
+      "source": ".omc/verification/active-track-integration-20260911/frontend-type-check.json",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-20260911/frontend-type-check.json.gz",
+      "bytes": 621,
+      "sha256": "684010a2bf39caee3b1ce13ede6293517372a2bb71d69fb937327c13eadb7f52",
+      "gzip_bytes": 376,
+      "gzip_sha256": "f656a1446c698374fa41d3e0140efba3b048c41bbbd3696d48bf924d86adb20a"
+    },
+    {
+      "source": ".omc/verification/active-track-integration-20260911/frontend-lint.json",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-20260911/frontend-lint.json.gz",
+      "bytes": 606,
+      "sha256": "d0718885ea16baf6fd9d0454a8deb2ba2e71bb87cf02edadd6a1bba32a9cee1a",
+      "gzip_bytes": 369,
+      "gzip_sha256": "c5357f8e613f595b554b38118da4be2f77d8884b95ebb2c3893b213fa513d157"
+    },
+    {
+      "source": ".omc/verification/active-track-integration-20260911/frontend-test.json",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-20260911/frontend-test.json.gz",
+      "bytes": 608,
+      "sha256": "fc550f22b05c027e2ff93e21e264cfcfeb60103f88da91d12a8191de26453827",
+      "gzip_bytes": 373,
+      "gzip_sha256": "4cd3eb7853b99ade0a1ee6351e79e5accb8e95fe9318d785c875b4048eb906de"
+    },
+    {
+      "source": ".omc/verification/active-track-integration-20260911/python-full.json",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-20260911/python-full.json.gz",
+      "bytes": 672,
+      "sha256": "1bad120ddd413440dc4f9d3c252b14b0e5b00a1fec14e9ef7bce607e0bc3ac17",
+      "gzip_bytes": 425,
+      "gzip_sha256": "e295c839c93db74721b2e5bf1f5c9ec8e1586aa8aa7eeb88add6608b4569c27e"
+    },
+    {
+      "source": ".omc/verification/active-track-integration-20260911/python-receipt-verify.json",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-20260911/python-receipt-verify.json.gz",
+      "bytes": 683,
+      "sha256": "a87174e96297f5b49af384b666daef056bd3557e09a9d3f558644d0fc77a403b",
+      "gzip_bytes": 421,
+      "gzip_sha256": "4db8b8232da22c9e92157ea7576bfc1b09da1b43d8d8aafa837e82d66f1b7018"
+    },
+    {
+      "source": ".omc/verification/active-track-integration-20260911/archived-source-receipt-verify.json",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-20260911/archived-source-receipt-verify.json.gz",
+      "bytes": 688,
+      "sha256": "d2a7ae9ca40dad76ef4540a54fd3d0783999c32519dea7ca88709ce74bc959da",
+      "gzip_bytes": 411,
+      "gzip_sha256": "69ceef71a511591c871e3000a5018b8d3dd36475d63c5a5781dc9515f1f9c16a"
+    },
+    {
+      "source": ".omc/verification/active-track-integration-20260911/image-web.json",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-20260911/image-web.json.gz",
+      "bytes": 985,
+      "sha256": "26d07ae565da4eef2cb996fafb26c19a5d729bd15aad509aba5242e210e17128",
+      "gzip_bytes": 482,
+      "gzip_sha256": "b401ede0154942fd304ea20cfbb81336d77f61309fb6542864e7c6cc2ff07d48"
+    },
+    {
+      "source": ".omc/verification/active-track-integration-20260911/image-web-smoke.json",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-20260911/image-web-smoke.json.gz",
+      "bytes": 700,
+      "sha256": "ab0d85e123890fd78b80f2ff6407527c231a240d7ccfc2a2cfceede8cbfe5561",
+      "gzip_bytes": 422,
+      "gzip_sha256": "c046cbb95905e639e6748009677aea5e7f06f572356062dc2509cba3661826b6"
+    },
+    {
+      "source": ".omc/verification/active-track-integration-20260911/image-web-identity.json",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-20260911/image-web-identity.json.gz",
+      "bytes": 646,
+      "sha256": "e57efef63f22f60d136a730ab2c10375f4c07689c5f9ec911845bb6f51cbdd42",
+      "gzip_bytes": 406,
+      "gzip_sha256": "8c5a55b0628c7db62243f867c4c0427e4d2a9e9a1346b97584bf5b9db8b9700c"
+    },
+    {
+      "source": ".omc/verification/active-track-integration-20260911/image-data-service.json",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-20260911/image-data-service.json.gz",
+      "bytes": 1068,
+      "sha256": "cc6e525ee21fc41bfc6e49569a094ae2913d01c8029086b1bf7e2f8f6c3a0792",
+      "gzip_bytes": 497,
+      "gzip_sha256": "3d0e53efbce123963d0dadd906390588072ca7ec1f5682f04ad9b7643c2b019e"
+    },
+    {
+      "source": ".omc/verification/active-track-integration-20260911/image-data-service-smoke.json",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-20260911/image-data-service-smoke.json.gz",
+      "bytes": 697,
+      "sha256": "aebfd9f1a073bfc4c577b7505c3a1ec6b04b83e31fa96a1de9a38327f212fecd",
+      "gzip_bytes": 419,
+      "gzip_sha256": "9bb1e465b4090c47f4e20d3ac8c2df606909c8915d164182a5d49262f3b51adc"
+    },
+    {
+      "source": ".omc/verification/active-track-integration-20260911/image-data-service-identity.json",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-20260911/image-data-service-identity.json.gz",
+      "bytes": 673,
+      "sha256": "e25aecd806e83fc9716da07e4cf73fe0c9844460f9eb2b707ded94f72bd99a60",
+      "gzip_bytes": 410,
+      "gzip_sha256": "18af3bb0c0ed73575d5b00cb9201b864a080c93cc7233856213288bd5f007ab3"
+    },
+    {
+      "source": ".omc/verification/active-track-integration-20260911/image-job-executor.json",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-20260911/image-job-executor.json.gz",
+      "bytes": 1031,
+      "sha256": "1f20420f51614a86ca4da20829dbc7cc33d9a028b9e425b3b9ddd9d3c145c179",
+      "gzip_bytes": 497,
+      "gzip_sha256": "b1d8cdac719d09b271879d29f8aa0af36e4abf4ff63639e7572edae933ebb29e"
+    },
+    {
+      "source": ".omc/verification/active-track-integration-20260911/image-job-executor-smoke.json",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-20260911/image-job-executor-smoke.json.gz",
+      "bytes": 698,
+      "sha256": "d4acd4c011970fdb9407e90a877c21b68a79bee1adee539f0fd64609ac669b82",
+      "gzip_bytes": 422,
+      "gzip_sha256": "fc599a90347b39f4c908df73a3397a91e54766b325d9a69d1a0b8f07fbfadc4d"
+    },
+    {
+      "source": ".omc/verification/active-track-integration-20260911/image-job-executor-identity.json",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-20260911/image-job-executor-identity.json.gz",
+      "bytes": 673,
+      "sha256": "e691daf93af85209d2420700cf7df588dbd9db5637c18186b2e0e94e2a38315c",
+      "gzip_bytes": 414,
+      "gzip_sha256": "fd45d7bd7073046ead8e712ea59d7649dea0954ec627f259a917aa7936ed4c24"
+    },
+    {
+      "source": ".omc/verification/active-track-integration-20260911/python-junit.xml",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-20260911/python-junit.xml.gz",
+      "bytes": 1027983,
+      "sha256": "bc893032b00751cd2b89df497b46a8f7b19469a2f5535a37ee2395b7a8fab99c",
+      "gzip_bytes": 129635,
+      "gzip_sha256": "1511911860d17ee11bbf57d388e26ce34fb9dec3e730c736c198cff9c3b81850"
+    },
+    {
+      "source": ".omc/research/active-track-integration-20260911/run_final_checks.py",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-20260911/run_final_checks.py.gz",
+      "bytes": 7600,
+      "sha256": "3639fbe1360888371ba905477f5fb17d2fcafdad164b8b065fe4d079b156aa4b",
+      "gzip_bytes": 2662,
+      "gzip_sha256": "214e19b30d8a26515c93406b6f4810db6a271b1b19b321b18923e85088e8accb"
+    },
+    {
+      "source": "services/agri-data-service/QUALITY_RECEIPT.json",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-20260911/QUALITY_RECEIPT.json.gz",
+      "bytes": 1015,
+      "sha256": "7fb279078524a8f674a47252c7c3d3ed1156a0d8625f0b09a4e935c3fd20e836",
+      "gzip_bytes": 454,
+      "gzip_sha256": "108cfbcf5cdc5348cd1a1745b54a76a300bb886cc6f5fb8cf212ddd51792ba68"
+    },
+    {
+      "source": ".omc/research/active-track-integration-20260911/continuation-review.json",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-20260911/continuation-review.json.gz",
+      "bytes": 18814,
+      "sha256": "8f7156c6c5dd8005e842d2ffcfcd87942e46618b0b0a85111538a64d7e36a83d",
+      "gzip_bytes": 6173,
+      "gzip_sha256": "5b9b1dfb2f9d8fe7a8768dd3ed91ec81af0cfc6d18c8fcbcc64f1afb313870ed"
+    }
+  ]
+}
