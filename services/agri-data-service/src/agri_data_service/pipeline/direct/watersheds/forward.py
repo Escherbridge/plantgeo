@@ -51,6 +51,7 @@ from agri_data_service.db.engine import local_source_loader_session
 from agri_data_service.foundation.parquet.lane_contract import newest_data_day, newest_marker_day, resolve_static_lane
 from agri_data_service.ingest.mtbs import inline_bbox_value
 from agri_data_service.ingest.policy import UNCONFIGURED_BBOX_REASON, resolve_bounded_bbox
+from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.direct import (
     BBOX_UNCONFIGURED,
     LANE_DAY_OUTCOMES,
@@ -72,7 +73,6 @@ from agri_data_service.pipeline.direct.watersheds.source import (
     WatershedsSourceError,
     fetch_watersheds_snapshot,
 )
-from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.parquet.gap_fill import (
     _lane_day_lock_key,
     fill_one_lane_day,

@@ -21,12 +21,12 @@ from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
 from agri_data_service.ingest.http import upstream_client
 from agri_data_service.ingest.policy import resolve_bounded_bbox, resolve_max_source_records
 from agri_data_service.ingest.usgs_nwis import NWIS_BOUNDS, build_gauge_write, fetch_streamflow_gauges
+from agri_data_service.pipeline.constants import WATER_GAUGES_DIRECT_WRITER_START_DAY
 from agri_data_service.pipeline.direct.water_gauges import (
     WATER_GAUGES_SOURCE_COLUMNS,
     DirectWaterGaugesForwardAdapter,
     tables_by_publisher_day,
 )
-from agri_data_service.pipeline.lanes.water_gauges import WATER_GAUGES_DIRECT_WRITER_START_DAY
 from agri_data_service.pipeline.parquet.availability_extension import AvailabilityExtensionTally
 from agri_data_service.pipeline.parquet.availability_index import BotoAvailabilityStorage
 from agri_data_service.pipeline.parquet.gap_fill import fill_one_lane_day, postgres_lane_day_lock

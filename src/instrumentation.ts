@@ -18,7 +18,6 @@ export async function register() {
 
   const { startJobs } = await import("@/lib/server/jobs/priority-zone-refresh");
   await startJobs();
-  await import("@/lib/server/jobs/water-refresh");
   const { startAlertDispatcherWorker } = await import(
     "@/lib/server/jobs/alert-dispatcher"
   );

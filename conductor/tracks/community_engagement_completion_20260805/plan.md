@@ -1,10 +1,26 @@
 ---
 type: track-plan
 track: community_engagement_completion_20260805
-status: active
+status: planned
 ---
 
 # Plan
+
+## Current status — September 11
+
+This track is **planned** for the remaining moderation re-audit and the four
+owner questions governing the ML label bridge. Phases 2–4 were subsequently
+recorded shipped; phase 4's current query and rejection-note rendering are in
+`CommunityDetails.tsx`, as cited below. Recheck the approved-to-published
+moderation workflow against the rebuilt database before choosing new work.
+
+The phase table, row counts, concurrent-session notices and implementation
+instructions below describe **August 5**. In particular, the “20+ uncommitted
+files” warning is not a present working-tree observation, and “pending” in that
+table is not the current status of phases 2–4. Current environmental work belongs
+to the [retirement plan](../environmental_parquet_serving_20260912/plan.md).
+
+## Historical plan — August 5
 
 Phases 1, 2 and 3 are independent and may run in parallel — they share no files.
 Phase 4 depends on phase 1. Phase 5 is design-gated on the spec's open questions.
@@ -71,13 +87,17 @@ field with real values.
 
 ## Phase 3 — publish evacuation-zones end to end
 
+Historical August 5 authoring plan: this slice was subsequently recorded shipped.
+The migration below is retained archive evidence; current environmental serving
+and repair belong to the [retirement plan](../environmental_parquet_serving_20260912/plan.md).
+
 The only item in this track that is a genuine build. 381 published rows exist
 with no serving path at all.
 
 - Add `geo.evacuation_zone_tiles(z,x,y)` as a Drizzle migration, modelled on
   `geo.sensor_tiles` including the `status = 'published'` filter and the
   `SET search_path = public, pg_catalog` hardening that
-  [drizzle/0008_geometry_dimension.sql:110](../../../drizzle/0008_geometry_dimension.sql#L110)
+  [archived geometry-dimension migration:110](../../../drizzle/archive/0008_geometry_dimension.sql#L110)
   applies to the existing functions.
 - Register it in [infra/martin/martin.yaml](../../../infra/martin/martin.yaml)
   beside `sensor_tiles` and `intervention_tiles`.
@@ -95,9 +115,11 @@ own rows and their workspace's rows, and nothing renders them.
 
 - Surface submission state in `CommunityPanel` — pending / published / rejected,
   with the expert's `reviewNote` shown on rejection.
-- The panel already calls `listMySubmissions`
-  ([CommunityPanel.tsx:126](../../../src/components/panels/CommunityPanel.tsx#L126)),
-  so this is rendering work, not a new query.
+- The original `CommunityPanel` query is retained in its current successor:
+  [CommunityDetails.tsx:118](../../../src/components/panels/CommunityDetails.tsx#L118)
+  calls `listMySubmissions`. September 11 reconciliation: the same component now
+  renders rejected-submission `reviewNote` at line 193, so this August 5 rendering
+  task is historical evidence, not an unimplemented query or UI request.
 - Do not notify by email in this phase; that is a separate decision with its own
   consent surface.
 

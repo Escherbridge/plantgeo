@@ -230,19 +230,6 @@ uv run agri-service data ingest-geometry-repair
 `ingest-backfill` covers sources that declare a usable history capability; run it
 without a valid `--source` to have it print the accepted tokens.
 
-### Historical four-year replays
-
-These are the long-running, checkpointed backfills. Run the plan generator first.
-The [historical ingestion runbook](./historical-backfill-runbook.md) is the
-authoritative sequence, including finalization and Parquet materialization; the
-short form is:
-
-```powershell
-uv run agri-service data historical-nasa-backfill --plan plans/nasa-power-pnw-soil-lattice-20220430-20260430.json
-uv run agri-service data historical-usdm-backfill --plan <usdm-plan>
-uv run agri-service data historical-era5-backfill --plan plans/era5-land-pnw-soil-20220430-20260430.json
-```
-
 Order matters for ERA5. The enforced prerequisite is not the checksum but the
 spatial cells: `_require_era5_spatial_cells` raises "ERA5 persistence requires
 the complete matching NASA sampling lattice in the warehouse" unless an

@@ -1,0 +1,68 @@
+Local scalar refusal repair verification receipt — 2026-09-12
+Repair base/parent: f62666363abd06e8c4aab287ad5f7353b1ec305d
+Preserved candidate tree: 10d00468d1c3d621814f7111056a39ce3ca24865
+Repair branch: codex/scalar-field-refusal-repair-20260912
+The enclosing commit binds the final files; exact commit/tree are supplied in the handoff.
+
+Review history
+Compatibility task 01a0949c-ff3f-72e1-96b8-f49cf11b5272: CHANGES REQUESTED on f626663.
+P2: a refused/empty native replacement waited behind label layout until map idle while
+old native cells, labels and inspection survived beneath the refusal notice.
+Separate repair source reviewer /root/source_reviewer: PASS, no actionable findings.
+source-review.json binds that review to canonical UTF-8/LF SHA-256 source/test/fixture hashes.
+The reviewer executed no tests. Source approval and executable results are separate evidence.
+
+Frozen change batch
+All production, test, fixture and rationale edits preceded the final verification sweep.
+Only evidence/manifest artifacts were completed afterward. checks.json binds all nine changed
+code/test/fixture files to the tested hashes and records exact commands, times and log hashes.
+The original candidate's 49-path manifest, browser report and 27 PNGs remain unchanged.
+
+Test selection and execution
+node scripts/test-surface.mjs --changed --base f62666363abd06e8c4aab287ad5f7353b1ec305d --plan
+mode: full; reason: Shared, removed, or unclassified path: e2e/scalar-field-fixture/entry.tsx
+The existing harness required the full fallback; it was run once with no intervening code edits.
+node scripts/test-surface.mjs --changed --base f62666363abd06e8c4aab287ad5f7353b1ec305d
+Exit 0. Tooling: 6 passed. Vitest: 150 files passed, 2 skipped; 2232 tests passed, 13 skipped.
+Duration: 152.94s. The same run includes all affected tests and the unset/default-off component smoke.
+Skipped: nine climate SQL and four PostGIS tests. Database DSNs were removed from the child
+environment; no database was started or accessed. Existing React act warnings remain in test output.
+
+Other executable gates
+node node_modules/typescript/bin/tsc --noEmit — exit 0.
+node node_modules/eslint/bin/eslint.js <the nine changed TS/TSX/MJS files in checks.json>
+— exit 0; no errors or warnings.
+node scripts/check-data-boundaries.mjs — exit 0:
+Client data-boundary check passed (12 documented URL rules).
+Client/server restricted-import check passed.
+Observation-fabrication check passed (2 rules over 7 display roots).
+
+Bounded browser verification
+node e2e/scalar-field-fixture/run.mjs --scenario=field,mixed-days,detail,mode-race,refusal-layout,reload
+Exit 0. Run run-2026-09-12T09-03-21-585Z-39572: 12 selected cases, zero failures.
+Both desktop and mobile: field, mixed-days native fallback, detail, data/mode race,
+refusal-layout, style reload. This is not the complete 29-case fixture or production acceptance.
+All twelve browser manifest hashes match before/after execution and the final source.
+
+Each refusal-layout case covers both [] and null. The fixture first verifies populated custom
+paint, then native detail and an actual mouse/touch tooltip. It deliberately intercepts real
+SDK idle notifications to hold the controller layout lock; this is a controlled notification
+hold, not a real transport refusal or an uncontrolled camera-animation delay. Before idle:
+the old nine-feature source/raw native query hits remain, but custom mesh cells are absent,
+native fill/outline/text opacity are zero, inspection-allowed hits are zero, and every canvas
+pixel is background. Existing hover/pinned captions clear and new mouse/touch inspection is
+blocked. Releasing idle converges the native source to empty. A later valid -0.4 collection
+restores labels and real tooltips. Per-phase diagnostics and screenshots are in report.json.
+
+An initial sandboxed browser attempt failed during esbuild parent-directory discovery, before
+any browser case ran. The unchanged command was retried with expanded local filesystem
+permissions. checks.json retains the failed attempt metadata separately from successful gates.
+External browser requests were blocked and none occurred. The fixture uses Chromium/SwiftShader,
+local ASCII glyphs, a blank basemap and synthetic data; no Railway/object-storage/backend calls.
+
+Custody and scope
+The final receipt check validates the repair manifest against the exact f626663 diff, PNG
+artifacts, local Markdown links/frontmatter, source-review and executed-source hashes, browser
+before/after hashes, original candidate/evidence identity and git diff --check.
+No source, test or fixture edits occurred after verification. No push or deployment occurred.
+M3, hardware/performance, real reader refusal integration and production acceptance remain open.

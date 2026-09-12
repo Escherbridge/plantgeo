@@ -124,9 +124,6 @@ it contains. A ledger row with `polygon_count = 0` is authoritative
 ("unsurveyed here"); **no row at all means "never asked"** — the two are not
 interchangeable (`drizzle/0013` header comment; `usda-soil.ts:146-153`).
 
-Two now-dormant materialized views were built to precompute the aggregated and
-summary shapes and are unused — see §5.
-
 ## 5. Known gaps and traps
 
 1. **Persisted coverage is partial by construction, not backfilled.** Ingest is
@@ -135,41 +132,13 @@ summary shapes and are unused — see §5.
    gone. Do not assume the store holds every SSURGO delineation for an area of
    interest unless the coverage ledger says so (`usda-soil.ts:340-347`).
 
-2. **Two pre-aggregation matviews already exist for exactly the aggregation
-   problem a Parquet lane will re-solve — read them before repeating the work:**
-   - `geo.mv_soil_survey_union` **never once produced a row in production**
-     until `drizzle/0035_soil_survey_union_collection_extract.sql` fixed a
-     missing `ST_CollectionExtract` step in its `delineation` CTE (four
-     consecutive failed refreshes recorded in `agri.matview_refresh_state`,
-     `drizzle/0035_soil_survey_union_collection_extract.sql:1-4`). **This
-     migration is DORMANT — unregistered in `drizzle/meta/_journal.json`, not
-     applied to production** (`drizzle/0035...sql:61-63`). Recorded here so it
-     is not re-diagnosed from scratch; **do not act on it.**
-   - `geo.mv_soil_survey_grid`, by contrast, **does refresh and populate
-     correctly today** (`drizzle/0035...sql:4`) — the difference is real, not
-     a typo.
-   - Even where populated, **neither matview has a reader.**
-     `docs/pending-migrations/0029-pre-aggregation.md:93` and `:106` both say
-     "not yet consumed by any reader." The live code explains why in-line:
-     `mv_soil_survey_union`'s grain (`zoom_tier, drainage_class` — one global
-     dissolve) doesn't match a viewport-scoped read, and repointing would trade
-     a bounded `ST_Union` (≤20,000 rows) for an `ST_Intersection` against a
-     continent-sized multipolygon — "worse on exactly the axis this work is
-     about" (`usda-soil.ts:1049-1059`). `mv_soil_survey_grid`'s fixed 3-tier
-     zoom ladder can't reproduce the live code's unbounded doubling ladder
-     (`usda-soil.ts:1151-1158`).
-   - Both are still refreshed on a schedule by the `matview-refresh` jobs-pulse
-     lane despite having zero consumers
-     (`services/agri-data-service/src/agri_data_service/jobs/matview_refresh.py:403,419`)
-     — compute spent maintaining relations nothing reads.
-
-3. **Ledger `polygon_count` does not sum to the true feature count.** A
+2. **Ledger `polygon_count` does not sum to the true feature count.** A
    delineation straddling a cell boundary is fetched and counted by both
    cells but stored once — measured: 5 cells, ledger sum 2,675, distinct
    features 2,525 (`src/lib/server/AGENTS.md:448-451`). Never treat a naive sum
    of ledger rows as a completeness or row-count check.
 
-4. **Per-cell truncation is real.** `MAX_SOIL_INGEST_POLYGONS_PER_CELL = 4000`
+3. **Per-cell truncation is real.** `MAX_SOIL_INGEST_POLYGONS_PER_CELL = 4000`
    caps one cell's stored delineations (`usda-soil.ts:40`); a cell that hits it
    is marked `truncated = true`. Density varies roughly an order of magnitude
    across CONUS — Corn Belt farmland measured at 2.6x the polygon density of
@@ -177,19 +146,19 @@ summary shapes and are unused — see §5.
    (`src/lib/server/AGENTS.md:269-278`) — so the ceiling is not uniformly safe
    headroom nationwide.
 
-5. **`saverest` (vintage) has no timezone in the upstream payload**
+4. **`saverest` (vintage) has no timezone in the upstream payload**
    (`"8/27/2025 8:27:08 PM"`, US-locale text). The module deliberately discards
    the clock time and keeps the date at UTC midnight rather than assert a
    timezone the publisher never stated (`usda-soil.ts:735-761`). Any Parquet
    export carrying vintage forward must preserve this same deliberate
    imprecision, not reintroduce a fabricated instant.
 
-6. **A dropped/unparseable row is a gap, counted, never silently discarded** —
+5. **A dropped/unparseable row is a gap, counted, never silently discarded** —
    `unreadable_count` on the ledger, `unreadableGeometries` on the response
    (`src/lib/server/AGENTS.md:307-321`). The same "honest gap" discipline
    `docs/layer-lane-standard.md` §0 and §7 require elsewhere.
 
-7. **`geo.soil_survey_coverage` has no `updated_at` column — only
+6. **`geo.soil_survey_coverage` has no `updated_at` column — only
    `fetched_at`.** An earlier design (the dormant 0029 pre-aggregation work)
    assumed `updated_at` for its matview watermark and was wrong; the corrected
    query lives at
@@ -197,14 +166,14 @@ summary shapes and are unused — see §5.
    Relevant to anyone computing "what changed since the last export" off this
    ledger.
 
-8. **Backfill cost is real and measured, not a "static layers are free" case.**
+7. **Backfill cost is real and measured, not a "static layers are free" case.**
    The PNW envelope alone (`-125,42,-111,49`, 6,272 cells) holds 1,507,623
    delineations across 44,332 mukeys and 220 survey areas; ~91h single-stream /
    ~30h at concurrency 3 from outside Railway's network, ~3h at concurrency 3
    from inside it (`src/lib/server/AGENTS.md:435-440`). A first full Parquet
    backfill for this lane is an hours-long, network-location-sensitive job.
 
-9. **Documentation trap, already flagged live in the RUNBOOK — don't repeat
+8. **Documentation trap, already flagged live in the RUNBOOK — don't repeat
    it**: `infra/cron-soilgrids` and the `soil` raster toggle are a completely
    different concern from this lane. See §"SoilGrids vs soil-survey" below.
 

@@ -373,13 +373,13 @@ const STATIC_LAYER_LEGENDS: Partial<Record<LayerToggleId, LayerLegendSpec>> = {
   // Two encodings from one toggle and one feed: a temperature dot per station, with the wind
   // arrow drawn over it. A station measuring only one of the two draws only that one.
   weather: {
-    title: "Wind & temperature",
+    title: "Sampled wind & weather",
     blocks: [
       { kind: "ramp", caption: "Temperature", stops: temperatureRampStops() },
       { kind: "classes", caption: "Wind speed", shape: "dot", classes: WIND_SPEED_CLASSES },
       {
         kind: "note",
-        text: "Open-Meteo model estimates. Filled cells average captured readings on the selected day; detail dots show the latest captured sample with no published area footprint. Zoom changes the statistic. Arrows point where wind blows to, with speed in m/s.",
+        text: "Open-Meteo model estimates. Filled cells average captured readings only inside their declared footprint; detail dots are sampled locations. Blank ground is unmeasured, not interpolated. Labels show °C; wind labels say where the wind comes from and give speed in m/s. Where wind labels collide, stronger winds take priority.",
       },
     ],
   },
@@ -546,7 +546,8 @@ export function vegetationLegendSpec(
       kind: "note",
       text:
         `Each cell is one measured ${declaredSupportDegrees}° sample, not a smoothed surface ` +
-        `between samples.`,
+        `between samples. Blank cells have no displayed measurement. Hover or tap a cell ` +
+        `for its exact NDVI and observation day.`,
     });
   }
   // The measured cells are painted on absolute NDVI whatever the mode says, because the

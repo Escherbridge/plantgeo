@@ -26,7 +26,6 @@ import pytest
 from agri_data_service.agent import tools as agent_tools
 from agri_data_service.agent.surfaces import (
     AGENT_SURFACE_NAMES,
-    POSTGRESQL_ONLY_SURFACE_NAMES,
     SURFACE_PARQUET_LANES,
 )
 from agri_data_service.parquet_ops import faults
@@ -60,13 +59,12 @@ class FakeResult:
 
 
 class RecordingSession:
-    """An AsyncSession stand-in that records every PostgreSQL read and answers it by its marker."""
+    """An AsyncSession stand-in used to prove environmental tools do not open the database."""
 
     def __init__(self) -> None:
         """Start with no scripted answers; an unscripted statement returns no rows."""
         self.statements: list[tuple[str, dict[str, object]]] = []
         self._answers: dict[str, list[Mapping[str, object]]] = {}
-        self.plane_is_populated = True
 
     def answer(self, marker: str, rows: Sequence[Mapping[str, object]]) -> None:
         """Answer every statement carrying this marker with these rows."""
@@ -75,23 +73,8 @@ class RecordingSession:
     async def execute(self, statement: object, parameters: Mapping[str, object] | None = None) -> FakeResult:
         """Record the statement and answer it from the script."""
         sql = str(statement)
-        bound = dict(parameters or {})
-        self.statements.append((sql, bound))
+        self.statements.append((sql, dict(parameters or {})))
         marker = self.marker_of(sql)
-        if marker == "agent_materialized_plane_populated":
-            requested = bound.get("relation_names")
-            names = list(requested) if isinstance(requested, list) else []
-            return FakeResult(
-                [
-                    {
-                        "relation_name": name,
-                        "relation_exists": True,
-                        "relation_kind": "m",
-                        "is_populated": self.plane_is_populated,
-                    }
-                    for name in names
-                ]
-            )
         return FakeResult(self._answers.get(marker or "", []))
 
     @staticmethod
@@ -104,16 +87,8 @@ class RecordingSession:
         """Every PostgreSQL statement's marker, in execution order."""
         return [marker for sql, _ in self.statements if (marker := self.marker_of(sql)) is not None]
 
-    def parameters_for(self, marker: str) -> dict[str, object]:
-        """The bound parameters of the first statement carrying this marker."""
-        for sql, parameters in self.statements:
-            if self.marker_of(sql) == marker:
-                return parameters
-        raise AssertionError(f"no PostgreSQL statement carrying marker {marker!r} was executed")
-
-
 def session_provider(session: RecordingSession) -> Any:
-    """Bind one recording session as the run's PostgreSQL provider."""
+    """Bind one recording session so environmental PostgreSQL access is observable."""
 
     @asynccontextmanager
     async def provider() -> AsyncIterator[RecordingSession]:
@@ -454,17 +429,10 @@ async def test_the_cell_list_says_it_is_observed_rather_than_declared() -> None:
     assert payload["applied_bounds"]["cell_universe_days"] == agent_tools.CELL_UNIVERSE_DAYS
 
 
-# --- What still reads PostgreSQL, and why ------------------------------------------
-
-
-async def test_the_coverage_audit_is_read_over_exactly_the_cells_the_value_came_from() -> None:
-    """The cells now arrive as two positionally-paired arrays; `agri.spatial_cell` is gone."""
+async def test_the_coverage_audit_is_not_read_after_the_parquet_cutover() -> None:
+    """The retired audit cannot be queried to explain a Parquet answer."""
     source = signal_warehouse()
     session = RecordingSession()
-    session.answer(
-        "agent_signal_coverage_on_day",
-        [{"signal_name": "air_temperature", "status": "no_data", "audit_row_count": 1}],
-    )
 
     payload = await call(
         lambda: agent_tools.query_signal_value_on_day(
@@ -474,11 +442,8 @@ async def test_the_coverage_audit_is_read_over_exactly_the_cells_the_value_came_
         session,
     )
 
-    bound = session.parameters_for("agent_signal_coverage_on_day")
-    assert bound["cell_ids"] == [NEAR_CELL, SECOND_CELL]
-    assert bound["cell_distances"] == [4607.7, 16857.9]
-    assert len(bound["cell_ids"]) == len(bound["cell_distances"]), "the two arrays are walked in step"
-    assert payload["coverage_audit_on_day"][0]["status"] == "no_data"
+    assert payload["coverage_audit_on_day"] == []
+    assert session.statements == []
     assert payload["cells_in_radius"] == 2
 
 
@@ -496,78 +461,11 @@ async def test_the_audit_is_not_read_at_all_when_no_cell_is_in_range() -> None:
         session,
     )
 
-    assert "agent_signal_coverage_on_day" not in session.markers()
-
-
-async def test_the_forecast_tool_resolves_its_cell_from_parquet_and_reads_the_ml_plane_in_postgresql() -> None:
-    """The ML serving plane is not environmental data and stays; only the retired cell lookup moved."""
-    source = signal_warehouse(published=[SELECTED_DAY])
-    session = RecordingSession()
-    session.answer("agent_forecast_summary_for_cell", [{"metric_name": "ndvi", "valid_day": "2026-03-15"}])
-
-    payload = await call(
-        lambda: agent_tools.query_forecast_summary_for_cell(
-            longitude=BOISE_LONGITUDE, latitude=BOISE_LATITUDE, as_of=datetime(2026, 3, 14, tzinfo=UTC)
-        ),
-        source,
-        session,
-    )
-
-    assert session.markers() == ["agent_materialized_plane_populated", "agent_forecast_summary_for_cell"]
-    bound = session.parameters_for("agent_forecast_summary_for_cell")
-    assert bound["cell_id"] == NEAR_CELL
-    assert bound["cell_distance_m"] == 4607.7
-    assert payload["resolved_cell"]["cell_id"] == NEAR_CELL
-    assert payload["forecast_values"][0]["metric_name"] == "ndvi"
-
-
-async def test_the_forecast_tool_still_refuses_an_unpopulated_matview_by_name() -> None:
-    """Its matview shipped with relispopulated false; a silent fallback would hide that forever."""
-    source = signal_warehouse()
-    session = RecordingSession()
-    session.plane_is_populated = False
-
-    payload = await call(
-        lambda: agent_tools.query_forecast_summary_for_cell(
-            longitude=BOISE_LONGITUDE, latitude=BOISE_LATITUDE, as_of=datetime(2026, 3, 14, tzinfo=UTC)
-        ),
-        source,
-        session,
-    )
-
-    assert payload["error"] == "pre_aggregated_plane_unbuilt"
-    assert payload["unbuilt_relations"] == [agent_tools.FORECAST_DAILY_RELATION]
-    assert session.markers() == ["agent_materialized_plane_populated"]
-    assert source.markers() == [], "the plane probe fails before any warehouse read is attempted"
-
-
-async def test_a_forecast_with_no_recent_cell_reports_that_rather_than_an_empty_plane() -> None:
-    """ "No cell has reported near you" is a different claim from "no forecast exists"."""
-    source = signal_warehouse()
-    source.answer("agent_signal_admitted_cells", [])
-    session = RecordingSession()
-
-    payload = await call(
-        lambda: agent_tools.query_forecast_summary_for_cell(
-            longitude=BOISE_LONGITUDE, latitude=BOISE_LATITUDE, as_of=datetime(2026, 3, 14, tzinfo=UTC)
-        ),
-        source,
-        session,
-    )
-
-    assert payload["resolved_cell"] is None
-    assert payload["forecast_values"] == []
-    assert "agent_forecast_summary_for_cell" not in session.markers()
+    assert session.markers() == []
 
 
 async def test_the_forecast_tool_refuses_a_never_written_lane_rather_than_an_empty_cell() -> None:
-    """A lane that has never written anything is state 4 of 4, never "no cell reported nearby".
-
-    Before this, `_admitted_signal_cells` answered `[]` for BOTH causes -- an unwritten lane and a
-    written lane with no cell nearby -- and `resolved_cell: null` carried the same note either way,
-    which asserted "no analysis cell reported inside the radius" about a lane that was never read at
-    all.
-    """
+    """An unavailable forecast lane is a typed refusal, never a database probe."""
     source = FakeAgentWarehouse()
     session = RecordingSession()
 
@@ -579,17 +477,15 @@ async def test_the_forecast_tool_refuses_a_never_written_lane_rather_than_an_emp
         session,
     )
 
-    assert payload["error"] == "parquet_lane_never_written"
-    assert payload["unwritten_lanes"] == [SIGNAL_LANE]
-    assert "REFUSAL, not an absence" in payload["note"]
-    assert source.markers() == [], "the cell lookup must not run against an unwritten lane"
+    assert payload["error"] == "forecast_parquet_lane_not_published"
+    assert session.markers() == []
+    assert source.markers() == []
 
 
-async def test_the_one_community_layer_is_served_from_postgresql_and_says_so() -> None:
-    """RUNBOOK section 0.26.1 keeps `interventions` in PostgreSQL; inventing a Parquet lane would be a fiction."""
+async def test_an_unadmitted_community_layer_is_refused_without_a_postgresql_fallback() -> None:
+    """An unregistered lane is a typed Parquet refusal, never a database read."""
     source = FakeAgentWarehouse()
     session = RecordingSession()
-    session.answer("agent_feature_value_near_point", [{"feature_id": "abc", "distance_meters": 120.0}])
 
     payload = await call(
         lambda: agent_tools.query_feature_value_near_point(
@@ -602,10 +498,10 @@ async def test_the_one_community_layer_is_served_from_postgresql_and_says_so() -
         session,
     )
 
-    assert payload["applied_bounds"]["served_from"] == "postgresql"
-    assert payload["features"][0]["feature_id"] == "abc"
-    assert session.markers() == ["agent_feature_value_near_point"]
-    assert source.markers() == [], "a PostgreSQL-resident layer never touches the Parquet warehouse"
+    assert payload["error"] == "surface_not_served_from_parquet"
+    assert session.markers() == []
+    assert source.markers() == []
+    assert "PostgreSQL is not queried as a fallback" in payload["note"]
 
 
 async def test_a_parquet_feature_layer_carries_its_lanes_own_columns_under_properties() -> None:
@@ -734,8 +630,8 @@ async def test_temporal_neighbours_carry_the_real_gap_each_side() -> None:
     assert by_side["after"]["observation_count"] == 12
 
 
-async def test_the_postgresql_only_surface_is_refused_by_the_coverage_tools_with_its_reason() -> None:
-    """It has no published day index; saying "uncovered" would be a claim the evidence cannot support."""
+async def test_an_unadmitted_surface_is_refused_by_the_coverage_tools() -> None:
+    """It has no Parquet lane; saying "uncovered" would be a claim the evidence cannot support."""
     source = FakeAgentWarehouse()
     payload = await call(
         lambda: agent_tools.query_observation_coverage_on_day(
@@ -745,7 +641,6 @@ async def test_the_postgresql_only_surface_is_refused_by_the_coverage_tools_with
     )
 
     assert payload["error"] == "surface_not_served_from_parquet"
-    assert payload["postgresql_only_surface_names"] == list(POSTGRESQL_ONLY_SURFACE_NAMES)
 
 
 # --- The fire summary --------------------------------------------------------------
@@ -794,12 +689,11 @@ async def test_the_fire_summary_reports_whole_lane_history_as_a_discriminated_sh
 # --- Catalogue and removal tripwires -----------------------------------------------
 
 
-def test_every_catalogue_surface_is_either_a_parquet_lane_or_named_as_postgresql_resident() -> None:
-    """No surface may fall between the two: a missing mapping is how a layer silently stops answering."""
+def test_every_catalogue_surface_is_mapped_or_explicitly_refused() -> None:
+    """The only unmapped surface is deliberately refused, never silently sent to PostgreSQL."""
     mapped = set(SURFACE_PARQUET_LANES)
-    postgresql_only = set(POSTGRESQL_ONLY_SURFACE_NAMES)
-    assert mapped | postgresql_only == set(AGENT_SURFACE_NAMES)
-    assert not mapped & postgresql_only
+    assert mapped <= set(AGENT_SURFACE_NAMES)
+    assert set(AGENT_SURFACE_NAMES) - mapped == {"interventions"}
 
 
 @pytest.mark.parametrize(
@@ -820,7 +714,7 @@ def test_every_catalogue_surface_is_either_a_parquet_lane_or_named_as_postgresql
 def test_no_surviving_agent_statement_reads_a_retired_environmental_relation(relation: str) -> None:
     """The c2-style removal proof, executable.
 
-    Four `.sql` files survive under `sql/agent/` and none of them may name an environmental relation
+    No SQL files survive under `sql/agent/` and none may name an environmental relation
     the retirement track is dropping. `geo.mv_signal_cell_daily` and `agri.spatial_cell` are already
     gone from production, so a surviving reference would be a hard error rather than a stale read;
     the rest are still there and must have no agent reader before their drop packet can close.
@@ -836,12 +730,7 @@ def test_no_surviving_agent_statement_reads_a_retired_environmental_relation(rel
     assert not offenders, f"{relation} is still read by {offenders}"
 
 
-def test_the_agent_sql_tree_holds_only_the_four_statements_that_stay() -> None:
-    """A file left behind after its caller moved is the next reader's trap, so the set is asserted."""
+def test_the_agent_sql_tree_is_empty_after_the_postgresql_fallback_removal() -> None:
+    """A file left behind after its caller moved is the next reader's trap, so the set is empty."""
     root = Path(__file__).resolve().parents[1] / "src" / "agri_data_service" / "sql" / "agent"
-    assert sorted(path.name for path in root.glob("*.sql")) == [
-        "feature_value_near_point.sql",
-        "forecast_summary_for_cell.sql",
-        "materialized_plane_populated.sql",
-        "signal_coverage_on_day.sql",
-    ]
+    assert sorted(path.name for path in root.glob("*.sql")) == []

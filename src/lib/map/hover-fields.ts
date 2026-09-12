@@ -49,8 +49,7 @@ export const HOVERABLE_LAYER_IDS: string[] = [
   "soil-survey-summary",
   "weather-temperature",
   "weather-temperature-cells",
-  "osm-roads",
-  "osm-waterways",
+  "vegetation-ndvi-cells-fill",
 ];
 
 /**
@@ -85,7 +84,7 @@ const LAYER_IDS_WITH_A_DEDICATED_CLICK_POPUP = new Set<string>([
  * `LAYER_IDS_WITH_A_DEDICATED_CLICK_POPUP` that is fine, because a tap is a `click` and those two
  * components already answer one. For the other thirteen -- sensors, both fire-perimeter and
  * burn-severity polygons, drought, evacuation zones, both intervention shapes, watersheds, both
- * soil-survey shapes, weather and the two basemap layers -- a tap on this map does nothing at
+ * soil-survey shapes, and weather -- a tap on this map does nothing at
  * all today: `MapView`'s own click handler treats "a feature was under the tap" as reason enough
  * to swallow it (so it never opens the confirm-before-analysis prompt either), and no popup ever
  * answers it. `HoverTooltip`'s tap handler is what closes that gap, for exactly this subset.
@@ -456,7 +455,7 @@ function formatSoilSurvey(props: Properties): HoverContent | null {
  * The feed carries no station identity -- it is a grid sample, not a named site -- so the
  * title is generic rather than inventing one. Units are the ones measured: m/s (weather.ts
  * asks Open-Meteo for `wind_speed_unit=ms`), °C (`temperature_2m`, whose default unit is
- * Celsius), and percent relative humidity. Every field is optional because the layer now
+ * Celsius), percent relative humidity, and millimetres of precipitation. Every field is optional because the layer now
  * draws a station that measured only some of them.
  */
 function formatWeatherObservation(props: Properties): HoverContent | null {
@@ -464,6 +463,7 @@ function formatWeatherObservation(props: Properties): HoverContent | null {
   const windDirection = formatInteger(props.windDirection, "°");
   const temperature = formatFixed(props.temperature, 1, " °C");
   const humidity = formatInteger(props.humidity, "%");
+  const precipitation = formatFixed(props.precipitation, 1, " mm");
   const observed = formatTimestampWithRelative(toIsoTimestamp(props.observedAt));
 
   const aggregate = props.supportKind === "aggregate_cell";
@@ -475,31 +475,26 @@ function formatWeatherObservation(props: Properties): HoverContent | null {
       ? `Wind: ${windSpeed}${windDirection ? ` from ${windDirection}` : ""}`
       : null,
     humidity ? `Humidity: ${humidity}` : null,
+    precipitation ? `Precipitation: ${precipitation}` : null,
     typeof props.observedDay === "string" ? `Source day: ${formatCalendarDay(props.observedDay)}` : null,
     observed ? `${aggregate ? 'Newest contributing reading' : 'Observed'}: ${observed}` : null,
   ]);
 }
 
-function formatRoad(props: Properties): HoverContent | null {
-  const title = stringField(props.name) ?? stringField(props.highway) ?? "Road";
-  const highway = stringField(props.highway);
-  const surface = stringField(props.surface);
-  const lanes = props.lanes != null ? formatInteger(props.lanes, "") : null;
-  const maxspeed = stringField(props.maxspeed);
-
-  return buildContent(title, [
-    highway ? `Type: ${highway}` : null,
-    surface ? `Surface: ${surface}` : null,
-    lanes ? `Lanes: ${lanes}` : null,
-    maxspeed ? `Max speed: ${maxspeed}` : null,
+/** Exact served NDVI metadata; see src/lib/map/AGENTS.md. */
+function formatVegetationCell(props: Properties): HoverContent | null {
+  const value = typeof props.ndvi === "number" ? props.ndvi : NaN;
+  if (!Number.isFinite(value)) return null;
+  const day = formatCalendarDay(stringField(props.observedDay));
+  const grid = stringField(props.gridName);
+  const cell = stringField(props.cellId) ?? stringField(props.supportId);
+  return buildContent("Measured vegetation cell", [
+    `NDVI: ${value} (dimensionless)`,
+    day ? `Observed: ${day}` : "Observation day not reported",
+    grid ? `Grid: ${grid}` : null,
+    cell ? `Cell: ${cell}` : null,
+    "Color represents this cell's value; blank cells have no displayed measurement.",
   ]);
-}
-
-function formatWaterway(props: Properties): HoverContent | null {
-  const title = stringField(props.name) ?? stringField(props.waterway) ?? "Waterway";
-  const waterway = stringField(props.waterway);
-
-  return buildContent(title, [waterway ? `Type: ${waterway}` : null]);
 }
 
 const FORMATTERS: Record<string, (props: Properties) => HoverContent | null> = {
@@ -526,8 +521,7 @@ const FORMATTERS: Record<string, (props: Properties) => HoverContent | null> = {
   "soil-survey-summary": formatSoilSurvey,
   "weather-temperature": formatWeatherObservation,
   "weather-temperature-cells": formatWeatherObservation,
-  "osm-roads": formatRoad,
-  "osm-waterways": formatWaterway,
+  "vegetation-ndvi-cells-fill": formatVegetationCell,
 };
 
 /** Per-layer field selection + unit formatting for the hover tooltip. Null when nothing to show. */

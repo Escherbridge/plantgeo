@@ -619,12 +619,25 @@ not measured beside its numerator will always eventually lie.
 
 ## §weather
 
-**One toggle, two style layers, one source.** `WeatherLayer` paints `weather-temperature`
-(circles, coloured on the observation's `temperature`) and `weather-wind` (a `text-field`
-symbol: an arrow glyph plus the measured speed) from a single GeoJSON source. The circles are
-added first so the arrows draw over them. Until 2026-08-08 only the arrows existed, so a
-toggle labelled "Wind & Weather" drew wind and nothing else while `temperature` and `humidity`
-were already on every feature and simply never painted.
+**One toggle, three readings, one source.** `WeatherLayer` paints `weather-temperature`
+(raw-sample circles), `weather-temperature-cells` (only declared aggregate support), numeric
+`weather-temperature-labels`, and `weather-wind` (an explicit font-safe `from N` compass direction
+plus measured speed) from a single GeoJSON source. Temperature labels and wind occupy opposite
+sides of the anchor so an aggregate square reads like a conventional weather plot rather than an
+anonymous tile. The Unicode arrow helper remains available for non-map consumers, but map labels
+use ASCII compass wording so missing glyph coverage cannot produce tofu boxes or reverse the
+meteorological from/to meaning.
+
+**The weather report owns the sampled lane; Climate still owns continuous fields.** The weather
+row lives in the Climate group because `Climate & Weather History` is the report that reads its
+own slider day, bbox and zoom. Its four-field cards summarize visible returned readings, while
+its point card names the nearest returned feature to the view centre or explicit query point
+rather than presenting the viewport centre as a selection. The sampled
+lane never gains contours: only the separate climate air-temperature field offers filled or
+isoline forms where its contract admits them. While a new day is pending, a retained placeholder
+may remain only with its own served day stated explicitly; once the request settles, every
+mismatched dated envelope is withheld, so an unavailable-day caption never describes an older
+frame.
 
 **Completeness is judged per drawn layer, not per observation.** Each layer filters on its own
 `hasWind` / `hasTemperature` flag, computed once when the collection is built. That is what
@@ -1128,3 +1141,40 @@ The burn-history ready result may carry verified `mtbsSnapshot` metadata even wh
 empty. Show capture time, publication availability, covered fire years and the exact partial-year
 list as a separate notice from row/history truncation. A complete captured query is not evidence
 that MTBS has finished mapping those fire seasons. Only an enabled layer displays this notice.
+
+## Climate and soil value labels (2026-09-12)
+
+Climate field (and legacy symbol) forms and ERA5-Land soil fields add measured-value symbol
+labels on the same GeoJSON source as their original marks. Fills, outlines, selected-day
+values, legends and support geometry stay as served. Climate contours omit numeric labels:
+their `value` is a band representative, not an observation. Each eligible instance owns one
+additional label id, removes it before its source, reloads it with current props on style
+replacement, and applies the live opacity multiplier to text. The shared formatter and
+collision limits are documented in `src/lib/map/AGENTS.md` under Measured scalar labels.
+
+The cell readers' `aggregated` flag derives from the served rung, so `avg` is never inferred
+from the current camera zoom. Labels can be collision-suppressed at crowded scales; they do
+not promise one visible number per cell. Shared hover registration for these two components
+was already absent and is not supplied by this label slice; source geometry and existing
+picking behavior are preserved. This is value legibility work, not closure of that hover gap.
+
+## §vegetation-scalar-field
+
+The shared tooltip measures its current content in a layout effect before paint, then flips
+and clamps both coordinates to the map container. A flip alone can put a wide caption outside
+the left edge of a phone. Its intrinsic width is capped at 240 pixels and at the container
+width, so the measured rectangle stays stable while positioning. Synthetic desktop/mobile
+inspection checks assert the actual caption bounds, as well as the exact value text.
+
+`VegetationLayer` reads the build-time `NEXT_PUBLIC_SCALAR_FIELD_RENDERER_LAYERS` comma list.
+Only explicit `vegetation` adds the custom nearest-cell scalar layer and native value labels;
+unset keeps the native presentation. See `src/lib/map/AGENTS.md` §scalar-field and
+`docs/scalar-field-renderer.md` for scientific constraints and rollout gates. This layer never
+stacks measured NDVI with the satellite composite. It keeps its existing fill ID as the native
+picking target, passes all opacity changes through one controller, and rebuilds the custom layer
+on style load. The `useStyleReady` retry additionally closes the missed initial style-load race.
+Native fill, outline and value labels have zero-duration opacity transitions in the opt-in
+path, so an invalidated collection disappears before a queued source clear. The map-scoped
+scalar inspection gate excludes retained transparent features from hover/tap and map-click
+decisions and retires an open caption. It releases only when replacement native data is ready.
+Weather and all other renderers keep their current ordering and representations.

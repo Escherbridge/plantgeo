@@ -27,13 +27,13 @@ from typing import TYPE_CHECKING, Final
 
 from agri_data_service.foundation.parquet.absence import GovernedAbsence
 from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
+from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.direct.evacuation_zones.products import (
     DIRECT_QUERY_URL,
     EVACUATION_ZONES_DIRECT_KIND,
     EVACUATION_ZONES_STREAM,
 )
 from agri_data_service.pipeline.direct.evacuation_zones.rows import split_into_parts
-from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.parquet.derivation import ABSENCE_LADDER_TIERS, write_absence_ladder
 from agri_data_service.pipeline.parquet.lane_registry import normalise_export_outcome
 

@@ -2,7 +2,6 @@
 
 import click
 
-from agri_data_service.execution.recommendation_commands import register_recommendation_commands
 from agri_data_service.interface.cli import commands
 from agri_data_service.interface.cli._registry import register_commands
 
@@ -19,4 +18,3 @@ register_commands(
         ("strategy-train", commands.strategy_train),
     ),
 )
-register_recommendation_commands(ml)

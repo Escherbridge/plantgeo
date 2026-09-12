@@ -1,19 +1,17 @@
 // Builds a PlantGeo database from empty, in the one order that works.
 //
 // This exists because the order used to live only inside migration error messages, so a new
-// region could not bring the schema up without reading them one failure at a time. See
-// `drizzle/archive/README.md` for what the previous 41-migration chain required and why it was
-// collapsed into `drizzle/0000_baseline.sql`.
+// region could not bring the schema up without reading migration failures one at a time.
 //
 //   node scripts/bootstrap-database.mjs                # extensions, preflight, baseline, seed
 //   node scripts/bootstrap-database.mjs --dry-run      # print the plan, touch nothing
 //   node scripts/bootstrap-database.mjs --skip-extensions
 //   node scripts/bootstrap-database.mjs --skip-seed    # schema only, no reference rows
 //
-// The `agri` schema is Alembic's, not Drizzle's, and seven objects in the baseline read Alembic
-// owned tables (agri.signal_observation, agri.spatial_cell, agri.strategies and seven more). This
-// script therefore REFUSES to apply the baseline until `agri` is present, rather than failing
-// halfway through with a bare "relation does not exist". Run Alembic first, from
+// The `agri` schema is Alembic's, not Drizzle's. The reduced baseline only relies on the retained
+// control dimensions (agri.spatial_cell and agri.data_source), while environmental payloads live
+// in governed Parquet. This script therefore refuses to apply the baseline until `agri` is
+// present, rather than failing halfway through with a bare "relation does not exist". Run Alembic first, from
 // `services/agri-data-service`:
 //
 //   DATABASE_URL_SYNC=<dsn> UV_NO_SYNC=1 uv run --no-sync alembic upgrade head
@@ -99,16 +97,16 @@ async function requireAlembicSchema() {
   if (dryRun) {
     // A dry run is for planning a database that does not exist yet, so refusing here would make
     // `--dry-run` fail on exactly the target it is meant to describe.
-    console.log("  (dry run) would require agri.signal_observation before continuing");
+    console.log("  (dry run) would require retained agri control tables before continuing");
     return;
   }
   const [{ present }] = await client`
-    SELECT count(*) > 0 AS present
+    SELECT count(*)::int AS present
       FROM information_schema.tables
-     WHERE table_schema = 'agri' AND table_name = 'signal_observation'
+     WHERE table_schema = 'agri' AND table_name IN ('spatial_cell', 'data_source')
   `;
-  if (present) {
-    console.log("  agri.signal_observation present");
+  if (present === 2) {
+    console.log("  retained agri control tables present");
     return;
   }
   console.error(

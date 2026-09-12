@@ -11,16 +11,11 @@ from sanic.response import BaseHTTPResponse
 
 from agri_data_service.config import settings
 from agri_data_service.db.engine import dispose_combined_local_engine, dispose_service_engines
-from agri_data_service.interface.http import parquet_bp
+from agri_data_service.interface.http import botanical_species_information_bp, parquet_bp
 from agri_data_service.routes import (
     agent_bp,
-    forecasts_bp,
     health_bp,
-    historical_promotion_bp,
     jobs_bp,
-    local_publication_bp,
-    ops_bp,
-    recommendations_bp,
     strategies_bp,
 )
 
@@ -102,21 +97,20 @@ def create_app(_args: object | None = None) -> AgriApp:
     # has no reason to carry a public read surface. See interface/http/AGENTS.md.
     profile_blueprints = {
         "combined_local": (
-            forecasts_bp,
-            recommendations_bp,
             strategies_bp,
-            local_publication_bp,
-            historical_promotion_bp,
             jobs_bp,
             parquet_bp,
+            botanical_species_information_bp,
         ),
-        "receiver_writer": (local_publication_bp, historical_promotion_bp, jobs_bp),
-        "published_reader": (forecasts_bp, parquet_bp),
+        "receiver_writer": (jobs_bp,),
+        # Forecasts are withheld until a source-direct Parquet forecast lane is published.
+        # Keeping the PostgreSQL-backed blueprint mounted would violate the environmental
+        # cutover even when the Next.js bridge no longer calls it.
+        "published_reader": (parquet_bp, botanical_species_information_bp),
     }[settings.service_profile]
     api_v1 = Blueprint.group(*profile_blueprints, url_prefix="/api/v1")
     app.blueprint(api_v1)
     app.blueprint(health_bp)
-    app.blueprint(ops_bp)
     # Registered in every profile; it answers 503 until ANTHROPIC_API_KEY is set.
     app.blueprint(agent_bp)
 

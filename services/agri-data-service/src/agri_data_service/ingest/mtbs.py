@@ -41,6 +41,7 @@ from agri_data_service.ingest.policy import (
     resolve_bounded_bbox,
     resolve_max_source_records,
 )
+from agri_data_service.ingest.records import FeatureWrite
 from agri_data_service.ingest.results import IngestionJobResult, skipped_result
 from agri_data_service.ingest.source import (
     FetchRequest,
@@ -49,7 +50,6 @@ from agri_data_service.ingest.source import (
     HistoryCapability,
     select_writes,
 )
-from agri_data_service.ingest.writer import FeatureWrite
 from agri_data_service.warehouse.mtbs_releases import (
     MTBS_ANNUAL_RELEASE_DATES as MTBS_ANNUAL_RELEASE_DATES,  # noqa: PLC0414 - public compatibility reexport
 )
@@ -58,8 +58,8 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
     from agri_data_service.ingest.identity import FeatureIdentity
+    from agri_data_service.ingest.records import FeatureWriter
     from agri_data_service.ingest.source import UpstreamRecord
-    from agri_data_service.ingest.writer import FeatureWriter
 
 BoundingBox = tuple[float, float, float, float]
 Sleep = Callable[[float], Awaitable[None]]

@@ -30,7 +30,7 @@ from agri_data_service.pipeline.direct.climate.source import (
     ClimateTimeBudgetExhaustedError,
 )
 from agri_data_service.pipeline.direct.climate.support import NASA_POWER_SUPPORT_CELL_COUNT
-from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
+from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.parquet.availability_extension import (
     AvailabilityExtensionOutcome,
     AvailabilityExtensionTally,

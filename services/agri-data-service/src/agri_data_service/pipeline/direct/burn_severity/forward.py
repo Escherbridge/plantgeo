@@ -42,6 +42,7 @@ from agri_data_service.db.engine import local_source_loader_session
 from agri_data_service.foundation.parquet.paths import partition_day_statuses
 from agri_data_service.ingest.mtbs import inline_bbox_value
 from agri_data_service.ingest.policy import UNCONFIGURED_BBOX_REASON, parse_bbox, resolve_bounded_bbox
+from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.direct import (
     BBOX_UNCONFIGURED,
     LANE_DAY_OUTCOMES,
@@ -64,7 +65,6 @@ from agri_data_service.pipeline.direct.burn_severity.products import (
 from agri_data_service.pipeline.direct.burn_severity.source import (
     fetch_burn_severity_release_day,
 )
-from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.parquet.availability_extension import AvailabilityExtensionTally
 from agri_data_service.pipeline.parquet.availability_index import BotoAvailabilityStorage
 from agri_data_service.pipeline.parquet.gap_fill import (

@@ -1,0 +1,158 @@
+[
+  {
+    "name": "portal-inventory",
+    "attempt": 1,
+    "requested_url": "https://www.pnwherbaria.org/data/datasets.php",
+    "retrieved_at": "2026-09-12T04:51:36.505120+00:00",
+    "method": "GET",
+    "limit_bytes": 1048576,
+    "status": 200,
+    "final_url": "https://www.pnwherbaria.org/data/datasets.php",
+    "headers": {
+      "Date": "Sat, 12 Sep 2026 04:51:37 GMT",
+      "Server": "Apache/2.4.52 (Ubuntu)",
+      "Vary": "Accept-Encoding",
+      "Connection": "close",
+      "Transfer-Encoding": "chunked",
+      "Content-Type": "text/html; charset=UTF-8"
+    },
+    "file": "pnw-portal-inventory-20260912.html",
+    "bytes": 65330,
+    "sha256": "61427faae1cbcb5d74e64c083666b53991242d6f65232b1d26ee792f10a7ee9a",
+    "outcome": "captured"
+  },
+  {
+    "name": "portal-usage-policy",
+    "attempt": 2,
+    "requested_url": "https://www.pnwherbaria.org/data/datausagepolicy.php",
+    "retrieved_at": "2026-09-12T04:51:36.951149+00:00",
+    "method": "GET",
+    "limit_bytes": 1048576,
+    "status": 200,
+    "final_url": "https://www.pnwherbaria.org/data/datausagepolicy.php",
+    "headers": {
+      "Date": "Sat, 12 Sep 2026 04:51:37 GMT",
+      "Server": "Apache/2.4.52 (Ubuntu)",
+      "Vary": "Accept-Encoding",
+      "Connection": "close",
+      "Transfer-Encoding": "chunked",
+      "Content-Type": "text/html; charset=UTF-8"
+    },
+    "file": "pnw-portal-usage-policy-20260912.html",
+    "bytes": 8907,
+    "sha256": "708d53ae2800fc51e079fe63bf8f268430de37a97cd54ae1a05c77c5fe804fc7",
+    "outcome": "captured"
+  },
+  {
+    "name": "wtu-provider",
+    "attempt": 3,
+    "requested_url": "https://www.pnwherbaria.org/data/providermetadata.php?code=WTU",
+    "retrieved_at": "2026-09-12T04:51:37.167302+00:00",
+    "method": "GET",
+    "limit_bytes": 1048576,
+    "status": 200,
+    "final_url": "https://www.pnwherbaria.org/data/providermetadata.php?code=WTU",
+    "headers": {
+      "Date": "Sat, 12 Sep 2026 04:51:38 GMT",
+      "Server": "Apache/2.4.52 (Ubuntu)",
+      "Vary": "Accept-Encoding",
+      "Connection": "close",
+      "Transfer-Encoding": "chunked",
+      "Content-Type": "text/html; charset=UTF-8"
+    },
+    "file": "pnw-wtu-provider-20260912.html",
+    "bytes": 21090,
+    "sha256": "ef15ec1c4b18ac32f43e0d5e117662ed6bdf0bc936d4d039efa5b5fbcf3e1102",
+    "outcome": "captured"
+  },
+  {
+    "name": "ubc-provider",
+    "attempt": 4,
+    "requested_url": "https://www.pnwherbaria.org/data/providermetadata.php?code=UBC",
+    "retrieved_at": "2026-09-12T04:51:37.467356+00:00",
+    "method": "GET",
+    "limit_bytes": 1048576,
+    "status": 200,
+    "final_url": "https://www.pnwherbaria.org/data/providermetadata.php?code=UBC",
+    "headers": {
+      "Date": "Sat, 12 Sep 2026 04:51:38 GMT",
+      "Server": "Apache/2.4.52 (Ubuntu)",
+      "Vary": "Accept-Encoding",
+      "Connection": "close",
+      "Transfer-Encoding": "chunked",
+      "Content-Type": "text/html; charset=UTF-8"
+    },
+    "file": "pnw-ubc-provider-20260912.html",
+    "bytes": 19377,
+    "sha256": "922b4750c7221d198129da5ff0b1ec5fe7039b73f794a64ec8457513510f9f08",
+    "outcome": "captured"
+  },
+  {
+    "name": "ubc-ipt-current",
+    "attempt": 5,
+    "requested_url": "https://data.canadensys.net/ipt/resource?r=ubc-vascular-specimens",
+    "retrieved_at": "2026-09-12T04:51:37.760317+00:00",
+    "method": "GET",
+    "limit_bytes": 1048576,
+    "status": 200,
+    "final_url": "https://data.canadensys.net/ipt/resource?r=ubc-vascular-specimens",
+    "headers": {
+      "Server": "nginx",
+      "Date": "Sat, 12 Sep 2026 04:51:38 GMT",
+      "Content-Type": "text/html;charset=UTF-8",
+      "Transfer-Encoding": "chunked",
+      "Connection": "close",
+      "Content-Language": "en-GB"
+    },
+    "file": "pnw-ubc-ipt-current-20260912.html",
+    "bytes": 86109,
+    "sha256": "21e95a58eea8b31751a8964b22cf1b1136b782595f7c293de11ed9fc89610e23",
+    "outcome": "captured"
+  },
+  {
+    "name": "ubc-ipt-16.43",
+    "attempt": 6,
+    "requested_url": "https://data.canadensys.net/ipt/resource?r=ubc-vascular-specimens&v=16.43",
+    "retrieved_at": "2026-09-12T04:51:38.405201+00:00",
+    "method": "GET",
+    "limit_bytes": 1048576,
+    "status": 200,
+    "final_url": "https://data.canadensys.net/ipt/resource?r=ubc-vascular-specimens&v=16.43",
+    "headers": {
+      "Server": "nginx",
+      "Date": "Sat, 12 Sep 2026 04:51:39 GMT",
+      "Content-Type": "text/html;charset=UTF-8",
+      "Transfer-Encoding": "chunked",
+      "Connection": "close",
+      "Content-Language": "en-GB"
+    },
+    "file": "pnw-ubc-ipt-16.43-20260912.html",
+    "bytes": 86181,
+    "sha256": "35b671ba0f41ceef6c6d7c86325ac36a03499770b5ba9f45be2ff934553dc9ba",
+    "outcome": "captured"
+  },
+  {
+    "name": "ubc-eml-16.43",
+    "attempt": 7,
+    "requested_url": "https://data.canadensys.net/ipt/eml.do?r=ubc-vascular-specimens&v=16.43",
+    "retrieved_at": "2026-09-12T04:51:38.877149+00:00",
+    "method": "GET",
+    "limit_bytes": 1048576,
+    "status": 200,
+    "final_url": "https://data.canadensys.net/ipt/eml.do?r=ubc-vascular-specimens&v=16.43",
+    "headers": {
+      "Server": "nginx",
+      "Date": "Sat, 12 Sep 2026 04:51:40 GMT",
+      "Content-Type": "text/xml;charset=UTF-8",
+      "Transfer-Encoding": "chunked",
+      "Connection": "close",
+      "Last-Modified": "Tue, 01 Sep 2026 12:00:01 GMT",
+      "Content-Disposition": "filename=\"eml-ubc-vascular-specimens-v16.43.xml\"",
+      "Content-Language": "en-GB"
+    },
+    "file": "pnw-ubc-eml-16.43-20260912.xml",
+    "bytes": 14208,
+    "sha256": "e73735e4eafcb1a233514948f72631ceced3dd22e30445d45f34e593f7293654",
+    "outcome": "captured"
+  }
+]

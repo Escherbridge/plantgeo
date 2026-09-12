@@ -216,18 +216,22 @@ describe("environmental reader ownership dispatch", () => {
   });
 
   it.each(["perimeter-acres", "percent-contained"] as const)(
-    "keeps the PostgreSQL-owned %s metric on its authoritative reader",
+    "returns a typed Parquet refusal for %s without a PostgreSQL reader",
     async (metric) => {
       const request = { ...input, metric };
 
       await expect(caller.getMetricAtDate(request)).resolves.toEqual({
-        state: "ready",
+        state: "unavailable",
         requestedDay: input.date,
         servedDay: input.date,
-        data: collection,
+        data: expect.objectContaining({
+          availability: "not_published",
+          reason: "metric_parquet_lane_not_published",
+          features: [],
+        }),
         truncated: false,
       });
-      expect(mocks.getMetricAtDate).toHaveBeenCalledWith(request);
+      expect(mocks.getMetricAtDate).not.toHaveBeenCalled();
     }
   );
 
@@ -251,17 +255,17 @@ describe("environmental reader ownership dispatch", () => {
     expect(mocks.getMetricAtDate).not.toHaveBeenCalled();
   });
 
-  it("propagates a selected PostgreSQL owner's failure without another read", async () => {
-    const failure = new Error("PostgreSQL unavailable");
-    mocks.getMetricAtDate.mockRejectedValue(failure);
-
-    await expect(caller.getMetricAtDate(input)).rejects.toThrow("PostgreSQL unavailable");
-    expect(mocks.getMetricAtDate).toHaveBeenCalledTimes(1);
+  it("keeps a retired metric closed without probing PostgreSQL", async () => {
+    await expect(caller.getMetricAtDate(input)).resolves.toMatchObject({
+      state: "unavailable",
+      data: { availability: "not_published" },
+    });
+    expect(mocks.getMetricAtDate).not.toHaveBeenCalled();
   });
 });
 
 describe("metric-at-date client transport", () => {
-  it("unwraps a PostgreSQL-owned collection from the shared ready envelope", async () => {
+  it("unwraps a collection from the shared ready envelope", async () => {
     mocks.metricQuery.mockResolvedValue({
       state: "ready",
       requestedDay: input.date,

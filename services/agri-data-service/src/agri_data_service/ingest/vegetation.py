@@ -16,7 +16,6 @@ import httpx
 import numpy as np
 import structlog
 
-from agri_data_service.ingest.geometry import GridCell
 from agri_data_service.ingest.http import (
     UpstreamBounds,
     UpstreamError,
@@ -34,7 +33,7 @@ from agri_data_service.ingest.identity import (
 )
 from agri_data_service.ingest.layer_binding import LayerBinding
 from agri_data_service.ingest.policy import BBOX_ORDINATE_COUNT, parse_bbox
-from agri_data_service.ingest.writer import FeatureWrite
+from agri_data_service.ingest.records import FeatureWrite, GridCell
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence

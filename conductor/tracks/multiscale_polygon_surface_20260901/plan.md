@@ -1,11 +1,19 @@
 ---
 type: track-plan
 slug: multiscale_polygon_surface_20260901
-status: planned
+status: active
 resource: ./spec.md
 ---
 
 # Plan
+
+## Current checkpoint — September 11
+
+Support and renderer implementation are complete subsets. The
+[MTBS rollout](../environmental_parquet_serving_20260912/plan.md)
+adds one bounded production/browser result, including the proved 746-versus-747
+viewport geometry distinction. It does not close the cross-product M3 conservation,
+pixel-continuity, mobile or request-to-paint matrix below.
 
 ## Wave M0 — contract freeze
 
@@ -36,3 +44,22 @@ resource: ./spec.md
 - [ ] Record response size, feature count and request-to-paint budgets.
 - [ ] Run screenshot and canvas-pixel checks on desktop and mobile viewports.
 - [ ] Submit the exact renderer packet to `parquet_production_acceptance_20260901`.
+
+## September 12 — bounded scalar label follow-up
+
+The local [scalar-label receipt](evidence/scalar-labels-20260912/README.md) adds
+reusable numeric annotations to the existing climate and soil scalar renderers.
+It includes independent source review and synthetic desktop/mobile canvas
+captures at all four zoom rungs. It does not close M3: live cross-product
+conservation, dense basemap/hover interaction, published-day transitions and
+request-to-paint budgets remain open. Weather remains the integrated repair;
+vegetation and soil-survey contract limits are documented rather than widened.
+
+## September 12 — isolated vegetation scalar field candidate
+
+The [vegetation scalar field packet](evidence/scalar-field-vegetation-20260912.md)
+reconciles the archived dot-renderer audit with the current measured-cell contract.
+The local candidate adds a default-off reusable nearest-cell WebGL2 paint path,
+projected-spacing inspection cues, and exact native-cell hover/tap metadata.
+Vegetation remains discrete; climate and weather ownership remain unchanged.
+This packet is a bounded local candidate and does not close any open M3 gate.

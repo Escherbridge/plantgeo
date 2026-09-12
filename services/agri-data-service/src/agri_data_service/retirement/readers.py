@@ -18,11 +18,9 @@ drop migration must itself account for. Documentation hits are recorded and neve
 form's own rule ("documentation-only hits are recorded but are not consumers",
 `conductor/tracks/repository_conformity_hardening_20260901/evidence/removal-proof-packet.md`).
 
-AN EXEMPTION IS ASSERTED, NEVER ABSENT. `sql/agent/feature_value_near_point.sql` keeps a live read of
-`geo.features` for `interventions`, a community layer RUNBOOK 0.26.1 keeps in PostgreSQL permanently.
-The wave-C adversarial review's complaint about the existing guard test was precisely that it passed
-by NOT listing the relation. Here the exemption names the path, the reason and the drop forms it
-applies to, and an exemption that matches no hit is reported as stale rather than silently carried.
+AN EXEMPTION IS ASSERTED, NEVER ABSENT. Any temporary reader exemption must name the path, reason,
+and drop forms it applies to. The environmental agent has no such exemption: its former
+`geo.features` reader was removed, so an executable hit is a real consumer again.
 
 A COMMENT NAMING A RELATION IS NOT A READ OF IT. `src/lib/server/db/schema.ts` had its Drizzle
 declaration of `public.drought_data` removed and replaced with a `//` comment explaining the removal
@@ -660,9 +658,8 @@ def _exemption_for(
 ) -> ReaderExemption | None:
     """Return the exemption covering one file under one drop form, or `None`.
 
-    The form is part of the match: `feature_value_near_point.sql` is an exception to deleting the
-    seven environmental layers' ROWS from `geo.features`, and is emphatically not an exception to
-    dropping the table it reads.
+    The form is part of the match: an exemption may cover one narrowly scoped row-delete or
+    materialized-view cleanup, but never silently clear a reader for another drop form.
     """
     for exemption in exemptions:
         if exemption.path == relative_path and drop_form in exemption.applies_to_forms:

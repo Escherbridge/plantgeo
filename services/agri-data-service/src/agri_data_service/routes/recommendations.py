@@ -106,6 +106,15 @@ async def get_strategy_recommendations(request: Request) -> HTTPResponse:
 async def _serve(  # noqa: PLR0911 - each return is one refusal reason the caller must be able to tell apart
     request: Request, *, model_kind: str
 ) -> HTTPResponse:
+    return json_response(
+        {
+            "error": "recommendation serving is retired",
+            "code": "RECOMMENDATION_PARQUET_ONLY",
+            "lane": model_kind,
+        },
+        status=410,
+        headers={"Cache-Control": "no-store"},
+    )
     try:
         query = _parse_query(request)
     except ValueError as exc:

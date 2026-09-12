@@ -14,7 +14,8 @@ environmental data.
 
 The statement-level parity evidence lives in `test_agent_parquet_reads.py`, which runs the real
 DuckDB statements over real Parquet; the four-state and refusal behaviour lives in
-`test_agent_parquet_tools.py`. This file keeps the day contract itself.
+`test_agent_parquet_tools.py`. This file keeps the day contract itself and asserts that no
+environmental path opens the injected database session.
 """
 
 # ruff: noqa: PLR2004 - the literals here are fixture values, and naming each one hides the assertion.
@@ -36,10 +37,6 @@ from tests.agent_fakes import FakeAgentWarehouse, published_lane
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping, Sequence
-
-PLANE_MARKER = "agent_materialized_plane_populated"
-AUDIT_MARKER = "agent_signal_coverage_on_day"
-FEATURE_MARKER = "agent_feature_value_near_point"
 
 VALUE_MARKER = "agent_signal_day_values"
 CELLS_MARKER = "agent_signal_cell_day_counts"
@@ -90,17 +87,6 @@ class RecordingSession:
         bound = dict(parameters or {})
         self.statements.append((sql, bound))
         marker = self.marker_of(sql) or ""
-        if marker == PLANE_MARKER and marker not in self._answers:
-            # Default the plane probe to "every named relation is built", so a test that is about
-            # something else does not have to script it.
-            requested = bound.get("relation_names")
-            names = list(requested) if isinstance(requested, list) else []
-            return FakeResult(
-                [
-                    {"relation_name": name, "relation_exists": True, "relation_kind": "m", "is_populated": True}
-                    for name in names
-                ]
-            )
         return FakeResult(self._answers.get(marker, []))
 
     @staticmethod
@@ -216,27 +202,24 @@ async def test_value_on_day_reads_the_caller_day_partition_and_never_the_live_ed
     assert payload["signals_on_day"][0]["observed_day"] == SELECTED_DAY
 
 
-async def test_value_on_day_reads_the_existing_coverage_audit_for_the_same_day() -> None:
-    """The audit is a PostgreSQL governance ledger and is read over the day's two UTC midnights."""
+async def test_value_on_day_uses_parquet_markers_instead_of_a_postgresql_coverage_audit() -> None:
+    """The retired per-cell audit is absent; governed state comes from the Parquet marker."""
     source = _signal_warehouse()
     source.answer(VALUE_MARKER, [_value_row()])
     source.answer(ADMITTED_MARKER, [{"cell_id": NEAR_CELL, "distance_meters": 4210.5}])
     session = RecordingSession()
-    session.answer(AUDIT_MARKER, [{"signal_name": "air_temperature_mean", "status": "no_data"}])
 
     async with agent_tools.run_context(session_provider=_session_provider(session), warehouse_source=source):
         raw = await agent_tools.query_signal_value_on_day(
             longitude=BOISE_LONGITUDE, latitude=BOISE_LATITUDE, day=SELECTED_DAY
         )
 
-    bound = session.parameters_for(AUDIT_MARKER)
-    assert bound["day_start"] == datetime(2026, 3, 14, tzinfo=UTC)
-    assert bound["day_end"] == datetime(2026, 3, 15, tzinfo=UTC)
-    assert json.loads(raw)["coverage_audit_on_day"][0]["status"] == "no_data"
+    assert json.loads(raw)["coverage_audit_on_day"] == []
+    assert session.statements == []
 
 
-async def test_value_on_day_reads_the_audit_over_exactly_the_cells_the_value_came_from() -> None:
-    """An absence recorded somewhere else must not be able to explain this point."""
+async def test_value_on_day_does_not_open_a_database_audit_session() -> None:
+    """An absence recorded somewhere else cannot be consulted after the audit was retired."""
     source = _signal_warehouse()
     source.answer(VALUE_MARKER, [_value_row()])
     source.answer(
@@ -253,11 +236,7 @@ async def test_value_on_day_reads_the_audit_over_exactly_the_cells_the_value_cam
             longitude=BOISE_LONGITUDE, latitude=BOISE_LATITUDE, day=SELECTED_DAY
         )
 
-    bound = session.parameters_for(AUDIT_MARKER)
-    assert bound["cell_ids"] == [NEAR_CELL, "bbbbbbbb-0000-0000-0000-000000000002"]
-    assert bound["cell_distances"] == [4210.5, 16857.9]
-    # The value read and the cell read share one admitted session, so they cannot disagree about
-    # which cells were in range.
+    assert session.statements == []
     assert source.markers() == [VALUE_MARKER, ADMITTED_MARKER]
 
 
@@ -476,8 +455,7 @@ async def test_selected_day_statements_are_read_only_and_named_by_a_line_one_mar
         )
 
     assert source.markers() == [VALUE_MARKER, ADMITTED_MARKER, NEIGHBORS_MARKER, CELLS_MARKER]
-    # The only PostgreSQL statement any of the three still issues is the absence ledger.
-    assert session.markers() == [AUDIT_MARKER]
+    assert session.markers() == []
     for statement, _ in [*source.executed, *session.statements]:
         assert statement.splitlines()[0].strip().startswith("-- agent_")
         # The beginner-doc headers are prose and legitimately contain English words that collide
@@ -624,24 +602,17 @@ async def test_an_unwritten_signal_lane_is_refused_by_name_rather_than_answered_
     assert ledger[0]["error"] == "parquet_lane_never_written"
 
 
-async def test_a_relation_the_probe_never_mentions_counts_as_unbuilt() -> None:
-    """Silence about a plane is not evidence that the plane is fine -- fail closed, not open.
-
-    The probe now guards ONE relation, the governed ML forecast plane, because every environmental
-    plane moved to Parquet where "never built" is a state the warehouse reports rather than a
-    catalog fact to be inferred.
-    """
+async def test_forecast_refusal_does_not_probe_postgresql() -> None:
+    """Forecast serving is unavailable until a governed Parquet lane is published."""
     source = _signal_warehouse()
     session = RecordingSession()
-    session.answer(PLANE_MARKER, [])
 
     async with agent_tools.run_context(session_provider=_session_provider(session), warehouse_source=source):
         raw = await agent_tools.query_forecast_summary_for_cell(longitude=BOISE_LONGITUDE, latitude=BOISE_LATITUDE)
 
-    assert session.markers() == [PLANE_MARKER]
+    assert session.markers() == []
     payload = json.loads(raw)
-    assert payload["error"] == "pre_aggregated_plane_unbuilt"
-    assert payload["unbuilt_relations"] == [agent_tools.FORECAST_DAILY_RELATION]
+    assert payload["error"] == "forecast_parquet_lane_not_published"
 
 
 # --- 5. The generic surface triad, for the layers that are not signal grids ---------
@@ -801,16 +772,6 @@ async def test_feature_value_near_point_dates_features_by_the_partition_the_map_
     assert nearest["served_day"] == SELECTED_DAY
     assert nearest["properties"]["site_number"] == "13206000"
     assert session.statements == [], "a Parquet-served layer touches no database"
-
-
-def test_the_bounding_box_widens_with_latitude_rather_than_clipping() -> None:
-    """A single metres-per-degree constant clips the east-west edges away from the equator."""
-    at_equator = agent_tools._bbox_degrees(50_000.0, 0.0)
-    at_boise = agent_tools._bbox_degrees(50_000.0, BOISE_LATITUDE)
-    at_high_latitude = agent_tools._bbox_degrees(50_000.0, 70.0)
-    assert at_equator < at_boise < at_high_latitude
-    # Every box must still contain the radius it stands in for, north-south as well as east-west.
-    assert at_equator >= 50_000.0 / 110_574.0
 
 
 def test_the_per_axis_box_is_wider_east_west_than_north_south_away_from_the_equator() -> None:

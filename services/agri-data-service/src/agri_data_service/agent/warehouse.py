@@ -45,7 +45,7 @@ if TYPE_CHECKING:
     from agri_data_service.pipeline.parquet.availability_index import AvailabilityIndex
 
 #: Every agent read addresses the OBSERVED half of a lane. A forecast is a different question and
-#: `forecast_summary_for_cell` answers it from the governed ML plane, not from `kind=forecast`.
+#: `forecast_summary_for_cell` currently refuses until a governed forecast Parquet lane is published.
 OBSERVED: Final[PartitionKind] = "observed"
 
 #: How many written day partitions ONE agent read may address.

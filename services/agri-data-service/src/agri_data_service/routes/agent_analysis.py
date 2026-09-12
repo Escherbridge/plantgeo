@@ -50,6 +50,11 @@ class AgentAnalyzeRequest(BaseModel):
     history: list[ConversationTurn] = Field(default_factory=list, max_length=MAX_HISTORY_TURNS)
     selected_day: date | None = None
     """The day the map's slider is on. Absent means the caller has no slider, not "use today"."""
+    species_id: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    )
+    """Exact canonical authoring UUID; names and noncanonical UUID spellings are refused."""
 
 
 def _frame(event: dict[str, Any]) -> str:
@@ -91,6 +96,7 @@ async def analyze_location(request: Request) -> HTTPResponse | None:
         history=tuple(payload.history),
         as_of=datetime.now(UTC),
         selected_day=payload.selected_day,
+        species_id=payload.species_id,
     )
     context = GraphContext(
         request=agent_request,

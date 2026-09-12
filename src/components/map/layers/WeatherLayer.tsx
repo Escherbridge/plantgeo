@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import type { Map as MapLibreMap } from "maplibre-gl";
 import { safeRemoveLayerAndSource } from "@/lib/map/layer-utils";
+import { useStyleReady } from "@/components/map/layers/use-style-ready";
 import { supportCellPolygon, type AggregateEnvelopeSupport } from "@/lib/map/layer-render-contract";
 
 /** A published sample or declared aggregate; each drawn signal remains independently nullable. */
@@ -16,6 +17,8 @@ export interface WeatherPoint {
   temperature: number | null;
   /** Relative humidity, percent. */
   humidity: number | null;
+  /** Precipitation accumulated for the source reading, in millimetres. */
+  precipitation: number | null;
   observedAt?: string | null;
   observedDay?: string;
   support?: AggregateEnvelopeSupport;
@@ -48,6 +51,13 @@ export function directionToArrow(degrees: number): string {
   const arrows = ["↓", "↙", "←", "↖", "↑", "↗", "→", "↘"];
   const index = Math.round(((degrees % 360 + 360) % 360) / 45) % 8;
   return arrows[index];
+}
+
+/** Return a font-safe meteorological compass label for a wind direction. */
+export function directionToCardinal(degrees: number): string {
+  const points = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
+  const index = Math.round(((degrees % 360 + 360) % 360) / 45) % points.length;
+  return points[index];
 }
 
 /**
@@ -105,15 +115,18 @@ export function weatherFeatures(data: WeatherPoint[]): GeoJSON.FeatureCollection
         ? supportCellPolygon(...point.coordinates, point.support) : null;
       const hasWind = point.windSpeed !== null && point.windDirection !== null;
       const arrow = hasWind ? directionToArrow(point.windDirection as number) : "";
+      const cardinal = hasWind ? directionToCardinal(point.windDirection as number) : "";
       const properties = {
         hasWind, hasTemperature: point.temperature !== null, hasCell: polygon !== null,
         arrow, windSpeed: point.windSpeed, windDirection: point.windDirection,
         color: hasWind ? windSpeedToColor(point.windSpeed as number) : "transparent",
         temperature: point.temperature, humidity: point.humidity,
+        precipitation: point.precipitation,
         observedAt: point.observedAt ?? null, observedDay: point.observedDay ?? null,
         supportKind: point.support?.supportKind ?? "raw_point",
         sampleKind: point.sampleKind ?? null,
-        label: hasWind ? `${arrow} ${(point.windSpeed as number).toFixed(1)} m/s` : "",
+        temperatureLabel: point.temperature === null ? "" : `${Math.round(point.temperature)}°`,
+        label: hasWind ? `from ${cardinal} ${(point.windSpeed as number).toFixed(1)} m/s` : "",
       };
       const coordinates: [number, number] = polygon
         ? [(polygon.coordinates[0][0][0] + polygon.coordinates[0][2][0]) / 2,
@@ -136,11 +149,13 @@ export function WeatherLayer({
   sourceId = "weather-wind-source",
   opacityScale = 1,
 }: WeatherLayerProps) {
+  const styleReady = useStyleReady(map);
   const geojson = useMemo<GeoJSON.FeatureCollection>(
     () => weatherFeatures(data),
     [data]
   );
   const cellLayerId = `${temperatureLayerId}-cells`;
+  const temperatureLabelLayerId = `${temperatureLayerId}-labels`;
 
   // Keep latest props in refs so the style.load handler uses current values.
   const propsRef = useRef({ visible, geojson, opacityScale });
@@ -208,6 +223,34 @@ export function WeatherLayer({
         });
       }
 
+      if (!m.getLayer(temperatureLabelLayerId)) {
+        m.addLayer({
+          id: temperatureLabelLayerId,
+          type: "symbol",
+          source: sourceId,
+          filter: [
+            "all",
+            ["==", ["geometry-type"], "Point"],
+            ["==", ["get", "hasTemperature"], true],
+          ],
+          layout: {
+            "text-field": ["get", "temperatureLabel"],
+            "text-font": ["Noto Sans Regular"],
+            "text-size": ["interpolate", ["linear"], ["zoom"], 4, 10, 10, 13, 14, 15],
+            "text-offset": [0, -0.6],
+            "text-anchor": "bottom",
+            "text-allow-overlap": false,
+            "text-ignore-placement": false,
+          },
+          paint: {
+            "text-color": "#ffffff",
+            "text-halo-color": "rgba(0,0,0,0.8)",
+            "text-halo-width": 1.25,
+            "text-opacity": propsRef.current.opacityScale,
+          },
+        });
+      }
+
       if (!m.getLayer(layerId)) {
         m.addLayer({
           id: layerId,
@@ -218,8 +261,11 @@ export function WeatherLayer({
             "text-field": ["get", "label"],
             "text-font": ["Noto Sans Regular"],
             "text-size": 12,
-            "text-anchor": "center",
+            "text-offset": [0, 0.55],
+            "text-anchor": "top",
             "text-rotation-alignment": "map",
+            // Preserve collision avoidance while prioritizing stronger winds.
+            "symbol-sort-key": ["*", -1, ["get", "windSpeed"]],
             "text-allow-overlap": false,
             "text-ignore-placement": false,
           },
@@ -232,14 +278,18 @@ export function WeatherLayer({
         });
       }
     },
-    [layerId, temperatureLayerId, cellLayerId, sourceId]
+    [layerId, temperatureLayerId, cellLayerId, temperatureLabelLayerId, sourceId]
   );
 
   const removeAllLayers = useCallback(
     (m: MapLibreMap) => {
-      safeRemoveLayerAndSource(m, [layerId, temperatureLayerId, cellLayerId], sourceId);
+      safeRemoveLayerAndSource(
+        m,
+        [layerId, temperatureLabelLayerId, temperatureLayerId, cellLayerId],
+        sourceId
+      );
     },
-    [layerId, temperatureLayerId, cellLayerId, sourceId]
+    [layerId, temperatureLayerId, cellLayerId, temperatureLabelLayerId, sourceId]
   );
 
   // Add/remove and re-add across style swaps, which wipe custom layers.
@@ -267,6 +317,14 @@ export function WeatherLayer({
     };
   }, [map, visible, addAllLayers, removeAllLayers]);
 
+  // `style.load` can happen before this dynamically imported component registers its
+  // listener. Re-read the live readiness on every style-data transition so that missed
+  // event cannot leave a visible weather layer blank until the next basemap swap.
+  useEffect(() => {
+    if (!map || !visible || !map.isStyleLoaded()) return;
+    addAllLayers(map);
+  }, [map, visible, styleReady, addAllLayers]);
+
   // Push new observations into the existing source without a remount cycle.
   useEffect(() => {
     if (!map || !visible) return;
@@ -290,6 +348,9 @@ export function WeatherLayer({
     if (map.getLayer(layerId)) {
       map.setPaintProperty(layerId, "text-opacity", opacityScale);
     }
+    if (map.getLayer(temperatureLabelLayerId)) {
+      map.setPaintProperty(temperatureLabelLayerId, "text-opacity", opacityScale);
+    }
     if (map.getLayer(cellLayerId)) map.setPaintProperty(cellLayerId, "fill-opacity", 0.65 * opacityScale);
     if (map.getLayer(temperatureLayerId)) {
       map.setPaintProperty(
@@ -303,7 +364,15 @@ export function WeatherLayer({
         TEMPERATURE_STROKE_OPACITY * opacityScale
       );
     }
-  }, [map, visible, layerId, temperatureLayerId, cellLayerId, opacityScale]);
+  }, [
+    map,
+    visible,
+    layerId,
+    temperatureLayerId,
+    cellLayerId,
+    temperatureLabelLayerId,
+    opacityScale,
+  ]);
 
   return null;
 }

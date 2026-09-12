@@ -2,13 +2,18 @@
 type: track-spec
 slug: observability_log_capture_20260903
 title: Observability lane — durable error/warning capture and the operator panel
-status: chartered-not-started
+status: blocked
 owner_decisions_required: 6
 blocked_by: parquet cutover wave in flight (QUALITY_RECEIPT tree digest)
 created: 2026-09-03
 ---
 
 # Purpose
+
+September 11 registry reconciliation: this charter is now listed in
+[`tracks.md`](../../tracks.md). D2–D7 remain the next gate; the September 4
+ingress check and source-line observations below retain their original dates.
+Use the [current plan](plan.md) before activating implementation work.
 
 Make "why is this lane red at 02:13?" answerable after Railway's log scrollback is gone, without a
 whole-stream LIST on the warehouse bucket and without publishing a DSN into an object that lives

@@ -1,27 +1,33 @@
 {
+  "reconciliation_20260911": {
+    "audited_on": "2026-09-11",
+    "source_head": "fa20223",
+    "status": "active",
+    "next_gate": "September 10 snapshot-dispatch and unused-MTBS reader cleanup are recorded in the completed-cutover retrospective. Canonical ownership, remaining candidate proofs and final conformity verdict are still open."
+  },
   "slug": "repository_conformity_hardening_20260901",
   "title": "Repository conformity, reuse, and dead-code hardening",
   "type": "refactor",
-  "status": "planned",
+  "status": "active",
   "created_on": "2026-09-01",
   "depends_on": [],
   "runbook_section": "LIVE / Repository conformity and removal audit",
   "note": "Close evidence, safety, architecture, quality-gate, dependency, and dead-code drift without racing the active Parquet production tracks or deleting historical/migration evidence by static scan.",
   "external_dependencies": [
     {
-      "track": "postgres_shrink_ingest_repoint_20260825",
+      "track": "environmental_parquet_serving_20260912",
       "slice": "s2",
       "status": "s2a_code_complete_s2b_delegated",
       "for": "CLI, parquet_ops, and pyproject ownership may pass to conformity only after the completed s2a tree is frozen; the delegated direct-writer scope remains outside this track."
     },
     {
-      "track": "parquet_reader_cutover_acceptance_20260901",
+      "track": "environmental_parquet_serving_20260912",
       "slice": "r2",
       "status": "planned",
       "for": "useViewportProxiedLayers.ts and the coverage/snapshot reader subset of parquet_ops may pass to conformity only after the production zoom, availability and request contracts are frozen."
     },
     {
-      "track": "postgres_shrink_ingest_repoint_20260825",
+      "track": "environmental_parquet_serving_20260912",
       "slice": "s6",
       "status": "planned",
       "for": "All Drizzle edits remain owned by shrink s6; conformity records dormant-migration evidence without editing migration files."
@@ -31,7 +37,7 @@
     "computed_at": "2026-09-02T00:00:00-06:00",
     "confidence": "verified",
     "shared_writes": [
-      "Reader, capability, climate-rung and fire-route files remain owned by parquet_reader_cutover_acceptance_20260901 and multiscale_polygon_surface_20260901.",
+      "Reader, capability, climate-rung and fire-route files remain owned by environmental_parquet_serving_20260912 and multiscale_polygon_surface_20260901.",
       "Writer-service and scheduler handoff configuration remains owned by gapless_parquet_publication_20260901.",
       "This track may inventory those surfaces but may edit them only through an explicit handoff from the owning track.",
       "src/hooks/useViewportProxiedLayers.ts and coverage/snapshot reader files pass from reader r2 to conformity c2 only after the production zoom/availability/request contract is frozen.",

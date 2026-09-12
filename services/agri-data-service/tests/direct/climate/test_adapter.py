@@ -36,7 +36,7 @@ from agri_data_service.pipeline.direct.climate.support import (
     ClimateSupportError,
     build_support,
 )
-from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
+from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.parquet.gap_fill import fill_one_lane_day, unlocked_lane_day
 from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRY
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore

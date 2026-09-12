@@ -32,12 +32,9 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from enum import StrEnum
 from typing import TYPE_CHECKING, Final
-from uuid import UUID
 
 import httpx
-from sqlalchemy import text
 
-from agri_data_service.db.sql_queries import load_query_sql
 from agri_data_service.execution.backfill_types import (
     HistoricalBackfillWindow,
     four_calendar_years_before,
@@ -71,6 +68,7 @@ from agri_data_service.ingest.open_meteo import archive_daily_request, fetch_arc
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from pathlib import Path
+    from uuid import UUID
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -78,9 +76,6 @@ if TYPE_CHECKING:
     from agri_data_service.execution.coverage_census import LaneCell
     from agri_data_service.execution.coverage_contract import SignalReconciliation
     from agri_data_service.ingest.open_meteo import OpenMeteoArchiveModel
-
-_ABSENCE_RELEASE_SQL: Final = text(load_query_sql("execution/coverage_absence_release.sql"))
-_INSERT_ABSENCE_SQL: Final = text(load_query_sql("execution/insert_coverage_absence.sql"))
 
 # Three cells, matching `plan_continuation.FRONTIER_PROBE_CELL_COUNT`, and for the same reason: one
 # out-of-domain cell must not decide a whole lattice's verdict, and the sample is spread across the
@@ -777,69 +772,16 @@ def write_fill_plan(decision: CoverageFillDecision) -> Path:
 
 
 async def record_governed_absence(
-    session: AsyncSession,
-    decision: CoverageFillDecision,
+    _session: AsyncSession,
+    _decision: CoverageFillDecision,
     *,
-    now: datetime | None = None,
+    _now: datetime | None = None,
 ) -> int:
-    """Register the probe's release, then write one `no_data` audit row per probed cell and signal.
-
-    Returns the number of rows the database actually INSERTED, never the number offered. The
-    statement ends `on conflict ... do nothing`, so a second `--apply` over the same run offers the
-    same rows and writes none of them; reporting the offer would print a write that did not happen.
-    """
-    absence = decision.absence
-    if absence is None:
-        raise CoverageFillError("only a fill refused as an absence has anything to record")
-    recorded_at = now or datetime.now(UTC)
-    release = await session.execute(
-        _ABSENCE_RELEASE_SQL,
-        {
-            "source_key": decision.source_key,
-            "source_version": GAP_PROBE_SOURCE_VERSION,
-            "retrieved_at": recorded_at,
-            "observed_from": _midnight_utc(absence.start_day),
-            "observed_to": _midnight_utc(absence.end_day),
-            "payload_checksum": absence.payload_checksum,
-            "schema_version": GAP_PROBE_SCHEMA_VERSION,
-            "transform_version": GAP_PROBE_TRANSFORM_VERSION,
-            "query_parameters": absence.query_parameters,
-            "quality_summary": absence.quality_summary,
-        },
+    """Refuse the retired PostgreSQL absence writer; absence evidence now lives beside Parquet."""
+    raise RuntimeError(
+        "record_governed_absence is retired: environmental coverage evidence must be written as a "
+        "governed Parquet availability marker"
     )
-    source_release_id: object = release.scalar_one_or_none()
-    if source_release_id is None:
-        raise CoverageFillError(
-            f"no agri.data_source row carries key {decision.source_key}, so this absence has no lane to belong to"
-        )
-    if not isinstance(source_release_id, UUID):
-        raise CoverageFillError("agri.source_release.id must be a uuid")
-    written = 0
-    for row in absence.rows:
-        inserted = await session.execute(
-            _INSERT_ABSENCE_SQL,
-            {
-                "source_release_id": source_release_id,
-                "cell_id": row.cell_id,
-                "signal_name": row.signal_name,
-                "source_parameter": row.source_parameter,
-                "support_key": row.support_key,
-                "window_start": row.window_start,
-                "window_end": row.window_end,
-                "expected_observation_count": row.expected_observation_count,
-                "details": json.dumps(
-                    {
-                        "recorded_by": "coverage-fill",
-                        "cell_key": row.cell_key,
-                        "probe": json.loads(absence.quality_summary),
-                        "request": json.loads(absence.query_parameters),
-                    },
-                    sort_keys=True,
-                ),
-            },
-        )
-        written += len(inserted.scalars().all())
-    return written
 
 
 def coverage_fill_payload(

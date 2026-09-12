@@ -1,5 +1,13 @@
 # `pipeline/parquet` — the object store and the partition writer
 
+## Environmental cutover boundary
+
+The generic database export drivers (`parquet-gap-fill` and `parquet-drain`) were retired on
+2026-09-12 and are not CLI or executor surfaces. Registered environmental adapters refuse generic
+exports; direct source packages must fetch, validate and write Parquet. Database sessions that remain
+inside direct repair code coordinate control-plane locks and receipts only; they never supply layer
+payloads or fallback observations.
+
 ## Sensor false-absence correction evidence
 
 `sensor_absence_correction.py` is scoped to September 5/6, 2026 and the fixed reviewed rescue candidate.

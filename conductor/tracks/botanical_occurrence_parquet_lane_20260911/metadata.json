@@ -1,0 +1,83 @@
+{
+  "slug": "botanical_occurrence_parquet_lane_20260911",
+  "title": "Governed botanical occurrence and taxonomy Parquet plane",
+  "type": "infrastructure",
+  "status": "planned",
+  "created_on": "2026-09-11",
+  "depends_on": [
+    "pnw_herbaria_source_admission_20260911",
+    "environmental_parquet_serving_20260912",
+    "gapless_parquet_publication_20260901"
+  ],
+  "related_tracks": [
+    "botanical_species_profile_lookup_20260911"
+  ],
+  "next_gate": "Freeze grains, dual temporal semantics, taxonomic versioning, spatial uncertainty policy and release-set publication contract against an admitted collection release.",
+  "partitions": {
+    "confidence": "planned",
+    "slices": [
+      {
+        "id": "d1",
+        "task": "Raw occurrence, identification, taxonomy and release-set schemas",
+        "model": "gpt-6-astra",
+        "depends_on": [],
+        "owns": [
+          {"path": "services/agri-data-service/src/agri_data_service/warehouse/schemas/botanical_occurrences.py", "status": "future"},
+          {"path": "services/agri-data-service/src/agri_data_service/foundation/botanical_occurrences/", "status": "future"}
+        ]
+      },
+      {
+        "id": "d2",
+        "task": "Deterministic normalization, uncertainty, support evaluation and spatial aggregation",
+        "model": "gpt-5.6-sol",
+        "depends_on": ["d1"],
+        "owns": [
+          {"path": "services/agri-data-service/src/agri_data_service/pipeline/direct/botanical_occurrences/", "status": "future"}
+        ]
+      },
+      {
+        "id": "d3",
+        "task": "Static release publication, executor duties and bounded reader",
+        "model": "gpt-6-astra",
+        "depends_on": ["d1", "d2"],
+        "owns": [
+          {"path": "services/agri-data-service/src/agri_data_service/planes/botanical_occurrences.py", "status": "future"},
+          {"path": "services/agri-data-service/src/agri_data_service/interface/http/botanical_occurrences.py", "status": "future"},
+          {"path": "services/agri-data-service/src/agri_data_service/agent/botanical_occurrences.py", "status": "future"},
+          {"path": "services/agri-data-service/tests/planes/test_botanical_occurrences.py", "status": "future"},
+          {"path": "services/agri-data-service/tests/agent/test_botanical_occurrences.py", "status": "future"}
+        ]
+      },
+      {
+        "id": "d4",
+        "task": "Independent data-contract, scientific-honesty and recovery verdict",
+        "model": "gpt-6-astra",
+        "depends_on": ["d1", "d2", "d3"],
+        "owns": [
+          {"path": "conductor/tracks/botanical_occurrence_parquet_lane_20260911/evidence/independent-review.md", "status": "future"}
+        ]
+      }
+    ],
+    "shared_writes": [
+      {
+        "path": "services/agri-data-service/src/agri_data_service/pipeline/parquet/lane_registry.py",
+        "owner": "d3",
+        "serializes_after": "gapless_parquet_publication_20260901",
+        "reason": "The active gapless track owns this registry. Register the plane only after that owner completes or explicitly transfers the file and the release contract passes review."
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/execution/job_executor_service.py",
+        "owner": "d3",
+        "serializes_after": "gapless_parquet_publication_20260901",
+        "reason": "Add the three botanical duties only after the active executor owner completes or explicitly transfers this shared file."
+      },
+      {
+        "path": "services/agri-data-service/tests/test_job_executor_service.py",
+        "owner": "d3",
+        "serializes_after": "gapless_parquet_publication_20260901",
+        "reason": "Extend the shared executor contract tests under the same transferred owner as the executor registration."
+      }
+    ],
+    "integration_slice": "d4"
+  }
+}

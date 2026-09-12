@@ -359,7 +359,7 @@ async def test_graph_happy_path_skips_web_and_emits_a_report() -> None:
 
 
 async def test_graph_runs_the_web_pass_when_the_warehouse_is_empty() -> None:
-    """An empty warehouse must open the web pass, which then carries the search tool."""
+    """An empty warehouse opens web search without re-exposing scoped botanical access."""
     warehouse_runner = _Runner([_Stream(_message(_text_block("Nothing stored here.")))])
     web_message = _message(
         SimpleNamespace(
@@ -386,6 +386,8 @@ async def test_graph_runs_the_web_pass_when_the_warehouse_is_empty() -> None:
     warehouse_tool_names = {getattr(tool, "name", None) for tool in calls[0]["tools"]}
     assert "web_search" not in warehouse_tool_names
     web_tools = calls[1]["tools"]
+    web_tool_names = {getattr(tool, "name", None) for tool in web_tools}
+    assert "species_information" not in web_tool_names
     search_tool = next(tool for tool in web_tools if isinstance(tool, dict))
     assert search_tool["type"] == "web_search_20260209"
     assert search_tool["max_uses"] == agent_graph.MAX_SEARCHES_PER_REQUEST
@@ -396,6 +398,64 @@ async def test_graph_runs_the_web_pass_when_the_warehouse_is_empty() -> None:
     assert search_event["resultCount"] == 1
     sources_event = next(event for event in events if event["type"] == "sources")
     assert sources_event["sources"] == [{"title": "Cost share program", "url": "https://example.gov/program"}]
+
+
+@pytest.mark.parametrize(
+    ("caller_species_id", "requested_species_id"),
+    [
+        ("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
+        (None, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+    ],
+)
+async def test_web_pass_keeps_species_access_caller_scoped(
+    monkeypatch: pytest.MonkeyPatch,
+    caller_species_id: str | None,
+    requested_species_id: str,
+) -> None:
+    """The later pass must not regain an unscoped species reader through its injected provider."""
+    marker = object()
+    provider_entries: list[object] = []
+
+    @asynccontextmanager
+    async def provider() -> Any:
+        provider_entries.append(marker)
+        yield marker
+
+    async def fail_read(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        raise AssertionError("a web-pass species request must be refused before opening the provider")
+
+    async def attempt_species_read(
+        _ctx: agent_graph.GraphContext,
+        **_kwargs: Any,
+    ) -> bool:
+        payload = json.loads(await agent_tools.species_information(requested_species_id))
+        assert payload["state"] == "refused"
+        assert payload["reason"]["code"] == "invalid_species_information_request"
+        return False
+
+    monkeypatch.setattr(agent_tools, "read_species_information", fail_read)
+    monkeypatch.setattr(agent_graph, "_run_pass", attempt_species_read)
+    context = _context(_client([], _parsed(None)))
+    context.request = agent_graph.AgentRequest(
+        longitude=-116.2,
+        latitude=43.6,
+        precision="approximate",
+        species_id=caller_species_id,
+    )
+    context.session_provider = provider
+
+    result = await agent_graph.GATHER_WEB_EVIDENCE.run(
+        context,
+        agent_graph.SufficiencyVerdict(
+            warehouse_is_sufficient=False,
+            searches_allowed=1,
+            reasons=("synthetic regression",),
+            coverage={},
+        ),
+    )
+
+    assert result.refused is False
+    assert provider_entries == [], "an invalid species UUID must not open the injected provider"
 
 
 async def test_graph_emits_refusal_and_stops() -> None:
@@ -676,7 +736,7 @@ async def test_every_tool_statement_is_read_only() -> None:
         )
     # Every published tool is driven above, so a tool added to WAREHOUSE_TOOLS without a call here
     # breaks this assertion rather than slipping through unscanned.
-    published_tool_count = 10
+    published_tool_count = 11
     assert len(agent_tools.WAREHOUSE_TOOLS) == published_tool_count
     # The two PostgreSQL statements that survive, and nothing else: the ML forecast plane and the
     # ingest lane's absence ledger. Both are governance relations the retirement inventory keeps.
@@ -710,7 +770,9 @@ def test_tool_schemas_publish_bounded_arguments() -> None:
         definition = tool.to_dict()
         name = definition["name"]
         properties = definition["input_schema"]["properties"]
-        if name in surface_only:
+        if name == "species_information":
+            assert {"species_id", "companion_limit"} == set(properties), name
+        elif name in surface_only:
             assert {"surface_name", "day"} <= set(properties), name
         else:
             assert {"longitude", "latitude"} <= set(properties), name

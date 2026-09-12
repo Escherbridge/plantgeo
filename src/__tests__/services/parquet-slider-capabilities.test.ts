@@ -296,12 +296,7 @@ describe("getParquetSliderCapabilities", () => {
       ...parquetReaders,
     ]);
     expect(parquetReaders).toContain("burn-severity");
-    expect(nonParquetReaders).toEqual(["soil-survey"]);
-    expect(
-      result.withheldParquetCapabilities
-        .filter((entry) => entry.reason === "reader_not_parquet")
-        .map((entry) => entry.layerName)
-    ).toEqual(nonParquetReaders);
+    expect(nonParquetReaders).toEqual([]);
     expect(result.parquetCoverageGeneratedAt).toBe("2026-08-28T12:00:00Z");
     expect(result.parquetCoverageEvaluatedThroughDay).toBe("2026-08-28");
     expect(result.parquetCoverageUnavailable).toBe(false);

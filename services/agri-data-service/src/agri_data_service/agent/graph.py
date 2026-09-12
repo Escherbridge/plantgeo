@@ -48,6 +48,10 @@ MODEL: Final = "claude-opus-5"
 # Adaptive thinking is Claude Opus 5's default, so `thinking` is deliberately never sent.
 SERVER_SIDE_FALLBACK_BETA: Final = "server-side-fallback-2026-07-01"
 WEB_SEARCH_TOOL: Final[dict[str, Any]] = {"type": "web_search_20260209", "name": "web_search"}
+# The scoped species tool is available only during the warehouse pass.
+WAREHOUSE_TOOLS_FOR_WEB: Final = tuple(
+    tool for tool in warehouse_tools.WAREHOUSE_TOOLS if tool.name != "species_information"
+)
 
 MAX_OUTPUT_TOKENS: Final = 16_000
 MAX_WAREHOUSE_ITERATIONS: Final = 6
@@ -115,6 +119,8 @@ class AgentRequest:
     as_of: datetime = field(default_factory=lambda: datetime.now(UTC))
     selected_day: date | None = None
     """The day the map is showing. None means the caller did not send one; see agent/AGENTS.md."""
+    species_id: str | None = None
+    """Canonical authoring UUID supplied by the caller; absent disables model botanical reads."""
 
 
 @dataclass(slots=True)
@@ -302,10 +308,14 @@ class GatherWarehouseEvidence:
                     as_of=ctx.request.as_of,
                     question=ctx.request.question,
                     selected_day=ctx.request.selected_day,
+                    species_id=ctx.request.species_id,
                 ),
             }
         )
-        async with warehouse_tools.run_context(session_provider=ctx.session_provider) as ledger:
+        async with warehouse_tools.run_context(
+            session_provider=ctx.session_provider,
+            allowed_species_id=ctx.request.species_id or "",
+        ) as ledger:
             refused = await _run_pass(
                 ctx,
                 tool_list=list(warehouse_tools.WAREHOUSE_TOOLS),
@@ -361,7 +371,7 @@ class AssessSufficiency:
     def decide(evidence: WarehouseEvidence, *, has_question: bool) -> SufficiencyVerdict:
         """Pure budget rule: fewer distinct populated sources buys more search budget."""
         populated = len(evidence.populated_tools)
-        available = len(warehouse_tools.WAREHOUSE_TOOLS)
+        available = sum(tool.name != "species_information" for tool in warehouse_tools.WAREHOUSE_TOOLS)
         coverage = {
             "populated_tools": list(evidence.populated_tools),
             "tool_calls_made": len(evidence.tool_calls),
@@ -414,12 +424,18 @@ class GatherWebEvidence:
             }
         )
         search_tool = {**WEB_SEARCH_TOOL, "max_uses": verdict.searches_allowed}
-        refused = await _run_pass(
-            ctx,
-            tool_list=[*warehouse_tools.WAREHOUSE_TOOLS, search_tool],
-            max_iterations=MAX_WEB_ITERATIONS,
-            collect_web=True,
-        )
+        # The web pass deliberately omits species_information, but retains the caller-bound
+        # context as a fail-closed backstop if a later tool-list change reintroduces it.
+        async with warehouse_tools.run_context(
+            session_provider=ctx.session_provider,
+            allowed_species_id=ctx.request.species_id or "",
+        ):
+            refused = await _run_pass(
+                ctx,
+                tool_list=[*WAREHOUSE_TOOLS_FOR_WEB, search_tool],
+                max_iterations=MAX_WEB_ITERATIONS,
+                collect_web=True,
+            )
         ctx.refused = ctx.refused or refused
         await ctx.emit(
             progress_event(

@@ -1,13 +1,15 @@
 # Strategy-selection training contract
 
-> **STATUS — 2026-08-22, body below untouched.** ML is frozen
+> **STATUS — refreshed 2026-09-12.** ML is frozen
 > (`conductor/RUNBOOK.md` §0.24.5 — moving to
 > `services/agri-data-service/src/agri_data_service/ml/` and eventually a
 > separate Mojo service), and the Postgres substrate this training contract
 > assumes is being retired by the same pivot (§0.23/§0.24). The
 > intervention-effect framing and label-boundary discipline below are unaffected
-> by the storage change, but nothing here has been re-verified against the
-> Parquet/lane architecture. Read RUNBOOK §0.23/§0.24 first.
+> by the storage change. The current source decision and post-`0018` enforcement
+> boundary are recorded in the [2026-09-12 audit](../conductor/retros/strategy_selection_governance_20260726/outcome-label-source-audit-2026-09-12.md).
+> No intervention/control source is admitted and `effect_candidate` remains
+> prohibited by release policy. Read that receipt and RUNBOOK §0.23/§0.24 first.
 
 PlantGeo treats strategy selection as an intervention-effect problem, not as
 multiclass classification. A model estimates the outcome under each eligible
@@ -104,9 +106,13 @@ The evaluation-only trainer currently requires, per strategy/outcome/horizon:
 Promotion to an effect claim additionally requires repeated pre-intervention
 support, completeness and variance-ratio gates, cluster-bootstrap uncertainty,
 placebo and negative-control tests, and spillover-buffer separation. Revision
-`0013` cannot verify those contracts, so it rejects every `effect_candidate`
-finalization. Retrospectively reconstructed covariates can support only
-research/evaluation use.
+`0013` could not verify those contracts and its original finalizer rejected
+every `effect_candidate`. Migration `20260803_0018` later removed both strategy
+finalizers and their state-change guards, so current-head PostgreSQL no longer
+provides that blanket rejection. Release governance keeps `effect_candidate`
+disabled; restoring any path requires a new independently reviewed enforcement
+revision in addition to the evidence gates. Retrospectively reconstructed
+covariates can support only research/evaluation use.
 
 ## Selection and abstention
 
@@ -123,8 +129,8 @@ recommendation.
 Missing constraints, immature outcomes, stale inputs, weak overlap, failed
 balance, unsupported geography, model disagreement, or an effect interval
 crossing the policy threshold produce a durable machine-readable abstention.
-Without the additional promotion evidence above, the maximum database output
-tier is `feasibility_candidate`.
+Without the additional promotion evidence and enforcement above, the maximum
+authorized output tier is `feasibility_candidate`.
 
 ## Promotion path
 

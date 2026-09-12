@@ -1,13 +1,8 @@
 import { z } from "zod";
-import {
-  fetchBoundedJson,
-  providerUrl,
-  UpstreamConfigurationError,
-} from "@/lib/server/http/bounded-upstream";
-
 /**
- * Bounded proxy over the agri-data-service's published forecast serving view
- * (`GET /forecasts/`). See `src/lib/server/AGENTS.md` §agri-forecasts.
+ * Forecast serving is intentionally withheld until a governed Parquet forecast lane is
+ * published. The former bridge queried the PostgreSQL-backed data service and is retired by
+ * the 2026-09-12 environmental source-to-Parquet directive.
  */
 
 /** The upstream answered 200 but the body broke the published contract -- permanent until a deploy fixes one side, so never relabelled as transient. */
@@ -56,14 +51,14 @@ const upstreamRecordSchema = z.object({
   }),
 });
 
-const upstreamPageSchema = z.object({
+const _upstreamPageSchema = z.object({
   data: z.array(upstreamRecordSchema),
   limit: z.number().int(),
   offset: z.number().int(),
   hasMore: z.boolean(),
 });
 
-export type UpstreamForecastPage = z.infer<typeof upstreamPageSchema>;
+export type UpstreamForecastPage = z.infer<typeof _upstreamPageSchema>;
 
 type UpstreamForecastRecord = z.infer<typeof upstreamRecordSchema>;
 
@@ -100,15 +95,6 @@ export interface PublishedForecastSeries {
   staleReceiptPointsDropped: number;
   hasMore: boolean;
   points: ForecastBandPoint[];
-}
-
-const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
-const UPSTREAM_TIMEOUT_MS = 8000;
-
-function endpoint(): URL {
-  const url = providerUrl("AGRI_DATA_SERVICE_URL", "http://localhost:8000");
-  url.pathname = `${url.pathname.replace(/\/$/, "")}/api/v1/forecasts/`;
-  return url;
 }
 
 function unavailableSeries(seriesKey: string, reason: string): PublishedForecastSeries {
@@ -202,34 +188,5 @@ export function toPublishedSeries(
 export async function getPublishedForecastSeries(
   request: ForecastSeriesRequest
 ): Promise<PublishedForecastSeries> {
-  let url: URL;
-  try {
-    url = endpoint();
-  } catch (error) {
-    // An unset base URL is a deployment without the bridge, not a fault worth a 500.
-    if (error instanceof UpstreamConfigurationError) {
-      return unavailableSeries(request.seriesKey, "forecast_service_not_configured");
-    }
-    throw error;
-  }
-
-  url.searchParams.set("series_key", request.seriesKey);
-  url.searchParams.set("spatial", "none");
-  url.searchParams.set("limit", String(request.limit));
-  url.searchParams.set("offset", String(request.offset));
-  if (request.validFrom !== undefined) url.searchParams.set("valid_from", request.validFrom);
-  if (request.validTo !== undefined) url.searchParams.set("valid_to", request.validTo);
-
-  const payload = await fetchBoundedJson(
-    url,
-    { method: "GET" },
-    { maxBytes: MAX_RESPONSE_BYTES, timeoutMs: UPSTREAM_TIMEOUT_MS }
-  );
-  const parsed = upstreamPageSchema.safeParse(payload);
-  if (!parsed.success) {
-    throw new ForecastContractError(
-      "forecast serving payload did not match the published contract"
-    );
-  }
-  return toPublishedSeries(request.seriesKey, parsed.data);
+  return unavailableSeries(request.seriesKey, "forecast_parquet_lane_not_published");
 }

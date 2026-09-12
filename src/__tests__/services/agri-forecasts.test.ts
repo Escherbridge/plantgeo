@@ -1,35 +1,12 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { ndviCellKeyForPoint, ndviForecastSeriesKeyForPoint } from "@/lib/forecast/series-key";
 
-/**
- * providerUrl and fetchBoundedJson are the only seams stubbed: providerUrl so the
- * not-configured path is reachable outside production, fetchBoundedJson so no test
- * touches the network. Everything else (error classes, mapping) runs for real.
- */
-vi.mock("@/lib/server/http/bounded-upstream", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/server/http/bounded-upstream")>();
-  return {
-    ...actual,
-    providerUrl: vi.fn(actual.providerUrl),
-    fetchBoundedJson: vi.fn(),
-  };
-});
-
 import {
-  fetchBoundedJson,
-  providerUrl,
-  UpstreamConfigurationError,
-} from "@/lib/server/http/bounded-upstream";
-import {
-  ForecastContractError,
   getPublishedForecastSeries,
   toPublishedSeries,
   type UpstreamForecastPage,
 } from "@/lib/server/services/agri-forecasts";
-
-const mockedProviderUrl = vi.mocked(providerUrl);
-const mockedFetch = vi.mocked(fetchBoundedJson);
 
 const RECEIPT_A = "0d4b0f34-0000-4000-8000-00000000000a";
 const RECEIPT_B = "0d4b0f34-0000-4000-8000-00000000000b";
@@ -170,53 +147,13 @@ describe("toPublishedSeries", () => {
 });
 
 describe("getPublishedForecastSeries", () => {
-  beforeEach(() => {
-    mockedProviderUrl.mockReset();
-    mockedFetch.mockReset();
-  });
-
-  it("reports unavailable instead of throwing when no base URL is configured", async () => {
-    mockedProviderUrl.mockImplementation(() => {
-      throw new UpstreamConfigurationError("AGRI_DATA_SERVICE_URL is not set");
-    });
-    const result = await getPublishedForecastSeries({
-      seriesKey: "series-a",
-      limit: 250,
-      offset: 0,
-    });
-    expect(result.availability).toBe("unavailable");
-    expect(result.reason).toBe("forecast_service_not_configured");
-    expect(mockedFetch).not.toHaveBeenCalled();
-  });
-
-  it("queries the serving route with the bounded contract parameters", async () => {
-    mockedProviderUrl.mockReturnValue(new URL("http://agri.internal:8000"));
-    mockedFetch.mockResolvedValue(
-      page([servingRecord({ validTime: "2026-08-09T00:00:00Z", horizonStep: 1 })])
-    );
-
-    const result = await getPublishedForecastSeries({
-      seriesKey: "ndvi-daily:sentinel2-ndvi-0p25deg:43.1250:-113.6250",
-      limit: 100,
-      offset: 0,
-    });
-
-    const requestedUrl = mockedFetch.mock.calls[0][0] as URL;
-    expect(requestedUrl.pathname).toBe("/api/v1/forecasts/");
-    expect(requestedUrl.searchParams.get("series_key")).toBe(
-      "ndvi-daily:sentinel2-ndvi-0p25deg:43.1250:-113.6250"
-    );
-    expect(requestedUrl.searchParams.get("spatial")).toBe("none");
-    expect(requestedUrl.searchParams.get("limit")).toBe("100");
-    expect(result.points).toHaveLength(1);
-    expect(result.points[0]).toMatchObject({ p10: 0.35, p50: 0.42, p90: 0.51 });
-  });
-
-  it("rejects a payload that drifts from the published contract", async () => {
-    mockedProviderUrl.mockReturnValue(new URL("http://agri.internal:8000"));
-    mockedFetch.mockResolvedValue({ rows: [] });
+  it("returns an explicit Parquet-lane refusal without a PostgreSQL or HTTP fallback", async () => {
     await expect(
       getPublishedForecastSeries({ seriesKey: "series-a", limit: 250, offset: 0 })
-    ).rejects.toBeInstanceOf(ForecastContractError);
+    ).resolves.toMatchObject({
+      availability: "unavailable",
+      reason: "forecast_parquet_lane_not_published",
+      points: [],
+    });
   });
 });

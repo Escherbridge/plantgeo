@@ -21,8 +21,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Final
 
+from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.direct.watersheds.rows import chunk_rows_by_geometry_bytes, watersheds_snapshot_table
-from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.parquet.lane_registry import normalise_export_outcome
 from agri_data_service.warehouse.schemas.watersheds import WATERSHEDS_STREAM
 

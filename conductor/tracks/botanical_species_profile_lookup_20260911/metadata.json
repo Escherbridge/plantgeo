@@ -1,0 +1,164 @@
+{
+  "slug": "botanical_species_profile_lookup_20260911",
+  "title": "Botanical species profile lookup and recommendation evidence",
+  "type": "infrastructure",
+  "status": "active",
+  "created_on": "2026-09-11",
+  "depends_on": [
+    "environmental_parquet_serving_20260912"
+  ],
+  "related_tracks": [
+    "pnw_herbaria_source_admission_20260911",
+    "botanical_occurrence_parquet_lane_20260911",
+    "botanical_occurrence_experience_20260911",
+    "botanical_species_recommendation_validation_20260911",
+    "repository_conformity_hardening_20260901"
+  ],
+  "next_gate": "Resolve credential-authorization and raw-evidence custody blockers; supply an operator-authorized read-only DSN matched to the recorded Railway target for the bounded authoring census; then complete reviewed-row preservation and independent source admission. Local implementation and canonical local intake are retained; source data and production acceptance remain pending. See evidence/source-admission-census-20260912.md.",
+  "census_handoff": {
+    "status": "blocked_before_database_connection",
+    "handoff": "evidence/census-handoff-20260912.md",
+    "receipt": "evidence/census-reconciliation-20260912.json",
+    "original_implementation_commit": "edc6afdeb23f339b40049ec0828551c2fe1a4d45",
+    "canonical_local_intake": "32a13c604e6da4331051e6a584f7942e7165af1e",
+    "canonical_local_evidence_checkpoint": "2317ee3a2ac35de489d27503dfec91ea3285bd66",
+    "original_worktree_registered_at_latest_inspection": false,
+    "raw_source_archive_custody": "unknown_outside_four_checked_absent_locations",
+    "private_credential_access_in_latest_continuation": false,
+    "database_queries_executed": 0
+  },
+  "source_admission_census": {
+    "status": "blocked_before_database_connection",
+    "audited_on": "2026-09-12",
+    "audit_base_commit": "d42e28ec43368fe9340eb70b4f8b1dcd51ce125f",
+    "audit_base_tree": "21faf5359d59325b2955383b2f326371875b757c",
+    "receipt": "evidence/source-admission-census-20260912.md",
+    "railway_metadata_revalidated": false,
+    "private_credential_access": false,
+    "remote_services_contacted": false,
+    "database_connections": 0,
+    "database_queries": 0,
+    "source_downloads": 0,
+    "source_ingestions": 0,
+    "source_admission_granted": false
+  },
+  "serving_contract": {
+    "kind": "static_lookup",
+    "spatial": false,
+    "authoring_system": "agri.species and its reviewed evidence records",
+    "published_product": "botanical-species-profile",
+    "serving_source": "transitional reviewed_authoring_database lookup; final release-pinned Parquet remains required",
+    "database_fallback": "none for final published profiles",
+    "transitional_publication_state": "not_published",
+    "transitional_profile_release_id": null,
+    "production_population_claim": "none"
+  },
+  "partitions": {
+    "confidence": "active",
+    "slices": [
+      {
+        "id": "p1",
+        "task": "Canonical taxon identity, existing agri.species inventory and per-value evidence contract",
+        "model": "gpt-6-astra",
+        "depends_on": [],
+        "owns": [
+          {"path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/schema-inventory.md", "status": "future"},
+          {"path": "services/agri-data-service/src/agri_data_service/foundation/botanical_species_profiles/", "status": "future"}
+        ]
+      },
+      {
+        "id": "p2",
+        "task": "Reviewed authoring, deterministic source reconciliation and immutable Parquet lookup publication",
+        "model": "gpt-5.6-sol",
+        "depends_on": ["p1"],
+        "owns": [
+          {"path": "services/agri-data-service/src/agri_data_service/warehouse/schemas/botanical_species_profiles.py", "status": "future"},
+          {"path": "services/agri-data-service/src/agri_data_service/pipeline/direct/botanical_species_profiles/", "status": "future"}
+        ]
+      },
+      {
+        "id": "p3",
+        "task": "Release-pinned species profile API and agent lookup",
+        "model": "gpt-6-astra",
+        "depends_on": ["p1", "p2"],
+        "owns": [
+          {"path": "services/agri-data-service/src/agri_data_service/planes/botanical_species_profiles.py", "status": "future"},
+          {"path": "services/agri-data-service/src/agri_data_service/interface/http/botanical_species_profiles.py", "status": "future"},
+          {"path": "services/agri-data-service/src/agri_data_service/agent/botanical_species_profiles.py", "status": "future"},
+          {"path": "services/agri-data-service/tests/planes/test_botanical_species_profiles.py", "status": "future"},
+          {"path": "services/agri-data-service/tests/interface/test_botanical_species_profile_routes.py", "status": "future"},
+          {"path": "services/agri-data-service/tests/test_botanical_species_profile_agent.py", "status": "future"}
+        ]
+      },
+      {
+        "id": "p4",
+        "task": "Integrated profile publication, API and agent conformance receipt",
+        "model": "gpt-6-astra",
+        "depends_on": ["p1", "p2", "p3"],
+        "owns": [
+          {"path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/integration-receipt.json", "status": "future"}
+        ]
+      },
+      {
+        "id": "p5",
+        "task": "Independent data-governance, botanical-science and agent-honesty verdict",
+        "model": "gpt-6-astra",
+        "depends_on": ["p4"],
+        "owns": [
+          {"path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/independent-review.md", "status": "future"}
+        ]
+      }
+    ],
+    "shared_writes": [
+      {
+        "path": "services/agri-data-service/src/agri_data_service/models/species.py",
+        "owner": "p1",
+        "serializes_after": "repository_conformity_hardening_20260901",
+        "reason": "Inventory the existing governed species model first. Extend it only after the active conformity owner completes or explicitly transfers the file; the database remains an authoring surface rather than the release-serving fallback."
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/agent/tools.py",
+        "owner": "p3",
+        "serializes_after": "environmental_parquet_serving_20260912",
+        "reason": "Register the release-pinned species-information tool only after the active reader owner completes or explicitly transfers the shared agent tool registry."
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/app.py",
+        "owner": "p3",
+        "serializes_after": "repository_conformity_hardening_20260901",
+        "reason": "Register the profile HTTP blueprint only after the active application/conformity owner completes or explicitly transfers the shared application factory."
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/agent/prompts.py",
+        "owner": "p3",
+        "serializes_after": "environmental_parquet_serving_20260912",
+        "reason": "Teach the agent the profile tool's evidence and refusal semantics under the same transferred reader/agent ownership."
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/agent/AGENTS.md",
+        "owner": "p3",
+        "serializes_after": "environmental_parquet_serving_20260912",
+        "reason": "Document the new tool in the shared agent topology after the active owner transfers the surface."
+      },
+      {
+        "path": "services/agri-data-service/tests/test_agent_parquet_tools.py",
+        "owner": "p3",
+        "serializes_after": "environmental_parquet_serving_20260912",
+        "reason": "Verify registration, pinned releases, bounded reads, evidence fields and refusal states with the transferred tool owner."
+      },
+      {
+        "path": "services/agri-data-service/tests/test_agent_graph.py",
+        "owner": "p3",
+        "serializes_after": "environmental_parquet_serving_20260912",
+        "reason": "Update shared agent sufficiency and tool-count behavior only after the reader/agent owner transfers this test surface."
+      },
+      {
+        "path": "services/agri-data-service/tests/test_agent_provider_wiring.py",
+        "owner": "p3",
+        "serializes_after": "environmental_parquet_serving_20260912",
+        "reason": "Prove the species-information tool is reachable through the model-facing provider after shared agent registration transfers."
+      }
+    ],
+    "integration_slice": "p4"
+  }
+}

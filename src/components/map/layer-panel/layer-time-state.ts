@@ -27,7 +27,6 @@ import type { SliderCapabilities, SliderLayerCapability } from "@/types/time-sli
 export const LAYER_WITHHOLDING_REASONS = [
   "coverage_unavailable",
   "coverage_not_current",
-  "reader_not_parquet",
   "lane_not_registered",
   "lane_never_written",
   "rung_not_reported",
@@ -237,10 +236,6 @@ const WITHHOLDING_WORDING: Record<LayerWithholdingReason, ReasonWording> = {
     badge: "Dates behind",
     detail:
       "Available dates have not caught up to today.",
-  },
-  reader_not_parquet: {
-    badge: "Other source",
-    detail: "Date history is not available for this layer yet.",
   },
   rung_not_reported: {
     badge: "Zooms missing",

@@ -2,10 +2,10 @@
 
 Every environmental answer here is a bounded read of the day-partitioned Parquet warehouse, through
 `agent/warehouse.py`, with caps on radius, time window and row count baked in rather than left to
-the model. Two questions are still PostgreSQL reads and say why: the ingest lane's absence ledger
-and the governed ML forecast plane, neither of which is environmental data. See agent/AGENTS.md,
-"Tool contract", for why the bounds are enforced here and not in the prompt, and "Reading the
-Parquet warehouse" for what a four-state answer means.
+the model. The only database-backed tool is the separate species/profile lookup; environmental
+surfaces never retry PostgreSQL when a Parquet lane is missing. See agent/AGENTS.md, "Tool contract",
+for why the bounds are enforced here and not in the prompt, and "Reading the Parquet warehouse" for
+what a four-state answer means.
 """
 
 from __future__ import annotations
@@ -18,29 +18,38 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from functools import wraps
 from math import cos, radians
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Annotated, Any, Final
 
 from anthropic import beta_async_tool
-from sqlalchemy import ARRAY, Float, Text, bindparam, text
+from pydantic import Field
 
 from agri_data_service.agent import parquet_reads, warehouse
 from agri_data_service.agent.surfaces import (
     AGENT_SURFACE_NAMES,
     FEATURE_SURFACE_NAMES,
     FIRE_LANE_NAMES,
-    POSTGRESQL_ONLY_SURFACE_NAMES,
     SIGNAL_PLANE_LANE,
     STREAM_SURFACE_NAMES,
     surface_lanes,
 )
 from agri_data_service.db.engine import published_reader_session
-from agri_data_service.db.sql_queries import load_query_sql
 from agri_data_service.parquet_ops.faults import ServingRefusalError
 from agri_data_service.parquet_ops.warehouse_reader import (
     GeometrySupport,
     NoSpatialSupport,
     PointSupport,
     spatial_support,
+)
+from agri_data_service.planes.botanical_species_information import (
+    DEFAULT_COMPANION_LIMIT,
+    MAX_COMPANION_LIMIT,
+    SpeciesInformationRequestError,
+    encode_species_information,
+    parse_species_information_request,
+    read_species_information,
+)
+from agri_data_service.planes.botanical_species_information import (
+    invalid_request as invalid_species_information_request,
 )
 from agri_data_service.warehouse.parquet.schema import get_stream_schema
 
@@ -219,16 +228,6 @@ FIRE_LANE_FEATURE_COUNT_COLUMN: Final[dict[str, str | None]] = {
     "burn-severity": None,
 }
 
-# --- The one pre-aggregated relation still probed ----------------------------------
-#
-# agri.mv_forecast_ml_daily_serving is a MATERIALIZED VIEW, which can exist while holding nothing:
-# PostgreSQL creates it WITH NO DATA and raises rather than returning zero rows until a REFRESH has
-# run. It shipped in exactly that state. It is also the last relation any agent tool probes: every
-# environmental plane moved to Parquet, where "never built" is `lane_never_written`, one of the four
-# states the warehouse itself reports rather than a catalog fact to be inferred.
-
-FORECAST_DAILY_RELATION: Final = "agri.mv_forecast_ml_daily_serving"
-
 # --- Bounding-box prefilter arithmetic ---------------------------------------------
 #
 # A metre radius has to become a degree box before it can be a range predicate DuckDB pushes into a
@@ -246,48 +245,6 @@ _BBOX_SAFETY_MARGIN: Final = 1.05
 # the box degenerates to most of the meridian anyway and the exact test does the real work.
 _MIN_LATITUDE_COSINE: Final = 0.01
 
-# --- The PostgreSQL statements that remain -----------------------------------------
-#
-# Four, and each one names why it is not a Parquet read: two governance relations the retirement
-# inventory classes "keep", one community layer RUNBOOK section 0.26.1 keeps in PostgreSQL, and the
-# catalog probe that guards the first of them.
-
-_PLANE_POPULATED_SQL: Final = text(load_query_sql("agent/materialized_plane_populated.sql")).bindparams(
-    bindparam("relation_names", type_=ARRAY(Text))
-)
-_FORECAST_SQL: Final = text(load_query_sql("agent/forecast_summary_for_cell.sql")).bindparams(
-    bindparam("metric_names", type_=ARRAY(Text))
-)
-_COVERAGE_ON_DAY_SQL: Final = text(load_query_sql("agent/signal_coverage_on_day.sql")).bindparams(
-    bindparam("cell_ids", type_=ARRAY(Text)),
-    bindparam("cell_distances", type_=ARRAY(Float)),
-    bindparam("signal_names", type_=ARRAY(Text)),
-)
-_FEATURE_NEAR_POINT_SQL: Final = text(load_query_sql("agent/feature_value_near_point.sql")).bindparams(
-    bindparam("property_keys", type_=ARRAY(Text))
-)
-
-# The property keys the ONE remaining PostgreSQL feature layer may carry, hand-spelled and capped.
-#
-# `SELECT properties` on geo.features is how a bounded row count becomes an unbounded byte count --
-# the column carries roughly 1,467 MB of TOAST across 4.97 million rows (measured 2026-08-15), so a
-# fifty-row answer can be tens of megabytes. The Parquet lanes have no such column: they publish
-# typed columns their registered schema declares, so this allow-list guards `interventions` alone.
-FEATURE_PROPERTY_KEYS: Final = (
-    "acres",
-    "county",
-    "description",
-    "id",
-    "ignitionDate",
-    "name",
-    "observedAt",
-    "priority",
-    "source",
-    "status",
-    "updatedAt",
-)
-
-
 # --- Ambient run state -------------------------------------------------------------
 #
 # Tool functions are module-level and their signatures are the model-facing schema, so the
@@ -298,10 +255,8 @@ FEATURE_PROPERTY_KEYS: Final = (
 _session_provider: ContextVar[Callable[[], AbstractAsyncContextManager[AsyncSession]]] = ContextVar(
     "agri_agent_session_provider", default=published_reader_session
 )
+_allowed_species_id: ContextVar[str | None] = ContextVar("agri_agent_allowed_species_id", default=None)
 _tool_ledger: ContextVar[list[dict[str, Any]] | None] = ContextVar("agri_agent_tool_ledger", default=None)
-# One run's answers to "is this plane built". A matview never becomes unpopulated again once it
-# has been refreshed, so the answer cannot go stale inside a run.
-_plane_state: ContextVar[dict[str, bool] | None] = ContextVar("agri_agent_plane_state", default=None)
 
 
 @asynccontextmanager
@@ -309,19 +264,20 @@ async def run_context(
     *,
     session_provider: Callable[[], AbstractAsyncContextManager[AsyncSession]] | None = None,
     warehouse_source: AgentWarehouseSource | None = None,
+    allowed_species_id: str | None = None,
 ) -> AsyncIterator[list[dict[str, Any]]]:
-    """Bind one run's PostgreSQL session provider and Parquet source, and yield the tool ledger."""
+    """Bind one run's species lookup session and Parquet source, and yield the tool ledger."""
     ledger: list[dict[str, Any]] = []
     provider_token = _session_provider.set(session_provider or published_reader_session)
+    species_token = _allowed_species_id.set(allowed_species_id)
     ledger_token = _tool_ledger.set(ledger)
-    plane_token = _plane_state.set({})
     source_token = warehouse.set_source(warehouse_source)
     try:
         yield ledger
     finally:
         warehouse.reset_source(source_token)
-        _plane_state.reset(plane_token)
         _tool_ledger.reset(ledger_token)
+        _allowed_species_id.reset(species_token)
         _session_provider.reset(provider_token)
 
 
@@ -359,14 +315,6 @@ def _clean_names(names: list[str] | None) -> list[str]:
 
 def _valid_coordinate(longitude: float, latitude: float) -> bool:
     return _MIN_LONGITUDE <= longitude <= _MAX_LONGITUDE and _MIN_LATITUDE <= latitude <= _MAX_LATITUDE
-
-
-def _bbox_degrees(radius_meters: float, latitude: float) -> float:
-    """Half-width in degrees of a square that certainly contains everything within the radius."""
-    cosine = max(cos(radians(latitude)), _MIN_LATITUDE_COSINE)
-    longitude_degrees = radius_meters / (_METERS_PER_DEGREE_LONGITUDE_AT_EQUATOR * cosine)
-    latitude_degrees = radius_meters / _METERS_PER_DEGREE_LATITUDE
-    return max(longitude_degrees, latitude_degrees) * _BBOX_SAFETY_MARGIN
 
 
 def _bbox_bounds(longitude: float, latitude: float, radius_meters: float) -> tuple[float, float, float, float]:
@@ -445,12 +393,6 @@ def _day_error(tool_name: str, raw_day: str) -> str:
     )
 
 
-def _day_bounds(day: date) -> tuple[datetime, datetime]:
-    """The half-open pair of UTC midnights bounding one calendar day."""
-    opening = datetime(day.year, day.month, day.day, tzinfo=UTC)
-    return opening, opening + timedelta(days=1)
-
-
 def _day_span(first_day: date, last_day: date) -> list[date]:
     """Every calendar day of a closed range, ascending; a day is never derived from an instant."""
     return [first_day + timedelta(days=offset) for offset in range((last_day - first_day).days + 1)]
@@ -491,11 +433,46 @@ def _feature_surface_error(raw_surface: str) -> str:
     )
 
 
-async def _fetch(statement: Any, parameters: dict[str, Any]) -> list[dict[str, Any]]:
-    """Run one bounded PostgreSQL read on a fresh least-privilege reader session."""
-    async with _session_provider.get()() as session:
-        result = await session.execute(statement, parameters)
-        return [dict(row) for row in result.mappings().all()]
+SpeciesUuid = Annotated[
+    str,
+    Field(
+        pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+        description="Exact canonical agri.species UUID; botanical names are not accepted.",
+    ),
+]
+CompanionLimit = Annotated[
+    int,
+    Field(ge=1, le=MAX_COMPANION_LIMIT, description="Maximum approved companion rows to return."),
+]
+
+
+@beta_async_tool
+async def species_information(
+    species_id: SpeciesUuid,
+    companion_limit: CompanionLimit = DEFAULT_COMPANION_LIMIT,
+) -> str:
+    """Read one unpublished authoring species profile with explicit provenance, missingness, and claim limits."""
+    try:
+        allowed_species_id = _allowed_species_id.get()
+        if allowed_species_id == "" or (allowed_species_id is not None and species_id != allowed_species_id):
+            raise SpeciesInformationRequestError(
+                "species_id must exactly match the canonical UUID supplied with this agent request"
+            )
+        request = parse_species_information_request({"species_id": species_id, "companion_limit": str(companion_limit)})
+        result = await read_species_information(request, session_provider=_session_provider.get())
+    except SpeciesInformationRequestError as error:
+        result = invalid_species_information_request(str(error))
+    _record(
+        "species_information",
+        0,
+        {
+            "profile_count": int(result["state"] == "found"),
+            "state": result["state"],
+            "publication_state": "not_published",
+            "evidence_domain": "botanical_reference",
+        },
+    )
+    return encode_species_information(result).decode("utf-8")
 
 
 # --- Refusing rather than answering nothing ----------------------------------------
@@ -512,43 +489,6 @@ async def _fetch(statement: Any, parameters: dict[str, Any]) -> list[dict[str, A
 # On top of those sit the SERVING refusals (`parquet_ops.faults`), which are statements about this
 # process rather than about the warehouse: a half-written day, a read over its memory budget, every
 # serving slot busy. Each one is reported by its own code so a model cannot fold it into an absence.
-
-
-def _plane_refusal(tool_name: str, unbuilt: list[dict[str, Any]]) -> str:
-    """State that a pre-aggregated PostgreSQL plane has never been built, rather than answering nothing."""
-    names = [entry["relation"] for entry in unbuilt]
-    _record(tool_name, 0, {"error": "plane_unbuilt", "relations": names})
-    return _payload(
-        {
-            "error": "pre_aggregated_plane_unbuilt",
-            "unbuilt_relations": names,
-            "note": (
-                "This is a REFUSAL, not an absence. The pre-aggregated relation this tool reads "
-                "exists in the schema but has never been refreshed, so it holds no rows and "
-                "cannot be read at all. Nothing whatsoever follows about whether data exists for "
-                "this location or day -- say that the warehouse view backing this answer is not "
-                "built, and do not report the subject as absent, zero or unaffected."
-            ),
-        }
-    )
-
-
-async def _unbuilt_planes(relations: Sequence[str]) -> list[dict[str, Any]]:
-    """Return one entry per named relation that is missing or has never been refreshed."""
-    resolved = _plane_state.get()
-    if resolved is None:
-        resolved = {}
-    unknown = [name for name in relations if name not in resolved]
-    if unknown:
-        rows = await _fetch(_PLANE_POPULATED_SQL, {"relation_names": unknown})
-        observed = {str(row["relation_name"]): bool(row["is_populated"]) for row in rows}
-        # A relation the probe did not answer for at all is treated as unbuilt: silence about a
-        # plane is not evidence that the plane is fine.
-        for name in unknown:
-            resolved[name] = observed.get(name, False)
-    return [
-        {"relation": name, "state": "missing_or_unpopulated"} for name in relations if not resolved.get(name, False)
-    ]
 
 
 def _lane_never_written_refusal(tool_name: str, lanes: Sequence[str]) -> str:
@@ -1068,69 +1008,36 @@ async def query_forecast_summary_for_cell(
     metric_names: list[str] | None = None,
     as_of: datetime | None = None,
 ) -> str:
-    """Return published daily forecast values for the analysis cell nearest a point."""
+    """Refuse forecast reads until the replacement Parquet lane is published."""
     if not _valid_coordinate(longitude, latitude):
         return _coordinate_error("forecast_summary_for_cell")
-    unbuilt = await _unbuilt_planes([FORECAST_DAILY_RELATION])
-    if unbuilt:
-        return _plane_refusal("forecast_summary_for_cell", unbuilt)
     radius = _clamp(radius_meters, MIN_RADIUS_METERS, MAX_RADIUS_METERS)
     names = _clean_names(metric_names)
-    reference = as_of or datetime.now(UTC)
-    valid_day_from = datetime(reference.year, reference.month, reference.day, tzinfo=UTC)
-    through_day = reference.date()
-    first_day = through_day - timedelta(days=CELL_UNIVERSE_DAYS)
-    cell_window = await warehouse.lane_window(layer=SIGNAL_PLANE_LANE, first_day=first_day, last_day=through_day)
-    if not cell_window.lane_written:
-        # A lane that never wrote anything is state 4 of 4, never an absence: reporting resolved_cell
-        # as null here would let the payload's own note assert a cause -- "no cell reported nearby" --
-        # that is not the cause. Refuse before the forecast read even starts.
-        return _lane_never_written_refusal("forecast_summary_for_cell", (SIGNAL_PLANE_LANE,))
-    cells = await _admitted_signal_cells(
-        cell_window,
-        longitude=longitude,
-        latitude=latitude,
-        radius_meters=radius,
-        first_day=first_day,
-        through_day=through_day,
-        operation="agent_forecast_summary_for_cell",
+    _record(
+        "forecast_summary_for_cell",
+        0,
+        {
+            "error": "forecast_parquet_lane_not_published",
+            "radius_meters": radius,
+            "metric_names": names,
+            "as_of": as_of.isoformat() if as_of is not None else None,
+        },
     )
-    rows: list[dict[str, Any]] = []
-    nearest = cells[0] if cells else None
-    if nearest is not None:
-        rows = await _fetch(
-            _FORECAST_SQL,
-            {
-                "cell_id": str(nearest["cell_id"]),
-                "cell_distance_m": float(nearest["distance_meters"]),
-                "valid_day_from": valid_day_from,
-                "metric_names": names,
-                "row_limit": DEFAULT_FORECAST_ROWS,
-            },
-        )
-    _record("forecast_summary_for_cell", len(rows), {"radius_meters": radius})
     return _payload(
         {
             "applied_bounds": {
                 "radius_meters": radius,
-                "valid_day_from": valid_day_from,
                 "metric_names": names,
                 "max_rows": DEFAULT_FORECAST_ROWS,
-                "cell_universe_days": CELL_UNIVERSE_DAYS,
             },
-            "resolved_cell": nearest,
-            "forecast_values": rows,
+            "resolved_cell": None,
+            "forecast_values": [],
+            "error": "forecast_parquet_lane_not_published",
             "note": (
-                "Only published, finalized, validated forecasts are visible here, pre-aggregated "
-                "to one row per valid DAY -- mean_point_value with the widest p10/p90 band the "
-                "day's steps reported, and contributing_forecast_points saying how many steps "
-                "that was. This view covers ML-method forecasts on series enabled for daily "
-                "aggregation ONLY, so a published forecast produced another way is out of scope "
-                "here rather than absent. resolved_cell is null when NO analysis cell reported "
-                "inside the radius in the last cell_universe_days, which is a statement about "
-                "which cells have reported recently and not about the forecast plane. The "
-                "forecast plane itself is a governed ML relation in PostgreSQL, not environmental "
-                "data, and is deliberately not a Parquet lane."
+                "Forecast schemas and materialized views were retired in the PostgreSQL-to-Parquet "
+                "cutover. No database or forecast fallback was queried. Publish the governed "
+                "forecast Parquet lane before enabling this tool; this refusal says nothing about "
+                "whether a forecast exists for the requested point."
             ),
         }
     )
@@ -1202,11 +1109,19 @@ async def query_signal_value_on_day(
             required_columns=SIGNAL_PLANE_COLUMNS,
         )
     rows = _filter_by_name(measured, names, "signal_name")[:MAX_DAY_SUMMARY_ROWS]
-    governed = await _signal_coverage_audit(cells, day=selected_day, names=names)
+    # The former per-cell PostgreSQL audit was empty at cutover and is retired with the ingest
+    # schema. Availability markers and `day_state` carry the governed absence evidence that remains
+    # meaningful to a serving reader.
+    governed: list[dict[str, Any]] = []
     _record(
         "signal_value_on_day",
         len(rows),
-        {"requested_day": selected_day, "radius_meters": radius, "coverage_audit_rows": len(governed)},
+        {
+            "requested_day": selected_day,
+            "radius_meters": radius,
+            "coverage_audit_rows": 0,
+            "coverage_audit_state": "retired",
+        },
     )
     return _payload(
         {
@@ -1234,11 +1149,9 @@ async def query_signal_value_on_day(
                 "the upstream had nothing (its evidence says why), day_not_written means the day "
                 "was never written and NOTHING follows from the empty list. A signal absent from a "
                 "published day had no accepted reading UNLESS signals_on_day_truncated is true, in "
-                "which case the list hit its row cap. coverage_audit_on_day is what the ingest "
-                "lane recorded for a window covering the day, read over exactly the cells this "
-                "answer came from: status no_data means the upstream published nothing, partial "
-                "means fewer cells landed than expected, and an empty audit means nothing was "
-                "recorded either way. For the nearest days that do carry a reading call "
+                "which case the list hit its row cap. The former per-cell PostgreSQL coverage audit "
+                "was retired with the ingest schema; use day_state and its Parquet availability "
+                "marker for governed absence evidence. For the nearest days that do carry a reading call "
                 "signal_neighbors_in_time, and never quote one of those as this day's value."
             ),
         }
@@ -1262,36 +1175,6 @@ async def _day_state(window: LaneWindow, day: date, state: str) -> dict[str, Any
             "run_id": evidence.run_id,
         }
     return verdict
-
-
-async def _signal_coverage_audit(
-    cells: Sequence[dict[str, Any]],
-    *,
-    day: date,
-    names: Sequence[str],
-) -> list[dict[str, Any]]:
-    """Read the ingest lane's absence ledger over exactly the cells the value answer came from.
-
-    STILL A POSTGRESQL READ, and deliberately. `agri.signal_coverage_audit` is a governance record
-    of what an upstream was asked for and what it answered -- the retirement inventory classes it
-    "keep" -- and it is the one question the Parquet plane cannot answer: a governed-absence marker
-    settles a whole lane-day, while this ledger is grained by signal, cell and fetched window and
-    says WHY nothing landed for one of them.
-    """
-    if not cells:
-        return []
-    day_start, day_end = _day_bounds(day)
-    return await _fetch(
-        _COVERAGE_ON_DAY_SQL,
-        {
-            "cell_ids": [str(cell["cell_id"]) for cell in cells],
-            "cell_distances": [float(cell["distance_meters"]) for cell in cells],
-            "day_start": day_start,
-            "day_end": day_end,
-            "signal_names": list(names),
-            "row_limit": MAX_COVERAGE_AUDIT_ROWS,
-        },
-    )
 
 
 @_refuses_serving_faults("signal_neighbors_in_time")
@@ -1513,20 +1396,17 @@ async def query_observation_coverage_on_day(
 
 
 def _surface_not_on_parquet(tool_name: str, surface: str) -> str:
-    """Refuse a surface that has no Parquet lane, naming where it does live."""
+    """Refuse a surface that has no published Parquet lane."""
     _record(tool_name, 0, {"error": "surface_not_served_from_parquet", "surface_name": surface})
     return _payload(
         {
             "error": "surface_not_served_from_parquet",
             "received_surface_name": surface,
-            "postgresql_only_surface_names": list(POSTGRESQL_ONLY_SURFACE_NAMES),
             "note": (
                 "This is a REFUSAL, not an absence. Coverage is answered from the Parquet "
-                "availability index, and this surface has no Parquet lane: it is community data a "
-                "user writes rather than environmental data an upstream publishes, so it stays in "
-                "PostgreSQL and has no published day index. feature_value_near_point can still "
-                "list its features for a day. Nothing follows about whether the surface holds "
-                "anything."
+                "availability index, and this surface has no published Parquet lane. PostgreSQL is "
+                "not queried as a fallback and no synthetic feature payload is fabricated. Nothing "
+                "follows about whether the surface holds anything."
             ),
         }
     )
@@ -1685,16 +1565,10 @@ async def query_feature_value_near_point(  # noqa: PLR0913 - the parameter list 
         return _feature_surface_error(surface_name)
     radius = _clamp(radius_meters, MIN_RADIUS_METERS, MAX_RADIUS_METERS)
     returned_features = _clamp_int(feature_count, 1, MAX_SURFACE_FEATURE_ROWS)
-    if surface in POSTGRESQL_ONLY_SURFACE_NAMES:
-        return await _postgresql_features(
-            surface,
-            selected_day,
-            longitude=longitude,
-            latitude=latitude,
-            radius_meters=radius,
-            returned_features=returned_features,
-        )
-    lane = surface_lanes(surface)[0]
+    lanes = surface_lanes(surface)
+    if not lanes:
+        return _surface_not_on_parquet("feature_value_near_point", surface)
+    lane = lanes[0]
     window = await warehouse.lane_window(layer=lane, first_day=selected_day, last_day=selected_day)
     if not window.lane_written:
         return _lane_never_written_refusal("feature_value_near_point", (lane,))
@@ -1778,68 +1652,6 @@ def _feature_row(row: dict[str, Any], *, served_day: date) -> dict[str, Any]:
     }
     carried["properties"] = {name: value for name, value in row.items() if name not in reserved}
     return carried
-
-
-async def _postgresql_features(  # noqa: PLR0913 - one argument per coordinate of the bounded read
-    surface: str,
-    day: date,
-    *,
-    longitude: float,
-    latitude: float,
-    radius_meters: float,
-    returned_features: int,
-) -> str:
-    """Answer for the one community layer that stays in PostgreSQL, in its original shape.
-
-    RUNBOOK section 0.26.1 keeps `interventions` in PostgreSQL: it is data a user writes, not data
-    an upstream publishes, so it has no registered Parquet lane and inventing one would be a
-    fiction. This is the only PostgreSQL read left in the feature path and it touches no
-    environmental layer.
-    """
-    rows = await _fetch(
-        _FEATURE_NEAR_POINT_SQL,
-        {
-            "surface_name": surface,
-            "day": day,
-            "longitude": longitude,
-            "latitude": latitude,
-            "radius_meters": radius_meters,
-            "bbox_degrees": _bbox_degrees(radius_meters, latitude),
-            "property_keys": list(FEATURE_PROPERTY_KEYS),
-            "row_limit": returned_features,
-        },
-    )
-    _record(
-        "feature_value_near_point",
-        len(rows),
-        {"surface_name": surface, "requested_day": day, "radius_meters": radius_meters},
-    )
-    return _payload(
-        {
-            "requested_day": day,
-            "surface_name": surface,
-            "applied_bounds": {
-                "requested_day": day,
-                "radius_meters": radius_meters,
-                "feature_count": returned_features,
-                "max_feature_rows": MAX_SURFACE_FEATURE_ROWS,
-                "projected_property_keys": list(FEATURE_PROPERTY_KEYS),
-                "served_from": "postgresql",
-                "search_shape": "radius",
-            },
-            "features": rows,
-            "features_truncated": len(rows) >= returned_features,
-            "note": (
-                "This layer is community data a user writes, so it is served from PostgreSQL "
-                "rather than from a Parquet lane and has no published day index. Every feature is "
-                "dated to requested_day by the same rule the map's tiles use, carries "
-                "distance_meters from the requested point and its own observed_day, and its "
-                "properties are projected to a fixed key list -- a key you do not see was not "
-                "requested rather than being empty. An empty list means nothing was published "
-                "dated to that day inside the search box."
-            ),
-        }
-    )
 
 
 # --- Model-facing tools ------------------------------------------------------------
@@ -2193,4 +2005,5 @@ WAREHOUSE_TOOLS: Final = (
     observation_coverage_on_day,
     observation_temporal_neighbors,
     feature_value_near_point,
+    species_information,
 )

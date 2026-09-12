@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render } from "@testing-library/react";
 import type { Map as MapLibreMap } from "maplibre-gl";
 import HoverTooltip from "@/components/map/HoverTooltip";
+import { setScalarFieldInspectionSuppressed } from "@/lib/map/scalar-field-inspection";
 
 /**
  * Touch fires no `mousemove` at all, so every `TOOLTIP_TAP_LAYER_IDS` layer was uninspectable on
@@ -204,5 +205,88 @@ describe("HoverTooltip: click (coarse pointer only)", () => {
     fireEvent.click(getByLabelText("Close"));
 
     expect(queryByText("Weather station")).toBeNull();
+  });
+});
+
+describe("HoverTooltip: measured vegetation", () => {
+  it.each([{ x: 195, y: 422 }, { x: 380, y: 830 }])("keeps a measured caption inside a phone viewport at %o", point => {
+    setCoarsePointer(true);
+    vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockReturnValue(240);
+    vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(180);
+    const fakeMap = createFakeMap([{ layer: { id: "vegetation-ndvi-cells-fill" }, properties: { ndvi: -0.4 } }]);
+    vi.spyOn(fakeMap, "getContainer").mockReturnValue({ clientWidth: 390, clientHeight: 844 });
+    const { getByText } = render(<HoverTooltip map={asMap(fakeMap)} />);
+    act(() => fakeMap.emit("click", { point }));
+    const element = getByText("Measured vegetation cell").parentElement!;
+    const left = Number.parseFloat(element.style.left);
+    const top = Number.parseFloat(element.style.top);
+    expect(left).toBeGreaterThanOrEqual(0);
+    expect(left + element.offsetWidth).toBeLessThanOrEqual(390);
+    expect(top).toBeGreaterThanOrEqual(0);
+    expect(top + element.offsetHeight).toBeLessThanOrEqual(844);
+  });
+
+  it.each([false, true])("inspects native cells with coarse pointer %s and clears on style replacement", coarse => {
+    setCoarsePointer(coarse);
+    const fakeMap = createFakeMap([{ layer: { id: "vegetation-ndvi-cells-fill" }, properties: {
+      ndvi: -0.25, observedDay: "2026-09-01", cellId: "negative-water-cell",
+    } }]);
+    const { getByText, queryByText } = render(<HoverTooltip map={asMap(fakeMap)} />);
+    act(() => fakeMap.emit(coarse ? "click" : "mousemove", { point: { x: 100, y: 120 } }));
+    expect(getByText("NDVI: -0.25 (dimensionless)")).toBeTruthy();
+    act(() => fakeMap.emit("style.load", {}));
+    expect(queryByText("Measured vegetation cell")).toBeNull();
+  });
+});
+
+describe("HoverTooltip: vegetation source invalidation", () => {
+  it.each([false, true])("clears and blocks refused cells before native source events with coarse pointer %s", coarse => {
+    setCoarsePointer(coarse);
+    const fakeMap = createFakeMap([{ layer: { id: "vegetation-ndvi-cells-fill" }, properties: { ndvi: 0.4 } }]);
+    const { queryByText } = render(<HoverTooltip map={asMap(fakeMap)} />);
+    const inspect = () => fakeMap.emit(coarse ? "click" : "mousemove", { point: { x: 100, y: 120 } });
+    act(inspect);
+    expect(queryByText("Measured vegetation cell")).toBeTruthy();
+    act(() => setScalarFieldInspectionSuppressed(fakeMap, ["vegetation-ndvi-cells-fill"], true));
+    expect(queryByText("Measured vegetation cell")).toBeNull();
+    expect(fakeMap.getCanvas().style.cursor).toBe("");
+    act(inspect);
+    expect(queryByText("Measured vegetation cell")).toBeNull();
+    expect(fakeMap.queryRenderedFeatures.mock.calls.at(-1)?.[1].layers).not.toContain("vegetation-ndvi-cells-fill");
+    fakeMap.setFeatures([{ layer: { id: "vegetation-ndvi-cells-fill" }, properties: { ndvi: -0.4 } }]);
+    act(() => setScalarFieldInspectionSuppressed(fakeMap, ["vegetation-ndvi-cells-fill"], false));
+    act(inspect);
+    expect(queryByText("NDVI: -0.4 (dimensionless)")).toBeTruthy();
+  });
+
+  it("keeps another layer's pinned caption when scalar inspection is invalidated", () => {
+    setCoarsePointer(true);
+    const fakeMap = createFakeMap([{ layer: { id: "sensors" }, properties: { network: "TEST" } }]);
+    const { queryByText } = render(<HoverTooltip map={asMap(fakeMap)} />);
+    act(() => fakeMap.emit("click", { point: { x: 100, y: 120 } }));
+    act(() => setScalarFieldInspectionSuppressed(fakeMap, ["vegetation-ndvi-cells-fill"], true));
+    expect(queryByText("Weather station")).toBeTruthy();
+  });
+
+  it("keeps the drawn-day caption while loading then clears it when replacement content lands", () => {
+    setCoarsePointer(true);
+    const fakeMap = createFakeMap([{ layer: { id: "vegetation-ndvi-cells-fill" }, properties: { ndvi: 0.4 } }]);
+    const { queryByText } = render(<HoverTooltip map={asMap(fakeMap)} />);
+    act(() => fakeMap.emit("click", { point: { x: 100, y: 120 } }));
+    act(() => fakeMap.emit("sourcedata", { sourceId: "vegetation-ndvi-cells", sourceDataType: "metadata" }));
+    expect(queryByText("Measured vegetation cell")).toBeTruthy();
+    act(() => fakeMap.emit("sourcedata", { sourceId: "unrelated", sourceDataType: "content" }));
+    expect(queryByText("Measured vegetation cell")).toBeTruthy();
+    act(() => fakeMap.emit("sourcedata", { sourceId: "vegetation-ndvi-cells", sourceDataType: "content" }));
+    expect(queryByText("Measured vegetation cell")).toBeNull();
+  });
+
+  it("does not dismiss another layer's pinned caption", () => {
+    setCoarsePointer(true);
+    const fakeMap = createFakeMap([{ layer: { id: "sensors" }, properties: { network: "TEST" } }]);
+    const { queryByText } = render(<HoverTooltip map={asMap(fakeMap)} />);
+    act(() => fakeMap.emit("click", { point: { x: 100, y: 120 } }));
+    act(() => fakeMap.emit("sourcedata", { sourceId: "vegetation-ndvi-cells", sourceDataType: "content" }));
+    expect(queryByText("Weather station")).toBeTruthy();
   });
 });

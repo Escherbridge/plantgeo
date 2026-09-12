@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Map as MapLibreMap, PointLike } from "maplibre-gl";
+import { isScalarFieldInspectionAllowed, subscribeScalarFieldInspection } from "@/lib/map/scalar-field-inspection";
 import {
   HOVERABLE_LAYER_IDS,
   TOOLTIP_TAP_LAYER_IDS,
@@ -15,6 +16,7 @@ interface HoverTooltipProps {
 
 interface TooltipState {
   content: HoverContent;
+  layerId: string;
   x: number;
   y: number;
   /**
@@ -92,7 +94,7 @@ export default function HoverTooltip({ map }: HoverTooltipProps) {
       }
 
       // Style switches change which layers exist -- only query ones present now.
-      const presentLayerIds = HOVERABLE_LAYER_IDS.filter((id) => map.getLayer(id));
+      const presentLayerIds = HOVERABLE_LAYER_IDS.filter((id) => map.getLayer(id) && isScalarFieldInspectionAllowed(map, id));
       const features =
         presentLayerIds.length > 0
           ? map.queryRenderedFeatures(e.point, { layers: presentLayerIds })
@@ -104,7 +106,7 @@ export default function HoverTooltip({ map }: HoverTooltipProps) {
         const content = formatHoverContent(layerId, (feature.properties ?? {}) as Record<string, unknown>);
         if (content) {
           map.getCanvas().style.cursor = "pointer";
-          setTooltip({ content, x: e.point.x, y: e.point.y, pinned: false });
+          setTooltip({ content, layerId, x: e.point.x, y: e.point.y, pinned: false });
           return;
         }
       }
@@ -134,7 +136,7 @@ export default function HoverTooltip({ map }: HoverTooltipProps) {
         return;
       }
 
-      const presentLayerIds = TOOLTIP_TAP_LAYER_IDS.filter((id) => map.getLayer(id));
+      const presentLayerIds = TOOLTIP_TAP_LAYER_IDS.filter((id) => map.getLayer(id) && isScalarFieldInspectionAllowed(map, id));
       const features =
         presentLayerIds.length > 0
           ? map.queryRenderedFeatures(tapHitTestGeometry(e.point), { layers: presentLayerIds })
@@ -153,7 +155,7 @@ export default function HoverTooltip({ map }: HoverTooltipProps) {
               return null;
             }
             pinnedRef.current = true;
-            return { content, x: e.point.x, y: e.point.y, pinned: true };
+            return { content, layerId, x: e.point.x, y: e.point.y, pinned: true };
           });
           return;
         }
@@ -172,41 +174,63 @@ export default function HoverTooltip({ map }: HoverTooltipProps) {
       setTooltip(null);
     }
 
+    function handleSourceData(event: maplibregl.MapSourceDataEvent) {
+      if (event.sourceId !== "vegetation-ndvi-cells" || event.sourceDataType !== "content") return;
+      setTooltip(previous => {
+        if (previous?.layerId !== "vegetation-ndvi-cells-fill") return previous;
+        pinnedRef.current = false;
+        map.getCanvas().style.cursor = "";
+        return null;
+      });
+    }
+
     map.on("mousemove", handleMouseMove);
     map.on("mouseout", handleMouseOut);
     map.on("click", handleClick);
     map.on("style.load", handleStyleLoad);
+    map.on("sourcedata", handleSourceData);
+    const unsubscribeInspection = subscribeScalarFieldInspection(map, () => {
+      setTooltip(previous => {
+        if (!previous || isScalarFieldInspectionAllowed(map, previous.layerId)) return previous;
+        pinnedRef.current = false;
+        map.getCanvas().style.cursor = "";
+        return null;
+      });
+    });
 
     return () => {
+      unsubscribeInspection();
       map.off("mousemove", handleMouseMove);
       map.off("mouseout", handleMouseOut);
       map.off("click", handleClick);
       map.off("style.load", handleStyleLoad);
+      map.off("sourcedata", handleSourceData);
       map.getCanvas().style.cursor = "";
     };
   }, [map]);
 
+  // Measure the current caption before paint; see AGENTS.md §vegetation-scalar-field.
+  useLayoutEffect(() => {
+    const element = tooltipRef.current;
+    if (!tooltip || !element) return;
+    const container = map.getContainer();
+    const width = element.offsetWidth || FALLBACK_WIDTH;
+    const height = element.offsetHeight || FALLBACK_HEIGHT;
+    const flipX = tooltip.x + TOOLTIP_OFFSET + width > container.clientWidth;
+    const flipY = tooltip.y + TOOLTIP_OFFSET + height > container.clientHeight;
+    const left = flipX ? tooltip.x - TOOLTIP_OFFSET - width : tooltip.x + TOOLTIP_OFFSET;
+    const top = flipY ? tooltip.y - TOOLTIP_OFFSET - height : tooltip.y + TOOLTIP_OFFSET;
+    element.style.left = `${Math.max(0, Math.min(left, container.clientWidth - width))}px`;
+    element.style.top = `${Math.max(0, Math.min(top, container.clientHeight - height))}px`;
+  }, [map, tooltip]);
+
   if (!tooltip) return null;
-
-  // Flip near viewport edges (using the map container as the positioning
-  // bound) so the tooltip never clips outside it.
-  const container = map.getContainer();
-  const containerWidth = container.clientWidth;
-  const containerHeight = container.clientHeight;
-  const tooltipWidth = tooltipRef.current?.offsetWidth ?? FALLBACK_WIDTH;
-  const tooltipHeight = tooltipRef.current?.offsetHeight ?? FALLBACK_HEIGHT;
-
-  const flipX = tooltip.x + TOOLTIP_OFFSET + tooltipWidth > containerWidth;
-  const flipY = tooltip.y + TOOLTIP_OFFSET + tooltipHeight > containerHeight;
-
-  const left = flipX ? tooltip.x - TOOLTIP_OFFSET - tooltipWidth : tooltip.x + TOOLTIP_OFFSET;
-  const top = flipY ? tooltip.y - TOOLTIP_OFFSET - tooltipHeight : tooltip.y + TOOLTIP_OFFSET;
 
   return (
     <div
       ref={tooltipRef}
       className="pointer-events-none absolute z-50 max-w-[240px] rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--background))]/95 px-3 py-2 text-xs text-[hsl(var(--foreground))] shadow-lg backdrop-blur-sm"
-      style={{ left, top }}
+      style={{ left: 0, top: 0, width: "max-content", maxWidth: "min(240px, 100%)" }}
     >
       {tooltip.pinned && (
         // pointer-events-auto against the container's pointer-events-none: dismissing a pinned

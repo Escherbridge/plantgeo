@@ -1,23 +1,19 @@
 import { and, eq, sql } from "drizzle-orm";
 import { haversineDistance } from "@/lib/map/measurement";
+import type { SoilProperties } from "@/lib/server/services/soilgrids";
 import { db } from "@/lib/server/db";
 import { features, layers } from "@/lib/server/db/schema";
-import {
-  getSoilProperties,
-  type SoilProperties,
-} from "@/lib/server/services/soilgrids";
 import { presentParquetBurnSeverity } from "@/lib/environmental/parquet-presentation";
 import type { MtbsSnapshotMetadata } from "@/lib/environmental/mtbs-snapshot";
 import {
   type StrategyScore,
 } from "@/lib/server/services/strategy-scoring";
-import {
-  resolveRequestedObservationDay,
-  serverCurrentDate,
-  type PublishedWeatherObservation,
-  type ResolvedSliderCapabilities,
-  type ResolvedSliderLayerCapability,
-} from "@/lib/server/services/environmental-read-model";
+import type {
+  PublishedWeatherObservation,
+  ResolvedSliderCapabilities,
+  ResolvedSliderLayerCapability,
+} from "@/lib/server/services/environmental-contracts";
+import { resolveRequestedObservationDay, serverCurrentDate } from "@/lib/server/services/parquet-day";
 import {
   getInterventionSuitability,
   type InterventionSuitability,
@@ -948,9 +944,9 @@ export async function assembleRegionalContext(
     // absent from this payload and present in the other, so reading the PostgreSQL one described a
     // withheld lane to the agent as published -- the one claim fail-closed exists to prevent.
     getParquetSliderCapabilities(),
-    // Live external reads, added 2026-08-14 to replace the two fields this assembler used to
-    // hardcode to null despite both having a real server-side read path.
-    getSoilProperties(lat, lon),
+    // SoilGrids' former cache path wrote to PostgreSQL. Until its source-direct Parquet lane is
+    // published, withhold it rather than reintroducing a database read through the agent.
+    Promise.resolve(null),
     getParquetBurnSeverity({ bbox, date: dateBySource.get("mtbsPerimeters"), mapZoom: CONTEXT_MAP_ZOOM }),
     readCommunityProposals(lat, lon),
   ]);

@@ -378,3 +378,106 @@ Open-Meteo model estimates from stations and daily captured-reading aggregate me
 from latest detail samples. The aggregate timestamp is the newest contributing reading,
 not the instant at which the mean was measured. The separate sensors layer remains
 station-based.
+
+## Measured scalar labels (2026-09-12)
+
+`measured-value-label.ts` builds one collision-aware symbol layer over the existing served
+source. It adds no features, source, aggregation, interpolated values, or inferred support.
+Only finite numeric `value` properties receive text; missing, string, NaN and infinite values
+receive none. Units come from each environmental definition. Moisture and wetness use three
+decimal places, VPD two, other scalars one; nonzero values below that displayed precision
+use a signed threshold caption rather than falsely reading as zero. Real zero stays zero.
+
+`aggregated: true` prefixes the value with `avg` only for the climate/soil cell callers whose
+readers declare means at aggregated rungs. This helper is not a general-purpose statistic
+classifier. Climate isobands carry representative band values and never call it. Text remains
+11–14 px across zoom, with halo and ordinary MapLibre collision placement; dense cells may
+have no placed label. Existing server row caps remain the only feature budget. Polygon label
+anchors are MapLibre placement positions within the served geometry, not new observations.
+
+## §scalar-field
+
+`scalar-field.ts` and `scalar-field-layer.ts` implement an opt-in nearest-cell value field.
+Vegetation is its only caller. This preserves the existing prohibition on inventing smooth
+variation between NDVI supports: the fragment shader maps each unchanged cell scalar through
+`NDVI_COLOR_RAMP`, with flat values over exactly the served rectangular polygon. It removes
+native fill antialias seams at low spacing without interpolation, density accumulation or
+invented gap coverage. Negative NDVI remains valid. Missing/nonrectangular supports, invalid
+values/dates, inconsistent units/days/grids/dimensions, shifted overlapping grids or conflicting
+duplicates keep the entire collection native. Identical duplicates are deduplicated only in
+the custom mesh. Cell-specific support IDs need not match. The mesh caps input at 20,000 cells.
+
+At 64 CSS pixels of projected support spacing the paint hands back to the original native
+fill and collision-placed numeric labels. Both renderers use the same value/ramp/opacity, so
+the handoff is direct: an alpha crossfade would double-darken shared pixels. The 64px threshold
+allows a two-decimal NDVI caption more room than the audit's provisional 32–48px thresholds.
+Tiny signed values use threshold captions rather than rounding nonzero values to zero. The
+original fill remains present for native feature picking even while its paint is transparent;
+hover/tap shows the exact measurement and observed day, grid and cell identity. Blank supports
+remain blank and cannot be picked as a custom invented value.
+
+The custom path requires WebGL2, flat Mercator without terrain or pitch, valid complete input,
+and at most 16 visible world copies. Uniform-grid spacing needs only the extreme-latitude cells
+in this flat projection; unsupported views remain native. Each visible world copy is drawn from
+viewport bounds. Shader compilation/link/allocation, uploads, render errors and context loss
+restore native paint. A transparent validation draw must succeed before native paint is hidden.
+Context restoration retains native paint until a fresh style rebuild; it does not reuse lost
+GPU objects. Style removal deletes buffers/program/VAO and listeners. GPU work outside render
+restores the prior program/buffer/VAO bindings to preserve MapLibre's state cache. The contract
+was checked against installed MapLibre 5.22 custom_style_layer.ts and draw_custom.ts.
+
+The SDK projection uniform uses `defaultProjectionData.mainMatrix`, as declared by
+`geo/projection/projection_data.ts` and supplied by `render/draw_custom.ts`. The installed
+`CustomRenderMethodInput` comment still says `projectionMatrix`; that comment is stale. The
+lifecycle test constructs the complete typed render input so a guessed matrix field cannot
+hide behind an assertion cast again.
+
+Label layout visibility changes wait for the native source's tiles to finish loading and retry
+on its `sourcedata` event. MapLibre 5.22 can otherwise interleave a layout-triggered GeoJSON tile
+reparse with `setData`, pairing new symbol indices with old empty raw tile data; unrestricted
+feature queries then throw in `FeatureIndex.lookupSymbolFeatures`. Waiting after the bad
+mutation does not repair that index. Gate the mutation itself with `isSourceLoaded` and avoid
+redundant `setData` when only opacity changes. Keep the native source mounted throughout.
+
+Source readiness retries also accept the SDK's final tile event without `sourceDataType` and
+its `idle` event; only `metadata` is excluded because it precedes replacement tile loading.
+On removal, unbind this layer's currently bound program/VAO/buffer before deletion. WebGL
+otherwise defers deletion of the current program, allowing the next style initialization to
+capture a doomed program as its previous binding and fail when restoring it. Bindings owned
+by other layers are left intact.
+
+A missing projection during style replacement is a temporary native-view condition, not a GPU
+failure. Both eligibility and render guards accept that transient state and retry on style/source
+readiness; real shader, upload, draw and context failures still latch native fallback. The
+reattached layer requests a frame for its transparent validation draw. Do not drain unrelated
+GL errors to make initialization appear successful.
+
+The source readiness guard alone is insufficient when a populated-view zoom event changes
+label layout just before React receives a new collection. The opt-in controller therefore
+serializes native GeoJSON `setData` with source-layer layout changes. A pending symbol/native
+visibility reparse holds only the latest replacement collection; map idle releases it.
+Conversely, pending data prevents label relayout. Native fill/outline source-mode flips use
+the same queued layout boundary. The GPU waits for its queued data to reach the loaded native source before painting,
+so native inspection and custom values refer to the same collection. Source identity is checked
+before draining the queue, and style removal discards it. The default-off component keeps its
+normal native `setData` path. Normal populated transitions retain layout-based label collision
+and picking semantics. Immediate invalidation additionally suppresses paint and inspection as
+described below; it does not bypass the serialized layout mutation.
+
+The controller also owns queued fill/outline visibility, so a source-mode switch cannot bypass
+serialization while earlier data is loading. Hiding measured NDVI immediately zeros its fill,
+outline, labels and custom paint; deferred layout cannot stack it with the satellite composite.
+A layout lock releases only at map `idle`, because a source can report loaded before a scheduled
+style reparse has started. Source completion retries data readiness but never unlocks pending
+layout. This covers both orderings: layout then data, and data then source-mode layout.
+
+An empty or null replacement invalidates the previously measured collection immediately,
+even while label layout owns the serialization lock. Its fill, outline and text paint must
+become transparent without a transition, and both an existing tooltip and subsequent
+hover/tap or map-click inspection must exclude the invalidated source. MapLibre still returns
+transparent geometry from native feature queries, so paint opacity alone is insufficient.
+Keep this suppression latched through a later populated replacement until the native source
+has accepted and loaded that replacement. Nonempty unsupported meshes remain eligible for
+native fallback. Idle still releases the queued data update; source completion alone cannot
+release a pending layout lock. The repair is presentation-only and does not change the reader's
+acceptance or refusal contract.

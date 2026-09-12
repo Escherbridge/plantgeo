@@ -1,6 +1,7 @@
 import { Profiler, type ReactNode } from "react";
 import { act, render, cleanup } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { setScalarFieldInspectionSuppressed } from "@/lib/map/scalar-field-inspection";
 
 /**
  * MapView owns the MapLibre instance and mounts every layer component under it, so one of its
@@ -32,6 +33,8 @@ const stub = () => null;
  */
 const fakeMap = vi.hoisted(() => ({
   fire: null as null | ((type: string, event: unknown) => void),
+  instance: null as object | null,
+  features: [] as { layer: { id: string } }[],
 }));
 
 vi.mock("maplibre-gl", () => {
@@ -41,6 +44,7 @@ vi.mock("maplibre-gl", () => {
     private readonly container = document.createElement("div");
 
     constructor() {
+      fakeMap.instance = this;
       fakeMap.fire = (type: string, event: unknown) => {
         for (const handler of this.handlers.get(type) ?? []) handler(event);
       };
@@ -89,7 +93,7 @@ vi.mock("maplibre-gl", () => {
       return false;
     }
     queryRenderedFeatures() {
-      return [];
+      return fakeMap.features;
     }
     setStyle() {}
     setSky() {}
@@ -166,6 +170,7 @@ function mountSettled() {
 
 beforeEach(() => {
   commits = 0;
+  fakeMap.features = [];
   useMapStore.setState({
     viewport: { ...DEFAULT_VIEWPORT },
     activeLayers: [],
@@ -192,6 +197,18 @@ afterEach(() => {
 });
 
 describe("MapView store subscriptions", () => {
+  it("treats suppressed scalar hits as empty ground while other rendered features still own the click", () => {
+    mountSettled();
+    setScalarFieldInspectionSuppressed(fakeMap.instance!, ["vegetation-ndvi-cells-fill", "vegetation-ndvi-cells-outline", "vegetation-ndvi-cells-values"], true);
+    fakeMap.features = [{ layer: { id: "vegetation-ndvi-cells-fill" } }, { layer: { id: "sensors" } }];
+    const click = () => fakeMap.fire!("click", { point: { x: 10, y: 10 }, lngLat: { lng: -120, lat: 46 } });
+    act(click);
+    expect(commits).toBe(0);
+    fakeMap.features = ["vegetation-ndvi-cells-fill", "vegetation-ndvi-cells-outline", "vegetation-ndvi-cells-values"].map(id => ({ layer: { id } }));
+    act(click);
+    expect(commits).toBeGreaterThan(0);
+  });
+
   it("does not re-render when a map-store field it never reads changes", () => {
     mountSettled();
 

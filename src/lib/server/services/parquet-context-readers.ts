@@ -1,6 +1,6 @@
 import type { WaterGauge } from "@/lib/environmental/water";
 import { haversineDistance } from "@/lib/map/measurement";
-import type { PublishedDroughtCollection, PublishedWeatherObservation } from "./environmental-read-model";
+import type { PublishedDroughtCollection, PublishedWeatherObservation } from "./environmental-contracts";
 import { getParquetDrought, getParquetWaterGauges, getParquetWeatherObservations, rejectAborted, type ParquetReaderResult } from "./parquet-trpc-readers";
 
 /** Preserve unwritten detail-rung evidence across the context assembler's settled reads. */

@@ -31,7 +31,7 @@ from agri_data_service.pipeline.direct.soil.source import (
     soil_day_from_cache,
 )
 from agri_data_service.pipeline.direct.soil.support import ERA5_LAND_VALUE_CELL_COUNT
-from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
+from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.parquet.gap_fill import fill_one_lane_day, unlocked_lane_day
 from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRY
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore

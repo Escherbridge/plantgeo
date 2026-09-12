@@ -1,0 +1,1082 @@
+[
+  {
+    "kind": "climate",
+    "zoom": 3,
+    "tier": 0,
+    "empty": false,
+    "opacity": 1,
+    "form": "field",
+    "reload": false,
+    "fixture": true,
+    "sourceFeatureCount": 3,
+    "sourceBytes": 717,
+    "labelIds": [
+      "climate-field-air-temperature-value-labels"
+    ],
+    "renderedLabelCount": 2,
+    "brightPixels": 0,
+    "errors": [],
+    "renderAndSettleMs": 968,
+    "size": 5,
+    "lattice": {
+      "cellSizeDegrees": 5,
+      "originOffsetDegrees": 0,
+      "snapCorrectionDegrees": 2.5,
+      "origin": "cell_origin"
+    },
+    "viewport": {
+      "width": 1280,
+      "height": 720
+    },
+    "pageErrors": [],
+    "screenshot": "1280-climate-z3.png",
+    "readPixelsReliable": false,
+    "screenshotBrightPixels": 373,
+    "screenshotBackgroundPixels": 830074,
+    "screenshotSampledPixels": 844800,
+    "seamProbe": {
+      "row": 320,
+      "start": 370,
+      "end": 910,
+      "backgroundPixels": 368
+    }
+  },
+  {
+    "kind": "climate",
+    "zoom": 7,
+    "tier": 5,
+    "empty": false,
+    "opacity": 1,
+    "form": "field",
+    "reload": false,
+    "fixture": true,
+    "sourceFeatureCount": 3,
+    "sourceBytes": 777,
+    "labelIds": [
+      "climate-field-air-temperature-value-labels"
+    ],
+    "renderedLabelCount": 3,
+    "brightPixels": 0,
+    "errors": [],
+    "renderAndSettleMs": 976,
+    "size": 1,
+    "lattice": {
+      "cellSizeDegrees": 1,
+      "originOffsetDegrees": -0.5,
+      "snapCorrectionDegrees": 0.1,
+      "origin": "cell_origin"
+    },
+    "viewport": {
+      "width": 1280,
+      "height": 720
+    },
+    "pageErrors": [],
+    "screenshot": "1280-climate-z7.png",
+    "readPixelsReliable": false,
+    "screenshotBrightPixels": 629,
+    "screenshotBackgroundPixels": 702872,
+    "screenshotSampledPixels": 844800,
+    "seamProbe": {
+      "row": 320,
+      "start": 370,
+      "end": 910,
+      "backgroundPixels": 0
+    }
+  },
+  {
+    "kind": "climate",
+    "zoom": 10,
+    "tier": 9,
+    "empty": false,
+    "opacity": 1,
+    "form": "field",
+    "reload": false,
+    "fixture": true,
+    "sourceFeatureCount": 3,
+    "sourceBytes": 777,
+    "labelIds": [
+      "climate-field-air-temperature-value-labels"
+    ],
+    "renderedLabelCount": 3,
+    "brightPixels": 0,
+    "errors": [],
+    "renderAndSettleMs": 956,
+    "size": 1,
+    "lattice": {
+      "cellSizeDegrees": 1,
+      "originOffsetDegrees": -0.5,
+      "snapCorrectionDegrees": 0.005,
+      "origin": "cell_origin"
+    },
+    "viewport": {
+      "width": 1280,
+      "height": 720
+    },
+    "pageErrors": [],
+    "screenshot": "1280-climate-z10.png",
+    "readPixelsReliable": false,
+    "screenshotBrightPixels": 896,
+    "screenshotBackgroundPixels": 0,
+    "screenshotSampledPixels": 844800,
+    "seamProbe": {
+      "row": 320,
+      "start": 370,
+      "end": 910,
+      "backgroundPixels": 0
+    }
+  },
+  {
+    "kind": "climate",
+    "zoom": 13,
+    "tier": 13,
+    "empty": false,
+    "opacity": 1,
+    "form": "field",
+    "reload": false,
+    "fixture": true,
+    "sourceFeatureCount": 3,
+    "sourceBytes": 780,
+    "labelIds": [
+      "climate-field-air-temperature-value-labels"
+    ],
+    "renderedLabelCount": 6,
+    "brightPixels": 0,
+    "errors": [],
+    "renderAndSettleMs": 958,
+    "size": 1,
+    "lattice": {
+      "cellSizeDegrees": 1,
+      "originOffsetDegrees": -0.5,
+      "snapCorrectionDegrees": 0,
+      "origin": "cell_center"
+    },
+    "viewport": {
+      "width": 1280,
+      "height": 720
+    },
+    "pageErrors": [],
+    "screenshot": "1280-climate-z13.png",
+    "readPixelsReliable": false,
+    "screenshotBrightPixels": 1314,
+    "screenshotBackgroundPixels": 0,
+    "screenshotSampledPixels": 844800,
+    "seamProbe": {
+      "row": 320,
+      "start": 370,
+      "end": 910,
+      "backgroundPixels": 0
+    }
+  },
+  {
+    "kind": "soil",
+    "zoom": 3,
+    "tier": 0,
+    "empty": false,
+    "opacity": 1,
+    "form": "field",
+    "reload": false,
+    "fixture": true,
+    "sourceFeatureCount": 3,
+    "sourceBytes": 725,
+    "labelIds": [
+      "soil-moisture-field-value-labels"
+    ],
+    "renderedLabelCount": 2,
+    "brightPixels": 0,
+    "errors": [],
+    "renderAndSettleMs": 958,
+    "size": 5,
+    "lattice": {
+      "cellSizeDegrees": 5,
+      "originOffsetDegrees": 0,
+      "snapCorrectionDegrees": 2.5,
+      "origin": "cell_origin"
+    },
+    "viewport": {
+      "width": 1280,
+      "height": 720
+    },
+    "pageErrors": [],
+    "screenshot": "1280-soil-z3.png",
+    "readPixelsReliable": false,
+    "screenshotBrightPixels": 495,
+    "screenshotBackgroundPixels": 829779,
+    "screenshotSampledPixels": 844800,
+    "seamProbe": {
+      "row": 320,
+      "start": 370,
+      "end": 910,
+      "backgroundPixels": 343
+    }
+  },
+  {
+    "kind": "soil",
+    "zoom": 7,
+    "tier": 5,
+    "empty": false,
+    "opacity": 1,
+    "form": "field",
+    "reload": false,
+    "fixture": true,
+    "sourceFeatureCount": 3,
+    "sourceBytes": 771,
+    "labelIds": [
+      "soil-moisture-field-value-labels"
+    ],
+    "renderedLabelCount": 1,
+    "brightPixels": 0,
+    "errors": [],
+    "renderAndSettleMs": 959,
+    "size": 0.25,
+    "lattice": {
+      "cellSizeDegrees": 0.25,
+      "originOffsetDegrees": 0,
+      "snapCorrectionDegrees": 0.1,
+      "origin": "cell_origin"
+    },
+    "viewport": {
+      "width": 1280,
+      "height": 720
+    },
+    "pageErrors": [],
+    "screenshot": "1280-soil-z7.png",
+    "readPixelsReliable": false,
+    "screenshotBrightPixels": 285,
+    "screenshotBackgroundPixels": 835484,
+    "screenshotSampledPixels": 844800,
+    "seamProbe": {
+      "row": 320,
+      "start": 370,
+      "end": 910,
+      "backgroundPixels": 541
+    }
+  },
+  {
+    "kind": "soil",
+    "zoom": 10,
+    "tier": 9,
+    "empty": false,
+    "opacity": 1,
+    "form": "field",
+    "reload": false,
+    "fixture": true,
+    "sourceFeatureCount": 3,
+    "sourceBytes": 771,
+    "labelIds": [
+      "soil-moisture-field-value-labels"
+    ],
+    "renderedLabelCount": 6,
+    "brightPixels": 0,
+    "errors": [],
+    "renderAndSettleMs": 968,
+    "size": 0.25,
+    "lattice": {
+      "cellSizeDegrees": 0.25,
+      "originOffsetDegrees": 0,
+      "snapCorrectionDegrees": 0.005,
+      "origin": "cell_origin"
+    },
+    "viewport": {
+      "width": 1280,
+      "height": 720
+    },
+    "pageErrors": [],
+    "screenshot": "1280-soil-z10.png",
+    "readPixelsReliable": false,
+    "screenshotBrightPixels": 1910,
+    "screenshotBackgroundPixels": 279204,
+    "screenshotSampledPixels": 844800,
+    "seamProbe": {
+      "row": 320,
+      "start": 370,
+      "end": 910,
+      "backgroundPixels": 0
+    }
+  },
+  {
+    "kind": "soil",
+    "zoom": 13,
+    "tier": 13,
+    "empty": false,
+    "opacity": 1,
+    "form": "field",
+    "reload": false,
+    "fixture": true,
+    "sourceFeatureCount": 3,
+    "sourceBytes": 774,
+    "labelIds": [
+      "soil-moisture-field-value-labels"
+    ],
+    "renderedLabelCount": 6,
+    "brightPixels": 0,
+    "errors": [],
+    "renderAndSettleMs": 959,
+    "size": 0.25,
+    "lattice": {
+      "cellSizeDegrees": 0.25,
+      "originOffsetDegrees": 0,
+      "snapCorrectionDegrees": 0,
+      "origin": "cell_center"
+    },
+    "viewport": {
+      "width": 1280,
+      "height": 720
+    },
+    "pageErrors": [],
+    "screenshot": "1280-soil-z13.png",
+    "readPixelsReliable": false,
+    "screenshotBrightPixels": 1294,
+    "screenshotBackgroundPixels": 0,
+    "screenshotSampledPixels": 844800,
+    "seamProbe": {
+      "row": 320,
+      "start": 370,
+      "end": 910,
+      "backgroundPixels": 0
+    }
+  },
+  {
+    "kind": "climate",
+    "zoom": 7,
+    "tier": 5,
+    "empty": true,
+    "opacity": 1,
+    "form": "field",
+    "reload": false,
+    "fixture": true,
+    "sourceFeatureCount": 0,
+    "sourceBytes": 42,
+    "labelIds": [
+      "climate-field-air-temperature-value-labels"
+    ],
+    "renderedLabelCount": 0,
+    "brightPixels": 0,
+    "errors": [],
+    "renderAndSettleMs": 970,
+    "size": 1,
+    "lattice": {
+      "cellSizeDegrees": 1,
+      "originOffsetDegrees": -0.5,
+      "snapCorrectionDegrees": 0.1,
+      "origin": "cell_origin"
+    },
+    "viewport": {
+      "width": 1280,
+      "height": 720
+    },
+    "pageErrors": [],
+    "screenshot": "1280-climate-z7-empty.png",
+    "readPixelsReliable": false,
+    "screenshotBrightPixels": 0,
+    "screenshotBackgroundPixels": 844800,
+    "screenshotSampledPixels": 844800,
+    "seamProbe": {
+      "row": 320,
+      "start": 370,
+      "end": 910,
+      "backgroundPixels": 541
+    }
+  },
+  {
+    "kind": "soil",
+    "zoom": 10,
+    "tier": 9,
+    "empty": false,
+    "opacity": 0,
+    "form": "field",
+    "reload": false,
+    "fixture": true,
+    "sourceFeatureCount": 3,
+    "sourceBytes": 771,
+    "labelIds": [
+      "soil-moisture-field-value-labels"
+    ],
+    "renderedLabelCount": 6,
+    "brightPixels": 0,
+    "errors": [],
+    "renderAndSettleMs": 961,
+    "size": 0.25,
+    "lattice": {
+      "cellSizeDegrees": 0.25,
+      "originOffsetDegrees": 0,
+      "snapCorrectionDegrees": 0.005,
+      "origin": "cell_origin"
+    },
+    "viewport": {
+      "width": 1280,
+      "height": 720
+    },
+    "pageErrors": [],
+    "screenshot": "1280-soil-z10-opacity-zero.png",
+    "readPixelsReliable": false,
+    "screenshotBrightPixels": 0,
+    "screenshotBackgroundPixels": 844800,
+    "screenshotSampledPixels": 844800,
+    "seamProbe": {
+      "row": 320,
+      "start": 370,
+      "end": 910,
+      "backgroundPixels": 541
+    }
+  },
+  {
+    "kind": "climate",
+    "zoom": 7,
+    "tier": 5,
+    "empty": false,
+    "opacity": 1,
+    "form": "field",
+    "reload": true,
+    "fixture": true,
+    "sourceFeatureCount": 3,
+    "sourceBytes": 777,
+    "labelIds": [
+      "climate-field-air-temperature-value-labels"
+    ],
+    "renderedLabelCount": 3,
+    "brightPixels": 0,
+    "errors": [],
+    "renderAndSettleMs": 1172,
+    "size": 1,
+    "lattice": {
+      "cellSizeDegrees": 1,
+      "originOffsetDegrees": -0.5,
+      "snapCorrectionDegrees": 0.1,
+      "origin": "cell_origin"
+    },
+    "viewport": {
+      "width": 1280,
+      "height": 720
+    },
+    "pageErrors": [],
+    "screenshot": "1280-climate-z7-reload.png",
+    "readPixelsReliable": false,
+    "screenshotBrightPixels": 629,
+    "screenshotBackgroundPixels": 702872,
+    "screenshotSampledPixels": 844800,
+    "seamProbe": {
+      "row": 320,
+      "start": 370,
+      "end": 910,
+      "backgroundPixels": 0
+    }
+  },
+  {
+    "kind": "climate",
+    "zoom": 7,
+    "tier": 5,
+    "empty": false,
+    "opacity": 1,
+    "form": "isoline",
+    "reload": false,
+    "fixture": true,
+    "sourceFeatureCount": 3,
+    "sourceBytes": 777,
+    "labelIds": [],
+    "renderedLabelCount": 0,
+    "brightPixels": 0,
+    "errors": [],
+    "renderAndSettleMs": 964,
+    "size": 1,
+    "lattice": {
+      "cellSizeDegrees": 1,
+      "originOffsetDegrees": -0.5,
+      "snapCorrectionDegrees": 0.1,
+      "origin": "cell_origin"
+    },
+    "viewport": {
+      "width": 1280,
+      "height": 720
+    },
+    "pageErrors": [],
+    "screenshot": "1280-climate-z7-isoline.png",
+    "readPixelsReliable": false,
+    "screenshotBrightPixels": 801,
+    "screenshotBackgroundPixels": 702320,
+    "screenshotSampledPixels": 844800,
+    "seamProbe": {
+      "row": 320,
+      "start": 370,
+      "end": 910,
+      "backgroundPixels": 0
+    }
+  },
+  {
+    "kind": "weather",
+    "zoom": 10,
+    "tier": 9,
+    "empty": false,
+    "opacity": 1,
+    "form": "field",
+    "reload": false,
+    "fixture": true,
+    "sourceFeatureCount": 1,
+    "sourceBytes": null,
+    "labelIds": [
+      "weather-temperature-labels",
+      "weather-wind"
+    ],
+    "renderedLabelCount": 2,
+    "brightPixels": 0,
+    "errors": [],
+    "renderAndSettleMs": 954,
+    "size": null,
+    "lattice": null,
+    "viewport": {
+      "width": 1280,
+      "height": 720
+    },
+    "pageErrors": [],
+    "screenshot": "1280-weather-z10.png",
+    "readPixelsReliable": false,
+    "screenshotBrightPixels": 1,
+    "screenshotBackgroundPixels": 843846,
+    "screenshotSampledPixels": 844800,
+    "seamProbe": {
+      "row": 320,
+      "start": 370,
+      "end": 910,
+      "backgroundPixels": 541
+    }
+  },
+  {
+    "kind": "climate",
+    "zoom": 3,
+    "tier": 0,
+    "empty": false,
+    "opacity": 1,
+    "form": "field",
+    "reload": false,
+    "fixture": true,
+    "sourceFeatureCount": 3,
+    "sourceBytes": 717,
+    "labelIds": [
+      "climate-field-air-temperature-value-labels"
+    ],
+    "renderedLabelCount": 2,
+    "brightPixels": 0,
+    "errors": [],
+    "renderAndSettleMs": 974,
+    "size": 5,
+    "lattice": {
+      "cellSizeDegrees": 5,
+      "originOffsetDegrees": 0,
+      "snapCorrectionDegrees": 2.5,
+      "origin": "cell_origin"
+    },
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "pageErrors": [],
+    "screenshot": "390-climate-z3.png",
+    "readPixelsReliable": false,
+    "screenshotBrightPixels": 373,
+    "screenshotBackgroundPixels": 291034,
+    "screenshotSampledPixels": 305760,
+    "seamProbe": {
+      "row": 405,
+      "start": 127,
+      "end": 262,
+      "backgroundPixels": 11
+    }
+  },
+  {
+    "kind": "climate",
+    "zoom": 7,
+    "tier": 5,
+    "empty": false,
+    "opacity": 1,
+    "form": "field",
+    "reload": false,
+    "fixture": true,
+    "sourceFeatureCount": 3,
+    "sourceBytes": 777,
+    "labelIds": [
+      "climate-field-air-temperature-value-labels"
+    ],
+    "renderedLabelCount": 3,
+    "brightPixels": 0,
+    "errors": [],
+    "renderAndSettleMs": 947,
+    "size": 1,
+    "lattice": {
+      "cellSizeDegrees": 1,
+      "originOffsetDegrees": -0.5,
+      "snapCorrectionDegrees": 0.1,
+      "origin": "cell_origin"
+    },
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "pageErrors": [],
+    "screenshot": "390-climate-z7.png",
+    "readPixelsReliable": false,
+    "screenshotBrightPixels": 533,
+    "screenshotBackgroundPixels": 204750,
+    "screenshotSampledPixels": 305760,
+    "seamProbe": {
+      "row": 405,
+      "start": 127,
+      "end": 262,
+      "backgroundPixels": 0
+    }
+  },
+  {
+    "kind": "climate",
+    "zoom": 10,
+    "tier": 9,
+    "empty": false,
+    "opacity": 1,
+    "form": "field",
+    "reload": false,
+    "fixture": true,
+    "sourceFeatureCount": 3,
+    "sourceBytes": 777,
+    "labelIds": [
+      "climate-field-air-temperature-value-labels"
+    ],
+    "renderedLabelCount": 1,
+    "brightPixels": 0,
+    "errors": [],
+    "renderAndSettleMs": 956,
+    "size": 1,
+    "lattice": {
+      "cellSizeDegrees": 1,
+      "originOffsetDegrees": -0.5,
+      "snapCorrectionDegrees": 0.005,
+      "origin": "cell_origin"
+    },
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "pageErrors": [],
+    "screenshot": "390-climate-z10.png",
+    "readPixelsReliable": false,
+    "screenshotBrightPixels": 290,
+    "screenshotBackgroundPixels": 0,
+    "screenshotSampledPixels": 305760,
+    "seamProbe": {
+      "row": 405,
+      "start": 127,
+      "end": 262,
+      "backgroundPixels": 0
+    }
+  },
+  {
+    "kind": "climate",
+    "zoom": 13,
+    "tier": 13,
+    "empty": false,
+    "opacity": 1,
+    "form": "field",
+    "reload": false,
+    "fixture": true,
+    "sourceFeatureCount": 3,
+    "sourceBytes": 780,
+    "labelIds": [
+      "climate-field-air-temperature-value-labels"
+    ],
+    "renderedLabelCount": 2,
+    "brightPixels": 0,
+    "errors": [],
+    "renderAndSettleMs": 948,
+    "size": 1,
+    "lattice": {
+      "cellSizeDegrees": 1,
+      "originOffsetDegrees": -0.5,
+      "snapCorrectionDegrees": 0,
+      "origin": "cell_center"
+    },
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "pageErrors": [],
+    "screenshot": "390-climate-z13.png",
+    "readPixelsReliable": false,
+    "screenshotBrightPixels": 438,
+    "screenshotBackgroundPixels": 0,
+    "screenshotSampledPixels": 305760,
+    "seamProbe": {
+      "row": 405,
+      "start": 127,
+      "end": 262,
+      "backgroundPixels": 0
+    }
+  },
+  {
+    "kind": "soil",
+    "zoom": 3,
+    "tier": 0,
+    "empty": false,
+    "opacity": 1,
+    "form": "field",
+    "reload": false,
+    "fixture": true,
+    "sourceFeatureCount": 3,
+    "sourceBytes": 725,
+    "labelIds": [
+      "soil-moisture-field-value-labels"
+    ],
+    "renderedLabelCount": 2,
+    "brightPixels": 0,
+    "errors": [],
+    "renderAndSettleMs": 955,
+    "size": 5,
+    "lattice": {
+      "cellSizeDegrees": 5,
+      "originOffsetDegrees": 0,
+      "snapCorrectionDegrees": 2.5,
+      "origin": "cell_origin"
+    },
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "pageErrors": [],
+    "screenshot": "390-soil-z3.png",
+    "readPixelsReliable": false,
+    "screenshotBrightPixels": 495,
+    "screenshotBackgroundPixels": 290739,
+    "screenshotSampledPixels": 305760,
+    "seamProbe": {
+      "row": 405,
+      "start": 127,
+      "end": 262,
+      "backgroundPixels": 9
+    }
+  },
+  {
+    "kind": "soil",
+    "zoom": 7,
+    "tier": 5,
+    "empty": false,
+    "opacity": 1,
+    "form": "field",
+    "reload": false,
+    "fixture": true,
+    "sourceFeatureCount": 3,
+    "sourceBytes": 771,
+    "labelIds": [
+      "soil-moisture-field-value-labels"
+    ],
+    "renderedLabelCount": 1,
+    "brightPixels": 0,
+    "errors": [],
+    "renderAndSettleMs": 961,
+    "size": 0.25,
+    "lattice": {
+      "cellSizeDegrees": 0.25,
+      "originOffsetDegrees": 0,
+      "snapCorrectionDegrees": 0.1,
+      "origin": "cell_origin"
+    },
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "pageErrors": [],
+    "screenshot": "390-soil-z7.png",
+    "readPixelsReliable": false,
+    "screenshotBrightPixels": 285,
+    "screenshotBackgroundPixels": 296444,
+    "screenshotSampledPixels": 305760,
+    "seamProbe": {
+      "row": 405,
+      "start": 127,
+      "end": 262,
+      "backgroundPixels": 0
+    }
+  },
+  {
+    "kind": "soil",
+    "zoom": 10,
+    "tier": 9,
+    "empty": false,
+    "opacity": 1,
+    "form": "field",
+    "reload": false,
+    "fixture": true,
+    "sourceFeatureCount": 3,
+    "sourceBytes": 771,
+    "labelIds": [
+      "soil-moisture-field-value-labels"
+    ],
+    "renderedLabelCount": 2,
+    "brightPixels": 0,
+    "errors": [],
+    "renderAndSettleMs": 951,
+    "size": 0.25,
+    "lattice": {
+      "cellSizeDegrees": 0.25,
+      "originOffsetDegrees": 0,
+      "snapCorrectionDegrees": 0.005,
+      "origin": "cell_origin"
+    },
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "pageErrors": [],
+    "screenshot": "390-soil-z10.png",
+    "readPixelsReliable": false,
+    "screenshotBrightPixels": 770,
+    "screenshotBackgroundPixels": 104130,
+    "screenshotSampledPixels": 305760,
+    "seamProbe": {
+      "row": 405,
+      "start": 127,
+      "end": 262,
+      "backgroundPixels": 0
+    }
+  },
+  {
+    "kind": "soil",
+    "zoom": 13,
+    "tier": 13,
+    "empty": false,
+    "opacity": 1,
+    "form": "field",
+    "reload": false,
+    "fixture": true,
+    "sourceFeatureCount": 3,
+    "sourceBytes": 774,
+    "labelIds": [
+      "soil-moisture-field-value-labels"
+    ],
+    "renderedLabelCount": 2,
+    "brightPixels": 0,
+    "errors": [],
+    "renderAndSettleMs": 966,
+    "size": 0.25,
+    "lattice": {
+      "cellSizeDegrees": 0.25,
+      "originOffsetDegrees": 0,
+      "snapCorrectionDegrees": 0,
+      "origin": "cell_center"
+    },
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "pageErrors": [],
+    "screenshot": "390-soil-z13.png",
+    "readPixelsReliable": false,
+    "screenshotBrightPixels": 574,
+    "screenshotBackgroundPixels": 0,
+    "screenshotSampledPixels": 305760,
+    "seamProbe": {
+      "row": 405,
+      "start": 127,
+      "end": 262,
+      "backgroundPixels": 0
+    }
+  },
+  {
+    "kind": "climate",
+    "zoom": 7,
+    "tier": 5,
+    "empty": true,
+    "opacity": 1,
+    "form": "field",
+    "reload": false,
+    "fixture": true,
+    "sourceFeatureCount": 0,
+    "sourceBytes": 42,
+    "labelIds": [
+      "climate-field-air-temperature-value-labels"
+    ],
+    "renderedLabelCount": 0,
+    "brightPixels": 0,
+    "errors": [],
+    "renderAndSettleMs": 951,
+    "size": 1,
+    "lattice": {
+      "cellSizeDegrees": 1,
+      "originOffsetDegrees": -0.5,
+      "snapCorrectionDegrees": 0.1,
+      "origin": "cell_origin"
+    },
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "pageErrors": [],
+    "screenshot": "390-climate-z7-empty.png",
+    "readPixelsReliable": false,
+    "screenshotBrightPixels": 0,
+    "screenshotBackgroundPixels": 305760,
+    "screenshotSampledPixels": 305760,
+    "seamProbe": {
+      "row": 405,
+      "start": 127,
+      "end": 262,
+      "backgroundPixels": 136
+    }
+  },
+  {
+    "kind": "soil",
+    "zoom": 10,
+    "tier": 9,
+    "empty": false,
+    "opacity": 0,
+    "form": "field",
+    "reload": false,
+    "fixture": true,
+    "sourceFeatureCount": 3,
+    "sourceBytes": 771,
+    "labelIds": [
+      "soil-moisture-field-value-labels"
+    ],
+    "renderedLabelCount": 2,
+    "brightPixels": 0,
+    "errors": [],
+    "renderAndSettleMs": 950,
+    "size": 0.25,
+    "lattice": {
+      "cellSizeDegrees": 0.25,
+      "originOffsetDegrees": 0,
+      "snapCorrectionDegrees": 0.005,
+      "origin": "cell_origin"
+    },
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "pageErrors": [],
+    "screenshot": "390-soil-z10-opacity-zero.png",
+    "readPixelsReliable": false,
+    "screenshotBrightPixels": 0,
+    "screenshotBackgroundPixels": 305760,
+    "screenshotSampledPixels": 305760,
+    "seamProbe": {
+      "row": 405,
+      "start": 127,
+      "end": 262,
+      "backgroundPixels": 136
+    }
+  },
+  {
+    "kind": "climate",
+    "zoom": 7,
+    "tier": 5,
+    "empty": false,
+    "opacity": 1,
+    "form": "field",
+    "reload": true,
+    "fixture": true,
+    "sourceFeatureCount": 3,
+    "sourceBytes": 777,
+    "labelIds": [
+      "climate-field-air-temperature-value-labels"
+    ],
+    "renderedLabelCount": 3,
+    "brightPixels": 0,
+    "errors": [],
+    "renderAndSettleMs": 1147,
+    "size": 1,
+    "lattice": {
+      "cellSizeDegrees": 1,
+      "originOffsetDegrees": -0.5,
+      "snapCorrectionDegrees": 0.1,
+      "origin": "cell_origin"
+    },
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "pageErrors": [],
+    "screenshot": "390-climate-z7-reload.png",
+    "readPixelsReliable": false,
+    "screenshotBrightPixels": 533,
+    "screenshotBackgroundPixels": 204750,
+    "screenshotSampledPixels": 305760,
+    "seamProbe": {
+      "row": 405,
+      "start": 127,
+      "end": 262,
+      "backgroundPixels": 0
+    }
+  },
+  {
+    "kind": "climate",
+    "zoom": 7,
+    "tier": 5,
+    "empty": false,
+    "opacity": 1,
+    "form": "isoline",
+    "reload": false,
+    "fixture": true,
+    "sourceFeatureCount": 3,
+    "sourceBytes": 777,
+    "labelIds": [],
+    "renderedLabelCount": 0,
+    "brightPixels": 0,
+    "errors": [],
+    "renderAndSettleMs": 954,
+    "size": 1,
+    "lattice": {
+      "cellSizeDegrees": 1,
+      "originOffsetDegrees": -0.5,
+      "snapCorrectionDegrees": 0.1,
+      "origin": "cell_origin"
+    },
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "pageErrors": [],
+    "screenshot": "390-climate-z7-isoline.png",
+    "readPixelsReliable": false,
+    "screenshotBrightPixels": 801,
+    "screenshotBackgroundPixels": 204360,
+    "screenshotSampledPixels": 305760,
+    "seamProbe": {
+      "row": 405,
+      "start": 127,
+      "end": 262,
+      "backgroundPixels": 0
+    }
+  },
+  {
+    "kind": "weather",
+    "zoom": 10,
+    "tier": 9,
+    "empty": false,
+    "opacity": 1,
+    "form": "field",
+    "reload": false,
+    "fixture": true,
+    "sourceFeatureCount": 1,
+    "sourceBytes": null,
+    "labelIds": [
+      "weather-temperature-labels",
+      "weather-wind"
+    ],
+    "renderedLabelCount": 2,
+    "brightPixels": 0,
+    "errors": [],
+    "renderAndSettleMs": 972,
+    "size": null,
+    "lattice": null,
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "pageErrors": [],
+    "screenshot": "390-weather-z10.png",
+    "readPixelsReliable": false,
+    "screenshotBrightPixels": 1,
+    "screenshotBackgroundPixels": 304806,
+    "screenshotSampledPixels": 305760,
+    "seamProbe": {
+      "row": 405,
+      "start": 127,
+      "end": 262,
+      "backgroundPixels": 114
+    }
+  }
+]

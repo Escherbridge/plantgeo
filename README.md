@@ -136,7 +136,5 @@ first:
   warehouse bootstrap, ingestion verbs, and what cannot be reproduced.
 - [Architecture](./docs/architecture.md) — runtime boundaries and data flows.
 - [Environment variables](./docs/env-vars.md) — server/client separation.
-- [Historical ingestion runbook](./docs/historical-backfill-runbook.md) — the
-  four-year backfill in full detail.
 - [Data ingestion and serving contract](./docs/data-ingestion-and-serving-contract.md)
   — warehouse-first custody and browser boundaries.

@@ -122,7 +122,6 @@ describe('layer registry derivations', () => {
     expect(getLayersForPanel('water')).toEqual([
       'water',
       'drought',
-      'weather',
       'sensors',
       'watersheds',
     ])
@@ -138,9 +137,10 @@ describe('layer registry derivations', () => {
     // 2026-08-10, on the grounds that only one can be painted over a cell at a time -- which
     // is true of a FILLED field and is now handled by `renderForms`, not by hiding eight
     // signals behind a picker with no axis of their own.
-    expect(getLayersForPanel('climate')).toEqual(
-      CLIMATE_FIELD_SIGNAL_IDS.map((signal) => CLIMATE_FIELD_SIGNALS[signal].toggleId)
-    )
+    expect(getLayersForPanel('climate')).toEqual([
+      'weather',
+      ...CLIMATE_FIELD_SIGNAL_IDS.map((signal) => CLIMATE_FIELD_SIGNALS[signal].toggleId),
+    ])
     expect(getLayersForPanel('community')).toEqual([
       'demand-heatmap',
       'interventions',
@@ -161,9 +161,9 @@ describe('layer registry derivations', () => {
     expect(panelIdsOwningLayers()).toEqual([
       'fire',
       'water',
+      'climate',
       'vegetation',
       'soil',
-      'climate',
       'community',
     ])
   })

@@ -133,14 +133,14 @@ def test_every_declared_digest_input_is_collected(tmp_path: Path) -> None:
     [
         ("src/agri_data_service/app.py", True),
         ("tests/conftest.py", True),
-        ("alembic/versions/20260827_0027_vegetation_publication_queue.py", True),
-        ("db/agri/tables/agri.signal_observation.sql", True),
+        ("alembic/versions/20260912_0000_greenfield.py", True),
+        ("db/agri_baseline.sql", True),
         ("mypy.ini", True),
         ("ruff.toml", True),
         ("README.md", False),
         ("QUALITY_RECEIPT.json", False),
         ("src/__pycache__/app.cpython-312.pyc", False),
-        ("db/tools/__pycache__/regenerate.cpython-312.pyc", False),
+        ("db/__pycache__/schema.cpython-312.pyc", False),
         ("", False),
     ],
 )

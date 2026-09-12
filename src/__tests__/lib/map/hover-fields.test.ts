@@ -59,8 +59,7 @@ describe("HOVERABLE_LAYER_IDS", () => {
       // placement collides away at density.
       "weather-temperature",
       "weather-temperature-cells",
-      "osm-roads",
-      "osm-waterways",
+      "vegetation-ndvi-cells-fill",
     ]);
   });
 });
@@ -555,55 +554,6 @@ describe("formatHoverContent: soil-survey-fill", () => {
   });
 });
 
-describe("formatHoverContent: osm-roads", () => {
-  it("formats a full road", () => {
-    const content = formatHoverContent("osm-roads", {
-      name: "Main St",
-      highway: "primary",
-      surface: "asphalt",
-      lanes: 4,
-      maxspeed: "35 mph",
-    });
-    expect(content?.title).toBe("Main St");
-    expect(content?.lines).toContain("Type: primary");
-    expect(content?.lines).toContain("Surface: asphalt");
-    expect(content?.lines).toContain("Lanes: 4");
-    expect(content?.lines).toContain("Max speed: 35 mph");
-    assertNoSentinels(content);
-  });
-
-  it("falls back to highway as the title when name is missing", () => {
-    const content = formatHoverContent("osm-roads", { highway: "residential" });
-    expect(content?.title).toBe("residential");
-    expect(content?.lines).toEqual(["Type: residential"]);
-    assertNoSentinels(content);
-  });
-
-  it("falls back to a generic title when both name and highway are missing", () => {
-    const content = formatHoverContent("osm-roads", { surface: "gravel" });
-    expect(content?.title).toBe("Road");
-    expect(content?.lines).toEqual(["Surface: gravel"]);
-    assertNoSentinels(content);
-  });
-});
-
-describe("formatHoverContent: osm-waterways", () => {
-  it("formats a full waterway", () => {
-    const content = formatHoverContent("osm-waterways", {
-      name: "Boise River",
-      waterway: "river",
-    });
-    expect(content?.title).toBe("Boise River");
-    expect(content?.lines).toEqual(["Type: river"]);
-    assertNoSentinels(content);
-  });
-
-  it("falls back to waterway, then a generic title", () => {
-    expect(formatHoverContent("osm-waterways", { waterway: "stream" })?.title).toBe("stream");
-    expect(formatHoverContent("osm-waterways", {})).toBeNull();
-  });
-});
-
 describe("formatHoverContent: weather-temperature", () => {
   it('identifies modeled aggregate cells without inventing station or native-grid identity', () => {
     const content = formatHoverContent('weather-temperature-cells', { temperature: 24, windSpeed: 3, windDirection: 0, sampleKind: 'model_estimate', supportKind: 'aggregate_cell', observedDay: '2026-09-09', observedAt: '2026-09-10T06:45:00Z' });
@@ -619,6 +569,7 @@ describe("formatHoverContent: weather-temperature", () => {
       windSpeed: 3.42,
       windDirection: 214.6,
       humidity: 48.2,
+      precipitation: 0,
       observedAt: new Date(Date.now() - 2 * 3600_000).toISOString(),
     });
     // No station name: the feed is a grid sample, not a named site.
@@ -626,6 +577,7 @@ describe("formatHoverContent: weather-temperature", () => {
     expect(content?.lines).toContain("Temperature: 21.4 °C");
     expect(content?.lines).toContain("Wind: 3.4 m/s from 215°");
     expect(content?.lines).toContain("Humidity: 48%");
+    expect(content?.lines).toContain("Precipitation: 0.0 mm");
     expect(content?.lines.find((l) => l.startsWith("Observed"))).toMatch(/2h ago/);
     assertNoSentinels(content);
   });
@@ -794,5 +746,30 @@ describe("formatHoverContent: native polygons", () => {
     } finally {
       localizedDate.mockRestore();
     }
+  });
+});
+
+describe("measured vegetation inspection", () => {
+  it("exposes the exact negative scalar, actual day, grid and cell on hover and tap", () => {
+    expect(TOOLTIP_TAP_LAYER_IDS).toContain("vegetation-ndvi-cells-fill");
+    const content = formatHoverContent("vegetation-ndvi-cells-fill", {
+      ndvi: -0.123456, observedDay: "2026-08-31", gridName: "ndvi-grid", cellId: "cell-12",
+    });
+    expect(content?.title).toBe("Measured vegetation cell");
+    expect(content?.lines).toContain("NDVI: -0.123456 (dimensionless)");
+    expect(content?.lines).toContain("Grid: ndvi-grid");
+    expect(content?.lines).toContain("Cell: cell-12");
+    expect(content?.lines.some(line => line.startsWith("Observed:"))).toBe(true);
+    assertNoSentinels(content);
+  });
+
+  it.each([null, undefined, NaN, Infinity, "", "0.2"])("does not invent a measurement from %s", ndvi => {
+    expect(formatHoverContent("vegetation-ndvi-cells-fill", { ndvi })).toBeNull();
+  });
+
+  it("retains real zero and distinguishes unknown dates", () => {
+    const content = formatHoverContent("vegetation-ndvi-cells-fill", { ndvi: 0, observedDay: "2026-02-30" });
+    expect(content?.lines).toContain("NDVI: 0 (dimensionless)");
+    expect(content?.lines).toContain("Observation day not reported");
   });
 });

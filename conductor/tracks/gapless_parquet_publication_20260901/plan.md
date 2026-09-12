@@ -2,10 +2,54 @@
 type: track-plan
 slug: gapless_parquet_publication_20260901
 status: active
+updated_on: 2026-09-12
 resource: ./spec.md
 ---
 
 # Plan
+
+## Local reconciliation — September 12
+
+The [local ownership audit](evidence/local-ownership-audit-20260912.md) binds the
+current source and inspected test definitions to base `8c14ea0`. It closes the
+stale P2 claim that the derived-empty receipt protocol is unimplemented: derived
+rungs can publish zero rows with their completion receipt, while an unmarked
+legacy rung still requires ladder repair. It does not establish that any stored
+day was repaired.
+
+Scheduled direct writers have bounded lookbacks or current-source polls; their
+existence does not close full-history gap authorship. The audit separates those
+scopes from the retained generic `parquet-*` exporters and the older database
+archive commands. Current code and unit-test definitions describe retry, restart
+and expired-lease handling, but no runtime recovery was observed in this audit.
+The dated wave ledger below remains historical evidence, including its old lane
+identities; use the retirement plan before any future operational work.
+
+- [x] Reconcile derived-empty publication, bounded scheduled gap scope and local
+  recovery contracts against the inspected source tree.
+- [ ] Bind every still-required historical horizon to a current source-direct or
+  preserved-Parquet recovery owner; bounded forward polling is insufficient.
+- [ ] Obtain current deployed definitions, effective cutoff and lease evidence,
+  then observe retry, restart, expired-lease recovery and three advances per
+  activated lane. These gates remain open under the local-only task boundary.
+
+## Current checkpoint — September 11
+
+The [operational retrospective](../environmental_parquet_serving_20260912/plan.md) archives completed temperature-history
+publication and the 747-fire current MTBS rollout. Daily MTBS publication and
+weekly capture configuration were reconciled; future scheduled execution was not
+yet observed. Three advances, retry/restart/lease recovery and the complete gap
+census remain open. September 10's eight-lane pause was recorded as
+`configured_pending_deployment`; a later release alone does not prove the exact
+runtime cutoff without active-definition and lease readback.
+
+Before executing the historical P3 recovery checklist below, use the current
+[retirement plan](../environmental_parquet_serving_20260912/plan.md): the rebuild
+and later source-direct replacements changed the old lane/command identities.
+Do not resume database-writing archive lanes from a dated dead-letter list.
+Reconcile older unclosed soil-wetness, precipitation, dew-point, burn-severity and
+drought session horizons against their own source coverage requirements; a newer
+canonical snapshot does not automatically discharge broader older requests.
 
 ## Wave P0 — inventory and contract freeze
 
@@ -60,7 +104,8 @@ resource: ./spec.md
 - [x] Require every required rung before terminal publication (2026-09-02: `derived_empty` receipt closes emptied rungs; ladder census).
 - [x] Extend availability for published and governed-absence outcomes without rescanning history
   (2026-09-02: claim-first extension after the completion marker in `fill_one_lane_day`; the
-  `derived_to_zero_rows` ladder hole is open, see `pipeline/parquet/AGENTS.md`).
+  derived-empty receipt protocol is implemented in the current source; unmarked legacy rungs
+  still require ladder repair. See the September 12 local audit; no production repair is claimed).
 - [x] Register executor schedules, leases, checkpoints, retries and dead-letter visibility.
 - [x] Document source-by-source pause, lease-expiry, activation and rollback procedures.
 - [x] Inventory every live Railway scheduled/one-shot writer and bind its exact command, cadence,

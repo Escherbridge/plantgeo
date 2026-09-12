@@ -1,11 +1,60 @@
 ---
 type: plan
 track: offline_export_service_20260908
-status: chartered
+status: active
 created: 2026-09-08
+updated_on: 2026-09-12
 ---
 
 # Plan — offline export service
+
+## Local phase checkpoint — September 12
+
+The [builder and phase reconciliation](evidence/local-builder-phase-reconciliation-20260912.md)
+binds the two selected in-repository builder files and the bounded temperature
+acceptance evidence. Phase 1's standalone staging service is now explicitly
+**superseded** and must not be implemented. The selected builders' broad phase
+acceptance remains open because the current eight-lane manifest, reconciled
+`soil-field-vpd` population, accepted phase review and end-to-end cost packet are
+not checked in. Relative-humidity 1981–2017 still has no recovery receipt.
+
+## Current scope and remaining ledger — September 11
+
+The September 9 owner decision rejected the standalone `plantgeo-export` service
+and selected the existing in-repository canonical-snapshot builders. Phase 1's
+standalone service and the old “where does the service live” question below are
+superseded design history; do not restart them. The five ERA5 product lanes were
+built in that cutover. All three NASA POWER temperature histories were published
+September 10 with 1,560 fully verified days each across four rungs; see the
+[operational retrospective](../environmental_parquet_serving_20260912/plan.md).
+
+The phase verdicts below are still `_pending_`: delivery evidence is not an
+invented retroactive approval of the discarded service. The next work is:
+
+- [ ] Reconcile each original phase with the chosen in-repository builder,
+  evidence and independent review; explicitly mark discarded standalone-service
+  deliverables superseded instead of implementing them again.
+- [ ] Bind the complete eight-lane source/history/rung manifest and verify each
+  declared horizon; do not rebuild the proved temperature window.
+- [ ] Record measured end-to-end staging/build/upload/verification cost against
+  the old baseline. `4b841b3` bounds apply verification to eight tasks while
+  retaining every evidence and publication check.
+- [ ] Recover deferred **relative-humidity 1981–2017** availability history using
+  the supported bounded publication contract and exact receipts. This supersedes
+  the earlier 1981–1985-only deferred window below; no recovery receipt is recorded.
+- [ ] Refresh the warm capability/serving result for the exact candidate and
+  hand remaining runtime/forward gaps to gapless and production acceptance.
+
+Historical phase checkboxes and verdicts below are preserved as the review ledger;
+this checkpoint governs their present scope.
+
+### Evidence checkpoint — September 11 metadata reconciliation
+
+The [NASA POWER metadata reconciliation](evidence/nasa-power-metadata-reconciliation-20260911.md)
+binds this track's stale September 7 dead-letter label to the September 10 publication
+receipts. It records the historical temperature slice as published while leaving current
+forward health, deployment/burn-in, performance comparison and the original phase reviews
+open. This checkpoint does not complete the broad phase-review checkbox above.
 
 Five phases. Each ends with an adversarial review in a separate context, recorded as a one-line
 verdict. A phase with no verdict is unreviewed, not done.
@@ -18,8 +67,11 @@ verdict. A phase with no verdict is unreviewed, not done.
 - [ ] Confirm from the manifest that `row_count`, `partition_count`, `batch_count` and
       `observation_day_min/max` match what `build_soil_moisture_from_canonical_snapshot.py` pins.
 - [ ] For each of the eight lanes, record: expected first day, last day, day count, cells per day.
-      `soil-field-vpd` already holds **462** correctly-shaped live day partitions — establish exactly
-      which days, because it must be RESUMED, not rebuilt.
+      `soil-field-vpd` has conflicting dated counts (448 sparse days in the September 7 evidence;
+      446 contiguous resume days pinned by the selected builder at `fb72d07`; the
+      [September 9 cutover archive](../../RUNBOOK.md#session-handoff-2026-09-09--parquet-cutover-16---21-layers-and-a-live-latency-regression)
+      reports 1,556 built days and a 1,572-day serving span). Establish the exact current population
+      with a retained receipt, because it must be RESUMED, not rebuilt.
 - [ ] **Deliverable:** a per-lane manifest committed to the track's `evidence/`. No lane proceeds
       without one.
 

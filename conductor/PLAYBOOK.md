@@ -14,7 +14,9 @@ Begin with the current work registry, not the legacy dependency graph:
 4. Repository `AGENTS.md` governs implementation, agent coordination, testing,
    review, Git, and safety.
 
-The current long-horizon forecasting work starts with the seasonal track's
-read-only Phase 0. No task may use this playbook to deploy Railway, schedule a
-job, publish a forecast, or represent strategy-selection output as causal
-efficacy.
+The seasonal track's earlier Phase 0 instructions are retained in its
+[retrospective](retros/seasonal_forecast_feedback_20260726/). Choose current work
+and its next gate from the registry, and reconcile completed work using the
+[session maintenance workflow](workflow.md#session-and-archive-maintenance).
+Release and publication actions follow the governing track and release policy;
+this playbook supplies no independent authorization.

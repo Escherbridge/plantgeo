@@ -2,12 +2,59 @@
 type: runbook
 track: offline_export_service_20260908
 created: 2026-09-08
+reviewed: 2026-09-12
 ---
 
 # RUNBOOK — offline export service
 
-Operational reference for the cutaway exporter. Append named sections; never rewrite the header.
-`conductor/RUNBOOK.md` remains the project-wide log and is shared with concurrent sessions.
+## Current use — reconciled September 12
+
+The September 12
+[local builder/phase reconciliation](evidence/local-builder-phase-reconciliation-20260912.md)
+identifies the selected builder files and makes Phase 1's discarded standalone
+staging service explicitly superseded. It does not close the selected-builders'
+broad phase review, eight-lane manifest, performance or deferred-history gates.
+
+The [track plan](plan.md) owns the remaining review/performance work. Sections
+0–8 below preserve the September 7–8 incident account; their measurements,
+process diagnoses and proposed fixes are historical. Use the
+[current project runbook](../../RUNBOOK.md) and maintained
+[script catalogue](../../../services/agri-data-service/scripts/AGENTS.md)
+before executing another export or publication.
+
+The owner chose the in-repository canonical-snapshot builders over the discarded
+standalone service. The five ERA5 product lanes were built in the recorded
+September 9 cutover; the three temperature histories were published on September
+10 with 1,560 complete days and four rungs each. The
+[temperature publication receipt](../environmental_parquet_serving_20260912/plan.md)
+supersedes this document's claim that those histories still need building.
+The [operational retrospective](../environmental_parquet_serving_20260912/plan.md)
+separates completed delivery from the open parent-track gates.
+
+Commit `4b841b3` replaced the serial verification described in section
+8 with bounded batches of up to eight concurrent tasks. It retains the
+publication barrier and every checksum, identity revalidation and final pointer
+comparison. Its [recorded request budget and retry](../environmental_parquet_serving_20260912/plan.md)
+supersede the old practical row-count ceiling as a diagnosis of current code.
+Do not execute the old proposal to move verification outside the lock or infer
+that a missing marker during verification proves a hang. Follow the
+[current concurrency contract](../../../services/agri-data-service/src/agri_data_service/pipeline/parquet/AGENTS.md#availability-verification-concurrency).
+
+Section 7's dead-letter and PostgreSQL-size inventory predates the September 9
+database rebuild and September 10 source repairs. Re-read the
+[current recovery checkpoint](../environmental_parquet_serving_20260912/plan.md)
+and [executor boundary audit](../environmental_parquet_serving_20260912/plan.md)
+before diagnosing a lane. The full-horizon relative-humidity index, remaining
+review/performance ledger, soil-survey low-zoom restoration and broader
+production acceptance are not closed by temperature publication.
+
+Historical sections 4 and 8 contain process termination, object deletion and
+rollback examples. Those examples are evidence of past recovery; they do not
+authorize repeating a mutation against a current lane. Preserve exact inputs,
+read current state, use the supported resume path and retain an independent
+receipt for the action actually taken.
+
+## Preserved September 7–8 incident account
 
 ## 0. The numbers this track exists to beat
 
@@ -136,12 +183,22 @@ the compiler — better to learn that from a census than from a two-hour apply.
 9. `--apply`, watching for the §4 hang.
 10. Re-probe capabilities warm, twice.
 
-## 7. Live blockers not owned by this track
+## 7. Historical blocker snapshot — observed September 7
 
-- **`climate-nasa-power-direct-forward` is dead-lettered**, `attempt_count` 6/6, since
-  2026-09-07T08:32Z, error `scheduled_command_exit: command exited with status 1`. The three
-  air-temperature lanes get no NEW days until it is fixed, independent of any backfill. Nine other
-  lanes also hold dead-letters, `matview-refresh` with **214**.
+This section is a preserved incident snapshot, not a live queue-health report. The
+NASA POWER dead-letter below is resolved as a blocker for the receipt-backed
+historical temperature publication only; this reconciliation did not inspect a
+current executor, scheduler or forward run. Current forward health therefore
+remains unverified. See the
+[September 11 metadata reconciliation](evidence/nasa-power-metadata-reconciliation-20260911.md)
+before using any item here as an operational gate.
+
+- **Historical NASA POWER observation:** `climate-nasa-power-direct-forward` was dead-lettered,
+  `attempt_count` 6/6, at 2026-09-07T08:32Z, error
+  `scheduled_command_exit: command exited with status 1`. This no longer blocks the verified
+  2022-04-30..2026-08-06 temperature-history slice. It remains evidence that forward advancement
+  needed repair at that time, not evidence about current forward health. Nine other lanes also held
+  dead-letters, with `matview-refresh` at **214**; those counts are historical and were not refreshed.
 - **`soil-survey`**: job time budget 1,230 s against a 3h20m run, killed before
   `_finalize_written_day`; 959 parts at `zoom=13` with **zero** markers. Also pinned
   `servingReader: "postgresql"`, so a completed export surfaces as `reader_not_parquet` next.

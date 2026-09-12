@@ -1,0 +1,14 @@
+# Preserve exact bytes for the four September 11 PNW metadata receipts.
+pnw-wtu-provider-20260911.html -text
+pnw-portal-inventory-20260911.html -text
+pnw-ubc-ipt-20260911.html -text
+pnw-ubc-eml-16.43-20260911.xml -text
+
+# Preserve exact bytes for the seven September 12 metadata refresh captures.
+pnw-portal-inventory-20260912.html -text
+pnw-portal-usage-policy-20260912.html -text
+pnw-wtu-provider-20260912.html -text
+pnw-ubc-provider-20260912.html -text
+pnw-ubc-ipt-current-20260912.html -text
+pnw-ubc-ipt-16.43-20260912.html -text
+pnw-ubc-eml-16.43-20260912.xml -text

@@ -1,11 +1,9 @@
 """Publish at most ONE WFIGS version per turn, directly, when and only when the source has changed.
 
-Bypasses PostgreSQL entirely: `pipeline/lanes/fire_perimeters.py::export_fire_perimeters_day` (the
-registered `_fill_fire_perimeters` adapter) reads `geo.features`, and
-`sql/pipeline/lane_watermark_fire_perimeters.sql` reads it again for the version stamp. This module
-replaces BOTH -- it substitutes its own adapter AND its own watermark onto the registration before
-handing it to the shared driver -- which is what makes `ingest-fire-perimeters`, `ingest/wfigs.py`'s
-write path and the `postgres-fire-perimeters` lane deletable rather than merely unused.
+This module is the source-direct owner of the fire-perimeters Parquet lane. The generic registration
+is a refusal, and this writer derives both the captured version and its watermark from WFIGS without
+consulting PostgreSQL. The former `geo.features` exporter and `postgres-fire-perimeters` schedule are
+retired; any remaining parity tooling is historical evidence only.
 
 THERE IS NO DAY LOOP HERE, AND THAT IS THE POINT. `drought/forward.py` walks a 60-week backlog
 newest-first because a `release_series` owes one partition per release Tuesday. This lane is a

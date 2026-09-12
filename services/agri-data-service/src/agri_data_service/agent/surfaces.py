@@ -74,9 +74,8 @@ AGENT_SURFACE_NAMES: Final = tuple(sorted(FEATURE_SURFACE_NAMES + STREAM_SURFACE
 # air temperature publishes mean/max/min as three lanes, soil moisture three depths, soil
 # temperature four -- and a day one depth is missing is a day the surface cannot be drawn.
 #
-# `interventions` is deliberately absent. RUNBOOK section 0.26.1 keeps that lane in PostgreSQL: it
-# is community data a user writes, not environmental data an upstream publishes, so it has no
-# registered Parquet lane and `SURFACE_PARQUET_LANES` must not invent one for it.
+# `interventions` is deliberately absent. It has no admitted Parquet lane yet, so the agent returns
+# a typed Parquet refusal rather than opening a PostgreSQL fallback or fabricating a payload.
 SURFACE_PARQUET_LANES: Final[dict[str, tuple[str, ...]]] = {
     "burn-severity": ("burn-severity",),
     "evacuation-zones": ("evacuation-zones",),
@@ -115,9 +114,6 @@ SURFACE_PARQUET_LANES: Final[dict[str, tuple[str, ...]]] = {
     ),
     "soil-field-vpd": ("soil-field-vpd",),
 }
-
-# The one surface the map publishes that has no Parquet lane and never will; see the note above.
-POSTGRESQL_ONLY_SURFACE_NAMES: Final = ("interventions",)
 
 # The lane the four signal tools read. NOT one of the map's surface names: `signal` is the governed
 # cell-day plane the climate and soil streams are DERIVED from, so it is addressed by lane slug and

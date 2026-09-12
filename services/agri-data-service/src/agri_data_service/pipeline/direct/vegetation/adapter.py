@@ -20,13 +20,13 @@ from typing import TYPE_CHECKING
 
 from agri_data_service.foundation.parquet.absence import GovernedAbsence
 from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
+from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.direct.vegetation.products import (
     VEGETATION_DIRECT_KIND,
     VEGETATION_DIRECT_WRITER_START_DAY,
 )
 from agri_data_service.pipeline.direct.vegetation.rows import vegetation_day_table
 from agri_data_service.pipeline.direct.vegetation.source import VegetationSourceError, VegetationSourceUnsettledError
-from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.parquet.derivation import govern_day_absent
 from agri_data_service.pipeline.parquet.lane_registry import normalise_export_outcome
 from agri_data_service.warehouse.schemas.vegetation import VEGETATION_PLANE_STREAM as VEGETATION_STREAM

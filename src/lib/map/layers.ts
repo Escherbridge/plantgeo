@@ -87,8 +87,6 @@ const FIRE_PERIMETER_SOURCE = "fire-perimeter-features";
 // Table-backed OSM tiles live in a separate composite: mixing them with the
 // function sources makes Martin declare vector_layers, which MapLibre then
 // validates against and rejects every function-backed layer. See sources.ts.
-const OSM_SOURCE = "martin-osm";
-
 /**
  * Which Martin source a layer toggle draws from, for callers that need to act on a layer's
  * TILES rather than its style layers -- currently the per-layer refresh in the layer panel,
@@ -489,30 +487,6 @@ export const watershedsOutlineLayer: LayerSpecification = {
   },
 };
 
-export const roadsLayer: LayerSpecification = {
-  id: "osm-roads",
-  type: "line",
-  source: OSM_SOURCE,
-  "source-layer": "osm_roads",
-  minzoom: 10,
-  paint: {
-    "line-color": "#94a3b8",
-    "line-width": ["interpolate", ["linear"], ["zoom"], 10, 0.5, 16, 3],
-  },
-};
-
-export const waterwaysLayer: LayerSpecification = {
-  id: "osm-waterways",
-  type: "line",
-  source: OSM_SOURCE,
-  "source-layer": "osm_waterways",
-  minzoom: 8,
-  paint: {
-    "line-color": "#3b82f6",
-    "line-width": ["interpolate", ["linear"], ["zoom"], 8, 0.5, 16, 3],
-  },
-};
-
 // ---------------------------------------------------------------------------
 // tRPC-fed GeoJSON layer
 //
@@ -646,8 +620,6 @@ export function getLayers(): LayerSpecification[] {
     interventionsPointsLayer,
     watershedsLayer,
     watershedsOutlineLayer,
-    roadsLayer,
-    waterwaysLayer,
   ];
 }
 
