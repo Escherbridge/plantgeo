@@ -1,7 +1,7 @@
 ---
 type: evidence
 recorded_on: 2026-09-11
-observed_at: 2026-09-12T05:54:36Z
+observed_at: 2026-09-12T05:56:00Z
 ---
 
 # Task and candidate ledger
@@ -16,6 +16,9 @@ candidate; it can close only after the required independent verdict.
 | Role | Codex task | Checkout and branch | Bound source or candidate | Current disposition |
 | --- | --- | --- | --- | --- |
 | QA and orchestration | `01a0904b-756b-7961-b991-cab666123be2` — PlantGeo QA and track orchestration | `C:/Users/atooz/Programming/plantgeo`, `main` | QA planning commit `820753d73543514f534c9c1386e1f84012152775`, tree `b3205373e373641059c3edf10ce01c7f5f61d994` | Active. Owns this ledger, requirement matrix, defect routing, shared Conductor registry/runbook and proof-gated task archival. Runtime integration is complete; populated-data, mobile, agent-parity and broader track verdicts remain open. |
+| Parquet reader and gapless acceptance continuation | `01a0941d-41b7-7483-b87b-61c94fab4120` — Resume Parquet reader and gapless acceptance | `C:/Users/atooz/.codex/worktrees/b893/plantgeo`, active continuation checkout | Root starting point `8c14ea0117ba14d5584f737b793f989566102514`; no candidate commit yet | Active. Auditing reader availability contracts, historical gap ownership and retry/restart/lease evidence. Production observations remain required; no Railway, storage, database, writer or load interruption is authorized. |
+| Environmental retirement and export continuation | `01a0941d-8488-7b00-845c-1ad3caeb0b5e` — Resume environmental retirement and export acceptance | `C:/Users/atooz/.codex/worktrees/25f9/plantgeo`, active continuation checkout | Starting point follows root `8c14ea0`; no candidate commit yet | Active. Auditing prepared-versus-published state and offline export acceptance for a bounded local slice. Production, PostgreSQL, scheduler, deployment and object-store mutations remain excluded. |
+| Repository conformity continuation | `01a0941d-ac50-70e0-8314-44e098436d20` — Resume repository conformity acceptance | `C:/Users/atooz/.codex/worktrees/a1e1/plantgeo`, active continuation checkout | Starting point follows root `8c14ea0`; no candidate commit yet | Active. Auditing proof-before-delete packets, frontmatter/link correctness and remaining dead-code/dependency evidence. No deletion or cross-track cleanup is authorized without proof and independent review. |
 | Canonical integration | `01a093c6-69e0-79d2-b1c7-bc5e907dfd1b` — Integrate weather and botanical candidates | `C:/Users/atooz/.codex/worktrees/40ae/plantgeo`, `codex/integrate-botanical-weather-evidence` | Final candidate `9284d52738dbb323bbcd1dfe8c22ab6290f2a4b1`, tree `a0797ce0b4a91b2ac051dfa423382fbf3db60104`; root `main` contains the identical candidate tree at `6d2ac6c` before the follow-up custody-ledger commit | Archived after serialized reconciliation, independent verification and root browser evidence intake. Candidate remains partial: populated data and narrow-mobile acceptance are open. No remote/data-writer action. |
 | Botanical species-profile author | `01a092bd-c71d-7bb3-bc46-e0dac684f751` — Build botanical species profiles | Preserved implementation commit `edc6afdeb23f339b40049ec0828551c2fe1a4d45`, tree `01ad55b6220a13604e8fbf8a4ceda773e35d5658`; predecessor worktree archived after Git metadata disappeared | Local implementation complete and independently reviewed; task archived after custody was retained. The separate census owner `01a093be-a6b1-7670-bf41-5e999cb0a2c9` produced and integrated receipt commit `557c4c0` and is archived; Railway/production census is blocked before DB access and remains open. |
 | Botanical profile and agent-wiring continuation | `01a093f2-7452-75d3-9fba-343d14758f71` — Resume botanical profile and agent wiring | `C:/Users/atooz/.codex/worktrees/a93f/plantgeo`, detached clean checkout | Reviewed commit `f122069fd3f635d2f39f55970a3e9b57f925a167`, tree `61d88bd500579d108e5a004cb5dbfb48fc632e5a`; integrated into root `3e35971` | Archived after independent review and focused verification. The exact-UUID, read-only authoring lookup is wired to the HTTP API, agent graph and MCP tool with explicit provenance, missingness, approved companion evidence and refusal of ranking/planting/fuel claims. The Railway/production census remains blocked with no authorized DSN; `pgt`, local databases, WCVP and unpublished fixture releases remain out of scope. |
@@ -58,5 +61,8 @@ recorded at `e5eaab6`, weather and botanical runtime integration at
 `9284d527`/`3e35971`, Herbaria evidence at `57ef4fc`, scalar-label integration at
 `ac4ce70`, and the root verification receipt at `3182159`; keep the platform QA
 task active for the remaining populated-data, mobile, agent-parity and broader
-track gates. Superseded identities remain dated evidence and are not relabeled
-as the final candidate.
+track gates. Three new bounded continuation tasks are now active for reader /
+gapless acceptance, environmental retirement / offline export, and repository
+conformity; they must return immutable receipts before any archive decision.
+Superseded identities remain dated evidence and are not relabeled as the final
+candidate.
