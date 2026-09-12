@@ -261,29 +261,6 @@ def read_published_run(*, root: Path, product_id: str, run_id: str) -> tuple[For
     return manifest.model_copy(update={"run": published_run}), ForecastSeries(run=published_run, values=series.values)
 
 
-def read_active_run(*, root: Path, product_id: str) -> tuple[ForecastManifest, ForecastSeries]:
-    """Resolve and verify the product-owned local active pointer and its committed run."""
-    _identity(product_id, "active")
-    pointer = _path(root, product_id, "active.json")
-    try:
-        current = json.loads(_read(pointer, 1024))
-    except json.JSONDecodeError as exc:
-        raise ArtifactError("invalid active pointer") from exc
-    if (
-        not isinstance(current, dict)
-        or set(current) != {"run_id", "manifest_sha256"}
-        or not isinstance(current["run_id"], str)
-        or not _TOKEN.fullmatch(current["run_id"])
-        or not isinstance(current["manifest_sha256"], str)
-        or not _HASH.fullmatch(current["manifest_sha256"])
-    ):
-        raise ArtifactError("invalid active pointer")
-    manifest_path = _path(root, product_id, "runs", current["run_id"] + ".json")
-    if _digest(_read(manifest_path, MAX_MANIFEST_BYTES)) != current["manifest_sha256"]:
-        raise ArtifactError("active pointer manifest integrity failure")
-    return read_published_run(root=root, product_id=product_id, run_id=current["run_id"])
-
-
 def activate_run(
     *, root: Path, product_id: str, run_id: str, expected_manifest_sha256: str | None, now: UTCInstant | None = None
 ) -> str:
