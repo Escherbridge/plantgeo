@@ -71,9 +71,10 @@ The [live restart receipt](session-restart-20260912-live.md) supersedes the
 stale lifecycle labels for the two unresolved owners without rewriting their
 historical custody rows. Forecast task `01a09323-6f59-7822-9e6f-146892776749`
 was restarted with a read-only superseded-branch audit, remained active through
-the bounded wait, and its restart turn was then interrupted/stopped; the task
-is now idle. No new completed restart receipt was produced; earlier completed
-audit evidence remains retained in its historical custody record. Ingestion task
+the bounded wait, and its restart turn was then interrupted/stopped; it returned
+to idle and was archived from the sidebar as superseded. No new completed
+restart receipt was produced; earlier completed audit evidence remains retained
+in its historical custody record. Ingestion task
 `01a08b00-2a50-73c2-b39b-39523c74ceb2` was restarted, made no progress for the
 bounded wait, was stopped cleanly and is idle; its candidate remains
 unintegrated and unresolved. The fresh queue aliases

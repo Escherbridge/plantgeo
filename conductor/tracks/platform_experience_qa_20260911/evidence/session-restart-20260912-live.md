@@ -17,10 +17,11 @@ performed.
 
 The paused forecast task `01a09323-6f59-7822-9e6f-146892776749` was restarted
 with a read-only ownership and rebase audit. Its restart turn remained active
-through the bounded wait and was then interrupted/stopped; the task is now
-`idle` without changing files, refs, stashes or external state. No new
-completed restart receipt was produced. Earlier completed audit evidence
-remains retained in its historical custody record and confirms that
+through the bounded wait and was then interrupted/stopped; the task returned
+to `idle` without changing files, refs, stashes or external state and was
+then archived from the sidebar as superseded. No new completed restart receipt
+was produced. Earlier completed audit evidence remains retained in its
+historical custody record and confirms that
 `codex/weather-forecast-20260911` remains superseded, diverges from current
 `main`, and is not a safe merge or cherry-pick source. The preserved
 future-forecast stash remains audit-only and unopened.
