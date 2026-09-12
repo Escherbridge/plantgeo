@@ -1,5 +1,39 @@
 # `src/lib/server` — module notes
 
+## Community publication and revision — 2026-09-11
+
+This section supersedes older descriptions of proposeIntervention as a live submission
+path. A code-reference audit found only ModerationPanel consuming castModerationVote/
+transitionLifecycleState and only tests/docs consuming proposeIntervention. Those three
+procedures and the duplicate panel were retired; the old API tests were replaced with
+canonical publication, recovery, role, geometry, conflict and revision behavior tests.
+Historical causalTauEst provenance warnings below remain applicable; no old rows were changed.
+
+Interactive submissions use interventions.submitIntervention and enter pending_review.
+contributions.publishContribution is the sole interactive writer of status published,
+which public intervention tiles require. The machine ingest endpoint remains a separately
+authorized noninteractive writer and is outside this repair. Generic submitObservation
+refuses the interventions layer so it cannot forge consent, ownership or workspace metadata.
+
+Review reads return a SHA-256 version covering identity, status, geometry/properties,
+review note and the full PostgreSQL timestamp. Every decision requires this displayed
+version; stale cards raise CONFLICT and refresh. Publication requires original valid geometry,
+recorded consent and a stored submitting identity. Approved recovery additionally verifies
+that identity against users.id via a text comparison and requires a persisted individual
+recoveryReviewNote; missing-history rows never enter the queue or publish automatically.
+
+Reject/revision require trimmed notes of 1–2000 characters. Revision requests use
+revision_requested (within the existing varchar(20)), which cannot publish directly.
+reviseIntervention accepts full validated submission fields and explicit consent; it checks
+original author ownership plus current workspace editor membership, preserves attribution,
+clears the review note and returns rejected/revision_requested sites to pending_review.
+Published sites cannot be revised through this endpoint.
+
+Lifecycle state no longer overwrites publication state. A future bounded migration must
+introduce a separate lifecycle field, explicitly map reviewed historical records and change
+its UI/readers/tests together. Existing proposed/approved/active/monitored rows must not be
+guessed into published. Track: community_engagement_completion_20260805.
+
 Rationale and constraints that the code's one-line doc comments deliberately omit.
 Add a section per module as it grows; sections are independent.
 

@@ -1,10 +1,46 @@
 ---
 type: track-spec
 track: community_engagement_completion_20260805
-status: planned
+status: active
 ---
 
 # Community engagement completion — specification
+
+## Active contract — September 11, 2026
+
+This is the canonical submit → review → publish → visible-map track. Interventions
+are operational PostgreSQL community submissions, outside the environmental
+Parquet lane. No product rows are seeded and no present production count is
+asserted here. The implementation starts at commit
+`89e8494422b8232c8f16dbffdcf2321c7ea17bc8`.
+
+`contributions.publishContribution` is the single interactive publication transition.
+Only `published` is public; approval and field lifecycle are not substitutes for it.
+The duplicate vote/lifecycle UI is retired. Restoring a lifecycle requires a separately
+bounded schema migration with distinct publication/lifecycle fields, historical
+classification, compatibility reads, and tests that lifecycle updates cannot hide a
+published site. This task does not guess historical intent or migrate ambiguous rows.
+
+Eligible historical `approved` interventions require an expert to inspect each site,
+record an individual recovery review note, verify geometry and original consent, and
+invoke the same publisher. Unknown ownership, missing consent, invalid geometry or
+unknown history cannot be bulk-recovered. Request a corrected contributor submission.
+
+Submission supports explicit Point and drawn Polygon boundaries. Drawing UX is
+bounded by [the companion track](../intervention_boundary_authoring_20260911/spec.md).
+The reviewer can reject or request revision with a reason; only the author can revise
+and resubmit. Publication must refresh saved and in-memory intervention tiles and
+invalidate contributor outcomes. Loading, authorized empty results, authorization,
+unprovisioned layers and service failures must remain distinct.
+
+Acceptance uses synthetic identities and rows only in an isolated local database:
+draw Polygon → submit → pending → expert publish → warm viewport visible → author
+sees published. Role denial, workspace isolation, malformed geometry, rejection,
+revision, individually reviewed recovery, style swap and listener cleanup are gates.
+The local receipts must distinguish mocked behavior, real PostgreSQL/PostGIS, and
+browser evidence. No Railway, production database, deployment or user contact is in scope.
+
+## Historical specification — August 5, 2026
 
 Everything below was measured against production
 (`switchback.proxy.rlwy.net:37967/plantgeo`, PG18) and the working tree on

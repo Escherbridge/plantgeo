@@ -1,12 +1,33 @@
 ---
 type: track-plan
 track: community_engagement_completion_20260805
-status: planned
+status: active
 ---
 
 # Plan
 
 ## Current status — September 11
+
+Activated as the canonical submission/publication repair track. The current batch
+replaces the competing approval path with one publication queue; adds individualized
+legacy recovery, revision and truthful error states; and refreshes cached map tiles
+after publication. Boundary authoring is the bounded companion track. Local
+verification and independent review passed; the candidate is ready for integration.
+No current production counts were measured. See the companion track's
+[verification evidence](../intervention_boundary_authoring_20260911/evidence/review-and-verification.md).
+
+- [x] Contributor submits a drawn Polygon and sees pending outcome.
+- [x] Expert publishes through the sole canonical transition; author sees published.
+- [x] Warm viewport, cross-tab/page return and style swap refresh without loops.
+- [x] Denied roles, workspace isolation, invalid geometry and revision/rejection pass.
+- [x] Eligible historical approval requires an individual recovery review.
+- [x] Final integrated test/type/lint/boundary receipts and separate review are recorded.
+- [ ] Exact commit/tree, shared patches and integration handoff recorded.
+
+The final handoff supplies its containing commit/tree and closes the last item.
+This track remains in progress for integration and the owner-gated ML decision.
+
+## Superseded pre-activation reconciliation — September 11
 
 This track is **planned** for the remaining moderation re-audit and the four
 owner questions governing the ML label bridge. Phases 2–4 were subsequently

@@ -1,0 +1,372 @@
+{
+  "schema": "qa-pnw-intake-independent-review/v1",
+  "reviewed_at_utc": "2026-09-12T02:45:09.212989+00:00",
+  "reviewer": "/root/legacy_repair_review",
+  "verdict": "PASS_bounded_16_document_composition",
+  "findings": [],
+  "base_and_unchanged_head": "2317ee3a2ac35de489d27503dfec91ea3285bd66",
+  "source_commit": "abdf99b993117f77a1912c05ccabd3df082a8903",
+  "source_tree": "7d7d4f06ce2d3d98fd37e713e1824e0e30ba4413",
+  "author_manifest": {
+    "path": ".omc/research/active-track-integration-20260911/qa-pnw-intake-author.json",
+    "bytes": 12814,
+    "sha256": "e2ebb4a41c4279f91716af37575427c21e0f55e3b3ce8ab2d2e62ef7a8515956"
+  },
+  "preparation_receipt": {
+    "path": ".omc/research/active-track-integration-20260911/qa-pnw-intake-preparation.json",
+    "bytes": 89189,
+    "sha256": "95b2371c4ee41519dbf959e229999a0607595af887e738b8f59b2b6f155fcd63"
+  },
+  "scope": "Independent final composition review of the finalized staged 16-document intake against immutable base/source and the already inspected preparation. No runtime validation or release approval is inferred.",
+  "files": [
+    {
+      "path": "conductor/RUNBOOK.md",
+      "disposition": "additive_composition",
+      "source_blob": "7ab8dc1031d72326a15ced3bab08788086036be5",
+      "staged_blob": "8d81a450356d3998273b0a709ba089c5dd34ec35",
+      "staged": {
+        "bytes": 17578,
+        "sha256": "ecf2a6b8481674c7623533900e163947e70065713cbee04bb2065709fa0a1c74"
+      },
+      "working": {
+        "bytes": 17578,
+        "sha256": "ecf2a6b8481674c7623533900e163947e70065713cbee04bb2065709fa0a1c74"
+      },
+      "source_and_index_pins_independently_matched_in_preceding_read_only_pass": true,
+      "working_matches_index_after_checkout_line_endings": true
+    },
+    {
+      "path": "conductor/tracks.md",
+      "disposition": "additive_composition",
+      "source_blob": "93276503daebb058b75b876b1156043bd1b29b8b",
+      "staged_blob": "18134ad92de6dc4c8c571b6d81939d7b8b0d9105",
+      "staged": {
+        "bytes": 14736,
+        "sha256": "03b75c8648fd49b4262d8d53a81a8dd789f9516899226ee448154746bf232995"
+      },
+      "working": {
+        "bytes": 14736,
+        "sha256": "03b75c8648fd49b4262d8d53a81a8dd789f9516899226ee448154746bf232995"
+      },
+      "source_and_index_pins_independently_matched_in_preceding_read_only_pass": true,
+      "working_matches_index_after_checkout_line_endings": true
+    },
+    {
+      "path": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+      "disposition": "exact_source",
+      "source_blob": "3a31757b1b7a1db3b7b34cc7859e4f2ef0f28c97",
+      "staged_blob": "3a31757b1b7a1db3b7b34cc7859e4f2ef0f28c97",
+      "staged": {
+        "bytes": 65947,
+        "sha256": "1efde3c255a3c9a566d53f8fcf7a1af734dffb1ef4384b40b3e4b522b578cc25"
+      },
+      "working": {
+        "bytes": 65947,
+        "sha256": "1efde3c255a3c9a566d53f8fcf7a1af734dffb1ef4384b40b3e4b522b578cc25"
+      },
+      "source_and_index_pins_independently_matched_in_preceding_read_only_pass": true,
+      "working_matches_index_after_checkout_line_endings": true
+    },
+    {
+      "path": "conductor/tracks/platform_experience_qa_20260911/evidence/intervention-boundary-spec.md",
+      "disposition": "exact_source",
+      "source_blob": "60fde2137d12ae0c2aa257062208b4c307bb0675",
+      "staged_blob": "60fde2137d12ae0c2aa257062208b4c307bb0675",
+      "staged": {
+        "bytes": 2552,
+        "sha256": "e65dd243e6d48bde5ecc5bb44586d9a1c92eb8da01c20e8bfbdab64f0f33f65b"
+      },
+      "working": {
+        "bytes": 2552,
+        "sha256": "e65dd243e6d48bde5ecc5bb44586d9a1c92eb8da01c20e8bfbdab64f0f33f65b"
+      },
+      "source_and_index_pins_independently_matched_in_preceding_read_only_pass": true,
+      "working_matches_index_after_checkout_line_endings": true
+    },
+    {
+      "path": "conductor/tracks/platform_experience_qa_20260911/evidence/task-ledger.md",
+      "disposition": "exact_source",
+      "source_blob": "4a8f65134078792b4100a4c626e98dbc47770fa1",
+      "staged_blob": "4a8f65134078792b4100a4c626e98dbc47770fa1",
+      "staged": {
+        "bytes": 5421,
+        "sha256": "b1237d67a5395cb8febf547d00b13dbbaa5e70dae9db16bfc340580c2e793be1"
+      },
+      "working": {
+        "bytes": 5421,
+        "sha256": "b1237d67a5395cb8febf547d00b13dbbaa5e70dae9db16bfc340580c2e793be1"
+      },
+      "source_and_index_pins_independently_matched_in_preceding_read_only_pass": true,
+      "working_matches_index_after_checkout_line_endings": true
+    },
+    {
+      "path": "conductor/tracks/platform_experience_qa_20260911/metadata.json",
+      "disposition": "exact_source",
+      "source_blob": "242ffbe7393a123a2345e17383e5be3f3f59e795",
+      "staged_blob": "242ffbe7393a123a2345e17383e5be3f3f59e795",
+      "staged": {
+        "bytes": 4880,
+        "sha256": "5f55457fdba93835b88678e1ca8c11818c5ff6cc662cbba0d5f47296beedcb7b"
+      },
+      "working": {
+        "bytes": 4880,
+        "sha256": "5f55457fdba93835b88678e1ca8c11818c5ff6cc662cbba0d5f47296beedcb7b"
+      },
+      "source_and_index_pins_independently_matched_in_preceding_read_only_pass": true,
+      "working_matches_index_after_checkout_line_endings": true
+    },
+    {
+      "path": "conductor/tracks/platform_experience_qa_20260911/spec.md",
+      "disposition": "exact_source",
+      "source_blob": "0aca102658dcbb0f0e99b582f61efef1fc940b75",
+      "staged_blob": "0aca102658dcbb0f0e99b582f61efef1fc940b75",
+      "staged": {
+        "bytes": 9779,
+        "sha256": "354f4d29417d5eebef6a87b924abb85f35f7c418227076b2513ce91c84b5007f"
+      },
+      "working": {
+        "bytes": 9779,
+        "sha256": "354f4d29417d5eebef6a87b924abb85f35f7c418227076b2513ce91c84b5007f"
+      },
+      "source_and_index_pins_independently_matched_in_preceding_read_only_pass": true,
+      "working_matches_index_after_checkout_line_endings": true
+    },
+    {
+      "path": "conductor/tracks/pnw_land_contact_experience_20260911/metadata.json",
+      "disposition": "exact_source",
+      "source_blob": "140630c93663d36bdfae50cd6de71c04d8503575",
+      "staged_blob": "140630c93663d36bdfae50cd6de71c04d8503575",
+      "staged": {
+        "bytes": 2865,
+        "sha256": "897a53d260a6a4fa99bfb5b95bc11949b3841d20981908b06491dda0cb3dd298"
+      },
+      "working": {
+        "bytes": 2865,
+        "sha256": "897a53d260a6a4fa99bfb5b95bc11949b3841d20981908b06491dda0cb3dd298"
+      },
+      "source_and_index_pins_independently_matched_in_preceding_read_only_pass": true,
+      "working_matches_index_after_checkout_line_endings": true
+    },
+    {
+      "path": "conductor/tracks/pnw_land_contact_experience_20260911/plan.md",
+      "disposition": "exact_source",
+      "source_blob": "79969f688321ac64cfd7d5bac2c033e47351419d",
+      "staged_blob": "79969f688321ac64cfd7d5bac2c033e47351419d",
+      "staged": {
+        "bytes": 8299,
+        "sha256": "17690031cf15c2e12224d3d57f7acd44ea75cb14ec37ea936891d8fe49d5bbb8"
+      },
+      "working": {
+        "bytes": 8299,
+        "sha256": "17690031cf15c2e12224d3d57f7acd44ea75cb14ec37ea936891d8fe49d5bbb8"
+      },
+      "source_and_index_pins_independently_matched_in_preceding_read_only_pass": true,
+      "working_matches_index_after_checkout_line_endings": true
+    },
+    {
+      "path": "conductor/tracks/pnw_land_contact_experience_20260911/spec.md",
+      "disposition": "exact_source",
+      "source_blob": "e2c490a4c78ebf3bfd93c405be292d8e244ab6d7",
+      "staged_blob": "e2c490a4c78ebf3bfd93c405be292d8e244ab6d7",
+      "staged": {
+        "bytes": 14314,
+        "sha256": "4babfa0a36df6685bbb47f9a8fb0822e8a0e1e562f574f574982636bfc6c828b"
+      },
+      "working": {
+        "bytes": 14314,
+        "sha256": "4babfa0a36df6685bbb47f9a8fb0822e8a0e1e562f574f574982636bfc6c828b"
+      },
+      "source_and_index_pins_independently_matched_in_preceding_read_only_pass": true,
+      "working_matches_index_after_checkout_line_endings": true
+    },
+    {
+      "path": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/independent-review.md",
+      "disposition": "exact_source",
+      "source_blob": "b54678df4cd62fed07eae8991a17dd1298bafdc5",
+      "staged_blob": "b54678df4cd62fed07eae8991a17dd1298bafdc5",
+      "staged": {
+        "bytes": 6551,
+        "sha256": "1963c50093eb381d5ce5d068d626db1b69b71ec73e525e1f754966775ba5532d"
+      },
+      "working": {
+        "bytes": 6551,
+        "sha256": "1963c50093eb381d5ce5d068d626db1b69b71ec73e525e1f754966775ba5532d"
+      },
+      "source_and_index_pins_independently_matched_in_preceding_read_only_pass": true,
+      "working_matches_index_after_checkout_line_endings": true
+    },
+    {
+      "path": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/parent-registration-review.md",
+      "disposition": "exact_source",
+      "source_blob": "7d55d6f26002fb9a21d164268071994f3c4315c3",
+      "staged_blob": "7d55d6f26002fb9a21d164268071994f3c4315c3",
+      "staged": {
+        "bytes": 1217,
+        "sha256": "a1c92accd558417191435d0e3374b52aa542a0029a610d96dac10f0beb06cfe8"
+      },
+      "working": {
+        "bytes": 1217,
+        "sha256": "a1c92accd558417191435d0e3374b52aa542a0029a610d96dac10f0beb06cfe8"
+      },
+      "source_and_index_pins_independently_matched_in_preceding_read_only_pass": true,
+      "working_matches_index_after_checkout_line_endings": true
+    },
+    {
+      "path": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+      "disposition": "exact_source",
+      "source_blob": "e0e2323bac8ab7556704757933372bfa7ea583a7",
+      "staged_blob": "e0e2323bac8ab7556704757933372bfa7ea583a7",
+      "staged": {
+        "bytes": 16496,
+        "sha256": "a7a0ae172f2eb4f456a935620ca608bb706347ed2de0eb1dd8dcbe06be58298d"
+      },
+      "working": {
+        "bytes": 16496,
+        "sha256": "a7a0ae172f2eb4f456a935620ca608bb706347ed2de0eb1dd8dcbe06be58298d"
+      },
+      "source_and_index_pins_independently_matched_in_preceding_read_only_pass": true,
+      "working_matches_index_after_checkout_line_endings": true
+    },
+    {
+      "path": "conductor/tracks/pnw_land_context_reference_plane_20260911/metadata.json",
+      "disposition": "exact_source",
+      "source_blob": "d56c661c2eb13d9a448ec77f53cd46c1786abdce",
+      "staged_blob": "d56c661c2eb13d9a448ec77f53cd46c1786abdce",
+      "staged": {
+        "bytes": 1829,
+        "sha256": "6a6ddb91e9237e31bdebb1c2a80ff75e06fa634722dddbac29acaee48f13c950"
+      },
+      "working": {
+        "bytes": 1829,
+        "sha256": "6a6ddb91e9237e31bdebb1c2a80ff75e06fa634722dddbac29acaee48f13c950"
+      },
+      "source_and_index_pins_independently_matched_in_preceding_read_only_pass": true,
+      "working_matches_index_after_checkout_line_endings": true
+    },
+    {
+      "path": "conductor/tracks/pnw_land_context_reference_plane_20260911/plan.md",
+      "disposition": "exact_source",
+      "source_blob": "98615b664c395c1d539a4f1b0c4bb641f327883d",
+      "staged_blob": "98615b664c395c1d539a4f1b0c4bb641f327883d",
+      "staged": {
+        "bytes": 4417,
+        "sha256": "e25b3acf99be5f408c25d4b556a9626faa950df8e25d8b5b6dfa36d7f2d5919f"
+      },
+      "working": {
+        "bytes": 4417,
+        "sha256": "e25b3acf99be5f408c25d4b556a9626faa950df8e25d8b5b6dfa36d7f2d5919f"
+      },
+      "source_and_index_pins_independently_matched_in_preceding_read_only_pass": true,
+      "working_matches_index_after_checkout_line_endings": true
+    },
+    {
+      "path": "conductor/tracks/pnw_land_context_reference_plane_20260911/spec.md",
+      "disposition": "exact_source",
+      "source_blob": "538439eaa3a3d08f68096c96a9f85d47d26b8ff1",
+      "staged_blob": "538439eaa3a3d08f68096c96a9f85d47d26b8ff1",
+      "staged": {
+        "bytes": 13125,
+        "sha256": "de34a31a100a56779e3173233266d71a0690d821e1507ac4ef09aa77fd818b51"
+      },
+      "working": {
+        "bytes": 13125,
+        "sha256": "de34a31a100a56779e3173233266d71a0690d821e1507ac4ef09aa77fd818b51"
+      },
+      "source_and_index_pins_independently_matched_in_preceding_read_only_pass": true,
+      "working_matches_index_after_checkout_line_endings": true
+    }
+  ],
+  "composition_checks": [
+    {
+      "path": "conductor/RUNBOOK.md",
+      "added_row_count": 1,
+      "exact_additions": [
+        "| PNW land context and public contact planning | [Reference-plane plan](tracks/pnw_land_context_reference_plane_20260911/plan.md) and [experience plan](tracks/pnw_land_contact_experience_20260911/plan.md) | Resolve Idaho utility/state-land feeds, Oregon's current utility feed, county parcel fields/rights and every exact distribution's reuse terms before acquisition. Keep private owner names excluded; preserve boundaries, offices, advisers and contact-process routes as distinct evidence. Registration is planning only and authorizes no ingestion, outreach or implementation. |"
+      ],
+      "removing_exact_added_rows_recovers_entire_base_git_bytes": true,
+      "base": {
+        "bytes": 16997,
+        "sha256": "f688e6b0e50357bc966eefd00d462d64a3c957a522e77a28238c56ca670ac6ff"
+      },
+      "staged": {
+        "bytes": 17578,
+        "sha256": "ecf2a6b8481674c7623533900e163947e70065713cbee04bb2065709fa0a1c74"
+      }
+    },
+    {
+      "path": "conductor/tracks.md",
+      "added_row_count": 2,
+      "exact_additions": [
+        "| [pnw_land_context_reference_plane_20260911](tracks/pnw_land_context_reference_plane_20260911/plan.md) | planned | Resolve exact source rights, current feeds, native IDs, watermarks and WA/OR/ID coverage for nonpersonal parcel/land-use context, electric territories, BLM surface/office jurisdictions, state-managed lands and a separately versioned public contact directory. Private owner names remain excluded. No acquisition or implementation is authorized. |",
+        "| [pnw_land_contact_experience_20260911](tracks/pnw_land_contact_experience_20260911/plan.md) | planned | After the reference plane is admitted, build four truthful map groups plus a persistent selected-area contact panel and read-only agent parity. Explain why a public office or adviser applies, distinguish records help from responsibility or documented forwarding, and prepare inquiries for user review without sending. |"
+      ],
+      "removing_exact_added_rows_recovers_entire_base_git_bytes": true,
+      "base": {
+        "bytes": 13848,
+        "sha256": "7c933a2b495ef91951f3339ba55c9bfd0d5f71420c253abcfd749c8f3cb611f2"
+      },
+      "staged": {
+        "bytes": 14736,
+        "sha256": "03b75c8648fd49b4262d8d53a81a8dd789f9516899226ee448154746bf232995"
+      }
+    }
+  ],
+  "checks": {
+    "exact_staged_path_set": 16,
+    "exact_incoming_source_blobs": 14,
+    "additive_shared_files": 2,
+    "new_rows_total": 3,
+    "unmerged_paths": 0,
+    "json_parsed": 3,
+    "markdown_okf_type_present": 13,
+    "cached_diff_check_exit_code": 0,
+    "head_unchanged": true,
+    "working_files_match_index": true,
+    "runtime_changes": 0,
+    "pivot_evidence_changes": 0,
+    "quality_receipt_unchanged": true,
+    "preexisting_omc_state_unchanged": true,
+    "only_unstaged_tracked_path": ".omc/ultrapilot-state.json"
+  },
+  "preserved_quality_receipt": {
+    "path": "services/agri-data-service/QUALITY_RECEIPT.json",
+    "bytes": 1014,
+    "sha256": "ac3190a42f2d04d111765cb064bd332d364808f4cb6e791b2d81b91c91f644f7",
+    "scope": "The existing completed sweep remains bound to its previously tested source; this documentation composition creates no new test-run claim."
+  },
+  "preserved_state": {
+    "path": ".omc/ultrapilot-state.json",
+    "bytes": 512,
+    "sha256": "abfc56277b0a05b8c68ed4ff071ed1900ced24f4c4758b63263a1632d3d2bd6a"
+  },
+  "prior_inventory_review": {
+    "status": "Preserved exactly through incoming source blobs; no new case/link scan required for final composition.",
+    "case_count": 206,
+    "unique_case_count": 206,
+    "statuses": {
+      "not_run": 165,
+      "blocked": 41
+    },
+    "passed_cases": 0,
+    "prepared_unique_local_link_targets": 92,
+    "local_links_note": "Preparation inspected local targets, including directories. This final pass preserves those exact source documents. External source URLs and source rights are not revalidated.",
+    "browser_tests_run": false
+  },
+  "semantic_limits": [
+    "PNW registration remains planning only and authorizes no acquisition, implementation, outreach, publication or source admission.",
+    "Private owner names remain excluded; boundaries, public offices, advisers and contact-process evidence remain separate.",
+    "Exact distribution rights, feed currency, WA/OR/ID coverage, native IDs, watermarks, office-topic freshness and source-admission gates remain open.",
+    "The QA inventory preserves 165 not-run and 41 blocked cases; dated planning completion in the task ledger is not evidence of executed browser QA or a completed source census.",
+    "The parent current order places this document intake before intervention; earlier preparation order is historical and does not override the parent current instruction."
+  ],
+  "reviewer_actions": {
+    "read_only_git_and_file_inspection": true,
+    "scratch_receipt_written": true,
+    "tests_run": false,
+    "builds_run": false,
+    "implementation_or_authored_document_edits": false,
+    "head_or_index_mutation": false,
+    "external_messages_sent": false
+  },
+  "application_provenance": "Author/root reports one no-commit cherry-pick. Independently observed index has one copy of each incoming addition, exact 14 source blobs, no unmerged paths and unchanged HEAD; command execution count is not inferred solely from final file bytes."
+}

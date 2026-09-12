@@ -1,0 +1,34 @@
+{
+  "path": "conductor/tracks/intervention_boundary_authoring_20260911/evidence/shared-file-packet.md",
+  "before_git_blob": "ab25ed8d783b7418d4a380ff2b8d84b26bbfb6a4",
+  "after_git_blob": "359ddcba4693c1faf3730932c0790915afa9109f",
+  "before_sha256": "f5665e9d63c628a7d629faecd79a6a2a68a3fa8d3f6d468ca41e5e1296affd4a",
+  "after_sha256": "fee412d6c86313d6818e935df77519b02618a6a26aa0a666fdfdb1272fa0f15a",
+  "link_destinations_corrected": 4,
+  "affected_existing_lines": 3,
+  "resolved_links": [
+    {
+      "href": "../../community_engagement_completion_20260805/plan.md",
+      "target": "conductor/tracks/community_engagement_completion_20260805/plan.md"
+    },
+    {
+      "href": "../plan.md",
+      "target": "conductor/tracks/intervention_boundary_authoring_20260911/plan.md"
+    },
+    {
+      "href": "../../community_engagement_completion_20260805/plan.md",
+      "target": "conductor/tracks/community_engagement_completion_20260805/plan.md"
+    },
+    {
+      "href": "../plan.md",
+      "target": "conductor/tracks/intervention_boundary_authoring_20260911/plan.md"
+    }
+  ],
+  "previous_reviewed_staged_tree": "4e89c03c87a7a8b120c01b3a90035e7fb83aa3d3",
+  "new_staged_tree": "e3e6f628b5536bc05fb6b9f2466de81afb0876aa",
+  "only_index_path_changed": true,
+  "previous_independent_review_sha256": "6b4b5c79ace3a52447547f5b9898f16b6588b1cd30e874c816df15d7cc922650",
+  "tests_run": false,
+  "diff_check": "PASS",
+  "final_author_sha256": "8039dcdd969b7f67c53df6a7dd8ebcf222ed1fcc9ce757d9494b8ed97da14937"
+}

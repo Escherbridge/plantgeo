@@ -1160,3 +1160,27 @@ The burn-history ready result may carry verified `mtbsSnapshot` metadata even wh
 empty. Show capture time, publication availability, covered fire years and the exact partial-year
 list as a separate notice from row/history truncation. A complete captured query is not evidence
 that MTBS has finished mapping those fire seasons. Only an enabled layer displays this notice.
+
+### Intervention boundary editor
+
+`InterventionBoundaryEditor` owns one temporary interaction through a portal
+covering the map canvas. Primary pointer-up handles mouse, pen and touch; arrows
+move the next-point marker, Enter adds, Backspace undoes, Ctrl+Enter finishes,
+and Escape cancels. Controls retain normal keyboard activation and trap Tab
+within the editor. Global map shortcuts are suppressed while it owns focus.
+The overlay receives pointer events before the map, preventing the same gesture
+from opening agent popups, selecting rendered features, or moving query pins.
+Every map gesture handler's prior enabled state is captured and restored; an
+already-disabled dragPan handler stays disabled after drawing. The dock's DOM
+visibility is temporarily hidden rather than closing/unmounting its form,
+so the full mobile canvas is available while draft text and consent survive.
+
+The temporary GeoJSON source renders the first point, next point, edges and fill.
+Its `style.load` listener recreates all layers from the current draft after a
+basemap replacement. It deliberately does not gate this listener on
+`map.isStyleLoaded()`, which also waits on sources unrelated to drawing.
+The installed MapLibre source confirms `style.load` follows stylesheet readiness
+and the `Style._checkLoaded` add-source guard. Only the initial not-yet-loaded
+stylesheet error is deferred to this event. Cleanup removes listeners, layers,
+source and temporary interaction changes. The editor does not touch the
+environmental serving lane or persist drafts to shared/global storage.

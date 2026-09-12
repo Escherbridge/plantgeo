@@ -1,0 +1,698 @@
+{
+  "type": "intervention-uncommitted-intake",
+  "status": "awaiting_independent_review",
+  "base_commit": "7056fa306fec5c268f84740f1687014792ff850f",
+  "base_tree": "4429ca453c63820b59b784d67846ff2bc88eb263",
+  "source_commit": "2fc6b30ac1b024e1c955dbf95552495608608a96",
+  "staged_tree": "4e89c03c87a7a8b120c01b3a90035e7fb83aa3d3",
+  "source_path_count": 56,
+  "staged_path_count": 63,
+  "files": [
+    {
+      "path": "conductor/RUNBOOK.md",
+      "staged_git_blob": "e01162084ca7b2ce0e7d661d448a8a63ca4cd793",
+      "staged_sha256": "0842aa0a3e0ef2d80fff0ca2a1a6c3ac554499798e2dcce720bb6bb0cf7f24b4",
+      "authored_shared_doc": true,
+      "normalized_current_status": false,
+      "base_git_blob": "8d81a450356d3998273b0a709ba089c5dd34ec35",
+      "source_git_blob": "6ab7b1b96b4eed8a6f1e0a156fba3dc1a51918d3"
+    },
+    {
+      "path": "conductor/tracks.md",
+      "staged_git_blob": "255aec9f561812dcd445b7141f7db46ad2a46e15",
+      "staged_sha256": "31aee332724ddfde393495c39dbab6c2456824fdc74a3a0719aa5c7370368dd3",
+      "authored_shared_doc": true,
+      "normalized_current_status": false,
+      "base_git_blob": "18134ad92de6dc4c8c571b6d81939d7b8b0d9105",
+      "source_git_blob": "8c14ecece770aac7140f0bab8511e1dc772118c6"
+    },
+    {
+      "path": "conductor/tracks/community_engagement_completion_20260805/metadata.json",
+      "staged_git_blob": "c03bb387baaa7d8a434d9f646b5fb0afa14e5668",
+      "staged_sha256": "e7aa50a7693b260e42360028e9a71e0a5591c78d05e8c11986d121c28f29ca4b",
+      "authored_shared_doc": false,
+      "normalized_current_status": true,
+      "base_git_blob": "cb3b64d3de42a646a9f246784994104499a29f31",
+      "source_git_blob": "34fcd338cffe85f0e1ab68ee6c1d8678c09636b7"
+    },
+    {
+      "path": "conductor/tracks/community_engagement_completion_20260805/plan.md",
+      "staged_git_blob": "baf25531d5118d2d0f54a7e3919928979808ce04",
+      "staged_sha256": "29e7e7c4c5c74d24088cc687855d0b31de35050beb46a0a34edad888bbbfe45b",
+      "authored_shared_doc": false,
+      "normalized_current_status": true,
+      "base_git_blob": "f9acb443e30fdc054845d7df13f2fa5125a08beb",
+      "source_git_blob": "28e7f4105175a1febb445ee01fefa700791e4574"
+    },
+    {
+      "path": "conductor/tracks/community_engagement_completion_20260805/spec.md",
+      "staged_git_blob": "59ba05213e7dcddb9480b78e17cb2b89afc35ddb",
+      "staged_sha256": "89e89fba388354b7555985e0238d8dc9b14b09b1a1ac73d1f5849cc629cbd0b3",
+      "authored_shared_doc": false,
+      "normalized_current_status": true,
+      "base_git_blob": "da44182a7846380361fb467721efd80f1900a51d",
+      "source_git_blob": "580db36bf9c025276f8ec8a3a1cf70d6fe363343"
+    },
+    {
+      "path": "conductor/tracks/intervention_boundary_authoring_20260911/evidence/boundary-doc-packet.md",
+      "staged_git_blob": "1403e4750bee5d4f9966b5f75a06a5e927607de2",
+      "staged_sha256": "d98f9f690fb75cf01f412a1f2b72133126a9c0d084d43d1d82a10aee0637713b",
+      "authored_shared_doc": false,
+      "normalized_current_status": false,
+      "base_git_blob": null,
+      "source_git_blob": "1403e4750bee5d4f9966b5f75a06a5e927607de2"
+    },
+    {
+      "path": "conductor/tracks/intervention_boundary_authoring_20260911/evidence/community-publication-doc-handoff.md",
+      "staged_git_blob": "79df2271e6a7c5f27d35d15cf585f55d2940acb9",
+      "staged_sha256": "bf4eb53bec9e15782e67af84db5d416135238b9f96fcde8e37493eaa6f22e8e3",
+      "authored_shared_doc": false,
+      "normalized_current_status": false,
+      "base_git_blob": null,
+      "source_git_blob": "79df2271e6a7c5f27d35d15cf585f55d2940acb9"
+    },
+    {
+      "path": "conductor/tracks/intervention_boundary_authoring_20260911/evidence/community-publication-doc-handoff.patch",
+      "staged_git_blob": "217565e75190891b0936111f313afd66fa446699",
+      "staged_sha256": "10b2e08a590990cbd173aac161a6c0780ce50d4e87fddc827a548b80dde7b9b7",
+      "authored_shared_doc": false,
+      "normalized_current_status": false,
+      "base_git_blob": null,
+      "source_git_blob": "217565e75190891b0936111f313afd66fa446699"
+    },
+    {
+      "path": "conductor/tracks/intervention_boundary_authoring_20260911/evidence/images/keyboard-rectangle-draft.png",
+      "staged_git_blob": "1e0fb6755d1e8602e4708eed397c6fa4efddbbed",
+      "staged_sha256": "8a0cd867ac4c79f39cea777516a82cf638887849de273cd96479336c0a09921e",
+      "authored_shared_doc": false,
+      "normalized_current_status": false,
+      "base_git_blob": null,
+      "source_git_blob": "1e0fb6755d1e8602e4708eed397c6fa4efddbbed"
+    },
+    {
+      "path": "conductor/tracks/intervention_boundary_authoring_20260911/evidence/images/published-after-style-swap.png",
+      "staged_git_blob": "d09c86fd529e044f4c5b8575fed5c3017d6a7104",
+      "staged_sha256": "8989970fcfe1b12510552d97731154229bfdc15c55e516a66168d75ab5c6963e",
+      "authored_shared_doc": false,
+      "normalized_current_status": false,
+      "base_git_blob": null,
+      "source_git_blob": "d09c86fd529e044f4c5b8575fed5c3017d6a7104"
+    },
+    {
+      "path": "conductor/tracks/intervention_boundary_authoring_20260911/evidence/images/published-same-viewport.png",
+      "staged_git_blob": "0cf5219d62541948dce1b5e894aab68fe2fee502",
+      "staged_sha256": "1c2f26331d7c4cad341a55081f8c3cebdb0dd260f21b3b1bd8f9ee2e158d2d8d",
+      "authored_shared_doc": false,
+      "normalized_current_status": false,
+      "base_git_blob": null,
+      "source_git_blob": "0cf5219d62541948dce1b5e894aab68fe2fee502"
+    },
+    {
+      "path": "conductor/tracks/intervention_boundary_authoring_20260911/evidence/images/warm-empty-viewport.png",
+      "staged_git_blob": "7592d0113b18c0e6f239ba29f3a5976bad10cfd7",
+      "staged_sha256": "f305658fd06b25651ee7c49b73f155035e68bd592e03ed4180818000f4a487d3",
+      "authored_shared_doc": false,
+      "normalized_current_status": false,
+      "base_git_blob": null,
+      "source_git_blob": "7592d0113b18c0e6f239ba29f3a5976bad10cfd7"
+    },
+    {
+      "path": "conductor/tracks/intervention_boundary_authoring_20260911/evidence/mapview-publication-sync.patch",
+      "staged_git_blob": "3d5f413a99473804bbfd5d5af516182113ad6357",
+      "staged_sha256": "79045848a88097d88e58cd0c54ca8be04b81801093b2dbcf21ff0cc1fb68aa91",
+      "authored_shared_doc": false,
+      "normalized_current_status": false,
+      "base_git_blob": null,
+      "source_git_blob": "3d5f413a99473804bbfd5d5af516182113ad6357"
+    },
+    {
+      "path": "conductor/tracks/intervention_boundary_authoring_20260911/evidence/review-and-verification.md",
+      "staged_git_blob": "80db93059537a2cbd70cd6522ff1887fa51c7c43",
+      "staged_sha256": "9aeece1d00323c8a2ebc19a388c42be1fe2bd04026852f91466a4bf64be4621d",
+      "authored_shared_doc": false,
+      "normalized_current_status": false,
+      "base_git_blob": null,
+      "source_git_blob": "80db93059537a2cbd70cd6522ff1887fa51c7c43"
+    },
+    {
+      "path": "conductor/tracks/intervention_boundary_authoring_20260911/evidence/shared-file-packet.md",
+      "staged_git_blob": "ab25ed8d783b7418d4a380ff2b8d84b26bbfb6a4",
+      "staged_sha256": "f5665e9d63c628a7d629faecd79a6a2a68a3fa8d3f6d468ca41e5e1296affd4a",
+      "authored_shared_doc": false,
+      "normalized_current_status": false,
+      "base_git_blob": null,
+      "source_git_blob": "ab25ed8d783b7418d4a380ff2b8d84b26bbfb6a4"
+    },
+    {
+      "path": "conductor/tracks/intervention_boundary_authoring_20260911/evidence/verification-receipt.json",
+      "staged_git_blob": "ad44b69279cf46323630960012808ac84a19653a",
+      "staged_sha256": "3cefeec455757662aba7ec8a24b7b422423b0a5f5093d83b238da0644e3fb249",
+      "authored_shared_doc": false,
+      "normalized_current_status": false,
+      "base_git_blob": null,
+      "source_git_blob": "ad44b69279cf46323630960012808ac84a19653a"
+    },
+    {
+      "path": "conductor/tracks/intervention_boundary_authoring_20260911/metadata.json",
+      "staged_git_blob": "1e476a5d74f1e6438c4a9ac1ae1269252a174c02",
+      "staged_sha256": "9737cc1cfe39daa5eadf43acbcbbf05373af9286cbcec3c40aba4b3b50cc1bfe",
+      "authored_shared_doc": false,
+      "normalized_current_status": true,
+      "base_git_blob": null,
+      "source_git_blob": "d58c5a66048fb9e02d00a13fd25f9014ab565874"
+    },
+    {
+      "path": "conductor/tracks/intervention_boundary_authoring_20260911/plan.md",
+      "staged_git_blob": "eb00d5d1d13658fc5f65408a101168c99a85b39a",
+      "staged_sha256": "5b042ce989b842ec97e82efb7d20f14b34b6267ecbca25f2f92da8ac7e900440",
+      "authored_shared_doc": false,
+      "normalized_current_status": true,
+      "base_git_blob": null,
+      "source_git_blob": "489a95c42cf96ff2cb7c04961e89fa4cfd61e98f"
+    },
+    {
+      "path": "conductor/tracks/intervention_boundary_authoring_20260911/spec.md",
+      "staged_git_blob": "d131e9b958f37bd3941835f8cdc1a5bef5d5ac38",
+      "staged_sha256": "0b6da253f43fe6b4fed88eecb4624cc0affd93559838be643a5ee4139b7dac69",
+      "authored_shared_doc": false,
+      "normalized_current_status": true,
+      "base_git_blob": null,
+      "source_git_blob": "338de05eafced6290b2babc41505e529645b64a0"
+    },
+    {
+      "path": "e2e/community-publication-db.mjs",
+      "staged_git_blob": "3a64f534767d159c111fbe2fe4a96d24218a6ed9",
+      "staged_sha256": "bfb7c776acc64e67cb55cccd4e7f063e6af1530e4a3d99b8496dd06288fdf642",
+      "authored_shared_doc": false,
+      "normalized_current_status": false,
+      "base_git_blob": null,
+      "source_git_blob": "3a64f534767d159c111fbe2fe4a96d24218a6ed9"
+    },
+    {
+      "path": "e2e/community-publication-identities.json",
+      "staged_git_blob": "6ca84674f886c48950b152182a941ea57b8cf9e7",
+      "staged_sha256": "115c9280b4a67daaee3796c3c47911f9d1fbf590a2d15b5fa9c515f9cdba1c26",
+      "authored_shared_doc": false,
+      "normalized_current_status": false,
+      "base_git_blob": null,
+      "source_git_blob": "6ca84674f886c48950b152182a941ea57b8cf9e7"
+    },
+    {
+      "path": "e2e/community-publication-server.mjs",
+      "staged_git_blob": "54212a5956c7469733aeaeda37e9f07c16a56bec",
+      "staged_sha256": "adc0d258ccd6b09e8934011f809038d333f3e203b57ee0229798f1468c279ec4",
+      "authored_shared_doc": false,
+      "normalized_current_status": false,
+      "base_git_blob": null,
+      "source_git_blob": "54212a5956c7469733aeaeda37e9f07c16a56bec"
+    },
+    {
+      "path": "e2e/community-publication-teardown.ts",
+      "staged_git_blob": "1c04e315b271fa1abdc2645c4bcb0dd2b27e118c",
+      "staged_sha256": "bf5dacb9533902ffde9e014f82a5f75026ddbbdb3efa345572ffed067c1fcd4e",
+      "authored_shared_doc": false,
+      "normalized_current_status": false,
+      "base_git_blob": null,
+      "source_git_blob": "1c04e315b271fa1abdc2645c4bcb0dd2b27e118c"
+    },
+    {
+      "path": "e2e/community-publication.config.ts",
+      "staged_git_blob": "198b40f13d67fe8c37971e8c672d53e87fc7edaa",
+      "staged_sha256": "f0ba53266c6b02d3b996732266256bf4c0dbd3d60c632f9596f37c5f478fe2de",
+      "authored_shared_doc": false,
+      "normalized_current_status": false,
+      "base_git_blob": null,
+      "source_git_blob": "198b40f13d67fe8c37971e8c672d53e87fc7edaa"
+    },
+    {
+      "path": "e2e/community-publication.md",
+      "staged_git_blob": "bee79c8ee78c213d9e3a4943f38c665eac992bb3",
+      "staged_sha256": "4f87d67e76a68a7410dfaacb2068a0af8fc51a8f2efe903c0eaa7ff8fe3fb00b",
+      "authored_shared_doc": false,
+      "normalized_current_status": false,
+      "base_git_blob": null,
+      "source_git_blob": "bee79c8ee78c213d9e3a4943f38c665eac992bb3"
+    },
+    {
+      "path": "e2e/community-publication.spec.ts",
+      "staged_git_blob": "e68467719cfe26458313f2241a795c8ebbea3f6d",
+      "staged_sha256": "051bf5b97fe19130769c6a9e310f8f2627f0f0d3f2fcaab211fcbc0cac200eef",
+      "authored_shared_doc": false,
+      "normalized_current_status": false,
+      "base_git_blob": null,
+      "source_git_blob": "e68467719cfe26458313f2241a795c8ebbea3f6d"
+    },
+    {
+      "path": "public/sw.js",
+      "staged_git_blob": "f03e02f737801b9f6660933216898e97c3e6e0b2",
+      "staged_sha256": "4c00b9c7f9b66094561b30f53d6ed33a11e9e756e910e03e5ea49cd350d6a52f",
+      "authored_shared_doc": false,
+      "normalized_current_status": false,
+      "base_git_blob": "0e629c6de79ac24d2403cfdb9ab9a109676a5bd0",
+      "source_git_blob": "f03e02f737801b9f6660933216898e97c3e6e0b2"
+    },
+    {
+      "path": "src/__tests__/api/interventions-trpc.test.ts",
+      "staged_git_blob": "a925df6775285aad581cd8ba7112b471dc2157ca",
+      "staged_sha256": "c65b955448932558c78be1beecdca53f754d2578b53a21ec8a2c64a99b9ca7ef",
+      "authored_shared_doc": false,
+      "normalized_current_status": false,
+      "base_git_blob": "e08f8231629afbcddfe610a31b3b918d10995e9f",
+      "source_git_blob": "a925df6775285aad581cd8ba7112b471dc2157ca"
+    },
+    {
+      "path": "src/__tests__/components/CommunityDetails.test.tsx",
+      "staged_git_blob": "1be3d4f341997732e6c199cb86a467c0fb5868f1",
+      "staged_sha256": "145b21116fe29dd6ad419d51bba6776f54884eca68c6a323a83ebd21a03a6bc6",
+      "authored_shared_doc": false,
+      "normalized_current_status": false,
+      "base_git_blob": "6a66b3a562f928d8dbcc17c87f6fc72afa943248",
+      "source_git_blob": "1be3d4f341997732e6c199cb86a467c0fb5868f1"
+    },
+    {
+      "path": "src/__tests__/components/ContributionQueue.test.tsx",
+      "staged_git_blob": "d8c8afae0767b44d6afb7be14689f1e3d72d5445",
+      "staged_sha256": "6d75884f9db83759115120a3f6df09135f14b965ee9e8434e019fd89bb48ce15",
+      "authored_shared_doc": false,
+      "normalized_current_status": false,
+      "base_git_blob": "25f7c8d1779273b4472b6fd040b05b4a86498379",
+      "source_git_blob": "d8c8afae0767b44d6afb7be14689f1e3d72d5445"
+    },
+    {
+      "path": "src/__tests__/components/InterventionBoundaryEditor.test.tsx",
+      "staged_git_blob": "27435c0a3b9151b6f4502975220dbaecfddab808",
+      "staged_sha256": "7dbdaa28ff601a20aec12db081ded6ae6f356d3d639ab7933530c4ecf7d942d8",
+      "authored_shared_doc": false,
+      "normalized_current_status": false,
+      "base_git_blob": null,
+      "source_git_blob": "27435c0a3b9151b6f4502975220dbaecfddab808"
+    },
+    {
+      "path": "src/__tests__/components/InterventionGeometryPreview.test.tsx",
+      "staged_git_blob": "cf58b39e4641ca84baeacff28ae806bef98afa6a",
+      "staged_sha256": "bdd56ccfadf6e915d750da811103dfa1723996819641e451f69e830f72535a4a",
+      "authored_shared_doc": false,
+      "normalized_current_status": false,
+      "base_git_blob": null,
+      "source_git_blob": "cf58b39e4641ca84baeacff28ae806bef98afa6a"
+    },
+    {
+      "path": "src/__tests__/components/InterventionPublicationSync.test.tsx",
+      "staged_git_blob": "34b35811b4d7a3b3edab35a7a10e6e32a3dc7234",
+      "staged_sha256": "8e0778fc25875ef881b3a1e1f034331e7174037f12ffe7dcedc556028d8a0c0f",
+      "authored_shared_doc": false,
+      "normalized_current_status": false,
+      "base_git_blob": null,
+      "source_git_blob": "34b35811b4d7a3b3edab35a7a10e6e32a3dc7234"
+    },
+    {
+      "path": "src/__tests__/components/InterventionSubmitModal.test.tsx",
+      "staged_git_blob": "0b734dd38eaa236042f7cb1a8a6efef778a1ca9b",
+      "staged_sha256": "14aff825ed9c0163a3be7febfb5313dae1f2da972ae2c870571ad49456816f9c",
+      "authored_shared_doc": false,
+      "normalized_current_status": false,
+      "base_git_blob": null,
+      "source_git_blob": "0b734dd38eaa236042f7cb1a8a6efef778a1ca9b"
+    },
+    {
+      "path": "src/__tests__/components/ModerationPanel.test.tsx",
+      "staged_git_blob": null,
+      "staged_sha256": null,
+      "authored_shared_doc": false,
+      "normalized_current_status": false,
+      "base_git_blob": "b1812a7b2eb990a76efac926d05994b4000c5a8f",
+      "source_git_blob": null
+    },
+    {
+      "path": "src/__tests__/components/map-view-render-count.test.tsx",
+      "staged_git_blob": "80d29b59341d16d2d93f1cdb15b8521efc10c291",
+      "staged_sha256": "52336674168f70a2437f97f492197d84207908ee54af60922421ba3fc009a2a7",
+      "authored_shared_doc": false,
+      "normalized_current_status": false,
+      "base_git_blob": "66ad275ca24a17b272bd69414e43680036db1141",
+      "source_git_blob": "80d29b59341d16d2d93f1cdb15b8521efc10c291"
+    },
+    {
+      "path": "src/__tests__/lib/map/intervention-boundary.test.ts",
+      "staged_git_blob": "7e7f95362fd435ca7857287390d2103f3fcd2748",
+      "staged_sha256": "cd4fb5c53f59e930338a497644cb9d23c77cf9cef9db913db77deacb0c43b8e9",
+      "authored_shared_doc": false,
+      "normalized_current_status": false,
+      "base_git_blob": null,
+      "source_git_blob": "7e7f95362fd435ca7857287390d2103f3fcd2748"
+    },
+    {
+      "path": "src/__tests__/lib/offline/intervention-worker-refresh.test.ts",
+      "staged_git_blob": "2a3ef95cc201c513617202f2dc669cefaa904abd",
+      "staged_sha256": "8a6a61cceab56eec86a6b6cdbbb7bf9d6e183a62a187006f801aaa4e1421b214",
+      "authored_shared_doc": false,
+      "normalized_current_status": false,
+      "base_git_blob": null,
+      "source_git_blob": "2a3ef95cc201c513617202f2dc669cefaa904abd"
+    },
+    {
+      "path": "src/__tests__/security/moderation-route-access.test.tsx",
+      "staged_git_blob": "910e9266de4224e7843914f2abb160823a6834b0",
+      "staged_sha256": "20558a5962d1975c35cac306af3b35ea266a9744fc46655792c613e1ffc9c140",
+      "authored_shared_doc": false,
+      "normalized_current_status": false,
+      "base_git_blob": "f097448a32787a09d6f6f945146978e71644791a",
+      "source_git_blob": "910e9266de4224e7843914f2abb160823a6834b0"
+    },
+    {
+      "path": "src/__tests__/services/community-publication-postgis.test.ts",
+      "staged_git_blob": "c421b3457280c43ffcd9045f63e71e2f96f29e0b",
+      "staged_sha256": "1c11674afd6be6734782b70156c7ee3d53f2b57140ef664b971a6e0f9bf76f7e",
+      "authored_shared_doc": false,
+      "normalized_current_status": false,
+      "base_git_blob": null,
+      "source_git_blob": "c421b3457280c43ffcd9045f63e71e2f96f29e0b"
+    },
+    {
+      "path": "src/__tests__/trpc/interventions.test.ts",
+      "staged_git_blob": "e0ab8d52f828ce06150d54968bca7c49e06f9eb7",
+      "staged_sha256": "5f1e1a7a73e3bd1e5a2a3015f2b09d9a7ea2f5513c7286c242849e2ce9085490",
+      "authored_shared_doc": false,
+      "normalized_current_status": false,
+      "base_git_blob": "84cc67b3d4dd6d4a3b02d04908de7dfd17fd5696",
+      "source_git_blob": "e0ab8d52f828ce06150d54968bca7c49e06f9eb7"
+    },
+    {
+      "path": "src/app/feed/InterventionFeed.tsx",
+      "staged_git_blob": "19adad70d06dcf172f47922ed0cc438f26e6a69c",
+      "staged_sha256": "fb518a2cdbf7f4689237359f173ece008f40d0ce20428e5bc732ea0041b47dd4",
+      "authored_shared_doc": false,
+      "normalized_current_status": false,
+      "base_git_blob": "ddd41e04d0a28865d3520905eabbbb504eea2124",
+      "source_git_blob": "19adad70d06dcf172f47922ed0cc438f26e6a69c"
+    },
+    {
+      "path": "src/app/moderation/page.tsx",
+      "staged_git_blob": "422cd22cc30f2c63b10101889d47dd3e97da2203",
+      "staged_sha256": "d3686b6c09743637aaaebf63c5ac1e054912b362df4c3e74835e6547cbdab687",
+      "authored_shared_doc": false,
+      "normalized_current_status": false,
+      "base_git_blob": "97ba8e2cb7cd69e31f52bf87321c3f6f57c8efc0",
+      "source_git_blob": "422cd22cc30f2c63b10101889d47dd3e97da2203"
+    },
+    {
+      "path": "src/components/map/AGENTS.md",
+      "staged_git_blob": "810d9f616cf2bf2bd52f40e38ba0f880b8bfae03",
+      "staged_sha256": "f08bcc8675afb1e9806be0ad80503a860a5bd34763db024366087a8597bddced",
+      "authored_shared_doc": true,
+      "normalized_current_status": false,
+      "base_git_blob": "7c8ba0a8a82e751f1f1eec9485db88fe58323b9c",
+      "source_git_blob": "7c8ba0a8a82e751f1f1eec9485db88fe58323b9c"
+    },
+    {
+      "path": "src/components/map/InterventionBoundaryEditor.tsx",
+      "staged_git_blob": "a075c66b79c593143e8cb98f9dcf6851dd293591",
+      "staged_sha256": "5ccbb92af6d60760cb5156280427433809a8c5c69d7beee4f11cd50195ddd929",
+      "authored_shared_doc": false,
+      "normalized_current_status": false,
+      "base_git_blob": null,
+      "source_git_blob": "a075c66b79c593143e8cb98f9dcf6851dd293591"
+    },
+    {
+      "path": "src/components/map/InterventionPublicationSync.tsx",
+      "staged_git_blob": "b9bb481a38ba78df443f309ff0caef5f4f00281c",
+      "staged_sha256": "681039153cb0aaafd2f233b90cedce2009d48de02b811f959f100436a71c941e",
+      "authored_shared_doc": false,
+      "normalized_current_status": false,
+      "base_git_blob": null,
+      "source_git_blob": "b9bb481a38ba78df443f309ff0caef5f4f00281c"
+    },
+    {
+      "path": "src/components/map/MapView.tsx",
+      "staged_git_blob": "ae4d4701b20a4fce00be04f6cf142e594ac2dbf8",
+      "staged_sha256": "f35672c6f35f16a8e1055b9c57702ba0dd70ad172ecb774d8637887720118d99",
+      "authored_shared_doc": false,
+      "normalized_current_status": false,
+      "base_git_blob": "5355ec7751bafe589aa9e012b3c9557d17063fdd",
+      "source_git_blob": "ae4d4701b20a4fce00be04f6cf142e594ac2dbf8"
+    },
+    {
+      "path": "src/components/panels/AGENTS.md",
+      "staged_git_blob": "6fbc7a10249c2db4ea8b46197c0eb57338a1c9a5",
+      "staged_sha256": "a3c239bf0b63a85867dcdfa0a8c74b8796fc2c0ffd90b8e19d21edc81e6d471b",
+      "authored_shared_doc": true,
+      "normalized_current_status": false,
+      "base_git_blob": "ecd1fc2634494734476482cc2e2d0c8ba30814ca",
+      "source_git_blob": "ecd1fc2634494734476482cc2e2d0c8ba30814ca"
+    },
+    {
+      "path": "src/components/panels/CommunityDetails.tsx",
+      "staged_git_blob": "31f40868bf5ee245181f6aacb497f4cb8fe8d65a",
+      "staged_sha256": "7b0e1c0960261e061b399a870d1c01e61df7fcbf7f62e01014c0062a8a142446",
+      "authored_shared_doc": false,
+      "normalized_current_status": false,
+      "base_git_blob": "f67cff61cd579e08286eefa9200e5f0de4919a27",
+      "source_git_blob": "31f40868bf5ee245181f6aacb497f4cb8fe8d65a"
+    },
+    {
+      "path": "src/components/panels/ContributionQueue.tsx",
+      "staged_git_blob": "0183655db0707be540905f3b3e25982740738a28",
+      "staged_sha256": "bd15b05ed866d1745fb6bc3821ba5b974a2ffd0a482e70ae731dec52540bd5b9",
+      "authored_shared_doc": false,
+      "normalized_current_status": false,
+      "base_git_blob": "726ba4c4003e0f93de3f47d89e7323c1549f17d1",
+      "source_git_blob": "0183655db0707be540905f3b3e25982740738a28"
+    },
+    {
+      "path": "src/components/panels/InterventionGeometryPreview.tsx",
+      "staged_git_blob": "2df66c1b85da2f6c9b679d1f2dc6c455b756facb",
+      "staged_sha256": "ef4ff93c52684da3e05aee8ea1e77516548ca8ac8c05e4e21efc8059aac6cbf9",
+      "authored_shared_doc": false,
+      "normalized_current_status": false,
+      "base_git_blob": null,
+      "source_git_blob": "2df66c1b85da2f6c9b679d1f2dc6c455b756facb"
+    },
+    {
+      "path": "src/components/panels/InterventionSubmitModal.tsx",
+      "staged_git_blob": "875d924e9dfa8500bbc9987217d4577fb200bea3",
+      "staged_sha256": "e0a3128979c0a47176ee17080d44020f7145fc34fa10634a016df1ed2e55e146",
+      "authored_shared_doc": false,
+      "normalized_current_status": false,
+      "base_git_blob": "1dcba435144656ba18532e3147feb67ef3fa0a84",
+      "source_git_blob": "875d924e9dfa8500bbc9987217d4577fb200bea3"
+    },
+    {
+      "path": "src/components/panels/ModerationPanel.tsx",
+      "staged_git_blob": null,
+      "staged_sha256": null,
+      "authored_shared_doc": false,
+      "normalized_current_status": false,
+      "base_git_blob": "62c513c56a652d5cdbc51d64cd08b33ee76ce2a0",
+      "source_git_blob": null
+    },
+    {
+      "path": "src/lib/geo/intervention-geometry.ts",
+      "staged_git_blob": "a5a22d8ddc1bb6b62d8e52415d82f2e9a2cc2563",
+      "staged_sha256": "6a1d95159e20a551fb1bac2ad22b1149606b77eeaa00449fce778b51e3d0ae22",
+      "authored_shared_doc": false,
+      "normalized_current_status": false,
+      "base_git_blob": null,
+      "source_git_blob": "a5a22d8ddc1bb6b62d8e52415d82f2e9a2cc2563"
+    },
+    {
+      "path": "src/lib/map/AGENTS.md",
+      "staged_git_blob": "7910a74e17cee862a1063337006c6c19fe98a8d8",
+      "staged_sha256": "4be2ce96235746267a079fd31887bd0e10759db2d899a168937bda8c51461dbf",
+      "authored_shared_doc": true,
+      "normalized_current_status": false,
+      "base_git_blob": "d0b70e5174428db6fb180a77b55a4dc691c4b1c6",
+      "source_git_blob": "d0b70e5174428db6fb180a77b55a4dc691c4b1c6"
+    },
+    {
+      "path": "src/lib/map/intervention-boundary.ts",
+      "staged_git_blob": "d1caf8409d9cf13e9ea4543449de7ac510b0b2f3",
+      "staged_sha256": "7fb711a48084c2a141a53a9d32bb23448b4838ee22af455a2806900ba18b5f2c",
+      "authored_shared_doc": false,
+      "normalized_current_status": false,
+      "base_git_blob": null,
+      "source_git_blob": "d1caf8409d9cf13e9ea4543449de7ac510b0b2f3"
+    },
+    {
+      "path": "src/lib/map/intervention-publication.ts",
+      "staged_git_blob": "fd72fc5fac9fbfde0f933aa1bd3f715ad6f00a28",
+      "staged_sha256": "2ee1c31552c95110e82607c3318ae337a05b67dbdadccafebb39de97147dbd27",
+      "authored_shared_doc": false,
+      "normalized_current_status": false,
+      "base_git_blob": null,
+      "source_git_blob": "fd72fc5fac9fbfde0f933aa1bd3f715ad6f00a28"
+    },
+    {
+      "path": "src/lib/server/AGENTS.md",
+      "staged_git_blob": "16f50abd7fcfe27c9c68bb2f9c30fbf7c93a8031",
+      "staged_sha256": "09e6486b7a1518a25137434da23513565d340dcd64319b22f29d8a7ffc832924",
+      "authored_shared_doc": true,
+      "normalized_current_status": false,
+      "base_git_blob": "c611969bf345acd4322228b75f5b0f791515c34b",
+      "source_git_blob": "c611969bf345acd4322228b75f5b0f791515c34b"
+    },
+    {
+      "path": "src/lib/server/services/AGENTS.md",
+      "staged_git_blob": "249ae798fa913bd0875097303a12437af14324e0",
+      "staged_sha256": "38e5286d6352eed5920ca1e86835f3f96c2e13bc41618b4f892b33a04ae0231a",
+      "authored_shared_doc": true,
+      "normalized_current_status": false,
+      "base_git_blob": "4d27138d460a0ef0e45ec3ee981003b97f9d7c74",
+      "source_git_blob": "4d27138d460a0ef0e45ec3ee981003b97f9d7c74"
+    },
+    {
+      "path": "src/lib/server/services/intervention-geometry-validation.ts",
+      "staged_git_blob": "36ae7a0e9f2b2610bdd6df26fd1cc9fdc182a272",
+      "staged_sha256": "c2790852c80cf66d05d24c9839b42585842ebbb48e16a7cff79c917c1e816a6d",
+      "authored_shared_doc": false,
+      "normalized_current_status": false,
+      "base_git_blob": null,
+      "source_git_blob": "36ae7a0e9f2b2610bdd6df26fd1cc9fdc182a272"
+    },
+    {
+      "path": "src/lib/server/services/intervention-geometry.ts",
+      "staged_git_blob": "fcd1aed4d4ad85f89c4d0456a3357e73b8b877cf",
+      "staged_sha256": "046e3655ddbbf3a24fd208dd4edd0d664a9596a276d6c3ae62d9f4f936ff7550",
+      "authored_shared_doc": false,
+      "normalized_current_status": false,
+      "base_git_blob": "a5a22d8ddc1bb6b62d8e52415d82f2e9a2cc2563",
+      "source_git_blob": "fcd1aed4d4ad85f89c4d0456a3357e73b8b877cf"
+    },
+    {
+      "path": "src/lib/server/trpc/routers/contributions.ts",
+      "staged_git_blob": "d372b4fbaf6ed2e4bb4a0d7372c863113939bf89",
+      "staged_sha256": "d2be7f2e04a11a04b2d1d404652dd56047e3dcd2db8911b7379d6f06d9058a62",
+      "authored_shared_doc": false,
+      "normalized_current_status": false,
+      "base_git_blob": "3cfe45ae66068aefdaa46fb328a183efbcac09be",
+      "source_git_blob": "d372b4fbaf6ed2e4bb4a0d7372c863113939bf89"
+    },
+    {
+      "path": "src/lib/server/trpc/routers/interventions.ts",
+      "staged_git_blob": "d3a2ca2b9fd2bdc28f5de480d4abd369a368c466",
+      "staged_sha256": "cd0f710fa5e9ebdc20eabff953455da1cab3611533c22de754cf7e83ab62fc69",
+      "authored_shared_doc": false,
+      "normalized_current_status": false,
+      "base_git_blob": "9b4c12d862af58a155e9248d623f53cd455aa777",
+      "source_git_blob": "d3a2ca2b9fd2bdc28f5de480d4abd369a368c466"
+    }
+  ],
+  "authored_documents": [
+    {
+      "path": "conductor/tracks.md",
+      "before_sha256": "03b75c8648fd49b4262d8d53a81a8dd789f9516899226ee448154746bf232995",
+      "after_sha256": "31aee332724ddfde393495c39dbab6c2456824fdc74a3a0719aa5c7370368dd3"
+    },
+    {
+      "path": "conductor/RUNBOOK.md",
+      "before_sha256": "ecf2a6b8481674c7623533900e163947e70065713cbee04bb2065709fa0a1c74",
+      "after_sha256": "0842aa0a3e0ef2d80fff0ca2a1a6c3ac554499798e2dcce720bb6bb0cf7f24b4"
+    },
+    {
+      "path": "src/lib/map/AGENTS.md",
+      "before_sha256": "3d4c7a2df17576b78b27084a55b423fc0e8dd92348d552cdd7831d48bd5a85a5",
+      "after_sha256": "4be2ce96235746267a079fd31887bd0e10759db2d899a168937bda8c51461dbf"
+    },
+    {
+      "path": "src/components/map/AGENTS.md",
+      "before_sha256": "bd7a7b36e0f770a682771c7a981cc5cd9c2eba3d59c5d792d1784e3a46f3771a",
+      "after_sha256": "f08bcc8675afb1e9806be0ad80503a860a5bd34763db024366087a8597bddced"
+    },
+    {
+      "path": "src/components/panels/AGENTS.md",
+      "before_sha256": "22317dcc3379510e0ad67a7ecfe0a29f51cec7c5b8d863bc5db1a4bb0b548fb9",
+      "after_sha256": "a3c239bf0b63a85867dcdfa0a8c74b8796fc2c0ffd90b8e19d21edc81e6d471b"
+    },
+    {
+      "path": "src/lib/server/AGENTS.md",
+      "before_sha256": "28d32f0d2f81f5f9de09b2a3c37db81685da3cd1c3b7d893529f28997cecf5c0",
+      "after_sha256": "09e6486b7a1518a25137434da23513565d340dcd64319b22f29d8a7ffc832924"
+    },
+    {
+      "path": "src/lib/server/services/AGENTS.md",
+      "before_sha256": "c90dad9dfbabe853a24a37c3c4a0ae984a2aacd7115f5d93a105b0f121e0e118",
+      "after_sha256": "38e5286d6352eed5920ca1e86835f3f96c2e13bc41618b4f892b33a04ae0231a"
+    },
+    {
+      "path": "conductor/tracks/intervention_boundary_authoring_20260911/spec.md",
+      "before_sha256": "376cccf8fa693259de5dbcb1feacc782e2a50f8ed4936b4833c381a8f2feb883",
+      "after_sha256": "0b6da253f43fe6b4fed88eecb4624cc0affd93559838be643a5ee4139b7dac69"
+    },
+    {
+      "path": "conductor/tracks/intervention_boundary_authoring_20260911/plan.md",
+      "before_sha256": "9fb0135897cd3ffccaa76d360a9d5cef090b5a8e3c91c27bd3b2166cc475b666",
+      "after_sha256": "5b042ce989b842ec97e82efb7d20f14b34b6267ecbca25f2f92da8ac7e900440"
+    },
+    {
+      "path": "conductor/tracks/intervention_boundary_authoring_20260911/metadata.json",
+      "before_sha256": "54473641ee086629c96aadde408555ae9967da04ca490a720405befdf78f1fab",
+      "after_sha256": "9737cc1cfe39daa5eadf43acbcbbf05373af9286cbcec3c40aba4b3b50cc1bfe"
+    },
+    {
+      "path": "conductor/tracks/community_engagement_completion_20260805/spec.md",
+      "before_sha256": "21119601c3c89670677e05879fdebabb5aadd2a808527ebe57af998efa7dec8b",
+      "after_sha256": "89e89fba388354b7555985e0238d8dc9b14b09b1a1ac73d1f5849cc629cbd0b3"
+    },
+    {
+      "path": "conductor/tracks/community_engagement_completion_20260805/plan.md",
+      "before_sha256": "84b313bf066ca85d3bcc82e2750e8bbdd2c2e6ebfc3fa920b3670ea609ad5edd",
+      "after_sha256": "29e7e7c4c5c74d24088cc687855d0b31de35050beb46a0a34edad888bbbfe45b"
+    },
+    {
+      "path": "conductor/tracks/community_engagement_completion_20260805/metadata.json",
+      "before_sha256": "0449753bf0bfe79c9ab5372d2b741aaf98af87df6202efb20822411ffa3a8b93",
+      "after_sha256": "e7aa50a7693b260e42360028e9a71e0a5591c78d05e8c11986d121c28f29ca4b"
+    }
+  ],
+  "unrelated_registry_runbook_rows_preserved": true,
+  "mapview_extra_patch_applied": false,
+  "tests_run": false,
+  "commit_created": false,
+  "production_action": false,
+  "source_tree": "739509a6cfef8a601bae631e4810c697b6988a41",
+  "declared_compositions": [
+    {
+      "packet": "conductor/tracks/intervention_boundary_authoring_20260911/evidence/shared-file-packet.md",
+      "git_blob": "ab25ed8d783b7418d4a380ff2b8d84b26bbfb6a4",
+      "sha256": "f5665e9d63c628a7d629faecd79a6a2a68a3fa8d3f6d468ca41e5e1296affd4a",
+      "targets": [
+        "conductor/tracks.md",
+        "conductor/RUNBOOK.md",
+        "src/lib/map/AGENTS.md"
+      ]
+    },
+    {
+      "packet": "conductor/tracks/intervention_boundary_authoring_20260911/evidence/boundary-doc-packet.md",
+      "git_blob": "1403e4750bee5d4f9966b5f75a06a5e927607de2",
+      "sha256": "d98f9f690fb75cf01f412a1f2b72133126a9c0d084d43d1d82a10aee0637713b",
+      "targets": [
+        "src/lib/map/AGENTS.md",
+        "src/components/map/AGENTS.md",
+        "src/components/panels/AGENTS.md"
+      ]
+    },
+    {
+      "packet": "conductor/tracks/intervention_boundary_authoring_20260911/evidence/community-publication-doc-handoff.md",
+      "git_blob": "79df2271e6a7c5f27d35d15cf585f55d2940acb9",
+      "sha256": "bf4eb53bec9e15782e67af84db5d416135238b9f96fcde8e37493eaa6f22e8e3",
+      "targets": [
+        "src/components/panels/AGENTS.md",
+        "src/lib/server/AGENTS.md",
+        "src/lib/server/services/AGENTS.md"
+      ],
+      "extracted_additions_from": {
+        "path": "conductor/tracks/intervention_boundary_authoring_20260911/evidence/community-publication-doc-handoff.patch",
+        "git_blob": "217565e75190891b0936111f313afd66fa446699",
+        "sha256": "10b2e08a590990cbd173aac161a6c0780ce50d4e87fddc827a548b80dde7b9b7"
+      }
+    }
+  ],
+  "source_unchanged_except_current_status_fields": true,
+  "current_status_normalization": {
+    "from": "in_progress",
+    "to": "active",
+    "scope": "Four OKF frontmatter statuses, two root metadata statuses and current community reconciliation_20260911.status only; historical bodies/checkpoints unchanged"
+  },
+  "mapview_patch_disposition": "Already included in source commit; no second application and no duplicate render-count stub",
+  "head_after_intake": "7056fa306fec5c268f84740f1687014792ff850f",
+  "independent_review_scope": "Exact 56-path custody, seven declared document compositions, current-status-only normalization and preservation of all unrelated rows/contracts; no new test or implementation approval claim"
+}

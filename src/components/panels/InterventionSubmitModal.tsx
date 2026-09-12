@@ -2,6 +2,9 @@
 
 import { useEffect, useRef, useState } from "react";
 import { trpc } from "@/lib/trpc/client";
+import { useMap } from "@/lib/map/map-context";
+import { InterventionBoundaryEditor } from "@/components/map/InterventionBoundaryEditor";
+import { finishBoundary, type InterventionSiteGeometry, type BoundaryMode, type BoundaryPoint } from "@/lib/map/intervention-boundary";
 
 /** Mirrors InterventionType in src/lib/environmental/intervention.ts. */
 const INTERVENTION_TYPES = [
@@ -15,22 +18,17 @@ const INTERVENTION_TYPES = [
 type InterventionType = (typeof INTERVENTION_TYPES)[number]["value"];
 
 interface InterventionSubmitModalProps {
-  /** Map centre the recommendation is pinned to. */
+  /** Suggested location for an explicitly selected point. */
   lat: number;
   lon: number;
   teamId?: string;
   workspaceName?: string;
   onClose: () => void;
   onSuccess?: () => void;
+  revision?: { featureId: string; name: string; type: string; description?: string; geometry?: InterventionSiteGeometry };
 }
 
-/**
- * Captures one signed-in contributor's own intervention recommendation.
- *
- * Point-only by design: no polygon drawing tool exists in this codebase yet, so
- * the map centre is the honest extent of what the user can express. The server
- * validator already accepts Polygon/MultiPolygon for whenever one lands.
- */
+/** Captures a contributor's site geometry and explicit publication consent. */
 export function InterventionSubmitModal({
   lat,
   lon,
@@ -38,20 +36,33 @@ export function InterventionSubmitModal({
   workspaceName,
   onClose,
   onSuccess,
+  revision,
 }: InterventionSubmitModalProps) {
+  const map = useMap();
   const [interventionType, setInterventionType] =
-    useState<InterventionType>("reforestation");
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
+    useState<InterventionType>(INTERVENTION_TYPES.find((entry) => entry.value === revision?.type)?.value ?? "reforestation");
+  const [name, setName] = useState(revision?.name ?? "");
+  const [description, setDescription] = useState(revision?.description ?? "");
+  const [geometry, setGeometry] = useState<InterventionSiteGeometry | null>(revision?.geometry ?? null);
+  const complexGeometry = geometry?.type === "MultiPolygon" || (geometry?.type === "Polygon" && geometry.coordinates.length > 1);
+  const [drawingMode, setDrawingMode] = useState<BoundaryMode | null>(null);
   const [publicationConsent, setPublicationConsent] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
     const previouslyFocused = document.activeElement;
     closeButtonRef.current?.focus();
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
+      if (event.key === "Tab" && dialogRef.current) {
+        const controls = Array.from(dialogRef.current.querySelectorAll<HTMLElement>("button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled)"));
+        const current = controls.indexOf(document.activeElement as HTMLElement);
+        if ((event.shiftKey && current <= 0) || (!event.shiftKey && current === controls.length - 1)) {
+          event.preventDefault(); controls[event.shiftKey ? controls.length - 1 : 0]?.focus();
+        }
+      }
     };
     document.addEventListener("keydown", handleKeyDown);
     return () => {
@@ -59,6 +70,7 @@ export function InterventionSubmitModal({
       if (previouslyFocused instanceof HTMLElement) previouslyFocused.focus();
     };
   }, [onClose]);
+  useEffect(() => { if (!drawingMode) closeButtonRef.current?.focus(); }, [drawingMode]);
 
   const submitMutation = trpc.interventions.submitIntervention.useMutation({
     onSuccess: () => {
@@ -69,6 +81,11 @@ export function InterventionSubmitModal({
       setError(err.message);
     },
   });
+  const reviseMutation = trpc.interventions.reviseIntervention.useMutation({
+    onSuccess: () => { onSuccess?.(); onClose(); },
+    onError: (err) => setError(err.message),
+  });
+  const isPending = submitMutation.isPending || reviseMutation.isPending;
 
   function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -81,30 +98,44 @@ export function InterventionSubmitModal({
       setError("Confirm the review and publication notice before submitting.");
       return;
     }
-    submitMutation.mutate({
+    if (!geometry) {
+      setError("Draw a site boundary or explicitly choose a point before submitting.");
+      return;
+    }
+    try {
+      if (geometry.type !== "MultiPolygon" && !complexGeometry) finishBoundary(geometry.type === "Point" ? "point" : "polygon", geometry.type === "Point" ? [geometry.coordinates as BoundaryPoint] : geometry.coordinates[0].slice(0, -1) as BoundaryPoint[]);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Choose a valid site geometry.");
+      return;
+    }
+    const input = {
       name: name.trim(),
       type: interventionType,
       description: description.trim() || undefined,
-      geometry: { type: "Point", coordinates: [lon, lat] },
-      teamId,
-      publicationConsent: true,
-    });
+      geometry,
+      publicationConsent: true as const,
+    };
+    if (revision) reviseMutation.mutate({ ...input, featureId: revision.featureId });
+    else submitMutation.mutate({ ...input, teamId });
   }
+
+  if (drawingMode) return <InterventionBoundaryEditor mode={drawingMode} initial={geometry?.type === "MultiPolygon" || complexGeometry ? null : geometry} onCancel={() => setDrawingMode(null)} onSave={(site) => { setGeometry(site); setDrawingMode(null); setError(null); }} />;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
       <section
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="intervention-submit-title"
-        className="bg-[hsl(var(--background))] border border-[hsl(var(--border))] rounded-xl shadow-xl w-full max-w-md mx-4 p-6"
+        className="bg-[hsl(var(--background))] border border-[hsl(var(--border))] rounded-xl shadow-xl w-full max-w-md max-h-[90dvh] overflow-y-auto mx-4 p-6"
       >
         <div className="flex items-center justify-between mb-4">
           <h2
             id="intervention-submit-title"
             className="text-lg font-semibold text-[hsl(var(--foreground))]"
           >
-            Recommend an Intervention
+            {revision ? "Revise your recommendation" : "Recommend an Intervention"}
           </h2>
           <button
             ref={closeButtonRef}
@@ -119,10 +150,19 @@ export function InterventionSubmitModal({
           </button>
         </div>
 
-        <p className="text-xs text-[hsl(var(--muted-foreground))] mb-4">
-          Site location: {lat.toFixed(4)}, {lon.toFixed(4)} &middot; recentre the
-          map to move the pin.
-        </p>
+        <fieldset className="mb-4 rounded-lg border p-3">
+          <legend className="text-sm font-medium">Site location or boundary</legend>
+          <p role="status" className="mb-2 text-xs">{geometry ? geometry.type === "Point" ? `Point: ${geometry.coordinates[1].toFixed(4)}, ${geometry.coordinates[0].toFixed(4)}` : complexGeometry ? "Existing boundary with multiple parts or holes retained." : `Polygon boundary: ${geometry.coordinates[0].length - 1} vertices` : "No site chosen. Draw a boundary or choose a point."}</p>
+          {complexGeometry && <p className="mb-2 text-xs">You can resubmit this boundary unchanged. Drawing or choosing a new site replaces the entire existing boundary, including all parts and holes; cancel drawing to keep it.</p>}
+          <div className="flex flex-wrap gap-2">
+            <button type="button" className="min-h-11 rounded border px-3 text-sm disabled:opacity-40" disabled={!map} onClick={() => setDrawingMode("polygon")}>{complexGeometry ? "Replace with polygon" : geometry?.type === "Polygon" ? "Edit polygon" : "Draw polygon"}</button>
+            <button type="button" className="min-h-11 rounded border px-3 text-sm disabled:opacity-40" disabled={!map} onClick={() => setDrawingMode("rectangle")}>Draw rectangle</button>
+            <button type="button" className="min-h-11 rounded border px-3 text-sm disabled:opacity-40" disabled={!map} onClick={() => setDrawingMode("point")}>Choose point on map</button>
+            <button type="button" className="min-h-11 rounded border px-3 text-sm" onClick={() => setGeometry({ type: "Point", coordinates: [lon, lat] })}>Use map centre as point</button>
+            {geometry && <button type="button" className="min-h-11 rounded border px-3 text-sm" onClick={() => setGeometry(null)}>Clear site</button>}
+          </div>
+          {!map && <p className="mt-2 text-xs">Map drawing is unavailable until the map is ready.</p>}
+        </fieldset>
 
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">
           <div className="flex flex-col gap-1">
@@ -198,8 +238,8 @@ export function InterventionSubmitModal({
                     workspaceName ?? "the selected partner workspace"
                   }`
                 : ""}
-              . It does not appear on the public map unless a reviewer approves
-              it, and once approved its location becomes publicly visible.
+              . It does not appear on the public map unless a reviewer publishes
+              it, and publication makes its location and boundary publicly visible.
             </span>
           </label>
 
@@ -219,10 +259,10 @@ export function InterventionSubmitModal({
             </button>
             <button
               type="submit"
-              disabled={submitMutation.isPending || !publicationConsent}
+              disabled={isPending || !publicationConsent || !geometry}
               className="min-h-11 px-4 py-2 rounded-lg bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))] text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
             >
-              {submitMutation.isPending
+              {isPending
                 ? "Submitting..."
                 : "Submit Recommendation"}
             </button>

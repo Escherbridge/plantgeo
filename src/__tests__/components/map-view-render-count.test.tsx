@@ -127,6 +127,7 @@ vi.mock("@/lib/map/styles", () => ({
 vi.mock("@/components/map/DataLoadingChip", () => ({ DataLoadingChip: stub }));
 vi.mock("@/components/map/MapFocus", () => ({ MapFocus: stub }));
 vi.mock("@/components/map/MapKeyboardShortcuts", () => ({ default: stub }));
+vi.mock("@/components/map/InterventionPublicationSync", () => ({ default: stub }));
 vi.mock("@/components/map/LayerManager", () => ({ default: stub }));
 vi.mock("@/components/map/HoverTooltip", () => ({ default: stub }));
 vi.mock("@/components/map/MapDateSummary", () => ({ MapDateSummary: stub }));

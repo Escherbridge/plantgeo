@@ -1,0 +1,1613 @@
+{
+  "type": "read-only-intervention-intake-preparation",
+  "generated_at": "2026-09-12T02:21:47.891030+00:00",
+  "status": "pins_verified_intake_pending",
+  "refs": {
+    "base": {
+      "commit": "89e8494422b8232c8f16dbffdcf2321c7ea17bc8",
+      "tree": "777fe20689dd68c337677cc49e3fd4e63bfd4bcc"
+    },
+    "candidate": {
+      "commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+      "tree": "df12542ffa00937e0213d10c938e715849030492"
+    },
+    "source": {
+      "commit": "2fc6b30ac1b024e1c955dbf95552495608608a96",
+      "tree": "739509a6cfef8a601bae631e4810c697b6988a41"
+    }
+  },
+  "peer_worktree": "C:/Users/atooz/.codex/worktrees/2f1d/plantgeo",
+  "inspections": {
+    "source_tree_matches": true,
+    "source_parent_matches": true,
+    "exact_56_path_surface": true,
+    "declared_document_base_blobs_match": true,
+    "all_seven_shared_docs_unmodified_in_peer_commit": true,
+    "mapview_base_blob_matches": true,
+    "mapview_exact_two_added_lines_no_removals": true,
+    "stored_mapview_patch_matches_already_applied_lines": true,
+    "receipt_base_and_tree_match": true,
+    "receipt_gates_record_zero_exits": true,
+    "receipt_test_counts_match_supplied_scope": true,
+    "receipt_browser_records_three_passes": true,
+    "bounded_independent_acceptance_recorded": true
+  },
+  "files": [
+    {
+      "status": "M",
+      "path": "conductor/tracks/community_engagement_completion_20260805/metadata.json",
+      "base": {
+        "git_blob": "cb3b64d3de42a646a9f246784994104499a29f31",
+        "mode": "100644",
+        "bytes": 4105,
+        "sha256": "be038342b3b748e40706fffb8a50611ef8dd167000da60809e5c40eb96ecd307"
+      },
+      "candidate": {
+        "git_blob": "cb3b64d3de42a646a9f246784994104499a29f31",
+        "mode": "100644",
+        "bytes": 4105,
+        "sha256": "be038342b3b748e40706fffb8a50611ef8dd167000da60809e5c40eb96ecd307"
+      },
+      "source": {
+        "git_blob": "34fcd338cffe85f0e1ab68ee6c1d8678c09636b7",
+        "mode": "100644",
+        "bytes": 4138,
+        "sha256": "0449753bf0bfe79c9ab5372d2b741aaf98af87df6202efb20822411ffa3a8b93"
+      },
+      "canonical_also_changed": false,
+      "divergent_overlap": false,
+      "explicit_weather_runtime_path": false,
+      "reserved_mapview_overlap": false
+    },
+    {
+      "status": "M",
+      "path": "conductor/tracks/community_engagement_completion_20260805/plan.md",
+      "base": {
+        "git_blob": "f9acb443e30fdc054845d7df13f2fa5125a08beb",
+        "mode": "100644",
+        "bytes": 8027,
+        "sha256": "52e06e01f1500a5813741a4de92f242d9872ce1cc6df89cc618327df1093463b"
+      },
+      "candidate": {
+        "git_blob": "f9acb443e30fdc054845d7df13f2fa5125a08beb",
+        "mode": "100644",
+        "bytes": 8027,
+        "sha256": "52e06e01f1500a5813741a4de92f242d9872ce1cc6df89cc618327df1093463b"
+      },
+      "source": {
+        "git_blob": "28e7f4105175a1febb445ee01fefa700791e4574",
+        "mode": "100644",
+        "bytes": 9403,
+        "sha256": "84b313bf066ca85d3bcc82e2750e8bbdd2c2e6ebfc3fa920b3670ea609ad5edd"
+      },
+      "canonical_also_changed": false,
+      "divergent_overlap": false,
+      "explicit_weather_runtime_path": false,
+      "reserved_mapview_overlap": false
+    },
+    {
+      "status": "M",
+      "path": "conductor/tracks/community_engagement_completion_20260805/spec.md",
+      "base": {
+        "git_blob": "da44182a7846380361fb467721efd80f1900a51d",
+        "mode": "100644",
+        "bytes": 6530,
+        "sha256": "9d278263e70adad32775218a385487648126e276e222bae4a441bdff1e8622e6"
+      },
+      "candidate": {
+        "git_blob": "da44182a7846380361fb467721efd80f1900a51d",
+        "mode": "100644",
+        "bytes": 6530,
+        "sha256": "9d278263e70adad32775218a385487648126e276e222bae4a441bdff1e8622e6"
+      },
+      "source": {
+        "git_blob": "580db36bf9c025276f8ec8a3a1cf70d6fe363343",
+        "mode": "100644",
+        "bytes": 8808,
+        "sha256": "21119601c3c89670677e05879fdebabb5aadd2a808527ebe57af998efa7dec8b"
+      },
+      "canonical_also_changed": false,
+      "divergent_overlap": false,
+      "explicit_weather_runtime_path": false,
+      "reserved_mapview_overlap": false
+    },
+    {
+      "status": "A",
+      "path": "conductor/tracks/intervention_boundary_authoring_20260911/evidence/boundary-doc-packet.md",
+      "base": null,
+      "candidate": null,
+      "source": {
+        "git_blob": "1403e4750bee5d4f9966b5f75a06a5e927607de2",
+        "mode": "100644",
+        "bytes": 4914,
+        "sha256": "d98f9f690fb75cf01f412a1f2b72133126a9c0d084d43d1d82a10aee0637713b"
+      },
+      "canonical_also_changed": false,
+      "divergent_overlap": false,
+      "explicit_weather_runtime_path": false,
+      "reserved_mapview_overlap": false
+    },
+    {
+      "status": "A",
+      "path": "conductor/tracks/intervention_boundary_authoring_20260911/evidence/community-publication-doc-handoff.md",
+      "base": null,
+      "candidate": null,
+      "source": {
+        "git_blob": "79df2271e6a7c5f27d35d15cf585f55d2940acb9",
+        "mode": "100644",
+        "bytes": 497,
+        "sha256": "bf4eb53bec9e15782e67af84db5d416135238b9f96fcde8e37493eaa6f22e8e3"
+      },
+      "canonical_also_changed": false,
+      "divergent_overlap": false,
+      "explicit_weather_runtime_path": false,
+      "reserved_mapview_overlap": false
+    },
+    {
+      "status": "A",
+      "path": "conductor/tracks/intervention_boundary_authoring_20260911/evidence/community-publication-doc-handoff.patch",
+      "base": null,
+      "candidate": null,
+      "source": {
+        "git_blob": "217565e75190891b0936111f313afd66fa446699",
+        "mode": "100644",
+        "bytes": 5772,
+        "sha256": "10b2e08a590990cbd173aac161a6c0780ce50d4e87fddc827a548b80dde7b9b7"
+      },
+      "canonical_also_changed": false,
+      "divergent_overlap": false,
+      "explicit_weather_runtime_path": false,
+      "reserved_mapview_overlap": false
+    },
+    {
+      "status": "A",
+      "path": "conductor/tracks/intervention_boundary_authoring_20260911/evidence/images/keyboard-rectangle-draft.png",
+      "base": null,
+      "candidate": null,
+      "source": {
+        "git_blob": "1e0fb6755d1e8602e4708eed397c6fa4efddbbed",
+        "mode": "100644",
+        "bytes": 50453,
+        "sha256": "8a0cd867ac4c79f39cea777516a82cf638887849de273cd96479336c0a09921e"
+      },
+      "canonical_also_changed": false,
+      "divergent_overlap": false,
+      "explicit_weather_runtime_path": false,
+      "reserved_mapview_overlap": false
+    },
+    {
+      "status": "A",
+      "path": "conductor/tracks/intervention_boundary_authoring_20260911/evidence/images/published-after-style-swap.png",
+      "base": null,
+      "candidate": null,
+      "source": {
+        "git_blob": "d09c86fd529e044f4c5b8575fed5c3017d6a7104",
+        "mode": "100644",
+        "bytes": 68855,
+        "sha256": "8989970fcfe1b12510552d97731154229bfdc15c55e516a66168d75ab5c6963e"
+      },
+      "canonical_also_changed": false,
+      "divergent_overlap": false,
+      "explicit_weather_runtime_path": false,
+      "reserved_mapview_overlap": false
+    },
+    {
+      "status": "A",
+      "path": "conductor/tracks/intervention_boundary_authoring_20260911/evidence/images/published-same-viewport.png",
+      "base": null,
+      "candidate": null,
+      "source": {
+        "git_blob": "0cf5219d62541948dce1b5e894aab68fe2fee502",
+        "mode": "100644",
+        "bytes": 78719,
+        "sha256": "1c2f26331d7c4cad341a55081f8c3cebdb0dd260f21b3b1bd8f9ee2e158d2d8d"
+      },
+      "canonical_also_changed": false,
+      "divergent_overlap": false,
+      "explicit_weather_runtime_path": false,
+      "reserved_mapview_overlap": false
+    },
+    {
+      "status": "A",
+      "path": "conductor/tracks/intervention_boundary_authoring_20260911/evidence/images/warm-empty-viewport.png",
+      "base": null,
+      "candidate": null,
+      "source": {
+        "git_blob": "7592d0113b18c0e6f239ba29f3a5976bad10cfd7",
+        "mode": "100644",
+        "bytes": 67529,
+        "sha256": "f305658fd06b25651ee7c49b73f155035e68bd592e03ed4180818000f4a487d3"
+      },
+      "canonical_also_changed": false,
+      "divergent_overlap": false,
+      "explicit_weather_runtime_path": false,
+      "reserved_mapview_overlap": false
+    },
+    {
+      "status": "A",
+      "path": "conductor/tracks/intervention_boundary_authoring_20260911/evidence/mapview-publication-sync.patch",
+      "base": null,
+      "candidate": null,
+      "source": {
+        "git_blob": "3d5f413a99473804bbfd5d5af516182113ad6357",
+        "mode": "100644",
+        "bytes": 1228,
+        "sha256": "79045848a88097d88e58cd0c54ca8be04b81801093b2dbcf21ff0cc1fb68aa91"
+      },
+      "canonical_also_changed": false,
+      "divergent_overlap": false,
+      "explicit_weather_runtime_path": false,
+      "reserved_mapview_overlap": false
+    },
+    {
+      "status": "A",
+      "path": "conductor/tracks/intervention_boundary_authoring_20260911/evidence/review-and-verification.md",
+      "base": null,
+      "candidate": null,
+      "source": {
+        "git_blob": "80db93059537a2cbd70cd6522ff1887fa51c7c43",
+        "mode": "100644",
+        "bytes": 7138,
+        "sha256": "9aeece1d00323c8a2ebc19a388c42be1fe2bd04026852f91466a4bf64be4621d"
+      },
+      "canonical_also_changed": false,
+      "divergent_overlap": false,
+      "explicit_weather_runtime_path": false,
+      "reserved_mapview_overlap": false
+    },
+    {
+      "status": "A",
+      "path": "conductor/tracks/intervention_boundary_authoring_20260911/evidence/shared-file-packet.md",
+      "base": null,
+      "candidate": null,
+      "source": {
+        "git_blob": "ab25ed8d783b7418d4a380ff2b8d84b26bbfb6a4",
+        "mode": "100644",
+        "bytes": 4433,
+        "sha256": "f5665e9d63c628a7d629faecd79a6a2a68a3fa8d3f6d468ca41e5e1296affd4a"
+      },
+      "canonical_also_changed": false,
+      "divergent_overlap": false,
+      "explicit_weather_runtime_path": false,
+      "reserved_mapview_overlap": false
+    },
+    {
+      "status": "A",
+      "path": "conductor/tracks/intervention_boundary_authoring_20260911/evidence/verification-receipt.json",
+      "base": null,
+      "candidate": null,
+      "source": {
+        "git_blob": "ad44b69279cf46323630960012808ac84a19653a",
+        "mode": "100644",
+        "bytes": 3143,
+        "sha256": "3cefeec455757662aba7ec8a24b7b422423b0a5f5093d83b238da0644e3fb249"
+      },
+      "canonical_also_changed": false,
+      "divergent_overlap": false,
+      "explicit_weather_runtime_path": false,
+      "reserved_mapview_overlap": false
+    },
+    {
+      "status": "A",
+      "path": "conductor/tracks/intervention_boundary_authoring_20260911/metadata.json",
+      "base": null,
+      "candidate": null,
+      "source": {
+        "git_blob": "d58c5a66048fb9e02d00a13fd25f9014ab565874",
+        "mode": "100644",
+        "bytes": 605,
+        "sha256": "54473641ee086629c96aadde408555ae9967da04ca490a720405befdf78f1fab"
+      },
+      "canonical_also_changed": false,
+      "divergent_overlap": false,
+      "explicit_weather_runtime_path": false,
+      "reserved_mapview_overlap": false
+    },
+    {
+      "status": "A",
+      "path": "conductor/tracks/intervention_boundary_authoring_20260911/plan.md",
+      "base": null,
+      "candidate": null,
+      "source": {
+        "git_blob": "489a95c42cf96ff2cb7c04961e89fa4cfd61e98f",
+        "mode": "100644",
+        "bytes": 1268,
+        "sha256": "9fb0135897cd3ffccaa76d360a9d5cef090b5a8e3c91c27bd3b2166cc475b666"
+      },
+      "canonical_also_changed": false,
+      "divergent_overlap": false,
+      "explicit_weather_runtime_path": false,
+      "reserved_mapview_overlap": false
+    },
+    {
+      "status": "A",
+      "path": "conductor/tracks/intervention_boundary_authoring_20260911/spec.md",
+      "base": null,
+      "candidate": null,
+      "source": {
+        "git_blob": "338de05eafced6290b2babc41505e529645b64a0",
+        "mode": "100644",
+        "bytes": 2168,
+        "sha256": "376cccf8fa693259de5dbcb1feacc782e2a50f8ed4936b4833c381a8f2feb883"
+      },
+      "canonical_also_changed": false,
+      "divergent_overlap": false,
+      "explicit_weather_runtime_path": false,
+      "reserved_mapview_overlap": false
+    },
+    {
+      "status": "A",
+      "path": "e2e/community-publication-db.mjs",
+      "base": null,
+      "candidate": null,
+      "source": {
+        "git_blob": "3a64f534767d159c111fbe2fe4a96d24218a6ed9",
+        "mode": "100644",
+        "bytes": 4162,
+        "sha256": "bfb7c776acc64e67cb55cccd4e7f063e6af1530e4a3d99b8496dd06288fdf642"
+      },
+      "canonical_also_changed": false,
+      "divergent_overlap": false,
+      "explicit_weather_runtime_path": false,
+      "reserved_mapview_overlap": false
+    },
+    {
+      "status": "A",
+      "path": "e2e/community-publication-identities.json",
+      "base": null,
+      "candidate": null,
+      "source": {
+        "git_blob": "6ca84674f886c48950b152182a941ea57b8cf9e7",
+        "mode": "100644",
+        "bytes": 240,
+        "sha256": "115c9280b4a67daaee3796c3c47911f9d1fbf590a2d15b5fa9c515f9cdba1c26"
+      },
+      "canonical_also_changed": false,
+      "divergent_overlap": false,
+      "explicit_weather_runtime_path": false,
+      "reserved_mapview_overlap": false
+    },
+    {
+      "status": "A",
+      "path": "e2e/community-publication-server.mjs",
+      "base": null,
+      "candidate": null,
+      "source": {
+        "git_blob": "54212a5956c7469733aeaeda37e9f07c16a56bec",
+        "mode": "100644",
+        "bytes": 4121,
+        "sha256": "adc0d258ccd6b09e8934011f809038d333f3e203b57ee0229798f1468c279ec4"
+      },
+      "canonical_also_changed": false,
+      "divergent_overlap": false,
+      "explicit_weather_runtime_path": false,
+      "reserved_mapview_overlap": false
+    },
+    {
+      "status": "A",
+      "path": "e2e/community-publication-teardown.ts",
+      "base": null,
+      "candidate": null,
+      "source": {
+        "git_blob": "1c04e315b271fa1abdc2645c4bcb0dd2b27e118c",
+        "mode": "100644",
+        "bytes": 289,
+        "sha256": "bf5dacb9533902ffde9e014f82a5f75026ddbbdb3efa345572ffed067c1fcd4e"
+      },
+      "canonical_also_changed": false,
+      "divergent_overlap": false,
+      "explicit_weather_runtime_path": false,
+      "reserved_mapview_overlap": false
+    },
+    {
+      "status": "A",
+      "path": "e2e/community-publication.config.ts",
+      "base": null,
+      "candidate": null,
+      "source": {
+        "git_blob": "198b40f13d67fe8c37971e8c672d53e87fc7edaa",
+        "mode": "100644",
+        "bytes": 865,
+        "sha256": "f0ba53266c6b02d3b996732266256bf4c0dbd3d60c632f9596f37c5f478fe2de"
+      },
+      "canonical_also_changed": false,
+      "divergent_overlap": false,
+      "explicit_weather_runtime_path": false,
+      "reserved_mapview_overlap": false
+    },
+    {
+      "status": "A",
+      "path": "e2e/community-publication.md",
+      "base": null,
+      "candidate": null,
+      "source": {
+        "git_blob": "bee79c8ee78c213d9e3a4943f38c665eac992bb3",
+        "mode": "100644",
+        "bytes": 3844,
+        "sha256": "4f87d67e76a68a7410dfaacb2068a0af8fc51a8f2efe903c0eaa7ff8fe3fb00b"
+      },
+      "canonical_also_changed": false,
+      "divergent_overlap": false,
+      "explicit_weather_runtime_path": false,
+      "reserved_mapview_overlap": false
+    },
+    {
+      "status": "A",
+      "path": "e2e/community-publication.spec.ts",
+      "base": null,
+      "candidate": null,
+      "source": {
+        "git_blob": "e68467719cfe26458313f2241a795c8ebbea3f6d",
+        "mode": "100644",
+        "bytes": 11464,
+        "sha256": "051bf5b97fe19130769c6a9e310f8f2627f0f0d3f2fcaab211fcbc0cac200eef"
+      },
+      "canonical_also_changed": false,
+      "divergent_overlap": false,
+      "explicit_weather_runtime_path": false,
+      "reserved_mapview_overlap": false
+    },
+    {
+      "status": "M",
+      "path": "public/sw.js",
+      "base": {
+        "git_blob": "0e629c6de79ac24d2403cfdb9ab9a109676a5bd0",
+        "mode": "100644",
+        "bytes": 10803,
+        "sha256": "566d08b74a8e57191e8d03e33370a49f93997b3d3a05c2cabd27a607e840f4fd"
+      },
+      "candidate": {
+        "git_blob": "0e629c6de79ac24d2403cfdb9ab9a109676a5bd0",
+        "mode": "100644",
+        "bytes": 10803,
+        "sha256": "566d08b74a8e57191e8d03e33370a49f93997b3d3a05c2cabd27a607e840f4fd"
+      },
+      "source": {
+        "git_blob": "f03e02f737801b9f6660933216898e97c3e6e0b2",
+        "mode": "100644",
+        "bytes": 10984,
+        "sha256": "4c00b9c7f9b66094561b30f53d6ed33a11e9e756e910e03e5ea49cd350d6a52f"
+      },
+      "canonical_also_changed": false,
+      "divergent_overlap": false,
+      "explicit_weather_runtime_path": false,
+      "reserved_mapview_overlap": false
+    },
+    {
+      "status": "M",
+      "path": "src/__tests__/api/interventions-trpc.test.ts",
+      "base": {
+        "git_blob": "e08f8231629afbcddfe610a31b3b918d10995e9f",
+        "mode": "100644",
+        "bytes": 3979,
+        "sha256": "0a12be2dbe18607af92f01b528d1bb9fd1402a86a3fe79f0a494c1e68fbe58cf"
+      },
+      "candidate": {
+        "git_blob": "e08f8231629afbcddfe610a31b3b918d10995e9f",
+        "mode": "100644",
+        "bytes": 3979,
+        "sha256": "0a12be2dbe18607af92f01b528d1bb9fd1402a86a3fe79f0a494c1e68fbe58cf"
+      },
+      "source": {
+        "git_blob": "a925df6775285aad581cd8ba7112b471dc2157ca",
+        "mode": "100644",
+        "bytes": 12156,
+        "sha256": "c65b955448932558c78be1beecdca53f754d2578b53a21ec8a2c64a99b9ca7ef"
+      },
+      "canonical_also_changed": false,
+      "divergent_overlap": false,
+      "explicit_weather_runtime_path": false,
+      "reserved_mapview_overlap": false
+    },
+    {
+      "status": "M",
+      "path": "src/__tests__/components/CommunityDetails.test.tsx",
+      "base": {
+        "git_blob": "6a66b3a562f928d8dbcc17c87f6fc72afa943248",
+        "mode": "100644",
+        "bytes": 4779,
+        "sha256": "d83d6df24658197a361299f828e68457cd74ad7041b00f27fe823dc3d7fe4236"
+      },
+      "candidate": {
+        "git_blob": "6a66b3a562f928d8dbcc17c87f6fc72afa943248",
+        "mode": "100644",
+        "bytes": 4779,
+        "sha256": "d83d6df24658197a361299f828e68457cd74ad7041b00f27fe823dc3d7fe4236"
+      },
+      "source": {
+        "git_blob": "1be3d4f341997732e6c199cb86a467c0fb5868f1",
+        "mode": "100644",
+        "bytes": 7384,
+        "sha256": "145b21116fe29dd6ad419d51bba6776f54884eca68c6a323a83ebd21a03a6bc6"
+      },
+      "canonical_also_changed": false,
+      "divergent_overlap": false,
+      "explicit_weather_runtime_path": false,
+      "reserved_mapview_overlap": false
+    },
+    {
+      "status": "M",
+      "path": "src/__tests__/components/ContributionQueue.test.tsx",
+      "base": {
+        "git_blob": "25f7c8d1779273b4472b6fd040b05b4a86498379",
+        "mode": "100644",
+        "bytes": 5790,
+        "sha256": "a73f863bef16cafed8d6315214e24fddfc9dfa493fc8d3e6ee6844b985e98434"
+      },
+      "candidate": {
+        "git_blob": "25f7c8d1779273b4472b6fd040b05b4a86498379",
+        "mode": "100644",
+        "bytes": 5790,
+        "sha256": "a73f863bef16cafed8d6315214e24fddfc9dfa493fc8d3e6ee6844b985e98434"
+      },
+      "source": {
+        "git_blob": "d8c8afae0767b44d6afb7be14689f1e3d72d5445",
+        "mode": "100644",
+        "bytes": 11304,
+        "sha256": "6d75884f9db83759115120a3f6df09135f14b965ee9e8434e019fd89bb48ce15"
+      },
+      "canonical_also_changed": false,
+      "divergent_overlap": false,
+      "explicit_weather_runtime_path": false,
+      "reserved_mapview_overlap": false
+    },
+    {
+      "status": "A",
+      "path": "src/__tests__/components/InterventionBoundaryEditor.test.tsx",
+      "base": null,
+      "candidate": null,
+      "source": {
+        "git_blob": "27435c0a3b9151b6f4502975220dbaecfddab808",
+        "mode": "100644",
+        "bytes": 5853,
+        "sha256": "7dbdaa28ff601a20aec12db081ded6ae6f356d3d639ab7933530c4ecf7d942d8"
+      },
+      "canonical_also_changed": false,
+      "divergent_overlap": false,
+      "explicit_weather_runtime_path": false,
+      "reserved_mapview_overlap": false
+    },
+    {
+      "status": "A",
+      "path": "src/__tests__/components/InterventionGeometryPreview.test.tsx",
+      "base": null,
+      "candidate": null,
+      "source": {
+        "git_blob": "cf58b39e4641ca84baeacff28ae806bef98afa6a",
+        "mode": "100644",
+        "bytes": 1371,
+        "sha256": "bdd56ccfadf6e915d750da811103dfa1723996819641e451f69e830f72535a4a"
+      },
+      "canonical_also_changed": false,
+      "divergent_overlap": false,
+      "explicit_weather_runtime_path": false,
+      "reserved_mapview_overlap": false
+    },
+    {
+      "status": "A",
+      "path": "src/__tests__/components/InterventionPublicationSync.test.tsx",
+      "base": null,
+      "candidate": null,
+      "source": {
+        "git_blob": "34b35811b4d7a3b3edab35a7a10e6e32a3dc7234",
+        "mode": "100644",
+        "bytes": 4024,
+        "sha256": "8e0778fc25875ef881b3a1e1f034331e7174037f12ffe7dcedc556028d8a0c0f"
+      },
+      "canonical_also_changed": false,
+      "divergent_overlap": false,
+      "explicit_weather_runtime_path": false,
+      "reserved_mapview_overlap": false
+    },
+    {
+      "status": "A",
+      "path": "src/__tests__/components/InterventionSubmitModal.test.tsx",
+      "base": null,
+      "candidate": null,
+      "source": {
+        "git_blob": "0b734dd38eaa236042f7cb1a8a6efef778a1ca9b",
+        "mode": "100644",
+        "bytes": 3581,
+        "sha256": "14aff825ed9c0163a3be7febfb5313dae1f2da972ae2c870571ad49456816f9c"
+      },
+      "canonical_also_changed": false,
+      "divergent_overlap": false,
+      "explicit_weather_runtime_path": false,
+      "reserved_mapview_overlap": false
+    },
+    {
+      "status": "D",
+      "path": "src/__tests__/components/ModerationPanel.test.tsx",
+      "base": {
+        "git_blob": "b1812a7b2eb990a76efac926d05994b4000c5a8f",
+        "mode": "100644",
+        "bytes": 5570,
+        "sha256": "692cb59cf940c0902d6c0f92ebb2304a8e5f01be3cc1dd0cb2fb9ce9993c4e5d"
+      },
+      "candidate": {
+        "git_blob": "b1812a7b2eb990a76efac926d05994b4000c5a8f",
+        "mode": "100644",
+        "bytes": 5570,
+        "sha256": "692cb59cf940c0902d6c0f92ebb2304a8e5f01be3cc1dd0cb2fb9ce9993c4e5d"
+      },
+      "source": null,
+      "canonical_also_changed": false,
+      "divergent_overlap": false,
+      "explicit_weather_runtime_path": false,
+      "reserved_mapview_overlap": false
+    },
+    {
+      "status": "M",
+      "path": "src/__tests__/components/map-view-render-count.test.tsx",
+      "base": {
+        "git_blob": "66ad275ca24a17b272bd69414e43680036db1141",
+        "mode": "100644",
+        "bytes": 9792,
+        "sha256": "cde45ef0158e08a18a11321e8edc46fa833de7fba876143ecef093d5e969ac24"
+      },
+      "candidate": {
+        "git_blob": "66ad275ca24a17b272bd69414e43680036db1141",
+        "mode": "100644",
+        "bytes": 9792,
+        "sha256": "cde45ef0158e08a18a11321e8edc46fa833de7fba876143ecef093d5e969ac24"
+      },
+      "source": {
+        "git_blob": "80d29b59341d16d2d93f1cdb15b8521efc10c291",
+        "mode": "100644",
+        "bytes": 9876,
+        "sha256": "52336674168f70a2437f97f492197d84207908ee54af60922421ba3fc009a2a7"
+      },
+      "canonical_also_changed": false,
+      "divergent_overlap": false,
+      "explicit_weather_runtime_path": false,
+      "reserved_mapview_overlap": false
+    },
+    {
+      "status": "A",
+      "path": "src/__tests__/lib/map/intervention-boundary.test.ts",
+      "base": null,
+      "candidate": null,
+      "source": {
+        "git_blob": "7e7f95362fd435ca7857287390d2103f3fcd2748",
+        "mode": "100644",
+        "bytes": 2845,
+        "sha256": "cd4fb5c53f59e930338a497644cb9d23c77cf9cef9db913db77deacb0c43b8e9"
+      },
+      "canonical_also_changed": false,
+      "divergent_overlap": false,
+      "explicit_weather_runtime_path": false,
+      "reserved_mapview_overlap": false
+    },
+    {
+      "status": "A",
+      "path": "src/__tests__/lib/offline/intervention-worker-refresh.test.ts",
+      "base": null,
+      "candidate": null,
+      "source": {
+        "git_blob": "2a3ef95cc201c513617202f2dc669cefaa904abd",
+        "mode": "100644",
+        "bytes": 2754,
+        "sha256": "8a6a61cceab56eec86a6b6cdbbb7bf9d6e183a62a187006f801aaa4e1421b214"
+      },
+      "canonical_also_changed": false,
+      "divergent_overlap": false,
+      "explicit_weather_runtime_path": false,
+      "reserved_mapview_overlap": false
+    },
+    {
+      "status": "M",
+      "path": "src/__tests__/security/moderation-route-access.test.tsx",
+      "base": {
+        "git_blob": "f097448a32787a09d6f6f945146978e71644791a",
+        "mode": "100644",
+        "bytes": 2608,
+        "sha256": "4fe94888bbade7a84d7d1fe460377ee2bba75b91d01508e177fe21de139554de"
+      },
+      "candidate": {
+        "git_blob": "f097448a32787a09d6f6f945146978e71644791a",
+        "mode": "100644",
+        "bytes": 2608,
+        "sha256": "4fe94888bbade7a84d7d1fe460377ee2bba75b91d01508e177fe21de139554de"
+      },
+      "source": {
+        "git_blob": "910e9266de4224e7843914f2abb160823a6834b0",
+        "mode": "100644",
+        "bytes": 2354,
+        "sha256": "20558a5962d1975c35cac306af3b35ea266a9744fc46655792c613e1ffc9c140"
+      },
+      "canonical_also_changed": false,
+      "divergent_overlap": false,
+      "explicit_weather_runtime_path": false,
+      "reserved_mapview_overlap": false
+    },
+    {
+      "status": "A",
+      "path": "src/__tests__/services/community-publication-postgis.test.ts",
+      "base": null,
+      "candidate": null,
+      "source": {
+        "git_blob": "c421b3457280c43ffcd9045f63e71e2f96f29e0b",
+        "mode": "100644",
+        "bytes": 11981,
+        "sha256": "1c11674afd6be6734782b70156c7ee3d53f2b57140ef664b971a6e0f9bf76f7e"
+      },
+      "canonical_also_changed": false,
+      "divergent_overlap": false,
+      "explicit_weather_runtime_path": false,
+      "reserved_mapview_overlap": false
+    },
+    {
+      "status": "M",
+      "path": "src/__tests__/trpc/interventions.test.ts",
+      "base": {
+        "git_blob": "84cc67b3d4dd6d4a3b02d04908de7dfd17fd5696",
+        "mode": "100644",
+        "bytes": 9587,
+        "sha256": "8e9ab958b3342bcbe4fe1a8e79aa4715d32dab8b07dcf0652bee22272b146fa1"
+      },
+      "candidate": {
+        "git_blob": "84cc67b3d4dd6d4a3b02d04908de7dfd17fd5696",
+        "mode": "100644",
+        "bytes": 9587,
+        "sha256": "8e9ab958b3342bcbe4fe1a8e79aa4715d32dab8b07dcf0652bee22272b146fa1"
+      },
+      "source": {
+        "git_blob": "e0ab8d52f828ce06150d54968bca7c49e06f9eb7",
+        "mode": "100644",
+        "bytes": 9602,
+        "sha256": "5f1e1a7a73e3bd1e5a2a3015f2b09d9a7ea2f5513c7286c242849e2ce9085490"
+      },
+      "canonical_also_changed": false,
+      "divergent_overlap": false,
+      "explicit_weather_runtime_path": false,
+      "reserved_mapview_overlap": false
+    },
+    {
+      "status": "M",
+      "path": "src/app/feed/InterventionFeed.tsx",
+      "base": {
+        "git_blob": "ddd41e04d0a28865d3520905eabbbb504eea2124",
+        "mode": "100644",
+        "bytes": 8859,
+        "sha256": "1f776f147d911a3e28fb69c189d389774edc0b39fc85ab7b5c242175a41d9c47"
+      },
+      "candidate": {
+        "git_blob": "ddd41e04d0a28865d3520905eabbbb504eea2124",
+        "mode": "100644",
+        "bytes": 8859,
+        "sha256": "1f776f147d911a3e28fb69c189d389774edc0b39fc85ab7b5c242175a41d9c47"
+      },
+      "source": {
+        "git_blob": "19adad70d06dcf172f47922ed0cc438f26e6a69c",
+        "mode": "100644",
+        "bytes": 8987,
+        "sha256": "fb518a2cdbf7f4689237359f173ece008f40d0ce20428e5bc732ea0041b47dd4"
+      },
+      "canonical_also_changed": false,
+      "divergent_overlap": false,
+      "explicit_weather_runtime_path": false,
+      "reserved_mapview_overlap": false
+    },
+    {
+      "status": "M",
+      "path": "src/app/moderation/page.tsx",
+      "base": {
+        "git_blob": "97ba8e2cb7cd69e31f52bf87321c3f6f57c8efc0",
+        "mode": "100644",
+        "bytes": 1539,
+        "sha256": "09d9821883f035a0cf9e253eb93bd212257636fedba336a6a4ee42311e44b915"
+      },
+      "candidate": {
+        "git_blob": "97ba8e2cb7cd69e31f52bf87321c3f6f57c8efc0",
+        "mode": "100644",
+        "bytes": 1539,
+        "sha256": "09d9821883f035a0cf9e253eb93bd212257636fedba336a6a4ee42311e44b915"
+      },
+      "source": {
+        "git_blob": "422cd22cc30f2c63b10101889d47dd3e97da2203",
+        "mode": "100644",
+        "bytes": 2014,
+        "sha256": "d3686b6c09743637aaaebf63c5ac1e054912b362df4c3e74835e6547cbdab687"
+      },
+      "canonical_also_changed": false,
+      "divergent_overlap": false,
+      "explicit_weather_runtime_path": false,
+      "reserved_mapview_overlap": false
+    },
+    {
+      "status": "A",
+      "path": "src/components/map/InterventionBoundaryEditor.tsx",
+      "base": null,
+      "candidate": null,
+      "source": {
+        "git_blob": "a075c66b79c593143e8cb98f9dcf6851dd293591",
+        "mode": "100644",
+        "bytes": 10407,
+        "sha256": "5ccbb92af6d60760cb5156280427433809a8c5c69d7beee4f11cd50195ddd929"
+      },
+      "canonical_also_changed": false,
+      "divergent_overlap": false,
+      "explicit_weather_runtime_path": false,
+      "reserved_mapview_overlap": false
+    },
+    {
+      "status": "A",
+      "path": "src/components/map/InterventionPublicationSync.tsx",
+      "base": null,
+      "candidate": null,
+      "source": {
+        "git_blob": "b9bb481a38ba78df443f309ff0caef5f4f00281c",
+        "mode": "100644",
+        "bytes": 1220,
+        "sha256": "681039153cb0aaafd2f233b90cedce2009d48de02b811f959f100436a71c941e"
+      },
+      "canonical_also_changed": false,
+      "divergent_overlap": false,
+      "explicit_weather_runtime_path": false,
+      "reserved_mapview_overlap": false
+    },
+    {
+      "status": "M",
+      "path": "src/components/map/MapView.tsx",
+      "base": {
+        "git_blob": "5355ec7751bafe589aa9e012b3c9557d17063fdd",
+        "mode": "100644",
+        "bytes": 18622,
+        "sha256": "f4e02f022adb6100e6707da840b98dead276c93a8bcdf5716f457a1f43f78000"
+      },
+      "candidate": {
+        "git_blob": "5355ec7751bafe589aa9e012b3c9557d17063fdd",
+        "mode": "100644",
+        "bytes": 18622,
+        "sha256": "f4e02f022adb6100e6707da840b98dead276c93a8bcdf5716f457a1f43f78000"
+      },
+      "source": {
+        "git_blob": "ae4d4701b20a4fce00be04f6cf142e594ac2dbf8",
+        "mode": "100644",
+        "bytes": 18739,
+        "sha256": "f35672c6f35f16a8e1055b9c57702ba0dd70ad172ecb774d8637887720118d99"
+      },
+      "canonical_also_changed": false,
+      "divergent_overlap": false,
+      "explicit_weather_runtime_path": false,
+      "reserved_mapview_overlap": true
+    },
+    {
+      "status": "M",
+      "path": "src/components/panels/CommunityDetails.tsx",
+      "base": {
+        "git_blob": "f67cff61cd579e08286eefa9200e5f0de4919a27",
+        "mode": "100644",
+        "bytes": 14143,
+        "sha256": "af2ff309c28a46a04ca0adce247f8383f51c1aa184c30c2c83309495e942987e"
+      },
+      "candidate": {
+        "git_blob": "f67cff61cd579e08286eefa9200e5f0de4919a27",
+        "mode": "100644",
+        "bytes": 14143,
+        "sha256": "af2ff309c28a46a04ca0adce247f8383f51c1aa184c30c2c83309495e942987e"
+      },
+      "source": {
+        "git_blob": "31f40868bf5ee245181f6aacb497f4cb8fe8d65a",
+        "mode": "100644",
+        "bytes": 17262,
+        "sha256": "7b0e1c0960261e061b399a870d1c01e61df7fcbf7f62e01014c0062a8a142446"
+      },
+      "canonical_also_changed": false,
+      "divergent_overlap": false,
+      "explicit_weather_runtime_path": false,
+      "reserved_mapview_overlap": false
+    },
+    {
+      "status": "M",
+      "path": "src/components/panels/ContributionQueue.tsx",
+      "base": {
+        "git_blob": "726ba4c4003e0f93de3f47d89e7323c1549f17d1",
+        "mode": "100644",
+        "bytes": 8007,
+        "sha256": "7c0544e0a631e505353172718b70fa344048caf822d85aa428a00d1a984581fc"
+      },
+      "candidate": {
+        "git_blob": "726ba4c4003e0f93de3f47d89e7323c1549f17d1",
+        "mode": "100644",
+        "bytes": 8007,
+        "sha256": "7c0544e0a631e505353172718b70fa344048caf822d85aa428a00d1a984581fc"
+      },
+      "source": {
+        "git_blob": "0183655db0707be540905f3b3e25982740738a28",
+        "mode": "100644",
+        "bytes": 12020,
+        "sha256": "bd15b05ed866d1745fb6bc3821ba5b974a2ffd0a482e70ae731dec52540bd5b9"
+      },
+      "canonical_also_changed": false,
+      "divergent_overlap": false,
+      "explicit_weather_runtime_path": false,
+      "reserved_mapview_overlap": false
+    },
+    {
+      "status": "A",
+      "path": "src/components/panels/InterventionGeometryPreview.tsx",
+      "base": null,
+      "candidate": null,
+      "source": {
+        "git_blob": "2df66c1b85da2f6c9b679d1f2dc6c455b756facb",
+        "mode": "100644",
+        "bytes": 2611,
+        "sha256": "ef4ff93c52684da3e05aee8ea1e77516548ca8ac8c05e4e21efc8059aac6cbf9"
+      },
+      "canonical_also_changed": false,
+      "divergent_overlap": false,
+      "explicit_weather_runtime_path": false,
+      "reserved_mapview_overlap": false
+    },
+    {
+      "status": "M",
+      "path": "src/components/panels/InterventionSubmitModal.tsx",
+      "base": {
+        "git_blob": "1dcba435144656ba18532e3147feb67ef3fa0a84",
+        "mode": "100644",
+        "bytes": 8819,
+        "sha256": "d6bc85297a113b9123105772968d4c0d839ee084b5781521530254392638c271"
+      },
+      "candidate": {
+        "git_blob": "1dcba435144656ba18532e3147feb67ef3fa0a84",
+        "mode": "100644",
+        "bytes": 8819,
+        "sha256": "d6bc85297a113b9123105772968d4c0d839ee084b5781521530254392638c271"
+      },
+      "source": {
+        "git_blob": "875d924e9dfa8500bbc9987217d4577fb200bea3",
+        "mode": "100644",
+        "bytes": 13101,
+        "sha256": "e0a3128979c0a47176ee17080d44020f7145fc34fa10634a016df1ed2e55e146"
+      },
+      "canonical_also_changed": false,
+      "divergent_overlap": false,
+      "explicit_weather_runtime_path": false,
+      "reserved_mapview_overlap": false
+    },
+    {
+      "status": "D",
+      "path": "src/components/panels/ModerationPanel.tsx",
+      "base": {
+        "git_blob": "62c513c56a652d5cdbc51d64cd08b33ee76ce2a0",
+        "mode": "100644",
+        "bytes": 7777,
+        "sha256": "1610c08215f75960ab7b7654a646fbe36bf0553ad5da38377398e90e30e51c9a"
+      },
+      "candidate": {
+        "git_blob": "62c513c56a652d5cdbc51d64cd08b33ee76ce2a0",
+        "mode": "100644",
+        "bytes": 7777,
+        "sha256": "1610c08215f75960ab7b7654a646fbe36bf0553ad5da38377398e90e30e51c9a"
+      },
+      "source": null,
+      "canonical_also_changed": false,
+      "divergent_overlap": false,
+      "explicit_weather_runtime_path": false,
+      "reserved_mapview_overlap": false
+    },
+    {
+      "status": "A",
+      "path": "src/lib/geo/intervention-geometry.ts",
+      "base": null,
+      "candidate": null,
+      "source": {
+        "git_blob": "a5a22d8ddc1bb6b62d8e52415d82f2e9a2cc2563",
+        "mode": "100644",
+        "bytes": 2873,
+        "sha256": "6a1d95159e20a551fb1bac2ad22b1149606b77eeaa00449fce778b51e3d0ae22"
+      },
+      "canonical_also_changed": false,
+      "divergent_overlap": false,
+      "explicit_weather_runtime_path": false,
+      "reserved_mapview_overlap": false
+    },
+    {
+      "status": "A",
+      "path": "src/lib/map/intervention-boundary.ts",
+      "base": null,
+      "candidate": null,
+      "source": {
+        "git_blob": "d1caf8409d9cf13e9ea4543449de7ac510b0b2f3",
+        "mode": "100644",
+        "bytes": 4936,
+        "sha256": "7fb711a48084c2a141a53a9d32bb23448b4838ee22af455a2806900ba18b5f2c"
+      },
+      "canonical_also_changed": false,
+      "divergent_overlap": false,
+      "explicit_weather_runtime_path": false,
+      "reserved_mapview_overlap": false
+    },
+    {
+      "status": "A",
+      "path": "src/lib/map/intervention-publication.ts",
+      "base": null,
+      "candidate": null,
+      "source": {
+        "git_blob": "fd72fc5fac9fbfde0f933aa1bd3f715ad6f00a28",
+        "mode": "100644",
+        "bytes": 2502,
+        "sha256": "2ee1c31552c95110e82607c3318ae337a05b67dbdadccafebb39de97147dbd27"
+      },
+      "canonical_also_changed": false,
+      "divergent_overlap": false,
+      "explicit_weather_runtime_path": false,
+      "reserved_mapview_overlap": false
+    },
+    {
+      "status": "A",
+      "path": "src/lib/server/services/intervention-geometry-validation.ts",
+      "base": null,
+      "candidate": null,
+      "source": {
+        "git_blob": "36ae7a0e9f2b2610bdd6df26fd1cc9fdc182a272",
+        "mode": "100644",
+        "bytes": 818,
+        "sha256": "c2790852c80cf66d05d24c9839b42585842ebbb48e16a7cff79c917c1e816a6d"
+      },
+      "canonical_also_changed": false,
+      "divergent_overlap": false,
+      "explicit_weather_runtime_path": false,
+      "reserved_mapview_overlap": false
+    },
+    {
+      "status": "M",
+      "path": "src/lib/server/services/intervention-geometry.ts",
+      "base": {
+        "git_blob": "a5a22d8ddc1bb6b62d8e52415d82f2e9a2cc2563",
+        "mode": "100644",
+        "bytes": 2873,
+        "sha256": "6a1d95159e20a551fb1bac2ad22b1149606b77eeaa00449fce778b51e3d0ae22"
+      },
+      "candidate": {
+        "git_blob": "a5a22d8ddc1bb6b62d8e52415d82f2e9a2cc2563",
+        "mode": "100644",
+        "bytes": 2873,
+        "sha256": "6a1d95159e20a551fb1bac2ad22b1149606b77eeaa00449fce778b51e3d0ae22"
+      },
+      "source": {
+        "git_blob": "fcd1aed4d4ad85f89c4d0456a3357e73b8b877cf",
+        "mode": "100644",
+        "bytes": 187,
+        "sha256": "046e3655ddbbf3a24fd208dd4edd0d664a9596a276d6c3ae62d9f4f936ff7550"
+      },
+      "canonical_also_changed": false,
+      "divergent_overlap": false,
+      "explicit_weather_runtime_path": false,
+      "reserved_mapview_overlap": false
+    },
+    {
+      "status": "M",
+      "path": "src/lib/server/trpc/routers/contributions.ts",
+      "base": {
+        "git_blob": "3cfe45ae66068aefdaa46fb328a183efbcac09be",
+        "mode": "100644",
+        "bytes": 4815,
+        "sha256": "4f8ca81ab1cd6a26f0ab87caf9d807b0f84b9d4b2f0ee04d54975d0b7294195e"
+      },
+      "candidate": {
+        "git_blob": "3cfe45ae66068aefdaa46fb328a183efbcac09be",
+        "mode": "100644",
+        "bytes": 4815,
+        "sha256": "4f8ca81ab1cd6a26f0ab87caf9d807b0f84b9d4b2f0ee04d54975d0b7294195e"
+      },
+      "source": {
+        "git_blob": "d372b4fbaf6ed2e4bb4a0d7372c863113939bf89",
+        "mode": "100644",
+        "bytes": 9002,
+        "sha256": "d2be7f2e04a11a04b2d1d404652dd56047e3dcd2db8911b7379d6f06d9058a62"
+      },
+      "canonical_also_changed": false,
+      "divergent_overlap": false,
+      "explicit_weather_runtime_path": false,
+      "reserved_mapview_overlap": false
+    },
+    {
+      "status": "M",
+      "path": "src/lib/server/trpc/routers/interventions.ts",
+      "base": {
+        "git_blob": "9b4c12d862af58a155e9248d623f53cd455aa777",
+        "mode": "100644",
+        "bytes": 15993,
+        "sha256": "f1c8c8199266dfdcd975a682c746aca215971fd69dfc55f449d2685a23809a04"
+      },
+      "candidate": {
+        "git_blob": "9b4c12d862af58a155e9248d623f53cd455aa777",
+        "mode": "100644",
+        "bytes": 15993,
+        "sha256": "f1c8c8199266dfdcd975a682c746aca215971fd69dfc55f449d2685a23809a04"
+      },
+      "source": {
+        "git_blob": "d3a2ca2b9fd2bdc28f5de480d4abd369a368c466",
+        "mode": "100644",
+        "bytes": 13512,
+        "sha256": "cd0f710fa5e9ebdc20eabff953455da1cab3611533c22de754cf7e83ab62fc69"
+      },
+      "canonical_also_changed": false,
+      "divergent_overlap": false,
+      "explicit_weather_runtime_path": false,
+      "reserved_mapview_overlap": false
+    }
+  ],
+  "file_count": 56,
+  "divergent_overlap_paths": [],
+  "weather_explicit_runtime_overlap_paths": [],
+  "reserved_shared_mapview": {
+    "path": "src/components/map/MapView.tsx",
+    "source_diff": "diff --git a/src/components/map/MapView.tsx b/src/components/map/MapView.tsx\nindex 5355ec7..ae4d470 100644\n--- a/src/components/map/MapView.tsx\n+++ b/src/components/map/MapView.tsx\n@@ -14,6 +14,7 @@ import { MapFocus } from \"./MapFocus\";\n import { readMapFocus } from \"@/lib/map/focus-params\";\n import { ReverseGeocode } from \"@/components/search/ReverseGeocode\";\n import MapKeyboardShortcuts from \"./MapKeyboardShortcuts\";\n+import InterventionPublicationSync from \"./InterventionPublicationSync\";\n import { ManagerRail } from \"./layer-panel/ManagerRail\";\n import { LayerPanel } from \"./layer-panel/LayerPanel\";\n import LayerManager from \"./LayerManager\";\n@@ -371,6 +372,7 @@ export default function MapView() {\n                 used to bind these collapse now, and a collapsed section is an unmounted\n                 section, so the bindings cannot live inside one. */}\n             <MapKeyboardShortcuts />\n+            <InterventionPublicationSync />\n             {/* The collapsed manager: the way back in, the unread alert count and the legend,\n                 in one row. Mounted before the panel so the panel paints over its shadow\n                 rather than under it; it renders nothing while the panel is open. */}\n",
+    "stored_patch_already_in_source": true,
+    "apply_stored_patch_separately": false,
+    "canonical": {
+      "git_blob": "5355ec7751bafe589aa9e012b3c9557d17063fdd",
+      "mode": "100644",
+      "bytes": 18622,
+      "sha256": "f4e02f022adb6100e6707da840b98dead276c93a8bcdf5716f457a1f43f78000"
+    }
+  },
+  "shared_docs": [
+    {
+      "path": "conductor/tracks.md",
+      "declared_base_blob": "8c14ecece770aac7140f0bab8511e1dc772118c6",
+      "base": {
+        "git_blob": "8c14ecece770aac7140f0bab8511e1dc772118c6",
+        "mode": "100644",
+        "bytes": 13168,
+        "sha256": "9c2fb6093a2e01ec59f2e473c75c37f18436ef5086231bbb829cda8ab77036b9"
+      },
+      "candidate": {
+        "git_blob": "46954314516212768f6d0b30e4643baeff540087",
+        "mode": "100644",
+        "bytes": 13848,
+        "sha256": "7c933a2b495ef91951f3339ba55c9bfd0d5f71420c253abcfd749c8f3cb611f2"
+      },
+      "source": {
+        "git_blob": "8c14ecece770aac7140f0bab8511e1dc772118c6",
+        "mode": "100644",
+        "bytes": 13168,
+        "sha256": "9c2fb6093a2e01ec59f2e473c75c37f18436ef5086231bbb829cda8ab77036b9"
+      },
+      "declared_base_matches": true,
+      "peer_shared_doc_unchanged": true,
+      "canonical_matches_declared_base": false,
+      "packets": [
+        "shared-file-packet.md"
+      ]
+    },
+    {
+      "path": "conductor/RUNBOOK.md",
+      "declared_base_blob": "6ab7b1b96b4eed8a6f1e0a156fba3dc1a51918d3",
+      "base": {
+        "git_blob": "6ab7b1b96b4eed8a6f1e0a156fba3dc1a51918d3",
+        "mode": "100644",
+        "bytes": 15903,
+        "sha256": "3dbee8aa4711c720a70617412d40420e90d48b5073c83497892cdcd490e42e7b"
+      },
+      "candidate": {
+        "git_blob": "e174315b1589ac0ea9573d3180c06edc3f0a471f",
+        "mode": "100644",
+        "bytes": 16997,
+        "sha256": "f688e6b0e50357bc966eefd00d462d64a3c957a522e77a28238c56ca670ac6ff"
+      },
+      "source": {
+        "git_blob": "6ab7b1b96b4eed8a6f1e0a156fba3dc1a51918d3",
+        "mode": "100644",
+        "bytes": 15903,
+        "sha256": "3dbee8aa4711c720a70617412d40420e90d48b5073c83497892cdcd490e42e7b"
+      },
+      "declared_base_matches": true,
+      "peer_shared_doc_unchanged": true,
+      "canonical_matches_declared_base": false,
+      "packets": [
+        "shared-file-packet.md"
+      ]
+    },
+    {
+      "path": "src/lib/map/AGENTS.md",
+      "declared_base_blob": "d0b70e5174428db6fb180a77b55a4dc691c4b1c6",
+      "base": {
+        "git_blob": "d0b70e5174428db6fb180a77b55a4dc691c4b1c6",
+        "mode": "100644",
+        "bytes": 31580,
+        "sha256": "3d4c7a2df17576b78b27084a55b423fc0e8dd92348d552cdd7831d48bd5a85a5"
+      },
+      "candidate": {
+        "git_blob": "d0b70e5174428db6fb180a77b55a4dc691c4b1c6",
+        "mode": "100644",
+        "bytes": 31580,
+        "sha256": "3d4c7a2df17576b78b27084a55b423fc0e8dd92348d552cdd7831d48bd5a85a5"
+      },
+      "source": {
+        "git_blob": "d0b70e5174428db6fb180a77b55a4dc691c4b1c6",
+        "mode": "100644",
+        "bytes": 31580,
+        "sha256": "3d4c7a2df17576b78b27084a55b423fc0e8dd92348d552cdd7831d48bd5a85a5"
+      },
+      "declared_base_matches": true,
+      "peer_shared_doc_unchanged": true,
+      "canonical_matches_declared_base": true,
+      "packets": [
+        "shared-file-packet.md",
+        "boundary-doc-packet.md"
+      ]
+    },
+    {
+      "path": "src/components/map/AGENTS.md",
+      "declared_base_blob": "7c8ba0a8a82e751f1f1eec9485db88fe58323b9c",
+      "base": {
+        "git_blob": "7c8ba0a8a82e751f1f1eec9485db88fe58323b9c",
+        "mode": "100644",
+        "bytes": 122475,
+        "sha256": "bd7a7b36e0f770a682771c7a981cc5cd9c2eba3d59c5d792d1784e3a46f3771a"
+      },
+      "candidate": {
+        "git_blob": "7c8ba0a8a82e751f1f1eec9485db88fe58323b9c",
+        "mode": "100644",
+        "bytes": 122475,
+        "sha256": "bd7a7b36e0f770a682771c7a981cc5cd9c2eba3d59c5d792d1784e3a46f3771a"
+      },
+      "source": {
+        "git_blob": "7c8ba0a8a82e751f1f1eec9485db88fe58323b9c",
+        "mode": "100644",
+        "bytes": 122475,
+        "sha256": "bd7a7b36e0f770a682771c7a981cc5cd9c2eba3d59c5d792d1784e3a46f3771a"
+      },
+      "declared_base_matches": true,
+      "peer_shared_doc_unchanged": true,
+      "canonical_matches_declared_base": true,
+      "packets": [
+        "boundary-doc-packet.md"
+      ]
+    },
+    {
+      "path": "src/components/panels/AGENTS.md",
+      "declared_base_blob": "ecd1fc2634494734476482cc2e2d0c8ba30814ca",
+      "base": {
+        "git_blob": "ecd1fc2634494734476482cc2e2d0c8ba30814ca",
+        "mode": "100644",
+        "bytes": 11475,
+        "sha256": "22317dcc3379510e0ad67a7ecfe0a29f51cec7c5b8d863bc5db1a4bb0b548fb9"
+      },
+      "candidate": {
+        "git_blob": "ecd1fc2634494734476482cc2e2d0c8ba30814ca",
+        "mode": "100644",
+        "bytes": 11475,
+        "sha256": "22317dcc3379510e0ad67a7ecfe0a29f51cec7c5b8d863bc5db1a4bb0b548fb9"
+      },
+      "source": {
+        "git_blob": "ecd1fc2634494734476482cc2e2d0c8ba30814ca",
+        "mode": "100644",
+        "bytes": 11475,
+        "sha256": "22317dcc3379510e0ad67a7ecfe0a29f51cec7c5b8d863bc5db1a4bb0b548fb9"
+      },
+      "declared_base_matches": true,
+      "peer_shared_doc_unchanged": true,
+      "canonical_matches_declared_base": true,
+      "packets": [
+        "boundary-doc-packet.md",
+        "community-publication-doc-handoff.md"
+      ]
+    },
+    {
+      "path": "src/lib/server/AGENTS.md",
+      "declared_base_blob": "c611969bf345acd4322228b75f5b0f791515c34b",
+      "base": {
+        "git_blob": "c611969bf345acd4322228b75f5b0f791515c34b",
+        "mode": "100644",
+        "bytes": 97246,
+        "sha256": "28d32f0d2f81f5f9de09b2a3c37db81685da3cd1c3b7d893529f28997cecf5c0"
+      },
+      "candidate": {
+        "git_blob": "c611969bf345acd4322228b75f5b0f791515c34b",
+        "mode": "100644",
+        "bytes": 97246,
+        "sha256": "28d32f0d2f81f5f9de09b2a3c37db81685da3cd1c3b7d893529f28997cecf5c0"
+      },
+      "source": {
+        "git_blob": "c611969bf345acd4322228b75f5b0f791515c34b",
+        "mode": "100644",
+        "bytes": 97246,
+        "sha256": "28d32f0d2f81f5f9de09b2a3c37db81685da3cd1c3b7d893529f28997cecf5c0"
+      },
+      "declared_base_matches": true,
+      "peer_shared_doc_unchanged": true,
+      "canonical_matches_declared_base": true,
+      "packets": [
+        "community-publication-doc-handoff.md"
+      ]
+    },
+    {
+      "path": "src/lib/server/services/AGENTS.md",
+      "declared_base_blob": "4d27138d460a0ef0e45ec3ee981003b97f9d7c74",
+      "base": {
+        "git_blob": "4d27138d460a0ef0e45ec3ee981003b97f9d7c74",
+        "mode": "100644",
+        "bytes": 52292,
+        "sha256": "c90dad9dfbabe853a24a37c3c4a0ae984a2aacd7115f5d93a105b0f121e0e118"
+      },
+      "candidate": {
+        "git_blob": "4d27138d460a0ef0e45ec3ee981003b97f9d7c74",
+        "mode": "100644",
+        "bytes": 52292,
+        "sha256": "c90dad9dfbabe853a24a37c3c4a0ae984a2aacd7115f5d93a105b0f121e0e118"
+      },
+      "source": {
+        "git_blob": "4d27138d460a0ef0e45ec3ee981003b97f9d7c74",
+        "mode": "100644",
+        "bytes": 52292,
+        "sha256": "c90dad9dfbabe853a24a37c3c4a0ae984a2aacd7115f5d93a105b0f121e0e118"
+      },
+      "declared_base_matches": true,
+      "peer_shared_doc_unchanged": true,
+      "canonical_matches_declared_base": true,
+      "packets": [
+        "community-publication-doc-handoff.md"
+      ]
+    }
+  ],
+  "doc_packet_targets": {
+    "shared-file-packet.md": [
+      "conductor/tracks.md",
+      "conductor/RUNBOOK.md",
+      "src/lib/map/AGENTS.md"
+    ],
+    "boundary-doc-packet.md": [
+      "src/lib/map/AGENTS.md",
+      "src/components/map/AGENTS.md",
+      "src/components/panels/AGENTS.md"
+    ],
+    "community-publication-doc-handoff.md": [
+      "src/components/panels/AGENTS.md",
+      "src/lib/server/AGENTS.md",
+      "src/lib/server/services/AGENTS.md"
+    ]
+  },
+  "source_and_evidence_pins": [
+    {
+      "path": "conductor/tracks/intervention_boundary_authoring_20260911/evidence/boundary-doc-packet.md",
+      "git_blob": "1403e4750bee5d4f9966b5f75a06a5e927607de2",
+      "mode": "100644",
+      "bytes": 4914,
+      "sha256": "d98f9f690fb75cf01f412a1f2b72133126a9c0d084d43d1d82a10aee0637713b"
+    },
+    {
+      "path": "conductor/tracks/intervention_boundary_authoring_20260911/evidence/community-publication-doc-handoff.md",
+      "git_blob": "79df2271e6a7c5f27d35d15cf585f55d2940acb9",
+      "mode": "100644",
+      "bytes": 497,
+      "sha256": "bf4eb53bec9e15782e67af84db5d416135238b9f96fcde8e37493eaa6f22e8e3"
+    },
+    {
+      "path": "conductor/tracks/intervention_boundary_authoring_20260911/evidence/community-publication-doc-handoff.patch",
+      "git_blob": "217565e75190891b0936111f313afd66fa446699",
+      "mode": "100644",
+      "bytes": 5772,
+      "sha256": "10b2e08a590990cbd173aac161a6c0780ce50d4e87fddc827a548b80dde7b9b7"
+    },
+    {
+      "path": "conductor/tracks/intervention_boundary_authoring_20260911/evidence/images/keyboard-rectangle-draft.png",
+      "git_blob": "1e0fb6755d1e8602e4708eed397c6fa4efddbbed",
+      "mode": "100644",
+      "bytes": 50453,
+      "sha256": "8a0cd867ac4c79f39cea777516a82cf638887849de273cd96479336c0a09921e"
+    },
+    {
+      "path": "conductor/tracks/intervention_boundary_authoring_20260911/evidence/images/published-after-style-swap.png",
+      "git_blob": "d09c86fd529e044f4c5b8575fed5c3017d6a7104",
+      "mode": "100644",
+      "bytes": 68855,
+      "sha256": "8989970fcfe1b12510552d97731154229bfdc15c55e516a66168d75ab5c6963e"
+    },
+    {
+      "path": "conductor/tracks/intervention_boundary_authoring_20260911/evidence/images/published-same-viewport.png",
+      "git_blob": "0cf5219d62541948dce1b5e894aab68fe2fee502",
+      "mode": "100644",
+      "bytes": 78719,
+      "sha256": "1c2f26331d7c4cad341a55081f8c3cebdb0dd260f21b3b1bd8f9ee2e158d2d8d"
+    },
+    {
+      "path": "conductor/tracks/intervention_boundary_authoring_20260911/evidence/images/warm-empty-viewport.png",
+      "git_blob": "7592d0113b18c0e6f239ba29f3a5976bad10cfd7",
+      "mode": "100644",
+      "bytes": 67529,
+      "sha256": "f305658fd06b25651ee7c49b73f155035e68bd592e03ed4180818000f4a487d3"
+    },
+    {
+      "path": "conductor/tracks/intervention_boundary_authoring_20260911/evidence/mapview-publication-sync.patch",
+      "git_blob": "3d5f413a99473804bbfd5d5af516182113ad6357",
+      "mode": "100644",
+      "bytes": 1228,
+      "sha256": "79045848a88097d88e58cd0c54ca8be04b81801093b2dbcf21ff0cc1fb68aa91"
+    },
+    {
+      "path": "conductor/tracks/intervention_boundary_authoring_20260911/evidence/review-and-verification.md",
+      "git_blob": "80db93059537a2cbd70cd6522ff1887fa51c7c43",
+      "mode": "100644",
+      "bytes": 7138,
+      "sha256": "9aeece1d00323c8a2ebc19a388c42be1fe2bd04026852f91466a4bf64be4621d"
+    },
+    {
+      "path": "conductor/tracks/intervention_boundary_authoring_20260911/evidence/shared-file-packet.md",
+      "git_blob": "ab25ed8d783b7418d4a380ff2b8d84b26bbfb6a4",
+      "mode": "100644",
+      "bytes": 4433,
+      "sha256": "f5665e9d63c628a7d629faecd79a6a2a68a3fa8d3f6d468ca41e5e1296affd4a"
+    },
+    {
+      "path": "conductor/tracks/intervention_boundary_authoring_20260911/evidence/verification-receipt.json",
+      "git_blob": "ad44b69279cf46323630960012808ac84a19653a",
+      "mode": "100644",
+      "bytes": 3143,
+      "sha256": "3cefeec455757662aba7ec8a24b7b422423b0a5f5093d83b238da0644e3fb249"
+    },
+    {
+      "path": "e2e/community-publication-db.mjs",
+      "git_blob": "3a64f534767d159c111fbe2fe4a96d24218a6ed9",
+      "mode": "100644",
+      "bytes": 4162,
+      "sha256": "bfb7c776acc64e67cb55cccd4e7f063e6af1530e4a3d99b8496dd06288fdf642"
+    },
+    {
+      "path": "e2e/community-publication-identities.json",
+      "git_blob": "6ca84674f886c48950b152182a941ea57b8cf9e7",
+      "mode": "100644",
+      "bytes": 240,
+      "sha256": "115c9280b4a67daaee3796c3c47911f9d1fbf590a2d15b5fa9c515f9cdba1c26"
+    },
+    {
+      "path": "e2e/community-publication-server.mjs",
+      "git_blob": "54212a5956c7469733aeaeda37e9f07c16a56bec",
+      "mode": "100644",
+      "bytes": 4121,
+      "sha256": "adc0d258ccd6b09e8934011f809038d333f3e203b57ee0229798f1468c279ec4"
+    },
+    {
+      "path": "e2e/community-publication-teardown.ts",
+      "git_blob": "1c04e315b271fa1abdc2645c4bcb0dd2b27e118c",
+      "mode": "100644",
+      "bytes": 289,
+      "sha256": "bf5dacb9533902ffde9e014f82a5f75026ddbbdb3efa345572ffed067c1fcd4e"
+    },
+    {
+      "path": "e2e/community-publication.config.ts",
+      "git_blob": "198b40f13d67fe8c37971e8c672d53e87fc7edaa",
+      "mode": "100644",
+      "bytes": 865,
+      "sha256": "f0ba53266c6b02d3b996732266256bf4c0dbd3d60c632f9596f37c5f478fe2de"
+    },
+    {
+      "path": "e2e/community-publication.md",
+      "git_blob": "bee79c8ee78c213d9e3a4943f38c665eac992bb3",
+      "mode": "100644",
+      "bytes": 3844,
+      "sha256": "4f87d67e76a68a7410dfaacb2068a0af8fc51a8f2efe903c0eaa7ff8fe3fb00b"
+    },
+    {
+      "path": "e2e/community-publication.spec.ts",
+      "git_blob": "e68467719cfe26458313f2241a795c8ebbea3f6d",
+      "mode": "100644",
+      "bytes": 11464,
+      "sha256": "051bf5b97fe19130769c6a9e310f8f2627f0f0d3f2fcaab211fcbc0cac200eef"
+    }
+  ],
+  "peer_validation_receipt": {
+    "baseCommit": "89e8494422b8232c8f16dbffdcf2321c7ea17bc8",
+    "baseTree": "777fe20689dd68c337677cc49e3fd4e63bfd4bcc",
+    "branch": "codex/intervention-boundary-publication-20260911",
+    "gates": [
+      {
+        "label": "tests",
+        "command": [
+          "C:\\Program Files\\nodejs\\node.exe",
+          "scripts/test-surface.mjs",
+          "--changed",
+          "--base",
+          "89e8494422b8232c8f16dbffdcf2321c7ea17bc8"
+        ],
+        "exitCode": 0,
+        "startedAt": "2026-09-12T01:45:32.556Z",
+        "finishedAt": "2026-09-12T01:48:46.597Z",
+        "logSha256": "96d63fff0edb3124fe4ff559e603b1df6f61e6b546cef20acf789b0336f2c674"
+      },
+      {
+        "label": "types",
+        "command": [
+          "C:\\Program Files\\nodejs\\node.exe",
+          "node_modules/typescript/bin/tsc",
+          "--noEmit"
+        ],
+        "exitCode": 0,
+        "startedAt": "2026-09-12T01:51:14.833Z",
+        "finishedAt": "2026-09-12T01:51:21.445Z",
+        "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "label": "lint",
+        "command": [
+          "C:\\Program Files\\nodejs\\node.exe",
+          "node_modules/eslint/bin/eslint.js",
+          "."
+        ],
+        "exitCode": 0,
+        "startedAt": "2026-09-12T01:51:14.845Z",
+        "finishedAt": "2026-09-12T01:51:50.311Z",
+        "logSha256": "34bf5b4d8d50632f3789a9b37eb42e97ba4cf983472f965be85822b44da80f4a"
+      },
+      {
+        "label": "boundary",
+        "command": [
+          "C:\\Program Files\\nodejs\\node.exe",
+          "scripts/check-data-boundaries.mjs"
+        ],
+        "exitCode": 0,
+        "startedAt": "2026-09-12T01:45:32.534Z",
+        "finishedAt": "2026-09-12T01:45:33.038Z",
+        "logSha256": "bdace32d4e9d976a4bd3aaa051952e30f8c3772a6d8f4e253c0a57740d90dbb4"
+      }
+    ],
+    "tests": {
+      "selectorMode": "full",
+      "filesPassed": 151,
+      "testsSkipped": 13,
+      "testsPassed": 2328,
+      "filesSkipped": 2,
+      "communityPostgisPassed": 8
+    },
+    "lint": {
+      "warnings": 545,
+      "errors": 0
+    },
+    "browser": {
+      "logSha256": "6889cffef95813ac05ba9f8e277408bf7a6997c7d0de41436d6d2bead23d578f",
+      "duration": "1.2 minutes",
+      "command": "npx playwright test --config e2e/community-publication.config.ts",
+      "exitCode": 0,
+      "passed": 3
+    },
+    "database": {
+      "postgresql": "17.5",
+      "isolatedClusterStopped": true,
+      "port": 55439,
+      "postgis": "3.5.2",
+      "disposableDatabasesRemoved": true,
+      "host": "127.0.0.1"
+    },
+    "cleanup": {
+      "ports3307_3308_55439HaveNoListeners": true,
+      "nativeDatabaseUnchanged": true
+    },
+    "independentReview": {
+      "evidence": "review-and-verification.md",
+      "verdict": "accept",
+      "openActionableFindings": 0,
+      "staleReviewP1": "resolved"
+    },
+    "limitations": [
+      "13 unrelated opt-in database tests skipped",
+      "Baseline-derived bounded community DDL, not full migration replay",
+      "Local HTTP adapter for real tile SQL, not Martin executable",
+      "Synthetic basemap and unrelated environmental responses",
+      "PG17/PostGIS3.5 rather than documented PG16/PostGIS3.4",
+      "Browser-local cross-tab notification, not cross-device push",
+      "No production acceptance or deployment"
+    ]
+  },
+  "current_track_statuses": {
+    "conductor/tracks/intervention_boundary_authoring_20260911/metadata.json": "in_progress",
+    "conductor/tracks/community_engagement_completion_20260805/metadata.json": "in_progress"
+  },
+  "ownership_and_order": [
+    "Root first commits the botanical/QA evidence checkpoint, then takes intervention2fc6b30 once and reconciles all three declared documentation packets.",
+    "MapView's two source lines and its render-count stub are already inside2fc6b30; do not separately apply mapview-publication-sync.patch.",
+    "Compose additive documentation into actual current registry/runbook/AGENTS files; preserve botanical, QA, weather and prior reader contracts.",
+    "Use the canonical registry active status vocabulary consistently with the two intervention/community track records; peer packets say in_progress.",
+    "After exact post-intervention source/doc pins and clean status are retained, root releases that base to the dedicated weather owner.",
+    "Weather rebases/rebuilds and implements shared changes; retain intervention MapView/router/component reservations. Then one final full combined sweep."
+  ],
+  "limits": [
+    "This is source/evidence pin inspection, not a new code approval or test run.",
+    "PostgreSQL17.5/PostGIS3.5.2 isolated loopback acceptance only; bounded baseline-derived DDL, not full migrations.",
+    "Real tile SQL through local HTTP adapter, not Martin; fixture basemap/environmental data; browser-profile cross-tab only.",
+    "No source apply, tracked edits, database operation, external task contact, production or test execution occurred."
+  ]
+}

@@ -1,5 +1,15 @@
 # Parquet reader services — rationale
 
+## Intervention original-geometry validation — 2026-09-11
+
+The pure schema lives in lib/geo/intervention-geometry.ts with a server compatibility
+re-export. Original topology validation is operational PostgreSQL, separate from Parquet.
+For bounded Point/Polygon/MultiPolygon coordinates, submit, revise and publish call parameterized
+PostGIS ST_IsValid and NOT ST_IsEmpty on the original JSON geometry. Checking the stored
+geom alone is insufficient because the existing sync trigger may repair invalid input.
+Invalid topology fails before a write. Publication/recovery also recheck consent, author,
+the 10000-position cap and the 1 MiB ingress-equivalent properties bound.
+
 ## §regional-temporal-neighbours — September 11 acceptance
 
 `regional-temporal-neighbors.ts` selects before/after candidates only from described,

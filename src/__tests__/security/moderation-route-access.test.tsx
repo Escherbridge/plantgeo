@@ -1,74 +1,41 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
-import type { ReactElement } from "react";
+import type { ReactNode } from "react";
 
-/**
- * ModerationPage is a server component: called directly as an async function,
- * not rendered through a Next request. ContributionQueue is stubbed so this test
- * exercises only the route's role gate (redirect-before-render), which is the
- * thing this file owns -- the queue's own behavior has its own test file.
- */
-const mocks = vi.hoisted(() => ({
-  getServerSession: vi.fn(),
-  redirect: vi.fn(),
-}));
-
+const mocks = vi.hoisted(() => ({ getServerSession: vi.fn() }));
 vi.mock("@/lib/server/auth", () => ({ getServerSession: mocks.getServerSession }));
-vi.mock("next/navigation", () => ({ redirect: mocks.redirect }));
-vi.mock("@/components/panels/ModerationPanel", () => ({
-  ModerationPanel: () => <div data-testid="proposal-moderation-stub" />,
-}));
-vi.mock("@/components/panels/ContributionQueue", () => ({
-  ContributionQueue: () => <div data-testid="contribution-queue-stub" />,
-}));
-
+vi.mock("next/link", () => ({ default: ({ href, children }: { href: string; children: ReactNode }) => <a href={href}>{children}</a> }));
+vi.mock("@/components/panels/ContributionQueue", () => ({ ContributionQueue: () => <div data-testid="contribution-queue-stub" /> }));
 import ModerationPage from "@/app/moderation/page";
 
-function sessionFor(platformRole: string | undefined) {
-  return platformRole === undefined ? null : { user: { platformRole } };
-}
-
-beforeEach(() => {
-  vi.clearAllMocks();
-});
+beforeEach(() => vi.clearAllMocks());
 
 describe("moderation route access", () => {
-  it("redirects home and renders nothing for a signed-out visitor", async () => {
+  it("distinguishes an authentication service failure from denied access", async () => {
+    mocks.getServerSession.mockRejectedValue(new Error("session service unavailable"));
+    render(await ModerationPage());
+    expect(screen.getByRole("alert").textContent).toContain("sign-in service is unavailable");
+    expect(screen.queryByTestId("contribution-queue-stub")).toBeNull();
+  });
+  it("explains authentication without mounting a queue for a signed-out visitor", async () => {
     mocks.getServerSession.mockResolvedValue(null);
-
-    const result = await ModerationPage();
-
-    expect(mocks.redirect).toHaveBeenCalledWith("/");
-    expect(result).toBeNull();
+    render(await ModerationPage());
+    expect(screen.getByText("Sign in to review community recommendations.")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Sign in" }).getAttribute("href")).toContain("callbackUrl=%2Fmoderation");
+    expect(screen.queryByTestId("contribution-queue-stub")).toBeNull();
   });
 
-  it("redirects home and renders nothing for a contributor", async () => {
-    mocks.getServerSession.mockResolvedValue(sessionFor("contributor"));
-
-    const result = await ModerationPage();
-
-    expect(mocks.redirect).toHaveBeenCalledWith("/");
-    expect(result).toBeNull();
+  it.each(["contributor", "viewer"])("explains denied %s access without mounting a queue", async (platformRole) => {
+    mocks.getServerSession.mockResolvedValue({ user: { platformRole } });
+    render(await ModerationPage());
+    expect(screen.getByText("Only experts and administrators can review community recommendations.")).toBeTruthy();
+    expect(screen.queryByTestId("contribution-queue-stub")).toBeNull();
   });
 
-  it("mounts the queue for an expert without redirecting", async () => {
-    mocks.getServerSession.mockResolvedValue(sessionFor("expert"));
-
-    const result = await ModerationPage();
-
-    expect(mocks.redirect).not.toHaveBeenCalled();
-    render(result as ReactElement);
-    expect(screen.getByTestId("contribution-queue-stub")).toBeTruthy();
-    expect(screen.getByTestId("proposal-moderation-stub")).toBeTruthy();
-  });
-
-  it("mounts the queue for an admin without redirecting", async () => {
-    mocks.getServerSession.mockResolvedValue(sessionFor("admin"));
-
-    const result = await ModerationPage();
-
-    expect(mocks.redirect).not.toHaveBeenCalled();
-    render(result as ReactElement);
-    expect(screen.getByTestId("contribution-queue-stub")).toBeTruthy();
+  it.each(["expert", "admin"])("mounts exactly one canonical queue for %s", async (platformRole) => {
+    mocks.getServerSession.mockResolvedValue({ user: { platformRole } });
+    render(await ModerationPage());
+    expect(screen.getAllByTestId("contribution-queue-stub")).toHaveLength(1);
+    expect(screen.queryByText(/Lifecycle/)).toBeNull();
   });
 });

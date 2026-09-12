@@ -408,3 +408,31 @@ inside polygon holes; only positive-area intersections count as a drawn feature.
 does not mutate geometry or interpolate additional values. Whole support cells and dissolved bands retain their geometry; the map clips drawing to
 the canvas. The frozen support inventory remains the denominator, including its eastern and
 coastal boundaries. A neighbor that only touches the viewport edge contributes no visible area.
+
+### Intervention publication refresh
+
+`intervention-publication.ts` clears only intervention service-worker tiles before
+issuing a persistent publication revision. The sync component applies that revision
+to MapLibre's intervention tile URLs, which clears in-memory empty tiles and bypasses
+HTTP/worker entries even when worker acknowledgement times out. Storage and same-tab
+events, page return, late TileJSON and style replacement share the same idempotent
+source reset; equal templates never call setTiles again. Cleanup removes every listener.
+Revision state is browser-local freshness metadata, not authorization or publication
+truth. The server's published filter remains authoritative. No layer toggle changes.
+Custom domains are recognized by the exact intervention tile path; the worker retains
+its refresh promise with waitUntil. Static basemap cache entries remain intact.
+
+### Intervention boundary authoring
+
+`intervention-boundary.ts` is the browser-safe authoring contract for an explicit
+Point or one Polygon exterior ring. Polygon and opposite-corner rectangle tools
+produce closed, counterclockwise rings. Validation rejects duplicate vertices,
+self-crossing/touching edges, non-finite or out-of-range coordinates, poles,
+antimeridian-spanning sites, and spherical areas below one square metre. Area
+uses the spherical longitude/sine-latitude formula, not Cartesian degrees.
+The UI ceiling is 4,095 drawn vertices plus ring closure, bounded by the server's
+4,096 positions per ring and 10,000 total positions; the 900,000 byte geometry
+cap leaves room under the 1 MiB request cap for form fields and RPC metadata.
+These local authoring restrictions do not redefine the server's existing
+Point/Polygon/MultiPolygon contract or imply that a browser validation replaces
+server topology checks.

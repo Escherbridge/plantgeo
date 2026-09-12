@@ -1,5 +1,31 @@
 # Panels
 
+## Community review publication contract — 2026-09-11
+
+This section supersedes the older ContributionQueue role redirect and optional-note
+description, the ModerationPanel section, and the 2026-09-10 dual-workflow section below.
+
+The moderation route mounts exactly one ContributionQueue. Expert/admin authorization is
+enforced on every review request; the route explains signed-out, denied-role and session
+service failures without mounting the queue. The queue distinguishes loading, service failure,
+missing intervention-layer provisioning and a confirmed empty result.
+
+Approve & Publish calls contributions.publishContribution, which writes published.
+The old ModerationPanel and its tests were retired after proving that its only runtime
+consumer was the moderation route. Its vote and lifecycle buttons wrote approved/active/
+monitored into the publication status, hiding sites from published-only map tiles.
+ContributionQueue preserves the absence of evaluated effect evidence. It renders the actual
+submitted Point/Polygon/MultiPolygon in InterventionGeometryPreview, including holes,
+and exposes the original GeoJSON. A location link does not claim the pending outline is on
+the public map. Publication awaits the intervention publication cache notification and
+invalidates the queue, contributor submissions, proposed feed and public intervention reads.
+
+Reject and Request revision require a nonempty reviewer note on both client and server.
+Only interventions support revision requests; a contributor correction returns the
+owned site to pending_review. Legacy approved interventions are separate, individually
+reviewed recovery candidates: the publish button requires a fresh per-row recovery note.
+There is no bulk recovery or automatic publication of historical approvals.
+
 ## Weather selected day
 
 The nearby weather cards in `FireDetails` use the weather row's settled day for
@@ -174,3 +200,28 @@ owns authorization and idempotent storage; the UI does not fabricate ratings or 
 report evidence. History resumes from ownership-checked server messages. Activity
 lists actual request/context/search/saved/completed/error events in this browser
 session; it is not a reconstructed model reasoning trace or a persistent audit log.
+
+### Recommendation site authoring and revisions
+
+`InterventionSubmitModal` starts with no implicit geometry. A contributor draws
+a Polygon or rectangle, chooses a point on the map, or explicitly accepts the
+map centre as a Point. Drawing hides only the form surface; returning from the
+editor preserves form text, consent and the previously saved geometry on Cancel.
+Finish validates and replaces the saved site. Clear removes it and disables
+submission until a replacement is chosen. A successful submit or revision uses
+the saved GeoJSON, not a substituted map-centre pin. Consent explicitly describes
+the public visibility of location and boundary after a reviewer publishes.
+
+Community rows distinguish loading, empty, auth, access, provisioning and service
+failures, and poll at 30 seconds for reviewer outcomes. Publication is labelled
+Published; historical Approved is labelled Awaiting publication review. Rejected
+and revision-requested rows expose Edit and resubmit only when the current user
+is the original submitter and has the required workspace role. Revision uses
+`reviseIntervention`, which must recheck author and workspace authorization.
+Existing MultiPolygon and polygon holes are preserved on resubmission; entering
+a new drawing explicitly replaces the whole site, as disclosed in the form.
+Cancel retains the complex original. The editor itself only authors one ring.
+
+Focused tests: `intervention-boundary.test.ts`, `InterventionBoundaryEditor.test.tsx`,
+`InterventionSubmitModal.test.tsx`, and the existing `CommunityDetails.test.tsx`.
+Execution belongs to the integrated final sweep; this packet claims no test pass.
