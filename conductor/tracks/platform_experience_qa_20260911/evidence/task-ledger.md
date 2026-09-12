@@ -65,6 +65,9 @@ the root verification receipt at
 mobile, agent-parity and broader track gates. The reader / gapless,
 environmental-retirement / offline-export, and conformity continuations are
 archived with immutable receipts while their parent tracks remain active for
-the remaining production and proof packets.
+the remaining production and proof packets. Two additional continuation
+requests are recorded as pending worktree setup in
+[`session-restart-20260912.md`](session-restart-20260912.md); their client queue
+identifiers are not task or commit identities.
 Superseded identities remain dated evidence and are not relabeled as the final
 candidate.
