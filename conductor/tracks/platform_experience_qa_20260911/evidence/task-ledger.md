@@ -1,7 +1,7 @@
 ---
 type: evidence
 recorded_on: 2026-09-12
-observed_at: 2026-09-12T07:12:03Z
+observed_at: 2026-09-12T07:20:03Z
 ---
 
 # Task and candidate ledger
@@ -25,7 +25,7 @@ candidate; it can close only after the required independent verdict.
 | Botanical profile source contract | `client-new-thread:f7fc17f4-d86a-4ca5-b2f0-294f5052e400` — PlantGeo botanical profile source contract | `C:/Users/atooz/.codex/worktrees/2205/plantgeo`, detached clean checkout | Independently reviewed commit `031dd2a`, tree `326f177016ed3434046b147d9d5267fba9692ce5`; integrated into root `747f094` | Archived after independent review and local integration. The nine source, identity, schema, publication and consumer blockers remain release-blocking; no DB, pgt, Railway, ingestion or runtime change. |
 | Forecast contract freeze | `client-new-thread:6f70e73b-4eae-44e1-8b52-ef99fbcb5c2f` — PlantGeo forecast contract freeze | `C:/Users/atooz/.codex/worktrees/30ce/plantgeo`, branch `codex/weather-forecast-planning-20260912` | Independently reviewed commit `518597f`, tree `14ed3b1a80fe2233447f20a1b83d5eacf3e31935`; integrated into root `23409e2` | Archived after independent planning review and local integration. Forecast tracks remain planned; provider admission, F0/F1/F3/F4, implementation, populated-data and mobile gates remain open. Documentation-only; no data operation. |
 | PostgreSQL shrink proof audit | `client-new-thread:38b706ea-0752-41a7-810c-758aeb812265` — PlantGeo PostgreSQL shrink proof audit | `C:/Users/atooz/.codex/worktrees/7837/plantgeo`, detached clean checkout | Independently reviewed commit `7967e6c`, tree `9df48945ca2276bfcf38b5fa089eb09356ff7f12`; integrated into root `f0b6b79` | Archived after independent review and local integration. Ownership/removal proof remains open under successor tracks; historical bridge/drain work is explicitly not restarted and no database or production action occurred. |
-| Service-backed QA gate matrix | `client-new-thread:dd4c97cc-6217-4f47-a687-da30ace6b8e0` — PlantGeo service-backed QA gate matrix | `C:/Users/atooz/.codex/worktrees/ff33/plantgeo`, detached clean checkout | Independently reviewed commit `ad7ae72`, tree `b3973d15965061496b6a6fac0fe297ba0ab80bd6`; integrated into root `15347ea` | Archived after independent review and local integration of the audit-only matrix. It records 34 groups (30 blocked, 4 not-run); platform QA remains active and no runtime/data/production action occurred. |
+| Service-backed QA gate matrix | `01a0945e-953b-7961-8d64-4d8443eb1f0f` — Platform experience QA acceptance audit (`client-new-thread:dd4c97cc-6217-4f47-a687-da30ace6b8e0`) | `C:/Users/atooz/.codex/worktrees/ff33/plantgeo`, detached clean checkout | Independently reviewed commit `ad7ae72`, tree `b3973d15965061496b6a6fac0fe297ba0ab80bd6`; integrated into root `15347ea` | Sidebar task archived after independent review and local integration of the audit-only matrix. It records 34 groups (30 blocked, 4 not-run); platform QA remains active and no runtime/data/production action occurred. |
 | Parquet reader and gapless acceptance continuation | `01a0941d-41b7-7483-b87b-61c94fab4120` — Resume Parquet reader and gapless acceptance | `C:/Users/atooz/.codex/worktrees/b893/plantgeo`, detached clean checkout | Reviewed commit `6213b303da54e91204c3da1ff4f9a7def896dbdf`, tree `11be3de73b218a008233f1053598e5248f7f37f8`; integrated into root `267e197` | Archived after independent review and local integration of the reader R0 availability-contract definition and gapless ownership reconciliation. The receipt records wire v3 coverage, recorded versus carried day ceilings, checksum/unconditional GET behavior, rollups, cache lifetimes, derived-empty support and the distinction between recovery code and observed recovery. Both parent tracks remain active for production traces, complete history, ownership/cutoff/lease evidence and scheduled advances. |
 | Environmental retirement and export continuation | `01a0941d-8488-7b00-845c-1ad3caeb0b5e` — Resume environmental retirement and export acceptance | `C:/Users/atooz/.codex/worktrees/25f9/plantgeo`, detached clean checkout | Reviewed commit `575c8902c796a51a6e465121791d3defff1964b9`, tree `757aca71689d72d384957144963dc09eeb13b26a`; integrated into root `eee2b0f` | Archived after independent review and local integration of the NASA POWER prepared-versus-published reconciliation. The receipt binds the three published temperature generations and historical window, scopes the stale dead-letter, removes an unsupported VPD count, and preserves missing artifacts and forward-health uncertainty. The environmental-retirement and offline-export parent tracks remain active; no production, PostgreSQL, scheduler, deployment or object-store mutation occurred. |
 | Repository conformity continuation | `01a0941d-ac50-70e0-8314-44e098436d20` — Resume repository conformity acceptance | `C:/Users/atooz/.codex/worktrees/a1e1/plantgeo`, detached clean checkout | Reviewed commit `a3ceca8644c5b9d09388238e1702060ee8e7daef`, tree `5dabbe83bfda5ca40f73048d3f2c4df8c42fdd96`; integrated into root `c894436` | Archived after independent review and local integration of one bounded conformity slice. The verified Zustand-only state model now replaces stale Jotai/atomWithQuery guidance in architecture, style guidance and the MapView comment; the broader canonical-core, dead-code and dependency proof gates remain active. No deletion or cross-track cleanup was authorized. |
@@ -103,8 +103,11 @@ admission (root `1637f97`), botanical profile source contract (root `747f094`),
 forecast contract freeze (root `23409e2`), PostgreSQL shrink proof (root
 `f0b6b79`) and the service-backed QA gate matrix (root `15347ea`). Their queue
 aliases, worktrees, reviewed commits/trees and read-only boundaries remain
-bound above. The receipts preserve unresolved parent-track gates and authorize
-no writers, databases, Railway, object storage, schedulers, APIs, UI runtime
-changes or deployment.
+bound above. The service-backed QA task materialized as
+`01a0945e-953b-7961-8d64-4d8443eb1f0f` and was archived in the sidebar; the
+other four remain client aliases because no separate sidebar task IDs were
+materialized. The receipts preserve unresolved parent-track gates and
+authorize no writers, databases, Railway, object storage, schedulers, APIs,
+UI runtime changes or deployment.
 Superseded identities remain dated evidence and are not relabeled as the final
 candidate.
