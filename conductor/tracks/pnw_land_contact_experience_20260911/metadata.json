@@ -4,6 +4,8 @@
   "type": "feature",
   "status": "planned",
   "created_on": "2026-09-11",
+  "updated_on": "2026-09-12",
+  "coordination_gates": "../pnw_land_context_reference_plane_20260911/evidence/land-herbaria-coordination-20260912.md",
   "depends_on": [
     "pnw_land_context_reference_plane_20260911"
   ],
@@ -12,7 +14,7 @@
     "parquet_reader_cutover_acceptance_20260901",
     "multiscale_polygon_surface_20260901"
   ],
-  "next_gate": "Freeze source-backed selection/contact/time contracts with the reference-plane owner, resolve its admission gates, and explicitly authorize implementation and shared-file ownership before any execution.",
+  "next_gate": "Freeze source-backed selection/contact/time contracts and source-admission gates with the reference-plane owner, including refusal of unauthorized occurrence-derived parcel/contact claims. Any optional botanical association needs separate admission/precision review; implementation and shared-file ownership remain unauthorized.",
   "registration_status": "registered_planned",
   "registry": "conductor/tracks.md",
   "authorization_scope": "planning_only",

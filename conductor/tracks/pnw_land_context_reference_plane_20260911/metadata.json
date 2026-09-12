@@ -4,16 +4,20 @@
   "type": "data-governance",
   "status": "planned",
   "created_on": "2026-09-11",
+  "updated_on": "2026-09-12",
+  "coordination_gates": "evidence/land-herbaria-coordination-20260912.md",
   "registration_status": "registered_planned",
   "execution_scope": "Planning packet only. No implementation, acquisition/ingestion, outreach, publication, deployment or runtime configuration is authorized.",
   "depends_on": [],
   "related_tracks": [
+    "pnw_herbaria_source_admission_20260911",
+    "botanical_occurrence_parquet_lane_20260911",
     "pnw_land_contact_experience_20260911",
     "parquet_reader_cutover_acceptance_20260901",
     "multiscale_polygon_surface_20260901",
     "gapless_parquet_publication_20260901"
   ],
-  "next_gate": "Resolve per-source rights, current production feeds, native identity, source watermarks and PNW coverage before any acquisition or implementation decision.",
+  "next_gate": "Resolve per-source rights, current authoritative feeds, native identity, source watermarks and PNW coverage. Keep any later botanical-to-parcel/contact association behind exact-release admission and precision review; do not block independent land families on Herbaria.",
   "geographic_scope": {
     "states": [
       "WA",

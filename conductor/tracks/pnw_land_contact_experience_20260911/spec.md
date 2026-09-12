@@ -27,6 +27,12 @@ is the shared admission and source-evidence reference. The existing research
 informed this packet; it does not establish live data coverage, source admission
 or implemented behavior.
 
+Apply the [September 12 coordination gates](../pnw_land_context_reference_plane_20260911/evidence/land-herbaria-coordination-20260912.md)
+to any later botanical association. Private-name exclusion does not make a
+specimen-derived parcel ID safe to expose: preserve admitted precision and
+withholding in the panel, agent and draft. Ordinary land lookup and public
+records help remain independently governed.
+
 ## Scope and four toggles
 
 Limit product scope to Washington, Oregon and Idaho. The upstream query envelope

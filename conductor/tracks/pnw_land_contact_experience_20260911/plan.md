@@ -19,6 +19,7 @@ for evidence, admission status and unresolved source questions.
 
 ## X0 — meaning, source contract and authorization gate
 
+- [ ] Apply the [September 12 coordination gates](../pnw_land_context_reference_plane_20260911/evidence/land-herbaria-coordination-20260912.md): keep withheld/unadmitted botanical associations out of parcel IDs, contact explanations and drafts, while preserving independently admitted land lookup and public records help.
 - [x] Complete independent planning review and parent registration as `planned`.
 - [ ] Obtain separate implementation authorization and assign code write sets
   before work starts.

@@ -26,6 +26,11 @@ identity, relationship evidence, serving contracts and agent data parity.
 The [source inventory](evidence/source-inventory.md) is the retained evidence
 baseline; its source metadata findings are not live coverage or ingestion receipts.
 
+The [September 12 coordination gates](evidence/land-herbaria-coordination-20260912.md)
+govern any later Herbaria association. Unadmitted or withheld/generalized
+occurrences cannot be resolved into parcel IDs or contact clues; botanical and
+land admissions remain separate, and no additional association is authorized.
+
 ## Geographic and product boundary
 
 Use Washington, Oregon and Idaho only. The query envelope is

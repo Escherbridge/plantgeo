@@ -13,6 +13,7 @@ outreach, publication, deployment or runtime changes.
 
 ## R0 — admission and identity decisions
 
+- [ ] Apply the [September 12 coordination gates](evidence/land-herbaria-coordination-20260912.md): retain separate land admission and condition any later botanical-to-parcel/contact association on exact-release rights, permitted precision and independent review.
 - [ ] Resolve Idaho utility polygons, Idaho production state-land feed and Oregon
   current machine utility feed using authoritative distribution/version evidence.
 - [ ] Establish county parcel geography/field coverage and distribution-specific
