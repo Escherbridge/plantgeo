@@ -130,6 +130,38 @@ describe("WeatherHistoryReport", () => {
     expect(screen.queryByText("21.5 °C")).toBeNull();
   });
 
+  it("clears a displayed selected-day fixture when a typed upstream outage replaces it", () => {
+    queries.getWeatherForBbox.mockReturnValue({
+      data: { state: "ready", requestedDay: DAY, servedDay: DAY, truncated: false, data: [observation] },
+      isFetching: false,
+      isPlaceholderData: false,
+      isError: false,
+    });
+
+    const rendered = renderWithProviders(<WeatherHistoryReport bbox="-117,43,-115,45" zoom={13} />);
+
+    expect(screen.getAllByText("21.5 °C").length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "Mark nearest weather reading on map" })).toBeTruthy();
+
+    queries.getWeatherForBbox.mockReturnValue({
+      data: {
+        state: "upstream_unavailable",
+        fault: { kind: "http", message: "upstream 503", status: 503 },
+      },
+      isFetching: false,
+      isPlaceholderData: false,
+      isError: false,
+    });
+
+    rendered.rerender(<WeatherHistoryReport bbox="-117,43,-115,45" zoom={13} />);
+
+    expect(
+      screen.getByText("Historical weather is temporarily unavailable from the data service. No fallback frame is shown.")
+    ).toBeTruthy();
+    expect(screen.queryByText("21.5 °C")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Mark nearest weather reading on map" })).toBeNull();
+  });
+
   it.each([
     ["absent", {
       state: "absent",
