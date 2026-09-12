@@ -2,9 +2,7 @@
 type: independent-review
 track: weather_forecast_parquet_lane_20260911
 review_base: 362422e3dffebb61a68fd4d7303234c3a14a43ed
-status: approved-isolated-local-handoff
-reviewed_commit: aab0dceb6fb76ff3164b440f4fa48da5748f88a9
-archive_ready: false
+status: static-findings-resolved-final-verification-pending
 ---
 
 # Independent weather batch review
@@ -122,49 +120,16 @@ prepublication refusal, publication, and the same selected-location agent
 context, including the archived source run's stale status. Final quality-only
 formatting changes were also inspected; no further static finding was identified.
 
-## Final independent closure
+The inspected `evidence/frontend-result.json` records exit code zero for boundary,
+typecheck, lint and tests. The initial `evidence/python-result.json` records exit
+code one and is not a passing receipt. The owner reported Windows temporary-root
+permission setup failures and a recovery sweep using a workspace temporary root;
+that recovery result is pending at this checkpoint. Final counts and scope must
+come from the completed selector receipt. A changed-selector fallback covering
+the full test set must still be described by its invocation and actual coverage,
+and does not create a full Python quality receipt or track archive acceptance.
 
-**Approved for isolated local handoff only**, against implementation commit
-`aab0dceb6fb76ff3164b440f4fa48da5748f88a9` on
-`codex/weather-forecast-20260911`, with review base
-`362422e3dffebb61a68fd4d7303234c3a14a43ed`. All identified static findings are
-closed. The reviewer verified HEAD matched this commit and the worktree was
-clean before this documentation-only closure. All 27 tested working-file hashes
-in `evidence/verification.json` matched the checkout. Following the evidence-only
-hash-semantics clarification, the reviewer independently hashed all 27 committed
-Git blobs and confirmed every recorded committed hash matched, with tree
-`3508af01613724c34b6211fe58c5007b68763c30`. Separate working and committed hashes
-account for text newline normalization. The scoped fixture `.gitattributes` uses
-`binary`, preserving the exact captured response bytes across fresh checkouts.
-No runtime test was run by this review lane.
-
-The reviewer inspected these committed evidence files:
-
-- `evidence/frontend-result.json`: zero exits for boundary, typecheck, lint and
-  tests. `verification.json` records the changed-selector full fallback with
-  145 passed files, 2,162 passed tests, 13 skipped tests and 11 weather tests;
-  lint has zero errors and 542 warnings.
-- `evidence/python-final-quality.txt` and `python-final-result.json`: format,
-  lint and mypy PASS; quality exit zero. The selector explicitly records
-  `receipt_eligible: false`.
-- `evidence/python-final-tests.txt`: 114 passed with one nonfatal pytest cache
-  permission warning; test exit zero. `verification.json` enumerates the six
-  new weather files plus the two tests that failed for environmental reasons in
-  the preceding broader recovery run.
-- `evidence/verification.json`: preserves the unsuccessful initial and recovery
-  runs. Initial Python selection had 5,561 passed, 147 skipped, one xfailed and
-  529 temporary-directory setup errors. The broader recovery recorded 6,086
-  passed, 149 skipped, one xfailed and two environmental failures; the final
-  focused run then passed both previously failing cases and every weather test.
-
-The final focused 114-test run is **not a full pytest rerun**. The changed-selector
-fallback and recovery evidence support this bounded handoff; they must not be
-reported as a clean final full-suite Python run or an official full Python
-quality receipt. The initial failures remain part of the evidence rather than
-being overwritten by a blanket pass claim.
-
-This approval covers the isolated local contracts, source fixture adapter,
-publication/readers and prepared presentation/agent modules. It does not approve
-shared integration, production source admission, deployment, external publication
-or track archival. Both tracks remain in progress and **not archive-ready** for
-the dependencies and acceptance gates listed above.
+This file is a static review receipt, not a passing test receipt or archive
+approval. No runtime test was run in this review lane. After the integrated sweep,
+record exact commit and evidence references and close the final verification
+status against that tree.

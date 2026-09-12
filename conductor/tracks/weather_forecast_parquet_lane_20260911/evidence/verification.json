@@ -64,22 +64,7 @@
     "normalized_variables": 13,
     "normalized_rows": 3120
   },
-  "local_log_sha256": {
-    "boundary.log": "2b7932a4819edb8f395fb4c5d88a0cce7a1d2934559bf5db3f4fc8116f49e1cc",
-    "frontend-tests.log": "b47620eef474a7d4539e5c79824d332dcd3f2e9eba07194059253ba366e20f25",
-    "lint.log": "95aa17a56b8a9c548540686c337207c4fc9913947d005ac5c445dee05fb96f99",
-    "python-check.log": "6f0b510103793ffe5f17bdce99245585776a304473c6a4b76bf4eb4a73d7ba84",
-    "python-final-quality.log": "a8de921b8bc4feac1c2d6018545181b79723544c751935f535f893047e515239",
-    "python-final-tests.log": "8c84061ab56d26c340d163a1f7f61b7b80e2091127f3da7e89ca8a978f7ef1d8",
-    "python-recovery.log": "686f81a6aa0411e44416e9d540400585c68c3d650c1c4e53ed000b7fa0e38a29",
-    "typecheck.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "archive_ready": false,
-  "staged_fixture_capture_sha256": "34812e5101395d607ca9c61454a0aee140dbc5628a052b2b276fc85f01e45186",
-  "fixture_git_attribute": "Scoped -text preserves the tested capture bytes in fresh checkouts.",
-  "implementation_commit": "aab0dceb6fb76ff3164b440f4fa48da5748f88a9",
-  "implementation_tree": "3508af01613724c34b6211fe58c5007b68763c30",
-  "verified_working_file_sha256": {
+  "runtime_and_test_file_sha256": {
     "services/agri-data-service/src/agri_data_service/agent/weather_forecast.py": "49ea73dec1e4439c2e15f36a70a06a1eaf4eeabe072ceb30081ecec71f362708",
     "services/agri-data-service/src/agri_data_service/pipeline/direct/weather_forecast/AGENTS.md": "ee457b67d2cc97f5a262d9161f5e36bc65ab7f691dea6318cd0b4165c7ffb562",
     "services/agri-data-service/src/agri_data_service/pipeline/direct/weather_forecast/artifacts.py": "4ff6d0a17c6b3e3b09b57c3d2082b63b890752c29183e54060670f108e14e4bf",
@@ -108,35 +93,17 @@
     "src/components/panels/WeatherDetails.tsx": "6042a4ef70517077c4b78a65bd9c70b04f38ee216221f25b2e477b38e1d4e093",
     "src/lib/environmental/weather-forecast.ts": "435314a25a84c383b6a09e46f01274fe7162c228a0b70986e8c90725a637c9b4"
   },
-  "committed_runtime_and_test_file_sha256": {
-    "services/agri-data-service/src/agri_data_service/agent/weather_forecast.py": "49ea73dec1e4439c2e15f36a70a06a1eaf4eeabe072ceb30081ecec71f362708",
-    "services/agri-data-service/src/agri_data_service/pipeline/direct/weather_forecast/AGENTS.md": "ee457b67d2cc97f5a262d9161f5e36bc65ab7f691dea6318cd0b4165c7ffb562",
-    "services/agri-data-service/src/agri_data_service/pipeline/direct/weather_forecast/artifacts.py": "4ff6d0a17c6b3e3b09b57c3d2082b63b890752c29183e54060670f108e14e4bf",
-    "services/agri-data-service/src/agri_data_service/pipeline/direct/weather_forecast/source.py": "19af208b45ba2aa59c90bd5537ba1d796d39a8e221746ea2da07d237884b2c4e",
-    "services/agri-data-service/src/agri_data_service/planes/weather_forecast.py": "3f01eaf37939cd64516e481b316bb88c1ddde9697f30ef9c4d2360c3ed5839f2",
-    "services/agri-data-service/src/agri_data_service/warehouse/schemas/weather_forecast.py": "130b8a4972548367ad5185ec645f714494a65d885815a15cd5f32732fe5c27a3",
-    "services/agri-data-service/src/agri_data_service/warehouse/weather_forecast/AGENTS.md": "29dc7d512c7657f7427ea12494e2217ce3a9d3f065ed56e3d09977ba237e379d",
-    "services/agri-data-service/src/agri_data_service/warehouse/weather_forecast/__init__.py": "8c350edb6eceb66e3d416c68c3ff3081de83179d0fec9a2dd927e12df38883cd",
-    "services/agri-data-service/src/agri_data_service/warehouse/weather_forecast/contracts.py": "5cba90be8155d206f515e3d8eaad28bf647044100c5252b73c7e50b1b122e12e",
-    "services/agri-data-service/src/agri_data_service/warehouse/weather_forecast/variables.py": "e3b17a58fc58677ea4607d4ccad0f64888170a93d6ef3ff31e24a5371d08975a",
-    "services/agri-data-service/src/agri_data_service/warehouse/weather_forecast/wind.py": "66b570bfae5f00f1079a55f885f4e61a0e843abb78d2004884fdb077b971735a",
-    "services/agri-data-service/tests/direct/test_weather_forecast_artifacts.py": "e1c828312d32c47163c0654a092f07c367fc0a8983ecf3fd6ec2e2f5b34ded59",
-    "services/agri-data-service/tests/direct/test_weather_forecast_end_to_end.py": "d3c5cc53e757a80e025591d7faa709b885ff3b0717ddc3242e462a002a963f28",
-    "services/agri-data-service/tests/direct/test_weather_forecast_source.py": "2b550016574c7358f226aff488de45238c0f9ac6dc193269a1a3925d4ef3ab6e",
-    "services/agri-data-service/tests/fixtures/weather_forecast/ecmwf_ifs_20260908T0000_boise.json": "34812e5101395d607ca9c61454a0aee140dbc5628a052b2b276fc85f01e45186",
-    "services/agri-data-service/tests/fixtures/weather_forecast/ecmwf_ifs_20260908T0000_boise.receipt.json": "22c22155fac922962243c3e38355c08ee8b9458c93e9744c3d6fc17966756ba3",
-    "services/agri-data-service/tests/interface/test_weather_forecast_agent.py": "65a1a97a5e3259a8dbdda363183284b97159ac6d9c5017308da314db2d12e0c5",
-    "services/agri-data-service/tests/test_weather_forecast_contract.py": "e4da8e0af2367395d3e08d7ce1213c64357600587610c6a9ab88d7b962c664fe",
-    "services/agri-data-service/tests/test_weather_forecast_wind.py": "183e8cbb75204811c69450ca5fb3309450116c5b2fc3dfa8c4956925bbc78ffa",
-    "src/__tests__/components/weather-forecast.test.tsx": "fac065a5d35d347e243ae47f0b7486665302a64173deec710e6dc0f05c3f7fca",
-    "src/components/map/layers/WeatherFieldLayer.tsx": "87368f1500df0ce5f4c898dd3696308d043c76b31608d3688194affc5b3c537e",
-    "src/components/map/layers/WeatherWindLayer.tsx": "80ea8a475f9f99313110efdc37ad9308634c27ab436aaffb80d947bafe700877",
-    "src/components/map/layers/weather-forecast/AGENTS.md": "90298f0ec88c8845fcfb9101c26fa0ad08807c51ae6839b46a2ec9a0fd39a215",
-    "src/components/map/layers/weather-forecast/presentation.ts": "e6e94cfd5a5b9caee493e10f02ba78f745b2471db7601bd09621ff99b1f1cf2d",
-    "src/components/map/layers/weather-forecast/useForecastMapSource.ts": "42ba002259e17b5d14039c107a5d83f9c3bad19cf9c84f195b0a1c8f58f7ea43",
-    "src/components/panels/WeatherDetails.tsx": "6042a4ef70517077c4b78a65bd9c70b04f38ee216221f25b2e477b38e1d4e093",
-    "src/lib/environmental/weather-forecast.ts": "435314a25a84c383b6a09e46f01274fe7162c228a0b70986e8c90725a637c9b4"
+  "local_log_sha256": {
+    "boundary.log": "2b7932a4819edb8f395fb4c5d88a0cce7a1d2934559bf5db3f4fc8116f49e1cc",
+    "frontend-tests.log": "b47620eef474a7d4539e5c79824d332dcd3f2e9eba07194059253ba366e20f25",
+    "lint.log": "95aa17a56b8a9c548540686c337207c4fc9913947d005ac5c445dee05fb96f99",
+    "python-check.log": "6f0b510103793ffe5f17bdce99245585776a304473c6a4b76bf4eb4a73d7ba84",
+    "python-final-quality.log": "a8de921b8bc4feac1c2d6018545181b79723544c751935f535f893047e515239",
+    "python-final-tests.log": "8c84061ab56d26c340d163a1f7f61b7b80e2091127f3da7e89ca8a978f7ef1d8",
+    "python-recovery.log": "686f81a6aa0411e44416e9d540400585c68c3d650c1c4e53ed000b7fa0e38a29",
+    "typecheck.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
-  "hash_semantics": "Working file hashes record tested bytes. Committed hashes additionally account for repository text newline normalization; binary source fixture bytes remain identical.",
-  "wrapper_note": "The cmd recovery wrappers' final TYPE display used forward slashes and reported a shell syntax error after writing their result JSON. Recorded quality_exit/tests_exit are the immediately captured Python process exit codes; final quality and pytest logs independently confirm success. Wrapper display failure is not represented as a passing wrapper invocation."
+  "archive_ready": false,
+  "staged_fixture_capture_sha256": "34812e5101395d607ca9c61454a0aee140dbc5628a052b2b276fc85f01e45186",
+  "fixture_git_attribute": "Scoped -text preserves the tested capture bytes in fresh checkouts."
 }
