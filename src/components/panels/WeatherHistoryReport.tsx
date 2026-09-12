@@ -132,8 +132,7 @@ export function WeatherHistoryReport({ bbox, zoom }: WeatherHistoryReportProps) 
     exactResult.state === "upstream_unavailable" ||
     selectedDay === null ||
     exactResult.requestedDay === selectedDay;
-  const presentedResult =
-    resultMatchesSelectedDay || query.isPlaceholderData ? exactResult : undefined;
+  const presentedResult = resultMatchesSelectedDay ? exactResult : undefined;
   const rows = presentedResult?.state === "ready" ? presentedResult.data : [];
 
   const weatherPoint =
@@ -171,12 +170,9 @@ export function WeatherHistoryReport({ bbox, zoom }: WeatherHistoryReportProps) 
   const wetReadings = rows.filter((row) => Number.isFinite(row.precipitationMm) && row.precipitationMm > 0).length;
   const pointReadingCount = rows.filter((row) => row.support.supportKind === "raw_point").length;
   const aggregateCellCount = rows.length - pointReadingCount;
-  const stateNotice = query.isPlaceholderData
-    ? null
-    : weatherStateNotice(presentedResult, selectedDay);
+  const stateNotice = weatherStateNotice(presentedResult, selectedDay);
   const canRetry =
-    !query.isPlaceholderData &&
-    (query.isError || presentedResult?.state === "upstream_unavailable");
+    query.isError || presentedResult?.state === "upstream_unavailable";
   const staleSelectedDay =
     exactResult !== undefined &&
     exactResult.state !== "upstream_unavailable" &&
@@ -193,14 +189,9 @@ export function WeatherHistoryReport({ bbox, zoom }: WeatherHistoryReportProps) 
         </p>
       </div>
 
-      {(query.isFetching || staleSelectedDay) && !query.isPlaceholderData && (
+      {(query.isFetching || staleSelectedDay) && presentedResult === undefined && (
         <p role="status" aria-live="polite" className="text-xs text-[hsl(var(--muted-foreground))]">
           Loading {selectedDay ?? "the latest published weather"}; no earlier frame is shown.
-        </p>
-      )}
-      {query.isPlaceholderData && presentedResult?.state === "ready" && (
-        <p role="status" aria-live="polite" className={NOTICE_CLASS_NAME}>
-          Showing the retained {presentedResult.servedDay} frame while {selectedDay ?? "the latest day"} loads.
         </p>
       )}
       {query.isError && (

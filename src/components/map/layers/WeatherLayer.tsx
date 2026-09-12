@@ -53,6 +53,13 @@ export function directionToArrow(degrees: number): string {
   return arrows[index];
 }
 
+/** Return a font-safe meteorological compass label for a wind direction. */
+export function directionToCardinal(degrees: number): string {
+  const points = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
+  const index = Math.round(((degrees % 360 + 360) % 360) / 45) % points.length;
+  return points[index];
+}
+
 /**
  * Wind speed classes: calm (blue) -> moderate (green) -> strong (red). Ordered by
  * ascending `below`, with the open top class last, so the lookup below and the legend read
@@ -108,6 +115,7 @@ export function weatherFeatures(data: WeatherPoint[]): GeoJSON.FeatureCollection
         ? supportCellPolygon(...point.coordinates, point.support) : null;
       const hasWind = point.windSpeed !== null && point.windDirection !== null;
       const arrow = hasWind ? directionToArrow(point.windDirection as number) : "";
+      const cardinal = hasWind ? directionToCardinal(point.windDirection as number) : "";
       const properties = {
         hasWind, hasTemperature: point.temperature !== null, hasCell: polygon !== null,
         arrow, windSpeed: point.windSpeed, windDirection: point.windDirection,
@@ -118,7 +126,7 @@ export function weatherFeatures(data: WeatherPoint[]): GeoJSON.FeatureCollection
         supportKind: point.support?.supportKind ?? "raw_point",
         sampleKind: point.sampleKind ?? null,
         temperatureLabel: point.temperature === null ? "" : `${Math.round(point.temperature)}°`,
-        label: hasWind ? `${arrow} ${(point.windSpeed as number).toFixed(1)} m/s` : "",
+        label: hasWind ? `from ${cardinal} ${(point.windSpeed as number).toFixed(1)} m/s` : "",
       };
       const coordinates: [number, number] = polygon
         ? [(polygon.coordinates[0][0][0] + polygon.coordinates[0][2][0]) / 2,

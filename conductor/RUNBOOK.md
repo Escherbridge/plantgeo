@@ -37,6 +37,12 @@ history still needed building, and no retirement had happened are archived dated
 statements. They must not restart completed work. Conversely, a prior rebuild or
 publication must not erase the unresolved reader, history and runtime gates.
 
+The September 12 botanical agent-parity candidate `0cd9430` is locally
+integrated in the coordinator checkout after independent review. It keeps the
+caller-bound species context active through the web pass and adds mismatched
+and omitted-UUID regressions; it is not a published profile release and does
+not close source, census, immutable-publication or production gates.
+
 ## Outstanding work by owning track
 
 | Work | Start here | Required next evidence |
@@ -145,3 +151,25 @@ artifact in a tracked Markdown summary.
 Keep this entry bounded. New operational detail belongs in a dated receipt and
 the owning track; update the checkpoint and links here rather than appending a
 second current handoff.
+
+The September 12 weather QA continuation corrected a stale-placeholder path in
+the historical report and map: a mismatched prior-day result is now withheld
+from both surfaces while the selected day loads. The focused report/map
+regression, integrated frontend sweep and independent review passed; the
+candidate remains locally uncommitted because repository ref locking is denied
+in this sandbox. The bounded weather approval remains in force; this local
+candidate does not authorize populated-data release, forecast implementation,
+Railway, production, database, writer, deployment or push operations.
+
+The September 12 follow-up also made map wind labels explicit and font-safe by
+using ASCII meteorological `from <cardinal> <speed>` wording. Independent review
+and the final integrated sweep passed (150 frontend files passed, 2 skipped;
+2,240 tests passed, 13 skipped); the detailed receipt is
+[root-integrated-checks-20260912-weather-labels.md](tracks/platform_experience_qa_20260911/evidence/root-integrated-checks-20260912-weather-labels.md).
+This remains a local presentation approval; live populated-data, mobile,
+accessibility, hover and separate forecast gates remain open.
+
+The older `root-integrated-checks-20260912.md` link and 2,233-test count in the
+table are retained as dated history. The current weather-label verification is
+the [2,240-test receipt](tracks/platform_experience_qa_20260911/evidence/root-integrated-checks-20260912-weather-labels.md),
+which is the receipt to use for the present local presentation candidate.

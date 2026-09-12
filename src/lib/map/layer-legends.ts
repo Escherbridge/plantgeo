@@ -379,7 +379,7 @@ const STATIC_LAYER_LEGENDS: Partial<Record<LayerToggleId, LayerLegendSpec>> = {
       { kind: "classes", caption: "Wind speed", shape: "dot", classes: WIND_SPEED_CLASSES },
       {
         kind: "note",
-        text: "Open-Meteo model estimates. Filled cells average captured readings only inside their declared footprint; detail dots are sampled locations. Blank ground is unmeasured, not interpolated. Labels show °C; arrows point where wind blows to, with speed in m/s. Where wind labels collide, stronger winds take priority.",
+        text: "Open-Meteo model estimates. Filled cells average captured readings only inside their declared footprint; detail dots are sampled locations. Blank ground is unmeasured, not interpolated. Labels show °C; wind labels say where the wind comes from and give speed in m/s. Where wind labels collide, stronger winds take priority.",
       },
     ],
   },

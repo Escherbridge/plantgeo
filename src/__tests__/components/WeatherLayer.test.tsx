@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { act, render, waitFor } from '@testing-library/react';
 import type { Map as MapLibreMap, LayerSpecification } from 'maplibre-gl';
-import { WeatherLayer, directionToArrow, weatherFeatures, type WeatherPoint } from '@/components/map/layers/WeatherLayer';
+import { WeatherLayer, directionToArrow, directionToCardinal, weatherFeatures, type WeatherPoint } from '@/components/map/layers/WeatherLayer';
 
 const sample: WeatherPoint = {
   coordinates: [-116, 44], temperature: 24, humidity: 35, windSpeed: 3, windDirection: 0,
@@ -78,11 +78,14 @@ describe('weather spatial support and wind', () => {
   it.each([[0, '↓'], [90, '←'], [180, '↑'], [270, '→'], [360, '↓']] as const)('points wind FROM %s toward %s', (direction, arrow) => {
     expect(directionToArrow(direction)).toBe(arrow);
   });
+  it.each([[0, 'N'], [45, 'NE'], [180, 'S'], [270, 'W'], [360, 'N']] as const)('labels wind FROM %s with a font-safe compass value', (direction, cardinal) => {
+    expect(directionToCardinal(direction)).toBe(cardinal);
+  });
   it('retains unsupported detail locations as points and preserves values and clocks', () => {
     const { features } = weatherFeatures([sample]);
     expect(features).toHaveLength(1);
     expect(features[0].geometry).toEqual({ type: 'Point', coordinates: [-116, 44] });
-    expect(features[0].properties).toMatchObject({ temperature: 24, temperatureLabel: '24°', precipitation: 0, windSpeed: 3, windDirection: 0, observedDay: '2026-09-09', observedAt: sample.observedAt, hasCell: false, sampleKind: 'model_estimate' });
+    expect(features[0].properties).toMatchObject({ temperature: 24, temperatureLabel: '24°', precipitation: 0, windSpeed: 3, windDirection: 0, label: 'from N 3.0 m/s', observedDay: '2026-09-09', observedAt: sample.observedAt, hasCell: false, sampleKind: 'model_estimate' });
   });
   it('uses the declared aggregate footprint and puts wind at its center without changing measurements', () => {
     const { features } = weatherFeatures([{ ...sample, support: {

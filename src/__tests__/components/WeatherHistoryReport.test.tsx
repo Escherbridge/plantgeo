@@ -251,7 +251,7 @@ describe("WeatherHistoryReport", () => {
     expect(screen.queryByText(/99/)).toBeNull();
   });
 
-  it("labels a retained frame with its own day while the selected day is pending", () => {
+  it("clears the retained prior-day frame while the selected day is pending", () => {
     queries.getWeatherForBbox.mockReturnValue({
       data: { state: "ready", requestedDay: "2026-07-31", servedDay: "2026-07-31", truncated: false, data: [observation] },
       isFetching: true,
@@ -261,7 +261,53 @@ describe("WeatherHistoryReport", () => {
 
     renderWithProviders(<WeatherHistoryReport bbox="-117,43,-115,45" zoom={13} />);
 
-    expect(screen.getByText(`Showing the retained 2026-07-31 frame while ${DAY} loads.`)).toBeTruthy();
+    expect(screen.getByText(`Loading ${DAY}; no earlier frame is shown.`)).toBeTruthy();
+    expect(screen.queryByText("21.5 °C")).toBeNull();
+    expect(screen.queryByText(/Showing the retained/)).toBeNull();
+  });
+
+  it("withholds day A during a delayed day B transition before showing day B", () => {
+    const nextDay = "2026-08-02";
+    const nextObservation: ParquetBrowserWeatherObservation = {
+      ...observation,
+      observedAt: `${nextDay}T12:00:00Z`,
+      observedDay: nextDay,
+      temperatureC: 24.25,
+      support: { ...support, provenance: { ...support.provenance, observedDay: nextDay } },
+    };
+    queries.getWeatherForBbox
+      .mockReturnValueOnce({
+        data: { state: "ready", requestedDay: DAY, servedDay: DAY, truncated: false, data: [observation] },
+        isFetching: false,
+        isPlaceholderData: false,
+        isError: false,
+      })
+      .mockReturnValueOnce({
+        data: { state: "ready", requestedDay: DAY, servedDay: DAY, truncated: false, data: [observation] },
+        isFetching: true,
+        isPlaceholderData: true,
+        isError: false,
+      })
+      .mockReturnValueOnce({
+        data: { state: "ready", requestedDay: nextDay, servedDay: nextDay, truncated: false, data: [nextObservation] },
+        isFetching: false,
+        isPlaceholderData: false,
+        isError: false,
+      });
+
+    const view = renderWithProviders(<WeatherHistoryReport bbox="-117,43,-115,45" zoom={13} />);
+    expect(screen.getAllByText("21.5 °C").length).toBeGreaterThan(0);
+
+    useTimeSliderStore.setState({ layerDates: { weather: nextDay } });
+    view.rerender(<WeatherHistoryReport bbox="-117,43,-115,45" zoom={13} />);
+
+    expect(screen.getByText(`Loading ${nextDay}; no earlier frame is shown.`)).toBeTruthy();
+    expect(screen.queryByText("21.5 °C")).toBeNull();
+    expect(screen.queryByText("24.3 °C")).toBeNull();
+
+    view.rerender(<WeatherHistoryReport bbox="-117,43,-115,45" zoom={13} />);
+    expect(screen.getAllByText("24.3 °C").length).toBeGreaterThan(0);
+    expect(screen.queryByText("21.5 °C")).toBeNull();
   });
 
   it("withholds a persisted prior-day frame from the dateless current-day query", () => {

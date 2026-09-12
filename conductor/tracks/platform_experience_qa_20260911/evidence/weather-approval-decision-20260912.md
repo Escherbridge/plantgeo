@@ -33,3 +33,27 @@ transitions, narrow-mobile and touch behavior, and the requested-day versus
 served-day policy. The two forecast tracks remain planned and still require
 source admission, immutable run publication, bounded readers, agent parity and
 independent scientific, accessibility and data-contract acceptance.
+
+## Follow-up local presentation correction — 2026-09-12T13:52Z
+
+The approved local scope now also includes the independently reviewed
+selected-day stale-frame correction. `WeatherHistoryReport` and `LayerManager`
+withhold mismatched `keepPreviousData` placeholders, blank the weather map and
+report while a new day is pending, and publish the requested day as loading in
+the drawn-day registry. The delayed day-A/day-B report and map regressions
+passed in the integrated sweep. This remains a local uncommitted presentation
+candidate because repository ref locking is denied in the sandbox; the original
+bounded approval remains local-only and does not authorize populated-data,
+forecast, Railway, database, object-store, writer, deployment or push work.
+
+## Follow-up font-safe wind-label candidate — 2026-09-12
+
+The visual lane has a bounded local candidate for the remaining map readability
+issue: map labels now use explicit ASCII `from <cardinal> <speed>` wording so
+they remain legible when the configured font lacks Unicode arrows and preserve
+the meteorological from/to meaning. The legend and map directory guidance are
+aligned, and the Unicode helper remains available to other consumers.
+Independent review and the final affected-check sweep passed, as recorded in
+[root-integrated-checks-20260912-weather-labels.md](root-integrated-checks-20260912-weather-labels.md).
+The approved local weather scope and all populated-data, forecast, database,
+Railway, writer, deployment and push boundaries remain unchanged.

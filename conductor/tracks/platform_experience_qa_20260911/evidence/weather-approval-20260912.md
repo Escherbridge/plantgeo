@@ -103,3 +103,42 @@ current-day responses and expose an explicit notice or refusal when they differ.
 
 This receipt authorizes neither deployment nor Railway, production, database,
 object-store or data-writer mutation.
+
+## Follow-up selected-day stale-frame correction — 2026-09-12T13:47Z
+
+A read-only visual audit identified a concrete contract mismatch: the historical
+report and `LayerManager` accepted `query.isPlaceholderData` as permission to
+present a previous weather day while a newly selected day was pending. The
+local correction now withholds that mismatched result from both the report and
+`WeatherLayer`, keeps the query cache warm, and publishes loading rather than
+a retained drawn day. The focused regressions cover a prior-day placeholder,
+a delayed day-A/day-B report transition, and the corresponding map draw plus
+registry state. This is a local uncommitted candidate pending the final
+integrated check sweep and independent code review; it does not widen this
+approval to populated data, forecast work, or deployment.
+
+## Follow-up review and verification — 2026-09-12T13:52Z
+
+The selected-day stale-frame candidate received an independent PASS. The
+review confirmed that both report and map apply the same requested-day match,
+that a withheld placeholder produces no weather rows or `WeatherLayer` data,
+and that the drawn-day registry reports the requested day as loading rather
+than a prior drawn day. The delayed day-A/day-B report and map regressions are
+meaningful and passed together with the full integrated sweep. The candidate
+is accepted as a local presentation correction under this approval, but its
+files remain uncommitted because repository ref locking is denied in the
+sandbox. No release, populated-data, forecast, Railway, database,
+object-store, writer, deployment or push approval is implied.
+
+## Follow-up font-safe wind labels — 2026-09-12
+
+The visual lane identified a presentation risk in the map's Unicode wind
+glyphs: missing glyph coverage can make direction labels appear as tofu boxes,
+while aggregate-cell labels may disappear under collision handling. A bounded
+candidate now uses explicit ASCII meteorological `from <cardinal> <speed>` map
+labels and updates the legend and map guidance; the existing Unicode arrow
+helper remains exported for compatibility. Independent review and the final
+affected-check sweep passed; see
+[root-integrated-checks-20260912-weather-labels.md](root-integrated-checks-20260912-weather-labels.md).
+It changes no reader, data, database, source, writer or deployment behavior and
+does not widen the existing local approval.

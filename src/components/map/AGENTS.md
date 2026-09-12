@@ -621,9 +621,12 @@ not measured beside its numerator will always eventually lie.
 
 **One toggle, three readings, one source.** `WeatherLayer` paints `weather-temperature`
 (raw-sample circles), `weather-temperature-cells` (only declared aggregate support), numeric
-`weather-temperature-labels`, and `weather-wind` (an arrow glyph plus measured speed) from a
-single GeoJSON source. Temperature labels and wind occupy opposite sides of the anchor so an
-aggregate square reads like a conventional weather plot rather than an anonymous tile.
+`weather-temperature-labels`, and `weather-wind` (an explicit font-safe `from N` compass direction
+plus measured speed) from a single GeoJSON source. Temperature labels and wind occupy opposite
+sides of the anchor so an aggregate square reads like a conventional weather plot rather than an
+anonymous tile. The Unicode arrow helper remains available for non-map consumers, but map labels
+use ASCII compass wording so missing glyph coverage cannot produce tofu boxes or reverse the
+meteorological from/to meaning.
 
 **The weather report owns the sampled lane; Climate still owns continuous fields.** The weather
 row lives in the Climate group because `Climate & Weather History` is the report that reads its

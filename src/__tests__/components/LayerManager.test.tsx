@@ -1951,6 +1951,79 @@ describe("LayerManager holds the previous day while the next one loads", () => {
     expect(lastRenderOf("WeatherLayer")?.data).toEqual([]);
   });
 
+  it("does not paint a retained weather frame during a selected-day transition", async () => {
+    const previousDay = "2026-08-01";
+    const nextDay = "2026-08-02";
+    const weatherRow = {
+      latitude: 43.6,
+      longitude: -116.2,
+      observedAt: `${previousDay}T12:00:00Z`,
+      observedDay: previousDay,
+      temperatureC: 21.5,
+      relativeHumidityPct: 44,
+      windSpeedMs: 3.2,
+      windDirectionDeg: 270,
+      precipitationMm: 0,
+      support: {
+        zoomTier: 13,
+        supportKind: "raw_point",
+        supportId: "weather-transition",
+        origin: "cell_center",
+        aggregationMethod: "identity",
+        contributorCount: 1,
+        provenance: {
+          sourceLayer: "weather-observations",
+          observedDay: previousDay,
+          newestObservedAt: `${previousDay}T12:00:00Z`,
+          attribution: "Open-Meteo",
+        },
+      },
+    };
+    useTimeSliderStore.setState({
+      layerDates: { weather: previousDay },
+      capabilities: sliderCapabilities,
+    });
+    useMapStore.setState({ activeLayers: ["weather"] });
+    viewportQueries.getWeatherForBbox.mockReturnValue(
+      landed({
+        state: "ready",
+        requestedDay: previousDay,
+        servedDay: previousDay,
+        truncated: false,
+        data: [weatherRow],
+      })
+    );
+    const fakeMap = createFakeMap();
+    fakeMap.setStyleLoaded(true);
+    const rendered = renderLayerManager(fakeMap);
+
+    expect(lastRenderOf("WeatherLayer")?.data).toHaveLength(1);
+
+    viewportQueries.getWeatherForBbox.mockReturnValue(
+      retaining({
+        state: "ready",
+        requestedDay: previousDay,
+        servedDay: previousDay,
+        truncated: false,
+        data: [weatherRow],
+      })
+    );
+    act(() => {
+      useTimeSliderStore.getState().setLayerDate("weather", nextDay);
+    });
+    await settleScrub();
+    act(() => {
+      rerenderLayerManager(rendered, fakeMap);
+    });
+
+    expect(lastRenderOf("WeatherLayer")?.data).toEqual([]);
+    expect(useDrawnLayerDayStore.getState().drawnDays.weather).toEqual({
+      drawnDate: nextDay,
+      requestedDate: nextDay,
+      isLoading: true,
+    });
+  });
+
   /**
    * Five fire answers an empty canvas cannot be told apart from "no fires burned here", and the
    * overlay is the only surface that distinguishes them for a reader looking at the map rather

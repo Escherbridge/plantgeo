@@ -492,8 +492,14 @@ export default function LayerManager() {
     weatherQuery.data.state === "upstream_unavailable" ||
     weatherDay.settledDate === null ||
     weatherQuery.data.requestedDay === weatherDay.settledDate;
-  const weatherResult =
-    weatherResultMatchesDay || weatherQuery.isPlaceholderData ? weatherQuery.data : undefined;
+  // Keep the query cache warm, but never paint a retained prior-day frame under a new selection.
+  const weatherResult = weatherResultMatchesDay ? weatherQuery.data : undefined;
+  // A withheld placeholder is blank on the canvas, so the drawn-day registry must not report it
+  // as a retained frame to MapDateSummary.
+  const weatherDrawQuery =
+    weatherResult === undefined && weatherQuery.isPlaceholderData === true
+      ? { ...weatherQuery, data: undefined, isPlaceholderData: false }
+      : { ...weatherQuery, data: weatherResult };
   const weatherData = useMemo<WeatherPoint[]>(
     () => presentParquetWeather(weatherResult),
     [weatherResult]
@@ -725,7 +731,7 @@ export default function LayerManager() {
       layerId: "weather",
       isDrawn: weatherEnabled,
       requestedDate: weatherDay.settledDate,
-      ...parquetDrawnDayFlags({ ...weatherQuery, data: weatherResult }),
+      ...parquetDrawnDayFlags(weatherDrawQuery),
     },
     // The four wave-C layers. They had no entry here while they were Martin tiles, because a tile
     // layer's day was applied as a style filter over bytes already in the browser -- there was no
