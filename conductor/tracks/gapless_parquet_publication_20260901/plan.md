@@ -8,6 +8,28 @@ resource: ./spec.md
 
 # Plan
 
+## Committed-main evidence packet — September 12
+
+The [publication evidence packet](evidence/publication-evidence-packet-20260912.md)
+binds this local-only reconciliation to committed `main` at `843b4b3` (tree
+`9533bb9e5423240630935df0cd012cd8ead15504`). It enumerates the current 27
+time-bearing streams and five static registrations, distinguishes their declared
+forward floors from requested history, and reconciles the older soil-wetness,
+precipitation, dew-point, drought and burn-severity receipts without claiming
+current coverage. In particular, the retained dew-point census proves complete
+physical history, not by itself a published availability generation.
+
+- [x] Produce the local source/horizon/absence/ownership reconciliation and exact
+  missing-owner/artifact/next-action packet, including ledger versus publication
+  fencing and three duties versus three scheduled advances.
+- [ ] Recover and bind the remaining historical inventories/audits, product/depth
+  identities, skipped-release receipts and current unresolved-interval owners.
+- [ ] Obtain effective deployed definitions, cutoff, checkpoint/cursor/lease and
+  old-process-drain evidence; observe recovery and per-product scheduled burn-in.
+
+No runtime gate closes. The September 2 ownership census and wave ledger below
+remain dated history; the effective active set is still unmeasured here.
+
 ## Local reconciliation — September 12
 
 The [local ownership audit](evidence/local-ownership-audit-20260912.md) binds the
