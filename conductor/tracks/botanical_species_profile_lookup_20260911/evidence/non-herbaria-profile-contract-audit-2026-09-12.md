@@ -3,6 +3,10 @@ type: evidence-receipt
 track: botanical_species_profile_lookup_20260911
 date: 2026-09-12
 status: audited-release-blocked
+source_commit: 6c08907ba392d8dcdff3e96c41fdb27c6a74fe9d
+source_tree: 92f3baef253389b737f3e36fd47a96b52c43c312
+continuation_base_commit: 64f4f892bd2b744cc097c7f76a1f239997b80f52
+continuation_base_tree: f8697da694a3f9fbbf28e70ff7581bd59546bfd6
 ---
 
 # Non-Herbaria botanical profile contract audit
@@ -23,6 +27,15 @@ evaluate source contents, ingest, publish, run a writer or scheduler, deploy, ra
 species, or make a planting, fuel, fire, food, timber, pollination, nitrogen-fixation,
 or suitability claim. Therefore it makes no claim about production rows or about the
 fitness of any candidate source.
+
+The continuation audit revalidated the same bounded surfaces at base commit
+`64f4f892bd2b744cc097c7f76a1f239997b80f52` and base tree
+`f8697da694a3f9fbbf28e70ff7581bd59546bfd6`. The authoring table/model,
+transitional plane and HTTP adapter, application registration, agent tool and prompt, MCP
+instructions, and recommendation-model trait vocabulary are byte-identical between the
+original and continuation bases. The intervening repository changes do not change this
+receipt's admission verdict. The continuation likewise performed no database or external
+read and makes no population claim.
 
 ## Repository inventory
 
@@ -79,6 +92,8 @@ and must not be used to infer a species-level agricultural role or deployment ou
 - `method/ml/recommendation_models.py` defines feature terms that accept an already-fetched
   `agri.species` mapping, including the three legacy Booleans. That code is inventory
   evidence of a future cutover requirement, not authorization to train from the wide row.
+  The current executable recommendation trainer does not pass such a mapping, so this audit
+  records a latent interface risk rather than claiming present runtime consumption.
   Before any profile-backed training or ranking is permitted, the caller must be proven to
   supply a pinned, reviewed immutable profile and to preserve unknown/conflict states.
 
@@ -94,6 +109,55 @@ references contain no captured artifact, field inventory, exact admitted release
 field-level rights verdict, normalization fixtures, coverage audit, or independent
 admission decision. They do not admit any value. Public accessibility or a named source
 family is not bulk-access, redistribution, API-display or training authorization.
+
+## Separate lightweight lookup decision
+
+**Decision: retain a separate lightweight lookup, with two explicitly non-interchangeable
+products.** The existing `botanical-species-information` endpoint remains a transitional,
+exact-internal-UUID view of editable authoring rows. The future
+`botanical-species-profile` product is a nonspatial, immutable, release-pinned Parquet
+lookup containing canonical taxon, assertion, reconciliation-decision, profile and manifest
+artifacts. Neither product is a botanical-occurrence layer, an environmental signal lane,
+or a recommendation endpoint.
+
+This separation is load-bearing:
+
+- relational `agri.species` remains useful for lightweight curation and the bounded legacy
+  bridge, but its wide columns do not acquire source, method, unit, rights or review evidence
+  merely because the HTTP, agent and MCP paths can read them;
+- the final lookup is keyed by authority/version/taxon-concept plus profile release, not the
+  transitional internal Species UUID and never normalized name text;
+- profile publication freezes reviewed values and their assertion/decision lineage without
+  copying editable defaults into evidence-backed negatives;
+- an absent profile release, artifact, taxon or field produces declared missingness or a typed
+  refusal, never a read-through to `agri.species`;
+- occurrence, establishment comparison and objective-effect evidence remain independent
+  downstream inputs, so the lookup cannot rank, recommend planting or manufacture a fuel/fire
+  conclusion; and
+- serving rights and training rights are separate field-level gates. A serving-eligible value
+  is excluded from training unless the exact source field and transformation have an affirmative
+  recorded training-use scope.
+
+The transitional endpoint may be retired after the immutable lookup is accepted. It must not
+be evolved into the final product by adding a release label around the same wide database row;
+that would preserve neither the assertion grain nor immutability.
+
+## Explicit blocker ledger
+
+| Blocker | Repository evidence | Required clearing evidence |
+| --- | --- | --- |
+| `B1_source_admission` | Planning names USDA PLANTS, NRCS Plant Materials, TRY and FEIS, but the repository has no captured exact non-Herbaria source release, hash, field inventory or independent field verdict. | One bounded packet for an exact release with bulk-access proof, field dictionary, coverage, update/withdrawal behavior and admit/withhold decisions. |
+| `B2_rights_and_training_scope` | No candidate field has reviewed redistribution, transformation, API/agent-display and model-training terms recorded separately. | Field-level rights review with licence version, attribution, consumer-specific permission and explicit training-use status/scope. Unknown is withholding, not permission. |
+| `B3_taxon_concept_identity` | `agri.species.id` is internal and `scientific_name` is only a unique string; no authority/version/concept mapping exists. | Versioned canonical taxon artifact and exact source/occurrence crosswalk with matched, ambiguous and unmatched states; no name-only contribution. |
+| `B4_assertion_and_decision_grains` | The wide species row has no per-value source record/field, original value/unit, method, context, review, conflict or withdrawal record. | Implemented and independently reviewed assertion and reconciliation-decision schemas satisfying the frozen envelope below. |
+| `B5_composition_and_fuel_context` | The transitional plane declares the fuel/tissue section `not_modeled_in_authoring_schema`; no admissible water, oil, tissue or fuel measurements exist. | Context-complete assertions retaining tissue/component, live/dead state, basis, unit, method, preparation, statistic, season, life stage, geography and environmental context. |
+| `B6_agricultural_role_evidence` | Legacy role Booleans/defaults, the pollinator label and free-form guild array cannot distinguish negative evidence from missingness or retain per-value provenance. Companion rows are a separate bounded relationship product. | Controlled role assertions with polarity, beneficiary/object, plant part where relevant, applicability, jurisdiction, method, source, rights and immutable review fields. |
+| `B7_immutable_publication` | The planned canonical-taxonomy, assertion, decision, profile, manifest, publication and final profile-reader paths do not exist; no integration receipt exists. | Hash-bound Parquet artifacts, reconciled counts, conditional pointer advance, idempotent replay, interruption recovery and rollback evidence. |
+| `B8_consumer_cutover` | HTTP, agent and MCP expose only the unpublished exact-UUID authoring lookup; the recommendation feature vocabulary can accept legacy `agri.species` mappings. | Final canonical-taxon plus pinned-release HTTP/tool/MCP proof, no database fallback, and proof that training/recommendation consumers read only eligible immutable profile values while retaining unknown/conflict states. |
+| `B9_independent_acceptance` | No dependency-last integration receipt or independent botanical/data-governance/agent-honesty verdict exists. | P4 exact-tree integration receipt followed by a non-author P5 verdict covering source, taxonomy, units/methods, rights, missingness, refusals and consumer boundaries. |
+
+All nine blockers are release-blocking. Clearing one does not weaken any other, and the
+transitional lookup clears none of them.
 
 ## Frozen assertion envelope
 
