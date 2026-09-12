@@ -1,0 +1,140 @@
+{
+  "slug": "weather_forecast_parquet_lane_20260911",
+  "title": "Governed weather-forecast Parquet plane",
+  "type": "infrastructure",
+  "status": "planned",
+  "created_on": "2026-09-11",
+  "depends_on": [
+    "gapless_parquet_publication_20260901",
+    "parquet_reader_cutover_acceptance_20260901"
+  ],
+  "related_tracks": [
+    "upstream_dataset_expansion_20260806",
+    "environmental_postgres_retirement_20260904",
+    "multiscale_polygon_surface_20260901",
+    "weather_forecast_experience_20260911"
+  ],
+  "next_gate": "Admit one exact deterministic forecast product and freeze model-run, valid-time, variable, support, missingness and immutable-run publication contracts.",
+  "partitions": {
+    "confidence": "planned",
+    "slices": [
+      {
+        "id": "f0",
+        "task": "Provider product admission and forecast contract freeze",
+        "model": "gpt-6-astra",
+        "depends_on": [],
+        "owns": [
+          {"path": "conductor/tracks/weather_forecast_parquet_lane_20260911/evidence/source-admission.md", "status": "future"}
+        ]
+      },
+      {
+        "id": "f1",
+        "task": "Forecast run, variable, field, point-window and vector schemas",
+        "model": "gpt-5.6-sol",
+        "depends_on": ["f0"],
+        "owns": [
+          {"path": "services/agri-data-service/src/agri_data_service/warehouse/schemas/weather_forecast.py", "status": "future"},
+          {"path": "services/agri-data-service/src/agri_data_service/foundation/weather_forecast/", "status": "future"}
+        ]
+      },
+      {
+        "id": "f2",
+        "task": "Bounded direct ingestion, immutable run publication and recovery",
+        "model": "gpt-5.6-sol",
+        "depends_on": ["f0", "f1"],
+        "owns": [
+          {"path": "services/agri-data-service/src/agri_data_service/pipeline/direct/weather_forecast/", "status": "future"}
+        ]
+      },
+      {
+        "id": "f3",
+        "task": "Field and point-window readers plus release-pinned agent tools",
+        "model": "gpt-6-astra",
+        "depends_on": ["f1", "f2"],
+        "owns": [
+          {"path": "services/agri-data-service/src/agri_data_service/planes/weather_forecast.py", "status": "future"},
+          {"path": "services/agri-data-service/src/agri_data_service/interface/http/weather_forecast.py", "status": "future"},
+          {"path": "services/agri-data-service/src/agri_data_service/agent/weather_forecast.py", "status": "future"}
+        ]
+      },
+      {
+        "id": "f4",
+        "task": "Independent scientific, recovery and data-contract verdict",
+        "model": "gpt-6-astra",
+        "depends_on": ["f0", "f1", "f2", "f3"],
+        "owns": [
+          {"path": "conductor/tracks/weather_forecast_parquet_lane_20260911/evidence/independent-review.md", "status": "future"}
+        ]
+      }
+    ],
+    "shared_writes": [
+      {
+        "path": "services/agri-data-service/src/agri_data_service/pipeline/parquet/lane_registry.py",
+        "owner": "f2",
+        "serializes_after": "gapless_parquet_publication_20260901",
+        "reason": "Register the forecast product only after the active publication owner finishes or explicitly transfers this registry."
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/execution/job_executor_service.py",
+        "owner": "f2",
+        "serializes_after": "gapless_parquet_publication_20260901",
+        "reason": "Add forecast refresh, repair and coverage duties under the transferred executor owner."
+      },
+      {
+        "path": "src/lib/server/services/parquet-slider-capabilities.ts",
+        "owner": "f3",
+        "serializes_after": "parquet_reader_cutover_acceptance_20260901",
+        "reason": "Register real horizons and run/valid-time semantics after the active reader owner freezes the shared capability contract."
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/app.py",
+        "owner": "f3",
+        "serializes_after": "botanical_species_profile_lookup_20260911",
+        "reason": "Register the forecast HTTP blueprint after the active species-profile task transfers the shared application bootstrap."
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/agent/graph.py",
+        "owner": "f3",
+        "serializes_after": "botanical_species_profile_lookup_20260911",
+        "reason": "Register the forecast tool after the active species-profile graph changes land."
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/agent/mcp_server.py",
+        "owner": "f3",
+        "serializes_after": "botanical_species_profile_lookup_20260911",
+        "reason": "Extend MCP list/call dispatch after the active species-profile MCP changes land."
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/agent/prompts.py",
+        "owner": "f3",
+        "serializes_after": "botanical_species_profile_lookup_20260911",
+        "reason": "Add forecast guidance after the active species-profile prompt changes land."
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/agent/tools.py",
+        "owner": "f3",
+        "serializes_after": "botanical_species_profile_lookup_20260911",
+        "reason": "Export the forecast tool after the active species-profile tool registry changes land."
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/agent/AGENTS.md",
+        "owner": "f3",
+        "serializes_after": "botanical_species_profile_lookup_20260911",
+        "reason": "Document forecast agent semantics under the directory convention after the active species-profile documentation lands."
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/interface/http/AGENTS.md",
+        "owner": "f3",
+        "serializes_after": "botanical_species_profile_lookup_20260911",
+        "reason": "Document bounded forecast HTTP routes after the active species-profile interface documentation lands."
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/planes/AGENTS.md",
+        "owner": "f3",
+        "serializes_after": "botanical_species_profile_lookup_20260911",
+        "reason": "Document forecast plane contracts after the active species-profile plane documentation lands."
+      }
+    ],
+    "integration_slice": "f4"
+  }
+}

@@ -1,0 +1,117 @@
+{
+  "slug": "weather_forecast_experience_20260911",
+  "title": "Traditional weather forecast map and location experience",
+  "type": "feature",
+  "status": "planned",
+  "created_on": "2026-09-11",
+  "depends_on": [
+    "weather_forecast_parquet_lane_20260911",
+    "parquet_reader_cutover_acceptance_20260901",
+    "multiscale_polygon_surface_20260901",
+    "gapless_parquet_publication_20260901"
+  ],
+  "related_tracks": [
+    "upstream_dataset_expansion_20260806",
+    "environmental_postgres_retirement_20260904"
+  ],
+  "next_gate": "Freeze observed-versus-forecast modes, selected-location cards, scalar-field support, wind-vector presentation, time semantics and real-data acceptance budgets against the admitted forecast schema.",
+  "surfaces": [
+    "sampled-weather-estimates",
+    "weather-forecast-field",
+    "weather-forecast-wind",
+    "selected-location-forecast"
+  ],
+  "partitions": {
+    "confidence": "planned",
+    "slices": [
+      {
+        "id": "x0",
+        "task": "Observed-versus-forecast modes, labels and catalogue-unavailable selected-day regression",
+        "model": "gpt-5.6-terra",
+        "depends_on": [],
+        "owns": [
+          {"path": "src/components/map/layer-panel/LayerTimeSlider.tsx", "status": "future"},
+          {"path": "src/lib/map/layer-legends.ts", "status": "future"}
+        ]
+      },
+      {
+        "id": "x1",
+        "task": "Selected-location hourly and daily forecast cards",
+        "model": "gpt-5.6-terra",
+        "depends_on": ["x0"],
+        "owns": [
+          {"path": "src/components/panels/WeatherDetails.tsx", "status": "future"},
+          {"path": "src/__tests__/components/weather-details.test.tsx", "status": "future"}
+        ]
+      },
+      {
+        "id": "x2",
+        "task": "Continuous scalar forecast field and masked support presentation",
+        "model": "gpt-5.6-sol",
+        "depends_on": ["x0"],
+        "owns": [
+          {"path": "src/components/map/layers/WeatherFieldLayer.tsx", "status": "future"},
+          {"path": "src/__tests__/components/weather-field-layer.test.tsx", "status": "future"}
+        ]
+      },
+      {
+        "id": "x3",
+        "task": "Wind vectors, optional particles and reduced-motion fallback",
+        "model": "gpt-5.6-sol",
+        "depends_on": ["x0"],
+        "owns": [
+          {"path": "src/components/map/layers/WeatherWindLayer.tsx", "status": "future"},
+          {"path": "src/__tests__/components/weather-wind-layer.test.tsx", "status": "future"}
+        ]
+      },
+      {
+        "id": "x4",
+        "task": "Shared integration, browser evidence and independent acceptance",
+        "model": "gpt-6-astra",
+        "depends_on": ["x1", "x2", "x3"],
+        "owns": [
+          {"path": "conductor/tracks/weather_forecast_experience_20260911/evidence/independent-review.md", "status": "future"}
+        ]
+      }
+    ],
+    "shared_writes": [
+      {
+        "path": "src/components/map/layer-panel/LayerTimeSlider.tsx",
+        "owner": "x0",
+        "serializes_after": "parquet_reader_cutover_acceptance_20260901",
+        "reason": "Add explicit Now/History/Forecast navigation after the active reader owner transfers selected-day and availability behavior."
+      },
+      {
+        "path": "src/lib/map/layer-legends.ts",
+        "owner": "x0",
+        "serializes_after": "multiscale_polygon_surface_20260901",
+        "reason": "Relabel sampled estimates and add forecast support/variable legends after the active renderer owner transfers shared legend semantics."
+      },
+      {
+        "path": "src/lib/map/layer-registry.ts",
+        "owner": "x4",
+        "serializes_after": "multiscale_polygon_surface_20260901",
+        "reason": "The active renderer owner keeps the shared registry until its batch completes or explicitly transfers it."
+      },
+      {
+        "path": "src/lib/map/layer-render-contract.ts",
+        "owner": "x4",
+        "serializes_after": "multiscale_polygon_surface_20260901",
+        "reason": "Register native or derived forecast fields and vector support only after the current render contract is accepted."
+      },
+      {
+        "path": "src/components/map/LayerManager.tsx",
+        "owner": "x4",
+        "serializes_after": "parquet_reader_cutover_acceptance_20260901",
+        "reason": "Integrate run/valid-time requests after the active selected-day reader work is transferred."
+      },
+      {
+        "path": "src/lib/server/trpc/routers/wildfire.ts",
+        "owner": "x4",
+        "serializes_after": "parquet_reader_cutover_acceptance_20260901",
+        "reason": "Add forecast queries against the frozen Python plane schema under the transferred API owner."
+      }
+    ],
+    "integration_slice": "x4"
+  }
+}
