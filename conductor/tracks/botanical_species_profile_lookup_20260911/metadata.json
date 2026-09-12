@@ -14,7 +14,7 @@
     "botanical_species_recommendation_validation_20260911",
     "repository_conformity_hardening_20260901"
   ],
-  "next_gate": "Resolve credential-authorization and raw-evidence custody blockers; supply an operator-authorized Railway read target for the bounded authoring census; then complete reviewed-row preservation and independent source admission. Local implementation and canonical local intake are retained; source data and production acceptance remain pending. See evidence/census-handoff-20260912.md.",
+  "next_gate": "Resolve credential-authorization and raw-evidence custody blockers; supply an operator-authorized read-only DSN matched to the recorded Railway target for the bounded authoring census; then complete reviewed-row preservation and independent source admission. Local implementation and canonical local intake are retained; source data and production acceptance remain pending. See evidence/source-admission-census-20260912.md.",
   "census_handoff": {
     "status": "blocked_before_database_connection",
     "handoff": "evidence/census-handoff-20260912.md",
@@ -26,6 +26,21 @@
     "raw_source_archive_custody": "unknown_outside_four_checked_absent_locations",
     "private_credential_access_in_latest_continuation": false,
     "database_queries_executed": 0
+  },
+  "source_admission_census": {
+    "status": "blocked_before_database_connection",
+    "audited_on": "2026-09-12",
+    "audit_base_commit": "d42e28ec43368fe9340eb70b4f8b1dcd51ce125f",
+    "audit_base_tree": "21faf5359d59325b2955383b2f326371875b757c",
+    "receipt": "evidence/source-admission-census-20260912.md",
+    "railway_metadata_revalidated": false,
+    "private_credential_access": false,
+    "remote_services_contacted": false,
+    "database_connections": 0,
+    "database_queries": 0,
+    "source_downloads": 0,
+    "source_ingestions": 0,
+    "source_admission_granted": false
   },
   "serving_contract": {
     "kind": "static_lookup",
