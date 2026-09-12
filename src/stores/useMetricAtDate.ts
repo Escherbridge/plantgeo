@@ -400,6 +400,8 @@ export interface LiveLayerDayReport {
   isDrawn: boolean;
   /** The day this layer's row has settled on, or null while nothing can name one yet. */
   requestedDate: string | null;
+  /** The request answered by a retained frame, when the reader declares it. */
+  answeredDate?: string;
   /** A request for this layer is open. Narrowed before publication -- see the hook. */
   isFetching: boolean;
   /**
@@ -425,6 +427,8 @@ export interface QueryReadState {
   isPlaceholderData?: boolean;
   isFetching?: boolean;
   data?: unknown;
+  answeredDate?: string;
+  temporalRefused?: boolean;
 }
 
 /**
@@ -438,13 +442,15 @@ export function drawnDayFlagsFromQuery(
   query: QueryReadState
 ): Pick<
   LiveLayerDayReport,
-  "isFetching" | "hasLandedForRequestedDate" | "isShowingPreviousDay"
+  "isFetching" | "hasLandedForRequestedDate" | "isShowingPreviousDay" | "answeredDate"
 > {
   return {
     isFetching: query.isFetching === true,
     hasLandedForRequestedDate:
-      query.isSuccess === true && query.isPlaceholderData !== true && query.data !== undefined,
-    isShowingPreviousDay: query.isPlaceholderData === true,
+      query.isSuccess === true && query.isPlaceholderData !== true && query.data !== undefined &&
+      query.temporalRefused !== true,
+    isShowingPreviousDay: query.isPlaceholderData === true && query.temporalRefused !== true,
+    answeredDate: query.answeredDate,
   };
 }
 
@@ -476,7 +482,7 @@ export function usePublishedDrawnLayerDays(
       if (!report.isDrawn) continue;
       const { requestedDate } = report;
       if (requestedDate !== null && report.hasLandedForRequestedDate) {
-        drawnDateByLayer.current[report.layerId] = requestedDate;
+        drawnDateByLayer.current[report.layerId] = report.answeredDate ?? requestedDate;
       }
       const drawnDate =
         requestedDate === null
@@ -484,10 +490,10 @@ export function usePublishedDrawnLayerDays(
           : report.isShowingPreviousDay
             ? // A retained frame is painted, so name the day it belongs to. The fallback covers
               // a placeholder standing in before this hook ever watched one land.
-              (drawnDateByLayer.current[report.layerId] ?? requestedDate)
+              (report.answeredDate ?? drawnDateByLayer.current[report.layerId] ?? requestedDate)
             : // Landed, or nothing painted at all (first load, or a failed request). Naming the
               // day asked for is the honest neutral in both: no features are being mislabelled.
-              requestedDate;
+              (report.answeredDate ?? requestedDate);
       drawnDays[report.layerId] = {
         drawnDate,
         requestedDate,

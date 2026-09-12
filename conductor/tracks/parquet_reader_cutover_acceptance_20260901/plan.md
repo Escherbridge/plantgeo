@@ -9,6 +9,14 @@ resource: ./spec.md
 
 ## Current checkpoint — September 12
 
+The [Priority 1 reader UI correction](evidence/reader-ui-contract-20260912.md)
+owns browser acceptance of the requested/served-day relationship and Layer Panel
+coverage authority/source-ceiling captions. It starts at
+`64f4f892bd2b744cc097c7f76a1f239997b80f52` on the local
+`codex/reader-ui-contract-20260912` branch. Its final task handoff records the exact
+immutable commit/tree, independent review and scoped verification. It does not
+close the current all-reader production packet or change a serving/writer policy.
+
 The [local availability contract reconciliation](evidence/local-availability-contract-20260912.md)
 freezes the current coverage v3 wire, checksum/refusal semantics and actual cache/policy
 boundaries against `8c14ea0117ba14d5584f737b793f989566102514`. This closes only the local
@@ -22,7 +30,8 @@ frontend toolchain; it does not certify this new documentation candidate. This
 continuation's final handoff owns its independent documentation review, validation
 and exact commit/tree; the root [task ledger](../platform_experience_qa_20260911/evidence/task-ledger.md)
 retains ownership. No fresh runtime pass or production policy is claimed here.
-The UI provenance/ceiling caption remains open.
+The UI provenance/ceiling caption is now owned by the local correction above;
+the earlier documentation receipt remains historical evidence of the gap.
 
 The [MTBS rollout](../environmental_postgres_retirement_20260904/evidence/mtbs-live-rollout-20260911.md)
 records deployed `fa20223`, selected-day public/browser checks and the prior
@@ -71,11 +80,12 @@ and shared capability registry have one serialized owner.
   request-time PostgreSQL fire read went with them — `regional-context.ts` (the agent's read) now
   calls `getParquetFireDetections`; `getPublishedFireDetections` survives with one caller,
   `alert-engine.ts`, which is a server-side job and not a map or agent reader.
-- [ ] Surface `coverageAuthority` and `sourceCeilingDay` in the slider caption
-      (`LayerRow`/`layer-coverage-track`) — published by the capability service 2026-09-02, no UI
-      consumer yet. A row read from an object-store walk currently captions identically to one
-      proved from the checksummed availability index, and a lane held back by its source's ceiling
-      captions identically to one that is simply behind.
+- [x] Surface `coverageAuthority` and `sourceCeilingDay` in the Layer Panel caption
+      (`LayerRow`/`layer-coverage-track`, 2026-09-12 local implementation;
+      [receipt](evidence/reader-ui-contract-20260912.md)). Distinguish indexed and discovered
+      coverage and the source publication ceiling without clamping carried availability
+      or inferring daily lag for static lookups. Final task handoff records verification;
+      deployed UI acceptance remains part of the production packet.
 - [ ] Run the focused TypeScript, lint and reader suites once after all reader changes.
   Wave 1 was swept green (2026-09-02: tsc clean, eslint 0 errors, vitest 1,622 passed) — that
   result does NOT cover the r3 deletion wave, which was authored without running anything and

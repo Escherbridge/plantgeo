@@ -755,13 +755,13 @@ describe("SoilDetails soil-moisture field", () => {
     expect(screen.queryByText(/Zoomed out to the z/)).toBeNull();
   });
 
-  it("names both days when the newest reading predates the day asked for", () => {
+  it("refuses a daily soil reading that predates the day asked for", () => {
     renderWithMoistureOn(
       moistureCollection({ observedDay: "2026-04-30", requestedDay: "2026-05-20" })
     );
 
-    expect(screen.getByText(/Drawn for 2026-04-30/)).toBeTruthy();
-    expect(screen.getByText(/at or before 2026-05-20/)).toBeTruthy();
+    expect(screen.getByRole("alert").textContent).toContain("response requested 2026-05-20 and observed 2026-04-30");
+    expect(screen.queryByText(/Drawn for 2026-04-30/)).toBeNull();
   });
 
   it("says which day to scrub to rather than drawing a field that is too old", () => {

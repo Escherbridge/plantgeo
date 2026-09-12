@@ -232,18 +232,15 @@ describe("ClimateDetails notices", () => {
     expect(screen.getByText(/Showing 500 of the cells in this view/)).toBeTruthy();
   });
 
-  it("names both days when the archive's newest day is not the day asked for", () => {
+  it("refuses a daily climate reading from a different day", () => {
     queries.getClimateField.mockReturnValue({
       data: collection({ observedDay: "2026-08-25", requestedDay: "2026-08-30" }),
     });
 
     renderPanel();
 
-    // A field silently drawn from days ago while the slider reads today is a lie the map cannot
-    // tell on its own, so the panel names both dates.
-    expect(
-      screen.getByText(/Drawn for 2026-08-25, the newest reading at or before 2026-08-30/)
-    ).toBeTruthy();
+    expect(screen.getByRole("alert").textContent).toContain("response requested 2026-08-30 and observed 2026-08-25");
+    expect(screen.queryByText(/Drawn for 2026-08-25/)).toBeNull();
   });
 
   it("says the served form outranked the requested one rather than letting the picker read broken", () => {

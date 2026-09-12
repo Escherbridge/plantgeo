@@ -29,6 +29,49 @@ import {
 } from "@/stores/time-slider-store";
 import type { DayRange, SliderLayerCapability } from "@/types/time-slider";
 
+/** Caption evidence and publication limits; see layer-panel/AGENTS.md. */
+export function describeCoverageEvidence(
+  layer: SliderLayerCapability,
+  serverCurrentDate: string
+): string | null {
+  const captions: string[] = [];
+  if (layer.coverageAuthority === "availability") {
+    captions.push("Coverage from the published availability index.");
+  } else if (layer.coverageAuthority === "census") {
+    captions.push("Coverage discovered from stored files (object-store census).");
+  }
+
+  const ceiling = layer.sourceCeilingDay;
+  if (ceiling && isCalendarDate(ceiling)) {
+    const sourceHoldback = layer.temporalKind !== "snapshot" && isCalendarDate(serverCurrentDate)
+      ? dayOffset(ceiling, serverCurrentDate)
+      : 0;
+    captions.push(
+      sourceHoldback > 0
+        ? `Source publication ceiling: ${ceiling} (${sourceHoldback} ${sourceHoldback === 1 ? "day" : "days"} behind today).`
+        : `Source publication ceiling: ${ceiling}.`
+    );
+
+    const latest = layer.latestObservedDate;
+    if (layer.temporalKind !== "snapshot" && latest && isCalendarDate(latest)) {
+      if (latest < ceiling) {
+        const daysBehind = dayOffset(latest, ceiling);
+        captions.push(
+          `Layer availability ends ${latest}, ${daysBehind} ${daysBehind === 1 ? "day" : "days"} before the source ceiling.`
+        );
+      } else if (latest === ceiling) {
+        captions.push("Layer availability reaches the source ceiling.");
+      } else {
+        captions.push(
+          `Layer availability extends through ${latest} under its time rules; this is not a newer source publication.`
+        );
+      }
+    }
+  }
+
+  return captions.length > 0 ? captions.join(" ") : null;
+}
+
 /**
  * What the record says about a run of days on ONE layer's axis.
  *

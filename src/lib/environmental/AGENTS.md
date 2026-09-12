@@ -149,3 +149,28 @@ were really aggregated at, which is a stronger claim than the latch and needs no
 It separates capture instants, calendar availability, covered fire years and still-partial mapping.
 The optional metadata on ready Parquet results also survives empty viewports. It does not establish
 authority by itself; the serving reader validates its immutable publication evidence.
+
+
+## Selected-day reader contract
+
+`parquet-day-contract.ts` mirrors the current public reader relationships without doing network
+work. A non-placeholder response must echo the selected request. Daily fire (the map requests a
+one-day window), sensors, soil and climate require exact served/observed-day equality. Historical
+weather/water reads are exact; their current UTC-day read permits the preceding day from the live
+window. Drought permits an older release by at most 14 days inclusive; the server still applies
+the stricter six-day limit after supersession. Vegetation permits the latest publication within
+its 30-day trailing window. Evacuation, fire-perimeter and burn-history reads permit a snapshot or
+release on or before the requested day. Static watersheds keep their undated query and caption.
+No policy permits a future served day relative to its request.
+
+Window terminal states can describe an earlier missing or absent partition: preserve that typed
+state and explicitly name its partition day, rather than equating it with the requested endpoint.
+All other disallowed date relationships become a typed `upstream_unavailable` contract fault
+before geometry/count presentation; daily collection refusals withhold the collection and expose
+an explicit notice. Existing governed absences, unpublished days and upstream faults remain
+separate when their temporal relationship is valid.
+
+Allowed older served dates are named in map/panel notices while the drawn-day ledger retains the
+answered/as-of request day. A retained frame needs original accepted-request evidence supplied by
+the hook; its current request cannot validate its old payload. The original server UTC day is
+preserved in that evidence so a valid live window remains valid through midnight.

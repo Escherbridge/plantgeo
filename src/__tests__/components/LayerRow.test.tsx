@@ -18,7 +18,11 @@ import {
   useSyncedDays,
   useSyncIndexReady,
 } from "@/stores/sync-index-store";
-import type { SliderCapabilities } from "@/types/time-slider";
+import {
+  SLIDER_STREAM_LAYER_NAMES,
+  type SliderCapabilities,
+  type SliderLayerCapability,
+} from "@/types/time-slider";
 
 /**
  * `sync-index-store` is a pinned contract owned by a parallel lane (see
@@ -120,6 +124,170 @@ function timeRangeInputFor(layerId: LayerToggleId): HTMLElement | null {
 function timeStatusStateFor(layerId: LayerToggleId): string | null {
   return screen.queryByTestId(`layer-time-status-${layerId}`)?.dataset.state ?? null;
 }
+
+describe("LayerRow coverage evidence caption", () => {
+  function setWaterCapability(overrides: Partial<SliderLayerCapability>) {
+    useTimeSliderStore.setState({
+      capabilities: {
+        ...CAPABILITIES,
+        layers: [{ ...CAPABILITIES.layers[0], ...overrides }],
+      },
+    });
+  }
+
+  beforeEach(() => {
+    useMapStore.setState({ activeLayers: [...LAYER_TOGGLE_IDS] });
+    useLayerStore.setState({ layerOpacity: {} });
+    useTimeSliderStore.setState({
+      layerDates: {},
+      forecastVariant: "monte_carlo",
+      capabilities: CAPABILITIES,
+      capabilitiesUnavailable: false,
+    });
+  });
+
+  it.each([
+    ["availability", "Coverage from the published availability index", "object-store census"],
+    ["census", "stored files (object-store census)", "published availability index"],
+  ] as const)("names %s evidence in the visible and accessible caption", (authority, expected, absent) => {
+    setWaterCapability({ coverageAuthority: authority });
+    renderRow("water");
+
+    const row = screen.getByTestId("layer-row-water");
+    const toggle = screen.getByRole("switch", { name: "Show Water Gauges on map" });
+    const description = document.getElementById(toggle.getAttribute("aria-describedby") ?? "");
+    expect(row.textContent).toContain(expected);
+    expect(description?.textContent).toContain(expected);
+    expect(row.textContent).not.toContain(absent);
+    expect(row.textContent).not.toContain("checksum verified");
+  });
+
+  it("distinguishes source holdback from an additional availability delay using server today", () => {
+    setWaterCapability({
+      coverageAuthority: "availability",
+      sourceCeilingDay: "2019-03-05",
+      latestObservedDate: "2019-03-03",
+      coverageGaps: [{ from: "2019-03-04", to: "2019-03-05" }],
+      describedThroughDay: "2019-03-05",
+    });
+    renderRow("water");
+
+    const text = screen.getByTestId("layer-row-water").textContent;
+    expect(text).toContain("Source publication ceiling: 2019-03-05 (2 days behind today)");
+    expect(text).toContain("Layer availability ends 2019-03-03, 2 days before the source ceiling");
+    expect(timeRangeInputFor("water")).not.toBeNull();
+  });
+
+  it("does not blame availability when it reaches a held-back source ceiling", () => {
+    setWaterCapability({
+      sourceCeilingDay: "2019-03-05",
+      latestObservedDate: "2019-03-05",
+    });
+    renderRow("water");
+
+    const text = screen.getByTestId("layer-row-water").textContent;
+    expect(text).toContain("2 days behind today");
+    expect(text).toContain("Layer availability reaches the source ceiling");
+    expect(text).not.toContain("before the source ceiling");
+  });
+
+  it("preserves available days beyond the publication ceiling without claiming new publication", () => {
+    setWaterCapability({
+      layerName: SLIDER_STREAM_LAYER_NAMES.drought,
+      sourceCeilingDay: "2019-03-03",
+    });
+    useTimeSliderStore.setState({ layerDates: { drought: SERVER_CURRENT_DATE } });
+    renderRow("drought");
+
+    const text = screen.getByTestId("layer-row-drought").textContent;
+    expect(text).toContain("Layer availability extends through 2019-03-07 under its time rules");
+    expect(text).toContain("this is not a newer source publication");
+    expect(timeRangeInputFor("drought")?.getAttribute("aria-valuetext")).toContain(SERVER_CURRENT_DATE);
+    expect(useTimeSliderStore.getState().layerDates.drought).toBe(SERVER_CURRENT_DATE);
+  });
+
+  it("accepts static lookup census without a daily lag claim or day controls", () => {
+    useTimeSliderStore.setState({
+      capabilities: {
+        ...CAPABILITIES,
+        layers: [{ ...CAPABILITIES.layers[1], coverageAuthority: "census", sourceCeilingDay: null }],
+      },
+    });
+    renderRow("watersheds");
+
+    const text = screen.getByTestId("layer-row-watersheds").textContent;
+    expect(text).toContain("Coverage discovered from stored files (object-store census)");
+    expect(text).not.toContain("before the source ceiling");
+    expect(text).not.toContain("Source publication ceiling");
+    expect(timeStatusStateFor("watersheds")).toBe("no_time_axis");
+    expect(timeRangeInputFor("watersheds")).toBeNull();
+    expect(screen.queryByTestId("layer-sync-reset-watersheds")).toBeNull();
+  });
+
+  it("does not infer an authority or source ceiling from legacy dates", () => {
+    renderRow("water");
+
+    const text = screen.getByTestId("layer-row-water").textContent;
+    expect(text).not.toContain("published availability index");
+    expect(text).not.toContain("object-store census");
+    expect(text).not.toContain("Source publication ceiling");
+  });
+
+  it("states a snapshot's explicit ceiling without treating its age as a daily delay", () => {
+    useTimeSliderStore.setState({
+      capabilities: {
+        ...CAPABILITIES,
+        layers: [{
+          ...CAPABILITIES.layers[1],
+          coverageAuthority: "census",
+          sourceCeilingDay: "2013-01-18",
+        }],
+      },
+    });
+    renderRow("watersheds");
+
+    const text = screen.getByTestId("layer-row-watersheds").textContent;
+    expect(text).toContain("Source publication ceiling: 2013-01-18.");
+    expect(text).not.toContain("behind today");
+    expect(text).not.toContain("Layer availability");
+    expect(timeRangeInputFor("watersheds")).toBeNull();
+  });
+
+  it("keeps provenance out of a switched-off row", () => {
+    setWaterCapability({ coverageAuthority: "availability", sourceCeilingDay: SERVER_CURRENT_DATE });
+    useMapStore.setState({ activeLayers: [] });
+    renderRow("water");
+
+    const text = screen.getByTestId("layer-row-water").textContent;
+    expect(text).not.toContain("published availability index");
+    expect(text).not.toContain("Source publication ceiling");
+  });
+
+  it("updates evidence with the capability and clears it when that row is withheld", () => {
+    setWaterCapability({ coverageAuthority: "census" });
+    renderRow("water");
+    expect(screen.getByTestId("layer-row-water").textContent).toContain("object-store census");
+
+    act(() => setWaterCapability({ coverageAuthority: "availability" }));
+    expect(screen.getByTestId("layer-row-water").textContent).toContain("published availability index");
+    expect(screen.getByTestId("layer-row-water").textContent).not.toContain("object-store census");
+
+    act(() => {
+      const withheldCapabilities = {
+        ...CAPABILITIES,
+        layers: [],
+        withheldParquetCapabilities: [{
+          layerName: "water-gauges",
+          reason: "ceiling_violation",
+          parquetLanes: ["water-gauges"],
+        }],
+      };
+      useTimeSliderStore.setState({ capabilities: withheldCapabilities });
+    });
+    expect(screen.getByTestId("layer-row-water").textContent).not.toContain("published availability index");
+    expect(timeStatusStateFor("water")).toBe("withheld");
+  });
+});
 
 describe("LayerRow time control gate", () => {
   beforeEach(() => {

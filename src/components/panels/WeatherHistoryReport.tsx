@@ -1,5 +1,6 @@
 "use client";
 
+import { useParquetDayContract } from "@/hooks/useParquetDayContract";
 import { keepPreviousData } from "@tanstack/react-query";
 import { CloudRain, Droplets, MapPin, Thermometer, Wind } from "lucide-react";
 import { useEffect, useMemo, useRef } from "react";
@@ -97,7 +98,7 @@ function weatherStateNotice(result: WeatherResult | undefined, selectedDay: stri
 
 /** A weather-forecast-style reading of the selected historical sample day. */
 export function WeatherHistoryReport({ bbox, zoom }: WeatherHistoryReportProps) {
-  const { requestDate } = useDebouncedLayerDay("weather");
+  const { requestDate, serverCurrentDate } = useDebouncedLayerDay("weather");
   const selectedDay = useLayerDay("weather").selectedDate;
   const queryPoint = useMapStore((state) => state.queryPoint);
   const setQueryPoint = useMapStore((state) => state.setQueryPoint);
@@ -121,19 +122,15 @@ export function WeatherHistoryReport({ bbox, zoom }: WeatherHistoryReportProps) 
     []
   );
 
-  const query = trpc.wildfire.getWeatherForBbox.useQuery(
+  const rawQuery = trpc.wildfire.getWeatherForBbox.useQuery(
     { bbox: bbox ?? "", date: requestDate, zoom },
     { enabled: bbox !== undefined, placeholderData: keepPreviousData }
   );
 
-  const exactResult = query.data;
-  const resultMatchesSelectedDay =
-    exactResult === undefined ||
-    exactResult.state === "upstream_unavailable" ||
-    selectedDay === null ||
-    exactResult.requestedDay === selectedDay;
-  const presentedResult =
-    resultMatchesSelectedDay || query.isPlaceholderData ? exactResult : undefined;
+  const query = useParquetDayContract(rawQuery, {
+    requestedDay: selectedDay, today: serverCurrentDate ?? undefined, policy: "live-observations", subject: "Weather observations",
+  });
+  const presentedResult = query.data;
   const rows = presentedResult?.state === "ready" ? presentedResult.data : [];
 
   const weatherPoint =
@@ -171,13 +168,9 @@ export function WeatherHistoryReport({ bbox, zoom }: WeatherHistoryReportProps) 
   const wetReadings = rows.filter((row) => Number.isFinite(row.precipitationMm) && row.precipitationMm > 0).length;
   const pointReadingCount = rows.filter((row) => row.support.supportKind === "raw_point").length;
   const aggregateCellCount = rows.length - pointReadingCount;
-  const stateNotice = query.isPlaceholderData
+  const stateNotice = query.temporalNotice ?? (query.isPlaceholderData
     ? null
-    : weatherStateNotice(presentedResult, selectedDay);
-  const staleSelectedDay =
-    exactResult !== undefined &&
-    exactResult.state !== "upstream_unavailable" &&
-    !resultMatchesSelectedDay;
+    : weatherStateNotice(presentedResult, selectedDay));
 
   return (
     <section aria-labelledby="historical-weather-heading" className="flex flex-col gap-2.5">
@@ -190,7 +183,7 @@ export function WeatherHistoryReport({ bbox, zoom }: WeatherHistoryReportProps) 
         </p>
       </div>
 
-      {(query.isFetching || staleSelectedDay) && !query.isPlaceholderData && (
+      {query.isFetching && !query.isPlaceholderData && (
         <p role="status" aria-live="polite" className="text-xs text-[hsl(var(--muted-foreground))]">
           Loading {selectedDay ?? "the latest published weather"}; no earlier frame is shown.
         </p>

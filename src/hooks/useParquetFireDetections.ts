@@ -20,6 +20,7 @@ import {
   type ParquetBrowserFireWindow,
 } from "@/lib/environmental/parquet-fire-presentation";
 import type { ParquetBrowserReaderResult } from "@/lib/environmental/parquet-presentation";
+import { useParquetDayContract } from "@/hooks/useParquetDayContract";
 import { isLayerPermanentlyWithheld } from "@/lib/map/layer-registry";
 import type { ZoomTier } from "@/lib/map/zoom-tiers";
 
@@ -77,6 +78,8 @@ export interface ParquetFireDetectionsRead {
   requestedDate: string | undefined;
   /** The fire row's day as SETTLED; what a caption may state. */
   settledDate: string | null;
+  temporalNotice: string | null;
+  answeredDate: string | undefined;
 }
 
 /**
@@ -91,7 +94,7 @@ export function useParquetFireDetections(enabled: boolean): ParquetFireDetection
   const fireDay = useDebouncedLayerDay("fire");
   const requestedZoomTier = servingZoomTierForMapZoom(zoom);
 
-  const query = trpc.wildfire.getFireDetections.useQuery(
+  const rawQuery = trpc.wildfire.getFireDetections.useQuery(
     {
       bbox: bbox ?? NO_VIEWPORT_BBOX,
       date: fireDay.requestDate,
@@ -114,11 +117,16 @@ export function useParquetFireDetections(enabled: boolean): ParquetFireDetection
       placeholderData: keepPreviousData,
     }
   );
+  const query = useParquetDayContract(rawQuery, {
+    requestedDay: fireDay.settledDate,
+    policy: "exact",
+    subject: "Fire detections",
+  });
 
   // Annotated, never cast: the browser mirror must stay assignable FROM the procedure's own
   // output, so a drift in the reader's contract fails here instead of being asserted away.
   const result: ParquetBrowserReaderResult<ParquetBrowserFireWindow> | undefined = query.data;
-  const isShowingPreviousDay = query.isPlaceholderData === true;
+  const isShowingPreviousDay = query.isPlaceholderData === true && !query.temporalRefused;
   const hasLandedForRequestedDate =
     query.isSuccess === true &&
     query.isPlaceholderData !== true &&
@@ -166,5 +174,7 @@ export function useParquetFireDetections(enabled: boolean): ParquetFireDetection
     isShowingPreviousDay,
     requestedDate: fireDay.requestDate,
     settledDate: fireDay.settledDate,
+    temporalNotice: query.temporalNotice,
+    answeredDate: query.answeredDate,
   };
 }

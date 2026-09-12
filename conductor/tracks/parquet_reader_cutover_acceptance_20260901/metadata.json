@@ -1,4 +1,14 @@
 {
+  "reader_ui_contract_20260912": {
+    "base_commit": "64f4f892bd2b744cc097c7f76a1f239997b80f52",
+    "base_tree": "f8697da694a3f9fbbf28e70ff7581bd59546bfd6",
+    "branch": "codex/reader-ui-contract-20260912",
+    "status": "active",
+    "evidence": "evidence/reader-ui-contract-20260912.md",
+    "scope": "Local Priority 1 browser requested/served-day acceptance, explicit refusal/notice and Layer Panel coverage authority/source publication ceiling captions. Static lookup, unavailable, placeholder and cancellation contracts remain preserved.",
+    "verification": "Independent source review precedes one final local type/lint/boundary/scoped-test sweep. The task handoff records exact commit/tree, changed paths, commands, results and log digests after the frozen-tree sweep; no full-suite or production acceptance is inferred.",
+    "next_gate": "Current all-reader product/day/zoom cold/warm traces, per-lane bootstrap/policy proof and exact deployed-tree/rollback acceptance. No operational services are accessed by this local slice."
+  },
   "reconciliation_20260912": {
     "audited_on": "2026-09-12",
     "source_head": "8c14ea0117ba14d5584f737b793f989566102514",

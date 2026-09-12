@@ -14,6 +14,7 @@ import {
   type LayerVisibility,
 } from "@/lib/map/layer-toggle-context";
 import { scaleOpacityValue, styleLayerOpacityTargets } from "@/lib/map/layer-opacity";
+import { useParquetDayContract } from "@/hooks/useParquetDayContract";
 import { useParquetFireDetections } from "@/hooks/useParquetFireDetections";
 import {
   useSoilFieldQuery,
@@ -266,13 +267,16 @@ export default function LayerManager() {
   // see src/components/map/AGENTS.md "A layer must not blank between days". Never one without
   // the other.
   //
-  const droughtQuery = trpc.environmental.getDroughtClassification.useQuery(
+  const droughtRawQuery = trpc.environmental.getDroughtClassification.useQuery(
     { bbox: bbox ?? undefined, date: droughtDay.requestDate, zoom },
     {
       enabled: layerVisibility.drought && bbox !== null,
       placeholderData: keepPreviousData,
     }
   );
+  const droughtQuery = useParquetDayContract(droughtRawQuery, {
+    requestedDay: droughtDay.settledDate, policy: "release", subject: "Drought classification",
+  });
   const droughtGeoJSON = useMemo(
     () => presentParquetDrought(droughtQuery.data),
     [droughtQuery.data]
@@ -293,30 +297,39 @@ export default function LayerManager() {
   // below, for the same reason every dated feed here carries both: a settled scrub or a pan would
   // otherwise blank the layer for a full round trip. Never one without the other.
   const sensorsEnabled = layerVisibility.sensors;
-  const sensorsQuery = trpc.environmental.getSensorStations.useQuery(
+  const sensorsRawQuery = trpc.environmental.getSensorStations.useQuery(
     { bbox: bbox ?? undefined, date: sensorsDay.requestDate, zoom },
     { enabled: sensorsEnabled && bbox !== null, placeholderData: keepPreviousData }
   );
+  const sensorsQuery = useParquetDayContract(sensorsRawQuery, {
+    requestedDay: sensorsDay.settledDate, policy: "exact", subject: "Sensor station readings",
+  });
   const sensorsGeoJSON = useMemo(
     () => presentParquetSensorStations(sensorsQuery.data),
     [sensorsQuery.data]
   );
 
   const evacuationZonesEnabled = layerVisibility["evacuation-zones"];
-  const evacuationZonesQuery = trpc.environmental.getEvacuationZones.useQuery(
+  const evacuationZonesRawQuery = trpc.environmental.getEvacuationZones.useQuery(
     { bbox: bbox ?? undefined, date: evacuationZonesDay.requestDate, zoom },
     { enabled: evacuationZonesEnabled && bbox !== null, placeholderData: keepPreviousData }
   );
+  const evacuationZonesQuery = useParquetDayContract(evacuationZonesRawQuery, {
+    requestedDay: evacuationZonesDay.settledDate, policy: "snapshot", subject: "Evacuation zones",
+  });
   const evacuationZonesGeoJSON = useMemo(
     () => presentParquetEvacuationZones(evacuationZonesQuery.data),
     [evacuationZonesQuery.data]
   );
 
   const burnSeverityEnabled = layerVisibility["burn-severity"];
-  const burnSeverityQuery = trpc.environmental.getBurnSeverity.useQuery(
+  const burnSeverityRawQuery = trpc.environmental.getBurnSeverity.useQuery(
     { bbox: bbox ?? undefined, date: burnSeverityDay.requestDate, zoom },
     { enabled: burnSeverityEnabled && bbox !== null, placeholderData: keepPreviousData }
   );
+  const burnSeverityQuery = useParquetDayContract(burnSeverityRawQuery, {
+    requestedDay: burnSeverityDay.settledDate, policy: "snapshot", subject: "Burn history boundaries",
+  });
   const burnSeverityGeoJSON = useMemo(
     () => presentParquetBurnSeverity(burnSeverityQuery.data),
     [burnSeverityQuery.data]
@@ -329,10 +342,13 @@ export default function LayerManager() {
   // blanked -- which is what `geo.fire_risk_tiles()` plus the style filter always did, and why
   // this layer, unlike watersheds, does take a date.
   const firePerimetersEnabled = layerVisibility["fire-perimeters"];
-  const firePerimetersQuery = trpc.environmental.getFirePerimeters.useQuery(
+  const firePerimetersRawQuery = trpc.environmental.getFirePerimeters.useQuery(
     { bbox: bbox ?? undefined, date: firePerimetersDay.requestDate, zoom },
     { enabled: firePerimetersEnabled && bbox !== null, placeholderData: keepPreviousData }
   );
+  const firePerimetersQuery = useParquetDayContract(firePerimetersRawQuery, {
+    requestedDay: firePerimetersDay.settledDate, policy: "snapshot", subject: "Fire perimeters",
+  });
   const firePerimetersGeoJSON = useMemo(
     () => presentParquetFirePerimeters(firePerimetersQuery.data),
     [firePerimetersQuery.data]
@@ -346,10 +362,13 @@ export default function LayerManager() {
   // scrubbing to 2024 would delete the continent's watersheds. The live edge is the only honest
   // ask for a static lookup.
   const watershedsEnabled = layerVisibility.watersheds;
-  const watershedsQuery = trpc.environmental.getWatershedBoundaries.useQuery(
+  const watershedsRawQuery = trpc.environmental.getWatershedBoundaries.useQuery(
     { bbox: bbox ?? undefined, zoom },
     { enabled: watershedsEnabled && bbox !== null, placeholderData: keepPreviousData }
   );
+  const watershedsQuery = useParquetDayContract(watershedsRawQuery, {
+    requestedDay: null, policy: "static", subject: "Watershed boundaries",
+  });
   const watershedsGeoJSON = useMemo(
     () => presentParquetWatersheds(watershedsQuery.data),
     [watershedsQuery.data]
@@ -359,7 +378,7 @@ export default function LayerManager() {
   // Both feeds take `water`'s day, because both are drawn by the one `water` toggle and so by
   // the one row that carries a slider for them. Gauges and wells sharing a day is a property of
   // there being a single control over them, not an assumption about the two upstreams.
-  const streamflowQuery = trpc.environmental.getStreamflow.useQuery(
+  const streamflowRawQuery = trpc.environmental.getStreamflow.useQuery(
     { bbox: bbox ?? "-180,-90,180,90", date: waterDay.requestDate, zoom },
     {
       enabled: waterEnabled && bbox !== null,
@@ -367,6 +386,9 @@ export default function LayerManager() {
       placeholderData: keepPreviousData,
     }
   );
+  const streamflowQuery = useParquetDayContract(streamflowRawQuery, {
+    requestedDay: waterDay.settledDate, today: waterDay.serverCurrentDate ?? undefined, policy: "live-observations", subject: "Streamflow",
+  });
   const waterPresentation = useMemo(
     () => presentParquetWater(streamflowQuery.data),
     [streamflowQuery.data]
@@ -388,7 +410,7 @@ export default function LayerManager() {
   // at most one clear reading per cell every few days, so the hour-long staleTime matches
   // the groundwater/watershed cadence rather than the 15-minute observation feeds. A named
   // day slides that per-cell window to end there instead of at now.
-  const vegetationQuery = trpc.environmental.getVegetationIndex.useQuery(
+  const vegetationRawQuery = trpc.environmental.getVegetationIndex.useQuery(
     { bbox: bbox ?? "-180,-90,180,90", date: vegetationDay.requestDate, zoom },
     {
       enabled: vegetationEnabled && bbox !== null,
@@ -396,6 +418,9 @@ export default function LayerManager() {
       placeholderData: keepPreviousData,
     }
   );
+  const vegetationQuery = useParquetDayContract(vegetationRawQuery, {
+    requestedDay: vegetationDay.settledDate, policy: "vegetation-window", subject: "Vegetation observations",
+  });
   // No zoom or tier is threaded into the three aggregate layers below. Each served feature
   // declares the rung it was read at and the square it covers (`AggregateEnvelopeSupport`), so
   // the presenters choose the form from the data in hand rather than from the camera -- which
@@ -477,7 +502,7 @@ export default function LayerManager() {
   // Reads every published observation across the viewport bbox -- not just the
   // nearest one -- so the wind layer reflects the full spread of
   // warehouse-backed samples instead of a single point.
-  const weatherQuery = trpc.wildfire.getWeatherForBbox.useQuery(
+  const weatherRawQuery = trpc.wildfire.getWeatherForBbox.useQuery(
     { bbox: bbox ?? "-180,-90,180,90", date: weatherDay.requestDate, zoom },
     {
       enabled: weatherEnabled && bbox !== null,
@@ -485,15 +510,12 @@ export default function LayerManager() {
       placeholderData: keepPreviousData,
     }
   );
+  const weatherQuery = useParquetDayContract(weatherRawQuery, {
+    requestedDay: weatherDay.settledDate, today: weatherDay.serverCurrentDate ?? undefined, policy: "live-observations", subject: "Weather observations",
+  });
   // Strict Parquet rows carry every required weather measurement; presentation only renames
   // fields for the existing browser-safe layer vocabulary.
-  const weatherResultMatchesDay =
-    weatherQuery.data === undefined ||
-    weatherQuery.data.state === "upstream_unavailable" ||
-    weatherDay.settledDate === null ||
-    weatherQuery.data.requestedDay === weatherDay.settledDate;
-  const weatherResult =
-    weatherResultMatchesDay || weatherQuery.isPlaceholderData ? weatherQuery.data : undefined;
+  const weatherResult = weatherQuery.data;
   const weatherData = useMemo<WeatherPoint[]>(
     () => presentParquetWeather(weatherResult),
     [weatherResult]
@@ -544,7 +566,25 @@ export default function LayerManager() {
 
   const burnSnapshot = burnSeverityQuery.data?.state === "ready"
     ? burnSeverityQuery.data.mtbsSnapshot : undefined;
+  const temporalLanes = [
+    { layerId: "fire", isDrawn: layerVisibility.fire, notice: fire.temporalNotice },
+    { layerId: "drought", isDrawn: layerVisibility.drought, notice: droughtQuery.temporalNotice },
+    { layerId: "water", isDrawn: waterEnabled, notice: streamflowQuery.temporalNotice },
+    { layerId: "vegetation", isDrawn: vegetationEnabled, notice: vegetationQuery.temporalNotice },
+    { layerId: "weather", isDrawn: weatherEnabled, notice: weatherQuery.temporalNotice },
+    { layerId: "sensors", isDrawn: sensorsEnabled, notice: sensorsQuery.temporalNotice },
+    { layerId: "evacuation-zones", isDrawn: evacuationZonesEnabled, notice: evacuationZonesQuery.temporalNotice },
+    { layerId: "burn-severity", isDrawn: burnSeverityEnabled, notice: burnSeverityQuery.temporalNotice },
+    { layerId: "fire-perimeters", isDrawn: firePerimetersEnabled, notice: firePerimetersQuery.temporalNotice },
+    { layerId: "watersheds", isDrawn: watershedsEnabled, notice: watershedsQuery.temporalNotice },
+    { layerId: "soil-moisture", isDrawn: soilMoistureVisible, notice: soilMoistureQuery.temporalNotice },
+    { layerId: "soil-temperature", isDrawn: soilTemperatureVisible, notice: soilTemperatureQuery.temporalNotice },
+    { layerId: "soil-vpd", isDrawn: soilVpdVisible, notice: soilVpdQuery.temporalNotice },
+  ];
   const parquetLayerFaults = [
+    ...temporalLanes.map((lane) => lane.isDrawn && lane.notice
+      ? { layerId: `${lane.layerId}-date`, tone: "notice" as const, message: lane.notice }
+      : null),
     burnSeverityEnabled && burnSnapshot
       ? {
           layerId: "burn-severity-capture",
@@ -658,6 +698,8 @@ export default function LayerManager() {
   //
   // Nine ids, never the nine NASA POWER signals: each `ClimateSignalLayer` publishes its own,
   // because it owns its own read. Publishers must stay disjoint.
+  const streamflowFlags = parquetDrawnDayFlags(streamflowQuery);
+  const groundwaterFlags = drawnDayFlagsFromQuery(groundwaterQuery);
   const liveLayerDayReports: LiveLayerDayReport[] = [
     {
       layerId: "fire",
@@ -668,6 +710,7 @@ export default function LayerManager() {
       // downgrade included -- see `useParquetFireDetections`.
       isFetching: fire.isFetching,
       hasLandedForRequestedDate: fire.hasLandedForRequestedDate,
+      answeredDate: fire.answeredDate,
       isShowingPreviousDay: fire.isShowingPreviousDay,
     },
     {
@@ -683,10 +726,11 @@ export default function LayerManager() {
       requestedDate: waterDay.settledDate,
       isFetching: streamflowQuery.isFetching === true || groundwaterQuery.isFetching === true,
       hasLandedForRequestedDate:
-        parquetDrawnDayFlags(streamflowQuery).hasLandedForRequestedDate &&
-        drawnDayFlagsFromQuery(groundwaterQuery).hasLandedForRequestedDate,
+        streamflowFlags.hasLandedForRequestedDate && groundwaterFlags.hasLandedForRequestedDate,
       isShowingPreviousDay:
-        streamflowQuery.isPlaceholderData === true || groundwaterQuery.isPlaceholderData === true,
+        streamflowFlags.isShowingPreviousDay || groundwaterFlags.isShowingPreviousDay,
+      answeredDate: streamflowFlags.isShowingPreviousDay && !groundwaterFlags.isShowingPreviousDay
+        ? streamflowFlags.answeredDate : undefined,
     },
     {
       layerId: "vegetation",

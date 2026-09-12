@@ -185,8 +185,8 @@ describe("WeatherHistoryReport", () => {
 
     renderWithProviders(<WeatherHistoryReport bbox="-117,43,-115,45" zoom={13} />);
 
-    expect(screen.getByText(`Loading ${DAY}; no earlier frame is shown.`)).toBeTruthy();
-    expect(screen.queryByText(/2026-07-31/)).toBeNull();
+    expect(screen.getByText(/response requested 2026-07-31, but the selected day is/)).toBeTruthy();
+    expect(screen.getByText(/The response is not shown/)).toBeTruthy();
   });
 
   it("describes aggregate support without treating contributor metadata as a sample count", () => {
@@ -215,7 +215,7 @@ describe("WeatherHistoryReport", () => {
     expect(screen.queryByText(/99/)).toBeNull();
   });
 
-  it("labels a retained frame with its own day while the selected day is pending", () => {
+  it("refuses a first-seen retained frame without accepted request provenance", () => {
     queries.getWeatherForBbox.mockReturnValue({
       data: { state: "ready", requestedDay: "2026-07-31", servedDay: "2026-07-31", truncated: false, data: [observation] },
       isFetching: true,
@@ -225,7 +225,8 @@ describe("WeatherHistoryReport", () => {
 
     renderWithProviders(<WeatherHistoryReport bbox="-117,43,-115,45" zoom={13} />);
 
-    expect(screen.getByText(`Showing the retained 2026-07-31 frame while ${DAY} loads.`)).toBeTruthy();
+    expect(screen.getByText(/retained response has not been verified for its original requested day/)).toBeTruthy();
+    expect(screen.queryByText("21.5 \u00b0C")).toBeNull();
   });
 
   it("withholds a persisted prior-day frame from the dateless current-day query", () => {

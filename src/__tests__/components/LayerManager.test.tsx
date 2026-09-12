@@ -1945,10 +1945,86 @@ describe("LayerManager holds the previous day while the next one loads", () => {
 
     const fakeMap = createFakeMap();
     fakeMap.setStyleLoaded(true);
-    renderLayerManager(fakeMap);
+    const rendered = renderLayerManager(fakeMap);
 
     expect(inputOf(viewportQueries.getWeatherForBbox)).toMatchObject({ date: "2026-07-28" });
     expect(lastRenderOf("WeatherLayer")?.data).toEqual([]);
+    expect(rendered.getByTestId("parquet-layer-unavailable-weather-date").textContent).toContain("response requested 2026-08-02, but the selected day is 2026-07-28");
+  });
+
+  it("refuses a different served day for a historical weather request with a correct echo", () => {
+    useTimeSliderStore.setState({ layerDates: { weather: "2026-07-28" }, capabilities: streamBackedCapabilities });
+    useMapStore.setState({ activeLayers: ["weather"] });
+    viewportQueries.getWeatherForBbox.mockReturnValue(landed({
+      state: "ready", requestedDay: "2026-07-28", servedDay: "2026-07-27", data: [], truncated: false,
+    }));
+    const fakeMap = createFakeMap();
+    fakeMap.setStyleLoaded(true);
+    const rendered = renderLayerManager(fakeMap);
+
+    expect(lastRenderOf("WeatherLayer")?.data).toEqual([]);
+    expect(rendered.getByTestId("parquet-layer-unavailable-weather-date").textContent)
+      .toContain("served 2026-07-27 for requested 2026-07-28, outside this reader's allowed date range");
+  });
+
+  it("keeps a release's answered day settled while explicitly naming its older served day", async () => {
+    useTimeSliderStore.setState({ layerDates: { drought: "2026-07-28" }, capabilities: streamBackedCapabilities });
+    useMapStore.setState({ activeLayers: ["drought"] });
+    const previous = { state: "ready", requestedDay: "2026-07-28", servedDay: "2026-07-25", data: [], truncated: false };
+    viewportQueries.getDroughtClassification.mockReturnValue(landed(previous));
+    const fakeMap = createFakeMap();
+    fakeMap.setStyleLoaded(true);
+    const rendered = renderLayerManager(fakeMap);
+
+    expect(useDrawnLayerDayStore.getState().drawnDays.drought).toEqual({
+      drawnDate: "2026-07-28", requestedDate: "2026-07-28", isLoading: false,
+    });
+    expect(rendered.getByTestId("parquet-layer-unavailable-drought-date").textContent)
+      .toContain("requested 2026-07-28; showing data served for 2026-07-25");
+
+    viewportQueries.getDroughtClassification.mockReturnValue(retaining(previous));
+    act(() => { useTimeSliderStore.getState().setLayerDate("drought", "2026-07-27"); });
+    await settleScrub();
+    expect(useDrawnLayerDayStore.getState().drawnDays.drought).toEqual({
+      drawnDate: "2026-07-28", requestedDate: "2026-07-27", isLoading: true,
+    });
+    expect(rendered.getByTestId("parquet-layer-unavailable-drought-date").textContent)
+      .toContain("requested 2026-07-28; showing data served for 2026-07-25");
+  });
+
+  it("names accepted streamflow's original day while groundwater has not landed", async () => {
+    useTimeSliderStore.setState({ layerDates: { water: "2026-07-28" }, capabilities: streamBackedCapabilities });
+    useMapStore.setState({ activeLayers: ["water"] });
+    const previous = { state: "ready", requestedDay: "2026-07-28", servedDay: "2026-07-28", data: [], truncated: false };
+    viewportQueries.getStreamflow.mockReturnValue(landed(previous));
+    viewportQueries.getGroundwater.mockReturnValue({ data: undefined, isFetching: true, isSuccess: false });
+    const fakeMap = createFakeMap();
+    fakeMap.setStyleLoaded(true);
+    renderLayerManager(fakeMap);
+
+    viewportQueries.getStreamflow.mockReturnValue(retaining(previous));
+    act(() => { useTimeSliderStore.getState().setLayerDate("water", "2026-07-27"); });
+    await settleScrub();
+
+    expect(useDrawnLayerDayStore.getState().drawnDays.water).toEqual({
+      drawnDate: "2026-07-28", requestedDate: "2026-07-27", isLoading: true,
+    });
+  });
+
+  it("does not publish refused streamflow as a retained composite water frame", () => {
+    useTimeSliderStore.setState({ layerDates: { water: "2026-07-28" }, capabilities: streamBackedCapabilities });
+    useMapStore.setState({ activeLayers: ["water"] });
+    viewportQueries.getStreamflow.mockReturnValue(retaining({
+      state: "ready", requestedDay: "2026-07-29", servedDay: "2026-07-29", data: [], truncated: false,
+    }));
+    viewportQueries.getGroundwater.mockReturnValue(landed([]));
+    const fakeMap = createFakeMap();
+    fakeMap.setStyleLoaded(true);
+    const rendered = renderLayerManager(fakeMap);
+
+    expect(useDrawnLayerDayStore.getState().drawnDays.water?.drawnDate).toBe("2026-07-28");
+    expect(rendered.getByTestId("parquet-layer-unavailable-water-date").textContent)
+      .toContain("retained response has not been verified");
   });
 
   /**
@@ -2258,6 +2334,8 @@ describe("LayerManager holds the previous day while the next one loads", () => {
     useMapStore.setState({ activeLayers: ["fire"] });
     const fakeMap = createFakeMap();
     fakeMap.setStyleLoaded(true);
+    const previous = { ...fireDetectionWindow(), requestedDay: "2026-07-30", servedDay: "2026-07-30" };
+    viewportQueries.getFireDetections.mockReturnValue(landed(previous));
     renderLayerManager(fakeMap);
 
     // The day the reader asked for has landed.
@@ -2270,7 +2348,7 @@ describe("LayerManager holds the previous day while the next one loads", () => {
     // The reader scrubs back; that day's request has not landed, so the cells still painted are
     // 2026-07-30's -- reported as such without LayerManager ever being told which day they came
     // from, because the previous settled day is what it already watched land.
-    viewportQueries.getFireDetections.mockReturnValue(retaining(fireDetectionWindow()));
+    viewportQueries.getFireDetections.mockReturnValue(retaining(previous));
     act(() => {
       useTimeSliderStore.getState().setLayerDate("fire", "2026-07-25");
     });

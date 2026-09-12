@@ -61,11 +61,11 @@ export function ClimateFieldLayers({
   zoom: number;
 }) {
   return (
-    <>
+    <div className="pointer-events-none absolute bottom-24 left-1/2 z-20 flex max-w-md -translate-x-1/2 flex-col gap-2">
       {CLIMATE_FIELD_SIGNAL_IDS.map((signal) => (
         <ClimateSignalLayer key={signal} map={map} bbox={bbox} zoom={zoom} signal={signal} />
       ))}
-    </>
+    </div>
   );
 }
 
@@ -134,6 +134,12 @@ function ClimateSignalLayer({
   const servedZoomTier = served?.zoomTier ?? null;
 
   return (
+    <>
+    {visible && query.temporalNotice && (
+      <p role="alert" className="rounded-md border border-amber-500/40 bg-[hsl(var(--background))] p-3 text-xs">
+        {query.temporalNotice}
+      </p>
+    )}
     <ClimateFieldLayer
       map={map}
       signal={signal}
@@ -143,5 +149,6 @@ function ClimateSignalLayer({
       opacityScale={layerOpacity[toggleId]}
       visible={visible}
     />
+    </>
   );
 }

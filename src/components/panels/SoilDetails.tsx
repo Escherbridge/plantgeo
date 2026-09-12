@@ -131,10 +131,6 @@ function SoilFieldSection({
   });
   const field = query.data;
   const aggregated = field !== undefined && field.granularity !== "detail";
-  // The archive ends before the live edge, so "the day you asked for" and "the day drawn"
-  // routinely differ. Saying so is the whole point: a field silently drawn from four months
-  // ago while the slider reads today is a lie the map cannot tell on its own.
-  const dayDiffers = field?.observedDay != null && field.observedDay !== field.requestedDay;
   // Defaulted rather than dereferenced. The server always sends the band table, but a
   // response replayed from IndexedDB was serialized by whatever schema was current when it
   // was written -- and a panel that throws is a worse failure than a missing legend.
@@ -153,6 +149,7 @@ function SoilFieldSection({
           legend for a layer nobody is drawing describe nothing. */}
       {visible && (
         <div className="mt-1.5 flex flex-col gap-1.5">
+          {query.temporalNotice && <p role="alert" className="text-xs text-amber-700 dark:text-amber-400">{query.temporalNotice}</p>}
           <h4 className="text-xs font-semibold text-[hsl(var(--foreground))]">
             {definition.layerLabel}
           </h4>
@@ -228,19 +225,6 @@ function SoilFieldSection({
             </p>
           )}
 
-          {/* The archive's last day is not today's day. Naming both is the only way the
-              map can be read correctly. */}
-          {dayDiffers && field && (
-            <p
-              role="status"
-              aria-live="polite"
-              className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-[hsl(var(--foreground))]"
-            >
-              Drawn for {field.observedDay}, the newest reading at or before{" "}
-              {field.requestedDay} — nothing is carried forward past{" "}
-              {field.maxObservationAgeDays} days.
-            </p>
-          )}
 
           {field?.reason === "stale" && (
             <p
@@ -332,7 +316,6 @@ export function SoilDetails({
     { lat: queryPoint?.lat ?? 0, lon: queryPoint?.lon ?? 0 },
     { enabled: !!queryPoint }
   );
-
 
   function handlePropertyChange(prop: SoilProperty) {
     setProperty(prop);

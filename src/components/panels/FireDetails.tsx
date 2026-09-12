@@ -112,7 +112,7 @@ function fireDetectionsReading(fire: ParquetFireDetectionsRead): FireDetectionsR
         value: NO_READING,
         sub: `Data service unavailable${fire.result?.state === "upstream_unavailable" ? ` (${fire.result.fault.kind})` : ""}`,
         alert:
-          "Published fire detections could not be read. No PostgreSQL or synthetic fallback is shown.",
+          fire.temporalNotice ?? "Published fire detections could not be read. No PostgreSQL or synthetic fallback is shown.",
       };
     case "request_failed":
       return {

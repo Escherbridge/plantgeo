@@ -214,6 +214,21 @@ describe("useParquetFireDetections request", () => {
 });
 
 describe("useParquetFireDetections answer", () => {
+  it.each([
+    { requestedDay: "2026-08-27", servedDay: "2026-08-27" },
+    { requestedDay: "2026-08-28", servedDay: "2026-08-27" },
+    { requestedDay: "2026-08-28", servedDay: "2026-08-29" },
+  ])("refuses a mismatched daily response %j before painting or counting", (days) => {
+    inputs.useQuery.mockReturnValue(landed({ ...readyWindow([cell()]), ...days }));
+    const { result } = renderHook(() => useParquetFireDetections(true));
+
+    expect(result.current.state).toBe("upstream_unavailable");
+    expect(result.current.result).toMatchObject({ fault: { kind: "contract" } });
+    expect(result.current.temporalNotice).toContain("The response is not shown.");
+    expect(result.current.geojson.features).toEqual([]);
+    expect(result.current.hasLandedForRequestedDate).toBe(false);
+  });
+
   it("presents a served window as drawable cells with its own totals", () => {
     inputs.useQuery.mockReturnValue(
       landed(readyWindow([cell(), cell({ detectionCount: 11, highConfidenceDetectionCount: 0 })]))
@@ -297,8 +312,12 @@ describe("useParquetFireDetections answer", () => {
 
 describe("useParquetFireDetections retained frames", () => {
   it("labels a retained frame rather than reporting it as this key's answer", () => {
-    inputs.useQuery.mockReturnValue(retaining(readyWindow([cell()])));
-    const { result } = renderHook(() => useParquetFireDetections(true));
+    const previous = readyWindow([cell()]);
+    inputs.useQuery.mockReturnValue(landed(previous));
+    const { result, rerender } = renderHook(() => useParquetFireDetections(true));
+    inputs.day = { requestDate: "2026-08-29", settledDate: "2026-08-29" };
+    inputs.useQuery.mockReturnValue(retaining(previous));
+    rerender();
 
     expect(result.current.isShowingPreviousDay).toBe(true);
     expect(result.current.hasLandedForRequestedDate).toBe(false);
@@ -309,7 +328,8 @@ describe("useParquetFireDetections retained frames", () => {
   });
 
   it("keeps a retained frame labelled with the rung it was actually aggregated at", () => {
-    inputs.useQuery.mockReturnValue(landed(readyWindow([cell()])));
+    const previous = readyWindow([cell()]);
+    inputs.useQuery.mockReturnValue(landed(previous));
     const { result, rerender } = renderHook(() => useParquetFireDetections(true));
     expect(result.current.zoomTier).toBe(9);
 
@@ -317,7 +337,7 @@ describe("useParquetFireDetections retained frames", () => {
     // painted is still the z9 cells. Labelling them z13 would state an aggregation nothing
     // performed -- the same misstatement the drawn-day latch exists to prevent for the day.
     inputs.viewport = { zoom: 14, bbox: "-116.6,43.4,-116.4,43.8" };
-    inputs.useQuery.mockReturnValue(retaining(readyWindow([cell()])));
+    inputs.useQuery.mockReturnValue(retaining(previous));
     rerender();
 
     expect(lastCall()[0].zoom).toBe(14);

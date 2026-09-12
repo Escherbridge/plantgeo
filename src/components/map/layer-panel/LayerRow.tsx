@@ -6,6 +6,7 @@ import { Eye, EyeOff, RefreshCw, Trash2 } from "lucide-react";
 import { LayerIcon } from "@/components/map/layer-panel/layer-icons";
 import { LayerSwatch } from "@/components/map/layer-panel/LayerSwatch";
 import { LayerTimeSlider } from "@/components/map/layer-panel/LayerTimeSlider";
+import { describeCoverageEvidence } from "@/components/map/layer-panel/layer-coverage-track";
 import { LayerOpacitySlider } from "@/components/ui/layer-opacity-slider";
 import {
   layerLegendSpec,
@@ -375,6 +376,15 @@ export function LayerRow({ layerId, legendContext, isFetchingSelectedDay }: Laye
         state.capabilities.streamsUnavailable ||
         hasSelectableDay(state.capabilities, layerId))
   );
+  const coverageCaption = useTimeSliderStore((state) => {
+    if (warehouseLayerName === null || state.capabilities === null) return null;
+    const capability = state.capabilities.layers.find(
+      (layer) => layer.layerName === warehouseLayerName
+    );
+    return capability
+      ? describeCoverageEvidence(capability, state.capabilities.serverCurrentDate)
+      : null;
+  });
 
   const withheldReason = entry.permanentlyUnavailableReason;
   const isWithheld = withheldReason !== null;
@@ -405,6 +415,7 @@ export function LayerRow({ layerId, legendContext, isFetchingSelectedDay }: Laye
     isWithheld ? withheldReason : null,
     publicationStanding,
     isActive && publicationStanding === null ? unavailableReason : null,
+    isActive ? coverageCaption : null,
   ].filter((caption): caption is string => caption !== null);
 
   return (

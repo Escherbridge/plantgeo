@@ -15,6 +15,7 @@ import { useMemo } from "react";
 import { keepPreviousData } from "@tanstack/react-query";
 import { isLayerPermanentlyWithheld as isWithheld } from "@/lib/map/layer-registry";
 import { bboxSquareDegrees, viewportBbox } from "@/lib/map/viewport-bbox";
+import { useParquetFieldDayContract } from "@/hooks/useParquetDayContract";
 
 /**
  * `MAX_WATERSHED_BBOX_SQUARE_DEGREES` from `src/lib/server/services/hydrosheds.ts`, restated
@@ -23,6 +24,7 @@ import { bboxSquareDegrees, viewportBbox } from "@/lib/map/viewport-bbox";
 export const WATERSHED_LIST_MAX_SQUARE_DEGREES = 1;
 import { trpc } from "@/lib/trpc/client";
 import { useMapStore } from "@/stores/map-store";
+import { useTimeSliderStore } from "@/stores/time-slider-store";
 import {
   soilFieldMeasureDefinition,
   type SoilFieldDepth,
@@ -220,7 +222,8 @@ export function useSoilFieldQuery(
 ) {
   const requested = bbox ?? null;
   const { toggleId } = soilFieldMeasureDefinition(measure);
-  return trpc.environmental.getSoilField.useQuery(
+  const serverCurrentDate = useTimeSliderStore((state) => state.capabilities?.serverCurrentDate);
+  const query = trpc.environmental.getSoilField.useQuery(
     { bbox: requested ?? NO_VIEWPORT_BBOX, measure, date, depth, zoom },
     {
       enabled: enabled && requested !== null && !isWithheld(toggleId),
@@ -229,6 +232,7 @@ export function useSoilFieldQuery(
       placeholderData: KEEP_PREVIOUS_WHILE_PANNING,
     }
   );
+  return useParquetFieldDayContract(query, date ?? serverCurrentDate, "Soil field");
 }
 
 /** Everything that keys a climate read; all of it must match across the two callers. */
@@ -276,7 +280,8 @@ export function useClimateFieldQuery(
   { enabled, signal, variant, date, renderForm, zoom }: ClimateFieldQueryOptions
 ) {
   const requested = bbox ?? null;
-  return trpc.environmental.getClimateField.useQuery(
+  const serverCurrentDate = useTimeSliderStore((state) => state.capabilities?.serverCurrentDate);
+  const query = trpc.environmental.getClimateField.useQuery(
     { bbox: requested ?? NO_VIEWPORT_BBOX, signal, variant, date, renderForm, zoom },
     {
       enabled:
@@ -286,4 +291,5 @@ export function useClimateFieldQuery(
       placeholderData: KEEP_PREVIOUS_WHILE_PANNING,
     }
   );
+  return useParquetFieldDayContract(query, date ?? serverCurrentDate, "Climate field");
 }

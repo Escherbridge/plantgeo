@@ -157,9 +157,10 @@ function renderWithDrawn(signals: readonly ClimateFieldSignalId[], zoom = 9) {
 }
 
 /** A response that answered for the key it was asked with. */
-function landed(): Record<string, unknown> {
+function landed(signal: ClimateFieldSignalId = "air-temperature"): Record<string, unknown> {
+  const day = `2026-07-${String(10 + CLIMATE_FIELD_SIGNAL_IDS.indexOf(signal)).padStart(2, "0")}`;
   return {
-    data: { type: "FeatureCollection", features: [] },
+    data: { type: "FeatureCollection", features: [], requestedDay: day, observedDay: day, availability: "published" },
     isSuccess: true,
     isFetching: false,
     isPlaceholderData: false,
@@ -169,7 +170,7 @@ function landed(): Record<string, unknown> {
 /** A response still standing in from the PREVIOUS key while the current one loads. */
 function retaining(): Record<string, unknown> {
   return {
-    data: { type: "FeatureCollection", features: [] },
+    data: climateQuery.resultBySignal.get("precipitation")?.data ?? landed("precipitation").data,
     isSuccess: true,
     isFetching: true,
     isPlaceholderData: true,
@@ -329,8 +330,8 @@ describe("each climate row draws the form the server actually served", () => {
     zoomTier = 13
   ) {
     return {
-      ...landed(),
-      data: { type: "FeatureCollection", features: [], signal, renderForm, zoomTier },
+      ...landed(signal),
+      data: { ...(landed(signal).data as Record<string, unknown>), signal, renderForm, zoomTier },
     };
   }
 
@@ -530,7 +531,7 @@ describe("each climate row labels the day it is actually painting", () => {
    */
   it("publishes a drawn day for every signal that is switched on", () => {
     for (const signal of CLIMATE_FIELD_SIGNAL_IDS) {
-      climateQuery.resultBySignal.set(signal, landed());
+      climateQuery.resultBySignal.set(signal, landed(signal));
     }
     renderWithDrawn(CLIMATE_FIELD_SIGNAL_IDS);
 
@@ -562,7 +563,7 @@ describe("each climate row labels the day it is actually painting", () => {
    */
   it("keeps naming the day in hand while a retained frame is on screen", async () => {
     for (const signal of CLIMATE_FIELD_SIGNAL_IDS) {
-      climateQuery.resultBySignal.set(signal, landed());
+      climateQuery.resultBySignal.set(signal, landed(signal));
     }
     const rendered = renderWithDrawn(CLIMATE_FIELD_SIGNAL_IDS);
     const precipitationIndex = CLIMATE_FIELD_SIGNAL_IDS.indexOf("precipitation");
@@ -598,7 +599,7 @@ describe("each climate row labels the day it is actually painting", () => {
    * this as loading would light every affected row's indicator indefinitely.
    */
   it("reports a paused request as an earlier day painted, not as loading", async () => {
-    climateQuery.resultBySignal.set("precipitation", landed());
+    climateQuery.resultBySignal.set("precipitation", landed("precipitation"));
     const rendered = renderWithDrawn(["precipitation"]);
     const precipitationIndex = CLIMATE_FIELD_SIGNAL_IDS.indexOf("precipitation");
     const paintedDay = `2026-07-${String(10 + precipitationIndex).padStart(2, "0")}`;

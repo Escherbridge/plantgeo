@@ -149,3 +149,22 @@ persistence never invents a saved ID. Session activity reflects received SSE eve
 and request outcomes. Every event still checks the active AbortController, so opening
 a saved conversation or starting another chat cannot receive an abandoned request's
 late response or activity update. Report payloads and source metadata remain unchanged.
+
+
+## Selected-day reader acceptance
+
+`useParquetDayContract` and `useParquetFieldDayContract` validate browser responses before
+presentation and before publishing a landed day. Their committed state records accepted payload
+identity and the original requested day/policy/server day. Only that exact accepted payload can
+stand in as a placeholder; a wrong-day response retained in the query cache cannot become valid
+by changing keys. A first-seen placeholder without that evidence is refused explicitly. Requests,
+query keys, stale times, retries and cancellation behavior are unchanged.
+
+The browser-safe policy table is documented in `src/lib/environmental/AGENTS.md`, "Selected-day
+reader contract". Actual served-day notices are separate from `answeredDate`, which remains the
+as-of request answered by the frame. Using the source snapshot day as the drawn/as-of day would
+make a completed release read look like a pending request to `MapDateSummary`.
+
+The composite water layer waits for streamflow and groundwater before latching a joint answered
+day. A validated streamflow placeholder may contribute its original answer date when groundwater
+is not retained; a retained groundwater answer continues to use the composite latch.

@@ -2,6 +2,7 @@
 
 import { Droplets, CloudRain, Map } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useParquetDayContract } from "@/hooks/useParquetDayContract";
 import { trpc } from "@/lib/trpc/client";
 import {
   useWatershedsQuery,
@@ -108,15 +109,21 @@ export function WaterDetails({ bbox, zoom }: WaterDetailsProps) {
   const waterDay = useDebouncedLayerDay("water");
   const droughtDay = useDebouncedLayerDay("drought");
 
-  const streamflowQuery = trpc.environmental.getStreamflow.useQuery(
+  const streamflowRawQuery = trpc.environmental.getStreamflow.useQuery(
     { bbox: bbox ?? "", date: waterDay.requestDate, zoom },
     { enabled: !!bbox }
   );
+  const streamflowQuery = useParquetDayContract(streamflowRawQuery, {
+    requestedDay: waterDay.settledDate, today: waterDay.serverCurrentDate ?? undefined, policy: "live-observations", subject: "Streamflow",
+  });
 
-  const droughtQuery = trpc.environmental.getDroughtClassification.useQuery(
+  const droughtRawQuery = trpc.environmental.getDroughtClassification.useQuery(
     { bbox, date: droughtDay.requestDate, zoom },
     { enabled: !!bbox }
   );
+  const droughtQuery = useParquetDayContract(droughtRawQuery, {
+    requestedDay: droughtDay.settledDate, policy: "release", subject: "Drought classification",
+  });
 
   // The same hook LayerManager calls, so the boundaries this tab lists are the ones the
   // map already fetched: one query entry, not a second ~5 MB USGS request 60 s later.
@@ -143,11 +150,11 @@ export function WaterDetails({ bbox, zoom }: WaterDetailsProps) {
 
   const waterPresentation = presentParquetWater(streamflowQuery.data);
   const { gauges, cells: gaugeCells, unlocatedRows } = waterPresentation;
-  const gaugeStateNotice = parquetStateNotice(streamflowQuery.data, "streamflow");
+  const gaugeStateNotice = streamflowQuery.temporalNotice ?? parquetStateNotice(streamflowQuery.data, "streamflow");
   const gaugeReason =
     gaugeStateNotice ?? (streamflowQuery.data === undefined ? capabilityGaugeReason : null);
   const watersheds = watershedQuery.data?.features ?? [];
-  const droughtStateNotice = parquetStateNotice(droughtQuery.data, "drought classification");
+  const droughtStateNotice = droughtQuery.temporalNotice ?? parquetStateNotice(droughtQuery.data, "drought classification");
   const watershedsUnavailable =
     watershedQuery.data?.availability === "unavailable";
   // USGS stops at its transfer limit and says so. The count below then describes a

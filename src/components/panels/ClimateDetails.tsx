@@ -137,10 +137,6 @@ function ClimateSignalReport({
   // `definition`, which has already moved.
   const served = query.data;
   const field = served?.signal === signal ? served : undefined;
-  // The archive ends before the live edge, so "the day you asked for" and "the day drawn"
-  // routinely differ. Saying so is the whole point: a field silently drawn from months ago
-  // while the slider reads today is a lie the map cannot tell on its own.
-  const dayDiffers = field?.observedDay != null && field.observedDay !== field.requestedDay;
   // Defaulted rather than dereferenced. The server always sends the band table, but a
   // response replayed from IndexedDB was serialized by whatever schema was current when it
   // was written -- and a panel that throws is a worse failure than a missing legend.
@@ -154,6 +150,7 @@ function ClimateSignalReport({
 
   return (
     <section className="flex flex-col gap-1.5">
+      {query.temporalNotice && <p role="alert" className="text-xs text-amber-700 dark:text-amber-400">{query.temporalNotice}</p>}
       <p className="text-xs font-semibold text-[hsl(var(--foreground))]">{definition.label}</p>
 
       {/* Offered only where the signal has more than one honest form, and since 2026-09-02 six of
@@ -222,24 +219,13 @@ function ClimateSignalReport({
         </p>
       )}
 
-      {/* The retained case. `field.requestedDay` below is the day the response in hand was asked
-          for, so while this is true the "newest reading at or before {day}" note names the
-          PREVIOUS request's day rather than this row's. Worded without "loading" because offline
-          pauses a fetch rather than cancelling it. */}
+      {/* Retained figures describe the accepted earlier request, including while offline. */}
       {query.isPlaceholderData && field !== undefined && (
         <p role="status" aria-live="polite" className="text-xs text-[hsl(var(--muted-foreground))]">
           The figures below describe the previous request; this one has not arrived yet.
         </p>
       )}
 
-      {/* The archive's last day is not today's day. Naming both is the only way the map can
-          be read correctly. */}
-      {dayDiffers && field && (
-        <p role="status" aria-live="polite" className={NOTICE_CLASS_NAME}>
-          Drawn for {field.observedDay}, the newest reading at or before {field.requestedDay} —
-          nothing is carried forward past {field.maxObservationAgeDays} days.
-        </p>
-      )}
 
       {field?.reason === "stale" && (
         <p role="status" aria-live="polite" className={NOTICE_CLASS_NAME}>

@@ -580,3 +580,17 @@ describe("the drawn-day ledger against a real query observer", () => {
     });
   });
 });
+
+
+describe("drawn-day temporal refusal", () => {
+  it("does not publish a refused success-shaped query as landed or retained", () => {
+    for (const isPlaceholderData of [false, true]) {
+      expect(drawnDayFlagsFromQuery({
+        data: { requestedDay: "2026-08-05" },
+        isSuccess: true,
+        isPlaceholderData,
+        temporalRefused: true,
+      })).toMatchObject({ hasLandedForRequestedDate: false, isShowingPreviousDay: false });
+    }
+  });
+});
