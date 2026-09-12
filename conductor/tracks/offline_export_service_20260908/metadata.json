@@ -2,8 +2,11 @@
   "reconciliation_20260911": {
     "audited_on": "2026-09-11",
     "source_head": "fa20223",
+    "repository_reconciliation_head": "8c14ea0117ba14d5584f737b793f989566102514",
+    "repository_reconciliation_tree": "de840fb558a110e0aded8f2baf44a39b9717f0d7",
     "status": "active",
-    "next_gate": "Builder and availability work has executed, including all three NASA POWER historical publications on September 10. Original per-phase review ledger, selected in-repository builder acceptance, deferred relative-humidity 1981–2017 index and measured end-to-end cost comparison remain incomplete. The standalone service was rejected September 9; do not rebuild it or verified temperature history."
+    "evidence": "conductor/tracks/offline_export_service_20260908/evidence/nasa-power-metadata-reconciliation-20260911.md",
+    "next_gate": "The three NASA POWER temperature histories and their availability generations were published for the verified 2022-04-30..2026-08-06 window on September 10. Current forward health, the later source-ceiling interval, original per-phase review ledger, selected in-repository builder acceptance, deferred relative-humidity 1981–2017 index and measured end-to-end cost comparison remain incomplete. The standalone service was rejected September 9; do not rebuild it or the verified temperature window."
   },
   "track": "offline_export_service_20260908",
   "title": "Offline export service — stage locally, transform locally, upload in bulk",
@@ -41,14 +44,21 @@
       "support_key": "era5-land-0.1deg",
       "cells_per_day": 1470,
       "reference_builder": "scripts/build_soil_moisture_from_canonical_snapshot.py",
-      "note": "soil-field-vpd already holds 462 correct live day partitions - RESUME, do not rebuild"
+      "note": "RESUME, do not rebuild. The stale 462-day estimate is removed: September 7 evidence recorded 448 sparse complete days, while the selected builder at fb72d07 pinned 446 contiguous resume days and conductor/RUNBOOK-archive-2026-09.md recorded 1,556 built days plus a 1,572-day serving span. Bind a current exact receipt before acting."
     },
     "nasa-power": {
       "lanes": ["climate-field-air-temperature-mean", "climate-field-air-temperature-max", "climate-field-air-temperature-min"],
       "source_key": "nasa-power-daily",
       "support_key": "surface",
       "cells_per_day": 397,
-      "blocked_by": "climate-nasa-power-direct-forward dead-lettered at attempt 6/6 since 2026-09-07T08:32Z"
+      "historical_dead_letter": {
+        "lane": "climate-nasa-power-direct-forward",
+        "observed_at": "2026-09-07T08:32:00Z",
+        "attempts": "6/6",
+        "status": "historical_resolved_for_published_temperature_history",
+        "scope": "Superseded as a blocker for the receipt-backed 2022-04-30..2026-08-06 mean/min/max publication only.",
+        "current_forward_health": "unverified"
+      }
     }
   },
   "out_of_scope": ["soil-survey", "postgres cost reduction", "serving re-partitioning", "postgres table drops"],

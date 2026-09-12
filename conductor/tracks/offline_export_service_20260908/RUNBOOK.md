@@ -177,12 +177,22 @@ the compiler — better to learn that from a census than from a two-hour apply.
 9. `--apply`, watching for the §4 hang.
 10. Re-probe capabilities warm, twice.
 
-## 7. Live blockers not owned by this track
+## 7. Historical blocker snapshot — observed September 7
 
-- **`climate-nasa-power-direct-forward` is dead-lettered**, `attempt_count` 6/6, since
-  2026-09-07T08:32Z, error `scheduled_command_exit: command exited with status 1`. The three
-  air-temperature lanes get no NEW days until it is fixed, independent of any backfill. Nine other
-  lanes also hold dead-letters, `matview-refresh` with **214**.
+This section is a preserved incident snapshot, not a live queue-health report. The
+NASA POWER dead-letter below is resolved as a blocker for the receipt-backed
+historical temperature publication only; this reconciliation did not inspect a
+current executor, scheduler or forward run. Current forward health therefore
+remains unverified. See the
+[September 11 metadata reconciliation](evidence/nasa-power-metadata-reconciliation-20260911.md)
+before using any item here as an operational gate.
+
+- **Historical NASA POWER observation:** `climate-nasa-power-direct-forward` was dead-lettered,
+  `attempt_count` 6/6, at 2026-09-07T08:32Z, error
+  `scheduled_command_exit: command exited with status 1`. This no longer blocks the verified
+  2022-04-30..2026-08-06 temperature-history slice. It remains evidence that forward advancement
+  needed repair at that time, not evidence about current forward health. Nine other lanes also held
+  dead-letters, with `matview-refresh` at **214**; those counts are historical and were not refreshed.
 - **`soil-survey`**: job time budget 1,230 s against a 3h20m run, killed before
   `_finalize_written_day`; 959 parts at `zoom=13` with **zero** markers. Also pinned
   `servingReader: "postgresql"`, so a completed export surfaces as `reader_not_parquet` next.

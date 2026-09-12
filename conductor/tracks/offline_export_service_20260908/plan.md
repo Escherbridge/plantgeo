@@ -37,6 +37,14 @@ invented retroactive approval of the discarded service. The next work is:
 Historical phase checkboxes and verdicts below are preserved as the review ledger;
 this checkpoint governs their present scope.
 
+### Evidence checkpoint — September 11 metadata reconciliation
+
+The [NASA POWER metadata reconciliation](evidence/nasa-power-metadata-reconciliation-20260911.md)
+binds this track's stale September 7 dead-letter label to the September 10 publication
+receipts. It records the historical temperature slice as published while leaving current
+forward health, deployment/burn-in, performance comparison and the original phase reviews
+open. This checkpoint does not complete the broad phase-review checkbox above.
+
 Five phases. Each ends with an adversarial review in a separate context, recorded as a one-line
 verdict. A phase with no verdict is unreviewed, not done.
 
@@ -48,8 +56,11 @@ verdict. A phase with no verdict is unreviewed, not done.
 - [ ] Confirm from the manifest that `row_count`, `partition_count`, `batch_count` and
       `observation_day_min/max` match what `build_soil_moisture_from_canonical_snapshot.py` pins.
 - [ ] For each of the eight lanes, record: expected first day, last day, day count, cells per day.
-      `soil-field-vpd` already holds **462** correctly-shaped live day partitions — establish exactly
-      which days, because it must be RESUMED, not rebuilt.
+      `soil-field-vpd` has conflicting dated counts (448 sparse days in the September 7 evidence;
+      446 contiguous resume days pinned by the selected builder at `fb72d07`; the
+      [September 9 cutover archive](../../RUNBOOK-archive-2026-09.md#session-handoff-2026-09-09--parquet-cutover-16---21-layers-and-a-live-latency-regression)
+      reports 1,556 built days and a 1,572-day serving span). Establish the exact current population
+      with a retained receipt, because it must be RESUMED, not rebuilt.
 - [ ] **Deliverable:** a per-lane manifest committed to the track's `evidence/`. No lane proceeds
       without one.
 
