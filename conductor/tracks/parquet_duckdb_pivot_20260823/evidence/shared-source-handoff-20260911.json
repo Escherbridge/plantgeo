@@ -1,0 +1,2606 @@
+{
+  "schema": "plantgeo.shared-surface-inventory.v1",
+  "status": "verified_post_botanical_pre_intervention_baseline",
+  "repository_root": "C:/Users/atooz/.codex/worktrees/4ccb/plantgeo",
+  "base_commit": "fa202230958fb55521963e886eb031be5fc266c4",
+  "frozen_candidate_commit": "89e8494422b8232c8f16dbffdcf2321c7ea17bc8",
+  "post_sweep_botanical_source_commit": "edc6afdeb23f339b40049ec0828551c2fe1a4d45",
+  "post_botanical_integrated_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+  "purpose": "Completed bounded path and base-to-frozen-candidate comparison, with all 119 post-botanical Git blob and byte hashes pinned to tested 416342fa5bea836e6a062549b87c2706f53ce45e. This is the preserved baseline for the later intervention intake and weather ownership transfer.",
+  "scope_notes": [
+    "No tracked source files changed, tests run, production operations, or intervention fixes performed by this inventory task.",
+    "Git object comparison concerns the stated frozen commit, independent of any later worktree changes.",
+    "Weather remains sampled current-condition estimates/observations with forecast horizon zero. No new forecast product is introduced by this inventory.",
+    "The execution/weather_observations archive package is recorded as an identity-reconciliation reference, not as the current-poll producer.",
+    "Entry-point and shared-surface groups are a bounded ownership inventory, not an exhaustive dependency graph or behavioral test receipt.",
+    "Intervention source equality does not certify that existing intervention behavior is correct.",
+    "Every per-path post_botanical_blob is now populated from tree df12542ffa00937e0213d10c938e715849030492; the original preparatory inventory remains separate historical evidence."
+  ],
+  "groups": {
+    "weather_core": [
+      "src/lib/map/layer-registry.ts",
+      "src/lib/map/layer-render-contract.ts",
+      "src/components/map/LayerManager.tsx",
+      "src/lib/map/layer-legends.ts",
+      "src/components/map/layer-panel/LayerTimeSlider.tsx",
+      "src/lib/server/trpc/routers/wildfire.ts",
+      "src/components/map/layers/WeatherLayer.tsx",
+      "src/components/panels/FireDetails.tsx",
+      "src/lib/environmental/parquet-presentation.ts"
+    ],
+    "weather_slider": [
+      "src/components/map/TimeSliderCapabilitiesLoader.tsx",
+      "src/lib/server/trpc/routers/environmental.ts",
+      "src/lib/server/services/parquet-slider-capabilities.ts",
+      "src/lib/server/services/parquet-plane-client.ts",
+      "src/types/time-slider.ts",
+      "src/stores/time-slider-store.ts",
+      "src/stores/useMetricAtDate.ts",
+      "src/lib/map/layer-toggle-context.ts",
+      "src/components/map/MapDateSummary.tsx",
+      "src/components/map/layer-panel/layer-time-state.ts",
+      "src/components/map/layer-panel/layer-coverage-track.ts"
+    ],
+    "weather_readers": [
+      "src/lib/server/services/parquet-trpc-readers.ts",
+      "src/lib/server/services/parquet-context-readers.ts",
+      "src/lib/server/services/regional-context.ts",
+      "src/lib/server/services/regional-temporal-neighbors.ts",
+      "src/lib/server/services/weather.ts",
+      "src/lib/server/services/environmental-read-model.ts"
+    ],
+    "python_weather": [
+      "services/agri-data-service/src/agri_data_service/pipeline/parquet/lane_registry.py",
+      "services/agri-data-service/src/agri_data_service/execution/job_executor_service.py",
+      "services/agri-data-service/src/agri_data_service/jobs/registry.py",
+      "services/agri-data-service/src/agri_data_service/warehouse/schemas/weather_observations.py",
+      "services/agri-data-service/src/agri_data_service/ingest/open_meteo.py",
+      "services/agri-data-service/src/agri_data_service/pipeline/direct/weather_observations/__init__.py",
+      "services/agri-data-service/src/agri_data_service/pipeline/direct/weather_observations/__main__.py",
+      "services/agri-data-service/src/agri_data_service/pipeline/direct/weather_observations/forward.py",
+      "services/agri-data-service/src/agri_data_service/pipeline/direct/weather_observations/source.py",
+      "services/agri-data-service/src/agri_data_service/pipeline/direct/weather_observations/support.py",
+      "services/agri-data-service/src/agri_data_service/pipeline/direct/weather_observations/rows.py",
+      "services/agri-data-service/src/agri_data_service/pipeline/direct/weather_observations/adapter.py",
+      "services/agri-data-service/src/agri_data_service/pipeline/direct/weather_observations/parity.py"
+    ],
+    "app_agent_mcp_registries": [
+      "src/lib/server/trpc/router.ts",
+      "src/app/api/ai/regional-intelligence/route.ts",
+      "services/agri-data-service/src/agri_data_service/app.py",
+      "services/agri-data-service/src/agri_data_service/interface/http/__init__.py",
+      "services/agri-data-service/src/agri_data_service/interface/http/parquet_routes.py",
+      "services/agri-data-service/src/agri_data_service/routes/__init__.py",
+      "services/agri-data-service/src/agri_data_service/routes/agent_analysis.py",
+      "services/agri-data-service/src/agri_data_service/agent/tools.py",
+      "services/agri-data-service/src/agri_data_service/agent/graph.py",
+      "services/agri-data-service/src/agri_data_service/agent/llm.py",
+      "services/agri-data-service/src/agri_data_service/agent/mcp_server.py",
+      "services/agri-data-service/src/agri_data_service/agent/prompts.py",
+      "services/agri-data-service/src/agri_data_service/pipeline/direct/__init__.py",
+      "services/agri-data-service/src/agri_data_service/interface/cli/_registry.py"
+    ],
+    "intervention_entrypoints": [
+      "src/lib/server/trpc/routers/interventions.ts",
+      "src/app/api/ingest/interventions/route.ts",
+      "src/lib/server/services/intervention-geometry.ts",
+      "src/lib/environmental/intervention.ts",
+      "src/components/panels/InterventionSubmitModal.tsx",
+      "src/components/panels/CommunityDetails.tsx",
+      "src/components/panels/ContributionQueue.tsx",
+      "src/components/panels/ModerationPanel.tsx",
+      "src/lib/server/trpc/routers/contributions.ts",
+      "src/app/feed/InterventionFeed.tsx",
+      "src/app/feed/page.tsx",
+      "src/app/community/CommunityLedger.tsx",
+      "src/lib/map/drawing.ts",
+      "src/lib/offline/tile-cache.ts",
+      "src/components/panels/OfflinePanel.tsx",
+      "src/components/map/MapView.tsx",
+      "src/lib/server/db/schema.ts",
+      "src/lib/server/services/carbon-potential.ts",
+      "infra/martin/martin.yaml",
+      "drizzle/0000_baseline.sql"
+    ],
+    "intervention_shared": [
+      "src/lib/server/trpc/routers/wildfire.ts",
+      "src/lib/server/trpc/router.ts",
+      "src/lib/server/trpc/routers/environmental.ts",
+      "src/lib/map/layer-registry.ts",
+      "src/lib/map/layer-render-contract.ts",
+      "src/components/map/LayerManager.tsx",
+      "src/lib/map/layers.ts",
+      "src/lib/map/sources.ts",
+      "src/lib/map/styles.ts",
+      "src/lib/map/layer-legends.ts",
+      "src/lib/map/hover-fields.ts",
+      "src/components/map/layer-panel/LayerRow.tsx",
+      "src/components/map/layer-panel/LayerLegend.tsx",
+      "src/components/map/layer-panel/LegendBlockView.tsx",
+      "src/components/map/layer-panel/LayerTimeSlider.tsx",
+      "src/lib/map/layer-publication-standing.ts",
+      "src/lib/cache/query-persister.ts",
+      "src/lib/cache/layer-cache-policy.ts",
+      "src/lib/server/services/regional-context.ts",
+      "services/agri-data-service/src/agri_data_service/agent/tools.py"
+    ],
+    "shared_directory_docs": [
+      "AGENTS.md",
+      "src/components/map/AGENTS.md",
+      "src/components/panels/AGENTS.md",
+      "src/lib/map/AGENTS.md",
+      "src/lib/environmental/AGENTS.md",
+      "src/lib/server/AGENTS.md",
+      "src/lib/server/services/AGENTS.md",
+      "src/lib/server/db/AGENTS.md",
+      "src/lib/cache/AGENTS.md",
+      "src/lib/net/AGENTS.md",
+      "src/hooks/AGENTS.md",
+      "src/app/community/AGENTS.md",
+      "services/agri-data-service/src/agri_data_service/AGENTS.md",
+      "services/agri-data-service/src/agri_data_service/agent/AGENTS.md",
+      "services/agri-data-service/src/agri_data_service/interface/AGENTS.md",
+      "services/agri-data-service/src/agri_data_service/interface/http/AGENTS.md",
+      "services/agri-data-service/src/agri_data_service/interface/cli/AGENTS.md",
+      "services/agri-data-service/src/agri_data_service/execution/AGENTS.md",
+      "services/agri-data-service/src/agri_data_service/pipeline/AGENTS.md",
+      "services/agri-data-service/src/agri_data_service/pipeline/parquet/AGENTS.md",
+      "services/agri-data-service/src/agri_data_service/pipeline/direct/AGENTS.md",
+      "services/agri-data-service/src/agri_data_service/execution/weather_observations/AGENTS.md",
+      "services/agri-data-service/src/agri_data_service/warehouse/schemas/AGENTS.md",
+      "services/agri-data-service/src/agri_data_service/planes/AGENTS.md",
+      "docs/lanes/weather-observations.md",
+      "docs/layer-lane-standard.md"
+    ],
+    "targeted_tests": [
+      "src/__tests__/components/LayerManager.test.tsx",
+      "src/__tests__/components/LayerTimeSlider.test.tsx",
+      "src/__tests__/components/LayerRow.test.tsx",
+      "src/__tests__/services/parquet-slider-capabilities.test.ts",
+      "src/__tests__/trpc/wildfire-cancellation.test.ts",
+      "src/__tests__/trpc/interventions.test.ts",
+      "src/__tests__/api/interventions-trpc.test.ts",
+      "src/__tests__/lib/offline/tile-cache.test.ts",
+      "services/agri-data-service/tests/parquet/test_lane_registry.py",
+      "services/agri-data-service/tests/test_job_executor_service.py"
+    ]
+  },
+  "files": [
+    {
+      "path": "AGENTS.md",
+      "groups": [
+        "shared_directory_docs"
+      ],
+      "roles": [
+        "Repository workflow and data-boundary instructions"
+      ],
+      "base_blob": "37d5cfb70c832b4012e74153f230b08aa81f5c94",
+      "frozen_candidate_blob": "37d5cfb70c832b4012e74153f230b08aa81f5c94",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "37d5cfb70c832b4012e74153f230b08aa81f5c94",
+      "post_botanical_git_bytes": 6342,
+      "post_botanical_git_sha256": "378ba41560160043e4b12b260f0b536744dd36e99c7534f620f5d04b6a8923af",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "docs/lanes/weather-observations.md",
+      "groups": [
+        "shared_directory_docs"
+      ],
+      "roles": [
+        "Historical weather/signal lane documentation requiring source-identity reconciliation"
+      ],
+      "base_blob": "6c3f957c907f50456dea6d2d8cc0bd5a779e24a1",
+      "frozen_candidate_blob": "6c3f957c907f50456dea6d2d8cc0bd5a779e24a1",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "6c3f957c907f50456dea6d2d8cc0bd5a779e24a1",
+      "post_botanical_git_bytes": 27308,
+      "post_botanical_git_sha256": "7926da5c2f3f69689e357114ee81900efb9209157b12065fbd8e3a951f26e04a",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "docs/layer-lane-standard.md",
+      "groups": [
+        "shared_directory_docs"
+      ],
+      "roles": [
+        "History, refresh, gap, governed absence and tool acceptance requirements"
+      ],
+      "base_blob": "e1d1eff517f0769a5e25eea7947ffab1a623afd8",
+      "frozen_candidate_blob": "e1d1eff517f0769a5e25eea7947ffab1a623afd8",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "e1d1eff517f0769a5e25eea7947ffab1a623afd8",
+      "post_botanical_git_bytes": 19519,
+      "post_botanical_git_sha256": "d42ec69d4a820406e3f7fdfe49b72d9f145b63f85059619d840943c432be0323",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "drizzle/0000_baseline.sql",
+      "groups": [
+        "intervention_entrypoints"
+      ],
+      "roles": [
+        "Current baseline intervention tile function and database schema"
+      ],
+      "base_blob": "603e66199d1a789f014a48e3781d5a2b6aaf08e6",
+      "frozen_candidate_blob": "603e66199d1a789f014a48e3781d5a2b6aaf08e6",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "603e66199d1a789f014a48e3781d5a2b6aaf08e6",
+      "post_botanical_git_bytes": 125325,
+      "post_botanical_git_sha256": "4b32cc4a272b3207301a80dcea8a8f19cead6d452526a1eb070fe6cbdfd9ca1c",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "infra/martin/martin.yaml",
+      "groups": [
+        "intervention_entrypoints"
+      ],
+      "roles": [
+        "Martin intervention tile source configuration"
+      ],
+      "base_blob": "ea13d193e81fd20608c3bdf3eb21923da96772fe",
+      "frozen_candidate_blob": "ea13d193e81fd20608c3bdf3eb21923da96772fe",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "ea13d193e81fd20608c3bdf3eb21923da96772fe",
+      "post_botanical_git_bytes": 4457,
+      "post_botanical_git_sha256": "84e5810050cb6e916a6aa269b274b8520e268e01b905e452bfdac45ae626faf9",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/agent/AGENTS.md",
+      "groups": [
+        "shared_directory_docs"
+      ],
+      "roles": [
+        "Agent tools and MCP registry contracts"
+      ],
+      "base_blob": "e586fea54bd2fd2819b43ee090de3df585e40bce",
+      "frozen_candidate_blob": "50125d17838c4caffa44898002698a6db3557560",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "modified",
+      "post_sweep_botanical_source_touches_path": true,
+      "post_botanical_blob": "5e3f96a14cf29469c5882f00accbfb997306f93c",
+      "post_botanical_git_bytes": 51237,
+      "post_botanical_git_sha256": "1d1404b84be5600bd656a2feef55283807105f41981e238dee8c639f11eabde3",
+      "change_from_frozen_candidate": "changed"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/agent/graph.py",
+      "groups": [
+        "app_agent_mcp_registries"
+      ],
+      "roles": [
+        "Agent graph consumes WAREHOUSE_TOOLS"
+      ],
+      "base_blob": "ff11ff43c3fed26650d6d9eb9fe9e25585a394c4",
+      "frozen_candidate_blob": "ff11ff43c3fed26650d6d9eb9fe9e25585a394c4",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": true,
+      "post_botanical_blob": "eb7171fa528e73eeaed0f2f410160f22c4b0a672",
+      "post_botanical_git_bytes": 19603,
+      "post_botanical_git_sha256": "c758aaeb6bb5dfb5f639c0ab99c23afe2eaf40ced3a730a490dea4afa6176303",
+      "change_from_frozen_candidate": "changed"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/agent/llm.py",
+      "groups": [
+        "app_agent_mcp_registries"
+      ],
+      "roles": [
+        "tool_schemas and tool_by_name derive from WAREHOUSE_TOOLS"
+      ],
+      "base_blob": "ee1ea2f3ae9f046fde243e9fd76a58683664d335",
+      "frozen_candidate_blob": "ee1ea2f3ae9f046fde243e9fd76a58683664d335",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "ee1ea2f3ae9f046fde243e9fd76a58683664d335",
+      "post_botanical_git_bytes": 12271,
+      "post_botanical_git_sha256": "81e473fcba07f33f0255d56bf2f607b25e511ee05cc4685d00bb06869cf90246",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/agent/mcp_server.py",
+      "groups": [
+        "app_agent_mcp_registries"
+      ],
+      "roles": [
+        "MCP stdio dispatcher and schema derivation"
+      ],
+      "base_blob": "94137284fec91c61553f984d84e427f468a7832c",
+      "frozen_candidate_blob": "94137284fec91c61553f984d84e427f468a7832c",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": true,
+      "post_botanical_blob": "5e0faccc57f56fd053f560023e54d110a2a60e20",
+      "post_botanical_git_bytes": 11944,
+      "post_botanical_git_sha256": "c08c0295cc25b08aa49651876fc453ee17fcce3942e5ad6d2bae051c3a1c7150",
+      "change_from_frozen_candidate": "changed"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/agent/prompts.py",
+      "groups": [
+        "app_agent_mcp_registries"
+      ],
+      "roles": [
+        "Agent policy/prompt composition, later botanical shared surface"
+      ],
+      "base_blob": "4f11a1a8efb9fc426d2053503514a8854f7109f5",
+      "frozen_candidate_blob": "4f11a1a8efb9fc426d2053503514a8854f7109f5",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": true,
+      "post_botanical_blob": "eb3c4821e3952e54cfc44534b2fa9d9ca5c8b66d",
+      "post_botanical_git_bytes": 8557,
+      "post_botanical_git_sha256": "881a38e530dad770741698d6a20557b456fbd1c9eb75b99e51f69ae3ccbb8073",
+      "change_from_frozen_candidate": "changed"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/agent/tools.py",
+      "groups": [
+        "app_agent_mcp_registries",
+        "intervention_shared"
+      ],
+      "roles": [
+        "WAREHOUSE_TOOLS registry and tool implementations",
+        "Intervention PostgreSQL feature escape path within changed Parquet point tool"
+      ],
+      "base_blob": "a012da8e5cf962a3690c3c0373afb81d33f22b2f",
+      "frozen_candidate_blob": "8cfd702c14c5705a653c571df21236f735239250",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "modified",
+      "post_sweep_botanical_source_touches_path": true,
+      "post_botanical_blob": "bd557339209d27df2877c00460b710732849015c",
+      "post_botanical_git_bytes": 106760,
+      "post_botanical_git_sha256": "6fcbc6e7698f03cde7f2017f5533747048ba82b6d977825a3405153b85a304d2",
+      "change_from_frozen_candidate": "changed"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/AGENTS.md",
+      "groups": [
+        "shared_directory_docs"
+      ],
+      "roles": [
+        "Python service package boundary instructions"
+      ],
+      "base_blob": "e84070835c60d927e84e84186dabc11a9a00be0b",
+      "frozen_candidate_blob": "e84070835c60d927e84e84186dabc11a9a00be0b",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "e84070835c60d927e84e84186dabc11a9a00be0b",
+      "post_botanical_git_bytes": 749,
+      "post_botanical_git_sha256": "539bcfd645fd062611bd01e5d0e3e84c562c911a95671cc5a0c660015e85a1e0",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/app.py",
+      "groups": [
+        "app_agent_mcp_registries"
+      ],
+      "roles": [
+        "Sanic create_app and profile_blueprints composition"
+      ],
+      "base_blob": "223bc153287e2eb671298554303f7ea77e75bd72",
+      "frozen_candidate_blob": "223bc153287e2eb671298554303f7ea77e75bd72",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": true,
+      "post_botanical_blob": "8a81d77438e9ef71341b12387bbc1f20fa26d0d0",
+      "post_botanical_git_bytes": 4744,
+      "post_botanical_git_sha256": "2e5f341b1793ed5f41d4bd4bd78a535911381598ff3622e75387a8d53952c8dd",
+      "change_from_frozen_candidate": "changed"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/execution/AGENTS.md",
+      "groups": [
+        "shared_directory_docs"
+      ],
+      "roles": [
+        "Executor ownership and publication scheduling"
+      ],
+      "base_blob": "1c5d6e5e9a825eaa518dbd73b7a9a604b97a596a",
+      "frozen_candidate_blob": "5985923a2fe31d0cfcfb80ac41c635e4b144eb95",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "modified",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "5985923a2fe31d0cfcfb80ac41c635e4b144eb95",
+      "post_botanical_git_bytes": 162898,
+      "post_botanical_git_sha256": "9042aa3fd8c6e7f53234eb80e27e1396c5951118c972ff0ff3e41fd7e4668e48",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/execution/job_executor_service.py",
+      "groups": [
+        "python_weather"
+      ],
+      "roles": [
+        "WEATHER_OBSERVATIONS_DIRECT_LANE_ID and scheduled executor spec"
+      ],
+      "base_blob": "9af611918b57ce724c2b30b92729cb618473c15a",
+      "frozen_candidate_blob": "9f664a0d0c5976db23f44102e89c997d76dccf87",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "modified",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "9f664a0d0c5976db23f44102e89c997d76dccf87",
+      "post_botanical_git_bytes": 105948,
+      "post_botanical_git_sha256": "18112122c430ca23089d8d644d0ab65b48c845caf5cfc5c6665ddd89b569fbb0",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/execution/weather_observations/AGENTS.md",
+      "groups": [
+        "shared_directory_docs"
+      ],
+      "roles": [
+        "NASA POWER/ERA5 signal archive; distinct from current-poll weather lane"
+      ],
+      "base_blob": "1adf52e997f67999a9b294edeb7ff1a5b82429da",
+      "frozen_candidate_blob": "1adf52e997f67999a9b294edeb7ff1a5b82429da",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "1adf52e997f67999a9b294edeb7ff1a5b82429da",
+      "post_botanical_git_bytes": 4232,
+      "post_botanical_git_sha256": "d47d7d10ddafb74a05f29fb434d05bd623d3c4cde09ade4a362c2800aa08f945",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/ingest/open_meteo.py",
+      "groups": [
+        "python_weather"
+      ],
+      "roles": [
+        "Current-conditions acquisition and sample validation"
+      ],
+      "base_blob": "3fdadc1a701cdcf37a91cc72cfad533db46fa901",
+      "frozen_candidate_blob": "3fdadc1a701cdcf37a91cc72cfad533db46fa901",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "3fdadc1a701cdcf37a91cc72cfad533db46fa901",
+      "post_botanical_git_bytes": 16914,
+      "post_botanical_git_sha256": "0509a448eb52ab54d36a715fa5fb19f65be19f1069469e7de868222275fa6e91",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/interface/AGENTS.md",
+      "groups": [
+        "shared_directory_docs"
+      ],
+      "roles": [
+        "Service interface boundary contracts"
+      ],
+      "base_blob": "38184901a04993a3718b4d1b2cbdfa7344597e0a",
+      "frozen_candidate_blob": "6fbc46a1f3a3f0e3f6b0189cf29e335e1559f736",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "modified",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "6fbc46a1f3a3f0e3f6b0189cf29e335e1559f736",
+      "post_botanical_git_bytes": 682,
+      "post_botanical_git_sha256": "b2f3d42ae32dec7f5367653aaa31d1930d19274b048fb0177ab562cc3b2a1b0a",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/interface/cli/_registry.py",
+      "groups": [
+        "app_agent_mcp_registries"
+      ],
+      "roles": [
+        "CLI command registry"
+      ],
+      "base_blob": "9ed911af65c0d44774e91341752e985e6d38bdea",
+      "frozen_candidate_blob": "9ed911af65c0d44774e91341752e985e6d38bdea",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "9ed911af65c0d44774e91341752e985e6d38bdea",
+      "post_botanical_git_bytes": 481,
+      "post_botanical_git_sha256": "09b32207db3dfb92cc9d865ebea03da3fc1686c76cf6f109d13a088cff07ac40",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/interface/cli/AGENTS.md",
+      "groups": [
+        "shared_directory_docs"
+      ],
+      "roles": [
+        "CLI registry contracts"
+      ],
+      "base_blob": "a2f9993aa74b7efd97f647ade19f1d1a9fbf3c69",
+      "frozen_candidate_blob": "e623cb1f3ada2fcd7195b6b1b6382675a73a29c8",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "modified",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "e623cb1f3ada2fcd7195b6b1b6382675a73a29c8",
+      "post_botanical_git_bytes": 3695,
+      "post_botanical_git_sha256": "43d680927ea67fa859b4d47594c82f5e90beca85eb4ab4161eee742204635465",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/interface/http/__init__.py",
+      "groups": [
+        "app_agent_mcp_registries"
+      ],
+      "roles": [
+        "HTTP package blueprint exports"
+      ],
+      "base_blob": "27666c30336e69b8acb5330f81efaaee67698b80",
+      "frozen_candidate_blob": "27666c30336e69b8acb5330f81efaaee67698b80",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "27666c30336e69b8acb5330f81efaaee67698b80",
+      "post_botanical_git_bytes": 306,
+      "post_botanical_git_sha256": "ba342e3ed2b3f22f9cf41e5ec6bd067e860dae4ec079afc31f4b70f34d95d428",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/interface/http/AGENTS.md",
+      "groups": [
+        "shared_directory_docs"
+      ],
+      "roles": [
+        "HTTP blueprint/profile registration contracts"
+      ],
+      "base_blob": "28f138da9d4f13a9fc25fc189aebcba2670629eb",
+      "frozen_candidate_blob": "28f138da9d4f13a9fc25fc189aebcba2670629eb",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": true,
+      "post_botanical_blob": "36e58686dd87b28061ce2c07971685d953e66c88",
+      "post_botanical_git_bytes": 2854,
+      "post_botanical_git_sha256": "6d7840f74a774e6c0569399e7bb9ffffe5a794741e63068d74dbed98dac743bc",
+      "change_from_frozen_candidate": "changed"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/interface/http/parquet_routes.py",
+      "groups": [
+        "app_agent_mcp_registries"
+      ],
+      "roles": [
+        "Governed Parquet HTTP blueprint"
+      ],
+      "base_blob": "6fc82832b3e45ecb2d7532965b75994cbcbc9153",
+      "frozen_candidate_blob": "6fc82832b3e45ecb2d7532965b75994cbcbc9153",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "6fc82832b3e45ecb2d7532965b75994cbcbc9153",
+      "post_botanical_git_bytes": 14436,
+      "post_botanical_git_sha256": "e46b91e012207a0988af2f94062424ca946926a87109e9f20859d1ec69acc847",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/jobs/registry.py",
+      "groups": [
+        "python_weather"
+      ],
+      "roles": [
+        "Job handler registry"
+      ],
+      "base_blob": "f58e62196245618c0877a4ef8b70900ac5ca0449",
+      "frozen_candidate_blob": "f58e62196245618c0877a4ef8b70900ac5ca0449",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "f58e62196245618c0877a4ef8b70900ac5ca0449",
+      "post_botanical_git_bytes": 18850,
+      "post_botanical_git_sha256": "c2d0b93e8900c95d8e14992725857767726409c21135548346f2fc4093bdf193",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/AGENTS.md",
+      "groups": [
+        "shared_directory_docs"
+      ],
+      "roles": [
+        "Pipeline ownership boundaries"
+      ],
+      "base_blob": "f40f6b5dfdc2cdb02f27b1dec26c8b3f521d7515",
+      "frozen_candidate_blob": "f40f6b5dfdc2cdb02f27b1dec26c8b3f521d7515",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "f40f6b5dfdc2cdb02f27b1dec26c8b3f521d7515",
+      "post_botanical_git_bytes": 2014,
+      "post_botanical_git_sha256": "42374bda9009bd78c1e33f5fdedfaf074e523fe7eace1f96d0e48b1c5dc94557",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/__init__.py",
+      "groups": [
+        "app_agent_mcp_registries"
+      ],
+      "roles": [
+        "Direct package registration/import boundary"
+      ],
+      "base_blob": "9ba41f38f6278eb0285f18ef7ba09c46330a8b16",
+      "frozen_candidate_blob": "46e91319f543fd76e828bc95bc6c5a316ab80cd8",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "modified",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "46e91319f543fd76e828bc95bc6c5a316ab80cd8",
+      "post_botanical_git_bytes": 22378,
+      "post_botanical_git_sha256": "7d5c8a18e320b12ca797824b5edcf32672830bd0a48f9b8553e4f5287cd59532",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/AGENTS.md",
+      "groups": [
+        "shared_directory_docs"
+      ],
+      "roles": [
+        "Source-direct identity and package registration"
+      ],
+      "base_blob": "7eb330fbfbda3a2082e9d9aea7f7d46ed4e934aa",
+      "frozen_candidate_blob": "2d6f340b416b9b97030ea7c9ae4cf55eac03a520",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "modified",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "2d6f340b416b9b97030ea7c9ae4cf55eac03a520",
+      "post_botanical_git_bytes": 114252,
+      "post_botanical_git_sha256": "c45df06b81b38926151995a9b66c5cff4f1ea786b792d09ea9dabec042d41e63",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/weather_observations/__init__.py",
+      "groups": [
+        "python_weather"
+      ],
+      "roles": [
+        "Direct weather package exports"
+      ],
+      "base_blob": "73b84ec476946a2d8bddba274ab2e30b3c2e0623",
+      "frozen_candidate_blob": "73b84ec476946a2d8bddba274ab2e30b3c2e0623",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "73b84ec476946a2d8bddba274ab2e30b3c2e0623",
+      "post_botanical_git_bytes": 757,
+      "post_botanical_git_sha256": "2c20edb2f77028ea3d9d583a3d9e1f8b26a562a0b199e5448d408d47551dc897",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/weather_observations/__main__.py",
+      "groups": [
+        "python_weather"
+      ],
+      "roles": [
+        "Direct weather command entry"
+      ],
+      "base_blob": "ec72741355083f60c2d5d49a17c1ab18e9b2767f",
+      "frozen_candidate_blob": "ec72741355083f60c2d5d49a17c1ab18e9b2767f",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "ec72741355083f60c2d5d49a17c1ab18e9b2767f",
+      "post_botanical_git_bytes": 293,
+      "post_botanical_git_sha256": "461c807e973c70c2e15ed02a783104329d275ae10b6c1b1389d37f0d4760de92",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/weather_observations/adapter.py",
+      "groups": [
+        "python_weather"
+      ],
+      "roles": [
+        "Weather publication adapter"
+      ],
+      "base_blob": "78131042d317ee2d478f5d597d238fd29bf79676",
+      "frozen_candidate_blob": "78131042d317ee2d478f5d597d238fd29bf79676",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "78131042d317ee2d478f5d597d238fd29bf79676",
+      "post_botanical_git_bytes": 9242,
+      "post_botanical_git_sha256": "6274add08ec63cfb8c5959ce7f44538260731d31c9ed07e9ea7c42df37ff8285",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/weather_observations/forward.py",
+      "groups": [
+        "python_weather"
+      ],
+      "roles": [
+        "Direct current-conditions forward publication"
+      ],
+      "base_blob": "edba5b918f1374af81293315f64d28ba5302062c",
+      "frozen_candidate_blob": "edba5b918f1374af81293315f64d28ba5302062c",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "edba5b918f1374af81293315f64d28ba5302062c",
+      "post_botanical_git_bytes": 29199,
+      "post_botanical_git_sha256": "3a5d9496862d246e375b37a93ed3804cc1a485ce9044225adba65e1c5e609530",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/weather_observations/parity.py",
+      "groups": [
+        "python_weather"
+      ],
+      "roles": [
+        "Weather parity evidence helper"
+      ],
+      "base_blob": "67405e709a155a1dc01da181406cfedd7768e575",
+      "frozen_candidate_blob": "67405e709a155a1dc01da181406cfedd7768e575",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "67405e709a155a1dc01da181406cfedd7768e575",
+      "post_botanical_git_bytes": 7917,
+      "post_botanical_git_sha256": "6c9642bde28d08ee180cafc9ab9c58ea0bc2f758081bd821ff99997d07848f77",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/weather_observations/rows.py",
+      "groups": [
+        "python_weather"
+      ],
+      "roles": [
+        "Direct weather typed row materialization"
+      ],
+      "base_blob": "18cf9c859186ff783e58f3f8ef225ca7e4a5971a",
+      "frozen_candidate_blob": "18cf9c859186ff783e58f3f8ef225ca7e4a5971a",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "18cf9c859186ff783e58f3f8ef225ca7e4a5971a",
+      "post_botanical_git_bytes": 8579,
+      "post_botanical_git_sha256": "696aef3c2557891fe1bdb283ee579ef93ef6a2f3097ffb94d029844f090527ec",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/weather_observations/source.py",
+      "groups": [
+        "python_weather"
+      ],
+      "roles": [
+        "Current-conditions polling; no historical archive substitution"
+      ],
+      "base_blob": "569b8020e9fa84cc38d4f3d24ee387c961e00a61",
+      "frozen_candidate_blob": "569b8020e9fa84cc38d4f3d24ee387c961e00a61",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "569b8020e9fa84cc38d4f3d24ee387c961e00a61",
+      "post_botanical_git_bytes": 3438,
+      "post_botanical_git_sha256": "2b2a8d5a5b644cfc1c47a94a2e82134e4a3bb50a2df010d9e7c99f341020ffe6",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/weather_observations/support.py",
+      "groups": [
+        "python_weather"
+      ],
+      "roles": [
+        "Bounded sample locations and support"
+      ],
+      "base_blob": "8d81bf1d939f939fb5a8bb4d992f8d7c41387e39",
+      "frozen_candidate_blob": "8d81bf1d939f939fb5a8bb4d992f8d7c41387e39",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "8d81bf1d939f939fb5a8bb4d992f8d7c41387e39",
+      "post_botanical_git_bytes": 2064,
+      "post_botanical_git_sha256": "ff291bd0a348f83083cf667008fd09f91b22424622fe57f815f8aacf787b1726",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/parquet/AGENTS.md",
+      "groups": [
+        "shared_directory_docs"
+      ],
+      "roles": [
+        "Generic Parquet publication and lane registration"
+      ],
+      "base_blob": "56327a1510ac8707e5f5288404374def6e90f524",
+      "frozen_candidate_blob": "822f04249a65d0a880eea0f76ad71594dcf7507d",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "modified",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "822f04249a65d0a880eea0f76ad71594dcf7507d",
+      "post_botanical_git_bytes": 101026,
+      "post_botanical_git_sha256": "376f4c6381ac24923b9d85ec73143577fa1eaea97059fa3e231b2d5b46b82f66",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/parquet/lane_registry.py",
+      "groups": [
+        "python_weather"
+      ],
+      "roles": [
+        "Weather lane/source identity, horizon/lag contract and source-direct refusal"
+      ],
+      "base_blob": "f6c237f36b23fe25e61a7284dc800afb9589b3b9",
+      "frozen_candidate_blob": "f6c237f36b23fe25e61a7284dc800afb9589b3b9",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "f6c237f36b23fe25e61a7284dc800afb9589b3b9",
+      "post_botanical_git_bytes": 76651,
+      "post_botanical_git_sha256": "bba473d5a10b4764f65e8279771591738f0df7d60fc7eb806163c01688760d6f",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/planes/AGENTS.md",
+      "groups": [
+        "shared_directory_docs"
+      ],
+      "roles": [
+        "Serving plane registration boundary"
+      ],
+      "base_blob": "05aef8eaf22bad4e1bcdfacb2ebb0cd9d288a32b",
+      "frozen_candidate_blob": "05aef8eaf22bad4e1bcdfacb2ebb0cd9d288a32b",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": true,
+      "post_botanical_blob": "bc1265cdaa5180883507db736bf751e738a6f7eb",
+      "post_botanical_git_bytes": 3405,
+      "post_botanical_git_sha256": "9c4a61c4ca8bb13d733603e431e8e3d56a4a427b4b3a9ed43aaa74896ebec8ce",
+      "change_from_frozen_candidate": "changed"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/routes/__init__.py",
+      "groups": [
+        "app_agent_mcp_registries"
+      ],
+      "roles": [
+        "Service route blueprint exports"
+      ],
+      "base_blob": "8cdeff7cb5c7fae90860a9f025199fb5f7389c7a",
+      "frozen_candidate_blob": "8cdeff7cb5c7fae90860a9f025199fb5f7389c7a",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "8cdeff7cb5c7fae90860a9f025199fb5f7389c7a",
+      "post_botanical_git_bytes": 1147,
+      "post_botanical_git_sha256": "f66979a0cee1997d626a546ec0017789dab934fe19eaaa7f310f06ca29f6af47",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/routes/agent_analysis.py",
+      "groups": [
+        "app_agent_mcp_registries"
+      ],
+      "roles": [
+        "Agent analysis HTTP entry"
+      ],
+      "base_blob": "50fcfc96e419ec12f62ba314421ac1b93145c269",
+      "frozen_candidate_blob": "50fcfc96e419ec12f62ba314421ac1b93145c269",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "50fcfc96e419ec12f62ba314421ac1b93145c269",
+      "post_botanical_git_bytes": 4731,
+      "post_botanical_git_sha256": "c70a73ec15a45454d61566e32f7fb06d63c4f366c232e59b924dccae262c7cd8",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/warehouse/schemas/AGENTS.md",
+      "groups": [
+        "shared_directory_docs"
+      ],
+      "roles": [
+        "Warehouse schema registry contracts"
+      ],
+      "base_blob": "edc9b1815b56faf3151d834a0d62f625c90e63b2",
+      "frozen_candidate_blob": "edc9b1815b56faf3151d834a0d62f625c90e63b2",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "edc9b1815b56faf3151d834a0d62f625c90e63b2",
+      "post_botanical_git_bytes": 4731,
+      "post_botanical_git_sha256": "892086123ea3209e09696632430588929548fbb1ac0d864d1fccd37e73294373",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/warehouse/schemas/weather_observations.py",
+      "groups": [
+        "python_weather"
+      ],
+      "roles": [
+        "Weather observation schema; distinguishes sampled current conditions from climate archive"
+      ],
+      "base_blob": "551562a36ef6e235a6de618a8727832735f12852",
+      "frozen_candidate_blob": "551562a36ef6e235a6de618a8727832735f12852",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "551562a36ef6e235a6de618a8727832735f12852",
+      "post_botanical_git_bytes": 10601,
+      "post_botanical_git_sha256": "8c6f669073877e593bba25cf4fec37104ff8e01c54bd9da2ae92b2e5ffd1db08",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "services/agri-data-service/tests/parquet/test_lane_registry.py",
+      "groups": [
+        "targeted_tests"
+      ],
+      "roles": [
+        "Python lane contract registry regressions"
+      ],
+      "base_blob": "04e7740c18b70725c688964f962375033655e5cc",
+      "frozen_candidate_blob": "04e7740c18b70725c688964f962375033655e5cc",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "04e7740c18b70725c688964f962375033655e5cc",
+      "post_botanical_git_bytes": 49047,
+      "post_botanical_git_sha256": "6ed82127b1425fc18c6f43dc3b6315b71a79af2f86b39cfb6acc0d6b69b5b94d",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "services/agri-data-service/tests/test_job_executor_service.py",
+      "groups": [
+        "targeted_tests"
+      ],
+      "roles": [
+        "Executor publication/scheduling regressions"
+      ],
+      "base_blob": "3a6eb888cda539c12f2351f0b9f520542a9f1f23",
+      "frozen_candidate_blob": "d893f4c40ea84defce31c7343f34f9c9a543dcfd",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "modified",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "d893f4c40ea84defce31c7343f34f9c9a543dcfd",
+      "post_botanical_git_bytes": 120777,
+      "post_botanical_git_sha256": "a19df7961c13d585a5d093148b3666ab33ad226884b76807d76d5080263fa69e",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/__tests__/api/interventions-trpc.test.ts",
+      "groups": [
+        "targeted_tests"
+      ],
+      "roles": [
+        "Intervention API flow regressions"
+      ],
+      "base_blob": "e08f8231629afbcddfe610a31b3b918d10995e9f",
+      "frozen_candidate_blob": "e08f8231629afbcddfe610a31b3b918d10995e9f",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "e08f8231629afbcddfe610a31b3b918d10995e9f",
+      "post_botanical_git_bytes": 3979,
+      "post_botanical_git_sha256": "0a12be2dbe18607af92f01b528d1bb9fd1402a86a3fe79f0a494c1e68fbe58cf",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/__tests__/components/LayerManager.test.tsx",
+      "groups": [
+        "targeted_tests"
+      ],
+      "roles": [
+        "Exact weather gap/late response/card date regression and shared map wiring"
+      ],
+      "base_blob": "f5f874e05da126457af750d6927c6261ba18017f",
+      "frozen_candidate_blob": "cf28267299e64c34402094890e6cd0a52774e9bb",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "modified",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "cf28267299e64c34402094890e6cd0a52774e9bb",
+      "post_botanical_git_bytes": 105088,
+      "post_botanical_git_sha256": "4f9f789335173aef5f510bf837cd4ab314beed2c6022e2d3b9e9453a8d526d01",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/__tests__/components/LayerRow.test.tsx",
+      "groups": [
+        "targeted_tests"
+      ],
+      "roles": [
+        "Shared complete-legend row behavior"
+      ],
+      "base_blob": "511d5833882a429c0a8b8becf28be1110f173866",
+      "frozen_candidate_blob": "b8e2a04449bb4cad36951323fb049e6e62c77e06",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "modified",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "b8e2a04449bb4cad36951323fb049e6e62c77e06",
+      "post_botanical_git_bytes": 36249,
+      "post_botanical_git_sha256": "58d65bc16cd21890a7f11f404a6c28c853a3b30aad5138dbc2bcd37db817c486",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/__tests__/components/LayerTimeSlider.test.tsx",
+      "groups": [
+        "targeted_tests"
+      ],
+      "roles": [
+        "Selected-day and gap control regressions"
+      ],
+      "base_blob": "998f56828cd8251590490bd46e6ac6147af55505",
+      "frozen_candidate_blob": "de0da79ef11cb8637c28516d4aac1244802017f2",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "modified",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "de0da79ef11cb8637c28516d4aac1244802017f2",
+      "post_botanical_git_bytes": 65923,
+      "post_botanical_git_sha256": "dd287f883a0304351be75dd0a11d6716dbdd8740aea3f56c0aa88d454034c1c7",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/__tests__/lib/offline/tile-cache.test.ts",
+      "groups": [
+        "targeted_tests"
+      ],
+      "roles": [
+        "Dynamic tile cache regression surface"
+      ],
+      "base_blob": "2a994b7086bce8721a96d686bb5e8124b0e9e563",
+      "frozen_candidate_blob": "2a994b7086bce8721a96d686bb5e8124b0e9e563",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "2a994b7086bce8721a96d686bb5e8124b0e9e563",
+      "post_botanical_git_bytes": 1017,
+      "post_botanical_git_sha256": "e7e6819d860a11e481f758ce8f2522990e650a969ee99552b39f4720de2ce6ef",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/__tests__/services/parquet-slider-capabilities.test.ts",
+      "groups": [
+        "targeted_tests"
+      ],
+      "roles": [
+        "Governed capability derivation"
+      ],
+      "base_blob": "19ad1f425af1cd9f9529b9ce467afaeaf9475f34",
+      "frozen_candidate_blob": "16a7068718e256ae6b6c48549ae693de29e19d27",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "modified",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "16a7068718e256ae6b6c48549ae693de29e19d27",
+      "post_botanical_git_bytes": 58779,
+      "post_botanical_git_sha256": "281f121d59ec04a835141f9b84b2d3059f64a7c0ff65ccf89e054e085c2f4ceb",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/__tests__/trpc/interventions.test.ts",
+      "groups": [
+        "targeted_tests"
+      ],
+      "roles": [
+        "Interventions router regressions"
+      ],
+      "base_blob": "84cc67b3d4dd6d4a3b02d04908de7dfd17fd5696",
+      "frozen_candidate_blob": "84cc67b3d4dd6d4a3b02d04908de7dfd17fd5696",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "84cc67b3d4dd6d4a3b02d04908de7dfd17fd5696",
+      "post_botanical_git_bytes": 9587,
+      "post_botanical_git_sha256": "8e9ab958b3342bcbe4fe1a8e79aa4715d32dab8b07dcf0652bee22272b146fa1",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/__tests__/trpc/wildfire-cancellation.test.ts",
+      "groups": [
+        "targeted_tests"
+      ],
+      "roles": [
+        "Weather date/cancellation boundary"
+      ],
+      "base_blob": "6814615bf59690d7ef91ef59054b9f02c2775d89",
+      "frozen_candidate_blob": "f5b8054df87a271fed03866ac4ec4b576450e8cd",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "modified",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "f5b8054df87a271fed03866ac4ec4b576450e8cd",
+      "post_botanical_git_bytes": 5367,
+      "post_botanical_git_sha256": "237c684559de07a8e138a267d56da395646a95a7da1497b197ef2847148c928f",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/app/api/ai/regional-intelligence/route.ts",
+      "groups": [
+        "app_agent_mcp_registries"
+      ],
+      "roles": [
+        "Next.js regional agent API and viewed-layer payload boundary"
+      ],
+      "base_blob": "b0fb420fae9fed2f0070f760b0c93d1fc1358405",
+      "frozen_candidate_blob": "1b8b8ef2bd2be323e40acefacbc56771dbb5c097",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "modified",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "1b8b8ef2bd2be323e40acefacbc56771dbb5c097",
+      "post_botanical_git_bytes": 11157,
+      "post_botanical_git_sha256": "64e0c369329b210175fb6a5be5f8559869bb903df9e35822c2c585df497506ac",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/app/api/ingest/interventions/route.ts",
+      "groups": [
+        "intervention_entrypoints"
+      ],
+      "roles": [
+        "Machine intervention ingestion route"
+      ],
+      "base_blob": "e03cb1226f376dde89796ea5540ed1e352b1b33c",
+      "frozen_candidate_blob": "e03cb1226f376dde89796ea5540ed1e352b1b33c",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "e03cb1226f376dde89796ea5540ed1e352b1b33c",
+      "post_botanical_git_bytes": 2000,
+      "post_botanical_git_sha256": "61aa9d87dbd34cb4052fc70b6440d64c1e9692e47bf8a4d67048e01a0261575c",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/app/community/AGENTS.md",
+      "groups": [
+        "shared_directory_docs"
+      ],
+      "roles": [
+        "Community ledger ownership"
+      ],
+      "base_blob": "52df96b7c81fbc964f1a255a2b3bbf2742c3383f",
+      "frozen_candidate_blob": "52df96b7c81fbc964f1a255a2b3bbf2742c3383f",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "52df96b7c81fbc964f1a255a2b3bbf2742c3383f",
+      "post_botanical_git_bytes": 762,
+      "post_botanical_git_sha256": "e6fc8a8a4f2d107dd2c868c86435de9e5a22ef341aa3c92728952329e8e202b1",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/app/community/CommunityLedger.tsx",
+      "groups": [
+        "intervention_entrypoints"
+      ],
+      "roles": [
+        "Community proposal/submission ledger"
+      ],
+      "base_blob": "06c14ecb3b818f279fb32a74baa30505e53a8e5e",
+      "frozen_candidate_blob": "06c14ecb3b818f279fb32a74baa30505e53a8e5e",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "06c14ecb3b818f279fb32a74baa30505e53a8e5e",
+      "post_botanical_git_bytes": 11152,
+      "post_botanical_git_sha256": "6bd508a707290317390422aecc60a2b54da2fdb438241f71a75c2c221956a59e",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/app/feed/InterventionFeed.tsx",
+      "groups": [
+        "intervention_entrypoints"
+      ],
+      "roles": [
+        "Public intervention feed"
+      ],
+      "base_blob": "ddd41e04d0a28865d3520905eabbbb504eea2124",
+      "frozen_candidate_blob": "ddd41e04d0a28865d3520905eabbbb504eea2124",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "ddd41e04d0a28865d3520905eabbbb504eea2124",
+      "post_botanical_git_bytes": 8859,
+      "post_botanical_git_sha256": "1f776f147d911a3e28fb69c189d389774edc0b39fc85ab7b5c242175a41d9c47",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/app/feed/page.tsx",
+      "groups": [
+        "intervention_entrypoints"
+      ],
+      "roles": [
+        "Feed route composition"
+      ],
+      "base_blob": "c7d62e437a3bd36468929c158f218a4769072fc1",
+      "frozen_candidate_blob": "c7d62e437a3bd36468929c158f218a4769072fc1",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "c7d62e437a3bd36468929c158f218a4769072fc1",
+      "post_botanical_git_bytes": 1739,
+      "post_botanical_git_sha256": "60c7b622dea640f93d86bbce0baf9b96077431929ae8e401e4cd42d3f1c5a6e6",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/components/map/AGENTS.md",
+      "groups": [
+        "shared_directory_docs"
+      ],
+      "roles": [
+        "Map/weather/legend/drawn-day and intervention composition contracts"
+      ],
+      "base_blob": "0f8aa61915bb82c5006deeed843683eb789bbe2b",
+      "frozen_candidate_blob": "7c8ba0a8a82e751f1f1eec9485db88fe58323b9c",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "modified",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "7c8ba0a8a82e751f1f1eec9485db88fe58323b9c",
+      "post_botanical_git_bytes": 122475,
+      "post_botanical_git_sha256": "bd7a7b36e0f770a682771c7a981cc5cd9c2eba3d59c5d792d1784e3a46f3771a",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/components/map/layer-panel/layer-coverage-track.ts",
+      "groups": [
+        "weather_slider"
+      ],
+      "roles": [
+        "Coverage interval rendering in the row slider"
+      ],
+      "base_blob": "4ef1a6f87458d791cc5035d17ae2aad8c2e78d26",
+      "frozen_candidate_blob": "86289b199cf0f827e56bb7120aa2135729454082",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "modified",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "86289b199cf0f827e56bb7120aa2135729454082",
+      "post_botanical_git_bytes": 31834,
+      "post_botanical_git_sha256": "7312a4edd98da9eab201761289b77a6e6bebeeb3857d40048f608af8bccf97f6",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/components/map/layer-panel/layer-time-state.ts",
+      "groups": [
+        "weather_slider"
+      ],
+      "roles": [
+        "Selected-day control state and absence/coverage interpretation"
+      ],
+      "base_blob": "de7cd61a82f487c61166844d9d4c7ba260c2f2f2",
+      "frozen_candidate_blob": "a8a52317b433371e8ad5c3b56713c5e05fa381ca",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "modified",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "a8a52317b433371e8ad5c3b56713c5e05fa381ca",
+      "post_botanical_git_bytes": 18379,
+      "post_botanical_git_sha256": "62d418539d2f4b0f3dfd87775e73eb97d743c1a6938af40fa4a7d6eda315573e",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/components/map/layer-panel/LayerLegend.tsx",
+      "groups": [
+        "intervention_shared"
+      ],
+      "roles": [
+        "Collapsed manager legend uses shared LegendBlockView"
+      ],
+      "base_blob": "8ace5a344cfaab53466e373341eb4970a1ecf499",
+      "frozen_candidate_blob": "d847fdfce6f1ee69e1c12b63339dcf1c0d3fe867",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "modified",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "d847fdfce6f1ee69e1c12b63339dcf1c0d3fe867",
+      "post_botanical_git_bytes": 8579,
+      "post_botanical_git_sha256": "c45281bb91171b57cde44192ac29d6d875e92aea607d576059d1e37711475b02",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/components/map/layer-panel/LayerRow.tsx",
+      "groups": [
+        "intervention_shared"
+      ],
+      "roles": [
+        "Shared row now renders expandable complete legend"
+      ],
+      "base_blob": "8b125098f02daa46d636551cc7a8ca284d80f952",
+      "frozen_candidate_blob": "18f77bba9a20a2e2572a0013d703d25756671376",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "modified",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "18f77bba9a20a2e2572a0013d703d25756671376",
+      "post_botanical_git_bytes": 28612,
+      "post_botanical_git_sha256": "c0cc6e181d5082fc8d967530eff61888f66338e490201a28c2fc16956ce45db7",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/components/map/layer-panel/LayerTimeSlider.tsx",
+      "groups": [
+        "weather_core",
+        "intervention_shared"
+      ],
+      "roles": [
+        "Per-layer selected-day control",
+        "Shared layer date control"
+      ],
+      "base_blob": "88f4b0329328ec041fdc2558251f3bf6cf0c3d77",
+      "frozen_candidate_blob": "07deadfcd757aeeda3c63be11e0b0c35925083d3",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "modified",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "07deadfcd757aeeda3c63be11e0b0c35925083d3",
+      "post_botanical_git_bytes": 37470,
+      "post_botanical_git_sha256": "c9343ff158aacd9d1ec7b8690541c9fff4c9b37dd1139b46047312c19612d8a9",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/components/map/layer-panel/LegendBlockView.tsx",
+      "groups": [
+        "intervention_shared"
+      ],
+      "roles": [
+        "New shared legend block renderer"
+      ],
+      "base_blob": null,
+      "frozen_candidate_blob": "5b51d71f3fea1c8d8852966fd6fac051124aa772",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "added",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "5b51d71f3fea1c8d8852966fd6fac051124aa772",
+      "post_botanical_git_bytes": 3317,
+      "post_botanical_git_sha256": "9a7fd5414030168e8ffa7939bd6b1399eb044c6d78f74e37e8aad15f385ce49d",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/components/map/LayerManager.tsx",
+      "groups": [
+        "weather_core",
+        "intervention_shared"
+      ],
+      "roles": [
+        "Weather bbox request, selected-day result guard and drawn-day report",
+        "Style-backed intervention visibility, opacity and reload appliers"
+      ],
+      "base_blob": "5cc43db89f6271737e133860665ad45efa884702",
+      "frozen_candidate_blob": "d05915a4657378b334a6e6b21b41c5c1503e82a4",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "modified",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "d05915a4657378b334a6e6b21b41c5c1503e82a4",
+      "post_botanical_git_bytes": 61214,
+      "post_botanical_git_sha256": "e9d1900e0484ffe30e511e991c8f4ab8681525039fe5f2df408235466155b084",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/components/map/layers/WeatherLayer.tsx",
+      "groups": [
+        "weather_core"
+      ],
+      "roles": [
+        "Weather point and declared aggregate-cell renderer"
+      ],
+      "base_blob": "ea266377cdc54fa82f47952d4a4d4f5d45c91df1",
+      "frozen_candidate_blob": "ea266377cdc54fa82f47952d4a4d4f5d45c91df1",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "ea266377cdc54fa82f47952d4a4d4f5d45c91df1",
+      "post_botanical_git_bytes": 11831,
+      "post_botanical_git_sha256": "172f15f13c9aded2a1ab79fc479055fbc9520ee7b282e76bbc0333a7b4ce8800",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/components/map/MapDateSummary.tsx",
+      "groups": [
+        "weather_slider"
+      ],
+      "roles": [
+        "Requested-versus-drawn map caption"
+      ],
+      "base_blob": "4738111b34379af347b1e7da9a57d4f1dd5a562e",
+      "frozen_candidate_blob": "4738111b34379af347b1e7da9a57d4f1dd5a562e",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "4738111b34379af347b1e7da9a57d4f1dd5a562e",
+      "post_botanical_git_bytes": 20487,
+      "post_botanical_git_sha256": "8ef9280c1766fb5e477b78ad05edd7dec5a3a38fedcabfafb4e438ea14bb8df9",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/components/map/MapView.tsx",
+      "groups": [
+        "intervention_entrypoints"
+      ],
+      "roles": [
+        "Map lifecycle, agent prompt and shared layer-manager composition"
+      ],
+      "base_blob": "5355ec7751bafe589aa9e012b3c9557d17063fdd",
+      "frozen_candidate_blob": "5355ec7751bafe589aa9e012b3c9557d17063fdd",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "5355ec7751bafe589aa9e012b3c9557d17063fdd",
+      "post_botanical_git_bytes": 18622,
+      "post_botanical_git_sha256": "f4e02f022adb6100e6707da840b98dead276c93a8bcdf5716f457a1f43f78000",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/components/map/TimeSliderCapabilitiesLoader.tsx",
+      "groups": [
+        "weather_slider"
+      ],
+      "roles": [
+        "Single browser capability fetch and store writer"
+      ],
+      "base_blob": "a0b978e353986ce914c18002a4bc310f1f371cf3",
+      "frozen_candidate_blob": "a0b978e353986ce914c18002a4bc310f1f371cf3",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "a0b978e353986ce914c18002a4bc310f1f371cf3",
+      "post_botanical_git_bytes": 7022,
+      "post_botanical_git_sha256": "c619977d0024f1b5096af3c9e5520c7c7dba42410856ded0fda70c2ce028bd3a",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/components/panels/AGENTS.md",
+      "groups": [
+        "shared_directory_docs"
+      ],
+      "roles": [
+        "Panel contracts including Weather selected day"
+      ],
+      "base_blob": "32617b69690955548bae4c0778a2979007f003ac",
+      "frozen_candidate_blob": "ecd1fc2634494734476482cc2e2d0c8ba30814ca",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "modified",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "ecd1fc2634494734476482cc2e2d0c8ba30814ca",
+      "post_botanical_git_bytes": 11475,
+      "post_botanical_git_sha256": "22317dcc3379510e0ad67a7ecfe0a29f51cec7c5b8d863bc5db1a4bb0b548fb9",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/components/panels/CommunityDetails.tsx",
+      "groups": [
+        "intervention_entrypoints"
+      ],
+      "roles": [
+        "Contributor's intervention submissions"
+      ],
+      "base_blob": "f67cff61cd579e08286eefa9200e5f0de4919a27",
+      "frozen_candidate_blob": "f67cff61cd579e08286eefa9200e5f0de4919a27",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "f67cff61cd579e08286eefa9200e5f0de4919a27",
+      "post_botanical_git_bytes": 14143,
+      "post_botanical_git_sha256": "af2ff309c28a46a04ca0adce247f8383f51c1aa184c30c2c83309495e942987e",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/components/panels/ContributionQueue.tsx",
+      "groups": [
+        "intervention_entrypoints"
+      ],
+      "roles": [
+        "Contribution review UI using shared contribution routes"
+      ],
+      "base_blob": "726ba4c4003e0f93de3f47d89e7323c1549f17d1",
+      "frozen_candidate_blob": "726ba4c4003e0f93de3f47d89e7323c1549f17d1",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "726ba4c4003e0f93de3f47d89e7323c1549f17d1",
+      "post_botanical_git_bytes": 8007,
+      "post_botanical_git_sha256": "7c0544e0a631e505353172718b70fa344048caf822d85aa428a00d1a984581fc",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/components/panels/FireDetails.tsx",
+      "groups": [
+        "weather_core"
+      ],
+      "roles": [
+        "Weather point cards and independent weather/fire clocks"
+      ],
+      "base_blob": "03f65e28ad7442eef5c3ec2bc5962bd1425e2c7c",
+      "frozen_candidate_blob": "8f394b62ed0f59485e73cef9c71999eafacd5c87",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "modified",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "8f394b62ed0f59485e73cef9c71999eafacd5c87",
+      "post_botanical_git_bytes": 10998,
+      "post_botanical_git_sha256": "212b1e7662101801c28774449d51442584e94887f682e90ef86b8ccfd4202435",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/components/panels/InterventionSubmitModal.tsx",
+      "groups": [
+        "intervention_entrypoints"
+      ],
+      "roles": [
+        "Interactive intervention recommendation submission"
+      ],
+      "base_blob": "1dcba435144656ba18532e3147feb67ef3fa0a84",
+      "frozen_candidate_blob": "1dcba435144656ba18532e3147feb67ef3fa0a84",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "1dcba435144656ba18532e3147feb67ef3fa0a84",
+      "post_botanical_git_bytes": 8819,
+      "post_botanical_git_sha256": "d6bc85297a113b9123105772968d4c0d839ee084b5781521530254392638c271",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/components/panels/ModerationPanel.tsx",
+      "groups": [
+        "intervention_entrypoints"
+      ],
+      "roles": [
+        "Moderation component"
+      ],
+      "base_blob": "62c513c56a652d5cdbc51d64cd08b33ee76ce2a0",
+      "frozen_candidate_blob": "62c513c56a652d5cdbc51d64cd08b33ee76ce2a0",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "62c513c56a652d5cdbc51d64cd08b33ee76ce2a0",
+      "post_botanical_git_bytes": 7777,
+      "post_botanical_git_sha256": "1610c08215f75960ab7b7654a646fbe36bf0553ad5da38377398e90e30e51c9a",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/components/panels/OfflinePanel.tsx",
+      "groups": [
+        "intervention_entrypoints"
+      ],
+      "roles": [
+        "Offline tile cache control surface"
+      ],
+      "base_blob": "a034031d9db5edb28def6f273e2e6f681ec8fe01",
+      "frozen_candidate_blob": "a034031d9db5edb28def6f273e2e6f681ec8fe01",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "a034031d9db5edb28def6f273e2e6f681ec8fe01",
+      "post_botanical_git_bytes": 7605,
+      "post_botanical_git_sha256": "ce0003cf280137d4eba3cb134deadd53f01146424dbb2b62219a247ffb6a711e",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/hooks/AGENTS.md",
+      "groups": [
+        "shared_directory_docs"
+      ],
+      "roles": [
+        "Shared reader hooks and cancellation contracts"
+      ],
+      "base_blob": "b6d3c20d79d923057729f7dd56acbb1fba59dc97",
+      "frozen_candidate_blob": "b6d3c20d79d923057729f7dd56acbb1fba59dc97",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "b6d3c20d79d923057729f7dd56acbb1fba59dc97",
+      "post_botanical_git_bytes": 10051,
+      "post_botanical_git_sha256": "6f7a4a9e9227febe5e1d190155371f8bb337c0787c922177c195531eaea599b3",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/lib/cache/AGENTS.md",
+      "groups": [
+        "shared_directory_docs"
+      ],
+      "roles": [
+        "Shared query-cache contracts"
+      ],
+      "base_blob": "2a9203ab2fa9ed946ce58f81d076637813570ddc",
+      "frozen_candidate_blob": "2a9203ab2fa9ed946ce58f81d076637813570ddc",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "2a9203ab2fa9ed946ce58f81d076637813570ddc",
+      "post_botanical_git_bytes": 32531,
+      "post_botanical_git_sha256": "f17448a33b65115968e508ba08548dc0e7f601ba0ee6eeccd71ea2d72b2303e4",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/lib/cache/layer-cache-policy.ts",
+      "groups": [
+        "intervention_shared"
+      ],
+      "roles": [
+        "Shared layer cache policy"
+      ],
+      "base_blob": "6c34ded444e9571056f2cb0dd895a4dfc21b11e6",
+      "frozen_candidate_blob": "6c34ded444e9571056f2cb0dd895a4dfc21b11e6",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "6c34ded444e9571056f2cb0dd895a4dfc21b11e6",
+      "post_botanical_git_bytes": 13989,
+      "post_botanical_git_sha256": "ffc56bd02ba1d8eadaa03771c7cecbcf1cf2ffbdc4a086bcaba42eb98d378958",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/lib/cache/query-persister.ts",
+      "groups": [
+        "intervention_shared"
+      ],
+      "roles": [
+        "Shared cached procedure/layer mapping"
+      ],
+      "base_blob": "8950627b7ffa257af62de349f7431a947e91aac1",
+      "frozen_candidate_blob": "8950627b7ffa257af62de349f7431a947e91aac1",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "8950627b7ffa257af62de349f7431a947e91aac1",
+      "post_botanical_git_bytes": 55734,
+      "post_botanical_git_sha256": "678f37a3a3993711aca3cb5d7f1bd52bb8c791d4c7c415a1d280588ddfa6e2c8",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/lib/environmental/AGENTS.md",
+      "groups": [
+        "shared_directory_docs"
+      ],
+      "roles": [
+        "Environmental domain/presentation instructions"
+      ],
+      "base_blob": "f3d6058f766a702f85f70c58b6011374c0396607",
+      "frozen_candidate_blob": "f3d6058f766a702f85f70c58b6011374c0396607",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "f3d6058f766a702f85f70c58b6011374c0396607",
+      "post_botanical_git_bytes": 10471,
+      "post_botanical_git_sha256": "bdee089baa50f996eccd0535ad1eb7211dcbaf5bf873d382fc66f421caf7d92a",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/lib/environmental/intervention.ts",
+      "groups": [
+        "intervention_entrypoints"
+      ],
+      "roles": [
+        "Intervention domain vocabulary"
+      ],
+      "base_blob": "61bb1fefad6c63515db119a1b8e112eb6ca08109",
+      "frozen_candidate_blob": "61bb1fefad6c63515db119a1b8e112eb6ca08109",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "61bb1fefad6c63515db119a1b8e112eb6ca08109",
+      "post_botanical_git_bytes": 279,
+      "post_botanical_git_sha256": "4e9ebb85cab0c001fd5e0557db8d1e5eb4c93ab308199685ffca9c26f333653c",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/lib/environmental/parquet-presentation.ts",
+      "groups": [
+        "weather_core"
+      ],
+      "roles": [
+        "Weather envelope presentation into renderer vocabulary"
+      ],
+      "base_blob": "d60517557cbbcb79cd29e71c51e151cb54c40171",
+      "frozen_candidate_blob": "d60517557cbbcb79cd29e71c51e151cb54c40171",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "d60517557cbbcb79cd29e71c51e151cb54c40171",
+      "post_botanical_git_bytes": 25070,
+      "post_botanical_git_sha256": "1264a7308f8da988ca1ab198a58cf0573b42011bc7265f03373635be1ed5b85d",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/lib/map/AGENTS.md",
+      "groups": [
+        "shared_directory_docs"
+      ],
+      "roles": [
+        "Layer render and map helper contracts"
+      ],
+      "base_blob": "3ba79aab8f7e98cafd055b65a501c908af81a757",
+      "frozen_candidate_blob": "d0b70e5174428db6fb180a77b55a4dc691c4b1c6",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "modified",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "d0b70e5174428db6fb180a77b55a4dc691c4b1c6",
+      "post_botanical_git_bytes": 31580,
+      "post_botanical_git_sha256": "3d4c7a2df17576b78b27084a55b423fc0e8dd92348d552cdd7831d48bd5a85a5",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/lib/map/drawing.ts",
+      "groups": [
+        "intervention_entrypoints"
+      ],
+      "roles": [
+        "Point, line, polygon, rectangle, circle and freehand drawing helpers"
+      ],
+      "base_blob": "1ae4a00531affcd3caa58a80fb22db847fa4002f",
+      "frozen_candidate_blob": "1ae4a00531affcd3caa58a80fb22db847fa4002f",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "1ae4a00531affcd3caa58a80fb22db847fa4002f",
+      "post_botanical_git_bytes": 10111,
+      "post_botanical_git_sha256": "edf560b611e8f49b04d9180b56714109692ee16c15fead1120566419addb48ff",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/lib/map/hover-fields.ts",
+      "groups": [
+        "intervention_shared"
+      ],
+      "roles": [
+        "Intervention hover formatter and layer registration"
+      ],
+      "base_blob": "9bb8602cbd3a84616a9f3d8e5a2df3419bdf2727",
+      "frozen_candidate_blob": "a0e7694c9f5736d70778063007fb9fd670916228",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "modified",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "a0e7694c9f5736d70778063007fb9fd670916228",
+      "post_botanical_git_bytes": 27204,
+      "post_botanical_git_sha256": "4c05d159926b32ce57d0823cc9fda04b9b77a5260738cfed8950ed0f012709ab",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/lib/map/layer-legends.ts",
+      "groups": [
+        "weather_core",
+        "intervention_shared"
+      ],
+      "roles": [
+        "Weather legend specification",
+        "Interventions zones and submitted-sites legend specification"
+      ],
+      "base_blob": "9fe535a893b2cb5effb9a5ddebac96e697ca9d22",
+      "frozen_candidate_blob": "d1ca83ac0b690cc1402316b6adeb8eb2f01c5c2c",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "modified",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "d1ca83ac0b690cc1402316b6adeb8eb2f01c5c2c",
+      "post_botanical_git_bytes": 24719,
+      "post_botanical_git_sha256": "0dca291e19656085866a41ffaef61133d9cfb23d4deca2683bd8c54ca95c22c4",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/lib/map/layer-publication-standing.ts",
+      "groups": [
+        "intervention_shared"
+      ],
+      "roles": [
+        "Shared publication standing by layer"
+      ],
+      "base_blob": "fbfa140a6ab1112391135a5cc874f214cbb9c775",
+      "frozen_candidate_blob": "fbfa140a6ab1112391135a5cc874f214cbb9c775",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "fbfa140a6ab1112391135a5cc874f214cbb9c775",
+      "post_botanical_git_bytes": 2813,
+      "post_botanical_git_sha256": "0ae03805739e8bb441ee53d6eef252629c6cd3f32f3a12dfc3dfc66f94f4f455",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/lib/map/layer-registry.ts",
+      "groups": [
+        "weather_core",
+        "intervention_shared"
+      ],
+      "roles": [
+        "Weather toggle identity and renderer/layer registration",
+        "Interventions toggle/style layers and published layer name"
+      ],
+      "base_blob": "fde30ea0fa42f030aa84642b7f5cc6bce0a26c6d",
+      "frozen_candidate_blob": "fde30ea0fa42f030aa84642b7f5cc6bce0a26c6d",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "fde30ea0fa42f030aa84642b7f5cc6bce0a26c6d",
+      "post_botanical_git_bytes": 25434,
+      "post_botanical_git_sha256": "f8d5adbcaf8d694d120100016d555b9fe4a33d55eac86cdd4cb67ebe1a576c5e",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/lib/map/layer-render-contract.ts",
+      "groups": [
+        "weather_core",
+        "intervention_shared"
+      ],
+      "roles": [
+        "Allowed weather support forms and event-point contract",
+        "Interventions reference/unavailable render contract"
+      ],
+      "base_blob": "5f9a6859eed799226bf1aa0055d404f759364ee5",
+      "frozen_candidate_blob": "5f9a6859eed799226bf1aa0055d404f759364ee5",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "5f9a6859eed799226bf1aa0055d404f759364ee5",
+      "post_botanical_git_bytes": 29732,
+      "post_botanical_git_sha256": "95a8227f036fd80a66caffa1c35a908a2990f523b0b2b75cbe7d8399e6e6c7e0",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/lib/map/layer-toggle-context.ts",
+      "groups": [
+        "weather_slider"
+      ],
+      "roles": [
+        "useDebouncedLayerDay and per-layer visibility/date composition"
+      ],
+      "base_blob": "ec4749e895f1a76cc3abdd2e84bf83f5c84ff8ba",
+      "frozen_candidate_blob": "ec4749e895f1a76cc3abdd2e84bf83f5c84ff8ba",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "ec4749e895f1a76cc3abdd2e84bf83f5c84ff8ba",
+      "post_botanical_git_bytes": 28745,
+      "post_botanical_git_sha256": "b281fb860b3e018385bb96cb2dab8974dc851843e437af836500d768927aae33",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/lib/map/layers.ts",
+      "groups": [
+        "intervention_shared"
+      ],
+      "roles": [
+        "Intervention polygon/outline/point paint declarations"
+      ],
+      "base_blob": "b14db624194d061ad3ee4b1ec96b79abad9666e6",
+      "frozen_candidate_blob": "b14db624194d061ad3ee4b1ec96b79abad9666e6",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "b14db624194d061ad3ee4b1ec96b79abad9666e6",
+      "post_botanical_git_bytes": 26954,
+      "post_botanical_git_sha256": "05b5148631473bd24228680080fb6d5fe89d5e490ff904b50c6faa111d71bb82",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/lib/map/sources.ts",
+      "groups": [
+        "intervention_shared"
+      ],
+      "roles": [
+        "Intervention Martin source declaration"
+      ],
+      "base_blob": "8cf115dd03f18d5cfa865b3685dad694c77fd093",
+      "frozen_candidate_blob": "8cf115dd03f18d5cfa865b3685dad694c77fd093",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "8cf115dd03f18d5cfa865b3685dad694c77fd093",
+      "post_botanical_git_bytes": 9966,
+      "post_botanical_git_sha256": "40530d534bbe2c90741e234b82d0bb546ea561ffbdedfb2e8c67446d7a3b49a6",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/lib/map/styles.ts",
+      "groups": [
+        "intervention_shared"
+      ],
+      "roles": [
+        "Shared basemap/layer source composition"
+      ],
+      "base_blob": "1a445362a61fb42c723354cbb8f21ee19ce0e518",
+      "frozen_candidate_blob": "1a445362a61fb42c723354cbb8f21ee19ce0e518",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "1a445362a61fb42c723354cbb8f21ee19ce0e518",
+      "post_botanical_git_bytes": 11518,
+      "post_botanical_git_sha256": "154e61c8ae0b9677dc7200f1efc877360dc14b30245e3d76aba5e7d3bc5647fe",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/lib/net/AGENTS.md",
+      "groups": [
+        "shared_directory_docs"
+      ],
+      "roles": [
+        "Tile fetch request budgeting"
+      ],
+      "base_blob": "6c8983e71c5c428a033f7e5a5b3f61943aa74fc9",
+      "frozen_candidate_blob": "6c8983e71c5c428a033f7e5a5b3f61943aa74fc9",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "6c8983e71c5c428a033f7e5a5b3f61943aa74fc9",
+      "post_botanical_git_bytes": 15990,
+      "post_botanical_git_sha256": "1c53062a5ed0e279ba4d09d74510f4efaf8a3a2e3241caad1eee586c31b2513c",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/lib/offline/tile-cache.ts",
+      "groups": [
+        "intervention_entrypoints"
+      ],
+      "roles": [
+        "Tile prefetch and dynamic tile refresh/clearing"
+      ],
+      "base_blob": "6a6b2ff8b2bb76d88f6280a6876100c8391179b9",
+      "frozen_candidate_blob": "6a6b2ff8b2bb76d88f6280a6876100c8391179b9",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "6a6b2ff8b2bb76d88f6280a6876100c8391179b9",
+      "post_botanical_git_bytes": 7005,
+      "post_botanical_git_sha256": "6dfaed19a2737567c44751ccc7c61874eaa82f3eb3631e3832b8922451e23eb1",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/lib/server/AGENTS.md",
+      "groups": [
+        "shared_directory_docs"
+      ],
+      "roles": [
+        "Server/API and day-selection contracts"
+      ],
+      "base_blob": "c611969bf345acd4322228b75f5b0f791515c34b",
+      "frozen_candidate_blob": "c611969bf345acd4322228b75f5b0f791515c34b",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "c611969bf345acd4322228b75f5b0f791515c34b",
+      "post_botanical_git_bytes": 97246,
+      "post_botanical_git_sha256": "28d32f0d2f81f5f9de09b2a3c37db81685da3cd1c3b7d893529f28997cecf5c0",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/lib/server/db/AGENTS.md",
+      "groups": [
+        "shared_directory_docs"
+      ],
+      "roles": [
+        "Database feature/layer ownership contracts"
+      ],
+      "base_blob": "4268093967be5ec639939044017a477c34932817",
+      "frozen_candidate_blob": "4268093967be5ec639939044017a477c34932817",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "4268093967be5ec639939044017a477c34932817",
+      "post_botanical_git_bytes": 32899,
+      "post_botanical_git_sha256": "e05953f7693f912696f52b6befa769f2b30476e95f8805fb1df3a10f40ab3ac8",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/lib/server/db/schema.ts",
+      "groups": [
+        "intervention_entrypoints"
+      ],
+      "roles": [
+        "Shared feature/layer schema underlying interventions"
+      ],
+      "base_blob": "a3d6a163bcfd15ad1bbb0a4030e48e6f278196f8",
+      "frozen_candidate_blob": "a3d6a163bcfd15ad1bbb0a4030e48e6f278196f8",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "a3d6a163bcfd15ad1bbb0a4030e48e6f278196f8",
+      "post_botanical_git_bytes": 32829,
+      "post_botanical_git_sha256": "33139720141ecaf9bc330a2eb69475652e0e38cec6aa245c1cdc49f7c3150916",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/lib/server/services/AGENTS.md",
+      "groups": [
+        "shared_directory_docs"
+      ],
+      "roles": [
+        "Governed reader and context contracts"
+      ],
+      "base_blob": "02090ea64210963b02c78fab22093b9eb264924b",
+      "frozen_candidate_blob": "4d27138d460a0ef0e45ec3ee981003b97f9d7c74",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "modified",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "4d27138d460a0ef0e45ec3ee981003b97f9d7c74",
+      "post_botanical_git_bytes": 52292,
+      "post_botanical_git_sha256": "c90dad9dfbabe853a24a37c3c4a0ae984a2aacd7115f5d93a105b0f121e0e118",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/lib/server/services/carbon-potential.ts",
+      "groups": [
+        "intervention_entrypoints"
+      ],
+      "roles": [
+        "getInterventionSuitability context read"
+      ],
+      "base_blob": "e62dabb18e269f03de76c76921b796a4d690fce2",
+      "frozen_candidate_blob": "e62dabb18e269f03de76c76921b796a4d690fce2",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "e62dabb18e269f03de76c76921b796a4d690fce2",
+      "post_botanical_git_bytes": 1207,
+      "post_botanical_git_sha256": "af67b77f57f1a9439c3239a4e27bcf60a81f99d0cbc4820c643d91e25fb24c1c",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/lib/server/services/environmental-read-model.ts",
+      "groups": [
+        "weather_readers"
+      ],
+      "roles": [
+        "Legacy weather/type declarations; active slider route uses parquet-slider-capabilities"
+      ],
+      "base_blob": "cf631909d80609418022e52832bea05f6744ed2b",
+      "frozen_candidate_blob": "cf631909d80609418022e52832bea05f6744ed2b",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "cf631909d80609418022e52832bea05f6744ed2b",
+      "post_botanical_git_bytes": 170513,
+      "post_botanical_git_sha256": "73bf419e0156ff96199e1cd9624948ba2048947dbd84c810bb6978b40ce40661",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/lib/server/services/intervention-geometry.ts",
+      "groups": [
+        "intervention_entrypoints"
+      ],
+      "roles": [
+        "Intervention geometry validation"
+      ],
+      "base_blob": "a5a22d8ddc1bb6b62d8e52415d82f2e9a2cc2563",
+      "frozen_candidate_blob": "a5a22d8ddc1bb6b62d8e52415d82f2e9a2cc2563",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "a5a22d8ddc1bb6b62d8e52415d82f2e9a2cc2563",
+      "post_botanical_git_bytes": 2873,
+      "post_botanical_git_sha256": "6a1d95159e20a551fb1bac2ad22b1149606b77eeaa00449fce778b51e3d0ae22",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/lib/server/services/parquet-context-readers.ts",
+      "groups": [
+        "weather_readers"
+      ],
+      "roles": [
+        "Point weather read and requested-day proximity metadata"
+      ],
+      "base_blob": "71677df6e4431ca0d337843e3dd82aefabf287e6",
+      "frozen_candidate_blob": "a0c7d3e1a5723e9463c061b2597e841495ffd46a",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "modified",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "a0c7d3e1a5723e9463c061b2597e841495ffd46a",
+      "post_botanical_git_bytes": 6321,
+      "post_botanical_git_sha256": "184d93c4226b8dcac06200a90cbbddbb158027c9a697924184378e5cd28e18e9",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/lib/server/services/parquet-plane-client.ts",
+      "groups": [
+        "weather_slider"
+      ],
+      "roles": [
+        "Typed governed Parquet serving and availability transport"
+      ],
+      "base_blob": "1bafae6a1b8a0323dff7d6919cc29493aab5124d",
+      "frozen_candidate_blob": "75dd2beca3f58aebadc95afbbb0c50607c4cc348",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "modified",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "75dd2beca3f58aebadc95afbbb0c50607c4cc348",
+      "post_botanical_git_bytes": 39375,
+      "post_botanical_git_sha256": "cad1d3267eb3dfe90f74410618a9392880f0ba960e0909d4a1c965a4daaa02a1",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/lib/server/services/parquet-slider-capabilities.ts",
+      "groups": [
+        "weather_slider"
+      ],
+      "roles": [
+        "Active governed availability and serving-reader capability catalogue"
+      ],
+      "base_blob": "df65af37f6ebdb33cff0bd54a8172dcadb4cb1ba",
+      "frozen_candidate_blob": "9ac96ca71fc03888ad696758673cec1839f29290",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "modified",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "9ac96ca71fc03888ad696758673cec1839f29290",
+      "post_botanical_git_bytes": 42437,
+      "post_botanical_git_sha256": "aaf2cb3d21c0ae8e36c5fe30bb401acb93493f4c0a14bf0c87ffe6cbc9ca27e5",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/lib/server/services/parquet-trpc-readers.ts",
+      "groups": [
+        "weather_readers"
+      ],
+      "roles": [
+        "Weather exact-day and implicit live-window readers"
+      ],
+      "base_blob": "1d0a9fca98f0820bce25cb9acb474e94a1e1bae3",
+      "frozen_candidate_blob": "a1141939e66840bccf08fa119236526ca97892c4",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "modified",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "a1141939e66840bccf08fa119236526ca97892c4",
+      "post_botanical_git_bytes": 99081,
+      "post_botanical_git_sha256": "060fc84c08315e8089bea8278257dbbc8e9e5a4fad529ce5ff4d806338b5336e",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/lib/server/services/regional-context.ts",
+      "groups": [
+        "weather_readers",
+        "intervention_shared"
+      ],
+      "roles": [
+        "Selected-day environmental context composition",
+        "Intervention suitability/community proposals within changed environmental context"
+      ],
+      "base_blob": "7f0931f8c404c123840aeb417c2786b12f4017cf",
+      "frozen_candidate_blob": "34550aea8f2ef5875fa0fd2a8631b58f122d7844",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "modified",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "34550aea8f2ef5875fa0fd2a8631b58f122d7844",
+      "post_botanical_git_bytes": 59826,
+      "post_botanical_git_sha256": "ffb422c7d3780cc44c97bf526a46d152c4e5e29538235d08b8c59aaa7279931d",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/lib/server/services/regional-temporal-neighbors.ts",
+      "groups": [
+        "weather_readers"
+      ],
+      "roles": [
+        "Bounded temporal neighbor evidence for environmental context"
+      ],
+      "base_blob": null,
+      "frozen_candidate_blob": "12400ad2d3a3701817f8d911b853b2153ef5abb7",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "added",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "12400ad2d3a3701817f8d911b853b2153ef5abb7",
+      "post_botanical_git_bytes": 14089,
+      "post_botanical_git_sha256": "7944bcb395b298f5b79faa65705d13707a14f65598dfe382ae45df05c827adce",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/lib/server/services/weather.ts",
+      "groups": [
+        "weather_readers"
+      ],
+      "roles": [
+        "Open-Meteo current-conditions HTTP helper"
+      ],
+      "base_blob": "6b2adf61abd0135e87e3fb6dd7dff6daf5853be8",
+      "frozen_candidate_blob": "6b2adf61abd0135e87e3fb6dd7dff6daf5853be8",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "6b2adf61abd0135e87e3fb6dd7dff6daf5853be8",
+      "post_botanical_git_bytes": 2582,
+      "post_botanical_git_sha256": "5bac2987a71fe25bb6d76989e43b53348917080839fc663eaa7df9f318a21e2a",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/lib/server/trpc/router.ts",
+      "groups": [
+        "app_agent_mcp_registries",
+        "intervention_shared"
+      ],
+      "roles": [
+        "Next.js tRPC appRouter composition including wildfire/interventions",
+        "Shared tRPC registration"
+      ],
+      "base_blob": "f6731e7417ff4ee32f4e4946c3b05753e8838ff0",
+      "frozen_candidate_blob": "f6731e7417ff4ee32f4e4946c3b05753e8838ff0",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "f6731e7417ff4ee32f4e4946c3b05753e8838ff0",
+      "post_botanical_git_bytes": 1905,
+      "post_botanical_git_sha256": "e903dcb8935a886571e0cfa9438199024aa0d9080d93849c96117c7018d743c4",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/lib/server/trpc/routers/contributions.ts",
+      "groups": [
+        "intervention_entrypoints"
+      ],
+      "roles": [
+        "Shared contribution moderation routes"
+      ],
+      "base_blob": "3cfe45ae66068aefdaa46fb328a183efbcac09be",
+      "frozen_candidate_blob": "3cfe45ae66068aefdaa46fb328a183efbcac09be",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "3cfe45ae66068aefdaa46fb328a183efbcac09be",
+      "post_botanical_git_bytes": 4815,
+      "post_botanical_git_sha256": "4f8ca81ab1cd6a26f0ab87caf9d807b0f84b9d4b2f0ee04d54975d0b7294195e",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/lib/server/trpc/routers/environmental.ts",
+      "groups": [
+        "weather_slider",
+        "intervention_shared"
+      ],
+      "roles": [
+        "environmental.getSliderCapabilities route",
+        "Shared environmental route composition"
+      ],
+      "base_blob": "bf3e742fa63242fe5d16505119419034ff6a7395",
+      "frozen_candidate_blob": "bf3e742fa63242fe5d16505119419034ff6a7395",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "bf3e742fa63242fe5d16505119419034ff6a7395",
+      "post_botanical_git_bytes": 30435,
+      "post_botanical_git_sha256": "8af4b155ec4072885f8a88157f3f36f6e3f6382eb834548274015688ac381a62",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/lib/server/trpc/routers/interventions.ts",
+      "groups": [
+        "intervention_entrypoints"
+      ],
+      "roles": [
+        "Submission, own submissions, proposal reads and intervention lifecycle mutations"
+      ],
+      "base_blob": "9b4c12d862af58a155e9248d623f53cd455aa777",
+      "frozen_candidate_blob": "9b4c12d862af58a155e9248d623f53cd455aa777",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "9b4c12d862af58a155e9248d623f53cd455aa777",
+      "post_botanical_git_bytes": 15993,
+      "post_botanical_git_sha256": "f1c8c8199266dfdcd975a682c746aca215971fd69dfc55f449d2685a23809a04",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/lib/server/trpc/routers/wildfire.ts",
+      "groups": [
+        "weather_core",
+        "intervention_shared"
+      ],
+      "roles": [
+        "getWeatherForPoint and getWeatherForBbox procedures",
+        "Public getInterventions read remains alongside changed weather procedures"
+      ],
+      "base_blob": "1489d775c0a90426d4aa901a4ce3240a1c8c45bc",
+      "frozen_candidate_blob": "77bd6f0a29f81a2de98f28c7cbb383729d104587",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "modified",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "77bd6f0a29f81a2de98f28c7cbb383729d104587",
+      "post_botanical_git_bytes": 8908,
+      "post_botanical_git_sha256": "393b0807748f88430d2039615b17b7c7ae3a3b86daa2ecdda8fe1ac14d4da928",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/stores/time-slider-store.ts",
+      "groups": [
+        "weather_slider"
+      ],
+      "roles": [
+        "Per-layer requested date and capability state"
+      ],
+      "base_blob": "e3acc95a82181ecda1eb1d2a4b3b4d5aa223dca6",
+      "frozen_candidate_blob": "e3acc95a82181ecda1eb1d2a4b3b4d5aa223dca6",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "e3acc95a82181ecda1eb1d2a4b3b4d5aa223dca6",
+      "post_botanical_git_bytes": 24155,
+      "post_botanical_git_sha256": "d926ce7e15cb30574f0674b206c67c7acc204e55604354fc3e0a34516880763d",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/stores/useMetricAtDate.ts",
+      "groups": [
+        "weather_slider"
+      ],
+      "roles": [
+        "Drawn-day publication and requested-versus-retained date state"
+      ],
+      "base_blob": "994dcd971d726779a8e7ee35dea831f01c1898e6",
+      "frozen_candidate_blob": "994dcd971d726779a8e7ee35dea831f01c1898e6",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "994dcd971d726779a8e7ee35dea831f01c1898e6",
+      "post_botanical_git_bytes": 24700,
+      "post_botanical_git_sha256": "dff215d513f3a640ded8afcab6cf1fda6a6c6a8b0bddd4b58af596950ea24f63",
+      "change_from_frozen_candidate": "unchanged"
+    },
+    {
+      "path": "src/types/time-slider.ts",
+      "groups": [
+        "weather_slider"
+      ],
+      "roles": [
+        "Shared slider capability and day-range types"
+      ],
+      "base_blob": "793a683ce9060113e5def13e4fde37b04803a6d1",
+      "frozen_candidate_blob": "793a683ce9060113e5def13e4fde37b04803a6d1",
+      "frozen_candidate_mode": "100644",
+      "change_from_base": "unchanged",
+      "post_sweep_botanical_source_touches_path": false,
+      "post_botanical_blob": "793a683ce9060113e5def13e4fde37b04803a6d1",
+      "post_botanical_git_bytes": 16596,
+      "post_botanical_git_sha256": "cf61195c9087211c7288aafafe7ba24af27447ef433eda158af421565867bab6",
+      "change_from_frozen_candidate": "unchanged"
+    }
+  ],
+  "changed_shared_surface_assessments": [
+    {
+      "path": "src/components/map/LayerManager.tsx",
+      "assessment": "Weather requested-day filter and weather drawn-day report only; style-backed intervention appliers are unchanged."
+    },
+    {
+      "path": "src/lib/server/trpc/routers/wildfire.ts",
+      "assessment": "Adds explicit date and governed-absence handling to getWeatherForPoint. Public getInterventions and mutation-retirement boundary are unchanged."
+    },
+    {
+      "path": "src/lib/map/layer-legends.ts",
+      "assessment": "Climate display-setting captions changed; the interventions legend definition is unchanged."
+    },
+    {
+      "path": "src/lib/map/hover-fields.ts",
+      "assessment": "Adds climate layer hover registration and formatting; intervention formatter and its bindings are unchanged."
+    },
+    {
+      "path": "src/components/map/layer-panel/LayerRow.tsx",
+      "assessment": "Generic active layer row gains an accessible expandable complete legend. This also makes the existing intervention legend available while its row is open."
+    },
+    {
+      "path": "src/components/map/layer-panel/LayerLegend.tsx",
+      "assessment": "Moves existing legend block rendering into a shared component used by the collapsed manager legend and row disclosures."
+    },
+    {
+      "path": "src/components/map/layer-panel/LegendBlockView.tsx",
+      "assessment": "New shared legend block renderer; intervention palette/status content still comes from the unchanged intervention legend specification."
+    },
+    {
+      "path": "src/components/map/layer-panel/LayerTimeSlider.tsx",
+      "assessment": "Shared selected-day absence/coverage controls changed; no intervention-specific layer identity or forecast axis is added."
+    },
+    {
+      "path": "src/lib/server/services/regional-context.ts",
+      "assessment": "Environmental selected-day, cancellation, governed-absence and temporal-neighbor composition changed. Intervention suitability/proposal reads remain; overall regional-context behavior is shared and is not claimed unchanged."
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/agent/tools.py",
+      "assessment": "Adds refusal of unsupported environmental point temporal semantics and precise evidence wording. The new guard explicitly allows POSTGRESQL_ONLY_SURFACE_NAMES; the intervention SQL delegation remains unchanged."
+    }
+  ],
+  "intervention_specific_section_comparisons": [
+    {
+      "id": "wildfire_public_interventions_read",
+      "path": "src/lib/server/trpc/routers/wildfire.ts",
+      "comparison": "unchanged",
+      "base": {
+        "start_line": 147,
+        "end_line": 167,
+        "lf_text_sha256": "6449e15d89aaad19073f0f82cda23b7d8d2ca305db5182307220672d816263f6",
+        "utf8_bytes_after_lf_normalization_and_outer_trim": 820
+      },
+      "frozen_candidate": {
+        "start_line": 147,
+        "end_line": 167,
+        "lf_text_sha256": "6449e15d89aaad19073f0f82cda23b7d8d2ca305db5182307220672d816263f6",
+        "utf8_bytes_after_lf_normalization_and_outer_trim": 820
+      }
+    },
+    {
+      "id": "interventions_legend_specification",
+      "path": "src/lib/map/layer-legends.ts",
+      "comparison": "unchanged",
+      "base": {
+        "start_line": 456,
+        "end_line": 485,
+        "lf_text_sha256": "3da74dbe5437ac8a7716ad6885c54710525fc100a47b20644fe91b8ffd6b52f2",
+        "utf8_bytes_after_lf_normalization_and_outer_trim": 801
+      },
+      "frozen_candidate": {
+        "start_line": 456,
+        "end_line": 485,
+        "lf_text_sha256": "3da74dbe5437ac8a7716ad6885c54710525fc100a47b20644fe91b8ffd6b52f2",
+        "utf8_bytes_after_lf_normalization_and_outer_trim": 801
+      }
+    },
+    {
+      "id": "intervention_hover_formatter",
+      "path": "src/lib/map/hover-fields.ts",
+      "comparison": "unchanged",
+      "base": {
+        "start_line": 328,
+        "end_line": 339,
+        "lf_text_sha256": "9fd3465b53cf3d238a2774ceb92ab116bcdfcad6a41b7ecfabd406eeba5f79ce",
+        "utf8_bytes_after_lf_normalization_and_outer_trim": 419
+      },
+      "frozen_candidate": {
+        "start_line": 339,
+        "end_line": 350,
+        "lf_text_sha256": "9fd3465b53cf3d238a2774ceb92ab116bcdfcad6a41b7ecfabd406eeba5f79ce",
+        "utf8_bytes_after_lf_normalization_and_outer_trim": 419
+      }
+    },
+    {
+      "id": "intervention_hover_bindings",
+      "path": "src/lib/map/hover-fields.ts",
+      "comparison": "unchanged",
+      "base": {
+        "start_line": 520,
+        "end_line": 521,
+        "lf_text_sha256": "b6e75d0b8c031303f0b3d96d0b6d9888138803c9114b781ff2276a1c30d5938b",
+        "utf8_bytes_after_lf_normalization_and_outer_trim": 80
+      },
+      "frozen_candidate": {
+        "start_line": 563,
+        "end_line": 564,
+        "lf_text_sha256": "b6e75d0b8c031303f0b3d96d0b6d9888138803c9114b781ff2276a1c30d5938b",
+        "utf8_bytes_after_lf_normalization_and_outer_trim": 80
+      }
+    },
+    {
+      "id": "style_backed_visibility_and_opacity",
+      "path": "src/components/map/LayerManager.tsx",
+      "comparison": "unchanged",
+      "base": {
+        "start_line": 826,
+        "end_line": 914,
+        "lf_text_sha256": "d26207eb6ba8b2da826caef9e1447276543c6e1702bca1aa3b234cd5f2cc3f5e",
+        "utf8_bytes_after_lf_normalization_and_outer_trim": 4545
+      },
+      "frozen_candidate": {
+        "start_line": 834,
+        "end_line": 922,
+        "lf_text_sha256": "d26207eb6ba8b2da826caef9e1447276543c6e1702bca1aa3b234cd5f2cc3f5e",
+        "utf8_bytes_after_lf_normalization_and_outer_trim": 4545
+      }
+    },
+    {
+      "id": "community_intervention_proposal_reader",
+      "path": "src/lib/server/services/regional-context.ts",
+      "comparison": "unchanged",
+      "base": {
+        "start_line": 658,
+        "end_line": 699,
+        "lf_text_sha256": "f17c7f60f244a9daae57aa56574c7aa700b833ea677407d7536aebd86d7e5597",
+        "utf8_bytes_after_lf_normalization_and_outer_trim": 1441
+      },
+      "frozen_candidate": {
+        "start_line": 663,
+        "end_line": 704,
+        "lf_text_sha256": "f17c7f60f244a9daae57aa56574c7aa700b833ea677407d7536aebd86d7e5597",
+        "utf8_bytes_after_lf_normalization_and_outer_trim": 1441
+      }
+    },
+    {
+      "id": "agent_intervention_postgresql_delegation",
+      "path": "services/agri-data-service/src/agri_data_service/agent/tools.py",
+      "comparison": "unchanged",
+      "base": {
+        "start_line": 1688,
+        "end_line": 1697,
+        "lf_text_sha256": "ede300e58b006cfbce348062dd35e2d67378f39a6b4857ec964d440be5222629",
+        "utf8_bytes_after_lf_normalization_and_outer_trim": 291
+      },
+      "frozen_candidate": {
+        "start_line": 1730,
+        "end_line": 1739,
+        "lf_text_sha256": "ede300e58b006cfbce348062dd35e2d67378f39a6b4857ec964d440be5222629",
+        "utf8_bytes_after_lf_normalization_and_outer_trim": 291
+      }
+    },
+    {
+      "id": "warehouse_tool_registry",
+      "path": "services/agri-data-service/src/agri_data_service/agent/tools.py",
+      "comparison": "unchanged",
+      "base": {
+        "start_line": 2185,
+        "end_line": 2197,
+        "lf_text_sha256": "c59006687db9154170e282434de776dae49a9f52e7dfcaf967c771cc9394ae31",
+        "utf8_bytes_after_lf_normalization_and_outer_trim": 322
+      },
+      "frozen_candidate": {
+        "start_line": 2230,
+        "end_line": 2242,
+        "lf_text_sha256": "c59006687db9154170e282434de776dae49a9f52e7dfcaf967c771cc9394ae31",
+        "utf8_bytes_after_lf_normalization_and_outer_trim": 322
+      }
+    }
+  ],
+  "verification": {
+    "kind": "read_only_git_object_and_source_inspection",
+    "tests_executed": false,
+    "tracked_source_edited": false,
+    "image_checks_owned_by_root": true,
+    "all_declared_paths_exist_in_frozen_tree": true,
+    "git_object_algorithm": "sha1",
+    "section_hash_normalization": "CRLF converted to LF; surrounding whitespace trimmed; SHA-256 of UTF-8 text"
+  },
+  "intervention_comparison": {
+    "entrypoints_count": 20,
+    "changed_entrypoints": [],
+    "unchanged_entrypoints_count": 20,
+    "shared_surfaces_count": 20,
+    "changed_shared_surfaces": [
+      {
+        "path": "services/agri-data-service/src/agri_data_service/agent/tools.py",
+        "change_from_base": "modified"
+      },
+      {
+        "path": "src/components/map/layer-panel/LayerLegend.tsx",
+        "change_from_base": "modified"
+      },
+      {
+        "path": "src/components/map/layer-panel/LayerRow.tsx",
+        "change_from_base": "modified"
+      },
+      {
+        "path": "src/components/map/layer-panel/LayerTimeSlider.tsx",
+        "change_from_base": "modified"
+      },
+      {
+        "path": "src/components/map/layer-panel/LegendBlockView.tsx",
+        "change_from_base": "added"
+      },
+      {
+        "path": "src/components/map/LayerManager.tsx",
+        "change_from_base": "modified"
+      },
+      {
+        "path": "src/lib/map/hover-fields.ts",
+        "change_from_base": "modified"
+      },
+      {
+        "path": "src/lib/map/layer-legends.ts",
+        "change_from_base": "modified"
+      },
+      {
+        "path": "src/lib/server/services/regional-context.ts",
+        "change_from_base": "modified"
+      },
+      {
+        "path": "src/lib/server/trpc/routers/wildfire.ts",
+        "change_from_base": "modified"
+      }
+    ],
+    "source_section_comparison_count": 8,
+    "unchanged_source_sections": 8,
+    "finding": "Intervention entrypoint files are byte-identical Git blobs to the base. Changed shared legend disclosure affects intervention rows; other changed shared files must be assessed by their recorded scoped summaries. This is not a runtime correctness or release acceptance claim."
+  },
+  "frozen_candidate_statistics": {
+    "unchanged": 82,
+    "modified": 35,
+    "added": 2
+  },
+  "post_sweep_botanical_shared_paths": [
+    "services/agri-data-service/src/agri_data_service/agent/AGENTS.md",
+    "services/agri-data-service/src/agri_data_service/agent/graph.py",
+    "services/agri-data-service/src/agri_data_service/agent/mcp_server.py",
+    "services/agri-data-service/src/agri_data_service/agent/prompts.py",
+    "services/agri-data-service/src/agri_data_service/agent/tools.py",
+    "services/agri-data-service/src/agri_data_service/app.py",
+    "services/agri-data-service/src/agri_data_service/interface/http/AGENTS.md",
+    "services/agri-data-service/src/agri_data_service/planes/AGENTS.md"
+  ],
+  "captured_at_utc": "2026-09-12T01:20:02.017370+00:00",
+  "head_at_capture": "89e8494422b8232c8f16dbffdcf2321c7ea17bc8",
+  "post_botanical_integrated_tree": "df12542ffa00937e0213d10c938e715849030492",
+  "pre_botanical_checkpoint_commit": "9b46e86155a65e56a5186fcd087fea944bdf5ba1",
+  "verified_at_utc": "2026-09-12T02:20:15.411079+00:00",
+  "inventory_source_sha256": "239c828fbdfbf03307f7d64aee992fd489bb2bddb9996341050194c31c43bf31",
+  "combined_validation": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/combined-validation-botanical-20260911.json",
+  "botanical_intake": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/botanical-intake-20260911.json",
+  "handoff_scope": "Immutable pre-intervention source baseline. Ownership transfer is pending the reviewed intervention intake and a newer canonical base; later task work is outside this tested candidate.",
+  "shared_transfer_released": false,
+  "weather_implementation_owner": "01a09323-6f59-7822-9e6f-146892776749 after the newer post-intervention base is released",
+  "intervention_reservation": "Candidate 2fc6b30ac1b024e1c955dbf95552495608608a96; MapView two-line mount and intervention routers/components. Do not apply its retained MapView patch twice.",
+  "semantic_notes": [
+    "Canonical ingest/http.py already preserves bounded Retry-After in BoundedResponse.retry_after; the weather owner must consume it and preserve durable cooldown behavior.",
+    "Preserve the exact 2025-04-28 selected-day gap and delayed-result regression, truthful prior-frame dates, and the independent fire clock.",
+    "Current weather observations remain horizon 0 with distinct source identity; future forecast history is not a relabeling of poll observations.",
+    "Preserve botanical registrations and explicit refusal/unknown distinctions; four-taxon WCVP remains an unaccepted local candidate."
+  ],
+  "production_action": false
+}

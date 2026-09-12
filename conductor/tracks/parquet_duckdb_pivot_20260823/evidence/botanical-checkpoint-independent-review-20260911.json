@@ -1,0 +1,1488 @@
+{
+  "schema": "botanical-checkpoint-independent-review/v1",
+  "type": "independent-review",
+  "reviewer_lane": "/root/legacy_repair_review",
+  "reviewed_at_utc": "2026-09-12T02:30:03.689923+00:00",
+  "verdict": "PASS_bounded_local_evidence_checkpoint",
+  "open_findings": [],
+  "resolved_findings": [
+    {
+      "id": "P3-stale-handoff-preparation-wording",
+      "severity": "P3",
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/shared-source-handoff-20260911.json",
+      "finding": "Inherited purpose/scope notes said root still needed to attach post-botanical blobs and that those fields were deliberately null, contradicting the completed 119 pins.",
+      "resolution": "Root changed those two documentary statements and refreshed only the shared baseline author-manifest entry. All current 47 hashes were verified after correction.",
+      "resolved_shared_sha256": "32867df1f51e10ad62cc8d2aec77f3f4ca84461e2ffbf5dc3b606417a25f3ec9"
+    }
+  ],
+  "tested_source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+  "tested_source_tree": "df12542ffa00937e0213d10c938e715849030492",
+  "head_at_final_review": "416342fa5bea836e6a062549b87c2706f53ce45e",
+  "evidence_only_following_commit": "Not yet created. This verdict continues to bind test execution to 416342fa5bea836e6a062549b87c2706f53ce45e, not to a future evidence commit.",
+  "author_manifest": {
+    "path": ".omc/research/active-track-integration-20260911/botanical-checkpoint-author.json",
+    "bytes": 12133,
+    "sha256": "0c8356b3b91da20b2c55d640a767fbb366cf548b2f4a0b5773421ec8aea3ea54"
+  },
+  "authored_paths": [
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/combined-validation-botanical-20260911.json",
+      "bytes": 25816,
+      "sha256": "ebc362f7f7de7d78c286c240fe012e21f8224b96d7a7cfcf8b63b6407fba49fd"
+    },
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/combined-validation-botanical-20260911.md",
+      "bytes": 6132,
+      "sha256": "828b50eaaca79be7818e7c17a784ad2b6e586a876515eec65c74eddf6436c0fb"
+    },
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/shared-source-handoff-20260911.json",
+      "bytes": 115999,
+      "sha256": "32867df1f51e10ad62cc8d2aec77f3f4ca84461e2ffbf5dc3b606417a25f3ec9"
+    },
+    {
+      "path": "services/agri-data-service/QUALITY_RECEIPT.json",
+      "bytes": 1014,
+      "sha256": "ac3190a42f2d04d111765cb064bd332d364808f4cb6e791b2d81b91c91f644f7"
+    },
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/invocation.json.gz",
+      "bytes": 483,
+      "sha256": "4e027f51dc9536d73bfc8279a9033a12fe648df3fe0c513c338ed9a8209f791c"
+    },
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/result.json.gz",
+      "bytes": 2309,
+      "sha256": "b9b8645ddf7812ad52591203e983bc3924e0f881f0d177f8bce7b8cc6ae9bef7"
+    },
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/frontend-check-data-boundary.log.gz",
+      "bytes": 185,
+      "sha256": "d27c6c81a40186e5ec057f0dce47bdfd5371cf1a6e4f3087c3c9ac9b2e2f552c"
+    },
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/frontend-type-check.log.gz",
+      "bytes": 65,
+      "sha256": "27716c1e8c4bf6d6d8cbd90f8a906074caf8b93ed66553d7d7269e4765fad224"
+    },
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/frontend-lint.log.gz",
+      "bytes": 16998,
+      "sha256": "c004e01db4697f5b59718e3221a018171344fbeda459e751d49319f1a5cb6f6d"
+    },
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/frontend-test.log.gz",
+      "bytes": 12872,
+      "sha256": "1754a060d508ddff3cf99f6d8f1d6af778e2bebb09ff1b44633952b4138c7e22"
+    },
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/python-full.log.gz",
+      "bytes": 255,
+      "sha256": "eb490565fb25e26496e143f5e131aa21c7217c7492eab0e26af2449aa50898d5"
+    },
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/python-receipt-verify.log.gz",
+      "bytes": 148,
+      "sha256": "007a254d5364dbc4eddc31da3ffe3c40b57f25cd7b126137367093513464f927"
+    },
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/archived-source-receipt-verify.log.gz",
+      "bytes": 148,
+      "sha256": "007a254d5364dbc4eddc31da3ffe3c40b57f25cd7b126137367093513464f927"
+    },
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/image-web.log.gz",
+      "bytes": 25813,
+      "sha256": "52e939d1b6eccff6efbc426b7cc6f101bd1b879622854f206412298c668ebc3c"
+    },
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/image-web-smoke.log.gz",
+      "bytes": 20,
+      "sha256": "46b50c321b39e89a491b6727a01628c34245605a30beb3e7414c5e01cff90e6e"
+    },
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/image-web-identity.log.gz",
+      "bytes": 72,
+      "sha256": "cc10e30ca715578f6e858020b5a7d884bdb323dd1e7fd45b4f903e041cb9882b"
+    },
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/image-data-service.log.gz",
+      "bytes": 1804,
+      "sha256": "30103f9a927082c7542fe0f3337484f84a42981b0be785711056d4337bae3729"
+    },
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/image-data-service-smoke.log.gz",
+      "bytes": 307,
+      "sha256": "9231fe606d149ccb3c48888771632f8db70a83488d568727320aaa7b54bac666"
+    },
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/image-data-service-identity.log.gz",
+      "bytes": 72,
+      "sha256": "200995f0ec523a338a7eb4a2d7ca69e0f5ee0e10f4768e6b49dc3f5904859234"
+    },
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/image-job-executor.log.gz",
+      "bytes": 2412,
+      "sha256": "b45075c0ee28627652f872739f31b0c6c6a516ec52d6802b640a916670a2c787"
+    },
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/image-job-executor-smoke.log.gz",
+      "bytes": 307,
+      "sha256": "9231fe606d149ccb3c48888771632f8db70a83488d568727320aaa7b54bac666"
+    },
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/image-job-executor-identity.log.gz",
+      "bytes": 72,
+      "sha256": "59f1fadb7353588f5d81be28b9efa49756396d14ddc0a1d2c95be2b15c2dc290"
+    },
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/frontend-check-data-boundary.json.gz",
+      "bytes": 379,
+      "sha256": "07951abb33e3688720a51d724f8652397b7d328805b29a3e0a25f3770f53d352"
+    },
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/frontend-type-check.json.gz",
+      "bytes": 373,
+      "sha256": "4f92bdf0ced22f676fdc91a885f79605045d4b9880391d46b2972aa5c6fe1781"
+    },
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/frontend-lint.json.gz",
+      "bytes": 372,
+      "sha256": "009fe5915baf8f609a0386e0d92c83538e2699ea1b19f8d0d973b858137496f7"
+    },
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/frontend-test.json.gz",
+      "bytes": 373,
+      "sha256": "48fc034034ba57ac0c00f53714b26356192c2e15fca74255928d2c4c4d8e5494"
+    },
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/python-full.json.gz",
+      "bytes": 424,
+      "sha256": "9f86eacfb962331117ca34aac5d3e1fcdb85a6dd7abd96ef1ce34e07072ab03d"
+    },
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/python-receipt-verify.json.gz",
+      "bytes": 420,
+      "sha256": "3984dd474990d51df0e384957edc80fc7269bd14e1a29ce9786e1e5932b821ef"
+    },
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/archived-source-receipt-verify.json.gz",
+      "bytes": 412,
+      "sha256": "3ac41c6389761831559f77b6a3c9b932a36e535d5be68faf3e80eeb0eb5fd7e2"
+    },
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/image-web.json.gz",
+      "bytes": 479,
+      "sha256": "dd2a7f6ae5147156acfa097cc2229a2cb776290eab55eed185a6aa97fd6a4d26"
+    },
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/image-web-smoke.json.gz",
+      "bytes": 422,
+      "sha256": "49021353eaa105fa621cb6d2a2e987bf225816da3f530337e196310fed510c3e"
+    },
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/image-web-identity.json.gz",
+      "bytes": 403,
+      "sha256": "b2115081fb24241cae47377c1a932cd1db4a552766fd766234f8a92a70d4d28a"
+    },
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/image-data-service.json.gz",
+      "bytes": 495,
+      "sha256": "ae919cbbd1076e1e215a530508ba5d753564169b499c70b6bb43b89c4afbe241"
+    },
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/image-data-service-smoke.json.gz",
+      "bytes": 417,
+      "sha256": "d8dc90616014e9c72513bc3e11de5770202817bc9b2b48a8154f8d387e3bf5bb"
+    },
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/image-data-service-identity.json.gz",
+      "bytes": 410,
+      "sha256": "dcf0b059ead00fe11a9e03deb04a42b7ecf21612ce5c65701f1d957c3d948773"
+    },
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/image-job-executor.json.gz",
+      "bytes": 497,
+      "sha256": "3ac6d877f238064a81897514ab25aed4cc831dd5ce971403dfb825574a3a204e"
+    },
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/image-job-executor-smoke.json.gz",
+      "bytes": 419,
+      "sha256": "278c2a9970b08068da4355f2fd677760b31af7a20c8dab01fdc4f1ede107134b"
+    },
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/image-job-executor-identity.json.gz",
+      "bytes": 413,
+      "sha256": "bfea8b7c23afbee4f011fae214c0c0483fd4ef2bf590008a49904331d194a253"
+    },
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/python-junit.xml.gz",
+      "bytes": 132616,
+      "sha256": "c02433fa206688bc1efb7adf60d1b3012d6feec427a3ef13ddef18821d45b512"
+    },
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/run_botanical_checks.py.gz",
+      "bytes": 2752,
+      "sha256": "2a9364bc1f64b232fcb91a0fd445046dfe870c5ecf7dea9e5d4f2cd8e42eb0d6"
+    },
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/QUALITY_RECEIPT.json.gz",
+      "bytes": 452,
+      "sha256": "29ae9e23dd755bb8aee4045ca7bf832a2e7d8cfa903d23040ad82c7de5974254"
+    },
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/continuation-review.json.gz",
+      "bytes": 6173,
+      "sha256": "5b9b1dfb2f9d8fe7a8768dd3ed91ec81af0cfc6d18c8fcbcc64f1afb313870ed"
+    },
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/verification-scope-review.json.gz",
+      "bytes": 6417,
+      "sha256": "c2fb8cbff13b649c1d469d83ceeb3b2d90c2225353cc66a345a38d5caafac37c"
+    },
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/qa-planning-intake-review.json.gz",
+      "bytes": 5186,
+      "sha256": "bdd221c3a0ddb86d3940061b1f7839d9a6d12dec25b4955da5a7ce001007e35b"
+    },
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/weather-intake-preparation-20260911.json.gz",
+      "bytes": 20953,
+      "sha256": "7764f16da8be41012fabe198dfd0a240823e0ff117ff85146d8c83597b43b5a1"
+    },
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/weather-intake-preparation-20260911.md.gz",
+      "bytes": 6693,
+      "sha256": "3d926316cc1f09c0eaa1cac076fa3575202c6faa20a6aa47064d4ca2538de22d"
+    },
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/botanical-final-gates-check.json.gz",
+      "bytes": 3156,
+      "sha256": "609a3eb896cec028671b42a497245003267083f15a78e165266ee971aa1b85ec"
+    }
+  ],
+  "author_paths_verified": 47,
+  "gzip_artifacts_verified": 43,
+  "gzip_verification": "Every decompressed payload equals its retained original byte-for-byte and both original/gzip sizes and SHA-256 values match; retained JSON and JUnit XML parse.",
+  "completed_gate_verification": {
+    "count": 16,
+    "host": 6,
+    "archive_receipt": 1,
+    "image_build_smoke_identity": 9,
+    "all_exit_zero": true,
+    "all_result_entries_match_individual_metadata": true,
+    "all_log_hashes_and_lengths_match": true,
+    "result": {
+      "path": ".omc/verification/botanical-integrated-20260911/result.json",
+      "bytes": 13657,
+      "sha256": "446461954ae957934c9e46583ad2de66298c1ad96e3f925d3d564f8398ae6ab7",
+      "passed": true,
+      "finished_at": "2026-09-12T01:58:21.644616+00:00"
+    },
+    "final_source_guard": "The reviewed runner checks source identity after image gates before writing the verified successful result. Current source differences remain limited to the generated receipt and existing .omc state."
+  },
+  "images": [
+    {
+      "name": "web",
+      "tag": "localhost/plantgeo-integration-web:416342fa5bea",
+      "image_id": "e13b01f4aab6ac3a0cd4c3c6fd3205d4740c4451574046a28545a07ab7024e30",
+      "build_log_contains_same_id": true,
+      "revision_label_command": "416342fa5bea836e6a062549b87c2706f53ce45e",
+      "smoke_command": [
+        "C:\\Program Files\\RedHat\\Podman\\podman.EXE",
+        "run",
+        "--rm",
+        "--network",
+        "none",
+        "--entrypoint",
+        "node",
+        "localhost/plantgeo-integration-web:416342fa5bea",
+        "--check",
+        "server.js"
+      ],
+      "smoke_output": "",
+      "build_summary_lines": [
+        "\u2716 542 problems (0 errors, 542 warnings)",
+        " Test Files  145 passed | 2 skipped (147)",
+        "      Tests  2260 passed | 13 skipped (2273)",
+        "[4/4] COMMIT localhost/plantgeo-integration-web:416342fa5bea",
+        "Successfully tagged localhost/plantgeo-integration-web:416342fa5bea"
+      ]
+    },
+    {
+      "name": "data-service",
+      "tag": "localhost/plantgeo-integration-data-service:416342fa5bea",
+      "image_id": "78a5fca94552262243679edd20b91dfde3dadcbcc86d7e395481298de92133a4",
+      "build_log_contains_same_id": true,
+      "revision_label_command": "416342fa5bea836e6a062549b87c2706f53ce45e",
+      "smoke_command": [
+        "C:\\Program Files\\RedHat\\Podman\\podman.EXE",
+        "run",
+        "--rm",
+        "--network",
+        "none",
+        "localhost/plantgeo-integration-data-service:416342fa5bea",
+        "agri-service",
+        "--help"
+      ],
+      "smoke_output": "Usage: agri-service [OPTIONS] COMMAND [ARGS]...\n\n  PlantGeo agriculture data, forecasting, ML, and operations.\n\nOptions:\n  --help  Show this message and exit.\n\nCommands:\n  agent     Serve and exercise the location-analysis agent's bounded...\n  data      Ingest, inspect, and maintain governed data products.\n  forecast  Run evaluation-only forecast workflows.\n  ml        Train and inspect evaluation-only ML artifacts.\n  ops       Inspect and operate the service and its durable jobs.",
+      "build_summary_lines": [
+        "quality receipt verified: sha256:f4f846ee0999299813e895bc9f034807d80414e0aefa6be4f16393bde9bd6f93 over 1380 files, generated 2026-09-12T01:49:56.636278Z",
+        "[3/3] COMMIT localhost/plantgeo-integration-data-service:416342fa5bea",
+        "Successfully tagged localhost/plantgeo-integration-data-service:416342fa5bea"
+      ]
+    },
+    {
+      "name": "job-executor",
+      "tag": "localhost/plantgeo-integration-job-executor:416342fa5bea",
+      "image_id": "191e9f2f7e6e2c4e16fee7ad0b83f31d686950ba9d31bd49ee1db82a8024c0e6",
+      "build_log_contains_same_id": true,
+      "revision_label_command": "416342fa5bea836e6a062549b87c2706f53ce45e",
+      "smoke_command": [
+        "C:\\Program Files\\RedHat\\Podman\\podman.EXE",
+        "run",
+        "--rm",
+        "--network",
+        "none",
+        "localhost/plantgeo-integration-job-executor:416342fa5bea",
+        "agri-service",
+        "--help"
+      ],
+      "smoke_output": "Usage: agri-service [OPTIONS] COMMAND [ARGS]...\n\n  PlantGeo agriculture data, forecasting, ML, and operations.\n\nOptions:\n  --help  Show this message and exit.\n\nCommands:\n  agent     Serve and exercise the location-analysis agent's bounded...\n  data      Ingest, inspect, and maintain governed data products.\n  forecast  Run evaluation-only forecast workflows.\n  ml        Train and inspect evaluation-only ML artifacts.\n  ops       Inspect and operate the service and its durable jobs.",
+      "build_summary_lines": [
+        "quality receipt verified: sha256:f4f846ee0999299813e895bc9f034807d80414e0aefa6be4f16393bde9bd6f93 over 1380 files, generated 2026-09-12T01:49:56.636278Z",
+        "[3/3] COMMIT localhost/plantgeo-integration-job-executor:416342fa5bea",
+        "Successfully tagged localhost/plantgeo-integration-job-executor:416342fa5bea"
+      ]
+    }
+  ],
+  "counts": {
+    "python_cases": 6533,
+    "python_passed": 6383,
+    "python_ordinary_skipped": 149,
+    "python_expected_failed": 1,
+    "python_failed": 0,
+    "python_errors": 0,
+    "vitest_passed": 2260,
+    "vitest_skipped": 13,
+    "vitest_files_passed": 145,
+    "vitest_files_skipped": 2,
+    "node_tooling_passed": 6,
+    "node_tooling_failed": 0,
+    "node_tooling_skipped": 0
+  },
+  "lint_scope": {
+    "reported_warnings": 1084,
+    "errors": 0,
+    "canonical_warnings": 542,
+    "retained_first_context_warnings": 542,
+    "canonical_warning_files": 26,
+    "archive_warning_files": 26,
+    "matching_locations_severities_and_normalized_messages": true,
+    "canonical_matches_first_candidate": true,
+    "correctly_disclosed_in_json_and_narrative": true,
+    "web_image_embedded_lint_warnings": 542
+  },
+  "test_scope": {
+    "typescript_root_inputs": 570,
+    "typescript_resolved_files": 2582,
+    "typescript_omc_paths": 0,
+    "vitest_root_src_only": true,
+    "tooling_explicit_script_only": true,
+    "inspection_did_not_rerun_quality_gates": true
+  },
+  "python_quality_receipt": {
+    "path": "services/agri-data-service/QUALITY_RECEIPT.json",
+    "bytes": 1014,
+    "sha256": "ac3190a42f2d04d111765cb064bd332d364808f4cb6e791b2d81b91c91f644f7",
+    "tree_digest": "sha256:f4f846ee0999299813e895bc9f034807d80414e0aefa6be4f16393bde9bd6f93",
+    "digest_file_count": 1380,
+    "generated_at": "2026-09-12T01:49:56.636278Z",
+    "contents": {
+      "checks": [
+        {
+          "command": "ruff format --check src tests scripts",
+          "duration_seconds": 0.091,
+          "name": "format",
+          "status": "pass"
+        },
+        {
+          "command": "ruff check src tests scripts",
+          "duration_seconds": 0.084,
+          "name": "lint",
+          "status": "pass"
+        },
+        {
+          "command": "mypy src scripts",
+          "duration_seconds": 2.785,
+          "name": "mypy",
+          "status": "pass"
+        },
+        {
+          "command": "pytest -q",
+          "duration_seconds": 270.469,
+          "name": "pytest",
+          "status": "pass"
+        }
+      ],
+      "digest_domain": "plantgeo.agri-data-service.quality-receipt.v2",
+      "digest_file_count": 1380,
+      "generated_at": "2026-09-12T01:49:56.636278Z",
+      "schema_version": 2,
+      "tools": {
+        "mypy": "mypy 2.3.0 (compiled: yes)",
+        "pytest": "pytest 9.1.1",
+        "python": "3.12.10",
+        "ruff": "ruff 0.15.22",
+        "uv": "uv 0.9.18 (0cee76417 2025-12-16)"
+      },
+      "tree_digest": "sha256:f4f846ee0999299813e895bc9f034807d80414e0aefa6be4f16393bde9bd6f93"
+    }
+  },
+  "source_pins": {
+    "count": 119,
+    "all_base_and_frozen_blob_pins_match": true,
+    "all_post_botanical_blob_size_and_sha256_pins_match": true,
+    "all_current_shared_source_bytes_match_tested_commit": true,
+    "all_14_named_weather_paths_and_pins_match": true,
+    "files": [
+      {
+        "path": "AGENTS.md",
+        "git_blob": "37d5cfb70c832b4012e74153f230b08aa81f5c94",
+        "mode": "100644",
+        "git_bytes": 6342,
+        "git_sha256": "378ba41560160043e4b12b260f0b536744dd36e99c7534f620f5d04b6a8923af",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "docs/lanes/weather-observations.md",
+        "git_blob": "6c3f957c907f50456dea6d2d8cc0bd5a779e24a1",
+        "mode": "100644",
+        "git_bytes": 27308,
+        "git_sha256": "7926da5c2f3f69689e357114ee81900efb9209157b12065fbd8e3a951f26e04a",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "docs/layer-lane-standard.md",
+        "git_blob": "e1d1eff517f0769a5e25eea7947ffab1a623afd8",
+        "mode": "100644",
+        "git_bytes": 19519,
+        "git_sha256": "d42ec69d4a820406e3f7fdfe49b72d9f145b63f85059619d840943c432be0323",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "drizzle/0000_baseline.sql",
+        "git_blob": "603e66199d1a789f014a48e3781d5a2b6aaf08e6",
+        "mode": "100644",
+        "git_bytes": 125325,
+        "git_sha256": "4b32cc4a272b3207301a80dcea8a8f19cead6d452526a1eb070fe6cbdfd9ca1c",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "infra/martin/martin.yaml",
+        "git_blob": "ea13d193e81fd20608c3bdf3eb21923da96772fe",
+        "mode": "100644",
+        "git_bytes": 4457,
+        "git_sha256": "84e5810050cb6e916a6aa269b274b8520e268e01b905e452bfdac45ae626faf9",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/agent/AGENTS.md",
+        "git_blob": "5e3f96a14cf29469c5882f00accbfb997306f93c",
+        "mode": "100644",
+        "git_bytes": 51237,
+        "git_sha256": "1d1404b84be5600bd656a2feef55283807105f41981e238dee8c639f11eabde3",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/agent/graph.py",
+        "git_blob": "eb7171fa528e73eeaed0f2f410160f22c4b0a672",
+        "mode": "100644",
+        "git_bytes": 19603,
+        "git_sha256": "c758aaeb6bb5dfb5f639c0ab99c23afe2eaf40ced3a730a490dea4afa6176303",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/agent/llm.py",
+        "git_blob": "ee1ea2f3ae9f046fde243e9fd76a58683664d335",
+        "mode": "100644",
+        "git_bytes": 12271,
+        "git_sha256": "81e473fcba07f33f0255d56bf2f607b25e511ee05cc4685d00bb06869cf90246",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/agent/mcp_server.py",
+        "git_blob": "5e0faccc57f56fd053f560023e54d110a2a60e20",
+        "mode": "100644",
+        "git_bytes": 11944,
+        "git_sha256": "c08c0295cc25b08aa49651876fc453ee17fcce3942e5ad6d2bae051c3a1c7150",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/agent/prompts.py",
+        "git_blob": "eb3c4821e3952e54cfc44534b2fa9d9ca5c8b66d",
+        "mode": "100644",
+        "git_bytes": 8557,
+        "git_sha256": "881a38e530dad770741698d6a20557b456fbd1c9eb75b99e51f69ae3ccbb8073",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/agent/tools.py",
+        "git_blob": "bd557339209d27df2877c00460b710732849015c",
+        "mode": "100644",
+        "git_bytes": 106760,
+        "git_sha256": "6fcbc6e7698f03cde7f2017f5533747048ba82b6d977825a3405153b85a304d2",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/AGENTS.md",
+        "git_blob": "e84070835c60d927e84e84186dabc11a9a00be0b",
+        "mode": "100644",
+        "git_bytes": 749,
+        "git_sha256": "539bcfd645fd062611bd01e5d0e3e84c562c911a95671cc5a0c660015e85a1e0",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/app.py",
+        "git_blob": "8a81d77438e9ef71341b12387bbc1f20fa26d0d0",
+        "mode": "100644",
+        "git_bytes": 4744,
+        "git_sha256": "2e5f341b1793ed5f41d4bd4bd78a535911381598ff3622e75387a8d53952c8dd",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/execution/AGENTS.md",
+        "git_blob": "5985923a2fe31d0cfcfb80ac41c635e4b144eb95",
+        "mode": "100644",
+        "git_bytes": 162898,
+        "git_sha256": "9042aa3fd8c6e7f53234eb80e27e1396c5951118c972ff0ff3e41fd7e4668e48",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/execution/job_executor_service.py",
+        "git_blob": "9f664a0d0c5976db23f44102e89c997d76dccf87",
+        "mode": "100644",
+        "git_bytes": 105948,
+        "git_sha256": "18112122c430ca23089d8d644d0ab65b48c845caf5cfc5c6665ddd89b569fbb0",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/execution/weather_observations/AGENTS.md",
+        "git_blob": "1adf52e997f67999a9b294edeb7ff1a5b82429da",
+        "mode": "100644",
+        "git_bytes": 4232,
+        "git_sha256": "d47d7d10ddafb74a05f29fb434d05bd623d3c4cde09ade4a362c2800aa08f945",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/ingest/open_meteo.py",
+        "git_blob": "3fdadc1a701cdcf37a91cc72cfad533db46fa901",
+        "mode": "100644",
+        "git_bytes": 16914,
+        "git_sha256": "0509a448eb52ab54d36a715fa5fb19f65be19f1069469e7de868222275fa6e91",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/interface/AGENTS.md",
+        "git_blob": "6fbc46a1f3a3f0e3f6b0189cf29e335e1559f736",
+        "mode": "100644",
+        "git_bytes": 682,
+        "git_sha256": "b2f3d42ae32dec7f5367653aaa31d1930d19274b048fb0177ab562cc3b2a1b0a",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/interface/cli/_registry.py",
+        "git_blob": "9ed911af65c0d44774e91341752e985e6d38bdea",
+        "mode": "100644",
+        "git_bytes": 481,
+        "git_sha256": "09b32207db3dfb92cc9d865ebea03da3fc1686c76cf6f109d13a088cff07ac40",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/interface/cli/AGENTS.md",
+        "git_blob": "e623cb1f3ada2fcd7195b6b1b6382675a73a29c8",
+        "mode": "100644",
+        "git_bytes": 3695,
+        "git_sha256": "43d680927ea67fa859b4d47594c82f5e90beca85eb4ab4161eee742204635465",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/interface/http/__init__.py",
+        "git_blob": "27666c30336e69b8acb5330f81efaaee67698b80",
+        "mode": "100644",
+        "git_bytes": 306,
+        "git_sha256": "ba342e3ed2b3f22f9cf41e5ec6bd067e860dae4ec079afc31f4b70f34d95d428",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/interface/http/AGENTS.md",
+        "git_blob": "36e58686dd87b28061ce2c07971685d953e66c88",
+        "mode": "100644",
+        "git_bytes": 2854,
+        "git_sha256": "6d7840f74a774e6c0569399e7bb9ffffe5a794741e63068d74dbed98dac743bc",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/interface/http/parquet_routes.py",
+        "git_blob": "6fc82832b3e45ecb2d7532965b75994cbcbc9153",
+        "mode": "100644",
+        "git_bytes": 14436,
+        "git_sha256": "e46b91e012207a0988af2f94062424ca946926a87109e9f20859d1ec69acc847",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/jobs/registry.py",
+        "git_blob": "f58e62196245618c0877a4ef8b70900ac5ca0449",
+        "mode": "100644",
+        "git_bytes": 18850,
+        "git_sha256": "c2d0b93e8900c95d8e14992725857767726409c21135548346f2fc4093bdf193",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/pipeline/AGENTS.md",
+        "git_blob": "f40f6b5dfdc2cdb02f27b1dec26c8b3f521d7515",
+        "mode": "100644",
+        "git_bytes": 2014,
+        "git_sha256": "42374bda9009bd78c1e33f5fdedfaf074e523fe7eace1f96d0e48b1c5dc94557",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/__init__.py",
+        "git_blob": "46e91319f543fd76e828bc95bc6c5a316ab80cd8",
+        "mode": "100644",
+        "git_bytes": 22378,
+        "git_sha256": "7d5c8a18e320b12ca797824b5edcf32672830bd0a48f9b8553e4f5287cd59532",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/AGENTS.md",
+        "git_blob": "2d6f340b416b9b97030ea7c9ae4cf55eac03a520",
+        "mode": "100644",
+        "git_bytes": 114252,
+        "git_sha256": "c45df06b81b38926151995a9b66c5cff4f1ea786b792d09ea9dabec042d41e63",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/weather_observations/__init__.py",
+        "git_blob": "73b84ec476946a2d8bddba274ab2e30b3c2e0623",
+        "mode": "100644",
+        "git_bytes": 757,
+        "git_sha256": "2c20edb2f77028ea3d9d583a3d9e1f8b26a562a0b199e5448d408d47551dc897",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/weather_observations/__main__.py",
+        "git_blob": "ec72741355083f60c2d5d49a17c1ab18e9b2767f",
+        "mode": "100644",
+        "git_bytes": 293,
+        "git_sha256": "461c807e973c70c2e15ed02a783104329d275ae10b6c1b1389d37f0d4760de92",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/weather_observations/adapter.py",
+        "git_blob": "78131042d317ee2d478f5d597d238fd29bf79676",
+        "mode": "100644",
+        "git_bytes": 9242,
+        "git_sha256": "6274add08ec63cfb8c5959ce7f44538260731d31c9ed07e9ea7c42df37ff8285",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/weather_observations/forward.py",
+        "git_blob": "edba5b918f1374af81293315f64d28ba5302062c",
+        "mode": "100644",
+        "git_bytes": 29199,
+        "git_sha256": "3a5d9496862d246e375b37a93ed3804cc1a485ce9044225adba65e1c5e609530",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/weather_observations/parity.py",
+        "git_blob": "67405e709a155a1dc01da181406cfedd7768e575",
+        "mode": "100644",
+        "git_bytes": 7917,
+        "git_sha256": "6c9642bde28d08ee180cafc9ab9c58ea0bc2f758081bd821ff99997d07848f77",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/weather_observations/rows.py",
+        "git_blob": "18cf9c859186ff783e58f3f8ef225ca7e4a5971a",
+        "mode": "100644",
+        "git_bytes": 8579,
+        "git_sha256": "696aef3c2557891fe1bdb283ee579ef93ef6a2f3097ffb94d029844f090527ec",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/weather_observations/source.py",
+        "git_blob": "569b8020e9fa84cc38d4f3d24ee387c961e00a61",
+        "mode": "100644",
+        "git_bytes": 3438,
+        "git_sha256": "2b2a8d5a5b644cfc1c47a94a2e82134e4a3bb50a2df010d9e7c99f341020ffe6",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/weather_observations/support.py",
+        "git_blob": "8d81bf1d939f939fb5a8bb4d992f8d7c41387e39",
+        "mode": "100644",
+        "git_bytes": 2064,
+        "git_sha256": "ff291bd0a348f83083cf667008fd09f91b22424622fe57f815f8aacf787b1726",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/pipeline/parquet/AGENTS.md",
+        "git_blob": "822f04249a65d0a880eea0f76ad71594dcf7507d",
+        "mode": "100644",
+        "git_bytes": 101026,
+        "git_sha256": "376f4c6381ac24923b9d85ec73143577fa1eaea97059fa3e231b2d5b46b82f66",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/pipeline/parquet/lane_registry.py",
+        "git_blob": "f6c237f36b23fe25e61a7284dc800afb9589b3b9",
+        "mode": "100644",
+        "git_bytes": 76651,
+        "git_sha256": "bba473d5a10b4764f65e8279771591738f0df7d60fc7eb806163c01688760d6f",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/planes/AGENTS.md",
+        "git_blob": "bc1265cdaa5180883507db736bf751e738a6f7eb",
+        "mode": "100644",
+        "git_bytes": 3405,
+        "git_sha256": "9c4a61c4ca8bb13d733603e431e8e3d56a4a427b4b3a9ed43aaa74896ebec8ce",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/routes/__init__.py",
+        "git_blob": "8cdeff7cb5c7fae90860a9f025199fb5f7389c7a",
+        "mode": "100644",
+        "git_bytes": 1147,
+        "git_sha256": "f66979a0cee1997d626a546ec0017789dab934fe19eaaa7f310f06ca29f6af47",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/routes/agent_analysis.py",
+        "git_blob": "50fcfc96e419ec12f62ba314421ac1b93145c269",
+        "mode": "100644",
+        "git_bytes": 4731,
+        "git_sha256": "c70a73ec15a45454d61566e32f7fb06d63c4f366c232e59b924dccae262c7cd8",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/warehouse/schemas/AGENTS.md",
+        "git_blob": "edc9b1815b56faf3151d834a0d62f625c90e63b2",
+        "mode": "100644",
+        "git_bytes": 4731,
+        "git_sha256": "892086123ea3209e09696632430588929548fbb1ac0d864d1fccd37e73294373",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/warehouse/schemas/weather_observations.py",
+        "git_blob": "551562a36ef6e235a6de618a8727832735f12852",
+        "mode": "100644",
+        "git_bytes": 10601,
+        "git_sha256": "8c6f669073877e593bba25cf4fec37104ff8e01c54bd9da2ae92b2e5ffd1db08",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "services/agri-data-service/tests/parquet/test_lane_registry.py",
+        "git_blob": "04e7740c18b70725c688964f962375033655e5cc",
+        "mode": "100644",
+        "git_bytes": 49047,
+        "git_sha256": "6ed82127b1425fc18c6f43dc3b6315b71a79af2f86b39cfb6acc0d6b69b5b94d",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "services/agri-data-service/tests/test_job_executor_service.py",
+        "git_blob": "d893f4c40ea84defce31c7343f34f9c9a543dcfd",
+        "mode": "100644",
+        "git_bytes": 120777,
+        "git_sha256": "a19df7961c13d585a5d093148b3666ab33ad226884b76807d76d5080263fa69e",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/__tests__/api/interventions-trpc.test.ts",
+        "git_blob": "e08f8231629afbcddfe610a31b3b918d10995e9f",
+        "mode": "100644",
+        "git_bytes": 3979,
+        "git_sha256": "0a12be2dbe18607af92f01b528d1bb9fd1402a86a3fe79f0a494c1e68fbe58cf",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/__tests__/components/LayerManager.test.tsx",
+        "git_blob": "cf28267299e64c34402094890e6cd0a52774e9bb",
+        "mode": "100644",
+        "git_bytes": 105088,
+        "git_sha256": "4f9f789335173aef5f510bf837cd4ab314beed2c6022e2d3b9e9453a8d526d01",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/__tests__/components/LayerRow.test.tsx",
+        "git_blob": "b8e2a04449bb4cad36951323fb049e6e62c77e06",
+        "mode": "100644",
+        "git_bytes": 36249,
+        "git_sha256": "58d65bc16cd21890a7f11f404a6c28c853a3b30aad5138dbc2bcd37db817c486",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/__tests__/components/LayerTimeSlider.test.tsx",
+        "git_blob": "de0da79ef11cb8637c28516d4aac1244802017f2",
+        "mode": "100644",
+        "git_bytes": 65923,
+        "git_sha256": "dd287f883a0304351be75dd0a11d6716dbdd8740aea3f56c0aa88d454034c1c7",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/__tests__/lib/offline/tile-cache.test.ts",
+        "git_blob": "2a994b7086bce8721a96d686bb5e8124b0e9e563",
+        "mode": "100644",
+        "git_bytes": 1017,
+        "git_sha256": "e7e6819d860a11e481f758ce8f2522990e650a969ee99552b39f4720de2ce6ef",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/__tests__/services/parquet-slider-capabilities.test.ts",
+        "git_blob": "16a7068718e256ae6b6c48549ae693de29e19d27",
+        "mode": "100644",
+        "git_bytes": 58779,
+        "git_sha256": "281f121d59ec04a835141f9b84b2d3059f64a7c0ff65ccf89e054e085c2f4ceb",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/__tests__/trpc/interventions.test.ts",
+        "git_blob": "84cc67b3d4dd6d4a3b02d04908de7dfd17fd5696",
+        "mode": "100644",
+        "git_bytes": 9587,
+        "git_sha256": "8e9ab958b3342bcbe4fe1a8e79aa4715d32dab8b07dcf0652bee22272b146fa1",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/__tests__/trpc/wildfire-cancellation.test.ts",
+        "git_blob": "f5b8054df87a271fed03866ac4ec4b576450e8cd",
+        "mode": "100644",
+        "git_bytes": 5367,
+        "git_sha256": "237c684559de07a8e138a267d56da395646a95a7da1497b197ef2847148c928f",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/app/api/ai/regional-intelligence/route.ts",
+        "git_blob": "1b8b8ef2bd2be323e40acefacbc56771dbb5c097",
+        "mode": "100644",
+        "git_bytes": 11157,
+        "git_sha256": "64e0c369329b210175fb6a5be5f8559869bb903df9e35822c2c585df497506ac",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/app/api/ingest/interventions/route.ts",
+        "git_blob": "e03cb1226f376dde89796ea5540ed1e352b1b33c",
+        "mode": "100644",
+        "git_bytes": 2000,
+        "git_sha256": "61aa9d87dbd34cb4052fc70b6440d64c1e9692e47bf8a4d67048e01a0261575c",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/app/community/AGENTS.md",
+        "git_blob": "52df96b7c81fbc964f1a255a2b3bbf2742c3383f",
+        "mode": "100644",
+        "git_bytes": 762,
+        "git_sha256": "e6fc8a8a4f2d107dd2c868c86435de9e5a22ef341aa3c92728952329e8e202b1",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/app/community/CommunityLedger.tsx",
+        "git_blob": "06c14ecb3b818f279fb32a74baa30505e53a8e5e",
+        "mode": "100644",
+        "git_bytes": 11152,
+        "git_sha256": "6bd508a707290317390422aecc60a2b54da2fdb438241f71a75c2c221956a59e",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/app/feed/InterventionFeed.tsx",
+        "git_blob": "ddd41e04d0a28865d3520905eabbbb504eea2124",
+        "mode": "100644",
+        "git_bytes": 8859,
+        "git_sha256": "1f776f147d911a3e28fb69c189d389774edc0b39fc85ab7b5c242175a41d9c47",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/app/feed/page.tsx",
+        "git_blob": "c7d62e437a3bd36468929c158f218a4769072fc1",
+        "mode": "100644",
+        "git_bytes": 1739,
+        "git_sha256": "60c7b622dea640f93d86bbce0baf9b96077431929ae8e401e4cd42d3f1c5a6e6",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/components/map/AGENTS.md",
+        "git_blob": "7c8ba0a8a82e751f1f1eec9485db88fe58323b9c",
+        "mode": "100644",
+        "git_bytes": 122475,
+        "git_sha256": "bd7a7b36e0f770a682771c7a981cc5cd9c2eba3d59c5d792d1784e3a46f3771a",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/components/map/layer-panel/layer-coverage-track.ts",
+        "git_blob": "86289b199cf0f827e56bb7120aa2135729454082",
+        "mode": "100644",
+        "git_bytes": 31834,
+        "git_sha256": "7312a4edd98da9eab201761289b77a6e6bebeeb3857d40048f608af8bccf97f6",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/components/map/layer-panel/layer-time-state.ts",
+        "git_blob": "a8a52317b433371e8ad5c3b56713c5e05fa381ca",
+        "mode": "100644",
+        "git_bytes": 18379,
+        "git_sha256": "62d418539d2f4b0f3dfd87775e73eb97d743c1a6938af40fa4a7d6eda315573e",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/components/map/layer-panel/LayerLegend.tsx",
+        "git_blob": "d847fdfce6f1ee69e1c12b63339dcf1c0d3fe867",
+        "mode": "100644",
+        "git_bytes": 8579,
+        "git_sha256": "c45281bb91171b57cde44192ac29d6d875e92aea607d576059d1e37711475b02",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/components/map/layer-panel/LayerRow.tsx",
+        "git_blob": "18f77bba9a20a2e2572a0013d703d25756671376",
+        "mode": "100644",
+        "git_bytes": 28612,
+        "git_sha256": "c0cc6e181d5082fc8d967530eff61888f66338e490201a28c2fc16956ce45db7",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/components/map/layer-panel/LayerTimeSlider.tsx",
+        "git_blob": "07deadfcd757aeeda3c63be11e0b0c35925083d3",
+        "mode": "100644",
+        "git_bytes": 37470,
+        "git_sha256": "c9343ff158aacd9d1ec7b8690541c9fff4c9b37dd1139b46047312c19612d8a9",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/components/map/layer-panel/LegendBlockView.tsx",
+        "git_blob": "5b51d71f3fea1c8d8852966fd6fac051124aa772",
+        "mode": "100644",
+        "git_bytes": 3317,
+        "git_sha256": "9a7fd5414030168e8ffa7939bd6b1399eb044c6d78f74e37e8aad15f385ce49d",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/components/map/LayerManager.tsx",
+        "git_blob": "d05915a4657378b334a6e6b21b41c5c1503e82a4",
+        "mode": "100644",
+        "git_bytes": 61214,
+        "git_sha256": "e9d1900e0484ffe30e511e991c8f4ab8681525039fe5f2df408235466155b084",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/components/map/layers/WeatherLayer.tsx",
+        "git_blob": "ea266377cdc54fa82f47952d4a4d4f5d45c91df1",
+        "mode": "100644",
+        "git_bytes": 11831,
+        "git_sha256": "172f15f13c9aded2a1ab79fc479055fbc9520ee7b282e76bbc0333a7b4ce8800",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/components/map/MapDateSummary.tsx",
+        "git_blob": "4738111b34379af347b1e7da9a57d4f1dd5a562e",
+        "mode": "100644",
+        "git_bytes": 20487,
+        "git_sha256": "8ef9280c1766fb5e477b78ad05edd7dec5a3a38fedcabfafb4e438ea14bb8df9",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/components/map/MapView.tsx",
+        "git_blob": "5355ec7751bafe589aa9e012b3c9557d17063fdd",
+        "mode": "100644",
+        "git_bytes": 18622,
+        "git_sha256": "f4e02f022adb6100e6707da840b98dead276c93a8bcdf5716f457a1f43f78000",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/components/map/TimeSliderCapabilitiesLoader.tsx",
+        "git_blob": "a0b978e353986ce914c18002a4bc310f1f371cf3",
+        "mode": "100644",
+        "git_bytes": 7022,
+        "git_sha256": "c619977d0024f1b5096af3c9e5520c7c7dba42410856ded0fda70c2ce028bd3a",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/components/panels/AGENTS.md",
+        "git_blob": "ecd1fc2634494734476482cc2e2d0c8ba30814ca",
+        "mode": "100644",
+        "git_bytes": 11475,
+        "git_sha256": "22317dcc3379510e0ad67a7ecfe0a29f51cec7c5b8d863bc5db1a4bb0b548fb9",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/components/panels/CommunityDetails.tsx",
+        "git_blob": "f67cff61cd579e08286eefa9200e5f0de4919a27",
+        "mode": "100644",
+        "git_bytes": 14143,
+        "git_sha256": "af2ff309c28a46a04ca0adce247f8383f51c1aa184c30c2c83309495e942987e",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/components/panels/ContributionQueue.tsx",
+        "git_blob": "726ba4c4003e0f93de3f47d89e7323c1549f17d1",
+        "mode": "100644",
+        "git_bytes": 8007,
+        "git_sha256": "7c0544e0a631e505353172718b70fa344048caf822d85aa428a00d1a984581fc",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/components/panels/FireDetails.tsx",
+        "git_blob": "8f394b62ed0f59485e73cef9c71999eafacd5c87",
+        "mode": "100644",
+        "git_bytes": 10998,
+        "git_sha256": "212b1e7662101801c28774449d51442584e94887f682e90ef86b8ccfd4202435",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/components/panels/InterventionSubmitModal.tsx",
+        "git_blob": "1dcba435144656ba18532e3147feb67ef3fa0a84",
+        "mode": "100644",
+        "git_bytes": 8819,
+        "git_sha256": "d6bc85297a113b9123105772968d4c0d839ee084b5781521530254392638c271",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/components/panels/ModerationPanel.tsx",
+        "git_blob": "62c513c56a652d5cdbc51d64cd08b33ee76ce2a0",
+        "mode": "100644",
+        "git_bytes": 7777,
+        "git_sha256": "1610c08215f75960ab7b7654a646fbe36bf0553ad5da38377398e90e30e51c9a",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/components/panels/OfflinePanel.tsx",
+        "git_blob": "a034031d9db5edb28def6f273e2e6f681ec8fe01",
+        "mode": "100644",
+        "git_bytes": 7605,
+        "git_sha256": "ce0003cf280137d4eba3cb134deadd53f01146424dbb2b62219a247ffb6a711e",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/hooks/AGENTS.md",
+        "git_blob": "b6d3c20d79d923057729f7dd56acbb1fba59dc97",
+        "mode": "100644",
+        "git_bytes": 10051,
+        "git_sha256": "6f7a4a9e9227febe5e1d190155371f8bb337c0787c922177c195531eaea599b3",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/lib/cache/AGENTS.md",
+        "git_blob": "2a9203ab2fa9ed946ce58f81d076637813570ddc",
+        "mode": "100644",
+        "git_bytes": 32531,
+        "git_sha256": "f17448a33b65115968e508ba08548dc0e7f601ba0ee6eeccd71ea2d72b2303e4",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/lib/cache/layer-cache-policy.ts",
+        "git_blob": "6c34ded444e9571056f2cb0dd895a4dfc21b11e6",
+        "mode": "100644",
+        "git_bytes": 13989,
+        "git_sha256": "ffc56bd02ba1d8eadaa03771c7cecbcf1cf2ffbdc4a086bcaba42eb98d378958",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/lib/cache/query-persister.ts",
+        "git_blob": "8950627b7ffa257af62de349f7431a947e91aac1",
+        "mode": "100644",
+        "git_bytes": 55734,
+        "git_sha256": "678f37a3a3993711aca3cb5d7f1bd52bb8c791d4c7c415a1d280588ddfa6e2c8",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/lib/environmental/AGENTS.md",
+        "git_blob": "f3d6058f766a702f85f70c58b6011374c0396607",
+        "mode": "100644",
+        "git_bytes": 10471,
+        "git_sha256": "bdee089baa50f996eccd0535ad1eb7211dcbaf5bf873d382fc66f421caf7d92a",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/lib/environmental/intervention.ts",
+        "git_blob": "61bb1fefad6c63515db119a1b8e112eb6ca08109",
+        "mode": "100644",
+        "git_bytes": 279,
+        "git_sha256": "4e9ebb85cab0c001fd5e0557db8d1e5eb4c93ab308199685ffca9c26f333653c",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/lib/environmental/parquet-presentation.ts",
+        "git_blob": "d60517557cbbcb79cd29e71c51e151cb54c40171",
+        "mode": "100644",
+        "git_bytes": 25070,
+        "git_sha256": "1264a7308f8da988ca1ab198a58cf0573b42011bc7265f03373635be1ed5b85d",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/lib/map/AGENTS.md",
+        "git_blob": "d0b70e5174428db6fb180a77b55a4dc691c4b1c6",
+        "mode": "100644",
+        "git_bytes": 31580,
+        "git_sha256": "3d4c7a2df17576b78b27084a55b423fc0e8dd92348d552cdd7831d48bd5a85a5",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/lib/map/drawing.ts",
+        "git_blob": "1ae4a00531affcd3caa58a80fb22db847fa4002f",
+        "mode": "100644",
+        "git_bytes": 10111,
+        "git_sha256": "edf560b611e8f49b04d9180b56714109692ee16c15fead1120566419addb48ff",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/lib/map/hover-fields.ts",
+        "git_blob": "a0e7694c9f5736d70778063007fb9fd670916228",
+        "mode": "100644",
+        "git_bytes": 27204,
+        "git_sha256": "4c05d159926b32ce57d0823cc9fda04b9b77a5260738cfed8950ed0f012709ab",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/lib/map/layer-legends.ts",
+        "git_blob": "d1ca83ac0b690cc1402316b6adeb8eb2f01c5c2c",
+        "mode": "100644",
+        "git_bytes": 24719,
+        "git_sha256": "0dca291e19656085866a41ffaef61133d9cfb23d4deca2683bd8c54ca95c22c4",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/lib/map/layer-publication-standing.ts",
+        "git_blob": "fbfa140a6ab1112391135a5cc874f214cbb9c775",
+        "mode": "100644",
+        "git_bytes": 2813,
+        "git_sha256": "0ae03805739e8bb441ee53d6eef252629c6cd3f32f3a12dfc3dfc66f94f4f455",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/lib/map/layer-registry.ts",
+        "git_blob": "fde30ea0fa42f030aa84642b7f5cc6bce0a26c6d",
+        "mode": "100644",
+        "git_bytes": 25434,
+        "git_sha256": "f8d5adbcaf8d694d120100016d555b9fe4a33d55eac86cdd4cb67ebe1a576c5e",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/lib/map/layer-render-contract.ts",
+        "git_blob": "5f9a6859eed799226bf1aa0055d404f759364ee5",
+        "mode": "100644",
+        "git_bytes": 29732,
+        "git_sha256": "95a8227f036fd80a66caffa1c35a908a2990f523b0b2b75cbe7d8399e6e6c7e0",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/lib/map/layer-toggle-context.ts",
+        "git_blob": "ec4749e895f1a76cc3abdd2e84bf83f5c84ff8ba",
+        "mode": "100644",
+        "git_bytes": 28745,
+        "git_sha256": "b281fb860b3e018385bb96cb2dab8974dc851843e437af836500d768927aae33",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/lib/map/layers.ts",
+        "git_blob": "b14db624194d061ad3ee4b1ec96b79abad9666e6",
+        "mode": "100644",
+        "git_bytes": 26954,
+        "git_sha256": "05b5148631473bd24228680080fb6d5fe89d5e490ff904b50c6faa111d71bb82",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/lib/map/sources.ts",
+        "git_blob": "8cf115dd03f18d5cfa865b3685dad694c77fd093",
+        "mode": "100644",
+        "git_bytes": 9966,
+        "git_sha256": "40530d534bbe2c90741e234b82d0bb546ea561ffbdedfb2e8c67446d7a3b49a6",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/lib/map/styles.ts",
+        "git_blob": "1a445362a61fb42c723354cbb8f21ee19ce0e518",
+        "mode": "100644",
+        "git_bytes": 11518,
+        "git_sha256": "154e61c8ae0b9677dc7200f1efc877360dc14b30245e3d76aba5e7d3bc5647fe",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/lib/net/AGENTS.md",
+        "git_blob": "6c8983e71c5c428a033f7e5a5b3f61943aa74fc9",
+        "mode": "100644",
+        "git_bytes": 15990,
+        "git_sha256": "1c53062a5ed0e279ba4d09d74510f4efaf8a3a2e3241caad1eee586c31b2513c",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/lib/offline/tile-cache.ts",
+        "git_blob": "6a6b2ff8b2bb76d88f6280a6876100c8391179b9",
+        "mode": "100644",
+        "git_bytes": 7005,
+        "git_sha256": "6dfaed19a2737567c44751ccc7c61874eaa82f3eb3631e3832b8922451e23eb1",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/lib/server/AGENTS.md",
+        "git_blob": "c611969bf345acd4322228b75f5b0f791515c34b",
+        "mode": "100644",
+        "git_bytes": 97246,
+        "git_sha256": "28d32f0d2f81f5f9de09b2a3c37db81685da3cd1c3b7d893529f28997cecf5c0",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/lib/server/db/AGENTS.md",
+        "git_blob": "4268093967be5ec639939044017a477c34932817",
+        "mode": "100644",
+        "git_bytes": 32899,
+        "git_sha256": "e05953f7693f912696f52b6befa769f2b30476e95f8805fb1df3a10f40ab3ac8",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/lib/server/db/schema.ts",
+        "git_blob": "a3d6a163bcfd15ad1bbb0a4030e48e6f278196f8",
+        "mode": "100644",
+        "git_bytes": 32829,
+        "git_sha256": "33139720141ecaf9bc330a2eb69475652e0e38cec6aa245c1cdc49f7c3150916",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/lib/server/services/AGENTS.md",
+        "git_blob": "4d27138d460a0ef0e45ec3ee981003b97f9d7c74",
+        "mode": "100644",
+        "git_bytes": 52292,
+        "git_sha256": "c90dad9dfbabe853a24a37c3c4a0ae984a2aacd7115f5d93a105b0f121e0e118",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/lib/server/services/carbon-potential.ts",
+        "git_blob": "e62dabb18e269f03de76c76921b796a4d690fce2",
+        "mode": "100644",
+        "git_bytes": 1207,
+        "git_sha256": "af67b77f57f1a9439c3239a4e27bcf60a81f99d0cbc4820c643d91e25fb24c1c",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/lib/server/services/environmental-read-model.ts",
+        "git_blob": "cf631909d80609418022e52832bea05f6744ed2b",
+        "mode": "100644",
+        "git_bytes": 170513,
+        "git_sha256": "73bf419e0156ff96199e1cd9624948ba2048947dbd84c810bb6978b40ce40661",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/lib/server/services/intervention-geometry.ts",
+        "git_blob": "a5a22d8ddc1bb6b62d8e52415d82f2e9a2cc2563",
+        "mode": "100644",
+        "git_bytes": 2873,
+        "git_sha256": "6a1d95159e20a551fb1bac2ad22b1149606b77eeaa00449fce778b51e3d0ae22",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/lib/server/services/parquet-context-readers.ts",
+        "git_blob": "a0c7d3e1a5723e9463c061b2597e841495ffd46a",
+        "mode": "100644",
+        "git_bytes": 6321,
+        "git_sha256": "184d93c4226b8dcac06200a90cbbddbb158027c9a697924184378e5cd28e18e9",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/lib/server/services/parquet-plane-client.ts",
+        "git_blob": "75dd2beca3f58aebadc95afbbb0c50607c4cc348",
+        "mode": "100644",
+        "git_bytes": 39375,
+        "git_sha256": "cad1d3267eb3dfe90f74410618a9392880f0ba960e0909d4a1c965a4daaa02a1",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/lib/server/services/parquet-slider-capabilities.ts",
+        "git_blob": "9ac96ca71fc03888ad696758673cec1839f29290",
+        "mode": "100644",
+        "git_bytes": 42437,
+        "git_sha256": "aaf2cb3d21c0ae8e36c5fe30bb401acb93493f4c0a14bf0c87ffe6cbc9ca27e5",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/lib/server/services/parquet-trpc-readers.ts",
+        "git_blob": "a1141939e66840bccf08fa119236526ca97892c4",
+        "mode": "100644",
+        "git_bytes": 99081,
+        "git_sha256": "060fc84c08315e8089bea8278257dbbc8e9e5a4fad529ce5ff4d806338b5336e",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/lib/server/services/regional-context.ts",
+        "git_blob": "34550aea8f2ef5875fa0fd2a8631b58f122d7844",
+        "mode": "100644",
+        "git_bytes": 59826,
+        "git_sha256": "ffb422c7d3780cc44c97bf526a46d152c4e5e29538235d08b8c59aaa7279931d",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/lib/server/services/regional-temporal-neighbors.ts",
+        "git_blob": "12400ad2d3a3701817f8d911b853b2153ef5abb7",
+        "mode": "100644",
+        "git_bytes": 14089,
+        "git_sha256": "7944bcb395b298f5b79faa65705d13707a14f65598dfe382ae45df05c827adce",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/lib/server/services/weather.ts",
+        "git_blob": "6b2adf61abd0135e87e3fb6dd7dff6daf5853be8",
+        "mode": "100644",
+        "git_bytes": 2582,
+        "git_sha256": "5bac2987a71fe25bb6d76989e43b53348917080839fc663eaa7df9f318a21e2a",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/lib/server/trpc/router.ts",
+        "git_blob": "f6731e7417ff4ee32f4e4946c3b05753e8838ff0",
+        "mode": "100644",
+        "git_bytes": 1905,
+        "git_sha256": "e903dcb8935a886571e0cfa9438199024aa0d9080d93849c96117c7018d743c4",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/lib/server/trpc/routers/contributions.ts",
+        "git_blob": "3cfe45ae66068aefdaa46fb328a183efbcac09be",
+        "mode": "100644",
+        "git_bytes": 4815,
+        "git_sha256": "4f8ca81ab1cd6a26f0ab87caf9d807b0f84b9d4b2f0ee04d54975d0b7294195e",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/lib/server/trpc/routers/environmental.ts",
+        "git_blob": "bf3e742fa63242fe5d16505119419034ff6a7395",
+        "mode": "100644",
+        "git_bytes": 30435,
+        "git_sha256": "8af4b155ec4072885f8a88157f3f36f6e3f6382eb834548274015688ac381a62",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/lib/server/trpc/routers/interventions.ts",
+        "git_blob": "9b4c12d862af58a155e9248d623f53cd455aa777",
+        "mode": "100644",
+        "git_bytes": 15993,
+        "git_sha256": "f1c8c8199266dfdcd975a682c746aca215971fd69dfc55f449d2685a23809a04",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/lib/server/trpc/routers/wildfire.ts",
+        "git_blob": "77bd6f0a29f81a2de98f28c7cbb383729d104587",
+        "mode": "100644",
+        "git_bytes": 8908,
+        "git_sha256": "393b0807748f88430d2039615b17b7c7ae3a3b86daa2ecdda8fe1ac14d4da928",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/stores/time-slider-store.ts",
+        "git_blob": "e3acc95a82181ecda1eb1d2a4b3b4d5aa223dca6",
+        "mode": "100644",
+        "git_bytes": 24155,
+        "git_sha256": "d926ce7e15cb30574f0674b206c67c7acc204e55604354fc3e0a34516880763d",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/stores/useMetricAtDate.ts",
+        "git_blob": "994dcd971d726779a8e7ee35dea831f01c1898e6",
+        "mode": "100644",
+        "git_bytes": 24700,
+        "git_sha256": "dff215d513f3a640ded8afcab6cf1fda6a6c6a8b0bddd4b58af596950ea24f63",
+        "working_matches_tested_source": true
+      },
+      {
+        "path": "src/types/time-slider.ts",
+        "git_blob": "793a683ce9060113e5def13e4fde37b04803a6d1",
+        "mode": "100644",
+        "git_bytes": 16596,
+        "git_sha256": "cf61195c9087211c7288aafafe7ba24af27447ef433eda158af421565867bab6",
+        "working_matches_tested_source": true
+      }
+    ],
+    "weather_paths": [
+      "src/lib/map/layer-registry.ts",
+      "src/components/map/LayerManager.tsx",
+      "src/components/map/layer-panel/LayerTimeSlider.tsx",
+      "src/lib/map/layer-render-contract.ts",
+      "src/lib/map/layer-legends.ts",
+      "src/lib/server/services/parquet-slider-capabilities.ts",
+      "src/lib/server/trpc/routers/wildfire.ts",
+      "services/agri-data-service/src/agri_data_service/app.py",
+      "services/agri-data-service/src/agri_data_service/agent/graph.py",
+      "services/agri-data-service/src/agri_data_service/agent/tools.py",
+      "services/agri-data-service/src/agri_data_service/agent/mcp_server.py",
+      "services/agri-data-service/src/agri_data_service/agent/prompts.py",
+      "services/agri-data-service/src/agri_data_service/pipeline/parquet/lane_registry.py",
+      "services/agri-data-service/src/agri_data_service/execution/job_executor_service.py"
+    ]
+  },
+  "document_checks": {
+    "json_parse": "PASS",
+    "markdown_okf_type": "verification",
+    "all_six_local_markdown_links_resolve": true,
+    "links": [
+      "combined-validation-botanical-20260911.json",
+      "validation-botanical-20260911/verification-scope-review.json.gz",
+      "validation-botanical-20260911/botanical-final-gates-check.json.gz",
+      "validation-botanical-20260911/qa-planning-intake-review.json.gz",
+      "combined-validation-20260911.json",
+      "shared-source-handoff-20260911.json"
+    ],
+    "qa_seven_document_delta": {
+      "files": 7,
+      "insertions": 390,
+      "deletions": 0,
+      "runtime_changes": 0
+    },
+    "first_candidate_receipt_unchanged_from_9b46e86": true,
+    "prior_wrapper_stop_and_continuation_preserved": true
+  },
+  "ownership_and_release_scope": {
+    "baseline": "Post-botanical, pre-intervention tested source only",
+    "shared_transfer_released": false,
+    "intervention_reservation": "Candidate 2fc6b30ac1b024e1c955dbf95552495608608a96; MapView two-line mount and intervention routers/components. Do not apply its retained MapView patch twice.",
+    "semantic_notes": [
+      "Canonical ingest/http.py already preserves bounded Retry-After in BoundedResponse.retry_after; the weather owner must consume it and preserve durable cooldown behavior.",
+      "Preserve the exact 2025-04-28 selected-day gap and delayed-result regression, truthful prior-frame dates, and the independent fire clock.",
+      "Current weather observations remain horizon 0 with distinct source identity; future forecast history is not a relabeling of poll observations.",
+      "Preserve botanical registrations and explicit refusal/unknown distinctions; four-taxon WCVP remains an unaccepted local candidate."
+    ],
+    "next_step": "Preserve this reviewed evidence checkpoint, then separately review queued documentation and intervention intake. Weather receives a newer exact canonical base after that intervention review; its implementation is not included in this tested source.",
+    "botanical_candidate_admitted": false,
+    "production": "HOLD"
+  },
+  "relocation_review": {
+    "path": ".omc/research/active-track-integration-20260911/completed-image-context-relocation-review.json",
+    "bytes": 3499,
+    "sha256": "9b3d67b887474451ece25c0ce3b1dcac0b99a5ff30f373a04cbf31477b6d8e4a"
+  },
+  "supporting_review_artifacts": [
+    {
+      "path": ".omc/research/active-track-integration-20260911/botanical-checkpoint-packet-pin-check.json",
+      "bytes": 61002,
+      "sha256": "6167aafb2bd2c122ab03a6188de406fecbd6c820eddbca5e3b70d65acea405f1"
+    },
+    {
+      "path": ".omc/research/active-track-integration-20260911/botanical-final-gates-check.json",
+      "bytes": 10173,
+      "sha256": "7ceb293c6dcf0d95ff161c680c1e055bcfdb686c66b68a5b41e41f0f86098b5c"
+    },
+    {
+      "path": ".omc/research/active-track-integration-20260911/verification-scope-review.json",
+      "bytes": 20757,
+      "sha256": "c656d1dc7ca090449c9a179ee726b6acc06c4ee9dbec9e5d04cbe29f1aeab54d"
+    },
+    {
+      "path": ".omc/research/active-track-integration-20260911/future-weather-intervention-runner-review.json",
+      "bytes": 2188,
+      "sha256": "226ce78dbeaf02dc4fb34030e777c88060a49e9c188710076302beb53040ef68"
+    }
+  ],
+  "excluded_actions": [
+    "No tests, lint/type command, builds, smokes or image commands executed by this evidence reviewer.",
+    "No authored packet edits, implementation/configuration changes or Git/HEAD mutation.",
+    "No context moves; root owns any later contained relocation.",
+    "No external messages, production operations, source admission or publication.",
+    "Queued QA/PNW documentation, intervention and weather candidates are outside this tested checkpoint."
+  ]
+}

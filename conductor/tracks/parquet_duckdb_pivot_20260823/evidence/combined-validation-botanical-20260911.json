@@ -1,0 +1,525 @@
+{
+  "type": "combined-validation",
+  "date": "2026-09-11",
+  "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+  "source_tree": "df12542ffa00937e0213d10c938e715849030492",
+  "started_at": "2026-09-12T01:45:11.166959+00:00",
+  "finished_at": "2026-09-12T01:58:21.644616+00:00",
+  "passed": true,
+  "database_integration": "four optional database environment variables removed",
+  "runner_sha256": "a1de0a5ab8db02fc6ff0c925e85633a713a6c8899c805b435e7d9e6a31b62645",
+  "continuation": null,
+  "continuation_error": null,
+  "checks": [
+    {
+      "name": "frontend-check-data-boundary",
+      "exit_code": 0,
+      "duration_seconds": 0.937
+    },
+    {
+      "name": "frontend-type-check",
+      "exit_code": 0,
+      "duration_seconds": 6.781
+    },
+    {
+      "name": "frontend-lint",
+      "exit_code": 0,
+      "duration_seconds": 82.938
+    },
+    {
+      "name": "frontend-test",
+      "exit_code": 0,
+      "duration_seconds": 169.578
+    },
+    {
+      "name": "python-full",
+      "exit_code": 0,
+      "duration_seconds": 286.062
+    },
+    {
+      "name": "python-receipt-verify",
+      "exit_code": 0,
+      "duration_seconds": 0.594
+    },
+    {
+      "name": "archived-source-receipt-verify",
+      "exit_code": 0,
+      "duration_seconds": 9.204
+    },
+    {
+      "name": "image-web",
+      "exit_code": 0,
+      "duration_seconds": 284.703
+    },
+    {
+      "name": "image-web-smoke",
+      "exit_code": 0,
+      "duration_seconds": 0.797
+    },
+    {
+      "name": "image-web-identity",
+      "exit_code": 0,
+      "duration_seconds": 0.437
+    },
+    {
+      "name": "image-data-service",
+      "exit_code": 0,
+      "duration_seconds": 84.64
+    },
+    {
+      "name": "image-data-service-smoke",
+      "exit_code": 0,
+      "duration_seconds": 6.516
+    },
+    {
+      "name": "image-data-service-identity",
+      "exit_code": 0,
+      "duration_seconds": 0.437
+    },
+    {
+      "name": "image-job-executor",
+      "exit_code": 0,
+      "duration_seconds": 106.344
+    },
+    {
+      "name": "image-job-executor-smoke",
+      "exit_code": 0,
+      "duration_seconds": 6.0
+    },
+    {
+      "name": "image-job-executor-identity",
+      "exit_code": 0,
+      "duration_seconds": 0.453
+    }
+  ],
+  "python_junit": {
+    "test_cases": 6533,
+    "passed": 6383,
+    "skipped_by_type": {
+      "pytest.skip": 149,
+      "pytest.xfail": 1
+    },
+    "failures": 0,
+    "errors": 0
+  },
+  "frontend_summaries": [
+    "\u2139 tests 6",
+    "\u2139 pass 6",
+    "\u2139 fail 0",
+    "\u2139 skipped 0",
+    "Test Files  145 passed | 2 skipped (147)",
+    "Tests  2260 passed | 13 skipped (2273)",
+    "Duration  164.60s (transform 4.15s, setup 2.83s, collect 49.60s, tests 20.19s, environment 211.40s, prepare 17.95s)"
+  ],
+  "python_quality_receipt": {
+    "checks": [
+      {
+        "command": "ruff format --check src tests scripts",
+        "duration_seconds": 0.091,
+        "name": "format",
+        "status": "pass"
+      },
+      {
+        "command": "ruff check src tests scripts",
+        "duration_seconds": 0.084,
+        "name": "lint",
+        "status": "pass"
+      },
+      {
+        "command": "mypy src scripts",
+        "duration_seconds": 2.785,
+        "name": "mypy",
+        "status": "pass"
+      },
+      {
+        "command": "pytest -q",
+        "duration_seconds": 270.469,
+        "name": "pytest",
+        "status": "pass"
+      }
+    ],
+    "digest_domain": "plantgeo.agri-data-service.quality-receipt.v2",
+    "digest_file_count": 1380,
+    "generated_at": "2026-09-12T01:49:56.636278Z",
+    "schema_version": 2,
+    "tools": {
+      "mypy": "mypy 2.3.0 (compiled: yes)",
+      "pytest": "pytest 9.1.1",
+      "python": "3.12.10",
+      "ruff": "ruff 0.15.22",
+      "uv": "uv 0.9.18 (0cee76417 2025-12-16)"
+    },
+    "tree_digest": "sha256:f4f846ee0999299813e895bc9f034807d80414e0aefa6be4f16393bde9bd6f93"
+  },
+  "local_image_ids": {
+    "web": "e13b01f4aab6ac3a0cd4c3c6fd3205d4740c4451574046a28545a07ab7024e30",
+    "data-service": "78a5fca94552262243679edd20b91dfde3dadcbcc86d7e395481298de92133a4",
+    "job-executor": "191e9f2f7e6e2c4e16fee7ad0b83f31d686950ba9d31bd49ee1db82a8024c0e6"
+  },
+  "production_deployment": false,
+  "retained_artifacts": [
+    {
+      "source": ".omc/verification/botanical-integrated-20260911/invocation.json",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/invocation.json.gz",
+      "bytes": 716,
+      "sha256": "e6af51afa03425ce7524d0bd759525dd079ce3a9b150d084e1873da9d759c5e7",
+      "gzip_bytes": 483,
+      "gzip_sha256": "4e027f51dc9536d73bfc8279a9033a12fe648df3fe0c513c338ed9a8209f791c"
+    },
+    {
+      "source": ".omc/verification/botanical-integrated-20260911/result.json",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/result.json.gz",
+      "bytes": 13657,
+      "sha256": "446461954ae957934c9e46583ad2de66298c1ad96e3f925d3d564f8398ae6ab7",
+      "gzip_bytes": 2309,
+      "gzip_sha256": "b9b8645ddf7812ad52591203e983bc3924e0f881f0d177f8bce7b8cc6ae9bef7"
+    },
+    {
+      "source": ".omc/verification/botanical-integrated-20260911/frontend-check-data-boundary.log",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/frontend-check-data-boundary.log.gz",
+      "bytes": 256,
+      "sha256": "7cd85c42797a9825c40dc47c5e7c8add2f0961f0af9b39ab9109f3182a10231a",
+      "gzip_bytes": 185,
+      "gzip_sha256": "d27c6c81a40186e5ec057f0dce47bdfd5371cf1a6e4f3087c3c9ac9b2e2f552c"
+    },
+    {
+      "source": ".omc/verification/botanical-integrated-20260911/frontend-type-check.log",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/frontend-type-check.log.gz",
+      "bytes": 45,
+      "sha256": "14a8d580c8ca9cbb71db2a138d653ce4622f0d23b39cc953fa285f60f58d26f5",
+      "gzip_bytes": 65,
+      "gzip_sha256": "27716c1e8c4bf6d6d8cbd90f8a906074caf8b93ed66553d7d7269e4765fad224"
+    },
+    {
+      "source": ".omc/verification/botanical-integrated-20260911/frontend-lint.log",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/frontend-lint.log.gz",
+      "bytes": 199174,
+      "sha256": "421322386ffdca3837feb49048e42d9c992dfd51aaf3d1dfbc863353f385a20c",
+      "gzip_bytes": 16998,
+      "gzip_sha256": "c004e01db4697f5b59718e3221a018171344fbeda459e751d49319f1a5cb6f6d"
+    },
+    {
+      "source": ".omc/verification/botanical-integrated-20260911/frontend-test.log",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/frontend-test.log.gz",
+      "bytes": 331392,
+      "sha256": "62482df07a67808c9c10c70ae9eee8daf4c03229e130141301f0223ebf94578a",
+      "gzip_bytes": 12872,
+      "gzip_sha256": "1754a060d508ddff3cf99f6d8f1d6af778e2bebb09ff1b44633952b4138c7e22"
+    },
+    {
+      "source": ".omc/verification/botanical-integrated-20260911/python-full.log",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/python-full.log.gz",
+      "bytes": 362,
+      "sha256": "731ec3637a9f246f1f7f46e20f44c90ea19db50d57b2f729431c8105f30addf9",
+      "gzip_bytes": 255,
+      "gzip_sha256": "eb490565fb25e26496e143f5e131aa21c7217c7492eab0e26af2449aa50898d5"
+    },
+    {
+      "source": ".omc/verification/botanical-integrated-20260911/python-receipt-verify.log",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/python-receipt-verify.log.gz",
+      "bytes": 154,
+      "sha256": "83438f3789e4d8f9636f77e3335c790a0812d7834b2a59388cfef05b3d682380",
+      "gzip_bytes": 148,
+      "gzip_sha256": "007a254d5364dbc4eddc31da3ffe3c40b57f25cd7b126137367093513464f927"
+    },
+    {
+      "source": ".omc/verification/botanical-integrated-20260911/archived-source-receipt-verify.log",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/archived-source-receipt-verify.log.gz",
+      "bytes": 154,
+      "sha256": "83438f3789e4d8f9636f77e3335c790a0812d7834b2a59388cfef05b3d682380",
+      "gzip_bytes": 148,
+      "gzip_sha256": "007a254d5364dbc4eddc31da3ffe3c40b57f25cd7b126137367093513464f927"
+    },
+    {
+      "source": ".omc/verification/botanical-integrated-20260911/image-web.log",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/image-web.log.gz",
+      "bytes": 441911,
+      "sha256": "c4e3d6bf4af0b17c96a67d683a569613dddee58715b1a4d728eab8addaa87a41",
+      "gzip_bytes": 25813,
+      "gzip_sha256": "52e939d1b6eccff6efbc426b7cc6f101bd1b879622854f206412298c668ebc3c"
+    },
+    {
+      "source": ".omc/verification/botanical-integrated-20260911/image-web-smoke.log",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/image-web-smoke.log.gz",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzip_bytes": 20,
+      "gzip_sha256": "46b50c321b39e89a491b6727a01628c34245605a30beb3e7414c5e01cff90e6e"
+    },
+    {
+      "source": ".omc/verification/botanical-integrated-20260911/image-web-identity.log",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/image-web-identity.log.gz",
+      "bytes": 65,
+      "sha256": "721b3aabc5edf38581d5f7698aae480da3d5490270cfbeb8bfb8463c979a9a09",
+      "gzip_bytes": 72,
+      "gzip_sha256": "cc10e30ca715578f6e858020b5a7d884bdb323dd1e7fd45b4f903e041cb9882b"
+    },
+    {
+      "source": ".omc/verification/botanical-integrated-20260911/image-data-service.log",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/image-data-service.log.gz",
+      "bytes": 3987,
+      "sha256": "1d670de4c942a002e98ad7a964230cc255f99f0a5d2008be54b1b02959ac6c08",
+      "gzip_bytes": 1804,
+      "gzip_sha256": "30103f9a927082c7542fe0f3337484f84a42981b0be785711056d4337bae3729"
+    },
+    {
+      "source": ".omc/verification/botanical-integrated-20260911/image-data-service-smoke.log",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/image-data-service-smoke.log.gz",
+      "bytes": 486,
+      "sha256": "60270ce6fbf4409b3b471f411846fd56099ff71102b6736e8af670166c64247e",
+      "gzip_bytes": 307,
+      "gzip_sha256": "9231fe606d149ccb3c48888771632f8db70a83488d568727320aaa7b54bac666"
+    },
+    {
+      "source": ".omc/verification/botanical-integrated-20260911/image-data-service-identity.log",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/image-data-service-identity.log.gz",
+      "bytes": 65,
+      "sha256": "5894d483228150d2a1b61dc2b3b2c55fc12662c1728f7ec7078b97f8ae77e296",
+      "gzip_bytes": 72,
+      "gzip_sha256": "200995f0ec523a338a7eb4a2d7ca69e0f5ee0e10f4768e6b49dc3f5904859234"
+    },
+    {
+      "source": ".omc/verification/botanical-integrated-20260911/image-job-executor.log",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/image-job-executor.log.gz",
+      "bytes": 5710,
+      "sha256": "d8b8fc8635a6e7f34797e9c17eee0bcda86b51e49db586a5554e242bd934718f",
+      "gzip_bytes": 2412,
+      "gzip_sha256": "b45075c0ee28627652f872739f31b0c6c6a516ec52d6802b640a916670a2c787"
+    },
+    {
+      "source": ".omc/verification/botanical-integrated-20260911/image-job-executor-smoke.log",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/image-job-executor-smoke.log.gz",
+      "bytes": 486,
+      "sha256": "60270ce6fbf4409b3b471f411846fd56099ff71102b6736e8af670166c64247e",
+      "gzip_bytes": 307,
+      "gzip_sha256": "9231fe606d149ccb3c48888771632f8db70a83488d568727320aaa7b54bac666"
+    },
+    {
+      "source": ".omc/verification/botanical-integrated-20260911/image-job-executor-identity.log",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/image-job-executor-identity.log.gz",
+      "bytes": 65,
+      "sha256": "596280eb38cf6f19b378196be14c56b2f28deab939f5c8fb4d085ba2735c9944",
+      "gzip_bytes": 72,
+      "gzip_sha256": "59f1fadb7353588f5d81be28b9efa49756396d14ddc0a1d2c95be2b15c2dc290"
+    },
+    {
+      "source": ".omc/verification/botanical-integrated-20260911/frontend-check-data-boundary.json",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/frontend-check-data-boundary.json.gz",
+      "bytes": 644,
+      "sha256": "c2c83b3dcd36c34c65301c985b4bddcd9f96e205d3193bda6d70ecf9affc05ff",
+      "gzip_bytes": 379,
+      "gzip_sha256": "07951abb33e3688720a51d724f8652397b7d328805b29a3e0a25f3770f53d352"
+    },
+    {
+      "source": ".omc/verification/botanical-integrated-20260911/frontend-type-check.json",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/frontend-type-check.json.gz",
+      "bytes": 616,
+      "sha256": "33f5118947c27c876a96cb92bd76c0e3c02547191a6f7c70ade28099153e6282",
+      "gzip_bytes": 373,
+      "gzip_sha256": "4f92bdf0ced22f676fdc91a885f79605045d4b9880391d46b2972aa5c6fe1781"
+    },
+    {
+      "source": ".omc/verification/botanical-integrated-20260911/frontend-lint.json",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/frontend-lint.json.gz",
+      "bytes": 603,
+      "sha256": "653efa7ec5e7d5c665b46a048e3b42d28c23d7275a052c355961fa75f1631c8c",
+      "gzip_bytes": 372,
+      "gzip_sha256": "009fe5915baf8f609a0386e0d92c83538e2699ea1b19f8d0d973b858137496f7"
+    },
+    {
+      "source": ".omc/verification/botanical-integrated-20260911/frontend-test.json",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/frontend-test.json.gz",
+      "bytes": 604,
+      "sha256": "84197bca16ba5ce9d54ff4ec32af0c610dd67134a1fc7c562393b932383289e3",
+      "gzip_bytes": 373,
+      "gzip_sha256": "48fc034034ba57ac0c00f53714b26356192c2e15fca74255928d2c4c4d8e5494"
+    },
+    {
+      "source": ".omc/verification/botanical-integrated-20260911/python-full.json",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/python-full.json.gz",
+      "bytes": 668,
+      "sha256": "07ba5953ccda2d530f99384a42a56d7be07a76cf1c3331cc1df4b005af9faec3",
+      "gzip_bytes": 424,
+      "gzip_sha256": "9f86eacfb962331117ca34aac5d3e1fcdb85a6dd7abd96ef1ce34e07072ab03d"
+    },
+    {
+      "source": ".omc/verification/botanical-integrated-20260911/python-receipt-verify.json",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/python-receipt-verify.json.gz",
+      "bytes": 679,
+      "sha256": "ede8663e663676939439fe9bf1d38f6acfd0796f3b9f47e3180eff41188febe8",
+      "gzip_bytes": 420,
+      "gzip_sha256": "3984dd474990d51df0e384957edc80fc7269bd14e1a29ce9786e1e5932b821ef"
+    },
+    {
+      "source": ".omc/verification/botanical-integrated-20260911/archived-source-receipt-verify.json",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/archived-source-receipt-verify.json.gz",
+      "bytes": 680,
+      "sha256": "8aaa67b6367ec2c406bce0a70c004934db14a162d79052fbe44e26b4e6b22f06",
+      "gzip_bytes": 412,
+      "gzip_sha256": "3ac41c6389761831559f77b6a3c9b932a36e535d5be68faf3e80eeb0eb5fd7e2"
+    },
+    {
+      "source": ".omc/verification/botanical-integrated-20260911/image-web.json",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/image-web.json.gz",
+      "bytes": 973,
+      "sha256": "e4bea072f410ea8d281247e30b0fb90ae9625f4db17bd29857349a2e1c4afa31",
+      "gzip_bytes": 479,
+      "gzip_sha256": "dd2a7f6ae5147156acfa097cc2229a2cb776290eab55eed185a6aa97fd6a4d26"
+    },
+    {
+      "source": ".omc/verification/botanical-integrated-20260911/image-web-smoke.json",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/image-web-smoke.json.gz",
+      "bytes": 696,
+      "sha256": "c2c0b02fd3d015e5e10ace0e0a5c15ee20c909700b59f5f8626d29f581b45a6b",
+      "gzip_bytes": 422,
+      "gzip_sha256": "49021353eaa105fa621cb6d2a2e987bf225816da3f530337e196310fed510c3e"
+    },
+    {
+      "source": ".omc/verification/botanical-integrated-20260911/image-web-identity.json",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/image-web-identity.json.gz",
+      "bytes": 642,
+      "sha256": "3a6db1fd1f6dfdcaa8922d64bf1d99d28afa5a31e36de565cc9c21cc38bd1276",
+      "gzip_bytes": 403,
+      "gzip_sha256": "b2115081fb24241cae47377c1a932cd1db4a552766fd766234f8a92a70d4d28a"
+    },
+    {
+      "source": ".omc/verification/botanical-integrated-20260911/image-data-service.json",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/image-data-service.json.gz",
+      "bytes": 1054,
+      "sha256": "1a30e3c8a00126971f1d7c14b6a8afa9f698bc98850443e228f65df9d2323c61",
+      "gzip_bytes": 495,
+      "gzip_sha256": "ae919cbbd1076e1e215a530508ba5d753564169b499c70b6bb43b89c4afbe241"
+    },
+    {
+      "source": ".omc/verification/botanical-integrated-20260911/image-data-service-smoke.json",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/image-data-service-smoke.json.gz",
+      "bytes": 693,
+      "sha256": "2db2cf7b5722f8fafd465cd72772b8931a117b3533fbb18a2e63d1345db1c3b7",
+      "gzip_bytes": 417,
+      "gzip_sha256": "d8dc90616014e9c72513bc3e11de5770202817bc9b2b48a8154f8d387e3bf5bb"
+    },
+    {
+      "source": ".omc/verification/botanical-integrated-20260911/image-data-service-identity.json",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/image-data-service-identity.json.gz",
+      "bytes": 669,
+      "sha256": "1b92025aa34f27a1e6727110063889c1e37b847aedb01bea41fa3aaff3166c4b",
+      "gzip_bytes": 410,
+      "gzip_sha256": "dcf0b059ead00fe11a9e03deb04a42b7ecf21612ce5c65701f1d957c3d948773"
+    },
+    {
+      "source": ".omc/verification/botanical-integrated-20260911/image-job-executor.json",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/image-job-executor.json.gz",
+      "bytes": 1019,
+      "sha256": "3f7daf5d49f5edc9afda5c1ec1cf932444706edb6b9740d96fd57c923499d83b",
+      "gzip_bytes": 497,
+      "gzip_sha256": "3ac6d877f238064a81897514ab25aed4cc831dd5ce971403dfb825574a3a204e"
+    },
+    {
+      "source": ".omc/verification/botanical-integrated-20260911/image-job-executor-smoke.json",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/image-job-executor-smoke.json.gz",
+      "bytes": 691,
+      "sha256": "f6ba9c5ed2557f344ca76b2ea1405d722cc7c30959adba1e0e95cb76386de7f4",
+      "gzip_bytes": 419,
+      "gzip_sha256": "278c2a9970b08068da4355f2fd677760b31af7a20c8dab01fdc4f1ede107134b"
+    },
+    {
+      "source": ".omc/verification/botanical-integrated-20260911/image-job-executor-identity.json",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/image-job-executor-identity.json.gz",
+      "bytes": 669,
+      "sha256": "1ebc87f720a4d9e7c62b9eceeb5317802c1a1f4182764906455e27bb0bc2da72",
+      "gzip_bytes": 413,
+      "gzip_sha256": "bfea8b7c23afbee4f011fae214c0c0483fd4ef2bf590008a49904331d194a253"
+    },
+    {
+      "source": ".omc/verification/botanical-integrated-20260911/python-junit.xml",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/python-junit.xml.gz",
+      "bytes": 1046427,
+      "sha256": "994eac42b998804047200176b61272b78bf6e91a019d097d3beec8d3d8a0f68b",
+      "gzip_bytes": 132616,
+      "gzip_sha256": "c02433fa206688bc1efb7adf60d1b3012d6feec427a3ef13ddef18821d45b512"
+    },
+    {
+      "source": ".omc/research/active-track-integration-20260911/run_botanical_checks.py",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/run_botanical_checks.py.gz",
+      "bytes": 7968,
+      "sha256": "a1de0a5ab8db02fc6ff0c925e85633a713a6c8899c805b435e7d9e6a31b62645",
+      "gzip_bytes": 2752,
+      "gzip_sha256": "2a9364bc1f64b232fcb91a0fd445046dfe870c5ecf7dea9e5d4f2cd8e42eb0d6"
+    },
+    {
+      "source": "services/agri-data-service/QUALITY_RECEIPT.json",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/QUALITY_RECEIPT.json.gz",
+      "bytes": 1014,
+      "sha256": "ac3190a42f2d04d111765cb064bd332d364808f4cb6e791b2d81b91c91f644f7",
+      "gzip_bytes": 452,
+      "gzip_sha256": "29ae9e23dd755bb8aee4045ca7bf832a2e7d8cfa903d23040ad82c7de5974254"
+    },
+    {
+      "source": ".omc/research/active-track-integration-20260911/continuation-review.json",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/continuation-review.json.gz",
+      "bytes": 18814,
+      "sha256": "8f7156c6c5dd8005e842d2ffcfcd87942e46618b0b0a85111538a64d7e36a83d",
+      "gzip_bytes": 6173,
+      "gzip_sha256": "5b9b1dfb2f9d8fe7a8768dd3ed91ec81af0cfc6d18c8fcbcc64f1afb313870ed"
+    },
+    {
+      "source": ".omc/research/active-track-integration-20260911/verification-scope-review.json",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/verification-scope-review.json.gz",
+      "bytes": 20757,
+      "sha256": "c656d1dc7ca090449c9a179ee726b6acc06c4ee9dbec9e5d04cbe29f1aeab54d",
+      "gzip_bytes": 6417,
+      "gzip_sha256": "c2fb8cbff13b649c1d469d83ceeb3b2d90c2225353cc66a345a38d5caafac37c"
+    },
+    {
+      "source": ".omc/research/active-track-integration-20260911/qa-planning-intake-review.json",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/qa-planning-intake-review.json.gz",
+      "bytes": 20993,
+      "sha256": "ad6c5eb31a730bb7f912370d8d260989104b2a2a269a6821848a629eeda10e45",
+      "gzip_bytes": 5186,
+      "gzip_sha256": "bdd221c3a0ddb86d3940061b1f7839d9a6d12dec25b4955da5a7ce001007e35b"
+    },
+    {
+      "source": ".omc/research/active-track-integration-20260911/weather-intake-preparation-20260911.json",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/weather-intake-preparation-20260911.json.gz",
+      "bytes": 146821,
+      "sha256": "89ac609f5705089f7257657f2b96d22b9e816fc44be6956311e8e1a31209b2a8",
+      "gzip_bytes": 20953,
+      "gzip_sha256": "7764f16da8be41012fabe198dfd0a240823e0ff117ff85146d8c83597b43b5a1"
+    },
+    {
+      "source": ".omc/research/active-track-integration-20260911/weather-intake-preparation-20260911.md",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/weather-intake-preparation-20260911.md.gz",
+      "bytes": 15928,
+      "sha256": "5f9c19a25af00294068ee13dc9d973febb54f5d19671943f75fade67f87bfbb5",
+      "gzip_bytes": 6693,
+      "gzip_sha256": "3d926316cc1f09c0eaa1cac076fa3575202c6faa20a6aa47064d4ca2538de22d"
+    },
+    {
+      "source": ".omc/research/active-track-integration-20260911/botanical-final-gates-check.json",
+      "retained": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/validation-botanical-20260911/botanical-final-gates-check.json.gz",
+      "bytes": 10173,
+      "sha256": "7ceb293c6dcf0d95ff161c680c1e055bcfdb686c66b68a5b41e41f0f86098b5c",
+      "gzip_bytes": 3156,
+      "gzip_sha256": "609a3eb896cec028671b42a497245003267083f15a78e165266ee971aa1b85ec"
+    }
+  ],
+  "lint_scope": {
+    "errors": 0,
+    "warnings": 1084,
+    "current_source_warnings": 542,
+    "retained_first_image_context_warnings": 542,
+    "finding": "The retained first image context duplicated all 542 canonical warnings; Vitest and TypeScript excluded archived contexts.",
+    "review": "validation-botanical-20260911/verification-scope-review.json.gz",
+    "correction": "Relocate only completed reproducible contexts beneath existing .tmp exclusions before the next batch; do not rewrite this measured result."
+  },
+  "acceptance_scope": {
+    "tested_source_only": true,
+    "source_guard": "Runner checks HEAD and tracked/untracked source after local gates and after all image gates before writing result.json.",
+    "botanical_integrated_commit": "32a13c604e6da4331051e6a584f7942e7165af1e",
+    "qa_planning_integrated_commit": "577adb20830bed1f6153aaec8f25c98a97bdc599",
+    "qa_ledger_integrated_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+    "shared_transfer_released": false,
+    "next_source_batch": "Accepted intervention 2fc6b30 is not yet composed. After its reviewed one-time intake, weather receives a new base and owns its shared implementation. A later combined sweep is required.",
+    "production": "HOLD; no image publication, deployment, provider restart, production migration or source admission is certified."
+  }
+}

@@ -1,0 +1,56 @@
+{
+  "schema": "completed-image-context-relocation-review/v1",
+  "reviewed_at_utc": "2026-09-12T02:30:03.688417+00:00",
+  "verdict": "SAFE_BOUNDED_PLAN_subject_to_root_final_path_and_use_check",
+  "verification_root": "C:\\Users\\atooz\\.codex\\worktrees\\4ccb\\plantgeo\\.omc\\verification",
+  "moves": [
+    {
+      "source": "C:\\Users\\atooz\\.codex\\worktrees\\4ccb\\plantgeo\\.omc\\verification\\active-track-integration-20260911\\image-context",
+      "destination": "C:\\Users\\atooz\\.codex\\worktrees\\4ccb\\plantgeo\\.omc\\verification\\.tmp\\active-track-integration-20260911-image-context",
+      "source_commit": "89e8494422b8232c8f16dbffdcf2321c7ea17bc8",
+      "all_16_gates_finished": true,
+      "finished_at": "2026-09-12T01:26:58.469300+00:00",
+      "source_exists": true,
+      "destination_absent": true,
+      "both_resolved_under_workspace_verification_root": true,
+      "no_symlink_or_junction_entries": true,
+      "archived_file_count": 2726,
+      "current_file_count": 2727,
+      "no_archive_files_missing": true,
+      "generated_context_only_files": [
+        "services/agri-data-service/scripts/__pycache__/quality_receipt.cpython-312.pyc"
+      ],
+      "generated_receipt_sha256": "7fb279078524a8f674a47252c7c3d3ed1156a0d8625f0b09a4e935c3fd20e836",
+      "moved": false
+    },
+    {
+      "source": "C:\\Users\\atooz\\.codex\\worktrees\\4ccb\\plantgeo\\.omc\\verification\\botanical-integrated-20260911\\image-context",
+      "destination": "C:\\Users\\atooz\\.codex\\worktrees\\4ccb\\plantgeo\\.omc\\verification\\.tmp\\botanical-integrated-20260911-image-context",
+      "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+      "all_16_gates_finished": true,
+      "finished_at": "2026-09-12T01:58:21.644616+00:00",
+      "source_exists": true,
+      "destination_absent": true,
+      "both_resolved_under_workspace_verification_root": true,
+      "no_symlink_or_junction_entries": true,
+      "archived_file_count": 2826,
+      "current_file_count": 2827,
+      "no_archive_files_missing": true,
+      "generated_context_only_files": [
+        "services/agri-data-service/scripts/__pycache__/quality_receipt.cpython-312.pyc"
+      ],
+      "generated_receipt_sha256": "ac3190a42f2d04d111765cb064bd332d364808f4cb6e791b2d81b91c91f644f7",
+      "moved": false
+    }
+  ],
+  "conditions": [
+    "Writer and reviewer must finish reading old contexts before root moves them; both runners have finished 16 gates.",
+    "Root must immediately reconfirm the exact paths resolve inside the named workspace verification root, remain non-link directories, and destinations remain absent.",
+    "Create only the verification/.tmp directory if absent, then issue one native PowerShell Move-Item -LiteralPath per explicit source/destination pair.",
+    "Move the complete context directories, including their generated receipt and bytecode cache, without editing contents.",
+    "Retain source-context.tar, all logs, metadata, JUnit and evidence packets in place and record relocation mappings and receipt hashes.",
+    "Future contexts use the existing **/.tmp/** ignore scope; no tracked config changes or test reruns are part of relocation."
+  ],
+  "qualification": "File-set inspection confirms only one generated quality-receipt bytecode cache beyond each archive inventory. This is a bounded relocation safety plan, not a fresh full content verification or another image test.",
+  "moves_performed": 0
+}
