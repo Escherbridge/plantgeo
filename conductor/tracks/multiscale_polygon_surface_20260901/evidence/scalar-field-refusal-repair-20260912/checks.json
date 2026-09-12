@@ -1,0 +1,166 @@
+{
+  "base": "f62666363abd06e8c4aab287ad5f7353b1ec305d",
+  "sourceHashEncoding": "utf8-lf",
+  "sourceHashes": {
+    "e2e/scalar-field-fixture/entry.tsx": "8c76b8d991f9b1738089a34ddb267853f7d1c7234a014a6a54460611067568da",
+    "e2e/scalar-field-fixture/run.mjs": "8154c1e2e6093ce474107f59bbf2b286356b95e0cabca8e887ce96ef2beddd50",
+    "src/__tests__/components/HoverTooltip.test.tsx": "872c52568ff3a9ce05a91c79121d049605b1cc39bfd05b649092eeb990670210",
+    "src/__tests__/components/map-view-render-count.test.tsx": "1bbc82eacdcfde8a8addadfc0199f839db8737ae6db8b7c62a9ce5c9d50344dd",
+    "src/__tests__/lib/map/scalar-field-layer.test.ts": "5a1141fedf8b6744ba9b7807e68deb816b57096d9ff97c11c4c1bc25d99832f6",
+    "src/components/map/HoverTooltip.tsx": "48ce07c502e454ec874cc089f20e3ce0ce1763f05378dd3854ed3ec375b9ce98",
+    "src/components/map/MapView.tsx": "d695590f32dc0370e955a428997d35758424c59a2ad0ee147bdfb8a63ba11091",
+    "src/lib/map/scalar-field-inspection.ts": "eb2db8ea26dbbd8a4bab546bb48c0be6783a4427810abe6807d0cc6771576370",
+    "src/lib/map/scalar-field-layer.ts": "8981cee1d31f5be12568768df14bd873f1d73c3394d9de109bc98fd72efbe927"
+  },
+  "checks": [
+    {
+      "id": "selector-plan",
+      "command": [
+        "node",
+        "scripts/test-surface.mjs",
+        "--changed",
+        "--base",
+        "f62666363abd06e8c4aab287ad5f7353b1ec305d",
+        "--plan"
+      ],
+      "startedAt": "2026-09-12T09:00:19.804Z",
+      "completedAt": "2026-09-12T09:00:20.057Z",
+      "exitCode": 0,
+      "log": "C:\\Users\\atooz\\.codex\\worktrees\\067b\\plantgeo\\.tmp\\scalar-refusal-checks\\selector-plan.log",
+      "logSha256": "ee325dc446bfae1a7eb73fee0688a160f6d9be6fdcf7b3edd41d3a861926c796"
+    },
+    {
+      "id": "tests",
+      "command": [
+        "node",
+        "scripts/test-surface.mjs",
+        "--changed",
+        "--base",
+        "f62666363abd06e8c4aab287ad5f7353b1ec305d"
+      ],
+      "startedAt": "2026-09-12T09:01:43.293Z",
+      "completedAt": "2026-09-12T09:04:20.996Z",
+      "exitCode": 0,
+      "log": "C:\\Users\\atooz\\.codex\\worktrees\\067b\\plantgeo\\.tmp\\scalar-refusal-checks\\tests.log",
+      "logSha256": "ffbc54eec856c5d7428637f01e775022af29646799f4dd359daca597fcb1421c"
+    },
+    {
+      "id": "type-check",
+      "command": [
+        "node",
+        "node_modules/typescript/bin/tsc",
+        "--noEmit"
+      ],
+      "startedAt": "2026-09-12T09:00:58.637Z",
+      "completedAt": "2026-09-12T09:01:11.623Z",
+      "exitCode": 0,
+      "log": "C:\\Users\\atooz\\.codex\\worktrees\\067b\\plantgeo\\.tmp\\scalar-refusal-checks\\type-check.log",
+      "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "id": "changed-lint",
+      "command": [
+        "node",
+        "node_modules/eslint/bin/eslint.js",
+        "e2e/scalar-field-fixture/entry.tsx",
+        "e2e/scalar-field-fixture/run.mjs",
+        "src/__tests__/components/HoverTooltip.test.tsx",
+        "src/__tests__/components/map-view-render-count.test.tsx",
+        "src/__tests__/lib/map/scalar-field-layer.test.ts",
+        "src/components/map/HoverTooltip.tsx",
+        "src/components/map/MapView.tsx",
+        "src/lib/map/scalar-field-inspection.ts",
+        "src/lib/map/scalar-field-layer.ts"
+      ],
+      "startedAt": "2026-09-12T09:01:11.993Z",
+      "completedAt": "2026-09-12T09:01:42.017Z",
+      "exitCode": 0,
+      "log": "C:\\Users\\atooz\\.codex\\worktrees\\067b\\plantgeo\\.tmp\\scalar-refusal-checks\\changed-lint.log",
+      "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "id": "data-boundary",
+      "command": [
+        "node",
+        "scripts/check-data-boundaries.mjs"
+      ],
+      "startedAt": "2026-09-12T09:04:21.184Z",
+      "completedAt": "2026-09-12T09:04:21.594Z",
+      "exitCode": 0,
+      "log": "C:\\Users\\atooz\\.codex\\worktrees\\067b\\plantgeo\\.tmp\\scalar-refusal-checks\\data-boundary.log",
+      "logSha256": "bdace32d4e9d976a4bd3aaa051952e30f8c3772a6d8f4e253c0a57740d90dbb4"
+    },
+    {
+      "id": "browser-final",
+      "command": [
+        "node",
+        "e2e/scalar-field-fixture/run.mjs",
+        "--scenario=field,mixed-days,detail,mode-race,refusal-layout,reload"
+      ],
+      "startedAt": "2026-09-12T09:03:21.197Z",
+      "completedAt": "2026-09-12T09:03:38.961Z",
+      "exitCode": 0,
+      "log": "C:\\Users\\atooz\\.codex\\worktrees\\067b\\plantgeo\\.tmp\\scalar-refusal-checks\\browser-final.log",
+      "logSha256": "bc8991eefc931616d03005a4a00b066fa3abc939b013c65f9182a405842186e3"
+    }
+  ],
+  "environmentAttempts": [
+    {
+      "id": "browser",
+      "command": [
+        "node",
+        "e2e/scalar-field-fixture/run.mjs",
+        "--scenario=field,mixed-days,detail,mode-race,refusal-layout,reload"
+      ],
+      "startedAt": "2026-09-12T09:01:42.230Z",
+      "completedAt": "2026-09-12T09:01:43.085Z",
+      "exitCode": 1,
+      "log": "C:\\Users\\atooz\\.codex\\worktrees\\067b\\plantgeo\\.tmp\\scalar-refusal-checks\\browser.log",
+      "logSha256": "115e67debacf006897ddf670f584df8429584ad48ce496c42615bde9428b0eb3",
+      "disposition": "esbuild sandbox parent-directory access denial before browser cases; unchanged source retried with expanded local permissions"
+    }
+  ],
+  "artifactHashes": {
+    "desktop-detail.png": "ea5d32774fa48cd39d2df1e0d7e4acfc4ef797cbd8720cf479aca8d5ceabec78",
+    "desktop-field.png": "d8c16600c01f20ada8d611dbb9045dcd19e491cd4cc0621f7f6be158196ed056",
+    "desktop-mixed-days.png": "a0125afb58f016e471c0029ddf2ca7896a920c6b4c520f730e89d100e933a5e1",
+    "desktop-mode-race.png": "839c543e5ec97d1fee1e63fd79234a959ea0afef9c63b423490d5a190f655736",
+    "desktop-refusal-layout-empty-before.png": "5c188e6e9facd3dd20aa99795e10ae406d82d74d52b18f222ecc2925d32573e5",
+    "desktop-refusal-layout-empty-recovered.png": "c879c7854930b6f5268d6e59d22b5b58c142a6755890566ff573c41b5c96c656",
+    "desktop-refusal-layout-empty-suppressed.png": "bb9e723fef1d68850a94048a103147985253808438013389ca5962ed99b54db6",
+    "desktop-refusal-layout-null-before.png": "5c188e6e9facd3dd20aa99795e10ae406d82d74d52b18f222ecc2925d32573e5",
+    "desktop-refusal-layout-null-recovered.png": "c879c7854930b6f5268d6e59d22b5b58c142a6755890566ff573c41b5c96c656",
+    "desktop-refusal-layout-null-suppressed.png": "bb9e723fef1d68850a94048a103147985253808438013389ca5962ed99b54db6",
+    "desktop-refusal-layout.png": "c879c7854930b6f5268d6e59d22b5b58c142a6755890566ff573c41b5c96c656",
+    "desktop-reload.png": "a0a3efef37bc6e1b64a6027cd65dc96f77a3a01e193dee178c66fb1726cfb22d",
+    "mobile-detail.png": "9955af5d439b45e386e01fbab9e8b20fc2b8f2ca896b57bc919915dcf9933bc9",
+    "mobile-field.png": "b659ffe2be5bf8c6dcf938ce08fa083b263ad86bb3f92ee015aac81257a5faad",
+    "mobile-mixed-days.png": "171167969a05383f8b6463e4ea8b3e3863085563869426b30d023d09a8ae0150",
+    "mobile-mode-race.png": "9a528a0f9acf956fe8778677aa952e8079a4cb0af2906221df26a875ed8531aa",
+    "mobile-refusal-layout-empty-before.png": "48a8a62c4748657967b74fcfc96973f85d9c21664db486d1db000c5f0f1c2e9e",
+    "mobile-refusal-layout-empty-recovered.png": "f738a6825c76a4dad7d632d530183117049b316413e9b33cf31ccbaa61fc9118",
+    "mobile-refusal-layout-empty-suppressed.png": "bc8470d4d1141cce5ead8051fdf92ab39eaef4c9206813fb7499e87bbf4d2f08",
+    "mobile-refusal-layout-null-before.png": "48a8a62c4748657967b74fcfc96973f85d9c21664db486d1db000c5f0f1c2e9e",
+    "mobile-refusal-layout-null-recovered.png": "f738a6825c76a4dad7d632d530183117049b316413e9b33cf31ccbaa61fc9118",
+    "mobile-refusal-layout-null-suppressed.png": "bc8470d4d1141cce5ead8051fdf92ab39eaef4c9206813fb7499e87bbf4d2f08",
+    "mobile-refusal-layout.png": "f738a6825c76a4dad7d632d530183117049b316413e9b33cf31ccbaa61fc9118",
+    "mobile-reload.png": "a80d9d4c1e64f6796b8ab93dc6af36e3e250477bba6088033e305540a292d41f",
+    "report.json": "20b6a392af304cbae5de5153b60c59c1fa7ac1d35b89f389f99f958e4bb3d698"
+  },
+  "browserScope": {
+    "selectedCases": 12,
+    "fullFixtureCases": 29,
+    "externalRequests": 0,
+    "synthetic": true
+  },
+  "testScope": {
+    "mode": "full",
+    "reason": "existing test selector requires fallback for unclassified e2e fixture",
+    "testFilesPassed": 150,
+    "testFilesSkipped": 2,
+    "testsPassed": 2232,
+    "testsSkipped": 13,
+    "toolingPassed": 6,
+    "databaseAccess": false
+  }
+}

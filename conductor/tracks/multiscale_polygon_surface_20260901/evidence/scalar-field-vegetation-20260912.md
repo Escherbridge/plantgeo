@@ -2,8 +2,9 @@
 type: track-evidence
 track: multiscale_polygon_surface_20260901
 observed_at: 2026-09-12
-status: local-candidate-verified
+status: local-candidate-refusal-repair
 review_base: fe9098ae045dda7a74d8f955dcc8c8e097ea09c9
+repair_base: f62666363abd06e8c4aab287ad5f7353b1ec305d
 ---
 
 # Bounded vegetation scalar field candidate
@@ -36,9 +37,33 @@ claim to implement the archived audit's full cross-product smoothing proposal or
 The runtime implementation, focused tests, fixture, and directory docs are bound by the
 enclosing commit; its exact commit/tree and changed-file manifest are in the final handoff.
 
-## Verification
+## Compatibility review and bounded refusal repair
 
-The final source has independent source approval and a strict synthetic browser receipt.
+Compatibility reviewer task `01a0949c-ff3f-72e1-96b8-f49cf11b5272` returned
+**CHANGES REQUESTED** on candidate `f62666363abd06e8c4aab287ad5f7353b1ec305d`, tree
+`10d00468d1c3d621814f7111056a39ce3ca24865`. Its independently reproduced P2 showed that
+an empty/refused replacement during label relayout cleared the custom mesh but queued the
+native-source clear until global map idle. Old cells, labels and inspection remained available
+beneath the reader's refusal notice. Twenty move/source/style events did not submit the clear.
+The original source approval below preceded this compatibility finding and does not override it.
+
+The repair starts from that exact preserved candidate on
+`codex/scalar-field-refusal-repair-20260912`. It immediately suppresses invalidated measured
+paint and inspection while retaining the layout/data serialization boundary. The queued source
+still converges after idle, and normal populated replacements retain latest-wins behavior.
+No reader, data service, backend, release gate or deployment behavior is changed.
+
+The [repair receipt](scalar-field-refusal-repair-20260912/verification.txt) records the separate
+source review and focused verification. Its
+[changed-file manifest](scalar-field-refusal-repair-20260912/changed-files.txt) is relative to
+`f62666363abd06e8c4aab287ad5f7353b1ec305d`; its browser report and screenshots cover only the
+selected repair cases. The original 49-path manifest, 27-case receipt and screenshots remain
+frozen evidence of `f626663`, rather than being relabelled as results on repaired source.
+The enclosing repair commit binds the final files; exact commit/tree IDs are in the handoff.
+
+## Original candidate verification (f626663)
+
+The original candidate had independent source approval and a strict synthetic browser receipt.
 The authoritative run is `run-2026-09-12T08-26-05-375Z-53204`: **27 cases passed, zero
 failures**, with identical before/after SHA-256 hashes over the declared eleven-file source
 manifest. Hash input is UTF-8 with canonical LF endings, matching Git's text normalization.

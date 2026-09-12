@@ -1170,6 +1170,8 @@ unset keeps the native presentation. See `src/lib/map/AGENTS.md` §scalar-field 
 stacks measured NDVI with the satellite composite. It keeps its existing fill ID as the native
 picking target, passes all opacity changes through one controller, and rebuilds the custom layer
 on style load. The `useStyleReady` retry additionally closes the missed initial style-load race.
-The native fill has a zero-duration opacity transition only in the opt-in path to avoid
-simultaneous field/native paint during the direct handoff. Weather and all other renderers keep
-their current ordering and representations.
+Native fill, outline and value labels have zero-duration opacity transitions in the opt-in
+path, so an invalidated collection disappears before a queued source clear. The map-scoped
+scalar inspection gate excludes retained transparent features from hover/tap and map-click
+decisions and retires an open caption. It releases only when replacement native data is ready.
+Weather and all other renderers keep their current ordering and representations.

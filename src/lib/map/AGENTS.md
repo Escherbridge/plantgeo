@@ -460,8 +460,9 @@ Conversely, pending data prevents label relayout. Native fill/outline source-mod
 the same queued layout boundary. The GPU waits for its queued data to reach the loaded native source before painting,
 so native inspection and custom values refer to the same collection. Source identity is checked
 before draining the queue, and style removal discards it. The default-off component keeps its
-normal native `setData` path. Labels retain layout-based collision and picking semantics; they
-are not made invisible solely with paint as a workaround for the SDK race.
+normal native `setData` path. Normal populated transitions retain layout-based label collision
+and picking semantics. Immediate invalidation additionally suppresses paint and inspection as
+described below; it does not bypass the serialized layout mutation.
 
 The controller also owns queued fill/outline visibility, so a source-mode switch cannot bypass
 serialization while earlier data is loading. Hiding measured NDVI immediately zeros its fill,
@@ -469,3 +470,14 @@ outline, labels and custom paint; deferred layout cannot stack it with the satel
 A layout lock releases only at map `idle`, because a source can report loaded before a scheduled
 style reparse has started. Source completion retries data readiness but never unlocks pending
 layout. This covers both orderings: layout then data, and data then source-mode layout.
+
+An empty or null replacement invalidates the previously measured collection immediately,
+even while label layout owns the serialization lock. Its fill, outline and text paint must
+become transparent without a transition, and both an existing tooltip and subsequent
+hover/tap or map-click inspection must exclude the invalidated source. MapLibre still returns
+transparent geometry from native feature queries, so paint opacity alone is insufficient.
+Keep this suppression latched through a later populated replacement until the native source
+has accepted and loaded that replacement. Nonempty unsupported meshes remain eligible for
+native fallback. Idle still releases the queued data update; source completion alone cannot
+release a pending layout lock. The repair is presentation-only and does not change the reader's
+acceptance or refusal contract.

@@ -12,6 +12,7 @@ import { MapProvider } from "@/lib/map/map-context";
 import { Skeleton } from "@/components/ui/skeleton";
 import { MapFocus } from "./MapFocus";
 import { readMapFocus } from "@/lib/map/focus-params";
+import { isScalarFieldInspectionAllowed } from "@/lib/map/scalar-field-inspection";
 import { ReverseGeocode } from "@/components/search/ReverseGeocode";
 import MapKeyboardShortcuts from "./MapKeyboardShortcuts";
 import { ManagerRail } from "./layer-panel/ManagerRail";
@@ -195,7 +196,7 @@ export default function MapView() {
       if (useMapStore.getState().isCapturingQueryPoint) return;
       // Do not send coordinates to the analysis service until the user confirms.
       const features = m.queryRenderedFeatures(e.point);
-      if (features && features.length > 0) return;
+      if (features?.some(feature => isScalarFieldInspectionAllowed(m, feature.layer.id))) return;
       const { lat, lng } = e.lngLat;
       setAgentCoords([lng, lat]);
     });

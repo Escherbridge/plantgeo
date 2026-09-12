@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render } from "@testing-library/react";
 import type { Map as MapLibreMap } from "maplibre-gl";
 import HoverTooltip from "@/components/map/HoverTooltip";
+import { setScalarFieldInspectionSuppressed } from "@/lib/map/scalar-field-inspection";
 
 /**
  * Touch fires no `mousemove` at all, so every `TOOLTIP_TAP_LAYER_IDS` layer was uninspectable on
@@ -239,6 +240,34 @@ describe("HoverTooltip: measured vegetation", () => {
 });
 
 describe("HoverTooltip: vegetation source invalidation", () => {
+  it.each([false, true])("clears and blocks refused cells before native source events with coarse pointer %s", coarse => {
+    setCoarsePointer(coarse);
+    const fakeMap = createFakeMap([{ layer: { id: "vegetation-ndvi-cells-fill" }, properties: { ndvi: 0.4 } }]);
+    const { queryByText } = render(<HoverTooltip map={asMap(fakeMap)} />);
+    const inspect = () => fakeMap.emit(coarse ? "click" : "mousemove", { point: { x: 100, y: 120 } });
+    act(inspect);
+    expect(queryByText("Measured vegetation cell")).toBeTruthy();
+    act(() => setScalarFieldInspectionSuppressed(fakeMap, ["vegetation-ndvi-cells-fill"], true));
+    expect(queryByText("Measured vegetation cell")).toBeNull();
+    expect(fakeMap.getCanvas().style.cursor).toBe("");
+    act(inspect);
+    expect(queryByText("Measured vegetation cell")).toBeNull();
+    expect(fakeMap.queryRenderedFeatures.mock.calls.at(-1)?.[1].layers).not.toContain("vegetation-ndvi-cells-fill");
+    fakeMap.setFeatures([{ layer: { id: "vegetation-ndvi-cells-fill" }, properties: { ndvi: -0.4 } }]);
+    act(() => setScalarFieldInspectionSuppressed(fakeMap, ["vegetation-ndvi-cells-fill"], false));
+    act(inspect);
+    expect(queryByText("NDVI: -0.4 (dimensionless)")).toBeTruthy();
+  });
+
+  it("keeps another layer's pinned caption when scalar inspection is invalidated", () => {
+    setCoarsePointer(true);
+    const fakeMap = createFakeMap([{ layer: { id: "sensors" }, properties: { network: "TEST" } }]);
+    const { queryByText } = render(<HoverTooltip map={asMap(fakeMap)} />);
+    act(() => fakeMap.emit("click", { point: { x: 100, y: 120 } }));
+    act(() => setScalarFieldInspectionSuppressed(fakeMap, ["vegetation-ndvi-cells-fill"], true));
+    expect(queryByText("Weather station")).toBeTruthy();
+  });
+
   it("keeps the drawn-day caption while loading then clears it when replacement content lands", () => {
     setCoarsePointer(true);
     const fakeMap = createFakeMap([{ layer: { id: "vegetation-ndvi-cells-fill" }, properties: { ndvi: 0.4 } }]);

@@ -2,6 +2,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Map as MapLibreMap, PointLike } from "maplibre-gl";
+import { isScalarFieldInspectionAllowed, subscribeScalarFieldInspection } from "@/lib/map/scalar-field-inspection";
 import {
   HOVERABLE_LAYER_IDS,
   TOOLTIP_TAP_LAYER_IDS,
@@ -93,7 +94,7 @@ export default function HoverTooltip({ map }: HoverTooltipProps) {
       }
 
       // Style switches change which layers exist -- only query ones present now.
-      const presentLayerIds = HOVERABLE_LAYER_IDS.filter((id) => map.getLayer(id));
+      const presentLayerIds = HOVERABLE_LAYER_IDS.filter((id) => map.getLayer(id) && isScalarFieldInspectionAllowed(map, id));
       const features =
         presentLayerIds.length > 0
           ? map.queryRenderedFeatures(e.point, { layers: presentLayerIds })
@@ -135,7 +136,7 @@ export default function HoverTooltip({ map }: HoverTooltipProps) {
         return;
       }
 
-      const presentLayerIds = TOOLTIP_TAP_LAYER_IDS.filter((id) => map.getLayer(id));
+      const presentLayerIds = TOOLTIP_TAP_LAYER_IDS.filter((id) => map.getLayer(id) && isScalarFieldInspectionAllowed(map, id));
       const features =
         presentLayerIds.length > 0
           ? map.queryRenderedFeatures(tapHitTestGeometry(e.point), { layers: presentLayerIds })
@@ -188,8 +189,17 @@ export default function HoverTooltip({ map }: HoverTooltipProps) {
     map.on("click", handleClick);
     map.on("style.load", handleStyleLoad);
     map.on("sourcedata", handleSourceData);
+    const unsubscribeInspection = subscribeScalarFieldInspection(map, () => {
+      setTooltip(previous => {
+        if (!previous || isScalarFieldInspectionAllowed(map, previous.layerId)) return previous;
+        pinnedRef.current = false;
+        map.getCanvas().style.cursor = "";
+        return null;
+      });
+    });
 
     return () => {
+      unsubscribeInspection();
       map.off("mousemove", handleMouseMove);
       map.off("mouseout", handleMouseOut);
       map.off("click", handleClick);

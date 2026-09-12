@@ -1,0 +1,14 @@
+{
+  "base": "f62666363abd06e8c4aab287ad5f7353b1ec305d",
+  "branch": "codex/scalar-field-refusal-repair-20260912",
+  "changedPaths": 44,
+  "browserCases": 12,
+  "sourceHashes": 12,
+  "checks": 6,
+  "pngCount": 24,
+  "originalCandidatePreserved": true,
+  "originalEvidencePreserved": true,
+  "manifestMatches": true,
+  "sourceReview": "PASS",
+  "diffCheck": "PASS"
+}

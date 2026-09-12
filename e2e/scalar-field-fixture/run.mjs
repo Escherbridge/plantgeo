@@ -17,6 +17,7 @@ const runtimeFiles = [
   "e2e/scalar-field-fixture/entry.tsx", "e2e/scalar-field-fixture/run.mjs",
   "src/components/map/layers/VegetationLayer.tsx", "src/components/map/HoverTooltip.tsx",
   "src/lib/map/scalar-field.ts", "src/lib/map/scalar-field-layer.ts",
+  "src/lib/map/scalar-field-inspection.ts",
   "src/lib/map/hover-fields.ts", "src/lib/map/layer-utils.ts",
   "src/lib/vegetation.ts", "src/stores/vegetation-store.ts", "package-lock.json",
 ];
@@ -99,6 +100,87 @@ async function analyze(page, png, probes) {
   }, { encoded: png.toString("base64"), points: probes });
 }
 
+async function inspectRefusalCell(page, device, point, value) {
+  if (device.hasTouch) await page.touchscreen.tap(point.x, point.y);
+  else {
+    await page.mouse.move(5, 5);
+    await page.mouse.move(point.x, point.y);
+  }
+  if (value !== null) {
+    await page.getByText(`NDVI: ${value} (dimensionless)`, { exact: true }).waitFor();
+    const bounds = await page.locator("#root > div").boundingBox();
+    check(bounds !== null && bounds.x >= 0 && bounds.y >= 0
+      && bounds.x + bounds.width <= device.viewport.width && bounds.y + bounds.height <= device.viewport.height,
+    `${device.name}-refusal-layout-tooltip`, { bounds, viewport: device.viewport });
+    return bounds;
+  }
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  return null;
+}
+
+async function refusalLifecycle(page, device, initial, prefix) {
+  const cycles = [];
+  let locked = initial;
+  for (const replacement of ["empty", "null"]) {
+    if (replacement === "null") locked = await page.evaluate(() => window.runScalarCase("refusal-layout"));
+    const key = `${prefix}-${replacement}`;
+    check(locked.diagnostics.coarseCustomActive === true && locked.diagnostics.coarseCustomReady === true,
+      key, "The valid coarse custom field must precede label layout");
+    check(locked.diagnostics.layoutPending === true && locked.diagnostics.dataPending === false
+      && locked.diagnostics.idleHeld === true && locked.diagnostics.heldIdleEvents > 0,
+    key, { required: "Actual label layout must be pending with SDK idle delivery held", diagnostics: locked.diagnostics });
+    check(locked.nativeOpacity === 1 && locked.labelCount > 0 && locked.inspectablePickCount > 0,
+      key, "Old native cells, labels, and inspection must be present before refusal");
+    const priorTooltipBounds = await inspectRefusalCell(page, device, locked.probes.negative, -0.5);
+    const priorTooltipVisible = await page.locator("#root > div").isVisible();
+    check(priorTooltipVisible, key, "An actual old mouse/touch tooltip must exist before replacement");
+    const beforeScreenshot = `${key}-before.png`;
+    await page.screenshot({ path: path.join(output, beforeScreenshot) });
+
+    const suppressed = await page.evaluate((value) => window.runScalarRefusalPhase(value), replacement);
+    await page.locator("#root > div").waitFor({ state: "hidden" });
+    const priorTooltipCleared = await page.locator("#root > div").count() === 0;
+    await inspectRefusalCell(page, device, suppressed.probes.negative, null);
+    const reinspectionBlocked = await page.locator("#root > div").count() === 0;
+    const png = await page.locator("#map canvas").screenshot({ style: "#title,#root{visibility:hidden!important}" });
+    const pixels = await analyze(page, png, suppressed.probes);
+    check(suppressed.diagnostics.layoutPending === true && suppressed.diagnostics.dataPending === true
+      && suppressed.diagnostics.idleHeld === true && suppressed.diagnostics.sourceFeatureCount === 9
+      && suppressed.diagnostics.renderedSourceFeatureCount > 0 && suppressed.unrestrictedPickCount > 0,
+    key, { required: "Refused source replacement must remain serialized behind the layout lock", diagnostics: suppressed.diagnostics });
+    check(suppressed.diagnostics.active === false && !suppressed.diagnostics.meshCells
+      && suppressed.diagnostics.nativeSuppressed === true && suppressed.nativeOpacity === 0
+      && suppressed.diagnostics.outlineOpacity === 0 && suppressed.diagnostics.labelOpacity === 0,
+    key, { required: "Custom cells and native fill, outline, and label paint must be suppressed before idle", diagnostics: suppressed.diagnostics });
+    check(pixels.nonBackgroundPixels === 0, key, { required: "No old cells, outlines, or labels may paint before idle", pixels });
+    check(suppressed.inspectablePickCount === 0 && priorTooltipCleared && reinspectionBlocked,
+      key, { priorTooltipCleared, reinspectionBlocked, inspectablePickCount: suppressed.inspectablePickCount });
+    const suppressedScreenshot = `${key}-suppressed.png`;
+    await page.screenshot({ path: path.join(output, suppressedScreenshot) });
+
+    const settled = await page.evaluate(() => window.runScalarRefusalPhase("settle"));
+    check(settled.diagnostics.idleHeld === false && settled.diagnostics.sourceFeatureCount === 0
+      && settled.diagnostics.renderedSourceFeatureCount === 0 && settled.diagnostics.dataPending === false
+      && settled.diagnostics.layoutPending === false && settled.labelCount === 0 && settled.inspectablePickCount === 0,
+    key, { required: "Released idle and source completion must converge to the empty source", diagnostics: settled.diagnostics });
+    const recovered = await page.evaluate(() => window.runScalarRefusalPhase("recover"));
+    check(recovered.diagnostics.nativeSuppressed === false && recovered.nativeOpacity === 1
+      && recovered.labelCount > 0 && recovered.inspectablePickCount > 0,
+    key, "A later valid source must restore native detail and inspection");
+    const recoveredTooltipBounds = await inspectRefusalCell(page, device, recovered.probes.negative, -0.4);
+    const recoveredScreenshot = `${key}-recovered.png`;
+    await page.screenshot({ path: path.join(output, recoveredScreenshot) });
+    for (const [phase, row] of Object.entries({ locked, suppressed, settled, recovered })) {
+      check(row.errors.length === 0, `${key}-${phase}`, row.errors);
+    }
+    cycles.push({ replacement, locked, suppressed: { ...suppressed, ...pixels }, settled, recovered,
+      interaction: device.hasTouch ? "native touch refusal lifecycle" : "native mouse refusal lifecycle",
+      priorTooltipVisible, priorTooltipCleared, reinspectionBlocked, priorTooltipBounds, recoveredTooltipBounds,
+      screenshots: { before: beforeScreenshot, suppressed: suppressedScreenshot, recovered: recoveredScreenshot } });
+  }
+  return { ...cycles.at(-1).recovered, refusalCycles: cycles };
+}
+
 try {
   browser = await chromium.launch({
     headless: true, args: ["--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader"],
@@ -122,18 +204,19 @@ try {
     await page.waitForFunction(() => window.fixtureReady);
     let baseline;
     const cases = [
-      ...["field", "duplicate", "half-opacity", "missing", "mixed-days", "mixed-units", "empty", "detail", "mode-race", "reload", "globe", "pitch"].map((scenario) => ({ scenario, sequence: "standard" })),
+      ...["field", "duplicate", "half-opacity", "missing", "mixed-days", "mixed-units", "empty", "detail", "mode-race", "refusal-layout", "reload", "globe", "pitch"].map((scenario) => ({ scenario, sequence: "standard" })),
       ...(!scenarioFilter && name === "desktop" ? ["field", "detail", "reload"].map((scenario) => ({ scenario, sequence: "direct" })) : []),
     ];
     for (const { scenario, sequence } of cases) {
       if (scenarioFilter && !scenarioFilter.split(",").includes(scenario)) continue;
-      const row = await page.evaluate((value) => window.runScalarCase(value), scenario);
+      let row = await page.evaluate((value) => window.runScalarCase(value), scenario);
       await page.locator("#title").evaluate((element, text) => { element.textContent = text; }, `SYNTHETIC NDVI | ${name} | ${scenario} | no live data`);
+      const prefix = `${name}-${sequence === "direct" ? "direct-" : ""}${scenario}`;
+      if (scenario === "refusal-layout") row = await refusalLifecycle(page, device, row, prefix);
       const png = await page.locator("#map canvas").screenshot({ style: "#title,#root{visibility:hidden!important}" });
       const pixels = await analyze(page, png, row.probes);
       const digest = createHash("sha256").update(png).digest("hex");
       if (scenario === "field") baseline = { digest, pixels };
-      const prefix = `${name}-${sequence === "direct" ? "direct-" : ""}${scenario}`;
       check(row.webgl2, prefix, "WebGL2 must be available for this fixture");
       check(row.errors.length === 0 && pageErrors.length === 0, prefix, { mapErrors: row.errors, pageErrors });
       if (["field", "duplicate", "missing", "reload"].includes(scenario)) {
