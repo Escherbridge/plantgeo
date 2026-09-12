@@ -168,6 +168,45 @@ describe("WeatherHistoryReport", () => {
     expect(screen.queryByRole("button", { name: "Mark nearest weather reading on map" })).toBeNull();
   });
 
+  it("clears retained ready readings after a transport error and exposes retry", () => {
+    const data = {
+      state: "ready" as const,
+      requestedDay: DAY,
+      servedDay: DAY,
+      truncated: false,
+      data: [observation],
+    };
+    queries.getWeatherForBbox.mockReturnValue({
+      data,
+      isFetching: false,
+      isPlaceholderData: false,
+      isError: false,
+      refetch: queries.refetch,
+    });
+
+    const rendered = renderWithProviders(<WeatherHistoryReport bbox="-117,43,-115,45" zoom={13} />);
+
+    expect(screen.getAllByText("21.5 °C").length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "Mark nearest weather reading on map" })).toBeTruthy();
+
+    queries.getWeatherForBbox.mockReturnValue({
+      data,
+      isFetching: false,
+      isPlaceholderData: false,
+      isError: true,
+      refetch: queries.refetch,
+    });
+    rendered.rerender(<WeatherHistoryReport bbox="-117,43,-115,45" zoom={13} />);
+
+    expect(screen.getByRole("alert").textContent).toContain(
+      "Historical weather could not be loaded. No cached fallback frame is shown."
+    );
+    expect(screen.queryByText("21.5 °C")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Mark nearest weather reading on map" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Retry weather" }));
+    expect(queries.refetch).toHaveBeenCalledTimes(1);
+  });
+
   it("exposes retry for transport errors and disables it while fetching", () => {
     queries.getWeatherForBbox.mockReturnValue({
       data: undefined,

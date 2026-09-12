@@ -133,7 +133,7 @@ export function WeatherHistoryReport({ bbox, zoom }: WeatherHistoryReportProps) 
     selectedDay === null ||
     exactResult.requestedDay === selectedDay;
   const presentedResult =
-    resultMatchesSelectedDay || query.isPlaceholderData ? exactResult : undefined;
+    !query.isError && (resultMatchesSelectedDay || query.isPlaceholderData) ? exactResult : undefined;
   const rows = presentedResult?.state === "ready" ? presentedResult.data : [];
 
   const weatherPoint =

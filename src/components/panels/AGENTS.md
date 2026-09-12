@@ -1,5 +1,13 @@
 # Panels
 
+## Historical weather transport failures
+
+`WeatherHistoryReport` withholds readings and its map-marking action on a query error,
+even when a failed refetch retains an earlier ready result in the query cache. Its
+unavailable notice must not accompany cached values. Pending placeholders remain
+allowed with their served day stated explicitly, as specified in the map directory's
+weather contract.
+
 ## Regional evidence release labels
 
 MTBS `publication_available_YYYY-MM-DD` is validated only for the MTBS source and
