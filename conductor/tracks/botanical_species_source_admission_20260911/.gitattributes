@@ -1,0 +1,2 @@
+# Preserve the exact source and evidence bytes referenced by SHA-256 receipts.
+* -text whitespace=trailing-space,space-before-tab,cr-at-eol

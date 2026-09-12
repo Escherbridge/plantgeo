@@ -84,6 +84,9 @@ WRITER_MODULES: Final[dict[str, str]] = {
 #: entry, with its reason, because "eleven writers" is a claim this file should be able to prove
 #: rather than a number it inherits.
 NON_WRITER_MODULES: Final[dict[str, str]] = {
+    "botanical_species_profiles": "an offline, reviewed static reference release publisher, not an environmental "
+    "forward lane: it consumes pinned source files, preserves explicit trait gaps and publishes by release ID. "
+    "It does not own day/bbox ingestion, a cron or a lane-day outcome.",
     "water_gauges": "a TRANSFORMER, not a writer: it holds `publisher_named_day`, "
     "`tables_by_publisher_day` and `merge_water_gauges_day`, which the water-gauges gap-fill lane "
     "calls. It has no `parser()`, no turn, and no bounded run to report an outcome for, so every "

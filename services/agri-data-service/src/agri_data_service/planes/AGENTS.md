@@ -7,7 +7,20 @@ Domain execution planes that bind method algorithms and pipeline acquisition out
 - **May import**: `foundation` (L0), `method` (L1), `warehouse` (L1), `pipeline` (L2).
 - **May NOT import**: `interface` (L4).
 
-## The zoom axis: one rule, no exceptions
+## Static botanical lookup exception
+
+`botanical_species_profiles.py` serves the explicitly nonspatial reference product authorized by
+`conductor/tracks/botanical_species_profile_lookup_20260911/spec.md`. Its axes are canonical taxon
+authority/version/ID and an immutable profile release, so it accepts no map zoom or selected day.
+It verifies stored manifest and Parquet content before rendering a bounded assertion page, shares
+the existing serving worker admission, and has no database fallback. The zoom rule below applies
+to the environmental map planes.
+
+`encode_profile_response` owns compact UTF-8 serialization for the 2 MiB response
+ceiling, HTTP body and agent tool text. The HTTP adapter sends those bytes directly;
+re-serializing with ASCII escapes could exceed a budget measured before transport.
+
+## The environmental zoom axis
 
 Every PUBLIC function in this directory takes a `requested_zoom: int` -- the map zoom a viewport is
 actually at -- and resolves it exactly once through `foundation.parquet.zoom.serving_zoom_tier`.

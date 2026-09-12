@@ -10,7 +10,7 @@ rendering live in top-level `agri_data_service.parquet_ops`.
 
 ## Invariants
 
-- `parquet_routes.py` is the sole HTTP adapter. No second HTTP-facing implementation or alias lives
+- `parquet_routes.py` is the sole environmental Parquet HTTP adapter. No environmental alias lives
   beside it.
 - Every resolved four-state envelope leaves as HTTP 200. A refusal is serving/transport state, never
   warehouse content.
@@ -27,3 +27,18 @@ rendering live in top-level `agri_data_service.parquet_ops`.
 - Timeouts stay below the caller budgets so the adapter can return the typed reason.
 
 Current MTBS reads inject the existing availability object-store adapter lazily into the common listing. The common resolver owns snapshot evidence and optional `mtbs_snapshot` wire metadata, including empty viewports; the HTTP adapter has no independent release authority.
+
+## Botanical static lookup
+
+`botanical_species_profiles.py` is the separate nonspatial reference adapter authorized by the
+botanical profile track. `GET /api/v1/botanical-species-profiles/lookup` accepts exactly
+`authority`, `authority_version`, `taxon_id`, `release_id`, optional `assertion_limit` (1–100), and
+the returned `cursor`. It rejects duplicate parameters, names, floating releases, date and zoom
+parameters. Both read profiles mount it; the write ingress does not.
+
+The plane owns validation, read admission, integrity verification, evidence paging and refusal
+payloads. The adapter maps published or unknown taxon results to HTTP 200, malformed requests to
+400, unpublished releases or oversized responses to 409, and storage, integrity, capacity or timeout
+failures to 503. Responses use `Cache-Control: no-store`, keeping incomplete/refused outcomes from
+being cached as published profiles. Tests may inject immutable local storage through
+`app.ctx.botanical_profile_storage`; an unset injection uses the lazy configured object store.

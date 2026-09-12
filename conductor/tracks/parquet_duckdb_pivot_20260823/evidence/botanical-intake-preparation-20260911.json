@@ -1,0 +1,623 @@
+{
+  "schema": "botanical-read-only-intake-preparation/v1",
+  "prepared_at": "2026-09-12T01:15:07.870847+00:00",
+  "reviewer_lane": "/root/legacy_reconciliation",
+  "verdict": "PASS for immutable provenance and bounded composition preparation; not combined-source verification or source admission",
+  "current_candidate": "89e8494422b8232c8f16dbffdcf2321c7ea17bc8",
+  "source_commit": "edc6afdeb23f339b40049ec0828551c2fe1a4d45",
+  "source_tree": "01ad55b6220a13604e8fbf8a4ceda773e35d5658",
+  "merge_base": "bc7b5e1ff5dbb6eac929d5db927acd6b7ff2ea4a",
+  "source_parents": [
+    "bc7b5e1ff5dbb6eac929d5db927acd6b7ff2ea4a"
+  ],
+  "source_only_commit_count": 1,
+  "changed_file_count": 65,
+  "changed_file_manifest_exact": true,
+  "files": [
+    {
+      "path": "conductor/tracks.md",
+      "base_blob": "ee037feeeebd9b8ba35f812795886f41ff61ab7c",
+      "current_blob": "8c14ecece770aac7140f0bab8511e1dc772118c6",
+      "source_blob": "1bc45fa9db27289073c5f4b7210724dfeb903053",
+      "changed_on_both_sides": true
+    },
+    {
+      "path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/.gitattributes",
+      "base_blob": null,
+      "current_blob": null,
+      "source_blob": "66db53559ae626d346bf8d551d009be115a48d52",
+      "changed_on_both_sides": false
+    },
+    {
+      "path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/changed-files.txt",
+      "base_blob": null,
+      "current_blob": null,
+      "source_blob": "2aa95c2b2c3f3ef262741da54d62ee7f7b8364fd",
+      "changed_on_both_sides": false
+    },
+    {
+      "path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/independent-review.json",
+      "base_blob": null,
+      "current_blob": null,
+      "source_blob": "9b924485ecbbebca90ce875b7a644646e382d33b",
+      "changed_on_both_sides": false
+    },
+    {
+      "path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/independent-review.md",
+      "base_blob": null,
+      "current_blob": null,
+      "source_blob": "c2bd91eb6a128985fbb3982381cb1d7a9484dfda",
+      "changed_on_both_sides": false
+    },
+    {
+      "path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/integration-receipt.json",
+      "base_blob": null,
+      "current_blob": null,
+      "source_blob": "267297eb19e8030d8dc23d15b5309eadb907a8df",
+      "changed_on_both_sides": false
+    },
+    {
+      "path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/integration.md",
+      "base_blob": null,
+      "current_blob": null,
+      "source_blob": "148a136233937d9e35a0dfd80903ca83f4af3c35",
+      "changed_on_both_sides": false
+    },
+    {
+      "path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/python-quality-receipt.json",
+      "base_blob": null,
+      "current_blob": null,
+      "source_blob": "5c08cee6783fb405fc4a58dde9ea1f1dcf1c9873",
+      "changed_on_both_sides": false
+    },
+    {
+      "path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/railway-census.json",
+      "base_blob": null,
+      "current_blob": null,
+      "source_blob": "4a4fb9670f8513d3d9e014dab84e28ce4153fabc",
+      "changed_on_both_sides": false
+    },
+    {
+      "path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/railway-census.md",
+      "base_blob": null,
+      "current_blob": null,
+      "source_blob": "13bf37b3183aa3e9b76c20869839bba0df2557be",
+      "changed_on_both_sides": false
+    },
+    {
+      "path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/releases/.gitattributes",
+      "base_blob": null,
+      "current_blob": null,
+      "source_blob": "f3c852c1692bcfd6ff9cfb5a02d5132c6d6d395e",
+      "changed_on_both_sides": false
+    },
+    {
+      "path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/releases/bspf-0f6b58aba4610edf9b6bcde1e7a0da0c44cf3e4671c1b624b13d7ed95b5ab501/assertions.parquet",
+      "base_blob": null,
+      "current_blob": null,
+      "source_blob": "c7b3efb8c92897b23fb72a2f20a0337e9f0de7d5",
+      "changed_on_both_sides": false
+    },
+    {
+      "path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/releases/bspf-0f6b58aba4610edf9b6bcde1e7a0da0c44cf3e4671c1b624b13d7ed95b5ab501/decisions.parquet",
+      "base_blob": null,
+      "current_blob": null,
+      "source_blob": "b973f18d16823cac5f4e6654f8615a6d855b6d74",
+      "changed_on_both_sides": false
+    },
+    {
+      "path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/releases/bspf-0f6b58aba4610edf9b6bcde1e7a0da0c44cf3e4671c1b624b13d7ed95b5ab501/manifest.parquet",
+      "base_blob": null,
+      "current_blob": null,
+      "source_blob": "cb983df7efb53b6b9b6752fdb5484a3930b3bc19",
+      "changed_on_both_sides": false
+    },
+    {
+      "path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/releases/bspf-0f6b58aba4610edf9b6bcde1e7a0da0c44cf3e4671c1b624b13d7ed95b5ab501/profiles.parquet",
+      "base_blob": null,
+      "current_blob": null,
+      "source_blob": "cdc54567f2b28ded5b14ef589658c86e55da343b",
+      "changed_on_both_sides": false
+    },
+    {
+      "path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/releases/bspf-0f6b58aba4610edf9b6bcde1e7a0da0c44cf3e4671c1b624b13d7ed95b5ab501/taxa.parquet",
+      "base_blob": null,
+      "current_blob": null,
+      "source_blob": "32bf1cc4970f8e1e1ce59a927fe03a8b97cb03b2",
+      "changed_on_both_sides": false
+    },
+    {
+      "path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/schema-inventory.md",
+      "base_blob": null,
+      "current_blob": null,
+      "source_blob": "a102c62592ec858804d21376754108c07f1dda16",
+      "changed_on_both_sides": false
+    },
+    {
+      "path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/shared-integration-base.json",
+      "base_blob": null,
+      "current_blob": null,
+      "source_blob": "6993a025fc3ba7fe1a2eb882a0330b1f808ff743",
+      "changed_on_both_sides": false
+    },
+    {
+      "path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/shared-registration.patch",
+      "base_blob": null,
+      "current_blob": null,
+      "source_blob": "f00f14a8091e8b8df330b55319774d8444bed347",
+      "changed_on_both_sides": false
+    },
+    {
+      "path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/verification.json",
+      "base_blob": null,
+      "current_blob": null,
+      "source_blob": "460a8e5fbbc2cf955a4724960acdb2ff23a1363e",
+      "changed_on_both_sides": false
+    },
+    {
+      "path": "conductor/tracks/botanical_species_profile_lookup_20260911/metadata.json",
+      "base_blob": "dca0f1f8d60bedb5a41c1396f76f020834659f5b",
+      "current_blob": "dca0f1f8d60bedb5a41c1396f76f020834659f5b",
+      "source_blob": "ab0345d543d126cad0d313ff13096c844d97461f",
+      "changed_on_both_sides": false
+    },
+    {
+      "path": "conductor/tracks/botanical_species_profile_lookup_20260911/plan.md",
+      "base_blob": "52ed9a5795803342c950ec3421e91846ab88ef9c",
+      "current_blob": "52ed9a5795803342c950ec3421e91846ab88ef9c",
+      "source_blob": "1479cb082853a7769cb8ecc56089fce4b54bb13f",
+      "changed_on_both_sides": false
+    },
+    {
+      "path": "conductor/tracks/botanical_species_profile_lookup_20260911/spec.md",
+      "base_blob": "8197fd4999d97908e543023fa0036cd283bf57d5",
+      "current_blob": "8197fd4999d97908e543023fa0036cd283bf57d5",
+      "source_blob": "203610c34c19136fa13fd1420c5efb8edd405ce8",
+      "changed_on_both_sides": false
+    },
+    {
+      "path": "conductor/tracks/botanical_species_source_admission_20260911/.gitattributes",
+      "base_blob": null,
+      "current_blob": null,
+      "source_blob": "12d6c8dd3903898eca9415c5a3ec59576cc198db",
+      "changed_on_both_sides": false
+    },
+    {
+      "path": "conductor/tracks/botanical_species_source_admission_20260911/evidence/README_WCVP-v16.xlsx",
+      "base_blob": null,
+      "current_blob": null,
+      "source_blob": "8e008c4cc32e71af8c30fe702d2e5ebefb2f81ec",
+      "changed_on_both_sides": false
+    },
+    {
+      "path": "conductor/tracks/botanical_species_source_admission_20260911/evidence/source-admission.json",
+      "base_blob": null,
+      "current_blob": null,
+      "source_blob": "2ecd0d283f303e1ac3f0ee37f001cfeee662d044",
+      "changed_on_both_sides": false
+    },
+    {
+      "path": "conductor/tracks/botanical_species_source_admission_20260911/evidence/source-admission.md",
+      "base_blob": null,
+      "current_blob": null,
+      "source_blob": "24f8b343060e693a9966c265b86fbe6999099433",
+      "changed_on_both_sides": false
+    },
+    {
+      "path": "conductor/tracks/botanical_species_source_admission_20260911/evidence/wcvp-16-source-release.json",
+      "base_blob": null,
+      "current_blob": null,
+      "source_blob": "d4a8fc7bce9cd3fadc31af251414eb531755e97b",
+      "changed_on_both_sides": false
+    },
+    {
+      "path": "conductor/tracks/botanical_species_source_admission_20260911/metadata.json",
+      "base_blob": null,
+      "current_blob": null,
+      "source_blob": "72ab949595475add53b9f495d3ae3c03f2099094",
+      "changed_on_both_sides": false
+    },
+    {
+      "path": "conductor/tracks/botanical_species_source_admission_20260911/plan.md",
+      "base_blob": null,
+      "current_blob": null,
+      "source_blob": "c0feade19b6b64ca504e855b1221f73349f933c8",
+      "changed_on_both_sides": false
+    },
+    {
+      "path": "conductor/tracks/botanical_species_source_admission_20260911/spec.md",
+      "base_blob": null,
+      "current_blob": null,
+      "source_blob": "a6536a00b471c87dbb9e5200293f2a8a86a63f64",
+      "changed_on_both_sides": false
+    },
+    {
+      "path": "services/agri-data-service/QUALITY_RECEIPT.json",
+      "base_blob": "4f89cd4f2c6c9517951f5ce7d0ea0c640272693f",
+      "current_blob": "a9c1e4382991afe9964edf4331343a73d7986355",
+      "source_blob": "5c08cee6783fb405fc4a58dde9ea1f1dcf1c9873",
+      "changed_on_both_sides": true
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/agent/AGENTS.md",
+      "base_blob": "e586fea54bd2fd2819b43ee090de3df585e40bce",
+      "current_blob": "50125d17838c4caffa44898002698a6db3557560",
+      "source_blob": "6e96a2a4de392ab1013ab751821de3d8a295b419",
+      "changed_on_both_sides": true
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/agent/botanical_species_profiles.py",
+      "base_blob": null,
+      "current_blob": null,
+      "source_blob": "3d05d046108fc80ae98bc1fd18f073c8a75d1487",
+      "changed_on_both_sides": false
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/agent/graph.py",
+      "base_blob": "ff11ff43c3fed26650d6d9eb9fe9e25585a394c4",
+      "current_blob": "ff11ff43c3fed26650d6d9eb9fe9e25585a394c4",
+      "source_blob": "eb7171fa528e73eeaed0f2f410160f22c4b0a672",
+      "changed_on_both_sides": false
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/agent/mcp_server.py",
+      "base_blob": "94137284fec91c61553f984d84e427f468a7832c",
+      "current_blob": "94137284fec91c61553f984d84e427f468a7832c",
+      "source_blob": "5e0faccc57f56fd053f560023e54d110a2a60e20",
+      "changed_on_both_sides": false
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/agent/prompts.py",
+      "base_blob": "4f11a1a8efb9fc426d2053503514a8854f7109f5",
+      "current_blob": "4f11a1a8efb9fc426d2053503514a8854f7109f5",
+      "source_blob": "eb3c4821e3952e54cfc44534b2fa9d9ca5c8b66d",
+      "changed_on_both_sides": false
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/agent/tools.py",
+      "base_blob": "a012da8e5cf962a3690c3c0373afb81d33f22b2f",
+      "current_blob": "8cfd702c14c5705a653c571df21236f735239250",
+      "source_blob": "de6e2c4ca113d89e461e8e4439161565868ebee8",
+      "changed_on_both_sides": true
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/app.py",
+      "base_blob": "223bc153287e2eb671298554303f7ea77e75bd72",
+      "current_blob": "223bc153287e2eb671298554303f7ea77e75bd72",
+      "source_blob": "8a81d77438e9ef71341b12387bbc1f20fa26d0d0",
+      "changed_on_both_sides": false
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/interface/http/AGENTS.md",
+      "base_blob": "28f138da9d4f13a9fc25fc189aebcba2670629eb",
+      "current_blob": "28f138da9d4f13a9fc25fc189aebcba2670629eb",
+      "source_blob": "36e58686dd87b28061ce2c07971685d953e66c88",
+      "changed_on_both_sides": false
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/interface/http/botanical_species_profiles.py",
+      "base_blob": null,
+      "current_blob": null,
+      "source_blob": "b7b7ff700cedb186921bb22330eecd59ecd9c962",
+      "changed_on_both_sides": false
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/botanical_species_profiles/AGENTS.md",
+      "base_blob": null,
+      "current_blob": null,
+      "source_blob": "afa3e497ff5c0016a6b8c97801f952050061bb19",
+      "changed_on_both_sides": false
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/botanical_species_profiles/__init__.py",
+      "base_blob": null,
+      "current_blob": null,
+      "source_blob": "f61ca715a1daba6a49e663b8b7640993a937cfae",
+      "changed_on_both_sides": false
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/botanical_species_profiles/__main__.py",
+      "base_blob": null,
+      "current_blob": null,
+      "source_blob": "e85f39dda21c796613990171d20426d0aabd6522",
+      "changed_on_both_sides": false
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/botanical_species_profiles/publication.py",
+      "base_blob": null,
+      "current_blob": null,
+      "source_blob": "652f5f796b273f35b8e34b0d74caf42bc0d5f505",
+      "changed_on_both_sides": false
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/botanical_species_profiles/source_ingest.py",
+      "base_blob": null,
+      "current_blob": null,
+      "source_blob": "46b99044c3f6f182a99c74e9bc7207c770cf6418",
+      "changed_on_both_sides": false
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/botanical_species_profiles/storage.py",
+      "base_blob": null,
+      "current_blob": null,
+      "source_blob": "3e2ea646246b64ed1b4ce8290046c10ef1511818",
+      "changed_on_both_sides": false
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/planes/AGENTS.md",
+      "base_blob": "05aef8eaf22bad4e1bcdfacb2ebb0cd9d288a32b",
+      "current_blob": "05aef8eaf22bad4e1bcdfacb2ebb0cd9d288a32b",
+      "source_blob": "bc1265cdaa5180883507db736bf751e738a6f7eb",
+      "changed_on_both_sides": false
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/planes/botanical_species_profiles.py",
+      "base_blob": null,
+      "current_blob": null,
+      "source_blob": "3b381e18ade137c79d144833e5489aa832686880",
+      "changed_on_both_sides": false
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/warehouse/botanical_species_profiles/AGENTS.md",
+      "base_blob": null,
+      "current_blob": null,
+      "source_blob": "1275b4a7c8833eec2b7e72ec29b7d6d4bb2c8993",
+      "changed_on_both_sides": false
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/warehouse/botanical_species_profiles/__init__.py",
+      "base_blob": null,
+      "current_blob": null,
+      "source_blob": "1a86242ffc7a3bff6486575cd17b9a8073ea21e5",
+      "changed_on_both_sides": false
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/warehouse/botanical_species_profiles/contract.py",
+      "base_blob": null,
+      "current_blob": null,
+      "source_blob": "d7d282fee75f8f36ac441fd68d3bbf5e916a1359",
+      "changed_on_both_sides": false
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/warehouse/botanical_species_profiles/reconcile.py",
+      "base_blob": null,
+      "current_blob": null,
+      "source_blob": "147c84980be0db5251e449e696d54d8749b7eb31",
+      "changed_on_both_sides": false
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/warehouse/schemas/botanical_species_profile.py",
+      "base_blob": null,
+      "current_blob": null,
+      "source_blob": "e16c565b47ae2f9f78c5e7d9e51600606141e0bf",
+      "changed_on_both_sides": false
+    },
+    {
+      "path": "services/agri-data-service/tests/botanical_species_profiles/fixtures.py",
+      "base_blob": null,
+      "current_blob": null,
+      "source_blob": "33a342e1e713fdcb764afb51350dd47228eda040",
+      "changed_on_both_sides": false
+    },
+    {
+      "path": "services/agri-data-service/tests/botanical_species_profiles/test_contract.py",
+      "base_blob": null,
+      "current_blob": null,
+      "source_blob": "c22d6211bc1dacd06809afecf851bf8d43d1e44d",
+      "changed_on_both_sides": false
+    },
+    {
+      "path": "services/agri-data-service/tests/botanical_species_profiles/test_publication.py",
+      "base_blob": null,
+      "current_blob": null,
+      "source_blob": "2fccc020d9211cb48ce1e28e4861fbdadebc04d8",
+      "changed_on_both_sides": false
+    },
+    {
+      "path": "services/agri-data-service/tests/botanical_species_profiles/test_source_ingest.py",
+      "base_blob": null,
+      "current_blob": null,
+      "source_blob": "eb009840869637e8540f29fdd9d1060c1b1e43a9",
+      "changed_on_both_sides": false
+    },
+    {
+      "path": "services/agri-data-service/tests/direct/test_direct_package_registration.py",
+      "base_blob": "2b57e0fba22cc4357294185afc63e8b5aa16a321",
+      "current_blob": "2b57e0fba22cc4357294185afc63e8b5aa16a321",
+      "source_blob": "bef646316377a094443559cdb1540547d3232f03",
+      "changed_on_both_sides": false
+    },
+    {
+      "path": "services/agri-data-service/tests/direct/test_direct_writer_contract.py",
+      "base_blob": "c5c004fa27f5c15054f96bd7711345b75e67eafd",
+      "current_blob": "c5c004fa27f5c15054f96bd7711345b75e67eafd",
+      "source_blob": "8af791554ad9857fd65a7564f1246113ed79a247",
+      "changed_on_both_sides": false
+    },
+    {
+      "path": "services/agri-data-service/tests/interface/test_botanical_species_profile_routes.py",
+      "base_blob": null,
+      "current_blob": null,
+      "source_blob": "2c87f2bc38817f2edc27be643332aa766922914f",
+      "changed_on_both_sides": false
+    },
+    {
+      "path": "services/agri-data-service/tests/planes/test_botanical_species_profiles.py",
+      "base_blob": null,
+      "current_blob": null,
+      "source_blob": "1daa1ceea88d08c76fdede770bc400f1aff96bb1",
+      "changed_on_both_sides": false
+    },
+    {
+      "path": "services/agri-data-service/tests/test_agent_graph.py",
+      "base_blob": "37a54519f234346b0b4ea2e0416fea2a8471ab0a",
+      "current_blob": "37a54519f234346b0b4ea2e0416fea2a8471ab0a",
+      "source_blob": "05efb8fa2f76a319863ac8684ead901b8d3ca624",
+      "changed_on_both_sides": false
+    },
+    {
+      "path": "services/agri-data-service/tests/test_agent_provider_wiring.py",
+      "base_blob": "a20eb92064066761d1b8426a05dc2e181c408cf0",
+      "current_blob": "a20eb92064066761d1b8426a05dc2e181c408cf0",
+      "source_blob": "c78b915da0e90708ecd004ab36709ce5c42236cb",
+      "changed_on_both_sides": false
+    },
+    {
+      "path": "services/agri-data-service/tests/test_botanical_species_profile_agent.py",
+      "base_blob": null,
+      "current_blob": null,
+      "source_blob": "67ba47e5153c62bb76eb85dfae7b0af2be3cb8e3",
+      "changed_on_both_sides": false
+    }
+  ],
+  "shared_file_pins": [
+    {
+      "path": "services/agri-data-service/src/agri_data_service/app.py",
+      "base_blob_matches": true,
+      "base_sha256_matches": true,
+      "candidate_sha256_matches": true,
+      "current_equals_base": true
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/agent/tools.py",
+      "base_blob_matches": true,
+      "base_sha256_matches": true,
+      "candidate_sha256_matches": true,
+      "current_equals_base": false
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/agent/prompts.py",
+      "base_blob_matches": true,
+      "base_sha256_matches": true,
+      "candidate_sha256_matches": true,
+      "current_equals_base": true
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/agent/AGENTS.md",
+      "base_blob_matches": true,
+      "base_sha256_matches": true,
+      "candidate_sha256_matches": true,
+      "current_equals_base": false
+    },
+    {
+      "path": "services/agri-data-service/tests/test_agent_graph.py",
+      "base_blob_matches": true,
+      "base_sha256_matches": true,
+      "candidate_sha256_matches": true,
+      "current_equals_base": true
+    },
+    {
+      "path": "services/agri-data-service/tests/test_agent_provider_wiring.py",
+      "base_blob_matches": true,
+      "base_sha256_matches": true,
+      "candidate_sha256_matches": true,
+      "current_equals_base": true
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/planes/AGENTS.md",
+      "base_blob_matches": true,
+      "base_sha256_matches": true,
+      "candidate_sha256_matches": true,
+      "current_equals_base": true
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/interface/http/AGENTS.md",
+      "base_blob_matches": true,
+      "base_sha256_matches": true,
+      "candidate_sha256_matches": true,
+      "current_equals_base": true
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/agent/graph.py",
+      "base_blob_matches": true,
+      "base_sha256_matches": true,
+      "candidate_sha256_matches": true,
+      "current_equals_base": true
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/agent/mcp_server.py",
+      "base_blob_matches": true,
+      "base_sha256_matches": true,
+      "candidate_sha256_matches": true,
+      "current_equals_base": true
+    }
+  ],
+  "shared_patch": {
+    "bytes": 16596,
+    "sha256": "ae0f07070de4872c870433c60e213111311c8c315ea829fcfcf7e5f2c1156def",
+    "matches_supplied": true
+  },
+  "shared_manifest_hash_matches_integration": true,
+  "review_receipt_hashes": {
+    "integration-receipt.json": true,
+    "verification.json": true,
+    "python-quality-receipt.json": true
+  },
+  "source_python_receipt_copy_exact": true,
+  "portable_artifacts": {
+    "taxa": {
+      "path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/releases/bspf-0f6b58aba4610edf9b6bcde1e7a0da0c44cf3e4671c1b624b13d7ed95b5ab501/taxa.parquet",
+      "bytes_match": true,
+      "sha256_matches": true
+    },
+    "assertions": {
+      "path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/releases/bspf-0f6b58aba4610edf9b6bcde1e7a0da0c44cf3e4671c1b624b13d7ed95b5ab501/assertions.parquet",
+      "bytes_match": true,
+      "sha256_matches": true
+    },
+    "decisions": {
+      "path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/releases/bspf-0f6b58aba4610edf9b6bcde1e7a0da0c44cf3e4671c1b624b13d7ed95b5ab501/decisions.parquet",
+      "bytes_match": true,
+      "sha256_matches": true
+    },
+    "profiles": {
+      "path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/releases/bspf-0f6b58aba4610edf9b6bcde1e7a0da0c44cf3e4671c1b624b13d7ed95b5ab501/profiles.parquet",
+      "bytes_match": true,
+      "sha256_matches": true
+    },
+    "manifest": {
+      "path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/releases/bspf-0f6b58aba4610edf9b6bcde1e7a0da0c44cf3e4671c1b624b13d7ed95b5ab501/manifest.parquet",
+      "bytes_match": true,
+      "sha256_matches": true
+    }
+  },
+  "composition": [
+    {
+      "path": "conductor/tracks.md",
+      "required": "Retain current environmental and forecast rows; add source-admission row and replace only botanical-profile row."
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/agent/tools.py",
+      "required": "Retain current registered_census_lanes import, _feature_surface_refusal and call, exact-partition/governed-absence documentation. Add only botanical import, run_context record_profile_tools hook, and WAREHOUSE_TOOLS entry."
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/agent/AGENTS.md",
+      "required": "Compose the source top-level static botanical section with the current exact-day feature admission section; hunks are disjoint."
+    },
+    {
+      "path": "services/agri-data-service/QUALITY_RECEIPT.json",
+      "required": "Preserve current verification result before intake. Source receipt binds b0ddaeeb60a4374bbd5c98b96de6e679de19ec5b2de206beacdb90eebf4b3674 (1328 files), not the composed candidate. Its exact source copy already remains under botanical evidence. Regenerate only under root-authorized final verification."
+    }
+  ],
+  "open_gates": [
+    "Retain ongoing 89e8494 verification results before full-commit intake",
+    "Owner composition and independent review of the exact integrated source",
+    "Production authoring schema/row/evidence census and preservation/canonical crosswalk of existing reviewed UUIDs",
+    "Independent source-specific botanical/data-governance admission; source author review is not admission",
+    "Explicit authorization before further source ingestion, immutable publication/readback and pointer change, access configuration or deployment",
+    "Exact deployed HTTP/model/MCP smoke and caller release selection",
+    "USDA/TRY/FEIS and quantitative growth/fuel/agricultural/companion/objective-effect enrichment remain unadmitted",
+    "Scientific occurrence/environment composition, validation and ranking stay in recommendation successor track"
+  ],
+  "documentation_finding": {
+    "path": "conductor/tracks/botanical_species_source_admission_20260911/metadata.json",
+    "line": 13,
+    "finding": "next_gate still requests local verification and commit, already completed in the submitted commit; replace with pending production census and independent source-admission gate during owner intake."
+  },
+  "limits": [
+    "No cherry-pick, patch application, tracked writes, tests, imports of product runtime, database or network access performed",
+    "No independent recomputation of Python quality source digest in this bounded preparation; verified supplied receipt and artifact hashes only",
+    "No wholesale botanical code review or scientific/licensing approval inferred",
+    "All comparisons pin immutable 89e8494 and edc6afde; root-generated uncommitted QUALITY_RECEIPT belongs to ongoing verification"
+  ]
+}

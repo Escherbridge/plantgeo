@@ -1,5 +1,32 @@
 # The location-analysis agent graph
 
+## Static botanical species information
+
+`botanical_species_profiles.species_information` is registered in `WAREHOUSE_TOOLS`, so the Anthropic
+graph, OpenAI `tool_schemas()` and MCP `tools/list`/`tools/call` all expose the same bounded function.
+It accepts the complete canonical authority/version/taxon identity and an exact `bspf-<sha256>`
+profile release. It never resolves a name, reads a latest pointer, queries editable `agri.species`
+or `companion_relationships` rows, or performs a species ranking.
+
+The plane reads the immutable manifest and Parquet artifacts through the same process-wide bounded
+worker admission as environmental reads. Storage is configured lazily with
+`BotoAvailabilityStorage.from_settings`; `use_profile_storage` injects a local store for tests.
+The response includes all six distinct evidence sections, raw and normalized assertions, source
+versions and licences, decision identifiers and the content-bound release manifest. Assertion pages
+default to 25 and cannot exceed 100. Cursors bind the exact taxon and release; each field declares
+whether its contributing raw evidence is present on this page. A response above 2 MiB is refused.
+
+Published field states distinguish known, unknown, conflict, refused and withdrawn. A canonical
+taxon absent from a verified release is `unknown`; unpublished, unavailable, unconfigured or invalid
+releases are refusals. Every response reserves ranking and planting recommendations for the separate
+recommendation validation track. Fuel measurements and context remain separate from fire tolerance,
+fire response and recovery, and a requirement or agricultural role never establishes an objective effect.
+
+The run ledger records `profile_count` and `evidence_domain=botanical_reference` with `row_count=0`.
+The local-environment sufficiency denominator excludes this tool because static reference coverage
+cannot prove coverage at the selected location or day. The HTTP counterpart is
+`GET /api/v1/botanical-species-profiles/lookup`, mounted only for `combined_local` and `published_reader`.
+
 The map's location-analysis agent, rebuilt server-side where it can sit directly on the
 warehouse. It eventually replaces the hand-rolled loop in
 `src/lib/server/services/ai-prompt.ts`; until the Next.js side switches endpoints, that file

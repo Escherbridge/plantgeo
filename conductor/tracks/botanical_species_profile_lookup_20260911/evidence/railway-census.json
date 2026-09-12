@@ -1,0 +1,21 @@
+{
+  "schema_version": "1",
+  "captured_at": "2026-09-11T23:58:47.876053+00:00",
+  "target_classification": "railway",
+  "credential_values_persisted": false,
+  "local_postgresql_used": false,
+  "database_mutations": false,
+  "script_sha256": "e9aa627044eaf9c20ee1d0ddd8d1abd6142df00eb3afc1c5a36304ada85e0168",
+  "status": "production_census_pending",
+  "error_class": "OperationalError",
+  "exception_text_persisted": false,
+  "elapsed_seconds": 0.093,
+  "prior_attempt_status": "network_connection_unavailable",
+  "local_continuation": {
+    "remote_access": false,
+    "private_environment_access": false,
+    "database_access": false,
+    "verified_production_table_counts": null,
+    "verified_production_review_states": null
+  }
+}

@@ -1,0 +1,1734 @@
+{
+  "schema": "botanical-full-intake-independent-review/v1",
+  "type": "independent-review",
+  "reviewer_lane": "/root/legacy_repair_review",
+  "reviewed_at_utc": "2026-09-12T01:41:01.027400+00:00",
+  "verdict": "BOUNDED_PASS_exact_65_path_composition_and_registration",
+  "findings": [],
+  "severity_counts": {
+    "P0": 0,
+    "P1": 0,
+    "P2": 0,
+    "P3": 0
+  },
+  "pre_intake_head": "9b46e86155a65e56a5186fcd087fea944bdf5ba1",
+  "source_commit": "edc6afdeb23f339b40049ec0828551c2fe1a4d45",
+  "source_tree": "01ad55b6220a13604e8fbf8a4ceda773e35d5658",
+  "source_parent_and_base": "bc7b5e1ff5dbb6eac929d5db927acd6b7ff2ea4a",
+  "author_manifest": {
+    "portable_path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/botanical-intake-20260911.json",
+    "original_path": ".omc/research/active-track-integration-20260911/botanical-intake-author.json",
+    "bytes": 53764,
+    "sha256": "c56fe3a0ee08cbc62d7b07f6018a4e63d82461b7bb13d0452530531abf9bc2c7"
+  },
+  "preparation_manifest": {
+    "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/botanical-intake-preparation-20260911.json",
+    "original_path": ".omc/research/botanical-intake-preparation-20260911.json",
+    "sha256": "b0d545efefb678a1eb4dbbeff8702c4ae3a2dd15c2b51b582672cadd4757a632"
+  },
+  "independent_mechanical_checks": {
+    "complete_source_path_set": true,
+    "source_path_count": 65,
+    "exact_source_blob_and_mode_count": 60,
+    "composed_count": 3,
+    "metadata_correction_count": 1,
+    "preserved_pre_intake_receipt_count": 1,
+    "staged_intake_changes": 64,
+    "initial_staged_outside_manifest": [],
+    "all_author_path_pins_match": true,
+    "all_working_files_match_index": true,
+    "all_65_raw_hashes_unchanged_during_review": true,
+    "unmerged_index_entries": 0,
+    "tools_only_import_recorder_registry_added": true,
+    "agent_docs_exact_union": true,
+    "registry_only_two_botanical_rows_changed": true,
+    "metadata_only_next_gate_changed": true
+  },
+  "paths": [
+    {
+      "path": "conductor/tracks.md",
+      "pre_intake": {
+        "mode": "100644",
+        "blob": "8c14ecece770aac7140f0bab8511e1dc772118c6"
+      },
+      "source": {
+        "mode": "100644",
+        "blob": "1bc45fa9db27289073c5f4b7210724dfeb903053"
+      },
+      "base": {
+        "mode": "100644",
+        "blob": "ee037feeeebd9b8ba35f812795886f41ff61ab7c"
+      },
+      "index": {
+        "mode": "100644",
+        "blob": "30fcdb2a25549c638beb318b6c7942879d5395db"
+      },
+      "working_bytes": 13378,
+      "working_sha256": "d3d62e2e8116ab63845c8ce882dedd039dc24e69b5e1a1417f2699036a8c7866",
+      "working_lf_sha256": "d3d62e2e8116ab63845c8ce882dedd039dc24e69b5e1a1417f2699036a8c7866",
+      "index_equals_source": false,
+      "index_equals_pre_intake": false,
+      "binary": false,
+      "disposition": "composed_with_current_accepted_changes",
+      "working_matches_index": true
+    },
+    {
+      "path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/.gitattributes",
+      "pre_intake": null,
+      "source": {
+        "mode": "100644",
+        "blob": "66db53559ae626d346bf8d551d009be115a48d52"
+      },
+      "base": null,
+      "index": {
+        "mode": "100644",
+        "blob": "66db53559ae626d346bf8d551d009be115a48d52"
+      },
+      "working_bytes": 229,
+      "working_sha256": "19c9625d211b01074b4a7456f96fcc754a2cb709ada11ef9e090f2f64821a19a",
+      "working_lf_sha256": "19c9625d211b01074b4a7456f96fcc754a2cb709ada11ef9e090f2f64821a19a",
+      "index_equals_source": true,
+      "index_equals_pre_intake": false,
+      "binary": false,
+      "disposition": "exact_source_git_blob",
+      "working_matches_index": true
+    },
+    {
+      "path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/changed-files.txt",
+      "pre_intake": null,
+      "source": {
+        "mode": "100644",
+        "blob": "2aa95c2b2c3f3ef262741da54d62ee7f7b8364fd"
+      },
+      "base": null,
+      "index": {
+        "mode": "100644",
+        "blob": "2aa95c2b2c3f3ef262741da54d62ee7f7b8364fd"
+      },
+      "working_bytes": 5719,
+      "working_sha256": "00757dc0924d7c8905f67bf847e4cf8045444681d28614da0966b2913e8bcb79",
+      "working_lf_sha256": "00757dc0924d7c8905f67bf847e4cf8045444681d28614da0966b2913e8bcb79",
+      "index_equals_source": true,
+      "index_equals_pre_intake": false,
+      "binary": false,
+      "disposition": "exact_source_git_blob",
+      "working_matches_index": true
+    },
+    {
+      "path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/independent-review.json",
+      "pre_intake": null,
+      "source": {
+        "mode": "100644",
+        "blob": "9b924485ecbbebca90ce875b7a644646e382d33b"
+      },
+      "base": null,
+      "index": {
+        "mode": "100644",
+        "blob": "9b924485ecbbebca90ce875b7a644646e382d33b"
+      },
+      "working_bytes": 3021,
+      "working_sha256": "1859f0b288fb735b6b6697208ab840f7f63e0f65aec4e31e2c007fa71af5469e",
+      "working_lf_sha256": "1859f0b288fb735b6b6697208ab840f7f63e0f65aec4e31e2c007fa71af5469e",
+      "index_equals_source": true,
+      "index_equals_pre_intake": false,
+      "binary": false,
+      "disposition": "exact_source_git_blob",
+      "working_matches_index": true
+    },
+    {
+      "path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/independent-review.md",
+      "pre_intake": null,
+      "source": {
+        "mode": "100644",
+        "blob": "c2bd91eb6a128985fbb3982381cb1d7a9484dfda"
+      },
+      "base": null,
+      "index": {
+        "mode": "100644",
+        "blob": "c2bd91eb6a128985fbb3982381cb1d7a9484dfda"
+      },
+      "working_bytes": 10836,
+      "working_sha256": "c2b2c0c13e0a523ea5729bf99b80f521977e49dd30341a9cc2e1f0b1bffff968",
+      "working_lf_sha256": "c2b2c0c13e0a523ea5729bf99b80f521977e49dd30341a9cc2e1f0b1bffff968",
+      "index_equals_source": true,
+      "index_equals_pre_intake": false,
+      "binary": false,
+      "disposition": "exact_source_git_blob",
+      "working_matches_index": true
+    },
+    {
+      "path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/integration-receipt.json",
+      "pre_intake": null,
+      "source": {
+        "mode": "100644",
+        "blob": "267297eb19e8030d8dc23d15b5309eadb907a8df"
+      },
+      "base": null,
+      "index": {
+        "mode": "100644",
+        "blob": "267297eb19e8030d8dc23d15b5309eadb907a8df"
+      },
+      "working_bytes": 16932,
+      "working_sha256": "5d4b6a712c4a6486de34386f0d75eef5c6dcc1895e2d11c738619c95da4584f7",
+      "working_lf_sha256": "331d5bf16b38e1ca967f5945ca6686fa452469fddcb14acc7fe7c4aa3e63545a",
+      "index_equals_source": true,
+      "index_equals_pre_intake": false,
+      "binary": false,
+      "disposition": "exact_source_git_blob",
+      "working_matches_index": true
+    },
+    {
+      "path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/integration.md",
+      "pre_intake": null,
+      "source": {
+        "mode": "100644",
+        "blob": "148a136233937d9e35a0dfd80903ca83f4af3c35"
+      },
+      "base": null,
+      "index": {
+        "mode": "100644",
+        "blob": "148a136233937d9e35a0dfd80903ca83f4af3c35"
+      },
+      "working_bytes": 10402,
+      "working_sha256": "ef2b558af3b1df749608b722d22ee48fbd0dcc7a190093628d8d58b4d7224a3c",
+      "working_lf_sha256": "364ba5cf23123eb098c0f8420c06cc8afb391ca073eb25e2ccac457ec53000b1",
+      "index_equals_source": true,
+      "index_equals_pre_intake": false,
+      "binary": false,
+      "disposition": "exact_source_git_blob",
+      "working_matches_index": true
+    },
+    {
+      "path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/python-quality-receipt.json",
+      "pre_intake": null,
+      "source": {
+        "mode": "100644",
+        "blob": "5c08cee6783fb405fc4a58dde9ea1f1dcf1c9873"
+      },
+      "base": null,
+      "index": {
+        "mode": "100644",
+        "blob": "5c08cee6783fb405fc4a58dde9ea1f1dcf1c9873"
+      },
+      "working_bytes": 1037,
+      "working_sha256": "babaeb1ac075d26073273f9a4c80ba302d25653177404fee7bc377ab8b52e335",
+      "working_lf_sha256": "babaeb1ac075d26073273f9a4c80ba302d25653177404fee7bc377ab8b52e335",
+      "index_equals_source": true,
+      "index_equals_pre_intake": false,
+      "binary": false,
+      "disposition": "exact_source_git_blob",
+      "working_matches_index": true
+    },
+    {
+      "path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/railway-census.json",
+      "pre_intake": null,
+      "source": {
+        "mode": "100644",
+        "blob": "4a4fb9670f8513d3d9e014dab84e28ce4153fabc"
+      },
+      "base": null,
+      "index": {
+        "mode": "100644",
+        "blob": "4a4fb9670f8513d3d9e014dab84e28ce4153fabc"
+      },
+      "working_bytes": 757,
+      "working_sha256": "7a9fe093e4b7f3dece2b9ad3fd1b81b707d50cf11e154c86afc98efe2562cd48",
+      "working_lf_sha256": "1e5438685545e6ccf0770c146bbd6c83acc772df4784b78b965b57dc154d3e2b",
+      "index_equals_source": true,
+      "index_equals_pre_intake": false,
+      "binary": false,
+      "disposition": "exact_source_git_blob",
+      "working_matches_index": true
+    },
+    {
+      "path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/railway-census.md",
+      "pre_intake": null,
+      "source": {
+        "mode": "100644",
+        "blob": "13bf37b3183aa3e9b76c20869839bba0df2557be"
+      },
+      "base": null,
+      "index": {
+        "mode": "100644",
+        "blob": "13bf37b3183aa3e9b76c20869839bba0df2557be"
+      },
+      "working_bytes": 1495,
+      "working_sha256": "b427147ede12a811b23a9467684262b6c984046b76523db29f30e94b98f9646f",
+      "working_lf_sha256": "087bb557cbfd75a0fb1817e902cb8dca6f7e9b3b4c5f8c22203b0cd7139ef335",
+      "index_equals_source": true,
+      "index_equals_pre_intake": false,
+      "binary": false,
+      "disposition": "exact_source_git_blob",
+      "working_matches_index": true
+    },
+    {
+      "path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/releases/.gitattributes",
+      "pre_intake": null,
+      "source": {
+        "mode": "100644",
+        "blob": "f3c852c1692bcfd6ff9cfb5a02d5132c6d6d395e"
+      },
+      "base": null,
+      "index": {
+        "mode": "100644",
+        "blob": "f3c852c1692bcfd6ff9cfb5a02d5132c6d6d395e"
+      },
+      "working_bytes": 23,
+      "working_sha256": "65337cb6abf32a75ad455701f9d944b5361fab8378f72b2253fc1f05674de4e0",
+      "working_lf_sha256": "4c0ffdd8667a8a3e299b03ae46b79ed5c6b0b4e427455bc0a7a31b14d299daa8",
+      "index_equals_source": true,
+      "index_equals_pre_intake": false,
+      "binary": false,
+      "disposition": "exact_source_git_blob",
+      "working_matches_index": true
+    },
+    {
+      "path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/releases/bspf-0f6b58aba4610edf9b6bcde1e7a0da0c44cf3e4671c1b624b13d7ed95b5ab501/assertions.parquet",
+      "pre_intake": null,
+      "source": {
+        "mode": "100644",
+        "blob": "c7b3efb8c92897b23fb72a2f20a0337e9f0de7d5"
+      },
+      "base": null,
+      "index": {
+        "mode": "100644",
+        "blob": "c7b3efb8c92897b23fb72a2f20a0337e9f0de7d5"
+      },
+      "working_bytes": 11969,
+      "working_sha256": "49320848d79779c4fa7c9646428b690bef89c7cab5702c417ffc05c65e6658a6",
+      "working_lf_sha256": null,
+      "index_equals_source": true,
+      "index_equals_pre_intake": false,
+      "binary": true,
+      "disposition": "exact_source_git_blob",
+      "working_matches_index": true
+    },
+    {
+      "path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/releases/bspf-0f6b58aba4610edf9b6bcde1e7a0da0c44cf3e4671c1b624b13d7ed95b5ab501/decisions.parquet",
+      "pre_intake": null,
+      "source": {
+        "mode": "100644",
+        "blob": "b973f18d16823cac5f4e6654f8615a6d855b6d74"
+      },
+      "base": null,
+      "index": {
+        "mode": "100644",
+        "blob": "b973f18d16823cac5f4e6654f8615a6d855b6d74"
+      },
+      "working_bytes": 11757,
+      "working_sha256": "1590c4446cdf7d70f6dfe5cb038aca3b92a820e94b4870b3d09d0b562049ad69",
+      "working_lf_sha256": null,
+      "index_equals_source": true,
+      "index_equals_pre_intake": false,
+      "binary": true,
+      "disposition": "exact_source_git_blob",
+      "working_matches_index": true
+    },
+    {
+      "path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/releases/bspf-0f6b58aba4610edf9b6bcde1e7a0da0c44cf3e4671c1b624b13d7ed95b5ab501/manifest.parquet",
+      "pre_intake": null,
+      "source": {
+        "mode": "100644",
+        "blob": "cb983df7efb53b6b9b6752fdb5484a3930b3bc19"
+      },
+      "base": null,
+      "index": {
+        "mode": "100644",
+        "blob": "cb983df7efb53b6b9b6752fdb5484a3930b3bc19"
+      },
+      "working_bytes": 10073,
+      "working_sha256": "f4db0f8fc52357e2fcee754ea50a46c335bb30cc108adffca1c17ed4cfd452c0",
+      "working_lf_sha256": null,
+      "index_equals_source": true,
+      "index_equals_pre_intake": false,
+      "binary": true,
+      "disposition": "exact_source_git_blob",
+      "working_matches_index": true
+    },
+    {
+      "path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/releases/bspf-0f6b58aba4610edf9b6bcde1e7a0da0c44cf3e4671c1b624b13d7ed95b5ab501/profiles.parquet",
+      "pre_intake": null,
+      "source": {
+        "mode": "100644",
+        "blob": "cdc54567f2b28ded5b14ef589658c86e55da343b"
+      },
+      "base": null,
+      "index": {
+        "mode": "100644",
+        "blob": "cdc54567f2b28ded5b14ef589658c86e55da343b"
+      },
+      "working_bytes": 12742,
+      "working_sha256": "05152ecb8552f768cf444a7a2fe1c7d5a7a8a70de90dc573a01911fe6f11cf92",
+      "working_lf_sha256": null,
+      "index_equals_source": true,
+      "index_equals_pre_intake": false,
+      "binary": true,
+      "disposition": "exact_source_git_blob",
+      "working_matches_index": true
+    },
+    {
+      "path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/releases/bspf-0f6b58aba4610edf9b6bcde1e7a0da0c44cf3e4671c1b624b13d7ed95b5ab501/taxa.parquet",
+      "pre_intake": null,
+      "source": {
+        "mode": "100644",
+        "blob": "32bf1cc4970f8e1e1ce59a927fe03a8b97cb03b2"
+      },
+      "base": null,
+      "index": {
+        "mode": "100644",
+        "blob": "32bf1cc4970f8e1e1ce59a927fe03a8b97cb03b2"
+      },
+      "working_bytes": 8782,
+      "working_sha256": "42583d98e56a74aa48ba0e1bc6f3c24ed48275ce6494fe2310c96ae34186b71d",
+      "working_lf_sha256": null,
+      "index_equals_source": true,
+      "index_equals_pre_intake": false,
+      "binary": true,
+      "disposition": "exact_source_git_blob",
+      "working_matches_index": true
+    },
+    {
+      "path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/schema-inventory.md",
+      "pre_intake": null,
+      "source": {
+        "mode": "100644",
+        "blob": "a102c62592ec858804d21376754108c07f1dda16"
+      },
+      "base": null,
+      "index": {
+        "mode": "100644",
+        "blob": "a102c62592ec858804d21376754108c07f1dda16"
+      },
+      "working_bytes": 5541,
+      "working_sha256": "94f9c6c813498d67778768fafa103d1fca6f36425029c2a4d2e3bb85d38b3630",
+      "working_lf_sha256": "94f9c6c813498d67778768fafa103d1fca6f36425029c2a4d2e3bb85d38b3630",
+      "index_equals_source": true,
+      "index_equals_pre_intake": false,
+      "binary": false,
+      "disposition": "exact_source_git_blob",
+      "working_matches_index": true
+    },
+    {
+      "path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/shared-integration-base.json",
+      "pre_intake": null,
+      "source": {
+        "mode": "100644",
+        "blob": "6993a025fc3ba7fe1a2eb882a0330b1f808ff743"
+      },
+      "base": null,
+      "index": {
+        "mode": "100644",
+        "blob": "6993a025fc3ba7fe1a2eb882a0330b1f808ff743"
+      },
+      "working_bytes": 4033,
+      "working_sha256": "a75a34b997e4885d9eafd4d90ec483ea5606a456434cf66ddb698816df4d974f",
+      "working_lf_sha256": "b885467b9da8676885db137db06ee7dee4d0ee7338ecf010cd704a7870a3ae7c",
+      "index_equals_source": true,
+      "index_equals_pre_intake": false,
+      "binary": false,
+      "disposition": "exact_source_git_blob",
+      "working_matches_index": true
+    },
+    {
+      "path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/shared-registration.patch",
+      "pre_intake": null,
+      "source": {
+        "mode": "100644",
+        "blob": "f00f14a8091e8b8df330b55319774d8444bed347"
+      },
+      "base": null,
+      "index": {
+        "mode": "100644",
+        "blob": "f00f14a8091e8b8df330b55319774d8444bed347"
+      },
+      "working_bytes": 16596,
+      "working_sha256": "ae0f07070de4872c870433c60e213111311c8c315ea829fcfcf7e5f2c1156def",
+      "working_lf_sha256": "ae0f07070de4872c870433c60e213111311c8c315ea829fcfcf7e5f2c1156def",
+      "index_equals_source": true,
+      "index_equals_pre_intake": false,
+      "binary": false,
+      "disposition": "exact_source_git_blob",
+      "working_matches_index": true
+    },
+    {
+      "path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/verification.json",
+      "pre_intake": null,
+      "source": {
+        "mode": "100644",
+        "blob": "460a8e5fbbc2cf955a4724960acdb2ff23a1363e"
+      },
+      "base": null,
+      "index": {
+        "mode": "100644",
+        "blob": "460a8e5fbbc2cf955a4724960acdb2ff23a1363e"
+      },
+      "working_bytes": 4850,
+      "working_sha256": "fffecc734a8d55646148591214e75147b14cf1b1b18e0974024ee228ea850439",
+      "working_lf_sha256": "288e2e7c66990a0a2f4c187c309eef1a8b8f390fe4f0042cb0ba5e79e58d1125",
+      "index_equals_source": true,
+      "index_equals_pre_intake": false,
+      "binary": false,
+      "disposition": "exact_source_git_blob",
+      "working_matches_index": true
+    },
+    {
+      "path": "conductor/tracks/botanical_species_profile_lookup_20260911/metadata.json",
+      "pre_intake": {
+        "mode": "100644",
+        "blob": "dca0f1f8d60bedb5a41c1396f76f020834659f5b"
+      },
+      "source": {
+        "mode": "100644",
+        "blob": "ab0345d543d126cad0d313ff13096c844d97461f"
+      },
+      "base": {
+        "mode": "100644",
+        "blob": "dca0f1f8d60bedb5a41c1396f76f020834659f5b"
+      },
+      "index": {
+        "mode": "100644",
+        "blob": "ab0345d543d126cad0d313ff13096c844d97461f"
+      },
+      "working_bytes": 9610,
+      "working_sha256": "d45b22d67359857dafabac4f705512a213ba7e45cb48ff332681d7d9f5bbaab1",
+      "working_lf_sha256": "d45b22d67359857dafabac4f705512a213ba7e45cb48ff332681d7d9f5bbaab1",
+      "index_equals_source": true,
+      "index_equals_pre_intake": false,
+      "binary": false,
+      "disposition": "exact_source_git_blob",
+      "working_matches_index": true
+    },
+    {
+      "path": "conductor/tracks/botanical_species_profile_lookup_20260911/plan.md",
+      "pre_intake": {
+        "mode": "100644",
+        "blob": "52ed9a5795803342c950ec3421e91846ab88ef9c"
+      },
+      "source": {
+        "mode": "100644",
+        "blob": "1479cb082853a7769cb8ecc56089fce4b54bb13f"
+      },
+      "base": {
+        "mode": "100644",
+        "blob": "52ed9a5795803342c950ec3421e91846ab88ef9c"
+      },
+      "index": {
+        "mode": "100644",
+        "blob": "1479cb082853a7769cb8ecc56089fce4b54bb13f"
+      },
+      "working_bytes": 4362,
+      "working_sha256": "9942328fdc1d848abfaf2d78700da336072d028856995e2a62edc22579681d45",
+      "working_lf_sha256": "9942328fdc1d848abfaf2d78700da336072d028856995e2a62edc22579681d45",
+      "index_equals_source": true,
+      "index_equals_pre_intake": false,
+      "binary": false,
+      "disposition": "exact_source_git_blob",
+      "working_matches_index": true
+    },
+    {
+      "path": "conductor/tracks/botanical_species_profile_lookup_20260911/spec.md",
+      "pre_intake": {
+        "mode": "100644",
+        "blob": "8197fd4999d97908e543023fa0036cd283bf57d5"
+      },
+      "source": {
+        "mode": "100644",
+        "blob": "203610c34c19136fa13fd1420c5efb8edd405ce8"
+      },
+      "base": {
+        "mode": "100644",
+        "blob": "8197fd4999d97908e543023fa0036cd283bf57d5"
+      },
+      "index": {
+        "mode": "100644",
+        "blob": "203610c34c19136fa13fd1420c5efb8edd405ce8"
+      },
+      "working_bytes": 8216,
+      "working_sha256": "9ef439a2a459894249517bc533400437a28681ce04e8fc9df9ad3c5055bb96b3",
+      "working_lf_sha256": "9ef439a2a459894249517bc533400437a28681ce04e8fc9df9ad3c5055bb96b3",
+      "index_equals_source": true,
+      "index_equals_pre_intake": false,
+      "binary": false,
+      "disposition": "exact_source_git_blob",
+      "working_matches_index": true
+    },
+    {
+      "path": "conductor/tracks/botanical_species_source_admission_20260911/.gitattributes",
+      "pre_intake": null,
+      "source": {
+        "mode": "100644",
+        "blob": "12d6c8dd3903898eca9415c5a3ec59576cc198db"
+      },
+      "base": null,
+      "index": {
+        "mode": "100644",
+        "blob": "12d6c8dd3903898eca9415c5a3ec59576cc198db"
+      },
+      "working_bytes": 140,
+      "working_sha256": "b3b54dd99c68dbd65d4e3886ecc65b2ad1b3b4969cba1cebe0aaf9e616a654fa",
+      "working_lf_sha256": "b3b54dd99c68dbd65d4e3886ecc65b2ad1b3b4969cba1cebe0aaf9e616a654fa",
+      "index_equals_source": true,
+      "index_equals_pre_intake": false,
+      "binary": false,
+      "disposition": "exact_source_git_blob",
+      "working_matches_index": true
+    },
+    {
+      "path": "conductor/tracks/botanical_species_source_admission_20260911/evidence/README_WCVP-v16.xlsx",
+      "pre_intake": null,
+      "source": {
+        "mode": "100644",
+        "blob": "8e008c4cc32e71af8c30fe702d2e5ebefb2f81ec"
+      },
+      "base": null,
+      "index": {
+        "mode": "100644",
+        "blob": "8e008c4cc32e71af8c30fe702d2e5ebefb2f81ec"
+      },
+      "working_bytes": 18112,
+      "working_sha256": "b4741be05ea3937b3604589602e1e24bcd3a0f558dcf8e06797eaa28b5207eaa",
+      "working_lf_sha256": null,
+      "index_equals_source": true,
+      "index_equals_pre_intake": false,
+      "binary": true,
+      "disposition": "exact_source_git_blob",
+      "working_matches_index": true
+    },
+    {
+      "path": "conductor/tracks/botanical_species_source_admission_20260911/evidence/source-admission.json",
+      "pre_intake": null,
+      "source": {
+        "mode": "100644",
+        "blob": "2ecd0d283f303e1ac3f0ee37f001cfeee662d044"
+      },
+      "base": null,
+      "index": {
+        "mode": "100644",
+        "blob": "2ecd0d283f303e1ac3f0ee37f001cfeee662d044"
+      },
+      "working_bytes": 27947,
+      "working_sha256": "d75c9f1b4e675e4d0d76f9f9ee760554fa565c52f040c06d2d9497d9cb31436b",
+      "working_lf_sha256": "1bd9e44db35c8fc4968d6f6bc96ddbf3d80f1ca278ac3aeec43a0c84856e0d4b",
+      "index_equals_source": true,
+      "index_equals_pre_intake": false,
+      "binary": false,
+      "disposition": "exact_source_git_blob",
+      "working_matches_index": true
+    },
+    {
+      "path": "conductor/tracks/botanical_species_source_admission_20260911/evidence/source-admission.md",
+      "pre_intake": null,
+      "source": {
+        "mode": "100644",
+        "blob": "24f8b343060e693a9966c265b86fbe6999099433"
+      },
+      "base": null,
+      "index": {
+        "mode": "100644",
+        "blob": "24f8b343060e693a9966c265b86fbe6999099433"
+      },
+      "working_bytes": 11772,
+      "working_sha256": "224228c41fefc5eb58b68631fd0d5d8bdc43a6692a23f886b9f1f03740d1fd18",
+      "working_lf_sha256": "c0b086fac951a2b15bcc73264436883c9c8c2415434cdc097bc7e896f54c5aa4",
+      "index_equals_source": true,
+      "index_equals_pre_intake": false,
+      "binary": false,
+      "disposition": "exact_source_git_blob",
+      "working_matches_index": true
+    },
+    {
+      "path": "conductor/tracks/botanical_species_source_admission_20260911/evidence/wcvp-16-source-release.json",
+      "pre_intake": null,
+      "source": {
+        "mode": "100644",
+        "blob": "d4a8fc7bce9cd3fadc31af251414eb531755e97b"
+      },
+      "base": null,
+      "index": {
+        "mode": "100644",
+        "blob": "d4a8fc7bce9cd3fadc31af251414eb531755e97b"
+      },
+      "working_bytes": 1842,
+      "working_sha256": "d2c094b2e97f4cbba53aa13998286102f682af80cf8e8606331f6284ad0dc966",
+      "working_lf_sha256": "d2c094b2e97f4cbba53aa13998286102f682af80cf8e8606331f6284ad0dc966",
+      "index_equals_source": true,
+      "index_equals_pre_intake": false,
+      "binary": false,
+      "disposition": "exact_source_git_blob",
+      "working_matches_index": true
+    },
+    {
+      "path": "conductor/tracks/botanical_species_source_admission_20260911/metadata.json",
+      "pre_intake": null,
+      "source": {
+        "mode": "100644",
+        "blob": "72ab949595475add53b9f495d3ae3c03f2099094"
+      },
+      "base": null,
+      "index": {
+        "mode": "100644",
+        "blob": "704db557b55de3137397b66eb0cec93f5ecc981b"
+      },
+      "working_bytes": 2064,
+      "working_sha256": "f24c4c1510fafa52f2a9a2ecaa04f0185e2f659f819d0babe51a968bec2a8a32",
+      "working_lf_sha256": "e0b38b72605a3cb99c9c776d3e6fcefc1e7100087997791d1a78d13a2de8ce68",
+      "index_equals_source": false,
+      "index_equals_pre_intake": false,
+      "binary": false,
+      "disposition": "source_blob_with_next_gate_only_correction",
+      "working_matches_index": true
+    },
+    {
+      "path": "conductor/tracks/botanical_species_source_admission_20260911/plan.md",
+      "pre_intake": null,
+      "source": {
+        "mode": "100644",
+        "blob": "c0feade19b6b64ca504e855b1221f73349f933c8"
+      },
+      "base": null,
+      "index": {
+        "mode": "100644",
+        "blob": "c0feade19b6b64ca504e855b1221f73349f933c8"
+      },
+      "working_bytes": 2300,
+      "working_sha256": "5217b1f4adbb217e69a589d1741b07250c899956036d605aa6e06b1789aed28e",
+      "working_lf_sha256": "bf3c7f09e43403029b535c87c8b69d95fab9e6e3db89907eb82f77dde8e54fd6",
+      "index_equals_source": true,
+      "index_equals_pre_intake": false,
+      "binary": false,
+      "disposition": "exact_source_git_blob",
+      "working_matches_index": true
+    },
+    {
+      "path": "conductor/tracks/botanical_species_source_admission_20260911/spec.md",
+      "pre_intake": null,
+      "source": {
+        "mode": "100644",
+        "blob": "a6536a00b471c87dbb9e5200293f2a8a86a63f64"
+      },
+      "base": null,
+      "index": {
+        "mode": "100644",
+        "blob": "a6536a00b471c87dbb9e5200293f2a8a86a63f64"
+      },
+      "working_bytes": 4735,
+      "working_sha256": "bd25ea48cec2ce76eb39d858b3906a41f2a257338122bcf12054fffd0618adc1",
+      "working_lf_sha256": "bd25ea48cec2ce76eb39d858b3906a41f2a257338122bcf12054fffd0618adc1",
+      "index_equals_source": true,
+      "index_equals_pre_intake": false,
+      "binary": false,
+      "disposition": "exact_source_git_blob",
+      "working_matches_index": true
+    },
+    {
+      "path": "services/agri-data-service/QUALITY_RECEIPT.json",
+      "pre_intake": {
+        "mode": "100644",
+        "blob": "6b9afcea61fa9654d1117a9149f246d688bb7e5b"
+      },
+      "source": {
+        "mode": "100644",
+        "blob": "5c08cee6783fb405fc4a58dde9ea1f1dcf1c9873"
+      },
+      "base": {
+        "mode": "100644",
+        "blob": "4f89cd4f2c6c9517951f5ce7d0ea0c640272693f"
+      },
+      "index": {
+        "mode": "100644",
+        "blob": "6b9afcea61fa9654d1117a9149f246d688bb7e5b"
+      },
+      "working_bytes": 1015,
+      "working_sha256": "7fb279078524a8f674a47252c7c3d3ed1156a0d8625f0b09a4e935c3fd20e836",
+      "working_lf_sha256": "7fb279078524a8f674a47252c7c3d3ed1156a0d8625f0b09a4e935c3fd20e836",
+      "index_equals_source": false,
+      "index_equals_pre_intake": true,
+      "binary": false,
+      "disposition": "retain_pre_intake_verification_receipt",
+      "working_matches_index": true
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/agent/AGENTS.md",
+      "pre_intake": {
+        "mode": "100644",
+        "blob": "50125d17838c4caffa44898002698a6db3557560"
+      },
+      "source": {
+        "mode": "100644",
+        "blob": "6e96a2a4de392ab1013ab751821de3d8a295b419"
+      },
+      "base": {
+        "mode": "100644",
+        "blob": "e586fea54bd2fd2819b43ee090de3df585e40bce"
+      },
+      "index": {
+        "mode": "100644",
+        "blob": "5e3f96a14cf29469c5882f00accbfb997306f93c"
+      },
+      "working_bytes": 51237,
+      "working_sha256": "1d1404b84be5600bd656a2feef55283807105f41981e238dee8c639f11eabde3",
+      "working_lf_sha256": "1d1404b84be5600bd656a2feef55283807105f41981e238dee8c639f11eabde3",
+      "index_equals_source": false,
+      "index_equals_pre_intake": false,
+      "binary": false,
+      "disposition": "composed_with_current_accepted_changes",
+      "working_matches_index": true
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/agent/botanical_species_profiles.py",
+      "pre_intake": null,
+      "source": {
+        "mode": "100644",
+        "blob": "3d05d046108fc80ae98bc1fd18f073c8a75d1487"
+      },
+      "base": null,
+      "index": {
+        "mode": "100644",
+        "blob": "3d05d046108fc80ae98bc1fd18f073c8a75d1487"
+      },
+      "working_bytes": 3949,
+      "working_sha256": "e98facaf6926bcdb1d96708947b5fb2281b1e61c60669ff7d116e69828d93b0e",
+      "working_lf_sha256": "e98facaf6926bcdb1d96708947b5fb2281b1e61c60669ff7d116e69828d93b0e",
+      "index_equals_source": true,
+      "index_equals_pre_intake": false,
+      "binary": false,
+      "disposition": "exact_source_git_blob",
+      "working_matches_index": true
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/agent/graph.py",
+      "pre_intake": {
+        "mode": "100644",
+        "blob": "ff11ff43c3fed26650d6d9eb9fe9e25585a394c4"
+      },
+      "source": {
+        "mode": "100644",
+        "blob": "eb7171fa528e73eeaed0f2f410160f22c4b0a672"
+      },
+      "base": {
+        "mode": "100644",
+        "blob": "ff11ff43c3fed26650d6d9eb9fe9e25585a394c4"
+      },
+      "index": {
+        "mode": "100644",
+        "blob": "eb7171fa528e73eeaed0f2f410160f22c4b0a672"
+      },
+      "working_bytes": 19603,
+      "working_sha256": "c758aaeb6bb5dfb5f639c0ab99c23afe2eaf40ced3a730a490dea4afa6176303",
+      "working_lf_sha256": "c758aaeb6bb5dfb5f639c0ab99c23afe2eaf40ced3a730a490dea4afa6176303",
+      "index_equals_source": true,
+      "index_equals_pre_intake": false,
+      "binary": false,
+      "disposition": "exact_source_git_blob",
+      "working_matches_index": true
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/agent/mcp_server.py",
+      "pre_intake": {
+        "mode": "100644",
+        "blob": "94137284fec91c61553f984d84e427f468a7832c"
+      },
+      "source": {
+        "mode": "100644",
+        "blob": "5e0faccc57f56fd053f560023e54d110a2a60e20"
+      },
+      "base": {
+        "mode": "100644",
+        "blob": "94137284fec91c61553f984d84e427f468a7832c"
+      },
+      "index": {
+        "mode": "100644",
+        "blob": "5e0faccc57f56fd053f560023e54d110a2a60e20"
+      },
+      "working_bytes": 11944,
+      "working_sha256": "c08c0295cc25b08aa49651876fc453ee17fcce3942e5ad6d2bae051c3a1c7150",
+      "working_lf_sha256": "c08c0295cc25b08aa49651876fc453ee17fcce3942e5ad6d2bae051c3a1c7150",
+      "index_equals_source": true,
+      "index_equals_pre_intake": false,
+      "binary": false,
+      "disposition": "exact_source_git_blob",
+      "working_matches_index": true
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/agent/prompts.py",
+      "pre_intake": {
+        "mode": "100644",
+        "blob": "4f11a1a8efb9fc426d2053503514a8854f7109f5"
+      },
+      "source": {
+        "mode": "100644",
+        "blob": "eb3c4821e3952e54cfc44534b2fa9d9ca5c8b66d"
+      },
+      "base": {
+        "mode": "100644",
+        "blob": "4f11a1a8efb9fc426d2053503514a8854f7109f5"
+      },
+      "index": {
+        "mode": "100644",
+        "blob": "eb3c4821e3952e54cfc44534b2fa9d9ca5c8b66d"
+      },
+      "working_bytes": 8557,
+      "working_sha256": "881a38e530dad770741698d6a20557b456fbd1c9eb75b99e51f69ae3ccbb8073",
+      "working_lf_sha256": "881a38e530dad770741698d6a20557b456fbd1c9eb75b99e51f69ae3ccbb8073",
+      "index_equals_source": true,
+      "index_equals_pre_intake": false,
+      "binary": false,
+      "disposition": "exact_source_git_blob",
+      "working_matches_index": true
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/agent/tools.py",
+      "pre_intake": {
+        "mode": "100644",
+        "blob": "8cfd702c14c5705a653c571df21236f735239250"
+      },
+      "source": {
+        "mode": "100644",
+        "blob": "de6e2c4ca113d89e461e8e4439161565868ebee8"
+      },
+      "base": {
+        "mode": "100644",
+        "blob": "a012da8e5cf962a3690c3c0373afb81d33f22b2f"
+      },
+      "index": {
+        "mode": "100644",
+        "blob": "bd557339209d27df2877c00460b710732849015c"
+      },
+      "working_bytes": 106760,
+      "working_sha256": "6fcbc6e7698f03cde7f2017f5533747048ba82b6d977825a3405153b85a304d2",
+      "working_lf_sha256": "6fcbc6e7698f03cde7f2017f5533747048ba82b6d977825a3405153b85a304d2",
+      "index_equals_source": false,
+      "index_equals_pre_intake": false,
+      "binary": false,
+      "disposition": "composed_with_current_accepted_changes",
+      "working_matches_index": true
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/app.py",
+      "pre_intake": {
+        "mode": "100644",
+        "blob": "223bc153287e2eb671298554303f7ea77e75bd72"
+      },
+      "source": {
+        "mode": "100644",
+        "blob": "8a81d77438e9ef71341b12387bbc1f20fa26d0d0"
+      },
+      "base": {
+        "mode": "100644",
+        "blob": "223bc153287e2eb671298554303f7ea77e75bd72"
+      },
+      "index": {
+        "mode": "100644",
+        "blob": "8a81d77438e9ef71341b12387bbc1f20fa26d0d0"
+      },
+      "working_bytes": 4744,
+      "working_sha256": "2e5f341b1793ed5f41d4bd4bd78a535911381598ff3622e75387a8d53952c8dd",
+      "working_lf_sha256": "2e5f341b1793ed5f41d4bd4bd78a535911381598ff3622e75387a8d53952c8dd",
+      "index_equals_source": true,
+      "index_equals_pre_intake": false,
+      "binary": false,
+      "disposition": "exact_source_git_blob",
+      "working_matches_index": true
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/interface/http/AGENTS.md",
+      "pre_intake": {
+        "mode": "100644",
+        "blob": "28f138da9d4f13a9fc25fc189aebcba2670629eb"
+      },
+      "source": {
+        "mode": "100644",
+        "blob": "36e58686dd87b28061ce2c07971685d953e66c88"
+      },
+      "base": {
+        "mode": "100644",
+        "blob": "28f138da9d4f13a9fc25fc189aebcba2670629eb"
+      },
+      "index": {
+        "mode": "100644",
+        "blob": "36e58686dd87b28061ce2c07971685d953e66c88"
+      },
+      "working_bytes": 2854,
+      "working_sha256": "6d7840f74a774e6c0569399e7bb9ffffe5a794741e63068d74dbed98dac743bc",
+      "working_lf_sha256": "6d7840f74a774e6c0569399e7bb9ffffe5a794741e63068d74dbed98dac743bc",
+      "index_equals_source": true,
+      "index_equals_pre_intake": false,
+      "binary": false,
+      "disposition": "exact_source_git_blob",
+      "working_matches_index": true
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/interface/http/botanical_species_profiles.py",
+      "pre_intake": null,
+      "source": {
+        "mode": "100644",
+        "blob": "b7b7ff700cedb186921bb22330eecd59ecd9c962"
+      },
+      "base": null,
+      "index": {
+        "mode": "100644",
+        "blob": "b7b7ff700cedb186921bb22330eecd59ecd9c962"
+      },
+      "working_bytes": 2192,
+      "working_sha256": "f1ff7ae3b28b27dec4b92ad708b466952a3086e9bc8307ca702c7c8bb521e3d8",
+      "working_lf_sha256": "f1ff7ae3b28b27dec4b92ad708b466952a3086e9bc8307ca702c7c8bb521e3d8",
+      "index_equals_source": true,
+      "index_equals_pre_intake": false,
+      "binary": false,
+      "disposition": "exact_source_git_blob",
+      "working_matches_index": true
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/botanical_species_profiles/AGENTS.md",
+      "pre_intake": null,
+      "source": {
+        "mode": "100644",
+        "blob": "afa3e497ff5c0016a6b8c97801f952050061bb19"
+      },
+      "base": null,
+      "index": {
+        "mode": "100644",
+        "blob": "afa3e497ff5c0016a6b8c97801f952050061bb19"
+      },
+      "working_bytes": 3975,
+      "working_sha256": "a68764cb0bd88199dad81758a00639570cd1f381dd0af81c979c828e90a68836",
+      "working_lf_sha256": "a68764cb0bd88199dad81758a00639570cd1f381dd0af81c979c828e90a68836",
+      "index_equals_source": true,
+      "index_equals_pre_intake": false,
+      "binary": false,
+      "disposition": "exact_source_git_blob",
+      "working_matches_index": true
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/botanical_species_profiles/__init__.py",
+      "pre_intake": null,
+      "source": {
+        "mode": "100644",
+        "blob": "f61ca715a1daba6a49e663b8b7640993a937cfae"
+      },
+      "base": null,
+      "index": {
+        "mode": "100644",
+        "blob": "f61ca715a1daba6a49e663b8b7640993a937cfae"
+      },
+      "working_bytes": 93,
+      "working_sha256": "4d0738555822d75c01f4840f0e76552bc2fc81e8d2dc59aeb20e5276385b7d33",
+      "working_lf_sha256": "4d0738555822d75c01f4840f0e76552bc2fc81e8d2dc59aeb20e5276385b7d33",
+      "index_equals_source": true,
+      "index_equals_pre_intake": false,
+      "binary": false,
+      "disposition": "exact_source_git_blob",
+      "working_matches_index": true
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/botanical_species_profiles/__main__.py",
+      "pre_intake": null,
+      "source": {
+        "mode": "100644",
+        "blob": "e85f39dda21c796613990171d20426d0aabd6522"
+      },
+      "base": null,
+      "index": {
+        "mode": "100644",
+        "blob": "e85f39dda21c796613990171d20426d0aabd6522"
+      },
+      "working_bytes": 3607,
+      "working_sha256": "292b09253568fc5dfc8d0c7aa5e264466bbd52ae093bcd1b2765c16cb1146e68",
+      "working_lf_sha256": "292b09253568fc5dfc8d0c7aa5e264466bbd52ae093bcd1b2765c16cb1146e68",
+      "index_equals_source": true,
+      "index_equals_pre_intake": false,
+      "binary": false,
+      "disposition": "exact_source_git_blob",
+      "working_matches_index": true
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/botanical_species_profiles/publication.py",
+      "pre_intake": null,
+      "source": {
+        "mode": "100644",
+        "blob": "652f5f796b273f35b8e34b0d74caf42bc0d5f505"
+      },
+      "base": null,
+      "index": {
+        "mode": "100644",
+        "blob": "652f5f796b273f35b8e34b0d74caf42bc0d5f505"
+      },
+      "working_bytes": 16363,
+      "working_sha256": "c6498787f7b3594bd1eb987a1323d8e9056e20b0750e2b574fe6b7df21597718",
+      "working_lf_sha256": "c6498787f7b3594bd1eb987a1323d8e9056e20b0750e2b574fe6b7df21597718",
+      "index_equals_source": true,
+      "index_equals_pre_intake": false,
+      "binary": false,
+      "disposition": "exact_source_git_blob",
+      "working_matches_index": true
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/botanical_species_profiles/source_ingest.py",
+      "pre_intake": null,
+      "source": {
+        "mode": "100644",
+        "blob": "46b99044c3f6f182a99c74e9bc7207c770cf6418"
+      },
+      "base": null,
+      "index": {
+        "mode": "100644",
+        "blob": "46b99044c3f6f182a99c74e9bc7207c770cf6418"
+      },
+      "working_bytes": 10306,
+      "working_sha256": "5ebd5ebf5a5d7f4cebdd3687257a77ac603afd13209b873996bba45ecdd0eb1f",
+      "working_lf_sha256": "5ebd5ebf5a5d7f4cebdd3687257a77ac603afd13209b873996bba45ecdd0eb1f",
+      "index_equals_source": true,
+      "index_equals_pre_intake": false,
+      "binary": false,
+      "disposition": "exact_source_git_blob",
+      "working_matches_index": true
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/botanical_species_profiles/storage.py",
+      "pre_intake": null,
+      "source": {
+        "mode": "100644",
+        "blob": "3e2ea646246b64ed1b4ce8290046c10ef1511818"
+      },
+      "base": null,
+      "index": {
+        "mode": "100644",
+        "blob": "3e2ea646246b64ed1b4ce8290046c10ef1511818"
+      },
+      "working_bytes": 4770,
+      "working_sha256": "c6f426fb6195461fe85b9fdb01fa515088f386a41a8819abddd0f6076f0ad90f",
+      "working_lf_sha256": "c6f426fb6195461fe85b9fdb01fa515088f386a41a8819abddd0f6076f0ad90f",
+      "index_equals_source": true,
+      "index_equals_pre_intake": false,
+      "binary": false,
+      "disposition": "exact_source_git_blob",
+      "working_matches_index": true
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/planes/AGENTS.md",
+      "pre_intake": {
+        "mode": "100644",
+        "blob": "05aef8eaf22bad4e1bcdfacb2ebb0cd9d288a32b"
+      },
+      "source": {
+        "mode": "100644",
+        "blob": "bc1265cdaa5180883507db736bf751e738a6f7eb"
+      },
+      "base": {
+        "mode": "100644",
+        "blob": "05aef8eaf22bad4e1bcdfacb2ebb0cd9d288a32b"
+      },
+      "index": {
+        "mode": "100644",
+        "blob": "bc1265cdaa5180883507db736bf751e738a6f7eb"
+      },
+      "working_bytes": 3405,
+      "working_sha256": "9c4a61c4ca8bb13d733603e431e8e3d56a4a427b4b3a9ed43aaa74896ebec8ce",
+      "working_lf_sha256": "9c4a61c4ca8bb13d733603e431e8e3d56a4a427b4b3a9ed43aaa74896ebec8ce",
+      "index_equals_source": true,
+      "index_equals_pre_intake": false,
+      "binary": false,
+      "disposition": "exact_source_git_blob",
+      "working_matches_index": true
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/planes/botanical_species_profiles.py",
+      "pre_intake": null,
+      "source": {
+        "mode": "100644",
+        "blob": "3b381e18ade137c79d144833e5489aa832686880"
+      },
+      "base": null,
+      "index": {
+        "mode": "100644",
+        "blob": "3b381e18ade137c79d144833e5489aa832686880"
+      },
+      "working_bytes": 11243,
+      "working_sha256": "830e4b3da9c494ee0e58457951e0b709934f2f8c0981f0062379c3f353ccbe31",
+      "working_lf_sha256": "830e4b3da9c494ee0e58457951e0b709934f2f8c0981f0062379c3f353ccbe31",
+      "index_equals_source": true,
+      "index_equals_pre_intake": false,
+      "binary": false,
+      "disposition": "exact_source_git_blob",
+      "working_matches_index": true
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/warehouse/botanical_species_profiles/AGENTS.md",
+      "pre_intake": null,
+      "source": {
+        "mode": "100644",
+        "blob": "1275b4a7c8833eec2b7e72ec29b7d6d4bb2c8993"
+      },
+      "base": null,
+      "index": {
+        "mode": "100644",
+        "blob": "1275b4a7c8833eec2b7e72ec29b7d6d4bb2c8993"
+      },
+      "working_bytes": 2851,
+      "working_sha256": "3e1e03c49c3e4ef45372fd60485acdb3746b8da4fa40d7a9f9edc1af916d50f2",
+      "working_lf_sha256": "3e1e03c49c3e4ef45372fd60485acdb3746b8da4fa40d7a9f9edc1af916d50f2",
+      "index_equals_source": true,
+      "index_equals_pre_intake": false,
+      "binary": false,
+      "disposition": "exact_source_git_blob",
+      "working_matches_index": true
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/warehouse/botanical_species_profiles/__init__.py",
+      "pre_intake": null,
+      "source": {
+        "mode": "100644",
+        "blob": "1a86242ffc7a3bff6486575cd17b9a8073ea21e5"
+      },
+      "base": null,
+      "index": {
+        "mode": "100644",
+        "blob": "1a86242ffc7a3bff6486575cd17b9a8073ea21e5"
+      },
+      "working_bytes": 78,
+      "working_sha256": "3eabd8f66b0ede3c923919a62fd6e2711f26a81a441f79359f0a19134d9681ef",
+      "working_lf_sha256": "3eabd8f66b0ede3c923919a62fd6e2711f26a81a441f79359f0a19134d9681ef",
+      "index_equals_source": true,
+      "index_equals_pre_intake": false,
+      "binary": false,
+      "disposition": "exact_source_git_blob",
+      "working_matches_index": true
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/warehouse/botanical_species_profiles/contract.py",
+      "pre_intake": null,
+      "source": {
+        "mode": "100644",
+        "blob": "d7d282fee75f8f36ac441fd68d3bbf5e916a1359"
+      },
+      "base": null,
+      "index": {
+        "mode": "100644",
+        "blob": "d7d282fee75f8f36ac441fd68d3bbf5e916a1359"
+      },
+      "working_bytes": 16623,
+      "working_sha256": "2f7ccfa3dc69c293a48c2dac5ebc4fb52a3fae5c52e41d321b1588f6a84bc4af",
+      "working_lf_sha256": "2f7ccfa3dc69c293a48c2dac5ebc4fb52a3fae5c52e41d321b1588f6a84bc4af",
+      "index_equals_source": true,
+      "index_equals_pre_intake": false,
+      "binary": false,
+      "disposition": "exact_source_git_blob",
+      "working_matches_index": true
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/warehouse/botanical_species_profiles/reconcile.py",
+      "pre_intake": null,
+      "source": {
+        "mode": "100644",
+        "blob": "147c84980be0db5251e449e696d54d8749b7eb31"
+      },
+      "base": null,
+      "index": {
+        "mode": "100644",
+        "blob": "147c84980be0db5251e449e696d54d8749b7eb31"
+      },
+      "working_bytes": 17199,
+      "working_sha256": "2c2087545560e42ef7d4ef4be7492dedd92cdd3dafa4b72df6eefeee6b452181",
+      "working_lf_sha256": "2c2087545560e42ef7d4ef4be7492dedd92cdd3dafa4b72df6eefeee6b452181",
+      "index_equals_source": true,
+      "index_equals_pre_intake": false,
+      "binary": false,
+      "disposition": "exact_source_git_blob",
+      "working_matches_index": true
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/warehouse/schemas/botanical_species_profile.py",
+      "pre_intake": null,
+      "source": {
+        "mode": "100644",
+        "blob": "e16c565b47ae2f9f78c5e7d9e51600606141e0bf"
+      },
+      "base": null,
+      "index": {
+        "mode": "100644",
+        "blob": "e16c565b47ae2f9f78c5e7d9e51600606141e0bf"
+      },
+      "working_bytes": 6094,
+      "working_sha256": "4dfce38cb07fa652d7b149c35b4177ce0b1a3d6fe4127cec608bac102f4337c6",
+      "working_lf_sha256": "4dfce38cb07fa652d7b149c35b4177ce0b1a3d6fe4127cec608bac102f4337c6",
+      "index_equals_source": true,
+      "index_equals_pre_intake": false,
+      "binary": false,
+      "disposition": "exact_source_git_blob",
+      "working_matches_index": true
+    },
+    {
+      "path": "services/agri-data-service/tests/botanical_species_profiles/fixtures.py",
+      "pre_intake": null,
+      "source": {
+        "mode": "100644",
+        "blob": "33a342e1e713fdcb764afb51350dd47228eda040"
+      },
+      "base": null,
+      "index": {
+        "mode": "100644",
+        "blob": "33a342e1e713fdcb764afb51350dd47228eda040"
+      },
+      "working_bytes": 3449,
+      "working_sha256": "f739a1b7c96d8de2bb5c675ba80d679125bf2f2f438afaef2894664ec4d3396b",
+      "working_lf_sha256": "f739a1b7c96d8de2bb5c675ba80d679125bf2f2f438afaef2894664ec4d3396b",
+      "index_equals_source": true,
+      "index_equals_pre_intake": false,
+      "binary": false,
+      "disposition": "exact_source_git_blob",
+      "working_matches_index": true
+    },
+    {
+      "path": "services/agri-data-service/tests/botanical_species_profiles/test_contract.py",
+      "pre_intake": null,
+      "source": {
+        "mode": "100644",
+        "blob": "c22d6211bc1dacd06809afecf851bf8d43d1e44d"
+      },
+      "base": null,
+      "index": {
+        "mode": "100644",
+        "blob": "c22d6211bc1dacd06809afecf851bf8d43d1e44d"
+      },
+      "working_bytes": 11809,
+      "working_sha256": "751f6aa5b9de01843390c6974c70d08a4244e7f30faa3db11b2a603dfbd1d919",
+      "working_lf_sha256": "751f6aa5b9de01843390c6974c70d08a4244e7f30faa3db11b2a603dfbd1d919",
+      "index_equals_source": true,
+      "index_equals_pre_intake": false,
+      "binary": false,
+      "disposition": "exact_source_git_blob",
+      "working_matches_index": true
+    },
+    {
+      "path": "services/agri-data-service/tests/botanical_species_profiles/test_publication.py",
+      "pre_intake": null,
+      "source": {
+        "mode": "100644",
+        "blob": "2fccc020d9211cb48ce1e28e4861fbdadebc04d8"
+      },
+      "base": null,
+      "index": {
+        "mode": "100644",
+        "blob": "2fccc020d9211cb48ce1e28e4861fbdadebc04d8"
+      },
+      "working_bytes": 8989,
+      "working_sha256": "100a3835543f000dc0e5329c701c4cbdc1d111680ebf84335e534b0180a465c7",
+      "working_lf_sha256": "100a3835543f000dc0e5329c701c4cbdc1d111680ebf84335e534b0180a465c7",
+      "index_equals_source": true,
+      "index_equals_pre_intake": false,
+      "binary": false,
+      "disposition": "exact_source_git_blob",
+      "working_matches_index": true
+    },
+    {
+      "path": "services/agri-data-service/tests/botanical_species_profiles/test_source_ingest.py",
+      "pre_intake": null,
+      "source": {
+        "mode": "100644",
+        "blob": "eb009840869637e8540f29fdd9d1060c1b1e43a9"
+      },
+      "base": null,
+      "index": {
+        "mode": "100644",
+        "blob": "eb009840869637e8540f29fdd9d1060c1b1e43a9"
+      },
+      "working_bytes": 6861,
+      "working_sha256": "dbf9b2c687ddabf296eda7d703a81df9b88f5e36a647e0abf60b384922c3a17f",
+      "working_lf_sha256": "dbf9b2c687ddabf296eda7d703a81df9b88f5e36a647e0abf60b384922c3a17f",
+      "index_equals_source": true,
+      "index_equals_pre_intake": false,
+      "binary": false,
+      "disposition": "exact_source_git_blob",
+      "working_matches_index": true
+    },
+    {
+      "path": "services/agri-data-service/tests/direct/test_direct_package_registration.py",
+      "pre_intake": {
+        "mode": "100644",
+        "blob": "2b57e0fba22cc4357294185afc63e8b5aa16a321"
+      },
+      "source": {
+        "mode": "100644",
+        "blob": "bef646316377a094443559cdb1540547d3232f03"
+      },
+      "base": {
+        "mode": "100644",
+        "blob": "2b57e0fba22cc4357294185afc63e8b5aa16a321"
+      },
+      "index": {
+        "mode": "100644",
+        "blob": "bef646316377a094443559cdb1540547d3232f03"
+      },
+      "working_bytes": 9572,
+      "working_sha256": "8cdde224a9bef43a0ebbee647418cbf84dc11511314a816c1d035c432791de58",
+      "working_lf_sha256": "8cdde224a9bef43a0ebbee647418cbf84dc11511314a816c1d035c432791de58",
+      "index_equals_source": true,
+      "index_equals_pre_intake": false,
+      "binary": false,
+      "disposition": "exact_source_git_blob",
+      "working_matches_index": true
+    },
+    {
+      "path": "services/agri-data-service/tests/direct/test_direct_writer_contract.py",
+      "pre_intake": {
+        "mode": "100644",
+        "blob": "c5c004fa27f5c15054f96bd7711345b75e67eafd"
+      },
+      "source": {
+        "mode": "100644",
+        "blob": "8af791554ad9857fd65a7564f1246113ed79a247"
+      },
+      "base": {
+        "mode": "100644",
+        "blob": "c5c004fa27f5c15054f96bd7711345b75e67eafd"
+      },
+      "index": {
+        "mode": "100644",
+        "blob": "8af791554ad9857fd65a7564f1246113ed79a247"
+      },
+      "working_bytes": 30926,
+      "working_sha256": "7000ce0193c61eaae99e3b71b675a9a11834be356401d46cebf0c36383018c67",
+      "working_lf_sha256": "7000ce0193c61eaae99e3b71b675a9a11834be356401d46cebf0c36383018c67",
+      "index_equals_source": true,
+      "index_equals_pre_intake": false,
+      "binary": false,
+      "disposition": "exact_source_git_blob",
+      "working_matches_index": true
+    },
+    {
+      "path": "services/agri-data-service/tests/interface/test_botanical_species_profile_routes.py",
+      "pre_intake": null,
+      "source": {
+        "mode": "100644",
+        "blob": "2c87f2bc38817f2edc27be643332aa766922914f"
+      },
+      "base": null,
+      "index": {
+        "mode": "100644",
+        "blob": "2c87f2bc38817f2edc27be643332aa766922914f"
+      },
+      "working_bytes": 7910,
+      "working_sha256": "d30a857833792b56bb364a3373be9332a5181c202fa2d5753cbaba277e61b10d",
+      "working_lf_sha256": "d30a857833792b56bb364a3373be9332a5181c202fa2d5753cbaba277e61b10d",
+      "index_equals_source": true,
+      "index_equals_pre_intake": false,
+      "binary": false,
+      "disposition": "exact_source_git_blob",
+      "working_matches_index": true
+    },
+    {
+      "path": "services/agri-data-service/tests/planes/test_botanical_species_profiles.py",
+      "pre_intake": null,
+      "source": {
+        "mode": "100644",
+        "blob": "1daa1ceea88d08c76fdede770bc400f1aff96bb1"
+      },
+      "base": null,
+      "index": {
+        "mode": "100644",
+        "blob": "1daa1ceea88d08c76fdede770bc400f1aff96bb1"
+      },
+      "working_bytes": 12719,
+      "working_sha256": "83ce50d67a5a000ea609b60be76ab201be1f8b7fbe2496aaa0472a0a135ebe55",
+      "working_lf_sha256": "83ce50d67a5a000ea609b60be76ab201be1f8b7fbe2496aaa0472a0a135ebe55",
+      "index_equals_source": true,
+      "index_equals_pre_intake": false,
+      "binary": false,
+      "disposition": "exact_source_git_blob",
+      "working_matches_index": true
+    },
+    {
+      "path": "services/agri-data-service/tests/test_agent_graph.py",
+      "pre_intake": {
+        "mode": "100644",
+        "blob": "37a54519f234346b0b4ea2e0416fea2a8471ab0a"
+      },
+      "source": {
+        "mode": "100644",
+        "blob": "05efb8fa2f76a319863ac8684ead901b8d3ca624"
+      },
+      "base": {
+        "mode": "100644",
+        "blob": "37a54519f234346b0b4ea2e0416fea2a8471ab0a"
+      },
+      "index": {
+        "mode": "100644",
+        "blob": "05efb8fa2f76a319863ac8684ead901b8d3ca624"
+      },
+      "working_bytes": 38677,
+      "working_sha256": "8c1ddff728d1b4fcffafc5afe7b54858b47b67a63e8889861738f5ab92017e59",
+      "working_lf_sha256": "8c1ddff728d1b4fcffafc5afe7b54858b47b67a63e8889861738f5ab92017e59",
+      "index_equals_source": true,
+      "index_equals_pre_intake": false,
+      "binary": false,
+      "disposition": "exact_source_git_blob",
+      "working_matches_index": true
+    },
+    {
+      "path": "services/agri-data-service/tests/test_agent_provider_wiring.py",
+      "pre_intake": {
+        "mode": "100644",
+        "blob": "a20eb92064066761d1b8426a05dc2e181c408cf0"
+      },
+      "source": {
+        "mode": "100644",
+        "blob": "c78b915da0e90708ecd004ab36709ce5c42236cb"
+      },
+      "base": {
+        "mode": "100644",
+        "blob": "a20eb92064066761d1b8426a05dc2e181c408cf0"
+      },
+      "index": {
+        "mode": "100644",
+        "blob": "c78b915da0e90708ecd004ab36709ce5c42236cb"
+      },
+      "working_bytes": 16754,
+      "working_sha256": "8c7afa307d618a5859a5721699bc1386d282a242d7f7c39bf521134d7a49850d",
+      "working_lf_sha256": "8c7afa307d618a5859a5721699bc1386d282a242d7f7c39bf521134d7a49850d",
+      "index_equals_source": true,
+      "index_equals_pre_intake": false,
+      "binary": false,
+      "disposition": "exact_source_git_blob",
+      "working_matches_index": true
+    },
+    {
+      "path": "services/agri-data-service/tests/test_botanical_species_profile_agent.py",
+      "pre_intake": null,
+      "source": {
+        "mode": "100644",
+        "blob": "67ba47e5153c62bb76eb85dfae7b0af2be3cb8e3"
+      },
+      "base": null,
+      "index": {
+        "mode": "100644",
+        "blob": "67ba47e5153c62bb76eb85dfae7b0af2be3cb8e3"
+      },
+      "working_bytes": 7344,
+      "working_sha256": "332a698f1af7c2d231f71ae4eb0954f4c7c8167fd88d4301e6090393bd090f66",
+      "working_lf_sha256": "332a698f1af7c2d231f71ae4eb0954f4c7c8167fd88d4301e6090393bd090f66",
+      "index_equals_source": true,
+      "index_equals_pre_intake": false,
+      "binary": false,
+      "disposition": "exact_source_git_blob",
+      "working_matches_index": true
+    }
+  ],
+  "portable_artifacts": [
+    {
+      "name": "taxa",
+      "key": "lookups/botanical-species-profile/releases/bspf-0f6b58aba4610edf9b6bcde1e7a0da0c44cf3e4671c1b624b13d7ed95b5ab501/taxa.parquet",
+      "sha256": "42583d98e56a74aa48ba0e1bc6f3c24ed48275ce6494fe2310c96ae34186b71d",
+      "bytes": 8782,
+      "portable_path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/releases/bspf-0f6b58aba4610edf9b6bcde1e7a0da0c44cf3e4671c1b624b13d7ed95b5ab501/taxa.parquet",
+      "independently_hash_verified": true
+    },
+    {
+      "name": "assertions",
+      "key": "lookups/botanical-species-profile/releases/bspf-0f6b58aba4610edf9b6bcde1e7a0da0c44cf3e4671c1b624b13d7ed95b5ab501/assertions.parquet",
+      "sha256": "49320848d79779c4fa7c9646428b690bef89c7cab5702c417ffc05c65e6658a6",
+      "bytes": 11969,
+      "portable_path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/releases/bspf-0f6b58aba4610edf9b6bcde1e7a0da0c44cf3e4671c1b624b13d7ed95b5ab501/assertions.parquet",
+      "independently_hash_verified": true
+    },
+    {
+      "name": "decisions",
+      "key": "lookups/botanical-species-profile/releases/bspf-0f6b58aba4610edf9b6bcde1e7a0da0c44cf3e4671c1b624b13d7ed95b5ab501/decisions.parquet",
+      "sha256": "1590c4446cdf7d70f6dfe5cb038aca3b92a820e94b4870b3d09d0b562049ad69",
+      "bytes": 11757,
+      "portable_path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/releases/bspf-0f6b58aba4610edf9b6bcde1e7a0da0c44cf3e4671c1b624b13d7ed95b5ab501/decisions.parquet",
+      "independently_hash_verified": true
+    },
+    {
+      "name": "profiles",
+      "key": "lookups/botanical-species-profile/releases/bspf-0f6b58aba4610edf9b6bcde1e7a0da0c44cf3e4671c1b624b13d7ed95b5ab501/profiles.parquet",
+      "sha256": "05152ecb8552f768cf444a7a2fe1c7d5a7a8a70de90dc573a01911fe6f11cf92",
+      "bytes": 12742,
+      "portable_path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/releases/bspf-0f6b58aba4610edf9b6bcde1e7a0da0c44cf3e4671c1b624b13d7ed95b5ab501/profiles.parquet",
+      "independently_hash_verified": true
+    },
+    {
+      "name": "manifest",
+      "key": "lookups/botanical-species-profile/releases/bspf-0f6b58aba4610edf9b6bcde1e7a0da0c44cf3e4671c1b624b13d7ed95b5ab501/manifest.parquet",
+      "sha256": "f4db0f8fc52357e2fcee754ea50a46c335bb30cc108adffca1c17ed4cfd452c0",
+      "bytes": 10073,
+      "portable_path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/releases/bspf-0f6b58aba4610edf9b6bcde1e7a0da0c44cf3e4671c1b624b13d7ed95b5ab501/manifest.parquet",
+      "independently_hash_verified": true
+    }
+  ],
+  "single_intake": {
+    "independent_final_content_has_each_source_registration_once": true,
+    "retained_patch_is_evidence_not_extra_delta": true,
+    "author_reported_action": {
+      "cherry_pick_command": [
+        "git",
+        "cherry-pick",
+        "--no-commit",
+        "edc6afdeb23f339b40049ec0828551c2fe1a4d45"
+      ],
+      "invocations": 1,
+      "shared_registration_patch_applied": false,
+      "source_not_ancestor_before": true,
+      "source_not_patch_equivalent_before": "+ edc6afdeb23f339b40049ec0828551c2fe1a4d45",
+      "new_path_collisions_before": [],
+      "head_unchanged": true,
+      "registration_occurrences": {
+        "botanical_import": 1,
+        "ledger_hook": 1,
+        "warehouse_entry": 1,
+        "botanical_guidance_heading": 1
+      },
+      "all_60_uncomposed_source_blobs_exact": true,
+      "composition_reconstructed_from_pre_intake_plus_source_edits_once": true
+    },
+    "qualification": "Action history is attributed to the author receipt; independent source/index and exact reconstruction prove the resulting one-intake content without relying on author approval."
+  },
+  "environmental_preservation": {
+    "registered_census_lanes_import": "unchanged",
+    "feature_surface_refusal": "unchanged",
+    "pre_storage_refusal_call": "unchanged before warehouse.lane_window",
+    "exact_partition_and_governed_absence_wording": "unchanged",
+    "non_botanical_registry_rows": "unchanged"
+  },
+  "registration_review": {
+    "shared_registry_occurrences": 1,
+    "model_and_mcp_registry": "same WAREHOUSE_TOOLS object",
+    "http_profiles": [
+      "combined_local",
+      "published_reader"
+    ],
+    "writer_profile_excluded": true,
+    "environmental_tool_count_unchanged": 10,
+    "ledger_row_count": 0,
+    "ledger_evidence_domain": "botanical_reference",
+    "botanical_tool_excluded_from_environmental_sufficiency_denominator": true
+  },
+  "assertions_reviewed_statically": [
+    {
+      "path": "services/agri-data-service/tests/test_botanical_species_profile_agent.py",
+      "contracts": [
+        "same required canonical model/MCP schema",
+        "pinned release and assertion bounds",
+        "SQL-refusing session provider",
+        "exact zero-environmental-row ledger",
+        "both botanical-only insufficiency and complete environmental sufficiency",
+        "raw citations and release identity",
+        "MCP dispatch",
+        "unknown/unpublished/integrity states",
+        "name/latest rejection"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/tests/interface/test_botanical_species_profile_routes.py",
+      "contracts": [
+        "actual app route dispatch for both reader profiles",
+        "writer profile exclusion",
+        "pre-storage malformed scope refusal",
+        "exact UTF-8 response budget",
+        "unknown versus unpublished status",
+        "integrity refusal",
+        "continuation release/taxon identity"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/tests/test_agent_graph.py",
+      "contracts": [
+        "ten environmental tools still accounted for",
+        "canonical schema branch for only the new botanical tool"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/tests/test_agent_provider_wiring.py",
+      "contracts": [
+        "new eleven-tool registry count"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/tests/direct/test_direct_package_registration.py",
+      "contracts": [
+        "explicit nonspatial release publication exception"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/tests/direct/test_direct_writer_contract.py",
+      "contracts": [
+        "explicit absence of environmental day/bbox/cron writer semantics"
+      ]
+    }
+  ],
+  "quality_receipt": {
+    "path": "services/agri-data-service/QUALITY_RECEIPT.json",
+    "bytes": 1015,
+    "sha256": "7fb279078524a8f674a47252c7c3d3ed1156a0d8625f0b09a4e935c3fd20e836",
+    "exact_pre_intake_preservation": true,
+    "valid_for_composed_source": false,
+    "contents": {
+      "checks": [
+        {
+          "command": "ruff format --check src tests scripts",
+          "duration_seconds": 0.184,
+          "name": "format",
+          "status": "pass"
+        },
+        {
+          "command": "ruff check src tests scripts",
+          "duration_seconds": 0.213,
+          "name": "lint",
+          "status": "pass"
+        },
+        {
+          "command": "mypy src scripts",
+          "duration_seconds": 29.997,
+          "name": "mypy",
+          "status": "pass"
+        },
+        {
+          "command": "pytest -q",
+          "duration_seconds": 224.845,
+          "name": "pytest",
+          "status": "pass"
+        }
+      ],
+      "digest_domain": "plantgeo.agri-data-service.quality-receipt.v2",
+      "digest_file_count": 1359,
+      "generated_at": "2026-09-12T01:03:29.273452Z",
+      "schema_version": 2,
+      "tools": {
+        "mypy": "mypy 2.3.0 (compiled: yes)",
+        "pytest": "pytest 9.1.1",
+        "python": "3.12.10",
+        "ruff": "ruff 0.15.22",
+        "uv": "uv 0.9.18 (0cee76417 2025-12-16)"
+      },
+      "tree_digest": "sha256:5bd47b38781161e3bd35e22ff38cb58a0a826516477ba4460dd4e7c5716bdfce"
+    }
+  },
+  "metadata_correction": {
+    "path": "conductor/tracks/botanical_species_source_admission_20260911/metadata.json",
+    "only_field_changed": "next_gate",
+    "old": "Complete local code/API/agent verification and commit. Production authoring census and independent source admission remain pending before any further source ingestion or publication.",
+    "new": "Complete the production authoring census and reviewed-row preservation decisions, then obtain independent source admission before any further source ingestion or publication. Production authorization remains a separate gate.",
+    "all_other_source_metadata_preserved": true
+  },
+  "remaining_gates": [
+    "Freeze composed candidate and run the one fresh root-owned full sweep and image gates",
+    "Production authoring census and preservation/crosswalk of reviewed relational UUIDs/evidence",
+    "Independent botanical and data-governance source admission",
+    "Separate authorization for further source ingestion, immutable publication/readback, pointer changes, configuration and deployment",
+    "Deployed HTTP/model/MCP acceptance and explicit caller release selection",
+    "Source-specific enrichment, condition-specific objective effects and recommendation validation"
+  ],
+  "limits": [
+    "No tests or builds run by reviewer",
+    "No product-runtime imports, source ingestion, database or network access",
+    "No implementation edits, commit, publication or deployment",
+    "Five Parquet artifact hashes verified without regeneration or scientific/source admission",
+    "The prior source descriptor and census-unavailable note are historical evidence, not new authorization or current production facts",
+    "Later parent QA documents outside the 65 source paths are outside this verdict",
+    "Existing peer implementation review is preserved; this is the requested bounded composition review"
+  ],
+  "narrative": {
+    "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/botanical-intake-review-20260911.md",
+    "bytes": 8364,
+    "sha256": "6212d3c61ed0d1d5c6df52eb350af699fb99f6e1f6e492ee3c07e0b024f64edf"
+  }
+}
