@@ -19,6 +19,7 @@ from agri_data_service.planes.weather_forecast import (
     MAX_SAMPLE_DISTANCE_M,
     ForecastSelection,
     read_forecast_field,
+    read_local_forecast_capability,
     read_selected_forecast,
 )
 from agri_data_service.warehouse.weather_forecast.variables import VARIABLES, VariableName
@@ -57,6 +58,24 @@ def configured_artifact_root() -> Path:
 def utc_now() -> datetime:
     """Return the serving clock; patched by deterministic adapter tests."""
     return datetime.now(UTC)
+
+
+@weather_forecast_bp.get("/capability")
+async def read_capability(request: Request) -> HTTPResponse:
+    """Resolve the verified local active run for one explicit forecast product."""
+    try:
+        product_id = _token(request, "product_id")
+    except ForecastRequestError as exc:
+        return _request_refusal(str(exc))
+
+    return await _answer(
+        lambda: read_local_forecast_capability(
+            root=configured_artifact_root(),
+            product_id=product_id,
+            now=utc_now(),
+        ),
+        route="capability",
+    )
 
 
 @weather_forecast_bp.get("/selected")

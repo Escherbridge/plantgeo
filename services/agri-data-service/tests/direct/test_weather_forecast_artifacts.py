@@ -18,6 +18,7 @@ from agri_data_service.pipeline.direct.weather_forecast.artifacts import (
 from agri_data_service.planes.weather_forecast import (
     ForecastSelection,
     read_forecast_field,
+    read_local_forecast_capability,
     read_selected_forecast,
 )
 from agri_data_service.warehouse.weather_forecast.contracts import (
@@ -104,6 +105,44 @@ def test_immutable_replay_and_complete_missingness_receipt(tmp_path: Path) -> No
     assert manifest.status_counts == {"available": 2, "missing": 2}
     assert len(list((tmp_path / "blobs").iterdir())) == EXPECTED_BLOB_COUNT
     assert not (tmp_path / "weather" / "active.json").exists()
+
+
+def test_capability_exposes_only_a_verified_active_run(tmp_path: Path) -> None:
+    absent = read_local_forecast_capability(root=tmp_path, product_id="weather", now=NOW)
+    assert absent.status == "not_yet_generated"
+    assert absent.active_run_id is absent.run is absent.valid_start is absent.valid_end is None
+    assert absent.support is absent.variables is None
+
+    manifest = _publish(tmp_path)
+    available = read_local_forecast_capability(root=tmp_path, product_id="weather", now=NOW)
+    assert available.status == "available"
+    assert available.run is not None
+    assert available.active_run_id == available.run.run_id == "run-a"
+    assert available.support == "sampled_points"
+    assert available.variables == ("temperature_2m",)
+    assert (available.valid_start, available.valid_end) == (START, END)
+    assert available.sample_count == len(SAMPLES)
+    assert available.row_count == manifest.row_count
+    assert available.run.support.kind == "sampled_point"
+
+    (tmp_path / "weather" / "active.json").write_text(
+        '{"run_id":"run-a","manifest_sha256":"' + "0" * 64 + '"}'
+    )
+    unavailable = read_local_forecast_capability(root=tmp_path, product_id="weather", now=NOW)
+    assert unavailable.status == "upstream_unavailable"
+    assert unavailable.active_run_id is unavailable.run is None
+    assert unavailable.support is unavailable.variables is None
+
+
+def test_capability_marks_an_old_verified_active_run_stale(tmp_path: Path) -> None:
+    _publish(tmp_path)
+    capability = read_local_forecast_capability(
+        root=tmp_path,
+        product_id="weather",
+        now=START + timedelta(days=3),
+    )
+    assert capability.status == "stale_run"
+    assert capability.active_run_id == "run-a"
 
 
 def test_missing_inventory_and_same_run_conflicts_refuse(tmp_path: Path) -> None:

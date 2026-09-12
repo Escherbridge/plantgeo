@@ -11,7 +11,12 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from agri_data_service.interface.http import weather_forecast
-from agri_data_service.planes.weather_forecast import ForecastField, ForecastSelection, SelectedWeatherForecast
+from agri_data_service.planes.weather_forecast import (
+    ForecastField,
+    ForecastSelection,
+    SelectedWeatherForecast,
+    WeatherForecastCapability,
+)
 from agri_data_service.warehouse.weather_forecast.contracts import (
     ForecastRun,
     ForecastValue,
@@ -66,6 +71,90 @@ def field_query(**overrides: str) -> dict[str, str]:
 def payload_of(response: HTTPResponse) -> dict[str, Any]:
     assert response.body is not None
     return json.loads(response.body)
+
+
+@pytest.mark.asyncio
+async def test_capability_route_uses_configured_root_and_serializes_verified_active_run(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    run: ForecastRun,
+) -> None:
+    captured: dict[str, object] = {}
+    result = WeatherForecastCapability(
+        product_id=PRODUCT_ID,
+        status="available",
+        active_run_id=RUN_ID,
+        run=run,
+        support="sampled_points",
+        variables=run.variables,
+        valid_start=START,
+        valid_end=END,
+        sample_count=1,
+        row_count=2,
+    )
+
+    def fake_read(**kwargs: object) -> WeatherForecastCapability:
+        captured.update(kwargs)
+        return result
+
+    monkeypatch.setattr(weather_forecast.settings, "local_execution_root", tmp_path)
+    monkeypatch.setattr(weather_forecast, "utc_now", lambda: NOW)
+    monkeypatch.setattr(weather_forecast, "read_local_forecast_capability", fake_read)
+
+    response = await weather_forecast.read_capability(request_with(product_id=PRODUCT_ID))
+
+    assert response.status == 200
+    assert response.headers["Cache-Control"] == "no-store"
+    assert captured == {
+        "root": (tmp_path / "weather-forecast").resolve(),
+        "product_id": PRODUCT_ID,
+        "now": NOW,
+    }
+    assert payload_of(response) == result.model_dump(mode="json")
+
+
+@pytest.mark.asyncio
+async def test_capability_route_preserves_unavailable_state_without_run_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result = WeatherForecastCapability(product_id=PRODUCT_ID, status="not_yet_generated")
+    monkeypatch.setattr(weather_forecast, "read_local_forecast_capability", lambda **_kwargs: result)
+
+    response = await weather_forecast.read_capability(request_with(product_id=PRODUCT_ID))
+
+    assert response.status == 200
+    assert payload_of(response) == {
+        "schema_version": "weather-forecast-capability/v1",
+        "product_id": PRODUCT_ID,
+        "source": "local",
+        "status": "not_yet_generated",
+        "active_run_id": None,
+        "run": None,
+        "support": None,
+        "variables": None,
+        "valid_start": None,
+        "valid_end": None,
+        "sample_count": None,
+        "row_count": None,
+    }
+
+
+@pytest.mark.asyncio
+async def test_capability_route_rejects_invalid_product_before_plane_call(monkeypatch: pytest.MonkeyPatch) -> None:
+    called = False
+
+    def fake_read(**_kwargs: object) -> WeatherForecastCapability:
+        nonlocal called
+        called = True
+        raise AssertionError("invalid request reached the plane")
+
+    monkeypatch.setattr(weather_forecast, "read_local_forecast_capability", fake_read)
+
+    response = await weather_forecast.read_capability(request_with(product_id="../other"))
+
+    assert response.status == 400
+    assert payload_of(response)["error"]["code"] == "invalid_request"
+    assert called is False
 
 
 @pytest.fixture

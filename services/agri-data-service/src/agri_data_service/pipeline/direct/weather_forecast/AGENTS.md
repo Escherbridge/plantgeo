@@ -54,6 +54,15 @@ Missing runs return not_yet_generated; integrity failures return upstream_unavai
 Staleness is relative to initialization and an explicit reader age policy, retaining
 the pinned run values. Windows outside its published inventory refuse exactly.
 
+The capability read is a local-serving discovery seam for `combined_local`. It reads
+the product-owned `active.json` pointer, verifies the pointer's manifest digest and
+the immutable publication receipt, and only then returns run identity, valid-time
+coverage, variables, lifecycle, sampled support, and bounded inventory counts. A
+missing pointer is `not_yet_generated`; malformed or incomplete state is
+`upstream_unavailable`. Neither state exposes run metadata that was not verified.
+Remote catalogue discovery remains a separate serving integration because this HTTP
+blueprint does not yet own production object-store credentials or a remote reader.
+
 ## Exact provider source adapter
 
 `source.py` normalizes the Open-Meteo Single Runs endpoint for the fixed ECMWF IFS
