@@ -5,6 +5,7 @@ import { WeatherLayer, directionToArrow, weatherFeatures, type WeatherPoint } fr
 
 const sample: WeatherPoint = {
   coordinates: [-116, 44], temperature: 24, humidity: 35, windSpeed: 3, windDirection: 0,
+  precipitation: 0,
   observedAt: '2026-09-10T06:45:00Z', observedDay: '2026-09-09', sampleKind: 'model_estimate',
 };
 
@@ -23,6 +24,9 @@ describe('weather spatial support and wind', () => {
     const mounted = render(<WeatherLayer map={map as unknown as MapLibreMap} data={[sample]} opacityScale={1} />);
     expect(layers.get('weather-temperature-cells')).toMatchObject({ type: 'fill', filter: ['all', ['==', ['geometry-type'], 'Polygon'], ['==', ['get', 'hasTemperature'], true]] });
     expect(layers.get('weather-temperature')).toMatchObject({ filter: ['all', ['==', ['geometry-type'], 'Point'], ['==', ['get', 'hasTemperature'], true], ['==', ['get', 'hasCell'], false]] });
+    expect(layers.get('weather-temperature-labels')).toMatchObject({
+      layout: { 'text-field': ['get', 'temperatureLabel'] },
+    });
     expect(layers.get('weather-wind')).toMatchObject({ layout: { 'text-rotation-alignment': 'map' } });
     mounted.rerender(<WeatherLayer map={map as unknown as MapLibreMap} data={[sample]} opacityScale={0.5} />);
     expect(map.setPaintProperty).toHaveBeenCalledWith('weather-temperature-cells', 'fill-opacity', 0.325);
@@ -37,7 +41,7 @@ describe('weather spatial support and wind', () => {
     const { features } = weatherFeatures([sample]);
     expect(features).toHaveLength(1);
     expect(features[0].geometry).toEqual({ type: 'Point', coordinates: [-116, 44] });
-    expect(features[0].properties).toMatchObject({ temperature: 24, windSpeed: 3, windDirection: 0, observedDay: '2026-09-09', observedAt: sample.observedAt, hasCell: false, sampleKind: 'model_estimate' });
+    expect(features[0].properties).toMatchObject({ temperature: 24, temperatureLabel: '24°', precipitation: 0, windSpeed: 3, windDirection: 0, observedDay: '2026-09-09', observedAt: sample.observedAt, hasCell: false, sampleKind: 'model_estimate' });
   });
   it('uses the declared aggregate footprint and puts wind at its center without changing measurements', () => {
     const { features } = weatherFeatures([{ ...sample, support: {

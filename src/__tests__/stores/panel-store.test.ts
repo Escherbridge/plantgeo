@@ -46,11 +46,11 @@ describe('usePanelHasActiveLayers', () => {
     expect(result.current).toBe(true)
   })
 
-  it('reports the water panel active when only "weather" is on', () => {
+  it('reports the climate panel active when only "weather" is on', () => {
     act(() => {
       useMapStore.setState({ activeLayers: ['weather'] })
     })
-    const { result } = renderHook(() => usePanelHasActiveLayers('water'))
+    const { result } = renderHook(() => usePanelHasActiveLayers('climate'))
     expect(result.current).toBe(true)
   })
 })

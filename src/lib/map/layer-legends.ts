@@ -373,13 +373,13 @@ const STATIC_LAYER_LEGENDS: Partial<Record<LayerToggleId, LayerLegendSpec>> = {
   // Two encodings from one toggle and one feed: a temperature dot per station, with the wind
   // arrow drawn over it. A station measuring only one of the two draws only that one.
   weather: {
-    title: "Wind & temperature",
+    title: "Sampled wind & weather",
     blocks: [
       { kind: "ramp", caption: "Temperature", stops: temperatureRampStops() },
       { kind: "classes", caption: "Wind speed", shape: "dot", classes: WIND_SPEED_CLASSES },
       {
         kind: "note",
-        text: "Open-Meteo model estimates. Filled cells average captured readings on the selected day; detail dots show the latest captured sample with no published area footprint. Zoom changes the statistic. Arrows point where wind blows to, with speed in m/s.",
+        text: "Open-Meteo model estimates. Filled cells average captured readings only inside their declared footprint; detail dots are sampled locations. Blank ground is unmeasured, not interpolated. Labels show °C; arrows point where wind blows to, with speed in m/s.",
       },
     ],
   },

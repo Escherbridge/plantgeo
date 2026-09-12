@@ -632,6 +632,7 @@ export function presentParquetWeather(
     windDirection: observation.windDirectionDeg,
     temperature: observation.temperatureC,
     humidity: observation.relativeHumidityPct,
+    precipitation: observation.precipitationMm,
     observedAt: observation.observedAt,
     observedDay: observation.observedDay,
     sampleKind: "model_estimate" as const,

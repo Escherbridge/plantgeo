@@ -487,9 +487,16 @@ export default function LayerManager() {
   );
   // Strict Parquet rows carry every required weather measurement; presentation only renames
   // fields for the existing browser-safe layer vocabulary.
+  const weatherResultMatchesDay =
+    weatherQuery.data === undefined ||
+    weatherQuery.data.state === "upstream_unavailable" ||
+    weatherDay.settledDate === null ||
+    weatherQuery.data.requestedDay === weatherDay.settledDate;
+  const weatherResult =
+    weatherResultMatchesDay || weatherQuery.isPlaceholderData ? weatherQuery.data : undefined;
   const weatherData = useMemo<WeatherPoint[]>(
-    () => presentParquetWeather(weatherQuery.data),
-    [weatherQuery.data]
+    () => presentParquetWeather(weatherResult),
+    [weatherResult]
   );
   // `fault` is an outage: nothing is drawn and the reason is upstream. `notice` is a true
   // statement ABOUT what is drawn -- a truncated read paints real cells that stop short of the
@@ -718,7 +725,7 @@ export default function LayerManager() {
       layerId: "weather",
       isDrawn: weatherEnabled,
       requestedDate: weatherDay.settledDate,
-      ...parquetDrawnDayFlags(weatherQuery),
+      ...parquetDrawnDayFlags({ ...weatherQuery, data: weatherResult }),
     },
     // The four wave-C layers. They had no entry here while they were Martin tiles, because a tile
     // layer's day was applied as a style filter over bytes already in the browser -- there was no

@@ -619,12 +619,22 @@ not measured beside its numerator will always eventually lie.
 
 ## §weather
 
-**One toggle, two style layers, one source.** `WeatherLayer` paints `weather-temperature`
-(circles, coloured on the observation's `temperature`) and `weather-wind` (a `text-field`
-symbol: an arrow glyph plus the measured speed) from a single GeoJSON source. The circles are
-added first so the arrows draw over them. Until 2026-08-08 only the arrows existed, so a
-toggle labelled "Wind & Weather" drew wind and nothing else while `temperature` and `humidity`
-were already on every feature and simply never painted.
+**One toggle, three readings, one source.** `WeatherLayer` paints `weather-temperature`
+(raw-sample circles), `weather-temperature-cells` (only declared aggregate support), numeric
+`weather-temperature-labels`, and `weather-wind` (an arrow glyph plus measured speed) from a
+single GeoJSON source. Temperature labels and wind occupy opposite sides of the anchor so an
+aggregate square reads like a conventional weather plot rather than an anonymous tile.
+
+**The weather report owns the sampled lane; Climate still owns continuous fields.** The weather
+row lives in the Climate group because `Climate & Weather History` is the report that reads its
+own slider day, bbox and zoom. Its four-field cards summarize visible returned readings, while
+its point card names the nearest returned feature to the view centre or explicit query point
+rather than presenting the viewport centre as a selection. The sampled
+lane never gains contours: only the separate climate air-temperature field offers filled or
+isoline forms where its contract admits them. While a new day is pending, a retained placeholder
+may remain only with its own served day stated explicitly; once the request settles, every
+mismatched dated envelope is withheld, so an unavailable-day caption never describes an older
+frame.
 
 **Completeness is judged per drawn layer, not per observation.** Each layer filters on its own
 `hasWind` / `hasTemperature` flag, computed once when the collection is built. That is what
