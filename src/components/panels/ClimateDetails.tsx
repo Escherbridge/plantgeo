@@ -8,6 +8,7 @@ import {
 } from "@/lib/map/layer-toggle-context";
 import { BASE_ZOOM_TIER } from "@/lib/map/zoom-tiers";
 import { useClimateStore } from "@/stores/climate-store";
+import { WeatherHistoryReport } from "@/components/panels/WeatherHistoryReport";
 import {
   CLIMATE_FIELD_SIGNALS,
   CLIMATE_FIELD_SIGNAL_IDS,
@@ -72,20 +73,22 @@ export function ClimateDetails({ bbox, zoom }: ClimateDetailsProps) {
   const drawn = CLIMATE_FIELD_SIGNAL_IDS.filter(
     (signal) => layerVisibility[CLIMATE_FIELD_SIGNALS[signal].toggleId]
   );
+  const weatherDrawn = layerVisibility.weather;
 
   // Nothing renders while every row is off: a band legend for a layer nobody is drawing
   // describes nothing.
-  if (drawn.length === 0) {
+  if (drawn.length === 0 && !weatherDrawn) {
     return (
       <p className="px-1 py-2 text-xs text-[hsl(var(--muted-foreground))]">
-        Switch on a climate layer above to read its legend. Each one carries its own date, so
-        they need not be showing the same day.
+        Switch on a climate or weather layer above to read its report. Each one carries its own
+        date, so they need not be showing the same day.
       </p>
     );
   }
 
   return (
     <div className="mt-1.5 flex flex-col gap-3">
+      {weatherDrawn && <WeatherHistoryReport bbox={bbox} zoom={zoom} />}
       {drawn.map((signal) => (
         <ClimateSignalReport key={signal} signal={signal} bbox={bbox} zoom={zoom} />
       ))}

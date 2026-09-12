@@ -406,7 +406,7 @@ describe("LayerPanel layer tree", () => {
     fireEvent.click(screen.getByRole("switch", { name: "Show all Water layers on map" }));
 
     const active = useMapStore.getState().activeLayers;
-    for (const toggleId of ["water", "drought", "weather", "sensors", "watersheds"]) {
+    for (const toggleId of ["water", "drought", "sensors", "watersheds"]) {
       expect(active, toggleId).toContain(toggleId);
     }
   });
@@ -511,7 +511,7 @@ describe("LayerPanel dock sections", () => {
     renderDock();
     openPanel();
 
-    expect(screen.getByRole("button", { name: "Water 0 of 5" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Water 0 of 4" })).toBeTruthy();
   });
 
   it("expands one report without expanding any other", () => {

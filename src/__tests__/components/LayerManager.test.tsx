@@ -1903,6 +1903,54 @@ describe("LayerManager holds the previous day while the next one loads", () => {
     expect(lastRenderOf("WeatherLayer")?.data).toEqual([]);
   });
 
+  it("rejects a completed weather envelope for a different selected day", () => {
+    useTimeSliderStore.setState({
+      layerDates: { weather: "2026-07-28" },
+      capabilities: streamBackedCapabilities,
+    });
+    useMapStore.setState({ activeLayers: ["weather"] });
+    viewportQueries.getWeatherForBbox.mockReturnValue(
+      landed({
+        state: "ready",
+        requestedDay: "2026-08-02",
+        servedDay: "2026-08-02",
+        truncated: false,
+        data: [{
+          latitude: 43.6,
+          longitude: -116.2,
+          observedAt: "2026-08-02T12:00:00Z",
+          observedDay: "2026-08-02",
+          temperatureC: 21.5,
+          relativeHumidityPct: 44,
+          windSpeedMs: 3.2,
+          windDirectionDeg: 270,
+          precipitationMm: 0,
+          support: {
+            zoomTier: 13,
+            supportKind: "raw_point",
+            supportId: "sample-1",
+            origin: "cell_center",
+            aggregationMethod: "identity",
+            contributorCount: 1,
+            provenance: {
+              sourceLayer: "weather-observations",
+              observedDay: "2026-08-02",
+              newestObservedAt: "2026-08-02T12:00:00Z",
+              attribution: "Open-Meteo",
+            },
+          },
+        }],
+      })
+    );
+
+    const fakeMap = createFakeMap();
+    fakeMap.setStyleLoaded(true);
+    renderLayerManager(fakeMap);
+
+    expect(inputOf(viewportQueries.getWeatherForBbox)).toMatchObject({ date: "2026-07-28" });
+    expect(lastRenderOf("WeatherLayer")?.data).toEqual([]);
+  });
+
   /**
    * Five fire answers an empty canvas cannot be told apart from "no fires burned here", and the
    * overlay is the only surface that distinguishes them for a reader looking at the map rather

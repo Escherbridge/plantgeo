@@ -228,7 +228,7 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
     renderKind: "component",
     styleLayerIds: [],
     warehouseLayerName: "weather-observations",
-    panelId: "water",
+    panelId: "climate",
     permanentlyUnavailableReason: null,
   },
   // Published rows read from the `sensors` Parquet lane through `environmental.getSensorStations`

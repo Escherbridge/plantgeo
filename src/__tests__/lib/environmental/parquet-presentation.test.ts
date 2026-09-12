@@ -301,6 +301,7 @@ describe("Parquet browser presentation", () => {
       coordinates: [-114.25, 43.5],
       temperature: 24,
       windSpeed: 3,
+      precipitation: 0,
       observedDay: "2026-08-20",
       sampleKind: "model_estimate",
     });

@@ -313,6 +313,6 @@ describe("ClimateDetails with nothing switched on", () => {
 
     renderPanel();
 
-    expect(screen.getByText(/Switch on a climate layer above/)).toBeTruthy();
+    expect(screen.getByText(/Switch on a climate or weather layer above/)).toBeTruthy();
   });
 });

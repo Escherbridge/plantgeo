@@ -16,6 +16,8 @@ export interface WeatherPoint {
   temperature: number | null;
   /** Relative humidity, percent. */
   humidity: number | null;
+  /** Precipitation accumulated for the source reading, in millimetres. */
+  precipitation: number | null;
   observedAt?: string | null;
   observedDay?: string;
   support?: AggregateEnvelopeSupport;
@@ -110,9 +112,11 @@ export function weatherFeatures(data: WeatherPoint[]): GeoJSON.FeatureCollection
         arrow, windSpeed: point.windSpeed, windDirection: point.windDirection,
         color: hasWind ? windSpeedToColor(point.windSpeed as number) : "transparent",
         temperature: point.temperature, humidity: point.humidity,
+        precipitation: point.precipitation,
         observedAt: point.observedAt ?? null, observedDay: point.observedDay ?? null,
         supportKind: point.support?.supportKind ?? "raw_point",
         sampleKind: point.sampleKind ?? null,
+        temperatureLabel: point.temperature === null ? "" : `${Math.round(point.temperature)}°`,
         label: hasWind ? `${arrow} ${(point.windSpeed as number).toFixed(1)} m/s` : "",
       };
       const coordinates: [number, number] = polygon
@@ -141,6 +145,7 @@ export function WeatherLayer({
     [data]
   );
   const cellLayerId = `${temperatureLayerId}-cells`;
+  const temperatureLabelLayerId = `${temperatureLayerId}-labels`;
 
   // Keep latest props in refs so the style.load handler uses current values.
   const propsRef = useRef({ visible, geojson, opacityScale });
@@ -208,6 +213,34 @@ export function WeatherLayer({
         });
       }
 
+      if (!m.getLayer(temperatureLabelLayerId)) {
+        m.addLayer({
+          id: temperatureLabelLayerId,
+          type: "symbol",
+          source: sourceId,
+          filter: [
+            "all",
+            ["==", ["geometry-type"], "Point"],
+            ["==", ["get", "hasTemperature"], true],
+          ],
+          layout: {
+            "text-field": ["get", "temperatureLabel"],
+            "text-font": ["Noto Sans Regular"],
+            "text-size": ["interpolate", ["linear"], ["zoom"], 4, 10, 10, 13, 14, 15],
+            "text-offset": [0, -0.6],
+            "text-anchor": "bottom",
+            "text-allow-overlap": false,
+            "text-ignore-placement": false,
+          },
+          paint: {
+            "text-color": "#ffffff",
+            "text-halo-color": "rgba(0,0,0,0.8)",
+            "text-halo-width": 1.25,
+            "text-opacity": propsRef.current.opacityScale,
+          },
+        });
+      }
+
       if (!m.getLayer(layerId)) {
         m.addLayer({
           id: layerId,
@@ -218,7 +251,8 @@ export function WeatherLayer({
             "text-field": ["get", "label"],
             "text-font": ["Noto Sans Regular"],
             "text-size": 12,
-            "text-anchor": "center",
+            "text-offset": [0, 0.55],
+            "text-anchor": "top",
             "text-rotation-alignment": "map",
             "text-allow-overlap": false,
             "text-ignore-placement": false,
@@ -232,14 +266,18 @@ export function WeatherLayer({
         });
       }
     },
-    [layerId, temperatureLayerId, cellLayerId, sourceId]
+    [layerId, temperatureLayerId, cellLayerId, temperatureLabelLayerId, sourceId]
   );
 
   const removeAllLayers = useCallback(
     (m: MapLibreMap) => {
-      safeRemoveLayerAndSource(m, [layerId, temperatureLayerId, cellLayerId], sourceId);
+      safeRemoveLayerAndSource(
+        m,
+        [layerId, temperatureLabelLayerId, temperatureLayerId, cellLayerId],
+        sourceId
+      );
     },
-    [layerId, temperatureLayerId, cellLayerId, sourceId]
+    [layerId, temperatureLayerId, cellLayerId, temperatureLabelLayerId, sourceId]
   );
 
   // Add/remove and re-add across style swaps, which wipe custom layers.
@@ -290,6 +328,9 @@ export function WeatherLayer({
     if (map.getLayer(layerId)) {
       map.setPaintProperty(layerId, "text-opacity", opacityScale);
     }
+    if (map.getLayer(temperatureLabelLayerId)) {
+      map.setPaintProperty(temperatureLabelLayerId, "text-opacity", opacityScale);
+    }
     if (map.getLayer(cellLayerId)) map.setPaintProperty(cellLayerId, "fill-opacity", 0.65 * opacityScale);
     if (map.getLayer(temperatureLayerId)) {
       map.setPaintProperty(
@@ -303,7 +344,15 @@ export function WeatherLayer({
         TEMPERATURE_STROKE_OPACITY * opacityScale
       );
     }
-  }, [map, visible, layerId, temperatureLayerId, cellLayerId, opacityScale]);
+  }, [
+    map,
+    visible,
+    layerId,
+    temperatureLayerId,
+    cellLayerId,
+    temperatureLabelLayerId,
+    opacityScale,
+  ]);
 
   return null;
 }

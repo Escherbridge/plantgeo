@@ -619,6 +619,7 @@ describe("formatHoverContent: weather-temperature", () => {
       windSpeed: 3.42,
       windDirection: 214.6,
       humidity: 48.2,
+      precipitation: 0,
       observedAt: new Date(Date.now() - 2 * 3600_000).toISOString(),
     });
     // No station name: the feed is a grid sample, not a named site.
@@ -626,6 +627,7 @@ describe("formatHoverContent: weather-temperature", () => {
     expect(content?.lines).toContain("Temperature: 21.4 °C");
     expect(content?.lines).toContain("Wind: 3.4 m/s from 215°");
     expect(content?.lines).toContain("Humidity: 48%");
+    expect(content?.lines).toContain("Precipitation: 0.0 mm");
     expect(content?.lines.find((l) => l.startsWith("Observed"))).toMatch(/2h ago/);
     assertNoSentinels(content);
   });

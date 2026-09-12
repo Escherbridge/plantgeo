@@ -456,7 +456,7 @@ function formatSoilSurvey(props: Properties): HoverContent | null {
  * The feed carries no station identity -- it is a grid sample, not a named site -- so the
  * title is generic rather than inventing one. Units are the ones measured: m/s (weather.ts
  * asks Open-Meteo for `wind_speed_unit=ms`), °C (`temperature_2m`, whose default unit is
- * Celsius), and percent relative humidity. Every field is optional because the layer now
+ * Celsius), percent relative humidity, and millimetres of precipitation. Every field is optional because the layer now
  * draws a station that measured only some of them.
  */
 function formatWeatherObservation(props: Properties): HoverContent | null {
@@ -464,6 +464,7 @@ function formatWeatherObservation(props: Properties): HoverContent | null {
   const windDirection = formatInteger(props.windDirection, "°");
   const temperature = formatFixed(props.temperature, 1, " °C");
   const humidity = formatInteger(props.humidity, "%");
+  const precipitation = formatFixed(props.precipitation, 1, " mm");
   const observed = formatTimestampWithRelative(toIsoTimestamp(props.observedAt));
 
   const aggregate = props.supportKind === "aggregate_cell";
@@ -475,6 +476,7 @@ function formatWeatherObservation(props: Properties): HoverContent | null {
       ? `Wind: ${windSpeed}${windDirection ? ` from ${windDirection}` : ""}`
       : null,
     humidity ? `Humidity: ${humidity}` : null,
+    precipitation ? `Precipitation: ${precipitation}` : null,
     typeof props.observedDay === "string" ? `Source day: ${formatCalendarDay(props.observedDay)}` : null,
     observed ? `${aggregate ? 'Newest contributing reading' : 'Observed'}: ${observed}` : null,
   ]);
