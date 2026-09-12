@@ -1,0 +1,455 @@
+{
+  "type": "retained-artifact-audit",
+  "auditedAt": "2026-09-12T07:25:08.137Z",
+  "sourceCommit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+  "sourceTree": "9533bb9e5423240630935df0cd012cd8ead15504",
+  "method": "Offline PNG inflate/filter reversal with Node built-ins; RGB thresholds and regions match retained pixels.mjs. No browser, service or renderer execution. PNG CRCs are not independently validated.",
+  "report": {
+    "path": "conductor/tracks/multiscale_polygon_surface_20260901/evidence/scalar-labels-20260912/canvas-report.json",
+    "sha256": "22748681d81deb43987aa2d19f651490c990ad3eb79b309993b999111b3ef189",
+    "scenarioCount": 26,
+    "recordedMapErrors": 0,
+    "recordedPageErrors": 0,
+    "recordedSettleMs": [
+      947,
+      1172
+    ]
+  },
+  "recipe": {
+    "path": "conductor/tracks/multiscale_polygon_surface_20260901/evidence/scalar-labels-20260912/reproduce.md",
+    "sha256": "6e0833d20fb11c5f54d27ff5e19c7704297f436bef10029c23be785b8c59575b"
+  },
+  "capturedSourceHashes": [
+    {
+      "path": "src/lib/map/measured-value-label.ts",
+      "sha256": "b701b7e9e338891ef5197b27502f4ffac0456d5a6a371fee2252b996c0a3d4c1"
+    },
+    {
+      "path": "src/components/map/layers/ClimateFieldLayer.tsx",
+      "sha256": "8f21a35f988f940ddbd7ff11c190ad981d46cfc7baea4618ed722e8969c35f3b"
+    },
+    {
+      "path": "src/components/map/layers/SoilFieldLayer.tsx",
+      "sha256": "4bb7ac7c5f1055376fdfc3167c5a49dca04b22fd2d9fc7c738b6376c3bb9ffc9"
+    }
+  ],
+  "screenshots": [
+    {
+      "file": "1280-climate-z3.png",
+      "sha256": "8c8cf18275fe0e0edf51e0bd28505d02e79d3aa107d1b993180c37dfe7e7b4fd",
+      "width": 1280,
+      "height": 720,
+      "brightPixels": 373,
+      "backgroundPixels": 830074,
+      "sampledPixels": 844800,
+      "seamProbe": {
+        "row": 320,
+        "start": 370,
+        "end": 910,
+        "backgroundPixels": 368
+      },
+      "matchesRetainedReport": true
+    },
+    {
+      "file": "1280-climate-z7.png",
+      "sha256": "07d1abab742f715bb194188d6fae8b5806f7f7a5492f916959f5127df2c78218",
+      "width": 1280,
+      "height": 720,
+      "brightPixels": 629,
+      "backgroundPixels": 702872,
+      "sampledPixels": 844800,
+      "seamProbe": {
+        "row": 320,
+        "start": 370,
+        "end": 910,
+        "backgroundPixels": 0
+      },
+      "matchesRetainedReport": true
+    },
+    {
+      "file": "1280-climate-z10.png",
+      "sha256": "9cd3c78926230a8a16102cd645ec044ee22ea555715887003765fd09b3c9a2c9",
+      "width": 1280,
+      "height": 720,
+      "brightPixels": 896,
+      "backgroundPixels": 0,
+      "sampledPixels": 844800,
+      "seamProbe": {
+        "row": 320,
+        "start": 370,
+        "end": 910,
+        "backgroundPixels": 0
+      },
+      "matchesRetainedReport": true
+    },
+    {
+      "file": "1280-climate-z13.png",
+      "sha256": "4001789657074a74c488fe6b6013f242f2e1364917101de45e0b2a06bd2d47bc",
+      "width": 1280,
+      "height": 720,
+      "brightPixels": 1314,
+      "backgroundPixels": 0,
+      "sampledPixels": 844800,
+      "seamProbe": {
+        "row": 320,
+        "start": 370,
+        "end": 910,
+        "backgroundPixels": 0
+      },
+      "matchesRetainedReport": true
+    },
+    {
+      "file": "1280-soil-z3.png",
+      "sha256": "79786afbda719dd06d13a5ce4196f805a281a2ff490455d48381b0f38c357532",
+      "width": 1280,
+      "height": 720,
+      "brightPixels": 495,
+      "backgroundPixels": 829779,
+      "sampledPixels": 844800,
+      "seamProbe": {
+        "row": 320,
+        "start": 370,
+        "end": 910,
+        "backgroundPixels": 343
+      },
+      "matchesRetainedReport": true
+    },
+    {
+      "file": "1280-soil-z7.png",
+      "sha256": "a39637487069fb7cf466112579f5d1c12d009642ad389771e9865322a005174c",
+      "width": 1280,
+      "height": 720,
+      "brightPixels": 285,
+      "backgroundPixels": 835484,
+      "sampledPixels": 844800,
+      "seamProbe": {
+        "row": 320,
+        "start": 370,
+        "end": 910,
+        "backgroundPixels": 541
+      },
+      "matchesRetainedReport": true
+    },
+    {
+      "file": "1280-soil-z10.png",
+      "sha256": "403cc3ab340cbb003d4400f7f0b360e6763ca99b4107aa9c1c1dd26d52ddd543",
+      "width": 1280,
+      "height": 720,
+      "brightPixels": 1910,
+      "backgroundPixels": 279204,
+      "sampledPixels": 844800,
+      "seamProbe": {
+        "row": 320,
+        "start": 370,
+        "end": 910,
+        "backgroundPixels": 0
+      },
+      "matchesRetainedReport": true
+    },
+    {
+      "file": "1280-soil-z13.png",
+      "sha256": "64be2a84ac3787a8533c2efc913210f185a0d5de37887fe7312733c0ba36bbe6",
+      "width": 1280,
+      "height": 720,
+      "brightPixels": 1294,
+      "backgroundPixels": 0,
+      "sampledPixels": 844800,
+      "seamProbe": {
+        "row": 320,
+        "start": 370,
+        "end": 910,
+        "backgroundPixels": 0
+      },
+      "matchesRetainedReport": true
+    },
+    {
+      "file": "1280-climate-z7-empty.png",
+      "sha256": "6d67e716bedc95eb1b73e42e34ea8c1468074527f5b3f629474da5fbcf3cc0b8",
+      "width": 1280,
+      "height": 720,
+      "brightPixels": 0,
+      "backgroundPixels": 844800,
+      "sampledPixels": 844800,
+      "seamProbe": {
+        "row": 320,
+        "start": 370,
+        "end": 910,
+        "backgroundPixels": 541
+      },
+      "matchesRetainedReport": true
+    },
+    {
+      "file": "1280-soil-z10-opacity-zero.png",
+      "sha256": "5b8534dca98c14da1b1b00c1fc33e73aae27fcd968e45f6dc550b552e953d3bd",
+      "width": 1280,
+      "height": 720,
+      "brightPixels": 0,
+      "backgroundPixels": 844800,
+      "sampledPixels": 844800,
+      "seamProbe": {
+        "row": 320,
+        "start": 370,
+        "end": 910,
+        "backgroundPixels": 541
+      },
+      "matchesRetainedReport": true
+    },
+    {
+      "file": "1280-climate-z7-reload.png",
+      "sha256": "07d1abab742f715bb194188d6fae8b5806f7f7a5492f916959f5127df2c78218",
+      "width": 1280,
+      "height": 720,
+      "brightPixels": 629,
+      "backgroundPixels": 702872,
+      "sampledPixels": 844800,
+      "seamProbe": {
+        "row": 320,
+        "start": 370,
+        "end": 910,
+        "backgroundPixels": 0
+      },
+      "matchesRetainedReport": true
+    },
+    {
+      "file": "1280-climate-z7-isoline.png",
+      "sha256": "e7866ffb0e515c5fe0baa93571204178a969cdb8cc67da86fdcc2fd1c6424d43",
+      "width": 1280,
+      "height": 720,
+      "brightPixels": 801,
+      "backgroundPixels": 702320,
+      "sampledPixels": 844800,
+      "seamProbe": {
+        "row": 320,
+        "start": 370,
+        "end": 910,
+        "backgroundPixels": 0
+      },
+      "matchesRetainedReport": true
+    },
+    {
+      "file": "1280-weather-z10.png",
+      "sha256": "40ccbbdc0ad5d492305b02360d6facbb39b6ead30f43b15b60b06b3aea16008a",
+      "width": 1280,
+      "height": 720,
+      "brightPixels": 1,
+      "backgroundPixels": 843846,
+      "sampledPixels": 844800,
+      "seamProbe": {
+        "row": 320,
+        "start": 370,
+        "end": 910,
+        "backgroundPixels": 541
+      },
+      "matchesRetainedReport": true
+    },
+    {
+      "file": "390-climate-z3.png",
+      "sha256": "68b5170dad041f4b80a45b2fc222e0a3a07f94b1b9bbabc9f8190c9b967e8962",
+      "width": 390,
+      "height": 844,
+      "brightPixels": 373,
+      "backgroundPixels": 291034,
+      "sampledPixels": 305760,
+      "seamProbe": {
+        "row": 405,
+        "start": 127,
+        "end": 262,
+        "backgroundPixels": 11
+      },
+      "matchesRetainedReport": true
+    },
+    {
+      "file": "390-climate-z7.png",
+      "sha256": "03a4528b90d2d238974b9584807719614639950a3b0be9bdfee6673ab9a6a577",
+      "width": 390,
+      "height": 844,
+      "brightPixels": 533,
+      "backgroundPixels": 204750,
+      "sampledPixels": 305760,
+      "seamProbe": {
+        "row": 405,
+        "start": 127,
+        "end": 262,
+        "backgroundPixels": 0
+      },
+      "matchesRetainedReport": true
+    },
+    {
+      "file": "390-climate-z10.png",
+      "sha256": "bf87641bddb462e359b5934db995bb72f4e5e00f0fd23d8bb6fc2a8db642a9fa",
+      "width": 390,
+      "height": 844,
+      "brightPixels": 290,
+      "backgroundPixels": 0,
+      "sampledPixels": 305760,
+      "seamProbe": {
+        "row": 405,
+        "start": 127,
+        "end": 262,
+        "backgroundPixels": 0
+      },
+      "matchesRetainedReport": true
+    },
+    {
+      "file": "390-climate-z13.png",
+      "sha256": "89a1e823f31748f125b1cea77b8789a0dee9c23ce4c86796c2338690247a6227",
+      "width": 390,
+      "height": 844,
+      "brightPixels": 438,
+      "backgroundPixels": 0,
+      "sampledPixels": 305760,
+      "seamProbe": {
+        "row": 405,
+        "start": 127,
+        "end": 262,
+        "backgroundPixels": 0
+      },
+      "matchesRetainedReport": true
+    },
+    {
+      "file": "390-soil-z3.png",
+      "sha256": "3c731914c9baa4b73f33d24dae67e17c6dd748ba5fd50acd83b84a64f6a1d3e0",
+      "width": 390,
+      "height": 844,
+      "brightPixels": 495,
+      "backgroundPixels": 290739,
+      "sampledPixels": 305760,
+      "seamProbe": {
+        "row": 405,
+        "start": 127,
+        "end": 262,
+        "backgroundPixels": 9
+      },
+      "matchesRetainedReport": true
+    },
+    {
+      "file": "390-soil-z7.png",
+      "sha256": "b3224dd1efed72038ca16bfbd69ed513c74a6eccd63f26d33a5569ff72fdaff5",
+      "width": 390,
+      "height": 844,
+      "brightPixels": 285,
+      "backgroundPixels": 296444,
+      "sampledPixels": 305760,
+      "seamProbe": {
+        "row": 405,
+        "start": 127,
+        "end": 262,
+        "backgroundPixels": 0
+      },
+      "matchesRetainedReport": true
+    },
+    {
+      "file": "390-soil-z10.png",
+      "sha256": "68dd2c8690043994e8ad57dad26652886d8cc50e09aff462588cf9eb54594597",
+      "width": 390,
+      "height": 844,
+      "brightPixels": 770,
+      "backgroundPixels": 104130,
+      "sampledPixels": 305760,
+      "seamProbe": {
+        "row": 405,
+        "start": 127,
+        "end": 262,
+        "backgroundPixels": 0
+      },
+      "matchesRetainedReport": true
+    },
+    {
+      "file": "390-soil-z13.png",
+      "sha256": "fe502e7892a5a380c7bcc7e2e2d582ce95a9ed5c71358f1224a164ec2a922005",
+      "width": 390,
+      "height": 844,
+      "brightPixels": 574,
+      "backgroundPixels": 0,
+      "sampledPixels": 305760,
+      "seamProbe": {
+        "row": 405,
+        "start": 127,
+        "end": 262,
+        "backgroundPixels": 0
+      },
+      "matchesRetainedReport": true
+    },
+    {
+      "file": "390-climate-z7-empty.png",
+      "sha256": "ec20b740b1d563496a7771ee029bdef79c04f861a576d21854be69e69435916a",
+      "width": 390,
+      "height": 844,
+      "brightPixels": 0,
+      "backgroundPixels": 305760,
+      "sampledPixels": 305760,
+      "seamProbe": {
+        "row": 405,
+        "start": 127,
+        "end": 262,
+        "backgroundPixels": 136
+      },
+      "matchesRetainedReport": true
+    },
+    {
+      "file": "390-soil-z10-opacity-zero.png",
+      "sha256": "b793eeb8d2b3c424fc5d18ebbaa357aa291648614c694684e030cf0097f28e3a",
+      "width": 390,
+      "height": 844,
+      "brightPixels": 0,
+      "backgroundPixels": 305760,
+      "sampledPixels": 305760,
+      "seamProbe": {
+        "row": 405,
+        "start": 127,
+        "end": 262,
+        "backgroundPixels": 136
+      },
+      "matchesRetainedReport": true
+    },
+    {
+      "file": "390-climate-z7-reload.png",
+      "sha256": "03a4528b90d2d238974b9584807719614639950a3b0be9bdfee6673ab9a6a577",
+      "width": 390,
+      "height": 844,
+      "brightPixels": 533,
+      "backgroundPixels": 204750,
+      "sampledPixels": 305760,
+      "seamProbe": {
+        "row": 405,
+        "start": 127,
+        "end": 262,
+        "backgroundPixels": 0
+      },
+      "matchesRetainedReport": true
+    },
+    {
+      "file": "390-climate-z7-isoline.png",
+      "sha256": "4478e5c2c17b0624fab1bc238912b0925da448f8de3d69202aab9fc9c34df38b",
+      "width": 390,
+      "height": 844,
+      "brightPixels": 801,
+      "backgroundPixels": 204360,
+      "sampledPixels": 305760,
+      "seamProbe": {
+        "row": 405,
+        "start": 127,
+        "end": 262,
+        "backgroundPixels": 0
+      },
+      "matchesRetainedReport": true
+    },
+    {
+      "file": "390-weather-z10.png",
+      "sha256": "c845331706204de431bcc0a6b9cddb963566e389f9aa244e6429111c1b429449",
+      "width": 390,
+      "height": 844,
+      "brightPixels": 1,
+      "backgroundPixels": 304806,
+      "sampledPixels": 305760,
+      "seamProbe": {
+        "row": 405,
+        "start": 127,
+        "end": 262,
+        "backgroundPixels": 114
+      },
+      "matchesRetainedReport": true
+    }
+  ],
+  "allPixelFieldsMatch": true
+}

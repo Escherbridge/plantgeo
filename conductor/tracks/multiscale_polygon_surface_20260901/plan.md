@@ -7,7 +7,7 @@ resource: ./spec.md
 
 # Plan
 
-## Current checkpoint — September 11
+## Retained checkpoint — September 11
 
 Support and renderer implementation are complete subsets. The
 [MTBS rollout](../environmental_postgres_retirement_20260904/evidence/mtbs-live-rollout-20260911.md)
@@ -54,3 +54,26 @@ captures at all four zoom rungs. It does not close M3: live cross-product
 conservation, dense basemap/hover interaction, published-day transitions and
 request-to-paint budgets remain open. Weather remains the integrated repair;
 vegetation and soil-survey contract limits are documented rather than widened.
+
+## September 12 — current local evidence boundary
+
+The [renderer proof and blocker packet](evidence/renderer-local-proof-boundary-20260912.md)
+reconciles the scalar subset against local main `843b4b3`. Its implementation is
+already integrated through `ac4ce70`; the platform plan's earlier author-handoff
+wording is stale. This evidence-only continuation makes no M3 acceptance claim.
+
+The [retained-artifact audit](evidence/retained-scalar-artifact-audit-20260912.json)
+rehashes the 26 original PNGs and independently recomputes their recorded RGB
+pixel counts. All counts match. It performs no fresh browser execution. The
+fixture unmounts before each case: empty/zero-opacity frames are initial states,
+and the reload images show mounting after style replacement, not recovery of a
+mounted layer. The 390px captures contain no touch input. Mounted lifecycle,
+stale-day and picking unit contracts are separately inventoried as inspected,
+not newly passed. Only the two documented interior seam probes support the
+existing narrow continuity claim.
+
+The current checkout lacks the renderer/test dependencies. The packet names the
+local fixture improvements, governed data/reader handoff, climate/soil picking
+contract, numeric budget freeze and browser/device prerequisites required for
+fresh desktop/mobile proof. M0 baseline completion, every M3 checkbox and QA
+MS-01 through MS-04 remain open; both parent tracks stay active.
