@@ -25,6 +25,9 @@ unlicensed source, infer missing traits or mutate production.
   location-warehouse sufficiency.
 - [x] Run the bounded verification sweep and obtain a separate review of the
   transitional slice. This does not complete the final P4/P5 acceptance gates.
+- [x] Keep `species_information` out of the optional web pass after the
+  warehouse `ContextVar` scope ends; `9d895dc` derives a filtered registry and
+  the graph regression verifies that the later pass cannot re-expose it.
 - [ ] Replace transitional authoring reads with the immutable reviewed Parquet
   profile product before recommendation, training, or published serving.
 

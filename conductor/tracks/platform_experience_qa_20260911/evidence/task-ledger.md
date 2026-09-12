@@ -198,7 +198,9 @@ the later web graph pass re-exposes `WAREHOUSE_TOOLS` after the
 `_run_pass` at `253`; `tools.py:310-313`, `538`). The smallest next packet is a
 synthetic web-pass regression for a mismatched UUID and an omitted UUID, then
 an owner fix that preserves the constraint or excludes the tool from that
-pass. The botanical task is archived after this receipt; source, census,
+pass. The omission design was implemented locally as `9d895dc`; the affected
+graph test passed (`28 passed, 1 skipped`), and the focused Ruff and mypy checks
+passed. The botanical task is archived after this receipt; source, census,
 publication, Herbaria and recommendation gates remain active.
 
 The ingestion restart completed with no assistant, tool, command or revision

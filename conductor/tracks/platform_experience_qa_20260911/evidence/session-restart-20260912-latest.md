@@ -40,6 +40,13 @@ The agent owner should then keep the constraint alive for the later pass or
 exclude `species_information` from that pass. This requires no live data or
 credentials.
 
+The follow-up omission design was implemented locally at `9d895dc`: the web
+pass now derives `WAREHOUSE_TOOLS_FOR_WEB` from the common registry while
+excluding `species_information`. The affected graph test, Ruff check and mypy
+check pass (`28 passed, 1 skipped` for `test_agent_graph.py`). This closes the
+post-context re-exposure path for the current graph, but it does not satisfy
+the final release-pinned botanical agent/API/MCP parity gates.
+
 The source, census, non-Herbaria, Herbaria, publication, occurrence-plane and
 recommendation gates remain HOLD. The task made no file or ref change and is
 archived after this receipt; the parent botanical and Herbaria tracks remain
