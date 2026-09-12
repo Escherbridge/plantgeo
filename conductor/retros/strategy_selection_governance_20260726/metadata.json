@@ -4,5 +4,7 @@
   "type": "governance",
   "created_at": "2026-07-26T00:00:00Z",
   "status": "completed",
-  "blocker": "No governed intervention/control outcome labels or source mapping are available."
+  "blocker": "No governed intervention/control outcome labels or source mapping are available.",
+  "last_audited_at": "2026-09-12T00:00:00-06:00",
+  "latest_evidence": "outcome-label-source-audit-2026-09-12.md"
 }

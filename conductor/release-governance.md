@@ -24,7 +24,7 @@ sources, forecasts, or labels. Local schema governance is implemented through
 | Production PostgreSQL 18 backup/restore and extension parity | blocked | `tracks/forecasting_predeploy_20260722/plan.md` |
 | Certified source/release lineage | blocked pending separately reviewed production handoff | `docs/data-ingestion-and-serving-contract.md` |
 | Forecast validation and publication | blocked; candidates remain evaluation-only | `tracks/forecasting_predeploy_20260722/` |
-| Intervention-effect labels and strategy efficacy | blocked; no governed outcome labels located | `tracks/strategy_selection_governance_20260726/` |
+| Intervention-effect labels and strategy efficacy | blocked; no governed outcome labels admitted | [`retros/strategy_selection_governance_20260726/outcome-label-source-audit-2026-09-12.md`](retros/strategy_selection_governance_20260726/outcome-label-source-audit-2026-09-12.md) |
 
 ## Release rule
 
@@ -35,6 +35,21 @@ separate operator authorization. The Drizzle `preDeployCommand` is the one
 automatic migration the operator has authorized; do not enable a forecast
 publication, scheduler, or `effect_candidate` finalization as part of Conductor
 maintenance.
+
+### Outcome-label refresh — 2026-09-12
+
+The current-tree audit found no admitted intervention/control outcome-label
+source. The August literature labels remain expert recommendation labels in a
+separate evaluation-only plane; Boise forecast errors and botanical
+occurrence/profile evidence cannot substitute for intervention effects.
+
+The current migration chain also no longer has either database
+`finalize_strategy_*` function. The retired selection-receipt finalizer was the
+function that blanket-rejected `effect_candidate`; the label-release finalizer
+did not inspect claim tier. That state remains disabled by this release policy:
+no direct write, replacement finalizer, benchmark persistence or publication
+is authorized. See the dated [source audit](retros/strategy_selection_governance_20260726/outcome-label-source-audit-2026-09-12.md)
+for the required mapping, target authorization and enforcement gates.
 
 ## Scheduler-owner directive — 2026-09-02
 

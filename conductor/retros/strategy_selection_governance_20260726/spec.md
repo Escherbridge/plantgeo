@@ -38,3 +38,12 @@ label plane on a disposable local database.
 
 See [`docs/reports/strategy-selection-label-audit-2026-07-25.md`](../../../docs/reports/strategy-selection-label-audit-2026-07-25.md)
 for the negative source-search evidence.
+
+## Current-state refresh — 2026-09-12
+
+The dated [outcome-label source audit](outcome-label-source-audit-2026-09-12.md)
+rechecked the retained evidence against the current tree and found no admitted
+source. It also records the post-`20260803_0018` enforcement boundary: the
+causal storage and exact export survive, but the old database finalizers and
+their state guards do not. `effect_candidate` remains disabled by release
+policy and no current-head write/finalization path is authorized.
