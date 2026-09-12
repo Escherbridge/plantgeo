@@ -1,0 +1,48 @@
+{
+  "schema": "weather-transfer-script-review/v1",
+  "reviewed_at": "2026-09-12T02:57:06.858207+00:00",
+  "reviewer_lane": "/root/legacy_reconciliation",
+  "author": "root",
+  "verdict": "PASS",
+  "script_path": ".omc/research/active-track-integration-20260911/prepare_weather_transfer.py",
+  "script_sha256": "e51df7fe853eeb9048783a4b9e53a2b1598247925b67d33647e9b0253fbf600f",
+  "script_bytes": 7711,
+  "original_script_sha256": "ecc33e4095e4d5b8f8356bf0cd0f9d5fbad5310a842cbee6ecdab195987a5177",
+  "resolved_finding": {
+    "line": 111,
+    "issue": "QA is active; only the two PNW tracks are planned.",
+    "resolution": "Root corrected this one constraint line. Replacing it with the original line reconstructs the previously reviewed script hash exactly."
+  },
+  "open_findings": [],
+  "checks": {
+    "git_capture": "Read-only argument-array Git commands bind supplied current HEAD/tree and immutable commit blobs; mode, byte count and SHA-256 are retained.",
+    "input_gate": "Requires a clean index, no dirty application/docs/receipts and no non-.omc untracked inputs; committed review JSON must have a PASS verdict.",
+    "absent_paths": "ls-tree absence returns present=false and null pin fields; deleted ModerationPanel source and test remain representable.",
+    "baseline": "Reads but never writes the immutable botanical baseline; all119 entries receive current pins.",
+    "output": "Writes only a distinct metadata artifact and refuses an existing target.",
+    "ownership": "Weather owns rebase/rebuild and shared implementation; root retains canonical composition and final verification. Latest944cf0f stays weather-owned.",
+    "verification_scope": "Last full-tested416342f/tree df12542f remains separate from the new source; its combined sweep explicitly awaits weather.",
+    "preservation": "Keeps intervention mount/routers/components, Retry-After, April28 gap regression, botanical admission/refusal boundaries, QA active and PNW planned statuses."
+  },
+  "actual_inputs": {
+    "baseline_sha256": "32867df1f51e10ad62cc8d2aec77f3f4ca84461e2ffbf5dc3b606417a25f3ec9",
+    "baseline_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+    "baseline_tree": "df12542ffa00937e0213d10c938e715849030492",
+    "unique_baseline_paths": 119,
+    "null_baseline_blobs": 0,
+    "weather_input_sha256": "89ac609f5705089f7257657f2b96d22b9e816fc44be6956311e8e1a31209b2a8",
+    "unique_named_weather_paths": 14,
+    "all_named_paths_in_baseline": true,
+    "intervention_source_paths": 56,
+    "supplemental_paths": 47,
+    "latest_weather_tip": "944cf0f04e158b36373971d4935bd42b912bc521",
+    "latest_weather_tree": "0c013080ccf94c16d089e2e071339ad89eb35124"
+  },
+  "next_verification": "After root runs the script on the committed post-intervention source, compare actual source/tree,119+47 pins, absent paths and committed review receipt hashes before release.",
+  "limits": [
+    "Script not executed or edited by reviewer",
+    "No tests/builds, tracked/source edits, HEAD/index changes or external messages",
+    "Only this short scratch review JSON written",
+    "Metadata verification only; no new intervention/weather code review or full-sweep verdict"
+  ]
+}

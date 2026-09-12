@@ -1,0 +1,1747 @@
+{
+  "type": "shared-source-ownership-transfer",
+  "status": "reviewed_post_intervention_base_ready_for_weather",
+  "captured_at_utc": "2026-09-12T02:58:47.006876+00:00",
+  "canonical_source_commit": "af6647497333cca551364403a3a6f052c83ba76b",
+  "canonical_source_tree": "242152ae8a22a59016cee7872fc5c8e790f10af6",
+  "canonical_ref": "codex/active-track-integration-20260911",
+  "canonical_worktree": "C:/Users/atooz/.codex/worktrees/4ccb/plantgeo",
+  "source_status": {
+    "staged_paths": [],
+    "tracked_dirty_paths": [
+      ".omc/ultrapilot-state.json"
+    ],
+    "application_source_docs_and_receipts_clean": true
+  },
+  "last_full_tested_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+  "last_full_tested_tree": "df12542ffa00937e0213d10c938e715849030492",
+  "current_source_full_sweep": "Pending the new weather implementation and final combined batch",
+  "independent_composition_reviews": [
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/qa-pnw-intake-review-20260911.json",
+      "present": true,
+      "git_blob": "6a55abdcb6e22bf278806024256a581c97a2c277",
+      "git_mode": "100644",
+      "git_bytes": 17556,
+      "git_sha256": "320b8f97f5714be40b9226c111ffd7021d3592c073c13e6c238e3c4a133758de"
+    },
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/intervention-intake-review-20260911.json",
+      "present": true,
+      "git_blob": "094cfe0120ec3691129203b405114c51cc1e9542",
+      "git_mode": "100644",
+      "git_bytes": 45453,
+      "git_sha256": "a103e045bc314dc3f47ba9c946e3e32335f8093ad9ee8404831fdae4d80825c8"
+    }
+  ],
+  "shared_weather_owner_task": "01a09323-6f59-7822-9e6f-146892776749",
+  "root_role": "Canonical merge/conflict owner and final combined verification",
+  "weather_owner_action": "Rebase/rebuild weather-owned work onto this base and implement shared catalogue, reader, tRPC, HTTP, agent/MCP, schedule and visual registrations; return an immutable independently reviewed candidate.",
+  "weather_owned_source_candidates": [
+    "aab0dceb6fb76ff3164b440f4fa48da5748f88a9",
+    "09450d2c5498fb3258bcb1cd690d75ea509887e4",
+    "f00c4f16edf6d0c4cf21d48b06d87cd64f76d716",
+    "944cf0f04e158b36373971d4935bd42b912bc521"
+  ],
+  "intervention_source": "2fc6b30ac1b024e1c955dbf95552495608608a96",
+  "constraints": [
+    "Preserve the exactly-once MapView intervention import/mount, its render-count stub, intervention routers/components, publication freshness and stale-review predicates.",
+    "Preserve canonical BoundedResponse.retry_after and durable cooldown behavior; do not replace the shared HTTP helper with an older version.",
+    "Preserve the exact 2025-04-28 selected-day gap/delayed-result regression, truthful prior-frame dates and independent fire clock.",
+    "Current weather observations retain horizon zero and their own source identity; a forecast product remains distinct.",
+    "Preserve botanical registrations, explicit refusal/unknown boundaries and source-admission gates.",
+    "Preserve QA active and both PNW tracks planned, with existing registry/runbook rows, while composing shared documentation.",
+    "Apply all changes before one final combined sweep. Prior botanical and intervention peer receipts retain their exact source and environment scope.",
+    "No remote push, image publication, deployment, Railway access, provider restart, production migration or unapproved source acquisition."
+  ],
+  "files": [
+    {
+      "path": "AGENTS.md",
+      "present": true,
+      "git_blob": "37d5cfb70c832b4012e74153f230b08aa81f5c94",
+      "git_mode": "100644",
+      "git_bytes": 6342,
+      "git_sha256": "378ba41560160043e4b12b260f0b536744dd36e99c7534f620f5d04b6a8923af",
+      "tested_post_botanical_blob": "37d5cfb70c832b4012e74153f230b08aa81f5c94",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "docs/lanes/weather-observations.md",
+      "present": true,
+      "git_blob": "6c3f957c907f50456dea6d2d8cc0bd5a779e24a1",
+      "git_mode": "100644",
+      "git_bytes": 27308,
+      "git_sha256": "7926da5c2f3f69689e357114ee81900efb9209157b12065fbd8e3a951f26e04a",
+      "tested_post_botanical_blob": "6c3f957c907f50456dea6d2d8cc0bd5a779e24a1",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "docs/layer-lane-standard.md",
+      "present": true,
+      "git_blob": "e1d1eff517f0769a5e25eea7947ffab1a623afd8",
+      "git_mode": "100644",
+      "git_bytes": 19519,
+      "git_sha256": "d42ec69d4a820406e3f7fdfe49b72d9f145b63f85059619d840943c432be0323",
+      "tested_post_botanical_blob": "e1d1eff517f0769a5e25eea7947ffab1a623afd8",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "drizzle/0000_baseline.sql",
+      "present": true,
+      "git_blob": "603e66199d1a789f014a48e3781d5a2b6aaf08e6",
+      "git_mode": "100644",
+      "git_bytes": 125325,
+      "git_sha256": "4b32cc4a272b3207301a80dcea8a8f19cead6d452526a1eb070fe6cbdfd9ca1c",
+      "tested_post_botanical_blob": "603e66199d1a789f014a48e3781d5a2b6aaf08e6",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "infra/martin/martin.yaml",
+      "present": true,
+      "git_blob": "ea13d193e81fd20608c3bdf3eb21923da96772fe",
+      "git_mode": "100644",
+      "git_bytes": 4457,
+      "git_sha256": "84e5810050cb6e916a6aa269b274b8520e268e01b905e452bfdac45ae626faf9",
+      "tested_post_botanical_blob": "ea13d193e81fd20608c3bdf3eb21923da96772fe",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/agent/AGENTS.md",
+      "present": true,
+      "git_blob": "5e3f96a14cf29469c5882f00accbfb997306f93c",
+      "git_mode": "100644",
+      "git_bytes": 51237,
+      "git_sha256": "1d1404b84be5600bd656a2feef55283807105f41981e238dee8c639f11eabde3",
+      "tested_post_botanical_blob": "5e3f96a14cf29469c5882f00accbfb997306f93c",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/agent/graph.py",
+      "present": true,
+      "git_blob": "eb7171fa528e73eeaed0f2f410160f22c4b0a672",
+      "git_mode": "100644",
+      "git_bytes": 19603,
+      "git_sha256": "c758aaeb6bb5dfb5f639c0ab99c23afe2eaf40ced3a730a490dea4afa6176303",
+      "tested_post_botanical_blob": "eb7171fa528e73eeaed0f2f410160f22c4b0a672",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": true
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/agent/llm.py",
+      "present": true,
+      "git_blob": "ee1ea2f3ae9f046fde243e9fd76a58683664d335",
+      "git_mode": "100644",
+      "git_bytes": 12271,
+      "git_sha256": "81e473fcba07f33f0255d56bf2f607b25e511ee05cc4685d00bb06869cf90246",
+      "tested_post_botanical_blob": "ee1ea2f3ae9f046fde243e9fd76a58683664d335",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/agent/mcp_server.py",
+      "present": true,
+      "git_blob": "5e0faccc57f56fd053f560023e54d110a2a60e20",
+      "git_mode": "100644",
+      "git_bytes": 11944,
+      "git_sha256": "c08c0295cc25b08aa49651876fc453ee17fcce3942e5ad6d2bae051c3a1c7150",
+      "tested_post_botanical_blob": "5e0faccc57f56fd053f560023e54d110a2a60e20",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": true
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/agent/prompts.py",
+      "present": true,
+      "git_blob": "eb3c4821e3952e54cfc44534b2fa9d9ca5c8b66d",
+      "git_mode": "100644",
+      "git_bytes": 8557,
+      "git_sha256": "881a38e530dad770741698d6a20557b456fbd1c9eb75b99e51f69ae3ccbb8073",
+      "tested_post_botanical_blob": "eb3c4821e3952e54cfc44534b2fa9d9ca5c8b66d",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": true
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/agent/tools.py",
+      "present": true,
+      "git_blob": "bd557339209d27df2877c00460b710732849015c",
+      "git_mode": "100644",
+      "git_bytes": 106760,
+      "git_sha256": "6fcbc6e7698f03cde7f2017f5533747048ba82b6d977825a3405153b85a304d2",
+      "tested_post_botanical_blob": "bd557339209d27df2877c00460b710732849015c",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": true
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/AGENTS.md",
+      "present": true,
+      "git_blob": "e84070835c60d927e84e84186dabc11a9a00be0b",
+      "git_mode": "100644",
+      "git_bytes": 749,
+      "git_sha256": "539bcfd645fd062611bd01e5d0e3e84c562c911a95671cc5a0c660015e85a1e0",
+      "tested_post_botanical_blob": "e84070835c60d927e84e84186dabc11a9a00be0b",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/app.py",
+      "present": true,
+      "git_blob": "8a81d77438e9ef71341b12387bbc1f20fa26d0d0",
+      "git_mode": "100644",
+      "git_bytes": 4744,
+      "git_sha256": "2e5f341b1793ed5f41d4bd4bd78a535911381598ff3622e75387a8d53952c8dd",
+      "tested_post_botanical_blob": "8a81d77438e9ef71341b12387bbc1f20fa26d0d0",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": true
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/execution/AGENTS.md",
+      "present": true,
+      "git_blob": "5985923a2fe31d0cfcfb80ac41c635e4b144eb95",
+      "git_mode": "100644",
+      "git_bytes": 162898,
+      "git_sha256": "9042aa3fd8c6e7f53234eb80e27e1396c5951118c972ff0ff3e41fd7e4668e48",
+      "tested_post_botanical_blob": "5985923a2fe31d0cfcfb80ac41c635e4b144eb95",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/execution/job_executor_service.py",
+      "present": true,
+      "git_blob": "9f664a0d0c5976db23f44102e89c997d76dccf87",
+      "git_mode": "100644",
+      "git_bytes": 105948,
+      "git_sha256": "18112122c430ca23089d8d644d0ab65b48c845caf5cfc5c6665ddd89b569fbb0",
+      "tested_post_botanical_blob": "9f664a0d0c5976db23f44102e89c997d76dccf87",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": true
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/execution/weather_observations/AGENTS.md",
+      "present": true,
+      "git_blob": "1adf52e997f67999a9b294edeb7ff1a5b82429da",
+      "git_mode": "100644",
+      "git_bytes": 4232,
+      "git_sha256": "d47d7d10ddafb74a05f29fb434d05bd623d3c4cde09ade4a362c2800aa08f945",
+      "tested_post_botanical_blob": "1adf52e997f67999a9b294edeb7ff1a5b82429da",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/ingest/open_meteo.py",
+      "present": true,
+      "git_blob": "3fdadc1a701cdcf37a91cc72cfad533db46fa901",
+      "git_mode": "100644",
+      "git_bytes": 16914,
+      "git_sha256": "0509a448eb52ab54d36a715fa5fb19f65be19f1069469e7de868222275fa6e91",
+      "tested_post_botanical_blob": "3fdadc1a701cdcf37a91cc72cfad533db46fa901",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/interface/AGENTS.md",
+      "present": true,
+      "git_blob": "6fbc46a1f3a3f0e3f6b0189cf29e335e1559f736",
+      "git_mode": "100644",
+      "git_bytes": 682,
+      "git_sha256": "b2f3d42ae32dec7f5367653aaa31d1930d19274b048fb0177ab562cc3b2a1b0a",
+      "tested_post_botanical_blob": "6fbc46a1f3a3f0e3f6b0189cf29e335e1559f736",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/interface/cli/_registry.py",
+      "present": true,
+      "git_blob": "9ed911af65c0d44774e91341752e985e6d38bdea",
+      "git_mode": "100644",
+      "git_bytes": 481,
+      "git_sha256": "09b32207db3dfb92cc9d865ebea03da3fc1686c76cf6f109d13a088cff07ac40",
+      "tested_post_botanical_blob": "9ed911af65c0d44774e91341752e985e6d38bdea",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/interface/cli/AGENTS.md",
+      "present": true,
+      "git_blob": "e623cb1f3ada2fcd7195b6b1b6382675a73a29c8",
+      "git_mode": "100644",
+      "git_bytes": 3695,
+      "git_sha256": "43d680927ea67fa859b4d47594c82f5e90beca85eb4ab4161eee742204635465",
+      "tested_post_botanical_blob": "e623cb1f3ada2fcd7195b6b1b6382675a73a29c8",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/interface/http/__init__.py",
+      "present": true,
+      "git_blob": "27666c30336e69b8acb5330f81efaaee67698b80",
+      "git_mode": "100644",
+      "git_bytes": 306,
+      "git_sha256": "ba342e3ed2b3f22f9cf41e5ec6bd067e860dae4ec079afc31f4b70f34d95d428",
+      "tested_post_botanical_blob": "27666c30336e69b8acb5330f81efaaee67698b80",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/interface/http/AGENTS.md",
+      "present": true,
+      "git_blob": "36e58686dd87b28061ce2c07971685d953e66c88",
+      "git_mode": "100644",
+      "git_bytes": 2854,
+      "git_sha256": "6d7840f74a774e6c0569399e7bb9ffffe5a794741e63068d74dbed98dac743bc",
+      "tested_post_botanical_blob": "36e58686dd87b28061ce2c07971685d953e66c88",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/interface/http/parquet_routes.py",
+      "present": true,
+      "git_blob": "6fc82832b3e45ecb2d7532965b75994cbcbc9153",
+      "git_mode": "100644",
+      "git_bytes": 14436,
+      "git_sha256": "e46b91e012207a0988af2f94062424ca946926a87109e9f20859d1ec69acc847",
+      "tested_post_botanical_blob": "6fc82832b3e45ecb2d7532965b75994cbcbc9153",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/jobs/registry.py",
+      "present": true,
+      "git_blob": "f58e62196245618c0877a4ef8b70900ac5ca0449",
+      "git_mode": "100644",
+      "git_bytes": 18850,
+      "git_sha256": "c2d0b93e8900c95d8e14992725857767726409c21135548346f2fc4093bdf193",
+      "tested_post_botanical_blob": "f58e62196245618c0877a4ef8b70900ac5ca0449",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/AGENTS.md",
+      "present": true,
+      "git_blob": "f40f6b5dfdc2cdb02f27b1dec26c8b3f521d7515",
+      "git_mode": "100644",
+      "git_bytes": 2014,
+      "git_sha256": "42374bda9009bd78c1e33f5fdedfaf074e523fe7eace1f96d0e48b1c5dc94557",
+      "tested_post_botanical_blob": "f40f6b5dfdc2cdb02f27b1dec26c8b3f521d7515",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/__init__.py",
+      "present": true,
+      "git_blob": "46e91319f543fd76e828bc95bc6c5a316ab80cd8",
+      "git_mode": "100644",
+      "git_bytes": 22378,
+      "git_sha256": "7d5c8a18e320b12ca797824b5edcf32672830bd0a48f9b8553e4f5287cd59532",
+      "tested_post_botanical_blob": "46e91319f543fd76e828bc95bc6c5a316ab80cd8",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/AGENTS.md",
+      "present": true,
+      "git_blob": "2d6f340b416b9b97030ea7c9ae4cf55eac03a520",
+      "git_mode": "100644",
+      "git_bytes": 114252,
+      "git_sha256": "c45df06b81b38926151995a9b66c5cff4f1ea786b792d09ea9dabec042d41e63",
+      "tested_post_botanical_blob": "2d6f340b416b9b97030ea7c9ae4cf55eac03a520",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/weather_observations/__init__.py",
+      "present": true,
+      "git_blob": "73b84ec476946a2d8bddba274ab2e30b3c2e0623",
+      "git_mode": "100644",
+      "git_bytes": 757,
+      "git_sha256": "2c20edb2f77028ea3d9d583a3d9e1f8b26a562a0b199e5448d408d47551dc897",
+      "tested_post_botanical_blob": "73b84ec476946a2d8bddba274ab2e30b3c2e0623",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/weather_observations/__main__.py",
+      "present": true,
+      "git_blob": "ec72741355083f60c2d5d49a17c1ab18e9b2767f",
+      "git_mode": "100644",
+      "git_bytes": 293,
+      "git_sha256": "461c807e973c70c2e15ed02a783104329d275ae10b6c1b1389d37f0d4760de92",
+      "tested_post_botanical_blob": "ec72741355083f60c2d5d49a17c1ab18e9b2767f",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/weather_observations/adapter.py",
+      "present": true,
+      "git_blob": "78131042d317ee2d478f5d597d238fd29bf79676",
+      "git_mode": "100644",
+      "git_bytes": 9242,
+      "git_sha256": "6274add08ec63cfb8c5959ce7f44538260731d31c9ed07e9ea7c42df37ff8285",
+      "tested_post_botanical_blob": "78131042d317ee2d478f5d597d238fd29bf79676",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/weather_observations/forward.py",
+      "present": true,
+      "git_blob": "edba5b918f1374af81293315f64d28ba5302062c",
+      "git_mode": "100644",
+      "git_bytes": 29199,
+      "git_sha256": "3a5d9496862d246e375b37a93ed3804cc1a485ce9044225adba65e1c5e609530",
+      "tested_post_botanical_blob": "edba5b918f1374af81293315f64d28ba5302062c",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/weather_observations/parity.py",
+      "present": true,
+      "git_blob": "67405e709a155a1dc01da181406cfedd7768e575",
+      "git_mode": "100644",
+      "git_bytes": 7917,
+      "git_sha256": "6c9642bde28d08ee180cafc9ab9c58ea0bc2f758081bd821ff99997d07848f77",
+      "tested_post_botanical_blob": "67405e709a155a1dc01da181406cfedd7768e575",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/weather_observations/rows.py",
+      "present": true,
+      "git_blob": "18cf9c859186ff783e58f3f8ef225ca7e4a5971a",
+      "git_mode": "100644",
+      "git_bytes": 8579,
+      "git_sha256": "696aef3c2557891fe1bdb283ee579ef93ef6a2f3097ffb94d029844f090527ec",
+      "tested_post_botanical_blob": "18cf9c859186ff783e58f3f8ef225ca7e4a5971a",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/weather_observations/source.py",
+      "present": true,
+      "git_blob": "569b8020e9fa84cc38d4f3d24ee387c961e00a61",
+      "git_mode": "100644",
+      "git_bytes": 3438,
+      "git_sha256": "2b2a8d5a5b644cfc1c47a94a2e82134e4a3bb50a2df010d9e7c99f341020ffe6",
+      "tested_post_botanical_blob": "569b8020e9fa84cc38d4f3d24ee387c961e00a61",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/weather_observations/support.py",
+      "present": true,
+      "git_blob": "8d81bf1d939f939fb5a8bb4d992f8d7c41387e39",
+      "git_mode": "100644",
+      "git_bytes": 2064,
+      "git_sha256": "ff291bd0a348f83083cf667008fd09f91b22424622fe57f815f8aacf787b1726",
+      "tested_post_botanical_blob": "8d81bf1d939f939fb5a8bb4d992f8d7c41387e39",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/parquet/AGENTS.md",
+      "present": true,
+      "git_blob": "822f04249a65d0a880eea0f76ad71594dcf7507d",
+      "git_mode": "100644",
+      "git_bytes": 101026,
+      "git_sha256": "376f4c6381ac24923b9d85ec73143577fa1eaea97059fa3e231b2d5b46b82f66",
+      "tested_post_botanical_blob": "822f04249a65d0a880eea0f76ad71594dcf7507d",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/parquet/lane_registry.py",
+      "present": true,
+      "git_blob": "f6c237f36b23fe25e61a7284dc800afb9589b3b9",
+      "git_mode": "100644",
+      "git_bytes": 76651,
+      "git_sha256": "bba473d5a10b4764f65e8279771591738f0df7d60fc7eb806163c01688760d6f",
+      "tested_post_botanical_blob": "f6c237f36b23fe25e61a7284dc800afb9589b3b9",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": true
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/planes/AGENTS.md",
+      "present": true,
+      "git_blob": "bc1265cdaa5180883507db736bf751e738a6f7eb",
+      "git_mode": "100644",
+      "git_bytes": 3405,
+      "git_sha256": "9c4a61c4ca8bb13d733603e431e8e3d56a4a427b4b3a9ed43aaa74896ebec8ce",
+      "tested_post_botanical_blob": "bc1265cdaa5180883507db736bf751e738a6f7eb",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/routes/__init__.py",
+      "present": true,
+      "git_blob": "8cdeff7cb5c7fae90860a9f025199fb5f7389c7a",
+      "git_mode": "100644",
+      "git_bytes": 1147,
+      "git_sha256": "f66979a0cee1997d626a546ec0017789dab934fe19eaaa7f310f06ca29f6af47",
+      "tested_post_botanical_blob": "8cdeff7cb5c7fae90860a9f025199fb5f7389c7a",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/routes/agent_analysis.py",
+      "present": true,
+      "git_blob": "50fcfc96e419ec12f62ba314421ac1b93145c269",
+      "git_mode": "100644",
+      "git_bytes": 4731,
+      "git_sha256": "c70a73ec15a45454d61566e32f7fb06d63c4f366c232e59b924dccae262c7cd8",
+      "tested_post_botanical_blob": "50fcfc96e419ec12f62ba314421ac1b93145c269",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/warehouse/schemas/AGENTS.md",
+      "present": true,
+      "git_blob": "edc9b1815b56faf3151d834a0d62f625c90e63b2",
+      "git_mode": "100644",
+      "git_bytes": 4731,
+      "git_sha256": "892086123ea3209e09696632430588929548fbb1ac0d864d1fccd37e73294373",
+      "tested_post_botanical_blob": "edc9b1815b56faf3151d834a0d62f625c90e63b2",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/warehouse/schemas/weather_observations.py",
+      "present": true,
+      "git_blob": "551562a36ef6e235a6de618a8727832735f12852",
+      "git_mode": "100644",
+      "git_bytes": 10601,
+      "git_sha256": "8c6f669073877e593bba25cf4fec37104ff8e01c54bd9da2ae92b2e5ffd1db08",
+      "tested_post_botanical_blob": "551562a36ef6e235a6de618a8727832735f12852",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "services/agri-data-service/tests/parquet/test_lane_registry.py",
+      "present": true,
+      "git_blob": "04e7740c18b70725c688964f962375033655e5cc",
+      "git_mode": "100644",
+      "git_bytes": 49047,
+      "git_sha256": "6ed82127b1425fc18c6f43dc3b6315b71a79af2f86b39cfb6acc0d6b69b5b94d",
+      "tested_post_botanical_blob": "04e7740c18b70725c688964f962375033655e5cc",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "services/agri-data-service/tests/test_job_executor_service.py",
+      "present": true,
+      "git_blob": "d893f4c40ea84defce31c7343f34f9c9a543dcfd",
+      "git_mode": "100644",
+      "git_bytes": 120777,
+      "git_sha256": "a19df7961c13d585a5d093148b3666ab33ad226884b76807d76d5080263fa69e",
+      "tested_post_botanical_blob": "d893f4c40ea84defce31c7343f34f9c9a543dcfd",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/__tests__/api/interventions-trpc.test.ts",
+      "present": true,
+      "git_blob": "a925df6775285aad581cd8ba7112b471dc2157ca",
+      "git_mode": "100644",
+      "git_bytes": 12156,
+      "git_sha256": "c65b955448932558c78be1beecdca53f754d2578b53a21ec8a2c64a99b9ca7ef",
+      "tested_post_botanical_blob": "e08f8231629afbcddfe610a31b3b918d10995e9f",
+      "changed_since_tested_botanical_source": true,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/__tests__/components/LayerManager.test.tsx",
+      "present": true,
+      "git_blob": "cf28267299e64c34402094890e6cd0a52774e9bb",
+      "git_mode": "100644",
+      "git_bytes": 105088,
+      "git_sha256": "4f9f789335173aef5f510bf837cd4ab314beed2c6022e2d3b9e9453a8d526d01",
+      "tested_post_botanical_blob": "cf28267299e64c34402094890e6cd0a52774e9bb",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/__tests__/components/LayerRow.test.tsx",
+      "present": true,
+      "git_blob": "b8e2a04449bb4cad36951323fb049e6e62c77e06",
+      "git_mode": "100644",
+      "git_bytes": 36249,
+      "git_sha256": "58d65bc16cd21890a7f11f404a6c28c853a3b30aad5138dbc2bcd37db817c486",
+      "tested_post_botanical_blob": "b8e2a04449bb4cad36951323fb049e6e62c77e06",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/__tests__/components/LayerTimeSlider.test.tsx",
+      "present": true,
+      "git_blob": "de0da79ef11cb8637c28516d4aac1244802017f2",
+      "git_mode": "100644",
+      "git_bytes": 65923,
+      "git_sha256": "dd287f883a0304351be75dd0a11d6716dbdd8740aea3f56c0aa88d454034c1c7",
+      "tested_post_botanical_blob": "de0da79ef11cb8637c28516d4aac1244802017f2",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/__tests__/lib/offline/tile-cache.test.ts",
+      "present": true,
+      "git_blob": "2a994b7086bce8721a96d686bb5e8124b0e9e563",
+      "git_mode": "100644",
+      "git_bytes": 1017,
+      "git_sha256": "e7e6819d860a11e481f758ce8f2522990e650a969ee99552b39f4720de2ce6ef",
+      "tested_post_botanical_blob": "2a994b7086bce8721a96d686bb5e8124b0e9e563",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/__tests__/services/parquet-slider-capabilities.test.ts",
+      "present": true,
+      "git_blob": "16a7068718e256ae6b6c48549ae693de29e19d27",
+      "git_mode": "100644",
+      "git_bytes": 58779,
+      "git_sha256": "281f121d59ec04a835141f9b84b2d3059f64a7c0ff65ccf89e054e085c2f4ceb",
+      "tested_post_botanical_blob": "16a7068718e256ae6b6c48549ae693de29e19d27",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/__tests__/trpc/interventions.test.ts",
+      "present": true,
+      "git_blob": "e0ab8d52f828ce06150d54968bca7c49e06f9eb7",
+      "git_mode": "100644",
+      "git_bytes": 9602,
+      "git_sha256": "5f1e1a7a73e3bd1e5a2a3015f2b09d9a7ea2f5513c7286c242849e2ce9085490",
+      "tested_post_botanical_blob": "84cc67b3d4dd6d4a3b02d04908de7dfd17fd5696",
+      "changed_since_tested_botanical_source": true,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/__tests__/trpc/wildfire-cancellation.test.ts",
+      "present": true,
+      "git_blob": "f5b8054df87a271fed03866ac4ec4b576450e8cd",
+      "git_mode": "100644",
+      "git_bytes": 5367,
+      "git_sha256": "237c684559de07a8e138a267d56da395646a95a7da1497b197ef2847148c928f",
+      "tested_post_botanical_blob": "f5b8054df87a271fed03866ac4ec4b576450e8cd",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/app/api/ai/regional-intelligence/route.ts",
+      "present": true,
+      "git_blob": "1b8b8ef2bd2be323e40acefacbc56771dbb5c097",
+      "git_mode": "100644",
+      "git_bytes": 11157,
+      "git_sha256": "64e0c369329b210175fb6a5be5f8559869bb903df9e35822c2c585df497506ac",
+      "tested_post_botanical_blob": "1b8b8ef2bd2be323e40acefacbc56771dbb5c097",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/app/api/ingest/interventions/route.ts",
+      "present": true,
+      "git_blob": "e03cb1226f376dde89796ea5540ed1e352b1b33c",
+      "git_mode": "100644",
+      "git_bytes": 2000,
+      "git_sha256": "61aa9d87dbd34cb4052fc70b6440d64c1e9692e47bf8a4d67048e01a0261575c",
+      "tested_post_botanical_blob": "e03cb1226f376dde89796ea5540ed1e352b1b33c",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/app/community/AGENTS.md",
+      "present": true,
+      "git_blob": "52df96b7c81fbc964f1a255a2b3bbf2742c3383f",
+      "git_mode": "100644",
+      "git_bytes": 762,
+      "git_sha256": "e6fc8a8a4f2d107dd2c868c86435de9e5a22ef341aa3c92728952329e8e202b1",
+      "tested_post_botanical_blob": "52df96b7c81fbc964f1a255a2b3bbf2742c3383f",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/app/community/CommunityLedger.tsx",
+      "present": true,
+      "git_blob": "06c14ecb3b818f279fb32a74baa30505e53a8e5e",
+      "git_mode": "100644",
+      "git_bytes": 11152,
+      "git_sha256": "6bd508a707290317390422aecc60a2b54da2fdb438241f71a75c2c221956a59e",
+      "tested_post_botanical_blob": "06c14ecb3b818f279fb32a74baa30505e53a8e5e",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/app/feed/InterventionFeed.tsx",
+      "present": true,
+      "git_blob": "19adad70d06dcf172f47922ed0cc438f26e6a69c",
+      "git_mode": "100644",
+      "git_bytes": 8987,
+      "git_sha256": "fb518a2cdbf7f4689237359f173ece008f40d0ce20428e5bc732ea0041b47dd4",
+      "tested_post_botanical_blob": "ddd41e04d0a28865d3520905eabbbb504eea2124",
+      "changed_since_tested_botanical_source": true,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/app/feed/page.tsx",
+      "present": true,
+      "git_blob": "c7d62e437a3bd36468929c158f218a4769072fc1",
+      "git_mode": "100644",
+      "git_bytes": 1739,
+      "git_sha256": "60c7b622dea640f93d86bbce0baf9b96077431929ae8e401e4cd42d3f1c5a6e6",
+      "tested_post_botanical_blob": "c7d62e437a3bd36468929c158f218a4769072fc1",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/components/map/AGENTS.md",
+      "present": true,
+      "git_blob": "810d9f616cf2bf2bd52f40e38ba0f880b8bfae03",
+      "git_mode": "100644",
+      "git_bytes": 124047,
+      "git_sha256": "f08bcc8675afb1e9806be0ad80503a860a5bd34763db024366087a8597bddced",
+      "tested_post_botanical_blob": "7c8ba0a8a82e751f1f1eec9485db88fe58323b9c",
+      "changed_since_tested_botanical_source": true,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/components/map/layer-panel/layer-coverage-track.ts",
+      "present": true,
+      "git_blob": "86289b199cf0f827e56bb7120aa2135729454082",
+      "git_mode": "100644",
+      "git_bytes": 31834,
+      "git_sha256": "7312a4edd98da9eab201761289b77a6e6bebeeb3857d40048f608af8bccf97f6",
+      "tested_post_botanical_blob": "86289b199cf0f827e56bb7120aa2135729454082",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/components/map/layer-panel/layer-time-state.ts",
+      "present": true,
+      "git_blob": "a8a52317b433371e8ad5c3b56713c5e05fa381ca",
+      "git_mode": "100644",
+      "git_bytes": 18379,
+      "git_sha256": "62d418539d2f4b0f3dfd87775e73eb97d743c1a6938af40fa4a7d6eda315573e",
+      "tested_post_botanical_blob": "a8a52317b433371e8ad5c3b56713c5e05fa381ca",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/components/map/layer-panel/LayerLegend.tsx",
+      "present": true,
+      "git_blob": "d847fdfce6f1ee69e1c12b63339dcf1c0d3fe867",
+      "git_mode": "100644",
+      "git_bytes": 8579,
+      "git_sha256": "c45281bb91171b57cde44192ac29d6d875e92aea607d576059d1e37711475b02",
+      "tested_post_botanical_blob": "d847fdfce6f1ee69e1c12b63339dcf1c0d3fe867",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/components/map/layer-panel/LayerRow.tsx",
+      "present": true,
+      "git_blob": "18f77bba9a20a2e2572a0013d703d25756671376",
+      "git_mode": "100644",
+      "git_bytes": 28612,
+      "git_sha256": "c0cc6e181d5082fc8d967530eff61888f66338e490201a28c2fc16956ce45db7",
+      "tested_post_botanical_blob": "18f77bba9a20a2e2572a0013d703d25756671376",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/components/map/layer-panel/LayerTimeSlider.tsx",
+      "present": true,
+      "git_blob": "07deadfcd757aeeda3c63be11e0b0c35925083d3",
+      "git_mode": "100644",
+      "git_bytes": 37470,
+      "git_sha256": "c9343ff158aacd9d1ec7b8690541c9fff4c9b37dd1139b46047312c19612d8a9",
+      "tested_post_botanical_blob": "07deadfcd757aeeda3c63be11e0b0c35925083d3",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": true
+    },
+    {
+      "path": "src/components/map/layer-panel/LegendBlockView.tsx",
+      "present": true,
+      "git_blob": "5b51d71f3fea1c8d8852966fd6fac051124aa772",
+      "git_mode": "100644",
+      "git_bytes": 3317,
+      "git_sha256": "9a7fd5414030168e8ffa7939bd6b1399eb044c6d78f74e37e8aad15f385ce49d",
+      "tested_post_botanical_blob": "5b51d71f3fea1c8d8852966fd6fac051124aa772",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/components/map/LayerManager.tsx",
+      "present": true,
+      "git_blob": "d05915a4657378b334a6e6b21b41c5c1503e82a4",
+      "git_mode": "100644",
+      "git_bytes": 61214,
+      "git_sha256": "e9d1900e0484ffe30e511e991c8f4ab8681525039fe5f2df408235466155b084",
+      "tested_post_botanical_blob": "d05915a4657378b334a6e6b21b41c5c1503e82a4",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": true
+    },
+    {
+      "path": "src/components/map/layers/WeatherLayer.tsx",
+      "present": true,
+      "git_blob": "ea266377cdc54fa82f47952d4a4d4f5d45c91df1",
+      "git_mode": "100644",
+      "git_bytes": 11831,
+      "git_sha256": "172f15f13c9aded2a1ab79fc479055fbc9520ee7b282e76bbc0333a7b4ce8800",
+      "tested_post_botanical_blob": "ea266377cdc54fa82f47952d4a4d4f5d45c91df1",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/components/map/MapDateSummary.tsx",
+      "present": true,
+      "git_blob": "4738111b34379af347b1e7da9a57d4f1dd5a562e",
+      "git_mode": "100644",
+      "git_bytes": 20487,
+      "git_sha256": "8ef9280c1766fb5e477b78ad05edd7dec5a3a38fedcabfafb4e438ea14bb8df9",
+      "tested_post_botanical_blob": "4738111b34379af347b1e7da9a57d4f1dd5a562e",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/components/map/MapView.tsx",
+      "present": true,
+      "git_blob": "ae4d4701b20a4fce00be04f6cf142e594ac2dbf8",
+      "git_mode": "100644",
+      "git_bytes": 18739,
+      "git_sha256": "f35672c6f35f16a8e1055b9c57702ba0dd70ad172ecb774d8637887720118d99",
+      "tested_post_botanical_blob": "5355ec7751bafe589aa9e012b3c9557d17063fdd",
+      "changed_since_tested_botanical_source": true,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/components/map/TimeSliderCapabilitiesLoader.tsx",
+      "present": true,
+      "git_blob": "a0b978e353986ce914c18002a4bc310f1f371cf3",
+      "git_mode": "100644",
+      "git_bytes": 7022,
+      "git_sha256": "c619977d0024f1b5096af3c9e5520c7c7dba42410856ded0fda70c2ce028bd3a",
+      "tested_post_botanical_blob": "a0b978e353986ce914c18002a4bc310f1f371cf3",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/components/panels/AGENTS.md",
+      "present": true,
+      "git_blob": "6fbc7a10249c2db4ea8b46197c0eb57338a1c9a5",
+      "git_mode": "100644",
+      "git_bytes": 14911,
+      "git_sha256": "a3c239bf0b63a85867dcdfa0a8c74b8796fc2c0ffd90b8e19d21edc81e6d471b",
+      "tested_post_botanical_blob": "ecd1fc2634494734476482cc2e2d0c8ba30814ca",
+      "changed_since_tested_botanical_source": true,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/components/panels/CommunityDetails.tsx",
+      "present": true,
+      "git_blob": "31f40868bf5ee245181f6aacb497f4cb8fe8d65a",
+      "git_mode": "100644",
+      "git_bytes": 17262,
+      "git_sha256": "7b0e1c0960261e061b399a870d1c01e61df7fcbf7f62e01014c0062a8a142446",
+      "tested_post_botanical_blob": "f67cff61cd579e08286eefa9200e5f0de4919a27",
+      "changed_since_tested_botanical_source": true,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/components/panels/ContributionQueue.tsx",
+      "present": true,
+      "git_blob": "0183655db0707be540905f3b3e25982740738a28",
+      "git_mode": "100644",
+      "git_bytes": 12020,
+      "git_sha256": "bd15b05ed866d1745fb6bc3821ba5b974a2ffd0a482e70ae731dec52540bd5b9",
+      "tested_post_botanical_blob": "726ba4c4003e0f93de3f47d89e7323c1549f17d1",
+      "changed_since_tested_botanical_source": true,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/components/panels/FireDetails.tsx",
+      "present": true,
+      "git_blob": "8f394b62ed0f59485e73cef9c71999eafacd5c87",
+      "git_mode": "100644",
+      "git_bytes": 10998,
+      "git_sha256": "212b1e7662101801c28774449d51442584e94887f682e90ef86b8ccfd4202435",
+      "tested_post_botanical_blob": "8f394b62ed0f59485e73cef9c71999eafacd5c87",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/components/panels/InterventionSubmitModal.tsx",
+      "present": true,
+      "git_blob": "875d924e9dfa8500bbc9987217d4577fb200bea3",
+      "git_mode": "100644",
+      "git_bytes": 13101,
+      "git_sha256": "e0a3128979c0a47176ee17080d44020f7145fc34fa10634a016df1ed2e55e146",
+      "tested_post_botanical_blob": "1dcba435144656ba18532e3147feb67ef3fa0a84",
+      "changed_since_tested_botanical_source": true,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/components/panels/ModerationPanel.tsx",
+      "present": false,
+      "git_blob": null,
+      "git_mode": null,
+      "git_bytes": null,
+      "git_sha256": null,
+      "tested_post_botanical_blob": "62c513c56a652d5cdbc51d64cd08b33ee76ce2a0",
+      "changed_since_tested_botanical_source": true,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/components/panels/OfflinePanel.tsx",
+      "present": true,
+      "git_blob": "a034031d9db5edb28def6f273e2e6f681ec8fe01",
+      "git_mode": "100644",
+      "git_bytes": 7605,
+      "git_sha256": "ce0003cf280137d4eba3cb134deadd53f01146424dbb2b62219a247ffb6a711e",
+      "tested_post_botanical_blob": "a034031d9db5edb28def6f273e2e6f681ec8fe01",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/hooks/AGENTS.md",
+      "present": true,
+      "git_blob": "b6d3c20d79d923057729f7dd56acbb1fba59dc97",
+      "git_mode": "100644",
+      "git_bytes": 10051,
+      "git_sha256": "6f7a4a9e9227febe5e1d190155371f8bb337c0787c922177c195531eaea599b3",
+      "tested_post_botanical_blob": "b6d3c20d79d923057729f7dd56acbb1fba59dc97",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/lib/cache/AGENTS.md",
+      "present": true,
+      "git_blob": "2a9203ab2fa9ed946ce58f81d076637813570ddc",
+      "git_mode": "100644",
+      "git_bytes": 32531,
+      "git_sha256": "f17448a33b65115968e508ba08548dc0e7f601ba0ee6eeccd71ea2d72b2303e4",
+      "tested_post_botanical_blob": "2a9203ab2fa9ed946ce58f81d076637813570ddc",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/lib/cache/layer-cache-policy.ts",
+      "present": true,
+      "git_blob": "6c34ded444e9571056f2cb0dd895a4dfc21b11e6",
+      "git_mode": "100644",
+      "git_bytes": 13989,
+      "git_sha256": "ffc56bd02ba1d8eadaa03771c7cecbcf1cf2ffbdc4a086bcaba42eb98d378958",
+      "tested_post_botanical_blob": "6c34ded444e9571056f2cb0dd895a4dfc21b11e6",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/lib/cache/query-persister.ts",
+      "present": true,
+      "git_blob": "8950627b7ffa257af62de349f7431a947e91aac1",
+      "git_mode": "100644",
+      "git_bytes": 55734,
+      "git_sha256": "678f37a3a3993711aca3cb5d7f1bd52bb8c791d4c7c415a1d280588ddfa6e2c8",
+      "tested_post_botanical_blob": "8950627b7ffa257af62de349f7431a947e91aac1",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/lib/environmental/AGENTS.md",
+      "present": true,
+      "git_blob": "f3d6058f766a702f85f70c58b6011374c0396607",
+      "git_mode": "100644",
+      "git_bytes": 10471,
+      "git_sha256": "bdee089baa50f996eccd0535ad1eb7211dcbaf5bf873d382fc66f421caf7d92a",
+      "tested_post_botanical_blob": "f3d6058f766a702f85f70c58b6011374c0396607",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/lib/environmental/intervention.ts",
+      "present": true,
+      "git_blob": "61bb1fefad6c63515db119a1b8e112eb6ca08109",
+      "git_mode": "100644",
+      "git_bytes": 279,
+      "git_sha256": "4e9ebb85cab0c001fd5e0557db8d1e5eb4c93ab308199685ffca9c26f333653c",
+      "tested_post_botanical_blob": "61bb1fefad6c63515db119a1b8e112eb6ca08109",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/lib/environmental/parquet-presentation.ts",
+      "present": true,
+      "git_blob": "d60517557cbbcb79cd29e71c51e151cb54c40171",
+      "git_mode": "100644",
+      "git_bytes": 25070,
+      "git_sha256": "1264a7308f8da988ca1ab198a58cf0573b42011bc7265f03373635be1ed5b85d",
+      "tested_post_botanical_blob": "d60517557cbbcb79cd29e71c51e151cb54c40171",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/lib/map/AGENTS.md",
+      "present": true,
+      "git_blob": "7910a74e17cee862a1063337006c6c19fe98a8d8",
+      "git_mode": "100644",
+      "git_bytes": 33390,
+      "git_sha256": "4be2ce96235746267a079fd31887bd0e10759db2d899a168937bda8c51461dbf",
+      "tested_post_botanical_blob": "d0b70e5174428db6fb180a77b55a4dc691c4b1c6",
+      "changed_since_tested_botanical_source": true,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/lib/map/drawing.ts",
+      "present": true,
+      "git_blob": "1ae4a00531affcd3caa58a80fb22db847fa4002f",
+      "git_mode": "100644",
+      "git_bytes": 10111,
+      "git_sha256": "edf560b611e8f49b04d9180b56714109692ee16c15fead1120566419addb48ff",
+      "tested_post_botanical_blob": "1ae4a00531affcd3caa58a80fb22db847fa4002f",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/lib/map/hover-fields.ts",
+      "present": true,
+      "git_blob": "a0e7694c9f5736d70778063007fb9fd670916228",
+      "git_mode": "100644",
+      "git_bytes": 27204,
+      "git_sha256": "4c05d159926b32ce57d0823cc9fda04b9b77a5260738cfed8950ed0f012709ab",
+      "tested_post_botanical_blob": "a0e7694c9f5736d70778063007fb9fd670916228",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/lib/map/layer-legends.ts",
+      "present": true,
+      "git_blob": "d1ca83ac0b690cc1402316b6adeb8eb2f01c5c2c",
+      "git_mode": "100644",
+      "git_bytes": 24719,
+      "git_sha256": "0dca291e19656085866a41ffaef61133d9cfb23d4deca2683bd8c54ca95c22c4",
+      "tested_post_botanical_blob": "d1ca83ac0b690cc1402316b6adeb8eb2f01c5c2c",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": true
+    },
+    {
+      "path": "src/lib/map/layer-publication-standing.ts",
+      "present": true,
+      "git_blob": "fbfa140a6ab1112391135a5cc874f214cbb9c775",
+      "git_mode": "100644",
+      "git_bytes": 2813,
+      "git_sha256": "0ae03805739e8bb441ee53d6eef252629c6cd3f32f3a12dfc3dfc66f94f4f455",
+      "tested_post_botanical_blob": "fbfa140a6ab1112391135a5cc874f214cbb9c775",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/lib/map/layer-registry.ts",
+      "present": true,
+      "git_blob": "fde30ea0fa42f030aa84642b7f5cc6bce0a26c6d",
+      "git_mode": "100644",
+      "git_bytes": 25434,
+      "git_sha256": "f8d5adbcaf8d694d120100016d555b9fe4a33d55eac86cdd4cb67ebe1a576c5e",
+      "tested_post_botanical_blob": "fde30ea0fa42f030aa84642b7f5cc6bce0a26c6d",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": true
+    },
+    {
+      "path": "src/lib/map/layer-render-contract.ts",
+      "present": true,
+      "git_blob": "5f9a6859eed799226bf1aa0055d404f759364ee5",
+      "git_mode": "100644",
+      "git_bytes": 29732,
+      "git_sha256": "95a8227f036fd80a66caffa1c35a908a2990f523b0b2b75cbe7d8399e6e6c7e0",
+      "tested_post_botanical_blob": "5f9a6859eed799226bf1aa0055d404f759364ee5",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": true
+    },
+    {
+      "path": "src/lib/map/layer-toggle-context.ts",
+      "present": true,
+      "git_blob": "ec4749e895f1a76cc3abdd2e84bf83f5c84ff8ba",
+      "git_mode": "100644",
+      "git_bytes": 28745,
+      "git_sha256": "b281fb860b3e018385bb96cb2dab8974dc851843e437af836500d768927aae33",
+      "tested_post_botanical_blob": "ec4749e895f1a76cc3abdd2e84bf83f5c84ff8ba",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/lib/map/layers.ts",
+      "present": true,
+      "git_blob": "b14db624194d061ad3ee4b1ec96b79abad9666e6",
+      "git_mode": "100644",
+      "git_bytes": 26954,
+      "git_sha256": "05b5148631473bd24228680080fb6d5fe89d5e490ff904b50c6faa111d71bb82",
+      "tested_post_botanical_blob": "b14db624194d061ad3ee4b1ec96b79abad9666e6",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/lib/map/sources.ts",
+      "present": true,
+      "git_blob": "8cf115dd03f18d5cfa865b3685dad694c77fd093",
+      "git_mode": "100644",
+      "git_bytes": 9966,
+      "git_sha256": "40530d534bbe2c90741e234b82d0bb546ea561ffbdedfb2e8c67446d7a3b49a6",
+      "tested_post_botanical_blob": "8cf115dd03f18d5cfa865b3685dad694c77fd093",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/lib/map/styles.ts",
+      "present": true,
+      "git_blob": "1a445362a61fb42c723354cbb8f21ee19ce0e518",
+      "git_mode": "100644",
+      "git_bytes": 11518,
+      "git_sha256": "154e61c8ae0b9677dc7200f1efc877360dc14b30245e3d76aba5e7d3bc5647fe",
+      "tested_post_botanical_blob": "1a445362a61fb42c723354cbb8f21ee19ce0e518",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/lib/net/AGENTS.md",
+      "present": true,
+      "git_blob": "6c8983e71c5c428a033f7e5a5b3f61943aa74fc9",
+      "git_mode": "100644",
+      "git_bytes": 15990,
+      "git_sha256": "1c53062a5ed0e279ba4d09d74510f4efaf8a3a2e3241caad1eee586c31b2513c",
+      "tested_post_botanical_blob": "6c8983e71c5c428a033f7e5a5b3f61943aa74fc9",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/lib/offline/tile-cache.ts",
+      "present": true,
+      "git_blob": "6a6b2ff8b2bb76d88f6280a6876100c8391179b9",
+      "git_mode": "100644",
+      "git_bytes": 7005,
+      "git_sha256": "6dfaed19a2737567c44751ccc7c61874eaa82f3eb3631e3832b8922451e23eb1",
+      "tested_post_botanical_blob": "6a6b2ff8b2bb76d88f6280a6876100c8391179b9",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/lib/server/AGENTS.md",
+      "present": true,
+      "git_blob": "16f50abd7fcfe27c9c68bb2f9c30fbf7c93a8031",
+      "git_mode": "100644",
+      "git_bytes": 99655,
+      "git_sha256": "09e6486b7a1518a25137434da23513565d340dcd64319b22f29d8a7ffc832924",
+      "tested_post_botanical_blob": "c611969bf345acd4322228b75f5b0f791515c34b",
+      "changed_since_tested_botanical_source": true,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/lib/server/db/AGENTS.md",
+      "present": true,
+      "git_blob": "4268093967be5ec639939044017a477c34932817",
+      "git_mode": "100644",
+      "git_bytes": 32899,
+      "git_sha256": "e05953f7693f912696f52b6befa769f2b30476e95f8805fb1df3a10f40ab3ac8",
+      "tested_post_botanical_blob": "4268093967be5ec639939044017a477c34932817",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/lib/server/db/schema.ts",
+      "present": true,
+      "git_blob": "a3d6a163bcfd15ad1bbb0a4030e48e6f278196f8",
+      "git_mode": "100644",
+      "git_bytes": 32829,
+      "git_sha256": "33139720141ecaf9bc330a2eb69475652e0e38cec6aa245c1cdc49f7c3150916",
+      "tested_post_botanical_blob": "a3d6a163bcfd15ad1bbb0a4030e48e6f278196f8",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/lib/server/services/AGENTS.md",
+      "present": true,
+      "git_blob": "249ae798fa913bd0875097303a12437af14324e0",
+      "git_mode": "100644",
+      "git_bytes": 52968,
+      "git_sha256": "38e5286d6352eed5920ca1e86835f3f96c2e13bc41618b4f892b33a04ae0231a",
+      "tested_post_botanical_blob": "4d27138d460a0ef0e45ec3ee981003b97f9d7c74",
+      "changed_since_tested_botanical_source": true,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/lib/server/services/carbon-potential.ts",
+      "present": true,
+      "git_blob": "e62dabb18e269f03de76c76921b796a4d690fce2",
+      "git_mode": "100644",
+      "git_bytes": 1207,
+      "git_sha256": "af67b77f57f1a9439c3239a4e27bcf60a81f99d0cbc4820c643d91e25fb24c1c",
+      "tested_post_botanical_blob": "e62dabb18e269f03de76c76921b796a4d690fce2",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/lib/server/services/environmental-read-model.ts",
+      "present": true,
+      "git_blob": "cf631909d80609418022e52832bea05f6744ed2b",
+      "git_mode": "100644",
+      "git_bytes": 170513,
+      "git_sha256": "73bf419e0156ff96199e1cd9624948ba2048947dbd84c810bb6978b40ce40661",
+      "tested_post_botanical_blob": "cf631909d80609418022e52832bea05f6744ed2b",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/lib/server/services/intervention-geometry.ts",
+      "present": true,
+      "git_blob": "fcd1aed4d4ad85f89c4d0456a3357e73b8b877cf",
+      "git_mode": "100644",
+      "git_bytes": 187,
+      "git_sha256": "046e3655ddbbf3a24fd208dd4edd0d664a9596a276d6c3ae62d9f4f936ff7550",
+      "tested_post_botanical_blob": "a5a22d8ddc1bb6b62d8e52415d82f2e9a2cc2563",
+      "changed_since_tested_botanical_source": true,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/lib/server/services/parquet-context-readers.ts",
+      "present": true,
+      "git_blob": "a0c7d3e1a5723e9463c061b2597e841495ffd46a",
+      "git_mode": "100644",
+      "git_bytes": 6321,
+      "git_sha256": "184d93c4226b8dcac06200a90cbbddbb158027c9a697924184378e5cd28e18e9",
+      "tested_post_botanical_blob": "a0c7d3e1a5723e9463c061b2597e841495ffd46a",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/lib/server/services/parquet-plane-client.ts",
+      "present": true,
+      "git_blob": "75dd2beca3f58aebadc95afbbb0c50607c4cc348",
+      "git_mode": "100644",
+      "git_bytes": 39375,
+      "git_sha256": "cad1d3267eb3dfe90f74410618a9392880f0ba960e0909d4a1c965a4daaa02a1",
+      "tested_post_botanical_blob": "75dd2beca3f58aebadc95afbbb0c50607c4cc348",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/lib/server/services/parquet-slider-capabilities.ts",
+      "present": true,
+      "git_blob": "9ac96ca71fc03888ad696758673cec1839f29290",
+      "git_mode": "100644",
+      "git_bytes": 42437,
+      "git_sha256": "aaf2cb3d21c0ae8e36c5fe30bb401acb93493f4c0a14bf0c87ffe6cbc9ca27e5",
+      "tested_post_botanical_blob": "9ac96ca71fc03888ad696758673cec1839f29290",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": true
+    },
+    {
+      "path": "src/lib/server/services/parquet-trpc-readers.ts",
+      "present": true,
+      "git_blob": "a1141939e66840bccf08fa119236526ca97892c4",
+      "git_mode": "100644",
+      "git_bytes": 99081,
+      "git_sha256": "060fc84c08315e8089bea8278257dbbc8e9e5a4fad529ce5ff4d806338b5336e",
+      "tested_post_botanical_blob": "a1141939e66840bccf08fa119236526ca97892c4",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/lib/server/services/regional-context.ts",
+      "present": true,
+      "git_blob": "34550aea8f2ef5875fa0fd2a8631b58f122d7844",
+      "git_mode": "100644",
+      "git_bytes": 59826,
+      "git_sha256": "ffb422c7d3780cc44c97bf526a46d152c4e5e29538235d08b8c59aaa7279931d",
+      "tested_post_botanical_blob": "34550aea8f2ef5875fa0fd2a8631b58f122d7844",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/lib/server/services/regional-temporal-neighbors.ts",
+      "present": true,
+      "git_blob": "12400ad2d3a3701817f8d911b853b2153ef5abb7",
+      "git_mode": "100644",
+      "git_bytes": 14089,
+      "git_sha256": "7944bcb395b298f5b79faa65705d13707a14f65598dfe382ae45df05c827adce",
+      "tested_post_botanical_blob": "12400ad2d3a3701817f8d911b853b2153ef5abb7",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/lib/server/services/weather.ts",
+      "present": true,
+      "git_blob": "6b2adf61abd0135e87e3fb6dd7dff6daf5853be8",
+      "git_mode": "100644",
+      "git_bytes": 2582,
+      "git_sha256": "5bac2987a71fe25bb6d76989e43b53348917080839fc663eaa7df9f318a21e2a",
+      "tested_post_botanical_blob": "6b2adf61abd0135e87e3fb6dd7dff6daf5853be8",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/lib/server/trpc/router.ts",
+      "present": true,
+      "git_blob": "f6731e7417ff4ee32f4e4946c3b05753e8838ff0",
+      "git_mode": "100644",
+      "git_bytes": 1905,
+      "git_sha256": "e903dcb8935a886571e0cfa9438199024aa0d9080d93849c96117c7018d743c4",
+      "tested_post_botanical_blob": "f6731e7417ff4ee32f4e4946c3b05753e8838ff0",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/lib/server/trpc/routers/contributions.ts",
+      "present": true,
+      "git_blob": "d372b4fbaf6ed2e4bb4a0d7372c863113939bf89",
+      "git_mode": "100644",
+      "git_bytes": 9002,
+      "git_sha256": "d2be7f2e04a11a04b2d1d404652dd56047e3dcd2db8911b7379d6f06d9058a62",
+      "tested_post_botanical_blob": "3cfe45ae66068aefdaa46fb328a183efbcac09be",
+      "changed_since_tested_botanical_source": true,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/lib/server/trpc/routers/environmental.ts",
+      "present": true,
+      "git_blob": "bf3e742fa63242fe5d16505119419034ff6a7395",
+      "git_mode": "100644",
+      "git_bytes": 30435,
+      "git_sha256": "8af4b155ec4072885f8a88157f3f36f6e3f6382eb834548274015688ac381a62",
+      "tested_post_botanical_blob": "bf3e742fa63242fe5d16505119419034ff6a7395",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/lib/server/trpc/routers/interventions.ts",
+      "present": true,
+      "git_blob": "d3a2ca2b9fd2bdc28f5de480d4abd369a368c466",
+      "git_mode": "100644",
+      "git_bytes": 13512,
+      "git_sha256": "cd0f710fa5e9ebdc20eabff953455da1cab3611533c22de754cf7e83ab62fc69",
+      "tested_post_botanical_blob": "9b4c12d862af58a155e9248d623f53cd455aa777",
+      "changed_since_tested_botanical_source": true,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/lib/server/trpc/routers/wildfire.ts",
+      "present": true,
+      "git_blob": "77bd6f0a29f81a2de98f28c7cbb383729d104587",
+      "git_mode": "100644",
+      "git_bytes": 8908,
+      "git_sha256": "393b0807748f88430d2039615b17b7c7ae3a3b86daa2ecdda8fe1ac14d4da928",
+      "tested_post_botanical_blob": "77bd6f0a29f81a2de98f28c7cbb383729d104587",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": true
+    },
+    {
+      "path": "src/stores/time-slider-store.ts",
+      "present": true,
+      "git_blob": "e3acc95a82181ecda1eb1d2a4b3b4d5aa223dca6",
+      "git_mode": "100644",
+      "git_bytes": 24155,
+      "git_sha256": "d926ce7e15cb30574f0674b206c67c7acc204e55604354fc3e0a34516880763d",
+      "tested_post_botanical_blob": "e3acc95a82181ecda1eb1d2a4b3b4d5aa223dca6",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/stores/useMetricAtDate.ts",
+      "present": true,
+      "git_blob": "994dcd971d726779a8e7ee35dea831f01c1898e6",
+      "git_mode": "100644",
+      "git_bytes": 24700,
+      "git_sha256": "dff215d513f3a640ded8afcab6cf1fda6a6c6a8b0bddd4b58af596950ea24f63",
+      "tested_post_botanical_blob": "994dcd971d726779a8e7ee35dea831f01c1898e6",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    },
+    {
+      "path": "src/types/time-slider.ts",
+      "present": true,
+      "git_blob": "793a683ce9060113e5def13e4fde37b04803a6d1",
+      "git_mode": "100644",
+      "git_bytes": 16596,
+      "git_sha256": "cf61195c9087211c7288aafafe7ba24af27447ef433eda158af421565867bab6",
+      "tested_post_botanical_blob": "793a683ce9060113e5def13e4fde37b04803a6d1",
+      "changed_since_tested_botanical_source": false,
+      "explicitly_named_weather_shared_path": false
+    }
+  ],
+  "supplemental_intervention_and_document_pins": [
+    {
+      "path": "conductor/RUNBOOK.md",
+      "present": true,
+      "git_blob": "e01162084ca7b2ce0e7d661d448a8a63ca4cd793",
+      "git_mode": "100644",
+      "git_bytes": 18237,
+      "git_sha256": "0842aa0a3e0ef2d80fff0ca2a1a6c3ac554499798e2dcce720bb6bb0cf7f24b4"
+    },
+    {
+      "path": "conductor/tracks.md",
+      "present": true,
+      "git_blob": "255aec9f561812dcd445b7141f7db46ad2a46e15",
+      "git_mode": "100644",
+      "git_bytes": 15168,
+      "git_sha256": "31aee332724ddfde393495c39dbab6c2456824fdc74a3a0719aa5c7370368dd3"
+    },
+    {
+      "path": "conductor/tracks/community_engagement_completion_20260805/metadata.json",
+      "present": true,
+      "git_blob": "c03bb387baaa7d8a434d9f646b5fb0afa14e5668",
+      "git_mode": "100644",
+      "git_bytes": 4128,
+      "git_sha256": "e7aa50a7693b260e42360028e9a71e0a5591c78d05e8c11986d121c28f29ca4b"
+    },
+    {
+      "path": "conductor/tracks/community_engagement_completion_20260805/plan.md",
+      "present": true,
+      "git_blob": "baf25531d5118d2d0f54a7e3919928979808ce04",
+      "git_mode": "100644",
+      "git_bytes": 9398,
+      "git_sha256": "29e7e7c4c5c74d24088cc687855d0b31de35050beb46a0a34edad888bbbfe45b"
+    },
+    {
+      "path": "conductor/tracks/community_engagement_completion_20260805/spec.md",
+      "present": true,
+      "git_blob": "59ba05213e7dcddb9480b78e17cb2b89afc35ddb",
+      "git_mode": "100644",
+      "git_bytes": 8803,
+      "git_sha256": "89e89fba388354b7555985e0238d8dc9b14b09b1a1ac73d1f5849cc629cbd0b3"
+    },
+    {
+      "path": "conductor/tracks/intervention_boundary_authoring_20260911/evidence/boundary-doc-packet.md",
+      "present": true,
+      "git_blob": "1403e4750bee5d4f9966b5f75a06a5e927607de2",
+      "git_mode": "100644",
+      "git_bytes": 4914,
+      "git_sha256": "d98f9f690fb75cf01f412a1f2b72133126a9c0d084d43d1d82a10aee0637713b"
+    },
+    {
+      "path": "conductor/tracks/intervention_boundary_authoring_20260911/evidence/community-publication-doc-handoff.md",
+      "present": true,
+      "git_blob": "79df2271e6a7c5f27d35d15cf585f55d2940acb9",
+      "git_mode": "100644",
+      "git_bytes": 497,
+      "git_sha256": "bf4eb53bec9e15782e67af84db5d416135238b9f96fcde8e37493eaa6f22e8e3"
+    },
+    {
+      "path": "conductor/tracks/intervention_boundary_authoring_20260911/evidence/community-publication-doc-handoff.patch",
+      "present": true,
+      "git_blob": "217565e75190891b0936111f313afd66fa446699",
+      "git_mode": "100644",
+      "git_bytes": 5772,
+      "git_sha256": "10b2e08a590990cbd173aac161a6c0780ce50d4e87fddc827a548b80dde7b9b7"
+    },
+    {
+      "path": "conductor/tracks/intervention_boundary_authoring_20260911/evidence/images/keyboard-rectangle-draft.png",
+      "present": true,
+      "git_blob": "1e0fb6755d1e8602e4708eed397c6fa4efddbbed",
+      "git_mode": "100644",
+      "git_bytes": 50453,
+      "git_sha256": "8a0cd867ac4c79f39cea777516a82cf638887849de273cd96479336c0a09921e"
+    },
+    {
+      "path": "conductor/tracks/intervention_boundary_authoring_20260911/evidence/images/published-after-style-swap.png",
+      "present": true,
+      "git_blob": "d09c86fd529e044f4c5b8575fed5c3017d6a7104",
+      "git_mode": "100644",
+      "git_bytes": 68855,
+      "git_sha256": "8989970fcfe1b12510552d97731154229bfdc15c55e516a66168d75ab5c6963e"
+    },
+    {
+      "path": "conductor/tracks/intervention_boundary_authoring_20260911/evidence/images/published-same-viewport.png",
+      "present": true,
+      "git_blob": "0cf5219d62541948dce1b5e894aab68fe2fee502",
+      "git_mode": "100644",
+      "git_bytes": 78719,
+      "git_sha256": "1c2f26331d7c4cad341a55081f8c3cebdb0dd260f21b3b1bd8f9ee2e158d2d8d"
+    },
+    {
+      "path": "conductor/tracks/intervention_boundary_authoring_20260911/evidence/images/warm-empty-viewport.png",
+      "present": true,
+      "git_blob": "7592d0113b18c0e6f239ba29f3a5976bad10cfd7",
+      "git_mode": "100644",
+      "git_bytes": 67529,
+      "git_sha256": "f305658fd06b25651ee7c49b73f155035e68bd592e03ed4180818000f4a487d3"
+    },
+    {
+      "path": "conductor/tracks/intervention_boundary_authoring_20260911/evidence/mapview-publication-sync.patch",
+      "present": true,
+      "git_blob": "3d5f413a99473804bbfd5d5af516182113ad6357",
+      "git_mode": "100644",
+      "git_bytes": 1228,
+      "git_sha256": "79045848a88097d88e58cd0c54ca8be04b81801093b2dbcf21ff0cc1fb68aa91"
+    },
+    {
+      "path": "conductor/tracks/intervention_boundary_authoring_20260911/evidence/review-and-verification.md",
+      "present": true,
+      "git_blob": "80db93059537a2cbd70cd6522ff1887fa51c7c43",
+      "git_mode": "100644",
+      "git_bytes": 7138,
+      "git_sha256": "9aeece1d00323c8a2ebc19a388c42be1fe2bd04026852f91466a4bf64be4621d"
+    },
+    {
+      "path": "conductor/tracks/intervention_boundary_authoring_20260911/evidence/shared-file-packet.md",
+      "present": true,
+      "git_blob": "359ddcba4693c1faf3730932c0790915afa9109f",
+      "git_mode": "100644",
+      "git_bytes": 4341,
+      "git_sha256": "fee412d6c86313d6818e935df77519b02618a6a26aa0a666fdfdb1272fa0f15a"
+    },
+    {
+      "path": "conductor/tracks/intervention_boundary_authoring_20260911/evidence/verification-receipt.json",
+      "present": true,
+      "git_blob": "ad44b69279cf46323630960012808ac84a19653a",
+      "git_mode": "100644",
+      "git_bytes": 3143,
+      "git_sha256": "3cefeec455757662aba7ec8a24b7b422423b0a5f5093d83b238da0644e3fb249"
+    },
+    {
+      "path": "conductor/tracks/intervention_boundary_authoring_20260911/metadata.json",
+      "present": true,
+      "git_blob": "1e476a5d74f1e6438c4a9ac1ae1269252a174c02",
+      "git_mode": "100644",
+      "git_bytes": 600,
+      "git_sha256": "9737cc1cfe39daa5eadf43acbcbbf05373af9286cbcec3c40aba4b3b50cc1bfe"
+    },
+    {
+      "path": "conductor/tracks/intervention_boundary_authoring_20260911/plan.md",
+      "present": true,
+      "git_blob": "eb00d5d1d13658fc5f65408a101168c99a85b39a",
+      "git_mode": "100644",
+      "git_bytes": 1263,
+      "git_sha256": "5b042ce989b842ec97e82efb7d20f14b34b6267ecbca25f2f92da8ac7e900440"
+    },
+    {
+      "path": "conductor/tracks/intervention_boundary_authoring_20260911/spec.md",
+      "present": true,
+      "git_blob": "d131e9b958f37bd3941835f8cdc1a5bef5d5ac38",
+      "git_mode": "100644",
+      "git_bytes": 2163,
+      "git_sha256": "0b6da253f43fe6b4fed88eecb4624cc0affd93559838be643a5ee4139b7dac69"
+    },
+    {
+      "path": "e2e/community-publication-db.mjs",
+      "present": true,
+      "git_blob": "3a64f534767d159c111fbe2fe4a96d24218a6ed9",
+      "git_mode": "100644",
+      "git_bytes": 4162,
+      "git_sha256": "bfb7c776acc64e67cb55cccd4e7f063e6af1530e4a3d99b8496dd06288fdf642"
+    },
+    {
+      "path": "e2e/community-publication-identities.json",
+      "present": true,
+      "git_blob": "6ca84674f886c48950b152182a941ea57b8cf9e7",
+      "git_mode": "100644",
+      "git_bytes": 240,
+      "git_sha256": "115c9280b4a67daaee3796c3c47911f9d1fbf590a2d15b5fa9c515f9cdba1c26"
+    },
+    {
+      "path": "e2e/community-publication-server.mjs",
+      "present": true,
+      "git_blob": "54212a5956c7469733aeaeda37e9f07c16a56bec",
+      "git_mode": "100644",
+      "git_bytes": 4121,
+      "git_sha256": "adc0d258ccd6b09e8934011f809038d333f3e203b57ee0229798f1468c279ec4"
+    },
+    {
+      "path": "e2e/community-publication-teardown.ts",
+      "present": true,
+      "git_blob": "1c04e315b271fa1abdc2645c4bcb0dd2b27e118c",
+      "git_mode": "100644",
+      "git_bytes": 289,
+      "git_sha256": "bf5dacb9533902ffde9e014f82a5f75026ddbbdb3efa345572ffed067c1fcd4e"
+    },
+    {
+      "path": "e2e/community-publication.config.ts",
+      "present": true,
+      "git_blob": "198b40f13d67fe8c37971e8c672d53e87fc7edaa",
+      "git_mode": "100644",
+      "git_bytes": 865,
+      "git_sha256": "f0ba53266c6b02d3b996732266256bf4c0dbd3d60c632f9596f37c5f478fe2de"
+    },
+    {
+      "path": "e2e/community-publication.md",
+      "present": true,
+      "git_blob": "bee79c8ee78c213d9e3a4943f38c665eac992bb3",
+      "git_mode": "100644",
+      "git_bytes": 3844,
+      "git_sha256": "4f87d67e76a68a7410dfaacb2068a0af8fc51a8f2efe903c0eaa7ff8fe3fb00b"
+    },
+    {
+      "path": "e2e/community-publication.spec.ts",
+      "present": true,
+      "git_blob": "e68467719cfe26458313f2241a795c8ebbea3f6d",
+      "git_mode": "100644",
+      "git_bytes": 11464,
+      "git_sha256": "051bf5b97fe19130769c6a9e310f8f2627f0f0d3f2fcaab211fcbc0cac200eef"
+    },
+    {
+      "path": "public/sw.js",
+      "present": true,
+      "git_blob": "f03e02f737801b9f6660933216898e97c3e6e0b2",
+      "git_mode": "100644",
+      "git_bytes": 10984,
+      "git_sha256": "4c00b9c7f9b66094561b30f53d6ed33a11e9e756e910e03e5ea49cd350d6a52f"
+    },
+    {
+      "path": "src/__tests__/components/CommunityDetails.test.tsx",
+      "present": true,
+      "git_blob": "1be3d4f341997732e6c199cb86a467c0fb5868f1",
+      "git_mode": "100644",
+      "git_bytes": 7384,
+      "git_sha256": "145b21116fe29dd6ad419d51bba6776f54884eca68c6a323a83ebd21a03a6bc6"
+    },
+    {
+      "path": "src/__tests__/components/ContributionQueue.test.tsx",
+      "present": true,
+      "git_blob": "d8c8afae0767b44d6afb7be14689f1e3d72d5445",
+      "git_mode": "100644",
+      "git_bytes": 11304,
+      "git_sha256": "6d75884f9db83759115120a3f6df09135f14b965ee9e8434e019fd89bb48ce15"
+    },
+    {
+      "path": "src/__tests__/components/InterventionBoundaryEditor.test.tsx",
+      "present": true,
+      "git_blob": "27435c0a3b9151b6f4502975220dbaecfddab808",
+      "git_mode": "100644",
+      "git_bytes": 5853,
+      "git_sha256": "7dbdaa28ff601a20aec12db081ded6ae6f356d3d639ab7933530c4ecf7d942d8"
+    },
+    {
+      "path": "src/__tests__/components/InterventionGeometryPreview.test.tsx",
+      "present": true,
+      "git_blob": "cf58b39e4641ca84baeacff28ae806bef98afa6a",
+      "git_mode": "100644",
+      "git_bytes": 1371,
+      "git_sha256": "bdd56ccfadf6e915d750da811103dfa1723996819641e451f69e830f72535a4a"
+    },
+    {
+      "path": "src/__tests__/components/InterventionPublicationSync.test.tsx",
+      "present": true,
+      "git_blob": "34b35811b4d7a3b3edab35a7a10e6e32a3dc7234",
+      "git_mode": "100644",
+      "git_bytes": 4024,
+      "git_sha256": "8e0778fc25875ef881b3a1e1f034331e7174037f12ffe7dcedc556028d8a0c0f"
+    },
+    {
+      "path": "src/__tests__/components/InterventionSubmitModal.test.tsx",
+      "present": true,
+      "git_blob": "0b734dd38eaa236042f7cb1a8a6efef778a1ca9b",
+      "git_mode": "100644",
+      "git_bytes": 3581,
+      "git_sha256": "14aff825ed9c0163a3be7febfb5313dae1f2da972ae2c870571ad49456816f9c"
+    },
+    {
+      "path": "src/__tests__/components/ModerationPanel.test.tsx",
+      "present": false,
+      "git_blob": null,
+      "git_mode": null,
+      "git_bytes": null,
+      "git_sha256": null
+    },
+    {
+      "path": "src/__tests__/components/map-view-render-count.test.tsx",
+      "present": true,
+      "git_blob": "80d29b59341d16d2d93f1cdb15b8521efc10c291",
+      "git_mode": "100644",
+      "git_bytes": 9876,
+      "git_sha256": "52336674168f70a2437f97f492197d84207908ee54af60922421ba3fc009a2a7"
+    },
+    {
+      "path": "src/__tests__/lib/map/intervention-boundary.test.ts",
+      "present": true,
+      "git_blob": "7e7f95362fd435ca7857287390d2103f3fcd2748",
+      "git_mode": "100644",
+      "git_bytes": 2845,
+      "git_sha256": "cd4fb5c53f59e930338a497644cb9d23c77cf9cef9db913db77deacb0c43b8e9"
+    },
+    {
+      "path": "src/__tests__/lib/offline/intervention-worker-refresh.test.ts",
+      "present": true,
+      "git_blob": "2a3ef95cc201c513617202f2dc669cefaa904abd",
+      "git_mode": "100644",
+      "git_bytes": 2754,
+      "git_sha256": "8a6a61cceab56eec86a6b6cdbbb7bf9d6e183a62a187006f801aaa4e1421b214"
+    },
+    {
+      "path": "src/__tests__/security/moderation-route-access.test.tsx",
+      "present": true,
+      "git_blob": "910e9266de4224e7843914f2abb160823a6834b0",
+      "git_mode": "100644",
+      "git_bytes": 2354,
+      "git_sha256": "20558a5962d1975c35cac306af3b35ea266a9744fc46655792c613e1ffc9c140"
+    },
+    {
+      "path": "src/__tests__/services/community-publication-postgis.test.ts",
+      "present": true,
+      "git_blob": "c421b3457280c43ffcd9045f63e71e2f96f29e0b",
+      "git_mode": "100644",
+      "git_bytes": 11981,
+      "git_sha256": "1c11674afd6be6734782b70156c7ee3d53f2b57140ef664b971a6e0f9bf76f7e"
+    },
+    {
+      "path": "src/app/moderation/page.tsx",
+      "present": true,
+      "git_blob": "422cd22cc30f2c63b10101889d47dd3e97da2203",
+      "git_mode": "100644",
+      "git_bytes": 2014,
+      "git_sha256": "d3686b6c09743637aaaebf63c5ac1e054912b362df4c3e74835e6547cbdab687"
+    },
+    {
+      "path": "src/components/map/InterventionBoundaryEditor.tsx",
+      "present": true,
+      "git_blob": "a075c66b79c593143e8cb98f9dcf6851dd293591",
+      "git_mode": "100644",
+      "git_bytes": 10407,
+      "git_sha256": "5ccbb92af6d60760cb5156280427433809a8c5c69d7beee4f11cd50195ddd929"
+    },
+    {
+      "path": "src/components/map/InterventionPublicationSync.tsx",
+      "present": true,
+      "git_blob": "b9bb481a38ba78df443f309ff0caef5f4f00281c",
+      "git_mode": "100644",
+      "git_bytes": 1220,
+      "git_sha256": "681039153cb0aaafd2f233b90cedce2009d48de02b811f959f100436a71c941e"
+    },
+    {
+      "path": "src/components/panels/InterventionGeometryPreview.tsx",
+      "present": true,
+      "git_blob": "2df66c1b85da2f6c9b679d1f2dc6c455b756facb",
+      "git_mode": "100644",
+      "git_bytes": 2611,
+      "git_sha256": "ef4ff93c52684da3e05aee8ea1e77516548ca8ac8c05e4e21efc8059aac6cbf9"
+    },
+    {
+      "path": "src/lib/geo/intervention-geometry.ts",
+      "present": true,
+      "git_blob": "a5a22d8ddc1bb6b62d8e52415d82f2e9a2cc2563",
+      "git_mode": "100644",
+      "git_bytes": 2873,
+      "git_sha256": "6a1d95159e20a551fb1bac2ad22b1149606b77eeaa00449fce778b51e3d0ae22"
+    },
+    {
+      "path": "src/lib/map/intervention-boundary.ts",
+      "present": true,
+      "git_blob": "d1caf8409d9cf13e9ea4543449de7ac510b0b2f3",
+      "git_mode": "100644",
+      "git_bytes": 4936,
+      "git_sha256": "7fb711a48084c2a141a53a9d32bb23448b4838ee22af455a2806900ba18b5f2c"
+    },
+    {
+      "path": "src/lib/map/intervention-publication.ts",
+      "present": true,
+      "git_blob": "fd72fc5fac9fbfde0f933aa1bd3f715ad6f00a28",
+      "git_mode": "100644",
+      "git_bytes": 2502,
+      "git_sha256": "2ee1c31552c95110e82607c3318ae337a05b67dbdadccafebb39de97147dbd27"
+    },
+    {
+      "path": "src/lib/server/services/intervention-geometry-validation.ts",
+      "present": true,
+      "git_blob": "36ae7a0e9f2b2610bdd6df26fd1cc9fdc182a272",
+      "git_mode": "100644",
+      "git_bytes": 818,
+      "git_sha256": "c2790852c80cf66d05d24c9839b42585842ebbb48e16a7cff79c917c1e816a6d"
+    }
+  ],
+  "production_action": false
+}

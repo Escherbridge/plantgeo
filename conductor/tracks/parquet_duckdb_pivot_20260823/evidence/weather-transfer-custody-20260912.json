@@ -1,0 +1,132 @@
+{
+  "type": "verification-evidence",
+  "record": "weather-transfer-and-intervention-evidence-custody",
+  "authored_at_utc": "2026-09-12T03:22:13.372881+00:00",
+  "canonical_runtime_source": {
+    "commit": "af6647497333cca551364403a3a6f052c83ba76b",
+    "tree": "242152ae8a22a59016cee7872fc5c8e790f10af6"
+  },
+  "weather_rebase_acknowledgment": {
+    "commit": "ced33dd466de60d916e9727bc54156c2095f348e",
+    "tree": "21c786e3602a6de49433398fba338bd850e0e0d4",
+    "merge_base": "af6647497333cca551364403a3a6f052c83ba76b"
+  },
+  "scope": "Retain nine existing independently checked evidence artifacts. No runtime change, source merge, new test/build run, provider operation or release action.",
+  "source_baseline_policy": "Weather continues from af664749; this evidence-only checkpoint does not require another rebase. Root owns the later reviewed shared composition and final combined sweep.",
+  "verification_boundary": {
+    "last_fully_tested_source": "416342fa5bea836e6a062549b87c2706f53ce45e",
+    "last_fully_tested_tree": "df12542ffa00937e0213d10c938e715849030492",
+    "combined_intervention_weather_sweep": "Pending new reviewed shared weather candidate. Runner static review and context relocation do not certify that future source."
+  },
+  "intervention_custody": "Only the one-file d9e4bd21 note is retained; 2fc6b30 runtime and its MapView patch are not reapplied. Six current bookkeeping updates remain unapplied until final combined validation. Broader tracks remain active and production remains HOLD.",
+  "line_endings": "raw_sha256 pins the exact copied working bytes; git_blob/git_sha256 pin the staged Git bytes. Existing Git text normalization may replace CRLF with LF without changing content.",
+  "author_manifest": {
+    "path": ".omc/research/active-track-integration-20260911/weather-transfer-custody-author-20260912.json",
+    "sha256": "3fb334427f3ca8dbc850e05685b8712f1556ca68a7f1ba639a9bcd89d75cbc41"
+  },
+  "required_independent_review": {
+    "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/weather-transfer-custody-review-20260912.json",
+    "must_pass_before_commit": true,
+    "status_at_authoring": "Not yet reviewed; no author self-approval."
+  },
+  "files": [
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/weather-shared-ownership-transfer-20260911.json",
+      "bytes": 76793,
+      "raw_sha256": "811540e91963126f89b30ac6cea290132593af59adf44f98d253d12bc74056ac",
+      "method": "preserved pre-existing untracked transfer; independently reviewed",
+      "git_blob": "4e06d956339f77236d3f90dc349a318417ea6996",
+      "git_bytes": 76793,
+      "git_sha256": "811540e91963126f89b30ac6cea290132593af59adf44f98d253d12bc74056ac"
+    },
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/weather-transfer-script-review-20260912.json",
+      "bytes": 3178,
+      "raw_sha256": "a6080af7adb4390e4aab9ca7631440edb12ab345ebc5b66c1cc3e03975dd1fda",
+      "source": ".omc/research/active-track-integration-20260911/transfer-script-review.json",
+      "source_raw_sha256": "a6080af7adb4390e4aab9ca7631440edb12ab345ebc5b66c1cc3e03975dd1fda",
+      "method": "exact byte copy",
+      "git_blob": "35cadb114b1a1d43fb6b0ebfedc342a4dbb4b0b8",
+      "git_bytes": 3178,
+      "git_sha256": "a6080af7adb4390e4aab9ca7631440edb12ab345ebc5b66c1cc3e03975dd1fda"
+    },
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/weather-transfer-pin-review-20260912.json",
+      "bytes": 4067,
+      "raw_sha256": "5cf5d1621d6dcfd98c201fe5b8a8ba0d18c6f611fcaee8478c10a51d8a02857e",
+      "source": ".omc/research/active-track-integration-20260911/weather-transfer-pin-review.json",
+      "source_raw_sha256": "5cf5d1621d6dcfd98c201fe5b8a8ba0d18c6f611fcaee8478c10a51d8a02857e",
+      "method": "exact byte copy",
+      "git_blob": "86502be7d66fdafc69c3794d0e049b1310f0836b",
+      "git_bytes": 4067,
+      "git_sha256": "5cf5d1621d6dcfd98c201fe5b8a8ba0d18c6f611fcaee8478c10a51d8a02857e"
+    },
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/intervention-link-correction-review-20260912.json",
+      "bytes": 4134,
+      "raw_sha256": "99119764c2d4ffdc32fcfd3287e0e98a605fb182a302175af233a7a6066de614",
+      "source": ".omc/research/active-track-integration-20260911/intervention-link-correction-review.json",
+      "source_raw_sha256": "99119764c2d4ffdc32fcfd3287e0e98a605fb182a302175af233a7a6066de614",
+      "method": "exact byte copy",
+      "git_blob": "c05f21fdfa83f7041b0c323dee10783c20786a1e",
+      "git_bytes": 4043,
+      "git_sha256": "6c1cd00088f4dc07c4df7a96d119daaea2f8d5ee06fb293e20ce9770e0b73a97"
+    },
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/weather-intervention-runner-review-20260912.json",
+      "bytes": 8161,
+      "raw_sha256": "a392d7db3337bc9da1b0636b5da508de52159115707e6a920d0c3c301c317dcb",
+      "source": ".omc/research/active-track-integration-20260911/weather-intervention-runner-review.json",
+      "source_raw_sha256": "a392d7db3337bc9da1b0636b5da508de52159115707e6a920d0c3c301c317dcb",
+      "method": "exact byte copy",
+      "git_blob": "7855f8f5650bb798bb80aa22a386109312a31736",
+      "git_bytes": 8161,
+      "git_sha256": "a392d7db3337bc9da1b0636b5da508de52159115707e6a920d0c3c301c317dcb"
+    },
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/completed-image-context-relocation-20260912.json",
+      "bytes": 2539,
+      "raw_sha256": "173aefb8a3a918216762addce64ea28151c93d9cb99f7bb85965570a46b8ffb5",
+      "source": ".omc/research/active-track-integration-20260911/completed-image-context-relocation-20260912.json",
+      "source_raw_sha256": "173aefb8a3a918216762addce64ea28151c93d9cb99f7bb85965570a46b8ffb5",
+      "method": "exact byte copy",
+      "git_blob": "1c8d4ff85035416197d7fc3a49c79723f52572a7",
+      "git_bytes": 2504,
+      "git_sha256": "33a2dbcdbb89a894763b62d441b217c43dbc0c13d1e0a1448425fe6d7dbb11a3"
+    },
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/completed-image-context-relocation-followup-review-20260912.json",
+      "bytes": 4384,
+      "raw_sha256": "f5c9fbe802dd4d70f2fcace733fa487ae9ee0b97c9bceccb848156b7a16061ef",
+      "source": ".omc/research/active-track-integration-20260911/completed-image-context-relocation-followup-review-20260912.json",
+      "source_raw_sha256": "f5c9fbe802dd4d70f2fcace733fa487ae9ee0b97c9bceccb848156b7a16061ef",
+      "method": "exact byte copy",
+      "git_blob": "5527c3db7fe06ef1a5d6e94575c2d42da505421a",
+      "git_bytes": 4384,
+      "git_sha256": "f5c9fbe802dd4d70f2fcace733fa487ae9ee0b97c9bceccb848156b7a16061ef"
+    },
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/intervention-post-integration-custody-20260912.json",
+      "bytes": 38671,
+      "raw_sha256": "79b1951dc59e1fe86f2e66a06ab94e87d954c2dc86e419c5ce1aa940704067ba",
+      "source": ".omc/research/active-track-integration-20260911/intervention-post-integration-custody-20260912.json",
+      "source_raw_sha256": "79b1951dc59e1fe86f2e66a06ab94e87d954c2dc86e419c5ce1aa940704067ba",
+      "method": "exact byte copy",
+      "git_blob": "89a2d59364a3e13710f56518d6ad211ba9a10f9d",
+      "git_bytes": 38671,
+      "git_sha256": "79b1951dc59e1fe86f2e66a06ab94e87d954c2dc86e419c5ce1aa940704067ba"
+    },
+    {
+      "path": "conductor/tracks/intervention_boundary_authoring_20260911/evidence/post-integration-reconciliation-20260912.md",
+      "bytes": 3418,
+      "raw_sha256": "b22966b179c765ef354ff3add79f2460a496ae754972800672a8be5c410ff0ba",
+      "source_commit": "d9e4bd21f46d5d5caf8a0a90a4f39f4f222f1241",
+      "source_tree": "1b90d27923a584bd71a8776affc18c57b23afb9f",
+      "source_blob": "408becb24012cccb79514641b8ba3b7545e50efb",
+      "method": "exact immutable Git blob; runtime parent not applied",
+      "git_blob": "408becb24012cccb79514641b8ba3b7545e50efb",
+      "git_bytes": 3418,
+      "git_sha256": "b22966b179c765ef354ff3add79f2460a496ae754972800672a8be5c410ff0ba"
+    }
+  ]
+}

@@ -1,0 +1,70 @@
+{
+  "type": "independent-completed-image-context-relocation-followup",
+  "reviewed_at_utc": "2026-09-12T03:18:05.148350+00:00",
+  "reviewer": "/root/legacy_reconciliation",
+  "verdict": "PASS_relocation_launch_precondition_satisfied",
+  "execution_receipt": {
+    "path": ".omc/research/active-track-integration-20260911/completed-image-context-relocation-20260912.json",
+    "sha256": "173aefb8a3a918216762addce64ea28151c93d9cb99f7bb85965570a46b8ffb5"
+  },
+  "prior_runner_review_unchanged": {
+    "path": ".omc/research/active-track-integration-20260911/weather-intervention-runner-review.json",
+    "sha256": "a392d7db3337bc9da1b0636b5da508de52159115707e6a920d0c3c301c317dcb"
+  },
+  "moves": [
+    {
+      "source": ".omc/verification/active-track-integration-20260911/image-context",
+      "destination": ".omc/verification/.tmp/active-track-integration-20260911-image-context",
+      "source_absent": true,
+      "destination_contained_without_links_or_junctions": true,
+      "file_count": 2727,
+      "archive_file_count": 2726,
+      "no_archive_inventory_paths_missing": true,
+      "only_generated_extra_files": [
+        "services/agri-data-service/scripts/__pycache__/quality_receipt.cpython-312.pyc"
+      ],
+      "archive_sha256": "0e8ac569f6d924378337cbcdab8afb8cacd7028e3e9083c8a3b0b06bf31c2837",
+      "generated_quality_receipt_sha256": "7fb279078524a8f674a47252c7c3d3ed1156a0d8625f0b09a4e935c3fd20e836",
+      "retained_source_commit": "89e8494422b8232c8f16dbffdcf2321c7ea17bc8",
+      "retained_gate_count": 16,
+      "all_gate_logs_match_recorded_bytes_and_hashes": true,
+      "all_gate_metadata_matches_retained_result": true,
+      "invocation_sha256": "59518b2782cb9e3cb1bd9891efc5c7429c197d06f1c11bb5c460e91045b7d3be",
+      "result_sha256": "e362aa37d7758907486141c8aeb638c32f17cdf48f2247c18afce035ead68378",
+      "junit_present": true,
+      "junit_sha256": "bc893032b00751cd2b89df497b46a8f7b19469a2f5535a37ee2395b7a8fab99c",
+      "git_ignore_rule": ".gitignore:33:.tmp/\t.omc/verification/.tmp/active-track-integration-20260911-image-context/src/components/map/MapView.tsx"
+    },
+    {
+      "source": ".omc/verification/botanical-integrated-20260911/image-context",
+      "destination": ".omc/verification/.tmp/botanical-integrated-20260911-image-context",
+      "source_absent": true,
+      "destination_contained_without_links_or_junctions": true,
+      "file_count": 2827,
+      "archive_file_count": 2826,
+      "no_archive_inventory_paths_missing": true,
+      "only_generated_extra_files": [
+        "services/agri-data-service/scripts/__pycache__/quality_receipt.cpython-312.pyc"
+      ],
+      "archive_sha256": "695e6ab4797c787aa854fccfefb6a1e6c9ab37517dcedf226d9df56736d87342",
+      "generated_quality_receipt_sha256": "ac3190a42f2d04d111765cb064bd332d364808f4cb6e791b2d81b91c91f644f7",
+      "retained_source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+      "retained_gate_count": 16,
+      "all_gate_logs_match_recorded_bytes_and_hashes": true,
+      "all_gate_metadata_matches_retained_result": true,
+      "invocation_sha256": "e6af51afa03425ce7524d0bd759525dd079ce3a9b150d084e1873da9d759c5e7",
+      "result_sha256": "446461954ae957934c9e46583ad2de66298c1ad96e3f925d3d564f8398ae6ab7",
+      "junit_present": true,
+      "junit_sha256": "994eac42b998804047200176b61272b78bf6e91a019d097d3beec8d3d8a0f68b",
+      "git_ignore_rule": ".gitignore:33:.tmp/\t.omc/verification/.tmp/botanical-integrated-20260911-image-context/src/components/map/MapView.tsx"
+    }
+  ],
+  "ignore_coverage": {
+    "eslint": "Unchanged globalIgnores **/.tmp/** covers both complete relocated trees; source paths outside that ignore are now absent.",
+    "git": "Actual representative files in both destinations match the existing .tmp ignore rule.",
+    "lint_executed": false
+  },
+  "scope": "Verified only the two named relocations, archive inventory and hashes, generated receipts, 32 completed gate logs and metadata, retained invocation/result/JUnit records and existing ignore coverage. No lint/tests/builds or unrelated RH custody rehash. This clears the historical-context relocation prerequisite; candidate review, fixes and exact source freeze remain prerequisites for the future runner.",
+  "findings": [],
+  "mutations": "Only this new scratch follow-up receipt was written; existing review and tracked files/index/HEAD were untouched."
+}

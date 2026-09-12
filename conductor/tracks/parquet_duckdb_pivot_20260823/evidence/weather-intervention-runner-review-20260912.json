@@ -1,0 +1,114 @@
+{
+  "schema": "weather-intervention-runner-independent-review/v1",
+  "reviewer": "/root/legacy_reconciliation",
+  "reviewed_at_utc": "2026-09-12T03:15:47.245717+00:00",
+  "verdict": "PASS_static_review_with_required_launch_preconditions",
+  "scope": "Read-only source comparison and evidence inspection; neither runner, tests, builds, smoke commands nor receipt verification scripts were executed.",
+  "runner": {
+    "path": ".omc/research/active-track-integration-20260911/run_weather_intervention_checks.py",
+    "sha256": "81c605cf36a0f746b8a2f82914b4316b8e064ee2fd198362bb61df6b548aa94b",
+    "bytes": 8878
+  },
+  "executed_reference": {
+    "path": ".omc/research/active-track-integration-20260911/run_botanical_checks.py",
+    "sha256": "a1de0a5ab8db02fc6ff0c925e85633a713a6c8899c805b435e7d9e6a31b62645",
+    "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+    "source_tree": "df12542ffa00937e0213d10c938e715849030492",
+    "six_helper_function_asts_unchanged": [
+      "now",
+      "assert_source_identity",
+      "run",
+      "child_environment",
+      "frontend",
+      "python"
+    ]
+  },
+  "superseded_finding": {
+    "reviewed_original_sha256": "4879db4838ba0a61dd33b6e189da4062cb5ad05dbf016d743083be1ec5d027d8",
+    "severity": "P2",
+    "original_lines": "95,101-107",
+    "finding": "OUT was created before containment validation; resolving verification_root without checking it against ROOT allowed a redirected ancestor to escape the workspace. Verification root and OUT were not covered by the link/junction check.",
+    "resolution": "Root-authored correction reviewed at the final SHA: assert_workspace_path checks lexical and resolved containment against ROOT and rejects symlinks/junctions in every path component. Verification root, OUT, snapshot parent and snapshot validate before mkdir; OUT and snapshot must be fresh; path checks repeat before archive/snapshot construction.",
+    "status": "RESOLVED_by_independent_static_review"
+  },
+  "gates": {
+    "expected_count": 16,
+    "expected_names": [
+      "frontend-check-data-boundary",
+      "frontend-type-check",
+      "frontend-lint",
+      "frontend-test",
+      "python-full",
+      "python-receipt-verify",
+      "archived-source-receipt-verify",
+      "image-web",
+      "image-web-smoke",
+      "image-web-identity",
+      "image-data-service",
+      "image-data-service-smoke",
+      "image-data-service-identity",
+      "image-job-executor",
+      "image-job-executor-smoke",
+      "image-job-executor-identity"
+    ],
+    "success_requires": "Exactly 16 records and every exit_code zero, plus final unchanged-source assertion before result.json",
+    "python_full_scope": "check.py --write-receipt selects all four format/lint/mypy/pytest checks; changed/batch/partial receipt selection is refused.",
+    "frontend_full_scope": "Boundary, TypeScript, eslint ., and npm test; npm test includes tooling tests then full root-src Vitest."
+  },
+  "source_and_evidence": {
+    "status": "PASS",
+    "source_guard": "Launch HEAD/tree captured; tracked changes restricted to pre-existing OMC state, then generated Python receipt; non-OMC untracked inputs refused; same HEAD/source checked after host gates and after images.",
+    "archive": "git archive of the frozen commit retained as source-context.tar; new snapshot receives generated receipt; archived-source verifier must agree before images.",
+    "receipt": "Working verifier and archived verifier use the source digest contract; both Python images enforce receipt verification during build.",
+    "images": "Three local tags carry the captured commit revision label; build, smoke and image ID inspection logs are retained for each successful build.",
+    "records": "Invocation pins runner SHA, commit/tree/context path. Each completed gate records command, cwd, times, exit code, log bytes and SHA-256; Python JUnit is retained."
+  },
+  "paths_and_historical_contexts": {
+    "status": "PASS_after_fix_and_subject_to_relocation_preconditions",
+    "new_output": ".omc/verification/weather-intervention-integrated-20260911",
+    "new_image_context": ".omc/verification/.tmp/wi-<captured-HEAD-first-12>",
+    "exclusion": "Existing eslint globalIgnores **/.tmp/** excludes new and relocated contexts. Vitest root-src/tooling selection and retained TypeScript file-set review exclude .omc contexts; gate/configuration/receipt contracts are unchanged from 416342f at this review.",
+    "relocation_review_path": ".omc/research/active-track-integration-20260911/completed-image-context-relocation-review.json",
+    "relocation_review_sha256": "9b3d67b887474451ece25c0ce3b1dcac0b99a5ff30f373a04cbf31477b6d8e4a",
+    "planned_moves": [
+      {
+        "source": "C:\\Users\\atooz\\.codex\\worktrees\\4ccb\\plantgeo\\.omc\\verification\\active-track-integration-20260911\\image-context",
+        "destination": "C:\\Users\\atooz\\.codex\\worktrees\\4ccb\\plantgeo\\.omc\\verification\\.tmp\\active-track-integration-20260911-image-context",
+        "source_exists_at_review": true,
+        "destination_exists_at_review": false,
+        "required_before_launch": "Complete root-owned bounded relocation and reconfirm old source absent, destination contained/no links, archived receipt/log custody retained"
+      },
+      {
+        "source": "C:\\Users\\atooz\\.codex\\worktrees\\4ccb\\plantgeo\\.omc\\verification\\botanical-integrated-20260911\\image-context",
+        "destination": "C:\\Users\\atooz\\.codex\\worktrees\\4ccb\\plantgeo\\.omc\\verification\\.tmp\\botanical-integrated-20260911-image-context",
+        "source_exists_at_review": true,
+        "destination_exists_at_review": false,
+        "required_before_launch": "Complete root-owned bounded relocation and reconfirm old source absent, destination contained/no links, archived receipt/log custody retained"
+      }
+    ],
+    "runner_boundary": "This runner does not move historical contexts or independently enforce completion of those two moves; root must finish and reconfirm the reviewed relocation before launching eslint ."
+  },
+  "smoke_behavior": {
+    "status": "PASS",
+    "commands": "All containers use --rm --network none with no host bind mounts or published ports. Web uses node --check server.js; Python images use agri-service --help, overriding the service/executor CMD. No scheduler, provider, migration, server or production operation is invoked.",
+    "build_scope": "Image builds remain local and may obtain normal build dependencies; this is not a claim of offline image construction."
+  },
+  "failure_handling": {
+    "status": "PASS_no_false_success",
+    "ordinary_failures": "Completed nonzero commands retain gate logs/metadata; failed host gates suppress images; failed image builds suppress that image smoke/identity. Any missing gate or nonzero result makes the 16-gate report fail.",
+    "exceptions": "Source drift, missing tools, archive/receipt errors and process launch errors abort without a successful final result. Already written logs/invocation remain; a fresh output directory is required for a later attempt. No automatic destructive cleanup is present."
+  },
+  "required_launch_preconditions": [
+    "Compose and independently review the new weather candidate, apply all fixes, then commit/freeze its exact source before one integrated batch.",
+    "Complete and independently retain the two reviewed historical-context relocations before the host lint gate.",
+    "Reconfirm this runner SHA, fresh contained output/snapshot paths, clean source except allowed OMC state, and required installed local tools immediately before launch."
+  ],
+  "review_dimensions": {
+    "security": "PASS after path fix; shell-free argument lists and bounded local smoke",
+    "correctness": "PASS static 16-gate/source/receipt accounting",
+    "performance": "Unchanged two-lane host concurrency and sequential image work; no review execution",
+    "maintainability": "Small runner fork; six execution/helper bodies unchanged from reviewed executed reference"
+  },
+  "open_findings": [],
+  "mutations": "Only this scratch review receipt was authored; tracked files, index and HEAD were not changed by this review."
+}

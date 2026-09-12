@@ -1,0 +1,80 @@
+{
+  "type": "bounded-independent-weather-transfer-pin-review",
+  "reviewed_at_utc": "2026-09-12T03:09:35.743190+00:00",
+  "reviewer": "/root/legacy_reconciliation",
+  "verdict": "PASS",
+  "input": {
+    "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/weather-shared-ownership-transfer-20260911.json",
+    "sha256": "811540e91963126f89b30ac6cea290132593af59adf44f98d253d12bc74056ac"
+  },
+  "canonical_source": {
+    "commit": "af6647497333cca551364403a3a6f052c83ba76b",
+    "tree": "242152ae8a22a59016cee7872fc5c8e790f10af6"
+  },
+  "observed_head": "af6647497333cca551364403a3a6f052c83ba76b",
+  "later_head_evidence_only_paths": [],
+  "last_fully_tested_source": {
+    "commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+    "tree": "df12542ffa00937e0213d10c938e715849030492",
+    "new_source_combined_sweep": "Pending weather implementation and final combined batch"
+  },
+  "counts": {
+    "shared_entries": 119,
+    "named_weather_paths": 14,
+    "supplemental_entries": 47,
+    "unique_source_entries": 166,
+    "present_source_entries": 164,
+    "absent_source_entries": 2,
+    "committed_independent_review_pins": 2,
+    "changed_shared_entries_since_tested_source": 16
+  },
+  "actual_git_pin_checks": {
+    "presence": "PASS",
+    "mode": "PASS",
+    "blob": "PASS",
+    "byte_count": "PASS",
+    "sha256": "PASS",
+    "scope": "All 166 source entries and both committed independent review entries; checked using immutable Git trees and raw cat-file blob bytes"
+  },
+  "inventory_checks": {
+    "shared119_equal_immutable_baseline": "PASS",
+    "all14_named_weather_paths_present_and_flagged": "PASS",
+    "supplemental47_equal_intervention56_plus_seven_docs_minus_shared119": "PASS",
+    "tested_source_blobs_and_change_flags": "PASS"
+  },
+  "absent_paths": [
+    {
+      "path": "src/__tests__/components/ModerationPanel.test.tsx",
+      "disposition": "Intentional intervention deletion; present at last fully tested source and absent at canonical source; null pin fields are accurate"
+    },
+    {
+      "path": "src/components/panels/ModerationPanel.tsx",
+      "disposition": "Intentional intervention deletion; present at last fully tested source and absent at canonical source; null pin fields are accurate"
+    }
+  ],
+  "immutable_botanical_baseline": {
+    "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/shared-source-handoff-20260911.json",
+    "checkpoint": "2317ee3a2ac35de489d27503dfec91ea3285bd66",
+    "git_bytes_unchanged_from_checkpoint": true,
+    "git_sha256": "797dfaa56f4c8593fc0e67ef318cf353012f3f2bf7d9fb280205fe75d10b6f71",
+    "working_raw_sha256": "32867df1f51e10ad62cc8d2aec77f3f4ca84461e2ffbf5dc3b606417a25f3ec9",
+    "line_endings": "Working CRLF and committed LF recorded separately; normalized bytes agree"
+  },
+  "committed_review_pins": [
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/qa-pnw-intake-review-20260911.json",
+      "git_blob": "6a55abdcb6e22bf278806024256a581c97a2c277",
+      "git_sha256": "320b8f97f5714be40b9226c111ffd7021d3592c073c13e6c238e3c4a133758de",
+      "verdict": "PASS_bounded_16_document_composition"
+    },
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/intervention-intake-review-20260911.json",
+      "git_blob": "094cfe0120ec3691129203b405114c51cc1e9542",
+      "git_sha256": "a103e045bc314dc3f47ba9c946e3e32335f8093ad9ee8404831fdae4d80825c8",
+      "verdict": "PASS_bounded_intervention_integration_composition"
+    }
+  ],
+  "ownership_and_scope": "Weather task owns rebase/rebuild from this source; its approved 944cf0f candidate remains with that owner. Intervention integration, Retry-After, April 28 gap, horizon zero, QA active and both PNW tracks planned remain explicit. This metadata review is not a source-code approval, test run, production action or assertion that the new source passed the combined sweep.",
+  "findings": [],
+  "review_actions": "Read-only Git/file inspection; only this scratch review receipt was written; no tests, builds, source edits, Git index or HEAD changes."
+}

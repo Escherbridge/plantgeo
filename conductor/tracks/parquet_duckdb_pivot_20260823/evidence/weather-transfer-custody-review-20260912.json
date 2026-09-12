@@ -1,0 +1,72 @@
+{
+  "type": "independent-weather-transfer-custody-review",
+  "reviewed_at_utc": "2026-09-12T03:26:18.305745+00:00",
+  "reviewer": "/root/legacy_reconciliation",
+  "verdict": "PASS_bounded_10_evidence_path_intake",
+  "scope": "Review of root-authored evidence custody and staged composition only. Exact copying of previously authored review receipts is verified without re-approving their underlying content.",
+  "head": "af6647497333cca551364403a3a6f052c83ba76b",
+  "source_tree": "242152ae8a22a59016cee7872fc5c8e790f10af6",
+  "reviewed_index_tree": "4ded293e9eb525dfcc23139f3e7795bc1ad4981b",
+  "input_pins": {
+    "author_manifest_sha256": "3fb334427f3ca8dbc850e05685b8712f1556ca68a7f1ba639a9bcd89d75cbc41",
+    "custody_raw_sha256": "aa30f931acf5f3e08cdffa01a96afd77ba7d2f5f84ce0fb6aa7c09cf5458a143",
+    "custody_git_blob": "4a6ad12d2036e7ecc2d87b06d782a238f360a803",
+    "custody_git_sha256": "aa30f931acf5f3e08cdffa01a96afd77ba7d2f5f84ce0fb6aa7c09cf5458a143"
+  },
+  "delta": {
+    "added_paths": 10,
+    "modified_or_deleted_existing_paths": 0,
+    "scratch_exact_byte_copies": 7,
+    "immutable_d9e_note": 1,
+    "preserved_existing_transfer": 1,
+    "new_custody_record": 1,
+    "paths": [
+      "conductor/tracks/intervention_boundary_authoring_20260911/evidence/post-integration-reconciliation-20260912.md",
+      "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/completed-image-context-relocation-20260912.json",
+      "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/completed-image-context-relocation-followup-review-20260912.json",
+      "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/intervention-link-correction-review-20260912.json",
+      "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/intervention-post-integration-custody-20260912.json",
+      "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/weather-intervention-runner-review-20260912.json",
+      "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/weather-shared-ownership-transfer-20260911.json",
+      "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/weather-transfer-custody-20260912.json",
+      "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/weather-transfer-pin-review-20260912.json",
+      "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/weather-transfer-script-review-20260912.json"
+    ]
+  },
+  "normalization": {
+    "status": "PASS",
+    "all_nine_recorded_git_blobs_sizes_and_sha256_match_index": true,
+    "only_crlf_to_lf_changed_paths": [
+      "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/intervention-link-correction-review-20260912.json",
+      "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/completed-image-context-relocation-20260912.json"
+    ],
+    "all_other_source_copy_bytes_exact": true
+  },
+  "d9e_note": {
+    "commit": "d9e4bd21f46d5d5caf8a0a90a4f39f4f222f1241",
+    "source_only_delta": "conductor/tracks/intervention_boundary_authoring_20260911/evidence/post-integration-reconciliation-20260912.md",
+    "exact_source_and_staged_blob": "408becb24012cccb79514641b8ba3b7545e50efb",
+    "runtime_parent_reapplied": false
+  },
+  "weather_base": {
+    "commit": "ced33dd466de60d916e9727bc54156c2095f348e",
+    "tree": "21c786e3602a6de49433398fba338bd850e0e0d4",
+    "merge_base": "af6647497333cca551364403a3a6f052c83ba76b",
+    "commits_above_base": 5,
+    "source_intake_in_this_checkpoint": false,
+    "additional_rebase_required_by_this_evidence_only_checkpoint": false
+  },
+  "preservation": {
+    "existing_transfer_raw_sha256": "811540e91963126f89b30ac6cea290132593af59adf44f98d253d12bc74056ac",
+    "botanical_baseline_git_blob": "e3c7432c2753aab8dfed96ae1698823f5bda5a13",
+    "botanical_baseline_raw_sha256": "32867df1f51e10ad62cc8d2aec77f3f4ca84461e2ffbf5dc3b606417a25f3ec9",
+    "application_qa_pnw_quality_receipt_and_existing_evidence_index_drift": false,
+    "six_proposed_bookkeeping_targets_still_exact": true,
+    "only_unstaged_path": ".omc/ultrapilot-state.json",
+    "preexisting_state_raw_sha256_unchanged_during_review": "abfc56277b0a05b8c68ed4ff071ed1900ced24f4c4758b63263a1632d3d2bd6a",
+    "state_staged": false
+  },
+  "authority_and_verification": "Historical 416342f full verification and bounded intervention peer acceptance remain distinct from the pending combined intervention/weather sweep. Runner static PASS and completed relocations are prerequisites only. The note leaves archive action to the parent; broader tracks remain active, production stays HOLD, six bookkeeping edits remain unapplied, and this checkpoint performs no release action.",
+  "findings": [],
+  "actions": "Read-only Git/file inspection and this scratch receipt only; no source edits, staging, commits, tests, builds or external actions. Root may add this independent receipt before committing a later evidence-only tree."
+}

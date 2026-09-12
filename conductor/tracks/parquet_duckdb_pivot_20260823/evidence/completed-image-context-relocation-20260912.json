@@ -1,0 +1,35 @@
+{
+  "type": "completed-image-context-relocation",
+  "performed_at_utc": "2026-09-12T03:15:59.9461356Z",
+  "head_unchanged": "af6647497333cca551364403a3a6f052c83ba76b",
+  "plan_review_sha256": "9b3d67b887474451ece25c0ce3b1dcac0b99a5ff30f373a04cbf31477b6d8e4a",
+  "use_check": "No current process command line matched either old context path or completed runner; both retained results report PASS and all readers are finished.",
+  "operation": "Two native PowerShell Move-Item operations; no delete or content rewrite.",
+  "retained": "Original tar archives, logs, JUnit, metadata and evidence packets remain in their original directories.",
+  "moves": [
+    {
+      "source": "C:\\Users\\atooz\\.codex\\worktrees\\4ccb\\plantgeo\\.omc\\verification\\active-track-integration-20260911\\image-context",
+      "destination": "C:\\Users\\atooz\\.codex\\worktrees\\4ccb\\plantgeo\\.omc\\verification\\.tmp\\active-track-integration-20260911-image-context",
+      "files_before": 2727,
+      "archive": "C:\\Users\\atooz\\.codex\\worktrees\\4ccb\\plantgeo\\.omc\\verification\\active-track-integration-20260911\\source-context.tar",
+      "archive_sha256_before": "0e8ac569f6d924378337cbcdab8afb8cacd7028e3e9083c8a3b0b06bf31c2837",
+      "receipt_sha256_before": "7fb279078524a8f674a47252c7c3d3ed1156a0d8625f0b09a4e935c3fd20e836",
+      "files_after": 2727,
+      "archive_sha256_after": "0e8ac569f6d924378337cbcdab8afb8cacd7028e3e9083c8a3b0b06bf31c2837",
+      "receipt_sha256_after": "7fb279078524a8f674a47252c7c3d3ed1156a0d8625f0b09a4e935c3fd20e836",
+      "source_absent": true
+    },
+    {
+      "source": "C:\\Users\\atooz\\.codex\\worktrees\\4ccb\\plantgeo\\.omc\\verification\\botanical-integrated-20260911\\image-context",
+      "destination": "C:\\Users\\atooz\\.codex\\worktrees\\4ccb\\plantgeo\\.omc\\verification\\.tmp\\botanical-integrated-20260911-image-context",
+      "files_before": 2827,
+      "archive": "C:\\Users\\atooz\\.codex\\worktrees\\4ccb\\plantgeo\\.omc\\verification\\botanical-integrated-20260911\\source-context.tar",
+      "archive_sha256_before": "695e6ab4797c787aa854fccfefb6a1e6c9ab37517dcedf226d9df56736d87342",
+      "receipt_sha256_before": "ac3190a42f2d04d111765cb064bd332d364808f4cb6e791b2d81b91c91f644f7",
+      "files_after": 2827,
+      "archive_sha256_after": "695e6ab4797c787aa854fccfefb6a1e6c9ab37517dcedf226d9df56736d87342",
+      "receipt_sha256_after": "ac3190a42f2d04d111765cb064bd332d364808f4cb6e791b2d81b91c91f644f7",
+      "source_absent": true
+    }
+  ]
+}
