@@ -1,0 +1,394 @@
+{
+  "type": "local-custody-evidence",
+  "observed_at": "2026-09-12T07:26:42.3971357Z",
+  "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+  "source_tree": "9533bb9e5423240630935df0cd012cd8ead15504",
+  "scope": "Registered Git worktrees and named local refs; metadata and committed blobs only. No other task uncommitted content read, copied, staged or changed.",
+  "comparison_surface": [
+    "infra/job-executor",
+    "services/agri-data-service/railway.job-executor.json",
+    "services/agri-data-service/src/agri_data_service/execution/job_executor_service.py",
+    "services/agri-data-service/src/agri_data_service/jobs",
+    "services/agri-data-service/src/agri_data_service/sql/jobs"
+  ],
+  "limitations": [
+    "Status is a point-in-time observation, not atomic across worktrees.",
+    "Git global ignore file was inaccessible; warnings retained. Status exits checked; ignored and unregistered directories not inventoried.",
+    "Ancestry or blob equality is not an approval or runtime receipt."
+  ],
+  "worktrees": [
+    {
+      "path": "C:/Users/atooz/Programming/plantgeo",
+      "head": "fe9098ae045dda7a74d8f955dcc8c8e097ea09c9",
+      "tree": "50e8907414a7258c3dce129e39459338af47eb76",
+      "status_exit": 0,
+      "status_paths": [
+        " M .omc/ultrapilot-state.json"
+      ],
+      "diagnostics": [
+        "warning: unable to access 'C:\\Users\\atooz/.config/git/ignore': Permission denied",
+        "warning: unable to access 'C:\\Users\\atooz/.config/git/ignore': Permission denied"
+      ],
+      "definition_surface_differing_from_base": []
+    },
+    {
+      "path": "C:/Users/atooz/.codex/visualizations/2026/08/26/01a03c0d-3526-73a3-984b-65341ec4e85e/weather-cutover-worktree",
+      "head": "985022babd0e3d97da55188716017987206e169b",
+      "tree": "b2d00a7a390bbe39adcee047c7b9d481fef7c7e7",
+      "status_exit": 0,
+      "status_paths": [],
+      "diagnostics": [
+        "warning: unable to access 'C:\\Users\\atooz/.config/git/ignore': Permission denied",
+        "warning: unable to access 'C:\\Users\\atooz/.config/git/ignore': Permission denied"
+      ],
+      "definition_surface_differing_from_base": [
+        "infra/job-executor/AGENTS.md",
+        "infra/job-executor/Dockerfile",
+        "services/agri-data-service/railway.job-executor.json",
+        "services/agri-data-service/src/agri_data_service/execution/job_executor_service.py",
+        "services/agri-data-service/src/agri_data_service/jobs/AGENTS.md",
+        "services/agri-data-service/src/agri_data_service/jobs/dispatch.py",
+        "services/agri-data-service/src/agri_data_service/jobs/matview_refresh.py",
+        "services/agri-data-service/src/agri_data_service/jobs/registry.py",
+        "services/agri-data-service/src/agri_data_service/jobs/scheduler.py",
+        "services/agri-data-service/src/agri_data_service/jobs/strategy_mv_refresh.py",
+        "services/agri-data-service/src/agri_data_service/jobs/worker.py"
+      ]
+    },
+    {
+      "path": "C:/Users/atooz/.codex/worktrees/0831/plantgeo",
+      "head": "64f4f892bd2b744cc097c7f76a1f239997b80f52",
+      "tree": "f8697da694a3f9fbbf28e70ff7581bd59546bfd6",
+      "status_exit": 0,
+      "status_paths": [
+        " M conductor/tracks.md",
+        " M conductor/tracks/parquet_reader_cutover_acceptance_20260901/metadata.json",
+        " M conductor/tracks/parquet_reader_cutover_acceptance_20260901/plan.md",
+        " M src/components/map/layer-panel/LayerRow.tsx",
+        " M src/components/map/layer-panel/layer-coverage-track.ts",
+        "?? conductor/tracks/parquet_reader_cutover_acceptance_20260901/evidence/reader-ui-contract-20260912.md",
+        "?? src/components/map/layer-panel/AGENTS.md"
+      ],
+      "diagnostics": [
+        "warning: unable to access 'C:\\Users\\atooz/.config/git/ignore': Permission denied",
+        "warning: unable to access 'C:\\Users\\atooz/.config/git/ignore': Permission denied"
+      ],
+      "definition_surface_differing_from_base": []
+    },
+    {
+      "path": "C:/Users/atooz/.codex/worktrees/2205/plantgeo",
+      "head": "031dd2afb0b7aa69791009223320ff76eb948374",
+      "tree": "326f177016ed3434046b147d9d5267fba9692ce5",
+      "status_exit": 0,
+      "status_paths": [],
+      "diagnostics": [
+        "warning: unable to access 'C:\\Users\\atooz/.config/git/ignore': Permission denied",
+        "warning: unable to access 'C:\\Users\\atooz/.config/git/ignore': Permission denied"
+      ],
+      "definition_surface_differing_from_base": []
+    },
+    {
+      "path": "C:/Users/atooz/.codex/worktrees/229e/plantgeo",
+      "head": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "tree": "9533bb9e5423240630935df0cd012cd8ead15504",
+      "status_exit": 0,
+      "status_paths": [],
+      "diagnostics": [
+        "warning: unable to access 'C:\\Users\\atooz/.config/git/ignore': Permission denied",
+        "warning: unable to access 'C:\\Users\\atooz/.config/git/ignore': Permission denied"
+      ],
+      "definition_surface_differing_from_base": []
+    },
+    {
+      "path": "C:/Users/atooz/.codex/worktrees/30ce/plantgeo",
+      "head": "518597fbfc557ec2ad574f988940ded88c857836",
+      "tree": "14ed3b1a80fe2233447f20a1b83d5eacf3e31935",
+      "status_exit": 0,
+      "status_paths": [],
+      "diagnostics": [
+        "warning: unable to access 'C:\\Users\\atooz/.config/git/ignore': Permission denied",
+        "warning: unable to access 'C:\\Users\\atooz/.config/git/ignore': Permission denied"
+      ],
+      "definition_surface_differing_from_base": []
+    },
+    {
+      "path": "C:/Users/atooz/.codex/worktrees/3529/plantgeo",
+      "head": "2317ee3a2ac35de489d27503dfec91ea3285bd66",
+      "tree": "beb0178b35027131c599940e968d0bacaeef173a",
+      "status_exit": 0,
+      "status_paths": [
+        " M .omc/ultrapilot-state.json",
+        " M conductor/RUNBOOK.md",
+        " M conductor/tracks.md",
+        " M conductor/tracks/platform_experience_qa_20260911/evidence/task-ledger.md",
+        " M conductor/tracks/platform_experience_qa_20260911/metadata.json",
+        " M conductor/tracks/platform_experience_qa_20260911/spec.md",
+        "?? .omc/notepads/",
+        "?? .omc/plans/",
+        "?? .omc/verification/",
+        "?? conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "?? conductor/tracks/platform_experience_qa_20260911/evidence/intervention-boundary-spec.md",
+        "?? conductor/tracks/pnw_land_contact_experience_20260911/",
+        "?? conductor/tracks/pnw_land_context_reference_plane_20260911/"
+      ],
+      "diagnostics": [
+        "warning: unable to access 'C:\\Users\\atooz/.config/git/ignore': Permission denied",
+        "warning: unable to access 'C:\\Users\\atooz/.config/git/ignore': Permission denied"
+      ],
+      "definition_surface_differing_from_base": [
+        "services/agri-data-service/src/agri_data_service/execution/job_executor_service.py",
+        "services/agri-data-service/src/agri_data_service/jobs/AGENTS.md",
+        "services/agri-data-service/src/agri_data_service/jobs/__init__.py",
+        "services/agri-data-service/src/agri_data_service/jobs/errors.py",
+        "services/agri-data-service/src/agri_data_service/jobs/worker.py"
+      ]
+    },
+    {
+      "path": "C:/Users/atooz/.codex/worktrees/3b59/plantgeo",
+      "head": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "tree": "9533bb9e5423240630935df0cd012cd8ead15504",
+      "status_exit": 0,
+      "status_paths": [
+        "?? conductor/tracks/multiscale_polygon_surface_20260901/evidence/retained-scalar-artifact-audit-20260912.json"
+      ],
+      "diagnostics": [
+        "warning: unable to access 'C:\\Users\\atooz/.config/git/ignore': Permission denied",
+        "warning: unable to access 'C:\\Users\\atooz/.config/git/ignore': Permission denied"
+      ],
+      "definition_surface_differing_from_base": []
+    },
+    {
+      "path": "C:/Users/atooz/.codex/worktrees/511c/plantgeo",
+      "head": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "tree": "9533bb9e5423240630935df0cd012cd8ead15504",
+      "status_exit": 0,
+      "status_paths": [],
+      "diagnostics": [
+        "warning: unable to access 'C:\\Users\\atooz/.config/git/ignore': Permission denied",
+        "warning: unable to access 'C:\\Users\\atooz/.config/git/ignore': Permission denied"
+      ],
+      "definition_surface_differing_from_base": []
+    },
+    {
+      "path": "C:/Users/atooz/.codex/worktrees/7387/plantgeo",
+      "head": "80d063221bd186791d9fc96163475a8a9b22934d",
+      "tree": "5eb0393b69a1a959ee0ced80b8e3c33d50d90a43",
+      "status_exit": 0,
+      "status_paths": [],
+      "diagnostics": [
+        "warning: unable to access 'C:\\Users\\atooz/.config/git/ignore': Permission denied",
+        "warning: unable to access 'C:\\Users\\atooz/.config/git/ignore': Permission denied"
+      ],
+      "definition_surface_differing_from_base": []
+    },
+    {
+      "path": "C:/Users/atooz/.codex/worktrees/7837/plantgeo",
+      "head": "7967e6ce8a7b5b7a503766612962e40bb8da5dd3",
+      "tree": "9df48945ca2276bfcf38b5fa089eb09356ff7f12",
+      "status_exit": 0,
+      "status_paths": [],
+      "diagnostics": [
+        "warning: unable to access 'C:\\Users\\atooz/.config/git/ignore': Permission denied",
+        "warning: unable to access 'C:\\Users\\atooz/.config/git/ignore': Permission denied"
+      ],
+      "definition_surface_differing_from_base": []
+    },
+    {
+      "path": "C:/Users/atooz/.codex/worktrees/ad33/plantgeo",
+      "head": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "tree": "9533bb9e5423240630935df0cd012cd8ead15504",
+      "status_exit": 0,
+      "status_paths": [],
+      "diagnostics": [
+        "warning: unable to access 'C:\\Users\\atooz/.config/git/ignore': Permission denied",
+        "warning: unable to access 'C:\\Users\\atooz/.config/git/ignore': Permission denied"
+      ],
+      "definition_surface_differing_from_base": []
+    },
+    {
+      "path": "C:/Users/atooz/.codex/worktrees/b292/plantgeo",
+      "head": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "tree": "9533bb9e5423240630935df0cd012cd8ead15504",
+      "status_exit": 0,
+      "status_paths": [],
+      "diagnostics": [
+        "warning: unable to access 'C:\\Users\\atooz/.config/git/ignore': Permission denied",
+        "warning: unable to access 'C:\\Users\\atooz/.config/git/ignore': Permission denied"
+      ],
+      "definition_surface_differing_from_base": []
+    }
+  ],
+  "refs": [
+    {
+      "ref": "codex/job-executor-sole-scheduler",
+      "head": "e4490c3c2f2e23f75cc9d6e297f4be646e0e00a1",
+      "tree": "85ab4a4cd59a0339fdbd57fe12b0a371d0f706c2",
+      "ancestor_of_base": true,
+      "ancestry_exit": 0,
+      "changed_definition_surface": [
+        "infra/job-executor/Dockerfile",
+        "services/agri-data-service/src/agri_data_service/execution/job_executor_service.py",
+        "services/agri-data-service/src/agri_data_service/jobs/AGENTS.md",
+        "services/agri-data-service/src/agri_data_service/jobs/matview_refresh.py"
+      ]
+    },
+    {
+      "ref": "codex/unified-data-lane-scheduler",
+      "head": "b4ec9c77ca1c65f2a1d0dbf24e95acaa1210f1e1",
+      "tree": "55c7a33fa0add8b8bc160944800523d561df030d",
+      "ancestor_of_base": false,
+      "ancestry_exit": 1,
+      "changed_definition_surface": [
+        "infra/job-executor/AGENTS.md",
+        "infra/job-executor/Dockerfile",
+        "services/agri-data-service/railway.job-executor.json",
+        "services/agri-data-service/src/agri_data_service/execution/job_executor_service.py",
+        "services/agri-data-service/src/agri_data_service/jobs/AGENTS.md",
+        "services/agri-data-service/src/agri_data_service/jobs/dispatch.py",
+        "services/agri-data-service/src/agri_data_service/jobs/matview_refresh.py",
+        "services/agri-data-service/src/agri_data_service/jobs/registry.py",
+        "services/agri-data-service/src/agri_data_service/jobs/scheduler.py",
+        "services/agri-data-service/src/agri_data_service/jobs/strategy_mv_refresh.py",
+        "services/agri-data-service/src/agri_data_service/jobs/worker.py"
+      ]
+    },
+    {
+      "ref": "codex/unified-data-lane-scheduler-fixes",
+      "head": "d763943790202f6d5bbe7fc7c2244ae0c4c38e0c",
+      "tree": "68618fab7ebc4e23907a70e2acfd67ffd5aa2511",
+      "ancestor_of_base": true,
+      "ancestry_exit": 0,
+      "changed_definition_surface": [
+        "infra/job-executor/AGENTS.md",
+        "infra/job-executor/Dockerfile",
+        "services/agri-data-service/railway.job-executor.json",
+        "services/agri-data-service/src/agri_data_service/execution/job_executor_service.py",
+        "services/agri-data-service/src/agri_data_service/jobs/AGENTS.md",
+        "services/agri-data-service/src/agri_data_service/jobs/dispatch.py",
+        "services/agri-data-service/src/agri_data_service/jobs/matview_refresh.py",
+        "services/agri-data-service/src/agri_data_service/jobs/registry.py",
+        "services/agri-data-service/src/agri_data_service/jobs/scheduler.py",
+        "services/agri-data-service/src/agri_data_service/jobs/strategy_mv_refresh.py",
+        "services/agri-data-service/src/agri_data_service/jobs/worker.py"
+      ]
+    },
+    {
+      "ref": "codex/gapless-publication-recovery-20260911",
+      "head": "341d44b23c60512630c8a7c0ab778e1ffa008b27",
+      "tree": "23e36740a8223436b2b068261292f65fb8e6e89c",
+      "ancestor_of_base": false,
+      "ancestry_exit": 1,
+      "changed_definition_surface": [
+        "services/agri-data-service/src/agri_data_service/execution/job_executor_service.py",
+        "services/agri-data-service/src/agri_data_service/jobs/AGENTS.md",
+        "services/agri-data-service/src/agri_data_service/jobs/__init__.py",
+        "services/agri-data-service/src/agri_data_service/jobs/errors.py",
+        "services/agri-data-service/src/agri_data_service/jobs/worker.py"
+      ]
+    },
+    {
+      "ref": "b6eb3ae20fab1c670065d6bf01647faf3f96612d",
+      "head": "b6eb3ae20fab1c670065d6bf01647faf3f96612d",
+      "tree": "89bdf37809bcd8340c712ba3c7f73ece6d054743",
+      "ancestor_of_base": false,
+      "ancestry_exit": 1,
+      "changed_definition_surface": [
+        "services/agri-data-service/src/agri_data_service/execution/job_executor_service.py",
+        "services/agri-data-service/src/agri_data_service/jobs/AGENTS.md",
+        "services/agri-data-service/src/agri_data_service/jobs/__init__.py",
+        "services/agri-data-service/src/agri_data_service/jobs/errors.py",
+        "services/agri-data-service/src/agri_data_service/jobs/worker.py"
+      ]
+    }
+  ],
+  "base_blobs": [
+    {
+      "path": "infra/job-executor/AGENTS.md",
+      "blob": "cd2c080c3becda27d5997c4029d3a96788e73f43"
+    },
+    {
+      "path": "infra/job-executor/Dockerfile",
+      "blob": "21dddb68bb32d805990408e73cd9b3be32556847"
+    },
+    {
+      "path": "services/agri-data-service/railway.job-executor.json",
+      "blob": "80c820cb6df8d4d295f05f67bea08c681338a52b"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/execution/job_executor_service.py",
+      "blob": "9af611918b57ce724c2b30b92729cb618473c15a"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/jobs/AGENTS.md",
+      "blob": "791b3bce796739032ef9e51dbf6a8963e9cfd033"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/jobs/worker.py",
+      "blob": "096c7c3312785f8838838a7a599f8f8aaab0e9b0"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/jobs/lease.py",
+      "blob": "28843267530fc4d8e341fec54cca1bcda73704e4"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/jobs/registry.py",
+      "blob": "f58e62196245618c0877a4ef8b70900ac5ca0449"
+    },
+    {
+      "path": "services/agri-data-service/db/agri/tables/job_definition.sql",
+      "blob": "f0b9a3bdf7d3048c5eef4519c3b2bd85d0389564"
+    },
+    {
+      "path": "services/agri-data-service/db/agri/tables/job_work_item.sql",
+      "blob": "aa5e49bee66871497be2c5ec2d0c19cd68cbd280"
+    },
+    {
+      "path": "services/agri-data-service/db/agri/tables/job_checkpoint.sql",
+      "blob": "3b055b2d470c54111eb9915a85591cea1ca843ef"
+    },
+    {
+      "path": "conductor/tracks/gapless_parquet_publication_20260901/evidence/local-publication-blockers-20260912.md",
+      "blob": "45b53449e13f8a0d3bf81f0583d2015f5592bfbc"
+    },
+    {
+      "path": "conductor/tracks/environmental_postgres_retirement_20260904/evidence/active-lane-database-boundary-20260910.md",
+      "blob": "ad0be09a8056a65275e69eaf780fb5f6ad9a45ad"
+    },
+    {
+      "path": "conductor/tracks/environmental_postgres_retirement_20260904/evidence/mtbs-live-rollout-20260911.md",
+      "blob": "9250874c5ebc6264ad3f14ae9a29686905cff8e7"
+    }
+  ],
+  "unreconciled_candidate_blobs": [
+    {
+      "path": "conductor/tracks/gapless_parquet_publication_20260901/evidence/generic-recovery-20260911.md",
+      "original_blob": "247b4f4c2bb4db0c6590eec99b27a3c4d046c446",
+      "integration_blob": "247b4f4c2bb4db0c6590eec99b27a3c4d046c446"
+    },
+    {
+      "path": "conductor/tracks/gapless_parquet_publication_20260901/evidence/live-reinventory-20260911.json",
+      "original_blob": "5a7af6c0c9c82f6159eca177d6cae0ab4c0eb03d",
+      "integration_blob": "5a7af6c0c9c82f6159eca177d6cae0ab4c0eb03d"
+    },
+    {
+      "path": "conductor/tracks/gapless_parquet_publication_20260901/evidence/scheduled-soil-advances-20260911.json",
+      "original_blob": "459dfe3da8c7569333f786b7605857daffa9d0ba",
+      "integration_blob": "459dfe3da8c7569333f786b7605857daffa9d0ba"
+    },
+    {
+      "path": "conductor/tracks/gapless_parquet_publication_20260901/evidence/validation-20260911.json",
+      "original_blob": "fb5adbc90195b9ae58230b6b87d170f508822de0",
+      "integration_blob": "fb5adbc90195b9ae58230b6b87d170f508822de0"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/execution/job_executor_service.py",
+      "original_blob": "9f664a0d0c5976db23f44102e89c997d76dccf87",
+      "integration_blob": "9f664a0d0c5976db23f44102e89c997d76dccf87"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/jobs/worker.py",
+      "original_blob": "b6b09472b05bb844fb4169df27ad7c6de50061aa",
+      "integration_blob": "b6b09472b05bb844fb4169df27ad7c6de50061aa"
+    }
+  ]
+}
