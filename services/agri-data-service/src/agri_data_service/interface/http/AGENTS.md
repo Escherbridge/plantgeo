@@ -27,3 +27,13 @@ rendering live in top-level `agri_data_service.parquet_ops`.
 - Timeouts stay below the caller budgets so the adapter can return the typed reason.
 
 Current MTBS reads inject the existing availability object-store adapter lazily into the common listing. The common resolver owns snapshot evidence and optional `mtbs_snapshot` wire metadata, including empty viewports; the HTTP adapter has no independent release authority.
+
+## Transitional botanical authoring lookup
+
+`botanical_species_information.py` is a deliberately temporary nonspatial reader. It accepts only
+the exact canonical UUID of an existing `agri.species` row and is mounted only by the read-capable
+`combined_local` and `published_reader` profiles. It never joins by name, reads GIS observations,
+or substitutes for the future immutable botanical profile Parquet product. Populated legacy fields
+remain `unverified_authoring`, including Boolean defaults; `reviewed_authoring_database` names the
+governed surface and does not approve each field. Missing fields are `unknown/not_reported`. Only companion rows whose
+modeled review state is `approved` are returned, with their existing evidence and reviewer fields.

@@ -11,7 +11,7 @@ from sanic.response import BaseHTTPResponse
 
 from agri_data_service.config import settings
 from agri_data_service.db.engine import dispose_combined_local_engine, dispose_service_engines
-from agri_data_service.interface.http import parquet_bp
+from agri_data_service.interface.http import botanical_species_information_bp, parquet_bp
 from agri_data_service.routes import (
     agent_bp,
     forecasts_bp,
@@ -109,9 +109,10 @@ def create_app(_args: object | None = None) -> AgriApp:
             historical_promotion_bp,
             jobs_bp,
             parquet_bp,
+            botanical_species_information_bp,
         ),
         "receiver_writer": (local_publication_bp, historical_promotion_bp, jobs_bp),
-        "published_reader": (forecasts_bp, parquet_bp),
+        "published_reader": (forecasts_bp, parquet_bp, botanical_species_information_bp),
     }[settings.service_profile]
     api_v1 = Blueprint.group(*profile_blueprints, url_prefix="/api/v1")
     app.blueprint(api_v1)

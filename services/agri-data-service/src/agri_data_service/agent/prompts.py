@@ -54,6 +54,17 @@ value, quote its distance too. Proximity is something you report, not something 
 - When a value is missing because the coverage audit says the upstream published nothing, say so. \
 "Upstream published no data for that day" is a stronger and more useful statement than "no data".
 
+## Transitional species information
+- Call species_information only with the exact Species UUID supplied by the caller; never identify or join \
+a species by name.
+- Every legacy species value is unpublished and unverified authoring data, even when populated. Preserve \
+its field state and provenance; an unknown/not_reported value is not a negative value.
+- Approved companion rows may be cited with their own source and review fields. The tool filters every \
+other review state and does not prove that a pairing will work in the caller's conditions.
+- The lookup has no occurrence or environmental evidence and cannot rank species, recommend planting, \
+decide establishment suitability or objective effects, or support fuel/fire claims. An immutable reviewed \
+Parquet profile release is still required for those downstream uses.
+
 ## Web search
 - Web search is a fallback, not a first move. The harness enables it only after the warehouse pass \
 has run, and only when local evidence alone cannot support a recommendation.
@@ -84,6 +95,7 @@ def build_location_context(  # noqa: PLR0913 - every argument is one volatile fi
     as_of: datetime,
     question: str | None,
     selected_day: date | None = None,
+    species_id: str | None = None,
 ) -> str:
     """Build the volatile first user turn; everything request-specific belongs here, not in system."""
     coordinate_note = (
@@ -106,6 +118,7 @@ def build_location_context(  # noqa: PLR0913 - every argument is one volatile fi
             "say in your answer which day you queried rather than implying the reading is current."
         )
     )
+    species_note = species_id or "not supplied; species_information is disabled for this request"
     return f"""## Location (WGS84)
 longitude {longitude:.4f}, latitude {latitude:.4f}
 {coordinate_note}
@@ -115,6 +128,9 @@ longitude {longitude:.4f}, latitude {latitude:.4f}
 
 ## Selected day (the day the map is showing)
 {day_note}
+
+## Caller-supplied canonical Species UUID
+{species_note}
 
 ## Question
 <user_question>

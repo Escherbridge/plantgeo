@@ -14,6 +14,20 @@ database, source, WCVP bundle, object store, release pointer, migration or
 deployment was accessed or changed. Secrets, connection strings and private
 hostnames are intentionally not recorded.
 
+## 2026-09-11 continuation
+
+The preflight blocker remains unchanged: no operator-authorized Railway reader
+configuration was available, so no production query was attempted and this
+receipt makes no production population or schema claim. Implementation
+continued only on the safe local contract surface: an exact Species UUID lookup
+over the already-modeled authoring tables. It adds no migration, source, writer,
+ingest path, downloaded artifact, candidate release, or publication claim. Its
+response identifies `reviewed_authoring_database` while labeling every legacy
+species value `unverified_authoring` or `unknown/not_reported`; only modeled
+`approved` companion relationships may carry positive evidence. An immutable
+Parquet profile release remains required before recommendation, training, or
+final published serving.
+
 ## Exact repository evidence
 
 - Checkout: detached `HEAD` in the PlantGeo worktree.

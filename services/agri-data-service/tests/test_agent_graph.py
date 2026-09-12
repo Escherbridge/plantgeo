@@ -676,7 +676,7 @@ async def test_every_tool_statement_is_read_only() -> None:
         )
     # Every published tool is driven above, so a tool added to WAREHOUSE_TOOLS without a call here
     # breaks this assertion rather than slipping through unscanned.
-    published_tool_count = 10
+    published_tool_count = 11
     assert len(agent_tools.WAREHOUSE_TOOLS) == published_tool_count
     # The two PostgreSQL statements that survive, and nothing else: the ML forecast plane and the
     # ingest lane's absence ledger. Both are governance relations the retirement inventory keeps.
@@ -710,7 +710,9 @@ def test_tool_schemas_publish_bounded_arguments() -> None:
         definition = tool.to_dict()
         name = definition["name"]
         properties = definition["input_schema"]["properties"]
-        if name in surface_only:
+        if name == "species_information":
+            assert {"species_id", "companion_limit"} == set(properties), name
+        elif name in surface_only:
             assert {"surface_name", "day"} <= set(properties), name
         else:
             assert {"longitude", "latitude"} <= set(properties), name

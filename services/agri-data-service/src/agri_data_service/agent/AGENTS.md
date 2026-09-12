@@ -489,6 +489,15 @@ stream, it never hangs it.
 
 `WAREHOUSE_TOOLS` has two consumers, and only one of them is the graph.
 
+`species_information` is the nonspatial exception in that registry. It uses the same ambient
+read-session provider as the graph and MCP session, but its ledger entry always has `row_count=0`:
+authoring reference data is not location-warehouse coverage. The sufficiency denominator likewise
+excludes it. Its exact UUID input, unpublished posture, field missingness, approved-only companion
+filter, and refusal limits are service-enforced rather than prompt-only.
+Graph runs additionally bind the tool argument to the optional canonical UUID validated at HTTP
+ingress; without that field the graph refuses botanical reads. Direct MCP callers remain responsible
+for supplying an exact UUID and receive the same bounded response contract.
+
 The graph is an opinionated consumer: it decides in Python whether the public web is warranted,
 budgets searches, and forces a structured report. `agent/mcp_server.py` is the unopinionated one.
 It lists the same ten tools over MCP stdio and calls them, carrying none of that policy, because a

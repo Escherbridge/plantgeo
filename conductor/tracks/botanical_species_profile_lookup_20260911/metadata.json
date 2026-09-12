@@ -14,14 +14,17 @@
     "botanical_species_recommendation_validation_20260911",
     "repository_conformity_hardening_20260901"
   ],
-  "next_gate": "Freeze the canonical taxon key, per-value evidence schema, reviewed database-authoring contract and immutable botanical-species-profile Parquet publication contract before admitting a first trait source.",
+  "next_gate": "Supply an operator-authorized Railway read target for the bounded authoring census, then reconcile reviewed identities and publish an independently admitted immutable profile release.",
   "serving_contract": {
     "kind": "static_lookup",
     "spatial": false,
     "authoring_system": "agri.species and its reviewed evidence records",
     "published_product": "botanical-species-profile",
-    "serving_source": "release-pinned Parquet",
-    "database_fallback": "none"
+    "serving_source": "transitional reviewed_authoring_database lookup; final release-pinned Parquet remains required",
+    "database_fallback": "none for final published profiles",
+    "transitional_publication_state": "not_published",
+    "transitional_profile_release_id": null,
+    "production_population_claim": "none"
   },
   "partitions": {
     "confidence": "active",

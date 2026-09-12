@@ -20,8 +20,12 @@ recommendation input: approved values must be frozen into one immutable
 `botanical-species-profile` Parquet release before serving or training consumes
 them. No database fallback may silently replace an absent published profile.
 
-No runtime, source download or database change is authorized by this planning
-pass.
+While the production census and immutable profile release remain blocked, the
+read-capable service profiles may expose a transitional, read-only lookup of the
+already-modeled authoring rows. This exception is keyed only by exact
+`agri.species.id` UUID and labels all legacy wide-column values as unverified
+authoring data. It is not a published profile, a fallback for a missing release,
+or evidence that production is populated.
 
 ## Identity and release grains
 
@@ -88,11 +92,20 @@ rather than a physiological requirement.
 
 ## Profile API and recommendation handoff
 
-The profile endpoint accepts canonical taxon identity and a pinned profile
+The final profile endpoint accepts canonical taxon identity and a pinned profile
 release. It returns approved values, missing and conflicting fields, per-value
 provenance, evidence class, licence, release identity and continuation limits.
 Normal serving reads the immutable Parquet profile release. The relational
 authoring tables are not a serving fallback.
+
+The transitional endpoint instead accepts one exact Species UUID and returns
+identity labels, existing lightweight profile fields, and bounded approved
+companion rows from the reviewed authoring database. Every value carries
+authoring provenance and an honest `unverified_authoring` or
+`unknown/not_reported` state. It declares `publication_state=not_published` and
+`profile_release_id=null`, reads no GIS/environmental observations, and refuses
+ranking, planting, occurrence, suitability, objective-effect, and unsupported
+fuel/fire conclusions.
 
 The agent's species-information tool exposes growth requirements, fuel or tissue
 composition, agricultural roles, companion evidence and explicit missingness as

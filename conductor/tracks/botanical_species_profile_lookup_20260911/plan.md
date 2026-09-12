@@ -11,6 +11,23 @@ non-Herbaria reference sources, publish a bounded profile release and wire the
 species-information agent tool. It may not accept restricted terms, scrape an
 unlicensed source, infer missing traits or mutate production.
 
+## Transitional authoring lookup checkpoint
+
+- [x] Add an exact-UUID, read-only lookup over only the existing modeled
+  `agri.species` and approved `agri.companion_relationships` rows.
+- [x] Mark legacy wide-column values as unpublished and unverified, with
+  explicit field and section missingness and authoring provenance.
+- [x] Bound companion rows and response bytes; refuse name-only identity and
+  downstream occurrence, ranking, recommendation, suitability, effect and
+  unsupported fuel/fire claims.
+- [x] Register HTTP only on `combined_local` and `published_reader`, and expose
+  the agent tool through the common provider and MCP path without changing
+  location-warehouse sufficiency.
+- [x] Run the bounded verification sweep and obtain a separate review of the
+  transitional slice. This does not complete the final P4/P5 acceptance gates.
+- [ ] Replace transitional authoring reads with the immutable reviewed Parquet
+  profile product before recommendation, training, or published serving.
+
 ## P0 — inventory and contract freeze
 
 - [ ] Inventory `agri.species`, its evidence/review posture, current readers and
@@ -50,7 +67,7 @@ unlicensed source, infer missing traits or mutate production.
 
 ## P3 — profile API, agent lookup and recommendation handoff
 
-- [ ] Expose bounded profile lookup by taxon and pinned release with per-value
+- [ ] Expose the final bounded profile lookup by taxon and pinned release with per-value
   evidence, licence, review state, conflict and missingness.
 - [ ] Wire a species-information agent tool that returns growth requirements,
   fuel/tissue composition, agricultural roles, companion evidence, citations
@@ -62,6 +79,9 @@ unlicensed source, infer missing traits or mutate production.
 - [ ] Prove the profile route through the registered application blueprint and
   the species-information tool through both the model-facing tool registry and
   MCP descriptor/call surfaces; importing a new module is not acceptance.
+
+The transitional UUID endpoint and tool prove their narrower transport
+reachability, but do not satisfy the final release-pinned P3 items.
 
 ## P4 — integration and independent acceptance
 

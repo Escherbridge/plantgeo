@@ -18,9 +18,10 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from functools import wraps
 from math import cos, radians
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Annotated, Any, Final
 
 from anthropic import beta_async_tool
+from pydantic import Field
 from sqlalchemy import ARRAY, Float, Text, bindparam, text
 
 from agri_data_service.agent import parquet_reads, warehouse
@@ -41,6 +42,17 @@ from agri_data_service.parquet_ops.warehouse_reader import (
     NoSpatialSupport,
     PointSupport,
     spatial_support,
+)
+from agri_data_service.planes.botanical_species_information import (
+    DEFAULT_COMPANION_LIMIT,
+    MAX_COMPANION_LIMIT,
+    SpeciesInformationRequestError,
+    encode_species_information,
+    parse_species_information_request,
+    read_species_information,
+)
+from agri_data_service.planes.botanical_species_information import (
+    invalid_request as invalid_species_information_request,
 )
 from agri_data_service.warehouse.parquet.schema import get_stream_schema
 
@@ -298,6 +310,7 @@ FEATURE_PROPERTY_KEYS: Final = (
 _session_provider: ContextVar[Callable[[], AbstractAsyncContextManager[AsyncSession]]] = ContextVar(
     "agri_agent_session_provider", default=published_reader_session
 )
+_allowed_species_id: ContextVar[str | None] = ContextVar("agri_agent_allowed_species_id", default=None)
 _tool_ledger: ContextVar[list[dict[str, Any]] | None] = ContextVar("agri_agent_tool_ledger", default=None)
 # One run's answers to "is this plane built". A matview never becomes unpopulated again once it
 # has been refreshed, so the answer cannot go stale inside a run.
@@ -309,10 +322,12 @@ async def run_context(
     *,
     session_provider: Callable[[], AbstractAsyncContextManager[AsyncSession]] | None = None,
     warehouse_source: AgentWarehouseSource | None = None,
+    allowed_species_id: str | None = None,
 ) -> AsyncIterator[list[dict[str, Any]]]:
     """Bind one run's PostgreSQL session provider and Parquet source, and yield the tool ledger."""
     ledger: list[dict[str, Any]] = []
     provider_token = _session_provider.set(session_provider or published_reader_session)
+    species_token = _allowed_species_id.set(allowed_species_id)
     ledger_token = _tool_ledger.set(ledger)
     plane_token = _plane_state.set({})
     source_token = warehouse.set_source(warehouse_source)
@@ -322,6 +337,7 @@ async def run_context(
         warehouse.reset_source(source_token)
         _plane_state.reset(plane_token)
         _tool_ledger.reset(ledger_token)
+        _allowed_species_id.reset(species_token)
         _session_provider.reset(provider_token)
 
 
@@ -496,6 +512,48 @@ async def _fetch(statement: Any, parameters: dict[str, Any]) -> list[dict[str, A
     async with _session_provider.get()() as session:
         result = await session.execute(statement, parameters)
         return [dict(row) for row in result.mappings().all()]
+
+
+SpeciesUuid = Annotated[
+    str,
+    Field(
+        pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+        description="Exact canonical agri.species UUID; botanical names are not accepted.",
+    ),
+]
+CompanionLimit = Annotated[
+    int,
+    Field(ge=1, le=MAX_COMPANION_LIMIT, description="Maximum approved companion rows to return."),
+]
+
+
+@beta_async_tool
+async def species_information(
+    species_id: SpeciesUuid,
+    companion_limit: CompanionLimit = DEFAULT_COMPANION_LIMIT,
+) -> str:
+    """Read one unpublished authoring species profile with explicit provenance, missingness, and claim limits."""
+    try:
+        allowed_species_id = _allowed_species_id.get()
+        if allowed_species_id == "" or (allowed_species_id is not None and species_id != allowed_species_id):
+            raise SpeciesInformationRequestError(
+                "species_id must exactly match the canonical UUID supplied with this agent request"
+            )
+        request = parse_species_information_request({"species_id": species_id, "companion_limit": str(companion_limit)})
+        result = await read_species_information(request, session_provider=_session_provider.get())
+    except SpeciesInformationRequestError as error:
+        result = invalid_species_information_request(str(error))
+    _record(
+        "species_information",
+        0,
+        {
+            "profile_count": int(result["state"] == "found"),
+            "state": result["state"],
+            "publication_state": "not_published",
+            "evidence_domain": "botanical_reference",
+        },
+    )
+    return encode_species_information(result).decode("utf-8")
 
 
 # --- Refusing rather than answering nothing ----------------------------------------
@@ -2193,4 +2251,5 @@ WAREHOUSE_TOOLS: Final = (
     observation_coverage_on_day,
     observation_temporal_neighbors,
     feature_value_near_point,
+    species_information,
 )

@@ -3,6 +3,17 @@
 ## Responsibility
 Domain execution planes that bind method algorithms and pipeline acquisition outputs into warehouse persistence.
 
+## Transitional botanical species information
+
+`botanical_species_information.py` is a bounded, nonspatial exception while an immutable botanical
+profile release is unavailable. It reads only the existing modeled `agri.species` row selected by
+exact UUID and approved `agri.companion_relationships`; no name join, GIS observation, environmental
+relation, migration, or writer is part of the plane. The `reviewed_authoring_database` source label
+names the governed authoring surface, not approval of each legacy field. Populated values—including
+Boolean defaults—remain `unverified_authoring`; nulls remain explicit `unknown/not_reported`.
+Recommendation, training, and final published serving still require an independently reviewed,
+release-pinned Parquet profile.
+
 ## Dependency Rules
 - **May import**: `foundation` (L0), `method` (L1), `warehouse` (L1), `pipeline` (L2).
 - **May NOT import**: `interface` (L4).

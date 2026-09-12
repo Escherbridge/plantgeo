@@ -115,6 +115,8 @@ class AgentRequest:
     as_of: datetime = field(default_factory=lambda: datetime.now(UTC))
     selected_day: date | None = None
     """The day the map is showing. None means the caller did not send one; see agent/AGENTS.md."""
+    species_id: str | None = None
+    """Canonical authoring UUID supplied by the caller; absent disables model botanical reads."""
 
 
 @dataclass(slots=True)
@@ -302,10 +304,14 @@ class GatherWarehouseEvidence:
                     as_of=ctx.request.as_of,
                     question=ctx.request.question,
                     selected_day=ctx.request.selected_day,
+                    species_id=ctx.request.species_id,
                 ),
             }
         )
-        async with warehouse_tools.run_context(session_provider=ctx.session_provider) as ledger:
+        async with warehouse_tools.run_context(
+            session_provider=ctx.session_provider,
+            allowed_species_id=ctx.request.species_id or "",
+        ) as ledger:
             refused = await _run_pass(
                 ctx,
                 tool_list=list(warehouse_tools.WAREHOUSE_TOOLS),
@@ -361,7 +367,7 @@ class AssessSufficiency:
     def decide(evidence: WarehouseEvidence, *, has_question: bool) -> SufficiencyVerdict:
         """Pure budget rule: fewer distinct populated sources buys more search budget."""
         populated = len(evidence.populated_tools)
-        available = len(warehouse_tools.WAREHOUSE_TOOLS)
+        available = sum(tool.name != "species_information" for tool in warehouse_tools.WAREHOUSE_TOOLS)
         coverage = {
             "populated_tools": list(evidence.populated_tools),
             "tool_calls_made": len(evidence.tool_calls),
