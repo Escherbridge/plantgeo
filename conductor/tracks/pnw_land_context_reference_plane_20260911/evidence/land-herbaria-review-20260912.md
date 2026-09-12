@@ -80,4 +80,3 @@ ingestion, provider contact, publication or deployment operation was performed.
 No code/configuration, registry, RUNBOOK, authored coordination document, prior
 planning receipt or source inventory was edited. This verdict is limited to the
 narrow planning reconciliation and does not close the source or runtime gates.
-
