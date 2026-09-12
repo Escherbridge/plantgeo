@@ -9,9 +9,10 @@ Per [README.md](README.md), this is the sole current work registry. Statuses are
 `active`, `planned`, `blocked`, `complete` and `historical`. Every current track
 directory is indexed below and its metadata uses the same current status.
 
-The September 11 audit reconciles repository head `fa20223` with dated operational
-receipts. It performed no fresh production measurement. Completed implementation,
-published data, deployment and scheduled burn-in remain separate claims. The
+The September 11 audit and weather approval reconcile the root candidate with
+dated operational receipts. It performed no fresh production measurement.
+Completed implementation, published data, deployment and scheduled burn-in remain
+separate claims. The
 [current runbook](RUNBOOK.md) routes operational work; the
 [release policy](release-governance.md) governs release decisions.
 
@@ -19,7 +20,7 @@ published data, deployment and scheduled burn-in remain separate claims. The
 
 | Track | Status | Remaining work and next gate |
 | --- | --- | --- |
-| [platform_experience_qa_20260911](tracks/platform_experience_qa_20260911/plan.md) | active | Bind every live author, integration and verifier task to an immutable candidate; inventory all surfaced user journeys; then run local desktop/mobile, role, accessibility, selected-day, cache, canvas and agent/MCP acceptance on the integrated tree. Synthetic local intervention submissions prove mechanics only and do not close the community track's human-contributor gate. |
+| [platform_experience_qa_20260911](tracks/platform_experience_qa_20260911/plan.md) | active | The weather/botanical candidate and root browser receipt are integrated; finish service-backed populated-data, narrow-mobile/touch, role/accessibility, selected-day, cache, canvas and agent/MCP acceptance on the frozen tree. Synthetic local intervention submissions prove mechanics only and do not close the community track's human-contributor gate. |
 | [parquet_reader_cutover_acceptance_20260901](tracks/parquet_reader_cutover_acceptance_20260901/plan.md) | active | Reader hard cuts and availability contracts are implemented. Finish current product/day/zoom cold/warm request traces, explicit coverage/source-ceiling presentation, and the exact acceptance handoff. Bounded MTBS acceptance does not close all readers. |
 | [gapless_parquet_publication_20260901](tracks/gapless_parquet_publication_20260901/plan.md) | active | Finish source-direct historical gap work, receipt-backed absences, effective executor ownership/cutoff and retry/restart/lease recovery. Prove three scheduled advances per activated product. Temperature history and MTBS publication are completed subsets. |
 | [multiscale_polygon_surface_20260901](tracks/multiscale_polygon_surface_20260901/plan.md) | active | Renderer/support implementation is present. Complete cross-product rung conservation, pixel continuity, feature/request-to-paint budgets and desktop/mobile evidence; submit the renderer verdict. |
@@ -42,7 +43,7 @@ published data, deployment and scheduled burn-in remain separate claims. The
 | [swr_indexeddb_dw_reconciliation_20260814](tracks/swr_indexeddb_dw_reconciliation_20260814/plan.md) | planned | Phase 1 IndexedDB SWR is shipped. Rescope phase 2 ETag/304 and revision semantics to current Parquet tRPC/availability generations; this is separate from the Martin tile service-worker cache. |
 | [upstream_dataset_expansion_20260806](tracks/upstream_dataset_expansion_20260806/plan.md) | planned | August 23 authorization to ingest Open-Meteo products remains recorded. Replace historical Postgres-persist/cron assumptions with Parquet lanes, serving and executor ownership for remaining GloFAS/CAMS/ensemble scope, and resolve the et0 guard. Source scaffolding is not completed delivery. |
 | [weather_forecast_parquet_lane_20260911](tracks/weather_forecast_parquet_lane_20260911/plan.md) | planned | Admit a real deterministic forecast product first, then publish immutable model runs with explicit valid-time, interval, field support, vector wind, missingness, three scheduled duties and bounded field/location/agent readers. Existing sampled current conditions retain forecast horizon zero. |
-| [weather_forecast_experience_20260911](tracks/weather_forecast_experience_20260911/plan.md) | planned | Build distinct Now/History/Forecast modes, a truthful scalar field, vector/particle wind and traditional selected-location hourly/daily cards. First reconcile the April 28, 2025 screenshot with catalogue/reader state and serialize shared registry/reader work behind the active integration batch. |
+| [weather_forecast_experience_20260911](tracks/weather_forecast_experience_20260911/plan.md) | planned | Build distinct Now/History/Forecast modes, a truthful scalar field, vector/particle wind and traditional selected-location hourly/daily cards. The historical-weather visual repair is accepted for its unavailable-state path in the platform QA candidate; this forecast track still starts with the April 28, 2025 screenshot's catalogue/reader reconciliation and waits for a governed forecast product. |
 | [pnw_herbaria_source_admission_20260911](tracks/pnw_herbaria_source_admission_20260911/plan.md) | active | Resolve WTU/UBC rights, coordinate-withholding and archive-safety gates, then capture a bounded data-only DwCA pilot into immutable quarantine with schema and custody receipts. Images and production publication remain excluded. |
 | [pnw_land_context_reference_plane_20260911](tracks/pnw_land_context_reference_plane_20260911/plan.md) | planned | Resolve exact source rights, current feeds, native IDs, watermarks and WA/OR/ID coverage for nonpersonal parcel/land-use context, electric territories, BLM surface/office jurisdictions, state-managed lands and a separately versioned public contact directory. Private owner names remain excluded. No acquisition or implementation is authorized. |
 | [pnw_land_contact_experience_20260911](tracks/pnw_land_contact_experience_20260911/plan.md) | planned | After the reference plane is admitted, build four truthful map groups plus a persistent selected-area contact panel and read-only agent parity. Explain why a public office or adviser applies, distinguish records help from responsibility or documented forwarding, and prepare inquiries for user review without sending. |
