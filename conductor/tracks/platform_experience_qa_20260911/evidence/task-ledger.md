@@ -59,7 +59,8 @@ historical QA candidate and historical ingestion-throttle repair entries are
 bound to immutable evidence and archived custody. The root browser receipt is
 recorded at `e5eaab6`, weather and botanical runtime integration at
 `9284d527`/`3e35971`, Herbaria evidence at `57ef4fc`, scalar-label integration at
-`ac4ce70`, conformity slice at `c894436`, and the root verification receipt at
+`ac4ce70`, conformity slice at `c894436`, weather approval at `f659d1f`, and
+the root verification receipt at
 `3182159`; keep the platform QA task active for the remaining populated-data,
 mobile, agent-parity and broader track gates. The reader / gapless,
 environmental-retirement / offline-export, and conformity continuations are
