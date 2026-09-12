@@ -77,3 +77,12 @@ local fixture improvements, governed data/reader handoff, climate/soil picking
 contract, numeric budget freeze and browser/device prerequisites required for
 fresh desktop/mobile proof. M0 baseline completion, every M3 checkbox and QA
 MS-01 through MS-04 remain open; both parent tracks stay active.
+
+## September 12 — isolated vegetation scalar field candidate
+
+The [vegetation scalar field packet](evidence/scalar-field-vegetation-20260912.md)
+reconciles the archived dot-renderer audit with the current measured-cell contract.
+The local candidate adds a default-off reusable nearest-cell WebGL2 paint path,
+projected-spacing inspection cues, and exact native-cell hover/tap metadata.
+Vegetation remains discrete; climate and weather ownership remain unchanged.
+This packet is a bounded local candidate and does not close any open M3 gate.

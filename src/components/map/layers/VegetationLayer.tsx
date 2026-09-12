@@ -12,6 +12,9 @@ import {
 import { getFirstSymbolLayer, safeRemoveLayerAndSource } from "@/lib/map/layer-utils";
 import { useVegetationStore } from "@/stores/vegetation-store";
 import type { ExpressionSpecification } from "@/types/map";
+import { scalarFieldEnabled } from "@/lib/map/scalar-field";
+import { ScalarFieldLayer } from "@/lib/map/scalar-field-layer";
+import { useStyleReady } from "./use-style-ready";
 
 export type VegetationMode = "ndvi" | "ndwi" | "nbr";
 
@@ -100,6 +103,8 @@ const NBR_LAYER_ID = "nbr-recovery-layer";
 const NDVI_CELL_SOURCE_ID = "vegetation-ndvi-cells";
 const NDVI_CELL_FILL_LAYER_ID = "vegetation-ndvi-cells-fill";
 const NDVI_CELL_OUTLINE_LAYER_ID = "vegetation-ndvi-cells-outline";
+const NDVI_FIELD_LAYER_ID = "vegetation-ndvi-scalar-field";
+const NDVI_CELL_LABEL_LAYER_ID = "vegetation-ndvi-cells-values";
 
 /** Cell-boundary cue, deliberately independent of the reader's opacity. */
 const CELL_OUTLINE_OPACITY = 0.35;
@@ -176,6 +181,10 @@ export function VegetationLayer({
   // Same shape as RouteLayer's `useRoutingStore`. When the layer-pivot panel lands, this can
   // move onto `useVegetationDisplayMode` beside `mode`/`opacity` if a second consumer appears.
   const source = useVegetationStore((state) => state.source);
+  const fieldEnabled = scalarFieldEnabled("vegetation", process.env.NEXT_PUBLIC_SCALAR_FIELD_RENDERER_LAYERS);
+  const fieldRef = useRef<ScalarFieldLayer | null>(null);
+  const cellDataRef = useRef<{ source: GeoJSONSource; data: GeoJSON.FeatureCollection | null } | null>(null);
+  const styleReady = useStyleReady(map);
 
   // The one value every paint below is written from: the authored strength times the reader's
   // multiplier. Computed once here so the attach path and the update effect cannot drift.
@@ -192,6 +201,7 @@ export function VegetationLayer({
     showNDWI,
     drawnOpacity,
     visible,
+    fieldEnabled,
   });
   propsRef.current = {
     geojson,
@@ -203,6 +213,7 @@ export function VegetationLayer({
     showNDWI,
     drawnOpacity,
     visible,
+    fieldEnabled,
   };
 
   const addAllLayers = useCallback((m: MapLibreMap) => {
@@ -215,6 +226,7 @@ export function VegetationLayer({
       ndviMode,
       showNDWI,
       drawnOpacity,
+      fieldEnabled,
     } = propsRef.current;
     const beforeId = getFirstSymbolLayer(m);
     const { satelliteRaster, measuredCells } = ndviEncodingVisibility(mode, source);
@@ -311,6 +323,7 @@ export function VegetationLayer({
         type: "geojson",
         data: geojson ?? EMPTY_CELL_COLLECTION,
       });
+      cellDataRef.current = { source: m.getSource(NDVI_CELL_SOURCE_ID) as GeoJSONSource, data: geojson };
     }
     if (!m.getLayer(NDVI_CELL_FILL_LAYER_ID)) {
       m.addLayer({
@@ -322,6 +335,7 @@ export function VegetationLayer({
         paint: {
           "fill-color": NDVI_CELL_FILL_COLOR,
           "fill-opacity": drawnOpacity,
+          ...(fieldEnabled ? { "fill-opacity-transition": { duration: 0, delay: 0 } } : {}),
         },
       }, beforeId);
     }
@@ -341,15 +355,60 @@ export function VegetationLayer({
         },
       }, beforeId);
     }
+    if (fieldEnabled && !m.getLayer(NDVI_CELL_LABEL_LAYER_ID)) {
+      m.addLayer({
+        id: NDVI_CELL_LABEL_LAYER_ID,
+        type: "symbol",
+        source: NDVI_CELL_SOURCE_ID,
+        filter: ["all", ["==", ["geometry-type"], "Polygon"], ["==", ["typeof", ["get", "ndvi"]], "number"], [">=", ["get", "ndvi"], -1], ["<=", ["get", "ndvi"], 1]],
+        layout: {
+          visibility: "none",
+          "text-field": ["concat", ["case",
+            ["all", [">", ["get", "ndvi"], 0], ["<", ["get", "ndvi"], 0.01]], "<0.01",
+            ["all", ["<", ["get", "ndvi"], 0], [">", ["get", "ndvi"], -0.01]], ">-0.01",
+            ["number-format", ["get", "ndvi"], { locale: "en-US", "min-fraction-digits": 2, "max-fraction-digits": 2 }]], " NDVI"],
+          "text-font": ["Noto Sans Regular"],
+          "text-size": 12,
+          "text-padding": 6,
+          "text-allow-overlap": false,
+          "text-ignore-placement": false,
+        },
+        paint: { "text-color": "#18181b", "text-halo-color": "#ffffff", "text-halo-width": 1.5, "text-opacity": drawnOpacity },
+      }, beforeId);
+    }
+    if (fieldEnabled && !m.getLayer(NDVI_FIELD_LAYER_ID)) {
+      const field = new ScalarFieldLayer({
+        id: NDVI_FIELD_LAYER_ID,
+        nativeFillId: NDVI_CELL_FILL_LAYER_ID,
+        nativeOutlineId: NDVI_CELL_OUTLINE_LAYER_ID,
+        nativeSourceId: NDVI_CELL_SOURCE_ID,
+        labelId: NDVI_CELL_LABEL_LAYER_ID,
+        valueProperty: "ndvi",
+        range: [-1, 1],
+        ramp: NDVI_COLOR_RAMP,
+      });
+      field.update(geojson, drawnOpacity, measuredCells === "visible");
+      try {
+        m.addLayer(field, NDVI_CELL_FILL_LAYER_ID);
+        fieldRef.current = field;
+        m.triggerRepaint();
+      } catch {
+        field.onRemove();
+        m.setPaintProperty(NDVI_CELL_FILL_LAYER_ID, "fill-opacity", drawnOpacity);
+      }
+    }
   }, []);
 
   const removeAllLayers = useCallback((m: MapLibreMap) => {
+    if (m.getLayer(NDVI_FIELD_LAYER_ID)) m.removeLayer(NDVI_FIELD_LAYER_ID);
+    fieldRef.current = null;
+    cellDataRef.current = null;
     safeRemoveLayerAndSource(m, [NDVI_LAYER_ID], "ndvi-overlay");
     safeRemoveLayerAndSource(m, [NDWI_LAYER_ID], "ndwi-overlay");
     safeRemoveLayerAndSource(m, [NBR_LAYER_ID], "nbr-recovery");
     safeRemoveLayerAndSource(
       m,
-      [NDVI_CELL_FILL_LAYER_ID, NDVI_CELL_OUTLINE_LAYER_ID],
+      [NDVI_CELL_FILL_LAYER_ID, NDVI_CELL_OUTLINE_LAYER_ID, NDVI_CELL_LABEL_LAYER_ID],
       NDVI_CELL_SOURCE_ID
     );
   }, []);
@@ -380,6 +439,10 @@ export function VegetationLayer({
       removeAllLayers(map);
     };
   }, [map, visible, addAllLayers, removeAllLayers]);
+
+  useEffect(() => {
+    if (map && visible && map.isStyleLoaded()) addAllLayers(map);
+  }, [map, visible, styleReady, addAllLayers]);
 
   // Update tile URLs, visibility and opacity when the composite period, the selected source,
   // the mode or the opacity change. `year` and `month` move only when the slider's day crosses
@@ -435,15 +498,22 @@ export function VegetationLayer({
     // not loaded when this ran -- and addAllLayers then creates it from propsRef with the
     // same data.
     const cellSource = map.getSource(NDVI_CELL_SOURCE_ID) as GeoJSONSource | undefined;
-    if (cellSource) cellSource.setData(geojson ?? EMPTY_CELL_COLLECTION);
+    if (cellSource && (cellDataRef.current?.source !== cellSource || cellDataRef.current.data !== geojson)) {
+      if (!fieldRef.current) cellSource.setData(geojson ?? EMPTY_CELL_COLLECTION);
+      cellDataRef.current = { source: cellSource, data: geojson };
+    }
     if (map.getLayer(NDVI_CELL_FILL_LAYER_ID)) {
-      map.setLayoutProperty(NDVI_CELL_FILL_LAYER_ID, "visibility", measuredCells);
+      if (!fieldRef.current) map.setLayoutProperty(NDVI_CELL_FILL_LAYER_ID, "visibility", measuredCells);
       map.setPaintProperty(NDVI_CELL_FILL_LAYER_ID, "fill-opacity", drawnOpacity);
     }
     if (map.getLayer(NDVI_CELL_OUTLINE_LAYER_ID)) {
-      map.setLayoutProperty(NDVI_CELL_OUTLINE_LAYER_ID, "visibility", measuredCells);
-      map.setPaintProperty(NDVI_CELL_OUTLINE_LAYER_ID, "line-opacity", NDVI_CELL_OUTLINE_OPACITY);
+      if (!fieldRef.current) map.setLayoutProperty(NDVI_CELL_OUTLINE_LAYER_ID, "visibility", measuredCells);
+      map.setPaintProperty(NDVI_CELL_OUTLINE_LAYER_ID, "line-opacity", measuredCells === "visible" ? NDVI_CELL_OUTLINE_OPACITY : 0);
     }
+    if (map.getLayer(NDVI_CELL_LABEL_LAYER_ID)) {
+      map.setPaintProperty(NDVI_CELL_LABEL_LAYER_ID, "text-opacity", measuredCells === "visible" ? drawnOpacity : 0);
+    }
+    fieldRef.current?.update(geojson, drawnOpacity, measuredCells === "visible");
   }, [
     map,
     geojson,

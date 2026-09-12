@@ -1154,3 +1154,22 @@ from the current camera zoom. Labels can be collision-suppressed at crowded scal
 not promise one visible number per cell. Shared hover registration for these two components
 was already absent and is not supplied by this label slice; source geometry and existing
 picking behavior are preserved. This is value legibility work, not closure of that hover gap.
+
+## §vegetation-scalar-field
+
+The shared tooltip measures its current content in a layout effect before paint, then flips
+and clamps both coordinates to the map container. A flip alone can put a wide caption outside
+the left edge of a phone. Its intrinsic width is capped at 240 pixels and at the container
+width, so the measured rectangle stays stable while positioning. Synthetic desktop/mobile
+inspection checks assert the actual caption bounds, as well as the exact value text.
+
+`VegetationLayer` reads the build-time `NEXT_PUBLIC_SCALAR_FIELD_RENDERER_LAYERS` comma list.
+Only explicit `vegetation` adds the custom nearest-cell scalar layer and native value labels;
+unset keeps the native presentation. See `src/lib/map/AGENTS.md` §scalar-field and
+`docs/scalar-field-renderer.md` for scientific constraints and rollout gates. This layer never
+stacks measured NDVI with the satellite composite. It keeps its existing fill ID as the native
+picking target, passes all opacity changes through one controller, and rebuilds the custom layer
+on style load. The `useStyleReady` retry additionally closes the missed initial style-load race.
+The native fill has a zero-duration opacity transition only in the opt-in path to avoid
+simultaneous field/native paint during the direct handoff. Weather and all other renderers keep
+their current ordering and representations.

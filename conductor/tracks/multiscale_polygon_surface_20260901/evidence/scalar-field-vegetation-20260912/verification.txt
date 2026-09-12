@@ -1,0 +1,42 @@
+Local verification receipt
+Review base: fe9098ae045dda7a74d8f955dcc8c8e097ea09c9
+
+npm run check:data-boundary (before tooltip-only correction)
+Client data-boundary check passed (12 documented URL rules).
+Client/server restricted-import check passed.
+Observation-fabrication check passed (2 rules over 7 display roots).
+
+npm run type-check (final correction): exit 0
+
+> plantgeo@0.1.0 type-check
+> tsc --noEmit
+
+
+npm run lint (final correction): exit 0
+✖ 545 problems (0 errors, 545 warnings)
+  0 errors and 220 warnings potentially fixable with the `--fix` option.
+
+
+npm run test:changed -- --base fe9098ae045dda7a74d8f955dcc8c8e097ea09c9
+Full fallback: unclassified e2e fixture. Before final tooltip/mock correction. Exit 0.
+Tooling: 6 passed.
+
+ Test Files  150 passed | 2 skipped (152)
+      Tests  2222 passed | 13 skipped (2235)
+   Start at  02:21:00
+   Duration  132.36s (transform 2.96s, setup 2.68s, collect 33.39s, tests 15.57s, environment 174.81s, prepare 14.97s)
+
+
+npx vitest run --configLoader runner --maxWorkers=2 src/__tests__/components/HoverTooltip.test.tsx src/__tests__/components/VegetationLayer.test.tsx src/__tests__/lib/map/scalar-field.test.ts src/__tests__/lib/map/scalar-field-layer.test.ts src/__tests__/lib/map/hover-fields.test.ts
+Final correction affected follow-up: exit 0.
+
+ Test Files  5 passed (5)
+      Tests  113 passed (113)
+   Start at  02:26:47
+   Duration  4.89s (transform 183ms, setup 108ms, collect 702ms, tests 207ms, environment 6.40s, prepare 538ms)
+
+
+node e2e/scalar-field-fixture/run.mjs
+Final source: run-2026-09-12T08-26-05-375Z-53204. 27 passed, zero failures.
+See report.json for UTF-8/LF before/after source hashes, strict assertions, and actual tooltip bounds.
+Database-dependent skips: 9 climate SQL + 4 PostGIS. No database started.
