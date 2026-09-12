@@ -169,10 +169,10 @@ The presentation lane produced independently reviewed candidate
 `997728b9ff38dd9c85773ba2fe17e97e40ef77f3`, from current `main`. Its exact
 three-file scope prioritizes stronger wind labels under collision avoidance,
 documents that behavior in the legend, and adds a focused layout assertion.
-It was integrated locally as root `e54d091`. The single final verification
-sweep passed the data-boundary check, but type-check, lint and Vitest could not
-start because this checkout has no `tsc`, `eslint` or `vitest` binaries. The
-replacement app task remains
+It was integrated locally as root `e54d091`. After restoring the lockfile
+dependencies locally, the single final verification sweep passed the
+data-boundary check, type-check, lint and the full frontend test run (150 files
+passed, 2 skipped; 2,232 tests passed, 13 skipped). The replacement app task remains
 queue alias `client-new-thread:b4b4d56b-f44d-4d39-9b58-636d218f8bb8` and had
 not materialized at observation. No data, database, writer, Railway,
 object-store, scheduler, deployment or push action occurred. The bounded

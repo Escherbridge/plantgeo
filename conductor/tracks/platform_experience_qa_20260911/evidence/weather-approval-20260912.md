@@ -58,12 +58,15 @@ not approve a populated-data release or the separate forecast tracks.
 - A follow-up presentation-only candidate, `a9ff85e`, was independently
   reviewed and integrated locally as root `e54d091`. It gives stronger wind
   labels placement priority while retaining collision avoidance and documents
-  that rule in the legend. The data-boundary check passed; type-check, lint and
-  Vitest could not start in the current checkout because their binaries are
-  absent, so live dense-label behavior remains unverified.
+  that rule in the legend. After restoring the lockfile dependencies locally,
+  the data-boundary check, type-check, lint and full frontend test run passed
+  (150 files passed, 2 skipped; 2,232 tests passed, 13 skipped). Live
+  dense-label behavior remains unverified because the governed reader/data
+  service was unavailable.
 - The root recheck receipt records that JavaScript dependencies were absent in
-  the current checkout, so the owner receipts remain the executable test
-  authority for this change.
+  the earlier current checkout; the restored local dependency run supersedes
+  that limitation for this candidate while the owner receipts remain the
+  authority for the historical browser evidence.
 
 ## Conditions that remain open
 

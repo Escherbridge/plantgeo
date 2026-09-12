@@ -97,10 +97,10 @@ It produced candidate `a9ff85e0485171cde8030d33cd3fd8da17b48017`, tree
 `997728b9ff38dd9c85773ba2fe17e97e40ef77f3`, which was independently reviewed
 and integrated locally as root `e54d091`. The three-file change gives stronger
 wind labels collision priority while retaining collision avoidance and records
-that rule in the legend. The single final verification sweep was attempted:
-the data-boundary check passed, while type-check, lint and Vitest could not
-start because this checkout has no `tsc`, `eslint` or `vitest` binaries. Its
-app-task queue alias was
+that rule in the legend. After restoring the lockfile dependencies locally,
+the single final verification sweep passed the data-boundary check,
+type-check, lint and the full frontend test run (150 files passed, 2 skipped;
+2,232 tests passed, 13 skipped). Its app-task queue alias was
 `client-new-thread:b4b4d56b-f44d-4d39-9b58-636d218f8bb8`; it had not
 materialized in `list_threads` at this observation. The approved weather scope
 remains the fixed desktop historical unavailable-state only; populated-data,
