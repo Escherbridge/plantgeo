@@ -18,7 +18,9 @@ transfer any shared reader/renderer file.
 - [x] Complete the isolated selected-location hourly/daily page and timeline.
 - [x] Obtain separate verifier review and final local check evidence (component
   and handler acceptance; full browser rendering remains blocked).
-- [ ] Record exact-file commit and narrow branch push gate result.
+- [x] Record exact-file commit and narrow branch push gate result: implementation
+  `7cd95ab7acbdb28f963cbe1de30fb42155b74801` pushed to the dedicated origin branch;
+  see the local receipt. Main remains unmerged.
 
 The [September 12 experience contract receipt](evidence/contract-receipt-20260912.md)
 freezes modes, selected-location cards, support/vector rules and initial

@@ -20,7 +20,9 @@ real-source or production-integration acceptance checkboxes.
 - [x] Complete the isolated artifact-to-reader-to-HTTP/UI fixture implementation.
 - [x] Obtain separate verifier review and final local check evidence (full sweep
   plus targeted recovery; no final full-suite-green or production claim).
-- [ ] Record exact-file commit and narrow branch push gate result.
+- [x] Record exact-file commit and narrow branch push gate result: implementation
+  `7cd95ab7acbdb28f963cbe1de30fb42155b74801` pushed to the dedicated origin branch;
+  see the local receipt. Main remains unmerged.
 
 This planning slice does not change runtime behavior. Implementation starts only
 after the source/product contract is frozen and the active shared-file owners

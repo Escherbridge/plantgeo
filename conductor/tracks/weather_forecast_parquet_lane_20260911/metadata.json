@@ -144,6 +144,9 @@
     "review_base": "0ee4f5bd99666760a5881ed1427301944dc7b001",
     "evidence": "evidence/local-slice-20260912.md",
     "source_admission": "fixture_only_real_source_not_admitted",
-    "shared_owner_transfers": []
+    "shared_owner_transfers": [],
+    "implementation_commit": "7cd95ab7acbdb28f963cbe1de30fb42155b74801",
+    "push_result": "pushed to origin/codex/weather-forecast-local-slice",
+    "main_merge": "not performed"
   }
 }
