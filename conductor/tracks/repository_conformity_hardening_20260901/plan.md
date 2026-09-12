@@ -10,8 +10,8 @@ resource: ./spec.md
 ## Current checkpoint — September 11
 
 `9b239fa` retired obsolete snapshot dispatch and `3632d61` retired unused MTBS
-readers; the [cleanup proof](../../retros/parquet_cutover_completed_slices_20260910/cleanup-proof.md)
-and [verification record](../../retros/parquet_cutover_completed_slices_20260910/verification.md)
+readers; the [cleanup proof](../environmental_parquet_serving_20260912/plan.md)
+and [verification record](../environmental_parquet_serving_20260912/plan.md)
 preserve those completed removals. The September 8–9 baseline/rebuild also
 supersedes old dormant-migration filenames as live deployment instructions.
 Remaining CLI/core extraction and removal candidates below still require their

@@ -26,15 +26,15 @@ The owner chose the in-repository canonical-snapshot builders over the discarded
 standalone service. The five ERA5 product lanes were built in the recorded
 September 9 cutover; the three temperature histories were published on September
 10 with 1,560 complete days and four rungs each. The
-[temperature publication receipt](../environmental_postgres_retirement_20260904/evidence/parquet-runtime-repair-20260910.md#final-temperature-publication-verified)
+[temperature publication receipt](../environmental_parquet_serving_20260912/plan.md)
 supersedes this document's claim that those histories still need building.
-The [operational retrospective](../../retros/parquet_operational_checkpoints_20260911/README.md)
+The [operational retrospective](../environmental_parquet_serving_20260912/plan.md)
 separates completed delivery from the open parent-track gates.
 
 Commit `4b841b3` replaced the serial verification described in section
 8 with bounded batches of up to eight concurrent tasks. It retains the
 publication barrier and every checksum, identity revalidation and final pointer
-comparison. Its [recorded request budget and retry](../environmental_postgres_retirement_20260904/evidence/parquet-runtime-repair-20260910.md#publication-request-budget-and-pending-runtime-verification)
+comparison. Its [recorded request budget and retry](../environmental_parquet_serving_20260912/plan.md)
 supersede the old practical row-count ceiling as a diagnosis of current code.
 Do not execute the old proposal to move verification outside the lock or infer
 that a missing marker during verification proves a hang. Follow the
@@ -42,8 +42,8 @@ that a missing marker during verification proves a hang. Follow the
 
 Section 7's dead-letter and PostgreSQL-size inventory predates the September 9
 database rebuild and September 10 source repairs. Re-read the
-[current recovery checkpoint](../environmental_postgres_retirement_20260904/evidence/repair-preparation-20260910.md)
-and [executor boundary audit](../environmental_postgres_retirement_20260904/evidence/active-lane-database-boundary-20260910.md)
+[current recovery checkpoint](../environmental_parquet_serving_20260912/plan.md)
+and [executor boundary audit](../environmental_parquet_serving_20260912/plan.md)
 before diagnosing a lane. The full-horizon relative-humidity index, remaining
 review/performance ledger, soil-survey low-zoom restoration and broader
 production acceptance are not closed by temperature publication.

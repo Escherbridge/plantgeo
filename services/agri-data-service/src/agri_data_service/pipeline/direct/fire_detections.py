@@ -39,14 +39,13 @@ from agri_data_service.ingest.firms import (
 from agri_data_service.ingest.http import upstream_client
 from agri_data_service.ingest.mtbs import inline_bbox_value
 from agri_data_service.ingest.policy import resolve_bounded_bbox
+from agri_data_service.pipeline.constants import FIRE_DETECTIONS_DIRECT_WRITER_START_DAY, LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.direct import (
     LANE_DAY_OUTCOMES,
     REFUSE_WHOLE_RELEASE,
     USAGE_ERROR_ON_UNCONFIGURED_BBOX,
     DirectWriterContract,
 )
-from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
-from agri_data_service.pipeline.lanes.fire_detections import FIRE_DETECTIONS_DIRECT_WRITER_START_DAY
 from agri_data_service.pipeline.parquet.availability_extension import AvailabilityExtensionTally
 from agri_data_service.pipeline.parquet.availability_index import BotoAvailabilityStorage
 from agri_data_service.pipeline.parquet.derivation import govern_day_absent

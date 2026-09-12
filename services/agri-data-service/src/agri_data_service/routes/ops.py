@@ -467,17 +467,10 @@ async def _load_snapshot(throughput_window_hours: int) -> _Snapshot:
                 generated_at,
             )
             panel_errors: dict[str, str] = {}
-            forecast_rows = await _optional_rows(
-                session,
-                _ScanQuery(
-                    cache_key=_FORECAST_CACHE_KEY,
-                    statement=_FORECAST_STATE_SQL,
-                    parameters={},
-                    ttl_seconds=_FORECAST_CACHE_SECONDS,
-                ),
-                generated_at,
-                panel_errors,
-            )
+            # Forecast serving moved to the governed Parquet plane.  Keep the operator panel's
+            # shape stable while avoiding a PostgreSQL read against the retired forecast tables.
+            forecast_rows: list[dict[str, Any]] = []
+            panel_errors[_FORECAST_CACHE_KEY] = "parquet_only"
             platform_rows = await _optional_rows(
                 session,
                 _ScanQuery(

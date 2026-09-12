@@ -1,10 +1,11 @@
 import { z } from "zod";
+import { TRPCError } from "@trpc/server";
 import { and, asc, eq, sql } from "drizzle-orm";
 import { router, publicProcedure } from "@/lib/server/trpc/init";
 import { features, layers } from "@/lib/server/db/schema";
 import { identityFromSession } from "@/lib/server/security/access-control";
 import { featureVisibilityCondition } from "@/lib/server/security/layer-access";
-import { resolveCachedLayerId } from "@/lib/server/services/environmental-read-model";
+import { resolveCachedLayerId } from "@/lib/server/services/environmental-layer-id";
 
 const viewportQuerySchema = z
   .object({
@@ -22,6 +23,17 @@ const viewportQuerySchema = z
       west < east && south < north,
     { message: "bbox must be ordered west,south,east,north", path: ["bbox"] }
   );
+
+const RELATIONAL_VISUALIZATION_LAYERS = new Set(["interventions"]);
+
+function assertRelationalVisualizationLayer(layerName: string): void {
+  if (!RELATIONAL_VISUALIZATION_LAYERS.has(layerName)) {
+    throw new TRPCError({
+      code: "PRECONDITION_FAILED",
+      message: "Environmental visualization data is available only through its Parquet reader",
+    });
+  }
+}
 
 function viewportCondition([west, south, east, north]: [
   number,
@@ -67,7 +79,7 @@ const FLOW_PROPERTY_KEYS = ["source", "target", "value", "volume"] as const;
  *
  * Both binds carry `::text`. `jsonb -> unknown` is ambiguous between `-> text` (object key) and
  * `-> integer` (array element), and postgres-js sends a bare string with no type OID — the same
- * bind-type trap documented on `environmental-read-model.ts`.
+ * bind-type ambiguity between JSON object keys and array indexes.
  */
 function projectedProperties(keys: readonly string[]) {
   return sql<Record<string, unknown>>`jsonb_build_object(${sql.join(
@@ -118,6 +130,7 @@ export const visualizationRouter = router({
   getHeatmapData: publicProcedure
     .input(viewportQuerySchema)
     .query(async ({ ctx, input }) => {
+      assertRelationalVisualizationLayer(input.layerName);
       const layerId = await resolveCachedLayerId(input.layerName);
       if (layerId === null) return [];
 
@@ -150,6 +163,7 @@ export const visualizationRouter = router({
   getPointData: publicProcedure
     .input(viewportQuerySchema)
     .query(async ({ ctx, input }) => {
+      assertRelationalVisualizationLayer(input.layerName);
       const layerId = await resolveCachedLayerId(input.layerName);
       if (layerId === null) return [];
 
@@ -182,6 +196,7 @@ export const visualizationRouter = router({
   getFlowData: publicProcedure
     .input(viewportQuerySchema)
     .query(async ({ ctx, input }) => {
+      assertRelationalVisualizationLayer(input.layerName);
       const layerId = await resolveCachedLayerId(input.layerName);
       if (layerId === null) return [];
 

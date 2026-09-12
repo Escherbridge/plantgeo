@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Final
 from agri_data_service.config import settings
 from agri_data_service.db.engine import local_source_loader_session
 from agri_data_service.foundation.parquet.paths import partition_day_statuses
+from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.direct import (
     IDEMPOTENT_NOOP,
     LANE_DAY_OUTCOMES,
@@ -49,7 +50,6 @@ from agri_data_service.pipeline.direct.climate.source import (
     fetch_climate_day,
 )
 from agri_data_service.pipeline.direct.climate.support import NASA_POWER_SUPPORT_CELL_COUNT, load_nasa_power_support
-from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.parquet.availability_extension import (
     AvailabilityExtensionTally,
     retry_pending_availability,

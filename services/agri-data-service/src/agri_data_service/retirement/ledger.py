@@ -23,13 +23,11 @@ deletes the entries, and the drop needs it to read clean first. `MATVIEW_REFRESH
 below breaks the circle with an ASSERTED exemption over exactly those two files, for exactly the three
 relations that have such an entry, for `materialized_view_drop` only.
 
-WHAT A DROP FORM IS, AND WHY `geo.features` HAS ONLY ONE. `sql/agent/feature_value_near_point.sql`
-keeps a live PostgreSQL read of `geo.features` for `interventions`, a community layer RUNBOOK 0.26.1
-keeps in PostgreSQL permanently. There is therefore no future in which that table drops, and the wave
-of work that assumed there was would have been wasted. The relation's only permitted form here is
-`row_delete` -- "drop these rows for these seven layers" -- and asking for a table drop raises
-`DropFormRefusedError` and emits no packet at all, rather than emitting a blocked one that a later reader
-might mistake for something an argument could unblock.
+WHAT A DROP FORM IS, AND WHY `geo.features` HAS ONLY ONE. The environmental feature rows are
+retired by layer while the populated relation remains available to the retained feature-serving
+plane. The agent no longer reads `geo.features`; an unadmitted `interventions` Parquet lane is a
+typed refusal. The relation's only permitted form here is `row_delete` -- "drop these rows for these
+seven layers" -- and asking for a table drop raises `DropFormRefusedError` and emits no packet at all.
 """
 
 from __future__ import annotations
@@ -507,19 +505,6 @@ def _geo_features_candidate(inventory: InventoryRow) -> DropCandidate:
             SearchTerm("watershed_tiles", "Martin tile function; its z>=10 branch reads geo.features directly"),
         ),
         layer_scopes=_geo_features_layer_scopes(),
-        reader_exemptions=(
-            ReaderExemption(
-                path="services/agri-data-service/src/agri_data_service/sql/agent/feature_value_near_point.sql",
-                reason=(
-                    "reads geo.features for `interventions` only, which RUNBOOK 0.26.1 keeps in PostgreSQL "
-                    "permanently; the caller checks the surface against the catalogue, and none of the seven "
-                    "environmental layers routes here any more (the statement's own header, 2026-09-04). This "
-                    "exemption is ASSERTED rather than left absent -- the wave-C review's complaint about the "
-                    "guard test was exactly that it passed by not listing the relation"
-                ),
-                applies_to_forms=frozenset({str(DropForm.ROW_DELETE)}),
-            ),
-        ),
         row_filter_template=_GEO_FEATURES_ROW_FILTER_TEMPLATE,
         notes=(
             "geo.geometry is gated transitively through geo.features.geometry_id and does not clear with "

@@ -44,6 +44,6 @@ verdict RED.
 
 ## Authority boundary
 
-A GREEN verdict may hand evidence to `postgres_shrink_ingest_repoint_20260825` for its P5/P6
+A GREEN verdict may hand evidence to `environmental_parquet_serving_20260912` for its P5/P6
 retirement review. It does not disable a writer, delete PostgreSQL/R2 data, run a retirement
 migration or authorize an unreviewed production mutation.

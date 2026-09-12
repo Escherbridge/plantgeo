@@ -4,10 +4,9 @@ Layer L2: may import `foundation`, `warehouse` and `db`; may NOT import method, 
 interface. It lives in `pipeline/parquet/` and deliberately NOT in `pipeline/lanes/` -- a module
 inside that directory importing its siblings would (correctly) fail
 `tests/test_layer_import_contract.py::test_lanes_do_not_import_each_other`. The registry is not a
-lane; it is the one module allowed to know all thirty-two of them -- six database-backed, six
-hand-written source-direct lanes (watersheds and evacuation-zones swapped 2026-09-06; burn-severity,
-drought, sensors and weather-observations swapped 2026-09-07), eleven source-direct NASA POWER
-streams, eight source-direct Open-Meteo ERA5-Land streams, and the calendar dimension.
+lane; it is the one module allowed to know all thirty-two of them -- thirty-one source-direct
+environmental lanes and the calendar dimension. No environmental registration has a PostgreSQL
+adapter or fallback; the direct source packages own writes and this registry refuses generic exports.
 
 IT IMPORTS EXACTLY FIVE MODULES FROM `pipeline/direct/`, AND NOTHING ELSE FROM ANY OF THOSE PACKAGES:
 `climate/products.py`, `soil/products.py` and `vegetation/products.py` for floors and lags, and
@@ -22,20 +21,16 @@ EVERY LANE DECLARES WHAT ITS PARTITION DAY MEANS. `daily_series` and `release_se
 publication lag off the calendar; `static_lookup` keys to a SOURCE WATERMARK -- the source's own
 "when did this last change" -- and is otherwise idle. See `foundation/parquet/lane_contract.py`
 for the vocabulary and `AGENTS.md` in this directory for the floor/lag evidence table, which
-floors are declared and which are fallbacks.
+floors are declared and which are measured or provisional.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, timedelta
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Final, Protocol
-from uuid import UUID
 
-from sqlalchemy import text
-
-from agri_data_service.db.sql_queries import load_query_sql
 from agri_data_service.foundation.parquet.calendar import (
     CALENDAR_REQUIRED_FORWARD_DAYS,
     CALENDAR_STREAM,
@@ -51,6 +46,11 @@ from agri_data_service.foundation.parquet.lane_contract import (
     validate_lane_nature,
 )
 from agri_data_service.foundation.parquet.paths import validate_layer_slug
+from agri_data_service.pipeline.constants import (
+    FIRE_DETECTIONS_DIRECT_WRITER_START_DAY,
+    LANE_BASE_ZOOM_TIER,
+    WATER_GAUGES_DIRECT_WRITER_START_DAY,
+)
 from agri_data_service.pipeline.direct.climate.products import (
     CLIMATE_FIELD_PRODUCTS,
     CLIMATE_METEOROLOGY_PUBLICATION_LAG_DAYS,
@@ -63,23 +63,9 @@ from agri_data_service.pipeline.direct.soil.products import (
 )
 from agri_data_service.pipeline.direct.vegetation.products import VEGETATION_DIRECT_WRITER_START_DAY
 from agri_data_service.pipeline.direct.watersheds.watermark import read_watersheds_source_watermark
-from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.lanes.calendar import export_calendar_version
-from agri_data_service.pipeline.lanes.fire_detections import (
-    FIRE_DETECTIONS_DIRECT_WRITER_START_DAY,
-    export_fire_detections_day,
-)
-from agri_data_service.pipeline.lanes.fire_perimeters import export_fire_perimeters_day
-from agri_data_service.pipeline.lanes.signal import export_signal_day
-from agri_data_service.pipeline.lanes.soil_survey import POLYGON_KEY_BATCH_SIZE, export_soil_survey_release
-from agri_data_service.pipeline.lanes.vegetation import export_vegetation_day
-from agri_data_service.pipeline.lanes.water_gauges import (
-    WATER_GAUGES_DIRECT_WRITER_START_DAY,
-    export_water_gauges_day,
-)
 from agri_data_service.pipeline.parquet.objectstore import (
     AbsenceWriteReceipt,
-    EmptyPartitionError,
     ParquetWriteReceipt,
 )
 from agri_data_service.warehouse.parquet.schema import SIGNAL_PLANE_STREAM
@@ -96,36 +82,13 @@ from agri_data_service.warehouse.schemas.watersheds import WATERSHEDS_STREAM
 from agri_data_service.warehouse.schemas.weather_observations import WEATHER_OBSERVATIONS_STREAM
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Iterable, Mapping, Sequence
+    from collections.abc import Iterable, Mapping, Sequence
 
     from sqlalchemy.ext.asyncio import AsyncSession
-    from sqlalchemy.sql.elements import TextClause
 
     from agri_data_service.pipeline.direct.climate.products import ClimateFieldProduct
     from agri_data_service.pipeline.direct.soil.products import SoilFieldProduct
     from agri_data_service.pipeline.parquet.objectstore import ObjectStore
-
-_SPATIAL_CELL_IDS_SQL: Final = text(load_query_sql("pipeline/lane_registry_spatial_cell_ids.sql"))
-_LAYER_ID_SQL: Final = text(load_query_sql("pipeline/lane_registry_layer_id.sql"))
-_SOIL_SURVEY_POLYGON_KEYS_SQL: Final = text(load_query_sql("pipeline/lane_registry_soil_survey_polygon_keys.sql"))
-
-# The TWO static lanes still keyed to a Postgres clock. Each query is transcribed from its own lane's
-# day export so the watermark and the snapshot describe exactly one population; see the file headers.
-# `fire-perimeters` joined the static lanes on 2026-09-04 -- it had been registered `daily_series`
-# over a table that holds one row per WFIGS incident refreshed in place, so its partitions sliced a
-# snapshot along an axis the source does not have; see its export SQL header.
-#
-# THERE WERE FOUR UNTIL 2026-09-06. `watersheds` and `evacuation-zones` were swapped that day, adapter
-# and watermark together, onto source-direct clocks that read no Postgres at all -- NHDPlus_HR's own
-# `loaddate` and a content digest of the captured Oregon OEM population -- and their two query files
-# were DELETED rather than left orphaned (`tests/test_sql_tree_conventions.py::test_loaded_exactly_once`
-# refuses a file no `load_query_sql` call names). See those two registrations below for why each swap
-# had to move both fields at once. `fire-perimeters` has a built source-direct replacement and still
-# reads the query below, because its executor lane is shadow and this is the clock the GENERIC
-# gap-fill driver reads until an owner activates it.
-_FIRE_PERIMETERS_WATERMARK_SQL: Final = text(load_query_sql("pipeline/lane_watermark_fire_perimeters.sql"))
-_SOIL_SURVEY_WATERMARK_SQL: Final = text(load_query_sql("pipeline/lane_watermark_soil_survey.sql"))
-
 
 class LaneRegistryError(RuntimeError):
     """Raised when a lane's arguments cannot be resolved, or an export reports an impossible shape."""
@@ -188,7 +151,7 @@ class LaneRegistration:
     forecast_module: str | None = None
     # A `static_lookup` lane's clock. Mandatory for that nature and forbidden for the others.
     watermark: LaneWatermarkResolver | None = None
-    # Last day the generic PostgreSQL writer owns; newer days belong to a dedicated writer.
+    # Historical ownership boundary retained for audit; it does not authorize a database writer.
     writer_ceiling: date | None = None
 
     def __post_init__(self) -> None:
@@ -279,85 +242,6 @@ def _from_absence(receipt: AbsenceWriteReceipt) -> LaneRunResult:
     return LaneRunResult(part_count=0, row_count=0, byte_count=receipt.byte_count, absence_recorded=True)
 
 
-def _coerce_uuid(value: object, *, column: str) -> UUID:
-    """Narrow one untrusted result-set value to a UUID, naming the column when it is neither."""
-    if isinstance(value, UUID):
-        return value
-    if isinstance(value, str):
-        try:
-            return UUID(value)
-        except ValueError as exc:
-            raise LaneRegistryError(f"{column} {value!r} is not a uuid") from exc
-    raise LaneRegistryError(f"{column} came back as {type(value).__name__}, not a uuid")
-
-
-def _coerce_text(value: object, *, column: str) -> str:
-    """Narrow one untrusted result-set value to a non-blank string, naming the column when it is not."""
-    if isinstance(value, UUID):
-        return str(value)
-    if not isinstance(value, str) or not value.strip():
-        raise LaneRegistryError(f"{column} came back as {value!r}, which is not a usable identifier")
-    return value
-
-
-async def _spatial_cell_ids(session: AsyncSession) -> tuple[UUID, ...]:
-    """Read every analysis cell the signal and vegetation exports batch over."""
-    result = await session.execute(_SPATIAL_CELL_IDS_SQL)
-    return tuple(_coerce_uuid(row["cell_id"], column="agri.spatial_cell.id") for row in result.mappings())
-
-
-async def spatial_cell_ids(session: AsyncSession) -> tuple[UUID, ...]:
-    """Expose the bounded analysis-cell population to lane-specific admin commands."""
-    return await _spatial_cell_ids(session)
-
-
-async def _layer_id(session: AsyncSession, layer_name: str) -> str:
-    """Resolve one `geo.layers` slug to its id, failing closed when the layer does not exist."""
-    result = await session.execute(_LAYER_ID_SQL, {"layer_name": layer_name})
-    ids = [_coerce_text(row["layer_id"], column="geo.layers.id") for row in result.mappings()]
-    if len(ids) != 1:
-        raise LaneRegistryError(
-            f"geo.layers holds {len(ids)} rows named {layer_name!r}; a day export scoped to an unresolved "
-            "layer would silently export the wrong population"
-        )
-    return ids[0]
-
-
-async def _soil_survey_polygon_key_batches(session: AsyncSession) -> AsyncIterator[tuple[str, ...]]:
-    """Walk the published SSURGO delineation keys one keyset page at a time, never as one list.
-
-    THE POPULATION IS THE REASON, AND IT IS MEASURED. The PNW envelope holds 1,507,623 delineations
-    (docs/lanes/soil-survey.md section 5 point 8) and production passed 200,000 on 2026-08-23 -- so
-    the ceiling that used to guard a single read-everything query was not protecting this lane, it
-    was failing it on every tick, which is why soil-survey has never written one object. A page is
-    `POLYGON_KEY_BATCH_SIZE` keys, the same bound the export's own row read uses, so one page is one
-    round trip on each side.
-
-    Paging by the LAST KEY rather than by OFFSET is what keeps the walk bounded: an offset walk
-    re-sorts the whole distinct set for every page, and page N costs N times page 1.
-    """
-    after_key = ""
-    while True:
-        result = await session.execute(
-            _SOIL_SURVEY_POLYGON_KEYS_SQL, {"after_key": after_key, "page_size": POLYGON_KEY_BATCH_SIZE}
-        )
-        page = tuple(_coerce_text(row["mupolygonkey"], column="soil-survey.mupolygonkey") for row in result.mappings())
-        if not page:
-            return
-        yield page
-        after_key = page[-1]
-
-
-async def _batches_after(
-    first: tuple[str, ...],
-    rest: AsyncIterator[tuple[str, ...]],
-) -> AsyncIterator[tuple[str, ...]]:
-    """Re-attach the page already pulled to prove a release is not empty, so no page is read twice."""
-    yield first
-    async for page in rest:
-        yield page
-
-
 # --- Source watermarks: the clock a static lane keys to ----------------------------------------
 #
 # A static lane's partition day is a VERSION STAMP, not an observation time, so nothing about a
@@ -367,67 +251,6 @@ async def _batches_after(
 # candidate is `geo.geometry.last_confirmed_at`, which advances on each re-fetch of unchanged
 # ground (src/lib/server/services/usda-soil.ts:769,833); putting it in a version stamp would
 # reinstate the daily churn this model removes.
-
-
-def _coerce_instant(value: object, *, column: str, slug: str) -> datetime | None:
-    """Narrow one untrusted `timestamptz` result value, refusing a naive one rather than guessing UTC."""
-    if value is None:
-        return None
-    if not isinstance(value, datetime):
-        raise LaneRegistryError(
-            f"{slug} watermark column {column} came back as {type(value).__name__}, not a timestamp"
-        )
-    if value.tzinfo is None:
-        raise LaneRegistryError(
-            f"{slug} watermark column {column} came back timezone-naive; assuming a zone for a version stamp "
-            "would silently shift it by up to a day"
-        )
-    return value
-
-
-def _coerce_row_count(value: object, *, slug: str) -> int:
-    """Narrow the population count the watermark describes; it rides the basis string as evidence."""
-    if isinstance(value, int):
-        return value
-    raise LaneRegistryError(f"{slug} watermark row_count came back as {type(value).__name__}, not an integer")
-
-
-async def _read_source_watermark(
-    session: AsyncSession,
-    statement: TextClause,
-    *,
-    slug: str,
-    evidence_columns: tuple[str, ...],
-) -> SourceWatermark:
-    """Run one watermark query and fold its single row into a cited `SourceWatermark`."""
-    result = await session.execute(statement)
-    rows = list(result.mappings())
-    if len(rows) != 1:
-        raise LaneRegistryError(
-            f"{slug} watermark query returned {len(rows)} rows; it aggregates and must return exactly one"
-        )
-    row = rows[0]
-    row_count = _coerce_row_count(row["row_count"], slug=slug)
-    evidence = ", ".join(
-        f"{column}={_render_instant(_coerce_instant(row[column], column=column, slug=slug))}"
-        for column in evidence_columns
-    )
-    watermark_at = _coerce_instant(row["watermark_at"], column="watermark_at", slug=slug)
-    if watermark_at is None:
-        return SourceWatermark(day=None, basis=f"{slug}: no published rows ({evidence}; row_count={row_count})")
-    # The instant rides ALONGSIDE the day it folds to; the day alone cannot separate two changes
-    # made on one UTC date. See `foundation/parquet/lane_contract.py`.
-    watermark_utc = watermark_at.astimezone(UTC)
-    return SourceWatermark(
-        day=watermark_utc.date(),
-        instant=watermark_utc,
-        basis=f"{slug}: GREATEST({evidence}) over {row_count} published rows",
-    )
-
-
-def _render_instant(value: datetime | None) -> str:
-    """Render one evidence column for the basis string; `null` is a real, reportable answer."""
-    return "null" if value is None else value.astimezone(UTC).isoformat()
 
 
 async def _watersheds_watermark(
@@ -469,32 +292,27 @@ async def _evacuation_zones_watermark(
 
 
 async def _fire_perimeters_watermark(
-    session: AsyncSession,
-    store: ObjectStore,  # noqa: ARG001 - uniform resolver shape; this lane's clock is in Postgres
+    session: AsyncSession,  # noqa: ARG001 - uniform resolver shape; no database fallback remains
+    store: ObjectStore,  # noqa: ARG001 - direct forward substitutes its source watermark
     *,
-    today: date,  # noqa: ARG001 - the source's own change time, never this run's date
+    today: date,  # noqa: ARG001 - uniform resolver shape
 ) -> SourceWatermark:
-    """When the published WFIGS incident-perimeter set last changed."""
-    return await _read_source_watermark(
-        session,
-        _FIRE_PERIMETERS_WATERMARK_SQL,
-        slug=FIRE_PERIMETERS_STREAM,
-        evidence_columns=("feature_updated_at", "feature_created_at", "geometry_version_valid_from"),
+    """Refuse the retired database watermark; direct forward owns the source clock."""
+    raise LaneRegistryError(
+        "fire-perimeters has no PostgreSQL watermark; run "
+        "`python -m agri_data_service.pipeline.direct.fire_perimeters` for source-direct publication"
     )
 
 
 async def _soil_survey_watermark(
-    session: AsyncSession,
-    store: ObjectStore,  # noqa: ARG001 - uniform resolver shape; this lane's clock is in Postgres
+    session: AsyncSession,  # noqa: ARG001 - uniform resolver shape; no database fallback remains
+    store: ObjectStore,  # noqa: ARG001 - no source-direct soil-survey publisher is admitted yet
     *,
-    today: date,  # noqa: ARG001 - the source's own vintage, never this run's date
+    today: date,  # noqa: ARG001 - uniform resolver shape
 ) -> SourceWatermark:
-    """The newer of SSURGO's own saverest vintage and the day this warehouse's published set grew."""
-    return await _read_source_watermark(
-        session,
-        _SOIL_SURVEY_WATERMARK_SQL,
-        slug=SOIL_SURVEY_STREAM,
-        evidence_columns=("source_vintage_at", "feature_created_at"),
+    """Refuse the retired database watermark until a source-direct SSURGO lane is admitted."""
+    raise LaneRegistryError(
+        "soil-survey has no PostgreSQL watermark; publish SSURGO through its source-direct Parquet lane"
     )
 
 
@@ -506,10 +324,10 @@ async def _calendar_watermark(
 ) -> SourceWatermark:
     """The version day the calendar dimension must carry, from the clock and its own object listing.
 
-    The other three watermarks ask Postgres what changed. This one has no source system to ask, so
+    The other source watermarks ask their upstream source what changed. This one has no source system to ask, so
     it asks the requirement instead: a version stamped `D` covers `D + CALENDAR_VERSION_FORWARD_DAYS`,
     and the dimension is current while that still reaches `today + CALENDAR_REQUIRED_FORWARD_DAYS`.
-    Returning the newest held version while coverage suffices is what makes the generic rule -- a
+    Returning the newest held version while coverage suffices is what makes the registry rule -- a
     partition dated at or after the watermark means current -- resolve without a special case.
 
     It carries NO instant, and cannot: a computed requirement has no source change time to compare
@@ -536,111 +354,6 @@ async def _calendar_watermark(
             f"{CALENDAR_VERSION_FORWARD_DAYS} days forward and must reach today plus "
             f"{CALENDAR_REQUIRED_FORWARD_DAYS}"
         ),
-    )
-
-
-def _refuse_empty_day(slug: str, *, day: date, subject: str) -> EmptyPartitionError:
-    """Build the zero-row refusal `gap_fill.py` turns into a governed absence for this lane-day."""
-    return EmptyPartitionError(
-        f"refusing to write a zero-row {slug!r} observed partition for {day}: the warehouse held no {subject} "
-        "for this day, and an empty file reads as a present day and hides the gap"
-    )
-
-
-async def _fill_signal(
-    session: AsyncSession,
-    store: ObjectStore,
-    *,
-    day: date,
-    run_id: str,  # noqa: ARG001 - uniform adapter shape; this lane records no absence of its own
-) -> LaneRunResult:
-    """Export one settled day of the governed signal plane across every analysis cell."""
-    cell_ids = await _spatial_cell_ids(session)
-    if not cell_ids:
-        raise LaneRegistryError(
-            "agri.spatial_cell is empty, so the signal plane has no analysis grid to export; that is a broken "
-            "warehouse, not an empty day, and must not be recorded as a governed absence"
-        )
-    return normalise_export_outcome(await export_signal_day(session, store, day=day, cell_ids=cell_ids))
-
-
-async def _fill_vegetation(
-    session: AsyncSession,
-    store: ObjectStore,
-    *,
-    day: date,
-    run_id: str,  # noqa: ARG001 - uniform adapter shape; this lane records no absence of its own
-) -> LaneRunResult:
-    """Export one settled day of the governed NDVI plane across every analysis cell."""
-    cell_ids = await _spatial_cell_ids(session)
-    if not cell_ids:
-        raise LaneRegistryError(
-            "agri.spatial_cell is empty, so the vegetation plane has no analysis grid to export; that is a "
-            "broken warehouse, not an empty day"
-        )
-    return normalise_export_outcome(await export_vegetation_day(session, store, day=day, cell_ids=cell_ids))
-
-
-async def _fill_water_gauges(
-    session: AsyncSession,
-    store: ObjectStore,
-    *,
-    day: date,
-    run_id: str,  # noqa: ARG001 - uniform adapter shape; this lane records no absence of its own
-) -> LaneRunResult:
-    """Export one settled day of the USGS NWIS gauge reading log."""
-    return normalise_export_outcome(await export_water_gauges_day(session, store, day=day))
-
-
-async def _fill_fire_detections(
-    session: AsyncSession,
-    store: ObjectStore,
-    *,
-    day: date,
-    run_id: str,
-) -> LaneRunResult:
-    """Export one settled day of the FIRMS cell-day aggregate, or record the lane's own absence."""
-    layer_id = await _layer_id(session, FIRE_DETECTIONS_STREAM)
-    return normalise_export_outcome(
-        await export_fire_detections_day(session, store, day=day, layer_id=layer_id, run_id=run_id)
-    )
-
-
-async def _fill_fire_perimeters(
-    session: AsyncSession,
-    store: ObjectStore,
-    *,
-    day: date,
-    run_id: str,  # noqa: ARG001 - uniform adapter shape; the driver records this lane's absences
-) -> LaneRunResult:
-    """Snapshot every published WFIGS incident perimeter under `day`, its source watermark's version date."""
-    return normalise_export_outcome(await export_fire_perimeters_day(session, store, day=day))
-
-
-async def _fill_soil_survey(
-    session: AsyncSession,
-    store: ObjectStore,
-    *,
-    day: date,
-    run_id: str,  # noqa: ARG001 - uniform adapter shape; the driver records this lane's absences
-) -> LaneRunResult:
-    """Stream every published SSURGO delineation under `day`, its source watermark's vintage date.
-
-    The first key page is pulled HERE rather than inside the export, because an empty first page is
-    the one answer the streaming export cannot phrase for itself: it would reach `write_partition`
-    with a zero-row table and surface the writer's generic refusal, losing the fact that this lane's
-    emptiness is a KNOWN, honest state -- soil-survey is warmed lazily by viewport reads
-    (docs/lanes/soil-survey.md section 2). The page is handed straight back to the export, so
-    proving the release non-empty costs no second query.
-    """
-    batches = _soil_survey_polygon_key_batches(session)
-    first_batch = await anext(batches, None)
-    if first_batch is None:
-        raise _refuse_empty_day(SOIL_SURVEY_STREAM, day=day, subject="published SSURGO delineation")
-    return normalise_export_outcome(
-        await export_soil_survey_release(
-            session, store, day=day, mupolygonkey_batches=_batches_after(first_batch, batches)
-        )
     )
 
 
@@ -685,7 +398,7 @@ def _source_direct_refusal(writer_module: str) -> LaneAdapter:
     ) -> LaneRunResult:
         """Refuse a generic export of a source-direct lane, naming the writer that actually owns it."""
         raise LaneRegistryError(
-            f"this lane has no PostgreSQL producer, so the generic gap-fill driver cannot export "
+            f"this lane has no PostgreSQL producer, so no generic export may run for "
             f"{day.isoformat()}. Its days are written by `python -m {writer_module}`, which "
             "substitutes its own adapter."
         )
@@ -695,28 +408,15 @@ def _source_direct_refusal(writer_module: str) -> LaneAdapter:
 
 _refuse_climate_direct_export: Final[LaneAdapter] = _source_direct_refusal("agri_data_service.pipeline.direct.climate")
 _refuse_soil_direct_export: Final[LaneAdapter] = _source_direct_refusal("agri_data_service.pipeline.direct.soil")
-#: The two STATIC source-direct lanes, swapped off Postgres on 2026-09-06. Unlike climate and soil --
-#: which were never database-backed -- these two had a working PostgreSQL producer until that day, so
-#: each refusal is also a redirection: the population it used to export is still published, by
-#: `python -m agri_data_service.pipeline.direct.<package>`, under a version stamp that package
-#: computes for itself.
+#: Static source-direct lanes use a source-owned watermark and refuse generic exports.
 _refuse_watersheds_direct_export: Final[LaneAdapter] = _source_direct_refusal(
     "agri_data_service.pipeline.direct.watersheds"
 )
 _refuse_evacuation_zones_direct_export: Final[LaneAdapter] = _source_direct_refusal(
     "agri_data_service.pipeline.direct.evacuation_zones"
 )
-#: The four SERIES source-direct lanes, swapped off Postgres on 2026-09-07. Each of these four
-#: registrations used to carry a Postgres-reading adapter held back by a condition WRITTEN INTO THE
-#: REGISTRATION ITSELF -- "swap it in the same push that activates the direct lane", "once the owner
-#: stops `mtbs-forward`", "while `geo.features` is the only path to older days". Every one of those
-#: conditions has since been discharged (the four `*-direct-forward` executor lanes are ACTIVE and
-#: their `parquet-*` counterparts retired; `postgres-sensors` is deleted), so the adapters were
-#: routed here rather than left as gates nobody could tell from live ones. Unlike watersheds and
-#: evacuation-zones, these four are `daily_series`/`release_series` lanes, so the refusal is their
-#: WHOLE guard against a re-activated generic lane: `conflicts_with` on the executor specs stops the
-#: two writers running together, and no `writer_ceiling` divides their windows -- see each
-#: registration for why its lane has no honest boundary day to declare.
+#: Series source-direct lanes likewise refuse generic exports; their direct forward/backfill modules
+#: own the full publication window.
 _refuse_burn_severity_direct_export: Final[LaneAdapter] = _source_direct_refusal(
     "agri_data_service.pipeline.direct.burn_severity"
 )
@@ -725,12 +425,30 @@ _refuse_sensors_direct_export: Final[LaneAdapter] = _source_direct_refusal("agri
 _refuse_weather_observations_direct_export: Final[LaneAdapter] = _source_direct_refusal(
     "agri_data_service.pipeline.direct.weather_observations"
 )
+_refuse_fire_detections_direct_export: Final[LaneAdapter] = _source_direct_refusal(
+    "agri_data_service.pipeline.direct.fire_detections"
+)
+_refuse_fire_perimeters_direct_export: Final[LaneAdapter] = _source_direct_refusal(
+    "agri_data_service.pipeline.direct.fire_perimeters"
+)
+_refuse_signal_direct_export: Final[LaneAdapter] = _source_direct_refusal(
+    "agri_data_service.pipeline.direct.signal"
+)
+_refuse_soil_survey_direct_export: Final[LaneAdapter] = _source_direct_refusal(
+    "agri_data_service.pipeline.direct.soil_survey"
+)
+_refuse_vegetation_direct_export: Final[LaneAdapter] = _source_direct_refusal(
+    "agri_data_service.pipeline.direct.vegetation"
+)
+_refuse_water_gauges_direct_export: Final[LaneAdapter] = _source_direct_refusal(
+    "agri_data_service.pipeline.direct.water_gauges"
+)
 
 
-# --- The twelve hand-written registrations, ten of them database-backed --------------------------
+# --- The twelve hand-written registrations, all source-direct except the calendar dimension ----
 #
 # Every floor and lag below is either quoted from that lane's `docs/lanes/<slug>.md` contract or
-# marked FALLBACK. A floor that is wrong in the early direction invents thousands of phantom
+# marked provisional. A floor that is wrong in the early direction invents thousands of phantom
 # gap-days the driver will then spend a cron tick a night failing to fill; a floor that is wrong in
 # the late direction silently omits real days. Both are recorded honestly rather than smoothed over.
 #
@@ -740,20 +458,14 @@ _refuse_weather_observations_direct_export: Final[LaneAdapter] = _source_direct_
 #   static_lookup  -- the day is a VERSION STAMP and the lane keys to a source watermark
 #                     (evacuation-zones, soil-survey, watersheds, and `calendar` below)
 #
-# `interventions` is deliberately absent: RUNBOOK section 0.26.1 keeps that lane in Postgres.
+# `interventions` is deliberately absent: it is a control-plane lookup retained separately from the
+# environmental Parquet lanes.
 #
-# THE TUPLE'S NAME IS NOW HALF WRONG, and that is deliberate rather than unnoticed. Six of the
-# twelve registrations below no longer read Postgres at all -- `watersheds` and `evacuation-zones`
-# (swapped 2026-09-06) plus `burn-severity`, `drought`, `sensors` and `weather-observations`
-# (swapped 2026-09-07) -- yet they stay HERE rather than moving into `_SOURCE_DIRECT_REGISTRATIONS`
-# below, because that tuple is GENERATED from a product list and these six are hand-written
-# registrations with measured, cited floors. Renaming the tuple would rewrite the meaning of
-# `CALENDAR_HISTORY_FLOOR`'s derivation for no gain; what matters is that `LANE_REGISTRATIONS` is
-# the union and every lane's own registration says which it is. The six that DO still read Postgres
-# are `fire-detections`, `fire-perimeters`, `signal`, `soil-survey`, `vegetation` and
-# `water-gauges`.
+# The historical tuple name is retained for migration compatibility with imports, but its adapters
+# are now all refusal adapters. The source-direct packages own every environmental write; no generic
+# registration reads PostgreSQL.
 
-_DATABASE_BACKED_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = (
+_HAND_WRITTEN_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = (
     LaneRegistration(
         # SOURCE-DIRECT SINCE 2026-09-07. `burn-severity-direct-forward`
         # (execution/job_executor_service.py) is ACTIVE and `parquet-burn-severity` is retired, so the
@@ -772,9 +484,8 @@ _DATABASE_BACKED_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = (
         # NO `writer_ceiling`, and none is possible to cite: `forward.py` (newest-first) and
         # `backfill.py` (oldest-first) walk ONE candidate set, `products.governed_release_days()`, and
         # that set is the whole window this registration covers -- there is no boundary day between a
-        # generic and a direct writer to declare. `conflicts_with` on the two executor specs remains
-        # the mutual-exclusion guard if `parquet-burn-severity` is ever re-activated, and this refusal
-        # is what makes a re-activation loud instead of a frozen Postgres re-export.
+        # generic and direct writers to divide. The executor no longer registers a generic lane, and
+        # this refusal remains as a defensive guard for direct callers of the registry.
         slug=BURN_SEVERITY_STREAM,
         adapter=_refuse_burn_severity_direct_export,
         history_floor=date(2020, 11, 24),
@@ -815,11 +526,9 @@ _DATABASE_BACKED_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = (
         # window (forward.py module docstring: "this module owns the FULL floor-to-settled window"). A
         # ceiling separating the two would have to sit at or below `history_floor`: below it
         # `__post_init__` rejects outright ("before its history floor"), and AT it would be an invented
-        # boundary handing the generic writer exactly one day, cited to nothing. The two writers are
-        # total substitutes, not neighbours, so their mutual exclusion stays where substitutes are
-        # enforced -- `conflicts_with` on both executor specs -- and this refusal is what a
-        # re-activated `parquet-drought` now hits instead of silently re-exporting a frozen
-        # `geo.drought_areas` over days the direct writer owns.
+        # boundary handing a database writer exactly one day, cited to nothing. The direct package
+        # owns the full floor-to-settled window, and this refusal protects direct callers from a
+        # stale database export.
         adapter=_refuse_drought_direct_export,
         history_floor=date(2022, 8, 9),
         publication_lag_days=4,
@@ -855,12 +564,8 @@ _DATABASE_BACKED_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = (
         # still there.
         #
         # A `static_lookup` CANNOT carry a `writer_ceiling` (`__post_init__` refuses one: a
-        # version-stamped lane has no calendar window to divide between two writers), so `conflicts_with`
-        # on the two executor specs is the ENTIRE mutual-exclusion guard here -- the same argument
-        # drought's registration makes for a different reason. Until an owner moves
-        # `evacuation-zones-direct-forward` into PLANTGEO_JOB_EXECUTOR_ACTIVE_LANES in place of
-        # `parquet-evacuation-zones`, the generic lane can still be SCHEDULED; it now refuses instead
-        # of exporting, which is a loud failure naming the writer that owns the layer.
+        # version-stamped lane has no calendar window to divide between two writers). The generic
+        # executor lane is removed; direct callers receive a loud refusal naming the owning writer.
         #
         # THE WATERMARK WAS THE HARDER HALF, and it was not a like-for-like SQL edit.
         # `sql/pipeline/lane_watermark_evacuation_zones.sql` (deleted in this edit) read `geo.features`
@@ -890,7 +595,7 @@ _DATABASE_BACKED_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = (
     ),
     LaneRegistration(
         slug=FIRE_DETECTIONS_STREAM,
-        adapter=_fill_fire_detections,
+        adapter=_refuse_fire_detections_direct_export,
         history_floor=date(2000, 11, 1),
         publication_lag_days=2,
         nature="daily_series",
@@ -905,20 +610,10 @@ _DATABASE_BACKED_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = (
         ),
     ),
     LaneRegistration(
-        # DELIBERATELY STILL `_fill_fire_perimeters` AND `_fire_perimeters_watermark`, both
-        # Postgres-reading, after the 2026-09-06 wave-B join registered `fire-perimeters-direct-forward`
-        # (execution/job_executor_service.py) beside them in SHADOW. The direct writer substitutes BOTH
-        # of them onto this registration at runtime before calling the shared driver
-        # (`pipeline/direct/fire_perimeters/forward.py`), so the registered pair is the FALLBACK the
-        # generic gap-fill lane still uses, never this lane's only clock.
-        #
-        # NO `writer_ceiling`, and none is possible: `__post_init__` refuses one on a version-stamped
-        # lane outright. Nor is there a backfill to bound one against -- WFIGS `_Current` is a live
-        # mutable snapshot that "does not retain what it reported yesterday", so no past version is
-        # re-fetchable and a backfill could only re-stamp TODAY's population under a past day. The swap
-        # of both fields belongs in the same push that drops `geo.features`.
+        # Source-direct publication owns this current-state snapshot. The generic registry refuses
+        # export and the source watermark is intentionally retired with the PostgreSQL tables.
         slug=FIRE_PERIMETERS_STREAM,
-        adapter=_fill_fire_perimeters,
+        adapter=_refuse_fire_perimeters_direct_export,
         history_floor=date(2025, 7, 28),
         publication_lag_days=0,
         nature="static_lookup",
@@ -956,7 +651,7 @@ _DATABASE_BACKED_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = (
         # `pipeline/direct/sensors`.
         #
         # WHAT THE OLD GATE SAID, AND WHY IT NO LONGER HOLDS. This registration used to keep a
-        # Postgres-reading adapter on the argument that NWS retains only a rolling ~6 days
+        # Historical notes: NWS retains only a rolling ~6 days
         # (`pipeline/direct/sensors/forward.py`, SENSORS_MAX_DAYS = NWS_OBSERVATION_RETENTION.days + 1),
         # so the append-only `geo.features` record was the ONLY path to any day older than that window.
         # That is still true of the SOURCE and no longer decides anything here: `postgres-sensors`, the
@@ -971,7 +666,7 @@ _DATABASE_BACKED_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = (
         # STILL NO `writer_ceiling`: this package ships no `*_DIRECT_WRITER_START_DAY`-equivalent
         # constant and no `backfill.py`, so there is no cited ownership-boundary day to declare, and an
         # invented one would divide the window on nothing. `conflicts_with` on the two executor specs is
-        # the mutual-exclusion guard, and this refusal is what a re-activated `parquet-sensors` hits.
+        # direct callers receive a refusal naming the source-direct writer.
         slug=SENSORS_STREAM,
         adapter=_refuse_sensors_direct_export,
         history_floor=date(2026, 7, 29),
@@ -992,7 +687,7 @@ _DATABASE_BACKED_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = (
     ),
     LaneRegistration(
         slug=SIGNAL_PLANE_STREAM,
-        adapter=_fill_signal,
+        adapter=_refuse_signal_direct_export,
         history_floor=date(2022, 4, 30),
         publication_lag_days=9,
         nature="daily_series",
@@ -1007,7 +702,7 @@ _DATABASE_BACKED_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = (
     ),
     LaneRegistration(
         slug=SOIL_SURVEY_STREAM,
-        adapter=_fill_soil_survey,
+        adapter=_refuse_soil_survey_direct_export,
         history_floor=date(2025, 8, 26),
         publication_lag_days=0,
         nature="static_lookup",
@@ -1023,14 +718,9 @@ _DATABASE_BACKED_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = (
     ),
     LaneRegistration(
         slug=VEGETATION_PLANE_STREAM,
-        # DELIBERATELY STILL `_fill_vegetation` (Postgres-reading), NOT a source-direct refusal.
-        # `pipeline/direct/vegetation/backfill.py` republishes every day at or before
-        # `VEGETATION_DIRECT_WRITER_START_DAY` through THIS SAME, UNCHANGED adapter to reach D2 parity
-        # (`backfill.py:149-155`); swapping it for a refusal makes `refuse_pre_ownership_day` reject the
-        # entire backfill window by construction, and vegetation could never reach parity or drop. Route
-        # it only once that backfill is discharged -- see the `writer_ceiling` note below for what IS
-        # safe to register now.
-        adapter=_fill_vegetation,
+        # Source-direct publication owns the full vegetation window. The generic registry refuses
+        # export while historical parity/backfill work is handled by the direct package.
+        adapter=_refuse_vegetation_direct_export,
         history_floor=date(2022, 8, 5),
         publication_lag_days=7,
         nature="daily_series",
@@ -1038,14 +728,8 @@ _DATABASE_BACKED_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = (
         # says bring it into conformance rather than writing a second one beside it), so the
         # registration records the real filename instead of the convention it breaks.
         forecast_module="vegetation_ndvi_forecast",
-        # The generic Postgres-reading exporter stops at `VEGETATION_DIRECT_WRITER_START_DAY` itself
-        # (2026-09-05), one day BEFORE fire-detections/water-gauges' convention of ceiling-minus-one:
-        # `pipeline/direct/vegetation/backfill.py::backfill_ceiling()` is the start day itself, and
-        # `forward.py::history_floor()` begins at `start day + 1`, so the two windows abut with no gap
-        # and no overlap (`backfill_ceiling() + 1 day == forward.history_floor()`, asserted in
-        # `tests/direct/test_vegetation_adapter.py`). This clamps the generic gap-fill driver
-        # (`gap_fill.lane_window`) out of the direct writer's days even though the adapter above is
-        # unchanged -- the SAME Postgres-reading path just never gets asked for a day past the boundary.
+        # The ceiling remains ownership metadata for reconciliation reports; it does not enable a
+        # PostgreSQL writer or create a fallback window.
         writer_ceiling=VEGETATION_DIRECT_WRITER_START_DAY,
         floor_basis=(
             "NATURE daily_series, forecastable (method/monte_carlo/vegetation_ndvi_forecast.py, horizon 30d). "
@@ -1063,7 +747,7 @@ _DATABASE_BACKED_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = (
     ),
     LaneRegistration(
         slug=WATER_GAUGES_STREAM,
-        adapter=_fill_water_gauges,
+        adapter=_refuse_water_gauges_direct_export,
         history_floor=date(2026, 5, 24),
         publication_lag_days=2,
         nature="daily_series",
@@ -1090,12 +774,8 @@ _DATABASE_BACKED_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = (
         # that package's `watermark.py`, which reads the source's own `loaddate` through `source.py`.
         #
         # `writer_ceiling` is refused here as on every `static_lookup` (`__post_init__`: a
-        # version-stamped lane has no calendar window to divide between two writers), so
-        # `conflicts_with` on the two executor specs is the whole mutual-exclusion guard. Until an
-        # owner swaps `parquet-watersheds` for `watersheds-direct-forward` in
-        # PLANTGEO_JOB_EXECUTOR_ACTIVE_LANES, the generic lane can still be scheduled -- it now
-        # refuses rather than exporting, and its census stays `current` on its own terms, because the
-        # published 2026-08-07 version is later than the source's own 2019-11-21 load date.
+        # version-stamped lane has no calendar window to divide between two writers). The generic
+        # executor lane is removed, so only the source watermark can drive this stream.
         slug=WATERSHEDS_STREAM,
         adapter=_refuse_watersheds_direct_export,
         history_floor=date(2026, 8, 7),
@@ -1254,12 +934,12 @@ _SOURCE_DIRECT_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = (
 
 # --- The conformed calendar dimension -----------------------------------------------------------
 #
-# The floor is DERIVED, not declared: the union of every database-backed lane's own floor, so the
+# The floor is DERIVED, not declared: the union of every source-bearing lane's own floor, so the
 # dimension covers every day any lane can key to it. Deriving it is what stops the calendar and the
 # deepest lane (`fire-detections`, 2000-11-01) drifting apart when a floor is next corrected.
 
 CALENDAR_HISTORY_FLOOR: Final[date] = min(
-    registration.history_floor for registration in (*_DATABASE_BACKED_REGISTRATIONS, *_SOURCE_DIRECT_REGISTRATIONS)
+    registration.history_floor for registration in (*_HAND_WRITTEN_REGISTRATIONS, *_SOURCE_DIRECT_REGISTRATIONS)
 )
 
 CALENDAR_REGISTRATION: Final = LaneRegistration(
@@ -1281,7 +961,7 @@ CALENDAR_REGISTRATION: Final = LaneRegistration(
 
 LANE_REGISTRATIONS: Final[tuple[LaneRegistration, ...]] = tuple(
     sorted(
-        (*_DATABASE_BACKED_REGISTRATIONS, *_SOURCE_DIRECT_REGISTRATIONS, CALENDAR_REGISTRATION),
+        (*_HAND_WRITTEN_REGISTRATIONS, *_SOURCE_DIRECT_REGISTRATIONS, CALENDAR_REGISTRATION),
         key=lambda entry: entry.slug,
     )
 )

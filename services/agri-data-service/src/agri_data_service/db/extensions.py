@@ -7,9 +7,10 @@ migration can import it without dragging Sanic, structlog and the async engine i
 ``alembic upgrade head``: importing ``routes.health.contracts`` executes
 ``routes/health/__init__.py``, which imports all three.
 
-Deliberately NOT ``timescaledb`` (dropped 2026-08-25, see ``alembic/archive/AGENTS.md``) and
-deliberately not ``btree_gist``: nothing in the tree uses it, every gist index is on a geometry
-column. See ``db/AGENTS.md`` for why this list is a governance assertion, not a default.
+Deliberately not ``timescaledb``; the current baseline does not use hypertables or continuous
+aggregates. Also deliberately not ``btree_gist``: the `agri` baseline uses no exclusion
+constraint or non-geometry GiST index. See ``db/AGENTS.md`` for why this list is a governance
+assertion, not a default.
 """
 
 from __future__ import annotations

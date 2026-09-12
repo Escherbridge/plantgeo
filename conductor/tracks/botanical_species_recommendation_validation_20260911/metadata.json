@@ -7,7 +7,7 @@
   "depends_on": [
     "botanical_occurrence_parquet_lane_20260911",
     "botanical_species_profile_lookup_20260911",
-    "parquet_reader_cutover_acceptance_20260901"
+    "environmental_parquet_serving_20260912"
   ],
   "related_tracks": [
     "botanical_occurrence_experience_20260911",

@@ -1,5 +1,5 @@
 import { snapshotMetadata } from "./mtbs-snapshot-fixture";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   getPublishedDroughtClassification: vi.fn(),
@@ -61,20 +61,12 @@ vi.mock("@/lib/server/services/soilgrids", () => ({
   getSoilProperties: mocks.getSoilProperties,
 }));
 
-vi.mock("@/lib/server/services/environmental-read-model", async () => {
-  const actual = await vi.importActual<
-    typeof import("@/lib/server/services/environmental-read-model")
-  >("@/lib/server/services/environmental-read-model");
+vi.mock("@/lib/server/services/parquet-day", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/server/services/parquet-day")>();
   return {
     ...actual,
-    // Pinned so the suite does not change meaning at UTC midnight. resolveRequestedObservationDay
-    // stays REAL: every call site in regional-context passes this day explicitly, so the live /
-    // historical / unobserved split under test is the production one.
+    // Keep the suite pinned to a stable server day without loading the retired read model.
     serverCurrentDate: () => "2026-08-09",
-    getPublishedDroughtClassification: mocks.getPublishedDroughtClassification,
-    getPublishedStreamflowGauges: mocks.getPublishedStreamflowGauges,
-    getPublishedWeatherForPoint: mocks.getPublishedWeatherForPoint,
-    getPublishedWeatherForBbox: mocks.getPublishedWeatherForBbox,
   };
 });
 
@@ -278,6 +270,8 @@ function readyPerimeterSnapshot(
 }
 
 beforeEach(() => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date(`${SERVER_TODAY}T12:00:00Z`));
   vi.clearAllMocks();
   mocks.dbSelectResults.length = 0;
   mocks.dbExecuteResults.length = 0;
@@ -302,6 +296,10 @@ beforeEach(() => {
   // in this file exercises soil/MTBS content unless it explicitly overrides these.
   mocks.getSoilProperties.mockRejectedValue(new Error("No soil fixture configured"));
   mocks.getParquetBurnSeverity.mockResolvedValue({ state: "not_generated", requestedDay: "2026-08-09", reason: "lane_never_written" });
+});
+
+afterAll(() => {
+  vi.useRealTimers();
 });
 
 describe("assembling regional context at the days the user is viewing", () => {
@@ -1192,15 +1190,7 @@ describe("community proposals and deferred strategy evidence", () => {
     expect(result.contextIsEmpty).toBe(true);
   });
 
-  it("wires soil properties and governed Parquet MTBS perimeters", async () => {
-    mocks.getSoilProperties.mockResolvedValue({
-      ph: 6.8,
-      organicCarbon: 12,
-      nitrogen: 1.1,
-      bulkDensity: 1.3,
-      cec: 14,
-      ocd: 3.2,
-    });
+  it("keeps retired soil properties unavailable while wiring governed Parquet MTBS perimeters", async () => {
     mocks.getParquetBurnSeverity.mockResolvedValue({
       state: "ready", requestedDay: "2026-08-09", servedDay: "2024-08-22", truncated: false,
       data: [{ fireName: "Test Fire", fireYear: 2023, acres: 500, severityClass: null,
@@ -1212,15 +1202,8 @@ describe("community proposals and deferred strategy evidence", () => {
 
     const result = await assembleRegionalContext(43.6, -116.2);
 
-    expect(result.payload.soilProperties).toEqual({
-      ph: 6.8,
-      organicCarbon: 12,
-      nitrogen: 1.1,
-      bulkDensity: 1.3,
-      cec: 14,
-      ocd: 3.2,
-    });
-    expect(result.dataFreshness.soilProperties).toBe("static_release_untimed");
+    expect(result.payload.soilProperties).toBeNull();
+    expect(result.dataFreshness.soilProperties).toBe("unavailable");
     expect(result.payload.mtbsPerimeters?.totalCount).toBe(1);
     expect(result.dataFreshness.mtbsPerimeters).toBe("publication_available_2024-08-22");
     expect(result.contextIsEmpty).toBe(false);

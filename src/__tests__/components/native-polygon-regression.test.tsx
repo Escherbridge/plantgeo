@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { URL as NodeURL, fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
@@ -55,16 +55,6 @@ import { DEFAULT_VIEWPORT } from "@/stores/map-store";
 // multi-level ".." against a Windows file:// base. Same reason as
 // src/__tests__/lib/map/layer-registry.test.ts.
 const SOURCE_DIR = fileURLToPath(new NodeURL("../../", import.meta.url));
-// The migration chain moved to `drizzle/archive/` on 2026-09-08 when `drizzle/` was collapsed to a
-// single generated baseline; see `drizzle/archive/README.md`. This scan reads migration TEXT, so it
-// follows the text.
-const DRIZZLE_DIR = fileURLToPath(
-  new NodeURL("../../../drizzle/archive", import.meta.url)
-);
-/** The one file on the migration path, and so the definition production actually runs. */
-const BASELINE_PATH = fileURLToPath(
-  new NodeURL("../../../drizzle/0000_baseline.sql", import.meta.url)
-);
 
 /** The six products the spec's render table calls `native_polygon`, in registry order. */
 const EXPECTED_NATIVE_POLYGON_LAYER_IDS: readonly LayerToggleId[] = [
@@ -119,22 +109,6 @@ const ZOOM_BY_BAND: Readonly<Record<ZoomBand, number>> = {
   detail: 14,
 };
 
-/**
- * The tile functions that ever backed a native polygon layer, newest definition wins.
- *
- * NONE of the four has a reader any more -- all four layers moved to the Parquet plane and all
- * four functions were unpublished from `infra/martin/martin.yaml` -- but the SQL still EXISTS in
- * production until wave D fires `drizzle/0039_drop_environmental_tile_functions.sql` with its
- * three-part packet. The generalization cases below therefore still govern them: a function live
- * in the database is a function a rollback or a hand-run can put back in front of a reader.
- * Delete these four names in the same commit that lands the drop, and not before.
- */
-const NATIVE_TILE_FUNCTION_NAMES = [
-  "fire_risk_tiles",
-  "burn_severity_tiles",
-  "evacuation_zone_tiles",
-  "watershed_tiles",
-] as const;
 
 /**
  * Client modules on a native polygon's path from wire to canvas. Every one is scanned for a
@@ -191,57 +165,6 @@ function styleLayerFacts(styleLayerId: string): StyleLayerFacts {
         : "",
     minzoom: "minzoom" in spec && typeof spec.minzoom === "number" ? spec.minzoom : null,
   };
-}
-
-/**
- * The newest migration text for one SQL object, from its `CREATE` to the next
- * `--> statement-breakpoint`.
- *
- * Migrations are `CREATE OR REPLACE`, so the highest-numbered file that names an object is the
- * definition production runs. Reading the whole directory rather than a pinned filename is what
- * makes this follow a future migration instead of silently going stale against one: a new file
- * that reintroduces simplification into a tile function fails here without being named.
- */
-function newestMigrationStatement(createMarker: string): string {
-  // The baseline is the only file on the migration path, so when it declares the object it IS the
-  // definition production runs, and the archived chain below is superseded history. pg_dump writes
-  // `CREATE FUNCTION`, never `CREATE OR REPLACE FUNCTION`. Reading the archive first would assert
-  // against bodies that, for 0033 and 0035, were never applied to production at all -- see
-  // `drizzle/archive/README.md`.
-  const baseline = readFileSync(BASELINE_PATH, "utf8");
-  const baselineMarker = createMarker.replace(
-    "CREATE OR REPLACE FUNCTION",
-    "CREATE FUNCTION"
-  );
-  const declaredAt = baseline.lastIndexOf(baselineMarker);
-  if (declaredAt !== -1) {
-    // pg_dump delimits objects with a `--\n-- Name: ...` header; that is this statement's end.
-    const end = baseline.indexOf("\n--\n-- Name:", declaredAt);
-    return baseline.slice(declaredAt, end === -1 ? baseline.length : end);
-  }
-
-  const files = readdirSync(DRIZZLE_DIR)
-    .filter((name) => name.endsWith(".sql"))
-    .sort();
-  let statement: string | null = null;
-  for (const file of files) {
-    const sql = readFileSync(join(DRIZZLE_DIR, file), "utf8");
-    let from = sql.indexOf(createMarker);
-    while (from !== -1) {
-      const breakpoint = sql.indexOf("--> statement-breakpoint", from);
-      statement = sql.slice(from, breakpoint === -1 ? sql.length : breakpoint);
-      from = sql.indexOf(createMarker, from + createMarker.length);
-    }
-  }
-  if (statement === null) {
-    throw new Error(`no migration in ${DRIZZLE_DIR} declares "${createMarker}"`);
-  }
-  return statement;
-}
-
-/** The body of a Martin tile function as production last defined it. */
-function tileFunctionBody(functionName: string): string {
-  return newestMigrationStatement(`CREATE OR REPLACE FUNCTION geo.${functionName}(`);
 }
 
 /**
@@ -584,60 +507,6 @@ describe("no client-side buffer, simplify or dissolve on a native polygon path",
   it("finds no geometry-mutating call in any module between the wire and the canvas", () => {
     const offending = NATIVE_POLYGON_CLIENT_MODULES.filter((modulePath) =>
       CLIENT_GEOMETRY_MUTATION.test(readFileSync(join(SOURCE_DIR, modulePath), "utf8"))
-    );
-
-    expect(offending).toEqual([]);
-  });
-});
-
-describe("generalization is server-side, topology-preserving and chosen by zoom", () => {
-  it("leaves every native tile function's geometry unsimplified", () => {
-    const simplifyingFunctions = NATIVE_TILE_FUNCTION_NAMES.filter((name) =>
-      /ST_Simplify/i.test(tileFunctionBody(name))
-    );
-
-    expect(simplifyingFunctions).toEqual([]);
-  });
-
-  it("hands each tile function's stored geometry straight to ST_AsMVTGeom", () => {
-    for (const name of NATIVE_TILE_FUNCTION_NAMES) {
-      expect(tileFunctionBody(name)).toMatch(/ST_AsMVTGeom\(ST_Transform\(/);
-    }
-  });
-
-  it("routes watersheds by zoom into the hierarchical HUC rollup rather than a cell grid", () => {
-    const body = tileFunctionBody("watershed_tiles");
-
-    // z >= 10 reads the published HUC12 rows; everything coarser reads the rollup, whose parent
-    // basin is the exact union of its members rather than an invented grouping.
-    expect(body).toMatch(/target_level\s*:=\s*CASE/);
-    expect(body).toMatch(/WHEN z >= 10 THEN 12/);
-    expect(body).toContain("geo.watershed_rollup");
-  });
-
-  it("builds the watershed rollup with the topology-preserving simplifier only", () => {
-    const rollup = newestMigrationStatement(
-      "CREATE MATERIALIZED VIEW IF NOT EXISTS geo.watershed_rollup"
-    );
-
-    expect(rollup).toContain("ST_SimplifyPreserveTopology");
-    // Plain ST_Simplify may return a self-intersecting or empty ring, which draws as a bow tie
-    // and answers point-in-polygon wrongly. The spec's word is "topology-preserving".
-    expect(rollup).not.toMatch(/\bST_Simplify\s*\(/i);
-  });
-
-  it("admits no bare ST_Simplify anywhere in the migration tree", () => {
-    // Both trees, deliberately. The archive is frozen, so scanning it alone would make this a
-    // tautology that can never fail again; the baseline is the file a new migration would be
-    // generated from and the only one on the migration path.
-    const candidates: string[] = [
-      ...readdirSync(DRIZZLE_DIR)
-        .filter((name) => name.endsWith(".sql"))
-        .map((name) => join(DRIZZLE_DIR, name)),
-      BASELINE_PATH,
-    ];
-    const offending = candidates.filter((path) =>
-      /\bST_Simplify\s*\(/i.test(readFileSync(path, "utf8"))
     );
 
     expect(offending).toEqual([]);

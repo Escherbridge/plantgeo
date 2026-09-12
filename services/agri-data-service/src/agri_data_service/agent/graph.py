@@ -424,12 +424,18 @@ class GatherWebEvidence:
             }
         )
         search_tool = {**WEB_SEARCH_TOOL, "max_uses": verdict.searches_allowed}
-        refused = await _run_pass(
-            ctx,
-            tool_list=[*WAREHOUSE_TOOLS_FOR_WEB, search_tool],
-            max_iterations=MAX_WEB_ITERATIONS,
-            collect_web=True,
-        )
+        # The web pass deliberately omits species_information, but retains the caller-bound
+        # context as a fail-closed backstop if a later tool-list change reintroduces it.
+        async with warehouse_tools.run_context(
+            session_provider=ctx.session_provider,
+            allowed_species_id=ctx.request.species_id or "",
+        ):
+            refused = await _run_pass(
+                ctx,
+                tool_list=[*WAREHOUSE_TOOLS_FOR_WEB, search_tool],
+                max_iterations=MAX_WEB_ITERATIONS,
+                collect_web=True,
+            )
         ctx.refused = ctx.refused or refused
         await ctx.emit(
             progress_event(

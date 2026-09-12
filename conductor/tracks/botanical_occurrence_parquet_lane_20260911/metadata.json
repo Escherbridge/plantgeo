@@ -6,7 +6,7 @@
   "created_on": "2026-09-11",
   "depends_on": [
     "pnw_herbaria_source_admission_20260911",
-    "parquet_duckdb_pivot_20260823",
+    "environmental_parquet_serving_20260912",
     "gapless_parquet_publication_20260901"
   ],
   "related_tracks": [

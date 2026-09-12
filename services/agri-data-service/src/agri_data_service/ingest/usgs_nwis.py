@@ -23,6 +23,7 @@ from agri_data_service.ingest.policy import (
     javascript_parse_float,
     parse_bbox,
 )
+from agri_data_service.ingest.records import FeatureWrite
 from agri_data_service.ingest.source import (
     FetchRequest,
     FreshnessRule,
@@ -30,7 +31,6 @@ from agri_data_service.ingest.source import (
     HistoryCapability,
     HistoryWindow,
 )
-from agri_data_service.ingest.writer import FeatureWrite
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence

@@ -36,7 +36,7 @@ from agri_data_service.pipeline.direct.fire_perimeters.watermark import (
     read_published_version,
     table_content_digest,
 )
-from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
+from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 from agri_data_service.warehouse.schemas.fire_perimeters import FIRE_PERIMETERS_SCHEMA, FIRE_PERIMETERS_STREAM
 from tests.parquet.test_objectstore_writer import RecordingBackend

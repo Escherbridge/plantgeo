@@ -31,7 +31,7 @@ from agri_data_service.pipeline.direct.soil.source import (
     SoilSourceCache,
 )
 from agri_data_service.pipeline.direct.soil.support import ERA5_LAND_SUPPORT_CELL_COUNT
-from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
+from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.parquet.availability_extension import AvailabilityExtensionTally
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 from tests.direct.soil.conftest import product_for

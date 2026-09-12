@@ -1,68 +1,56 @@
 ---
-type: work-registry
+type: track-registry
 updated_on: 2026-09-12
 ---
 
-# Current Work Registry
+# Current tracks
 
-Per [README.md](README.md), this is the sole current work registry. Statuses are
-`active`, `planned`, `blocked`, `complete` and `historical`. Every current track
-directory is indexed below and its metadata uses the same current status.
+This registry contains planned, active, and blocked work only. Completed implementation history and retired migration plans are intentionally absent.
 
-The September 11 audit and weather approval reconcile the root candidate with
-dated operational receipts. It performed no fresh production measurement.
-Completed implementation, published data, deployment and scheduled burn-in remain
-separate claims. The
-[current runbook](RUNBOOK.md) routes operational work; the
-[release policy](release-governance.md) governs release decisions.
+## Environmental data and product acceptance
 
-## Active and incomplete tracks
-
-| Track | Status | Remaining work and next gate |
+| Track | State | Outstanding work |
 | --- | --- | --- |
-| [platform_experience_qa_20260911](tracks/platform_experience_qa_20260911/plan.md) | active | The weather/botanical candidate, Herbaria metadata packet, scalar-label slice and root browser receipt are integrated; finish service-backed populated-data, narrow-mobile/touch, role/accessibility, selected-day, cache, canvas and agent/MCP acceptance on the frozen tree. The [root verification receipt](tracks/platform_experience_qa_20260911/evidence/root-integrated-checks-20260912.md) records environment-limited gates. Synthetic local intervention submissions prove mechanics only and do not close the community track's human-contributor gate. |
-| [parquet_reader_cutover_acceptance_20260901](tracks/parquet_reader_cutover_acceptance_20260901/plan.md) | active | Reader hard cuts and availability contracts are implemented. Finish current product/day/zoom cold/warm request traces, explicit coverage/source-ceiling presentation, and the exact acceptance handoff. Bounded MTBS acceptance does not close all readers. |
-| [gapless_parquet_publication_20260901](tracks/gapless_parquet_publication_20260901/plan.md) | active | Finish source-direct historical gap work, receipt-backed absences, effective executor ownership/cutoff and retry/restart/lease recovery. Prove three scheduled advances per activated product. Temperature history and MTBS publication are completed subsets. |
-| [multiscale_polygon_surface_20260901](tracks/multiscale_polygon_surface_20260901/plan.md) | active | Renderer/support implementation is present. Complete cross-product rung conservation, pixel continuity, feature/request-to-paint budgets and desktop/mobile evidence; submit the renderer verdict. |
-| [parquet_production_acceptance_20260901](tracks/parquet_production_acceptance_20260901/plan.md) | blocked | Waiting for the complete reader/renderer/writer packets. Owns full current private/public route, cold/warm browser and spatial matrices, three-schedule burn-in, exact deployed-tree validation and release/rollback verdict. |
-| [repository_conformity_hardening_20260901](tracks/repository_conformity_hardening_20260901/plan.md) | active | Executable standards and multiple proven removals have landed. Finish CLI/domain and canonical-core ownership, remaining dead-code/dependency proof packets, and final integrated conformity review. Historical migrations remain evidence. |
-| [parquet_duckdb_pivot_20260823](tracks/parquet_duckdb_pivot_20260823/spec.md) | active | Historical construction and private API slices are archived. Track the delegated reader, direct-writer and acceptance handoffs plus remaining product/static-lane scope. September 9 rebuild supersedes the old “PostgreSQL intact” premise. |
-| [postgres_shrink_ingest_repoint_20260825](tracks/postgres_shrink_ingest_repoint_20260825/plan.md) | active | CLI/package split and baseline/rebuild slices are complete. Reconcile remaining package/removal work with current proof; source/writer work belongs to gapless and all remaining environmental retirement belongs to its successor. Do not restart the historical bridge/drain plan. |
-| [environmental_postgres_retirement_20260904](tracks/environmental_postgres_retirement_20260904/plan.md) | active | Admit prepared signal/sensor repairs; restore static soil/soil-survey under their distinct contracts; recover older MTBS; replace environmental database archive paths; verify effective cutoff and remaining removal proofs. Temperature history and the 747-fire current MTBS rollout are archived as complete slices. |
-| [offline_export_service_20260908](tracks/offline_export_service_20260908/plan.md) | active | Reconcile implemented builders and published temperature history with the original phase-review/performance ledger. Finish selected-builder acceptance and deferred relative-humidity 1981–2017 availability history; retain indexed-history verification before catalogue graduation. |
-| [observability_log_capture_20260903](tracks/observability_log_capture_20260903/plan.md) | blocked | Six charter decisions remain: bucket provider, operator auth, tail cap, keepalive, retention and platform-tap scope. Then refresh ownership and implement bounded durable capture plus the gated operator panel. |
-| [regional_fire_risk_surface_20260824](tracks/regional_fire_risk_surface_20260824/spec.md) | planned | Define the Parquet risk product and refusal outside its supported stratum; obtain held-out skill/calibration before operational claims. Historical AUC 0.725 was in-sample, only about 0.03 above VPD alone, and fell to 0.586 in closed forest. |
-| [rangeland_carbon_lane_20260824](tracks/rangeland_carbon_lane_20260824/spec.md) | planned | Build a source-watermarked static SOC/OCD Parquet lane and serving/tool contract. Revalidate the historical raster inventory after the rebuild. Prior fire analysis found no carbon-targeting signal. |
-| [fire_feature_plane_validation_20260824](tracks/fire_feature_plane_validation_20260824/spec.md) | planned | Fire history reconciled August 27: 9,428 calendar days, 8,359 data days, 1,069 governed absences and 3,039,749 detections. Next: held-out-season validation, calibration, coverage/cap weighting and MODIS/VIIRS normalization. Do not restart that completed archive task. |
-| [fire_risk_zone_forecast_20260823](tracks/fire_risk_zone_forecast_20260823/spec.md) | planned | Feature/label/evaluation work may proceed; implement time-honest 1–2-week occurrence forecasts and honest rendering. Model training remains gated by the ML runtime/freeze decision and held-out validation. The old fire-history-hole blocker is superseded. |
-| [ml_mojo_conversion_20260823](tracks/ml_mojo_conversion_20260823/spec.md) | blocked | Standing owner ML freeze/runtime decision remains open. Inventory port/retire/stays-Python modules and record the runtime/training disposition before conversion; data work is independent of this gate. |
-| [rangeland_partnership_outreach_20260824](tracks/rangeland_partnership_outreach_20260824/spec.md) | planned | Refresh primary-source programmes, contacts, deadlines and land/feedstock constraints, then select authorized outreach. The August 24 contact/deadline inventory is historical; this audit sent no messages. |
-| [cds_only_products_20260808](tracks/cds_only_products_20260808/plan.md) | planned | Rescope AgERA5/CEMS source scaffolding to governed Parquet and executor ownership; wire the commands, tests and bounded backfill/refresh contracts. No completed backfill is recorded. |
-| [community_engagement_completion_20260805](tracks/community_engagement_completion_20260805/plan.md) | planned | Re-audit and finish the approved-to-published moderation workflow. Sensors, evacuation zones and review-outcome slices were recorded shipped; ML label bridge retains four owner questions. August 22 database counts are not current measurements. |
-| [mycelium_cloud_seeding_spike_20260802](tracks/mycelium_cloud_seeding_spike_20260802/plan.md) | blocked | Five core spikes have verdicts. The explicit owner decision remains: close, run spike 006, or commission the named follow-up desk work. No closure is inferred from completed research alone. |
-| [swr_indexeddb_dw_reconciliation_20260814](tracks/swr_indexeddb_dw_reconciliation_20260814/plan.md) | planned | Phase 1 IndexedDB SWR is shipped. Rescope phase 2 ETag/304 and revision semantics to current Parquet tRPC/availability generations; this is separate from the Martin tile service-worker cache. |
-| [upstream_dataset_expansion_20260806](tracks/upstream_dataset_expansion_20260806/plan.md) | planned | August 23 authorization to ingest Open-Meteo products remains recorded. Replace historical Postgres-persist/cron assumptions with Parquet lanes, serving and executor ownership for remaining GloFAS/CAMS/ensemble scope, and resolve the et0 guard. Source scaffolding is not completed delivery. |
-| [weather_forecast_parquet_lane_20260911](tracks/weather_forecast_parquet_lane_20260911/plan.md) | planned | Admit a real deterministic forecast product first, then publish immutable model runs with explicit valid-time, interval, field support, vector wind, missingness, three scheduled duties and bounded field/location/agent readers. Existing sampled current conditions retain forecast horizon zero. |
-| [weather_forecast_experience_20260911](tracks/weather_forecast_experience_20260911/plan.md) | planned | Build distinct Now/History/Forecast modes, a truthful scalar field, vector/particle wind and traditional selected-location hourly/daily cards. The historical-weather visual repair is accepted for its unavailable-state path in the platform QA candidate; this forecast track still starts with the April 28, 2025 screenshot's catalogue/reader reconciliation and waits for a governed forecast product. |
-| [pnw_herbaria_source_admission_20260911](tracks/pnw_herbaria_source_admission_20260911/plan.md) | active | Resolve WTU/UBC rights, coordinate-withholding and archive-safety gates, then capture a bounded data-only DwCA pilot into immutable quarantine with schema and custody receipts. Images and production publication remain excluded. |
-| [pnw_land_context_reference_plane_20260911](tracks/pnw_land_context_reference_plane_20260911/plan.md) | planned | Resolve exact source rights, current feeds, native IDs, watermarks and WA/OR/ID coverage for nonpersonal parcel/land-use context, electric territories, BLM surface/office jurisdictions, state-managed lands and a separately versioned public contact directory. Private owner names remain excluded. No acquisition or implementation is authorized. |
-| [pnw_land_contact_experience_20260911](tracks/pnw_land_contact_experience_20260911/plan.md) | planned | After the reference plane is admitted, build four truthful map groups plus a persistent selected-area contact panel and read-only agent parity. Explain why a public office or adviser applies, distinguish records help from responsibility or documented forwarding, and prepare inquiries for user review without sending. |
-| [botanical_occurrence_parquet_lane_20260911](tracks/botanical_occurrence_parquet_lane_20260911/plan.md) | planned | Freeze a static release-set occurrence/taxonomy plane with dual snapshot/event time, versioned QC/taxonomy, uncertainty-aware spatial support, sparse exact aggregates, conditional publication and bounded reader/agent contracts. Depends on source admission. |
-| [botanical_species_profile_lookup_20260911](tracks/botanical_species_profile_lookup_20260911/plan.md) | active | The exact-UUID authoring lookup is integrated but unpublished. The [current census](tracks/botanical_species_profile_lookup_20260911/evidence/source-admission-census-20260912.md) keeps the branch-only WCVP candidate unaccepted and the Railway census blocked before connection. Obtain separately authorized read-only authoring evidence and independent field-level source admission before immutable profile publication or release-pinned agent/API acceptance. |
-| [botanical_species_recommendation_validation_20260911](tracks/botanical_species_recommendation_validation_20260911/plan.md) | planned | Compose release-pinned specimen evidence, species growth profiles, environmental conditions and separate species-objective-effect evidence. Validate sampling bias, spatial/temporal transfer, component verdicts and abstention before any ranking or suitability claim reaches the API or agent. |
-| [botanical_occurrence_experience_20260911](tracks/botanical_occurrence_experience_20260911/plan.md) | planned | Define specimen-occurrence detail, documented-taxon richness and collection-effort context layers plus honest filters and agent answers. No view may imply vegetation abundance, current occupancy or surveyed absence. Depends on the governed data-plane contract. |
+| [Environmental Parquet serving](tracks/environmental_parquet_serving_20260912/plan.md) | active | Remove the remaining environmental PostgreSQL surface; complete direct writers, governed readers, layer registration, and agent parity. |
+| [Gapless Parquet publication](tracks/gapless_parquet_publication_20260901/plan.md) | active | Close full historical horizons, governed absences, repair ownership, and sustained forward publication. |
+| [Multiscale polygon surfaces](tracks/multiscale_polygon_surface_20260901/plan.md) | active | Complete low-zoom support geometry, live selected-day rendering, performance, and browser evidence. |
+| [Parquet production acceptance](tracks/parquet_production_acceptance_20260901/plan.md) | blocked | Run cross-layer conservation, freshness, cold/warm, schedule burn-in, and release checks after serving work is ready. |
+| [Offline export service](tracks/offline_export_service_20260908/plan.md) | active | Complete the production builder, availability-cost controls, and export verification. |
+| [Platform experience QA](tracks/platform_experience_qa_20260911/plan.md) | active | Run populated-data, selected-day, mobile, accessibility, cache, canvas, agent, and MCP journeys. |
+| [Repository conformity hardening](tracks/repository_conformity_hardening_20260901/plan.md) | active | Remove proven dead paths and keep executable architecture boundaries aligned with current documentation. |
 
-## Completed slices and historical tracks
+## Weather and fire
 
-| Archive | Status | Retained scope |
+| Track | State | Outstanding work |
 | --- | --- | --- |
-| [session_hygiene_20260911](retros/session_hygiene_20260911/README.md) | historical | Pruned session briefs, historical handoff/log material and cleanup provenance, with current pointers retained. |
-| [parquet_operational_checkpoints_20260911](retros/parquet_operational_checkpoints_20260911/README.md) | historical | Completed September 8–9 baseline/rebuild, September 10 temperature-history publication and September 11 bounded MTBS rollout; original retirement plan and prior registry retained. Parent tracks remain open. |
-| [parquet_cutover_completed_slices_20260910](retros/parquet_cutover_completed_slices_20260910/README.md) | historical | Completed pivot d0/d1/d3/d5, removal/test-intent proofs, and local verification evidence. |
-| [agri_sdk_layering_20260805](retros/agri_sdk_layering_20260805/metadata.json) | historical | SDK phases 0–3 shipped; phases 4–8 explicitly superseded by later package-boundary decisions. Conformity owns remaining canonical-core work. |
-| [soil_survey_lane_shape_20260825](retros/soil_survey_lane_shape_20260825/metadata.json) | complete | Static versioned release, bounded streaming and four-rung design resolved by `68da7af`; production low-zoom restoration remains open in retirement. |
-| [Earlier completed-track index and August 22 reconciliation](retros/parquet_operational_checkpoints_20260911/registry-through-20260910.md) | historical | Preserves the complete numbered 01–31 and dated historical track index, original outcomes (including the reverted WebGPU work), and pivot audit without presenting old row counts or stub directories as current state. |
+| [Weather forecast Parquet lane](tracks/weather_forecast_parquet_lane_20260911/plan.md) | planned | Admit run-time and valid-time forecasts, publish direct Parquet products, and register serving and agent tools. |
+| [Traditional forecast experience](tracks/weather_forecast_experience_20260911/plan.md) | planned | Render continuous weather fields, wind, and useful hourly and daily forecast cards beyond the observation horizon. |
+| [Fire feature plane validation](tracks/fire_feature_plane_validation_20260824/spec.md) | planned | Validate fire features across seasons and resolutions. |
+| [Regional fire-risk surface](tracks/regional_fire_risk_surface_20260824/spec.md) | planned | Build the cross-state prioritization surface after its source and validation gates are ready. |
+| [Fire-risk zone forecast](tracks/fire_risk_zone_forecast_20260823/spec.md) | planned | Develop and validate the one-to-two-week fire-risk forecast. |
 
-No incomplete parent track was archived by this pass. Update the registry,
-metadata and current plan together when evidence clears a gate; add a dated
-retrospective for the completed slice and keep the underlying receipts accessible.
+## Botanical and land context
+
+| Track | State | Outstanding work |
+| --- | --- | --- |
+| [Botanical species profile lookup](tracks/botanical_species_profile_lookup_20260911/plan.md) | active | Census the approved Railway lookup, admit growth and composition sources, publish immutable profiles, and prove API/agent/MCP parity. |
+| [PNW Herbaria source admission](tracks/pnw_herbaria_source_admission_20260911/plan.md) | active | Resolve exact release identity, field maps, reuse and coordinate policies, and quarantine controls before a bounded specimen pilot. |
+| [Botanical occurrence Parquet lane](tracks/botanical_occurrence_parquet_lane_20260911/plan.md) | planned | Publish governed occurrence and taxonomy data after source admission. |
+| [Botanical occurrence experience](tracks/botanical_occurrence_experience_20260911/plan.md) | planned | Add map and agent experiences after the occurrence product is accepted. |
+| [Species recommendation validation](tracks/botanical_species_recommendation_validation_20260911/plan.md) | planned | Establish evidence and evaluation for species-specific recommendations. |
+| [PNW land reference plane](tracks/pnw_land_context_reference_plane_20260911/plan.md) | planned | Resolve source rights and publish public boundaries, offices, advisers, and contact-process references. |
+| [PNW land contact experience](tracks/pnw_land_contact_experience_20260911/plan.md) | planned | Design the public contact workflow after reference-plane admission. |
+
+## Other planned or blocked work
+
+| Track | State |
+| --- | --- |
+| [Community engagement completion](tracks/community_engagement_completion_20260805/plan.md) | planned |
+| [CDS-only products](tracks/cds_only_products_20260808/plan.md) | planned |
+| [Rangeland carbon lane](tracks/rangeland_carbon_lane_20260824/spec.md) | planned |
+| [Rangeland partnership outreach](tracks/rangeland_partnership_outreach_20260824/spec.md) | planned |
+| [SWR IndexedDB/DW reconciliation](tracks/swr_indexeddb_dw_reconciliation_20260814/plan.md) | planned |
+| [Upstream dataset expansion](tracks/upstream_dataset_expansion_20260806/plan.md) | planned |
+| [ML to Mojo conversion](tracks/ml_mojo_conversion_20260823/spec.md) | blocked |
+| [Mycelium cloud-seeding spike](tracks/mycelium_cloud_seeding_spike_20260802/plan.md) | blocked |
+| [Observability log capture](tracks/observability_log_capture_20260903/plan.md) | blocked |

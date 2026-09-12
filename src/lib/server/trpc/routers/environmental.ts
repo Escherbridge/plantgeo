@@ -3,11 +3,6 @@ import { z } from "zod";
 import { router, publicProcedure } from "@/lib/server/trpc/init";
 import { rethrowUpstreamFault } from "@/lib/server/trpc/upstream-fault";
 import { getInterventionSuitability } from "@/lib/server/services/carbon-potential";
-import { getPublishedRasters } from "@/lib/server/services/raster-catalog";
-import {
-  getMetricAtDate,
-  getPublishedGroundwaterWells,
-} from "@/lib/server/services/environmental-read-model";
 import { parquetClimateFieldCollection } from "@/lib/server/services/parquet-climate-field";
 import { getParquetSliderCapabilities } from "@/lib/server/services/parquet-slider-capabilities";
 import {
@@ -46,19 +41,12 @@ import {
   WatershedResponseError,
 } from "@/lib/server/services/hydrosheds";
 import { NLCD_CLASSES } from "@/lib/server/services/nlcd";
-import { METRIC_AT_DATE_IDS } from "@/types/time-slider";
+import { METRIC_AT_DATE_IDS, type MetricAtDateCollection } from "@/types/time-slider";
 import {
-  getSoilProperties,
-  SoilEvidenceUnavailableError,
-  SoilUpstreamUnavailableError,
-} from "@/lib/server/services/soilgrids";
-import {
-  getSoilSurvey,
   soilSurveyAreaCeiling,
-  SoilSurveyResponseError,
   type SoilSurveyCoverage,
   type SoilSurveyGranularity,
-} from "@/lib/server/services/usda-soil";
+} from "@/lib/server/services/soil-survey-contracts";
 import {
   GIBS_NDVI_PRODUCT,
   getEnvironmentalTileTemplate,
@@ -188,7 +176,7 @@ export interface ProxiedSoilSurveyCollection extends ProxiedFeatureCollection {
    * How much of the viewport the warehouse can answer for. The gap persistence created:
    * ground nobody has fetched paints exactly like ground the survey found nothing on, and
    * `covered < cells` is the only thing that tells them apart. See
-   * `usda-soil.ts#SoilSurveyCoverage`.
+   * `soil-survey-contracts.ts#SoilSurveyCoverage`.
    */
   coverage: SoilSurveyCoverage;
 }
@@ -356,10 +344,8 @@ export const environmentalRouter = router({
     ),
 
   /**
-   * The five `geo.features` layers that drew from Martin tile functions until the
-   * environmental_postgres_retirement_20260904 track, now read from the private Parquet plane
-   * exactly as drought is. Four moved in wave C; `getFirePerimeters` followed once its lane was
-   * re-registered `static_lookup`, and with it the last environmental read left PostgreSQL.
+   * The five former `geo.features` layers now read from the private Parquet plane. PostgreSQL is
+   * not a fallback when a lane is unavailable.
    *
    * All five take the same `(bbox, date, zoom)` triple every other Parquet viewport read takes,
    * and for the same reasons: `bbox` clips the geometry server-side (`_clipped_scan` in
@@ -517,41 +503,25 @@ export const environmentalRouter = router({
    */
   getGroundwater: publicProcedure
     .input(z.object({ bbox: bboxSchema, date: observationDateSchema.optional() }))
-    .query(({ input }) => getPublishedGroundwaterWells(input.bbox, input.date)),
+    .query(() => []),
 
   getSoilProperties: publicProcedure
     .input(pointSchema)
-    .query(async ({ input }) => {
-      try {
-        return await getSoilProperties(input.lat, input.lon);
-      } catch (error) {
-        if (error instanceof SoilEvidenceUnavailableError) {
-          throw new TRPCError({
-            code: "PRECONDITION_FAILED",
-            message: error.message,
-          });
-        }
-        // Transient upstream fault: the client may retry, unlike a coverage gap.
-        if (error instanceof SoilUpstreamUnavailableError) {
-          throw new TRPCError({
-            code: "SERVICE_UNAVAILABLE",
-            message: error.message,
-          });
-        }
-        throw error;
-      }
+    .query(() => {
+      throw new TRPCError({
+        code: "PRECONDITION_FAILED",
+        message: "Soil properties are unavailable until the source-direct Parquet lane is published",
+      });
     }),
 
   /**
-   * SSURGO map-unit polygons for the viewport, read from the warehouse. Cells nobody has
-   * fetched yet are warmed from USDA Soil Data Access first, bounded per request; see
-   * `usda-soil.ts` §soil-survey-persistence.
+   * SSURGO map-unit polygons are withheld until their source-direct Parquet lane is published.
    *
    * The area ceiling is zoom-dependent, so it cannot live on the bbox field the way
-   * `areaBoundedBbox` puts it: `soilSurveyAreaCeiling` returns the original measured ceiling
+   * `areaBoundedBbox` puts it: `soilSurveyAreaCeiling` returns the bounded detail ceiling
    * only for the detail tier, which may warm at most a 2x2 patch of cells, and null for the
    * aggregated tiers, which cap their own cell budget and degrade to `truncated: true`
-   * rather than erroring. See `usda-soil.ts` §soil-survey-zoom.
+   * rather than erroring.
    */
   getSoilSurvey: publicProcedure
     .input(
@@ -574,43 +544,13 @@ export const environmentalRouter = router({
           }
         })
     )
-    .query(async ({ input }): Promise<ProxiedSoilSurveyCollection> => {
-      try {
-        const collection = await getSoilSurvey(input.bbox, input.zoom);
-        return {
-          ...collection,
-          availability: "published",
-          reason: null,
-          // Map units SDA served that would not parse. Carried rather than absorbed:
-          // SoilPanel must not caption a reader gap as ground USDA found no soil on.
-          unreadableGeometries: collection.unreadableGeometries,
-          // Which tier actually answered, so an averaged view is never captioned as a
-          // surveyed map unit.
-          granularity: collection.granularity,
-          // How much of the viewport the store actually covers. Carried, never absorbed:
-          // unfetched ground draws exactly like unsurveyed ground.
-          coverage: collection.coverage,
-          // SSURGO's survey areas each carry their own vintage (per feature, as
-          // `surveyAreaVintage`); the product publishes no single release timestamp for a
-          // set of map units, so there is nothing honest to put here.
-          observedAt: null,
-          revision: null,
-        };
-      } catch (error) {
-        if (error instanceof SoilSurveyResponseError) {
-          return {
-            ...unavailableCollection("soil_survey_upstream_returned_no_table"),
-            // A provider fault answered nothing, so no tier described the viewport. The
-            // detail tier is the honest default: it is what a zoomless request resolves to.
-            granularity: "detail",
-            // No cell was described, so there is no coverage gap to report on top of the
-            // provider fault: `availability: "unavailable"` is what the client captions
-            // this view with, and a second "partly backfilled" note would compete with it.
-            coverage: { cells: 0, covered: 0, ingested: 0 },
-          };
-        }
-        rethrowUpstreamFault(error, "USDA Soil Data Access");
-      }
+    .query((): ProxiedSoilSurveyCollection => {
+      const unavailable = unavailableCollection("soil_survey_parquet_lane_not_published");
+      return {
+        ...unavailable,
+        granularity: "detail",
+        coverage: { cells: 0, covered: 0, ingested: 0 },
+      };
     }),
 
   /**
@@ -626,16 +566,14 @@ export const environmentalRouter = router({
    * local warehouse rather than proxying a third party, and zooming OUT is exactly when it
    * gets cheaper -- `zoom` moves it onto a coarser aggregation lattice, so a whole-PNW
    * request returns ~28 lattice nodes and at most nine isobands rather than 1,568 squares.
-   * See `environmental-read-model.ts` §soil-field.
+   * The source-direct Parquet reader owns this field; PostgreSQL is not consulted.
    */
   /**
    * The soil raster archives that are actually published, with the ramp their tiles were
    * painted with. Returns an empty array when nothing is published, which is the honest
    * answer and the one the layer tree renders as an inert row rather than a broken source.
    */
-  getPublishedSoilRasters: publicProcedure.query(() =>
-    getPublishedRasters("soilgrids", "pmtiles")
-  ),
+  getPublishedSoilRasters: publicProcedure.query(() => []),
 
   getSoilField: publicProcedure
     .input(
@@ -757,7 +695,7 @@ export const environmentalRouter = router({
    */
   getSliderCapabilities: publicProcedure.query(() => getParquetSliderCapabilities()),
 
-  /** Exact-day reads for the two explicitly PostgreSQL-owned fire-perimeter metrics. */
+  /** Exact-day metric reads remain unavailable until their source-direct Parquet lanes are admitted. */
   getMetricAtDate: publicProcedure
     .input(
       z.object({
@@ -769,10 +707,15 @@ export const environmentalRouter = router({
         bbox: bboxSchema.optional(),
       })
     )
-    .query(async ({ input }) => {
-      const data = await getMetricAtDate(input);
+    .query(({ input }) => {
+      const data: MetricAtDateCollection = {
+        type: "FeatureCollection",
+        features: [],
+        availability: "not_published",
+        reason: "metric_parquet_lane_not_published",
+      };
       return {
-        state: "ready" as const,
+        state: "unavailable" as const,
         requestedDay: input.date,
         servedDay: input.date,
         data,

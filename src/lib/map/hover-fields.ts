@@ -50,8 +50,6 @@ export const HOVERABLE_LAYER_IDS: string[] = [
   "weather-temperature",
   "weather-temperature-cells",
   "vegetation-ndvi-cells-fill",
-  "osm-roads",
-  "osm-waterways",
 ];
 
 /**
@@ -86,7 +84,7 @@ const LAYER_IDS_WITH_A_DEDICATED_CLICK_POPUP = new Set<string>([
  * `LAYER_IDS_WITH_A_DEDICATED_CLICK_POPUP` that is fine, because a tap is a `click` and those two
  * components already answer one. For the other thirteen -- sensors, both fire-perimeter and
  * burn-severity polygons, drought, evacuation zones, both intervention shapes, watersheds, both
- * soil-survey shapes, weather and the two basemap layers -- a tap on this map does nothing at
+ * soil-survey shapes, and weather -- a tap on this map does nothing at
  * all today: `MapView`'s own click handler treats "a feature was under the tap" as reason enough
  * to swallow it (so it never opens the confirm-before-analysis prompt either), and no popup ever
  * answers it. `HoverTooltip`'s tap handler is what closes that gap, for exactly this subset.
@@ -499,28 +497,6 @@ function formatVegetationCell(props: Properties): HoverContent | null {
   ]);
 }
 
-function formatRoad(props: Properties): HoverContent | null {
-  const title = stringField(props.name) ?? stringField(props.highway) ?? "Road";
-  const highway = stringField(props.highway);
-  const surface = stringField(props.surface);
-  const lanes = props.lanes != null ? formatInteger(props.lanes, "") : null;
-  const maxspeed = stringField(props.maxspeed);
-
-  return buildContent(title, [
-    highway ? `Type: ${highway}` : null,
-    surface ? `Surface: ${surface}` : null,
-    lanes ? `Lanes: ${lanes}` : null,
-    maxspeed ? `Max speed: ${maxspeed}` : null,
-  ]);
-}
-
-function formatWaterway(props: Properties): HoverContent | null {
-  const title = stringField(props.name) ?? stringField(props.waterway) ?? "Waterway";
-  const waterway = stringField(props.waterway);
-
-  return buildContent(title, [waterway ? `Type: ${waterway}` : null]);
-}
-
 const FORMATTERS: Record<string, (props: Properties) => HoverContent | null> = {
   "published-fire-circles": formatFireDetection,
   // The same formatter for both of the cell's shapes: the square at coarse and middle zoom and
@@ -546,8 +522,6 @@ const FORMATTERS: Record<string, (props: Properties) => HoverContent | null> = {
   "weather-temperature": formatWeatherObservation,
   "weather-temperature-cells": formatWeatherObservation,
   "vegetation-ndvi-cells-fill": formatVegetationCell,
-  "osm-roads": formatRoad,
-  "osm-waterways": formatWaterway,
 };
 
 /** Per-layer field selection + unit formatting for the hover tooltip. Null when nothing to show. */

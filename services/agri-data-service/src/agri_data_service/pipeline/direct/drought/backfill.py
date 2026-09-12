@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Final
 
 from agri_data_service.config import settings
 from agri_data_service.db.engine import local_source_loader_session
+from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.direct.drought.adapter import DirectDroughtError
 from agri_data_service.pipeline.direct.drought.forward import (
     DROUGHT_DIRECT_ALL_TIERS,
@@ -44,7 +45,6 @@ from agri_data_service.pipeline.direct.drought.products import (
     newest_settled_tuesday,
     release_weeks,
 )
-from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.parquet.availability_extension import AvailabilityExtensionTally
 from agri_data_service.pipeline.parquet.availability_index import BotoAvailabilityStorage
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore

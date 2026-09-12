@@ -1,18 +1,11 @@
 ---
 type: reference
-status: historical
-archived: 2026-09-11
+status: active
+updated_on: 2026-09-12
 ---
 
-# Historical session brief: vegetation
+# vegetation
 
-The August 2026 session brief is retained in the
-[session archive](../retros/session_hygiene_20260911/layer-sessions/vegetation.md).
-Its measured numbers and original line references apply to that archived file.
+Current ingestion and serving work is owned by the [environmental Parquet serving track](../tracks/environmental_parquet_serving_20260912/plan.md). Historical coverage and forward scheduling are owned by [gapless publication](../tracks/gapless_parquet_publication_20260901/plan.md), with final runtime evidence owned by [production acceptance](../tracks/parquet_production_acceptance_20260901/plan.md).
 
-Begin new work at the [current registry](../tracks.md) and [runbook](../RUNBOOK.md).
-Reader work belongs to [reader cutover](../tracks/parquet_reader_cutover_acceptance_20260901/),
-forward publication and gaps to [gapless publication](../tracks/gapless_parquet_publication_20260901/),
-and remaining environmental recovery and per-relation proof to
-[environmental retirement](../tracks/environmental_postgres_retirement_20260904/).
-The retired shared-drain instructions in the snapshot are historical evidence.
+Use source-direct Parquet writers and governed Parquet readers only. Record layer-specific gaps, source ceilings, required resolution rungs, availability state, and agent-tool parity in the owning active track.

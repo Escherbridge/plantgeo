@@ -266,3 +266,166 @@ database, pgt, Railway, object-store, provider, writer, scheduler, deployment
 and push operations; the botanical lane also keeps immutable publication
 blocked pending admitted sources, and the visual lane keeps live M3 gates
 open pending service-backed evidence.
+
+### 2026-09-12 owner restart and custody repair
+
+The archived botanical profile task
+`01a092bd-c71d-7bb3-bc46-e0dac684f751` was reopened for the known P2 UUID
+binding fix. Its existing directory lacked a usable `.git` repository, so the
+task stopped before mutation and remains open unresolved. The archived scalar
+rendering task `01a04997-04fb-7a31-9628-b46ace71f415` was reopened for the
+bounded desktop/mobile M3 fixture slice; it completed without any assistant,
+tool, command or revision evidence and remains open unresolved. Neither task
+produced a candidate or authorized integration.
+
+A replacement botanical implementation task was queued from the verified
+PlantGeo Git project as `client-new-thread:5348c172-4406-49c9-8479-1b66ff81e6f7`
+with `gpt-5.6-terra` at medium effort. It had not materialized in
+`list_threads` at observation. A local isolated-branch attempt failed before
+mutation when the sandbox could not lock the repository ref; no branch,
+worktree, code, data, database, writer, scheduler, deployment or push action
+resulted. Preserve the queue alias as dispatch evidence only and retry after a
+valid registered worktree is available.
+
+The visual owner was subsequently re-steered to audit the authoritative
+checkout directly. Its latest turn remains active without an assistant
+message, tool marker, command or revision at the latest poll; retain it open
+and re-poll the same handle before considering any pause or restart. No visual
+candidate or integration evidence exists.
+
+The visual task then remained unchanged through additional polls and did not
+acknowledge a stop-at-boundary prompt. Handoff was unavailable because of
+pending composer state, so it was archived as a reversible session pause.
+This archive is not owner closure, candidate approval or M3 completion; reopen
+it only with a valid worktree and an evidence-bearing restart.
+
+### 2026-09-12 botanical candidate handoff
+
+The registered detached worktree
+`C:\Users\atooz\.codex\worktrees\920f\plantgeo` produced candidate
+`0cd943036990023b6d237d3514b2ba124dba87a0` on parent `0ee4f5b`. Its two-file
+scope is the agent web-pass context in `graph.py` and synthetic regression
+coverage in `tests/test_agent_graph.py`. Candidate checks passed with the
+candidate source forced on `PYTHONPATH`: `30 passed, 1 skipped`, Ruff PASS and
+mypy PASS. The earlier two-test failure was an environment path mismatch and
+was not from the candidate source. Independent review is pending; no
+integration, push or release approval is recorded.
+
+### 2026-09-12 botanical candidate integrated locally
+
+Independent review passed for candidate `0cd943036990023b6d237d3514b2ba124dba87a0`.
+The root blobs matched parent `0ee4f5b` before the two reviewed files were
+copied into the coordinator checkout, so the P2 graph/test candidate is now
+present locally as uncommitted code. The sandbox still denies repository ref
+locking, so no cherry-pick, commit, push or release approval was attempted.
+
+With the candidate source forced on `PYTHONPATH`, the coordinator run returned
+`30 passed, 1 skipped`; Ruff and mypy passed with writable cache locations. A
+separate review rerun stalled during teardown after the same test bodies had
+passed and was terminated, so retain this as focused candidate evidence and
+keep broad release gates open.
+
+### 2026-09-12 restarted-owner boundary and visual replacement
+
+The botanical owner `01a092bd-c71d-7bb3-bc46-e0dac684f751` was restarted with
+one bounded read-only reconciliation pass. Its checkout
+`C:\Users\atooz\.codex\worktrees\0caf\plantgeo` still lacks a usable `.git`
+repository, so the owner stopped before inspecting receipts or changing files.
+It remains open and unresolved; rebind it to a valid registered repository
+worktree before resuming. The ingestion owner
+`01a08b00-2a50-73c2-b39b-39523c74ceb2` likewise completed one read-only
+preflight with no assistant/tool/command/revision evidence and remains open
+and unresolved. Neither restart performed data, database, provider,
+object-store, writer, scheduler, deployment, push or archive operations.
+
+The coordinator queued a replacement dedicated visual task from the verified
+PlantGeo Git project as `client-new-thread:f19ad11e-fca1-49e9-a510-63824b2dfd54`
+with a low-effort presentation/QA brief. It must inspect the weather approval
+and current renderer first, make a concrete bounded presentation or fixture
+change only when justified, run affected checks once at the end and never
+touch Railway, production, ingestion, writers, deployment or push. The alias
+was not yet present in `list_threads`, so no completion, integration or M3
+approval is claimed.
+
+### 2026-09-12 weather selected-day stale-frame candidate
+
+A read-only visual audit identified a concrete mismatch with the approved
+no-stale-frame contract: both `WeatherHistoryReport` and `LayerManager` allowed
+`isPlaceholderData` to keep a prior weather day visible during a new selection.
+The coordinator corrected both surfaces and added report/map regressions for a
+prior-day placeholder and delayed day-A/day-B transition. The candidate is
+local and uncommitted pending the final integrated check sweep and independent
+review; no data, database, provider, object-store, writer, scheduler,
+deployment or push operation occurred. Forecast and populated-data gates
+remain open.
+
+### 2026-09-12 weather stale-frame review and verification
+
+Independent weather review returned PASS. The report and map apply the same
+requested-day match rule, the withheld placeholder produces no weather rows or
+map data, and the drawn-day registry reports the requested day as loading. The
+new report/map regressions and the integrated sweep passed: data-boundary,
+type-check, ESLint with zero errors, tooling tests, and 150 frontend files
+with 2 skipped; 2,235 tests passed and 13 skipped. This is a locally accepted
+presentation correction with uncommitted files because repository ref locking
+is denied; it does not close populated-data, mobile/touch, selected-day live,
+forecast, source, deployment or push gates.
+
+### 2026-09-12 custody recovery and replacement lanes
+
+The botanical owner `01a092bd-c71d-7bb3-bc46-e0dac684f751` and ingestion owner
+`01a08b00-2a50-73c2-b39b-39523c74ceb2` were stopped after read-only checks
+confirmed that their registered directories were not usable Git repositories.
+Both tasks were archived as reversible pauses so their custody is retained while
+valid worktrees are provisioned; neither is a completion or acceptance record.
+No data, source, database, Railway, writer, scheduler, deployment, object-store
+or push operation occurred.
+
+The coordinator dispatched three replacements from the verified PlantGeo Git
+project, each with an isolated worktree and a bounded no-data-load brief:
+
+* `client-new-thread:8b8ed7ef-46e5-4700-a503-18ceabcb1a5a` — botanical
+  reconciliation and agent/API/MCP parity;
+* `client-new-thread:ce5c8b4e-7320-4f9c-82ad-7c88d07c1768` — non-Herbaria
+  ingestion and agent-wiring audit;
+* `client-new-thread:ace3c375-e668-420d-85a3-501c56027c1a` — traditional
+  weather and visual-layer presentation.
+
+The aliases remain dispatch-only until `list_threads` materializes the tasks
+and each returns a concrete evidence-bearing result. No push or cross-worktree
+integration has been authorized; any candidate must pass independent review
+and the affected final sweep first.
+
+### 2026-09-12 lane audits and font-safe weather label candidate
+
+The botanical audit confirms a functioning transitional exact-UUID lookup and
+HTTP/agent/MCP registration, but no admitted non-Herbaria release, canonical
+crosswalk or assertion-level provenance for an immutable profile. WCVP custody,
+the Railway census, WTU/UBC admission and the occurrence Parquet dependency
+remain open or blocked. The ingestion audit likewise finds only VPD/GloFAS/CAMS
+and ensemble scaffolding; no approved writer, serving registration or
+publication exists, and growth, water/oil/tissue, fuel and agricultural-role
+fields remain source-admission work.
+
+The visual audit found that aggregate support cells can appear as anonymous
+squares when label collision removes their text, and that Unicode wind arrows
+may become tofu boxes under incomplete glyph coverage. A local presentation
+candidate changes map labels to explicit font-safe ASCII `from N` compass
+wording plus measured speed while retaining `directionToArrow` for compatibility.
+Its scope is `WeatherLayer.tsx`, the focused weather-layer test and
+`src/components/map/AGENTS.md`.
+Independent review and the single final affected-check sweep are recorded in
+the dated entry below; no data, database, ingestion, writer, deployment or push
+action is authorized.
+
+### 2026-09-12 font-safe label review and integrated verification
+
+Independent visual review passed after the map label was changed to explicit
+meteorological `from <cardinal> <speed>` wording. The final single repository
+sweep passed data-boundary, type-check, ESLint with zero errors, tooling tests,
+and Vitest: 150 files passed, 2 skipped; 2,240 tests passed, 13 skipped. The
+[receipt](root-integrated-checks-20260912-weather-labels.md) records the
+database-dependent skips and remaining live-data/mobile/forecast gates. No
+data, database, ingestion, writer, deployment or push action occurred. This
+closes the bounded local presentation candidate while leaving broader weather
+and forecast gates open.

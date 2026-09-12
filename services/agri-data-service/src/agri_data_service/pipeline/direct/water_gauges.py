@@ -12,7 +12,7 @@ import pyarrow as pa  # type: ignore[import-untyped]
 from agri_data_service.foundation.parquet.paths import partition_day_statuses
 from agri_data_service.ingest.identity import build_streamflow_gauge_identity
 from agri_data_service.ingest.usgs_nwis import USGS_PROPERTY_SOURCE
-from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
+from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
 from agri_data_service.warehouse.schemas.water_gauges import (
     WATER_GAUGES_GRAIN,
     WATER_GAUGES_SCHEMA,

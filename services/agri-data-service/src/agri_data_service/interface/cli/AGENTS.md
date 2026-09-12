@@ -46,3 +46,8 @@ JSON receipt that names the ledger it wrote. The body lives in `execution/job_ru
 `execution/AGENTS.md`, "Failed checkpoints are superseded by the clock or by an operator".
 
 Parquet row commands inject the same lazy MTBS availability metadata loader used by HTTP. Exact-day, release and window responses preserve the common optional `mtbs_snapshot` descriptor; no CLI-specific snapshot catalogue or database fallback is introduced.
+
+The generic `parquet-gap-fill` and `parquet-drain` commands are retired and are no longer registered
+under `data`. They were PostgreSQL export surfaces. Direct source packages own acquisition,
+validation and Parquet publication; missing history must be repaired from the upstream source or a
+verified Parquet artifact, with no CLI option for an environmental PostgreSQL fallback.

@@ -10,10 +10,10 @@ import {
 } from "@/lib/environmental/climate-field";
 import { buildIsobands } from "@/lib/geo/isobands";
 import {
-  CLIMATE_FIELD_MAX_CELLS,
   type ClimateFieldFeatureProperties,
   type PublishedClimateFieldCollection,
-} from "@/lib/server/services/environmental-read-model";
+} from "@/lib/server/services/environmental-contracts";
+import { CLIMATE_FIELD_MAX_CELLS } from "@/lib/server/services/parquet-layer-constants";
 import {
   assertFormPermittedForTier,
   type AggregateEnvelopeSupport,

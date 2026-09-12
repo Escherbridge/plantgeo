@@ -44,7 +44,7 @@ from typing import TYPE_CHECKING, Final
 import pyarrow as pa  # type: ignore[import-untyped]
 
 from agri_data_service.foundation.parquet.paths import partition_day_statuses
-from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
+from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
 from agri_data_service.warehouse.schemas.sensors import SENSORS_GRAIN, SENSORS_SCHEMA, SENSORS_STREAM
 
 if TYPE_CHECKING:

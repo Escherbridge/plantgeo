@@ -13,8 +13,7 @@ if TYPE_CHECKING:
 
     import httpx
 
-    from agri_data_service.ingest.geometry import GridCell
-    from agri_data_service.ingest.writer import FeatureWrite
+    from agri_data_service.ingest.records import FeatureWrite, GridCell
 
     UpstreamRecord = Mapping[str, object]
     FetchCallable = Callable[["FetchRequest"], Awaitable[Sequence[UpstreamRecord]]]

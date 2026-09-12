@@ -33,13 +33,13 @@ from typing import TYPE_CHECKING
 import pyarrow as pa  # type: ignore[import-untyped]
 
 from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
+from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.direct.fire_perimeters.products import FIRE_PERIMETERS_DIRECT_KIND
 from agri_data_service.pipeline.direct.fire_perimeters.rows import (
     MAX_PART_PAYLOAD_BYTES,
     chunk_row_indices_by_geometry_bytes,
     fire_perimeters_table,
 )
-from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.parquet.lane_registry import normalise_export_outcome
 from agri_data_service.warehouse.schemas.fire_perimeters import FIRE_PERIMETERS_STREAM
 

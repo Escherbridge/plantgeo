@@ -7,6 +7,19 @@ remains the live implementation and the **authority on the product surface** —
 event union, the report field names, and the enum vocabularies all come from there and from
 `src/lib/regional-intelligence.ts`.
 
+## Current cutover directive (2026-09-12)
+
+The PostgreSQL forecast schemas, forecast materialized views, empty per-cell signal coverage audit,
+and environmental feature fallbacks are retired by
+`environmental_postgres_retirement_20260904` revision `20260912_0028`. No agent path may query or
+write those relations. `forecast_summary_for_cell` returns the typed
+`forecast_parquet_lane_not_published` refusal until a governed Parquet forecast lane is admitted.
+Every environmental surface, including soil-survey and interventions, is Parquet-owned at the
+agent boundary: an unregistered or unwritten lane returns a typed refusal and never retries a
+PostgreSQL feature query. The PostgreSQL session provider remains only for the retained
+species/profile lookup. Sections below that describe the former forecast matview, coverage-audit,
+or intervention reader are historical context, not an active contract.
+
 ## Topology
 
 ```
@@ -71,8 +84,9 @@ the runner keeps its own copy of the conversation and does not expose it.
 Every tool in `tools.py` is **read-only and bounded**, and both properties are enforced in
 Python and SQL rather than requested in the prompt.
 
-- **Read-only, in both dialects.** Every statement is a `SELECT` — the DuckDB reads over Parquet
-  and the two PostgreSQL statements alike. A writer session is never used.
+- **Read-only, in the warehouse dialect.** Every environmental statement is a DuckDB read over
+  Parquet. A writer session is never used; the session provider exists only for the species/profile
+  lookup.
   `test_every_tool_statement_is_read_only` scans every executable line of both sets, and
   `test_agent_parquet_reads.py` repeats the scan over the DuckDB half so a statement added there
   cannot ship unscanned.
@@ -125,12 +139,12 @@ joined a relation that no longer exists.
 | tool | reads |
 |---|---|
 | `signals_near_point`, `signal_value_on_day`, `signal_neighbors_in_time`, `nearest_signal_cells` | Parquet lane `signal`, `kind=observed`, `zoom=13` |
-| `signal_value_on_day`'s second half | `agri.signal_coverage_audit` — **PostgreSQL**, see below |
+| `signal_value_on_day`'s second half | Parquet availability marker and `day_state` |
 | `drought_history_at_point` | Parquet lane `drought` (a `release_series`) |
 | `fire_history_near_point` | Parquet lanes `fire-detections` and `burn-severity`, plus both availability indexes |
-| `forecast_summary_for_cell` | `agri.mv_forecast_ml_daily_serving` — **PostgreSQL**, keyed by a cell resolved from Parquet |
+| `forecast_summary_for_cell` | typed refusal until a governed forecast Parquet lane is admitted; no PostgreSQL fallback |
 | `observation_coverage_on_day`, `observation_temporal_neighbors` | each surface's published **availability index** |
-| `feature_value_near_point` | the surface's own Parquet lane; `interventions` alone stays in `geo.features` |
+| `feature_value_near_point` | the surface's own Parquet lane; an unregistered lane returns a typed refusal |
 
 Three seams carry all of it, and none of them re-implements anything `parquet_ops` already owns:
 
@@ -163,29 +177,19 @@ Consequences that show up in a payload, and therefore in a note:
   three columns are OMITTED rather than returned null — a permanently null field invites the model
   to reason about it, which is the `impact_type` lesson below — and `nearest_signal_cells` REFUSES
   a `grid_names` filter rather than silently answering unfiltered.
-- **`forecast_summary_for_cell` narrowed** exactly as before: ML-method forecasts on series flagged
-  `allow_ml_daily_aggregate`, one row per valid day, and deliberately **no fallback** to
-  `agri.v_forecast_series_serving`. What changed is only where the cell comes from.
+- **`forecast_summary_for_cell` is retired at the serving boundary.** The former ML aggregate and
+  its cell lookup depended on PostgreSQL forecast relations that the cutover drops. The tool keeps
+  its public shape and returns `forecast_parquet_lane_not_published` until an equivalent governed
+  Parquet lane is admitted; it never falls back to a database relation.
 
-### The two PostgreSQL statements that stay, and why
+### The database boundary
 
-Neither is environmental data, and the retirement inventory classes both "keep".
-
-`agri.signal_coverage_audit` is the ingest lane's record of what an upstream was asked for and what
-it answered. It is the one question Parquet **cannot** answer: a governed-absence marker settles a
-whole lane-day, while this ledger is grained by signal, cell and fetched window and says *why*
-nothing landed for one of them. It used to resolve "cells near the point" from `agri.spatial_cell`;
-the cells now arrive as two positionally-paired arrays resolved from the Parquet plane by the same
-call that read the values, which is STRICTER than the join it replaces — the audit is read over
-exactly the cells the answer came from rather than every cell the radius admitted.
-
-`agri.mv_forecast_ml_daily_serving` is the governed ML serving plane, built on
-`agri.v_forecast_series_serving` and inheriting its published/finalized/validated gate. It keeps
-its `pg_class` probe (below) because that gate is the reason an agent cannot quote a draft.
-
-`geo.features` keeps exactly one agent reader: `interventions`. RUNBOOK section 0.26.1 keeps that
-lane in PostgreSQL because it is community data a user writes rather than environmental data an
-upstream publishes, so it has no registered Parquet lane and inventing one would be a fiction.
+The agent has no environmental PostgreSQL reader. `interventions` has no admitted Parquet lane yet,
+so `feature_value_near_point`, `observation_coverage_on_day`, and
+`observation_temporal_neighbors` return a typed Parquet refusal for it. That refusal is deliberate:
+it makes the missing lane visible without querying `geo.features`, returning stale rows, or
+fabricating a synthetic feature collection. Species/profile authoring data remains a separate
+lightweight lookup and is the only database-backed agent surface.
 
 ### Refusing: two states became four
 
@@ -224,15 +228,9 @@ Two refusals this module adds on top:
   `PARQUET_COVERAGE_AUTHORITY` is `census_until_bootstrap` these two tools refuse for every lane;
   they light up as each lane's index is published.
 
-The `pg_class` probe survives for the one relation left that needs it, and its answers are still
-cached per `run_context`. It is **not** a freshness test and nothing may read it as one: a matview
-refreshed once and then frozen reports `relispopulated = true`. That gap is why
-`geo.mv_signal_observation_day` was removed from the probe list rather than left in it — its
-refresh was dropped from the spec in `f5510a1` after timing out at 302 s against a 300 s
-`statement_timeout`, so it is populated AND frozen, and a probe that passed it would have let
-`observation_coverage_on_day` and `observation_temporal_neighbors` serve stale census answers with
-no refusal at all. The census question moved to the availability index, which carries a
-`source_ceiling_day` and can therefore say how current it is.
+The forecast `pg_class` probe described in the historical notes was removed with the cutover. Agent
+coverage now comes from the Parquet availability index, which carries a `source_ceiling_day` and
+can say how current it is without consulting a PostgreSQL relation.
 
 ### Window caps are scan budgets, and they fell
 
@@ -318,14 +316,13 @@ Two design points that are load-bearing rather than incidental:
 
 A metre radius has to become a degree box before it can be a range predicate DuckDB pushes into a
 Parquet row group. The exact geodesic test runs on the survivors, so the box changes how many rows
-are measured and never which rows survive — the same relationship `geom && ST_Expand(...)` had to
-`ST_DWithin(geography)` on the PostgreSQL side, for the same reason.
+are measured and never which rows survive.
 
 The box is sized **per axis** (`_bbox_bounds`). A degree of latitude is a fixed 110,574 m; a degree
 of longitude is 111,320 m only at the equator and shrinks by `cos(latitude)`. Sizing the box on the
 latitude figure alone clips its east–west edges away from the equator and silently drops real rows,
 which is exactly the failure a prefilter must not introduce. `_bbox_degrees` — the square form,
-sized on the wider axis — survives for the one PostgreSQL statement that still takes one.
+sized on the wider axis — remains for compatibility with callers that still use the helper.
 
 ## Answering at the selected day
 
@@ -336,7 +333,7 @@ day the map is showing**.
 
 | tool | question | statements |
 |---|---|---|
-| `signal_value_on_day` | what was measured on this exact day | `SIGNAL_DAY_VALUES` + `SIGNAL_ADMITTED_CELLS` + `signal_coverage_on_day.sql` |
+| `signal_value_on_day` | what was measured on this exact day | `SIGNAL_DAY_VALUES` + `SIGNAL_ADMITTED_CELLS` + Parquet `day_state` |
 | `signal_neighbors_in_time` | what is the nearest reading each side of it | `SIGNAL_TIME_NEIGHBORS` |
 | `nearest_signal_cells` | where are the measurements, and how far | `SIGNAL_CELL_DAY_COUNTS` |
 
@@ -349,9 +346,8 @@ Design rules, each of which has a test:
   Substituting a date is the same refusal MTBS makes for a fire year with no dated release.
 - **The day is the partition, not a filter.** The read is handed exactly the part files of the
   requested day, so a neighbouring day's rows cannot reach the statement and no timestamp is cast
-  to a date to keep that true. The half-open pair of UTC midnights survives in exactly one place —
-  `signal_coverage_on_day.sql` — because `agri.signal_coverage_audit` is grained by the *window a
-  lane fetched* rather than by a day, and overlap is the only honest test for that.
+  to a date to keep that true. Governed absence evidence comes from the Parquet availability marker;
+  the former per-cell `agri.signal_coverage_audit` was empty and is retired.
 - **Every proximity answer carries its distance and the observation's own date.** Temporal rows
   carry `observed_day`, `nearest_cell_observed_at`, signed `day_offset` and magnitude
   `distance_days`; spatial rows carry `distance_meters` and the centroid coordinates. A
@@ -365,11 +361,9 @@ Design rules, each of which has a test:
   once in `CELL_UNIVERSE_DAYS` (30) before the requested day. A cell silent longer than that is
   missing from the list, and the note says so outright rather than letting an observed set read as
   a grid.
-- **Absence is explained from the table that already records it.** `signal_value_on_day` reads
-  `agri.signal_coverage_audit` over *exactly* the cells the value came from, so a `no_data`
-  verdict can only explain the point it was recorded for. Nothing new is written anywhere; the
-  ingest lanes fill that table and this only reads it back. See
-  `execution/coverage_contract.py` for how the same rows drive gap detection.
+- **Absence is explained by the serving marker.** `signal_value_on_day` reads the Parquet
+  availability state for the requested partition. A governed absence carries the source response
+  and receipt metadata in that marker; no PostgreSQL ingest audit is queried.
 
 `AgentRequest.selected_day` carries the map's day into `build_location_context`, which states it
 outright. When it is `None` the context says so and stands in today's date **visibly**, with an
@@ -378,9 +372,8 @@ in the position of implying a past reading is current.
 
 ### Deviations
 
-- `signal_value_on_day` issues **three** statements for one tool call — two DuckDB reads inside
-  ONE admitted session (the values and the admitted cells) and one PostgreSQL read (the absence
-  ledger). One session, because a tool asking two questions of one day should not queue twice
+- `signal_value_on_day` issues **two** DuckDB statements for one tool call inside ONE admitted
+  session (the values and the admitted cells). One session, because a tool asking two questions of one day should not queue twice
   behind the three-slot serving gate, and because the second statement then reads part files this
   process has already opened. `test_every_tool_statement_is_read_only` drives all ten published
   tools and asserts `len(WAREHOUSE_TOOLS) == 10` beside the statement set: the tripwire scans every
@@ -399,20 +392,16 @@ in the position of implying a past reading is current.
 
 ### Where the columns come from
 
-`agri.*` columns are verified against `models/historical.py`, `models/forecasting.py` and the
-declarative views under `db/agri/`. `forecast_summary_for_cell` reads
-`agri.mv_forecast_ml_daily_serving`, which is built on `agri.v_forecast_series_serving` and so
-inherits its "published, finalized, validated" gate — the agent must not be able to quote a draft
-forecast, and reading the matview rather than re-deriving the join keeps that true.
+`agri.*` columns are verified against the registered Parquet Arrow schemas. The former
+`forecast_summary_for_cell` PostgreSQL matview is retired; the tool refuses until its replacement
+Parquet lane carries an equivalent published, finalized, and validated gate.
 
 Parquet columns come from the REGISTERED Arrow schemas under `warehouse/schemas/`, and which
 column carries a lane's position is decided by `parquet_ops.warehouse_reader.spatial_support` —
 imported, never re-derived — so the agent and the map agree about where a lane's coordinates live.
 A lane declaring neither a coordinate pair nor a WKB column is refused rather than answered for the
 whole world. `feature_value_near_point` returns the lane's own typed columns under `properties`;
-there is no JSON allow-list any more because there is no JSON blob to guard — the ~1,467 MB of
-TOAST across 4.97 million `geo.features` rows that made `FEATURE_PROPERTY_KEYS` necessary is not a
-property of a Parquet lane. That allow-list survives, trimmed, for `interventions` alone.
+there is no JSON allow-list because there is no JSON blob to guard.
 
 `fire_history_near_point`'s lanes are spelled in `surfaces.py::FIRE_LANE_NAMES` rather than
 resolved through `ingest/firms.py` and `ingest/mtbs.py` as the PostgreSQL statement did: those
@@ -422,13 +411,9 @@ the two lanes have genuinely different grains — `fire-detections` publishes on
 carrying `detection_count`, `burn-severity` one row per mapped perimeter — and guessing from a
 column name would be a rule nobody wrote down.
 
-The four PostgreSQL statements that remain live in `sql/agent/*.sql` behind `load_query_sql`, with
-the beginner-doc header standard from `sql/AGENTS.md` — including its bind-param trap: parameter
-names in comments carry no leading colon, because `text()` scans comments too. The eight that
-moved were DELETED, not left orphaned: a `.sql` file with no call site fails
-`test_sql_tree_conventions.py::test_loaded_exactly_once`, and
-`test_agent_parquet_tools.py::test_the_agent_sql_tree_holds_only_the_four_statements_that_stay`
-asserts the surviving set by name.
+The agent SQL tree is intentionally empty: all model-facing environmental reads use the DuckDB
+statements in `agent/parquet_reads.py`. A leftover `sql/agent/*.sql` file would be an orphaned
+PostgreSQL fallback and should be deleted rather than wired back into a caller.
 
 ## Report vocabulary
 
@@ -690,9 +675,8 @@ of the warehouse the port made visible.
   from an observation instant and is named differently for that reason.
 - **A polygon lane's `distance_meters` is to its centroid**, because DuckDB has no geodesic
   distance to an edge. `distance_basis` says which measurement it is, on every row.
-- **`interventions` still reads `geo.features`.** It is community data, it is empty, and RUNBOOK
-  section 0.26.1 keeps it in PostgreSQL. It does not block the `geo.features` drop packet any more
-  than the layer itself already does.
+- **`interventions` has no admitted Parquet lane.** It is surfaced as a typed refusal until a
+  governed Parquet export is published; no `geo.features` read is permitted from this agent module.
 
 ## What the agent owes every layer
 

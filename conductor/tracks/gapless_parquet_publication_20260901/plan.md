@@ -35,7 +35,7 @@ identities; use the retirement plan before any future operational work.
 
 ## Current checkpoint — September 11
 
-The [operational retrospective](../../retros/parquet_operational_checkpoints_20260911/README.md) archives completed temperature-history
+The [operational retrospective](../environmental_parquet_serving_20260912/plan.md) archives completed temperature-history
 publication and the 747-fire current MTBS rollout. Daily MTBS publication and
 weekly capture configuration were reconciled; future scheduled execution was not
 yet observed. Three advances, retry/restart/lease recovery and the complete gap
@@ -44,7 +44,7 @@ census remain open. September 10's eight-lane pause was recorded as
 runtime cutoff without active-definition and lease readback.
 
 Before executing the historical P3 recovery checklist below, use the current
-[retirement plan](../environmental_postgres_retirement_20260904/plan.md): the rebuild
+[retirement plan](../environmental_parquet_serving_20260912/plan.md): the rebuild
 and later source-direct replacements changed the old lane/command identities.
 Do not resume database-writing archive lanes from a dated dead-letter list.
 Reconcile older unclosed soil-wetness, precipitation, dew-point, burn-severity and

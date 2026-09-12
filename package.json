@@ -25,7 +25,6 @@
     "docker:logs": "podman compose logs -f",
     "tiles:serve": "podman compose up -d martin",
     "tiles:logs": "podman compose logs -f martin",
-    "warm:soilgrids": "node scripts/warm-soilgrids.mjs",
     "prepare": "husky",
     "test:e2e": "playwright test",
     "bench": "vitest bench --run --configLoader runner",

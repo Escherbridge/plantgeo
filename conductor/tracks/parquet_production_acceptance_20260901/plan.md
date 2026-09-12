@@ -9,7 +9,7 @@ resource: ./spec.md
 
 ## Evidence intake — September 11
 
-[Completed operational slices](../../retros/parquet_operational_checkpoints_20260911/README.md) are inputs to this gate, not a GREEN
+[Completed operational slices](../environmental_parquet_serving_20260912/plan.md) are inputs to this gate, not a GREEN
 all-product verdict. MTBS has a bounded deployed public/browser acceptance receipt;
 three temperature histories have exact availability generation receipts. The full
 matrix, scheduled burn-in and recovery proof remain open. The owner-authorized

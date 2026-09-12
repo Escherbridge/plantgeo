@@ -67,7 +67,7 @@ from agri_data_service.ingest.source import FetchRequest, HistoryWindow, select_
 if TYPE_CHECKING:
     import httpx
 
-    from agri_data_service.ingest.writer import FeatureWrite
+    from agri_data_service.ingest.records import FeatureWrite
 
 #: The window this module always asks for: the full currently-available rolling retention, so one
 #: poll recovers as much of it as NWS still holds rather than guessing at a shorter, tunable span.

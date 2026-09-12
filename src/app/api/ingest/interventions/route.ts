@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { ingestFeature } from "@/lib/server/services/ingest";
+import { upsertInterventionFeature } from "@/lib/server/services/intervention-store";
 import {
   parseBoundedJson,
   authorizeIngressRequest,
@@ -59,14 +59,13 @@ export async function POST(request: NextRequest) {
 
   const { id, geometry, properties } = parsed.data;
 
-  const created = await ingestFeature({
+  const created = await upsertInterventionFeature({
     layerId: INTERVENTIONS_LAYER_ID,
     featureId: id,
     properties: {
       ...properties,
       geometry,
     },
-    channel: "layer:interventions",
   });
 
   return NextResponse.json({ ok: true, count: created ? 1 : 0 }, { status: 201 });

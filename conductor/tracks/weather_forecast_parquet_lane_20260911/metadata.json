@@ -6,11 +6,11 @@
   "created_on": "2026-09-11",
   "depends_on": [
     "gapless_parquet_publication_20260901",
-    "parquet_reader_cutover_acceptance_20260901"
+    "environmental_parquet_serving_20260912"
   ],
   "related_tracks": [
     "upstream_dataset_expansion_20260806",
-    "environmental_postgres_retirement_20260904",
+    "environmental_parquet_serving_20260912",
     "multiscale_polygon_surface_20260901",
     "weather_forecast_experience_20260911"
   ],
@@ -84,7 +84,7 @@
       {
         "path": "src/lib/server/services/parquet-slider-capabilities.ts",
         "owner": "f3",
-        "serializes_after": "parquet_reader_cutover_acceptance_20260901",
+        "serializes_after": "environmental_parquet_serving_20260912",
         "reason": "Register real horizons and run/valid-time semantics after the active reader owner freezes the shared capability contract."
       },
       {

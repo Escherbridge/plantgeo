@@ -14,13 +14,13 @@
   "runbook_section": "LIVE / Spatial aggregation and polygon contract",
   "external_dependencies": [
     {
-      "track": "parquet_reader_cutover_acceptance_20260901",
+      "track": "environmental_parquet_serving_20260912",
       "slice": "r0",
       "status": "planned",
       "for": "m0 consumes the frozen support-geometry and temporal envelope contract."
     },
     {
-      "track": "parquet_reader_cutover_acceptance_20260901",
+      "track": "environmental_parquet_serving_20260912",
       "slice": "r2",
       "status": "planned",
       "for": "m1 waits for the shared reader/capability implementation to land before editing shared response files."

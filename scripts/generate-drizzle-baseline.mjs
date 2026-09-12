@@ -1,4 +1,4 @@
-// Regenerates `drizzle/0000_baseline.sql` from a pg_dump --schema-only artifact.
+// Regenerates the current Drizzle greenfield baseline from a schema-only PostgreSQL dump.
 //
 //   node scripts/generate-drizzle-baseline.mjs <artifact.sql> [drizzle/0000_baseline.sql]
 //
@@ -78,29 +78,17 @@ sql = sql.replace(/^CREATE SCHEMA (public|geo|tracking);$/gm, "CREATE SCHEMA IF 
 
 const header = `-- PlantGeo Drizzle greenfield baseline.
 --
--- This single revision replaces migrations 0000..0040, which are retained unedited in
--- \`drizzle/archive/\`. It is generated from production's ACTUAL schema by pg_dump 18, not
--- hand-transcribed, so it cannot drift from what production really is. Regenerate it with
--- \`scripts/generate-drizzle-baseline.mjs\`; that file documents how the artifact is produced.
---
--- WHY THE CHAIN WAS COLLAPSED, in one line each -- \`drizzle/archive/README.md\` has the evidence:
---   * Four steps had to run OUT OF BAND, BETWEEN migrations, but drizzle-orm applies every
---     pending migration in ONE transaction, and CREATE INDEX CONCURRENTLY cannot run in one.
---   * Seven of the last ten migrations had never been applied to production at all.
+-- Generated from the current Railway schema by PostgreSQL 18 pg_dump. Regenerate it with
+-- \`scripts/generate-drizzle-baseline.mjs\`; do not hand-transcribe production definitions.
 --
 -- PREREQUISITES, in order. This baseline creates no extensions, no \`agri\` objects and no rows:
 --   1. CREATE EXTENSION postgis, pgcrypto, vector, btree_gist
---   2. Alembic \`upgrade head\`, run separately -- seven objects below read Alembic-owned agri
---      tables (agri.signal_observation, agri.spatial_cell, agri.strategies and seven more).
+--   2. Alembic \`upgrade head\`, run separately, creates the retained control and lookup schema.
 --   3. This baseline.
 --   4. \`drizzle/seed/\` -- this dump is --schema-only, and an empty \`geo.layers\` makes
 --      /api/ready return 503, which fails the Railway healthcheck.
 -- \`scripts/bootstrap-database.mjs\` does 1, 3 and 4, and REFUSES 3 until 2 has been done. It does
 -- not run Alembic itself: that is a Python toolchain the Next.js image does not carry.
---
--- VERIFIED 2026-09-08 by building an empty database on the production server and comparing every
--- column, index, constraint, function, view definition and trigger against production by
--- catalogue query: zero differences in public, geo and tracking.
 
 `;
 fs.writeFileSync(destination, header + sql);

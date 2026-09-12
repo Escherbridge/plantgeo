@@ -36,10 +36,10 @@ from agri_data_service.ingest.policy import (
     resolve_bounded_bbox,
     resolve_max_source_records,
 )
+from agri_data_service.ingest.records import FeatureWrite
 from agri_data_service.ingest.results import IngestionJobResult, skipped_result
 from agri_data_service.ingest.source import HistoryCapability
 from agri_data_service.ingest.upstream_retry import UpstreamRetryPolicy, retry_upstream
-from agri_data_service.ingest.writer import FeatureWrite
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping, Sequence
@@ -47,7 +47,7 @@ if TYPE_CHECKING:
     import httpx
 
     from agri_data_service.ingest.arcgis import AdaptiveWalkOutcome, OversizedSourceRecord
-    from agri_data_service.ingest.writer import FeatureWriter
+    from agri_data_service.ingest.records import FeatureWriter
 
 WFIGS_SOURCE: Final = "wfigs-fire-perimeters"
 WFIGS_PROPERTY_SOURCE: Final = "WFIGS Interagency Fire Perimeters"

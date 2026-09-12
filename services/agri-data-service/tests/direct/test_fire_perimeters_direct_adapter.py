@@ -38,7 +38,7 @@ from agri_data_service.pipeline.direct.fire_perimeters.support import (
     fire_perimeter_geometry_session,
     perimeter_geometries_to_wkb,
 )
-from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
+from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.parquet.gap_fill import fill_one_lane_day, unlocked_lane_day
 from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRY
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore

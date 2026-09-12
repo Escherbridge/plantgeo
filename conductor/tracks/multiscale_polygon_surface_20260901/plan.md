@@ -10,7 +10,7 @@ resource: ./spec.md
 ## Current checkpoint — September 11
 
 Support and renderer implementation are complete subsets. The
-[MTBS rollout](../environmental_postgres_retirement_20260904/evidence/mtbs-live-rollout-20260911.md)
+[MTBS rollout](../environmental_parquet_serving_20260912/plan.md)
 adds one bounded production/browser result, including the proved 746-versus-747
 viewport geometry distinction. It does not close the cross-product M3 conservation,
 pixel-continuity, mobile or request-to-paint matrix below.

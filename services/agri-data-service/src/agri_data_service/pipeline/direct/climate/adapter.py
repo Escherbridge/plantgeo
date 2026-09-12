@@ -10,13 +10,13 @@ from typing import TYPE_CHECKING, Final
 
 from agri_data_service.foundation.parquet.absence import GovernedAbsence
 from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
+from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.direct.climate.rows import climate_day_table
 from agri_data_service.pipeline.direct.climate.source import (
     ClimateProviderDeferredError,
     ClimateSourceError,
     ClimateSourceUnsettledError,
 )
-from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.parquet.derivation import govern_day_absent
 from agri_data_service.pipeline.parquet.lane_registry import normalise_export_outcome
 

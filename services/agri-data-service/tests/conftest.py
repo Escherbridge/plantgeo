@@ -28,13 +28,7 @@ if TYPE_CHECKING:
     from _pytest.terminal import TerminalReporter
 
 AGRI_TEST_DATABASE_URL_ENV = "AGRI_TEST_DATABASE_URL"
-# Bump this with EVERY new revision, in the same change as the revision. It was missed for
-# 20260816_0024, which silently broke the whole disposable-database gate: every `agri_db`-marked
-# test refused any database actually at head and the sweep ran without them. See db/AGENTS.md.
-# 2026-08-25: the 26-revision chain collapsed into greenfield root `20260825_0000` and its history
-# moved unedited to `alembic/archive/`. Live follow-on revisions extend that root, so the only legal
-# `alembic_version` value is the current head below; any earlier value must be upgraded before tests.
-EXPECTED_ALEMBIC_HEAD = "20260827_0027"
+EXPECTED_ALEMBIC_HEAD = "20260912_0000"
 PROTECTED_DATABASE_NAME = "plantgeo"
 AGRI_DB_MARKER = "agri_db"
 AGRI_DB_REHEARSAL_MARKER = "agri_db_migration_rehearsal"
@@ -80,8 +74,8 @@ def _assert_head_and_safe(dsn: str) -> None:
     if revision != EXPECTED_ALEMBIC_HEAD:
         pytest.fail(
             f"{AGRI_TEST_DATABASE_URL_ENV} database {database_name!r} is at Alembic revision "
-            f"{revision!r}, expected head {EXPECTED_ALEMBIC_HEAD!r}. Run `alembic upgrade head` "
-            "against it, or rebuild it with db/tools/regenerate.py."
+            f"{revision!r}, expected head {EXPECTED_ALEMBIC_HEAD!r}. Recreate the disposable "
+            "database and run `alembic upgrade head` against it."
         )
 
 

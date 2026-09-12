@@ -11,7 +11,7 @@ import { layers, teamMembers } from "@/lib/server/db/schema";
 import {
   clearLayerIdCache,
   invalidateLayerId,
-} from "@/lib/server/services/environmental-read-model";
+} from "@/lib/server/services/environmental-layer-id";
 import {
   identityFromSession,
   isPlatformAdmin,

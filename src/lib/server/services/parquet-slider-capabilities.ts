@@ -1,7 +1,7 @@
 import type {
   ResolvedSliderCapabilities,
   ResolvedSliderLayerCapability,
-} from "@/lib/server/services/environmental-read-model";
+} from "@/lib/server/services/environmental-contracts";
 import { FUTURE_AXIS_DAYS, MAX_REPORTED_DAY_RANGES } from "@/lib/environmental/slider-policy";
 import {
   getParquetWarehouseCoverage,
@@ -39,7 +39,6 @@ const REQUIRED_ZOOM_TIERS = [0, 5, 9, 13] as const satisfies readonly ZoomTier[]
 export type WithheldParquetCapabilityReason =
   | "coverage_unavailable"
   | "coverage_not_current"
-  | "reader_not_parquet"
   | "lane_not_registered"
   | "lane_never_written"
   | "rung_not_reported"
@@ -78,7 +77,8 @@ interface ParquetCapabilityContract {
   layerName: string;
   temporalKind: TemporalKind;
   parquetNature: ParquetLaneNature;
-  servingReader: "parquet" | "postgresql";
+  /** Every published capability is served by the governed Parquet plane. */
+  servingReader: "parquet";
   parquetLanes: readonly string[];
   /** First day the lane contract promises as a usable series, even when older physical facts exist. */
   selectableHistoryFloor?: string;
@@ -97,15 +97,9 @@ const DIRECT_PARQUET_CAPABILITIES = [
     selectableHistoryFloor: "2022-08-05",
   },
   { layerName: "weather-observations", temporalKind: "daily_series", parquetNature: "daily_series", servingReader: "parquet", parquetLanes: ["weather-observations"] },
-  // sensors / watersheds / evacuation-zones flipped to "parquet" on 2026-09-07. Their RENDER paths
-  // left Postgres on 2026-09-04 (wave C) and this line was never updated behind them, so all three
-  // were withheld as `reader_not_parquet` while drawing Parquet pixels. Two independent proofs:
-  // each resolves to a `getParquet*` reader (`parquet-trpc-readers.ts:2200/2063/1923`) onto a GeoJSON
-  // source `LayerManager.applyParquetFeatureData` fills, and Martin publishes only
-  // `intervention_tiles`/`building_tiles` (`infra/martin/martin.yaml:65-71`), so no tile function
-  // serves them. The production reason itself was the third proof: `reader_not_parquet` is the LAST
-  // check in `proveCapability`, so each had already passed availability, four-rung reporting, nature,
-  // bounds and ceiling.
+  // Sensors, watersheds and evacuation zones are read from their governed Parquet lanes. Their
+  // snapshot nature means they do not create a scrubber axis, but it does not authorize a database
+  // fallback when a lane is unavailable.
   //
   // WHAT THIS DOES NOT DO: all three are `temporalKind: "snapshot"`, so `sliderDomain` returns null
   // (`stores/time-slider-store.ts:105`) and none gains a scrubber. What changes is that they stop
@@ -114,12 +108,9 @@ const DIRECT_PARQUET_CAPABILITIES = [
   { layerName: "sensors", temporalKind: "snapshot", parquetNature: "daily_series", servingReader: "parquet", parquetLanes: ["sensors"] },
   { layerName: "watersheds", temporalKind: "snapshot", parquetNature: "static_lookup", servingReader: "parquet", parquetLanes: ["watersheds"] },
   { layerName: "vegetation", temporalKind: "daily_series", parquetNature: "daily_series", servingReader: "parquet", parquetLanes: ["vegetation"] },
-  // soil-survey STAYS postgresql, and not because the line is stale: the lane has never written an
-  // object (it is withheld as `lane_never_written`, never reaching the reader gate), and
-  // `services/usda-soil.ts` both READS `geo.features`/`geo.soil_survey_coverage` and WRITES them on
-  // its SDA warm path. Flipping it would advertise a Parquet axis over Postgres polygons -- the exact
-  // inversion this gate exists to prevent.
-  { layerName: "soil-survey", temporalKind: "snapshot", parquetNature: "static_lookup", servingReader: "postgresql", parquetLanes: ["soil-survey"] },
+  // Soil-survey is a declared Parquet static lookup. It remains withheld until its lane publishes
+  // a validated object; an empty lane never reopens the retired PostgreSQL reader.
+  { layerName: "soil-survey", temporalKind: "snapshot", parquetNature: "static_lookup", servingReader: "parquet", parquetLanes: ["soil-survey"] },
   { layerName: "evacuation-zones", temporalKind: "snapshot", parquetNature: "static_lookup", servingReader: "parquet", parquetLanes: ["evacuation-zones"] },
   // burn-severity flipped to "parquet" on 2026-09-07: the last row in this table whose axis and
   // pixels disagreed, and the only one that ran the inversion in the direction `servingReader`
@@ -334,11 +325,9 @@ function availabilityWithheldLanes(
 /**
  * A capability whose lane withheld itself, or null when every one of its lanes is describable.
  *
- * Checked BEFORE any census fact and before the PostgreSQL passthrough, which is the whole point
- * of the fail-closed rule: an unpublished, stale, malformed or checksum-invalid availability index
- * says nothing about which days exist, so falling back to a census walk -- or to the PostgreSQL
- * row the layer used to be served from -- would answer a question the warehouse just declined to
- * answer, in a form the client cannot tell apart from a proved one.
+ * Checked BEFORE any census fact: an unpublished, stale, malformed or checksum-invalid availability
+ * index says nothing about which days exist, so falling back to a census walk would answer a question
+ * the warehouse just declined to answer, in a form the client cannot tell apart from a proved one.
  */
 function availabilityWithholding(
   contract: ParquetCapabilityContract,
@@ -867,9 +856,6 @@ function proveCapability(
   );
   if (publishedRanges.length === 0) {
     return missing(contract, "no_common_readable_history", []);
-  }
-  if (contract.servingReader !== "parquet") {
-    return missing(contract, "reader_not_parquet", []);
   }
   const earliestDay = publishedRanges[0].from;
   const latestDay = publishedRanges.at(-1)!.to;

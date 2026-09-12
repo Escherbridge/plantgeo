@@ -1,11 +1,11 @@
 import { db } from "@/lib/server/db";
 import { environmentalAlerts, priorityZones } from "@/lib/server/db/schema";
 import { and, eq, gte, sql } from "drizzle-orm";
+import { getContextWaterGauges } from "@/lib/server/services/parquet-context-readers";
 import {
-  getDroughtCategoryAtPoint,
-  getPublishedFireDetections,
-  getPublishedStreamflowGauges,
-} from "@/lib/server/services/environmental-read-model";
+  getParquetDrought,
+  getParquetFireDetections,
+} from "@/lib/server/services/parquet-trpc-readers";
 import { DROUGHT_CATEGORY_LABELS } from "@/lib/server/services/usdm-drought";
 
 export type AlertSeverity = "info" | "warning" | "critical";
@@ -206,17 +206,17 @@ export async function checkFireProximityAlerts(
 
   const bbox = bboxAroundPoint(lat, lon, radiusKm);
   if (!bbox) return [];
-  const fires = await getPublishedFireDetections(bbox, 1);
+  const fireRead = await getParquetFireDetections({ bbox, mapZoom: 13, dayRange: 1 });
+  if (fireRead.state !== "ready") return [];
 
   let closestDistKm = Infinity;
   let closestFire: { lat: number; lon: number } | null = null;
 
-  for (const feature of fires.features) {
-    const [fireLon, fireLat] = feature.geometry.coordinates;
-    const distKm = haversineKm(lat, lon, fireLat, fireLon);
+  for (const fire of fireRead.data.cells) {
+    const distKm = haversineKm(lat, lon, fire.latitude, fire.longitude);
     if (distKm < closestDistKm) {
       closestDistKm = distKm;
-      closestFire = { lat: fireLat, lon: fireLon };
+      closestFire = { lat: fire.latitude, lon: fire.longitude };
     }
   }
 
@@ -266,13 +266,24 @@ export async function checkDroughtAlerts(
   const isDuplicate = await deduplicateAlert(userId, "drought_escalation", locationId);
   if (isDuplicate) return [];
 
-  // Containment is evaluated in PostGIS against the stored release geometry:
-  // the national collection is far too large to load into Node per watched
-  // location. getDroughtCategoryAtPoint already rejects a stale release.
-  const observed = await getDroughtCategoryAtPoint(lat, lon);
-  if (!observed || observed.dmCategory < 3) return [];
+  const bbox = bboxAroundPoint(lat, lon, 1);
+  if (!bbox) return [];
+  const droughtRead = await getParquetDrought({ bbox, mapZoom: 13 });
+  if (droughtRead.state !== "ready") return [];
+  const droughtCollection: GeoJSON.FeatureCollection = {
+    type: "FeatureCollection",
+    features: droughtRead.data.map((area) => ({
+      type: "Feature",
+      geometry: area.geometry,
+      properties: { DM: area.droughtCategory },
+    })),
+  };
+  const dmCategory = droughtLevelAtPoint(droughtCollection, lat, lon);
+  if (dmCategory === null || dmCategory < 3) return [];
+  const observedArea = droughtRead.data.find((area) => area.droughtCategory === dmCategory);
+  if (!observedArea) return [];
 
-  const label = DROUGHT_CATEGORY_LABELS[observed.dmCategory];
+  const label = DROUGHT_CATEGORY_LABELS[dmCategory];
 
   return [
     {
@@ -280,14 +291,14 @@ export async function checkDroughtAlerts(
       alertType: "drought_escalation",
       severity: "critical",
       title: `${label} detected near watched location`,
-      body: `The US Drought Monitor reports ${label} conditions in your region as of the latest weekly update (${observed.validDate}).`,
+      body: `The US Drought Monitor reports ${label} conditions in your region as of the latest weekly update (${observedArea.validDate}).`,
       metadata: {
         watchedLocationId: locationId,
         source: "warehouse:drought-usdm",
-        sourceUrl: observed.sourceUrl,
-        observedAt: observed.observedAt,
-        droughtClass: observed.dmCategory,
-        weekDate: observed.validDate,
+        sourceUrl: observedArea.sourceUrl,
+        observedAt: observedArea.ingestedAt,
+        droughtClass: dmCategory,
+        weekDate: observedArea.validDate,
         lat,
         lon,
       },
@@ -309,9 +320,14 @@ export async function checkStreamflowAlerts(
 
   const bbox = bboxAroundPoint(lat, lon, 200);
   if (!bbox) return [];
-  const criticalGauges = (await getPublishedStreamflowGauges(bbox)).filter(
-    (gauge) => gauge.condition === "critically_low"
-  );
+  let criticalGauges;
+  try {
+    criticalGauges = (await getContextWaterGauges(bbox)).filter(
+      (gauge) => gauge.condition === "critically_low"
+    );
+  } catch {
+    return [];
+  }
 
   if (criticalGauges.length === 0) return [];
 

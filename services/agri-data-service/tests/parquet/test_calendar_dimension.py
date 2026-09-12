@@ -31,7 +31,7 @@ from agri_data_service.foundation.parquet.calendar import (
 )
 from agri_data_service.foundation.parquet.completion import PartitionCompletion
 from agri_data_service.foundation.parquet.paths import partition_day_statuses
-from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
+from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.lanes.calendar import build_calendar_table, export_calendar_version
 from agri_data_service.pipeline.parquet.lane_registry import CALENDAR_HISTORY_FLOOR, LANE_REGISTRY
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore

@@ -5,7 +5,7 @@
   "status": "active",
   "created_on": "2026-09-11",
   "depends_on": [
-    "parquet_duckdb_pivot_20260823"
+    "environmental_parquet_serving_20260912"
   ],
   "related_tracks": [
     "pnw_herbaria_source_admission_20260911",
@@ -119,7 +119,7 @@
       {
         "path": "services/agri-data-service/src/agri_data_service/agent/tools.py",
         "owner": "p3",
-        "serializes_after": "parquet_reader_cutover_acceptance_20260901",
+        "serializes_after": "environmental_parquet_serving_20260912",
         "reason": "Register the release-pinned species-information tool only after the active reader owner completes or explicitly transfers the shared agent tool registry."
       },
       {
@@ -131,31 +131,31 @@
       {
         "path": "services/agri-data-service/src/agri_data_service/agent/prompts.py",
         "owner": "p3",
-        "serializes_after": "parquet_reader_cutover_acceptance_20260901",
+        "serializes_after": "environmental_parquet_serving_20260912",
         "reason": "Teach the agent the profile tool's evidence and refusal semantics under the same transferred reader/agent ownership."
       },
       {
         "path": "services/agri-data-service/src/agri_data_service/agent/AGENTS.md",
         "owner": "p3",
-        "serializes_after": "parquet_reader_cutover_acceptance_20260901",
+        "serializes_after": "environmental_parquet_serving_20260912",
         "reason": "Document the new tool in the shared agent topology after the active owner transfers the surface."
       },
       {
         "path": "services/agri-data-service/tests/test_agent_parquet_tools.py",
         "owner": "p3",
-        "serializes_after": "parquet_reader_cutover_acceptance_20260901",
+        "serializes_after": "environmental_parquet_serving_20260912",
         "reason": "Verify registration, pinned releases, bounded reads, evidence fields and refusal states with the transferred tool owner."
       },
       {
         "path": "services/agri-data-service/tests/test_agent_graph.py",
         "owner": "p3",
-        "serializes_after": "parquet_reader_cutover_acceptance_20260901",
+        "serializes_after": "environmental_parquet_serving_20260912",
         "reason": "Update shared agent sufficiency and tool-count behavior only after the reader/agent owner transfers this test surface."
       },
       {
         "path": "services/agri-data-service/tests/test_agent_provider_wiring.py",
         "owner": "p3",
-        "serializes_after": "parquet_reader_cutover_acceptance_20260901",
+        "serializes_after": "environmental_parquet_serving_20260912",
         "reason": "Prove the species-information tool is reachable through the model-facing provider after shared agent registration transfers."
       }
     ],

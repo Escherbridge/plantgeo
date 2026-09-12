@@ -78,6 +78,7 @@ from agri_data_service.foundation.parquet.paths import (
     try_parse_absence_marker_path,
     try_parse_partition_path,
 )
+from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.direct.evacuation_zones.products import (
     EVACUATION_ZONES_DIRECT_KIND,
     EVACUATION_ZONES_STREAM,
@@ -91,7 +92,6 @@ from agri_data_service.pipeline.direct.evacuation_zones.rows import (
     updated_at_by_natural_key,
 )
 from agri_data_service.pipeline.direct.evacuation_zones.source import fetch_evacuation_zones_snapshot
-from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.warehouse.schemas.evacuation_zones import EVACUATION_ZONES_SCHEMA
 
 if TYPE_CHECKING:

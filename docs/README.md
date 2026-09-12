@@ -160,17 +160,10 @@ Each carries a dated status banner at the top pointing to
 - [SQL-first forecasting framework](./sql-forecasting-framework.md) — ML is
   frozen and each lane's own Monte Carlo forecast now serves forecasted values
   instead of this framework.
-- [Historical ingestion runbook](./historical-backfill-runbook.md) — targets
-  the Postgres warehouse the pivot is leaving.
 - [Predictive environmental intelligence](./predictive-environmental-intelligence-spec.md)
   — ML domain (frozen) and assumes "PlantGeo's single PostGIS database."
 - [Strategy-selection training contract](./strategy-selection-training.md) —
   ML domain (frozen); Postgres substrate assumption is not current.
-- [Pending migration 0029](./pending-migrations/0029-pre-aggregation.md) and
-  [0033](./pending-migrations/0033-features-partitioning.md) — optimize
-  Postgres relations (`geo.mv_signal_cell_daily`, `geo.features`) that are
-  named in RUNBOOK §0.23.2 as export targets; confirm relevance before
-  applying either.
 
 ### Historical — point-in-time records, not current guidance
 

@@ -34,8 +34,8 @@ from agri_data_service.ingest.policy import (
     parse_bbox,
     resolve_max_source_records,
 )
+from agri_data_service.ingest.records import FeatureWrite
 from agri_data_service.ingest.source import FreshnessRule, FunctionSource, HistoryCapability
-from agri_data_service.ingest.writer import FeatureWrite
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence

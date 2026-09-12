@@ -60,8 +60,6 @@ describe("HOVERABLE_LAYER_IDS", () => {
       "weather-temperature",
       "weather-temperature-cells",
       "vegetation-ndvi-cells-fill",
-      "osm-roads",
-      "osm-waterways",
     ]);
   });
 });
@@ -553,55 +551,6 @@ describe("formatHoverContent: soil-survey-fill", () => {
     });
     expect(content?.lines.some((l) => l.startsWith("Hydric share"))).toBe(false);
     assertNoSentinels(content);
-  });
-});
-
-describe("formatHoverContent: osm-roads", () => {
-  it("formats a full road", () => {
-    const content = formatHoverContent("osm-roads", {
-      name: "Main St",
-      highway: "primary",
-      surface: "asphalt",
-      lanes: 4,
-      maxspeed: "35 mph",
-    });
-    expect(content?.title).toBe("Main St");
-    expect(content?.lines).toContain("Type: primary");
-    expect(content?.lines).toContain("Surface: asphalt");
-    expect(content?.lines).toContain("Lanes: 4");
-    expect(content?.lines).toContain("Max speed: 35 mph");
-    assertNoSentinels(content);
-  });
-
-  it("falls back to highway as the title when name is missing", () => {
-    const content = formatHoverContent("osm-roads", { highway: "residential" });
-    expect(content?.title).toBe("residential");
-    expect(content?.lines).toEqual(["Type: residential"]);
-    assertNoSentinels(content);
-  });
-
-  it("falls back to a generic title when both name and highway are missing", () => {
-    const content = formatHoverContent("osm-roads", { surface: "gravel" });
-    expect(content?.title).toBe("Road");
-    expect(content?.lines).toEqual(["Surface: gravel"]);
-    assertNoSentinels(content);
-  });
-});
-
-describe("formatHoverContent: osm-waterways", () => {
-  it("formats a full waterway", () => {
-    const content = formatHoverContent("osm-waterways", {
-      name: "Boise River",
-      waterway: "river",
-    });
-    expect(content?.title).toBe("Boise River");
-    expect(content?.lines).toEqual(["Type: river"]);
-    assertNoSentinels(content);
-  });
-
-  it("falls back to waterway, then a generic title", () => {
-    expect(formatHoverContent("osm-waterways", { waterway: "stream" })?.title).toBe("stream");
-    expect(formatHoverContent("osm-waterways", {})).toBeNull();
   });
 });
 

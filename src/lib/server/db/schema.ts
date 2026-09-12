@@ -37,10 +37,6 @@ const spatialPoint = customType<{ data: string; driverData: string }>({
   dataType: () => "geometry(POINT,4326)",
 });
 
-const spatialMultiPolygon = customType<{ data: string; driverData: string }>({
-  dataType: () => "geometry(MULTIPOLYGON,4326)",
-});
-
 const spatialPolygon = customType<{ data: string; driverData: string }>({
   dataType: () => "geometry(POLYGON,4326)",
 });
@@ -306,72 +302,6 @@ export const alerts = trackingSchema.table("alerts", {
 });
 
 // ============================================
-// POI / Places (geo schema)
-// Note: geom geometry(POINT,4326) column added via migration:
-// ALTER TABLE geo.poi ADD COLUMN geom GEOMETRY(POINT,4326);
-// CREATE INDEX ON geo.poi USING GIST(geom);
-// ============================================
-
-export const poi = geoSchema.table("poi", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  name: text("name").notNull(),
-  geom: spatialPoint("geom"),
-  category: varchar("category", { length: 50 }),
-  subcategory: varchar("subcategory", { length: 50 }),
-  address: text("address"),
-  phone: varchar("phone", { length: 30 }),
-  website: text("website"),
-  hours: jsonb("hours").default({}),
-  tags: jsonb("tags").default({}),
-  osmId: integer("osm_id"),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
-});
-
-// ============================================
-// Water Scarcity Tables (public schema)
-// ============================================
-
-export const waterGauges = pgTable("water_gauges", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  siteNo: varchar("site_no", { length: 20 }).notNull().unique(),
-  siteName: text("site_name"),
-  lat: doublePrecision("lat").notNull(),
-  lon: doublePrecision("lon").notNull(),
-  flowCfs: doublePrecision("flow_cfs"),
-  percentile: integer("percentile"),
-  trend: varchar("trend", { length: 20 }),
-  condition: varchar("condition", { length: 30 }),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
-});
-
-// `public.drought_data` (legacy blob table, superseded by `geo.drought_areas` below) had its
-// Drizzle declaration removed here — zero readers/writers left in src/, table row still exists
-// in Postgres pending a wave-D drop migration. See src/lib/server/AGENTS.md §"Geometry lives in
-// PostGIS, not in a JSON column" and conductor/tracks/environmental_postgres_retirement_20260904/.
-
-/** One USDM D0-D4 classification polygon per weekly release; see `src/lib/server/AGENTS.md` §drought-ingestion. */
-export const droughtAreas = geoSchema.table(
-  "drought_areas",
-  {
-    id: uuid("id").defaultRandom().primaryKey(),
-    validDate: varchar("valid_date", { length: 10 }).notNull(),
-    dmCategory: integer("dm_category").notNull(),
-    geom: spatialMultiPolygon("geom").notNull(),
-    sourceUrl: text("source_url").notNull(),
-    ingestedAt: timestamp("ingested_at", { withTimezone: true })
-      .notNull()
-      .defaultNow(),
-  },
-  (table) => [
-    uniqueIndex("drought_areas_valid_date_category_unique").on(
-      table.validDate,
-      table.dmCategory
-    ),
-    index("drought_areas_valid_date_idx").on(table.validDate),
-  ]
-);
-
-// ============================================
 // Community Strategy Requests (public schema)
 // ============================================
 
@@ -461,56 +391,6 @@ export const rasterRelease = geoSchema.table(
       .on(table.collection, table.property)
       .where(sql`${table.supersededAt} IS NULL`),
   ]
-);
-
-// ============================================
-// Soil Health Tables (public schema)
-// ============================================
-
-/** SoilGrids point cache keyed on a rounded grid cell; see `src/lib/server/AGENTS.md` §soil-evidence. */
-export const soilGridCache = pgTable(
-  "soil_grid_cache",
-  {
-    id: uuid("id").defaultRandom().primaryKey(),
-    lat: doublePrecision("lat").notNull(),
-    lon: doublePrecision("lon").notNull(),
-    ph: doublePrecision("ph"),
-    organicCarbon: doublePrecision("organic_carbon"),
-    nitrogen: doublePrecision("nitrogen"),
-    bulkDensity: doublePrecision("bulk_density"),
-    cec: doublePrecision("cec"),
-    ocd: doublePrecision("ocd"),
-    /** False records a verified upstream no-data cell so it is not re-queried. */
-    complete: boolean("complete").notNull().default(false),
-    sourceUrl: text("source_url"),
-    cachedAt: timestamp("cached_at", { withTimezone: true }).defaultNow(),
-  },
-  (table) => [uniqueIndex("soil_grid_cache_cell_unique").on(table.lat, table.lon)]
-);
-
-/**
- * Which SSURGO grid cells have been fetched from USDA Soil Data Access, so a cell
- * nobody asked for stays distinguishable from a cell the survey found nothing in.
- * See `src/lib/server/AGENTS.md` §soil-survey-persistence.
- */
-export const soilSurveyCoverage = geoSchema.table(
-  "soil_survey_coverage",
-  {
-    /** '<col>:<row>' on the 1/8-degree grid; minted only by `soilSurveyCellKey`. */
-    cellKey: varchar("cell_key", { length: 40 }).primaryKey(),
-    west: doublePrecision("west").notNull(),
-    south: doublePrecision("south").notNull(),
-    east: doublePrecision("east").notNull(),
-    north: doublePrecision("north").notNull(),
-    polygonCount: integer("polygon_count").notNull(),
-    /** Rows SDA served that had no readable geometry or no publisher vintage. */
-    unreadableCount: integer("unreadable_count").notNull().default(0),
-    /** SDA held more delineations than the row ceiling served: covered in part only. */
-    truncated: boolean("truncated").notNull().default(false),
-    /** When we asked. Never when SSURGO published — that is per feature. */
-    fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull().defaultNow(),
-  },
-  (table) => [index("ix_soil_survey_coverage_fetched_at").on(table.fetchedAt)]
 );
 
 // ============================================

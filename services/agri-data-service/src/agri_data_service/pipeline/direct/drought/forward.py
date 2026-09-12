@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING, Final
 from agri_data_service.config import settings
 from agri_data_service.db.engine import local_source_loader_session
 from agri_data_service.foundation.parquet.paths import partition_day_statuses
+from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.direct import (
     LANE_DAY_OUTCOMES,
     NOT_BBOX_BOUNDED,
@@ -48,7 +49,6 @@ from agri_data_service.pipeline.direct.drought.products import (
     release_weeks,
 )
 from agri_data_service.pipeline.direct.drought.source import DroughtDaySource, fetch_drought_day
-from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.parquet.availability_extension import AvailabilityExtensionTally
 from agri_data_service.pipeline.parquet.availability_index import BotoAvailabilityStorage
 from agri_data_service.pipeline.parquet.gap_fill import (

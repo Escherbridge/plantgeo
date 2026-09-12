@@ -26,7 +26,7 @@ standalone service and the old “where does the service live” question below 
 superseded design history; do not restart them. The five ERA5 product lanes were
 built in that cutover. All three NASA POWER temperature histories were published
 September 10 with 1,560 fully verified days each across four rungs; see the
-[operational retrospective](../../retros/parquet_operational_checkpoints_20260911/README.md).
+[operational retrospective](../environmental_parquet_serving_20260912/plan.md).
 
 The phase verdicts below are still `_pending_`: delivery evidence is not an
 invented retroactive approval of the discarded service. The next work is:
@@ -69,7 +69,7 @@ verdict. A phase with no verdict is unreviewed, not done.
 - [ ] For each of the eight lanes, record: expected first day, last day, day count, cells per day.
       `soil-field-vpd` has conflicting dated counts (448 sparse days in the September 7 evidence;
       446 contiguous resume days pinned by the selected builder at `fb72d07`; the
-      [September 9 cutover archive](../../RUNBOOK-archive-2026-09.md#session-handoff-2026-09-09--parquet-cutover-16---21-layers-and-a-live-latency-regression)
+      [September 9 cutover archive](../../RUNBOOK.md#session-handoff-2026-09-09--parquet-cutover-16---21-layers-and-a-live-latency-regression)
       reports 1,556 built days and a 1,572-day serving span). Establish the exact current population
       with a retained receipt, because it must be RESUMED, not rebuilt.
 - [ ] **Deliverable:** a per-lane manifest committed to the track's `evidence/`. No lane proceeds

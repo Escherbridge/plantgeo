@@ -58,7 +58,7 @@ from agri_data_service.warehouse.schemas.sensors import SENSORS_SCHEMA
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from agri_data_service.ingest.writer import FeatureWrite
+    from agri_data_service.ingest.records import FeatureWrite
 
 #: Mirrors the day export's exclusion (`sql/pipeline/direct/sensors/postgres_day_counts.sql`, the
 #: surviving transcription): free text, not one of the sixteen

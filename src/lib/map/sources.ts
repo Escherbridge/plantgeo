@@ -17,14 +17,10 @@ const PMTILES_ARCHIVE_URL =
 const DYNAMIC_TILES_URL =
   process.env.NEXT_PUBLIC_DYNAMIC_TILES_URL || "http://localhost:3100";
 
-// Function and table sources must stay in SEPARATE composites: Martin declares
-// vector_layers in TileJSON for tables but cannot for functions, and MapLibre
-// validates style source-layers against vector_layers whenever the field is
-// present -- a mixed composite therefore rejects every function-backed layer.
-// building_tiles was a member until 2026-08-15, when the 3D-footprints layer was removed:
-// nothing draws geo.osm_buildings any more, so requesting its tiles bought nothing. The
-// Martin function is still live and still serves valid (empty) tiles, so restoring the layer
-// means re-listing the id here and nothing else.
+// Function-backed sources each get their own MapLibre vector source. Martin declares
+// vector_layers in TileJSON for table sources but cannot for functions, and MapLibre validates
+// style source-layers against vector_layers whenever the field is present -- a mixed composite
+// therefore rejects every function-backed layer.
 // Each id below now gets its OWN MapLibre vector source (createMartinDynamicSources), keyed
 // by the id itself. Until 2026-08-21 these were comma-joined into a SINGLE composite source,
 // which coupled all six layers into one fate: a 404 on any one member failed the whole
@@ -69,8 +65,8 @@ const DYNAMIC_TILE_SOURCE_IDS = ["intervention_tiles"] as const;
  * components. What changed here is where the bytes come from, not who owns the layer.
  *
  * Empty until `LayerManager` sets data on them: an empty GeoJSON source renders nothing and errors
- * on nothing, which is the same "an empty source is not a broken source" property the OSM table
- * sources rely on below.
+ * on nothing, so a missing Parquet product stays an explicit empty source until its lane is
+ * admitted.
  */
 export const PARQUET_FEATURE_SOURCE_IDS = [
   "sensor-station-features",
@@ -96,17 +92,6 @@ export function createParquetFeatureSources(): Record<string, SourceSpecificatio
     ])
   );
 }
-
-// Both are Martin *table* sources, and both geo.osm_roads and geo.osm_waterways also have
-// 0 rows in production, with no toggle to withhold: they're baked unconditionally into
-// every style's roadsLayer/
-// waterwaysLayer (src/lib/map/layers.ts), the same always-on shape as the protomaps
-// roads/water basemap layers. An empty source renders nothing rather than erroring (see
-// src/components/map/AGENTS.md "The layer toggle is the only source of layer
-// visibility"), and there is no switch here to mislead anyone about, so nothing needs to
-// change: both start drawing with no code change once the osm2pgsql import
-// (infra/db/import/osm-flex-config.lua) has been run for the covered region.
-const OSM_TILE_SOURCE_IDS = ["osm_roads", "osm_waterways"] as const;
 
 const SATELLITE_URL =
   "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
@@ -167,10 +152,6 @@ export function createMartinDynamicSources(
   );
 }
 
-export function createMartinOsmSource(baseUrl: string): SourceSpecification {
-  return createMartinCompositeSource(baseUrl, OSM_TILE_SOURCE_IDS);
-}
-
 export function getSources(
   dynamicTilesUrl: string = DYNAMIC_TILES_URL,
   pmtilesArchiveUrl: string = PMTILES_ARCHIVE_URL
@@ -179,7 +160,6 @@ export function getSources(
     protomaps: createPmtilesSource(pmtilesArchiveUrl),
     ...createMartinDynamicSources(dynamicTilesUrl),
     ...createParquetFeatureSources(),
-    "martin-osm": createMartinOsmSource(dynamicTilesUrl),
     "terrain-dem": terrainSource,
     satellite: {
       type: "raster",
@@ -218,5 +198,4 @@ export const terrainSource: SourceSpecification = {
 export const pmtilesSource = createPmtilesSource(PMTILES_ARCHIVE_URL);
 
 export const martinDynamicSources = createMartinDynamicSources(DYNAMIC_TILES_URL);
-export const martinOsmSource = createMartinOsmSource(DYNAMIC_TILES_URL);
 export const parquetFeatureSources = createParquetFeatureSources();

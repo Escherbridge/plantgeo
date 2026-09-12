@@ -4,7 +4,7 @@
   "status": "planned",
   "created_on": "2026-08-24",
   "depends_on": [
-    "parquet_duckdb_pivot_20260823",
+    "environmental_parquet_serving_20260912",
     "regional_fire_risk_surface_20260824"
   ],
   "runbook_section": "0.41.9",

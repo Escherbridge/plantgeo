@@ -109,7 +109,7 @@ SELECT
             false
         )
     ) AS migration_catalog_ready,
-    (
-        has_schema_privilege(current_user, 'agri', 'USAGE')
-        AND to_regclass('agri.v_forecast_series_serving') IS NOT NULL
-    ) AS serving_surface_ready
+    -- Environmental and forecast payloads are served from governed Parquet.  The
+    -- database probe only verifies that the retained control schema is reachable;
+    -- it must not name a retired forecast relation.
+    has_schema_privilege(current_user, 'agri', 'USAGE') AS serving_surface_ready

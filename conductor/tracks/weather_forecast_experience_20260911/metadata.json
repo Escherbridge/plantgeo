@@ -6,13 +6,13 @@
   "created_on": "2026-09-11",
   "depends_on": [
     "weather_forecast_parquet_lane_20260911",
-    "parquet_reader_cutover_acceptance_20260901",
+    "environmental_parquet_serving_20260912",
     "multiscale_polygon_surface_20260901",
     "gapless_parquet_publication_20260901"
   ],
   "related_tracks": [
     "upstream_dataset_expansion_20260806",
-    "environmental_postgres_retirement_20260904"
+    "environmental_parquet_serving_20260912"
   ],
   "next_gate": "Independently review the 2026-09-12 planning receipt; X0 runtime work waits for F3's admitted run/valid-time reader and capability contract, the April 28 evidence handoff and reader/renderer ownership transfers. Initial experience budgets remain unmeasured targets.",
   "planning_receipt": "evidence/contract-receipt-20260912.md",
@@ -79,7 +79,7 @@
       {
         "path": "src/components/map/layer-panel/LayerTimeSlider.tsx",
         "owner": "x0",
-        "serializes_after": "parquet_reader_cutover_acceptance_20260901",
+        "serializes_after": "environmental_parquet_serving_20260912",
         "reason": "Add explicit Now/History/Forecast navigation after the active reader owner transfers selected-day and availability behavior."
       },
       {
@@ -103,13 +103,13 @@
       {
         "path": "src/components/map/LayerManager.tsx",
         "owner": "x4",
-        "serializes_after": "parquet_reader_cutover_acceptance_20260901",
+        "serializes_after": "environmental_parquet_serving_20260912",
         "reason": "Integrate run/valid-time requests after the active selected-day reader work is transferred."
       },
       {
         "path": "src/lib/server/trpc/routers/wildfire.ts",
         "owner": "x4",
-        "serializes_after": "parquet_reader_cutover_acceptance_20260901",
+        "serializes_after": "environmental_parquet_serving_20260912",
         "reason": "Add forecast queries against the frozen Python plane schema under the transferred API owner."
       }
     ],

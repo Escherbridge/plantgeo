@@ -18,7 +18,7 @@
     "botanical_occurrence_parquet_lane_20260911",
     "botanical_occurrence_experience_20260911",
     "multiscale_polygon_surface_20260901",
-    "parquet_reader_cutover_acceptance_20260901"
+    "environmental_parquet_serving_20260912"
   ],
   "task_bindings": {
     "resolution": "Bind live IDs, checkouts, bases, commits, trees and receipts in evidence/task-ledger.md before consuming task handoffs; names here are roles, not status claims.",

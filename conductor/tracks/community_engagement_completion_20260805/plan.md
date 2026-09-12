@@ -18,7 +18,7 @@ The phase table, row counts, concurrent-session notices and implementation
 instructions below describe **August 5**. In particular, the “20+ uncommitted
 files” warning is not a present working-tree observation, and “pending” in that
 table is not the current status of phases 2–4. Current environmental work belongs
-to the [retirement plan](../environmental_postgres_retirement_20260904/plan.md).
+to the [retirement plan](../environmental_parquet_serving_20260912/plan.md).
 
 ## Historical plan — August 5
 
@@ -89,7 +89,7 @@ field with real values.
 
 Historical August 5 authoring plan: this slice was subsequently recorded shipped.
 The migration below is retained archive evidence; current environmental serving
-and repair belong to the [retirement plan](../environmental_postgres_retirement_20260904/plan.md).
+and repair belong to the [retirement plan](../environmental_parquet_serving_20260912/plan.md).
 
 The only item in this track that is a genuine build. 381 published rows exist
 with no serving path at all.

@@ -1,0 +1,15 @@
+{
+  "slug": "environmental_parquet_serving_20260912",
+  "title": "Environmental Parquet serving",
+  "type": "infrastructure",
+  "status": "active",
+  "created_on": "2026-09-12",
+  "updated_on": "2026-09-12",
+  "depends_on": [],
+  "parallel_with": [
+    "gapless_parquet_publication_20260901",
+    "multiscale_polygon_surface_20260901",
+    "weather_forecast_parquet_lane_20260911"
+  ],
+  "completion_gate": "No environmental PostgreSQL code or schema remains; every layer writes and serves governed Parquet and passes production acceptance."
+}

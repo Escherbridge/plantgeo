@@ -2,7 +2,6 @@ import type { StyleSpecification } from "maplibre-gl";
 import type { MapStyle } from "@/types/map";
 import {
   martinDynamicSources,
-  martinOsmSource,
   parquetFeatureSources,
   terrainSource,
   pmtilesSource,
@@ -73,7 +72,6 @@ export const darkStyle: StyleSpecification = {
     // sets their data from the Parquet readers and re-sets it on every style.load, because a
     // basemap swap rebuilds each source from this spec and would otherwise blank them.
     ...parquetFeatureSources,
-    "martin-osm": martinOsmSource,
     "terrain-dem": terrainSource,
   },
   // terrain enabled on-demand via MapView controls
@@ -187,7 +185,6 @@ export const lightStyle: StyleSpecification = {
     // sets their data from the Parquet readers and re-sets it on every style.load, because a
     // basemap swap rebuilds each source from this spec and would otherwise blank them.
     ...parquetFeatureSources,
-    "martin-osm": martinOsmSource,
     "terrain-dem": terrainSource,
   },
   // terrain enabled on-demand via MapView controls
@@ -317,7 +314,6 @@ export const satelliteStyle: StyleSpecification = {
     // sets their data from the Parquet readers and re-sets it on every style.load, because a
     // basemap swap rebuilds each source from this spec and would otherwise blank them.
     ...parquetFeatureSources,
-    "martin-osm": martinOsmSource,
   },
   // terrain enabled on-demand via MapView controls
   layers: [

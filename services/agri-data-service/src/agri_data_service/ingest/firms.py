@@ -25,6 +25,7 @@ from agri_data_service.ingest.identity import (
 )
 from agri_data_service.ingest.layer_binding import LayerBinding
 from agri_data_service.ingest.policy import is_fresh_observation, javascript_parse_float
+from agri_data_service.ingest.records import FeatureWrite
 from agri_data_service.ingest.source import (
     FetchRequest,
     FreshnessRule,
@@ -32,7 +33,6 @@ from agri_data_service.ingest.source import (
     HistoryCapability,
     HistoryWindow,
 )
-from agri_data_service.ingest.writer import FeatureWrite
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence

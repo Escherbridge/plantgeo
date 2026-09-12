@@ -7,7 +7,7 @@
   "depends_on": [
     "botanical_occurrence_parquet_lane_20260911",
     "multiscale_polygon_surface_20260901",
-    "parquet_reader_cutover_acceptance_20260901"
+    "environmental_parquet_serving_20260912"
   ],
   "related_tracks": [
     "botanical_species_profile_lookup_20260911",
@@ -87,13 +87,13 @@
       {
         "path": "src/types/time-slider.ts",
         "owner": "x4",
-        "serializes_after": "parquet_reader_cutover_acceptance_20260901",
+        "serializes_after": "environmental_parquet_serving_20260912",
         "reason": "Add static source-release/event-window semantics only after the active reader owner freezes or transfers the time contract."
       },
       {
         "path": "src/lib/server/services/parquet-slider-capabilities.ts",
         "owner": "x4",
-        "serializes_after": "parquet_reader_cutover_acceptance_20260901",
+        "serializes_after": "environmental_parquet_serving_20260912",
         "reason": "Register static reference capability only after the active reader owner transfers this registry."
       },
       {
@@ -105,7 +105,7 @@
       {
         "path": "src/__tests__/services/parquet-slider-capabilities.test.ts",
         "owner": "x4",
-        "serializes_after": "parquet_reader_cutover_acceptance_20260901",
+        "serializes_after": "environmental_parquet_serving_20260912",
         "reason": "Extend capability conformance under the same serialized integration owner."
       }
     ],

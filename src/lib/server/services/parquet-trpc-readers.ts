@@ -39,11 +39,11 @@ import {
 import { granularityForZoomTier } from "@/lib/server/services/zoom-granularity";
 import { isFreshObservation } from "@/lib/server/services/environmental-time";
 import {
-  SOIL_FIELD_MAX_CELLS,
   type PublishedSoilFieldCollection,
   type SoilFieldFeatureProperties,
   type SoilFieldReadOptions,
-} from "@/lib/server/services/environmental-read-model";
+} from "@/lib/server/services/environmental-contracts";
+import { SOIL_FIELD_MAX_CELLS } from "@/lib/server/services/parquet-layer-constants";
 import {
   UpstreamAbortedError,
   UpstreamConfigurationError,

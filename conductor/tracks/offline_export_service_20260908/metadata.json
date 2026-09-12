@@ -52,7 +52,7 @@
       "support_key": "era5-land-0.1deg",
       "cells_per_day": 1470,
       "reference_builder": "scripts/build_soil_moisture_from_canonical_snapshot.py",
-      "note": "RESUME, do not rebuild. The stale 462-day estimate is removed: September 7 evidence recorded 448 sparse complete days, while the selected builder at fb72d07 pinned 446 contiguous resume days and conductor/RUNBOOK-archive-2026-09.md recorded 1,556 built days plus a 1,572-day serving span. Bind a current exact receipt before acting."
+      "note": "RESUME, do not rebuild. The stale 462-day estimate is removed: September 7 evidence recorded 448 sparse complete days, while the selected builder at fb72d07 pinned 446 contiguous resume days and conductor/RUNBOOK.md recorded 1,556 built days plus a 1,572-day serving span. Bind a current exact receipt before acting."
     },
     "nasa-power": {
       "lanes": ["climate-field-air-temperature-mean", "climate-field-air-temperature-max", "climate-field-air-temperature-min"],

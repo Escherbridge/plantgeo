@@ -53,6 +53,9 @@ def register_seasonal_commands(cli: Group) -> None:
     @click.option("--cell-key", "cell_keys", multiple=True)
     def seasonal_evidence_report(database_url: str, output: Path, cell_keys: tuple[str, ...]) -> None:
         """Write the Phase 0 read-only forecast-iteration and data-quality report."""
+        raise click.ClickException(
+            "seasonal-evidence-report is retired: forecast evidence is source-direct Parquet only"
+        )
         selected = cell_keys or BOISE_AREA_CELL_KEYS
         evidence = asyncio.run(collect_evidence_from_url(database_url, cell_keys=selected))
         output.parent.mkdir(parents=True, exist_ok=True)
@@ -77,6 +80,9 @@ def register_seasonal_commands(cli: Group) -> None:
         database_url: str, destination: Path, export_key: str, cell_keys: tuple[str, ...]
     ) -> None:
         """Freeze the governed series into a checksummed, database-free evaluation export."""
+        raise click.ClickException(
+            "seasonal-freeze-export is retired: forecast evidence is source-direct Parquet only"
+        )
         selected = cell_keys or BOISE_AREA_CELL_KEYS
         try:
             scope = ExportScope(
@@ -144,6 +150,9 @@ def register_seasonal_commands(cli: Group) -> None:
         export_dir: Path, database_url: str, candidate_name: str, series_keys: tuple[str, ...]
     ) -> None:
         """Persist candidate receipts and the residual-feedback lineage plane. Evaluation only."""
+        raise click.ClickException(
+            "seasonal-persist-lineage is retired: forecast lineage is source-direct Parquet only"
+        )
         summary = asyncio.run(
             persist_benchmark(
                 export_dir,

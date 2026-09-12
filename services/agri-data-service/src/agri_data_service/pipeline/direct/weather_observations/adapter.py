@@ -19,10 +19,10 @@ from typing import TYPE_CHECKING, Final
 import pyarrow as pa  # type: ignore[import-untyped]
 
 from agri_data_service.foundation.parquet.paths import partition_day_statuses
+from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.direct.weather_observations.rows import (
     WEATHER_OBSERVATIONS_SOURCE_COLUMNS,
 )
-from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.warehouse.schemas.weather_observations import (
     WEATHER_OBSERVATIONS_GRAIN,
     WEATHER_OBSERVATIONS_SCHEMA,
