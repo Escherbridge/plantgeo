@@ -212,3 +212,10 @@ The stale completed QA task `01a08af2-569e-7532-a16c-79823255e487` was pruned
 from the Codex sidebar after its completed candidate receipt was rechecked. It
 had no live turn or active worktree; the current orchestration task and the
 unresolved ingestion owner remain retained.
+
+The coordinator then performed one additional bounded restart of ingestion
+task `01a08b00-2a50-73c2-b39b-39523c74ceb2`. Turn
+`01a09596-3c03-79c0-9099-c24464715adc` ran from
+`2026-09-12T12:27:26Z` through `2026-09-12T12:30:38Z`, completed idle, and
+emitted no assistant, tool, command, or revision evidence. It remains open and
+unresolved; no mutation or push occurred.

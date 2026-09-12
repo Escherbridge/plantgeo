@@ -72,3 +72,15 @@ The stale completed QA task `01a08af2-569e-7532-a16c-79823255e487` was also
 archived from the `PlantGeo Pending Reconcile` section after its last completed
 candidate receipt was rechecked. No active worktree or running turn was
 associated with that task.
+
+## Coordinator continuation poll — 2026-09-12T12:27:26Z
+
+The coordinator restarted ingestion task
+`01a08b00-2a50-73c2-b39b-39523c74ceb2` once more with a strict read-only
+reconciliation prompt. Its turn
+`01a09596-3c03-79c0-9099-c24464715adc` completed at
+`2026-09-12T12:30:38Z` and returned idle, but contained no assistant message,
+tool event, command, or revision. This is verified terminal task state without
+completion evidence, so the owner remains unresolved and intentionally open.
+No file, ref, database, provider, object-store, writer, scheduler,
+deployment, or push operation occurred.
