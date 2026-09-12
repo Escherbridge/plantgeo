@@ -227,3 +227,18 @@ historical-weather reconciliation only; it does not reopen forecast work or
 authorize source, database, writer, deployment, or push operations. It had not
 materialized in `list_threads` at observation and therefore has no completion
 evidence yet.
+
+### 2026-09-12 weather retry follow-up
+
+The current root added a bounded presentation change to
+`WeatherHistoryReport`: transport errors and typed `upstream_unavailable`
+responses now expose a keyboard-accessible `Retry weather` button that calls
+the existing query refetch, disables while fetching and reports `Retrying…`.
+The focused component test covers both branches. The final integrated
+frontend sweep passed with 150 test files passed and 2 skipped, 2,233 tests
+passed and 13 skipped; data-boundary and type-check passed, and ESLint had
+zero errors with eleven pre-existing React hook warnings. An independent
+final review returned PASS. This does not close the service-backed weather QA
+lane or any populated-data, mobile/touch, hover, selected-day or forecast
+gate. No data, database, writer, scheduler, deployment or push operation
+occurred.

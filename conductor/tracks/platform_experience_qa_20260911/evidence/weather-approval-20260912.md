@@ -68,6 +68,26 @@ not approve a populated-data release or the separate forecast tracks.
   that limitation for this candidate while the owner receipts remain the
   authority for the historical browser evidence.
 
+## Follow-up local presentation update — 2026-09-12T12:45Z
+
+The historical report now exposes a keyboard-accessible `Retry weather`
+control for transport errors and typed `upstream_unavailable` responses. The
+control calls the existing TanStack query refetch, disables itself while a
+request is in flight and changes its label to `Retrying…`; it does not add a
+fallback frame, alter the governed reader, ingest data, or widen the forecast
+scope. The focused report test covers the upstream-unavailable retry action.
+
+The final integrated frontend sweep passed with 150 test files passed and 2
+skipped, 2,233 tests passed and 13 skipped. The data-boundary check and
+type-check passed; ESLint reported zero errors and eleven pre-existing React
+hook warnings in the report component. Live populated-data, mobile/touch,
+hover and forecast conditions remain open below.
+
+An independent final review returned PASS after the transport-error branch
+was covered directly. It confirmed both retry paths use the existing query
+refetch, preserve the no-fallback behavior and remain outside the reader,
+forecast, ingestion, database, writer and deployment boundaries.
+
 ## Conditions that remain open
 
 The platform QA track remains active. Governed populated-data browser evidence

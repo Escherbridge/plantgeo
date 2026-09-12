@@ -96,3 +96,26 @@ commit, push, deploy, access Railway or production data, run writers, or reopen
 the separate forecast implementation. The alias had not materialized in the
 sidebar at the time of this receipt, so no completion or runtime evidence is
 claimed yet.
+
+## Weather retry affordance follow-up — 2026-09-12T12:45Z
+
+The coordinator applied a bounded local presentation follow-up to the
+historical weather report. `WeatherHistoryReport` now offers a keyboard-
+accessible `Retry weather` action for query transport errors and typed
+`upstream_unavailable` responses, disables it during refetch and labels the
+in-flight state `Retrying…`. The focused test exercises the retry action. The
+change is presentation-only: it does not touch the governed reader, data
+plane, forecast contract, database, writer, scheduler, deployment or push.
+
+The final integrated frontend sweep passed with 150 test files passed and 2
+skipped, 2,233 tests passed and 13 skipped. The data-boundary check and
+type-check passed; ESLint reported zero errors and eleven pre-existing React
+hook warnings in the report component. The bounded historical-weather
+approval remains in force, while populated-data, mobile/touch, hover,
+selected-day and forecast gates remain open. The dedicated weather QA queue
+alias remains unmaterialized and therefore has no completion evidence.
+
+The independent final review returned PASS after the transport-error branch
+was covered directly. It confirmed both retry paths use the existing query
+refetch, preserve the no-fallback behavior and remain outside the reader,
+forecast, ingestion, database, writer and deployment boundaries.

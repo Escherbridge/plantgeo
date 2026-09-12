@@ -174,6 +174,9 @@ export function WeatherHistoryReport({ bbox, zoom }: WeatherHistoryReportProps) 
   const stateNotice = query.isPlaceholderData
     ? null
     : weatherStateNotice(presentedResult, selectedDay);
+  const canRetry =
+    !query.isPlaceholderData &&
+    (query.isError || presentedResult?.state === "upstream_unavailable");
   const staleSelectedDay =
     exactResult !== undefined &&
     exactResult.state !== "upstream_unavailable" &&
@@ -201,11 +204,33 @@ export function WeatherHistoryReport({ bbox, zoom }: WeatherHistoryReportProps) 
         </p>
       )}
       {query.isError && (
-        <p role="alert" className={NOTICE_CLASS_NAME}>
-          Historical weather could not be loaded. No cached fallback frame is shown.
-        </p>
+        <div role="alert" className={NOTICE_CLASS_NAME}>
+          <p>Historical weather could not be loaded. No cached fallback frame is shown.</p>
+          <button
+            type="button"
+            onClick={() => void query.refetch()}
+            disabled={query.isFetching}
+            className="mt-2 min-h-11 rounded px-2 text-xs font-medium underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 disabled:opacity-50"
+          >
+            {query.isFetching ? "Retrying…" : "Retry weather"}
+          </button>
+        </div>
       )}
-      {stateNotice && <p role="status" className={NOTICE_CLASS_NAME}>{stateNotice}</p>}
+      {stateNotice && (
+        <div role="status" className={NOTICE_CLASS_NAME}>
+          <p>{stateNotice}</p>
+          {canRetry && (
+            <button
+              type="button"
+              onClick={() => void query.refetch()}
+              disabled={query.isFetching}
+              className="mt-2 min-h-11 rounded px-2 text-xs font-medium underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 disabled:opacity-50"
+            >
+              {query.isFetching ? "Retrying…" : "Retry weather"}
+            </button>
+          )}
+        </div>
+      )}
 
       {rows.length > 0 && (
         <>

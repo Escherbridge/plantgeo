@@ -16,10 +16,12 @@ interface WeatherQueryResult {
   isFetching?: boolean;
   isPlaceholderData?: boolean;
   isError?: boolean;
+  refetch?: ReturnType<typeof vi.fn>;
 }
 
 const queries = vi.hoisted(() => ({
   getWeatherForBbox: vi.fn((): WeatherQueryResult => ({ data: undefined })),
+  refetch: vi.fn(),
 }));
 
 vi.mock("@/lib/trpc/client", () => ({
@@ -85,6 +87,7 @@ beforeEach(() => {
     },
   });
   queries.getWeatherForBbox.mockReturnValue({ data: undefined });
+  queries.refetch.mockReset();
 });
 
 afterEach(() => {
@@ -151,6 +154,7 @@ describe("WeatherHistoryReport", () => {
       isFetching: false,
       isPlaceholderData: false,
       isError: false,
+      refetch: queries.refetch,
     });
 
     rendered.rerender(<WeatherHistoryReport bbox="-117,43,-115,45" zoom={13} />);
@@ -158,8 +162,40 @@ describe("WeatherHistoryReport", () => {
     expect(
       screen.getByText("Historical weather is temporarily unavailable from the data service. No fallback frame is shown.")
     ).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Retry weather" }));
+    expect(queries.refetch).toHaveBeenCalledTimes(1);
     expect(screen.queryByText("21.5 °C")).toBeNull();
     expect(screen.queryByRole("button", { name: "Mark nearest weather reading on map" })).toBeNull();
+  });
+
+  it("exposes retry for transport errors and disables it while fetching", () => {
+    queries.getWeatherForBbox.mockReturnValue({
+      data: undefined,
+      isFetching: false,
+      isPlaceholderData: false,
+      isError: true,
+      refetch: queries.refetch,
+    });
+
+    const rendered = renderWithProviders(<WeatherHistoryReport bbox="-117,43,-115,45" zoom={13} />);
+
+    expect(screen.getByRole("alert").textContent).toContain(
+      "Historical weather could not be loaded. No cached fallback frame is shown."
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Retry weather" }));
+    expect(queries.refetch).toHaveBeenCalledTimes(1);
+
+    queries.getWeatherForBbox.mockReturnValue({
+      data: undefined,
+      isFetching: true,
+      isPlaceholderData: false,
+      isError: true,
+      refetch: queries.refetch,
+    });
+    rendered.rerender(<WeatherHistoryReport bbox="-117,43,-115,45" zoom={13} />);
+
+    const retryingButton = screen.getByRole("button", { name: "Retrying…" }) as HTMLButtonElement;
+    expect(retryingButton.disabled).toBe(true);
   });
 
   it.each([
