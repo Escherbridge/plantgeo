@@ -1,0 +1,792 @@
+{
+  "type": "local-evidence-custody-index",
+  "schema_version": 1,
+  "date": "2026-09-12",
+  "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+  "source_tree": "9533bb9e5423240630935df0cd012cd8ead15504",
+  "branch": "codex/production-acceptance-verdict-20260912",
+  "production_verdict": "RED",
+  "runtime_access_performed": false,
+  "hash_semantics": "SHA-256 and byte lengths are canonical Git blob bytes at source_commit, not CRLF-converted checkout bytes. These hashes establish retained-source custody only.",
+  "matrix_counts": {
+    "ui_rows": 27,
+    "backend_only_rows": 2,
+    "product_rows": 29,
+    "public_capability_rows": 23,
+    "public_physical_lanes": 30,
+    "registered_physical_lanes": 32,
+    "qa_groups": 34,
+    "qa_blocked": 30,
+    "qa_not_run": 4,
+    "production_cases_executed": 0
+  },
+  "registered_physical_lane_keys": [
+    "burn-severity",
+    "calendar",
+    "climate-field-air-temperature-max",
+    "climate-field-air-temperature-mean",
+    "climate-field-air-temperature-min",
+    "climate-field-dew-point",
+    "climate-field-precipitation",
+    "climate-field-relative-humidity",
+    "climate-field-shortwave-radiation",
+    "climate-field-wind-speed",
+    "drought",
+    "evacuation-zones",
+    "fire-detections",
+    "fire-perimeters",
+    "sensors",
+    "signal",
+    "soil-field-moisture-0-7cm",
+    "soil-field-moisture-28-100cm",
+    "soil-field-moisture-7-28cm",
+    "soil-field-vpd",
+    "soil-survey",
+    "soil-temperature-0-to-7cm",
+    "soil-temperature-100-to-255cm",
+    "soil-temperature-28-to-100cm",
+    "soil-temperature-7-to-28cm",
+    "soil-wetness-profile",
+    "soil-wetness-root-zone",
+    "soil-wetness-surface",
+    "vegetation",
+    "water-gauges",
+    "watersheds",
+    "weather-observations"
+  ],
+  "current_operational_bindings": {
+    "service_matrix": null,
+    "source_inventory": null,
+    "latest_pointer_key": null,
+    "latest_pointer_sha256": null,
+    "availability_generation": null,
+    "bootstrap_receipt": null,
+    "rollback_revision": null,
+    "reason": "No complete current owner-supplied production packet; null is missing evidence and RED."
+  },
+  "retained_temperature_generations": {
+    "scope": "Historical 2026-09-10 receipt only; does not identify current pointers, later terminal days or future scheduled runs. Availability schema_version 1 is distinct from public coverage wire v3.",
+    "source_path": "conductor/tracks/environmental_postgres_retirement_20260904/evidence/temperature-bootstrap-receipts-20260910.json",
+    "receipts": [
+      {
+        "bootstrap_receipt_key": "layer=climate-field-air-temperature-mean/kind=observed/availability/bootstrap/receipt=7a2f6659cd5fbbdeaee0ec566887aaf2a51b0a74f6e355a697869933fd480d8d.json",
+        "bootstrap_receipt_sha256": "7a2f6659cd5fbbdeaee0ec566887aaf2a51b0a74f6e355a697869933fd480d8d",
+        "created_at": "2026-09-10T12:25:44.725543Z",
+        "earliest_terminal_day": "2022-04-30",
+        "generation_bytes": 793655,
+        "generation_key": "layer=climate-field-air-temperature-mean/kind=observed/availability/generation=527989e565b95d6369a59fa8e0b6404b58969fddc1f919d7e6a01f90c538f3b2/availability.parquet",
+        "generation_receipt_sha256": "7643dc256c25e379450086d915e3724c9539df58ba11a82f8d6dce88be1f5085",
+        "generation_sha256": "527989e565b95d6369a59fa8e0b6404b58969fddc1f919d7e6a01f90c538f3b2",
+        "lane": "climate-field-air-temperature-mean",
+        "lane_root": "layer=climate-field-air-temperature-mean/kind=observed",
+        "latest_terminal_day": "2026-08-06",
+        "nature": "daily_series",
+        "prior_generation_key": null,
+        "prior_generation_sha256": null,
+        "product": "climate-field-air-temperature-mean",
+        "required_rungs": [
+          0,
+          5,
+          9,
+          13
+        ],
+        "rows": 6240,
+        "schema_version": "1",
+        "source_ceiling": "2026-09-05",
+        "verified_complete_days": 1560,
+        "verified_earliest_complete_day": "2022-04-30",
+        "verified_latest_complete_day": "2026-08-06",
+        "verified_rows_per_rung": {
+          "0": 1560,
+          "5": 1560,
+          "9": 1560,
+          "13": 1560
+        },
+        "verified_source_inventory_root": "76c277ff405e687b0594d80336289da8a929d52e81b30f647e1b3758943b2032"
+      },
+      {
+        "bootstrap_receipt_key": "layer=climate-field-air-temperature-min/kind=observed/availability/bootstrap/receipt=457cdae7b539305efb06c4cf69b42aae63646c0940e242aa978cfe871b0c0097.json",
+        "bootstrap_receipt_sha256": "457cdae7b539305efb06c4cf69b42aae63646c0940e242aa978cfe871b0c0097",
+        "created_at": "2026-09-10T12:28:11.699054Z",
+        "earliest_terminal_day": "2022-04-30",
+        "generation_bytes": 794128,
+        "generation_key": "layer=climate-field-air-temperature-min/kind=observed/availability/generation=a607e073e88702bcdd4a7a0278ff3aabf147ef0d281acd2b283ee554823c1377/availability.parquet",
+        "generation_receipt_sha256": "1bf7e1df5977cb725f0c652f75c02257c700a923c299617e569e032302369fee",
+        "generation_sha256": "a607e073e88702bcdd4a7a0278ff3aabf147ef0d281acd2b283ee554823c1377",
+        "lane": "climate-field-air-temperature-min",
+        "lane_root": "layer=climate-field-air-temperature-min/kind=observed",
+        "latest_terminal_day": "2026-08-06",
+        "nature": "daily_series",
+        "prior_generation_key": null,
+        "prior_generation_sha256": null,
+        "product": "climate-field-air-temperature-min",
+        "required_rungs": [
+          0,
+          5,
+          9,
+          13
+        ],
+        "rows": 6240,
+        "schema_version": "1",
+        "source_ceiling": "2026-09-05",
+        "verified_complete_days": 1560,
+        "verified_earliest_complete_day": "2022-04-30",
+        "verified_latest_complete_day": "2026-08-06",
+        "verified_rows_per_rung": {
+          "0": 1560,
+          "5": 1560,
+          "9": 1560,
+          "13": 1560
+        },
+        "verified_source_inventory_root": "49773aa36e8dd5ea8d414187a63f83e69ac1ea10c76d3806e177bd0b07697b23"
+      },
+      {
+        "bootstrap_receipt_key": "layer=climate-field-air-temperature-max/kind=observed/availability/bootstrap/receipt=78f7191eab9c043d0d5a0d22fcab587d7375d5763101585f7742ed339b097968.json",
+        "bootstrap_receipt_sha256": "78f7191eab9c043d0d5a0d22fcab587d7375d5763101585f7742ed339b097968",
+        "created_at": "2026-09-10T12:29:33.986004Z",
+        "earliest_terminal_day": "2022-04-30",
+        "generation_bytes": 793493,
+        "generation_key": "layer=climate-field-air-temperature-max/kind=observed/availability/generation=962763ebdc1325cf32949e43c8c581f77869f6a926ae2d32d012c1810a80757d/availability.parquet",
+        "generation_receipt_sha256": "4b30fe52ba823acc0e957aaac7cac9ee589ef22b58864c55d9229b98f7812da7",
+        "generation_sha256": "962763ebdc1325cf32949e43c8c581f77869f6a926ae2d32d012c1810a80757d",
+        "lane": "climate-field-air-temperature-max",
+        "lane_root": "layer=climate-field-air-temperature-max/kind=observed",
+        "latest_terminal_day": "2026-08-06",
+        "nature": "daily_series",
+        "prior_generation_key": null,
+        "prior_generation_sha256": null,
+        "product": "climate-field-air-temperature-max",
+        "required_rungs": [
+          0,
+          5,
+          9,
+          13
+        ],
+        "rows": 6240,
+        "schema_version": "1",
+        "source_ceiling": "2026-09-05",
+        "verified_complete_days": 1560,
+        "verified_earliest_complete_day": "2022-04-30",
+        "verified_latest_complete_day": "2026-08-06",
+        "verified_rows_per_rung": {
+          "0": 1560,
+          "5": 1560,
+          "9": 1560,
+          "13": 1560
+        },
+        "verified_source_inventory_root": "f92abc2c8eba0f3ec6a0c6852f9adeaa7fdbbbf93cef8010d77356fc6d77ce0e"
+      }
+    ]
+  },
+  "sources": [
+    {
+      "path": "AGENTS.md",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "37d5cfb70c832b4012e74153f230b08aa81f5c94",
+      "git_blob_bytes": 6342,
+      "git_blob_sha256": "378ba41560160043e4b12b260f0b536744dd36e99c7534f620f5d04b6a8923af"
+    },
+    {
+      "path": "conductor/README.md",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "238134f83c52a8babba63665b9164ed4b36e0a9e",
+      "git_blob_bytes": 1894,
+      "git_blob_sha256": "c0f46f4e0ef071fc702285a85106b6202a90fe0df33bfbc5eb98405de262a359"
+    },
+    {
+      "path": "conductor/release-governance.md",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "5173f526bdb3d575d360b1c0a1da2e0c802399ca",
+      "git_blob_bytes": 4760,
+      "git_blob_sha256": "2214451d64e50eb63b3720ea7a779781105e142b2bc4cebe463e1ef3fffc586c"
+    },
+    {
+      "path": "conductor/retros/parquet_operational_checkpoints_20260911/README.md",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "6d4f924240774e8bc7df9961f6b873a42e518de4",
+      "git_blob_bytes": 5305,
+      "git_blob_sha256": "c6cb556751c8fdaaba36465543a671f0ebfccc5011db7b6704ac18d218b1948f"
+    },
+    {
+      "path": "conductor/tracks.md",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "e93bc8f4ad886cc6fc13c4648d61b77e7f3685b8",
+      "git_blob_bytes": 14359,
+      "git_blob_sha256": "8c7ed4f5e72020f4e0e14eb808ebabbb257282cd5cfba9e9ec0fb2efe77ca4de"
+    },
+    {
+      "path": "conductor/tracks/environmental_postgres_retirement_20260904/evidence/local-admission-cutoff-reconciliation-20260912.md",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "d384490c1eeca43be936d06031c7ec18ba2338b1",
+      "git_blob_bytes": 5407,
+      "git_blob_sha256": "4ca586c57c3349068ea2247e67d34578029ab0ddb10d5c3ee4c26709668d7cf9"
+    },
+    {
+      "path": "conductor/tracks/environmental_postgres_retirement_20260904/evidence/mtbs-live-rollout-20260911.md",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "9250874c5ebc6264ad3f14ae9a29686905cff8e7",
+      "git_blob_bytes": 5493,
+      "git_blob_sha256": "f95e55f05042639f62de1fe97d040d1e8c7cf1edb7ee318a5031a3e903e5d088"
+    },
+    {
+      "path": "conductor/tracks/environmental_postgres_retirement_20260904/evidence/temperature-bootstrap-receipts-20260910.json",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "bfbd03914dc220281315ef4a493473d0d953e8fa",
+      "git_blob_bytes": 4862,
+      "git_blob_sha256": "f918a86d2dd6551e6d6bbe4a89c8cc2e97c454f9f7b4c785f554857daeb54f2c"
+    },
+    {
+      "path": "conductor/tracks/environmental_postgres_retirement_20260904/plan.md",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "4daed08093914deeb08d24df7007f9d14886f2f7",
+      "git_blob_bytes": 7248,
+      "git_blob_sha256": "84430fd8d33979a097b95de6aee3a16d8ff36a89b44d1f528d873c34797c3318"
+    },
+    {
+      "path": "conductor/tracks/gapless_parquet_publication_20260901/evidence/local-ownership-audit-20260912.md",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "75cfb467980a40ec8f160fd0dbd8ecc704b6e053",
+      "git_blob_bytes": 9659,
+      "git_blob_sha256": "039a46d788c2798561111942dcef08631914941a88f941541e1b623ad1dbbc06"
+    },
+    {
+      "path": "conductor/tracks/gapless_parquet_publication_20260901/evidence/local-publication-blockers-20260912.md",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "45b53449e13f8a0d3bf81f0583d2015f5592bfbc",
+      "git_blob_bytes": 3657,
+      "git_blob_sha256": "e0a6b2789aab9c3b1ea01f7219b2b07a421bf9f259de238e577addd7603b285d"
+    },
+    {
+      "path": "conductor/tracks/gapless_parquet_publication_20260901/evidence/product-ownership-census.md",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "c95e0a0d326c296281c3c5fc28f49294105f9fb9",
+      "git_blob_bytes": 22593,
+      "git_blob_sha256": "9b6c9fd19ee328d8727385498f2d593e341284265253759dd812f4c788662cff"
+    },
+    {
+      "path": "conductor/tracks/gapless_parquet_publication_20260901/metadata.json",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "9d4b9ab0cdc17bb2e6152047fc055241d7a7b020",
+      "git_blob_bytes": 22017,
+      "git_blob_sha256": "dfed94e6c478570e7d68a209934c4f740ffa3b01c3f82031313ecc08aca4b9b4"
+    },
+    {
+      "path": "conductor/tracks/gapless_parquet_publication_20260901/plan.md",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "2b0e5074feb3a3709adae22781379ba57ff0139c",
+      "git_blob_bytes": 11606,
+      "git_blob_sha256": "fb270e93169f5a530cda89763df37ac668628b5b14ebb35a5a1d17f03a090004"
+    },
+    {
+      "path": "conductor/tracks/gapless_parquet_publication_20260901/spec.md",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "21b98b05571b475690d6c03adb599598311473aa",
+      "git_blob_bytes": 4941,
+      "git_blob_sha256": "eea790cf23f3cac6df83b757fd71e7546d8d9e3d299efc9a662c6db04b18a511"
+    },
+    {
+      "path": "conductor/tracks/multiscale_polygon_surface_20260901/evidence/native-polygon-baseline.md",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "f1f0257e959fd85b1075b345723656c57f181942",
+      "git_blob_bytes": 16398,
+      "git_blob_sha256": "68023a4602fb155041dd9cf0ebf3d7f46d11190d4675f77867045c1396e014c2"
+    },
+    {
+      "path": "conductor/tracks/multiscale_polygon_surface_20260901/evidence/scalar-labels-20260912/1280-climate-z10.png",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "7f884bcd08ba95c533ba5b34e60b65ade5b08ab9",
+      "git_blob_bytes": 13527,
+      "git_blob_sha256": "9cd3c78926230a8a16102cd645ec044ee22ea555715887003765fd09b3c9a2c9"
+    },
+    {
+      "path": "conductor/tracks/multiscale_polygon_surface_20260901/evidence/scalar-labels-20260912/1280-climate-z13.png",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "40542e4f8d221b6f8741b3d52946ce7725aa6188",
+      "git_blob_bytes": 10543,
+      "git_blob_sha256": "4001789657074a74c488fe6b6013f242f2e1364917101de45e0b2a06bd2d47bc"
+    },
+    {
+      "path": "conductor/tracks/multiscale_polygon_surface_20260901/evidence/scalar-labels-20260912/1280-climate-z3.png",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "27670867a9e10a7a6ee281720df141681771debd",
+      "git_blob_bytes": 10868,
+      "git_blob_sha256": "8c8cf18275fe0e0edf51e0bd28505d02e79d3aa107d1b993180c37dfe7e7b4fd"
+    },
+    {
+      "path": "conductor/tracks/multiscale_polygon_surface_20260901/evidence/scalar-labels-20260912/1280-climate-z7-empty.png",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "e5aaaf1ed87d753bf3d83c2829a05b918f4ac0f1",
+      "git_blob_bytes": 6619,
+      "git_blob_sha256": "6d67e716bedc95eb1b73e42e34ea8c1468074527f5b3f629474da5fbcf3cc0b8"
+    },
+    {
+      "path": "conductor/tracks/multiscale_polygon_surface_20260901/evidence/scalar-labels-20260912/1280-climate-z7-isoline.png",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "e662dfd3d211ab951323498a8bda023d772c30a4",
+      "git_blob_bytes": 7086,
+      "git_blob_sha256": "e7866ffb0e515c5fe0baa93571204178a969cdb8cc67da86fdcc2fd1c6424d43"
+    },
+    {
+      "path": "conductor/tracks/multiscale_polygon_surface_20260901/evidence/scalar-labels-20260912/1280-climate-z7-reload.png",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "55b66e8666a266f9d5794b0b9c6bfc858772f76a",
+      "git_blob_bytes": 13505,
+      "git_blob_sha256": "07d1abab742f715bb194188d6fae8b5806f7f7a5492f916959f5127df2c78218"
+    },
+    {
+      "path": "conductor/tracks/multiscale_polygon_surface_20260901/evidence/scalar-labels-20260912/1280-climate-z7.png",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "55b66e8666a266f9d5794b0b9c6bfc858772f76a",
+      "git_blob_bytes": 13505,
+      "git_blob_sha256": "07d1abab742f715bb194188d6fae8b5806f7f7a5492f916959f5127df2c78218"
+    },
+    {
+      "path": "conductor/tracks/multiscale_polygon_surface_20260901/evidence/scalar-labels-20260912/1280-soil-z10-opacity-zero.png",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "f15d53cd05748adc95923f5de2f970bb9741b83f",
+      "git_blob_bytes": 6537,
+      "git_blob_sha256": "5b8534dca98c14da1b1b00c1fc33e73aae27fcd968e45f6dc550b552e953d3bd"
+    },
+    {
+      "path": "conductor/tracks/multiscale_polygon_surface_20260901/evidence/scalar-labels-20260912/1280-soil-z10.png",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "717ea87b3172ee8159e2c34732fd124c566f6338",
+      "git_blob_bytes": 25810,
+      "git_blob_sha256": "403cc3ab340cbb003d4400f7f0b360e6763ca99b4107aa9c1c1dd26d52ddd543"
+    },
+    {
+      "path": "conductor/tracks/multiscale_polygon_surface_20260901/evidence/scalar-labels-20260912/1280-soil-z13.png",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "e76ae670da7d3e8fe2ae23b43738fe966fc1cb23",
+      "git_blob_bytes": 12026,
+      "git_blob_sha256": "64be2a84ac3787a8533c2efc913210f185a0d5de37887fe7312733c0ba36bbe6"
+    },
+    {
+      "path": "conductor/tracks/multiscale_polygon_surface_20260901/evidence/scalar-labels-20260912/1280-soil-z3.png",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "1657ac5698159249ddffc3aa6adb9c007372d330",
+      "git_blob_bytes": 12057,
+      "git_blob_sha256": "79786afbda719dd06d13a5ce4196f805a281a2ff490455d48381b0f38c357532"
+    },
+    {
+      "path": "conductor/tracks/multiscale_polygon_surface_20260901/evidence/scalar-labels-20260912/1280-soil-z7.png",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "d5d1162eb762b11fbb249476d1e0c0e6f7ab6840",
+      "git_blob_bytes": 9385,
+      "git_blob_sha256": "a39637487069fb7cf466112579f5d1c12d009642ad389771e9865322a005174c"
+    },
+    {
+      "path": "conductor/tracks/multiscale_polygon_surface_20260901/evidence/scalar-labels-20260912/1280-weather-z10.png",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "fd227d96c271dde7b21f4087f495a6947229dff9",
+      "git_blob_bytes": 9277,
+      "git_blob_sha256": "40ccbbdc0ad5d492305b02360d6facbb39b6ead30f43b15b60b06b3aea16008a"
+    },
+    {
+      "path": "conductor/tracks/multiscale_polygon_surface_20260901/evidence/scalar-labels-20260912/390-climate-z10.png",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "45cacf0cf9a53b9c23c0c038df60fd1aec3e987a",
+      "git_blob_bytes": 7604,
+      "git_blob_sha256": "bf87641bddb462e359b5934db995bb72f4e5e00f0fd23d8bb6fc2a8db642a9fa"
+    },
+    {
+      "path": "conductor/tracks/multiscale_polygon_surface_20260901/evidence/scalar-labels-20260912/390-climate-z13.png",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "e0e1f42b664011e66ed135784b4a9afbf206c9ce",
+      "git_blob_bytes": 8664,
+      "git_blob_sha256": "89a1e823f31748f125b1cea77b8789a0dee9c23ce4c86796c2338690247a6227"
+    },
+    {
+      "path": "conductor/tracks/multiscale_polygon_surface_20260901/evidence/scalar-labels-20260912/390-climate-z3.png",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "19b364a988409dc1ba4173a3440e0328b4706937",
+      "git_blob_bytes": 9211,
+      "git_blob_sha256": "68b5170dad041f4b80a45b2fc222e0a3a07f94b1b9bbabc9f8190c9b967e8962"
+    },
+    {
+      "path": "conductor/tracks/multiscale_polygon_surface_20260901/evidence/scalar-labels-20260912/390-climate-z7-empty.png",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "54e5d76f188b5d2dac6e8c6112e3478252eea885",
+      "git_blob_bytes": 5001,
+      "git_blob_sha256": "ec20b740b1d563496a7771ee029bdef79c04f861a576d21854be69e69435916a"
+    },
+    {
+      "path": "conductor/tracks/multiscale_polygon_surface_20260901/evidence/scalar-labels-20260912/390-climate-z7-isoline.png",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "afc47a0e0d93d062f727c7fcbb9dd081033574fc",
+      "git_blob_bytes": 5316,
+      "git_blob_sha256": "4478e5c2c17b0624fab1bc238912b0925da448f8de3d69202aab9fc9c34df38b"
+    },
+    {
+      "path": "conductor/tracks/multiscale_polygon_surface_20260901/evidence/scalar-labels-20260912/390-climate-z7-reload.png",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "cef8d615aea80eb3efc5391607a6df0a884dda8a",
+      "git_blob_bytes": 10391,
+      "git_blob_sha256": "03a4528b90d2d238974b9584807719614639950a3b0be9bdfee6673ab9a6a577"
+    },
+    {
+      "path": "conductor/tracks/multiscale_polygon_surface_20260901/evidence/scalar-labels-20260912/390-climate-z7.png",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "cef8d615aea80eb3efc5391607a6df0a884dda8a",
+      "git_blob_bytes": 10391,
+      "git_blob_sha256": "03a4528b90d2d238974b9584807719614639950a3b0be9bdfee6673ab9a6a577"
+    },
+    {
+      "path": "conductor/tracks/multiscale_polygon_surface_20260901/evidence/scalar-labels-20260912/390-soil-z10-opacity-zero.png",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "9474f4874c7306a0968a6e43a6634bfa649a45a7",
+      "git_blob_bytes": 4993,
+      "git_blob_sha256": "b793eeb8d2b3c424fc5d18ebbaa357aa291648614c694684e030cf0097f28e3a"
+    },
+    {
+      "path": "conductor/tracks/multiscale_polygon_surface_20260901/evidence/scalar-labels-20260912/390-soil-z10.png",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "690b9d660e8372f54288ae744c1986a388c338e9",
+      "git_blob_bytes": 11308,
+      "git_blob_sha256": "68dd2c8690043994e8ad57dad26652886d8cc50e09aff462588cf9eb54594597"
+    },
+    {
+      "path": "conductor/tracks/multiscale_polygon_surface_20260901/evidence/scalar-labels-20260912/390-soil-z13.png",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "6e00e2b8398cb5da31c7b7d0bbf95e93e16d0b00",
+      "git_blob_bytes": 9672,
+      "git_blob_sha256": "fe502e7892a5a380c7bcc7e2e2d582ce95a9ed5c71358f1224a164ec2a922005"
+    },
+    {
+      "path": "conductor/tracks/multiscale_polygon_surface_20260901/evidence/scalar-labels-20260912/390-soil-z3.png",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "a699b3624ffa4af5579d6a71ba6ad83209c3f3d9",
+      "git_blob_bytes": 10325,
+      "git_blob_sha256": "3c731914c9baa4b73f33d24dae67e17c6dd748ba5fd50acd83b84a64f6a1d3e0"
+    },
+    {
+      "path": "conductor/tracks/multiscale_polygon_surface_20260901/evidence/scalar-labels-20260912/390-soil-z7.png",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "d3f42a8eea7b127c799b820eda95bde64f5c791f",
+      "git_blob_bytes": 7680,
+      "git_blob_sha256": "b3224dd1efed72038ca16bfbd69ed513c74a6eccd63f26d33a5569ff72fdaff5"
+    },
+    {
+      "path": "conductor/tracks/multiscale_polygon_surface_20260901/evidence/scalar-labels-20260912/390-weather-z10.png",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "21a70c425a3c799ef6c82ac79936ffcba7438d7f",
+      "git_blob_bytes": 7695,
+      "git_blob_sha256": "c845331706204de431bcc0a6b9cddb963566e389f9aa244e6429111c1b429449"
+    },
+    {
+      "path": "conductor/tracks/multiscale_polygon_surface_20260901/evidence/scalar-labels-20260912/README.md",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "158032055924e2f767471fb3588f3caf769da772",
+      "git_blob_bytes": 8935,
+      "git_blob_sha256": "f76dee5fb13dbcb4becb6acff2f34bcabc0b1bf9d22672c8c8dc933b1ff1e806"
+    },
+    {
+      "path": "conductor/tracks/multiscale_polygon_surface_20260901/evidence/scalar-labels-20260912/canvas-report.json",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "a967c04f755349767b75352c666de7c005d81827",
+      "git_blob_bytes": 24175,
+      "git_blob_sha256": "22748681d81deb43987aa2d19f651490c990ad3eb79b309993b999111b3ef189"
+    },
+    {
+      "path": "conductor/tracks/multiscale_polygon_surface_20260901/evidence/scalar-labels-20260912/reproduce.md",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "8da9d963a6e97a40a874af1a05099f3fb56b20bc",
+      "git_blob_bytes": 9030,
+      "git_blob_sha256": "6e0833d20fb11c5f54d27ff5e19c7704297f436bef10029c23be785b8c59575b"
+    },
+    {
+      "path": "conductor/tracks/multiscale_polygon_surface_20260901/evidence/screenshots-2026-09-03/README.md",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "afd00cee58e20c88e89795d1900baf19abf3a7f7",
+      "git_blob_bytes": 1901,
+      "git_blob_sha256": "589eec2f1fae99eab82473edc348fbe09b2bc95a5b01c193c7d289fa8c651dbb"
+    },
+    {
+      "path": "conductor/tracks/multiscale_polygon_surface_20260901/metadata.json",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "554327a331d3a945e0479b497b7dfb2e402e296f",
+      "git_blob_bytes": 10530,
+      "git_blob_sha256": "1af9557834660215718048b2f910b2131449adba6c442d6e05f572e09fba9512"
+    },
+    {
+      "path": "conductor/tracks/multiscale_polygon_surface_20260901/plan.md",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "a0010bf6a37c4ab824bacbb08c56e277ccf61baa",
+      "git_blob_bytes": 3118,
+      "git_blob_sha256": "183e66265e9db92437e0ddf55f4e3d7f9e082b62c3a87ccca5961ba919fa6ebc"
+    },
+    {
+      "path": "conductor/tracks/multiscale_polygon_surface_20260901/spec.md",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "f26ce441654fde249aa127ca1f8e77dfd8ce5064",
+      "git_blob_bytes": 2646,
+      "git_blob_sha256": "affd642e40675fcfe88d42367ff79cfba2760dba4524bac161f4473a9be3aa88"
+    },
+    {
+      "path": "conductor/tracks/offline_export_service_20260908/evidence/local-builder-phase-reconciliation-20260912.md",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "8fe06061fbb9bbad7823e5911a3796f2a36a7cc5",
+      "git_blob_bytes": 5805,
+      "git_blob_sha256": "bc6a89126ebb6fb59df6977c21daaa3a4e575edb8874e1605cf94e2bb837cbc7"
+    },
+    {
+      "path": "conductor/tracks/offline_export_service_20260908/plan.md",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "a490ea8f4c9342de247b379c59a3e17056401bb5",
+      "git_blob_bytes": 8543,
+      "git_blob_sha256": "eacf0df962e4f7a81f76d0582b72a684135c653982a71125f5e1506d3403bdd3"
+    },
+    {
+      "path": "conductor/tracks/parquet_production_acceptance_20260901/metadata.json",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "13b645f12433bd5f33314ba98f192c9dedc0444c",
+      "git_blob_bytes": 5773,
+      "git_blob_sha256": "0bba47f28a0be56002f4bd13b6dc5f0f46da8f9c754dda14d3a44cecdf419674"
+    },
+    {
+      "path": "conductor/tracks/parquet_production_acceptance_20260901/plan.md",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "d09c82c5e40813fe61bafa1df31e77fa7b582466",
+      "git_blob_bytes": 2534,
+      "git_blob_sha256": "0c5e236297ced154548304864f54002f34ae31c271190d38c72efe9129798ddc"
+    },
+    {
+      "path": "conductor/tracks/parquet_production_acceptance_20260901/spec.md",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "7136a08bfad89ee0241c5165b2b5e72d518179d5",
+      "git_blob_bytes": 2234,
+      "git_blob_sha256": "18b4a247ed7bca3a78ea398949c1f21de2420380b8775f1395e26eded53129d9"
+    },
+    {
+      "path": "conductor/tracks/parquet_reader_cutover_acceptance_20260901/evidence/local-acceptance-blockers-20260912.md",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "39e1b0a7a86b2f4d0127256a82357ff158266c1d",
+      "git_blob_bytes": 4760,
+      "git_blob_sha256": "8d698bf8e5b61027762aae1faa06f72751cf2cd6bb0066366fc534f7c626c568"
+    },
+    {
+      "path": "conductor/tracks/parquet_reader_cutover_acceptance_20260901/evidence/local-availability-contract-20260912.md",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "89c1a1221e5d36a9d16bf36db9de64175a1e78ff",
+      "git_blob_bytes": 11991,
+      "git_blob_sha256": "7f4ddeeb92131fb66055e88da07455714df17e0b655de434dba1021400a73a65"
+    },
+    {
+      "path": "conductor/tracks/parquet_reader_cutover_acceptance_20260901/evidence/reader-cutover-verdict.md",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "a8f751d24a67a6ac0b01a27e32d9294b951aaf05",
+      "git_blob_bytes": 16805,
+      "git_blob_sha256": "d3fa1b459b7097f7eaa1960f0c2e6add2577560ca438b6d5567a354f27bf6549"
+    },
+    {
+      "path": "conductor/tracks/parquet_reader_cutover_acceptance_20260901/metadata.json",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "cb214cf568dbf8d589ac2a3cc3b7ed3010ca308c",
+      "git_blob_bytes": 13607,
+      "git_blob_sha256": "c919f6bee3defefb1ed333837f7002ea3a49a671ae96943f97ef3c34269a06b6"
+    },
+    {
+      "path": "conductor/tracks/parquet_reader_cutover_acceptance_20260901/plan.md",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "887eca8d92100d1db3bc476ef591c7ed89f54d73",
+      "git_blob_bytes": 6698,
+      "git_blob_sha256": "a5916abd544b5faf34183f475564b3a1246146bb20b96aae035c5ca8648211c5"
+    },
+    {
+      "path": "conductor/tracks/parquet_reader_cutover_acceptance_20260901/spec.md",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "0e86baf47aa11df79e5617bbd53c11653635e99d",
+      "git_blob_bytes": 2832,
+      "git_blob_sha256": "0e167a4897c8a43c4f117ae57fcd8e527fb908ef283213745aa03767b3aab993"
+    },
+    {
+      "path": "conductor/tracks/platform_experience_qa_20260911/evidence/browser-weather-20260911.md",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "6fdb2f4e23009cb96a53eb71cd03fabc8cbf028e",
+      "git_blob_bytes": 2622,
+      "git_blob_sha256": "bf144089742659bf4b242c245327d79ced463fb105f7e0372f13469d18543a58"
+    },
+    {
+      "path": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "3a31757b1b7a1db3b7b34cc7859e4f2ef0f28c97",
+      "git_blob_bytes": 65947,
+      "git_blob_sha256": "1efde3c255a3c9a566d53f8fcf7a1af734dffb1ef4384b40b3e4b522b578cc25"
+    },
+    {
+      "path": "conductor/tracks/platform_experience_qa_20260911/evidence/remaining-acceptance-matrix-20260912.md",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "cd41cbe837d9e668fc7e4c263c282857cdb8b1f7",
+      "git_blob_bytes": 38064,
+      "git_blob_sha256": "e9ae92415c7d16e553fd05b4a2d880077a1d109df8ab9872d4b5a4579b648dea"
+    },
+    {
+      "path": "conductor/tracks/platform_experience_qa_20260911/evidence/root-integrated-checks-20260912.md",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "cea2f3038917b12fec9eb7b6a7a25f1cb862e874",
+      "git_blob_bytes": 2412,
+      "git_blob_sha256": "7cc11d3364050193f3d50cd9b21f933d9cebb040b15ac4e370117f6800da214a"
+    },
+    {
+      "path": "conductor/tracks/platform_experience_qa_20260911/evidence/session-restart-20260912.md",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "426126f3443220898a53d72bae01634025401771",
+      "git_blob_bytes": 2068,
+      "git_blob_sha256": "82a4a34f17301132fcae9120a9339cf5c11e3380e79ae6452e7b112988d856ed"
+    },
+    {
+      "path": "conductor/tracks/platform_experience_qa_20260911/evidence/task-ledger.md",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "15d18763c5d69d837a3ce0eb8d40ee7aae34a31a",
+      "git_blob_bytes": 21927,
+      "git_blob_sha256": "dd5450692c3d282e467b2a7cd436b167d7a723e9c77b67bd2c213d40d0773a31"
+    },
+    {
+      "path": "conductor/tracks/platform_experience_qa_20260911/evidence/weather-approval-20260912.md",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "b32ef0eb223116e303102d69cf0d8afd78d65221",
+      "git_blob_bytes": 4126,
+      "git_blob_sha256": "e44355d24149e61024358fbee52866088c9e57cfe242266b3727d480731e2ed2"
+    },
+    {
+      "path": "conductor/tracks/platform_experience_qa_20260911/matrix.md",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "4bbad0160decb67f1c1c738fb396b26169bd76ab",
+      "git_blob_bytes": 3744,
+      "git_blob_sha256": "e61b85e5b716bb97d16a09df6b23dc080db93194d22fa7f025cd89c7dda84df6"
+    },
+    {
+      "path": "conductor/tracks/platform_experience_qa_20260911/metadata.json",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "242ffbe7393a123a2345e17383e5be3f3f59e795",
+      "git_blob_bytes": 4880,
+      "git_blob_sha256": "5f55457fdba93835b88678e1ca8c11818c5ff6cc662cbba0d5f47296beedcb7b"
+    },
+    {
+      "path": "conductor/tracks/platform_experience_qa_20260911/plan.md",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "5d335e1e0aefb7fb8af6a20f61f066be26cf9ca5",
+      "git_blob_bytes": 5889,
+      "git_blob_sha256": "cb811b9fcaac589fd451c86178ecd35f4019f38682533e40b2a950c2b30dac67"
+    },
+    {
+      "path": "conductor/tracks/platform_experience_qa_20260911/spec.md",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "0aca102658dcbb0f0e99b582f61efef1fc940b75",
+      "git_blob_bytes": 9779,
+      "git_blob_sha256": "354f4d29417d5eebef6a87b924abb85f35f7c418227076b2513ce91c84b5007f"
+    },
+    {
+      "path": "conductor/tracks/weather_forecast_experience_20260911/plan.md",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "9b22340037b09afd06dd97d172922e211477153c",
+      "git_blob_bytes": 3103,
+      "git_blob_sha256": "a3da8662e52e1e5d6152b26329ca9dd222f54b0729fe79be44718dd2bde462e7"
+    },
+    {
+      "path": "conductor/tracks/weather_forecast_experience_20260911/spec.md",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "6844eeb0ad011209088393f66442c6844d13da77",
+      "git_blob_bytes": 5247,
+      "git_blob_sha256": "c5a6bd4f09c8fef6365728316d07f31909170e5c4c5e6b54be7cf241f152b416"
+    },
+    {
+      "path": "docs/layer-lane-standard.md",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "e1d1eff517f0769a5e25eea7947ffab1a623afd8",
+      "git_blob_bytes": 19519,
+      "git_blob_sha256": "d42ec69d4a820406e3f7fdfe49b72d9f145b63f85059619d840943c432be0323"
+    },
+    {
+      "path": "docs/testing.md",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "380d62e06ff7b5383e6576e2a8ec2b3f3cd8affd",
+      "git_blob_bytes": 4716,
+      "git_blob_sha256": "3933ee9d0fd3a8e51ab699244e6f88c9a4ee3a3fe5b59e49c93758a98fe53a0f"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/agent/surfaces.py",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "8eccaae149b6a5c9dbe9d34f250b69f5609f029d",
+      "git_blob_bytes": 6976,
+      "git_blob_sha256": "f8adbfc18f1c2fd9d3a9d81c833345cf896fac5a9194c1f5160fdd009c2c9039"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/agent/tools.py",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "0b7326f2429206450696c71c39957bcf14a6853e",
+      "git_blob_bytes": 106630,
+      "git_blob_sha256": "8314e7de0a2924b5a67a6c1c2a813a95fe01483b183be4bdb6f6d9d154ed48d3"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/interface/http/parquet_routes.py",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "6fc82832b3e45ecb2d7532965b75994cbcbc9153",
+      "git_blob_bytes": 14436,
+      "git_blob_sha256": "e46b91e012207a0988af2f94062424ca946926a87109e9f20859d1ec69acc847"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/parquet_ops/coverage.py",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "4bd2a1a4df90c59e0176032007c086b3ce57ca5a",
+      "git_blob_bytes": 24795,
+      "git_blob_sha256": "d00182adf0da1ef9c353d31daad6c87015ee53ab28d9f852b23376fb2f77335a"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/parquet_ops/snapshot_products.py",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "17920f54b01862044f71628058b7905e6302603d",
+      "git_blob_bytes": 103375,
+      "git_blob_sha256": "784f8190802246af969f390053fcaebdcf4a78d74f8d31f036f2ec3112aeb5a1"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/parquet/lane_registry.py",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "f6c237f36b23fe25e61a7284dc800afb9589b3b9",
+      "git_blob_bytes": 76651,
+      "git_blob_sha256": "bba473d5a10b4764f65e8279771591738f0df7d60fc7eb806163c01688760d6f"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/warehouse/parquet/schema.py",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "d035380b605b427b6374e744c2b67f0f96918123",
+      "git_blob_bytes": 11407,
+      "git_blob_sha256": "9e635b6e34abb9457a9f7ef19bca7308f7f3f99f23f1f4daef7232bf9a781410"
+    },
+    {
+      "path": "src/lib/map/coverage-region.ts",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "8295849533cd39c161c6eb06abf09f550875e4c0",
+      "git_blob_bytes": 6451,
+      "git_blob_sha256": "039904315406f26068215cc8393cbf7e452d317c4691459af5b8d15fba51e20e"
+    },
+    {
+      "path": "src/lib/map/layer-render-contract.ts",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "5f9a6859eed799226bf1aa0055d404f759364ee5",
+      "git_blob_bytes": 29732,
+      "git_blob_sha256": "95a8227f036fd80a66caffa1c35a908a2990f523b0b2b75cbe7d8399e6e6c7e0"
+    },
+    {
+      "path": "src/lib/map/zoom-tiers.ts",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "671c6cc793a9a4faee32bac1729fa48bdffe54a2",
+      "git_blob_bytes": 19872,
+      "git_blob_sha256": "894fd7f29fdd64a14dda74e6f10bc30b45a75207eac9711f057cf9fa71a404c8"
+    },
+    {
+      "path": "src/lib/server/services/parquet-slider-capabilities.ts",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "df65af37f6ebdb33cff0bd54a8172dcadb4cb1ba",
+      "git_blob_bytes": 42635,
+      "git_blob_sha256": "a630beab06ff37326cbd8a8554b7478b5e6c1e162f8bfe54ed5adf3ade3f8e5a"
+    },
+    {
+      "path": "src/stores/map-store.ts",
+      "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "git_blob_oid": "fdbf5d1262b2607150271b58ac3a911bd17589eb",
+      "git_blob_bytes": 5629,
+      "git_blob_sha256": "f47a6b3436106803aba412ba6335c8cd63d73e06ef121e511f2b5f521cfbe720"
+    }
+  ]
+}
