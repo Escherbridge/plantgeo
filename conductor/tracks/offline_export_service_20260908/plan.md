@@ -3,9 +3,20 @@ type: plan
 track: offline_export_service_20260908
 status: active
 created: 2026-09-08
+updated_on: 2026-09-12
 ---
 
 # Plan — offline export service
+
+## Local phase checkpoint — September 12
+
+The [builder and phase reconciliation](evidence/local-builder-phase-reconciliation-20260912.md)
+binds the two selected in-repository builder files and the bounded temperature
+acceptance evidence. Phase 1's standalone staging service is now explicitly
+**superseded** and must not be implemented. The selected builders' broad phase
+acceptance remains open because the current eight-lane manifest, reconciled
+`soil-field-vpd` population, accepted phase review and end-to-end cost packet are
+not checked in. Relative-humidity 1981–2017 still has no recovery receipt.
 
 ## Current scope and remaining ledger — September 11
 

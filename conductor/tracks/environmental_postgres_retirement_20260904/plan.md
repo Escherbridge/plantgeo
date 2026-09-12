@@ -2,10 +2,20 @@
 type: track-plan
 slug: environmental_postgres_retirement_20260904
 status: active
-updated_on: 2026-09-11
+updated_on: 2026-09-12
 ---
 
 # Environmental retirement — remaining work
+
+## Local evidence checkpoint — September 12
+
+The [admission and cutoff reconciliation](evidence/local-admission-cutoff-reconciliation-20260912.md)
+confirms that the ignored signal, sensor and static-soil artifacts cited by the
+September 10 summaries are absent from this checkout. Their checked-in hashes are
+a recovery ledger, not re-hashable admission inputs. It also preserves the cutoff
+as `configured_pending_deployment` and records the still-missing bucket-pinned
+fixed-support identity. No admission or cutoff checkbox below closes from this
+local-only audit.
 
 This plan reconciles repository head `fa20223` with dated September 9–11 evidence.
 The previous wave plan is preserved in the

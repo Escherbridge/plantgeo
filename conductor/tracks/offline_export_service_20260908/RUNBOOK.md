@@ -2,12 +2,18 @@
 type: runbook
 track: offline_export_service_20260908
 created: 2026-09-08
-reviewed: 2026-09-11
+reviewed: 2026-09-12
 ---
 
 # RUNBOOK — offline export service
 
-## Current use — reconciled September 11
+## Current use — reconciled September 12
+
+The September 12
+[local builder/phase reconciliation](evidence/local-builder-phase-reconciliation-20260912.md)
+identifies the selected builder files and makes Phase 1's discarded standalone
+staging service explicitly superseded. It does not close the selected-builders'
+broad phase review, eight-lane manifest, performance or deferred-history gates.
 
 The [track plan](plan.md) owns the remaining review/performance work. Sections
 0–8 below preserve the September 7–8 incident account; their measurements,

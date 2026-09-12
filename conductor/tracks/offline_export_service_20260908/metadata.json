@@ -1,4 +1,12 @@
 {
+  "reconciliation_20260912": {
+    "audited_on": "2026-09-12",
+    "source_head": "6c08907ba392d8dcdff3e96c41fdb27c6a74fe9d",
+    "source_tree": "92f3baef253389b737f3e36fd47a96b52c43c312",
+    "status": "active",
+    "evidence": "conductor/tracks/offline_export_service_20260908/evidence/local-builder-phase-reconciliation-20260912.md",
+    "next_gate": "Bind the current eight-lane source/history/rung manifest, reconcile soil-field-vpd, obtain accepted selected-builder phase review and measured end-to-end cost, then recover and independently read back relative-humidity 1981-2017 availability. The rejected standalone staging service is superseded, not an implementation queue."
+  },
   "reconciliation_20260911": {
     "audited_on": "2026-09-11",
     "source_head": "fa20223",

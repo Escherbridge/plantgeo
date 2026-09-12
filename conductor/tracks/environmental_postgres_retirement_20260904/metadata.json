@@ -1,4 +1,12 @@
 {
+  "reconciliation_20260912": {
+    "audited_on": "2026-09-12",
+    "source_head": "6c08907ba392d8dcdff3e96c41fdb27c6a74fe9d",
+    "source_tree": "92f3baef253389b737f3e36fd47a96b52c43c312",
+    "status": "active",
+    "evidence": "conductor/tracks/environmental_postgres_retirement_20260904/evidence/local-admission-cutoff-reconciliation-20260912.md",
+    "next_gate": "Restore or recapture and re-hash the missing signal, sensor and static-soil artifacts; bind current four-rung and availability state; prove the deployed executor cutoff and admit a bucket-pinned fixed-support artifact. The September 10 cutoff remains configured_pending_deployment."
+  },
   "reconciliation_20260911": {
     "audited_on": "2026-09-11",
     "source_head": "fa20223",
