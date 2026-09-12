@@ -86,7 +86,7 @@ export default function MapView() {
   // layer under it, so a re-render here is the most expensive one on the page. Subscribing to
   // the store object re-rendered it on every unrelated write -- a feature selection, a layer
   // toggle, a query-point pin. See conductor/code_styleguides/typescript.md, "Subscribe to the
-  // narrowest Zustand/Jotai state slice".
+  // narrowest Zustand state slice".
   //
   // `viewport` is deliberately absent from this list. It is read once, to seed the camera, by a
   // `[]`-dependency callback -- and `setViewport` mints a new object on every moveend, resize

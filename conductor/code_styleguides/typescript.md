@@ -71,7 +71,7 @@ compiler's strict mode; it does not replace it.
   expose semantic states for loading, empty, partial, stale, error, and success.
   Split a panel when its data orchestration and visual sections stop being easy
   to test independently.
-- Subscribe to the narrowest Zustand/Jotai state slice. Do not read an entire
+- Subscribe to the narrowest Zustand state slice. Do not read an entire
   store in a high-frequency map component, and do not mirror server data in
   multiple stores without a single source of truth and invalidation plan.
 - Use stable domain identifiers as React keys. Array indexes are allowed only

@@ -20,7 +20,7 @@ PlantGeo follows a client-server architecture with clear separation of concerns:
 │                    CLIENT LAYER                              │
 │ ┌────────────────────────────────────────────────────────┐   │
 │ │ React 19 Components + TypeScript                       │   │
-│ │ State Management: Zustand (global) + Jotai (per-layer)│   │
+│ │ State Management: Zustand (global and per-layer)       │   │
 │ └────────────────────────────────────────────────────────┘   │
 │                                                               │
 │ ┌──────────────────┐  ┌──────────────────┐                   │
@@ -251,15 +251,16 @@ export const useLayerStore = create<LayerStore>((set) => ({
 const { layers, addLayer } = useLayerStore();
 ```
 
-### Per-Layer State (Jotai)
+### Per-Layer State (Zustand)
 
-For complex per-layer state (data, filters, cache), Jotai atoms are used:
+Per-layer data, filters, and cache state are held in the relevant Zustand store. The
+repository does not use Jotai atoms; components select the narrowest store slice they need:
 
 ```typescript
-const layerDataAtom = atomWithQuery(async () => {
-  // Load data for specific layer
-  return fetchLayerData(layerId);
-});
+const layers = useLayerStore((state) => state.layers);
+const activeLayer = useLayerStore((state) =>
+  state.layers.find((layer) => layer.id === state.activeLayerId),
+);
 ```
 
 ## Authentication & Authorization
