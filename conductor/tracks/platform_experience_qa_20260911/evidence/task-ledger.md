@@ -219,3 +219,11 @@ task `01a08b00-2a50-73c2-b39b-39523c74ceb2`. Turn
 `2026-09-12T12:27:26Z` through `2026-09-12T12:30:38Z`, completed idle, and
 emitted no assistant, tool, command, or revision evidence. It remains open and
 unresolved; no mutation or push occurred.
+
+The coordinator also dispatched dedicated weather QA queue alias
+`client-new-thread:8eb12603-ce98-42b1-ab04-539779e56f9c` from the current
+PlantGeo default branch. The lane is read-only and owns service-backed
+historical-weather reconciliation only; it does not reopen forecast work or
+authorize source, database, writer, deployment, or push operations. It had not
+materialized in `list_threads` at observation and therefore has no completion
+evidence yet.

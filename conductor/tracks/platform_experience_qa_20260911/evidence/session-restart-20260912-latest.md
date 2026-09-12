@@ -84,3 +84,15 @@ tool event, command, or revision. This is verified terminal task state without
 completion evidence, so the owner remains unresolved and intentionally open.
 No file, ref, database, provider, object-store, writer, scheduler,
 deployment, or push operation occurred.
+
+## Dedicated weather QA lane dispatch — 2026-09-12T12:31Z
+
+The coordinator dispatched a dedicated read-only weather QA task as queue
+alias `client-new-thread:8eb12603-ce98-42b1-ab04-539779e56f9c` from the current
+PlantGeo project default branch. Its brief is limited to reconciling the
+approved historical presentation against service-backed populated-data,
+selected-day, mobile/touch and accessibility evidence. It must not edit,
+commit, push, deploy, access Railway or production data, run writers, or reopen
+the separate forecast implementation. The alias had not materialized in the
+sidebar at the time of this receipt, so no completion or runtime evidence is
+claimed yet.
