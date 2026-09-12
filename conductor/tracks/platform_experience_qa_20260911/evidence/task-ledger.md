@@ -252,3 +252,17 @@ without an assistant message, tool event, command or revision. It remains
 idle, unresolved and open; no candidate integration or archive is authorized.
 No file, ref, database, provider, object-store, writer, scheduler, deployment
 or push operation occurred.
+
+### 2026-09-12 lane-aware botanical and visual dispatch
+
+Two read-only tasks were dispatched from current `main`: botanical source
+admission/agent parity as queue alias
+`client-new-thread:871b3483-2577-4ff3-9caa-d45ecf509731` on
+`gpt-5.6-terra` medium effort, and visual M3 acceptance as queue alias
+`client-new-thread:ca4a204f-51a2-4b53-b096-800862d65054` on
+`gpt-5.6-luna` low effort. Both aliases were absent from `list_threads` at
+observation and therefore have no completion evidence. Their briefs prohibit
+database, pgt, Railway, object-store, provider, writer, scheduler, deployment
+and push operations; the botanical lane also keeps immutable publication
+blocked pending admitted sources, and the visual lane keeps live M3 gates
+open pending service-backed evidence.

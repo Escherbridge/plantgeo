@@ -130,3 +130,21 @@ emitted no assistant message, tool event, command or revision. This is
 terminal task state without completion evidence; the owner remains unresolved,
 idle and intentionally open. No file, ref, database, provider, object-store,
 writer, scheduler, deployment or push operation occurred.
+
+## Lane-aware botanical and visual dispatch — 2026-09-12T13:02Z
+
+The coordinator dispatched two new read-only tasks from the current PlantGeo
+project default branch. Botanical source admission and agent parity was
+queued as `client-new-thread:871b3483-2577-4ff3-9caa-d45ecf509731` using
+`gpt-5.6-terra` at medium effort. Its brief covers the active species-profile
+P0/P1 source, licence, growth-requirement, water/oil/fuel-composition,
+agricultural-role and immutable-profile gates, with no database or external
+source access.
+
+Visual M3 acceptance was queued as
+`client-new-thread:ca4a204f-51a2-4b53-b096-800862d65054` using
+`gpt-5.6-luna` at low effort. Its brief covers the active multiscale visual
+gates and one bounded local presentation or synthetic-evidence slice, with no
+reader, API, forecast, ingestion, database, writer, scheduler, deployment or
+push access. Both aliases were absent from `list_threads` at observation, so
+no completion or runtime evidence is claimed yet.
