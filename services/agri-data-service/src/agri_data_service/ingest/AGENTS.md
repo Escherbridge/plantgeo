@@ -151,9 +151,8 @@ production key over `-125,42,-111,49`: day ranges 1, 2, 3, 4 and 5 answered HTTP
 `400 Invalid day range. Expects [1..5].` — identically for the dated and the undated form. `MAX_FIRMS_DAY_RANGE`
 was 10 until that measurement, so `_clamp_day_range` advertised a ceiling every product refused:
 `FIRMS_DAY_RANGE=10` produced a 400 on all three constellation products and therefore a **failed job**,
-confirmed by running `ingest-firms` that way against production. Nothing in production sets
-`FIRMS_DAY_RANGE` (checked on `plantgeo-ingest-cron`, `plantgeo-cron-firms` and `plantgeo-main`), so
-`firms_day_range()` returns the default 2 there and lowering the clamp changes no live behaviour — it only
+confirmed by running `ingest-firms` that way against production. `FIRMS_DAY_RANGE` is unset in the
+current executor, so `firms_day_range()` returns the default 2 there and lowering the clamp changes no live behaviour — it only
 stops a 6-to-10 configuration from being silently accepted and then failing.
 
 **That clamp is currently forked, and the TypeScript half is the one that serves.** `firmsDayRange()`

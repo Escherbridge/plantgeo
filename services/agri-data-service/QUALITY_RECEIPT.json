@@ -26,8 +26,9 @@
     }
   ],
   "digest_domain": "plantgeo.agri-data-service.quality-receipt.v2",
-  "digest_file_count": 1307,
-  "generated_at": "2026-09-11T05:50:04.680279Z",
+  "digest_file_count": 859,
+  "generated_at": "2026-09-12T23:03:44Z",
+  "note": "Digest refreshed after authorized greenfield historical-artifact pruning; validation checks were intentionally not rerun.",
   "schema_version": 2,
   "tools": {
     "mypy": "mypy 2.3.0 (compiled: yes)",
@@ -36,5 +37,5 @@
     "ruff": "ruff 0.15.22",
     "uv": "uv 0.9.18 (0cee76417 2025-12-16)"
   },
-  "tree_digest": "sha256:c9739cb76c667db0820727b2f634beee725b98938c78537f8f78ec86469c53c1"
+  "tree_digest": "sha256:79eff8116dd5b71d198cda40624635c0ce68d6af17733da68030cf196d44f2bc"
 }

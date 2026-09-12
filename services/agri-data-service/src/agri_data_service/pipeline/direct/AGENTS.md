@@ -475,10 +475,8 @@ make loud. The real writer substitutes its own adapter with
 bounds the lane is its floor, enforced by `refuse_immutable_day` ON THE ADAPTER so the bound holds no
 matter which driver reaches it.
 
-`plantgeo-ingest-cron` is deliberately NOT named as the legacy owner of the eight generic
-`parquet-climate-field-*` specs. It never produced one of these days, and naming it would put them
-in its atomic cutover group -- so activating the real ingest cutover would drag along eight lanes
-whose adapter refuses by design.
+The source-direct climate writer is the only scheduled owner of these streams. Generic Parquet
+executor specs were removed because their adapter refuses by design.
 
 The direct lane and those eight generic specs DO declare each other in `conflicts_with`, from both
 sides, so the executor refuses to run two owners over one calendar. See `execution/AGENTS.md`,
@@ -540,9 +538,8 @@ history:
   series IS the immutable history (kPa in, kPa out). A forward writer that recomputed VPD from
   temperature and dew point would be a second, different estimator writing under the first one's
   `signal_name`.
-- **Credentials.** `CDSAPI_*` lives only on the inert `plantgeo-ingest-cron` service, so a CDS writer
-  could not run in production at all. The archive host is keyless; `OPEN_METEO_API_KEY` only lifts
-  the quota wall and is read from the environment at fetch time.
+- **Credentials.** The archive host is keyless; `OPEN_METEO_API_KEY` only lifts the quota wall and
+  is read from the environment at fetch time.
 
 `execution/AGENTS.md` section "Soil temperature is deliberately excluded" predates the reviewed
 soil-temperature plan and describes a decision that was reversed; the plans and the written rows are

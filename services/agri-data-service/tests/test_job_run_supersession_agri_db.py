@@ -95,8 +95,6 @@ def _lane(lane_id: str, catch_up_policy: CatchUp) -> LaneExecutionSpec:
     """A minimal hourly lane whose definition name is unique to this test run."""
     return LaneExecutionSpec(
         lane_id=lane_id,
-        legacy_owners=(),
-        required_handoff_acknowledgements=(),
         conflicts_with=(),
         work_class="backlog" if catch_up_policy == "replay_oldest" else "incremental",
         migration_disposition="consolidatable",
@@ -307,7 +305,7 @@ async def test_the_planner_holds_a_replay_lane_and_resumes_it_at_the_current_buc
     assert due == []
     assert [result.state for result in held] == ["failed"]
     assert held[0].run_id == run_id
-    assert held[0].handoff_blockers == (
+    assert held[0].blockers == (
         f"operator supersession required: agri-service ops jobs-supersede-run --lane {spec.lane_id} --run-id {run_id}",
     )
 
@@ -354,7 +352,7 @@ async def test_the_failure_streak_counts_only_the_unbroken_newest_run_of_failure
     assert due == []
     assert [result.state for result in held] == ["failed"]
     assert held[0].run_id == third
-    assert len(held[0].handoff_blockers) == 1
+    assert len(held[0].blockers) == 1
 
     recorded = await _supersede(session, spec, third, evidence="breaker proof", apply=True)
     assert recorded.outcome == "recorded"

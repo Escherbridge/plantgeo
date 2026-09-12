@@ -11,7 +11,6 @@ from agri_data_service.execution.job_executor_service import (
     ACTIVE_LANES_VARIABLE,
     COMMAND_CLEANUP_MARGIN_SECONDS,
     LANE_SPECS,
-    ExecutorConfigurationError,
     parse_activation,
 )
 from agri_data_service.parquet_ops.snapshot_products import PRODUCT_BY_LAYER
@@ -121,13 +120,10 @@ def test_the_three_moisture_streams_are_lanes_rather_than_snapshot_products() ->
             assert product.stream not in PRODUCT_BY_LAYER, product.stream
 
 
-def test_the_executor_carries_one_shadow_soil_lane_with_no_legacy_owner() -> None:
-    """Nothing ever produced a forward ERA5-Land day, so there is no cutover to acknowledge."""
+def test_the_executor_carries_one_shadow_soil_lane() -> None:
     spec = LANE_SPECS[SOIL_LANE_ID]
 
     assert spec.command == EXPECTED_COMMAND
-    assert spec.legacy_owners == ()
-    assert spec.required_handoff_acknowledgements == ()
     assert spec.schedule == EXPECTED_SCHEDULE
     assert spec.phase_offset_seconds == EXPECTED_PHASE_OFFSET_SECONDS
     assert spec.phase_offset_seconds != LANE_SPECS[CLIMATE_LANE_ID].phase_offset_seconds
@@ -143,40 +139,10 @@ def test_the_soil_lane_is_shadow_until_an_operator_names_it() -> None:
     assert parse_activation({ACTIVE_LANES_VARIABLE: ""}).is_active(SOIL_LANE_ID) is False
 
 
-def test_activating_the_soil_lane_needs_no_handoff_acknowledgement() -> None:
-    """With no legacy owner there is nothing to disable first, and the gate must say so cleanly."""
+def test_activating_the_soil_lane_uses_the_allow_list() -> None:
     activation = parse_activation({ACTIVE_LANES_VARIABLE: SOIL_LANE_ID})
 
     assert activation.is_active(SOIL_LANE_ID) is True
-    assert activation.handoff_acknowledgements == {}
-
-
-def test_each_soil_stream_also_gets_its_generic_parquet_spec_and_it_stays_shadow() -> None:
-    """The generic lane spec exists so the census sees the stream; its adapter still refuses."""
-    for product in SOIL_FIELD_PRODUCTS:
-        spec = LANE_SPECS[f"parquet-{product.stream}"]
-        assert spec.publication_lag_days == product.publication_lag_days, product.stream
-        assert spec.writer_ceiling is None, product.stream
-        assert spec.legacy_owners == (), product.stream
-        assert spec.required_handoff_acknowledgements == (), product.stream
-        assert parse_activation({}).is_active(spec.lane_id) is False, product.stream
-
-
-def test_the_soil_lane_and_its_eight_generic_specs_declare_each_other_as_conflicts() -> None:
-    """Two owners of one calendar, one of which can only ever fail; the gate must refuse the pairing."""
-    direct = LANE_SPECS[SOIL_LANE_ID]
-    generic_ids = tuple(f"parquet-{product.stream}" for product in SOIL_FIELD_PRODUCTS)
-
-    assert set(direct.conflicts_with) == set(generic_ids)
-    for lane_id in generic_ids:
-        assert LANE_SPECS[lane_id].conflicts_with == (SOIL_LANE_ID,), lane_id
-
-
-def test_no_soil_generic_spec_conflicts_with_the_climate_writer() -> None:
-    """The conflict is per WRITER: naming the climate lane here would refuse a pairing that is fine."""
-    for product in SOIL_FIELD_PRODUCTS:
-        assert CLIMATE_LANE_ID not in LANE_SPECS[f"parquet-{product.stream}"].conflicts_with, product.stream
-    assert set(LANE_SPECS[CLIMATE_LANE_ID].conflicts_with).isdisjoint(LANE_SPECS[SOIL_LANE_ID].conflicts_with)
 
 
 def test_the_two_direct_writers_may_activate_together() -> None:
@@ -184,16 +150,6 @@ def test_the_two_direct_writers_may_activate_together() -> None:
     activation = parse_activation({ACTIVE_LANES_VARIABLE: f"{SOIL_LANE_ID},{CLIMATE_LANE_ID}"})
 
     assert activation.active_lanes == frozenset({SOIL_LANE_ID, CLIMATE_LANE_ID})
-
-
-@pytest.mark.parametrize("first", [True, False])
-def test_activating_a_generic_soil_lane_beside_the_direct_writer_is_refused(first: bool) -> None:
-    """Declared on both sides, so the refusal does not depend on which lane an operator names first."""
-    generic = f"parquet-{SOIL_FIELD_PRODUCTS[0].stream}"
-    pair = (SOIL_LANE_ID, generic) if first else (generic, SOIL_LANE_ID)
-
-    with pytest.raises(ExecutorConfigurationError, match="conflicts with active lane"):
-        parse_activation({ACTIVE_LANES_VARIABLE: ",".join(pair)})
 
 
 def test_the_command_timeout_is_the_cli_default_budget_plus_a_stated_grace() -> None:

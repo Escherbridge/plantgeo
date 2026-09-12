@@ -11,7 +11,6 @@ from agri_data_service.execution.job_executor_service import (
     ACTIVE_LANES_VARIABLE,
     COMMAND_CLEANUP_MARGIN_SECONDS,
     LANE_SPECS,
-    ExecutorConfigurationError,
     parse_activation,
 )
 from agri_data_service.pipeline.direct.climate.products import (
@@ -90,13 +89,10 @@ def test_every_climate_slug_resolves_to_the_schema_the_writer_will_conform_to() 
         assert schema is product.stream_schema
 
 
-def test_the_executor_carries_one_shadow_climate_lane_with_no_legacy_owner() -> None:
-    """Nothing ever produced a forward climate day, so there is no cutover to acknowledge."""
+def test_the_executor_carries_one_shadow_climate_lane() -> None:
     spec = LANE_SPECS[CLIMATE_LANE_ID]
 
     assert spec.command == EXPECTED_COMMAND
-    assert spec.legacy_owners == ()
-    assert spec.required_handoff_acknowledgements == ()
     assert spec.schedule == EXPECTED_SCHEDULE
     assert spec.phase_offset_seconds == EXPECTED_PHASE_OFFSET_SECONDS
     assert spec.migration_disposition == "source-specific"
@@ -111,41 +107,10 @@ def test_the_climate_lane_is_shadow_until_an_operator_names_it() -> None:
     assert parse_activation({ACTIVE_LANES_VARIABLE: ""}).is_active(CLIMATE_LANE_ID) is False
 
 
-def test_activating_the_climate_lane_needs_no_handoff_acknowledgement() -> None:
-    """With no legacy owner there is nothing to disable first, and the gate must say so cleanly."""
+def test_activating_the_climate_lane_uses_the_allow_list() -> None:
     activation = parse_activation({ACTIVE_LANES_VARIABLE: CLIMATE_LANE_ID})
 
     assert activation.is_active(CLIMATE_LANE_ID) is True
-    assert activation.handoff_acknowledgements == {}
-
-
-def test_each_climate_stream_also_gets_its_generic_parquet_spec_and_it_stays_shadow() -> None:
-    """The generic lane spec exists so the census sees the stream; its adapter still refuses."""
-    for product in CLIMATE_FIELD_PRODUCTS:
-        spec = LANE_SPECS[f"parquet-{product.stream}"]
-        assert spec.publication_lag_days == product.publication_lag_days, product.stream
-        assert spec.writer_ceiling is None, product.stream
-        assert parse_activation({}).is_active(spec.lane_id) is False, product.stream
-
-
-def test_the_direct_lane_and_its_eleven_generic_specs_declare_each_other_as_conflicts() -> None:
-    """Two owners of one calendar, one of which can only ever fail; the gate must refuse the pairing."""
-    direct = LANE_SPECS[CLIMATE_LANE_ID]
-    generic_ids = tuple(f"parquet-{product.stream}" for product in CLIMATE_FIELD_PRODUCTS)
-
-    assert set(direct.conflicts_with) == set(generic_ids)
-    for lane_id in generic_ids:
-        assert LANE_SPECS[lane_id].conflicts_with == (CLIMATE_LANE_ID,), lane_id
-
-
-@pytest.mark.parametrize("first", [True, False])
-def test_activating_a_generic_climate_lane_beside_the_direct_writer_is_refused(first: bool) -> None:
-    """Declared on both sides, so the refusal does not depend on which lane an operator names first."""
-    generic = f"parquet-{CLIMATE_FIELD_PRODUCTS[0].stream}"
-    pair = (CLIMATE_LANE_ID, generic) if first else (generic, CLIMATE_LANE_ID)
-
-    with pytest.raises(ExecutorConfigurationError, match="conflicts with active lane"):
-        parse_activation({ACTIVE_LANES_VARIABLE: ",".join(pair)})
 
 
 def test_the_command_timeout_is_the_cli_default_budget_plus_a_stated_grace() -> None:
@@ -157,14 +122,3 @@ def test_the_command_timeout_is_the_cli_default_budget_plus_a_stated_grace() -> 
     assert "--time-budget-seconds" not in (spec.command or ()), (
         "the executor passes no override, so the CLI default is the budget the derivation is against"
     )
-
-
-def test_no_climate_lane_joins_the_ingest_cron_atomic_cutover_group() -> None:
-    """`plantgeo-ingest-cron` never produced a climate day, so it cannot be their legacy owner.
-
-    Naming it would make the real ingest cutover drag along eleven lanes whose registered adapter
-    refuses by design, which is an invented dependency standing in for a handoff that never existed.
-    """
-    for product in CLIMATE_FIELD_PRODUCTS:
-        assert LANE_SPECS[f"parquet-{product.stream}"].legacy_owners == (), product.stream
-        assert LANE_SPECS[f"parquet-{product.stream}"].required_handoff_acknowledgements == (), product.stream

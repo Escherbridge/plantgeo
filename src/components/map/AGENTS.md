@@ -74,11 +74,12 @@ Three surfaces went, and the shared reason is that each could only ever render i
 
 - **Environmental Alerts** (`AlertDetails`, `AlertBell`, `useUnreadAlertCount`, `alerts-store`, the unmounted `tracking/AlertManager`). The section rendered "No alerts — add watched locations to get started" and nothing else, and the rail's bell was a permanent zero.
 - **Environmental Analytics** (`AnalyticsDetails`, `lib/export/analytics-export.ts`). `analyticsRouter` answers its four procedures with `PRECONDITION_FAILED` until a versioned warehouse aggregate is published, so the panel's only reachable state was the notice saying so — with a CSV/PDF export beside it that could export nothing.
-- **3D Building Footprints** (the `building-footprints` registry entry, `buildingFootprintsLayer`, the `building_tiles` composite member, its legend/hover/opacity wiring). `geo.osm_buildings` has 0 rows because the osm2pgsql import has never been run for the covered region, so the row was a permanently disabled switch with an explanation attached.
+- **3D Building Footprints** (the `building-footprints` registry entry, layer, source, legend, hover, and opacity wiring). The layer had no admitted serving product.
 
 **No stubs were left behind.** Removing the layer took `panelId: PanelId | null` down to `panelId: PanelId` and took the ungoverned "Basemap" bucket (`UNGOVERNED_GROUP_KEY`, `UNCATEGORISED_LAYER_TOGGLE_IDS`) with it — that bucket existed for exactly one layer. `DockDetailsId` lost `"alerts"`, `PanelId` lost `"analytics"`, and `DetailsSection` lost its `badge` prop, whose only user was the unread count.
 
-**The server side is untouched on purpose.** `alertsRouter`, `analyticsRouter`, `alert-engine`, the alert dispatcher/digest jobs and their tables all remain, and Martin still serves `building_tiles`. Restoring any of the three is a front-end change: re-add the panel and its section id, or re-list `building_tiles` in `DYNAMIC_TILE_SOURCE_IDS` and re-add the registry entry.
+Martin publishes only `intervention_tiles`. Any future building layer requires a newly admitted
+source and a complete client registration.
 
 **Mobile is the same tree in a different box.** Under `max-sm` the shell is `inset-0 z-30`, square-cornered and borderless: a full-screen overlay. A 19rem drawer on a 360px screen leaves a 56px strip that is neither a usable map nor a usable panel. Nothing about the content branches on viewport — the sections, the reports and the one scroller are identical — and `useMapPaddingForPanel` skips the camera shift there, because there is no remaining map to re-centre and moving it would leave the reader somewhere else on dismissal. A bottom sheet with detents was considered and rejected: it needs a second scroll story (sheet drag versus content scroll) for the one surface that has exactly one scroller by contract.
 

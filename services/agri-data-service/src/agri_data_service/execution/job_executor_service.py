@@ -9,7 +9,7 @@ import socket
 import time
 import uuid
 from contextlib import suppress
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Final, Literal
@@ -90,7 +90,6 @@ SETTLED_WITHOUT_SUCCESS: Final[frozenset[str]] = frozenset({"failed", "partial"}
 FAILURE_STREAK_PROBE_LIMIT: Final = 3
 
 ACTIVE_LANES_VARIABLE: Final = "PLANTGEO_JOB_EXECUTOR_ACTIVE_LANES"
-HANDOFF_ACKNOWLEDGEMENTS_VARIABLE: Final = "PLANTGEO_JOB_EXECUTOR_HANDOFF_ACKNOWLEDGEMENTS"
 POLL_SECONDS_VARIABLE: Final = "PLANTGEO_JOB_EXECUTOR_POLL_SECONDS"
 MAX_LANES_PER_TICK_VARIABLE: Final = "PLANTGEO_JOB_EXECUTOR_MAX_LANES_PER_TICK"
 
@@ -128,7 +127,7 @@ LaneTickState = Literal[
 
 
 class ExecutorConfigurationError(ValueError):
-    """Raised when ownership activation could overlap or strand a legacy lane."""
+    """Raised when executor lane configuration is invalid."""
 
 
 class ExecutorLeaderUnlockError(RuntimeError):
@@ -143,11 +142,9 @@ if max(CLOCK_RELEASE_STREAK_LIMIT.values()) > FAILURE_STREAK_PROBE_LIMIT:
 
 @dataclass(frozen=True, slots=True)
 class LaneExecutionSpec:
-    """One code-owned scheduling and migration contract."""
+    """One code-owned scheduling contract."""
 
     lane_id: str
-    legacy_owners: tuple[str, ...]
-    required_handoff_acknowledgements: tuple[str, ...]
     conflicts_with: tuple[str, ...]
     work_class: LaneWorkClass
     migration_disposition: MigrationDisposition
@@ -180,8 +177,6 @@ class LaneExecutionSpec:
             raise ExecutorConfigurationError(f"{self.lane_id}: command must not be empty")
         if self.command_timeout_seconds <= 0:
             raise ExecutorConfigurationError(f"{self.lane_id}: command_timeout_seconds must be positive")
-        if len(set(self.required_handoff_acknowledgements)) != len(self.required_handoff_acknowledgements):
-            raise ExecutorConfigurationError(f"{self.lane_id}: handoff acknowledgements must be unique")
 
     @property
     def definition_name(self) -> str:
@@ -209,8 +204,6 @@ class LaneExecutionSpec:
             ),
             parameters={
                 "lane_id": self.lane_id,
-                "legacy_owners": list(self.legacy_owners),
-                "required_handoff_acknowledgements": list(self.required_handoff_acknowledgements),
                 "work_class": self.work_class,
                 "migration_disposition": self.migration_disposition,
                 "cadence_seconds": self.cadence_seconds,
@@ -228,8 +221,6 @@ class LaneExecutionSpec:
     def inventory_row(self, *, active: bool) -> dict[str, object]:
         return {
             "lane_id": self.lane_id,
-            "legacy_owners": list(self.legacy_owners),
-            "required_handoff_acknowledgements": list(self.required_handoff_acknowledgements),
             "conflicts_with": list(self.conflicts_with),
             "active": active,
             "work_class": self.work_class,
@@ -261,19 +252,6 @@ class LaneExecutionSpec:
             "source_watermark_parity": "not_evaluated",
         }
 
-
-INGEST_CRON_OWNER: Final = "plantgeo-ingest-cron"
-DIRECT_FIRE_OWNER: Final = "plantgeo-fire-detections-forward"
-DIRECT_WATER_OWNER: Final = "plantgeo-water-gauges-forward"
-MTBS_OWNER: Final = "plantgeo-cron-mtbs"
-SOILGRIDS_OWNER: Final = "plantgeo-cron-soilgrids"
-SOIL_MOISTURE_SNAPSHOT_OWNER: Final = "plantgeo-soil-moisture-parquet-load"
-
-
-def _disabled(owner: str) -> str:
-    return f"{owner}:disabled-and-no-run-in-flight"
-
-
 def _registration(slug: str) -> tuple[int, int, str | None]:
     lane = LANE_REGISTRY[slug]
     ceiling = None if lane.writer_ceiling is None else lane.writer_ceiling.isoformat()
@@ -284,8 +262,6 @@ def _spec(  # noqa: PLR0913 - this is the declarative constructor for the code-o
     lane_id: str,
     *,
     command: tuple[str, ...] | None,
-    legacy_owners: tuple[str, ...] = (INGEST_CRON_OWNER,),
-    required_handoffs: tuple[str, ...] | None = None,
     conflicts_with: tuple[str, ...] = (),
     work_class: LaneWorkClass = "incremental",
     disposition: MigrationDisposition = "consolidatable",
@@ -302,13 +278,8 @@ def _spec(  # noqa: PLR0913 - this is the declarative constructor for the code-o
     writer_floor: str | None = None,
     writer_ceiling: str | None = None,
 ) -> LaneExecutionSpec:
-    acknowledgements = (
-        tuple(_disabled(owner) for owner in legacy_owners) if required_handoffs is None else required_handoffs
-    )
     return LaneExecutionSpec(
         lane_id=lane_id,
-        legacy_owners=legacy_owners,
-        required_handoff_acknowledgements=acknowledgements,
         conflicts_with=conflicts_with,
         work_class=work_class,
         migration_disposition=disposition,
@@ -383,7 +354,6 @@ _MIGRATION_INPUT_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
     _spec(
         "fire-detections-direct-forward",
         command=("python", "-m", "agri_data_service.pipeline.direct.fire_detections"),
-        legacy_owners=(DIRECT_FIRE_OWNER,),
         phase_offset_seconds=900,
         schedule="15 * * * *",
         publication_lag_days=_registration("fire-detections")[0],
@@ -395,7 +365,6 @@ _MIGRATION_INPUT_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
     _spec(
         "water-gauges-direct-forward",
         command=("python", "-m", "agri_data_service.pipeline.parquet.water_gauges_forward"),
-        legacy_owners=(DIRECT_WATER_OWNER,),
         disposition="source-specific",
         phase_offset_seconds=900,
         schedule="15 * * * *",
@@ -409,7 +378,6 @@ _MIGRATION_INPUT_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
     _spec(
         "mtbs-forward",
         command=("python", "-m", "agri_data_service.pipeline.direct.burn_severity"),
-        legacy_owners=(MTBS_OWNER,),
         cadence_seconds=604800,
         phase_offset_seconds=460500,
         schedule="55 7 * * 2",
@@ -420,22 +388,10 @@ _MIGRATION_INPUT_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
         description="Source-direct MTBS capture and governed Parquet publication.",
     ),
     _spec(
-        "soilgrids-cache-warm",
-        command=None,
-        legacy_owners=(SOILGRIDS_OWNER,),
-        disposition="snapshot-only",
-        phase_offset_seconds=1500,
-        schedule="25 * * * *",
-        publication_lag_source="static lookup; no temporal publication lag",
-        timeout_seconds=3000,
-        description="Retired: SoilGrids must be admitted as a versioned Parquet lookup before warming.",
-    ),
-    _spec(
         CLIMATE_DIRECT_LANE_ID,
         command=("python", "-m", "agri_data_service.pipeline.direct.climate"),
-        # No legacy owner; the larger of the two source lags and the earliest of the eight floors
-        # cover the shared direct writer contract.
-        legacy_owners=(),
+        # The larger of the two source lags and the earliest of the eight floors cover the shared
+        # direct writer contract.
         disposition="source-specific",
         phase_offset_seconds=2400,
         schedule="40 * * * *",
@@ -453,11 +409,10 @@ _MIGRATION_INPUT_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
     _spec(
         SOIL_DIRECT_LANE_ID,
         command=("python", "-m", "agri_data_service.pipeline.direct.soil"),
-        # No legacy owner and one shared lag: unlike the climate writer's two publication clocks,
-        # all eight ERA5-Land streams come off one model on one release schedule. The phase offset is
+        # One shared lag applies: unlike the climate writer's two publication clocks, all eight
+        # ERA5-Land streams come off one model on one release schedule. The phase offset is
         # its own so the two direct writers never open their fan-outs in the same minute -- they
         # share no lane, but they do share this container's CPU and egress.
-        legacy_owners=(),
         disposition="source-specific",
         phase_offset_seconds=3000,
         schedule="50 * * * *",
@@ -475,9 +430,7 @@ _MIGRATION_INPUT_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
     _spec(
         VEGETATION_DIRECT_LANE_ID,
         command=("python", "-m", "agri_data_service.pipeline.direct.vegetation"),
-        # No legacy owner: unlike fire/water, this writer never ran as its own standalone Railway
-        # service. It is now the sole scheduled owner of the source-direct stream.
-        legacy_owners=(),
+        # This is the sole scheduled owner of the source-direct stream.
         disposition="source-specific",
         phase_offset_seconds=300,
         schedule="5 * * * *",
@@ -498,7 +451,6 @@ _MIGRATION_INPUT_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
     _spec(
         WEATHER_OBSERVATIONS_DIRECT_LANE_ID,
         command=("python", "-m", "agri_data_service.pipeline.direct.weather_observations"),
-        legacy_owners=(),
         disposition="source-specific",
         phase_offset_seconds=1800,
         schedule="30 * * * *",
@@ -520,7 +472,6 @@ _MIGRATION_INPUT_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
     _spec(
         DROUGHT_DIRECT_LANE_ID,
         command=("python", "-m", "agri_data_service.pipeline.direct.drought"),
-        legacy_owners=(),
         disposition="source-specific",
         phase_offset_seconds=2700,
         schedule="45 * * * *",
@@ -542,7 +493,6 @@ _MIGRATION_INPUT_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
     _spec(
         FIRE_PERIMETERS_DIRECT_LANE_ID,
         command=("python", "-m", "agri_data_service.pipeline.direct.fire_perimeters"),
-        legacy_owners=(),
         disposition="source-specific",
         phase_offset_seconds=600,
         schedule="10 * * * *",
@@ -566,7 +516,6 @@ _MIGRATION_INPUT_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
     _spec(
         SENSORS_DIRECT_LANE_ID,
         command=("python", "-m", "agri_data_service.pipeline.direct.sensors"),
-        legacy_owners=(),
         disposition="source-specific",
         phase_offset_seconds=1200,
         schedule="20 * * * *",
@@ -593,7 +542,6 @@ _MIGRATION_INPUT_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
     _spec(
         WATERSHEDS_DIRECT_LANE_ID,
         command=("python", "-m", "agri_data_service.pipeline.direct.watersheds"),
-        legacy_owners=(),
         disposition="source-specific",
         cadence_seconds=86400,
         phase_offset_seconds=10800,
@@ -625,7 +573,6 @@ _MIGRATION_INPUT_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
     _spec(
         EVACUATION_ZONES_DIRECT_LANE_ID,
         command=("python", "-m", "agri_data_service.pipeline.direct.evacuation_zones"),
-        legacy_owners=(),
         disposition="source-specific",
         phase_offset_seconds=2100,
         schedule="35 * * * *",
@@ -663,7 +610,6 @@ _MIGRATION_INPUT_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
             "--time-budget-seconds",
             "1800",
         ),
-        legacy_owners=(),
         disposition="source-specific",
         cadence_seconds=86400,
         phase_offset_seconds=32100,
@@ -687,17 +633,6 @@ _MIGRATION_INPUT_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
         # pinned by `tests/test_job_executor_service.py`).
         writer_floor=LANE_REGISTRY["burn-severity"].history_floor.isoformat(),
     ),
-    _spec(
-        "soil-moisture-parquet-backfill",
-        command=None,
-        legacy_owners=(SOIL_MOISTURE_SNAPSHOT_OWNER,),
-        disposition="snapshot-only",
-        cadence_seconds=None,
-        schedule=None,
-        publication_lag_source="historical one-shot snapshot contract",
-        timeout_seconds=3600,
-        description="Completed one-shot soil-moisture load, not a recurring forward lane.",
-    ),
 )
 
 _LANE_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
@@ -716,55 +651,6 @@ assert not {target for spec in _LANE_SPECS for target in spec.conflicts_with} - 
 )
 
 
-@dataclass(frozen=True, slots=True)
-class LegacyRailwayResponsibility:
-    """One observed legacy Railway writer and its executor-only disposition."""
-
-    service_name: str
-    service_id: str
-    replacement_lanes: tuple[str, ...]
-    terminal_disposition: str | None = None
-
-    def inventory_row(self) -> dict[str, object]:
-        return {
-            "service_name": self.service_name,
-            "service_id": self.service_id,
-            "replacement_lanes": list(self.replacement_lanes),
-            "terminal_disposition": self.terminal_disposition,
-        }
-
-
-def _lanes_owned_by(owner: str) -> tuple[str, ...]:
-    return tuple(spec.lane_id for spec in _LANE_SPECS if owner in spec.legacy_owners)
-
-
-LEGACY_RAILWAY_SERVICE_IDS: Final[Mapping[str, str]] = MappingProxyType(
-    {
-        INGEST_CRON_OWNER: "3ae3cc37-c398-43fe-b74c-83e4da130423",
-        MTBS_OWNER: "a683cc83-2b49-4276-a136-941e1b2cbe24",
-        SOILGRIDS_OWNER: "0960aa81-4499-4cb1-9daa-3350eed4d654",
-        DIRECT_FIRE_OWNER: "f4ad61fe-e71a-4776-b9d5-0b153c9ee5b7",
-        DIRECT_WATER_OWNER: "40cb252b-e21c-4140-8d94-5db77eb2398d",
-        SOIL_MOISTURE_SNAPSHOT_OWNER: "4a1413f1-5f96-44ea-853c-6a379c7673c4",
-    }
-)
-
-LEGACY_RAILWAY_RESPONSIBILITIES: Final[Mapping[str, LegacyRailwayResponsibility]] = MappingProxyType(
-    {
-        owner: LegacyRailwayResponsibility(owner, service_id, _lanes_owned_by(owner))
-        for owner, service_id in LEGACY_RAILWAY_SERVICE_IDS.items()
-        if owner != SOIL_MOISTURE_SNAPSHOT_OWNER
-    }
-    | {
-        SOIL_MOISTURE_SNAPSHOT_OWNER: LegacyRailwayResponsibility(
-            SOIL_MOISTURE_SNAPSHOT_OWNER,
-            LEGACY_RAILWAY_SERVICE_IDS[SOIL_MOISTURE_SNAPSHOT_OWNER],
-            ("soil-moisture-parquet-backfill",),
-            terminal_disposition="completed immutable snapshot; never schedule or recreate",
-        )
-    }
-)
-
 _TRY_LEADER_LOCK: Final = text("SELECT pg_try_advisory_lock(hashtextextended(:lock_key, 0)) AS acquired")
 _RELEASE_LEADER_LOCK: Final = text("SELECT pg_advisory_unlock(hashtextextended(:lock_key, 0)) AS released")
 _SELECT_DEFINITION_STATE: Final = text(load_query_sql("execution/select_definition_state.sql"))
@@ -774,10 +660,9 @@ _SELECT_LATEST_RUN: Final = text(load_query_sql("execution/select_latest_run.sql
 
 @dataclass(frozen=True, slots=True)
 class ActivationConfig:
-    """The explicit lane allow-list and operator-entered handoff acknowledgements."""
+    """The explicit lane allow-list."""
 
     active_lanes: frozenset[str]
-    handoff_acknowledgements: Mapping[str, frozenset[str]] = field(default_factory=lambda: MappingProxyType({}))
 
     def is_active(self, lane_id: str) -> bool:
         return lane_id in self.active_lanes
@@ -788,40 +673,13 @@ def _comma_tokens(value: str) -> tuple[str, ...]:
 
 
 def parse_activation(environment: Mapping[str, str] | None = None) -> ActivationConfig:
-    """Parse and validate the two-part cutover gate, defaulting every lane to shadow."""
+    """Parse and validate the active lane allow-list, defaulting every lane to shadow."""
     source = os.environ if environment is None else environment
     active = frozenset(_comma_tokens(source.get(ACTIVE_LANES_VARIABLE, "")))
     unknown = sorted(active - LANE_SPECS.keys())
     if unknown:
         raise ExecutorConfigurationError(f"unknown active lane(s): {', '.join(unknown)}")
 
-    acknowledgements: dict[str, set[str]] = {}
-    for token in _comma_tokens(source.get(HANDOFF_ACKNOWLEDGEMENTS_VARIABLE, "")):
-        lane_id, separator, acknowledgement = token.partition("=")
-        if not separator or not lane_id.strip() or not acknowledgement.strip():
-            raise ExecutorConfigurationError(
-                f"{HANDOFF_ACKNOWLEDGEMENTS_VARIABLE} entries must be lane=operator-acknowledgement"
-            )
-        lane_id = lane_id.strip()
-        acknowledgement = acknowledgement.strip()
-        lane_acknowledgements = acknowledgements.setdefault(lane_id, set())
-        if acknowledgement in lane_acknowledgements:
-            raise ExecutorConfigurationError(f"duplicate handoff acknowledgement {acknowledgement!r} for {lane_id!r}")
-        lane_acknowledgements.add(acknowledgement)
-
-    unknown_acknowledgements = sorted(acknowledgements.keys() - LANE_SPECS.keys())
-    if unknown_acknowledgements:
-        raise ExecutorConfigurationError(
-            f"handoff acknowledgement names unknown lane(s): {', '.join(unknown_acknowledgements)}"
-        )
-    inactive_acknowledgements = sorted(acknowledgements.keys() - active)
-    if inactive_acknowledgements:
-        raise ExecutorConfigurationError(
-            f"handoff acknowledgement supplied for inactive lane(s): {', '.join(inactive_acknowledgements)}"
-        )
-
-    # Mutual exclusion is checked before per-lane handoff validation. Keeping this pass separate makes
-    # any future control-plane conflict deterministic and preserves the data-corruption guard.
     for lane_id in sorted(active):
         conflicts = sorted(set(LANE_SPECS[lane_id].conflicts_with) & active)
         if conflicts:
@@ -833,19 +691,7 @@ def parse_activation(environment: Mapping[str, str] | None = None) -> Activation
             raise ExecutorConfigurationError(
                 f"lane {lane_id!r} is {spec.migration_disposition} and has no executor command"
             )
-        supplied = frozenset(acknowledgements.get(lane_id, set()))
-        expected = frozenset(spec.required_handoff_acknowledgements)
-        if supplied != expected:
-            missing = sorted(expected - supplied)
-            extra = sorted(supplied - expected)
-            raise ExecutorConfigurationError(
-                f"lane {lane_id!r} handoff acknowledgements do not match; missing={missing}, extra={extra}"
-            )
-
-    frozen_acknowledgements = MappingProxyType(
-        {lane_id: frozenset(values) for lane_id, values in acknowledgements.items()}
-    )
-    return ActivationConfig(active_lanes=active, handoff_acknowledgements=frozen_acknowledgements)
+    return ActivationConfig(active_lanes=active)
 
 
 def scheduled_bucket(spec: LaneExecutionSpec, now: datetime) -> datetime:
@@ -947,7 +793,7 @@ class LaneTickResult:
     detail: str | None = None
     slice_summary: Mapping[str, object] | None = None
     command: tuple[str, ...] | None = None
-    handoff_blockers: tuple[str, ...] = ()
+    blockers: tuple[str, ...] = ()
     due_prediction: str | None = None
 
     def to_dict(self) -> dict[str, object]:
@@ -960,7 +806,7 @@ class LaneTickResult:
             "detail": self.detail,
             "slice": None if self.slice_summary is None else dict(self.slice_summary),
             "command": None if self.command is None else list(self.command),
-            "handoff_blockers": list(self.handoff_blockers),
+            "blockers": list(self.blockers),
             "due_prediction": self.due_prediction,
         }
 
@@ -1138,7 +984,7 @@ def judge_failed_checkpoint(spec: LaneExecutionSpec, latest: LatestRun, now: dat
     The clock releases a lane while its failure streak is below its policy's limit. A coalesce_latest lane
     declares a missed bucket not owed, so a transient failure is superseded by the next bucket -- but three
     in a row is a broken lane, and the breaker holds it until an operator records a supersession; the
-    legacy matview cron minted 200 dead letters for want of exactly that. A replay_oldest lane owes every
+    a former maintenance loop minted 200 dead letters for want of exactly that. A replay_oldest lane owes every
     bucket, so its limit is one and only a recorded supersession ever releases it.
 
     Whatever releases it, the lane resumes at the CURRENT bucket, never at the buckets the hold cost: a
@@ -1190,7 +1036,7 @@ def _held_checkpoint_result(spec: LaneExecutionSpec, latest: LatestRun, verdict:
         run_id=latest.run_id,
         run_status=latest.status,
         detail=detail,
-        handoff_blockers=(
+        blockers=(
             (f"operator supersession required: {supersession_command(spec, latest.run_id)}",) if needs_operator else ()
         ),
     )
@@ -1399,10 +1245,6 @@ async def _plan_active_lanes(
                 scheduled_bucket(spec, now) if spec.executable and spec.cadence_seconds is not None else None
             )
             blockers = ["lane is not in the active allow-list"]
-            blockers.extend(
-                f"operator handoff acknowledgement required: {acknowledgement}"
-                for acknowledgement in spec.required_handoff_acknowledgements
-            )
             if not spec.executable:
                 blockers.append("no executable command exists in this runtime")
             results.append(
@@ -1411,7 +1253,7 @@ async def _plan_active_lanes(
                     state=state,
                     scheduled_for=current_bucket,
                     command=spec.command,
-                    handoff_blockers=tuple(blockers),
+                    blockers=tuple(blockers),
                     due_prediction=(
                         "would_be_due_if_activated; source watermark parity not evaluated"
                         if spec.executable
@@ -1754,10 +1596,7 @@ def executor_inventory(activation: ActivationConfig) -> dict[str, object]:
     return {
         "event": "plantgeo_job_executor_inventory",
         "mode": "active" if activation.active_lanes else "shadow",
-        "activation_variables": [ACTIVE_LANES_VARIABLE, HANDOFF_ACKNOWLEDGEMENTS_VARIABLE],
-        "legacy_railway_responsibilities": [
-            responsibility.inventory_row() for responsibility in LEGACY_RAILWAY_RESPONSIBILITIES.values()
-        ],
+        "activation_variables": [ACTIVE_LANES_VARIABLE],
         "lanes": [spec.inventory_row(active=activation.is_active(spec.lane_id)) for spec in LANE_SPECS.values()],
     }
 
@@ -1893,10 +1732,7 @@ __all__ = [
     "ACTIVE_LANES_VARIABLE",
     "CLOCK_RELEASE_STREAK_LIMIT",
     "FAILURE_STREAK_PROBE_LIMIT",
-    "HANDOFF_ACKNOWLEDGEMENTS_VARIABLE",
     "LANE_SPECS",
-    "LEGACY_RAILWAY_RESPONSIBILITIES",
-    "LEGACY_RAILWAY_SERVICE_IDS",
     "RUN_SUPERSESSION_FINGERPRINT_PREFIX",
     "RUN_SUPERSESSION_INCIDENT_TYPE",
     "SETTLED_WITHOUT_SUCCESS",
@@ -1910,7 +1746,6 @@ __all__ = [
     "LaneExecutionSpec",
     "LaneTickResult",
     "LatestRun",
-    "LegacyRailwayResponsibility",
     "bucket_after",
     "executor_inventory",
     "fair_due_order",
