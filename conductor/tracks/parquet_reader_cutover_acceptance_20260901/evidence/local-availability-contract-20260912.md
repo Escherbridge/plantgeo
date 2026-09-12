@@ -63,6 +63,34 @@ The following Python paths are under
   ceiling minus cadence, publication lag and three grace days. This source-relative
   tolerance is separate from response-cache age.
 
+## Requested day and served day
+
+- `requestedDay` is the caller's named day; `servedDay` is the partition or
+  release that supplied the answer. Exact day and window resolution set the two
+  equal (`parquet_ops/serving.py:96`, `:128`, `:310`), while release resolution
+  keeps the as-of day as `requestedDay` and reports the newest eligible release
+  or governed-absence marker at its own day as `servedDay` (`:183`, `:195`,
+  `:431`). A carried weekly release must therefore remain visibly older than the
+  day it answers.
+- The wire renders both dates for published and governed-absence envelopes
+  (`parquet_ops/wire.py:133`, `:174`). `parquet-envelope.ts:82` freezes the same
+  distinction and `parquet-plane-client.ts:498` preserves it into the TypeScript
+  union. Missing-day states carry only `requestedDay`, because no partition was
+  served. `parquet-trpc-readers.ts:997` preserves the pair in ready and governed
+  absence results.
+- The current client validates the shape of each returned day, and validates the
+  requested-day sequence for a window (`parquet-plane-client.ts:538`, `:619`),
+  but `getParquetLayerDay` and `getParquetLatestRelease` do not independently
+  compare the echoed `requestedDay` with the outgoing single-day/as-of argument
+  (`:743`, `:784`). The serving implementation and inspected contract tests
+  establish the intended source behavior; this local audit does not turn that
+  into an observed production echo check or a universal client refusal claim.
+- Response-specific panels already name both dates where a carried answer is a
+  product behavior (`ClimateDetails.tsx:143`, `:239`; `SoilDetails.tsx:137`,
+  `:239`; `WaterDetails.tsx:137`). That does not close the separate slider-row
+  provenance gap: `LayerTimeSlider.tsx:376` still derives its note only from day
+  coverage and does not caption `coverageAuthority` or `sourceCeilingDay`.
+
 ## Policy boundary: no universal zero-LIST claim
 
 `config.py:197` defaults to `census_until_bootstrap`; no deployed setting was read.
@@ -129,6 +157,7 @@ The named tests were inspected as source, **not run in this slice**:
 | Full-read integrity and ETag/length adapter contract | `services/agri-data-service/tests/parquet/test_availability_index.py:234`, `:262`, `:405`, `:431`, `:448` |
 | Rollup/full equivalence, skipped generation GET, stale pointer binding and fallback | `services/agri-data-service/tests/parquet_ops/test_coverage_rollup.py:244`, `:265`, `:293`, `:328`, `:360`, `:452` |
 | Wire version, withholding and bounded cache reuse | `src/__tests__/services/parquet-plane-client.test.ts:420`, `:545`, `:583`, `:592`, `:986` |
+| Exact-day versus carried-release request/serve semantics | `services/agri-data-service/tests/parquet_ops/test_parquet_envelopes.py:152`, `services/agri-data-service/tests/contract/test_wire_contract.py:172`, `src/__tests__/services/parquet-plane-client.test.ts:304`, `:868`, `:884` |
 | Withholding precedence, recorded ceiling, carried release, surfaced provenance | `src/__tests__/services/parquet-slider-capabilities.test.ts:1040`, `:1064`, `:1104`, `:1134`, `:1179`, `:1202` |
 
 R0's availability wire/cache/refusal **definition** can close on this source
