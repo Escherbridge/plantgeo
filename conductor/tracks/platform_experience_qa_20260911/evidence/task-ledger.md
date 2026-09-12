@@ -242,3 +242,13 @@ final review returned PASS. This does not close the service-backed weather QA
 lane or any populated-data, mobile/touch, hover, selected-day or forecast
 gate. No data, database, writer, scheduler, deployment or push operation
 occurred.
+
+### 2026-09-12 coordinator ingestion restart
+
+The ingestion owner `01a08b00-2a50-73c2-b39b-39523c74ceb2` was restarted with
+a bounded read-only checkpoint. Turn `01a095b3-4944-7d60-841b-5dfe04f4a9ed`
+completed idle from `2026-09-12T12:59:10Z` through `2026-09-12T12:59:49Z`
+without an assistant message, tool event, command or revision. It remains
+idle, unresolved and open; no candidate integration or archive is authorized.
+No file, ref, database, provider, object-store, writer, scheduler, deployment
+or push operation occurred.

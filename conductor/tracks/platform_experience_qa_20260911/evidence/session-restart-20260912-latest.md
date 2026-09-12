@@ -119,3 +119,14 @@ The independent final review returned PASS after the transport-error branch
 was covered directly. It confirmed both retry paths use the existing query
 refetch, preserve the no-fallback behavior and remain outside the reader,
 forecast, ingestion, database, writer and deployment boundaries.
+
+## Coordinator ingestion restart — 2026-09-12T12:59Z
+
+The coordinator restarted ingestion task
+`01a08b00-2a50-73c2-b39b-39523c74ceb2` with a bounded read-only checkpoint.
+Turn `01a095b3-4944-7d60-841b-5dfe04f4a9ed` ran from
+`2026-09-12T12:59:10Z` through `2026-09-12T12:59:49Z`, completed idle and
+emitted no assistant message, tool event, command or revision. This is
+terminal task state without completion evidence; the owner remains unresolved,
+idle and intentionally open. No file, ref, database, provider, object-store,
+writer, scheduler, deployment or push operation occurred.
