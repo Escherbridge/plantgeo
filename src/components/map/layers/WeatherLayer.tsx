@@ -256,6 +256,8 @@ export function WeatherLayer({
             "text-offset": [0, 0.55],
             "text-anchor": "top",
             "text-rotation-alignment": "map",
+            // Preserve collision avoidance while prioritizing stronger winds.
+            "symbol-sort-key": ["*", -1, ["get", "windSpeed"]],
             "text-allow-overlap": false,
             "text-ignore-placement": false,
           },

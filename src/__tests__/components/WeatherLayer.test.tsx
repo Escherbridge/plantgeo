@@ -27,7 +27,13 @@ describe('weather spatial support and wind', () => {
     expect(layers.get('weather-temperature-labels')).toMatchObject({
       layout: { 'text-field': ['get', 'temperatureLabel'] },
     });
-    expect(layers.get('weather-wind')).toMatchObject({ layout: { 'text-rotation-alignment': 'map' } });
+    expect(layers.get('weather-wind')).toMatchObject({
+      layout: {
+        'text-rotation-alignment': 'map',
+        'symbol-sort-key': ['*', -1, ['get', 'windSpeed']],
+        'text-allow-overlap': false,
+      },
+    });
     mounted.rerender(<WeatherLayer map={map as unknown as MapLibreMap} data={[sample]} opacityScale={0.5} />);
     expect(map.setPaintProperty).toHaveBeenCalledWith('weather-temperature-cells', 'fill-opacity', 0.325);
     mounted.unmount();
