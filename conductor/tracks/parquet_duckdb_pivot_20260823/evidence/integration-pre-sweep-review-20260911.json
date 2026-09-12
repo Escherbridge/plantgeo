@@ -1,0 +1,143 @@
+{
+  "schema_version": 1,
+  "type": "integration-pre-sweep-review",
+  "reviewed_on": "2026-09-11",
+  "verdict": "approved_pre_sweep_documentation_checkpoint",
+  "reviewer": {
+    "agent": "/root/integration_packet_review",
+    "role": "independent integration documentation reviewer",
+    "integration_task_id": "01a0919f-40dd-7ae2-a5a3-cd8cf7e13489",
+    "reviewer_independent_of_document_author": true,
+    "implementation_authorship": false
+  },
+  "integration_commit": "3233fd7d4f85253cd9a49afd25d201ebb13934b9",
+  "scope": "Nine root-authored integration documents at the pre-sweep checkpoint. This review corroborates bounded peer intake and current governance statements; it is not a fresh runtime implementation review.",
+  "content_identity": {
+    "algorithm": "sha256",
+    "basis": "Exact working-tree file bytes captured after both documentation findings were corrected. These documents include uncommitted integration edits; the commit identifies the integration base, not committed copies of those edits.",
+    "reviewed_files": [
+      {
+        "path": "conductor/RUNBOOK.md",
+        "sha256": "243ea810b66e39ead2a3c8a6fc6ee98393333745c50f845d4863d3654b123b27",
+        "byte_count": 13910
+      },
+      {
+        "path": "conductor/tracks.md",
+        "sha256": "1693edafe4d64ebcb3f78661d7eb63af139d432a56ddd1b6f569a1b1e7fc9da2",
+        "byte_count": 12251
+      },
+      {
+        "path": "conductor/tracks/parquet_duckdb_pivot_20260823/plan.md",
+        "sha256": "6a8987de8bf53da5f4eddea594251a8bbba1522f74a8dde65c161114a6f9abbc",
+        "byte_count": 2461
+      },
+      {
+        "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/integration-ledger-20260911.md",
+        "sha256": "8d16a4857fd1118e21aacb13446c6d298e8a70d62080a5edd6c7a4a5ddbc658f",
+        "byte_count": 15519
+      },
+      {
+        "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/release-packet-20260911.md",
+        "sha256": "ba17acfbc7c2ca3807878314e3c0a1bf2dcc4fa739c11c24aa4b1c3b4860a074",
+        "byte_count": 8570
+      },
+      {
+        "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/product-successors-20260911.md",
+        "sha256": "dc472d67c9ce461dc865d5af1b4a9cc959362d3bef9ed0b588694570fd2a9e52",
+        "byte_count": 4814
+      },
+      {
+        "path": "conductor/tracks/postgres_shrink_ingest_repoint_20260825/evidence/residual-handoff-20260911.md",
+        "sha256": "4f0e530574325d104d9b33b611f60bf43ec3890fc66fc8b9bf0afb4717541679",
+        "byte_count": 6477
+      },
+      {
+        "path": "conductor/tracks/gapless_parquet_publication_20260901/metadata.json",
+        "sha256": "186d12e70c62f4249d7a112a5fad4d2fd97f7648488d130a76eb5beb61f14de9",
+        "byte_count": 22601
+      },
+      {
+        "path": "conductor/tracks/repository_conformity_hardening_20260901/metadata.json",
+        "sha256": "c000ea80b353bc85018bc6c6598ef0afdf42e94853920649733e79091e933182",
+        "byte_count": 12341
+      }
+    ]
+  },
+  "checks": {
+    "local_markdown_links_and_anchors": {
+      "status": "PASS",
+      "count": 122
+    },
+    "okf_frontmatter": {
+      "status": "PASS",
+      "files": 7
+    },
+    "json_parsing": {
+      "status": "PASS",
+      "files": 2
+    },
+    "direct_whitespace": {
+      "status": "PASS",
+      "files": 9
+    },
+    "corrected_hunks_and_changed_file_whitespace": "PASS",
+    "peer_intake_scope_and_source_attested_evidence": "PASS",
+    "parent_baseline_and_integrated_commit_identity": "PASS",
+    "successor_ownership_and_shrink_closure_prerequisites": "PASS",
+    "botanical_runtime_exclusion": "PASS"
+  },
+  "findings": [
+    {
+      "id": "DOC-1",
+      "status": "closed",
+      "file": "conductor/tracks/gapless_parquet_publication_20260901/metadata.json",
+      "original_line": 22,
+      "finding": "The live external dependency description still assigned P5/P6 to the old shrink track despite the corrected supersedes clause.",
+      "resolution": "The external dependency now assigns all environmental P5/P6 downstream to environmental_postgres_retirement_20260904. Original computed historical partitions remain preserved.",
+      "closure_verified_by": "Targeted readback of external_dependencies and supersedes after the root correction."
+    },
+    {
+      "id": "DOC-2",
+      "status": "closed",
+      "file": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/integration-ledger-20260911.md",
+      "original_line": 17,
+      "finding": "The current parent-baseline lineage omitted the separately merged source-admission synchronization baseline bc7b5e1 and merge 3233fd7.",
+      "resolution": "The ledger records bc7b5e1ff5dbb6eac929d5db927acd6b7ff2ea4a and merge 3233fd7d4f85253cd9a49afd25d201ebb13934b9 separately; the release packet also records both later planning baselines while excluding botanical runtime.",
+      "closure_verified_by": "Targeted ledger/release readback and actual Git commit/merge identities."
+    }
+  ],
+  "unresolved_actionable_findings": [],
+  "conclusions": [
+    "Gapless, reader, environmental retirement, multiscale and conformity have accepted bounded local integration slices. Offline intake and the final combined quality sweep remain pending.",
+    "Dated source-attested receipts support the effective eight-lane cutoff, six-soil-product scheduled backlog advancements, reader and renderer changes, and product preparation. They do not certify the undeployed integration tree.",
+    "Shrink has documentary support for package and successor acknowledgements. Its final closure checkbox remains unchecked pending combined verification and independent closure review; environmental implementation and production gates remain with successors.",
+    "Pivot's literal static-registry/provisioning obligation remains explicitly open. A product successor map does not prove delivery.",
+    "The initial dispatch record is explicitly retained as superseded preparation provenance.",
+    "Parent planning baselines and botanical serialization dependencies remain outside this runtime release gate."
+  ],
+  "approval_limits": {
+    "final_exact_tree_review": false,
+    "final_combined_quality_sweep_approved": false,
+    "production_release_approved": false,
+    "production_data_certification_approved": false,
+    "shrink_closure_approved": false,
+    "pivot_closure_approved": false,
+    "any_track_closure_approved": false,
+    "production_mutation_authorized": false
+  },
+  "reviewer_actions": {
+    "application_tests_run": false,
+    "runtime_tests_run": false,
+    "production_checks_run": false,
+    "production_mutations_performed": false,
+    "implementation_files_edited": false,
+    "commit_created": false,
+    "output": "This review receipt only."
+  },
+  "remaining_gates": [
+    "Accept the canonical offline correction and preserved artifact handoff.",
+    "Freeze the combined implementation tree and run the single final integrated quality sweep with its actual skip and environment disclosures.",
+    "Independently review final exact-tree evidence and scoped closure documents before changing any umbrella status.",
+    "Complete exact deployed candidate, publication, burn-in, recovery and rollback evidence under the applicable separate production authorizations."
+  ]
+}

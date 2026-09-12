@@ -3,21 +3,52 @@
     "audited_on": "2026-09-11",
     "source_head": "fa20223",
     "status": "active",
-    "next_gate": "The September 8 baseline collapse and September 9 production rebuild supersede the historical intact-database, no-drop and old P6 sequence. Remaining environmental retirement is owned by environmental_postgres_retirement_20260904; gapless owns writer/repair schedules. Reconcile residual package/removal obligations with those owners before execution.",
+    "next_gate": "Package and successor scope is reconciled. Keep this track active until integration completes the exact combined-tree checks and independent closure review, then records the proposed completed-implementation plus explicit-successor-handoffs disposition. All environmental P5/P6 and associated evidence remain with environmental_postgres_retirement_20260904; generic writer/gap/burn-in work stays with gapless, reader/browser acceptance with its current owners, and item G/wider product scope with pivot.",
     "evidence": "conductor/retros/parquet_operational_checkpoints_20260911/README.md",
-    "historical_partitions": "Computed ownership/slice fields retain their original dates; re-freeze ownership against current code before execution."
+    "historical_partitions": "Computed ownership/slice fields and checkpoint_20260827 retain their original dates as evidence. Current ownership is established by retirement_successor and closure_proposal_20260911; historical P5/P6, intact-database and bridge/drain instructions are not executable."
   },
   "id": "postgres_shrink_ingest_repoint_20260825",
-  "description": "Postgres shrink via ingest repoint to Parquet — bridge, then cut per lane",
+  "description": "Postgres shrink scope reconciliation — completed implementation and explicit successor handoffs, pending final combined verification and review",
   "type": "feature",
   "created_at": "2026-08-25T02:30:00Z",
   "status": "active",
   "retirement_successor": {
     "track": "environmental_postgres_retirement_20260904",
-    "scope": "P5/P6 environmental retirement superseded by the expanded per-relation retirement charter; other unfinished work and historical bridge evidence remain here."
+    "scope": "All environmental P5/P6 scope, including source recovery, product repair and admission, archive replacement, surviving reader/writer dependencies, removal, current-reader and exact preservation/parity proof, per-relation rollback and production evidence/action gates. Joint environmental agent/MCP selected-day, neighbour, provenance and refusal acceptance remains with retirement and reader acceptance. No environmental implementation or evidence-collection obligation remains with shrink.",
+    "evidence": "conductor/tracks/environmental_postgres_retirement_20260904/evidence/repair-handoff-20260911.md",
+    "accepted_scope_record": "conductor/tracks/postgres_shrink_ingest_repoint_20260825/evidence/residual-handoff-20260911.md"
+  },
+  "closure_proposal_20260911": {
+    "status": "pending_final_combined_verification_and_independent_review",
+    "proposed_registry_status": "complete",
+    "proposed_disposition": "completed_implementation_and_explicit_successor_handoffs",
+    "prepared_against_revision": "3233fd7",
+    "package_scope": "parquet_ops extraction, grouped interface/cli and the agri-service hard cut shipped before conformity C2. Conformity consumed the frozen public boundary; no s2a implementation remains with shrink. Its retained non-forecast CLI sites stay with executor/source-product/history owners.",
+    "package_evidence": "conductor/tracks/repository_conformity_hardening_20260901/evidence/integration-correction-20260911.md",
+    "historical_completion_evidence": "conductor/retros/parquet_operational_checkpoints_20260911/README.md",
+    "residual_handoff": "conductor/tracks/postgres_shrink_ingest_repoint_20260825/evidence/residual-handoff-20260911.md",
+    "retrospective": "conductor/retros/postgres_shrink_scoped_closure_20260911/README.md",
+    "remaining_owners": {
+      "environmental_postgres_retirement_20260904": "All environmental P5/P6 implementation, source recovery/admission/archive/removal, preservation/parity/rollback and production evidence obligations, including joint agent/MCP acceptance with the reader owner.",
+      "gapless_parquet_publication_20260901": "s2b-s4 generic direct writers, registration, historical gap authoring, governed absences, source and scheduler ownership, scheduled advancement and recovery/burn-in.",
+      "parquet_reader_cutover_acceptance_20260901": "Reader/capability and joint environmental agent/MCP selected-day, temporal/spatial-neighbour, provenance and refusal acceptance.",
+      "multiscale_polygon_surface_20260901": "Renderer and spatial conservation/continuity evidence for the existing reader/production acceptance handoff.",
+      "parquet_production_acceptance_20260901": "Final exact deployed product/day/rung/browser matrix, production acceptance and release/rollback verdict.",
+      "parquet_duckdb_pivot_20260823": "Item G static-provisioning/coverage disposition, wider product/static-lane scope, older requested horizons and the pivot's own acceptance handoffs.",
+      "repository_conformity_hardening_20260901": "Its retained conformity/removal obligations and named executor/source-product/history/reader/core handoffs; none recreates shrink s2a."
+    },
+    "remaining_shrink_implementation": [],
+    "remaining_shrink_production_evidence_collection": [],
+    "combined_verification": "pending",
+    "independent_closure_review": "pending",
+    "final_integration_revision": null,
+    "final_evidence": [],
+    "track_complete": false,
+    "production_certification": false,
+    "production_mutation_authorized": false
   },
   "supersedes": {
-    "parquet_duckdb_pivot_20260823": "item E of RUNBOOK 0.33.3 (forward path per lane, upstream -> Parquet) moves here; items A (slice d1), C (d3), D (d4) stay there and are this track's external dependencies"
+    "parquet_duckdb_pivot_20260823": "Historical charter transfer: item E of RUNBOOK 0.33.3 (forward path per lane, upstream -> Parquet) moved here. Its unfinished s2b-s4 scope now belongs to gapless_parquet_publication_20260901 and all environmental P5/P6 belongs to environmental_postgres_retirement_20260904. Pivot retains its construction/private-reader evidence, delegated d4 acceptance, item G and wider product scope."
   },
   "external_dependencies": [
     {
@@ -40,13 +71,18 @@
     },
     {
       "track": "gapless_parquet_publication_20260901",
-      "status": "planned",
-      "for": "Owns unfinished direct forward publication, gap authoring, executor activation and multi-schedule burn-in. Blocks P5/P6 retirement."
+      "status": "active",
+      "for": "Accepted successor for direct forward publication, gap authoring, governed absences, executor activation and multi-schedule burn-in/recovery. Its production gates remain there; environmental P5/P6 belongs to environmental_postgres_retirement_20260904."
+    },
+    {
+      "track": "environmental_postgres_retirement_20260904",
+      "status": "active",
+      "for": "Accepted successor for all environmental P5/P6 implementation and evidence obligations described by retirement_successor; no environmental work returns to this former umbrella."
     },
     {
       "track": "parquet_production_acceptance_20260901",
       "status": "blocked",
-      "for": "Evidence-only final gate for reader, temporal and spatial production correctness. A GREEN handoff is required before P5/P6 review."
+      "for": "Evidence-only final gate for reader, temporal and spatial production correctness and release/rollback evidence. Its verdict remains open with the successor owners; scoped shrink closure supplies no production acceptance or mutation authorization."
     }
   ],
   "checkpoint_20260827": {

@@ -1,0 +1,489 @@
+{
+  "schema_version": 1,
+  "kind": "implementation-correspondence-not-independent-review",
+  "created_at": "2026-09-12T00:39:53.058481+00:00",
+  "candidate_base": "cc64e6e3e1de8dda164beeee0e7e22aa30088b76",
+  "legacy_commit": "3a5f3902e6f56b0878eab1d72b34789f6653058f",
+  "legacy_slice": "3a5f3902e6f56b0878eab1d72b34789f6653058f^..3a5f3902e6f56b0878eab1d72b34789f6653058f",
+  "assigned_file_count": 41,
+  "exact_legacy_tip_files": 28,
+  "selective_composition_files": 13,
+  "whitespace_check_exit": 0,
+  "whitespace_diagnostics": "",
+  "tests_run": false,
+  "lint_typecheck_build_run": false,
+  "commits_created": false,
+  "staging_performed": false,
+  "production_actions": false,
+  "excluded_paths": [
+    {
+      "path": "services/agri-data-service/tests/test_agent_parquet_reads.py",
+      "reason": "Accepted reader uses the stronger eight-ULP weighted-sum allowance plus changed-value/count rejection coverage; the legacy four-ULP edit is superseded."
+    },
+    {
+      "path": "services/agri-data-service/QUALITY_RECEIPT.json",
+      "reason": "Legacy receipt is stale for the combined tree; final receipt remains root-owned."
+    },
+    {
+      "path": "conductor/tracks/environmental_postgres_retirement_20260904/evidence/ingestion-throttle-audit-20260911.md",
+      "reason": "Dated evidence intake belongs to root reconciliation, not runtime authoring."
+    },
+    {
+      "path": "conductor/tracks/environmental_postgres_retirement_20260904/plan.md",
+      "reason": "Current track disposition and historical evidence links belong to root reconciliation."
+    }
+  ],
+  "files": [
+    {
+      "path": "services/agri-data-service/src/agri_data_service/ingest/AGENTS.md",
+      "classification": "exact_legacy_tip_blob",
+      "legacy_parent_sha256": "e7e41f89214eda42331c5d9d76b52cfd682787276c53e8c3141d7e9dbc0f85f7",
+      "legacy_tip_sha256": "de66d1e8a391fae6bc584dd9b5b5dc991b98acf5da9c219bd8d9c0a9c08b0b38",
+      "candidate_base_sha256": "e7e41f89214eda42331c5d9d76b52cfd682787276c53e8c3141d7e9dbc0f85f7",
+      "working_tree_lf_sha256": "de66d1e8a391fae6bc584dd9b5b5dc991b98acf5da9c219bd8d9c0a9c08b0b38",
+      "working_tree_raw_sha256": "de66d1e8a391fae6bc584dd9b5b5dc991b98acf5da9c219bd8d9c0a9c08b0b38",
+      "working_tree_raw_bytes": 167520,
+      "resolution": "Exact missing legacy tip behavior applied to the unchanged candidate path."
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/ingest/http.py",
+      "classification": "exact_legacy_tip_blob",
+      "legacy_parent_sha256": "d954554f4d5e9f733b0fd85242ecedd61a3cfa9ffabf45f2fca733bf5d413ed5",
+      "legacy_tip_sha256": "5918d946e64498e1f425642bfb1f88e9253a5098b48d14e920d6de34c3a6e091",
+      "candidate_base_sha256": "d954554f4d5e9f733b0fd85242ecedd61a3cfa9ffabf45f2fca733bf5d413ed5",
+      "working_tree_lf_sha256": "5918d946e64498e1f425642bfb1f88e9253a5098b48d14e920d6de34c3a6e091",
+      "working_tree_raw_sha256": "5918d946e64498e1f425642bfb1f88e9253a5098b48d14e920d6de34c3a6e091",
+      "working_tree_raw_bytes": 12807,
+      "resolution": "Exact missing legacy tip behavior applied to the unchanged candidate path."
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/ingest/mtbs.py",
+      "classification": "exact_legacy_tip_blob",
+      "legacy_parent_sha256": "17eb28462f776acf58dd2afe44937859ffec18d620a85ba7e85eb20b0650bcd6",
+      "legacy_tip_sha256": "c7de226e005014a68230f6c0ea065f1823efb7414182ba56f800df5eafa0cbd3",
+      "candidate_base_sha256": "17eb28462f776acf58dd2afe44937859ffec18d620a85ba7e85eb20b0650bcd6",
+      "working_tree_lf_sha256": "c7de226e005014a68230f6c0ea065f1823efb7414182ba56f800df5eafa0cbd3",
+      "working_tree_raw_sha256": "c7de226e005014a68230f6c0ea065f1823efb7414182ba56f800df5eafa0cbd3",
+      "working_tree_raw_bytes": 60463,
+      "resolution": "Exact missing legacy tip behavior applied to the unchanged candidate path."
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/AGENTS.md",
+      "classification": "exact_legacy_tip_blob",
+      "legacy_parent_sha256": "4c235de6e9cf70ab072d874b23686e548ab277cece174ac3279635312f886a9b",
+      "legacy_tip_sha256": "c45df06b81b38926151995a9b66c5cff4f1ea786b792d09ea9dabec042d41e63",
+      "candidate_base_sha256": "4c235de6e9cf70ab072d874b23686e548ab277cece174ac3279635312f886a9b",
+      "working_tree_lf_sha256": "c45df06b81b38926151995a9b66c5cff4f1ea786b792d09ea9dabec042d41e63",
+      "working_tree_raw_sha256": "c45df06b81b38926151995a9b66c5cff4f1ea786b792d09ea9dabec042d41e63",
+      "working_tree_raw_bytes": 114252,
+      "resolution": "Exact missing legacy tip behavior applied to the unchanged candidate path."
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/__init__.py",
+      "classification": "exact_legacy_tip_blob",
+      "legacy_parent_sha256": "494d9647a455492939cbd7ad4733ca5a4a06c0edd0942121f71122b0f56b97ee",
+      "legacy_tip_sha256": "7d5c8a18e320b12ca797824b5edcf32672830bd0a48f9b8553e4f5287cd59532",
+      "candidate_base_sha256": "494d9647a455492939cbd7ad4733ca5a4a06c0edd0942121f71122b0f56b97ee",
+      "working_tree_lf_sha256": "7d5c8a18e320b12ca797824b5edcf32672830bd0a48f9b8553e4f5287cd59532",
+      "working_tree_raw_sha256": "7d5c8a18e320b12ca797824b5edcf32672830bd0a48f9b8553e4f5287cd59532",
+      "working_tree_raw_bytes": 22378,
+      "resolution": "Exact missing legacy tip behavior applied to the unchanged candidate path."
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/burn_severity/adapter.py",
+      "classification": "exact_legacy_tip_blob",
+      "legacy_parent_sha256": "b525884e18e23f5fa9acc81ff26987e64b0ce533e4d4e9a95aadeb9ad4609d44",
+      "legacy_tip_sha256": "174393df738576e785a63bcf095ac34d532b02721d12bb0594a8dc335649819a",
+      "candidate_base_sha256": "b525884e18e23f5fa9acc81ff26987e64b0ce533e4d4e9a95aadeb9ad4609d44",
+      "working_tree_lf_sha256": "174393df738576e785a63bcf095ac34d532b02721d12bb0594a8dc335649819a",
+      "working_tree_raw_sha256": "174393df738576e785a63bcf095ac34d532b02721d12bb0594a8dc335649819a",
+      "working_tree_raw_bytes": 8404,
+      "resolution": "Exact missing legacy tip behavior applied to the unchanged candidate path."
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/burn_severity/capture.py",
+      "classification": "selective_composition",
+      "legacy_parent_sha256": "a7d832c4ec993db9040a4319fdee91605c483a1609b71b1eb12b3d34dc66ad34",
+      "legacy_tip_sha256": "35b0239ae4ff1159e4b1d9987e8c7de7e7a9a98296a563b0d3f5bf352c77ac9d",
+      "candidate_base_sha256": "01d976ba062aa616df0c4a6888c4ec68e255bbf7d8d95d02e853ed3289125ab3",
+      "working_tree_lf_sha256": "aad6d7158e8ba63f80cffc4618253f1eab5dc840db2fd1121d77f9a892997b06",
+      "working_tree_raw_sha256": "aad6d7158e8ba63f80cffc4618253f1eab5dc840db2fd1121d77f9a892997b06",
+      "working_tree_raw_bytes": 20254,
+      "resolution": "Legacy refusal diagnostics added around _query only; accepted optional DuckDB connection in prepare_capture remains byte-identical to the candidate."
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/burn_severity/forward.py",
+      "classification": "exact_legacy_tip_blob",
+      "legacy_parent_sha256": "4e25fb776d9b235ec142c73abf9b199b87618985bcc9f96116e9f94ac6d9a855",
+      "legacy_tip_sha256": "c0a80a989867b5450707eae4b6becb688383f61f677f6cbd3fcb35f4dde8a636",
+      "candidate_base_sha256": "4e25fb776d9b235ec142c73abf9b199b87618985bcc9f96116e9f94ac6d9a855",
+      "working_tree_lf_sha256": "c0a80a989867b5450707eae4b6becb688383f61f677f6cbd3fcb35f4dde8a636",
+      "working_tree_raw_sha256": "c0a80a989867b5450707eae4b6becb688383f61f677f6cbd3fcb35f4dde8a636",
+      "working_tree_raw_bytes": 32697,
+      "resolution": "Exact missing legacy tip behavior applied to the unchanged candidate path."
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/burn_severity/source.py",
+      "classification": "exact_legacy_tip_blob",
+      "legacy_parent_sha256": "eb09bf45a0c7fb9e1a4cf1ad792941c518c69d7b1fd1cd3db87879ad8f94c0b9",
+      "legacy_tip_sha256": "d5dc378191bbb024c1b8f9bef738273a8e5cf29bfb0dfd2ad1a9adf0cf1572d3",
+      "candidate_base_sha256": "eb09bf45a0c7fb9e1a4cf1ad792941c518c69d7b1fd1cd3db87879ad8f94c0b9",
+      "working_tree_lf_sha256": "d5dc378191bbb024c1b8f9bef738273a8e5cf29bfb0dfd2ad1a9adf0cf1572d3",
+      "working_tree_raw_sha256": "d5dc378191bbb024c1b8f9bef738273a8e5cf29bfb0dfd2ad1a9adf0cf1572d3",
+      "working_tree_raw_bytes": 6685,
+      "resolution": "Exact missing legacy tip behavior applied to the unchanged candidate path."
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/climate/AGENTS.md",
+      "classification": "exact_legacy_tip_blob",
+      "legacy_parent_sha256": "4ed76415c9bc4236011e32bce0f00544ea4ea08c935f82dc192540a890ace68a",
+      "legacy_tip_sha256": "66e511e29b5959056e3376b79e1dd0072438a18721b4906ba95e101a511fde2c",
+      "candidate_base_sha256": "4ed76415c9bc4236011e32bce0f00544ea4ea08c935f82dc192540a890ace68a",
+      "working_tree_lf_sha256": "66e511e29b5959056e3376b79e1dd0072438a18721b4906ba95e101a511fde2c",
+      "working_tree_raw_sha256": "66e511e29b5959056e3376b79e1dd0072438a18721b4906ba95e101a511fde2c",
+      "working_tree_raw_bytes": 4225,
+      "resolution": "Exact missing legacy tip behavior applied to the unchanged candidate path."
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/climate/adapter.py",
+      "classification": "exact_legacy_tip_blob",
+      "legacy_parent_sha256": "42c6e6e7c2866baa592c3ff7804412d9a3c1ddc0426222d53b353adaaa9bd1bc",
+      "legacy_tip_sha256": "b62a9e04800b621eea2721a5334f756bb4a2fc50bc84da0f02b955b9ece926c0",
+      "candidate_base_sha256": "42c6e6e7c2866baa592c3ff7804412d9a3c1ddc0426222d53b353adaaa9bd1bc",
+      "working_tree_lf_sha256": "b62a9e04800b621eea2721a5334f756bb4a2fc50bc84da0f02b955b9ece926c0",
+      "working_tree_raw_sha256": "b62a9e04800b621eea2721a5334f756bb4a2fc50bc84da0f02b955b9ece926c0",
+      "working_tree_raw_bytes": 9652,
+      "resolution": "Exact missing legacy tip behavior applied to the unchanged candidate path."
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/climate/cooldown.py",
+      "classification": "exact_legacy_tip_blob",
+      "legacy_parent_sha256": null,
+      "legacy_tip_sha256": "028b07830b42e6eabb899808d03f4004f1a0d1c1381fab91b06d31e351f451b7",
+      "candidate_base_sha256": null,
+      "working_tree_lf_sha256": "028b07830b42e6eabb899808d03f4004f1a0d1c1381fab91b06d31e351f451b7",
+      "working_tree_raw_sha256": "028b07830b42e6eabb899808d03f4004f1a0d1c1381fab91b06d31e351f451b7",
+      "working_tree_raw_bytes": 4164,
+      "resolution": "Exact missing legacy tip behavior applied to the unchanged candidate path."
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/climate/forward.py",
+      "classification": "exact_legacy_tip_blob",
+      "legacy_parent_sha256": "6989f7820562527f82fb9c280ca0bc343dd88cb26e65843082905a11916f28cf",
+      "legacy_tip_sha256": "40393c8d8fef6b0a7d06cb40415b117e0a10a19fad36ca4a1a08cc4c8e10ba10",
+      "candidate_base_sha256": "6989f7820562527f82fb9c280ca0bc343dd88cb26e65843082905a11916f28cf",
+      "working_tree_lf_sha256": "40393c8d8fef6b0a7d06cb40415b117e0a10a19fad36ca4a1a08cc4c8e10ba10",
+      "working_tree_raw_sha256": "40393c8d8fef6b0a7d06cb40415b117e0a10a19fad36ca4a1a08cc4c8e10ba10",
+      "working_tree_raw_bytes": 39396,
+      "resolution": "Exact missing legacy tip behavior applied to the unchanged candidate path."
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/climate/source.py",
+      "classification": "exact_legacy_tip_blob",
+      "legacy_parent_sha256": "28a3d921cb010f13046debcfdbe76f8c2b95c32142e79120f2c1219193612075",
+      "legacy_tip_sha256": "5bba0822caa15fbb9a192a24fc6db6add3120795b0253074c2e124d184f0a0db",
+      "candidate_base_sha256": "28a3d921cb010f13046debcfdbe76f8c2b95c32142e79120f2c1219193612075",
+      "working_tree_lf_sha256": "5bba0822caa15fbb9a192a24fc6db6add3120795b0253074c2e124d184f0a0db",
+      "working_tree_raw_sha256": "5bba0822caa15fbb9a192a24fc6db6add3120795b0253074c2e124d184f0a0db",
+      "working_tree_raw_bytes": 30901,
+      "resolution": "Exact missing legacy tip behavior applied to the unchanged candidate path."
+    },
+    {
+      "path": "services/agri-data-service/tests/direct/climate/test_adapter.py",
+      "classification": "exact_legacy_tip_blob",
+      "legacy_parent_sha256": "ea840852e1217b03553381a7fbefc96fb9874def5c0badf85b6ccfca5edaaeb5",
+      "legacy_tip_sha256": "bb54b9a0c8ea61772e5b116fac458a90b91a9c99274cae701b27f58e63878f50",
+      "candidate_base_sha256": "ea840852e1217b03553381a7fbefc96fb9874def5c0badf85b6ccfca5edaaeb5",
+      "working_tree_lf_sha256": "bb54b9a0c8ea61772e5b116fac458a90b91a9c99274cae701b27f58e63878f50",
+      "working_tree_raw_sha256": "bb54b9a0c8ea61772e5b116fac458a90b91a9c99274cae701b27f58e63878f50",
+      "working_tree_raw_bytes": 20457,
+      "resolution": "Exact missing legacy tip behavior applied to the unchanged candidate path."
+    },
+    {
+      "path": "services/agri-data-service/tests/direct/climate/test_forward_command.py",
+      "classification": "exact_legacy_tip_blob",
+      "legacy_parent_sha256": "e3b89ec1f750579dba75297b716c8c4633b6f5c109f9174f6cb2bc72e813cad1",
+      "legacy_tip_sha256": "433e9b870b4680d77eae6dce04e29f6302185b844affaf2ab83979f785f0d32c",
+      "candidate_base_sha256": "e3b89ec1f750579dba75297b716c8c4633b6f5c109f9174f6cb2bc72e813cad1",
+      "working_tree_lf_sha256": "433e9b870b4680d77eae6dce04e29f6302185b844affaf2ab83979f785f0d32c",
+      "working_tree_raw_sha256": "433e9b870b4680d77eae6dce04e29f6302185b844affaf2ab83979f785f0d32c",
+      "working_tree_raw_bytes": 27787,
+      "resolution": "Exact missing legacy tip behavior applied to the unchanged candidate path."
+    },
+    {
+      "path": "services/agri-data-service/tests/direct/climate/test_provider_backpressure.py",
+      "classification": "exact_legacy_tip_blob",
+      "legacy_parent_sha256": null,
+      "legacy_tip_sha256": "481a0f8d44354de8db02a9d817ad123a3f2c05ae1f18c1939360bae004659743",
+      "candidate_base_sha256": null,
+      "working_tree_lf_sha256": "481a0f8d44354de8db02a9d817ad123a3f2c05ae1f18c1939360bae004659743",
+      "working_tree_raw_sha256": "481a0f8d44354de8db02a9d817ad123a3f2c05ae1f18c1939360bae004659743",
+      "working_tree_raw_bytes": 15787,
+      "resolution": "Exact missing legacy tip behavior applied to the unchanged candidate path."
+    },
+    {
+      "path": "services/agri-data-service/tests/direct/climate/test_source.py",
+      "classification": "exact_legacy_tip_blob",
+      "legacy_parent_sha256": "6862675d49ae375c0c6bff01b0d11fdf383fbf1e63363cf9a6ddb2ca2b3edf34",
+      "legacy_tip_sha256": "311ebf5e79b30c2ed110f3204e9750cf2306a85791c64e6b2ae8cd95e3a93295",
+      "candidate_base_sha256": "6862675d49ae375c0c6bff01b0d11fdf383fbf1e63363cf9a6ddb2ca2b3edf34",
+      "working_tree_lf_sha256": "311ebf5e79b30c2ed110f3204e9750cf2306a85791c64e6b2ae8cd95e3a93295",
+      "working_tree_raw_sha256": "311ebf5e79b30c2ed110f3204e9750cf2306a85791c64e6b2ae8cd95e3a93295",
+      "working_tree_raw_bytes": 20287,
+      "resolution": "Exact missing legacy tip behavior applied to the unchanged candidate path."
+    },
+    {
+      "path": "services/agri-data-service/tests/direct/test_mtbs_provider_refusals.py",
+      "classification": "exact_legacy_tip_blob",
+      "legacy_parent_sha256": null,
+      "legacy_tip_sha256": "1c7d4df642975b3d76c56fdd803c4c7bef961f7f6bbdc53f3550502cb6c8ddfd",
+      "candidate_base_sha256": null,
+      "working_tree_lf_sha256": "1c7d4df642975b3d76c56fdd803c4c7bef961f7f6bbdc53f3550502cb6c8ddfd",
+      "working_tree_raw_sha256": "1c7d4df642975b3d76c56fdd803c4c7bef961f7f6bbdc53f3550502cb6c8ddfd",
+      "working_tree_raw_bytes": 7639,
+      "resolution": "Exact missing legacy tip behavior applied to the unchanged candidate path."
+    },
+    {
+      "path": "services/agri-data-service/tests/test_ingest_http.py",
+      "classification": "exact_legacy_tip_blob",
+      "legacy_parent_sha256": "1ffb5da4bc42eab6e245e272cf1d4c5d4b97211c3a9df3228f4ba3893eb118cf",
+      "legacy_tip_sha256": "f53a5bd6143f4f7cb82904f1d0a48fc043b0c991064fa6de0a1cb692110ab27e",
+      "candidate_base_sha256": "1ffb5da4bc42eab6e245e272cf1d4c5d4b97211c3a9df3228f4ba3893eb118cf",
+      "working_tree_lf_sha256": "f53a5bd6143f4f7cb82904f1d0a48fc043b0c991064fa6de0a1cb692110ab27e",
+      "working_tree_raw_sha256": "f53a5bd6143f4f7cb82904f1d0a48fc043b0c991064fa6de0a1cb692110ab27e",
+      "working_tree_raw_bytes": 15075,
+      "resolution": "Exact missing legacy tip behavior applied to the unchanged candidate path."
+    },
+    {
+      "path": "src/__tests__/components/ClimateDetails.test.tsx",
+      "classification": "exact_legacy_tip_blob",
+      "legacy_parent_sha256": "2bafd24867c5585366302ef354c8b43e25e4c87117dc7fc89a891fe1cd7ff17e",
+      "legacy_tip_sha256": "522fa4dc908a489f14de1118495c97226d6b72a08b7ff495e7a91dc0b72f3a85",
+      "candidate_base_sha256": "2bafd24867c5585366302ef354c8b43e25e4c87117dc7fc89a891fe1cd7ff17e",
+      "working_tree_lf_sha256": "522fa4dc908a489f14de1118495c97226d6b72a08b7ff495e7a91dc0b72f3a85",
+      "working_tree_raw_sha256": "522fa4dc908a489f14de1118495c97226d6b72a08b7ff495e7a91dc0b72f3a85",
+      "working_tree_raw_bytes": 14040,
+      "resolution": "Exact missing legacy tip behavior applied to the unchanged candidate path."
+    },
+    {
+      "path": "src/__tests__/components/ClimateFieldLayers.test.tsx",
+      "classification": "selective_composition",
+      "legacy_parent_sha256": "d5d4a6e4ccfd6c9d33e8cb9cd0dd10c7db18097806315095c6d8c2477e9cd7d4",
+      "legacy_tip_sha256": "739c71ac9ff409b5a8b615cde3a6bda8b4b020ecc5496088520b074bbacf9298",
+      "candidate_base_sha256": "cd4fa08944ff8076f21be26319a123c0de98adca9d1918464192ed4643035169",
+      "working_tree_lf_sha256": "4f59051b8ce017a55b8aa55f1328512e2a0a4112636248299206d7abd7dd3a0c",
+      "working_tree_raw_sha256": "4f59051b8ce017a55b8aa55f1328512e2a0a4112636248299206d7abd7dd3a0c",
+      "working_tree_raw_bytes": 27332,
+      "resolution": "Adds served-field/high-zoom regression while preserving current field/isoline-only test types and legacy-symbol refusal coverage."
+    },
+    {
+      "path": "src/__tests__/components/LayerRow.test.tsx",
+      "classification": "exact_legacy_tip_blob",
+      "legacy_parent_sha256": "1ea2cae09fdce0c9d642cd16bda56ccdedd8f6eed86fe4a4d12dde52c7a7f927",
+      "legacy_tip_sha256": "58d65bc16cd21890a7f11f404a6c28c853a3b30aad5138dbc2bcd37db817c486",
+      "candidate_base_sha256": "1ea2cae09fdce0c9d642cd16bda56ccdedd8f6eed86fe4a4d12dde52c7a7f927",
+      "working_tree_lf_sha256": "58d65bc16cd21890a7f11f404a6c28c853a3b30aad5138dbc2bcd37db817c486",
+      "working_tree_raw_sha256": "58d65bc16cd21890a7f11f404a6c28c853a3b30aad5138dbc2bcd37db817c486",
+      "working_tree_raw_bytes": 36249,
+      "resolution": "Exact missing legacy tip behavior applied to the unchanged candidate path."
+    },
+    {
+      "path": "src/__tests__/lib/map/hover-fields.test.ts",
+      "classification": "selective_composition",
+      "legacy_parent_sha256": "29bcb1791395af67dd526d3cbc92f8c7d4deed2f12fd2acf596e6051c009cd13",
+      "legacy_tip_sha256": "e1d1ef5db86fa263b3acdb4e648a8009f7930a8f6f75c00dbdf60d941daba937",
+      "candidate_base_sha256": "29bcb1791395af67dd526d3cbc92f8c7d4deed2f12fd2acf596e6051c009cd13",
+      "working_tree_lf_sha256": "bc2190431cc13d622a625a0bd75af87b44a0e1878a34ed7dc31dcdb00c9a13c7",
+      "working_tree_raw_sha256": "bc2190431cc13d622a625a0bd75af87b44a0e1878a34ed7dc31dcdb00c9a13c7",
+      "working_tree_raw_bytes": 35730,
+      "resolution": "Ports climate tooltip cases; exact hover registry expectation excludes the retired point form."
+    },
+    {
+      "path": "src/__tests__/services/parquet-climate-field.test.ts",
+      "classification": "selective_composition",
+      "legacy_parent_sha256": "d2607df44c6da0c480108e27678195e61ac0348a5a6cb027012fd6de488eef5e",
+      "legacy_tip_sha256": "1189ac3e50d8d29fcbac782c3479b5b04e19e59f52dfe70c34712523f190f772",
+      "candidate_base_sha256": "1662f558b7b6a16a44ed59675e9e478c011756371a60e06ae8087f0df12c5262",
+      "working_tree_lf_sha256": "6ce44bdbf85815db6f4e22d6885a833453ab7b31b6f0f4029953f0dac8623b8c",
+      "working_tree_raw_sha256": "6ce44bdbf85815db6f4e22d6885a833453ab7b31b6f0f4029953f0dac8623b8c",
+      "working_tree_raw_bytes": 20303,
+      "resolution": "Legacy viewport/halo coverage composed with accepted terminal-evidence and truncation tests; existing assertions now also check the corresponding renderStatus."
+    },
+    {
+      "path": "src/__tests__/services/parquet-trpc-readers.test.ts",
+      "classification": "selective_composition",
+      "legacy_parent_sha256": "8c301477ff11fe7d37eade3d913f3e575081d5c1266588bd94fa256f240f3fa1",
+      "legacy_tip_sha256": "1f4b7d2b3b6c51c82ddb6f4d1ede7e4cb1a90570bc2f9d562b7fffd946bb1a50",
+      "candidate_base_sha256": "24499b4a42e291ee77847f07383f597c9cf262b64e30b8a30674d63591e8ff20",
+      "working_tree_lf_sha256": "2be917ca412a0465c72ffcd7b071957c5de1c31a6973bebf99c5ac8d5e56228c",
+      "working_tree_raw_sha256": "2be917ca412a0465c72ffcd7b071957c5de1c31a6973bebf99c5ac8d5e56228c",
+      "working_tree_raw_bytes": 91098,
+      "resolution": "Only three expected climate request bboxes gain the served-cell halo; all accepted reader tests and explicit-day semantics remain."
+    },
+    {
+      "path": "src/components/map/AGENTS.md",
+      "classification": "selective_composition",
+      "legacy_parent_sha256": "c6c8589000525c685f885d3c9e36da3c8370847559ceeeb11c27f1ed159a037b",
+      "legacy_tip_sha256": "a7210a688d8e6663c0b5f8ccbad6220b3062aba29ab040a6ff4c504630cb52e0",
+      "candidate_base_sha256": "63c99a3afc31a08b163c073f721498c6bbb98843692295c35a4f278d26666cfb",
+      "working_tree_lf_sha256": "82c4b5a95b6661dfbf9fdf0ea39a93ad2514ba1cb8d5964a73d0eb446dfd36c5",
+      "working_tree_raw_sha256": "82c4b5a95b6661dfbf9fdf0ea39a93ad2514ba1cb8d5964a73d0eb446dfd36c5",
+      "working_tree_raw_bytes": 121844,
+      "resolution": "Legacy local legend disclosure rationale composed with accepted multiscale notes."
+    },
+    {
+      "path": "src/components/map/layer-panel/LayerLegend.tsx",
+      "classification": "exact_legacy_tip_blob",
+      "legacy_parent_sha256": "4a1c54b50abcef3a60e40a08729725beaa893b3f80b95adf609714944cf78642",
+      "legacy_tip_sha256": "c45281bb91171b57cde44192ac29d6d875e92aea607d576059d1e37711475b02",
+      "candidate_base_sha256": "4a1c54b50abcef3a60e40a08729725beaa893b3f80b95adf609714944cf78642",
+      "working_tree_lf_sha256": "c45281bb91171b57cde44192ac29d6d875e92aea607d576059d1e37711475b02",
+      "working_tree_raw_sha256": "c45281bb91171b57cde44192ac29d6d875e92aea607d576059d1e37711475b02",
+      "working_tree_raw_bytes": 8579,
+      "resolution": "Exact missing legacy tip behavior applied to the unchanged candidate path."
+    },
+    {
+      "path": "src/components/map/layer-panel/LayerRow.tsx",
+      "classification": "exact_legacy_tip_blob",
+      "legacy_parent_sha256": "eb90b12f37fce7fc1b2c76cc419d2f227a19e56217238d77d17e0a1aa39abc1f",
+      "legacy_tip_sha256": "c0cc6e181d5082fc8d967530eff61888f66338e490201a28c2fc16956ce45db7",
+      "candidate_base_sha256": "eb90b12f37fce7fc1b2c76cc419d2f227a19e56217238d77d17e0a1aa39abc1f",
+      "working_tree_lf_sha256": "c0cc6e181d5082fc8d967530eff61888f66338e490201a28c2fc16956ce45db7",
+      "working_tree_raw_sha256": "c0cc6e181d5082fc8d967530eff61888f66338e490201a28c2fc16956ce45db7",
+      "working_tree_raw_bytes": 28612,
+      "resolution": "Exact missing legacy tip behavior applied to the unchanged candidate path."
+    },
+    {
+      "path": "src/components/map/layer-panel/LegendBlockView.tsx",
+      "classification": "exact_legacy_tip_blob",
+      "legacy_parent_sha256": null,
+      "legacy_tip_sha256": "9a7fd5414030168e8ffa7939bd6b1399eb044c6d78f74e37e8aad15f385ce49d",
+      "candidate_base_sha256": null,
+      "working_tree_lf_sha256": "9a7fd5414030168e8ffa7939bd6b1399eb044c6d78f74e37e8aad15f385ce49d",
+      "working_tree_raw_sha256": "9a7fd5414030168e8ffa7939bd6b1399eb044c6d78f74e37e8aad15f385ce49d",
+      "working_tree_raw_bytes": 3317,
+      "resolution": "Exact missing legacy tip behavior applied to the unchanged candidate path."
+    },
+    {
+      "path": "src/components/map/layers/ClimateFieldLayer.tsx",
+      "classification": "selective_composition",
+      "legacy_parent_sha256": "2c685e34d2839c09a6aa4c5c395b50a3cf5f50c1ee6ce5fb38a350d0b4f6ad6e",
+      "legacy_tip_sha256": "5dceec18744dc50e6f562a7e476a36b170aacc7cde744ca35eefa31a8588e9b8",
+      "candidate_base_sha256": "dcf08783fd10478a8ac92a96c3fdb72687b9cd81de81966e122e83fe0c0c3834",
+      "working_tree_lf_sha256": "44e805e392ba7f2f67e105a563ff9ba838be3d40bc031fdfbcae9f3970faca8d",
+      "working_tree_raw_sha256": "44e805e392ba7f2f67e105a563ff9ba838be3d40bc031fdfbcae9f3970faca8d",
+      "working_tree_raw_bytes": 14592,
+      "resolution": "Replaces only local ID helper with shared climateFieldLayerIds; preserves accepted field/isoline type, retired point path removal and existing lifecycle logic."
+    },
+    {
+      "path": "src/components/panels/AGENTS.md",
+      "classification": "exact_legacy_tip_blob",
+      "legacy_parent_sha256": "0d38d42c8d227f6abded23732b74395e7b42e4d79fc81704a7ae3a9c658e238d",
+      "legacy_tip_sha256": "22e02250f4103dabc2ca642ac644a39d7fd111a6805a2ace30680ab6dc199d9f",
+      "candidate_base_sha256": "0d38d42c8d227f6abded23732b74395e7b42e4d79fc81704a7ae3a9c658e238d",
+      "working_tree_lf_sha256": "22e02250f4103dabc2ca642ac644a39d7fd111a6805a2ace30680ab6dc199d9f",
+      "working_tree_raw_sha256": "22e02250f4103dabc2ca642ac644a39d7fd111a6805a2ace30680ab6dc199d9f",
+      "working_tree_raw_bytes": 10791,
+      "resolution": "Exact missing legacy tip behavior applied to the unchanged candidate path."
+    },
+    {
+      "path": "src/components/panels/ClimateDetails.tsx",
+      "classification": "exact_legacy_tip_blob",
+      "legacy_parent_sha256": "848880776889c643b71f327cec5125aec0ee0c618fd2b2a647b79e7e9efe5455",
+      "legacy_tip_sha256": "b98e685b9f42b859e51fd97686b3a17b70f58494a9e4ecdb96e509cbc5042d9b",
+      "candidate_base_sha256": "848880776889c643b71f327cec5125aec0ee0c618fd2b2a647b79e7e9efe5455",
+      "working_tree_lf_sha256": "b98e685b9f42b859e51fd97686b3a17b70f58494a9e4ecdb96e509cbc5042d9b",
+      "working_tree_raw_sha256": "b98e685b9f42b859e51fd97686b3a17b70f58494a9e4ecdb96e509cbc5042d9b",
+      "working_tree_raw_bytes": 17001,
+      "resolution": "Exact missing legacy tip behavior applied to the unchanged candidate path."
+    },
+    {
+      "path": "src/lib/map/AGENTS.md",
+      "classification": "selective_composition",
+      "legacy_parent_sha256": "2aabcf87fbf2fa7990ed644ad38c385dd0a6dd1ecab06e4b495f7c7bf920984e",
+      "legacy_tip_sha256": "cf6c2c4895deb0f73d02260b02f9e22b297915e611aed3e85b1befa6ab34b80f",
+      "candidate_base_sha256": "2aabcf87fbf2fa7990ed644ad38c385dd0a6dd1ecab06e4b495f7c7bf920984e",
+      "working_tree_lf_sha256": "3d4c7a2df17576b78b27084a55b423fc0e8dd92348d552cdd7831d48bd5a85a5",
+      "working_tree_raw_sha256": "3d4c7a2df17576b78b27084a55b423fc0e8dd92348d552cdd7831d48bd5a85a5",
+      "working_tree_raw_bytes": 31580,
+      "resolution": "Ports viewport/legend/hover rationale and explicitly records that the retired point form remains excluded."
+    },
+    {
+      "path": "src/lib/map/climate-layer-ids.ts",
+      "classification": "selective_composition",
+      "legacy_parent_sha256": null,
+      "legacy_tip_sha256": "a75a1f5191bc6d744213e12a025fb65e6c790470b47d57db2269eccf6e3f62f4",
+      "candidate_base_sha256": null,
+      "working_tree_lf_sha256": "b044324ba27f4ee9320864391d818e9d8961c8a6b005e022d5f63634a3dd53f4",
+      "working_tree_raw_sha256": "b044324ba27f4ee9320864391d818e9d8961c8a6b005e022d5f63634a3dd53f4",
+      "working_tree_raw_bytes": 464,
+      "resolution": "Ports shared climate IDs but excludes retired pointId in accordance with accepted multiscale renderer removal."
+    },
+    {
+      "path": "src/lib/map/climate-viewport.ts",
+      "classification": "exact_legacy_tip_blob",
+      "legacy_parent_sha256": null,
+      "legacy_tip_sha256": "f775271da5b8a2bab46c73708376c46f2ed42787e422a05b7332edd4c6671d6e",
+      "candidate_base_sha256": null,
+      "working_tree_lf_sha256": "f775271da5b8a2bab46c73708376c46f2ed42787e422a05b7332edd4c6671d6e",
+      "working_tree_raw_sha256": "f775271da5b8a2bab46c73708376c46f2ed42787e422a05b7332edd4c6671d6e",
+      "working_tree_raw_bytes": 4289,
+      "resolution": "Exact missing legacy tip behavior applied to the unchanged candidate path."
+    },
+    {
+      "path": "src/lib/map/hover-fields.ts",
+      "classification": "selective_composition",
+      "legacy_parent_sha256": "822be2175804e4fdb56b2b5a07442623abcf7d413df9de5dd9409ec682a9ad71",
+      "legacy_tip_sha256": "90032c3b837eefb504be005b6b18f4b3f816f8e7ebc3241b8abcf697619407f7",
+      "candidate_base_sha256": "822be2175804e4fdb56b2b5a07442623abcf7d413df9de5dd9409ec682a9ad71",
+      "working_tree_lf_sha256": "4c05d159926b32ce57d0823cc9fda04b9b77a5260738cfed8950ed0f012709ab",
+      "working_tree_raw_sha256": "4c05d159926b32ce57d0823cc9fda04b9b77a5260738cfed8950ed0f012709ab",
+      "working_tree_raw_bytes": 27204,
+      "resolution": "Ports signal-specific hover/tap formatting and band-versus-reading distinction, excluding the retired point registration."
+    },
+    {
+      "path": "src/lib/map/layer-legends.ts",
+      "classification": "exact_legacy_tip_blob",
+      "legacy_parent_sha256": "177fd8a9ea3c1ded69f4a5177313038e43d36abb7dcd76b3d25409c531d58cfa",
+      "legacy_tip_sha256": "0dca291e19656085866a41ffaef61133d9cfb23d4deca2683bd8c54ca95c22c4",
+      "candidate_base_sha256": "177fd8a9ea3c1ded69f4a5177313038e43d36abb7dcd76b3d25409c531d58cfa",
+      "working_tree_lf_sha256": "0dca291e19656085866a41ffaef61133d9cfb23d4deca2683bd8c54ca95c22c4",
+      "working_tree_raw_sha256": "0dca291e19656085866a41ffaef61133d9cfb23d4deca2683bd8c54ca95c22c4",
+      "working_tree_raw_bytes": 24719,
+      "resolution": "Exact missing legacy tip behavior applied to the unchanged candidate path."
+    },
+    {
+      "path": "src/lib/server/services/AGENTS.md",
+      "classification": "selective_composition",
+      "legacy_parent_sha256": "1436e610eec6cd7ea6972c1c966e32c53152ce52f81bee345b64edc31c00ba98",
+      "legacy_tip_sha256": "ea86d6c6cc001a8cebb8183391ac3103456fa04ee1cea8751b9af2d9c2aef7db",
+      "candidate_base_sha256": "f9a3bb913dfd2d7f93b5f4a0cf83c47e3f16d2444c93a79d27d53dda6c8c43e7",
+      "working_tree_lf_sha256": "c90dad9dfbabe853a24a37c3c4a0ae984a2aacd7115f5d93a105b0f121e0e118",
+      "working_tree_raw_sha256": "c90dad9dfbabe853a24a37c3c4a0ae984a2aacd7115f5d93a105b0f121e0e118",
+      "working_tree_raw_bytes": 52292,
+      "resolution": "Legacy climate viewport and presentation-status rationale composed with all accepted reader contract sections."
+    },
+    {
+      "path": "src/lib/server/services/parquet-climate-field.ts",
+      "classification": "selective_composition",
+      "legacy_parent_sha256": "6695373fd592bc7e08203207b0bd963e2809b9d425dc10a437ad001c5cb6624f",
+      "legacy_tip_sha256": "0a6ec9215ebb9b695c25dda27ff4ac7470e43dc7421c9f8056aeb84f0ac6913d",
+      "candidate_base_sha256": "d33fb41518c55350cd246ef2082ad49a635e8e05181eb13e1c3c9d94fd66342d",
+      "working_tree_lf_sha256": "5172f082c3d9662bf5a44b5d98fb7602675fd19ed543d4dc38a9f5931b26a1f3",
+      "working_tree_raw_sha256": "5172f082c3d9662bf5a44b5d98fb7602675fd19ed543d4dc38a9f5931b26a1f3",
+      "working_tree_raw_bytes": 15693,
+      "resolution": "Adds overlap counts, halo-aware drawing and renderStatus while retaining ParquetCollectionStatus, served-day/governed-absence evidence, ready-empty publication and truncation behavior."
+    },
+    {
+      "path": "src/lib/server/services/parquet-trpc-readers.ts",
+      "classification": "selective_composition",
+      "legacy_parent_sha256": "16b536f17edda9e4485b1044b30d90c927a374f3155978a43f7ce60f032e3aa4",
+      "legacy_tip_sha256": "139592de62ec05265cd0f5865eedaa6291ddf67d4e6673e8f676cf1e4aaa0a05",
+      "candidate_base_sha256": "9072f3409ab8b4b3a8b247a527f4a222e94a48ac71528f4186947bc2919b2967",
+      "working_tree_lf_sha256": "060fc84c08315e8089bea8278257dbbc8e9e5a4fad529ce5ff4d806338b5336e",
+      "working_tree_raw_sha256": "060fc84c08315e8089bea8278257dbbc8e9e5a4fad529ce5ff4d806338b5336e",
+      "working_tree_raw_bytes": 99081,
+      "resolution": "Only imports climateFieldReadBbox and applies it to climate reads; selected-day/abort/response-day rejection, terminal metadata and other product paths remain."
+    }
+  ]
+}

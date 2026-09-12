@@ -7,6 +7,16 @@ resource: ./spec.md
 
 # Plan
 
+## Wind & Weather acceptance addendum — September 11
+
+- [ ] Jointly with environmental retirement, reconcile weather product/source
+  identity, uncited history floor/lag, published intervals and the recorded
+  2021-11-27..2026-07-31 gap containing 2025-04-28. The current toggle is sampled
+  estimates/observations with forecast horizon 0; never backfill current-poll
+  history with reanalysis under the same identity. The
+  [audit handoff](../parquet_duckdb_pivot_20260823/evidence/wind-weather-handoff-20260911.md)
+  retains the exact source, reader and rendering boundaries.
+
 ## Current checkpoint — September 11
 
 The [current evidence packet](evidence/generic-recovery-20260911.md) records a

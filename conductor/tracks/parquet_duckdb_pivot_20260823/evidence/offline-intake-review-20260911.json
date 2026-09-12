@@ -1,0 +1,440 @@
+{
+  "type": "offline-integration-intake-review",
+  "schema_version": 1,
+  "created_at": "2026-09-12T00:36:40.382344+00:00",
+  "reviewer": {
+    "agent": "/root/offline_final_intake",
+    "implementation_authorship": false
+  },
+  "verdict": "accepted_source_and_local_evidence_combined_validation_pending",
+  "base_commit": "fa202230958fb55521963e886eb031be5fc266c4",
+  "peer_commit": "6f2c7a8c0be95a6690efb51a9906d369f54697ad",
+  "integrated_commit": "cc64e6e3e1de8dda164beeee0e7e22aa30088b76",
+  "integrated_tree": "66c55446103cbcee65d9900a0237b4e0814d5b4c",
+  "source_preservation": {
+    "peer_file_count": 13,
+    "byte_identical_files": 12,
+    "authorized_additive_directory_contracts": 1,
+    "working_tree_peer_surface_matched_target_before_evidence_recovery": true,
+    "files": [
+      {
+        "path": "conductor/tracks/offline_export_service_20260908/evidence/README.md",
+        "peer_blob": "9cfd11bcad2b1a84c52afd30051d7a75f175a083",
+        "integrated_blob": "9cfd11bcad2b1a84c52afd30051d7a75f175a083",
+        "peer_mode": "100644",
+        "integrated_mode": "100644",
+        "peer_byte_count": 5687,
+        "peer_sha256": "1ecbdc300c20f4cf246a5db4721c719677f407013a104177dd018da7322de32c",
+        "byte_identical_at_target": true
+      },
+      {
+        "path": "conductor/tracks/offline_export_service_20260908/evidence/relative-humidity-history-candidate-20260911.json",
+        "peer_blob": "95db1bb5bd77f2dbe24ee2b6e7650bc8d584d08c",
+        "integrated_blob": "95db1bb5bd77f2dbe24ee2b6e7650bc8d584d08c",
+        "peer_mode": "100644",
+        "integrated_mode": "100644",
+        "peer_byte_count": 5123,
+        "peer_sha256": "dabbdb9f7e1753c3803c8a117958ba43fe9eec63d1a491d3a763aaf5e78488d3",
+        "byte_identical_at_target": true
+      },
+      {
+        "path": "conductor/tracks/offline_export_service_20260908/evidence/review-20260911.md",
+        "peer_blob": "a49ee2acb1ec1b95d91fe51ffd5a86d486e1566a",
+        "integrated_blob": "a49ee2acb1ec1b95d91fe51ffd5a86d486e1566a",
+        "peer_mode": "100644",
+        "integrated_mode": "100644",
+        "peer_byte_count": 3677,
+        "peer_sha256": "7a7c01f6a13e44c154f8b8228dad921320a492a6af0e76c8247ae079b1ff5d82",
+        "byte_identical_at_target": true
+      },
+      {
+        "path": "conductor/tracks/offline_export_service_20260908/evidence/selected-builder-audit-receipt-20260911.json",
+        "peer_blob": "44d0818522fbbd885f6dbd86251cc7315b5e260d",
+        "integrated_blob": "44d0818522fbbd885f6dbd86251cc7315b5e260d",
+        "peer_mode": "100644",
+        "integrated_mode": "100644",
+        "peer_byte_count": 132594,
+        "peer_sha256": "952aeba68821f80e92686e814b2e4aad49150bcde33b2d8914629096d83ec5b7",
+        "byte_identical_at_target": true
+      },
+      {
+        "path": "conductor/tracks/offline_export_service_20260908/evidence/selected-builder-manifest-20260911.json",
+        "peer_blob": "35a017d2fe302ab6708a9caf76e62366a7da6899",
+        "integrated_blob": "35a017d2fe302ab6708a9caf76e62366a7da6899",
+        "peer_mode": "100644",
+        "integrated_mode": "100644",
+        "peer_byte_count": 7216,
+        "peer_sha256": "b76ba1b1cb68d4f438090a61f77cc498d685d381eedb4af33ee487d4dfeb9fd4",
+        "byte_identical_at_target": true
+      },
+      {
+        "path": "conductor/tracks/offline_export_service_20260908/evidence/warm-capability-probe-20260911.json",
+        "peer_blob": "7e306208aa699c43a726a5e9160066ec033c4346",
+        "integrated_blob": "7e306208aa699c43a726a5e9160066ec033c4346",
+        "peer_mode": "100644",
+        "integrated_mode": "100644",
+        "peer_byte_count": 2433,
+        "peer_sha256": "f0a5a80e4a56eb1f3c9c906aa13bd6ebfa430f0311252f8196a675c117965dc3",
+        "byte_identical_at_target": true
+      },
+      {
+        "path": "conductor/tracks/offline_export_service_20260908/metadata.json",
+        "peer_blob": "218ddb5ebdb180c402d4a4af41924941a3f27d95",
+        "integrated_blob": "218ddb5ebdb180c402d4a4af41924941a3f27d95",
+        "peer_mode": "100644",
+        "integrated_mode": "100644",
+        "peer_byte_count": 3991,
+        "peer_sha256": "3b017f12e67897fba6a89584c53f704d82cf39d55b600f72686889f107d6dd24",
+        "byte_identical_at_target": true
+      },
+      {
+        "path": "conductor/tracks/offline_export_service_20260908/plan.md",
+        "peer_blob": "36fce7c8863ffc822104e9ef8d37020660f5b622",
+        "integrated_blob": "36fce7c8863ffc822104e9ef8d37020660f5b622",
+        "peer_mode": "100644",
+        "integrated_mode": "100644",
+        "peer_byte_count": 7933,
+        "peer_sha256": "c758a20fe074538de853425b994cffca92046ab6724b2afc1222e4acc94e2838",
+        "byte_identical_at_target": true
+      },
+      {
+        "path": "services/agri-data-service/scripts/AGENTS.md",
+        "peer_blob": "b1bfcd824b9bf2562662c50eb8aae69847334d06",
+        "integrated_blob": "d475745e5bdf51249a15c88ddbca406457367d1a",
+        "peer_mode": "100644",
+        "integrated_mode": "100644",
+        "peer_byte_count": 75898,
+        "peer_sha256": "36d49498da8036fa977a86155514d9d7886915855eef6facf7745b4cb4ed83c1",
+        "byte_identical_at_target": false
+      },
+      {
+        "path": "services/agri-data-service/scripts/audit_offline_canonical_exports.py",
+        "peer_blob": "582492e3ff18a8dd4d088a91c66829f11e498df6",
+        "integrated_blob": "582492e3ff18a8dd4d088a91c66829f11e498df6",
+        "peer_mode": "100644",
+        "integrated_mode": "100644",
+        "peer_byte_count": 30834,
+        "peer_sha256": "8c8af8d3f33ff05c0569dd7c5432c5977b29898099085f0282604d19b0efd18c",
+        "byte_identical_at_target": true
+      },
+      {
+        "path": "services/agri-data-service/scripts/compile_relative_humidity_availability_history.py",
+        "peer_blob": "9124762813ae36701fd1f0c62c14a9b9bcbf4f1a",
+        "integrated_blob": "9124762813ae36701fd1f0c62c14a9b9bcbf4f1a",
+        "peer_mode": "100644",
+        "integrated_mode": "100644",
+        "peer_byte_count": 41116,
+        "peer_sha256": "71beea00bf3fd061fe140f22dcd44287baa8a1a7f30d430e061ec17605293093",
+        "byte_identical_at_target": true
+      },
+      {
+        "path": "services/agri-data-service/tests/scripts/test_audit_offline_canonical_exports.py",
+        "peer_blob": "32d56f37edb403e2a2cf6946c6caa78c0d90a4d3",
+        "integrated_blob": "32d56f37edb403e2a2cf6946c6caa78c0d90a4d3",
+        "peer_mode": "100644",
+        "integrated_mode": "100644",
+        "peer_byte_count": 9597,
+        "peer_sha256": "e9a2616ea18d9232366b52c9f2471fc70359bea64ab37e17cc7ec45097f44293",
+        "byte_identical_at_target": true
+      },
+      {
+        "path": "services/agri-data-service/tests/scripts/test_compile_relative_humidity_availability_history.py",
+        "peer_blob": "d9024c8d1396b24a1c8ee8b48aa11e9ebd96031f",
+        "integrated_blob": "d9024c8d1396b24a1c8ee8b48aa11e9ebd96031f",
+        "peer_mode": "100644",
+        "integrated_mode": "100644",
+        "peer_byte_count": 18775,
+        "peer_sha256": "c6a09285d3627886ab628ff423d16907e3006e2e01e78a1e818d1a1ecf0a1c12",
+        "byte_identical_at_target": true
+      }
+    ]
+  },
+  "shared_directory_contract": {
+    "path": "services/agri-data-service/scripts/AGENTS.md",
+    "canonical_owner": "offline",
+    "contributors": [
+      "retirement",
+      "offline"
+    ],
+    "integrated_blob": "d475745e5bdf51249a15c88ddbca406457367d1a",
+    "checks": {
+      "all_three_deltas_are_insertions_only": true,
+      "insertions_at_disjoint_base_positions": true,
+      "integrated_insertions_equal_exact_union": true,
+      "retirement_sections_preserved": true,
+      "offline_sections_preserved": true
+    },
+    "insertions": {
+      "retirement": [
+        {
+          "base_line": 76,
+          "line_count": 55,
+          "sha256": "95018f300e80c3ba0ff6e75eb5bee02798991487370acc608de6aa4f761fb52d"
+        },
+        {
+          "base_line": 949,
+          "line_count": 26,
+          "sha256": "29d326424a66447befd88ee5863443a8c40aa5a88f12d53cfa3d3bc9f3d13eb2"
+        }
+      ],
+      "offline": [
+        {
+          "base_line": 670,
+          "line_count": 38,
+          "sha256": "f4a2412bda478ece3e5fd96380285abbb3db1f831d75cf9a4b373f226a86c02c"
+        },
+        {
+          "base_line": 870,
+          "line_count": 27,
+          "sha256": "5a890668ebbba28bebbdc48491c879e5cfda49c270ce16dbb746d08c63fab218"
+        }
+      ],
+      "integrated": [
+        {
+          "base_line": 76,
+          "line_count": 55,
+          "sha256": "95018f300e80c3ba0ff6e75eb5bee02798991487370acc608de6aa4f761fb52d"
+        },
+        {
+          "base_line": 670,
+          "line_count": 38,
+          "sha256": "f4a2412bda478ece3e5fd96380285abbb3db1f831d75cf9a4b373f226a86c02c"
+        },
+        {
+          "base_line": 870,
+          "line_count": 27,
+          "sha256": "5a890668ebbba28bebbdc48491c879e5cfda49c270ce16dbb746d08c63fab218"
+        },
+        {
+          "base_line": 949,
+          "line_count": 26,
+          "sha256": "29d326424a66447befd88ee5863443a8c40aa5a88f12d53cfa3d3bc9f3d13eb2"
+        }
+      ]
+    },
+    "authorization": "Recorded offline/retirement shared-document decision; integration mechanical composition only."
+  },
+  "independent_implementation_review": {
+    "task_id": "01a092b9-6913-7553-a78b-15180596d38f",
+    "agent": "/root/independent_reviewer",
+    "agent_name": "Faraday",
+    "identity_verified_from": "read-only Codex task-state row and retained SubAgentActivity records",
+    "final_delta_approval": {
+      "line": 5667,
+      "timestamp": "2026-09-11T23:48:37.185Z",
+      "sha256": "c5174456565df73ccbc314ebcfa54eec70f49f6ce217a43a26edb2048f383d30"
+    },
+    "findings": [],
+    "verdict": "No remaining P0-P3 findings in the final four Python source/test files; prior phase verdicts unchanged.",
+    "administrative_review_placeholder": "Resolved in peer commit: review status complete and final commands/results recorded.",
+    "tests_run_by_implementation_reviewer": false
+  },
+  "validation": {
+    "scope": "scripts batch only",
+    "receipt_eligible": false,
+    "combined_tree_validation": false,
+    "working_directory": "file:///C:/Users/atooz/.codex/worktrees/a7cc/plantgeo/services/agri-data-service",
+    "command": [
+      "C:\\Users\\atooz\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\native\\powershell\\pwsh.exe",
+      "-Command",
+      "$logPath='C:\\Users\\atooz\\.codex\\worktrees\\a7cc\\plantgeo\\conductor\\tracks\\offline_export_service_20260908\\evidence\\scripts-batch-validation-20260911.log'; if (Test-Path -LiteralPath $logPath) { throw \"Refusing to overwrite $logPath\" }; $env:UV_PROJECT_ENVIRONMENT='C:\\Users\\atooz\\Programming\\plantgeo\\services\\agri-data-service\\.venv'; Remove-Item Env:AGRI_TEST_DATABASE_URL,Env:AGRI_CROSS_MAJOR_DATABASE_URL,Env:PLANTGEO_TEST_DATABASE_URL,Env:POSTGIS_TEST_DSN -ErrorAction SilentlyContinue; & 'C:\\Users\\atooz\\Programming\\plantgeo\\services\\agri-data-service\\.venv\\Scripts\\python.exe' scripts/check.py --batch scripts 2>&1 | Tee-Object -FilePath $logPath; $exitCode=$LASTEXITCODE; [pscustomobject]@{exit_code=$exitCode;path=$logPath;bytes=(Get-Item -LiteralPath $logPath).Length;sha256=(Get-FileHash -LiteralPath $logPath -Algorithm SHA256).Hash.ToLowerInvariant()} | ConvertTo-Json -Compress; exit $exitCode"
+    ],
+    "original_green_run": {
+      "line": 5650,
+      "timestamp": "2026-09-11T23:47:30.930Z",
+      "sha256": "2b77fdc2e92dd353918773de56d3d966947fb835d69903c9c341fce6f9ec40cc",
+      "exit_code": 0,
+      "durations_seconds": {
+        "format": 0.07,
+        "lint": 0.06,
+        "mypy": 1.6,
+        "pytest": 32.71
+      }
+    },
+    "retained_confirmation_run": {
+      "line": 5823,
+      "timestamp": "2026-09-11T23:54:07.193Z",
+      "sha256": "0ffd4da4314010e748ef774ba33a3cd37466743dac5f151fec28a99a0cc1b076",
+      "exit_code": 0,
+      "durations_seconds": {
+        "format": 0.07,
+        "lint": 0.09,
+        "mypy": 1.51,
+        "pytest": 31.18
+      }
+    },
+    "checks": {
+      "format": "PASS",
+      "lint": "PASS",
+      "mypy": "PASS",
+      "pytest": "PASS"
+    },
+    "pytest_selection": [
+      "tests/scripts"
+    ],
+    "owner_reported_test_count": 168,
+    "green_log_prints_test_count": false,
+    "test_count_attribution": "168 is the unchanged selected surface shown by preceding 2-failed/166-passed output and the owner report; the successful check.py log prints gate status only.",
+    "preceding_test_count_record": {
+      "line": 5436,
+      "timestamp": "2026-09-11T23:40:14.792Z",
+      "sha256": "64e18b487b4821b5490cd188867c873662efa3826e8702ec69a6ee11596c35cb"
+    },
+    "retained_log_path": "conductor/tracks/offline_export_service_20260908/evidence/scripts-batch-validation-20260911.log",
+    "retained_log_sha256": "1562d3d3a2fc67496b375760a3cab0c3e92f8bfaf660f4ad17a1f208445b5510",
+    "retained_log_bytes": 391,
+    "no_tests_rerun_during_intake": true
+  },
+  "evidence_recovery": {
+    "method": "Exact recorded owner-authored unified diffs applied to known peer Git blobs; green command stdout normalized to its historically recorded LF log hash.",
+    "owner_authored_evidence_addendum_only": true,
+    "new_peer_commit_claimed": false,
+    "peer_worktree_state": "a7cc unavailable after restart; live staging/disk verification unavailable",
+    "patch_record": {
+      "line": 5839,
+      "timestamp": "2026-09-11T23:54:50.007Z",
+      "sha256": "c82e086adb42cf2d34c2e2ce58b8ee645caf9b8484b69b7cab40c443acf01dc6"
+    },
+    "historical_log_hash_record": {
+      "line": 5846,
+      "timestamp": "2026-09-11T23:55:00.050Z",
+      "sha256": "75b9e0556b426bb83c56d474e02f09714ceac764e79cd53fe3fae78c546ae2fe"
+    },
+    "historical_stage_success_record": {
+      "line": 5853,
+      "timestamp": "2026-09-11T23:55:15.996Z",
+      "sha256": "08056c2e69d8fa4b9d0e4c1e50fd7cfa85e4f81808fe66091b7c8a75b9cfd314"
+    },
+    "historical_exact_four_file_staged_inventory": {
+      "line": 5895,
+      "timestamp": "2026-09-12T00:16:08.160Z",
+      "sha256": "d6c93227118257afcf1cd191926c70d2beb8ced50614c7557795102de280d13f"
+    },
+    "historical_staged_blob_ids": "Not explicitly printed; recovered blob IDs and any existing Git object bytes are recorded per file without claiming a live index comparison.",
+    "root_preflight": "Every updated root path matched the original peer Git blob after CRLF normalization; added log path absent.",
+    "files": [
+      {
+        "path": "conductor/tracks/offline_export_service_20260908/evidence/README.md",
+        "base_peer_blob": "9cfd11bcad2b1a84c52afd30051d7a75f175a083",
+        "recovered_git_blob": "5efb797bb3d364b35b330829edfcb6f4d9cb070c",
+        "byte_count": 5820,
+        "sha256": "b8db042a924a0a370948198f2c210af87a071b3c1dd01a60a9b448af6f810830",
+        "exact_blob_already_present_in_shared_git_object_store": true,
+        "historical_staged_blob_id_explicitly_recorded": false,
+        "live_peer_staged_to_disk_verification": "unavailable: peer worktree absent after restart"
+      },
+      {
+        "path": "conductor/tracks/offline_export_service_20260908/metadata.json",
+        "base_peer_blob": "218ddb5ebdb180c402d4a4af41924941a3f27d95",
+        "recovered_git_blob": "fefa5f4391c0831cb81168be0a6035cbbd475fac",
+        "byte_count": 4063,
+        "sha256": "b034cd0ab438ce9be5a779593aee8671d5e936f4b3e14543eda0d6ca8d1fdee2",
+        "exact_blob_already_present_in_shared_git_object_store": true,
+        "historical_staged_blob_id_explicitly_recorded": false,
+        "live_peer_staged_to_disk_verification": "unavailable: peer worktree absent after restart"
+      },
+      {
+        "path": "conductor/tracks/offline_export_service_20260908/evidence/review-20260911.md",
+        "base_peer_blob": "a49ee2acb1ec1b95d91fe51ffd5a86d486e1566a",
+        "recovered_git_blob": "f4e7ee5506eabb0fcd060de5453e3dbe8049793c",
+        "byte_count": 4392,
+        "sha256": "db88b8e0fb41722fced2776bbdebf2fb3a01559cdfcc47168068a226359a65e6",
+        "exact_blob_already_present_in_shared_git_object_store": true,
+        "historical_staged_blob_id_explicitly_recorded": false,
+        "live_peer_staged_to_disk_verification": "unavailable: peer worktree absent after restart"
+      },
+      {
+        "path": "conductor/tracks/offline_export_service_20260908/evidence/scripts-batch-validation-20260911.log",
+        "base_peer_blob": null,
+        "recovered_git_blob": "35522a1e7e15c4851c3ff302a8135ecc3f5cb435",
+        "byte_count": 391,
+        "sha256": "1562d3d3a2fc67496b375760a3cab0c3e92f8bfaf660f4ad17a1f208445b5510",
+        "exact_blob_already_present_in_shared_git_object_store": true,
+        "historical_staged_blob_id_explicitly_recorded": false,
+        "live_peer_staged_to_disk_verification": "unavailable: peer worktree absent after restart"
+      }
+    ]
+  },
+  "local_evidence": {
+    "audit": {
+      "path": "conductor/tracks/offline_export_service_20260908/evidence/selected-builder-audit-receipt-20260911.json",
+      "byte_count": 132594,
+      "sha256": "952aeba68821f80e92686e814b2e4aad49150bcde33b2d8914629096d83ec5b7",
+      "lane_count": 8,
+      "findings": 0,
+      "listed_objects": 173654,
+      "listed_bytes": 5893948572,
+      "lane_rung_measurements": 32,
+      "limit": "GET/LIST and pinned receipt audit; not a full decode of every generation/history part or historical stage telemetry."
+    },
+    "warm_probe": {
+      "path": "conductor/tracks/offline_export_service_20260908/evidence/warm-capability-probe-20260911.json",
+      "sha256": "f0a5a80e4a56eb1f3c9c906aa13bd6ebfa430f0311252f8196a675c117965dc3",
+      "byte_count": 2433,
+      "http_status": 200,
+      "elapsed_ms": 634,
+      "serving_capability_count": 22,
+      "limit": "Ordinary public warm probe, not controlled cold/warm or zero-LIST proof; RH pre-apply coverage remains 2018-01-01..2026-09-06."
+    },
+    "custody_index": {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/offline-intake-custody-20260911.json",
+      "sha256": "d89670a9e976e2016397d678a6ecb6c75ee747c2c79d75c3d94f7884a2e960f0",
+      "original_reviewer": "/root/review_retirement_intake",
+      "full_manifest_entries": 67578,
+      "packet_byte_count": 150236825,
+      "original_source_and_destination_full_hashes_verified": true,
+      "current_check": "Retained root full manifest, receipt and all three publication inputs rehashed; prior full per-file custody verification not repeated.",
+      "current_rehashed_files": [
+        {
+          "path": "services/agri-data-service/.agri-local-runs/relative-humidity-availability-history-20260911-v3.sha256",
+          "bytes": 15379894,
+          "sha256": "d644501b608051b230d5a94ea8b22f339624c6d43496aa14837f65211b6b3f70"
+        },
+        {
+          "path": "services/agri-data-service/.agri-local-runs/relative-humidity-availability-history-20260911-v3/receipt.json",
+          "bytes": 4567,
+          "sha256": "05be63c4fb3d2afa91f3ca83144fc36cba3cc86d5d04f5e0c866408b0f8de6f3"
+        },
+        {
+          "path": "services/agri-data-service/.agri-local-runs/relative-humidity-availability-history-20260911-v3/publication-input-001.json",
+          "bytes": 30456712,
+          "sha256": "2ea68f2fba06843337bb377480a04340b5eb43c5632ec1bdca3116d958b71f51"
+        },
+        {
+          "path": "services/agri-data-service/.agri-local-runs/relative-humidity-availability-history-20260911-v3/publication-input-002.json",
+          "bytes": 30456712,
+          "sha256": "6adff99bcc0c42aaad58c58fc81b739644cccc5182fed7faf5a06f668ceb6f39"
+        },
+        {
+          "path": "services/agri-data-service/.agri-local-runs/relative-humidity-availability-history-20260911-v3/publication-input-003.json",
+          "bytes": 7685776,
+          "sha256": "6280330cc0a814c600f9869387e431f8d1b97e3490dc2dbfb6ac54ce18fe7282"
+        }
+      ]
+    },
+    "rh_candidate": {
+      "days": 13514,
+      "first_day": "1981-01-01",
+      "last_day": "2017-12-31",
+      "fully_digested_rows": 54056,
+      "required_rungs": [
+        0,
+        5,
+        9,
+        13
+      ],
+      "apply_authorized": false
+    }
+  },
+  "source_rollout": "C:/Users/atooz/.codex/archived_sessions/rollout-2026-09-11T11-57-24-01a0919d-fae4-7ce2-af96-5668e628ee36.jsonl",
+  "remaining_gates": [
+    "Final combined root/Python checks and fresh QUALITY_RECEIPT.",
+    "Any production apply requires exact owner authorization and current pointer, evidence upload, publication and rollback checks.",
+    "Controlled production serving acceptance and historical telemetry gaps remain outside this offline local-construction acceptance."
+  ],
+  "tests_run_by_this_reviewer": false,
+  "runtime_edits": false,
+  "commits_created": false,
+  "production_actions": false,
+  "blocking_intake_findings": []
+}

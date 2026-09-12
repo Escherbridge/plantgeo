@@ -7,6 +7,15 @@ resource: ./spec.md
 
 # Plan
 
+## Wind & Weather acceptance addendum — September 11
+
+- [ ] Add the exact 2025-04-28 gap regression: the missing day clears the weather
+  frame and a delayed response cannot repaint another day. Align map date with
+  details/cards, then retain exact deployed-day acceptance. The current weather
+  toggle has forecast horizon 0; the recorded 2021-11-27..2026-07-31 history gap
+  and source reconciliation remain with gapless/environmental retirement. See
+  the [audit handoff](../parquet_duckdb_pivot_20260823/evidence/wind-weather-handoff-20260911.md).
+
 ## Current checkpoint — September 11
 
 The [MTBS rollout](../environmental_postgres_retirement_20260904/evidence/mtbs-live-rollout-20260911.md)

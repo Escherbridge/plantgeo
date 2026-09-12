@@ -7,6 +7,16 @@ resource: ./spec.md
 
 # Plan
 
+## Wind & Weather acceptance addendum — September 11
+
+- [ ] Retain the current toggle as sampled weather estimates/observations with
+  forecast horizon 0. Sparse aggregate bins must not be enlarged to imply a
+  continuous surface. Preserve declared support, truthful refusal, and separate
+  points/aggregate footprints/supported surfaces in the production visual and
+  conservation matrix. See the
+  [audit handoff](../parquet_duckdb_pivot_20260823/evidence/wind-weather-handoff-20260911.md)
+  for the exact recorded gap and reader regression owned by adjacent tracks.
+
 ## Current checkpoint — September 11
 
 Support and renderer implementation are complete subsets. The

@@ -10,6 +10,7 @@ import sys
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Final, Literal
@@ -160,6 +161,9 @@ MTBS_REQUEST_HEADERS: Mapping[str, str] = MappingProxyType(
 MTBS_BOUNDS: Final = UpstreamBounds(max_bytes=24 * 1024 * 1024, timeout_seconds=REQUEST_TIMEOUT_SECONDS)
 
 HTTP_TOO_MANY_REQUESTS: Final = 429
+HTTP_FORBIDDEN: Final = 403
+HTTP_PAGE_SIZE_REFUSALS: Final = frozenset({413, 500})
+MAX_RETRY_AFTER_LENGTH: Final = 128
 HTTP_SERVER_ERROR_MIN: Final = 500
 HTTP_SERVER_ERROR_MAX: Final = 600
 MAX_REQUEST_ATTEMPTS: Final = 4
@@ -181,6 +185,39 @@ BBOX_OPTION: Final = "--bbox"
 
 class MtbsIngestError(Exception):
     """Base class for every MTBS capture failure that must stop the run rather than degrade it."""
+
+
+def bounded_retry_after(value: str | None) -> str | None:
+    """Retain only a bounded numeric delay or normalized HTTP date, never arbitrary header text."""
+    if not value or len(value) > MAX_RETRY_AFTER_LENGTH:
+        return None
+    if value.isascii() and value.isdigit():
+        return value
+    try:
+        parsed = parsedate_to_datetime(value)
+        return parsed.astimezone(UTC).isoformat() if parsed.tzinfo is not None else None
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def provider_cooldown_seconds(value: str | None, *, now: datetime) -> float | None:
+    """Parse a valid provider cooldown without shortening its requested duration."""
+    normalized = bounded_retry_after(value)
+    if normalized is None:
+        return None
+    if normalized.isdigit():
+        return float(normalized)
+    return max(0.0, (datetime.fromisoformat(normalized) - now).total_seconds())
+
+
+class MtbsProviderRefusalError(MtbsIngestError):
+    """An access denial or exhausted provider throttle must end this intake attempt."""
+
+    def __init__(self, status: int, retry_after: str | None = None) -> None:
+        self.status = status
+        self.retry_after = bounded_retry_after(retry_after)
+        self.code = "provider_rate_limited" if status == HTTP_TOO_MANY_REQUESTS else "provider_access_denied"
+        super().__init__(f"MTBS {self.code}: HTTP {status}; retry_after={self.retry_after}")
 
 
 class MtbsReleaseNotPublishedError(MtbsIngestError):
@@ -639,13 +676,21 @@ async def _get_query(
         )
         if retryable and attempt + 1 < MAX_REQUEST_ATTEMPTS:
             retry_after = response.headers.get("retry-after")
-            delay = (
-                min(float(retry_after), MAX_RETRY_DELAY_SECONDS)
-                if retry_after and retry_after.isdigit()
-                else min(2.0**attempt, MAX_RETRY_DELAY_SECONDS)
-            )
+            if response.status_code == HTTP_TOO_MANY_REQUESTS:
+                requested_delay = provider_cooldown_seconds(retry_after, now=datetime.now(UTC))
+                if requested_delay is not None and requested_delay > MAX_RETRY_DELAY_SECONDS:
+                    raise MtbsProviderRefusalError(response.status_code, retry_after)
+                delay = requested_delay if requested_delay is not None else min(2.0**attempt, MAX_RETRY_DELAY_SECONDS)
+            else:
+                delay = (
+                    min(float(retry_after), MAX_RETRY_DELAY_SECONDS)
+                    if retry_after and retry_after.isascii() and retry_after.isdigit()
+                    else min(2.0**attempt, MAX_RETRY_DELAY_SECONDS)
+                )
             await sleep(delay)
             continue
+        if response.status_code in {HTTP_FORBIDDEN, HTTP_TOO_MANY_REQUESTS}:
+            raise MtbsProviderRefusalError(response.status_code, response.headers.get("retry-after"))
         response.raise_for_status()
         payload = response.json()
         if not isinstance(payload, dict):
@@ -734,8 +779,8 @@ async def _fetch_page_within_service_limits(
                 window=attempted,
                 sleep=sleep,
             )
-        except httpx.HTTPStatusError:
-            if attempted.size <= MIN_PAGE_SIZE:
+        except httpx.HTTPStatusError as error:
+            if error.response.status_code not in HTTP_PAGE_SIZE_REFUSALS or attempted.size <= MIN_PAGE_SIZE:
                 raise
             attempted = PageWindow(offset=attempted.offset, size=max(MIN_PAGE_SIZE, attempted.size // 2))
             continue

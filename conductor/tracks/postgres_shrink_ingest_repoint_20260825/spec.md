@@ -2,11 +2,10 @@
 type: track-spec
 title: "Postgres shrink via ingest repoint to Parquet — bridge, then cut per lane"
 description: >-
-  Restore a writer to the forward path immediately, then move each of the twelve
-  lanes from "upstream -> Postgres -> Parquet" to "upstream -> Parquet directly",
-  verifying row-level parity before deleting that lane's Postgres write path.
-  Collapse the alembic history to a greenfield baseline that matches production
-  as it actually is. Shrink Postgres only after serving no longer reads it.
+  Reconcile the completed package and baseline/rebuild slices with explicit
+  successor handoffs. Proposed scoped closure awaits combined-tree verification
+  and independent review; environmental retirement and production acceptance
+  remain with their current owners.
 tags: [feature, postgres_shrink_ingest_repoint_20260825, active]
 status: active
 timestamp: 2026-08-25
@@ -17,14 +16,54 @@ resource: ./metadata.json
 
 ## Current execution authority — September 11
 
-The [operational retrospective](../../retros/parquet_operational_checkpoints_20260911/README.md) records the completed baseline/rebuild
-slice. The September 4 successor already transferred **all P5/P6 environmental
-retirement** to [environmental retirement](../environmental_postgres_retirement_20260904/plan.md).
-The September 9 rebuild supersedes the old “no deletion”, intact-database and
-pending-shrink checkpoints below. They remain historical evidence, not current
-commands. Gapless owns direct-writer and repair schedules. Before residual
-package/removal work, reconcile current ownership and proof with those successors;
-never restart the old PostgreSQL bridge, shared drain or Railway cron plan.
+The track remains **active, pending final combined verification and independent
+closure review**. The proposed disposition is **completed implementation plus
+explicit successor handoffs**. The [residual handoff](evidence/residual-handoff-20260911.md)
+records accepted scope and evidence; the [proposed scoped retrospective](../../retros/postgres_shrink_scoped_closure_20260911/README.md)
+preserves the resulting boundary. This proposal is not a production acceptance
+verdict or permission to execute a release or data operation.
+
+The [conformity handoff](../repository_conformity_hardening_20260901/evidence/integration-correction-20260911.md#shrink-s2a-and-conformity-c2-ownership)
+confirms that `parquet_ops/`, the grouped `interface/cli/` surface and the
+`agri-service` hard cut shipped, and that no s2a implementation remains with
+shrink. Its retained non-forecast CLI sites have executor, source-product and
+history owners. The [operational retrospective](../../retros/parquet_operational_checkpoints_20260911/README.md)
+records the completed September baseline/rebuild with its dated preservation,
+catalogue-parity and readiness evidence. Neither receipt proves current database
+size, permanent producer retirement or completion of the wider conformity track.
+
+Current ownership is explicit:
+
+- [Environmental retirement](../environmental_postgres_retirement_20260904/plan.md)
+  owns **all environmental P5/P6 scope**, including source recovery, product
+  repair/admission, archive replacement, surviving reader/writer dependencies,
+  removal and per-relation preservation/parity/rollback proof, and the associated
+  production evidence and action gates. Its [product handoff](../environmental_postgres_retirement_20260904/evidence/repair-handoff-20260911.md)
+  keeps those incomplete obligations current.
+- [Gapless publication](../gapless_parquet_publication_20260901/plan.md) owns
+  s2b–s4's generic direct-writer and registration work, historical gaps, governed
+  absences, source/scheduler ownership, scheduled advances and recovery/burn-in.
+- [Reader acceptance](../parquet_reader_cutover_acceptance_20260901/plan.md) and
+  environmental retirement retain joint environmental agent/MCP selected-day,
+  spatial/temporal-neighbour, provenance and refusal acceptance. The agent repoint
+  already shipped under retirement; historical s7 is not a new rewrite queue.
+  [Production acceptance](../parquet_production_acceptance_20260901/plan.md) owns
+  the final deployed product/browser matrix and release/rollback verdict, with
+  renderer evidence from [multiscale](../multiscale_polygon_surface_20260901/plan.md).
+- [Pivot](../parquet_duckdb_pivot_20260823/spec.md) retains item G's unresolved
+  static-provisioning/coverage disposition, wider product scope, older requested
+  horizons and its own acceptance handoffs. They are not shrink deliverables.
+
+No shrink-owned implementation or production evidence-collection obligation
+remains after these accepted scope transfers. Integration still owes the exact
+combined-tree checks, independent review and coordinated registry/metadata/plan/
+runbook disposition before changing this track's status. Successor production
+gates remain open with their owners after any scoped closure.
+
+The dated checkpoints, phase requirements and partition maps below remain
+historical evidence. This section supersedes their retained claims that P5/P6
+stays here, PostgreSQL is intact, or another bridge/drain/shrink sequence must run.
+Never restart the old PostgreSQL bridge, shared drain or Railway cron plan.
 
 ## Owner directive supersession — 2026-09-02
 

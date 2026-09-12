@@ -1,0 +1,261 @@
+{
+  "type": "integration-evidence-custody",
+  "recorded_at_utc": "2026-09-11T23:13:05.290614+00:00",
+  "agent": "/root/review_gapless_intake",
+  "original_commit": "341d44b23c60512630c8a7c0ab778e1ffa008b27",
+  "integrated_gapless_commit": "b6eb3ae20fab1c670065d6bf01647faf3f96612d",
+  "source_worktree": "C:/Users/atooz/.codex/worktrees/0724/plantgeo",
+  "destination_worktree": "C:/Users/atooz/.codex/worktrees/4ccb/plantgeo",
+  "scope": "Exact referenced research evidence required to reproduce gapless intake; configuration, live secrets and caches are excluded.",
+  "summary": {
+    "referenced_validation_captures": 11,
+    "referenced_runtime_source_captures": 9,
+    "source_hashes_verified": 20,
+    "portable_artifacts": 18,
+    "copied_bytes": 16898185,
+    "configuration_captures_excluded": 1,
+    "peer_service_receipts_not_copied": 1,
+    "destination_conflicts": 0
+  },
+  "secret_screening": {
+    "result": "No live secret identified in selected portable artifacts.",
+    "method": "Inspected structured credential field names, credential-bearing URL/Bearer/JWT/private-key/access-key patterns and literal credential assignments in the three capture scripts. Credential-looking JUnit parameters were traced to existing test fixtures; no credential values are included in this manifest.",
+    "junit_fixture_prefixes": 6,
+    "junit_fixture_sources": [
+      "services/agri-data-service/tests/test_alembic_stamp_verification.py",
+      "services/agri-data-service/tests/test_config.py",
+      "services/agri-data-service/tests/test_jobs_dispatch.py",
+      "services/agri-data-service/tests/test_jobs_pulse_command.py"
+    ]
+  },
+  "entries": [
+    {
+      "path": ".omc/research/gapless-python-final-20260911.log",
+      "sha256": "cfb2a6030e469f6b3714f79ffb6c21d10182d07481cb7b816f320a4b0c4087b1",
+      "bytes": 29933,
+      "reference": "validation-20260911.json#capture_digests",
+      "source_hash_verified": true,
+      "custody_status": "copied_exact_bytes",
+      "destination_sha256": "cfb2a6030e469f6b3714f79ffb6c21d10182d07481cb7b816f320a4b0c4087b1",
+      "destination_bytes": 29933,
+      "destination_hash_verified": true
+    },
+    {
+      "path": ".omc/research/gapless-python-final-corrected-20260911.log",
+      "sha256": "4f375a94db27779d3c9dc3f6ea88a3d7d385ffa0b40093d28b11bacd3efa4f85",
+      "bytes": 362,
+      "reference": "validation-20260911.json#capture_digests",
+      "source_hash_verified": true,
+      "custody_status": "copied_exact_bytes",
+      "destination_sha256": "4f375a94db27779d3c9dc3f6ea88a3d7d385ffa0b40093d28b11bacd3efa4f85",
+      "destination_bytes": 362,
+      "destination_hash_verified": true
+    },
+    {
+      "path": ".omc/research/gapless-quality-corrected-20260911.json",
+      "sha256": "ee389146a7e4e0813a0f707f3efcbde47df7c401fdb1bca99c36c6a6c26c73da",
+      "bytes": 1037,
+      "reference": "validation-20260911.json#capture_digests",
+      "source_hash_verified": true,
+      "custody_status": "copied_exact_bytes",
+      "destination_sha256": "ee389146a7e4e0813a0f707f3efcbde47df7c401fdb1bca99c36c6a6c26c73da",
+      "destination_bytes": 1037,
+      "destination_hash_verified": true
+    },
+    {
+      "path": ".omc/research/gapless-python-reviewed-20260911.log",
+      "sha256": "238845dd2174ba6039650098d41e67823e1094c89874c2ec758978535c347144",
+      "bytes": 40897,
+      "reference": "validation-20260911.json#capture_digests",
+      "source_hash_verified": true,
+      "custody_status": "copied_exact_bytes",
+      "destination_sha256": "238845dd2174ba6039650098d41e67823e1094c89874c2ec758978535c347144",
+      "destination_bytes": 40897,
+      "destination_hash_verified": true
+    },
+    {
+      "path": ".omc/research/gapless-python-reviewed-20260911.xml",
+      "sha256": "8e2f25638d7abc3465f8d647d5f9a578f60a40f4f0e4a575d0f73c3724bda6ba",
+      "bytes": 995583,
+      "reference": "validation-20260911.json#capture_digests",
+      "source_hash_verified": true,
+      "custody_status": "copied_exact_bytes",
+      "destination_sha256": "8e2f25638d7abc3465f8d647d5f9a578f60a40f4f0e4a575d0f73c3724bda6ba",
+      "destination_bytes": 995583,
+      "destination_hash_verified": true
+    },
+    {
+      "path": ".omc/research/gapless-executor-harness-20260911.log",
+      "sha256": "233207cad9ad5fd210cae75114a85e0b55e85f45678f302769fe99c0aff598d8",
+      "bytes": 183,
+      "reference": "validation-20260911.json#capture_digests",
+      "source_hash_verified": true,
+      "custody_status": "copied_exact_bytes",
+      "destination_sha256": "233207cad9ad5fd210cae75114a85e0b55e85f45678f302769fe99c0aff598d8",
+      "destination_bytes": 183,
+      "destination_hash_verified": true
+    },
+    {
+      "path": ".omc/research/gapless-executor-harness-20260911.xml",
+      "sha256": "bb779c616f61c1e88feae6b2d9a954daef485fa8f3279197409e5fd659814c9f",
+      "bytes": 17483,
+      "reference": "validation-20260911.json#capture_digests",
+      "source_hash_verified": true,
+      "custody_status": "copied_exact_bytes",
+      "destination_sha256": "bb779c616f61c1e88feae6b2d9a954daef485fa8f3279197409e5fd659814c9f",
+      "destination_bytes": 17483,
+      "destination_hash_verified": true
+    },
+    {
+      "path": ".omc/research/gapless-data-boundary-20260911.log",
+      "sha256": "2b7932a4819edb8f395fb4c5d88a0cce7a1d2934559bf5db3f4fc8116f49e1cc",
+      "bytes": 179,
+      "reference": "validation-20260911.json#capture_digests",
+      "source_hash_verified": true,
+      "custody_status": "copied_exact_bytes",
+      "destination_sha256": "2b7932a4819edb8f395fb4c5d88a0cce7a1d2934559bf5db3f4fc8116f49e1cc",
+      "destination_bytes": 179,
+      "destination_hash_verified": true
+    },
+    {
+      "path": ".omc/research/gapless-python-final-verified-20260911.log",
+      "sha256": "713ba5cdd4690ff0bf419700ba2e74454d75cd1418a4dd95c51ee3da923db14d",
+      "bytes": 362,
+      "reference": "validation-20260911.json#capture_digests",
+      "source_hash_verified": true,
+      "custody_status": "copied_exact_bytes",
+      "destination_sha256": "713ba5cdd4690ff0bf419700ba2e74454d75cd1418a4dd95c51ee3da923db14d",
+      "destination_bytes": 362,
+      "destination_hash_verified": true
+    },
+    {
+      "path": ".omc/research/gapless-python-final-verified-20260911.xml",
+      "sha256": "4eaab3bff52acf6b38807b18c329a1c7049d9dca789074c7814e89203b3fd25c",
+      "bytes": 980226,
+      "reference": "validation-20260911.json#capture_digests",
+      "source_hash_verified": true,
+      "custody_status": "copied_exact_bytes",
+      "destination_sha256": "4eaab3bff52acf6b38807b18c329a1c7049d9dca789074c7814e89203b3fd25c",
+      "destination_bytes": 980226,
+      "destination_hash_verified": true
+    },
+    {
+      "path": "services/agri-data-service/QUALITY_RECEIPT.json",
+      "sha256": "e2e7c51c6ead7aaa28939ce98cb5c45b3456779507ef3fa77993e325cd86e9f3",
+      "bytes": 1036,
+      "reference": "validation-20260911.json#capture_digests",
+      "source_hash_verified": true,
+      "custody_status": "peer_receipt_not_copied",
+      "reason": "Peer-only receipt retained by original commit and committed validation snapshot; current service receipt is not rewritten.",
+      "immutable_git_reference": "341d44b23c60512630c8a7c0ab778e1ffa008b27:services/agri-data-service/QUALITY_RECEIPT.json"
+    },
+    {
+      "path": ".omc/research/gapless_preflight.py",
+      "sha256": "f5ecbb94f53899cd4adba20a05d2a29651cc41e45836cc5f48b29a8a801c2ad7",
+      "bytes": 8810,
+      "reference": "live-reinventory-20260911.json#source_capture_digests",
+      "source_hash_verified": true,
+      "custody_status": "copied_exact_bytes",
+      "destination_sha256": "f5ecbb94f53899cd4adba20a05d2a29651cc41e45836cc5f48b29a8a801c2ad7",
+      "destination_bytes": 8810,
+      "destination_hash_verified": true
+    },
+    {
+      "path": ".omc/research/gapless-live-preflight-20260911.json",
+      "sha256": "16de60bdc081c777d79ea42453c5071d3b75a4fc4250f8230931a373a9c8a770",
+      "bytes": 10179969,
+      "reference": "live-reinventory-20260911.json#source_capture_digests",
+      "source_hash_verified": true,
+      "custody_status": "copied_exact_bytes",
+      "destination_sha256": "16de60bdc081c777d79ea42453c5071d3b75a4fc4250f8230931a373a9c8a770",
+      "destination_bytes": 10179969,
+      "destination_hash_verified": true
+    },
+    {
+      "path": ".omc/research/gapless-railway-status-20260911.json",
+      "sha256": "52108cc6b5d98e0571ddc1d59ad64f8882e3dc33223b139e6be2d4f9ba2f281b",
+      "bytes": 8777,
+      "reference": "live-reinventory-20260911.json#source_capture_digests",
+      "source_hash_verified": true,
+      "custody_status": "copied_exact_bytes",
+      "destination_sha256": "52108cc6b5d98e0571ddc1d59ad64f8882e3dc33223b139e6be2d4f9ba2f281b",
+      "destination_bytes": 8777,
+      "destination_hash_verified": true
+    },
+    {
+      "path": ".omc/research/gapless-railway-config-20260911.json",
+      "sha256": "35e067ec0d9e4532d8d7e687717e64b2dda78452150136c120b620cdfd95b275",
+      "bytes": 3587,
+      "reference": "live-reinventory-20260911.json#source_capture_digests",
+      "source_hash_verified": true,
+      "custody_status": "excluded_configuration_capture",
+      "reason": "Configuration excluded by the integration owner; source remains in worktree 0724 with this verified hash."
+    },
+    {
+      "path": ".omc/research/gapless-railway-deployments-20260911.json",
+      "sha256": "4b1ecc32e836341647160fbe340e86e5f07cd0f5bf6d54ed37147c421544494b",
+      "bytes": 4770,
+      "reference": "live-reinventory-20260911.json#source_capture_digests",
+      "source_hash_verified": true,
+      "custody_status": "copied_exact_bytes",
+      "destination_sha256": "4b1ecc32e836341647160fbe340e86e5f07cd0f5bf6d54ed37147c421544494b",
+      "destination_bytes": 4770,
+      "destination_hash_verified": true
+    },
+    {
+      "path": ".omc/research/gapless-railway-logs-20260911.json",
+      "sha256": "51fab9e82d3f5463edfe9e96e6968194a708854793c26483ad2e1ffdadec2c90",
+      "bytes": 4415479,
+      "reference": "live-reinventory-20260911.json#source_capture_digests",
+      "source_hash_verified": true,
+      "custody_status": "copied_exact_bytes",
+      "destination_sha256": "51fab9e82d3f5463edfe9e96e6968194a708854793c26483ad2e1ffdadec2c90",
+      "destination_bytes": 4415479,
+      "destination_hash_verified": true
+    },
+    {
+      "path": ".omc/research/gapless-structured-forward-summaries-20260911.json",
+      "sha256": "16915a3f75b11d120b201fc9550ec8567528472cf64e4907e87dd3611777dca4",
+      "bytes": 205686,
+      "reference": "live-reinventory-20260911.json#source_capture_digests",
+      "source_hash_verified": true,
+      "custody_status": "copied_exact_bytes",
+      "destination_sha256": "16915a3f75b11d120b201fc9550ec8567528472cf64e4907e87dd3611777dca4",
+      "destination_bytes": 205686,
+      "destination_hash_verified": true
+    },
+    {
+      "path": ".omc/research/gapless_verify_advances.py",
+      "sha256": "84f418c76b6b15e5576b89d6f5ae65bd60db6322e62417c2e33e9db1bc52d443",
+      "bytes": 4168,
+      "reference": "live-reinventory-20260911.json#source_capture_digests",
+      "source_hash_verified": true,
+      "custody_status": "copied_exact_bytes",
+      "destination_sha256": "84f418c76b6b15e5576b89d6f5ae65bd60db6322e62417c2e33e9db1bc52d443",
+      "destination_bytes": 4168,
+      "destination_hash_verified": true
+    },
+    {
+      "path": ".omc/research/gapless_bind_advances.py",
+      "sha256": "e3f72bc3add37d659f658937f7d40d82b00ef6e86bc8da70e4b113f80d779045",
+      "bytes": 4281,
+      "reference": "live-reinventory-20260911.json#source_capture_digests",
+      "source_hash_verified": true,
+      "custody_status": "copied_exact_bytes",
+      "destination_sha256": "e3f72bc3add37d659f658937f7d40d82b00ef6e86bc8da70e4b113f80d779045",
+      "destination_bytes": 4281,
+      "destination_hash_verified": true
+    }
+  ],
+  "limits": [
+    "This is local worktree custody, not a new validation run or production acceptance.",
+    "The excluded configuration source remains at its original path in worktree 0724; its hash can be checked there. The committed runtime summary remains available in the gapless evidence directory.",
+    "The peer quality receipt certifies only its original source domain. The final combined quality receipt is pending.",
+    "The copied .omc research files are local evidence artifacts; this operation does not stage or commit them."
+  ],
+  "source_worktree_removed": false,
+  "existing_different_files_overwritten": false,
+  "tests_run": false,
+  "production_actions": false,
+  "commit_created": false
+}

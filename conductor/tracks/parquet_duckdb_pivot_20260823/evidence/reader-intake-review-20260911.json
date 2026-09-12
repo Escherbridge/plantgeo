@@ -1,0 +1,123 @@
+{
+  "type": "integration-intake-review",
+  "reviewed_on": "2026-09-11",
+  "reviewer": {
+    "agent": "/root/review_gapless_intake",
+    "assigned_role": "independent reader integration intake reviewer",
+    "integration_task_id": "01a0919f-40dd-7ae2-a5a3-cd8cf7e13489",
+    "implementation_authorship": false
+  },
+  "verdict": "approved_local_integration_slice",
+  "blocking_findings": [],
+  "production_release_approved": false,
+  "track_closure_approved": false,
+  "revisions": {
+    "original_branch": "codex/reader-cutover-acceptance-20260911",
+    "original_base": "fa202230958fb55521963e886eb031be5fc266c4",
+    "original_commits_in_order": [
+      "d56b508fb3afe8adb85969ce1553cd739daf779f",
+      "d7ded2a923b4e2796e90906667aca9deb64541a1"
+    ],
+    "integrated_commits_in_order": [
+      "4e9a731eef836664cbdf9e0e0db96adfa265057f",
+      "0f31262345c355532bc5a166af0dbaaf909636c6"
+    ],
+    "verified_original_code_tree": "e5625b0b683c299f1e9e03d5122529486171038d"
+  },
+  "review_scope": {
+    "original_range_commits_reviewed": 2,
+    "source_and_test_manifest_files_reviewed": 33,
+    "all_peer_changed_files_byte_compared": 62,
+    "integrated_file_mismatches": [],
+    "tests_or_production_probes_run_by_reviewer": false,
+    "reviewer_changes": "This receipt only; no implementation edits or commit."
+  },
+  "behavior_review": [
+    "Explicit selected dates, including UTC today, use exact-day gauge and weather reads; omitted dates retain the existing bounded freshness policy.",
+    "Day/window envelopes bind requested and served days exactly; release reads alone permit an earlier served day. Publisher-day identity is retained instead of deriving the day from observation timestamps. The existing shape-only wire date contract is not broadened by this review.",
+    "Climate/soil collections preserve published-empty status, served day and truncation separately from governed absence and unwritten states.",
+    "Direct terminal absence evidence takes precedence over cached capability coverage. Empty truncated fire reads remain unknown and cannot support measured-zero claims.",
+    "Regional row reads receive request cancellation; aborts reject rather than yielding successful partial context. Shared capability warming retains its separate cancellation policy.",
+    "Slider captions distinguish availability, census and unstated evidence; carried answerable dates remain distinct from source publication ceilings. An unpublished index does not imply an active build.",
+    "Regional temporal neighbours inspect at most 180 days per side in existing availability metadata, then read at most one candidate on each side for each of three daily families. Returned observations retain their own day and signed/absolute temporal and geodesic spatial distances.",
+    "Neighbour reads reject inconsistent aliases, unproved bounds, wrong day/rung/viewport/identity and incomplete results. Empty candidates do not trigger hidden scans for another local day.",
+    "Python feature tools refuse unsupported release/static/cumulative/rolling populations before storage access. Daily feature answers and exact-partition coverage no longer claim broader map parity.",
+    "Regression changes exercise terminal/day binding, cancellation, bounded neighbours and explicit unsupported populations. The concurrency test uses a waiter barrier; the weighted-mean oracle limits tolerance to eight ULPs and retains negative controls and exact counts/extrema."
+  ],
+  "documentation_resolution": {
+    "verdict": "pass",
+    "metadata_existing_keys_preserved_exactly": true,
+    "metadata_only_added_key": "reader_acceptance_20260911",
+    "plan_matches_reviewed_peer_blob": true,
+    "finding": "The baseline checkpoint is retained. Peer plan changes add the current handoff and evidence-backed local completion entries while preserving historical checkpoints and outstanding production gates. The integration resolution changes no reviewed peer file.",
+    "scope_boundary": "Reader-owned services, tRPC, selected-day tools and slider presentation; no generic publication, product repair, map-renderer implementation or botanical work was added."
+  },
+  "evidence_integrity": {
+    "validation_manifest_path": "conductor/tracks/parquet_reader_cutover_acceptance_20260901/evidence/reader-validation-20260911.json",
+    "validation_manifest_sha256": "572805e3f5ff09be9fc00405d1a137a7ce75cae62d6996e5b8433f14f7eb7c5a",
+    "source_git_blob_ids_verified": 33,
+    "source_raw_sha256_values_verified": 33,
+    "source_lf_sha256_values_verified": 33,
+    "source_integrated_bytes_verified": 33,
+    "prior_review_path": "conductor/tracks/parquet_reader_cutover_acceptance_20260901/evidence/independent-reader-review-20260911.md",
+    "prior_review_sha256": "540c15fe018c04bccfb6e006a0207593230fcf8eaf26eeceaf7f5d0b9664ae66",
+    "prior_review_runtime_hashes_verified": 14,
+    "compressed_log_archives_verified": 15,
+    "decompressed_log_hashes_and_lengths_verified": 15,
+    "log_archives_unchanged_on_integration": 15,
+    "content_addressed_response_archives_verified": 2,
+    "response_archive_check": "Both decompress to the SHA-256 encoded in their filenames and remain byte-identical on integration.",
+    "source_and_log_manifest_mismatches": [],
+    "original_range_diff_check": "pass",
+    "closure_log_hashes": [
+      {
+        "name": "boundary-closure-20260911.out",
+        "raw_sha256": "29411c4cb6c8759fccfc523128d4932045b54b6714aa05276869485858d49d69",
+        "archive_sha256": "2e15165fbe15a366f5a29ddab1c70a5ef9b7572efdb5de48986b9925a72450e6"
+      },
+      {
+        "name": "frontend-closure-20260911.out",
+        "raw_sha256": "6dbf4b96884e1bfedb729aa04401e199a0114098f7a7de6ec222fe650f151ba4",
+        "archive_sha256": "701ee091677430f749df327c9a21a7c0c26a5074625ef64d0154ca1e649e2499"
+      },
+      {
+        "name": "lint-closure-20260911.out",
+        "raw_sha256": "cc1db0252ba576a5586a08b02be5a48c87b7f0900713d52a48fd345766ec94b0",
+        "archive_sha256": "0c22e9c652fbf5b645cbac2fe168f2d4998c9edc0c68306451ccac22f547d8dd"
+      },
+      {
+        "name": "python-closure-20260911.out",
+        "raw_sha256": "7f0405328064854b579aac5b79cb6a13f71391d0c5ea2896dbb3536db7435bae",
+        "archive_sha256": "59ffd9fb763a1a024f43f9f559dac4a7418a5a824cdc673dbc228fd40b1a3e4d"
+      },
+      {
+        "name": "typecheck-closure-20260911.out",
+        "raw_sha256": "4ce128ddb484fe970e5c9944c293f8c99055eb1e8af3fbcbe0132532b2a6d1e1",
+        "archive_sha256": "913831cac2d2c987d2ef7cb3356d4681de095a5b14f54ff68765d54279def203"
+      }
+    ]
+  },
+  "retained_validation_results": {
+    "boundary": "pass",
+    "typecheck": "pass",
+    "lint": { "errors": 0, "warnings": 542 },
+    "frontend_selector_mode": "full fallback",
+    "frontend": { "files_passed": 145, "files_skipped": 2, "tests_passed": 2226, "tests_skipped": 13 },
+    "python_selector_mode": "full fallback",
+    "python_checks": { "format": "pass", "lint": "pass", "mypy": "pass", "pytest": "pass" },
+    "python_successful_test_count": null,
+    "python_count_limit": "The successful closure checker log retains no exact pytest count; earlier failing-run counts are not reused.",
+    "python_receipt_eligible": false,
+    "database_integration_claimed": false,
+    "earlier_failed_logs_preserved": true
+  },
+  "remaining_limits": [
+    "The production observations describe baseline fa202230958fb55521963e886eb031be5fc266c4, not the candidate; first/repeated HTTP requests do not prove cold/warm caches, private GET/LIST counts or request-to-paint.",
+    "Static lookup census and transitional missing-bootstrap behavior preclude whole-catalogue zero-LIST acceptance without further migration or explicit disposition.",
+    "Browser selected-versus-painted day, pan/scrub/rung transitions, downstream cancellation and omitted product/variant/rung/historical-positive cases remain production matrix gates.",
+    "Daily neighbours sample the nearest globally published candidate in described bounds, not the nearest local observation over all history. Three concurrent source jobs can each add two existing bounded row reads; production latency was not measured here.",
+    "Python release/static/MTBS/vegetation feature semantics and value-bearing temporal neighbours remain unimplemented. Existing signal admission remains bounded to the newest 120 partitions.",
+    "MTBS conservation/detail refusals, watershed intermittency, publication freshness and pixel conservation retain their owning acceptance gates.",
+    "No full-service Python quality receipt or final combined-tree quality verdict follows from this intake. The final integration sweep and independent combined-tree review remain required."
+  ]
+}

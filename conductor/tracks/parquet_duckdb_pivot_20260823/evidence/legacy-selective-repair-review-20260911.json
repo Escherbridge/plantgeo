@@ -1,0 +1,1286 @@
+{
+  "schema_version": 1,
+  "type": "independent-selective-repair-review",
+  "reviewer": "/root/legacy_repair_review",
+  "captured_at_utc": "2026-09-12T00:54:24.541903+00:00",
+  "verdict": "BOUNDED_PASS_static_source_reconciliation_and_weather_regression",
+  "findings": [],
+  "comparison": {
+    "candidate_base": "cc64e6e3e1de8dda164beeee0e7e22aa30088b76",
+    "legacy_commit": "3a5f3902e6f56b0878eab1d72b34789f6653058f",
+    "basis": "Static independent review of the exact working-tree files pinned below, before the root final integrated verification sweep."
+  },
+  "review_narrative": {
+    "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/legacy-selective-repair-review-20260911.md",
+    "bytes": 8699,
+    "raw_sha256": "7b5890e93413b082798d0e5b5723fae9b6ef68c3a9e184b5ffbd254d49ccff46",
+    "lf_sha256": "7b5890e93413b082798d0e5b5723fae9b6ef68c3a9e184b5ffbd254d49ccff46"
+  },
+  "initial_author_correspondence": {
+    "path": ".omc/research/legacy-selective-repair-20260911/author-resolution.json",
+    "sha256": "5cfe186e96b198dc27f125b752eb6d7adf055fd911742e0989cc5155632e7c39",
+    "file_count": 41,
+    "raw_bytes": 1325640,
+    "exact_legacy_tip_files": 28,
+    "selective_composition_files": 13,
+    "working_tree_and_three_immutable_hashes_match": true,
+    "independent_pin_details": [
+      {
+        "path": "services/agri-data-service/src/agri_data_service/ingest/AGENTS.md",
+        "classification": "exact_legacy_tip_blob",
+        "raw_bytes": 167520,
+        "raw_sha256": "de66d1e8a391fae6bc584dd9b5b5dc991b98acf5da9c219bd8d9c0a9c08b0b38",
+        "lf_sha256": "de66d1e8a391fae6bc584dd9b5b5dc991b98acf5da9c219bd8d9c0a9c08b0b38",
+        "working_tree_pin_matches": true,
+        "candidate_base_sha256": "e7e41f89214eda42331c5d9d76b52cfd682787276c53e8c3141d7e9dbc0f85f7",
+        "candidate_base_sha256_matches": true,
+        "legacy_tip_sha256": "de66d1e8a391fae6bc584dd9b5b5dc991b98acf5da9c219bd8d9c0a9c08b0b38",
+        "legacy_tip_sha256_matches": true,
+        "legacy_parent_sha256": "e7e41f89214eda42331c5d9d76b52cfd682787276c53e8c3141d7e9dbc0f85f7",
+        "legacy_parent_sha256_matches": true
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/ingest/http.py",
+        "classification": "exact_legacy_tip_blob",
+        "raw_bytes": 12807,
+        "raw_sha256": "5918d946e64498e1f425642bfb1f88e9253a5098b48d14e920d6de34c3a6e091",
+        "lf_sha256": "5918d946e64498e1f425642bfb1f88e9253a5098b48d14e920d6de34c3a6e091",
+        "working_tree_pin_matches": true,
+        "candidate_base_sha256": "d954554f4d5e9f733b0fd85242ecedd61a3cfa9ffabf45f2fca733bf5d413ed5",
+        "candidate_base_sha256_matches": true,
+        "legacy_tip_sha256": "5918d946e64498e1f425642bfb1f88e9253a5098b48d14e920d6de34c3a6e091",
+        "legacy_tip_sha256_matches": true,
+        "legacy_parent_sha256": "d954554f4d5e9f733b0fd85242ecedd61a3cfa9ffabf45f2fca733bf5d413ed5",
+        "legacy_parent_sha256_matches": true
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/ingest/mtbs.py",
+        "classification": "exact_legacy_tip_blob",
+        "raw_bytes": 60463,
+        "raw_sha256": "c7de226e005014a68230f6c0ea065f1823efb7414182ba56f800df5eafa0cbd3",
+        "lf_sha256": "c7de226e005014a68230f6c0ea065f1823efb7414182ba56f800df5eafa0cbd3",
+        "working_tree_pin_matches": true,
+        "candidate_base_sha256": "17eb28462f776acf58dd2afe44937859ffec18d620a85ba7e85eb20b0650bcd6",
+        "candidate_base_sha256_matches": true,
+        "legacy_tip_sha256": "c7de226e005014a68230f6c0ea065f1823efb7414182ba56f800df5eafa0cbd3",
+        "legacy_tip_sha256_matches": true,
+        "legacy_parent_sha256": "17eb28462f776acf58dd2afe44937859ffec18d620a85ba7e85eb20b0650bcd6",
+        "legacy_parent_sha256_matches": true
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/AGENTS.md",
+        "classification": "exact_legacy_tip_blob",
+        "raw_bytes": 114252,
+        "raw_sha256": "c45df06b81b38926151995a9b66c5cff4f1ea786b792d09ea9dabec042d41e63",
+        "lf_sha256": "c45df06b81b38926151995a9b66c5cff4f1ea786b792d09ea9dabec042d41e63",
+        "working_tree_pin_matches": true,
+        "candidate_base_sha256": "4c235de6e9cf70ab072d874b23686e548ab277cece174ac3279635312f886a9b",
+        "candidate_base_sha256_matches": true,
+        "legacy_tip_sha256": "c45df06b81b38926151995a9b66c5cff4f1ea786b792d09ea9dabec042d41e63",
+        "legacy_tip_sha256_matches": true,
+        "legacy_parent_sha256": "4c235de6e9cf70ab072d874b23686e548ab277cece174ac3279635312f886a9b",
+        "legacy_parent_sha256_matches": true
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/__init__.py",
+        "classification": "exact_legacy_tip_blob",
+        "raw_bytes": 22378,
+        "raw_sha256": "7d5c8a18e320b12ca797824b5edcf32672830bd0a48f9b8553e4f5287cd59532",
+        "lf_sha256": "7d5c8a18e320b12ca797824b5edcf32672830bd0a48f9b8553e4f5287cd59532",
+        "working_tree_pin_matches": true,
+        "candidate_base_sha256": "494d9647a455492939cbd7ad4733ca5a4a06c0edd0942121f71122b0f56b97ee",
+        "candidate_base_sha256_matches": true,
+        "legacy_tip_sha256": "7d5c8a18e320b12ca797824b5edcf32672830bd0a48f9b8553e4f5287cd59532",
+        "legacy_tip_sha256_matches": true,
+        "legacy_parent_sha256": "494d9647a455492939cbd7ad4733ca5a4a06c0edd0942121f71122b0f56b97ee",
+        "legacy_parent_sha256_matches": true
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/burn_severity/adapter.py",
+        "classification": "exact_legacy_tip_blob",
+        "raw_bytes": 8404,
+        "raw_sha256": "174393df738576e785a63bcf095ac34d532b02721d12bb0594a8dc335649819a",
+        "lf_sha256": "174393df738576e785a63bcf095ac34d532b02721d12bb0594a8dc335649819a",
+        "working_tree_pin_matches": true,
+        "candidate_base_sha256": "b525884e18e23f5fa9acc81ff26987e64b0ce533e4d4e9a95aadeb9ad4609d44",
+        "candidate_base_sha256_matches": true,
+        "legacy_tip_sha256": "174393df738576e785a63bcf095ac34d532b02721d12bb0594a8dc335649819a",
+        "legacy_tip_sha256_matches": true,
+        "legacy_parent_sha256": "b525884e18e23f5fa9acc81ff26987e64b0ce533e4d4e9a95aadeb9ad4609d44",
+        "legacy_parent_sha256_matches": true
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/burn_severity/capture.py",
+        "classification": "selective_composition",
+        "raw_bytes": 20254,
+        "raw_sha256": "aad6d7158e8ba63f80cffc4618253f1eab5dc840db2fd1121d77f9a892997b06",
+        "lf_sha256": "aad6d7158e8ba63f80cffc4618253f1eab5dc840db2fd1121d77f9a892997b06",
+        "working_tree_pin_matches": true,
+        "candidate_base_sha256": "01d976ba062aa616df0c4a6888c4ec68e255bbf7d8d95d02e853ed3289125ab3",
+        "candidate_base_sha256_matches": true,
+        "legacy_tip_sha256": "35b0239ae4ff1159e4b1d9987e8c7de7e7a9a98296a563b0d3f5bf352c77ac9d",
+        "legacy_tip_sha256_matches": true,
+        "legacy_parent_sha256": "a7d832c4ec993db9040a4319fdee91605c483a1609b71b1eb12b3d34dc66ad34",
+        "legacy_parent_sha256_matches": true
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/burn_severity/forward.py",
+        "classification": "exact_legacy_tip_blob",
+        "raw_bytes": 32697,
+        "raw_sha256": "c0a80a989867b5450707eae4b6becb688383f61f677f6cbd3fcb35f4dde8a636",
+        "lf_sha256": "c0a80a989867b5450707eae4b6becb688383f61f677f6cbd3fcb35f4dde8a636",
+        "working_tree_pin_matches": true,
+        "candidate_base_sha256": "4e25fb776d9b235ec142c73abf9b199b87618985bcc9f96116e9f94ac6d9a855",
+        "candidate_base_sha256_matches": true,
+        "legacy_tip_sha256": "c0a80a989867b5450707eae4b6becb688383f61f677f6cbd3fcb35f4dde8a636",
+        "legacy_tip_sha256_matches": true,
+        "legacy_parent_sha256": "4e25fb776d9b235ec142c73abf9b199b87618985bcc9f96116e9f94ac6d9a855",
+        "legacy_parent_sha256_matches": true
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/burn_severity/source.py",
+        "classification": "exact_legacy_tip_blob",
+        "raw_bytes": 6685,
+        "raw_sha256": "d5dc378191bbb024c1b8f9bef738273a8e5cf29bfb0dfd2ad1a9adf0cf1572d3",
+        "lf_sha256": "d5dc378191bbb024c1b8f9bef738273a8e5cf29bfb0dfd2ad1a9adf0cf1572d3",
+        "working_tree_pin_matches": true,
+        "candidate_base_sha256": "eb09bf45a0c7fb9e1a4cf1ad792941c518c69d7b1fd1cd3db87879ad8f94c0b9",
+        "candidate_base_sha256_matches": true,
+        "legacy_tip_sha256": "d5dc378191bbb024c1b8f9bef738273a8e5cf29bfb0dfd2ad1a9adf0cf1572d3",
+        "legacy_tip_sha256_matches": true,
+        "legacy_parent_sha256": "eb09bf45a0c7fb9e1a4cf1ad792941c518c69d7b1fd1cd3db87879ad8f94c0b9",
+        "legacy_parent_sha256_matches": true
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/climate/AGENTS.md",
+        "classification": "exact_legacy_tip_blob",
+        "raw_bytes": 4225,
+        "raw_sha256": "66e511e29b5959056e3376b79e1dd0072438a18721b4906ba95e101a511fde2c",
+        "lf_sha256": "66e511e29b5959056e3376b79e1dd0072438a18721b4906ba95e101a511fde2c",
+        "working_tree_pin_matches": true,
+        "candidate_base_sha256": "4ed76415c9bc4236011e32bce0f00544ea4ea08c935f82dc192540a890ace68a",
+        "candidate_base_sha256_matches": true,
+        "legacy_tip_sha256": "66e511e29b5959056e3376b79e1dd0072438a18721b4906ba95e101a511fde2c",
+        "legacy_tip_sha256_matches": true,
+        "legacy_parent_sha256": "4ed76415c9bc4236011e32bce0f00544ea4ea08c935f82dc192540a890ace68a",
+        "legacy_parent_sha256_matches": true
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/climate/adapter.py",
+        "classification": "exact_legacy_tip_blob",
+        "raw_bytes": 9652,
+        "raw_sha256": "b62a9e04800b621eea2721a5334f756bb4a2fc50bc84da0f02b955b9ece926c0",
+        "lf_sha256": "b62a9e04800b621eea2721a5334f756bb4a2fc50bc84da0f02b955b9ece926c0",
+        "working_tree_pin_matches": true,
+        "candidate_base_sha256": "42c6e6e7c2866baa592c3ff7804412d9a3c1ddc0426222d53b353adaaa9bd1bc",
+        "candidate_base_sha256_matches": true,
+        "legacy_tip_sha256": "b62a9e04800b621eea2721a5334f756bb4a2fc50bc84da0f02b955b9ece926c0",
+        "legacy_tip_sha256_matches": true,
+        "legacy_parent_sha256": "42c6e6e7c2866baa592c3ff7804412d9a3c1ddc0426222d53b353adaaa9bd1bc",
+        "legacy_parent_sha256_matches": true
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/climate/cooldown.py",
+        "classification": "exact_legacy_tip_blob",
+        "raw_bytes": 4164,
+        "raw_sha256": "028b07830b42e6eabb899808d03f4004f1a0d1c1381fab91b06d31e351f451b7",
+        "lf_sha256": "028b07830b42e6eabb899808d03f4004f1a0d1c1381fab91b06d31e351f451b7",
+        "working_tree_pin_matches": true,
+        "candidate_base_sha256": null,
+        "candidate_base_sha256_matches": true,
+        "legacy_tip_sha256": "028b07830b42e6eabb899808d03f4004f1a0d1c1381fab91b06d31e351f451b7",
+        "legacy_tip_sha256_matches": true,
+        "legacy_parent_sha256": null,
+        "legacy_parent_sha256_matches": true
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/climate/forward.py",
+        "classification": "exact_legacy_tip_blob",
+        "raw_bytes": 39396,
+        "raw_sha256": "40393c8d8fef6b0a7d06cb40415b117e0a10a19fad36ca4a1a08cc4c8e10ba10",
+        "lf_sha256": "40393c8d8fef6b0a7d06cb40415b117e0a10a19fad36ca4a1a08cc4c8e10ba10",
+        "working_tree_pin_matches": true,
+        "candidate_base_sha256": "6989f7820562527f82fb9c280ca0bc343dd88cb26e65843082905a11916f28cf",
+        "candidate_base_sha256_matches": true,
+        "legacy_tip_sha256": "40393c8d8fef6b0a7d06cb40415b117e0a10a19fad36ca4a1a08cc4c8e10ba10",
+        "legacy_tip_sha256_matches": true,
+        "legacy_parent_sha256": "6989f7820562527f82fb9c280ca0bc343dd88cb26e65843082905a11916f28cf",
+        "legacy_parent_sha256_matches": true
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/climate/source.py",
+        "classification": "exact_legacy_tip_blob",
+        "raw_bytes": 30901,
+        "raw_sha256": "5bba0822caa15fbb9a192a24fc6db6add3120795b0253074c2e124d184f0a0db",
+        "lf_sha256": "5bba0822caa15fbb9a192a24fc6db6add3120795b0253074c2e124d184f0a0db",
+        "working_tree_pin_matches": true,
+        "candidate_base_sha256": "28a3d921cb010f13046debcfdbe76f8c2b95c32142e79120f2c1219193612075",
+        "candidate_base_sha256_matches": true,
+        "legacy_tip_sha256": "5bba0822caa15fbb9a192a24fc6db6add3120795b0253074c2e124d184f0a0db",
+        "legacy_tip_sha256_matches": true,
+        "legacy_parent_sha256": "28a3d921cb010f13046debcfdbe76f8c2b95c32142e79120f2c1219193612075",
+        "legacy_parent_sha256_matches": true
+      },
+      {
+        "path": "services/agri-data-service/tests/direct/climate/test_adapter.py",
+        "classification": "exact_legacy_tip_blob",
+        "raw_bytes": 20457,
+        "raw_sha256": "bb54b9a0c8ea61772e5b116fac458a90b91a9c99274cae701b27f58e63878f50",
+        "lf_sha256": "bb54b9a0c8ea61772e5b116fac458a90b91a9c99274cae701b27f58e63878f50",
+        "working_tree_pin_matches": true,
+        "candidate_base_sha256": "ea840852e1217b03553381a7fbefc96fb9874def5c0badf85b6ccfca5edaaeb5",
+        "candidate_base_sha256_matches": true,
+        "legacy_tip_sha256": "bb54b9a0c8ea61772e5b116fac458a90b91a9c99274cae701b27f58e63878f50",
+        "legacy_tip_sha256_matches": true,
+        "legacy_parent_sha256": "ea840852e1217b03553381a7fbefc96fb9874def5c0badf85b6ccfca5edaaeb5",
+        "legacy_parent_sha256_matches": true
+      },
+      {
+        "path": "services/agri-data-service/tests/direct/climate/test_forward_command.py",
+        "classification": "exact_legacy_tip_blob",
+        "raw_bytes": 27787,
+        "raw_sha256": "433e9b870b4680d77eae6dce04e29f6302185b844affaf2ab83979f785f0d32c",
+        "lf_sha256": "433e9b870b4680d77eae6dce04e29f6302185b844affaf2ab83979f785f0d32c",
+        "working_tree_pin_matches": true,
+        "candidate_base_sha256": "e3b89ec1f750579dba75297b716c8c4633b6f5c109f9174f6cb2bc72e813cad1",
+        "candidate_base_sha256_matches": true,
+        "legacy_tip_sha256": "433e9b870b4680d77eae6dce04e29f6302185b844affaf2ab83979f785f0d32c",
+        "legacy_tip_sha256_matches": true,
+        "legacy_parent_sha256": "e3b89ec1f750579dba75297b716c8c4633b6f5c109f9174f6cb2bc72e813cad1",
+        "legacy_parent_sha256_matches": true
+      },
+      {
+        "path": "services/agri-data-service/tests/direct/climate/test_provider_backpressure.py",
+        "classification": "exact_legacy_tip_blob",
+        "raw_bytes": 15787,
+        "raw_sha256": "481a0f8d44354de8db02a9d817ad123a3f2c05ae1f18c1939360bae004659743",
+        "lf_sha256": "481a0f8d44354de8db02a9d817ad123a3f2c05ae1f18c1939360bae004659743",
+        "working_tree_pin_matches": true,
+        "candidate_base_sha256": null,
+        "candidate_base_sha256_matches": true,
+        "legacy_tip_sha256": "481a0f8d44354de8db02a9d817ad123a3f2c05ae1f18c1939360bae004659743",
+        "legacy_tip_sha256_matches": true,
+        "legacy_parent_sha256": null,
+        "legacy_parent_sha256_matches": true
+      },
+      {
+        "path": "services/agri-data-service/tests/direct/climate/test_source.py",
+        "classification": "exact_legacy_tip_blob",
+        "raw_bytes": 20287,
+        "raw_sha256": "311ebf5e79b30c2ed110f3204e9750cf2306a85791c64e6b2ae8cd95e3a93295",
+        "lf_sha256": "311ebf5e79b30c2ed110f3204e9750cf2306a85791c64e6b2ae8cd95e3a93295",
+        "working_tree_pin_matches": true,
+        "candidate_base_sha256": "6862675d49ae375c0c6bff01b0d11fdf383fbf1e63363cf9a6ddb2ca2b3edf34",
+        "candidate_base_sha256_matches": true,
+        "legacy_tip_sha256": "311ebf5e79b30c2ed110f3204e9750cf2306a85791c64e6b2ae8cd95e3a93295",
+        "legacy_tip_sha256_matches": true,
+        "legacy_parent_sha256": "6862675d49ae375c0c6bff01b0d11fdf383fbf1e63363cf9a6ddb2ca2b3edf34",
+        "legacy_parent_sha256_matches": true
+      },
+      {
+        "path": "services/agri-data-service/tests/direct/test_mtbs_provider_refusals.py",
+        "classification": "exact_legacy_tip_blob",
+        "raw_bytes": 7639,
+        "raw_sha256": "1c7d4df642975b3d76c56fdd803c4c7bef961f7f6bbdc53f3550502cb6c8ddfd",
+        "lf_sha256": "1c7d4df642975b3d76c56fdd803c4c7bef961f7f6bbdc53f3550502cb6c8ddfd",
+        "working_tree_pin_matches": true,
+        "candidate_base_sha256": null,
+        "candidate_base_sha256_matches": true,
+        "legacy_tip_sha256": "1c7d4df642975b3d76c56fdd803c4c7bef961f7f6bbdc53f3550502cb6c8ddfd",
+        "legacy_tip_sha256_matches": true,
+        "legacy_parent_sha256": null,
+        "legacy_parent_sha256_matches": true
+      },
+      {
+        "path": "services/agri-data-service/tests/test_ingest_http.py",
+        "classification": "exact_legacy_tip_blob",
+        "raw_bytes": 15075,
+        "raw_sha256": "f53a5bd6143f4f7cb82904f1d0a48fc043b0c991064fa6de0a1cb692110ab27e",
+        "lf_sha256": "f53a5bd6143f4f7cb82904f1d0a48fc043b0c991064fa6de0a1cb692110ab27e",
+        "working_tree_pin_matches": true,
+        "candidate_base_sha256": "1ffb5da4bc42eab6e245e272cf1d4c5d4b97211c3a9df3228f4ba3893eb118cf",
+        "candidate_base_sha256_matches": true,
+        "legacy_tip_sha256": "f53a5bd6143f4f7cb82904f1d0a48fc043b0c991064fa6de0a1cb692110ab27e",
+        "legacy_tip_sha256_matches": true,
+        "legacy_parent_sha256": "1ffb5da4bc42eab6e245e272cf1d4c5d4b97211c3a9df3228f4ba3893eb118cf",
+        "legacy_parent_sha256_matches": true
+      },
+      {
+        "path": "src/__tests__/components/ClimateDetails.test.tsx",
+        "classification": "exact_legacy_tip_blob",
+        "raw_bytes": 14040,
+        "raw_sha256": "522fa4dc908a489f14de1118495c97226d6b72a08b7ff495e7a91dc0b72f3a85",
+        "lf_sha256": "522fa4dc908a489f14de1118495c97226d6b72a08b7ff495e7a91dc0b72f3a85",
+        "working_tree_pin_matches": true,
+        "candidate_base_sha256": "2bafd24867c5585366302ef354c8b43e25e4c87117dc7fc89a891fe1cd7ff17e",
+        "candidate_base_sha256_matches": true,
+        "legacy_tip_sha256": "522fa4dc908a489f14de1118495c97226d6b72a08b7ff495e7a91dc0b72f3a85",
+        "legacy_tip_sha256_matches": true,
+        "legacy_parent_sha256": "2bafd24867c5585366302ef354c8b43e25e4c87117dc7fc89a891fe1cd7ff17e",
+        "legacy_parent_sha256_matches": true
+      },
+      {
+        "path": "src/__tests__/components/ClimateFieldLayers.test.tsx",
+        "classification": "selective_composition",
+        "raw_bytes": 27332,
+        "raw_sha256": "4f59051b8ce017a55b8aa55f1328512e2a0a4112636248299206d7abd7dd3a0c",
+        "lf_sha256": "4f59051b8ce017a55b8aa55f1328512e2a0a4112636248299206d7abd7dd3a0c",
+        "working_tree_pin_matches": true,
+        "candidate_base_sha256": "cd4fa08944ff8076f21be26319a123c0de98adca9d1918464192ed4643035169",
+        "candidate_base_sha256_matches": true,
+        "legacy_tip_sha256": "739c71ac9ff409b5a8b615cde3a6bda8b4b020ecc5496088520b074bbacf9298",
+        "legacy_tip_sha256_matches": true,
+        "legacy_parent_sha256": "d5d4a6e4ccfd6c9d33e8cb9cd0dd10c7db18097806315095c6d8c2477e9cd7d4",
+        "legacy_parent_sha256_matches": true
+      },
+      {
+        "path": "src/__tests__/components/LayerRow.test.tsx",
+        "classification": "exact_legacy_tip_blob",
+        "raw_bytes": 36249,
+        "raw_sha256": "58d65bc16cd21890a7f11f404a6c28c853a3b30aad5138dbc2bcd37db817c486",
+        "lf_sha256": "58d65bc16cd21890a7f11f404a6c28c853a3b30aad5138dbc2bcd37db817c486",
+        "working_tree_pin_matches": true,
+        "candidate_base_sha256": "1ea2cae09fdce0c9d642cd16bda56ccdedd8f6eed86fe4a4d12dde52c7a7f927",
+        "candidate_base_sha256_matches": true,
+        "legacy_tip_sha256": "58d65bc16cd21890a7f11f404a6c28c853a3b30aad5138dbc2bcd37db817c486",
+        "legacy_tip_sha256_matches": true,
+        "legacy_parent_sha256": "1ea2cae09fdce0c9d642cd16bda56ccdedd8f6eed86fe4a4d12dde52c7a7f927",
+        "legacy_parent_sha256_matches": true
+      },
+      {
+        "path": "src/__tests__/lib/map/hover-fields.test.ts",
+        "classification": "selective_composition",
+        "raw_bytes": 35730,
+        "raw_sha256": "bc2190431cc13d622a625a0bd75af87b44a0e1878a34ed7dc31dcdb00c9a13c7",
+        "lf_sha256": "bc2190431cc13d622a625a0bd75af87b44a0e1878a34ed7dc31dcdb00c9a13c7",
+        "working_tree_pin_matches": true,
+        "candidate_base_sha256": "29bcb1791395af67dd526d3cbc92f8c7d4deed2f12fd2acf596e6051c009cd13",
+        "candidate_base_sha256_matches": true,
+        "legacy_tip_sha256": "e1d1ef5db86fa263b3acdb4e648a8009f7930a8f6f75c00dbdf60d941daba937",
+        "legacy_tip_sha256_matches": true,
+        "legacy_parent_sha256": "29bcb1791395af67dd526d3cbc92f8c7d4deed2f12fd2acf596e6051c009cd13",
+        "legacy_parent_sha256_matches": true
+      },
+      {
+        "path": "src/__tests__/services/parquet-climate-field.test.ts",
+        "classification": "selective_composition",
+        "raw_bytes": 20303,
+        "raw_sha256": "6ce44bdbf85815db6f4e22d6885a833453ab7b31b6f0f4029953f0dac8623b8c",
+        "lf_sha256": "6ce44bdbf85815db6f4e22d6885a833453ab7b31b6f0f4029953f0dac8623b8c",
+        "working_tree_pin_matches": true,
+        "candidate_base_sha256": "1662f558b7b6a16a44ed59675e9e478c011756371a60e06ae8087f0df12c5262",
+        "candidate_base_sha256_matches": true,
+        "legacy_tip_sha256": "1189ac3e50d8d29fcbac782c3479b5b04e19e59f52dfe70c34712523f190f772",
+        "legacy_tip_sha256_matches": true,
+        "legacy_parent_sha256": "d2607df44c6da0c480108e27678195e61ac0348a5a6cb027012fd6de488eef5e",
+        "legacy_parent_sha256_matches": true
+      },
+      {
+        "path": "src/__tests__/services/parquet-trpc-readers.test.ts",
+        "classification": "selective_composition",
+        "raw_bytes": 91098,
+        "raw_sha256": "2be917ca412a0465c72ffcd7b071957c5de1c31a6973bebf99c5ac8d5e56228c",
+        "lf_sha256": "2be917ca412a0465c72ffcd7b071957c5de1c31a6973bebf99c5ac8d5e56228c",
+        "working_tree_pin_matches": true,
+        "candidate_base_sha256": "24499b4a42e291ee77847f07383f597c9cf262b64e30b8a30674d63591e8ff20",
+        "candidate_base_sha256_matches": true,
+        "legacy_tip_sha256": "1f4b7d2b3b6c51c82ddb6f4d1ede7e4cb1a90570bc2f9d562b7fffd946bb1a50",
+        "legacy_tip_sha256_matches": true,
+        "legacy_parent_sha256": "8c301477ff11fe7d37eade3d913f3e575081d5c1266588bd94fa256f240f3fa1",
+        "legacy_parent_sha256_matches": true
+      },
+      {
+        "path": "src/components/map/AGENTS.md",
+        "classification": "selective_composition",
+        "raw_bytes": 121844,
+        "raw_sha256": "82c4b5a95b6661dfbf9fdf0ea39a93ad2514ba1cb8d5964a73d0eb446dfd36c5",
+        "lf_sha256": "82c4b5a95b6661dfbf9fdf0ea39a93ad2514ba1cb8d5964a73d0eb446dfd36c5",
+        "working_tree_pin_matches": true,
+        "candidate_base_sha256": "63c99a3afc31a08b163c073f721498c6bbb98843692295c35a4f278d26666cfb",
+        "candidate_base_sha256_matches": true,
+        "legacy_tip_sha256": "a7210a688d8e6663c0b5f8ccbad6220b3062aba29ab040a6ff4c504630cb52e0",
+        "legacy_tip_sha256_matches": true,
+        "legacy_parent_sha256": "c6c8589000525c685f885d3c9e36da3c8370847559ceeeb11c27f1ed159a037b",
+        "legacy_parent_sha256_matches": true
+      },
+      {
+        "path": "src/components/map/layer-panel/LayerLegend.tsx",
+        "classification": "exact_legacy_tip_blob",
+        "raw_bytes": 8579,
+        "raw_sha256": "c45281bb91171b57cde44192ac29d6d875e92aea607d576059d1e37711475b02",
+        "lf_sha256": "c45281bb91171b57cde44192ac29d6d875e92aea607d576059d1e37711475b02",
+        "working_tree_pin_matches": true,
+        "candidate_base_sha256": "4a1c54b50abcef3a60e40a08729725beaa893b3f80b95adf609714944cf78642",
+        "candidate_base_sha256_matches": true,
+        "legacy_tip_sha256": "c45281bb91171b57cde44192ac29d6d875e92aea607d576059d1e37711475b02",
+        "legacy_tip_sha256_matches": true,
+        "legacy_parent_sha256": "4a1c54b50abcef3a60e40a08729725beaa893b3f80b95adf609714944cf78642",
+        "legacy_parent_sha256_matches": true
+      },
+      {
+        "path": "src/components/map/layer-panel/LayerRow.tsx",
+        "classification": "exact_legacy_tip_blob",
+        "raw_bytes": 28612,
+        "raw_sha256": "c0cc6e181d5082fc8d967530eff61888f66338e490201a28c2fc16956ce45db7",
+        "lf_sha256": "c0cc6e181d5082fc8d967530eff61888f66338e490201a28c2fc16956ce45db7",
+        "working_tree_pin_matches": true,
+        "candidate_base_sha256": "eb90b12f37fce7fc1b2c76cc419d2f227a19e56217238d77d17e0a1aa39abc1f",
+        "candidate_base_sha256_matches": true,
+        "legacy_tip_sha256": "c0cc6e181d5082fc8d967530eff61888f66338e490201a28c2fc16956ce45db7",
+        "legacy_tip_sha256_matches": true,
+        "legacy_parent_sha256": "eb90b12f37fce7fc1b2c76cc419d2f227a19e56217238d77d17e0a1aa39abc1f",
+        "legacy_parent_sha256_matches": true
+      },
+      {
+        "path": "src/components/map/layer-panel/LegendBlockView.tsx",
+        "classification": "exact_legacy_tip_blob",
+        "raw_bytes": 3317,
+        "raw_sha256": "9a7fd5414030168e8ffa7939bd6b1399eb044c6d78f74e37e8aad15f385ce49d",
+        "lf_sha256": "9a7fd5414030168e8ffa7939bd6b1399eb044c6d78f74e37e8aad15f385ce49d",
+        "working_tree_pin_matches": true,
+        "candidate_base_sha256": null,
+        "candidate_base_sha256_matches": true,
+        "legacy_tip_sha256": "9a7fd5414030168e8ffa7939bd6b1399eb044c6d78f74e37e8aad15f385ce49d",
+        "legacy_tip_sha256_matches": true,
+        "legacy_parent_sha256": null,
+        "legacy_parent_sha256_matches": true
+      },
+      {
+        "path": "src/components/map/layers/ClimateFieldLayer.tsx",
+        "classification": "selective_composition",
+        "raw_bytes": 14592,
+        "raw_sha256": "44e805e392ba7f2f67e105a563ff9ba838be3d40bc031fdfbcae9f3970faca8d",
+        "lf_sha256": "44e805e392ba7f2f67e105a563ff9ba838be3d40bc031fdfbcae9f3970faca8d",
+        "working_tree_pin_matches": true,
+        "candidate_base_sha256": "dcf08783fd10478a8ac92a96c3fdb72687b9cd81de81966e122e83fe0c0c3834",
+        "candidate_base_sha256_matches": true,
+        "legacy_tip_sha256": "5dceec18744dc50e6f562a7e476a36b170aacc7cde744ca35eefa31a8588e9b8",
+        "legacy_tip_sha256_matches": true,
+        "legacy_parent_sha256": "2c685e34d2839c09a6aa4c5c395b50a3cf5f50c1ee6ce5fb38a350d0b4f6ad6e",
+        "legacy_parent_sha256_matches": true
+      },
+      {
+        "path": "src/components/panels/AGENTS.md",
+        "classification": "exact_legacy_tip_blob",
+        "raw_bytes": 10791,
+        "raw_sha256": "22e02250f4103dabc2ca642ac644a39d7fd111a6805a2ace30680ab6dc199d9f",
+        "lf_sha256": "22e02250f4103dabc2ca642ac644a39d7fd111a6805a2ace30680ab6dc199d9f",
+        "working_tree_pin_matches": true,
+        "candidate_base_sha256": "0d38d42c8d227f6abded23732b74395e7b42e4d79fc81704a7ae3a9c658e238d",
+        "candidate_base_sha256_matches": true,
+        "legacy_tip_sha256": "22e02250f4103dabc2ca642ac644a39d7fd111a6805a2ace30680ab6dc199d9f",
+        "legacy_tip_sha256_matches": true,
+        "legacy_parent_sha256": "0d38d42c8d227f6abded23732b74395e7b42e4d79fc81704a7ae3a9c658e238d",
+        "legacy_parent_sha256_matches": true
+      },
+      {
+        "path": "src/components/panels/ClimateDetails.tsx",
+        "classification": "exact_legacy_tip_blob",
+        "raw_bytes": 17001,
+        "raw_sha256": "b98e685b9f42b859e51fd97686b3a17b70f58494a9e4ecdb96e509cbc5042d9b",
+        "lf_sha256": "b98e685b9f42b859e51fd97686b3a17b70f58494a9e4ecdb96e509cbc5042d9b",
+        "working_tree_pin_matches": true,
+        "candidate_base_sha256": "848880776889c643b71f327cec5125aec0ee0c618fd2b2a647b79e7e9efe5455",
+        "candidate_base_sha256_matches": true,
+        "legacy_tip_sha256": "b98e685b9f42b859e51fd97686b3a17b70f58494a9e4ecdb96e509cbc5042d9b",
+        "legacy_tip_sha256_matches": true,
+        "legacy_parent_sha256": "848880776889c643b71f327cec5125aec0ee0c618fd2b2a647b79e7e9efe5455",
+        "legacy_parent_sha256_matches": true
+      },
+      {
+        "path": "src/lib/map/AGENTS.md",
+        "classification": "selective_composition",
+        "raw_bytes": 31580,
+        "raw_sha256": "3d4c7a2df17576b78b27084a55b423fc0e8dd92348d552cdd7831d48bd5a85a5",
+        "lf_sha256": "3d4c7a2df17576b78b27084a55b423fc0e8dd92348d552cdd7831d48bd5a85a5",
+        "working_tree_pin_matches": true,
+        "candidate_base_sha256": "2aabcf87fbf2fa7990ed644ad38c385dd0a6dd1ecab06e4b495f7c7bf920984e",
+        "candidate_base_sha256_matches": true,
+        "legacy_tip_sha256": "cf6c2c4895deb0f73d02260b02f9e22b297915e611aed3e85b1befa6ab34b80f",
+        "legacy_tip_sha256_matches": true,
+        "legacy_parent_sha256": "2aabcf87fbf2fa7990ed644ad38c385dd0a6dd1ecab06e4b495f7c7bf920984e",
+        "legacy_parent_sha256_matches": true
+      },
+      {
+        "path": "src/lib/map/climate-layer-ids.ts",
+        "classification": "selective_composition",
+        "raw_bytes": 464,
+        "raw_sha256": "b044324ba27f4ee9320864391d818e9d8961c8a6b005e022d5f63634a3dd53f4",
+        "lf_sha256": "b044324ba27f4ee9320864391d818e9d8961c8a6b005e022d5f63634a3dd53f4",
+        "working_tree_pin_matches": true,
+        "candidate_base_sha256": null,
+        "candidate_base_sha256_matches": true,
+        "legacy_tip_sha256": "a75a1f5191bc6d744213e12a025fb65e6c790470b47d57db2269eccf6e3f62f4",
+        "legacy_tip_sha256_matches": true,
+        "legacy_parent_sha256": null,
+        "legacy_parent_sha256_matches": true
+      },
+      {
+        "path": "src/lib/map/climate-viewport.ts",
+        "classification": "exact_legacy_tip_blob",
+        "raw_bytes": 4289,
+        "raw_sha256": "f775271da5b8a2bab46c73708376c46f2ed42787e422a05b7332edd4c6671d6e",
+        "lf_sha256": "f775271da5b8a2bab46c73708376c46f2ed42787e422a05b7332edd4c6671d6e",
+        "working_tree_pin_matches": true,
+        "candidate_base_sha256": null,
+        "candidate_base_sha256_matches": true,
+        "legacy_tip_sha256": "f775271da5b8a2bab46c73708376c46f2ed42787e422a05b7332edd4c6671d6e",
+        "legacy_tip_sha256_matches": true,
+        "legacy_parent_sha256": null,
+        "legacy_parent_sha256_matches": true
+      },
+      {
+        "path": "src/lib/map/hover-fields.ts",
+        "classification": "selective_composition",
+        "raw_bytes": 27204,
+        "raw_sha256": "4c05d159926b32ce57d0823cc9fda04b9b77a5260738cfed8950ed0f012709ab",
+        "lf_sha256": "4c05d159926b32ce57d0823cc9fda04b9b77a5260738cfed8950ed0f012709ab",
+        "working_tree_pin_matches": true,
+        "candidate_base_sha256": "822be2175804e4fdb56b2b5a07442623abcf7d413df9de5dd9409ec682a9ad71",
+        "candidate_base_sha256_matches": true,
+        "legacy_tip_sha256": "90032c3b837eefb504be005b6b18f4b3f816f8e7ebc3241b8abcf697619407f7",
+        "legacy_tip_sha256_matches": true,
+        "legacy_parent_sha256": "822be2175804e4fdb56b2b5a07442623abcf7d413df9de5dd9409ec682a9ad71",
+        "legacy_parent_sha256_matches": true
+      },
+      {
+        "path": "src/lib/map/layer-legends.ts",
+        "classification": "exact_legacy_tip_blob",
+        "raw_bytes": 24719,
+        "raw_sha256": "0dca291e19656085866a41ffaef61133d9cfb23d4deca2683bd8c54ca95c22c4",
+        "lf_sha256": "0dca291e19656085866a41ffaef61133d9cfb23d4deca2683bd8c54ca95c22c4",
+        "working_tree_pin_matches": true,
+        "candidate_base_sha256": "177fd8a9ea3c1ded69f4a5177313038e43d36abb7dcd76b3d25409c531d58cfa",
+        "candidate_base_sha256_matches": true,
+        "legacy_tip_sha256": "0dca291e19656085866a41ffaef61133d9cfb23d4deca2683bd8c54ca95c22c4",
+        "legacy_tip_sha256_matches": true,
+        "legacy_parent_sha256": "177fd8a9ea3c1ded69f4a5177313038e43d36abb7dcd76b3d25409c531d58cfa",
+        "legacy_parent_sha256_matches": true
+      },
+      {
+        "path": "src/lib/server/services/AGENTS.md",
+        "classification": "selective_composition",
+        "raw_bytes": 52292,
+        "raw_sha256": "c90dad9dfbabe853a24a37c3c4a0ae984a2aacd7115f5d93a105b0f121e0e118",
+        "lf_sha256": "c90dad9dfbabe853a24a37c3c4a0ae984a2aacd7115f5d93a105b0f121e0e118",
+        "working_tree_pin_matches": true,
+        "candidate_base_sha256": "f9a3bb913dfd2d7f93b5f4a0cf83c47e3f16d2444c93a79d27d53dda6c8c43e7",
+        "candidate_base_sha256_matches": true,
+        "legacy_tip_sha256": "ea86d6c6cc001a8cebb8183391ac3103456fa04ee1cea8751b9af2d9c2aef7db",
+        "legacy_tip_sha256_matches": true,
+        "legacy_parent_sha256": "1436e610eec6cd7ea6972c1c966e32c53152ce52f81bee345b64edc31c00ba98",
+        "legacy_parent_sha256_matches": true
+      },
+      {
+        "path": "src/lib/server/services/parquet-climate-field.ts",
+        "classification": "selective_composition",
+        "raw_bytes": 15693,
+        "raw_sha256": "5172f082c3d9662bf5a44b5d98fb7602675fd19ed543d4dc38a9f5931b26a1f3",
+        "lf_sha256": "5172f082c3d9662bf5a44b5d98fb7602675fd19ed543d4dc38a9f5931b26a1f3",
+        "working_tree_pin_matches": true,
+        "candidate_base_sha256": "d33fb41518c55350cd246ef2082ad49a635e8e05181eb13e1c3c9d94fd66342d",
+        "candidate_base_sha256_matches": true,
+        "legacy_tip_sha256": "0a6ec9215ebb9b695c25dda27ff4ac7470e43dc7421c9f8056aeb84f0ac6913d",
+        "legacy_tip_sha256_matches": true,
+        "legacy_parent_sha256": "6695373fd592bc7e08203207b0bd963e2809b9d425dc10a437ad001c5cb6624f",
+        "legacy_parent_sha256_matches": true
+      },
+      {
+        "path": "src/lib/server/services/parquet-trpc-readers.ts",
+        "classification": "selective_composition",
+        "raw_bytes": 99081,
+        "raw_sha256": "060fc84c08315e8089bea8278257dbbc8e9e5a4fad529ce5ff4d806338b5336e",
+        "lf_sha256": "060fc84c08315e8089bea8278257dbbc8e9e5a4fad529ce5ff4d806338b5336e",
+        "working_tree_pin_matches": true,
+        "candidate_base_sha256": "9072f3409ab8b4b3a8b247a527f4a222e94a48ac71528f4186947bc2919b2967",
+        "candidate_base_sha256_matches": true,
+        "legacy_tip_sha256": "139592de62ec05265cd0f5865eedaa6291ddf67d4e6673e8f676cf1e4aaa0a05",
+        "legacy_tip_sha256_matches": true,
+        "legacy_parent_sha256": "16b536f17edda9e4485b1044b30d90c927a374f3155978a43f7ce60f032e3aa4",
+        "legacy_parent_sha256_matches": true
+      }
+    ]
+  },
+  "final_reviewed_source": {
+    "unique_paths": 44,
+    "original_source_paths": 41,
+    "unchanged_since_initial_review": 39,
+    "weather_guidance_only_additions": 2,
+    "additional_weather_implementation_test_paths": 3,
+    "files": [
+      {
+        "path": "services/agri-data-service/src/agri_data_service/ingest/AGENTS.md",
+        "bytes": 167520,
+        "raw_sha256": "de66d1e8a391fae6bc584dd9b5b5dc991b98acf5da9c219bd8d9c0a9c08b0b38",
+        "lf_sha256": "de66d1e8a391fae6bc584dd9b5b5dc991b98acf5da9c219bd8d9c0a9c08b0b38",
+        "classification": "exact_legacy_tip_blob",
+        "matches_initial_raw_pin": true,
+        "weather_guidance_addition_only_verified": false
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/ingest/http.py",
+        "bytes": 12807,
+        "raw_sha256": "5918d946e64498e1f425642bfb1f88e9253a5098b48d14e920d6de34c3a6e091",
+        "lf_sha256": "5918d946e64498e1f425642bfb1f88e9253a5098b48d14e920d6de34c3a6e091",
+        "classification": "exact_legacy_tip_blob",
+        "matches_initial_raw_pin": true,
+        "weather_guidance_addition_only_verified": false
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/ingest/mtbs.py",
+        "bytes": 60463,
+        "raw_sha256": "c7de226e005014a68230f6c0ea065f1823efb7414182ba56f800df5eafa0cbd3",
+        "lf_sha256": "c7de226e005014a68230f6c0ea065f1823efb7414182ba56f800df5eafa0cbd3",
+        "classification": "exact_legacy_tip_blob",
+        "matches_initial_raw_pin": true,
+        "weather_guidance_addition_only_verified": false
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/AGENTS.md",
+        "bytes": 114252,
+        "raw_sha256": "c45df06b81b38926151995a9b66c5cff4f1ea786b792d09ea9dabec042d41e63",
+        "lf_sha256": "c45df06b81b38926151995a9b66c5cff4f1ea786b792d09ea9dabec042d41e63",
+        "classification": "exact_legacy_tip_blob",
+        "matches_initial_raw_pin": true,
+        "weather_guidance_addition_only_verified": false
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/__init__.py",
+        "bytes": 22378,
+        "raw_sha256": "7d5c8a18e320b12ca797824b5edcf32672830bd0a48f9b8553e4f5287cd59532",
+        "lf_sha256": "7d5c8a18e320b12ca797824b5edcf32672830bd0a48f9b8553e4f5287cd59532",
+        "classification": "exact_legacy_tip_blob",
+        "matches_initial_raw_pin": true,
+        "weather_guidance_addition_only_verified": false
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/burn_severity/adapter.py",
+        "bytes": 8404,
+        "raw_sha256": "174393df738576e785a63bcf095ac34d532b02721d12bb0594a8dc335649819a",
+        "lf_sha256": "174393df738576e785a63bcf095ac34d532b02721d12bb0594a8dc335649819a",
+        "classification": "exact_legacy_tip_blob",
+        "matches_initial_raw_pin": true,
+        "weather_guidance_addition_only_verified": false
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/burn_severity/capture.py",
+        "bytes": 20254,
+        "raw_sha256": "aad6d7158e8ba63f80cffc4618253f1eab5dc840db2fd1121d77f9a892997b06",
+        "lf_sha256": "aad6d7158e8ba63f80cffc4618253f1eab5dc840db2fd1121d77f9a892997b06",
+        "classification": "selective_composition",
+        "matches_initial_raw_pin": true,
+        "weather_guidance_addition_only_verified": false
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/burn_severity/forward.py",
+        "bytes": 32697,
+        "raw_sha256": "c0a80a989867b5450707eae4b6becb688383f61f677f6cbd3fcb35f4dde8a636",
+        "lf_sha256": "c0a80a989867b5450707eae4b6becb688383f61f677f6cbd3fcb35f4dde8a636",
+        "classification": "exact_legacy_tip_blob",
+        "matches_initial_raw_pin": true,
+        "weather_guidance_addition_only_verified": false
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/burn_severity/source.py",
+        "bytes": 6685,
+        "raw_sha256": "d5dc378191bbb024c1b8f9bef738273a8e5cf29bfb0dfd2ad1a9adf0cf1572d3",
+        "lf_sha256": "d5dc378191bbb024c1b8f9bef738273a8e5cf29bfb0dfd2ad1a9adf0cf1572d3",
+        "classification": "exact_legacy_tip_blob",
+        "matches_initial_raw_pin": true,
+        "weather_guidance_addition_only_verified": false
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/climate/AGENTS.md",
+        "bytes": 4225,
+        "raw_sha256": "66e511e29b5959056e3376b79e1dd0072438a18721b4906ba95e101a511fde2c",
+        "lf_sha256": "66e511e29b5959056e3376b79e1dd0072438a18721b4906ba95e101a511fde2c",
+        "classification": "exact_legacy_tip_blob",
+        "matches_initial_raw_pin": true,
+        "weather_guidance_addition_only_verified": false
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/climate/adapter.py",
+        "bytes": 9652,
+        "raw_sha256": "b62a9e04800b621eea2721a5334f756bb4a2fc50bc84da0f02b955b9ece926c0",
+        "lf_sha256": "b62a9e04800b621eea2721a5334f756bb4a2fc50bc84da0f02b955b9ece926c0",
+        "classification": "exact_legacy_tip_blob",
+        "matches_initial_raw_pin": true,
+        "weather_guidance_addition_only_verified": false
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/climate/cooldown.py",
+        "bytes": 4164,
+        "raw_sha256": "028b07830b42e6eabb899808d03f4004f1a0d1c1381fab91b06d31e351f451b7",
+        "lf_sha256": "028b07830b42e6eabb899808d03f4004f1a0d1c1381fab91b06d31e351f451b7",
+        "classification": "exact_legacy_tip_blob",
+        "matches_initial_raw_pin": true,
+        "weather_guidance_addition_only_verified": false
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/climate/forward.py",
+        "bytes": 39396,
+        "raw_sha256": "40393c8d8fef6b0a7d06cb40415b117e0a10a19fad36ca4a1a08cc4c8e10ba10",
+        "lf_sha256": "40393c8d8fef6b0a7d06cb40415b117e0a10a19fad36ca4a1a08cc4c8e10ba10",
+        "classification": "exact_legacy_tip_blob",
+        "matches_initial_raw_pin": true,
+        "weather_guidance_addition_only_verified": false
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/climate/source.py",
+        "bytes": 30901,
+        "raw_sha256": "5bba0822caa15fbb9a192a24fc6db6add3120795b0253074c2e124d184f0a0db",
+        "lf_sha256": "5bba0822caa15fbb9a192a24fc6db6add3120795b0253074c2e124d184f0a0db",
+        "classification": "exact_legacy_tip_blob",
+        "matches_initial_raw_pin": true,
+        "weather_guidance_addition_only_verified": false
+      },
+      {
+        "path": "services/agri-data-service/tests/direct/climate/test_adapter.py",
+        "bytes": 20457,
+        "raw_sha256": "bb54b9a0c8ea61772e5b116fac458a90b91a9c99274cae701b27f58e63878f50",
+        "lf_sha256": "bb54b9a0c8ea61772e5b116fac458a90b91a9c99274cae701b27f58e63878f50",
+        "classification": "exact_legacy_tip_blob",
+        "matches_initial_raw_pin": true,
+        "weather_guidance_addition_only_verified": false
+      },
+      {
+        "path": "services/agri-data-service/tests/direct/climate/test_forward_command.py",
+        "bytes": 27787,
+        "raw_sha256": "433e9b870b4680d77eae6dce04e29f6302185b844affaf2ab83979f785f0d32c",
+        "lf_sha256": "433e9b870b4680d77eae6dce04e29f6302185b844affaf2ab83979f785f0d32c",
+        "classification": "exact_legacy_tip_blob",
+        "matches_initial_raw_pin": true,
+        "weather_guidance_addition_only_verified": false
+      },
+      {
+        "path": "services/agri-data-service/tests/direct/climate/test_provider_backpressure.py",
+        "bytes": 15787,
+        "raw_sha256": "481a0f8d44354de8db02a9d817ad123a3f2c05ae1f18c1939360bae004659743",
+        "lf_sha256": "481a0f8d44354de8db02a9d817ad123a3f2c05ae1f18c1939360bae004659743",
+        "classification": "exact_legacy_tip_blob",
+        "matches_initial_raw_pin": true,
+        "weather_guidance_addition_only_verified": false
+      },
+      {
+        "path": "services/agri-data-service/tests/direct/climate/test_source.py",
+        "bytes": 20287,
+        "raw_sha256": "311ebf5e79b30c2ed110f3204e9750cf2306a85791c64e6b2ae8cd95e3a93295",
+        "lf_sha256": "311ebf5e79b30c2ed110f3204e9750cf2306a85791c64e6b2ae8cd95e3a93295",
+        "classification": "exact_legacy_tip_blob",
+        "matches_initial_raw_pin": true,
+        "weather_guidance_addition_only_verified": false
+      },
+      {
+        "path": "services/agri-data-service/tests/direct/test_mtbs_provider_refusals.py",
+        "bytes": 7639,
+        "raw_sha256": "1c7d4df642975b3d76c56fdd803c4c7bef961f7f6bbdc53f3550502cb6c8ddfd",
+        "lf_sha256": "1c7d4df642975b3d76c56fdd803c4c7bef961f7f6bbdc53f3550502cb6c8ddfd",
+        "classification": "exact_legacy_tip_blob",
+        "matches_initial_raw_pin": true,
+        "weather_guidance_addition_only_verified": false
+      },
+      {
+        "path": "services/agri-data-service/tests/test_ingest_http.py",
+        "bytes": 15075,
+        "raw_sha256": "f53a5bd6143f4f7cb82904f1d0a48fc043b0c991064fa6de0a1cb692110ab27e",
+        "lf_sha256": "f53a5bd6143f4f7cb82904f1d0a48fc043b0c991064fa6de0a1cb692110ab27e",
+        "classification": "exact_legacy_tip_blob",
+        "matches_initial_raw_pin": true,
+        "weather_guidance_addition_only_verified": false
+      },
+      {
+        "path": "src/__tests__/components/ClimateDetails.test.tsx",
+        "bytes": 14040,
+        "raw_sha256": "522fa4dc908a489f14de1118495c97226d6b72a08b7ff495e7a91dc0b72f3a85",
+        "lf_sha256": "522fa4dc908a489f14de1118495c97226d6b72a08b7ff495e7a91dc0b72f3a85",
+        "classification": "exact_legacy_tip_blob",
+        "matches_initial_raw_pin": true,
+        "weather_guidance_addition_only_verified": false
+      },
+      {
+        "path": "src/__tests__/components/ClimateFieldLayers.test.tsx",
+        "bytes": 27332,
+        "raw_sha256": "4f59051b8ce017a55b8aa55f1328512e2a0a4112636248299206d7abd7dd3a0c",
+        "lf_sha256": "4f59051b8ce017a55b8aa55f1328512e2a0a4112636248299206d7abd7dd3a0c",
+        "classification": "selective_composition",
+        "matches_initial_raw_pin": true,
+        "weather_guidance_addition_only_verified": false
+      },
+      {
+        "path": "src/__tests__/components/LayerRow.test.tsx",
+        "bytes": 36249,
+        "raw_sha256": "58d65bc16cd21890a7f11f404a6c28c853a3b30aad5138dbc2bcd37db817c486",
+        "lf_sha256": "58d65bc16cd21890a7f11f404a6c28c853a3b30aad5138dbc2bcd37db817c486",
+        "classification": "exact_legacy_tip_blob",
+        "matches_initial_raw_pin": true,
+        "weather_guidance_addition_only_verified": false
+      },
+      {
+        "path": "src/__tests__/lib/map/hover-fields.test.ts",
+        "bytes": 35730,
+        "raw_sha256": "bc2190431cc13d622a625a0bd75af87b44a0e1878a34ed7dc31dcdb00c9a13c7",
+        "lf_sha256": "bc2190431cc13d622a625a0bd75af87b44a0e1878a34ed7dc31dcdb00c9a13c7",
+        "classification": "selective_composition",
+        "matches_initial_raw_pin": true,
+        "weather_guidance_addition_only_verified": false
+      },
+      {
+        "path": "src/__tests__/services/parquet-climate-field.test.ts",
+        "bytes": 20303,
+        "raw_sha256": "6ce44bdbf85815db6f4e22d6885a833453ab7b31b6f0f4029953f0dac8623b8c",
+        "lf_sha256": "6ce44bdbf85815db6f4e22d6885a833453ab7b31b6f0f4029953f0dac8623b8c",
+        "classification": "selective_composition",
+        "matches_initial_raw_pin": true,
+        "weather_guidance_addition_only_verified": false
+      },
+      {
+        "path": "src/__tests__/services/parquet-trpc-readers.test.ts",
+        "bytes": 91098,
+        "raw_sha256": "2be917ca412a0465c72ffcd7b071957c5de1c31a6973bebf99c5ac8d5e56228c",
+        "lf_sha256": "2be917ca412a0465c72ffcd7b071957c5de1c31a6973bebf99c5ac8d5e56228c",
+        "classification": "selective_composition",
+        "matches_initial_raw_pin": true,
+        "weather_guidance_addition_only_verified": false
+      },
+      {
+        "path": "src/components/map/AGENTS.md",
+        "bytes": 122475,
+        "raw_sha256": "bd7a7b36e0f770a682771c7a981cc5cd9c2eba3d59c5d792d1784e3a46f3771a",
+        "lf_sha256": "bd7a7b36e0f770a682771c7a981cc5cd9c2eba3d59c5d792d1784e3a46f3771a",
+        "classification": "selective_composition",
+        "matches_initial_raw_pin": false,
+        "weather_guidance_addition_only_verified": true
+      },
+      {
+        "path": "src/components/map/layer-panel/LayerLegend.tsx",
+        "bytes": 8579,
+        "raw_sha256": "c45281bb91171b57cde44192ac29d6d875e92aea607d576059d1e37711475b02",
+        "lf_sha256": "c45281bb91171b57cde44192ac29d6d875e92aea607d576059d1e37711475b02",
+        "classification": "exact_legacy_tip_blob",
+        "matches_initial_raw_pin": true,
+        "weather_guidance_addition_only_verified": false
+      },
+      {
+        "path": "src/components/map/layer-panel/LayerRow.tsx",
+        "bytes": 28612,
+        "raw_sha256": "c0cc6e181d5082fc8d967530eff61888f66338e490201a28c2fc16956ce45db7",
+        "lf_sha256": "c0cc6e181d5082fc8d967530eff61888f66338e490201a28c2fc16956ce45db7",
+        "classification": "exact_legacy_tip_blob",
+        "matches_initial_raw_pin": true,
+        "weather_guidance_addition_only_verified": false
+      },
+      {
+        "path": "src/components/map/layer-panel/LegendBlockView.tsx",
+        "bytes": 3317,
+        "raw_sha256": "9a7fd5414030168e8ffa7939bd6b1399eb044c6d78f74e37e8aad15f385ce49d",
+        "lf_sha256": "9a7fd5414030168e8ffa7939bd6b1399eb044c6d78f74e37e8aad15f385ce49d",
+        "classification": "exact_legacy_tip_blob",
+        "matches_initial_raw_pin": true,
+        "weather_guidance_addition_only_verified": false
+      },
+      {
+        "path": "src/components/map/layers/ClimateFieldLayer.tsx",
+        "bytes": 14592,
+        "raw_sha256": "44e805e392ba7f2f67e105a563ff9ba838be3d40bc031fdfbcae9f3970faca8d",
+        "lf_sha256": "44e805e392ba7f2f67e105a563ff9ba838be3d40bc031fdfbcae9f3970faca8d",
+        "classification": "selective_composition",
+        "matches_initial_raw_pin": true,
+        "weather_guidance_addition_only_verified": false
+      },
+      {
+        "path": "src/components/panels/AGENTS.md",
+        "bytes": 11475,
+        "raw_sha256": "22317dcc3379510e0ad67a7ecfe0a29f51cec7c5b8d863bc5db1a4bb0b548fb9",
+        "lf_sha256": "22317dcc3379510e0ad67a7ecfe0a29f51cec7c5b8d863bc5db1a4bb0b548fb9",
+        "classification": "exact_legacy_tip_blob",
+        "matches_initial_raw_pin": false,
+        "weather_guidance_addition_only_verified": true
+      },
+      {
+        "path": "src/components/panels/ClimateDetails.tsx",
+        "bytes": 17001,
+        "raw_sha256": "b98e685b9f42b859e51fd97686b3a17b70f58494a9e4ecdb96e509cbc5042d9b",
+        "lf_sha256": "b98e685b9f42b859e51fd97686b3a17b70f58494a9e4ecdb96e509cbc5042d9b",
+        "classification": "exact_legacy_tip_blob",
+        "matches_initial_raw_pin": true,
+        "weather_guidance_addition_only_verified": false
+      },
+      {
+        "path": "src/lib/map/AGENTS.md",
+        "bytes": 31580,
+        "raw_sha256": "3d4c7a2df17576b78b27084a55b423fc0e8dd92348d552cdd7831d48bd5a85a5",
+        "lf_sha256": "3d4c7a2df17576b78b27084a55b423fc0e8dd92348d552cdd7831d48bd5a85a5",
+        "classification": "selective_composition",
+        "matches_initial_raw_pin": true,
+        "weather_guidance_addition_only_verified": false
+      },
+      {
+        "path": "src/lib/map/climate-layer-ids.ts",
+        "bytes": 464,
+        "raw_sha256": "b044324ba27f4ee9320864391d818e9d8961c8a6b005e022d5f63634a3dd53f4",
+        "lf_sha256": "b044324ba27f4ee9320864391d818e9d8961c8a6b005e022d5f63634a3dd53f4",
+        "classification": "selective_composition",
+        "matches_initial_raw_pin": true,
+        "weather_guidance_addition_only_verified": false
+      },
+      {
+        "path": "src/lib/map/climate-viewport.ts",
+        "bytes": 4289,
+        "raw_sha256": "f775271da5b8a2bab46c73708376c46f2ed42787e422a05b7332edd4c6671d6e",
+        "lf_sha256": "f775271da5b8a2bab46c73708376c46f2ed42787e422a05b7332edd4c6671d6e",
+        "classification": "exact_legacy_tip_blob",
+        "matches_initial_raw_pin": true,
+        "weather_guidance_addition_only_verified": false
+      },
+      {
+        "path": "src/lib/map/hover-fields.ts",
+        "bytes": 27204,
+        "raw_sha256": "4c05d159926b32ce57d0823cc9fda04b9b77a5260738cfed8950ed0f012709ab",
+        "lf_sha256": "4c05d159926b32ce57d0823cc9fda04b9b77a5260738cfed8950ed0f012709ab",
+        "classification": "selective_composition",
+        "matches_initial_raw_pin": true,
+        "weather_guidance_addition_only_verified": false
+      },
+      {
+        "path": "src/lib/map/layer-legends.ts",
+        "bytes": 24719,
+        "raw_sha256": "0dca291e19656085866a41ffaef61133d9cfb23d4deca2683bd8c54ca95c22c4",
+        "lf_sha256": "0dca291e19656085866a41ffaef61133d9cfb23d4deca2683bd8c54ca95c22c4",
+        "classification": "exact_legacy_tip_blob",
+        "matches_initial_raw_pin": true,
+        "weather_guidance_addition_only_verified": false
+      },
+      {
+        "path": "src/lib/server/services/AGENTS.md",
+        "bytes": 52292,
+        "raw_sha256": "c90dad9dfbabe853a24a37c3c4a0ae984a2aacd7115f5d93a105b0f121e0e118",
+        "lf_sha256": "c90dad9dfbabe853a24a37c3c4a0ae984a2aacd7115f5d93a105b0f121e0e118",
+        "classification": "selective_composition",
+        "matches_initial_raw_pin": true,
+        "weather_guidance_addition_only_verified": false
+      },
+      {
+        "path": "src/lib/server/services/parquet-climate-field.ts",
+        "bytes": 15693,
+        "raw_sha256": "5172f082c3d9662bf5a44b5d98fb7602675fd19ed543d4dc38a9f5931b26a1f3",
+        "lf_sha256": "5172f082c3d9662bf5a44b5d98fb7602675fd19ed543d4dc38a9f5931b26a1f3",
+        "classification": "selective_composition",
+        "matches_initial_raw_pin": true,
+        "weather_guidance_addition_only_verified": false
+      },
+      {
+        "path": "src/lib/server/services/parquet-trpc-readers.ts",
+        "bytes": 99081,
+        "raw_sha256": "060fc84c08315e8089bea8278257dbbc8e9e5a4fad529ce5ff4d806338b5336e",
+        "lf_sha256": "060fc84c08315e8089bea8278257dbbc8e9e5a4fad529ce5ff4d806338b5336e",
+        "classification": "selective_composition",
+        "matches_initial_raw_pin": true,
+        "weather_guidance_addition_only_verified": false
+      },
+      {
+        "path": "src/components/map/LayerManager.tsx",
+        "bytes": 61214,
+        "raw_sha256": "e9d1900e0484ffe30e511e991c8f4ab8681525039fe5f2df408235466155b084",
+        "lf_sha256": "e9d1900e0484ffe30e511e991c8f4ab8681525039fe5f2df408235466155b084",
+        "classification": "separate_weather_regression"
+      },
+      {
+        "path": "src/components/panels/FireDetails.tsx",
+        "bytes": 10998,
+        "raw_sha256": "212b1e7662101801c28774449d51442584e94887f682e90ef86b8ccfd4202435",
+        "lf_sha256": "212b1e7662101801c28774449d51442584e94887f682e90ef86b8ccfd4202435",
+        "classification": "separate_weather_regression"
+      },
+      {
+        "path": "src/__tests__/components/LayerManager.test.tsx",
+        "bytes": 105088,
+        "raw_sha256": "4f9f789335173aef5f510bf837cd4ab314beed2c6022e2d3b9e9453a8d526d01",
+        "lf_sha256": "4f9f789335173aef5f510bf837cd4ab314beed2c6022e2d3b9e9453a8d526d01",
+        "classification": "separate_weather_regression"
+      }
+    ]
+  },
+  "review_dimensions": {
+    "security": {
+      "rating": "no_concrete_issue_found",
+      "basis": "Bounded parsed Retry-After; failure journals omit response body/credential headers/URLs; invalid cooldown state refuses access."
+    },
+    "performance": {
+      "rating": "bounded_within_declared_contract",
+      "basis": "Paced starts, bounded concurrency/request/time/CAS work; declared climate cell halo and existing collection cap."
+    },
+    "correctness": {
+      "rating": "no_concrete_issue_found_in_reviewed_delta",
+      "basis": "Static code and contract-assertion review detailed in the pinned narrative; no runtime execution claim."
+    },
+    "maintainability": {
+      "rating": "consistent_with_accepted_boundaries",
+      "basis": "Shared IDs/legend blocks, preserved accepted reader/renderer/retirement seams, directory guidance records rationale."
+    }
+  },
+  "contract_reviews": [
+    {
+      "area": "NASA pacing and exact request budgets",
+      "result": "PASS_static",
+      "assertions_reviewed": [
+        "Exact shared start times",
+        "Deadline/refusal checked after wait without charging",
+        "One-attempt/no-redirect accounting",
+        "No queued requests after provider refusal"
+      ]
+    },
+    {
+      "area": "Monotonic durable Retry-After",
+      "result": "PASS_static",
+      "assertions_reviewed": [
+        "Later concurrent stored deadline wins",
+        "Current diagnostic retains effective maximum and earlier access-denial identity",
+        "Fresh paused turn has zero source requests",
+        "Malformed/read/CAS failure stops further calls",
+        "Already-running positive response retained"
+      ],
+      "policy_limit": "One stored-constraint read per fresh turn; not a distributed per-request lock or provider quota guarantee."
+    },
+    {
+      "area": "Publication summaries and failure propagation",
+      "result": "PASS_static",
+      "assertions_reviewed": [
+        "Actual written/absence/deferred counts",
+        "Incomplete selected days yield partial run",
+        "Distinct provider/request/time/unsettled outcomes",
+        "Cooldown failure escapes generic finalizer",
+        "Ordinary provider deferral keeps ordinary scheduler exit"
+      ]
+    },
+    {
+      "area": "MTBS refusal propagation",
+      "result": "PASS_static",
+      "assertions_reviewed": [
+        "Only 413/500 downshift geometry pages",
+        "Typed 403/exhausted-429 stop nested retries",
+        "Long valid 429 waits are never shortened",
+        "Exact request/page counts",
+        "No publication object/capture manifest on refusal",
+        "No secret body/header content in journal"
+      ],
+      "accepted_composition": "Optional DuckDB prepare_capture argument and prepare_snapshot forwarding preserved."
+    },
+    {
+      "area": "Climate viewport, terminal metadata and rendering",
+      "result": "PASS_static",
+      "assertions_reviewed": [
+        "Four rung footprints and served-pitch halo",
+        "Counts use original viewport rather than halo",
+        "Contour neighbors outside count may contribute geometry",
+        "Hole/edge-only and halo-only bands do not claim visible area",
+        "Published-empty, governed absence and truncation stay distinct",
+        "Accepted field/isoline-only and high-zoom served-form fallback retained"
+      ],
+      "reader_preservation": "Only climate halo import/call changed; accepted selected-day, abort and response-identity paths preserved."
+    },
+    {
+      "area": "Climate UI disclosure and hover",
+      "result": "PASS_static",
+      "assertions_reviewed": [
+        "Palette/unit data and selected-setting caption",
+        "Expanded state and controls relation",
+        "Escape focus return and off/on reset",
+        "Cell readings versus interpolated ranges",
+        "Source calendar date, true zero and malformed-value refusal"
+      ]
+    },
+    {
+      "area": "Wind and Weather exact-day regression",
+      "result": "PASS_static",
+      "assertions_reviewed": [
+        "Populated 2026-08-01 shown",
+        "Pending 2025-04-28 retains honestly dated map frame and clears cards",
+        "Landed missing day clears map",
+        "Delayed old populated response repaints neither map nor cards",
+        "Explicit return restores published day",
+        "Both weather query dates match weather clock",
+        "Independent fire request stays 2026-07-30",
+        "Forecast horizon remains zero"
+      ],
+      "server_contract_cross_check": "getContextWeatherForPoint supplies observation.proximity.requestedDay; drawn-day helper distinguishes retained placeholders from absent/rejected frames."
+    }
+  ],
+  "legacy_reconciliation": {
+    "reconciliation_sha256": "2184e8af8f505ab6a596ad726e682fa2631a48fb8bb822d64023f5c9a71cec47",
+    "merge_base_matches": true,
+    "legacy_only_commits": [
+      "3a5f3902e6f56b0878eab1d72b34789f6653058f",
+      "35624ddbaf93670b839333ae51d7ef15e1f5a85e",
+      "2a4333716a7018e6393c41a190d5f7254fbd2404",
+      "b840c6a2c48eb896678deec0c7a0c04aa33e6f3b",
+      "c342f1060af74d8c5b8b3d9ac0ac77600d6b5634"
+    ],
+    "net_paths": 139,
+    "manifest_paths": 139,
+    "net_equals_manifest": true,
+    "union_equals_net": true,
+    "git_object_pins_checked": 417,
+    "mismatches": [],
+    "dispositions": {
+      "present": 90,
+      "superseded": 5,
+      "missing": 44
+    },
+    "mechanical": {
+      "identical": 72,
+      "missing_path": 8,
+      "baseline": 23,
+      "changed": 34,
+      "deletion_preserved": 2
+    },
+    "present_or_superseded": 95,
+    "selective_repair_paths": 41,
+    "documentation_resolutions_needed": [
+      "conductor/tracks/environmental_postgres_retirement_20260904/evidence/ingestion-throttle-audit-20260911.md",
+      "conductor/tracks/environmental_postgres_retirement_20260904/evidence/repair-preparation-20260910.md",
+      "conductor/tracks/environmental_postgres_retirement_20260904/plan.md"
+    ],
+    "advisor_patch_ids": {
+      "b840c6a2c48eb896678deec0c7a0c04aa33e6f3b": "e15997ed3cb9ddcdcdb311b60474ca3e342f3340",
+      "ac25a9d3e5d4109cbff98cf8f8595eb00b315ad3": "e15997ed3cb9ddcdcdb311b60474ca3e342f3340"
+    },
+    "mtbs_equivalent_tree_differences": [
+      "conductor/tracks/environmental_postgres_retirement_20260904/evidence/repair-preparation-20260910.md"
+    ],
+    "historical_source_bytes": 20720,
+    "historical_source_sha256": "aa6696f4fae0fffeeeebc37ef0fb8f8bf74cec5861d930142a0ce5a1258d5538",
+    "restored_throttle_raw_sha256": "14734fe11c98b78221200c604e276cebc60de95c6e2cb011bff5537591fb732e",
+    "restored_throttle_raw_bytes": 10635,
+    "restored_throttle_exact_legacy": true
+  },
+  "legacy_omission_resolution": {
+    "original_omissions": 44,
+    "reviewed_selective_repair_paths": 41,
+    "documentation_resolutions": [
+      {
+        "original_path": "conductor/tracks/environmental_postgres_retirement_20260904/evidence/ingestion-throttle-audit-20260911.md",
+        "result": "Exact legacy source restored; raw SHA-256 and 10635 bytes verified."
+      },
+      {
+        "original_path": "conductor/tracks/environmental_postgres_retirement_20260904/evidence/repair-preparation-20260910.md",
+        "result": "Sensor preparation superseded by accepted September 11 revalidation; all other omitted deployment and telemetry lifecycle paragraphs accurately preserved in the separate historical document with non-reverification limits."
+      },
+      {
+        "original_path": "conductor/tracks/environmental_postgres_retirement_20260904/plan.md",
+        "result": "Dated throttle pointer restored, old candidate/release request explicitly superseded, accepted retirement plan preserved."
+      }
+    ],
+    "unresolved_after_reviewed_working_tree_resolutions": 0,
+    "original_immutable_HOLD_retained": true
+  },
+  "documentation_review": {
+    "result": "PASS_static",
+    "files": [
+      {
+        "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/legacy-candidate-reconciliation-20260911.json",
+        "bytes": 120723,
+        "raw_sha256": "2184e8af8f505ab6a596ad726e682fa2631a48fb8bb822d64023f5c9a71cec47",
+        "lf_sha256": "2184e8af8f505ab6a596ad726e682fa2631a48fb8bb822d64023f5c9a71cec47"
+      },
+      {
+        "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/legacy-candidate-reconciliation-20260911.md",
+        "bytes": 10706,
+        "raw_sha256": "f5486ccaceffe17a3e438510f2de660ccc03214e8c576b36bb03aaf33412e3ae",
+        "lf_sha256": "f5486ccaceffe17a3e438510f2de660ccc03214e8c576b36bb03aaf33412e3ae"
+      },
+      {
+        "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/legacy-telemetry-preservation-20260911.md",
+        "bytes": 7341,
+        "raw_sha256": "f1a08c71e9736503c7949ad998a3f0249abc66c7f2f90927555d38ff82e189be",
+        "lf_sha256": "f1a08c71e9736503c7949ad998a3f0249abc66c7f2f90927555d38ff82e189be"
+      },
+      {
+        "path": "conductor/tracks/environmental_postgres_retirement_20260904/evidence/ingestion-throttle-audit-20260911.md",
+        "bytes": 10635,
+        "raw_sha256": "14734fe11c98b78221200c604e276cebc60de95c6e2cb011bff5537591fb732e",
+        "lf_sha256": "14734fe11c98b78221200c604e276cebc60de95c6e2cb011bff5537591fb732e"
+      },
+      {
+        "path": "conductor/tracks/environmental_postgres_retirement_20260904/plan.md",
+        "bytes": 11897,
+        "raw_sha256": "bf39f850c5678e0fd64ce17eddba6ae830ac22dfe8feb0c1eed889ba5ddd31d2",
+        "lf_sha256": "bf39f850c5678e0fd64ce17eddba6ae830ac22dfe8feb0c1eed889ba5ddd31d2"
+      },
+      {
+        "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/wind-weather-handoff-20260911.md",
+        "bytes": 2303,
+        "raw_sha256": "a797ac306219080f4d84b3b986f73eada26f8a8a485ae616b0089072c8de69e9",
+        "lf_sha256": "a797ac306219080f4d84b3b986f73eada26f8a8a485ae616b0089072c8de69e9"
+      },
+      {
+        "path": "conductor/tracks/gapless_parquet_publication_20260901/plan.md",
+        "bytes": 12371,
+        "raw_sha256": "8a246ea3bbd8b14445061c0b8527be8bcf4a576ec7beeb1b5ec8db7bc304338f",
+        "lf_sha256": "8a246ea3bbd8b14445061c0b8527be8bcf4a576ec7beeb1b5ec8db7bc304338f"
+      },
+      {
+        "path": "conductor/tracks/parquet_reader_cutover_acceptance_20260901/plan.md",
+        "bytes": 7493,
+        "raw_sha256": "fbd2e604eaa4c64baf8b0e9d63922ef48cb232fe6476e7a6dfe0ffe2e865fbec",
+        "lf_sha256": "fbd2e604eaa4c64baf8b0e9d63922ef48cb232fe6476e7a6dfe0ffe2e865fbec"
+      },
+      {
+        "path": "conductor/tracks/multiscale_polygon_surface_20260901/plan.md",
+        "bytes": 3464,
+        "raw_sha256": "1b248a6933846693ad689bb0c6d320ebf287b9712e0cc24ea784b82fc5674215",
+        "lf_sha256": "1b248a6933846693ad689bb0c6d320ebf287b9712e0cc24ea784b82fc5674215"
+      }
+    ],
+    "wind_weather_boundary": "Sampled estimates/observations, horizon 0, recorded 2021-11-27..2026-07-31 gap containing 2025-04-28, exact source/floor/lag reconciliation and sparse-support requirements stay open. Current-poll history cannot be filled with reanalysis under the same identity."
+  },
+  "referenced_contract_files": [
+    {
+      "path": "src/lib/map/zoom-tiers.ts",
+      "bytes": 19872,
+      "raw_sha256": "894fd7f29fdd64a14dda74e6f10bc30b45a75207eac9711f057cf9fa71a404c8",
+      "lf_sha256": "894fd7f29fdd64a14dda74e6f10bc30b45a75207eac9711f057cf9fa71a404c8"
+    },
+    {
+      "path": "src/lib/geo/isobands.ts",
+      "bytes": 17841,
+      "raw_sha256": "fa626c95c9e75cecb61ba11b33db613ce4f6443d84a8a3c7ef8be5dcdd1fd291",
+      "lf_sha256": "fa626c95c9e75cecb61ba11b33db613ce4f6443d84a8a3c7ef8be5dcdd1fd291"
+    },
+    {
+      "path": "src/lib/server/services/parquet-context-readers.ts",
+      "bytes": 6321,
+      "raw_sha256": "184d93c4226b8dcac06200a90cbbddbb158027c9a697924184378e5cd28e18e9",
+      "lf_sha256": "184d93c4226b8dcac06200a90cbbddbb158027c9a697924184378e5cd28e18e9"
+    },
+    {
+      "path": "src/lib/server/trpc/routers/wildfire.ts",
+      "bytes": 8908,
+      "raw_sha256": "393b0807748f88430d2039615b17b7c7ae3a3b86daa2ecdda8fe1ac14d4da928",
+      "lf_sha256": "dbcb6751952d2b3d50b1c14a08b95af38a2173d4013ad743e40b975e4a5fbbbc"
+    },
+    {
+      "path": "src/stores/useMetricAtDate.ts",
+      "bytes": 24700,
+      "raw_sha256": "dff215d513f3a640ded8afcab6cf1fda6a6c6a8b0bddd4b58af596950ea24f63",
+      "lf_sha256": "dff215d513f3a640ded8afcab6cf1fda6a6c6a8b0bddd4b58af596950ea24f63"
+    },
+    {
+      "path": "src/lib/map/layer-toggle-context.ts",
+      "bytes": 28745,
+      "raw_sha256": "b281fb860b3e018385bb96cb2dab8974dc851843e437af836500d768927aae33",
+      "lf_sha256": "b281fb860b3e018385bb96cb2dab8974dc851843e437af836500d768927aae33"
+    }
+  ],
+  "limits": {
+    "tests_run": false,
+    "lint_typecheck_build_run": false,
+    "runtime_edits_by_reviewer": false,
+    "commits_created": false,
+    "production_actions": false,
+    "historical_raw_capture_reverification": false,
+    "task_archiving": false,
+    "release_acceptance": false,
+    "closure_approval": false,
+    "required_next_step": "Freeze final combined source, run root-owned boundary/type/lint/frontend and full Python receipt sweep, then perform exact-tree and closure review before any archive-safety determination."
+  }
+}

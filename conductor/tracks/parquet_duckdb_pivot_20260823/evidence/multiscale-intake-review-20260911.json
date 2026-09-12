@@ -1,0 +1,193 @@
+{
+  "type": "integration-intake-review",
+  "reviewed_on": "2026-09-11",
+  "generated_at": "2026-09-11T23:11:55.769640+00:00",
+  "reviewer": {
+    "agent": "/root/review_conformity_intake",
+    "role": "independent multiscale integration intake reviewer",
+    "integration_task_id": "01a0919f-40dd-7ae2-a5a3-cd8cf7e13489",
+    "implementation_authorship": false
+  },
+  "implementation_task": {
+    "id": "01a09199-b590-77d2-a22d-1e77ade63662",
+    "title": "Finish multiscale map surfaces",
+    "canonical_worktree": "C:/Users/atooz/.codex/worktrees/edfb/plantgeo"
+  },
+  "verdict": "approved_local_integration_slice",
+  "blocking_code_findings": [],
+  "production_release_approved": false,
+  "track_closure_approved": false,
+  "revisions": {
+    "base": "fa202230958fb55521963e886eb031be5fc266c4",
+    "commits": [
+      "06acd9d21f62ea703be472828de4de886820a6a0",
+      "86f55d5351623fcef9e030f9c92542213f93877d"
+    ],
+    "tip": "86f55d5351623fcef9e030f9c92542213f93877d",
+    "second_commit_scope": "Removes one trailing blank line from the renderer evidence only; no source change.",
+    "reader_integration_reviewed": "4e9a731eef836664cbdf9e0e0db96adfa265057f",
+    "source_tree_at_intake": "a166a8f3a2ab2c7f6efc6246d366e119d7ad5645",
+    "integrated_commits": [
+      "912bbfc9ab38621790646ef68ce91f22a1c0832c",
+      "0a66f4c309000d6d6e1db79b3ef722e16dc27d66"
+    ]
+  },
+  "scope": {
+    "changed_files_reviewed": [
+      "conductor/tracks/multiscale_polygon_surface_20260901/evidence/renderer-verdict-20260911.md",
+      "conductor/tracks/multiscale_polygon_surface_20260901/metadata.json",
+      "conductor/tracks/multiscale_polygon_surface_20260901/plan.md",
+      "src/__tests__/components/ClimateFieldLayers.test.tsx",
+      "src/__tests__/components/event-aggregation-rendering.test.tsx",
+      "src/components/map/layers/ClimateFieldLayer.tsx",
+      "src/components/map/layers/ClimateFieldLayers.tsx",
+      "src/components/map/layers/FireLayer.tsx",
+      "src/components/map/layers/WaterLayer.tsx"
+    ],
+    "changed_file_count": 9,
+    "source_and_test_git_blob_ids": {
+      "src/__tests__/components/ClimateFieldLayers.test.tsx": "d29a72657bbe5af67365ec09ac1a60844e4e59eb",
+      "src/__tests__/components/event-aggregation-rendering.test.tsx": "fa81bdcebea53ef1f12c9960a7c8d5e8d6be523b",
+      "src/components/map/layers/ClimateFieldLayer.tsx": "7f219045135b404dd3e01c0034d272eea1bceab8",
+      "src/components/map/layers/ClimateFieldLayers.tsx": "2004f0aebdcc0c2ae9e32247ae9d0814e45e7d63",
+      "src/components/map/layers/FireLayer.tsx": "06818f2843e17a254fec220d475bae40153dd9c0",
+      "src/components/map/layers/WaterLayer.tsx": "b159eb00dbeae792178a02146bd9909500f7c005"
+    },
+    "tests_run_by_this_reviewer": false,
+    "implementation_or_production_mutations_by_this_reviewer": false,
+    "reviewer_output": "This intake receipt only; no commit."
+  },
+  "ownership": {
+    "implementation_within_multiscale_lane": true,
+    "runtime_overlap_with_integrated_reader": [],
+    "protected_generic_publication_scheduler_offline_files_changed": [],
+    "baseline_resolution": "Plan and metadata include inherited September maintenance edits. Reconcile their small owner delta onto the authoritative a7e6b223cc91663ac6c9462321426a53667cbfce baseline; do not replace newer baseline content or create an active-track maintenance commit."
+  },
+  "code_review_conclusions": [
+    "Fire rejects collections with mixed physical rungs and withholds coarse/middle Points while retaining declared detail Points; existing caption and source filters remain unchanged.",
+    "Water withholds malformed non-raw support without a polygon but preserves valid anonymous detail raw_point rows that the presenter deliberately routes through cells.",
+    "Climate removes circle construction and rejects served symbol form. Valid field/isoline data still selects the served form and physical rung, including retained responses.",
+    "Reader commit 4e9a731 preserves these support/render-form APIs. The climate reader coerces legacy symbol requests to permitted continuous-field forms; no valid current reader response requires the deleted circle path.",
+    "The narrow regressions cover mixed fire rungs, malformed aggregate support, anonymous water points and a withheld legacy climate form. Existing lifecycle tests cover form and rung swaps.",
+    "Drawn-day publication still follows active-layer visibility. This alone is not a blocking change because the current hook intentionally reports a neutral requested date for empty/failed active layers; explicit renderer-refusal UX remains part of the recorded semantics matrix.",
+    "git diff --check across the complete two-commit range passed."
+  ],
+  "prior_independent_review": {
+    "reviewer_task_id": "01a09199-dccf-7863-afb0-cbc6b1390591",
+    "reviewer_agent_path": "/root/renderer_inventory",
+    "source": "read_thread retained final messages",
+    "decision": "Approved after correcting the anonymous z13 water regression",
+    "independently_retrieved": true
+  },
+  "validation_evidence": {
+    "retained_logs": [
+      {
+        "name": "focused_renderer_tests",
+        "source_jsonl": "C:/Users/atooz/.codex/sessions/2026/09/11/rollout-2026-09-11T11-52-45-01a09199-b590-77d2-a22d-1e77ade63662.jsonl",
+        "record_line": 539,
+        "record_timestamp": "2026-09-11T18:10:53.482Z",
+        "command_item_id": "exec-66614796-5c04-4afa-9ce1-8d98a40ac0ee",
+        "command": [
+          "C:\\Users\\atooz\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\native\\powershell\\pwsh.exe",
+          "-Command",
+          "npx vitest run src/__tests__/components/ClimateFieldLayers.test.tsx src/__tests__/components/event-aggregation-rendering.test.tsx --configLoader runner --maxWorkers=2"
+        ],
+        "exit_code": 0,
+        "output_chars": 120424,
+        "output_sha256": "0037adcb79fa7fc340015bb6c640ac376307add97ebc70e18ea56320fd3091eb",
+        "complete_output_read": true,
+        "summary_lines": [
+          "Test Files  2 passed (2)",
+          "Tests  39 passed (39)",
+          "Duration  11.48s (transform 5.48s, setup 219ms, collect 7.80s, tests 1.31s, environment 7.84s, prepare 728ms)"
+        ]
+      },
+      {
+        "name": "focused_renderer_tests_repeat",
+        "source_jsonl": "C:/Users/atooz/.codex/sessions/2026/09/11/rollout-2026-09-11T11-52-45-01a09199-b590-77d2-a22d-1e77ade63662.jsonl",
+        "record_line": 552,
+        "record_timestamp": "2026-09-11T18:11:32.800Z",
+        "command_item_id": "exec-0bbb2845-7ae3-456f-8e2f-3ffe264621d1",
+        "command": [
+          "C:\\Users\\atooz\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\native\\powershell\\pwsh.exe",
+          "-Command",
+          "node_modules\\.bin\\vitest.cmd run src/__tests__/components/ClimateFieldLayers.test.tsx src/__tests__/components/event-aggregation-rendering.test.tsx --configLoader runner --maxWorkers=2 --reporter=dot"
+        ],
+        "exit_code": 0,
+        "output_chars": 119955,
+        "output_sha256": "340b7f962748a7bc0329a2223279d00d303e36c0f32f91a711e268c933617c65",
+        "complete_output_read": true,
+        "summary_lines": [
+          "Test Files  2 passed (2)",
+          "Tests  39 passed (39)",
+          "Duration  12.69s (transform 13.65s, setup 141ms, collect 14.22s, tests 2.43s, environment 6.51s, prepare 526ms)"
+        ]
+      },
+      {
+        "name": "final_local_full_fallback",
+        "source_jsonl": "C:/Users/atooz/.codex/sessions/2026/09/11/rollout-2026-09-11T11-52-45-01a09199-b590-77d2-a22d-1e77ade63662.jsonl",
+        "record_line": 606,
+        "record_timestamp": "2026-09-11T18:14:52.714Z",
+        "command_item_id": "exec-adff408f-9822-4a98-9b54-3d00f0ef2016",
+        "command": [
+          "C:\\Users\\atooz\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\native\\powershell\\pwsh.exe",
+          "-Command",
+          "npm run check:data-boundary; npm run type-check; npm run lint; npm run test:changed -- --base HEAD"
+        ],
+        "exit_code": 0,
+        "output_chars": 429124,
+        "output_sha256": "f509427d3484f72945e59210b1db7c8febc9d9078459deb08a449a183d405f5c",
+        "complete_output_read": true,
+        "summary_lines": [
+          "Client data-boundary check passed (12 documented URL rules).",
+          "Client/server restricted-import check passed.",
+          "Observation-fabrication check passed (2 rules over 7 display roots).",
+          "\u2716 542 problems (0 errors, 542 warnings)",
+          "\"mode\": \"full\",",
+          "\"reason\": \"Shared, removed, or unclassified path: .omc/ultrapilot-state.json\",",
+          "Test Files  144 passed | 2 skipped (146)",
+          "Tests  2153 passed | 13 skipped (2166)",
+          "Duration  308.87s (transform 39.09s, setup 6.06s, collect 111.91s, tests 28.06s, environment 380.13s, prepare 33.63s)"
+        ]
+      }
+    ],
+    "focused_result": "2 files and 39 tests passed; React act warnings recorded.",
+    "full_local_result": "144 test files passed and 2 skipped; 2153 tests passed and 13 skipped.",
+    "skips": [
+      {
+        "file": "src/__tests__/services/postgis-spatial.test.ts",
+        "tests": 4,
+        "reason": "POSTGIS_TEST_DSN absent"
+      },
+      {
+        "file": "src/__tests__/services/climate-field-sql-contract.test.ts",
+        "tests": 9,
+        "reason": "PLANTGEO_TEST_DATABASE_URL absent"
+      }
+    ],
+    "lint": "0 errors; 542 existing warnings",
+    "boundary": "Three explicit pass messages recovered from the final command output.",
+    "typecheck": "tsc --noEmit appears in final command output with no TypeScript diagnostics; compound shell exit alone was not used as proof.",
+    "limitations": [
+      "Validation occurred before these commits on the peer working tree; no exact source-domain digest receipt was produced.",
+      "The full suite was selected because inherited OMC/Conductor changes triggered an unclassified-path fallback. It is a full local peer-tree result, not a combined integration-tree result.",
+      "The read_thread API truncates these outputs before their summaries; complete aggregated_output fields were recovered from the retained local rollout JSONL.",
+      "No Python quality receipt is claimed by this frontend-only lane."
+    ]
+  },
+  "remaining_gates": [
+    "One final quality sweep on the exact combined integration tree.",
+    "Desktop and mobile canvas-pixel and screenshot continuity across coarse/middle/detail for MTBS, fire density, air temperature and soil moisture.",
+    "Visible density/perimeter distinctions and explicit empty, refusal and governed-absence semantics.",
+    "Independent applicable count/sum conservation and cold/warm byte, feature, request and response-to-first-paint budgets.",
+    "Soil-survey wide-view native-polygon deviation and z4 visibility floor/z2 payload product decisions."
+  ],
+  "document_verdict": "The committed renderer verdict correctly remains partial, explicitly limits localhost evidence to shell startup and leaves M3/M5 production acceptance open.",
+  "integration_byte_verification": {
+    "integrated_tip": "0a66f4c309000d6d6e1db79b3ef722e16dc27d66",
+    "compared_files": 9,
+    "mismatches": [],
+    "result": "All nine reviewed peer files are byte-identical at the integrated tip.",
+    "baseline_preservation": "The only additional difference under the multiscale track directory is spec.md status planned -> active, inherited from the authoritative baseline and outside the peer changed-file manifest."
+  }
+}

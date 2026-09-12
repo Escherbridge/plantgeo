@@ -19,11 +19,15 @@ from agri_data_service.config import settings
 from agri_data_service.db.engine import local_source_loader_session
 from agri_data_service.foundation.parquet.paths import partition_day_statuses
 from agri_data_service.pipeline.direct import (
+    COMPLETE,
     IDEMPOTENT_NOOP,
+    INCOMPLETE,
     LANE_DAY_OUTCOMES,
     NO_SUCH_DEFECT,
     NOT_BBOX_BOUNDED,
     NOT_YET_SETTLED,
+    PROVIDER_ACCESS_DENIED,
+    PROVIDER_RATE_LIMITED,
     PUBLISHED,
     REFUSE_WHOLE_RELEASE,
     REQUEST_BUDGET_EXHAUSTED,
@@ -37,6 +41,7 @@ from agri_data_service.pipeline.direct.climate.adapter import (
     DirectClimateFieldError,
     refuse_immutable_day,
 )
+from agri_data_service.pipeline.direct.climate.cooldown import NasaPowerCooldown
 from agri_data_service.pipeline.direct.climate.products import (
     CLIMATE_DEFAULT_TIME_BUDGET_SECONDS,
     CLIMATE_DISTINCT_PUBLICATION_CLOCKS,
@@ -44,6 +49,8 @@ from agri_data_service.pipeline.direct.climate.products import (
     products_for,
 )
 from agri_data_service.pipeline.direct.climate.source import (
+    NASA_POWER_REQUEST_START_INTERVAL_SECONDS,
+    ClimateProviderDeferredError,
     ClimateSourceCache,
     ClimateTimeBudgetExhaustedError,
     fetch_climate_day,
@@ -126,6 +133,10 @@ WRITER_CONTRACT: Final = DirectWriterContract(
         NOT_YET_SETTLED,
         IDEMPOTENT_NOOP,
         PUBLISHED,
+        COMPLETE,
+        INCOMPLETE,
+        PROVIDER_RATE_LIMITED,
+        PROVIDER_ACCESS_DENIED,
     },
     flags_absent_on_purpose={
         "--bbox": "the support is the PINNED 397-cell NASA POWER lattice read from `agri.spatial_cell` "
@@ -190,7 +201,9 @@ async def run_climate_forward(config: ClimateForwardConfig) -> dict[str, object]
     store = ObjectStore.from_settings()
     availability_storage = BotoAvailabilityStorage.from_settings()
     cache = ClimateSourceCache(
-        request_budget=config.request_budget, checkpoints=SourceResponseCheckpoints(availability_storage)
+        request_budget=config.request_budget,
+        checkpoints=SourceResponseCheckpoints(availability_storage),
+        cooldown=NasaPowerCooldown(availability_storage),
     )
     deadline = time.monotonic() + config.time_budget_seconds
     results: list[dict[str, object]] = []
@@ -224,14 +237,19 @@ async def run_climate_forward(config: ClimateForwardConfig) -> dict[str, object]
                 )
             )
 
+    incomplete_products = sum(result["outcome"] in {INCOMPLETE, CLIMATE_TIME_BUDGET_OUTCOME} for result in results)
     report: dict[str, object] = {
-        "status": "completed",
+        "status": "partial" if incomplete_products else "completed",
+        "outcome": INCOMPLETE if incomplete_products else COMPLETE,
         "run_id": run_id,
         "today": today.isoformat(),
         "product": config.product_id,
         "streams": [product.stream for product in products],
         "request_budget": cache.request_budget,
         "requests_spent": cache.requests_spent,
+        "request_start_interval_seconds": NASA_POWER_REQUEST_START_INTERVAL_SECONDS,
+        "incomplete_products": incomplete_products,
+        "provider_deferral": _provider_diagnostic(cache.deferred_refusal),
         **availability.to_summary(),
         "results": results,
     }
@@ -285,6 +303,9 @@ async def _publish_product(  # noqa: PLR0913 - the store, product, support, cach
         if time.monotonic() >= deadline:
             published.append(_stopped_day(day, outcome=CLIMATE_TIME_BUDGET_OUTCOME, detail="after checkpoint restore"))
             break
+        if cache.deferred_refusal is not None and cache.missing_cells(support, day):
+            published.append(_provider_stopped_day(day, cache.deferred_refusal))
+            break
         if not cache.can_afford(support, day):
             published.append(
                 _stopped_day(
@@ -314,7 +335,7 @@ async def _publish_product(  # noqa: PLR0913 - the store, product, support, cach
     return {
         "layer": product.stream,
         "product": product.product_id,
-        "outcome": "idempotent_noop" if not backlog else "published",
+        **_publication_summary(published, selected_days=len(selected)),
         "history_floor": product.history_floor.isoformat(),
         "settled_through": ceiling.isoformat(),
         "publication_lag_days": product.publication_lag_days,
@@ -322,6 +343,26 @@ async def _publish_product(  # noqa: PLR0913 - the store, product, support, cach
         "backlog_days": len(backlog),
         "availability_retried_days": retried,
         "days": published,
+    }
+
+
+def _publication_summary(days: Sequence[Mapping[str, object]], *, selected_days: int) -> dict[str, object]:
+    """Report actual terminal publications and leave every unfinished selected day visible."""
+    written = sum(day["outcome"] == "written" for day in days)
+    absent = sum(day["outcome"] == "absent" for day in days)
+    deferred = selected_days - written - absent
+    if not selected_days:
+        outcome = IDEMPOTENT_NOOP
+    elif deferred:
+        outcome = INCOMPLETE
+    else:
+        outcome = PUBLISHED if written else COMPLETE
+    return {
+        "outcome": outcome,
+        "selected_days": selected_days,
+        "written_days": written,
+        "governed_absence_days": absent,
+        "deferred_days": deferred,
     }
 
 
@@ -401,6 +442,43 @@ def _stopped_day(day: date, *, outcome: str, attempts: int = 0, detail: str | No
         "written_bytes": 0,
         "detail": detail,
     }
+
+
+def _provider_diagnostic(error: ClimateProviderDeferredError | None) -> dict[str, object] | None:
+    """Expose the refusal and a parsed retry hint without carrying raw response headers."""
+    if error is None:
+        return None
+    return {
+        "outcome": error.outcome,
+        "detail": str(error),
+        "retry_not_before": error.retry_not_before.isoformat() if error.retry_not_before is not None else None,
+        "retry_hint_enforced_across_turns": error.retry_hint_enforced_across_turns,
+    }
+
+
+def _provider_stopped_day(day: date, error: ClimateProviderDeferredError, *, attempts: int = 0) -> dict[str, object]:
+    """Keep provider refusal separate from publication lag and local request-budget exhaustion."""
+    return {
+        **_stopped_day(day, outcome=error.outcome, attempts=attempts, detail=str(error)),
+        "provider_deferral": _provider_diagnostic(error),
+    }
+
+
+def _adapter_refusal(adapter: DirectClimateFieldAdapter, *, day: date, attempt: int) -> dict[str, object] | None:
+    """Recover typed source stops that the shared gap-fill boundary catches."""
+    if adapter.cooldown_failure is not None:
+        raise adapter.cooldown_failure
+    if adapter.provider_refusal is not None:
+        return _provider_stopped_day(day, adapter.provider_refusal, attempts=attempt)
+    if adapter.time_budget_refusal is not None:
+        return _stopped_day(
+            day, outcome=CLIMATE_TIME_BUDGET_OUTCOME, attempts=attempt, detail=str(adapter.time_budget_refusal)
+        )
+    if adapter.unsettled_refusal is not None:
+        return _stopped_day(
+            day, outcome=CLIMATE_SOURCE_UNSETTLED_OUTCOME, attempts=attempt, detail=str(adapter.unsettled_refusal)
+        )
+    return None
 
 
 async def _publish_day_with_retries(  # noqa: PLR0913 - one lane-day coordinate per argument
@@ -528,16 +606,9 @@ async def _publish_locked_day(  # noqa: PLR0913 - one lane-day coordinate per ar
                 await session.rollback()
             outcome, parts, rows, written_bytes = "raised", 0, 0, 0
             detail = f"{type(error).__name__}: {error}"
-        if adapter.unsettled_refusal is not None:
-            # NOT A FAILURE AND NOT A RETRY. POWER has not published this day, so refetching it inside
-            # the same turn asks the same question of the same release; the next turn is the soonest
-            # the answer can differ. Reported as its own outcome so a run stays green.
-            return _stopped_day(
-                day,
-                outcome=CLIMATE_SOURCE_UNSETTLED_OUTCOME,
-                attempts=attempt,
-                detail=str(adapter.unsettled_refusal),
-            )
+        refusal = _adapter_refusal(adapter, day=day, attempt=attempt)
+        if refusal is not None:
+            return refusal
         if outcome == "blocked":
             raise DirectClimateFieldError(detail or f"{product.stream} {day.isoformat()} is blocked")
         if outcome == "absent":

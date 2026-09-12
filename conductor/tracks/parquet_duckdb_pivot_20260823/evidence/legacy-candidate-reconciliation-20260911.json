@@ -1,0 +1,3434 @@
+{
+  "schema_version": 1,
+  "type": "legacy-candidate-reconciliation",
+  "captured_at_utc": "2026-09-12T00:43:08.748801+00:00",
+  "reviewer": "/root/legacy_reconciliation",
+  "comparison": {
+    "merge_base": "0ae1528ed4655fcd198966877b91abdf9c472f31",
+    "legacy_commit": "3a5f3902e6f56b0878eab1d72b34789f6653058f",
+    "legacy_tree": "48377a8ee5f7e546c36d7dc484e222e64203950b",
+    "current_commit": "cc64e6e3e1de8dda164beeee0e7e22aa30088b76",
+    "current_tree": "66c55446103cbcee65d9900a0237b4e0814d5b4c",
+    "legacy_is_ancestor": false,
+    "basis": "Immutable Git objects at the named commits; later working-tree repair edits are excluded."
+  },
+  "verdict_at_comparison": "HOLD_missing_legacy_behaviors",
+  "counts": {
+    "legacy_only_commits": 5,
+    "legacy_net_paths": 139,
+    "legacy_commit_path_union": 139,
+    "commit_union_equals_net_manifest": true,
+    "mechanical": {
+      "identical": 72,
+      "missing_path": 8,
+      "baseline": 23,
+      "changed": 34,
+      "deletion_preserved": 2
+    },
+    "dispositions": {
+      "present": 90,
+      "superseded": 5,
+      "missing": 44
+    }
+  },
+  "commit_equivalence": [
+    {
+      "legacy": "c342f1060af74d8c5b8b3d9ac0ac77600d6b5634",
+      "disposition": "partly_superseded_partly_missing",
+      "explanation": "Historical sensor preparation has a current accepted revalidation successor; the net historical recovery file is classified missing until the recovered provenance artifact is independently reviewed."
+    },
+    {
+      "legacy": "b840c6a2c48eb896678deec0c7a0c04aa33e6f3b",
+      "current_equivalent": "ac25a9d3e5d4109cbff98cf8f8595eb00b315ad3",
+      "stable_patch_id": "e15997ed3cb9ddcdcdb311b60474ca3e342f3340",
+      "explanation": "Exact stable patch-ID match; later reader changes are classified per file."
+    },
+    {
+      "legacy": "2a4333716a7018e6393c41a190d5f7254fbd2404",
+      "current_equivalent": "3632d616dc43f3845dbcb901e625b946b82519ba",
+      "complete_tree_difference": [
+        "conductor/tracks/environmental_postgres_retirement_20260904/evidence/repair-preparation-20260910.md"
+      ],
+      "explanation": "Every other tracked file, including runtime, tests, migrations and receipt, is identical between these two MTBS commits. Later fa20223 and accepted-lane differences are classified per file."
+    },
+    {
+      "legacy": "35624ddbaf93670b839333ae51d7ef15e1f5a85e",
+      "accepted_successor": "bc7b5e1ff5dbb6eac929d5db927acd6b7ff2ea4a",
+      "disposition": "superseded",
+      "explanation": "Accepted parent source-admission and botanical planning tracks replace the preliminary proposal; runtime stays outside this candidate."
+    },
+    {
+      "legacy": "3a5f3902e6f56b0878eab1d72b34789f6653058f",
+      "disposition": "missing_with_two_explicit_supersessions",
+      "tip_changed_paths": 45,
+      "superseded_paths": [
+        "services/agri-data-service/QUALITY_RECEIPT.json",
+        "services/agri-data-service/tests/test_agent_parquet_reads.py"
+      ]
+    }
+  ],
+  "historical_source": {
+    "commit": "3a5f3902e6f56b0878eab1d72b34789f6653058f",
+    "path": "conductor/tracks/environmental_postgres_retirement_20260904/evidence/repair-preparation-20260910.md",
+    "git_blob": "9506a3748087cbbceef7a30bf2ef5ff3e3ca01ff",
+    "bytes": 20720,
+    "sha256": "aa6696f4fae0fffeeeebc37ef0fb8f8bf74cec5861d930142a0ce5a1258d5538",
+    "proposed_preservation_path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/legacy-telemetry-preservation-20260911.md",
+    "proposed_resolution_review_status": "pending_independent_review"
+  },
+  "supporting_receipts": [
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/gapless-intake-review-20260911.json",
+      "sha256_at_reconciliation": "01e91046cd39b64699844939144ad6923dc96d15d5cd14678fd3857bc613c3c8"
+    },
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/reader-intake-review-20260911.json",
+      "sha256_at_reconciliation": "d866f83e35973cac997cfb9a18cba1aab8ba212215a59edc0c25431d15129f9d"
+    },
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/environmental-intake-review-20260911.md",
+      "sha256_at_reconciliation": "f67a208add41631359cc5df8d3596bc02ae5820f14e8d86b17dc439c4db59a1b"
+    },
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/conformity-intake-review-20260911.json",
+      "sha256_at_reconciliation": "db2c45f12fe831fa275161ef17db0770b5a17b5c593bbdec4ad34df25971b929"
+    },
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/multiscale-intake-review-20260911.json",
+      "sha256_at_reconciliation": "2a7a4bae62111b38afc533bb0cb759afe20ce6b4540bf88dd2f140ba33c1ef53"
+    },
+    {
+      "path": "conductor/tracks/parquet_duckdb_pivot_20260823/evidence/offline-intake-custody-20260911.json",
+      "sha256_at_reconciliation": "d89670a9e976e2016397d678a6ecb6c75ee747c2c79d75c3d94f7884a2e960f0"
+    }
+  ],
+  "limits": {
+    "tests_run": false,
+    "runtime_edits_by_reviewer": false,
+    "commits_created": false,
+    "legacy_merge_performed": false,
+    "production_actions": false,
+    "task_archiving": false,
+    "new_runtime_acceptance": false,
+    "resolution_rule": "Keep this cc64e6e diagnosis immutable. Later owner repairs require a separately pinned source-preservation/independent-review receipt before any missing disposition can be reported resolved."
+  },
+  "files": [
+    {
+      "path": "AGENTS.md",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "21db9e35e710e83e5b5a6027af81c7254d17619e"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "37d5cfb70c832b4012e74153f230b08aa81f5c94"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "37d5cfb70c832b4012e74153f230b08aa81f5c94"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "mtbs-snapshot",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "conductor/research/pnw-herbaria-source-viability-20260910.md",
+      "legacy_change": "A",
+      "git_objects": {
+        "merge_base": null,
+        "legacy": {
+          "mode": "100644",
+          "blob": "81d5dca288bcf5d744b09181b9d45d98b0f4cc70"
+        },
+        "current": null
+      },
+      "mechanical_comparison": "missing_path",
+      "disposition_at_comparison": "superseded",
+      "behavior": "botanical-planning",
+      "explanation": "The accepted parent planning and source-admission split replaces the provisional single-document proposal; exact WTU/UBC occurrence admission remains blocked.",
+      "legacy_commits": [
+        "35624ddbaf93670b839333ae51d7ef15e1f5a85e"
+      ]
+    },
+    {
+      "path": "conductor/retros/parquet_cutover_completed_slices_20260910/README.md",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "acb68283f7cfcf7e5b8e7963471c29e419950954"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "9e842f12da3e42d0bf28f0da7b71744e004410f0"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "9e842f12da3e42d0bf28f0da7b71744e004410f0"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "mtbs-snapshot",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "conductor/retros/parquet_cutover_completed_slices_20260910/cleanup-proof.md",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "777f59c5e497ca71250151aea94afa7eae7b8ff4"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "1294f0ef4cb21105021c3b16bd9e40aef134a406"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "1294f0ef4cb21105021c3b16bd9e40aef134a406"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "mtbs-snapshot",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "conductor/tracks/environmental_postgres_retirement_20260904/evidence/ingestion-throttle-audit-20260911.md",
+      "legacy_change": "A",
+      "git_objects": {
+        "merge_base": null,
+        "legacy": {
+          "mode": "100644",
+          "blob": "0947614f2684717f222812be231d74461e415a39"
+        },
+        "current": null
+      },
+      "mechanical_comparison": "missing_path",
+      "disposition_at_comparison": "missing",
+      "behavior": "throttle-audit-provenance",
+      "explanation": "At least one legacy change is absent from the pinned comparison; this does not mean the entire file is absent. See the behavioral receipt and preserve any accepted later changes during repair.",
+      "legacy_commits": [
+        "3a5f3902e6f56b0878eab1d72b34789f6653058f"
+      ]
+    },
+    {
+      "path": "conductor/tracks/environmental_postgres_retirement_20260904/evidence/mtbs-current-capture-20260910.md",
+      "legacy_change": "A",
+      "git_objects": {
+        "merge_base": null,
+        "legacy": {
+          "mode": "100644",
+          "blob": "e03401a21cd0ecfdff97f5976df1a6f6cc5ba2f6"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "e03401a21cd0ecfdff97f5976df1a6f6cc5ba2f6"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "mtbs-snapshot",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "conductor/tracks/environmental_postgres_retirement_20260904/evidence/repair-preparation-20260910.md",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "656eccecb716a52e2baf66d537f86db7f820ed6d"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "9506a3748087cbbceef7a30bf2ef5ff3e3ca01ff"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "656eccecb716a52e2baf66d537f86db7f820ed6d"
+        }
+      },
+      "mechanical_comparison": "baseline",
+      "disposition_at_comparison": "missing",
+      "behavior": "historical-recovery-telemetry",
+      "explanation": "The old file remains at merge-base bytes. Current sensor revalidation supersedes its preparation/custody claims, but legacy deployment and diagnostic lifecycle provenance was omitted. A separate preservation document is proposed pending independent review.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404",
+        "c342f1060af74d8c5b8b3d9ac0ac77600d6b5634"
+      ]
+    },
+    {
+      "path": "conductor/tracks/environmental_postgres_retirement_20260904/evidence/soil-static-admission-preparation-20260910.md",
+      "legacy_change": "A",
+      "git_objects": {
+        "merge_base": null,
+        "legacy": {
+          "mode": "100644",
+          "blob": "cbf5191b5f20c35f635cafd41a8806232f723bf4"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "cbf5191b5f20c35f635cafd41a8806232f723bf4"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "mtbs-snapshot",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "conductor/tracks/environmental_postgres_retirement_20260904/plan.md",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "2b44ca7f69b7e114d37e7e75c6483abde6db7a46"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "6288c3ebd6770e4bccc0c6b615c5df3aca95f3af"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "e16d8a96875917422f7c147d1f6052bf0b0579d3"
+        }
+      },
+      "mechanical_comparison": "changed",
+      "disposition_at_comparison": "missing",
+      "behavior": "throttle-audit-provenance",
+      "explanation": "At least one legacy change is absent from the pinned comparison; this does not mean the entire file is absent. See the behavioral receipt and preserve any accepted later changes during repair.",
+      "legacy_commits": [
+        "3a5f3902e6f56b0878eab1d72b34789f6653058f",
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "docs/services.md",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "a81bab54f081f13031f69041fac5afcc5a7267cf"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "9507b441558d71ce26eaf5cf66bc0771dda1a4a6"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "9507b441558d71ce26eaf5cf66bc0771dda1a4a6"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "mtbs-snapshot",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "docs/strategy-deployment-readiness.md",
+      "legacy_change": "A",
+      "git_objects": {
+        "merge_base": null,
+        "legacy": {
+          "mode": "100644",
+          "blob": "95885f7b8ea63a27813d183b72c1d2dea05104d3"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "95885f7b8ea63a27813d183b72c1d2dea05104d3"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "advisor-history",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "b840c6a2c48eb896678deec0c7a0c04aa33e6f3b"
+      ]
+    },
+    {
+      "path": "drizzle/0001_ai_message_feedback.sql",
+      "legacy_change": "A",
+      "git_objects": {
+        "merge_base": null,
+        "legacy": {
+          "mode": "100644",
+          "blob": "5e281c22c5b5bc12b6c1a62f6362d797f1c64fad"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "5e281c22c5b5bc12b6c1a62f6362d797f1c64fad"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "advisor-history",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "b840c6a2c48eb896678deec0c7a0c04aa33e6f3b"
+      ]
+    },
+    {
+      "path": "drizzle/meta/_journal.json",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "d0f67e806a24a6b64b1965ca2f5ba74b24b08ecc"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "42aba1f173f30e3296ff5c35e0ea22a90c021751"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "42aba1f173f30e3296ff5c35e0ea22a90c021751"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "advisor-history",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "b840c6a2c48eb896678deec0c7a0c04aa33e6f3b"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/QUALITY_RECEIPT.json",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "f7a2f7701b7a3ec2017dbed62eb231d229f8d7cc"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "c5e4e92de697445a9c670a5998375d740577858b"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "a9c1e4382991afe9964edf4331343a73d7986355"
+        }
+      },
+      "mechanical_comparison": "changed",
+      "disposition_at_comparison": "superseded",
+      "behavior": "quality-receipt",
+      "explanation": "A source-bound legacy quality receipt cannot attest to later accepted code. Gapless receipt intake is retained; integration must generate and verify its own full-source receipt after final freeze.",
+      "legacy_commits": [
+        "3a5f3902e6f56b0878eab1d72b34789f6653058f",
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/scripts/AGENTS.md",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "d0033ae13a1c649c1a4ada9ffcbf15f36e8de217"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "255b492c4de1c083929f8a1b137bb869fe600a56"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "d475745e5bdf51249a15c88ddbca406457367d1a"
+        }
+      },
+      "mechanical_comparison": "changed",
+      "disposition_at_comparison": "present",
+      "behavior": "shared-guidance",
+      "explanation": "Every legacy line is retained; accepted retirement operator and offline builder sections are additive.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/scripts/prepare_mtbs_current_snapshot.py",
+      "legacy_change": "A",
+      "git_objects": {
+        "merge_base": null,
+        "legacy": {
+          "mode": "100644",
+          "blob": "f2216dfc5c4331ca681bfed0e831c2cc07321fc7"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "f2216dfc5c4331ca681bfed0e831c2cc07321fc7"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "mtbs-snapshot",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/scripts/stage_mtbs_current_snapshot.py",
+      "legacy_change": "A",
+      "git_objects": {
+        "merge_base": null,
+        "legacy": {
+          "mode": "100644",
+          "blob": "d3b6a2ca7e513a9224808893d7d0ed9b6fe3dc48"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "d3b6a2ca7e513a9224808893d7d0ed9b6fe3dc48"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "mtbs-snapshot",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/execution/AGENTS.md",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "376393b25b623c215d370052766744b11af7dd24"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "1c5d6e5e9a825eaa518dbd73b7a9a604b97a596a"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "5985923a2fe31d0cfcfb80ac41c635e4b144eb95"
+        }
+      },
+      "mechanical_comparison": "changed",
+      "disposition_at_comparison": "present",
+      "behavior": "shared-guidance",
+      "explanation": "Legacy lane-control and MTBS scheduling guidance remains; accepted forecast/chunk workflows and child-exit fencing guidance are additive.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/execution/job_executor_service.py",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "31224385e39308cd7a261b9a20d4a1b646975986"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "9af611918b57ce724c2b30b92729cb618473c15a"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "9f664a0d0c5976db23f44102e89c997d76dccf87"
+        }
+      },
+      "mechanical_comparison": "changed",
+      "disposition_at_comparison": "present",
+      "behavior": "mtbs-snapshot",
+      "explanation": "Legacy MTBS current-capture/daily definitions and fatal pinned-database handling remain. Accepted gapless adds child-exit confirmation and abort propagation without replacing MTBS ownership.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/execution/job_lane_control.py",
+      "legacy_change": "A",
+      "git_objects": {
+        "merge_base": null,
+        "legacy": {
+          "mode": "100644",
+          "blob": "b3bda39b7d94228039ceba410fb5c0b35b60af49"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "b3bda39b7d94228039ceba410fb5c0b35b60af49"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "mtbs-snapshot",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/ingest/AGENTS.md",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "64e1a31127c0d783ab5951942134e28b6fedb932"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "2058c7d4a65185e78483999d9d3af9513a3169e2"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "64e1a31127c0d783ab5951942134e28b6fedb932"
+        }
+      },
+      "mechanical_comparison": "baseline",
+      "disposition_at_comparison": "missing",
+      "behavior": "nasa-provider-backpressure",
+      "explanation": "At least one legacy change is absent from the pinned comparison; this does not mean the entire file is absent. See the behavioral receipt and preserve any accepted later changes during repair.",
+      "legacy_commits": [
+        "3a5f3902e6f56b0878eab1d72b34789f6653058f"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/ingest/http.py",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "8048a3d2b00a7c25abd9a86e2c1883d95d092331"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "4db0efdb6845cc13754738989bc8b8b8a366d297"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "8048a3d2b00a7c25abd9a86e2c1883d95d092331"
+        }
+      },
+      "mechanical_comparison": "baseline",
+      "disposition_at_comparison": "missing",
+      "behavior": "nasa-provider-backpressure",
+      "explanation": "At least one legacy change is absent from the pinned comparison; this does not mean the entire file is absent. See the behavioral receipt and preserve any accepted later changes during repair.",
+      "legacy_commits": [
+        "3a5f3902e6f56b0878eab1d72b34789f6653058f"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/ingest/mtbs.py",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "3171b59eabfb29872a91d770f22bf026c2584bde"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "894dec47228433e38a7d89e6d5f6ab5da9f9fcc1"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "48af2746a21dbc0c1a3415e91013f9f1efe31800"
+        }
+      },
+      "mechanical_comparison": "changed",
+      "disposition_at_comparison": "missing",
+      "behavior": "mtbs-provider-refusal",
+      "explanation": "At least one legacy change is absent from the pinned comparison; this does not mean the entire file is absent. See the behavioral receipt and preserve any accepted later changes during repair.",
+      "legacy_commits": [
+        "3a5f3902e6f56b0878eab1d72b34789f6653058f",
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/interface/cli/AGENTS.md",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "17ea0eb4c8aef1feccea1ccfd77e69c4168daa29"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "a2f9993aa74b7efd97f647ade19f1d1a9fbf3c69"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "e623cb1f3ada2fcd7195b6b1b6382675a73a29c8"
+        }
+      },
+      "mechanical_comparison": "changed",
+      "disposition_at_comparison": "present",
+      "behavior": "shared-guidance",
+      "explanation": "Legacy operator/Parquet guidance remains; conformity corrects the already-existing agent verb and documents injected workflows.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/interface/cli/ops.py",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "a20a23a6b0b442e0122d174e61fc8a3f3bf698d1"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "d8fc08beb78efdc4744279644a9d066beab5582e"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "d8fc08beb78efdc4744279644a9d066beab5582e"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "mtbs-snapshot",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/interface/cli/parquet.py",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "9e0fc5b6d499ef9b49cf626ce0e534ec6bdf0b1e"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "305a818ebe6534a127febd8bc7226c90e4836cca"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "305a818ebe6534a127febd8bc7226c90e4836cca"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "mtbs-snapshot",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/interface/http/AGENTS.md",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "44aa7a0bf19f43736f43f3fac7f0dd06c8d4fdd0"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "28f138da9d4f13a9fc25fc189aebcba2670629eb"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "28f138da9d4f13a9fc25fc189aebcba2670629eb"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "mtbs-snapshot",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/interface/http/parquet_routes.py",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "1af6f7c936fd89448e7507213ab0c014e22b8772"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "6fc82832b3e45ecb2d7532965b75994cbcbc9153"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "6fc82832b3e45ecb2d7532965b75994cbcbc9153"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "mtbs-snapshot",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/parquet_ops/AGENTS.md",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "ffd58926145cf1489f5677cf3296017644e030a9"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "4e3e1d8449e3af0707b942ce78cec93a6297a504"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "eed9dc2bede9f17f1a9fa553f0cc00b53433b3c3"
+        }
+      },
+      "mechanical_comparison": "changed",
+      "disposition_at_comparison": "present",
+      "behavior": "mtbs-snapshot",
+      "explanation": "Legacy snapshot metadata admission remains; canonical base-z13 completion compatibility is documented additively.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/parquet_ops/mtbs_snapshot_catalog.py",
+      "legacy_change": "A",
+      "git_objects": {
+        "merge_base": null,
+        "legacy": {
+          "mode": "100644",
+          "blob": "8bcecd46964ed7c45b8697a3e73281a21769c759"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "3e95403b095d70f9642b1b41a0555a20ec31697c"
+        }
+      },
+      "mechanical_comparison": "changed",
+      "disposition_at_comparison": "superseded",
+      "behavior": "mtbs-base-marker",
+      "explanation": "fa20223 deliberately accepts the canonical base-z13 schema-v1 marker while retaining typed indexed data receipts and all identity/count checks; derived or explicit-part markers still require exact digests.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/parquet_ops/serving.py",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "c40944d8998cccab41f62586c8b4a684ea077822"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "3134ab1606bae44a7d58782b3979f0f20904dd25"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "3134ab1606bae44a7d58782b3979f0f20904dd25"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "mtbs-snapshot",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/parquet_ops/warehouse_reader.py",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "17763598e00ce1612f3435928d51b01762b2410f"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "26b225fae861f05fe2adab0578a9425b8177ba36"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "26b225fae861f05fe2adab0578a9425b8177ba36"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "mtbs-snapshot",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/parquet_ops/wire.py",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "5265e62b5f6616f662b5678cecd93a791c7e8d51"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "3ceaa0b3911ca50b3d628fcdc13271f713be5443"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "3ceaa0b3911ca50b3d628fcdc13271f713be5443"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "mtbs-snapshot",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/AGENTS.md",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "0d6a3c8e4cd57dbff90d101ed74f2603332b3745"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "f40f6b5dfdc2cdb02f27b1dec26c8b3f521d7515"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "f40f6b5dfdc2cdb02f27b1dec26c8b3f521d7515"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "mtbs-snapshot",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/AGENTS.md",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "d2b140fd5308289abb19c7822e36b6346927671f"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "2d6f340b416b9b97030ea7c9ae4cf55eac03a520"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "7eb330fbfbda3a2082e9d9aea7f7d46ed4e934aa"
+        }
+      },
+      "mechanical_comparison": "changed",
+      "disposition_at_comparison": "missing",
+      "behavior": "nasa-provider-backpressure",
+      "explanation": "At least one legacy change is absent from the pinned comparison; this does not mean the entire file is absent. See the behavioral receipt and preserve any accepted later changes during repair.",
+      "legacy_commits": [
+        "3a5f3902e6f56b0878eab1d72b34789f6653058f",
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/__init__.py",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "9ba41f38f6278eb0285f18ef7ba09c46330a8b16"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "46e91319f543fd76e828bc95bc6c5a316ab80cd8"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "9ba41f38f6278eb0285f18ef7ba09c46330a8b16"
+        }
+      },
+      "mechanical_comparison": "baseline",
+      "disposition_at_comparison": "missing",
+      "behavior": "nasa-provider-backpressure",
+      "explanation": "At least one legacy change is absent from the pinned comparison; this does not mean the entire file is absent. See the behavioral receipt and preserve any accepted later changes during repair.",
+      "legacy_commits": [
+        "3a5f3902e6f56b0878eab1d72b34789f6653058f"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/burn_severity/adapter.py",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "a38974a5e047d46ce5d7e5442c0c207e8ba043fa"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "571cf4f45d21b42bfaccb7cb62771971189e1193"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "a38974a5e047d46ce5d7e5442c0c207e8ba043fa"
+        }
+      },
+      "mechanical_comparison": "baseline",
+      "disposition_at_comparison": "missing",
+      "behavior": "mtbs-provider-refusal",
+      "explanation": "At least one legacy change is absent from the pinned comparison; this does not mean the entire file is absent. See the behavioral receipt and preserve any accepted later changes during repair.",
+      "legacy_commits": [
+        "3a5f3902e6f56b0878eab1d72b34789f6653058f"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/burn_severity/capture.py",
+      "legacy_change": "A",
+      "git_objects": {
+        "merge_base": null,
+        "legacy": {
+          "mode": "100644",
+          "blob": "79b9761a4bc3ff4e852f7e873365110769bc96b7"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "b1e23ead78780b8d386994d7cf531c21fa0b4c33"
+        }
+      },
+      "mechanical_comparison": "changed",
+      "disposition_at_comparison": "missing",
+      "behavior": "mtbs-provider-refusal",
+      "explanation": "At least one legacy change is absent from the pinned comparison; this does not mean the entire file is absent. See the behavioral receipt and preserve any accepted later changes during repair.",
+      "legacy_commits": [
+        "3a5f3902e6f56b0878eab1d72b34789f6653058f",
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/burn_severity/current_snapshot.py",
+      "legacy_change": "A",
+      "git_objects": {
+        "merge_base": null,
+        "legacy": {
+          "mode": "100644",
+          "blob": "095e8cc06af85288ad08fe7a5288eca499cf193f"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "ad4175f14c81c376e075836711bd05819cd17a0c"
+        }
+      },
+      "mechanical_comparison": "changed",
+      "disposition_at_comparison": "present",
+      "behavior": "mtbs-snapshot",
+      "explanation": "Legacy snapshot validation and four-rung construction remain; retirement injects an optional existing DuckDB connection through derivation for bounded offline preparation.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/burn_severity/daily.py",
+      "legacy_change": "A",
+      "git_objects": {
+        "merge_base": null,
+        "legacy": {
+          "mode": "100644",
+          "blob": "908b9a5510332752c602cb6e0c7c74b862b36cd4"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "908b9a5510332752c602cb6e0c7c74b862b36cd4"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "mtbs-snapshot",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/burn_severity/forward.py",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "1241f443fcf3ad2919b9567adca6aa8d9b42c689"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "98431bc24ffc543ab07c062f9233e9e88f2bfda1"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "c335db88912d6105382c8758131d0a222ec40c83"
+        }
+      },
+      "mechanical_comparison": "changed",
+      "disposition_at_comparison": "missing",
+      "behavior": "mtbs-provider-refusal",
+      "explanation": "At least one legacy change is absent from the pinned comparison; this does not mean the entire file is absent. See the behavioral receipt and preserve any accepted later changes during repair.",
+      "legacy_commits": [
+        "3a5f3902e6f56b0878eab1d72b34789f6653058f",
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/burn_severity/publish_snapshot.py",
+      "legacy_change": "A",
+      "git_objects": {
+        "merge_base": null,
+        "legacy": {
+          "mode": "100644",
+          "blob": "6ba67208af011f1ef4def9c6a9f7c1966596e5c4"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "6ba67208af011f1ef4def9c6a9f7c1966596e5c4"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "mtbs-snapshot",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/burn_severity/source.py",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "6f2185557925ac923f407b5adac8d34b76ab6028"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "e7cfdd64b87d85955d0dc0f8fbab27f003ccf64e"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "6f2185557925ac923f407b5adac8d34b76ab6028"
+        }
+      },
+      "mechanical_comparison": "baseline",
+      "disposition_at_comparison": "missing",
+      "behavior": "mtbs-provider-refusal",
+      "explanation": "At least one legacy change is absent from the pinned comparison; this does not mean the entire file is absent. See the behavioral receipt and preserve any accepted later changes during repair.",
+      "legacy_commits": [
+        "3a5f3902e6f56b0878eab1d72b34789f6653058f"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/burn_severity/stage.py",
+      "legacy_change": "A",
+      "git_objects": {
+        "merge_base": null,
+        "legacy": {
+          "mode": "100644",
+          "blob": "f27405fa25f52f6f9ce0d96aeb8e96c5aca8844a"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "f27405fa25f52f6f9ce0d96aeb8e96c5aca8844a"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "mtbs-snapshot",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/climate/AGENTS.md",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "436ace567d69562d0a371b3af4882a5bbad90674"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "94bfff5e6670194d8477f230ed8cf845645750cf"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "436ace567d69562d0a371b3af4882a5bbad90674"
+        }
+      },
+      "mechanical_comparison": "baseline",
+      "disposition_at_comparison": "missing",
+      "behavior": "nasa-provider-backpressure",
+      "explanation": "At least one legacy change is absent from the pinned comparison; this does not mean the entire file is absent. See the behavioral receipt and preserve any accepted later changes during repair.",
+      "legacy_commits": [
+        "3a5f3902e6f56b0878eab1d72b34789f6653058f"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/climate/adapter.py",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "2091e576f6243461ea6496606ab86c488162d9e0"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "f73804d36e9c74946bf66dd1850b7ffbf0240a2f"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "2091e576f6243461ea6496606ab86c488162d9e0"
+        }
+      },
+      "mechanical_comparison": "baseline",
+      "disposition_at_comparison": "missing",
+      "behavior": "nasa-provider-backpressure",
+      "explanation": "At least one legacy change is absent from the pinned comparison; this does not mean the entire file is absent. See the behavioral receipt and preserve any accepted later changes during repair.",
+      "legacy_commits": [
+        "3a5f3902e6f56b0878eab1d72b34789f6653058f"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/climate/cooldown.py",
+      "legacy_change": "A",
+      "git_objects": {
+        "merge_base": null,
+        "legacy": {
+          "mode": "100644",
+          "blob": "0cd94cdbdb48c0df4d7029af98e4d0e41afaba82"
+        },
+        "current": null
+      },
+      "mechanical_comparison": "missing_path",
+      "disposition_at_comparison": "missing",
+      "behavior": "nasa-provider-backpressure",
+      "explanation": "At least one legacy change is absent from the pinned comparison; this does not mean the entire file is absent. See the behavioral receipt and preserve any accepted later changes during repair.",
+      "legacy_commits": [
+        "3a5f3902e6f56b0878eab1d72b34789f6653058f"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/climate/forward.py",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "c7a1e5543cf6fd3262b71ed4f392d3946b399990"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "eb7c301261f36a5698a86887a39624559c458925"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "c7a1e5543cf6fd3262b71ed4f392d3946b399990"
+        }
+      },
+      "mechanical_comparison": "baseline",
+      "disposition_at_comparison": "missing",
+      "behavior": "nasa-provider-backpressure",
+      "explanation": "At least one legacy change is absent from the pinned comparison; this does not mean the entire file is absent. See the behavioral receipt and preserve any accepted later changes during repair.",
+      "legacy_commits": [
+        "3a5f3902e6f56b0878eab1d72b34789f6653058f"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/climate/source.py",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "ed8bc038ad5d6ee14536c04244b401ac779bd729"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "ff524aa53d8af58ac0829cbdf190f3c7b233aa74"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "ed8bc038ad5d6ee14536c04244b401ac779bd729"
+        }
+      },
+      "mechanical_comparison": "baseline",
+      "disposition_at_comparison": "missing",
+      "behavior": "nasa-provider-backpressure",
+      "explanation": "At least one legacy change is absent from the pinned comparison; this does not mean the entire file is absent. See the behavioral receipt and preserve any accepted later changes during repair.",
+      "legacy_commits": [
+        "3a5f3902e6f56b0878eab1d72b34789f6653058f"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/lanes/burn_severity.py",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "ff15eef0b0e0f28a6317473c5100a31f9dc8b2bb"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "6a2368f33a6fa57911c0fd19ac65bb2801c0606b"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "6a2368f33a6fa57911c0fd19ac65bb2801c0606b"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "mtbs-snapshot",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/sql/execution/insert_executor_lane_control_incident.sql",
+      "legacy_change": "A",
+      "git_objects": {
+        "merge_base": null,
+        "legacy": {
+          "mode": "100644",
+          "blob": "a83579670e2bb7cc4c8146125b0d30713db2e3c1"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "a83579670e2bb7cc4c8146125b0d30713db2e3c1"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "mtbs-snapshot",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/sql/execution/lock_executor_lane_definitions.sql",
+      "legacy_change": "A",
+      "git_objects": {
+        "merge_base": null,
+        "legacy": {
+          "mode": "100644",
+          "blob": "e473bb25d350c3f651bc5b4fd278a16f92083134"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "e473bb25d350c3f651bc5b4fd278a16f92083134"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "mtbs-snapshot",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/sql/execution/select_executor_lane_definitions.sql",
+      "legacy_change": "A",
+      "git_objects": {
+        "merge_base": null,
+        "legacy": {
+          "mode": "100644",
+          "blob": "1418ca2eca4239be8a018fc985059848a27033a1"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "1418ca2eca4239be8a018fc985059848a27033a1"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "mtbs-snapshot",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/sql/execution/set_executor_lane_enabled.sql",
+      "legacy_change": "A",
+      "git_objects": {
+        "merge_base": null,
+        "legacy": {
+          "mode": "100644",
+          "blob": "b99d60ba2e5303912287b614e54c2cb179e7ee4e"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "b99d60ba2e5303912287b614e54c2cb179e7ee4e"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "mtbs-snapshot",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/warehouse/AGENTS.md",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "ab07c3f8f45ff125be96586a8e70aa3996029543"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "0bd0d08e2d6baf4c7a8ddb9bc023f2f754e9cedb"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "0bd0d08e2d6baf4c7a8ddb9bc023f2f754e9cedb"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "mtbs-snapshot",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/warehouse/mtbs_releases.py",
+      "legacy_change": "A",
+      "git_objects": {
+        "merge_base": null,
+        "legacy": {
+          "mode": "100644",
+          "blob": "a3278962d4d36040522f24cfa819eebd7842a258"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "a3278962d4d36040522f24cfa819eebd7842a258"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "mtbs-snapshot",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/warehouse/mtbs_snapshots.py",
+      "legacy_change": "A",
+      "git_objects": {
+        "merge_base": null,
+        "legacy": {
+          "mode": "100644",
+          "blob": "71f10de7abcd8db1dee2d7f51070b98440c14088"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "71f10de7abcd8db1dee2d7f51070b98440c14088"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "mtbs-snapshot",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/tests/direct/climate/test_adapter.py",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "1cda04d996ca61e159b763c9b2e0fd1fe3ca1033"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "d5846389d36d1a917b40355eefbcead828e2861b"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "1cda04d996ca61e159b763c9b2e0fd1fe3ca1033"
+        }
+      },
+      "mechanical_comparison": "baseline",
+      "disposition_at_comparison": "missing",
+      "behavior": "nasa-provider-backpressure",
+      "explanation": "At least one legacy change is absent from the pinned comparison; this does not mean the entire file is absent. See the behavioral receipt and preserve any accepted later changes during repair.",
+      "legacy_commits": [
+        "3a5f3902e6f56b0878eab1d72b34789f6653058f"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/tests/direct/climate/test_forward_command.py",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "1f522ca0f4a0b0c124230e6cd8e615932f25643a"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "96a80a21837e68b7e40eb8f20b3e5d2304c88b5a"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "1f522ca0f4a0b0c124230e6cd8e615932f25643a"
+        }
+      },
+      "mechanical_comparison": "baseline",
+      "disposition_at_comparison": "missing",
+      "behavior": "nasa-provider-backpressure",
+      "explanation": "At least one legacy change is absent from the pinned comparison; this does not mean the entire file is absent. See the behavioral receipt and preserve any accepted later changes during repair.",
+      "legacy_commits": [
+        "3a5f3902e6f56b0878eab1d72b34789f6653058f"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/tests/direct/climate/test_provider_backpressure.py",
+      "legacy_change": "A",
+      "git_objects": {
+        "merge_base": null,
+        "legacy": {
+          "mode": "100644",
+          "blob": "0d113c25a0169c61269173198395afa80978acaa"
+        },
+        "current": null
+      },
+      "mechanical_comparison": "missing_path",
+      "disposition_at_comparison": "missing",
+      "behavior": "nasa-provider-backpressure",
+      "explanation": "At least one legacy change is absent from the pinned comparison; this does not mean the entire file is absent. See the behavioral receipt and preserve any accepted later changes during repair.",
+      "legacy_commits": [
+        "3a5f3902e6f56b0878eab1d72b34789f6653058f"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/tests/direct/climate/test_source.py",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "a5f1e1d3124dc61d04b0965ce7a3cdc20703598c"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "c32ea863508a035ededb2b37ab4981d22b01836e"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "a5f1e1d3124dc61d04b0965ce7a3cdc20703598c"
+        }
+      },
+      "mechanical_comparison": "baseline",
+      "disposition_at_comparison": "missing",
+      "behavior": "nasa-provider-backpressure",
+      "explanation": "At least one legacy change is absent from the pinned comparison; this does not mean the entire file is absent. See the behavioral receipt and preserve any accepted later changes during repair.",
+      "legacy_commits": [
+        "3a5f3902e6f56b0878eab1d72b34789f6653058f"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/tests/direct/test_mtbs_current_snapshot.py",
+      "legacy_change": "A",
+      "git_objects": {
+        "merge_base": null,
+        "legacy": {
+          "mode": "100644",
+          "blob": "218b5c4bd92ca0f955cf87140e89d201331de1c3"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "218b5c4bd92ca0f955cf87140e89d201331de1c3"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "mtbs-snapshot",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/tests/direct/test_mtbs_provider_refusals.py",
+      "legacy_change": "A",
+      "git_objects": {
+        "merge_base": null,
+        "legacy": {
+          "mode": "100644",
+          "blob": "08e308104ef01615014403c6f766b0bc3eea7ed2"
+        },
+        "current": null
+      },
+      "mechanical_comparison": "missing_path",
+      "disposition_at_comparison": "missing",
+      "behavior": "mtbs-provider-refusal",
+      "explanation": "At least one legacy change is absent from the pinned comparison; this does not mean the entire file is absent. See the behavioral receipt and preserve any accepted later changes during repair.",
+      "legacy_commits": [
+        "3a5f3902e6f56b0878eab1d72b34789f6653058f"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/tests/direct/test_mtbs_staging.py",
+      "legacy_change": "A",
+      "git_objects": {
+        "merge_base": null,
+        "legacy": {
+          "mode": "100644",
+          "blob": "93a57afafe655ed56644adeae704d95dec354602"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "09178f520cbffd7eadf7143bdba09c9c7022ab57"
+        }
+      },
+      "mechanical_comparison": "changed",
+      "disposition_at_comparison": "present",
+      "behavior": "mtbs-snapshot",
+      "explanation": "Legacy publication/interrupt/refusal cases remain; fa20223 additionally reads the actual output through the snapshot catalog and checks base-v1/derived-v2 markers.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/tests/parquet/test_burn_severity_lane.py",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "2e2426d1b9e0dd55bcdb8387c664443520502476"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "ff64ca18f4d0a624eb84889368cf909534121e25"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "ff64ca18f4d0a624eb84889368cf909534121e25"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "mtbs-snapshot",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/tests/parquet_ops/AGENTS.md",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "3a47d2de4de48ee4e4b06f2499a624dc467df116"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "7f428d1ce27dc3a9e3fe0b534b1c60cfbf5ba6cf"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "fe749a9c249a3c8c274b8b659c12a397eb90d155"
+        }
+      },
+      "mechanical_comparison": "changed",
+      "disposition_at_comparison": "present",
+      "behavior": "shared-guidance",
+      "explanation": "Legacy snapshot/release tests remain documented; accepted reader synchronization notes and baseline marker tests are additive.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/tests/parquet_ops/test_mtbs_release_eligibility.py",
+      "legacy_change": "A",
+      "git_objects": {
+        "merge_base": null,
+        "legacy": {
+          "mode": "100644",
+          "blob": "f3799851f2039d52b5acefd99b9ef2e9d459d4d4"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "f3799851f2039d52b5acefd99b9ef2e9d459d4d4"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "mtbs-snapshot",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/tests/parquet_ops/test_mtbs_snapshot_catalog.py",
+      "legacy_change": "A",
+      "git_objects": {
+        "merge_base": null,
+        "legacy": {
+          "mode": "100644",
+          "blob": "f3e8bdccb26b032c9b1313e7c4ed902abafd4a65"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "024d72b6efa221880c02e354ccc7a4758b53bd30"
+        }
+      },
+      "mechanical_comparison": "changed",
+      "disposition_at_comparison": "superseded",
+      "behavior": "mtbs-base-marker",
+      "explanation": "The accepted baseline updates the positive fixture to real base-v1/derived-v2 completions and adds rebound digest/count/run/noncanonical refusal cases.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/tests/test_agent_parquet_reads.py",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "ae37b5537c0450b08f57e3a513aa5227048dfe9c"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "063042706b5f5e4185ca9166919bfd98615331de"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "5cdeec1b64fbb393c18296ee9d6bb549388cece3"
+        }
+      },
+      "mechanical_comparison": "changed",
+      "disposition_at_comparison": "superseded",
+      "behavior": "weighted-mean-oracle",
+      "explanation": "Accepted reader uses an eight-ULP weighted-sum allowance with controls rejecting changed values and counts; do not restore the older four-ULP assertion.",
+      "legacy_commits": [
+        "3a5f3902e6f56b0878eab1d72b34789f6653058f"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/tests/test_ingest_http.py",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "90f7ae66854656d9271fa8e62b0144bc1bfb40a5"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "b6d2f523337e17f4371bfc2d6fedb727e6cd0b34"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "90f7ae66854656d9271fa8e62b0144bc1bfb40a5"
+        }
+      },
+      "mechanical_comparison": "baseline",
+      "disposition_at_comparison": "missing",
+      "behavior": "nasa-provider-backpressure",
+      "explanation": "At least one legacy change is absent from the pinned comparison; this does not mean the entire file is absent. See the behavioral receipt and preserve any accepted later changes during repair.",
+      "legacy_commits": [
+        "3a5f3902e6f56b0878eab1d72b34789f6653058f"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/tests/test_job_executor_service.py",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "af4ca48b85c337a65db0ee53606520c93e0a7e02"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "3a6eb888cda539c12f2351f0b9f520542a9f1f23"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "d893f4c40ea84defce31c7343f34f9c9a543dcfd"
+        }
+      },
+      "mechanical_comparison": "changed",
+      "disposition_at_comparison": "present",
+      "behavior": "mtbs-snapshot",
+      "explanation": "Legacy MTBS cadence/definition and database-fatal coverage remains; accepted gapless extends abort and cleanup verification.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "services/agri-data-service/tests/test_job_lane_control.py",
+      "legacy_change": "A",
+      "git_objects": {
+        "merge_base": null,
+        "legacy": {
+          "mode": "100644",
+          "blob": "8ebcfe83269d297d1de9f65a0f378a767bba7372"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "8ebcfe83269d297d1de9f65a0f378a767bba7372"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "mtbs-snapshot",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "src/__tests__/api/regional-intelligence-gates.test.ts",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "fd4b19baf3c369e8c0db56d1a6f5d7f95a7ab499"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "a996c2df354f58bbce9d3fc4be6d123b359a8815"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "7cf1dfa1416ca2ccaf696eb1085d2252cb959567"
+        }
+      },
+      "mechanical_comparison": "changed",
+      "disposition_at_comparison": "present",
+      "behavior": "advisor-history",
+      "explanation": "Legacy private advisor endpoint gates remain; reader fixtures accept the added request AbortSignal parameter.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "src/__tests__/components/ChatTextControls.test.tsx",
+      "legacy_change": "A",
+      "git_objects": {
+        "merge_base": null,
+        "legacy": {
+          "mode": "100644",
+          "blob": "35ee28f74d1c927e6ae0dec99b0cef60011f4dad"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "35ee28f74d1c927e6ae0dec99b0cef60011f4dad"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "advisor-history",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "b840c6a2c48eb896678deec0c7a0c04aa33e6f3b"
+      ]
+    },
+    {
+      "path": "src/__tests__/components/ClimateDetails.test.tsx",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "a494da61f8899c3cce9c5bf1c886720123a1349e"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "3ae2563b3b43c19b2038ed357417de404747a43a"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "a494da61f8899c3cce9c5bf1c886720123a1349e"
+        }
+      },
+      "mechanical_comparison": "baseline",
+      "disposition_at_comparison": "missing",
+      "behavior": "climate-viewport-coverage",
+      "explanation": "At least one legacy change is absent from the pinned comparison; this does not mean the entire file is absent. See the behavioral receipt and preserve any accepted later changes during repair.",
+      "legacy_commits": [
+        "3a5f3902e6f56b0878eab1d72b34789f6653058f"
+      ]
+    },
+    {
+      "path": "src/__tests__/components/ClimateFieldLayers.test.tsx",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "c3cae9da015570b1bc12bd08eb1de2c8a33a618d"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "a12af1d6637645f7fe7b79438a174000ac75413a"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "d29a72657bbe5af67365ec09ac1a60844e4e59eb"
+        }
+      },
+      "mechanical_comparison": "changed",
+      "disposition_at_comparison": "missing",
+      "behavior": "climate-legend-hover",
+      "explanation": "At least one legacy change is absent from the pinned comparison; this does not mean the entire file is absent. See the behavioral receipt and preserve any accepted later changes during repair.",
+      "legacy_commits": [
+        "3a5f3902e6f56b0878eab1d72b34789f6653058f"
+      ]
+    },
+    {
+      "path": "src/__tests__/components/LayerManager.test.tsx",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "cc7dffc228a384b2a36aa133f7ccca4dcf5cf807"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "f5f874e05da126457af750d6927c6261ba18017f"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "f5f874e05da126457af750d6927c6261ba18017f"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "mtbs-snapshot",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "src/__tests__/components/LayerRow.test.tsx",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "511d5833882a429c0a8b8becf28be1110f173866"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "b8e2a04449bb4cad36951323fb049e6e62c77e06"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "511d5833882a429c0a8b8becf28be1110f173866"
+        }
+      },
+      "mechanical_comparison": "baseline",
+      "disposition_at_comparison": "missing",
+      "behavior": "climate-legend-hover",
+      "explanation": "At least one legacy change is absent from the pinned comparison; this does not mean the entire file is absent. See the behavioral receipt and preserve any accepted later changes during repair.",
+      "legacy_commits": [
+        "3a5f3902e6f56b0878eab1d72b34789f6653058f"
+      ]
+    },
+    {
+      "path": "src/__tests__/components/MessageFeedback.test.tsx",
+      "legacy_change": "A",
+      "git_objects": {
+        "merge_base": null,
+        "legacy": {
+          "mode": "100644",
+          "blob": "3e9087cf5cfbc476f99e4efcfdb08ff81a794143"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "3e9087cf5cfbc476f99e4efcfdb08ff81a794143"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "advisor-history",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "b840c6a2c48eb896678deec0c7a0c04aa33e6f3b"
+      ]
+    },
+    {
+      "path": "src/__tests__/components/RegionalIntelligencePanel.test.tsx",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "22fb38f086317553403c3c3cf0471b6f7741edb7"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "6ffb56bb3520c692aca2095dbdf26d36822235c0"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "6ffb56bb3520c692aca2095dbdf26d36822235c0"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "advisor-history",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404",
+        "b840c6a2c48eb896678deec0c7a0c04aa33e6f3b"
+      ]
+    },
+    {
+      "path": "src/__tests__/components/SavedConversationMapLink.test.tsx",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "c6403d7ec6bd03fd23a4dd084d7b9033909892d8"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "bdafefe93f8a244656cbbbeb5b940baafc28e382"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "bdafefe93f8a244656cbbbeb5b940baafc28e382"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "advisor-history",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "b840c6a2c48eb896678deec0c7a0c04aa33e6f3b"
+      ]
+    },
+    {
+      "path": "src/__tests__/hooks/use-regional-intelligence-viewed-layers.test.tsx",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "3fbc070cc561462a2f7ca602cdbbb3c51160d4b3"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "9a7e565e5f5d8a36f06c917c07d18f9e4180647e"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "9a7e565e5f5d8a36f06c917c07d18f9e4180647e"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "advisor-history",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "b840c6a2c48eb896678deec0c7a0c04aa33e6f3b"
+      ]
+    },
+    {
+      "path": "src/__tests__/lib/map/hover-fields.test.ts",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "23f280331c11885b03f91f259bc001b123d85cf4"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "e87c0e89b2a73ef2fe2d499c2b13a25095d6c0b5"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "23f280331c11885b03f91f259bc001b123d85cf4"
+        }
+      },
+      "mechanical_comparison": "baseline",
+      "disposition_at_comparison": "missing",
+      "behavior": "climate-legend-hover",
+      "explanation": "At least one legacy change is absent from the pinned comparison; this does not mean the entire file is absent. See the behavioral receipt and preserve any accepted later changes during repair.",
+      "legacy_commits": [
+        "3a5f3902e6f56b0878eab1d72b34789f6653058f"
+      ]
+    },
+    {
+      "path": "src/__tests__/services/ai-conversation-persistence.test.ts",
+      "legacy_change": "A",
+      "git_objects": {
+        "merge_base": null,
+        "legacy": {
+          "mode": "100644",
+          "blob": "dab0c74a82f6886714a62dcc640d81c3fdae9736"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "dab0c74a82f6886714a62dcc640d81c3fdae9736"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "advisor-history",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "b840c6a2c48eb896678deec0c7a0c04aa33e6f3b"
+      ]
+    },
+    {
+      "path": "src/__tests__/services/conversation-history.test.ts",
+      "legacy_change": "A",
+      "git_objects": {
+        "merge_base": null,
+        "legacy": {
+          "mode": "100644",
+          "blob": "4890f7cca3705528f92b74527766afb2332ee0f9"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "4890f7cca3705528f92b74527766afb2332ee0f9"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "advisor-history",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "b840c6a2c48eb896678deec0c7a0c04aa33e6f3b"
+      ]
+    },
+    {
+      "path": "src/__tests__/services/mtbs-snapshot-contract.test.ts",
+      "legacy_change": "A",
+      "git_objects": {
+        "merge_base": null,
+        "legacy": {
+          "mode": "100644",
+          "blob": "0579ce0ca46c53caa9053ac8ab64b0b8a61b6060"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "0579ce0ca46c53caa9053ac8ab64b0b8a61b6060"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "mtbs-snapshot",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "src/__tests__/services/mtbs-snapshot-fixture.ts",
+      "legacy_change": "A",
+      "git_objects": {
+        "merge_base": null,
+        "legacy": {
+          "mode": "100644",
+          "blob": "09ce6b9aca4dca53258880aea010a71e9bc68723"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "09ce6b9aca4dca53258880aea010a71e9bc68723"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "mtbs-snapshot",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "src/__tests__/services/parquet-climate-field.test.ts",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "a8f18b1098e216679b3bc9b8fc396538e67b58ca"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "d824e28fb12a70240d9ec1634e917bea5a5c6ec6"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "aff352d02dbaae062db6fe2222ba9fa52b9e6a0a"
+        }
+      },
+      "mechanical_comparison": "changed",
+      "disposition_at_comparison": "missing",
+      "behavior": "climate-viewport-coverage",
+      "explanation": "At least one legacy change is absent from the pinned comparison; this does not mean the entire file is absent. See the behavioral receipt and preserve any accepted later changes during repair.",
+      "legacy_commits": [
+        "3a5f3902e6f56b0878eab1d72b34789f6653058f"
+      ]
+    },
+    {
+      "path": "src/__tests__/services/parquet-plane-client.test.ts",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "d3d86d09709ec9eba5bcdc4fff4a6ffba57920aa"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "d1d504df86bbe2ee6fdb87e617d5bcbfd4758e53"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "de271b0585cca5fa1a5c815373fafb8f9de0cb5a"
+        }
+      },
+      "mechanical_comparison": "changed",
+      "disposition_at_comparison": "present",
+      "behavior": "mtbs-snapshot",
+      "explanation": "Legacy MTBS metadata/forgery checks remain; reader adds envelope-day mismatch and allowed release-carry cases.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "src/__tests__/services/parquet-trpc-readers.test.ts",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "c0ff4a28ba14d7e7768d3699a9d9c3ca03a05a64"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "19252e6050accd9cae33d9e8670ae28ef57629d8"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "83bd6c92de5d3d27e5d9026d68b3c1f7db106a11"
+        }
+      },
+      "mechanical_comparison": "changed",
+      "disposition_at_comparison": "missing",
+      "behavior": "climate-viewport-coverage",
+      "explanation": "At least one legacy change is absent from the pinned comparison; this does not mean the entire file is absent. See the behavioral receipt and preserve any accepted later changes during repair.",
+      "legacy_commits": [
+        "3a5f3902e6f56b0878eab1d72b34789f6653058f",
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "src/__tests__/services/regional-temporal-context.test.ts",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "123c709be2fb7bfc6c94f9d111b87f508657f346"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "d0a46658349a9f28730617694c00d2ba2ee19c67"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "b5530f79331f00bde39d170efa8e5c3fcbd41460"
+        }
+      },
+      "mechanical_comparison": "changed",
+      "disposition_at_comparison": "present",
+      "behavior": "mtbs-snapshot",
+      "explanation": "Legacy cumulative MTBS as-of and truthful requested/source-date coverage remains; accepted reader adds explicit-day weather, governed absence and abort handling cases.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "src/__tests__/stores/regional-intelligence-store.test.ts",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "5621741157c431bd0c2ba6c0775b43d89e7672ad"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "361757f0a77d02970e79021419a94bd57eda4358"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "361757f0a77d02970e79021419a94bd57eda4358"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "advisor-history",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "b840c6a2c48eb896678deec0c7a0c04aa33e6f3b"
+      ]
+    },
+    {
+      "path": "src/__tests__/trpc/regional-intelligence-feedback.test.ts",
+      "legacy_change": "A",
+      "git_objects": {
+        "merge_base": null,
+        "legacy": {
+          "mode": "100644",
+          "blob": "f678f1948c5015bd7a16c36d71084fa83b4c666e"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "f678f1948c5015bd7a16c36d71084fa83b4c666e"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "advisor-history",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "b840c6a2c48eb896678deec0c7a0c04aa33e6f3b"
+      ]
+    },
+    {
+      "path": "src/app/api/ai/regional-intelligence/route.ts",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "a8590c50df3994c420903e34d49c45bebaefd922"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "b0fb420fae9fed2f0070f760b0c93d1fc1358405"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "1b8b8ef2bd2be323e40acefacbc56771dbb5c097"
+        }
+      },
+      "mechanical_comparison": "changed",
+      "disposition_at_comparison": "present",
+      "behavior": "advisor-history",
+      "explanation": "Legacy private advisor history/feedback behavior remains; accepted reader propagates request.signal to context assembly.",
+      "legacy_commits": [
+        "b840c6a2c48eb896678deec0c7a0c04aa33e6f3b"
+      ]
+    },
+    {
+      "path": "src/app/dashboard/conversations/AGENTS.md",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "9fc02a07d5991e6e05d61e8114e9ea8e653e4373"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "57d49ab367871df17b9014b75ce62194cd5642ed"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "57d49ab367871df17b9014b75ce62194cd5642ed"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "advisor-history",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "b840c6a2c48eb896678deec0c7a0c04aa33e6f3b"
+      ]
+    },
+    {
+      "path": "src/app/dashboard/conversations/ResumeConversation.tsx",
+      "legacy_change": "A",
+      "git_objects": {
+        "merge_base": null,
+        "legacy": {
+          "mode": "100644",
+          "blob": "571ba9716c949ad9845776e7e7f23b497d1e1727"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "571ba9716c949ad9845776e7e7f23b497d1e1727"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "advisor-history",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "b840c6a2c48eb896678deec0c7a0c04aa33e6f3b"
+      ]
+    },
+    {
+      "path": "src/app/dashboard/conversations/[id]/page.tsx",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "02fd378c199ce88b432bf79b8bbb91829383eacb"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "e95136d038b58c6a2e27618ccbdb500ecf007498"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "e95136d038b58c6a2e27618ccbdb500ecf007498"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "advisor-history",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "b840c6a2c48eb896678deec0c7a0c04aa33e6f3b"
+      ]
+    },
+    {
+      "path": "src/app/dashboard/conversations/page.tsx",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "ca61e378a2617ce79a43c6094a6c236865838d68"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "d3f2d954713cc91e59a4953c79933e802eaba154"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "d3f2d954713cc91e59a4953c79933e802eaba154"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "advisor-history",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "b840c6a2c48eb896678deec0c7a0c04aa33e6f3b"
+      ]
+    },
+    {
+      "path": "src/app/dashboard/conversations/saved-report.ts",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "e29c41d00318c4228fc5a8de4cb0f8173eabbcc7"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "85f30328b9b03851272dd3ba7812f98e1475882d"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "85f30328b9b03851272dd3ba7812f98e1475882d"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "advisor-history",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "b840c6a2c48eb896678deec0c7a0c04aa33e6f3b"
+      ]
+    },
+    {
+      "path": "src/components/map/AGENTS.md",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "e32327ee72c5ab8f75866671467446d88d3fa728"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "c783d2fa2cbd3a6e4d59578eb7090e4547363328"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "942c0e711eca645fd1bef39f237923f1f43a7b57"
+        }
+      },
+      "mechanical_comparison": "changed",
+      "disposition_at_comparison": "missing",
+      "behavior": "climate-legend-hover",
+      "explanation": "At least one legacy change is absent from the pinned comparison; this does not mean the entire file is absent. See the behavioral receipt and preserve any accepted later changes during repair.",
+      "legacy_commits": [
+        "3a5f3902e6f56b0878eab1d72b34789f6653058f",
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "src/components/map/LayerManager.tsx",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "152c0d1c580ecedb511aa05ac1f7339c89ba0b59"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "5cc43db89f6271737e133860665ad45efa884702"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "5cc43db89f6271737e133860665ad45efa884702"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "mtbs-snapshot",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "src/components/map/layer-panel/LayerLegend.tsx",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "8ace5a344cfaab53466e373341eb4970a1ecf499"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "d847fdfce6f1ee69e1c12b63339dcf1c0d3fe867"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "8ace5a344cfaab53466e373341eb4970a1ecf499"
+        }
+      },
+      "mechanical_comparison": "baseline",
+      "disposition_at_comparison": "missing",
+      "behavior": "climate-legend-hover",
+      "explanation": "At least one legacy change is absent from the pinned comparison; this does not mean the entire file is absent. See the behavioral receipt and preserve any accepted later changes during repair.",
+      "legacy_commits": [
+        "3a5f3902e6f56b0878eab1d72b34789f6653058f"
+      ]
+    },
+    {
+      "path": "src/components/map/layer-panel/LayerRow.tsx",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "8b125098f02daa46d636551cc7a8ca284d80f952"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "18f77bba9a20a2e2572a0013d703d25756671376"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "8b125098f02daa46d636551cc7a8ca284d80f952"
+        }
+      },
+      "mechanical_comparison": "baseline",
+      "disposition_at_comparison": "missing",
+      "behavior": "climate-legend-hover",
+      "explanation": "At least one legacy change is absent from the pinned comparison; this does not mean the entire file is absent. See the behavioral receipt and preserve any accepted later changes during repair.",
+      "legacy_commits": [
+        "3a5f3902e6f56b0878eab1d72b34789f6653058f"
+      ]
+    },
+    {
+      "path": "src/components/map/layer-panel/LegendBlockView.tsx",
+      "legacy_change": "A",
+      "git_objects": {
+        "merge_base": null,
+        "legacy": {
+          "mode": "100644",
+          "blob": "5b51d71f3fea1c8d8852966fd6fac051124aa772"
+        },
+        "current": null
+      },
+      "mechanical_comparison": "missing_path",
+      "disposition_at_comparison": "missing",
+      "behavior": "climate-legend-hover",
+      "explanation": "At least one legacy change is absent from the pinned comparison; this does not mean the entire file is absent. See the behavioral receipt and preserve any accepted later changes during repair.",
+      "legacy_commits": [
+        "3a5f3902e6f56b0878eab1d72b34789f6653058f"
+      ]
+    },
+    {
+      "path": "src/components/map/layers/ClimateFieldLayer.tsx",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "0da042a35029530e3d326c0373ba739526710729"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "2ae26e661062fce61299c8b78dd3571108442f11"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "7f219045135b404dd3e01c0034d272eea1bceab8"
+        }
+      },
+      "mechanical_comparison": "changed",
+      "disposition_at_comparison": "missing",
+      "behavior": "climate-legend-hover",
+      "explanation": "At least one legacy change is absent from the pinned comparison; this does not mean the entire file is absent. See the behavioral receipt and preserve any accepted later changes during repair.",
+      "legacy_commits": [
+        "3a5f3902e6f56b0878eab1d72b34789f6653058f"
+      ]
+    },
+    {
+      "path": "src/components/panels/AGENTS.md",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "76148434a9295202d7688ca482684844faa6157d"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "a65296e457ddbbe885986ac0147baf8b8f87c9dd"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "32617b69690955548bae4c0778a2979007f003ac"
+        }
+      },
+      "mechanical_comparison": "changed",
+      "disposition_at_comparison": "missing",
+      "behavior": "climate-legend-hover",
+      "explanation": "At least one legacy change is absent from the pinned comparison; this does not mean the entire file is absent. See the behavioral receipt and preserve any accepted later changes during repair.",
+      "legacy_commits": [
+        "3a5f3902e6f56b0878eab1d72b34789f6653058f",
+        "2a4333716a7018e6393c41a190d5f7254fbd2404",
+        "b840c6a2c48eb896678deec0c7a0c04aa33e6f3b"
+      ]
+    },
+    {
+      "path": "src/components/panels/ClimateDetails.tsx",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "bb7fb934f7ae15e6b7dfb015d9c3adeeadc15931"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "f0a4aabd82f403dcd1a0e9f0a9f64ccebe915326"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "bb7fb934f7ae15e6b7dfb015d9c3adeeadc15931"
+        }
+      },
+      "mechanical_comparison": "baseline",
+      "disposition_at_comparison": "missing",
+      "behavior": "climate-viewport-coverage",
+      "explanation": "At least one legacy change is absent from the pinned comparison; this does not mean the entire file is absent. See the behavioral receipt and preserve any accepted later changes during repair.",
+      "legacy_commits": [
+        "3a5f3902e6f56b0878eab1d72b34789f6653058f"
+      ]
+    },
+    {
+      "path": "src/components/panels/CopyShareText.tsx",
+      "legacy_change": "A",
+      "git_objects": {
+        "merge_base": null,
+        "legacy": {
+          "mode": "100644",
+          "blob": "4dc9bca0cc5ada7279b589bd4a80ef3c5e596189"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "4dc9bca0cc5ada7279b589bd4a80ef3c5e596189"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "advisor-history",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "b840c6a2c48eb896678deec0c7a0c04aa33e6f3b"
+      ]
+    },
+    {
+      "path": "src/components/panels/MessageFeedback.tsx",
+      "legacy_change": "A",
+      "git_objects": {
+        "merge_base": null,
+        "legacy": {
+          "mode": "100644",
+          "blob": "f732f4c8a67b61c136a51a9ef488b0ce88ac11a7"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "f732f4c8a67b61c136a51a9ef488b0ce88ac11a7"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "advisor-history",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "b840c6a2c48eb896678deec0c7a0c04aa33e6f3b"
+      ]
+    },
+    {
+      "path": "src/components/panels/RegionalIntelligencePanel.tsx",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "42f362c202e1b26ea58b68b2a44ca12924433ad9"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "14e2c1671ef27c82f756a31affad8780ce0bbbec"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "14e2c1671ef27c82f756a31affad8780ce0bbbec"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "advisor-history",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404",
+        "b840c6a2c48eb896678deec0c7a0c04aa33e6f3b"
+      ]
+    },
+    {
+      "path": "src/hooks/AGENTS.md",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "0625042f592bcc80f074964d8e19d20e22884d75"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "b6d3c20d79d923057729f7dd56acbb1fba59dc97"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "b6d3c20d79d923057729f7dd56acbb1fba59dc97"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "advisor-history",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "b840c6a2c48eb896678deec0c7a0c04aa33e6f3b"
+      ]
+    },
+    {
+      "path": "src/hooks/useRegionalIntelligence.ts",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "0ed9beb7d6e0fbf755275f18d13a5f4091c50f0d"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "1508a71f80e8bac1c09ee024094c07a9dc09529d"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "1508a71f80e8bac1c09ee024094c07a9dc09529d"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "advisor-history",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "b840c6a2c48eb896678deec0c7a0c04aa33e6f3b"
+      ]
+    },
+    {
+      "path": "src/lib/environmental/AGENTS.md",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "d4cd018a83452181a627a8ac0c7713c2c08f69cd"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "f3d6058f766a702f85f70c58b6011374c0396607"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "f3d6058f766a702f85f70c58b6011374c0396607"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "mtbs-snapshot",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "src/lib/environmental/mtbs-snapshot.ts",
+      "legacy_change": "A",
+      "git_objects": {
+        "merge_base": null,
+        "legacy": {
+          "mode": "100644",
+          "blob": "0892237894ab813a064c73c38b634dc0935a5378"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "0892237894ab813a064c73c38b634dc0935a5378"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "mtbs-snapshot",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "src/lib/environmental/parquet-presentation.ts",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "6b5204e56ab98bf5fd4f88bc8950ab673a92d97f"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "d60517557cbbcb79cd29e71c51e151cb54c40171"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "d60517557cbbcb79cd29e71c51e151cb54c40171"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "mtbs-snapshot",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "src/lib/environmental/wildfire.ts",
+      "legacy_change": "D",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "d3ee4c40f19d9bb9b17129e03ddefffa90b83b23"
+        },
+        "legacy": null,
+        "current": null
+      },
+      "mechanical_comparison": "deletion_preserved",
+      "disposition_at_comparison": "present",
+      "behavior": "mtbs-snapshot",
+      "explanation": "The legacy deletion remains deleted.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "src/lib/map/AGENTS.md",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "3ba79aab8f7e98cafd055b65a501c908af81a757"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "5d7a59409784854b8ad7d85df24f10b97dfd3f92"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "3ba79aab8f7e98cafd055b65a501c908af81a757"
+        }
+      },
+      "mechanical_comparison": "baseline",
+      "disposition_at_comparison": "missing",
+      "behavior": "climate-legend-hover",
+      "explanation": "At least one legacy change is absent from the pinned comparison; this does not mean the entire file is absent. See the behavioral receipt and preserve any accepted later changes during repair.",
+      "legacy_commits": [
+        "3a5f3902e6f56b0878eab1d72b34789f6653058f"
+      ]
+    },
+    {
+      "path": "src/lib/map/climate-layer-ids.ts",
+      "legacy_change": "A",
+      "git_objects": {
+        "merge_base": null,
+        "legacy": {
+          "mode": "100644",
+          "blob": "54f81b1257d9f4deed6dd678c280e4d757727b21"
+        },
+        "current": null
+      },
+      "mechanical_comparison": "missing_path",
+      "disposition_at_comparison": "missing",
+      "behavior": "climate-legend-hover",
+      "explanation": "At least one legacy change is absent from the pinned comparison; this does not mean the entire file is absent. See the behavioral receipt and preserve any accepted later changes during repair.",
+      "legacy_commits": [
+        "3a5f3902e6f56b0878eab1d72b34789f6653058f"
+      ]
+    },
+    {
+      "path": "src/lib/map/climate-viewport.ts",
+      "legacy_change": "A",
+      "git_objects": {
+        "merge_base": null,
+        "legacy": {
+          "mode": "100644",
+          "blob": "d2bfdf1f748b2d839550c9d66f7e872475abdeea"
+        },
+        "current": null
+      },
+      "mechanical_comparison": "missing_path",
+      "disposition_at_comparison": "missing",
+      "behavior": "climate-viewport-coverage",
+      "explanation": "At least one legacy change is absent from the pinned comparison; this does not mean the entire file is absent. See the behavioral receipt and preserve any accepted later changes during repair.",
+      "legacy_commits": [
+        "3a5f3902e6f56b0878eab1d72b34789f6653058f"
+      ]
+    },
+    {
+      "path": "src/lib/map/hover-fields.ts",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "9bb8602cbd3a84616a9f3d8e5a2df3419bdf2727"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "8e68db15d981390c5e5e8a773c4a5c09f9086775"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "9bb8602cbd3a84616a9f3d8e5a2df3419bdf2727"
+        }
+      },
+      "mechanical_comparison": "baseline",
+      "disposition_at_comparison": "missing",
+      "behavior": "climate-legend-hover",
+      "explanation": "At least one legacy change is absent from the pinned comparison; this does not mean the entire file is absent. See the behavioral receipt and preserve any accepted later changes during repair.",
+      "legacy_commits": [
+        "3a5f3902e6f56b0878eab1d72b34789f6653058f"
+      ]
+    },
+    {
+      "path": "src/lib/map/layer-legends.ts",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "9fe535a893b2cb5effb9a5ddebac96e697ca9d22"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "d1ca83ac0b690cc1402316b6adeb8eb2f01c5c2c"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "9fe535a893b2cb5effb9a5ddebac96e697ca9d22"
+        }
+      },
+      "mechanical_comparison": "baseline",
+      "disposition_at_comparison": "missing",
+      "behavior": "climate-legend-hover",
+      "explanation": "At least one legacy change is absent from the pinned comparison; this does not mean the entire file is absent. See the behavioral receipt and preserve any accepted later changes during repair.",
+      "legacy_commits": [
+        "3a5f3902e6f56b0878eab1d72b34789f6653058f"
+      ]
+    },
+    {
+      "path": "src/lib/regional-intelligence-saved-report.ts",
+      "legacy_change": "A",
+      "git_objects": {
+        "merge_base": null,
+        "legacy": {
+          "mode": "100644",
+          "blob": "3a3f87a4161c5a87c49e6a3225465d66a6e50d5a"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "3a3f87a4161c5a87c49e6a3225465d66a6e50d5a"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "advisor-history",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "b840c6a2c48eb896678deec0c7a0c04aa33e6f3b"
+      ]
+    },
+    {
+      "path": "src/lib/regional-intelligence.ts",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "ec0431d59b4c1aa33085db8b3e6be5cc74222e9e"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "fb81d8b0e24d469d552eedd475548bc0368b0c14"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "fb81d8b0e24d469d552eedd475548bc0368b0c14"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "mtbs-snapshot",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "src/lib/server/db/AGENTS.md",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "0dcf124c2faecef3f8a13ff14df0b9ba3468c96f"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "4268093967be5ec639939044017a477c34932817"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "4268093967be5ec639939044017a477c34932817"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "advisor-history",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "b840c6a2c48eb896678deec0c7a0c04aa33e6f3b"
+      ]
+    },
+    {
+      "path": "src/lib/server/db/migration-contract.ts",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "8fcf478a902e7cb3e545e25c1be34fd1bea69a1a"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "42ea0907c12ac6181919214fbcd290a8495762dc"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "42ea0907c12ac6181919214fbcd290a8495762dc"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "advisor-history",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "b840c6a2c48eb896678deec0c7a0c04aa33e6f3b"
+      ]
+    },
+    {
+      "path": "src/lib/server/db/schema.ts",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "d2d8cfc10f9b9a2b51b69afdb8a80d0a76745d9a"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "a3d6a163bcfd15ad1bbb0a4030e48e6f278196f8"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "a3d6a163bcfd15ad1bbb0a4030e48e6f278196f8"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "advisor-history",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "b840c6a2c48eb896678deec0c7a0c04aa33e6f3b"
+      ]
+    },
+    {
+      "path": "src/lib/server/services/AGENTS.md",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "19f23bf3d835c602a6664dcd7e150c8505545434"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "e0f4bc71230526d1e9f0c02b7490882e6a572961"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "c79b45b40241756bfb533850c0fc458c6607225e"
+        }
+      },
+      "mechanical_comparison": "changed",
+      "disposition_at_comparison": "missing",
+      "behavior": "climate-legend-hover",
+      "explanation": "At least one legacy change is absent from the pinned comparison; this does not mean the entire file is absent. See the behavioral receipt and preserve any accepted later changes during repair.",
+      "legacy_commits": [
+        "3a5f3902e6f56b0878eab1d72b34789f6653058f",
+        "2a4333716a7018e6393c41a190d5f7254fbd2404",
+        "b840c6a2c48eb896678deec0c7a0c04aa33e6f3b"
+      ]
+    },
+    {
+      "path": "src/lib/server/services/ai-conversations.ts",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "d741207df058e4bfb399852b53368f832a4eddf8"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "7fc28ddb58d42f77e8b2856bf26ca6a8a16312f9"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "7fc28ddb58d42f77e8b2856bf26ca6a8a16312f9"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "advisor-history",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "b840c6a2c48eb896678deec0c7a0c04aa33e6f3b"
+      ]
+    },
+    {
+      "path": "src/lib/server/services/ai-prompt.ts",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "60db870064c10234801c39c894da6ce880ff5a7a"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "1364858329ab384ee3c385847f9ed6e526ae52ad"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "8b44bb5ab990c8e42621e04b349b73cf9f888b6d"
+        }
+      },
+      "mechanical_comparison": "changed",
+      "disposition_at_comparison": "present",
+      "behavior": "advisor-history",
+      "explanation": "Legacy saved-report/feedback prompt behavior remains; accepted reader adds governed-absence and bounded-neighbour language.",
+      "legacy_commits": [
+        "b840c6a2c48eb896678deec0c7a0c04aa33e6f3b"
+      ]
+    },
+    {
+      "path": "src/lib/server/services/conversation-history.ts",
+      "legacy_change": "A",
+      "git_objects": {
+        "merge_base": null,
+        "legacy": {
+          "mode": "100644",
+          "blob": "55d64f944bd934d9f509cf36d5741f48a3e4ad0c"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "55d64f944bd934d9f509cf36d5741f48a3e4ad0c"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "advisor-history",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "b840c6a2c48eb896678deec0c7a0c04aa33e6f3b"
+      ]
+    },
+    {
+      "path": "src/lib/server/services/mtbs-snapshot-contract.ts",
+      "legacy_change": "A",
+      "git_objects": {
+        "merge_base": null,
+        "legacy": {
+          "mode": "100644",
+          "blob": "9e3aa188179dc044f65719f6ca9030f21b2774f0"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "9e3aa188179dc044f65719f6ca9030f21b2774f0"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "mtbs-snapshot",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "src/lib/server/services/mtbs.ts",
+      "legacy_change": "D",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "7430cf942afe71f61151344ae62b829dbf1dffaa"
+        },
+        "legacy": null,
+        "current": null
+      },
+      "mechanical_comparison": "deletion_preserved",
+      "disposition_at_comparison": "present",
+      "behavior": "mtbs-snapshot",
+      "explanation": "The legacy deletion remains deleted.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "src/lib/server/services/parquet-climate-field.ts",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "c01343b3e3f4b49061a41408360f2d72a87f0234"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "3288a68c7c15d91efa84995626abc4f02b27660c"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "c78c407c2930ad3664685c17484d7b6d08f749b7"
+        }
+      },
+      "mechanical_comparison": "changed",
+      "disposition_at_comparison": "missing",
+      "behavior": "climate-viewport-coverage",
+      "explanation": "At least one legacy change is absent from the pinned comparison; this does not mean the entire file is absent. See the behavioral receipt and preserve any accepted later changes during repair.",
+      "legacy_commits": [
+        "3a5f3902e6f56b0878eab1d72b34789f6653058f"
+      ]
+    },
+    {
+      "path": "src/lib/server/services/parquet-envelope.ts",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "7f3a5c9105f8e6f743e75562f2cd8a4ded281955"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "7460a7560a62ddffb26d8d0c2086056c4be37fcb"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "7460a7560a62ddffb26d8d0c2086056c4be37fcb"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "mtbs-snapshot",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "src/lib/server/services/parquet-plane-client.ts",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "126c9acb53ae815d2afd4c9e7acd5062b5930a00"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "1bafae6a1b8a0323dff7d6919cc29493aab5124d"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "75dd2beca3f58aebadc95afbbb0c50607c4cc348"
+        }
+      },
+      "mechanical_comparison": "changed",
+      "disposition_at_comparison": "present",
+      "behavior": "mtbs-snapshot",
+      "explanation": "Legacy MTBS descriptor binding remains; accepted reader rejects malformed/mismatched requested and served days and allows carry only through the release route.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "src/lib/server/services/parquet-trpc-readers.ts",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "2ca8fa3c7a52a608057341e8f3067d27ecefb738"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "8e4889bf4d16081ab73773832f437c9594c0ed70"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "90c9b5e6a12e0bce960e8e9359960321cee172de"
+        }
+      },
+      "mechanical_comparison": "changed",
+      "disposition_at_comparison": "missing",
+      "behavior": "climate-viewport-coverage",
+      "explanation": "At least one legacy change is absent from the pinned comparison; this does not mean the entire file is absent. See the behavioral receipt and preserve any accepted later changes during repair.",
+      "legacy_commits": [
+        "3a5f3902e6f56b0878eab1d72b34789f6653058f",
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "src/lib/server/services/regional-context.ts",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "d241772ca6159a9e7596f3f0c0dda01013a4859e"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "7f0931f8c404c123840aeb417c2786b12f4017cf"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "34550aea8f2ef5875fa0fd2a8631b58f122d7844"
+        }
+      },
+      "mechanical_comparison": "changed",
+      "disposition_at_comparison": "present",
+      "behavior": "mtbs-snapshot",
+      "explanation": "Legacy MTBS latest snapshot and requested-day context remains; accepted reader adds explicit-day weather, governed-absence distinctions, abort propagation and separately labelled bounded neighbours.",
+      "legacy_commits": [
+        "2a4333716a7018e6393c41a190d5f7254fbd2404"
+      ]
+    },
+    {
+      "path": "src/lib/server/trpc/routers/regional-intelligence.ts",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "58997292f3e2063d42da575a6c0017a6d41bd121"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "787901e0f7de8979995474d884758aa660ede704"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "787901e0f7de8979995474d884758aa660ede704"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "advisor-history",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "b840c6a2c48eb896678deec0c7a0c04aa33e6f3b"
+      ]
+    },
+    {
+      "path": "src/stores/regional-intelligence-store.ts",
+      "legacy_change": "M",
+      "git_objects": {
+        "merge_base": {
+          "mode": "100644",
+          "blob": "f581ccda90fa9f25b45322bdfb4fd0da3e538c54"
+        },
+        "legacy": {
+          "mode": "100644",
+          "blob": "9957f3e9d49d17750f885a04fc8d139832860fb1"
+        },
+        "current": {
+          "mode": "100644",
+          "blob": "9957f3e9d49d17750f885a04fc8d139832860fb1"
+        }
+      },
+      "mechanical_comparison": "identical",
+      "disposition_at_comparison": "present",
+      "behavior": "advisor-history",
+      "explanation": "Git mode and blob match the legacy candidate exactly.",
+      "legacy_commits": [
+        "b840c6a2c48eb896678deec0c7a0c04aa33e6f3b"
+      ]
+    }
+  ]
+}

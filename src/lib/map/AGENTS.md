@@ -225,6 +225,13 @@ which path a number came from whenever one is quoted.
 
 ## The hover tooltip and the caption modules
 
+Climate renderers and the hover manager share `climate-layer-ids.ts`. Every signal's filled
+cell, filled isoband and boundary is registered for hover and tap. The retired point form
+remains excluded, matching the renderer's accepted continuous-field contract.
+Cell captions give the numeric reading and unit; isoband captions give the published band range,
+never its representative midpoint as a measurement. Both retain the publisher's calendar day
+and NASA POWER attribution. Empty/malformed measurements do not create an attribution-only tooltip.
+
 USDM `validDate` is a publisher calendar day, not an instant. Its tooltip uses
 `formatCalendarDay` with UTC formatting so a September 1 release stays September 1
 in Denver. The presentation also carries a synthetic midnight `observedAt`; localizing
@@ -378,3 +385,26 @@ Open-Meteo model estimates from stations and daily captured-reading aggregate me
 from latest detail samples. The aggregate timestamp is the newest contributing reading,
 not the instant at which the mean was measured. The separate sensors layer remains
 station-based.
+
+## Climate viewport support
+
+The climate legend's form caption says **Display setting** because its context contains the
+chosen preference, not the retained response's geometry. At detail zoom a requested contour is
+served as filled cells, and a retained frame can also differ during loading. Colors and units
+still use the same signal scale. The renderer and details report read the returned form; the
+legend must not claim that the preference describes the frame currently painted.
+
+`climate-viewport.ts` owns the climate-only read halo and support-overlap helpers. Every request
+includes one served cell beyond the requested viewport, bounded to WGS84, so the generic point
+reader can return cells overlapping the view even when their sample centers lie outside it.
+The same halo supplies the immediate neighbors that isobands need. Its pitch is one degree at
+z13/z9/z5 and five degrees at z0, read from the declared lattice rather than a new resolution.
+It does not alter ingestion extent, create samples, or widen ordinary event-point queries.
+
+Field presentation and viewport counts use positive-area support overlap with the original
+request. Contour construction may use halo rows, while its displayed coverage count excludes
+them. A ring/viewport area check excludes bands produced entirely in the halo, including views
+inside polygon holes; only positive-area intersections count as a drawn feature. This check
+does not mutate geometry or interpolate additional values. Whole support cells and dissolved bands retain their geometry; the map clips drawing to
+the canvas. The frozen support inventory remains the denominator, including its eastern and
+coastal boundaries. A neighbor that only touches the viewport edge contributes no visible area.

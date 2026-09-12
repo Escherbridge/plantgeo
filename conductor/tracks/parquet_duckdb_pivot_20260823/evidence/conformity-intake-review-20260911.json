@@ -1,0 +1,395 @@
+{
+  "type": "integration-intake-review",
+  "reviewed_on": "2026-09-11",
+  "generated_at": "2026-09-11T23:17:25.460350+00:00",
+  "reviewer": {
+    "agent": "/root/review_conformity_intake",
+    "role": "independent conformity integration intake reviewer",
+    "integration_task_id": "01a0919f-40dd-7ae2-a5a3-cd8cf7e13489",
+    "implementation_authorship": false
+  },
+  "implementation_task": {
+    "id": "01a0919a-0438-7303-9ac8-755f22ab49ea",
+    "title": "Finish repository conformity hardening",
+    "canonical_worktree": "C:/Users/atooz/.codex/worktrees/5ff7/plantgeo"
+  },
+  "verdict": "approved_local_integration_slice",
+  "blocking_code_findings": [],
+  "production_release_approved": false,
+  "track_closure_approved": false,
+  "revisions": {
+    "base": "fa202230958fb55521963e886eb031be5fc266c4",
+    "original_commit": "cff114445f0db905b668fa18c5b7d16d9ffd2502",
+    "correction_commit": "48561a664307a6726fac524ad218fde3be0e621f",
+    "reviewed_commits": [
+      "cff114445f0db905b668fa18c5b7d16d9ffd2502",
+      "48561a664307a6726fac524ad218fde3be0e621f",
+      "dcaad2fb398f302c21a7749b1245fddb3e1f18d6"
+    ],
+    "authoritative_documentation_baseline": "a7e6b223cc91663ac6c9462321426a53667cbfce",
+    "baseline_merge": "be724caf7c6547f62349fafa4d24ec182444c432",
+    "documentation_correction_commit": "dcaad2fb398f302c21a7749b1245fddb3e1f18d6",
+    "tip": "dcaad2fb398f302c21a7749b1245fddb3e1f18d6",
+    "integrated_commits": [
+      "b734c312f9fe5844139cb6f930ec18f3cabe4400",
+      "144b41adb9d0f0b23011e00cbefd3b0f791e0b9d",
+      "5cc800ac8b9fda9b278b01996054978ff643d761"
+    ]
+  },
+  "scope": {
+    "original_changed_file_count": 21,
+    "correction_changed_files": [
+      "conductor/tracks/repository_conformity_hardening_20260901/evidence/final-inventory-20260911.md",
+      "conductor/tracks/repository_conformity_hardening_20260901/evidence/integration-correction-20260911.md",
+      "conductor/tracks/repository_conformity_hardening_20260901/metadata.json",
+      "conductor/tracks/repository_conformity_hardening_20260901/plan.md",
+      "services/agri-data-service/src/agri_data_service/execution/AGENTS.md",
+      "services/agri-data-service/src/agri_data_service/execution/forecast_workflows.py",
+      "services/agri-data-service/src/agri_data_service/interface/cli/AGENTS.md",
+      "services/agri-data-service/src/agri_data_service/interface/cli/commands.py",
+      "services/agri-data-service/tests/test_forecast_refresh_cli.py"
+    ],
+    "correction_changed_file_count": 9,
+    "combined_changed_files": [
+      "conductor/tracks/repository_conformity_hardening_20260901/evidence/final-inventory-20260911.md",
+      "conductor/tracks/repository_conformity_hardening_20260901/evidence/integration-correction-20260911.md",
+      "conductor/tracks/repository_conformity_hardening_20260901/metadata.json",
+      "conductor/tracks/repository_conformity_hardening_20260901/plan.md",
+      "conductor/tracks/repository_conformity_hardening_20260901/spec.md",
+      "services/agri-data-service/src/agri_data_service/execution/AGENTS.md",
+      "services/agri-data-service/src/agri_data_service/execution/chunked_lane.py",
+      "services/agri-data-service/src/agri_data_service/execution/forecast_workflows.py",
+      "services/agri-data-service/src/agri_data_service/interface/AGENTS.md",
+      "services/agri-data-service/src/agri_data_service/interface/cli/AGENTS.md",
+      "services/agri-data-service/src/agri_data_service/interface/cli/commands.py",
+      "services/agri-data-service/src/agri_data_service/sql/execution/forecast_iteration_outcome_totals.sql",
+      "services/agri-data-service/src/agri_data_service/sql/execution/forecast_iteration_summary.sql",
+      "services/agri-data-service/src/agri_data_service/sql/execution/materialize_forecast_iteration.sql",
+      "services/agri-data-service/src/agri_data_service/sql/execution/reconcile_forecast_iteration_actuals_command.sql",
+      "services/agri-data-service/src/agri_data_service/warehouse/parquet/AGENTS.md",
+      "services/agri-data-service/src/agri_data_service/warehouse/parquet/snapshot_signal_product.py",
+      "services/agri-data-service/tests/parquet/test_snapshot_signal_product_schemas.py",
+      "services/agri-data-service/tests/test_chunked_lane_workflow.py",
+      "services/agri-data-service/tests/test_forecast_refresh_cli.py",
+      "services/agri-data-service/tests/test_layer_import_contract.py",
+      "services/agri-data-service/tests/test_vegetation_ndvi_cli_payloads.py",
+      "services/agri-data-service/tests/test_vegetation_ndvi_release_materialisation.py"
+    ],
+    "combined_service_git_blob_ids": {
+      "services/agri-data-service/src/agri_data_service/execution/AGENTS.md": "bbcb9f11480da656307c3ef6d2721c1c2ce0c25a",
+      "services/agri-data-service/src/agri_data_service/execution/chunked_lane.py": "527cc7ac97cfb913f86376f9197024c97bf67c34",
+      "services/agri-data-service/src/agri_data_service/execution/forecast_workflows.py": "cb02da91f761c36da74a55c71e691421609083ba",
+      "services/agri-data-service/src/agri_data_service/interface/AGENTS.md": "6fbc46a1f3a3f0e3f6b0189cf29e335e1559f736",
+      "services/agri-data-service/src/agri_data_service/interface/cli/AGENTS.md": "e623cb1f3ada2fcd7195b6b1b6382675a73a29c8",
+      "services/agri-data-service/src/agri_data_service/interface/cli/commands.py": "ac1403e2537c0ba3bbb3a776d043b103b3bd83bb",
+      "services/agri-data-service/src/agri_data_service/sql/execution/forecast_iteration_outcome_totals.sql": "9ccb46281f8391b815a7cfbaa0dd8d5a5d59cdd0",
+      "services/agri-data-service/src/agri_data_service/sql/execution/forecast_iteration_summary.sql": "674024ad705cb5aad5c875a099a0e0b8daa09976",
+      "services/agri-data-service/src/agri_data_service/sql/execution/materialize_forecast_iteration.sql": "89f0fe52817a57d3b1b64ba2933b32fdffd03f4e",
+      "services/agri-data-service/src/agri_data_service/sql/execution/reconcile_forecast_iteration_actuals_command.sql": "de5eaa32c6d51ec908816284dddbbc208621ccd6",
+      "services/agri-data-service/src/agri_data_service/warehouse/parquet/AGENTS.md": "10e7f9e1162b3130e089ef0c3d85bb205fe7f568",
+      "services/agri-data-service/src/agri_data_service/warehouse/parquet/snapshot_signal_product.py": "0932ee668fb44083e9fc0d8b7ae986ed02ad4d1e",
+      "services/agri-data-service/tests/parquet/test_snapshot_signal_product_schemas.py": "4f18c74a61c825d3991dc4de8c5c2e65c1a37be7",
+      "services/agri-data-service/tests/test_chunked_lane_workflow.py": "f765e2280acb25cf97588c91077097325647b898",
+      "services/agri-data-service/tests/test_forecast_refresh_cli.py": "75a4e8b6d8c2b99eee32a3226a7851b25035fded",
+      "services/agri-data-service/tests/test_layer_import_contract.py": "7599c96e616a3182b20c01b51b1b9c8628c2a635",
+      "services/agri-data-service/tests/test_vegetation_ndvi_cli_payloads.py": "7c584c61066882f55720af3ba42c03a07edbddc7",
+      "services/agri-data-service/tests/test_vegetation_ndvi_release_materialisation.py": "df656f15545410b6ac587f84c7d715231f0d2019"
+    },
+    "tests_run_by_this_reviewer": false,
+    "implementation_or_production_mutations_by_this_reviewer": false,
+    "reviewer_output": "This intake receipt and multiscale integration byte-comparison update only; no commit.",
+    "final_documentation_followup_changed_files": [
+      "conductor/tracks/repository_conformity_hardening_20260901/evidence/integration-correction-20260911.md"
+    ],
+    "service_bytes_unchanged_by_documentation_followup": true
+  },
+  "original_findings": [
+    {
+      "id": "original-baseline-contamination",
+      "priority": 1,
+      "finding": "Original commit included inherited maintenance changes in its track plan/metadata/spec.",
+      "status": "resolved_by_integration_baseline_strategy",
+      "resolution": "Parent supplied and integration merged the authoritative baseline. Merge the bounded peer document delta onto that baseline; the original commit must not be represented as independent authorship of maintenance."
+    },
+    {
+      "id": "exact-tree-validation-overclaim",
+      "priority": 2,
+      "finding": "Plan marked a final exact-tree sweep complete although broad validation preceded the final SQL move.",
+      "status": "resolved",
+      "resolution": "48561a6 replaces that claim with layered validation and explicitly leaves the combined exact-tree sweep and images unchecked for integration."
+    },
+    {
+      "id": "quality-receipt-owner",
+      "priority": 2,
+      "finding": "Plan and metadata directed offline export to regenerate the final receipt.",
+      "status": "resolved",
+      "resolution": "48561a6 assigns the final combined sweep, one QUALITY_RECEIPT.json and both image proofs to integration."
+    },
+    {
+      "id": "vegetation-validation-order",
+      "priority": 3,
+      "finding": "DSN resolution moved ahead of cutoff/as-of validation for simulation and evaluation.",
+      "status": "resolved",
+      "resolution": "Both workflows receive a lazy DSN factory, validate cutoff/as-of first, and invoke the resolver immediately before the original session/transaction. Two new tests exercise four precedence cases."
+    },
+    {
+      "id": "review-validation-attribution",
+      "priority": 2,
+      "finding": "The original recovered inventory only narrated review and validation without an attributable retained receipt.",
+      "status": "resolved_for_bounded_intake",
+      "resolution": "Canonical owner and reviewer task identities are now recovered. Complete retained command outputs prove the 47-pass post-SQL move and 45-pass correction runs; the original full Python checker table is also retained. None certifies the final combined tree."
+    }
+  ],
+  "conditional_documentation_gate": {
+    "status": "resolved",
+    "path": "conductor/tracks/repository_conformity_hardening_20260901/evidence/integration-correction-20260911.md",
+    "line": 38,
+    "finding": "The statement that shrink retains P5/P6 retirement authority assigns environmental retirement to the wrong active track.",
+    "required_change": "State that all environmental P5/P6 work belongs to environmental_postgres_retirement_20260904. Shrink retains only its residual package/product/handoff closure obligations.",
+    "owner_notified_by": "integration parent task",
+    "blocks_final_intake": false,
+    "resolution_commit": "dcaad2fb398f302c21a7749b1245fddb3e1f18d6",
+    "resolution": "The owner states that environmental_postgres_retirement_20260904 supersedes shrink environmental P5/P6 in full and no shrink-owned environmental implementation remains."
+  },
+  "code_review_conclusions": [
+    "All original source changes were reviewed previously; the nine-path correction introduces no additional runtime scope outside the two dependency seams and regression test.",
+    "Cutoff and as-of checks precede database_url_factory() in both workflows. Valid inputs resolve the same settings method and retain the same transaction body and result construction.",
+    "The only calls to the changed workflow signatures are the two updated CLI helpers; no stale database_url caller remains in the branch.",
+    "Four invalid-input cases assert ValueError while a patched DSN resolver raises AssertionError if touched; those cases fail under the original broken ordering.",
+    "The frozen eighteen transaction-site assertions are unaffected because CLI line count does not change. The framework still imports neither Click nor global settings.",
+    "The original SQL-resource moves preserve SQL bodies and leave the pre-existing vegetation reconciliation query intact. Canonical schema descriptors preserve physical schemas and metadata.",
+    "No generic publication/executor implementation, offline builder, reader, migration, deployment configuration or generated quality receipt was edited.",
+    "git diff --check passed for the correction. No new security, performance or correctness blocker was found.",
+    "Final docs-only dcaad2f changes only the environmental P5/P6 ownership clause, preserves all reviewed service bytes, and passes git diff --check."
+  ],
+  "independent_review": {
+    "task_id": "01a091d1-2ac1-7552-bf1c-5d4d039acb8d",
+    "agent_path": "/root/independent_review",
+    "retrieved_via": "read_thread retained final messages",
+    "original_and_correction_approval_retrieved": true,
+    "limitation": "All three bounded approvals are attributable to the retained reviewer task; none replaces final combined-tree review and release governance.",
+    "documentation_followup_approval_retrieved": true
+  },
+  "retained_validation_evidence": [
+    {
+      "name": "original_pre_sql_move_full_python_checker",
+      "source_jsonl": "C:/Users/atooz/.codex/sessions/2026/09/11/rollout-2026-09-11T11-53-05-01a0919a-0438-7303-9ac8-755f22ab49ea.jsonl",
+      "record_line": 1080,
+      "record_timestamp": "2026-09-11T18:49:12.517Z",
+      "command_item_id": "exec-26656bb5-8d43-4bd3-954d-51d44e6e9d12",
+      "command": [
+        "C:\\Windows\\system32\\cmd.exe",
+        "/c",
+        "set UV_NO_SYNC=1&& set UV_CACHE_DIR=%TEMP%\\codex-plantgeo-uv-cache&& uv run --no-sync python scripts/check.py"
+      ],
+      "exit_code": 0,
+      "output_sha256": "2525adf94143ac1e0973742b9fcee08771db6fa3811059a66810865fd48e825c",
+      "complete_output_read": true,
+      "complete_output": "Validation summary\r\ncheck | status | duration | first line of failure output\r\n------|--------|----------|-----------------------------\r\nformat | PASS | 0.12s | -\r\nlint | PASS | 0.13s | -\r\nmypy | PASS | 4.47s | -\r\npytest | PASS | 258.44s | -\r\n"
+    },
+    {
+      "name": "original_post_sql_move_focused_validation",
+      "source_jsonl": "C:/Users/atooz/.codex/sessions/2026/09/11/rollout-2026-09-11T11-53-05-01a0919a-0438-7303-9ac8-755f22ab49ea.jsonl",
+      "record_line": 1372,
+      "record_timestamp": "2026-09-11T19:04:11.563Z",
+      "command_item_id": "exec-09c4f58c-db7e-484d-bb83-b742002ac0f2",
+      "command": [
+        "C:\\Windows\\system32\\cmd.exe",
+        "/c",
+        "set UV_NO_SYNC=1&& set UV_CACHE_DIR=%TEMP%\\codex-plantgeo-uv-cache&& uv run --no-sync ruff format --check src\\agri_data_service\\execution\\forecast_workflows.py tests\\test_layer_import_contract.py tests\\test_vegetation_ndvi_cli_payloads.py tests\\test_vegetation_ndvi_release_materialisation.py&& uv run --no-sync ruff check src\\agri_data_service\\execution\\forecast_workflows.py src\\agri_data_service\\interface\\cli\\commands.py tests\\test_layer_import_contract.py tests\\test_vegetation_ndvi_cli_payloads.py tests\\test_vegetation_ndvi_release_materialisation.py&& uv run --no-sync mypy src\\agri_data_service\\execution\\forecast_workflows.py src\\agri_data_service\\interface\\cli\\commands.py&& uv run --no-sync pytest -q tests\\test_forecast_refresh_cli.py tests\\test_cli_contract.py tests\\test_vegetation_ndvi_cli_payloads.py tests\\test_vegetation_ndvi_release_materialisation.py tests\\test_layer_import_contract.py tests\\test_sql_queries_loader.py"
+      ],
+      "exit_code": 0,
+      "output_sha256": "525b310dccadfc8fb44f6ce5ed23cc35b991e03fbfeb06f8cc583e50b49d75e8",
+      "complete_output_read": true,
+      "complete_output": "4 files already formatted\nAll checks passed!\nSuccess: no issues found in 2 source files\r\n.......................................x........                         [100%]\r\n47 passed, 1 xfailed in 8.46s\r\n"
+    },
+    {
+      "name": "validation_order_correction_focused_validation",
+      "source_jsonl": "C:/Users/atooz/.codex/sessions/2026/09/11/rollout-2026-09-11T11-53-05-01a0919a-0438-7303-9ac8-755f22ab49ea.jsonl",
+      "record_line": 1656,
+      "record_timestamp": "2026-09-11T23:08:34.505Z",
+      "command_item_id": "exec-5a8d7b91-85bf-4b50-b981-d3b95757c902",
+      "command": [
+        "C:\\Windows\\system32\\cmd.exe",
+        "/c",
+        "set UV_NO_SYNC=1&& set UV_CACHE_DIR=%TEMP%\\codex-plantgeo-uv-cache&& uv run --no-sync ruff format --check src\\agri_data_service\\execution\\forecast_workflows.py src\\agri_data_service\\interface\\cli\\commands.py tests\\test_forecast_refresh_cli.py&& uv run --no-sync ruff check src\\agri_data_service\\execution\\forecast_workflows.py src\\agri_data_service\\interface\\cli\\commands.py tests\\test_forecast_refresh_cli.py&& uv run --no-sync mypy src\\agri_data_service\\execution\\forecast_workflows.py src\\agri_data_service\\interface\\cli\\commands.py&& uv run --no-sync pytest -q tests\\test_forecast_refresh_cli.py tests\\test_vegetation_ndvi_cli_payloads.py tests\\test_vegetation_ndvi_release_materialisation.py tests\\test_layer_import_contract.py tests\\test_cli_contract.py"
+      ],
+      "exit_code": 0,
+      "output_sha256": "dc2a0d28b9c6875be287eca4eb3be93e64d23c520ad4096e87df3d1a7da6c60a",
+      "complete_output_read": true,
+      "complete_output": "Success: no issues found in 2 source files\r\n...............................x..............                           [100%]\r\n45 passed, 1 xfailed in 10.37s\r\n"
+    }
+  ],
+  "validation_scope": {
+    "correction": "45 passed, 1 intentional thin-CLI xfail in 10.37s across five explicitly named test files. Mypy reports no issues in two source files.",
+    "static_checks": "The retained correction command uses cmd conditional && chaining; mypy and pytest were reached only after Ruff format and lint returned success. The final aggregate output retains mypy/pytest summaries, not separate Ruff messages.",
+    "original_post_sql_move": "47 passed, 1 intentional thin-CLI xfail in 8.46s, with explicit formatter/Ruff/mypy pass text.",
+    "original_full_python": "Retained checker table reports format, lint, mypy and full pytest PASS; pytest duration 258.44s. The table does not disclose pytest counts/skips, so none are invented here.",
+    "full_combined_tree_pass": false,
+    "quality_receipt_regenerated": false,
+    "images_passed": false,
+    "production_or_database_acceptance": false
+  },
+  "remaining_gates": [
+    "One final combined exact-tree quality sweep, one generated Python quality receipt and both image proofs.",
+    "Track owner handoff acceptance and all separate production, telemetry, retained-candidate and retirement gates."
+  ],
+  "integration_byte_verification": {
+    "integrated_tip": "5cc800ac8b9fda9b278b01996054978ff643d761",
+    "compared_file_count": 23,
+    "byte_identical_file_count": 22,
+    "intentional_shared_document_differences": [
+      "services/agri-data-service/src/agri_data_service/execution/AGENTS.md"
+    ],
+    "unexpected_mismatches": [],
+    "file_comparisons": [
+      {
+        "path": "conductor/tracks/repository_conformity_hardening_20260901/evidence/final-inventory-20260911.md",
+        "peer_blob": "43ddd62b7393d44762ecb811581b5bf460c14c94",
+        "integrated_blob": "43ddd62b7393d44762ecb811581b5bf460c14c94",
+        "byte_identical": true
+      },
+      {
+        "path": "conductor/tracks/repository_conformity_hardening_20260901/evidence/integration-correction-20260911.md",
+        "peer_blob": "aa5f6681252bb9286fad36f08fe2ca8768293a39",
+        "integrated_blob": "aa5f6681252bb9286fad36f08fe2ca8768293a39",
+        "byte_identical": true
+      },
+      {
+        "path": "conductor/tracks/repository_conformity_hardening_20260901/metadata.json",
+        "peer_blob": "ecbff7d84873b295816ee04ff4a89795a4a0e9ae",
+        "integrated_blob": "ecbff7d84873b295816ee04ff4a89795a4a0e9ae",
+        "byte_identical": true
+      },
+      {
+        "path": "conductor/tracks/repository_conformity_hardening_20260901/plan.md",
+        "peer_blob": "3c62f3b3fd24dc5869de1db259618e2249aff9e7",
+        "integrated_blob": "3c62f3b3fd24dc5869de1db259618e2249aff9e7",
+        "byte_identical": true
+      },
+      {
+        "path": "conductor/tracks/repository_conformity_hardening_20260901/spec.md",
+        "peer_blob": "a9ed203c324cc473e2c54dd70c74a7d81eafadb3",
+        "integrated_blob": "a9ed203c324cc473e2c54dd70c74a7d81eafadb3",
+        "byte_identical": true
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/execution/AGENTS.md",
+        "peer_blob": "bbcb9f11480da656307c3ef6d2721c1c2ce0c25a",
+        "integrated_blob": "5985923a2fe31d0cfcfb80ac41c635e4b144eb95",
+        "byte_identical": false
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/execution/chunked_lane.py",
+        "peer_blob": "527cc7ac97cfb913f86376f9197024c97bf67c34",
+        "integrated_blob": "527cc7ac97cfb913f86376f9197024c97bf67c34",
+        "byte_identical": true
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/execution/forecast_workflows.py",
+        "peer_blob": "cb02da91f761c36da74a55c71e691421609083ba",
+        "integrated_blob": "cb02da91f761c36da74a55c71e691421609083ba",
+        "byte_identical": true
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/interface/AGENTS.md",
+        "peer_blob": "6fbc46a1f3a3f0e3f6b0189cf29e335e1559f736",
+        "integrated_blob": "6fbc46a1f3a3f0e3f6b0189cf29e335e1559f736",
+        "byte_identical": true
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/interface/cli/AGENTS.md",
+        "peer_blob": "e623cb1f3ada2fcd7195b6b1b6382675a73a29c8",
+        "integrated_blob": "e623cb1f3ada2fcd7195b6b1b6382675a73a29c8",
+        "byte_identical": true
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/interface/cli/commands.py",
+        "peer_blob": "ac1403e2537c0ba3bbb3a776d043b103b3bd83bb",
+        "integrated_blob": "ac1403e2537c0ba3bbb3a776d043b103b3bd83bb",
+        "byte_identical": true
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/sql/execution/forecast_iteration_outcome_totals.sql",
+        "peer_blob": "9ccb46281f8391b815a7cfbaa0dd8d5a5d59cdd0",
+        "integrated_blob": "9ccb46281f8391b815a7cfbaa0dd8d5a5d59cdd0",
+        "byte_identical": true
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/sql/execution/forecast_iteration_summary.sql",
+        "peer_blob": "674024ad705cb5aad5c875a099a0e0b8daa09976",
+        "integrated_blob": "674024ad705cb5aad5c875a099a0e0b8daa09976",
+        "byte_identical": true
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/sql/execution/materialize_forecast_iteration.sql",
+        "peer_blob": "89f0fe52817a57d3b1b64ba2933b32fdffd03f4e",
+        "integrated_blob": "89f0fe52817a57d3b1b64ba2933b32fdffd03f4e",
+        "byte_identical": true
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/sql/execution/reconcile_forecast_iteration_actuals_command.sql",
+        "peer_blob": "de5eaa32c6d51ec908816284dddbbc208621ccd6",
+        "integrated_blob": "de5eaa32c6d51ec908816284dddbbc208621ccd6",
+        "byte_identical": true
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/warehouse/parquet/AGENTS.md",
+        "peer_blob": "10e7f9e1162b3130e089ef0c3d85bb205fe7f568",
+        "integrated_blob": "10e7f9e1162b3130e089ef0c3d85bb205fe7f568",
+        "byte_identical": true
+      },
+      {
+        "path": "services/agri-data-service/src/agri_data_service/warehouse/parquet/snapshot_signal_product.py",
+        "peer_blob": "0932ee668fb44083e9fc0d8b7ae986ed02ad4d1e",
+        "integrated_blob": "0932ee668fb44083e9fc0d8b7ae986ed02ad4d1e",
+        "byte_identical": true
+      },
+      {
+        "path": "services/agri-data-service/tests/parquet/test_snapshot_signal_product_schemas.py",
+        "peer_blob": "4f18c74a61c825d3991dc4de8c5c2e65c1a37be7",
+        "integrated_blob": "4f18c74a61c825d3991dc4de8c5c2e65c1a37be7",
+        "byte_identical": true
+      },
+      {
+        "path": "services/agri-data-service/tests/test_chunked_lane_workflow.py",
+        "peer_blob": "f765e2280acb25cf97588c91077097325647b898",
+        "integrated_blob": "f765e2280acb25cf97588c91077097325647b898",
+        "byte_identical": true
+      },
+      {
+        "path": "services/agri-data-service/tests/test_forecast_refresh_cli.py",
+        "peer_blob": "75a4e8b6d8c2b99eee32a3226a7851b25035fded",
+        "integrated_blob": "75a4e8b6d8c2b99eee32a3226a7851b25035fded",
+        "byte_identical": true
+      },
+      {
+        "path": "services/agri-data-service/tests/test_layer_import_contract.py",
+        "peer_blob": "7599c96e616a3182b20c01b51b1b9c8628c2a635",
+        "integrated_blob": "7599c96e616a3182b20c01b51b1b9c8628c2a635",
+        "byte_identical": true
+      },
+      {
+        "path": "services/agri-data-service/tests/test_vegetation_ndvi_cli_payloads.py",
+        "peer_blob": "7c584c61066882f55720af3ba42c03a07edbddc7",
+        "integrated_blob": "7c584c61066882f55720af3ba42c03a07edbddc7",
+        "byte_identical": true
+      },
+      {
+        "path": "services/agri-data-service/tests/test_vegetation_ndvi_release_materialisation.py",
+        "peer_blob": "df656f15545410b6ac587f84c7d715231f0d2019",
+        "integrated_blob": "df656f15545410b6ac587f84c7d715231f0d2019",
+        "byte_identical": true
+      }
+    ],
+    "shared_execution_document": {
+      "canonical_owner": "gapless",
+      "resolution": "Additive union of the reviewed conformity workflow/lazy-DSN guidance and gapless process/lease cleanup guidance. No other peer bytes differ.",
+      "dual_preservation_checks": {
+        "without_conformity_sections_equals_gapless_blob": true,
+        "without_gapless_addition_equals_conformity_blob": true
+      }
+    },
+    "ownership_language_check": "No newly introduced current ownership defect found. The final correction transfers all environmental P5/P6 to the successor in full; retained shrink/migration entries remain historical classification and do not override current umbrella and migration governance."
+  }
+}

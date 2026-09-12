@@ -6,8 +6,11 @@ status: blocked
 
 # Active-track release and rollback intake
 
-**Decision: HOLD.** No peer candidate has been accepted and no combined release
-SHA exists yet. This packet records the concrete scope and evidence needed to
+**Decision: HOLD.** Six canonical implementation slices are integrated locally.
+Offline source/evidence intake, selective legacy repair and the existing-reader
+weather gap regression have independent local review. Combined release checks
+and final closure review remain pending; production acceptance remains open.
+This packet records the concrete scope and evidence needed to
 complete owner review. It is not an authorization request for an unspecified
 release. Fill the exact candidate and runtime identities from reviewed handoffs
 before presenting a production action for approval.
@@ -18,9 +21,11 @@ before presenting a production action for approval.
 | --- | --- |
 | Integration branch | `codex/active-track-integration-20260911` |
 | Starting commit | `fa202230958fb55521963e886eb031be5fc266c4` |
-| Inherited baseline | September maintenance/botanical snapshot; parent-owned and uncommitted, excluded from integration output |
-| Accepted peer commits | None; see [intake ledger](integration-ledger-20260911.md) |
-| Final combined code commit and tree | Pending accepted branches |
+| Inherited baseline | Parent's reviewed documentation commit `a7e6b223cc91663ac6c9462321426a53667cbfce`, merged as `be724caf7c6547f62349fafa4d24ec182444c432` |
+| Subsequent planning baselines | Parent `b9b7bf4` and source-admission synchronization `bc7b5e1`, merged separately as `6389b487` and `3233fd7`; botanical runtime remains outside this candidate |
+| Accepted peer source commits | Gapless `341d44b`, reader `d56b508` + `d7ded2a`, product repairs `78d6af8`, renderer `06acd9d` + `86f55d5`, conformity `cff1144` + `48561a6` + `dcaad2f`, offline `6f2c7a8`; integrated identities and bounded verdicts in the [intake ledger](integration-ledger-20260911.md) |
+| Legacy reconciliation | All 139 paths compared against preserved `cc64e6e`; all 44 original omissions resolved by reviewed selective repair and documentation recovery |
+| Final combined code commit and tree | Reviewed 44-path repair/regression batch ready for source freeze and the final integrated sweep |
 | Python source digest and verified quality receipt | Pending exact combined source domain and full receipt-producing sweep |
 | Independent integration review | Pending complete candidate |
 | Fresh service/deployment and rollback identities | Pending read-only preflight from the relevant owners |
@@ -60,7 +65,10 @@ release action. This integration pass performs no push or production mutation.
 Temperature history through August 6 and the bounded September 11 MTBS rollout
 remain dated inputs from the [operational retrospective](../../../retros/parquet_operational_checkpoints_20260911/README.md).
 Neither substitutes for forward intervals, broader history or schedule burn-in.
-The eight-lane pause remains unproven until its effective state is freshly read.
+The September 11 gapless and retirement packets establish the effective
+eight-lane cutoff for captured baseline `fa20223` and three scheduled backlog
+advances for six soil products. They do not establish current mutation-time
+quiescence, every-product burn-in or runtime acceptance of this integration tree.
 
 ## Final local command packet
 

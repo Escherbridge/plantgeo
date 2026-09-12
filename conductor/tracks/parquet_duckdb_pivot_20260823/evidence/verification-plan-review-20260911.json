@@ -1,0 +1,22 @@
+{
+  "type": "verification-plan-review",
+  "date": "2026-09-11",
+  "reviewer": "/root/integration_packet_review",
+  "verdict": "pass_for_execution_under_source_freeze",
+  "runner": ".omc/research/active-track-integration-20260911/run_final_checks.py",
+  "runner_sha256": "3639fbe1360888371ba905477f5fb17d2fcafdad164b8b065fe4d079b156aa4b",
+  "resolved_findings": [
+    "Build web, data-service and job-executor images using their actual Dockerfiles and archived source contexts.",
+    "Remove all four optional test database variables from both local test groups and build-command environments.",
+    "Reject HEAD or checked-source drift before local checks and before archiving; permit only named original scratch state and the generated receipt."
+  ],
+  "scope": "Independent static review of the prepared verification runner; no tests or builds were run by the reviewer.",
+  "execution_contract": {
+    "frontend": ["check:data-boundary", "type-check", "lint", "test"],
+    "python": "Full scripts/check.py --write-receipt followed by verify_quality_receipt.py",
+    "archive": "Git archive of the captured commit plus newly generated Python quality receipt, verified before image builds",
+    "smokes": "Network-disabled node --check server.js for web; agri-service --help for data-service and executor",
+    "scheduler_started": false,
+    "production_actions": false
+  }
+}

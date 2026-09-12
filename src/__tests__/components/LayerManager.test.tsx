@@ -138,6 +138,9 @@ const viewportQueries = vi.hoisted(() => ({
   getVegetationIndex: vi.fn((): ViewportQueryResult => ({ data: undefined })),
   getDroughtClassification: vi.fn((): ViewportQueryResult => ({ data: undefined })),
   getWeatherForBbox: vi.fn((): StreamflowQueryResult => ({ data: [] })),
+  getWeatherForPoint: vi.fn((): ViewportQueryResult & { isLoading?: boolean } => ({
+    data: undefined,
+  })),
   getFireDetections: vi.fn((): ViewportQueryResult => ({ data: undefined })),
   // The five layers that moved off Martin's tile functions across
   // environmental_postgres_retirement_20260904 -- four in wave C, fire perimeters last. They are
@@ -169,6 +172,7 @@ vi.mock("@/lib/trpc/client", () => ({
     },
     wildfire: {
       getWeatherForBbox: { useQuery: viewportQueries.getWeatherForBbox },
+      getWeatherForPoint: { useQuery: viewportQueries.getWeatherForPoint },
       getFireDetections: { useQuery: viewportQueries.getFireDetections },
     },
   },
@@ -231,6 +235,7 @@ function soilFieldEnabledFlagOf(measure: "moisture" | "temperature"): boolean | 
 }
 
 import LayerManager from "@/components/map/LayerManager";
+import { FireDetails } from "@/components/panels/FireDetails";
 
 /**
  * A minimal maplibre-gl Map stand-in: an event emitter plus the handful of methods
@@ -497,6 +502,7 @@ beforeEach(() => {
   viewportQueries.getVegetationIndex.mockReturnValue({ data: undefined });
   viewportQueries.getDroughtClassification.mockReturnValue({ data: undefined });
   viewportQueries.getWeatherForBbox.mockReturnValue({ data: [] });
+  viewportQueries.getWeatherForPoint.mockReturnValue({ data: undefined });
   // `vi.clearAllMocks()` clears recorded CALLS and not implementations, so a case that
   // overrides what the fire read answers would otherwise answer that way for every case after
   // it. A landed empty window rather than `undefined`, because several cases below assert the
@@ -1901,6 +1907,141 @@ describe("LayerManager holds the previous day while the next one loads", () => {
       []
     );
     expect(lastRenderOf("WeatherLayer")?.data).toEqual([]);
+  });
+
+  it("clears the 2025-04-28 weather gap and rejects a delayed populated answer for another day", async () => {
+    const publishedDay = "2026-08-01";
+    const gapDay = "2025-04-28";
+    const center = { lat: 43.6, lon: -116.2 };
+    const weatherCapability = {
+      ...publishedLayer("weather-observations", publishedDay, "2021-11-26"),
+      coverageGaps: [{ from: "2021-11-27", to: "2026-07-31" }],
+    };
+    useTimeSliderStore.setState({
+      layerDates: { weather: publishedDay, fire: "2026-07-30" },
+      capabilities: { ...sliderCapabilities, layers: [weatherCapability] },
+    });
+    useMapStore.setState({ activeLayers: ["weather"] });
+    const populated = {
+      state: "ready",
+      requestedDay: publishedDay,
+      servedDay: publishedDay,
+      truncated: false,
+      data: [{
+        latitude: center.lat,
+        longitude: center.lon,
+        observedAt: `${publishedDay}T12:00:00Z`,
+        observedDay: publishedDay,
+        temperatureC: 21.5,
+        relativeHumidityPct: 44,
+        windSpeedMs: 3.2,
+        windDirectionDeg: 270,
+        support: {
+          zoomTier: 13,
+          supportKind: "raw_point",
+          supportId: "sample-1",
+          origin: "cell_center",
+          aggregationMethod: "identity",
+          contributorCount: 1,
+          provenance: {
+            sourceLayer: "weather-observations",
+            observedDay: publishedDay,
+            newestObservedAt: `${publishedDay}T12:00:00Z`,
+            attribution: "Open-Meteo",
+          },
+        },
+      }],
+    };
+    const pointReading = {
+      availability: "published",
+      observation: {
+        ...center,
+        observedAt: `${publishedDay}T12:00:00Z`,
+        observedDay: publishedDay,
+        temperature: 21.5,
+        humidity: 44,
+        windSpeed: 3.2,
+        windDirection: 270,
+        precipitation: 0,
+        proximity: { requestedDay: publishedDay },
+      },
+    };
+    viewportQueries.getWeatherForBbox.mockReturnValue(landed(populated));
+    viewportQueries.getWeatherForPoint.mockReturnValue(landed(pointReading));
+    const fakeMap = createFakeMap();
+    fakeMap.setStyleLoaded(true);
+    const view = () => (
+      <MapProvider value={fakeMap as unknown as maplibregl.Map}>
+        <LayerManager />
+        <FireDetails center={center} />
+      </MapProvider>
+    );
+    const rendered = renderWithProviders(view());
+    const assertWeatherRequest = (date: string) => {
+      expect(inputOf(viewportQueries.getWeatherForBbox)).toMatchObject({ date });
+      expect(inputOf(viewportQueries.getWeatherForPoint)).toEqual({ ...center, date });
+      expect(rendered.getByTestId("weather-selected-day").textContent).toBe(`Weather for ${date}`);
+      expect(fireRequestDate()).toBe("2026-07-30");
+    };
+
+    expect(weatherCapability.forecastHorizonDays).toBe(0);
+    assertWeatherRequest(publishedDay);
+    expect(lastRenderOf("WeatherLayer")?.data).toHaveLength(1);
+    expect(rendered.getByText("21.5 °C")).toBeTruthy();
+
+    viewportQueries.getWeatherForBbox.mockReturnValue(retaining(populated));
+    viewportQueries.getWeatherForPoint.mockReturnValue({ data: undefined, isLoading: true });
+    act(() => useTimeSliderStore.getState().setLayerDate("weather", gapDay));
+    await settleScrub();
+    assertWeatherRequest(gapDay);
+    expect(lastRenderOf("WeatherLayer")?.data).toHaveLength(1);
+    expect(useDrawnLayerDayStore.getState().drawnDays.weather).toEqual({
+      requestedDate: gapDay,
+      drawnDate: publishedDay,
+      isLoading: true,
+    });
+    expect(rendered.queryByText("21.5 °C")).toBeNull();
+
+    viewportQueries.getWeatherForBbox.mockReturnValue(landed({
+      state: "not_generated",
+      requestedDay: gapDay,
+      reason: "day_not_written",
+    }));
+    viewportQueries.getWeatherForPoint.mockReturnValue({
+      data: undefined,
+      isError: true,
+      isLoading: false,
+    });
+    act(() => rendered.rerender(view()));
+    assertWeatherRequest(gapDay);
+    expect(lastRenderOf("WeatherLayer")?.data).toEqual([]);
+    expect(useDrawnLayerDayStore.getState().drawnDays.weather).toEqual({
+      requestedDate: gapDay,
+      drawnDate: gapDay,
+      isLoading: false,
+    });
+    expect(rendered.getByText(`No weather reading is available for ${gapDay} near this point.`)).toBeTruthy();
+
+    // A completed response retains its own requested day even if it arrives after the gap.
+    viewportQueries.getWeatherForBbox.mockReturnValue(landed(populated));
+    viewportQueries.getWeatherForPoint.mockReturnValue(landed(pointReading));
+    act(() => rendered.rerender(view()));
+    assertWeatherRequest(gapDay);
+    expect(lastRenderOf("WeatherLayer")?.data).toEqual([]);
+    expect(rendered.queryByText("21.5 °C")).toBeNull();
+    expect(rendered.queryByText("3.2 m/s")).toBeNull();
+    expect(rendered.queryByText("44%")).toBeNull();
+    expect(useDrawnLayerDayStore.getState().drawnDays.weather).toEqual({
+      requestedDate: gapDay,
+      drawnDate: gapDay,
+      isLoading: false,
+    });
+
+    act(() => useTimeSliderStore.getState().setLayerDate("weather", publishedDay));
+    await settleScrub();
+    assertWeatherRequest(publishedDay);
+    expect(lastRenderOf("WeatherLayer")?.data).toHaveLength(1);
+    expect(rendered.getByText("21.5 °C")).toBeTruthy();
   });
 
   /**

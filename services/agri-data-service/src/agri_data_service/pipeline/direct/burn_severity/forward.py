@@ -40,7 +40,7 @@ from typing import TYPE_CHECKING, Final
 from agri_data_service.config import settings
 from agri_data_service.db.engine import local_source_loader_session
 from agri_data_service.foundation.parquet.paths import partition_day_statuses
-from agri_data_service.ingest.mtbs import inline_bbox_value
+from agri_data_service.ingest.mtbs import MtbsProviderRefusalError, inline_bbox_value
 from agri_data_service.ingest.policy import UNCONFIGURED_BBOX_REASON, parse_bbox, resolve_bounded_bbox
 from agri_data_service.pipeline.direct import (
     BBOX_UNCONFIGURED,
@@ -412,6 +412,9 @@ async def _publish_locked_release_day_with_retries(  # noqa: PLR0913
         else:
             source = adapter.source
 
+        if adapter.provider_refusal is not None:
+            raise adapter.provider_refusal
+
         if outcome in {"blocked", "absent", "written"} and source is None:
             raise DirectBurnSeverityError(
                 f"burn-severity {day} returned {outcome} without a completed locked source fetch"
@@ -728,6 +731,20 @@ async def main(argv: Sequence[str] | None = None) -> int:
             report = await run_daily(config)
         else:
             report = await run_burn_severity_forward(config)
+    except MtbsProviderRefusalError as error:
+        print(
+            json.dumps(
+                {
+                    "status": "failed",
+                    "error_code": error.code,
+                    "http_status": error.status,
+                    "retry_after": error.retry_after,
+                    "error": str(error),
+                },
+                sort_keys=True,
+            )
+        )
+        return 1
     except Exception as error:  # the one terminal failure report a caller parses
         print(json.dumps({"status": "failed", "error": f"{type(error).__name__}: {error}"}, sort_keys=True))
         return 1

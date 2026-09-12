@@ -211,6 +211,18 @@ censused 2026-08-25: two owed days, not twenty.
 
 ## §climate-zoom — one rung per request
 
+Climate reads now pass the original viewport through `climateFieldReadBbox` to include one
+served cell of support/contour neighbors. The caller's viewport remains unchanged in the query
+key and collection adapter. Only this climate reader uses the halo; generic Python point reads,
+event-point products and the pinned ingestion lattice retain their existing contracts.
+
+The collection's `cellCount` and `latticeCellCount` both describe footprint overlap with the
+original viewport. Halo rows help construct bands but do not inflate that count. A ready day
+stays `availability: published` even with no visible cells or no constructible isobands;
+`renderStatus` distinguishes `no_cells_in_view` from `insufficient_contour_neighbors`.
+Neither is an unpublished day. The latter retains real measurements and tells the panel to
+offer the existing filled form. An upstream non-ready day retains unavailable state.
+
 `getParquetClimateField` used to pin `zoomTier: 13`. The comment justifying it ("this lane has one
 serving tier") described the reader, not the warehouse: the climate lanes publish z13/z9/z5/z0 like
 every other lane, so the three coarse rungs were written and never once read, and a zoomed-out

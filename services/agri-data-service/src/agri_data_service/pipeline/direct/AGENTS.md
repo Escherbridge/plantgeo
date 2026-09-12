@@ -1513,3 +1513,26 @@ Current captures are eligible on the UTC day after capture, without adding the
 historical seven-day lag. The historical forward path still enumerates only the
 five `governed_release_days()`; the generic burn adapter refuses direct ingestion.
 Neither path authors new nonrelease daily absences that could shadow a snapshot.
+## MTBS intake failure identity
+
+The MTBS source retry helper immediately propagates a typed provider refusal.
+The direct adapter preserves that exception across the generic lane finalizer's
+`raised` result; forward rethrows it before any outer refetch or bucket verification
+retry. Its terminal CLI report identifies provider access denial versus exhausted
+rate limit, status, and bounded Retry-After. This does not change normal successful
+source tables or publication evidence.
+
+The current-snapshot capture still makes no automatic HTTP retries. For non-200
+responses its local failure journal keeps status, normalized Retry-After, bounded
+request role, and request timing, before refusing. It reads no failure body and
+retains no credential headers or response URL. Successful raw entities, manifest
+serialization, prepared Parquet and source-content hashes are unchanged.
+
+## NASA provider backpressure correction — 2026-09-11
+
+The climate-specific contract in [climate/AGENTS.md](climate/AGENTS.md) supersedes this directory's
+older request-throughput and provider-unsettled wording for NASA. Starts are paced at 0.5 seconds
+under one turn cache, with one transport attempt and no redirects per charge. 429 and 401/403 have
+distinct outcomes; a bounded durable Retry-After constraint survives ordinary hourly turns without
+creating a scheduler hold. Source pauses leave cached positives usable. Product/run summaries
+count actual publication and expose incomplete work. Soil source behavior is unchanged.

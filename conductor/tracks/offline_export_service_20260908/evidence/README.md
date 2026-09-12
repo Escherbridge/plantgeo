@@ -87,5 +87,6 @@ authorization and in filename order.
 ## Review and validation
 
 The implementation review and final affected Python validation are recorded in
-[`review-20260911.md`](review-20260911.md). This track does not own the combined repository
+[`review-20260911.md`](review-20260911.md), with the complete green command output retained in
+[`scripts-batch-validation-20260911.log`](scripts-batch-validation-20260911.log). This track does not own the combined repository
 `QUALITY_RECEIPT.json`; integration owns that final cross-lane receipt.

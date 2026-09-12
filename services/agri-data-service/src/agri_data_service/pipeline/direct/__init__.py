@@ -111,6 +111,12 @@ TIME_BUDGET_EXHAUSTED: Final = "time_budget_exhausted"
 #: for a limit that was never the binding one.
 REQUEST_BUDGET_EXHAUSTED: Final = "request_budget_exhausted"
 
+#: The provider explicitly throttled requests; the next ordinary turn may try again.
+PROVIDER_RATE_LIMITED: Final = "provider_rate_limited"
+
+#: The provider refused access, without establishing any absence of source observations.
+PROVIDER_ACCESS_DENIED: Final = "provider_access_denied"
+
 #: The day is past its publication lag, the writer asked, and the source answered all-null/all-fill
 #: with nothing proving the mirror has moved past the day. A REFUSAL, retried next turn -- never a
 #: governed absence, because "the mirror has not reached this day" and "the source published nothing
@@ -180,6 +186,8 @@ DIRECT_ONLY_OUTCOMES: Final[frozenset[str]] = frozenset(
     {
         TIME_BUDGET_EXHAUSTED,
         REQUEST_BUDGET_EXHAUSTED,
+        PROVIDER_RATE_LIMITED,
+        PROVIDER_ACCESS_DENIED,
         SOURCE_UNSETTLED,
         NOT_YET_SETTLED,
         BBOX_UNCONFIGURED,
@@ -381,6 +389,8 @@ __all__ = [
     "NO_SUCH_DEFECT",
     "NO_WINDOW",
     "NO_WRITABLE_OBSERVATIONS",
+    "PROVIDER_ACCESS_DENIED",
+    "PROVIDER_RATE_LIMITED",
     "PUBLISHED",
     "REFUSE_UNCONFIGURED_BBOX",
     "REFUSE_WHOLE_RELEASE",

@@ -1,0 +1,1563 @@
+{
+  "type": "integration-source-preservation-review",
+  "reviewed_on": "2026-09-11",
+  "generated_at": "2026-09-12T00:36:40.382344+00:00",
+  "reviewer": {
+    "agent": "/root/review_conformity_intake",
+    "integration_task_id": "01a0919f-40dd-7ae2-a5a3-cd8cf7e13489",
+    "implementation_authorship": false
+  },
+  "verdict": "accepted_six_lane_source_preservation",
+  "target_commit": "cc64e6e3e1de8dda164beeee0e7e22aa30088b76",
+  "target_tree": "66c55446103cbcee65d9900a0237b4e0814d5b4c",
+  "comparison_base": "fa202230958fb55521963e886eb031be5fc266c4",
+  "method": "Git tree entries and blob IDs, including file mode and expected deletions. Rename detection disabled so retired SQL paths are checked for absence as well as replacement paths for exact bytes. Runtime classification excludes Conductor/docs/Markdown, directory AGENTS contracts, the generated quality receipt, and .omc orchestration/research artifacts. Source, tests, service scripts and non-document data/config files outside those roots remain checked.",
+  "scope": {
+    "accepted_lane_count": 6,
+    "unique_runtime_test_paths": 113,
+    "retained_runtime_test_files": 109,
+    "deleted_runtime_test_paths": 4,
+    "dated_track_documentation_excluded": true,
+    "directory_contracts_reviewed_separately": true,
+    "generated_quality_receipt_excluded": true,
+    "offline_included": true,
+    "tests_run": false,
+    "runtime_changes_by_reviewer": false,
+    "commit_created_by_reviewer": false,
+    "orchestration_and_research_artifacts_excluded": true
+  },
+  "lanes": [
+    {
+      "lane": "gapless",
+      "task_id": "01a09199-337e-71f0-9595-581f62ddc7e4",
+      "base": "fa202230958fb55521963e886eb031be5fc266c4",
+      "tip": "341d44b23c60512630c8a7c0ab778e1ffa008b27",
+      "reviewed_commits": [
+        "341d44b23c60512630c8a7c0ab778e1ffa008b27"
+      ],
+      "runtime_test_path_count": 17,
+      "retained_path_count": 17,
+      "deleted_path_count": 0,
+      "files": [
+        {
+          "path": "services/agri-data-service/src/agri_data_service/execution/job_executor_service.py",
+          "change": "M",
+          "base_blob": "9af611918b57ce724c2b30b92729cb618473c15a",
+          "peer_blob": "9f664a0d0c5976db23f44102e89c997d76dccf87",
+          "integrated_blob": "9f664a0d0c5976db23f44102e89c997d76dccf87",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/src/agri_data_service/jobs/__init__.py",
+          "change": "M",
+          "base_blob": "0c1fe7d0bed9361c559f06a42b6d5a91bac5e8a5",
+          "peer_blob": "9592e42bc8ff281df707b1fc48d2b911964c5345",
+          "integrated_blob": "9592e42bc8ff281df707b1fc48d2b911964c5345",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/src/agri_data_service/jobs/errors.py",
+          "change": "A",
+          "base_blob": null,
+          "peer_blob": "f83b32b602088fb20ccb59c01cfab6ece7770a55",
+          "integrated_blob": "f83b32b602088fb20ccb59c01cfab6ece7770a55",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/src/agri_data_service/jobs/worker.py",
+          "change": "M",
+          "base_blob": "096c7c3312785f8838838a7a599f8f8aaab0e9b0",
+          "peer_blob": "b6b09472b05bb844fb4169df27ad7c6de50061aa",
+          "integrated_blob": "b6b09472b05bb844fb4169df27ad7c6de50061aa",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/src/agri_data_service/pipeline/parquet/availability_extension.py",
+          "change": "M",
+          "base_blob": "33ec72e9b251328989c974b9736b094e24c4daf8",
+          "peer_blob": "e831d02a8c34d8aaadabb321db05bc2f13ec11e2",
+          "integrated_blob": "e831d02a8c34d8aaadabb321db05bc2f13ec11e2",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/src/agri_data_service/pipeline/parquet/derivation.py",
+          "change": "M",
+          "base_blob": "4b8cddfc6c09beeed0674d1ec9800af5a1bfc88f",
+          "peer_blob": "801db5d1beaf5929b53dc6f5cfe0920d52b98eb8",
+          "integrated_blob": "801db5d1beaf5929b53dc6f5cfe0920d52b98eb8",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/src/agri_data_service/pipeline/parquet/drain.py",
+          "change": "M",
+          "base_blob": "171cca7cf1f697909f38d4dbfc6de6a72455c6db",
+          "peer_blob": "86105442a145e925d19a551a3773f38d2653bb3c",
+          "integrated_blob": "86105442a145e925d19a551a3773f38d2653bb3c",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/src/agri_data_service/pipeline/parquet/gap_fill.py",
+          "change": "M",
+          "base_blob": "26bac33f5fe06fd00c5a20cf0d4585e229336b7b",
+          "peer_blob": "fd61fac2d49ff22644f584848765dfc5d34ff90e",
+          "integrated_blob": "fd61fac2d49ff22644f584848765dfc5d34ff90e",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/src/agri_data_service/pipeline/parquet/objectstore.py",
+          "change": "M",
+          "base_blob": "315465536f0beb5ba521f8b8049127e70fe72e46",
+          "peer_blob": "ae33cf3ca1d3b633d65dbe723978c3f849a44798",
+          "integrated_blob": "ae33cf3ca1d3b633d65dbe723978c3f849a44798",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/tests/direct/test_watersheds_direct_adapter.py",
+          "change": "M",
+          "base_blob": "745722dd6d985ef80de30b8d50544fc1a1668d86",
+          "peer_blob": "dcf9391148797c9462cd18519d8db8468ba476c3",
+          "integrated_blob": "dcf9391148797c9462cd18519d8db8468ba476c3",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/tests/parquet/test_availability_extension.py",
+          "change": "M",
+          "base_blob": "a51b7bd507beb4a2bb91aed0155eed6b16301ae4",
+          "peer_blob": "2f3f1d9f72b913eac1717b0e95ffb7a83a82d9d9",
+          "integrated_blob": "2f3f1d9f72b913eac1717b0e95ffb7a83a82d9d9",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/tests/parquet/test_gap_fill.py",
+          "change": "M",
+          "base_blob": "59307ede95a8d1f00ba0d6b073a4e629a1caa2b8",
+          "peer_blob": "1e8f268b9cdaced2236277e5b98a649771cdb871",
+          "integrated_blob": "1e8f268b9cdaced2236277e5b98a649771cdb871",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/tests/parquet/test_governed_absence.py",
+          "change": "M",
+          "base_blob": "a30746cff46fb2819e42c7c1c1dc220d44e89fbe",
+          "peer_blob": "e21174ce945301439cc7ab8e3acd31e370871e07",
+          "integrated_blob": "e21174ce945301439cc7ab8e3acd31e370871e07",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/tests/parquet/test_publication_recovery.py",
+          "change": "A",
+          "base_blob": null,
+          "peer_blob": "593c4e44b01ff0a5b0cd5e2b6e02d866f7dc7efd",
+          "integrated_blob": "593c4e44b01ff0a5b0cd5e2b6e02d866f7dc7efd",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/tests/parquet/test_vegetation_absence.py",
+          "change": "M",
+          "base_blob": "924f99bb3551a90cb4d14fa3acac171c03d91a6c",
+          "peer_blob": "3e8993cff8d9749509dbc757a1acfef63a5b9a5c",
+          "integrated_blob": "3e8993cff8d9749509dbc757a1acfef63a5b9a5c",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/tests/test_job_executor_service.py",
+          "change": "M",
+          "base_blob": "3a6eb888cda539c12f2351f0b9f520542a9f1f23",
+          "peer_blob": "d893f4c40ea84defce31c7343f34f9c9a543dcfd",
+          "integrated_blob": "d893f4c40ea84defce31c7343f34f9c9a543dcfd",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/tests/test_jobs_worker.py",
+          "change": "M",
+          "base_blob": "1b1d9beeeffa1ebacbbe7cfc731694b3194cc32d",
+          "peer_blob": "377012ca335e50bdfe38f66e51c6398b7b93f23e",
+          "integrated_blob": "377012ca335e50bdfe38f66e51c6398b7b93f23e",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        }
+      ],
+      "excluded_from_runtime_equality": {
+        "documentation": [
+          "conductor/tracks/gapless_parquet_publication_20260901/evidence/generic-recovery-20260911.md",
+          "conductor/tracks/gapless_parquet_publication_20260901/evidence/live-reinventory-20260911.json",
+          "conductor/tracks/gapless_parquet_publication_20260901/evidence/scheduled-soil-advances-20260911.json",
+          "conductor/tracks/gapless_parquet_publication_20260901/evidence/validation-20260911.json",
+          "conductor/tracks/gapless_parquet_publication_20260901/metadata.json",
+          "conductor/tracks/gapless_parquet_publication_20260901/plan.md"
+        ],
+        "generated_quality_receipt": [
+          "services/agri-data-service/QUALITY_RECEIPT.json"
+        ],
+        "directory_contract": [
+          "services/agri-data-service/src/agri_data_service/execution/AGENTS.md",
+          "services/agri-data-service/src/agri_data_service/jobs/AGENTS.md",
+          "services/agri-data-service/src/agri_data_service/pipeline/parquet/AGENTS.md"
+        ]
+      }
+    },
+    {
+      "lane": "reader",
+      "task_id": "01a09198-6362-7e61-9332-eec8bd39416b",
+      "base": "fa202230958fb55521963e886eb031be5fc266c4",
+      "tip": "d7ded2a923b4e2796e90906667aca9deb64541a1",
+      "reviewed_commits": [
+        "d56b508fb3afe8adb85969ce1553cd739daf779f",
+        "d7ded2a923b4e2796e90906667aca9deb64541a1"
+      ],
+      "runtime_test_path_count": 29,
+      "retained_path_count": 29,
+      "deleted_path_count": 0,
+      "files": [
+        {
+          "path": "services/agri-data-service/src/agri_data_service/agent/tools.py",
+          "change": "M",
+          "base_blob": "a012da8e5cf962a3690c3c0373afb81d33f22b2f",
+          "peer_blob": "8cfd702c14c5705a653c571df21236f735239250",
+          "integrated_blob": "8cfd702c14c5705a653c571df21236f735239250",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/tests/parquet_ops/test_coverage_census.py",
+          "change": "M",
+          "base_blob": "e4a943f553d601141e0550b9809007f9ac70a4a3",
+          "peer_blob": "731e075073689cc84765fed7e3322497f0b84fb9",
+          "integrated_blob": "731e075073689cc84765fed7e3322497f0b84fb9",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/tests/test_agent_parquet_reads.py",
+          "change": "M",
+          "base_blob": "ae37b5537c0450b08f57e3a513aa5227048dfe9c",
+          "peer_blob": "5cdeec1b64fbb393c18296ee9d6bb549388cece3",
+          "integrated_blob": "5cdeec1b64fbb393c18296ee9d6bb549388cece3",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/tests/test_agent_parquet_tools.py",
+          "change": "M",
+          "base_blob": "f1b3452a23f0404f150d26acd70f299bdd70ce15",
+          "peer_blob": "18139ea97ad1a078509ab17e46e8c10f072be403",
+          "integrated_blob": "18139ea97ad1a078509ab17e46e8c10f072be403",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/tests/test_agent_signal_time_tools.py",
+          "change": "M",
+          "base_blob": "9e344d3e085d1b331519f060de00269978f4e4b1",
+          "peer_blob": "026e6eee548ca1fa10cfcf5dff057b87aba3c98b",
+          "integrated_blob": "026e6eee548ca1fa10cfcf5dff057b87aba3c98b",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "src/__tests__/api/regional-intelligence-gates.test.ts",
+          "change": "M",
+          "base_blob": "a996c2df354f58bbce9d3fc4be6d123b359a8815",
+          "peer_blob": "7cf1dfa1416ca2ccaf696eb1085d2252cb959567",
+          "integrated_blob": "7cf1dfa1416ca2ccaf696eb1085d2252cb959567",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "src/__tests__/components/LayerTimeSlider.test.tsx",
+          "change": "M",
+          "base_blob": "998f56828cd8251590490bd46e6ac6147af55505",
+          "peer_blob": "de0da79ef11cb8637c28516d4aac1244802017f2",
+          "integrated_blob": "de0da79ef11cb8637c28516d4aac1244802017f2",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "src/__tests__/components/layer-time-state.test.ts",
+          "change": "M",
+          "base_blob": "e7855f7dc6f48bd1e06f1529b74784f69bf4bb45",
+          "peer_blob": "1a4efa48ba09b4ccf86ce14a27bad8e086cb521f",
+          "integrated_blob": "1a4efa48ba09b4ccf86ce14a27bad8e086cb521f",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "src/__tests__/services/parquet-climate-field.test.ts",
+          "change": "M",
+          "base_blob": "a8f18b1098e216679b3bc9b8fc396538e67b58ca",
+          "peer_blob": "aff352d02dbaae062db6fe2222ba9fa52b9e6a0a",
+          "integrated_blob": "aff352d02dbaae062db6fe2222ba9fa52b9e6a0a",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "src/__tests__/services/parquet-context-readers.test.ts",
+          "change": "M",
+          "base_blob": "84e02b516c68a57e66929e3f51fdfb8f9802eeab",
+          "peer_blob": "cf650027182de9cf23cb3942128c67a770f162bc",
+          "integrated_blob": "cf650027182de9cf23cb3942128c67a770f162bc",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "src/__tests__/services/parquet-plane-client.test.ts",
+          "change": "M",
+          "base_blob": "d1d504df86bbe2ee6fdb87e617d5bcbfd4758e53",
+          "peer_blob": "de271b0585cca5fa1a5c815373fafb8f9de0cb5a",
+          "integrated_blob": "de271b0585cca5fa1a5c815373fafb8f9de0cb5a",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "src/__tests__/services/parquet-slider-capabilities.test.ts",
+          "change": "M",
+          "base_blob": "19ad1f425af1cd9f9529b9ce467afaeaf9475f34",
+          "peer_blob": "16a7068718e256ae6b6c48549ae693de29e19d27",
+          "integrated_blob": "16a7068718e256ae6b6c48549ae693de29e19d27",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "src/__tests__/services/parquet-trpc-readers.test.ts",
+          "change": "M",
+          "base_blob": "7a5bbda7273da2a0a561adf06b26b9ed01361499",
+          "peer_blob": "83bd6c92de5d3d27e5d9026d68b3c1f7db106a11",
+          "integrated_blob": "83bd6c92de5d3d27e5d9026d68b3c1f7db106a11",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "src/__tests__/services/regional-temporal-context.test.ts",
+          "change": "M",
+          "base_blob": "d0a46658349a9f28730617694c00d2ba2ee19c67",
+          "peer_blob": "b5530f79331f00bde39d170efa8e5c3fcbd41460",
+          "integrated_blob": "b5530f79331f00bde39d170efa8e5c3fcbd41460",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "src/__tests__/services/regional-temporal-neighbors.test.ts",
+          "change": "A",
+          "base_blob": null,
+          "peer_blob": "d0d15daa42d7e72f5e90a0e05d7f5eb1fdce55f2",
+          "integrated_blob": "d0d15daa42d7e72f5e90a0e05d7f5eb1fdce55f2",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "src/__tests__/trpc/wildfire-cancellation.test.ts",
+          "change": "M",
+          "base_blob": "6814615bf59690d7ef91ef59054b9f02c2775d89",
+          "peer_blob": "f5b8054df87a271fed03866ac4ec4b576450e8cd",
+          "integrated_blob": "f5b8054df87a271fed03866ac4ec4b576450e8cd",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "src/app/api/ai/regional-intelligence/route.ts",
+          "change": "M",
+          "base_blob": "b0fb420fae9fed2f0070f760b0c93d1fc1358405",
+          "peer_blob": "1b8b8ef2bd2be323e40acefacbc56771dbb5c097",
+          "integrated_blob": "1b8b8ef2bd2be323e40acefacbc56771dbb5c097",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "src/components/map/layer-panel/LayerTimeSlider.tsx",
+          "change": "M",
+          "base_blob": "88f4b0329328ec041fdc2558251f3bf6cf0c3d77",
+          "peer_blob": "07deadfcd757aeeda3c63be11e0b0c35925083d3",
+          "integrated_blob": "07deadfcd757aeeda3c63be11e0b0c35925083d3",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "src/components/map/layer-panel/layer-coverage-track.ts",
+          "change": "M",
+          "base_blob": "4ef1a6f87458d791cc5035d17ae2aad8c2e78d26",
+          "peer_blob": "86289b199cf0f827e56bb7120aa2135729454082",
+          "integrated_blob": "86289b199cf0f827e56bb7120aa2135729454082",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "src/components/map/layer-panel/layer-time-state.ts",
+          "change": "M",
+          "base_blob": "de7cd61a82f487c61166844d9d4c7ba260c2f2f2",
+          "peer_blob": "a8a52317b433371e8ad5c3b56713c5e05fa381ca",
+          "integrated_blob": "a8a52317b433371e8ad5c3b56713c5e05fa381ca",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "src/lib/server/services/ai-prompt.ts",
+          "change": "M",
+          "base_blob": "1364858329ab384ee3c385847f9ed6e526ae52ad",
+          "peer_blob": "8b44bb5ab990c8e42621e04b349b73cf9f888b6d",
+          "integrated_blob": "8b44bb5ab990c8e42621e04b349b73cf9f888b6d",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "src/lib/server/services/parquet-climate-field.ts",
+          "change": "M",
+          "base_blob": "c01343b3e3f4b49061a41408360f2d72a87f0234",
+          "peer_blob": "c78c407c2930ad3664685c17484d7b6d08f749b7",
+          "integrated_blob": "c78c407c2930ad3664685c17484d7b6d08f749b7",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "src/lib/server/services/parquet-context-readers.ts",
+          "change": "M",
+          "base_blob": "71677df6e4431ca0d337843e3dd82aefabf287e6",
+          "peer_blob": "a0c7d3e1a5723e9463c061b2597e841495ffd46a",
+          "integrated_blob": "a0c7d3e1a5723e9463c061b2597e841495ffd46a",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "src/lib/server/services/parquet-plane-client.ts",
+          "change": "M",
+          "base_blob": "1bafae6a1b8a0323dff7d6919cc29493aab5124d",
+          "peer_blob": "75dd2beca3f58aebadc95afbbb0c50607c4cc348",
+          "integrated_blob": "75dd2beca3f58aebadc95afbbb0c50607c4cc348",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "src/lib/server/services/parquet-slider-capabilities.ts",
+          "change": "M",
+          "base_blob": "df65af37f6ebdb33cff0bd54a8172dcadb4cb1ba",
+          "peer_blob": "9ac96ca71fc03888ad696758673cec1839f29290",
+          "integrated_blob": "9ac96ca71fc03888ad696758673cec1839f29290",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "src/lib/server/services/parquet-trpc-readers.ts",
+          "change": "M",
+          "base_blob": "1d0a9fca98f0820bce25cb9acb474e94a1e1bae3",
+          "peer_blob": "90c9b5e6a12e0bce960e8e9359960321cee172de",
+          "integrated_blob": "90c9b5e6a12e0bce960e8e9359960321cee172de",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "src/lib/server/services/regional-context.ts",
+          "change": "M",
+          "base_blob": "7f0931f8c404c123840aeb417c2786b12f4017cf",
+          "peer_blob": "34550aea8f2ef5875fa0fd2a8631b58f122d7844",
+          "integrated_blob": "34550aea8f2ef5875fa0fd2a8631b58f122d7844",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "src/lib/server/services/regional-temporal-neighbors.ts",
+          "change": "A",
+          "base_blob": null,
+          "peer_blob": "12400ad2d3a3701817f8d911b853b2153ef5abb7",
+          "integrated_blob": "12400ad2d3a3701817f8d911b853b2153ef5abb7",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "src/lib/server/trpc/routers/wildfire.ts",
+          "change": "M",
+          "base_blob": "1489d775c0a90426d4aa901a4ce3240a1c8c45bc",
+          "peer_blob": "77bd6f0a29f81a2de98f28c7cbb383729d104587",
+          "integrated_blob": "77bd6f0a29f81a2de98f28c7cbb383729d104587",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        }
+      ],
+      "excluded_from_runtime_equality": {
+        "documentation": [
+          "conductor/tracks/parquet_reader_cutover_acceptance_20260901/evidence/boundary-20260911.out.gz",
+          "conductor/tracks/parquet_reader_cutover_acceptance_20260901/evidence/boundary-closure-20260911.out.gz",
+          "conductor/tracks/parquet_reader_cutover_acceptance_20260901/evidence/boundary-final-20260911.out.gz",
+          "conductor/tracks/parquet_reader_cutover_acceptance_20260901/evidence/deployment-identities-20260911.json",
+          "conductor/tracks/parquet_reader_cutover_acceptance_20260901/evidence/frontend-20260911.out.gz",
+          "conductor/tracks/parquet_reader_cutover_acceptance_20260901/evidence/frontend-closure-20260911.out.gz",
+          "conductor/tracks/parquet_reader_cutover_acceptance_20260901/evidence/frontend-final-20260911.out.gz",
+          "conductor/tracks/parquet_reader_cutover_acceptance_20260901/evidence/independent-reader-review-20260911.md",
+          "conductor/tracks/parquet_reader_cutover_acceptance_20260901/evidence/lint-20260911.out.gz",
+          "conductor/tracks/parquet_reader_cutover_acceptance_20260901/evidence/lint-closure-20260911.out.gz",
+          "conductor/tracks/parquet_reader_cutover_acceptance_20260901/evidence/lint-final-20260911.out.gz",
+          "conductor/tracks/parquet_reader_cutover_acceptance_20260901/evidence/normalize-public-reader-probes-20260911.py",
+          "conductor/tracks/parquet_reader_cutover_acceptance_20260901/evidence/production-approval-packet-20260911.md",
+          "conductor/tracks/parquet_reader_cutover_acceptance_20260901/evidence/public-reader-observations-20260911.json",
+          "conductor/tracks/parquet_reader_cutover_acceptance_20260901/evidence/public-reader-probe-20260911.ps1",
+          "conductor/tracks/parquet_reader_cutover_acceptance_20260901/evidence/python-closure-20260911.out.gz",
+          "conductor/tracks/parquet_reader_cutover_acceptance_20260901/evidence/python-final-20260911.out.gz",
+          "conductor/tracks/parquet_reader_cutover_acceptance_20260901/evidence/python-readers-20260911.out.gz",
+          "conductor/tracks/parquet_reader_cutover_acceptance_20260901/evidence/reader-behavior-inventory-20260911.md",
+          "conductor/tracks/parquet_reader_cutover_acceptance_20260901/evidence/reader-local-handoff-20260911.md",
+          "conductor/tracks/parquet_reader_cutover_acceptance_20260901/evidence/reader-route-evidence-20260911.md",
+          "conductor/tracks/parquet_reader_cutover_acceptance_20260901/evidence/reader-validation-20260911.json",
+          "conductor/tracks/parquet_reader_cutover_acceptance_20260901/evidence/response-c949dd4f512e2f5f79194221e7a76bfd1971cae49387daa89f00ceb15761ddeb.json.gz",
+          "conductor/tracks/parquet_reader_cutover_acceptance_20260901/evidence/response-fbdd5f9b4d6ed2a7b081cf7f970fca61b6a6feb450384243845a29a3e271aa49.json.gz",
+          "conductor/tracks/parquet_reader_cutover_acceptance_20260901/evidence/typecheck-20260911.out.gz",
+          "conductor/tracks/parquet_reader_cutover_acceptance_20260901/evidence/typecheck-closure-20260911.out.gz",
+          "conductor/tracks/parquet_reader_cutover_acceptance_20260901/evidence/typecheck-final-20260911.out.gz",
+          "conductor/tracks/parquet_reader_cutover_acceptance_20260901/metadata.json",
+          "conductor/tracks/parquet_reader_cutover_acceptance_20260901/plan.md"
+        ],
+        "directory_contract": [
+          "services/agri-data-service/src/agri_data_service/agent/AGENTS.md",
+          "services/agri-data-service/tests/parquet_ops/AGENTS.md",
+          "src/components/map/AGENTS.md",
+          "src/lib/server/services/AGENTS.md"
+        ]
+      }
+    },
+    {
+      "lane": "retirement",
+      "task_id": "01a09199-8076-78e1-b386-91bc64d27ea2",
+      "base": "fa202230958fb55521963e886eb031be5fc266c4",
+      "tip": "78d6af81fb313a78608bfcb77291c5103904be93",
+      "reviewed_commits": [
+        "78d6af81fb313a78608bfcb77291c5103904be93"
+      ],
+      "runtime_test_path_count": 39,
+      "retained_path_count": 39,
+      "deleted_path_count": 0,
+      "files": [
+        {
+          "path": "services/agri-data-service/scripts/correct_signal_coordinates.py",
+          "change": "A",
+          "base_blob": null,
+          "peer_blob": "d0f83bb7a59a332b195a1864b663371506db39e0",
+          "integrated_blob": "d0f83bb7a59a332b195a1864b663371506db39e0",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/scripts/prepare_fire_detections_recovery.py",
+          "change": "A",
+          "base_blob": null,
+          "peer_blob": "54224f09411a66594827733e7f0f6db2849858ea",
+          "integrated_blob": "54224f09411a66594827733e7f0f6db2849858ea",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/scripts/prepare_mtbs_older_recovery.py",
+          "change": "A",
+          "base_blob": null,
+          "peer_blob": "5601225812390616f3ae71d068e03a9f042d2241",
+          "integrated_blob": "5601225812390616f3ae71d068e03a9f042d2241",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/scripts/prepare_soil_survey_restoration.py",
+          "change": "A",
+          "base_blob": null,
+          "peer_blob": "d8fe0bf392068fdc0920dbb9f407886f5577bd39",
+          "integrated_blob": "d8fe0bf392068fdc0920dbb9f407886f5577bd39",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/scripts/prepare_static_soil.py",
+          "change": "A",
+          "base_blob": null,
+          "peer_blob": "573102afc5834bb150092c0d4ab60b41fa606259",
+          "integrated_blob": "573102afc5834bb150092c0d4ab60b41fa606259",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/scripts/prepare_water_gauges_recovery.py",
+          "change": "A",
+          "base_blob": null,
+          "peer_blob": "043779d64c2afc085538cfbf6653a801a161135b",
+          "integrated_blob": "043779d64c2afc085538cfbf6653a801a161135b",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/scripts/verify_signal_candidates.py",
+          "change": "A",
+          "base_blob": null,
+          "peer_blob": "fa1cd6ba10e4c4dec37b1a1fa6636bd818fbc7d6",
+          "integrated_blob": "fa1cd6ba10e4c4dec37b1a1fa6636bd818fbc7d6",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/burn_severity/capture.py",
+          "change": "M",
+          "base_blob": "1592e1e9b9ae06c7910da3f3c7145fd0385d43e5",
+          "peer_blob": "b1e23ead78780b8d386994d7cf531c21fa0b4c33",
+          "integrated_blob": "b1e23ead78780b8d386994d7cf531c21fa0b4c33",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/burn_severity/current_snapshot.py",
+          "change": "M",
+          "base_blob": "095e8cc06af85288ad08fe7a5288eca499cf193f",
+          "peer_blob": "ad4175f14c81c376e075836711bd05819cd17a0c",
+          "integrated_blob": "ad4175f14c81c376e075836711bd05819cd17a0c",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/burn_severity/older_capture.py",
+          "change": "A",
+          "base_blob": null,
+          "peer_blob": "827376551c8cfe9422dd19b2109a3fef2082afc6",
+          "integrated_blob": "827376551c8cfe9422dd19b2109a3fef2082afc6",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/burn_severity/older_recovery.py",
+          "change": "A",
+          "base_blob": null,
+          "peer_blob": "e3a48dfcbe87c268591e13d53b8708406bb68c6c",
+          "integrated_blob": "e3a48dfcbe87c268591e13d53b8708406bb68c6c",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/src/agri_data_service/pipeline/fire_detections_recovery/__init__.py",
+          "change": "A",
+          "base_blob": null,
+          "peer_blob": "998c5ed92daf21fc243ef35d033a3ea83fda6709",
+          "integrated_blob": "998c5ed92daf21fc243ef35d033a3ea83fda6709",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/src/agri_data_service/pipeline/fire_detections_recovery/models.py",
+          "change": "A",
+          "base_blob": null,
+          "peer_blob": "4b41f5d6994b825e13cd07962e08fdb944af846b",
+          "integrated_blob": "4b41f5d6994b825e13cd07962e08fdb944af846b",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/src/agri_data_service/pipeline/fire_detections_recovery/prepare.py",
+          "change": "A",
+          "base_blob": null,
+          "peer_blob": "ebe4d4cfddad85d1f649877f0105b17a131ab15a",
+          "integrated_blob": "ebe4d4cfddad85d1f649877f0105b17a131ab15a",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/src/agri_data_service/pipeline/parquet/signal_candidate_admission.py",
+          "change": "A",
+          "base_blob": null,
+          "peer_blob": "34d3341638466fa8befa54951f20fee2ee1e1434",
+          "integrated_blob": "34d3341638466fa8befa54951f20fee2ee1e1434",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/src/agri_data_service/pipeline/parquet/signal_coordinate_correction.py",
+          "change": "A",
+          "base_blob": null,
+          "peer_blob": "cd600f79eb7cfa756c99bd63efaae6462dcbacbe",
+          "integrated_blob": "cd600f79eb7cfa756c99bd63efaae6462dcbacbe",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/src/agri_data_service/pipeline/soil_survey_restore/__init__.py",
+          "change": "A",
+          "base_blob": null,
+          "peer_blob": "caf6b1dadb34ff142a96da78a6da2382fdb494c9",
+          "integrated_blob": "caf6b1dadb34ff142a96da78a6da2382fdb494c9",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/src/agri_data_service/pipeline/soil_survey_restore/models.py",
+          "change": "A",
+          "base_blob": null,
+          "peer_blob": "2f054c714a0aa057a52958b7453e035d752e8aee",
+          "integrated_blob": "2f054c714a0aa057a52958b7453e035d752e8aee",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/src/agri_data_service/pipeline/soil_survey_restore/prepare.py",
+          "change": "A",
+          "base_blob": null,
+          "peer_blob": "a67abc2fd39493100d9e0d221ad2c91d39e0ef45",
+          "integrated_blob": "a67abc2fd39493100d9e0d221ad2c91d39e0ef45",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/src/agri_data_service/pipeline/static_soil/__init__.py",
+          "change": "A",
+          "base_blob": null,
+          "peer_blob": "cfc483599acd5e7cd5415490d3d0d2cfb846bf3a",
+          "integrated_blob": "cfc483599acd5e7cd5415490d3d0d2cfb846bf3a",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/src/agri_data_service/pipeline/static_soil/models.py",
+          "change": "A",
+          "base_blob": null,
+          "peer_blob": "a8de63e9423e6a3b4a8e56174d438e9343cc2728",
+          "integrated_blob": "a8de63e9423e6a3b4a8e56174d438e9343cc2728",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/src/agri_data_service/pipeline/static_soil/point.py",
+          "change": "A",
+          "base_blob": null,
+          "peer_blob": "b2526808f180a34499bedfe46a9f7a33080446b4",
+          "integrated_blob": "b2526808f180a34499bedfe46a9f7a33080446b4",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/src/agri_data_service/pipeline/static_soil/prepare.py",
+          "change": "A",
+          "base_blob": null,
+          "peer_blob": "5e47958692346fb0f0fab913ff246cee3a2fb2d1",
+          "integrated_blob": "5e47958692346fb0f0fab913ff246cee3a2fb2d1",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/src/agri_data_service/pipeline/static_soil/raster.py",
+          "change": "A",
+          "base_blob": null,
+          "peer_blob": "abf9f8e8d27649d43e3153dc71273c2db4fda5e2",
+          "integrated_blob": "abf9f8e8d27649d43e3153dc71273c2db4fda5e2",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/src/agri_data_service/pipeline/water_gauges_recovery/__init__.py",
+          "change": "A",
+          "base_blob": null,
+          "peer_blob": "dc562e993d45022798f8da6aa3dca6427a71629b",
+          "integrated_blob": "dc562e993d45022798f8da6aa3dca6427a71629b",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/src/agri_data_service/pipeline/water_gauges_recovery/models.py",
+          "change": "A",
+          "base_blob": null,
+          "peer_blob": "f247082ac34f3bd9c9f3ecaa1ce99dc820da27a4",
+          "integrated_blob": "f247082ac34f3bd9c9f3ecaa1ce99dc820da27a4",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/src/agri_data_service/pipeline/water_gauges_recovery/normalize.py",
+          "change": "A",
+          "base_blob": null,
+          "peer_blob": "17479d43736b6303d082228e69f1acecc1962b89",
+          "integrated_blob": "17479d43736b6303d082228e69f1acecc1962b89",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/src/agri_data_service/pipeline/water_gauges_recovery/prepare.py",
+          "change": "A",
+          "base_blob": null,
+          "peer_blob": "df96e0d0679a73d9f64c3a5c1ba3d3a2946f55f1",
+          "integrated_blob": "df96e0d0679a73d9f64c3a5c1ba3d3a2946f55f1",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/src/agri_data_service/retirement/readers.py",
+          "change": "M",
+          "base_blob": "f2d83a85c38529f8f5426f0ad4cfd7a5d0b4f8ba",
+          "peer_blob": "040f7b2bfa6ef683a171d7d6633335b4abe27e55",
+          "integrated_blob": "040f7b2bfa6ef683a171d7d6633335b4abe27e55",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/src/agri_data_service/sql/pipeline/soil_survey_restore_geometry.sql",
+          "change": "A",
+          "base_blob": null,
+          "peer_blob": "a3a3b7beb761be4ac21adbf72ea7011c2f8a5f48",
+          "integrated_blob": "a3a3b7beb761be4ac21adbf72ea7011c2f8a5f48",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/tests/direct/test_mtbs_older_recovery.py",
+          "change": "A",
+          "base_blob": null,
+          "peer_blob": "f97a582a01aa0600fa7abe05a9d610433084b5c6",
+          "integrated_blob": "f97a582a01aa0600fa7abe05a9d610433084b5c6",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/tests/parquet/test_fire_detections_recovery.py",
+          "change": "A",
+          "base_blob": null,
+          "peer_blob": "5b33d668054fc58bc575df33ad4f149461635f13",
+          "integrated_blob": "5b33d668054fc58bc575df33ad4f149461635f13",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/tests/parquet/test_signal_candidate_admission.py",
+          "change": "A",
+          "base_blob": null,
+          "peer_blob": "bc6a508a84832777d32399774de8ca0efe1fb5a2",
+          "integrated_blob": "bc6a508a84832777d32399774de8ca0efe1fb5a2",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/tests/parquet/test_signal_coordinate_correction.py",
+          "change": "A",
+          "base_blob": null,
+          "peer_blob": "d3a9c66c84e09138ab78c1bd2e101c831a43db04",
+          "integrated_blob": "d3a9c66c84e09138ab78c1bd2e101c831a43db04",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/tests/parquet/test_soil_survey_restoration.py",
+          "change": "A",
+          "base_blob": null,
+          "peer_blob": "d8ac261c322dc82de6be4c62f3cf7af72b77e5bc",
+          "integrated_blob": "d8ac261c322dc82de6be4c62f3cf7af72b77e5bc",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/tests/parquet/test_static_soil_preparation.py",
+          "change": "A",
+          "base_blob": null,
+          "peer_blob": "6c90802217cdaa63cf04c325dc51b7a31f1456d4",
+          "integrated_blob": "6c90802217cdaa63cf04c325dc51b7a31f1456d4",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/tests/parquet/test_water_gauges_recovery.py",
+          "change": "A",
+          "base_blob": null,
+          "peer_blob": "f6c650893525f685d6277616bbafb056b16b4a9f",
+          "integrated_blob": "f6c650893525f685d6277616bbafb056b16b4a9f",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/tests/retirement/test_readers.py",
+          "change": "M",
+          "base_blob": "1b8bd6975690e976857a236c047bed702f42d5e0",
+          "peer_blob": "14a1215803e7d94a11506c01af8971a470db69ef",
+          "integrated_blob": "14a1215803e7d94a11506c01af8971a470db69ef",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/tests/scripts/test_correct_signal_coordinates.py",
+          "change": "A",
+          "base_blob": null,
+          "peer_blob": "efa677c7796d03622bccb2db4310d39bfe73abeb",
+          "integrated_blob": "efa677c7796d03622bccb2db4310d39bfe73abeb",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        }
+      ],
+      "excluded_from_runtime_equality": {
+        "documentation": [
+          "conductor/tracks/environmental_postgres_retirement_20260904/evidence/.gitattributes",
+          "conductor/tracks/environmental_postgres_retirement_20260904/evidence/archive-source-preparation-20260911.md",
+          "conductor/tracks/environmental_postgres_retirement_20260904/evidence/independent-repair-replay-20260911.json",
+          "conductor/tracks/environmental_postgres_retirement_20260904/evidence/independent-repair-review-20260911.md",
+          "conductor/tracks/environmental_postgres_retirement_20260904/evidence/independent_repair_replay_20260911.py",
+          "conductor/tracks/environmental_postgres_retirement_20260904/evidence/mtbs-older-preparation-20260911.json",
+          "conductor/tracks/environmental_postgres_retirement_20260904/evidence/mtbs-older-recovery-20260911.md",
+          "conductor/tracks/environmental_postgres_retirement_20260904/evidence/nwis-archive-approved-probe-20260911.json",
+          "conductor/tracks/environmental_postgres_retirement_20260904/evidence/nwis-archive-public-response-20260911.json",
+          "conductor/tracks/environmental_postgres_retirement_20260904/evidence/nwis-archive-public-response-summary-20260911.json",
+          "conductor/tracks/environmental_postgres_retirement_20260904/evidence/nwis-archive-source-probe-20260911.json",
+          "conductor/tracks/environmental_postgres_retirement_20260904/evidence/preserved-repair-inputs-custody-20260911.json",
+          "conductor/tracks/environmental_postgres_retirement_20260904/evidence/preserved-sensor-candidate-custody-20260911.json",
+          "conductor/tracks/environmental_postgres_retirement_20260904/evidence/repair-handoff-20260911.md",
+          "conductor/tracks/environmental_postgres_retirement_20260904/evidence/retirement-reinventory-20260911.json",
+          "conductor/tracks/environmental_postgres_retirement_20260904/evidence/retirement-runtime-checkpoint-20260911.json",
+          "conductor/tracks/environmental_postgres_retirement_20260904/evidence/runtime-and-retirement-readback-20260911.md",
+          "conductor/tracks/environmental_postgres_retirement_20260904/evidence/signal-sensor-candidate-revalidation-20260911.md",
+          "conductor/tracks/environmental_postgres_retirement_20260904/evidence/soil-restoration-preparation-20260911.md",
+          "conductor/tracks/environmental_postgres_retirement_20260904/evidence/static-soil-candidate-20260911.json",
+          "conductor/tracks/environmental_postgres_retirement_20260904/evidence/static-soil-point-evidence-20260911.json",
+          "conductor/tracks/environmental_postgres_retirement_20260904/evidence/static-soil-valid-pixel-inspection-20260911.json",
+          "conductor/tracks/environmental_postgres_retirement_20260904/metadata.json",
+          "conductor/tracks/environmental_postgres_retirement_20260904/plan.md"
+        ],
+        "directory_contract": [
+          "services/agri-data-service/scripts/AGENTS.md",
+          "services/agri-data-service/src/agri_data_service/pipeline/direct/burn_severity/AGENTS.md",
+          "services/agri-data-service/src/agri_data_service/pipeline/fire_detections_recovery/AGENTS.md",
+          "services/agri-data-service/src/agri_data_service/pipeline/parquet/AGENTS.md",
+          "services/agri-data-service/src/agri_data_service/pipeline/soil_survey_restore/AGENTS.md",
+          "services/agri-data-service/src/agri_data_service/pipeline/static_soil/AGENTS.md",
+          "services/agri-data-service/src/agri_data_service/pipeline/water_gauges_recovery/AGENTS.md",
+          "services/agri-data-service/src/agri_data_service/retirement/AGENTS.md"
+        ]
+      }
+    },
+    {
+      "lane": "multiscale",
+      "task_id": "01a09199-b590-77d2-a22d-1e77ade63662",
+      "base": "fa202230958fb55521963e886eb031be5fc266c4",
+      "tip": "86f55d5351623fcef9e030f9c92542213f93877d",
+      "reviewed_commits": [
+        "06acd9d21f62ea703be472828de4de886820a6a0",
+        "86f55d5351623fcef9e030f9c92542213f93877d"
+      ],
+      "runtime_test_path_count": 6,
+      "retained_path_count": 6,
+      "deleted_path_count": 0,
+      "files": [
+        {
+          "path": "src/__tests__/components/ClimateFieldLayers.test.tsx",
+          "change": "M",
+          "base_blob": "c3cae9da015570b1bc12bd08eb1de2c8a33a618d",
+          "peer_blob": "d29a72657bbe5af67365ec09ac1a60844e4e59eb",
+          "integrated_blob": "d29a72657bbe5af67365ec09ac1a60844e4e59eb",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "src/__tests__/components/event-aggregation-rendering.test.tsx",
+          "change": "M",
+          "base_blob": "d705a332f0982447e33dc66ac259ef9bbe55469e",
+          "peer_blob": "fa81bdcebea53ef1f12c9960a7c8d5e8d6be523b",
+          "integrated_blob": "fa81bdcebea53ef1f12c9960a7c8d5e8d6be523b",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "src/components/map/layers/ClimateFieldLayer.tsx",
+          "change": "M",
+          "base_blob": "0da042a35029530e3d326c0373ba739526710729",
+          "peer_blob": "7f219045135b404dd3e01c0034d272eea1bceab8",
+          "integrated_blob": "7f219045135b404dd3e01c0034d272eea1bceab8",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "src/components/map/layers/ClimateFieldLayers.tsx",
+          "change": "M",
+          "base_blob": "ecf02052496c3f2f958974f9bcbfb8dd3dc3dc7f",
+          "peer_blob": "2004f0aebdcc0c2ae9e32247ae9d0814e45e7d63",
+          "integrated_blob": "2004f0aebdcc0c2ae9e32247ae9d0814e45e7d63",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "src/components/map/layers/FireLayer.tsx",
+          "change": "M",
+          "base_blob": "07047f6d1c16c3a54ab91a1925d3717a20e7ea1d",
+          "peer_blob": "06818f2843e17a254fec220d475bae40153dd9c0",
+          "integrated_blob": "06818f2843e17a254fec220d475bae40153dd9c0",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "src/components/map/layers/WaterLayer.tsx",
+          "change": "M",
+          "base_blob": "90fd4bf4631dbab9e57b43f9ba3c1dedc49b45fa",
+          "peer_blob": "b159eb00dbeae792178a02146bd9909500f7c005",
+          "integrated_blob": "b159eb00dbeae792178a02146bd9909500f7c005",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        }
+      ],
+      "excluded_from_runtime_equality": {
+        "documentation": [
+          "conductor/tracks/multiscale_polygon_surface_20260901/evidence/renderer-verdict-20260911.md",
+          "conductor/tracks/multiscale_polygon_surface_20260901/metadata.json",
+          "conductor/tracks/multiscale_polygon_surface_20260901/plan.md"
+        ]
+      }
+    },
+    {
+      "lane": "conformity",
+      "task_id": "01a0919a-0438-7303-9ac8-755f22ab49ea",
+      "base": "fa202230958fb55521963e886eb031be5fc266c4",
+      "tip": "dcaad2fb398f302c21a7749b1245fddb3e1f18d6",
+      "reviewed_commits": [
+        "cff114445f0db905b668fa18c5b7d16d9ffd2502",
+        "48561a664307a6726fac524ad218fde3be0e621f",
+        "dcaad2fb398f302c21a7749b1245fddb3e1f18d6"
+      ],
+      "runtime_test_path_count": 18,
+      "retained_path_count": 14,
+      "deleted_path_count": 4,
+      "files": [
+        {
+          "path": "services/agri-data-service/src/agri_data_service/execution/chunked_lane.py",
+          "change": "A",
+          "base_blob": null,
+          "peer_blob": "527cc7ac97cfb913f86376f9197024c97bf67c34",
+          "integrated_blob": "527cc7ac97cfb913f86376f9197024c97bf67c34",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/src/agri_data_service/execution/forecast_workflows.py",
+          "change": "A",
+          "base_blob": null,
+          "peer_blob": "cb02da91f761c36da74a55c71e691421609083ba",
+          "integrated_blob": "cb02da91f761c36da74a55c71e691421609083ba",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/src/agri_data_service/interface/cli/commands.py",
+          "change": "M",
+          "base_blob": "bb0027a10a9a019e456368045953f4a49386089a",
+          "peer_blob": "ac1403e2537c0ba3bbb3a776d043b103b3bd83bb",
+          "integrated_blob": "ac1403e2537c0ba3bbb3a776d043b103b3bd83bb",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/src/agri_data_service/sql/cli/forecast_iteration_outcome_totals.sql",
+          "change": "D",
+          "base_blob": "adf44de14e2d468c972d7633b99e8a1ab61247c1",
+          "peer_blob": null,
+          "integrated_blob": null,
+          "peer_mode": null,
+          "integrated_mode": null,
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/src/agri_data_service/sql/cli/forecast_iteration_summary.sql",
+          "change": "D",
+          "base_blob": "0864d31bed353b1eb3acaaf88387587b35d8f87d",
+          "peer_blob": null,
+          "integrated_blob": null,
+          "peer_mode": null,
+          "integrated_mode": null,
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/src/agri_data_service/sql/cli/materialize_forecast_iteration.sql",
+          "change": "D",
+          "base_blob": "25fc5bfc8d7fd0a700680938f03262913f0bb788",
+          "peer_blob": null,
+          "integrated_blob": null,
+          "peer_mode": null,
+          "integrated_mode": null,
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/src/agri_data_service/sql/cli/reconcile_forecast_iteration_actuals.sql",
+          "change": "D",
+          "base_blob": "5de9aba2aea5fd343d8c88b02d5222f90436d784",
+          "peer_blob": null,
+          "integrated_blob": null,
+          "peer_mode": null,
+          "integrated_mode": null,
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/src/agri_data_service/sql/execution/forecast_iteration_outcome_totals.sql",
+          "change": "A",
+          "base_blob": null,
+          "peer_blob": "9ccb46281f8391b815a7cfbaa0dd8d5a5d59cdd0",
+          "integrated_blob": "9ccb46281f8391b815a7cfbaa0dd8d5a5d59cdd0",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/src/agri_data_service/sql/execution/forecast_iteration_summary.sql",
+          "change": "A",
+          "base_blob": null,
+          "peer_blob": "674024ad705cb5aad5c875a099a0e0b8daa09976",
+          "integrated_blob": "674024ad705cb5aad5c875a099a0e0b8daa09976",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/src/agri_data_service/sql/execution/materialize_forecast_iteration.sql",
+          "change": "A",
+          "base_blob": null,
+          "peer_blob": "89f0fe52817a57d3b1b64ba2933b32fdffd03f4e",
+          "integrated_blob": "89f0fe52817a57d3b1b64ba2933b32fdffd03f4e",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/src/agri_data_service/sql/execution/reconcile_forecast_iteration_actuals_command.sql",
+          "change": "A",
+          "base_blob": null,
+          "peer_blob": "de5eaa32c6d51ec908816284dddbbc208621ccd6",
+          "integrated_blob": "de5eaa32c6d51ec908816284dddbbc208621ccd6",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/src/agri_data_service/warehouse/parquet/snapshot_signal_product.py",
+          "change": "M",
+          "base_blob": "9e953a03b949df6c7512869b8e8842dd931208fa",
+          "peer_blob": "0932ee668fb44083e9fc0d8b7ae986ed02ad4d1e",
+          "integrated_blob": "0932ee668fb44083e9fc0d8b7ae986ed02ad4d1e",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/tests/parquet/test_snapshot_signal_product_schemas.py",
+          "change": "M",
+          "base_blob": "712550f070ad8e6df3213e09005478326f577aab",
+          "peer_blob": "4f18c74a61c825d3991dc4de8c5c2e65c1a37be7",
+          "integrated_blob": "4f18c74a61c825d3991dc4de8c5c2e65c1a37be7",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/tests/test_chunked_lane_workflow.py",
+          "change": "A",
+          "base_blob": null,
+          "peer_blob": "f765e2280acb25cf97588c91077097325647b898",
+          "integrated_blob": "f765e2280acb25cf97588c91077097325647b898",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/tests/test_forecast_refresh_cli.py",
+          "change": "M",
+          "base_blob": "7dd54ccde93f7daa96857dd4aa262eca6ec42766",
+          "peer_blob": "75a4e8b6d8c2b99eee32a3226a7851b25035fded",
+          "integrated_blob": "75a4e8b6d8c2b99eee32a3226a7851b25035fded",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/tests/test_layer_import_contract.py",
+          "change": "M",
+          "base_blob": "5578474c09fec6781afaff8747c5167cd374119d",
+          "peer_blob": "7599c96e616a3182b20c01b51b1b9c8628c2a635",
+          "integrated_blob": "7599c96e616a3182b20c01b51b1b9c8628c2a635",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/tests/test_vegetation_ndvi_cli_payloads.py",
+          "change": "M",
+          "base_blob": "9b3b263a71285fb07bb9b33f0395a3bd086985bd",
+          "peer_blob": "7c584c61066882f55720af3ba42c03a07edbddc7",
+          "integrated_blob": "7c584c61066882f55720af3ba42c03a07edbddc7",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/tests/test_vegetation_ndvi_release_materialisation.py",
+          "change": "M",
+          "base_blob": "0b4a8e33ca9e3453ec1b3ec1fb8b7c54045d64c8",
+          "peer_blob": "df656f15545410b6ac587f84c7d715231f0d2019",
+          "integrated_blob": "df656f15545410b6ac587f84c7d715231f0d2019",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        }
+      ],
+      "excluded_from_runtime_equality": {
+        "documentation": [
+          "conductor/tracks/repository_conformity_hardening_20260901/evidence/final-inventory-20260911.md",
+          "conductor/tracks/repository_conformity_hardening_20260901/evidence/integration-correction-20260911.md",
+          "conductor/tracks/repository_conformity_hardening_20260901/metadata.json",
+          "conductor/tracks/repository_conformity_hardening_20260901/plan.md",
+          "conductor/tracks/repository_conformity_hardening_20260901/spec.md"
+        ],
+        "directory_contract": [
+          "services/agri-data-service/src/agri_data_service/execution/AGENTS.md",
+          "services/agri-data-service/src/agri_data_service/interface/AGENTS.md",
+          "services/agri-data-service/src/agri_data_service/interface/cli/AGENTS.md",
+          "services/agri-data-service/src/agri_data_service/warehouse/parquet/AGENTS.md"
+        ]
+      }
+    },
+    {
+      "lane": "offline",
+      "task_id": "01a0919d-fae4-7ce2-af96-5668e628ee36",
+      "base": "fa202230958fb55521963e886eb031be5fc266c4",
+      "tip": "6f2c7a8c0be95a6690efb51a9906d369f54697ad",
+      "reviewed_commits": [
+        "6f2c7a8c0be95a6690efb51a9906d369f54697ad"
+      ],
+      "runtime_test_path_count": 4,
+      "retained_path_count": 4,
+      "deleted_path_count": 0,
+      "files": [
+        {
+          "path": "services/agri-data-service/scripts/audit_offline_canonical_exports.py",
+          "change": "A",
+          "base_blob": null,
+          "peer_blob": "582492e3ff18a8dd4d088a91c66829f11e498df6",
+          "integrated_blob": "582492e3ff18a8dd4d088a91c66829f11e498df6",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/scripts/compile_relative_humidity_availability_history.py",
+          "change": "A",
+          "base_blob": null,
+          "peer_blob": "9124762813ae36701fd1f0c62c14a9b9bcbf4f1a",
+          "integrated_blob": "9124762813ae36701fd1f0c62c14a9b9bcbf4f1a",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/tests/scripts/test_audit_offline_canonical_exports.py",
+          "change": "A",
+          "base_blob": null,
+          "peer_blob": "32d56f37edb403e2a2cf6946c6caa78c0d90a4d3",
+          "integrated_blob": "32d56f37edb403e2a2cf6946c6caa78c0d90a4d3",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        },
+        {
+          "path": "services/agri-data-service/tests/scripts/test_compile_relative_humidity_availability_history.py",
+          "change": "A",
+          "base_blob": null,
+          "peer_blob": "d9024c8d1396b24a1c8ee8b48aa11e9ebd96031f",
+          "integrated_blob": "d9024c8d1396b24a1c8ee8b48aa11e9ebd96031f",
+          "peer_mode": "100644",
+          "integrated_mode": "100644",
+          "preserved": true
+        }
+      ],
+      "excluded_from_runtime_equality": {
+        "documentation": [
+          "conductor/tracks/offline_export_service_20260908/evidence/README.md",
+          "conductor/tracks/offline_export_service_20260908/evidence/relative-humidity-history-candidate-20260911.json",
+          "conductor/tracks/offline_export_service_20260908/evidence/review-20260911.md",
+          "conductor/tracks/offline_export_service_20260908/evidence/selected-builder-audit-receipt-20260911.json",
+          "conductor/tracks/offline_export_service_20260908/evidence/selected-builder-manifest-20260911.json",
+          "conductor/tracks/offline_export_service_20260908/evidence/warm-capability-probe-20260911.json",
+          "conductor/tracks/offline_export_service_20260908/metadata.json",
+          "conductor/tracks/offline_export_service_20260908/plan.md"
+        ],
+        "directory_contract": [
+          "services/agri-data-service/scripts/AGENTS.md"
+        ]
+      }
+    }
+  ],
+  "runtime_path_intersections": {},
+  "runtime_mismatches": [],
+  "unexpected_integrated_runtime_paths": [],
+  "accepted_paths_missing_from_integrated_delta": [],
+  "shared_directory_contract_intersections": {
+    "services/agri-data-service/src/agri_data_service/execution/AGENTS.md": [
+      "gapless",
+      "conformity"
+    ],
+    "services/agri-data-service/src/agri_data_service/pipeline/parquet/AGENTS.md": [
+      "gapless",
+      "retirement"
+    ],
+    "services/agri-data-service/scripts/AGENTS.md": [
+      "retirement",
+      "offline"
+    ]
+  },
+  "authorized_shared_directory_resolutions": [
+    {
+      "path": "services/agri-data-service/src/agri_data_service/execution/AGENTS.md",
+      "canonical_owner": "gapless",
+      "contributors": [
+        "gapless",
+        "conformity"
+      ],
+      "integrated_blob": "5985923a2fe31d0cfcfb80ac41c635e4b144eb95",
+      "checks": {
+        "remove_conformity_additions_reproduces_gapless": true,
+        "remove_gapless_addition_reproduces_conformity": true
+      },
+      "prior_review": "conformity-intake-review-20260911.json#integration_byte_verification"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/pipeline/parquet/AGENTS.md",
+      "canonical_owner": "gapless",
+      "contributors": [
+        "gapless",
+        "retirement"
+      ],
+      "integrated_blob": "822f04249a65d0a880eea0f76ad71594dcf7507d",
+      "checks": {
+        "remove_retirement_admission_section_reproduces_gapless": true,
+        "retirement_admission_section_byte_identical": true
+      },
+      "resolution": "Preserve gapless generic recovery and corrected absence guidance; add retirement signal-admission section without changing either reviewed contract.",
+      "prior_review": "integration-ledger-20260911.md shared-document decision and accepted retirement/gapless resolution"
+    },
+    {
+      "path": "services/agri-data-service/scripts/AGENTS.md",
+      "canonical_owner": "offline",
+      "contributors": [
+        "retirement",
+        "offline"
+      ],
+      "integrated_blob": "d475745e5bdf51249a15c88ddbca406457367d1a",
+      "checks": {
+        "all_three_deltas_are_insertions_only": true,
+        "insertions_at_disjoint_base_positions": true,
+        "integrated_insertions_equal_exact_union": true,
+        "retirement_sections_preserved": true,
+        "offline_sections_preserved": true
+      },
+      "insertions": {
+        "retirement": [
+          {
+            "base_line": 76,
+            "line_count": 55,
+            "sha256": "95018f300e80c3ba0ff6e75eb5bee02798991487370acc608de6aa4f761fb52d"
+          },
+          {
+            "base_line": 949,
+            "line_count": 26,
+            "sha256": "29d326424a66447befd88ee5863443a8c40aa5a88f12d53cfa3d3bc9f3d13eb2"
+          }
+        ],
+        "offline": [
+          {
+            "base_line": 670,
+            "line_count": 38,
+            "sha256": "f4a2412bda478ece3e5fd96380285abbb3db1f831d75cf9a4b373f226a86c02c"
+          },
+          {
+            "base_line": 870,
+            "line_count": 27,
+            "sha256": "5a890668ebbba28bebbdc48491c879e5cfda49c270ce16dbb746d08c63fab218"
+          }
+        ],
+        "integrated": [
+          {
+            "base_line": 76,
+            "line_count": 55,
+            "sha256": "95018f300e80c3ba0ff6e75eb5bee02798991487370acc608de6aa4f761fb52d"
+          },
+          {
+            "base_line": 670,
+            "line_count": 38,
+            "sha256": "f4a2412bda478ece3e5fd96380285abbb3db1f831d75cf9a4b373f226a86c02c"
+          },
+          {
+            "base_line": 870,
+            "line_count": 27,
+            "sha256": "5a890668ebbba28bebbdc48491c879e5cfda49c270ce16dbb746d08c63fab218"
+          },
+          {
+            "base_line": 949,
+            "line_count": 26,
+            "sha256": "29d326424a66447befd88ee5863443a8c40aa5a88f12d53cfa3d3bc9f3d13eb2"
+          }
+        ]
+      },
+      "authorization": "Recorded offline/retirement shared-document decision; integration mechanical composition only."
+    }
+  ],
+  "conclusions": [
+    "Every accepted runtime/test file has the exact peer blob and mode at the target commit; all accepted deletions remain absent.",
+    "The six runtime/test write sets are disjoint. No runtime overlap needed conflict resolution.",
+    "The complete root runtime/test delta from the base equals the union of the six accepted manifests; no extra runtime/test change is hidden in integration.",
+    "The only shared directory contracts are the three explicitly authorized resolutions above, independently checked against peer bytes."
+  ],
+  "limits": [
+    "This proves preservation and scope at the target commit only; it does not prove combined behavior or quality-gate success.",
+    "No production, publication, burn-in, image, receipt or track-closure approval is granted.",
+    "Ten additional .omc/research paths originate in the parent botanical planning baseline. They are explicitly inventoried as out-of-runtime research artifacts and confer no botanical implementation acceptance.",
+    "Offline construction is included by the independent appendix below; its scoped owner validation does not establish combined quality-gate success."
+  ],
+  "excluded_baseline_research_artifacts": [
+    ".omc/research/.gitattributes",
+    ".omc/research/pnw-admission-eml-http-receipt-20260911.json",
+    ".omc/research/pnw-admission-fetch-20260911.py",
+    ".omc/research/pnw-admission-http-receipts-20260911.json",
+    ".omc/research/pnw-admission-sync-verify-20260911.py",
+    ".omc/research/pnw-admission-verify-20260911.py",
+    ".omc/research/pnw-portal-inventory-20260911.html",
+    ".omc/research/pnw-ubc-eml-16.43-20260911.xml",
+    ".omc/research/pnw-ubc-ipt-20260911.html",
+    ".omc/research/pnw-wtu-provider-20260911.html"
+  ],
+  "offline_appendix": {
+    "reviewer": "/root/offline_final_intake",
+    "created_at": "2026-09-12T00:36:40.382344+00:00",
+    "previous_five_lane_review": {
+      "generated_at": "2026-09-11T23:52:03.581185+00:00",
+      "reviewer": {
+        "agent": "/root/review_conformity_intake",
+        "integration_task_id": "01a0919f-40dd-7ae2-a5a3-cd8cf7e13489",
+        "implementation_authorship": false
+      },
+      "verdict": "accepted_five_lane_source_preservation",
+      "target_commit": "3233fd7d4f85253cd9a49afd25d201ebb13934b9",
+      "target_tree": "d1779d6121badbea1b3e15c1dd7cb8defd7f53fa",
+      "scope": {
+        "accepted_lane_count": 5,
+        "unique_runtime_test_paths": 109,
+        "retained_runtime_test_files": 105,
+        "deleted_runtime_test_paths": 4,
+        "dated_track_documentation_excluded": true,
+        "directory_contracts_reviewed_separately": true,
+        "generated_quality_receipt_excluded": true,
+        "offline_included": false,
+        "tests_run": false,
+        "runtime_changes_by_reviewer": false,
+        "commit_created_by_reviewer": false,
+        "orchestration_and_research_artifacts_excluded": true
+      },
+      "receipt_sha256_before_appendix": "63337c4dfe7f6c8aa8b20b092a21b1811a2f7ee401bf9c0d74960513bc0bbb93"
+    },
+    "source_commit": "6f2c7a8c0be95a6690efb51a9906d369f54697ad",
+    "target_commit": "cc64e6e3e1de8dda164beeee0e7e22aa30088b76",
+    "target_tree": "66c55446103cbcee65d9900a0237b4e0814d5b4c",
+    "new_runtime_test_paths": [
+      "services/agri-data-service/scripts/audit_offline_canonical_exports.py",
+      "services/agri-data-service/scripts/compile_relative_humidity_availability_history.py",
+      "services/agri-data-service/tests/scripts/test_audit_offline_canonical_exports.py",
+      "services/agri-data-service/tests/scripts/test_compile_relative_humidity_availability_history.py"
+    ],
+    "prior_109_paths_reverified": true,
+    "six_lane_union_exactly_matches_combined_runtime_delta": true,
+    "intake_receipt": "offline-intake-review-20260911.json",
+    "tests_run": false,
+    "runtime_edits": false
+  }
+}

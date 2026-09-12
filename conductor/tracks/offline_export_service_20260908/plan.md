@@ -1,7 +1,7 @@
 ---
 type: plan
 track: offline_export_service_20260908
-status: ready_for_authorized_publication
+status: active
 created: 2026-09-08
 ---
 

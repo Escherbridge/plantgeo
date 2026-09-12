@@ -26,7 +26,7 @@
       "gapless/environmental owners: generic availability, scheduler and product repair surfaces",
       "executor/source-product owners: 18 exact non-forecast CLI transaction sites",
       "product/API owners: geofence disposition and inviteMember telemetry sunset gate",
-      "shrink/migration owners: all Drizzle and Alembic history"
+      "environmental retirement/current migration owners: retain Drizzle and Alembic history; conformity cannot remove or apply migrations without current proof and authorization"
     ]
   },
   "slug": "repository_conformity_hardening_20260901",
@@ -51,10 +51,10 @@
       "for": "useViewportProxiedLayers.ts and the coverage/snapshot reader subset of parquet_ops may pass to conformity only after the production zoom, availability and request contracts are frozen."
     },
     {
-      "track": "postgres_shrink_ingest_repoint_20260825",
-      "slice": "s6",
-      "status": "planned",
-      "for": "All Drizzle edits remain owned by shrink s6; conformity records dormant-migration evidence without editing migration files."
+      "track": "environmental_postgres_retirement_20260904",
+      "slice": "p5-p6-successor",
+      "status": "active",
+      "for": "Environmental migration/removal scope transferred from shrink s6 in full. Conformity preserves Drizzle/Alembic history and records evidence without editing migration files; current migration governance controls non-environmental work."
     }
   ],
   "partitions": {

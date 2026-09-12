@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Final
 
 from agri_data_service.foundation.parquet.absence import GovernedAbsence
 from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
+from agri_data_service.ingest.mtbs import MtbsProviderRefusalError
 from agri_data_service.pipeline.direct.burn_severity.rows import burn_severity_release_day_table
 from agri_data_service.pipeline.lanes import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.parquet.derivation import govern_day_absent
@@ -70,6 +71,7 @@ class DirectBurnSeverityAdapter:
 
     fetch_source: Callable[[], Awaitable[BurnSeverityDaySource]]
     source: BurnSeverityDaySource | None = field(default=None, init=False)
+    provider_refusal: MtbsProviderRefusalError | None = field(default=None, init=False)
 
     async def __call__(
         self,
@@ -81,7 +83,11 @@ class DirectBurnSeverityAdapter:
     ) -> LaneRunResult:
         """Rollback the timeout transaction, fetch under the session lock, then write z13."""
         await session.rollback()
-        source = await self.fetch_source()
+        try:
+            source = await self.fetch_source()
+        except MtbsProviderRefusalError as error:
+            self.provider_refusal = error
+            raise
         if source.day != day:
             raise DirectBurnSeverityError(f"the fetch closure for {day} returned source day {source.day}")
         self.source = source

@@ -1,5 +1,17 @@
 # Panels
 
+## Weather selected day
+
+The nearby weather cards in `FireDetails` use the weather row's settled day for
+their point request, availability gate and date caption. The fire summary keeps
+the fire row's independent clock. A point result must name the requested weather
+day; placeholders or delayed results for another day leave numeric cards empty.
+These are published sampled weather estimates/observations with forecast horizon
+zero. A missing historical day must not silently become a current reading or a
+different product's reanalysis. The integration's 2025-04-28 regression checks
+card/map agreement through the gap, a delayed response and an explicit return to
+a published day.
+
 ## Regional evidence release labels
 
 MTBS `publication_available_YYYY-MM-DD` is validated only for the MTBS source and
@@ -16,6 +28,12 @@ Drought freshness retains its age checks but displays the publisher's calendar r
 Its synthetic UTC midnight is not localized into the previous evening in western timezones.
 
 ## Narrow dock controls and status copy
+
+Climate details read the collection's presentation status separately from publication. A
+published day with no overlapping cells states a spatial gap; a published day with too few
+neighbors for contours offers the filled form. Neither may be captioned as an unpublished day.
+Legacy cached collections without `renderStatus` remain readable. An actual unpublished answer
+names its requested day rather than claiming the whole product never covers that geography.
 
 The shared tab list wraps when its labels do not fit the dock. Tabs retain enough intrinsic
 width for their icons and labels, and the list grows in height rather than clipping a fixed

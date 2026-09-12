@@ -20,6 +20,7 @@ HTTP_SERVER_ERROR_MINIMUM: Final = 500
 SUCCESS_STATUS_MINIMUM: Final = 200
 SUCCESS_STATUS_MAXIMUM: Final = 300
 MAX_REDIRECTS: Final = 3
+MAX_RETRY_AFTER_CHARACTERS: Final = 128
 
 
 class UpstreamError(Exception):
@@ -103,6 +104,7 @@ class BoundedResponse:
     # so every existing construction (and every test that builds one by hand) still type-checks; the
     # only caller that needs a real number is a paged walk budgeting its own total transfer.
     byte_count: int = 0
+    retry_after: str | None = None
 
     @property
     def ok(self) -> bool:
@@ -190,6 +192,8 @@ async def fetch_bounded(
     url: str,
     bounds: UpstreamBounds,
     headers: Mapping[str, str] | None = None,
+    *,
+    transport_attempts: int = TRANSPORT_RETRY_ATTEMPTS,
 ) -> BoundedResponse:
     """Fetch a URL under a byte cap and timeout, never raising on a non-2xx status or an unreadable body.
 
@@ -202,23 +206,29 @@ async def fetch_bounded(
     The raised exception types are unchanged, so a caller that exhausts the retries sees exactly
     what it saw before -- only later, and only after the fault proved persistent.
     """
+    if isinstance(transport_attempts, bool) or not 1 <= transport_attempts <= TRANSPORT_RETRY_ATTEMPTS:
+        raise ValueError(f"transport_attempts must be between 1 and {TRANSPORT_RETRY_ATTEMPTS}")
     last_error: httpx.HTTPError | None = None
-    for attempt in range(1, TRANSPORT_RETRY_ATTEMPTS + 1):
+    for attempt in range(1, transport_attempts + 1):
         try:
             async with client.stream(
                 "GET", url, headers=dict(headers or {}), timeout=bounds.timeout_seconds
             ) as response:
                 body, byte_count, payload_error = await _read_bounded_body(response, bounds)
+                retry_after = response.headers.get("retry-after")
+                if retry_after is not None and len(retry_after) > MAX_RETRY_AFTER_CHARACTERS:
+                    retry_after = None
                 return BoundedResponse(
                     status=response.status_code,
                     content_type=response.headers.get("content-type"),
                     text=body.decode("utf-8", errors="replace"),
                     payload_error=payload_error,
                     byte_count=byte_count,
+                    retry_after=retry_after,
                 )
         except httpx.HTTPError as error:
             last_error = error
-            if attempt == TRANSPORT_RETRY_ATTEMPTS:
+            if attempt == transport_attempts:
                 break
             # Exponential, because a connection table that is full drains on its own and the point
             # is to stop adding to it. Nothing is retried after the body has begun streaming: a

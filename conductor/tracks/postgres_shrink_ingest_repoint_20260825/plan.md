@@ -2,6 +2,7 @@
 type: track-plan
 title: "Postgres shrink via ingest repoint to Parquet — bridge, then cut per lane"
 tags: [postgres_shrink_ingest_repoint_20260825]
+status: active
 resource: ./spec.md
 ---
 
@@ -9,14 +10,46 @@ resource: ./spec.md
 
 ## Current execution authority — September 11
 
-The [operational retrospective](../../retros/parquet_operational_checkpoints_20260911/README.md) records the completed baseline/rebuild
-slice. The September 4 successor already transferred **all P5/P6 environmental
-retirement** to [environmental retirement](../environmental_postgres_retirement_20260904/plan.md).
-The September 9 rebuild supersedes the old “no deletion”, intact-database and
-pending-shrink checkpoints below. They remain historical evidence, not current
-commands. Gapless owns direct-writer and repair schedules. Before residual
-package/removal work, reconcile current ownership and proof with those successors;
-never restart the old PostgreSQL bridge, shared drain or Railway cron plan.
+**Active, pending final combined verification and independent closure review.**
+The [current specification](spec.md#current-execution-authority--september-11),
+[accepted residual handoff](evidence/residual-handoff-20260911.md) and
+[proposed retrospective](../../retros/postgres_shrink_scoped_closure_20260911/README.md)
+define the proposed disposition: completed implementation plus explicit successor
+handoffs. The implementation and ownership reconciliation is complete; this plan
+does not claim that final integration checks or production acceptance have passed.
+
+- [x] Reconcile the completed package/CLI/`agri-service` boundary with
+  [conformity's corrected receipt](../repository_conformity_hardening_20260901/evidence/integration-correction-20260911.md#shrink-s2a-and-conformity-c2-ownership).
+  No s2a implementation remains with shrink; retained CLI/core work stays with
+  its named conformity, executor, source-product, history and reader owners.
+- [x] Preserve the [completed baseline/rebuild evidence](../../retros/parquet_operational_checkpoints_20260911/README.md)
+  and historical construction receipts within their exact dates and populations.
+  The old pending-shrink and intact-database premises are superseded.
+- [x] Confirm all environmental P5/P6 source recovery, repair/admission, archive
+  replacement, removal, current-reader, preservation/parity/rollback and production
+  evidence obligations remain with
+  [environmental retirement](../environmental_postgres_retirement_20260904/plan.md).
+- [x] Confirm generic writer/registration, historical gaps, governed absences,
+  scheduler ownership, scheduled advances and recovery/burn-in remain with
+  [gapless](../gapless_parquet_publication_20260901/plan.md); joint agent/MCP
+  acceptance remains with retirement and
+  [reader acceptance](../parquet_reader_cutover_acceptance_20260901/plan.md).
+  Final browser/deployed-tree acceptance and release/rollback evidence remain with
+  [production acceptance](../parquet_production_acceptance_20260901/plan.md).
+- [x] Retain item G, wider product/static-lane scope and older requested horizons
+  in [pivot](../parquet_duckdb_pivot_20260823/spec.md), with its own acceptance gates.
+- [ ] Integration runs the final quality sweep and required receipt/image checks
+  on the exact combined tree, with scope and environment skips disclosed.
+- [ ] A separate reviewer accepts the combined change and confirms that shrink's
+  own scope is exhausted by completed work or explicit successor handoff.
+- [ ] Integration updates registry, specification/plan, metadata, retrospective
+  and runbook together, recording final evidence and the scoped disposition.
+
+The historical blocks and phase checklists below are preserved unchanged. The
+current ownership above supersedes any older P5/P6 claim or command sequence in
+them. Never resume the old PostgreSQL bridge, shared drain, Railway cron plan or
+environmental retirement from this historical plan. The proposed closure creates
+no deployment, publication, migration, relation-drop or service-removal authority.
 
 > **CURRENT EXECUTION AUTHORITY — 2026-09-01:** P2-P4 tasks, dependency arrows and file ownership
 > below are historical provenance and **MUST NOT be executed from this plan**. Forward writers, gap

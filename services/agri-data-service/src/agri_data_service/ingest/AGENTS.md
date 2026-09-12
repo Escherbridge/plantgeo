@@ -1099,3 +1099,33 @@ calculations elsewhere are separate and unchanged. With no percentile supplied, 
 remains `unknown`; an absolute flow of 17.7 cfs alone does not establish a low-flow condition.
 Existing Parquet rows retain previously emitted classifications until explicitly corrected or
 replaced; this producer change does not claim to rewrite historical objects.
+## MTBS provider refusals and geometry page limits
+
+`mtbs._get_query` retains its four-attempt HTTP 429/5xx transport policy. A 403,
+or a 429 remaining after that bounded policy, becomes `MtbsProviderRefusalError`;
+the status and a protocol-shaped Retry-After survive without URL/header/body
+disclosure. Geometry page downshift is restricted to HTTP 413 and this EDW host's
+documented oversized-polygon HTTP 500 behavior. Other statuses must not be treated
+as evidence that a smaller geometry page will help. HTTP 500 remains ambiguous,
+so its existing bounded attempt/page floor is retained rather than an unlimited retry.
+
+Retry-After diagnostics accept at most 128 characters of ASCII digits or a valid
+HTTP date normalized to UTC. Arbitrary header text is omitted. These changes do
+not establish that the observed production intake failure was MTBS throttling;
+fresh evidence currently identifies NASA POWER 429 separately.
+
+For HTTP 429, a valid numeric or HTTP-date cooldown within the 60-second local
+wait budget is honored in full. A longer cooldown ends the attempt immediately
+with the typed throttle refusal; it is never truncated into an earlier retry.
+Missing or invalid values retain the bounded exponential fallback. This cooldown
+deferral rule is specific to 429 and does not relabel server errors as access denial.
+
+## Bounded HTTP retry hints and caller-owned attempt caps — 2026-09-11
+
+`http.BoundedResponse` adds only an optional Retry-After value, omitted above 128 characters;
+other headers are not retained. It survives a refused/oversized body so provider status handling
+remains reachable. `fetch_bounded` accepts `transport_attempts` from one through the existing
+three-attempt ceiling, defaulting to three. NASA chooses one and disables redirects on its own
+client so its outer pacing and accounting own every request. Other callers keep existing behavior.
+The climate lane parses and persists its provider constraint; this shared helper does not sleep
+on status responses or apply a universal provider policy.

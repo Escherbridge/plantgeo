@@ -8,7 +8,8 @@
   "track": "offline_export_service_20260908",
   "title": "Offline export service — stage locally, transform locally, upload in bulk",
   "created": "2026-09-08",
-  "status": "ready_for_authorized_publication",
+  "status": "active",
+  "local_scope_disposition": "ready_for_authorized_publication",
   "owner": "atoozmc@gmail.com",
   "premise_corrected": {
     "original": "pull down a database backup and export from it",
@@ -64,7 +65,8 @@
     "selected_builder_audit_receipt": "evidence/selected-builder-audit-receipt-20260911.json",
     "relative_humidity_candidate": "evidence/relative-humidity-history-candidate-20260911.json",
     "warm_capability_probe": "evidence/warm-capability-probe-20260911.json",
-    "review": "evidence/review-20260911.md"
+    "review": "evidence/review-20260911.md",
+    "validation_log": "evidence/scripts-batch-validation-20260911.log"
   },
   "mutation_boundary": {
     "production_mutations_performed": false,

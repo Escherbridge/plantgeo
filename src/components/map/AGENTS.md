@@ -34,7 +34,7 @@ Two layers make the case on their own. `watersheds` paints its fill at `0.05` �
 
 **One component, because it is one fact.** The alternative shipped in most map UIs — a chip strip naming the drawn layers plus a legend card explaining their colours — is two renderings of `activeLayers` that have to be kept in step, and the failure mode is silent: a layer appears in one and not the other. Here `entries` is computed once and the collapsed state is a projection of it, so there is nothing to synchronise.
 
-It renders nothing while every toggle is off, which is how the map starts, and nothing while the manager is open: the layer tree in there already carries a swatch, a name and a category heading per layer. It is mounted inside `ManagerRail`, which is the whole of the collapsed manager.
+It renders nothing while every toggle is off, which is how the map starts, and nothing while the manager is open. It is mounted inside `ManagerRail`, which is the whole of the collapsed manager. While open, each active `LayerRow` exposes its complete encoding behind a local **Legend** button. A swatch, name and category alone did not explain numeric colors, so both surfaces now render the same `layerLegendSpec` blocks through the pure `LegendBlockView`. The row disclosure has keyboard activation, an expanded-state relationship, and Escape returns focus to its trigger; turning the layer off resets it. It owns no layer visibility or palette state.
 
 Two shapes preceded it. Until 2026-08-07 it listed `trpc.layers.list` rows — `geo.layers` names, one flat `stylePresets`/`styleOverrides` swatch each — which named warehouse publications rather than drawn encodings: a fill keyed to a `severity` match showed as one arbitrary colour, a ramp showed as nothing at all, and the card needed a network round-trip before it could say anything. That rewrite dropped tRPC and every `layer-store` field but `legendVisible`. `legendVisible` itself went on 2026-08-09: it was a global boolean with two controls over it (the card's own eye and a second one in the manager's header, the latter governing a card the reader could not see while using it), and disclosure here is now local to the component that owns it.
 
@@ -618,6 +618,17 @@ and `latticeCellCount`, both measured on the request that drew the cells. A deno
 not measured beside its numerator will always eventually lie.
 
 ## §weather
+
+### Request binding
+
+Weather data and drawn-day reporting use the weather row's settled request day.
+An explicitly retained placeholder may keep its previous frame and previous-day
+caption while the next request is pending. A settled missing-day answer clears
+the frame; a later non-placeholder envelope for another day cannot repaint it.
+The exact 2025-04-28 regression also binds the nearby weather cards to this clock.
+The fire row keeps its own independent day. Weather remains sampled estimates or
+observations with forecast horizon zero; its sparse declared aggregate support
+must not be enlarged into a continuous surface.
 
 **One toggle, two style layers, one source.** `WeatherLayer` paints `weather-temperature`
 (circles, coloured on the observation's `temperature`) and `weather-wind` (a `text-field`

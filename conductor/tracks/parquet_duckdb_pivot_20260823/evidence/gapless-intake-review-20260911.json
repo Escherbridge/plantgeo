@@ -1,0 +1,99 @@
+{
+  "type": "integration-intake-review",
+  "reviewed_on": "2026-09-11",
+  "reviewer": {
+    "agent": "/root/review_gapless_intake",
+    "role": "independent gapless integration intake reviewer",
+    "integration_task_id": "01a0919f-40dd-7ae2-a5a3-cd8cf7e13489",
+    "implementation_authorship": false
+  },
+  "verdict": "approved_local_integration_slice",
+  "blocking_code_findings": [],
+  "production_release_approved": false,
+  "track_closure_approved": false,
+  "revisions": {
+    "original_branch": "codex/gapless-publication-recovery-20260911",
+    "original_base": "fa202230958fb55521963e886eb031be5fc266c4",
+    "original_commit": "341d44b23c60512630c8a7c0ab778e1ffa008b27",
+    "original_range_commit_count": 1,
+    "baseline_commit": "a7e6b223cc91663ac6c9462321426a53667cbfce",
+    "baseline_merge_commit": "be724caf7c6547f62349fafa4d24ec182444c432",
+    "integrated_commit": "b6eb3ae20fab1c670065d6bf01647faf3f96612d"
+  },
+  "scope": {
+    "original_changed_files_reviewed": 27,
+    "integrated_peer_files_byte_compared": 27,
+    "integrated_peer_file_mismatches": [],
+    "tests_run_by_this_reviewer": false,
+    "implementation_or_production_mutations_by_this_reviewer": false,
+    "reviewer_output": "This intake receipt only; no commit."
+  },
+  "code_review_conclusions": [
+    "Query-zero exports remain blocked gaps and preserve existing objects rather than authoring source absence.",
+    "Absence rechecks retain original marker bytes; ladder preflight refuses conflicting reasons, malformed evidence, data and published-empty completion evidence.",
+    "Partial absence repair records intended receipts before physical writes, remains recoverable after interruption and requires physical verification before availability publication.",
+    "Repair rechecks rung states under the day lock and leaves complete ladders unchanged.",
+    "Pinned database failures escape worker rollback/reconnection before another scheduler command can run without leadership.",
+    "Unconfirmed subprocess exit preserves the attempt and lease, stops further dispatch and exits the service; new regressions cover timeout, signal/wait errors, cancellation and missing exit confirmation.",
+    "Consumer test changes adapt generic-finalizer behavior without taking over product implementation."
+  ],
+  "documentation_resolution": {
+    "verdict": "pass",
+    "paths": [
+      "conductor/tracks/gapless_parquet_publication_20260901/metadata.json",
+      "conductor/tracks/gapless_parquet_publication_20260901/plan.md"
+    ],
+    "finding": "Resolved files exactly match the reviewed peer blobs. The captured-runtime checkpoint replaces the baseline's pending observation while retaining historical-horizon reconciliation, active status, bounded evidence and outstanding production gates.",
+    "shared_documentation_owner": "gapless",
+    "integration_rule": "The integration owner authorized additive conformity sections in execution/AGENTS.md and additive retirement sections in pipeline/parquet/AGENTS.md; preserve both owners' subject-specific sections.",
+    "shared_python_or_test_files_with_recovered_reader_retirement_conformity": []
+  },
+  "receipt_verification": {
+    "digest_domain": "plantgeo.agri-data-service.quality-receipt.v2",
+    "source_digest": "sha256:d2c093db5ae5e396ce64f2c11e7e78dacfbac43b36092d0e6a5464e69482ba5b",
+    "digest_file_count": 1309,
+    "independently_recomputed_from": [
+      "Original commit Git archive",
+      "Peer working-tree source inputs at initial intake",
+      "Integrated commit b6eb3ae20fab1c670065d6bf01647faf3f96612d Git archive"
+    ],
+    "all_three_match_recorded_receipt": true,
+    "quality_receipt_sha256": "e2e7c51c6ead7aaa28939ce98cb5c45b3456779507ef3fa77993e325cd86e9f3",
+    "validation_receipt_sha256": "2e7489b119eb6bce64155590041ea617bbd7ef38827953eee253dc7ebeabcbdf",
+    "validation_receipt_path": "conductor/tracks/gapless_parquet_publication_20260901/evidence/validation-20260911.json",
+    "validation_capture_hashes_verified": 11,
+    "runtime_source_capture_hashes_verified": 9,
+    "final_junit_sha256": "4eaab3bff52acf6b38807b18c329a1c7049d9dca789074c7814e89203b3fd25c",
+    "final_junit_counts_independently_parsed": {
+      "cases": 6166,
+      "passed": 6016,
+      "skipped": 149,
+      "xfailed": 1,
+      "failures": 0,
+      "errors": 0
+    },
+    "original_range_diff_check": "pass",
+    "skip_limits": "Skips include database integration, migration rehearsals, live-provider probes and declared writer-contract cases. Local validation does not certify deployed recovery.",
+    "prior_review_provenance_limit": "The peer receipt names an independent verifier agent without a stable reviewer task identity. This receipt provides separately attributable exact-revision intake review."
+  },
+  "production_evidence": {
+    "observed_revision": "fa202230958fb55521963e886eb031be5fc266c4",
+    "observed_deployment": "95304e24-16ed-4705-a615-c60b0e368a08",
+    "live_reinventory_sha256": "c60c582102a8915437a45f72ca042f6218ae329af3fd8fb1d23199e724993295",
+    "scheduled_soil_advances_sha256": "b683cc53c6d4ad00de6397d65aa3651eac67be8ece914dc4eaa5b318940a0072",
+    "scope": "Six soil products, 18 product-days and 72 rungs; three backlog additions per product, not every activated product.",
+    "limits": [
+      "Read-only database mode was recorded; object listings were non-atomic and the attempt query reached its 1000-row cap.",
+      "The observed deployment predates the new implementation.",
+      "The logged provider SHA is not cryptographically cross-bound to a retained upstream response.",
+      "Every-product advancement, full-horizon source and aggregation conservation, live retry/restart/expired-lease/disable and exact release authorization remain open."
+    ]
+  },
+  "retained_evidence_custody": {
+    "manifest": "gapless-intake-custody-20260911.json",
+    "manifest_sha256": "42cd00ca6fd5e5e23bf89d64de05687510dc79159bf35c696ff5b444b690f06a",
+    "portable_research_artifacts": 18,
+    "note": "Exact referenced bytes are retained at the same .omc/research paths in worktree 4ccb. The owner-excluded configuration capture remains in 0724; the peer quality receipt remains bound to its original commit and does not certify the combined tree."
+  },
+  "remaining_integration_requirement": "Regenerate and independently review the quality receipt after all accepted peer changes on the final combined tree; this receipt approves only the pinned gapless slice and its bounded document resolution."
+}

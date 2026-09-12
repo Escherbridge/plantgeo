@@ -1,0 +1,8 @@
+Test selection: {"batches": ["scripts"], "changed_paths": [], "mode": "scoped", "pytest_paths": ["tests/scripts"], "reasons": [], "receipt_eligible": false}
+Validation summary
+check | status | duration | first line of failure output
+------|--------|----------|-----------------------------
+format | PASS | 0.07s | -
+lint | PASS | 0.09s | -
+mypy | PASS | 1.51s | -
+pytest | PASS | 31.18s | -

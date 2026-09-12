@@ -7,9 +7,10 @@ import hashlib
 import json
 import time
 from dataclasses import asdict, dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from email.utils import parsedate_to_datetime
 from http import HTTPStatus
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, Literal
 
 from agri_data_service.execution.weather_observations.nasa_power import (
     extract_nasa_power_parameter_values,
@@ -18,6 +19,12 @@ from agri_data_service.execution.weather_observations.nasa_power import (
 )
 from agri_data_service.foundation.canonical import canonical_json, sha256_digest
 from agri_data_service.ingest.http import UpstreamBounds, UpstreamError, fetch_bounded, upstream_client
+from agri_data_service.pipeline.direct import (
+    PROVIDER_ACCESS_DENIED,
+    PROVIDER_RATE_LIMITED,
+    REQUEST_BUDGET_EXHAUSTED,
+)
+from agri_data_service.pipeline.direct.climate.cooldown import ClimateCooldownError, NasaPowerCooldown
 from agri_data_service.pipeline.direct.climate.products import (
     CLIMATE_DIRECT_SNAPSHOT_PREFIX,
     CLIMATE_SOURCE_PARAMETERS,
@@ -52,6 +59,9 @@ NASA_POWER_POINT_BOUNDS: Final = UpstreamBounds(
 
 #: Simultaneous point requests against a public, key-free API. See `pipeline/direct/AGENTS.md`.
 NASA_POWER_POINT_CONCURRENCY: Final = 4
+NASA_POWER_REQUEST_START_INTERVAL_SECONDS: Final = 0.5
+
+type ClimateDeferralOutcome = Literal["provider_rate_limited", "provider_access_denied", "request_budget_exhausted"]
 
 POINT_ORDINATE_COUNT: Final = 2
 
@@ -64,8 +74,20 @@ class ClimateSourceUnsettledError(ClimateSourceError):
     """Raised when POWER answered but the day is not yet whole: a refusal, never a governed absence."""
 
 
-class ClimateProviderDeferredError(ClimateSourceUnsettledError):
-    """A provider quota or request budget requires a later turn."""
+class ClimateProviderDeferredError(ClimateSourceError):
+    """A typed provider or request-budget refusal requires a later turn."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        outcome: ClimateDeferralOutcome = PROVIDER_RATE_LIMITED,
+        retry_not_before: datetime | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.outcome = outcome
+        self.retry_not_before = retry_not_before
+        self.retry_hint_enforced_across_turns = False
 
 
 class ClimateTimeBudgetExhaustedError(RuntimeError):
@@ -102,6 +124,65 @@ class ClimateSourceCache:
     deferred_refusal: ClimateProviderDeferredError | None = None
     checkpoints: SourceResponseCheckpoints | None = None
     restored_days: set[tuple[str, date]] = field(default_factory=set)
+    start_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
+    next_request_start: float = 0.0
+    cooldown: NasaPowerCooldown | None = None
+    cooldown_loaded: bool = False
+    cooldown_failure: ClimateCooldownError | None = None
+
+    async def require_provider_access(self, *, now: datetime) -> None:
+        """Verify the stored provider pause once before any missing source capture starts."""
+        if self.cooldown_failure is not None:
+            raise self.cooldown_failure
+        if self.cooldown is not None and not self.cooldown_loaded:
+            try:
+                retry_not_before = await asyncio.to_thread(self.cooldown.read)
+            except ClimateCooldownError as error:
+                self.cooldown_failure = error
+                raise
+            self.cooldown_loaded = True
+            if retry_not_before is not None and retry_not_before > now:
+                refusal = ClimateProviderDeferredError(
+                    "NASA POWER Retry-After still prohibits new requests",
+                    retry_not_before=retry_not_before,
+                )
+                refusal.retry_hint_enforced_across_turns = True
+                self.deferred_refusal = refusal
+        if self.deferred_refusal is not None:
+            raise self.deferred_refusal
+
+    async def retain_provider_refusal(self, error: ClimateProviderDeferredError) -> None:
+        """Stop queued captures first, then retain a valid provider pause for later turns."""
+        if self.deferred_refusal is None:
+            self.deferred_refusal = error
+        if self.cooldown is not None and error.retry_not_before is not None:
+            try:
+                error.retry_not_before = await asyncio.to_thread(self.cooldown.advance, error.retry_not_before)
+            except ClimateCooldownError as failure:
+                self.cooldown_failure = failure
+                raise
+            error.retry_hint_enforced_across_turns = True
+            retained = self.deferred_refusal or error
+            if retained.retry_not_before is None or retained.retry_not_before < error.retry_not_before:
+                retained.retry_not_before = error.retry_not_before
+            retained.retry_hint_enforced_across_turns = True
+
+    async def start_request(self, *, day: date, deadline: float | None) -> None:
+        """Pace all cell-day starts in this turn and charge only a permitted start."""
+        async with self.start_lock:
+            require_time_remaining(deadline, day=day)
+            if self.deferred_refusal is not None:
+                raise self.deferred_refusal
+            delay = max(0.0, self.next_request_start - time.monotonic())
+            if deadline is not None and delay >= deadline - time.monotonic():
+                raise ClimateTimeBudgetExhaustedError(f"the turn cannot start another POWER request for {day}")
+            if delay > 0:
+                await asyncio.sleep(delay)
+            require_time_remaining(deadline, day=day)
+            if self.deferred_refusal is not None:
+                raise self.deferred_refusal
+            self.next_request_start = time.monotonic() + NASA_POWER_REQUEST_START_INTERVAL_SECONDS
+            self.requests_spent += 1
 
     @property
     def remaining_requests(self) -> int:
@@ -251,25 +332,35 @@ async def fill_cell_day_cache(  # noqa: PLR0913 - the day, support, cache, clock
     missing = cache.missing_cells(support, day)
     if not missing:
         return
+    if cache.cooldown_failure is not None:
+        raise cache.cooldown_failure
+    if cache.deferred_refusal is not None:
+        raise cache.deferred_refusal
     if len(missing) > cache.remaining_requests:
         raise ClimateProviderDeferredError(
             f"{day.isoformat()} needs {len(missing)} more POWER point request(s) and this turn has "
-            f"{cache.remaining_requests} left of its budget of {cache.request_budget}"
+            f"{cache.remaining_requests} left of its budget of {cache.request_budget}",
+            outcome=REQUEST_BUDGET_EXHAUSTED,
         )
+    require_time_remaining(deadline, day=day)
+    await cache.require_provider_access(now=receipt_clock(now))
     require_time_remaining(deadline, day=day)
     gate = asyncio.Semaphore(max(1, concurrency))
     support_digest = _support_digest(support) if cache.checkpoints is not None else ""
 
     async def one(cell: NasaPowerSupportCell, client: httpx.AsyncClient) -> ClimateCellDayResponse:
         async with gate:
-            require_time_remaining(deadline, day=day)
-            if cache.deferred_refusal is not None:
-                raise cache.deferred_refusal
-            cache.requests_spent += 1
+            await cache.start_request(day=day, deadline=deadline)
             try:
-                response = await _fetch_cell_day(client, cell, day=day, now=now)
+                remaining = None if deadline is None else max(0.0, deadline - time.monotonic())
+                async with asyncio.timeout(remaining):
+                    response = await _fetch_cell_day(client, cell, day=day, now=now)
+            except TimeoutError as error:
+                raise ClimateTimeBudgetExhaustedError(
+                    f"the turn ran out of time fetching {cell.cell_key} {day}"
+                ) from error
             except ClimateProviderDeferredError as error:
-                cache.deferred_refusal = error
+                await cache.retain_provider_refusal(error)
                 raise
             cache.hold(response)
             if cache.checkpoints is not None and response.body is not None and _checkpoint_eligible(response):
@@ -282,19 +373,22 @@ async def fill_cell_day_cache(  # noqa: PLR0913 - the day, support, cache, clock
             return response
 
     async with upstream_client(NASA_POWER_POINT_BOUNDS) as client:
+        client.follow_redirects = False
         answers = await asyncio.gather(*(one(cell, client) for cell in missing), return_exceptions=True)
 
     failures: list[tuple[NasaPowerSupportCell, BaseException]] = []
     for cell, answer in zip(missing, answers, strict=True):
         if isinstance(answer, BaseException):
             failures.append((cell, answer))
+    if cache.cooldown_failure is not None:
+        raise cache.cooldown_failure
+    if cache.deferred_refusal is not None:
+        raise cache.deferred_refusal
     if any(isinstance(error, ClimateTimeBudgetExhaustedError) for _cell, error in failures):
         raise ClimateTimeBudgetExhaustedError(
             f"the turn's time budget ran out while fetching {day.isoformat()}; "
             f"{len(failures)} of {len(missing)} cell request(s) did not complete"
         )
-    if cache.deferred_refusal is not None:
-        raise cache.deferred_refusal
     if failures:
         cell, error = failures[0]
         raise ClimateSourceUnsettledError(
@@ -482,14 +576,20 @@ async def _fetch_cell_day(
     """Issue one bounded point request and narrow its body, naming the cell-day on every refusal."""
     url = climate_point_url(cell, day=day)
     try:
-        response = await fetch_bounded(client, url, NASA_POWER_POINT_BOUNDS)
+        response = await fetch_bounded(client, url, NASA_POWER_POINT_BOUNDS, transport_attempts=1)
     except UpstreamError as error:
         raise ClimateSourceUnsettledError(
             f"NASA POWER transport failed for {cell.cell_key} {day.isoformat()}: {type(error).__name__}: {error}"
         ) from error
     if response.status == HTTPStatus.TOO_MANY_REQUESTS:
         raise ClimateProviderDeferredError(
-            f"NASA POWER answered 429 for {cell.cell_key} {day.isoformat()}; deferred until a later turn"
+            f"NASA POWER answered 429 for {cell.cell_key} {day.isoformat()}; deferred until a later turn",
+            retry_not_before=retry_after_instant(response.retry_after, now=receipt_clock(now)),
+        )
+    if response.status in {HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN}:
+        raise ClimateProviderDeferredError(
+            f"NASA POWER denied access with {response.status} for {cell.cell_key} {day.isoformat()}",
+            outcome=PROVIDER_ACCESS_DENIED,
         )
     if not response.ok:
         raise ClimateSourceUnsettledError(
@@ -506,6 +606,22 @@ async def _fetch_cell_day(
         request_url=url,
         retrieved_at=receipt_clock(now),
     )
+
+
+def retry_after_instant(value: str | None, *, now: datetime) -> datetime | None:
+    """Parse bounded Retry-After seconds or an HTTP date without retaining raw header text."""
+    if value is None:
+        return None
+    value = value.strip()
+    try:
+        if value.isascii() and value.isdigit():
+            return now + timedelta(seconds=int(value))
+        parsed = parsedate_to_datetime(value)
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            return None
+        return max(now, parsed.astimezone(UTC))
+    except (ValueError, TypeError, OverflowError):
+        return None
 
 
 def receipt_clock(now: datetime | None) -> datetime:
@@ -591,6 +707,7 @@ __all__ = [
     "NASA_POWER_POINT_CONCURRENCY",
     "NASA_POWER_POINT_MAX_BYTES",
     "NASA_POWER_POINT_TIMEOUT_SECONDS",
+    "NASA_POWER_REQUEST_START_INTERVAL_SECONDS",
     "ClimateCellDayResponse",
     "ClimateCellValue",
     "ClimateDaySource",
@@ -607,4 +724,5 @@ __all__ = [
     "fill_cell_day_cache",
     "parse_climate_point_body",
     "receipt_clock",
+    "retry_after_instant",
 ]

@@ -19,11 +19,11 @@
       "track": "postgres_shrink_ingest_repoint_20260825",
       "slice": "s2a",
       "status": "resolved",
-      "for": "The shared parquet_ops core, CLI split and job-executor foundation are integrated. This track receives unfinished forward execution; P5/P6 remain downstream in the old track."
+      "for": "The shared parquet_ops core, CLI split and job-executor foundation are integrated. This track receives unfinished forward execution; all environmental P5/P6 remain downstream in environmental_postgres_retirement_20260904."
     }
   ],
   "supersedes": {
-    "postgres_shrink_ingest_repoint_20260825:s2b-s4-forward-scope": "Direct forward publication, gap authoring and executor activation move here. PostgreSQL P5/P6 retirement stays in the older track."
+    "postgres_shrink_ingest_repoint_20260825:s2b-s4-forward-scope": "Direct forward publication, gap authoring and executor activation move here. All environmental P5/P6 retirement is owned by environmental_postgres_retirement_20260904 under its September 4 successor charter."
   },
   "note": "Generic publication/executor recovery is locally complete with a full Python quality receipt and independent exact-tree approval: 6016 passed, 149 skipped, one xfailed. September 11 read-only inventory establishes 32 physical registrations, 27 time-bearing products, the effective eight-lane cutoff, and three scheduled backlog advances for six soil products. Full-horizon source conservation, every-product burn-in, live recovery/disable and exact production handoff remain open.",
   "production_authorization": "Owner directive 2026-09-02 authorizes an executor-only repository release and eventual controlled removal of the six inventoried Railway writer objects. Feature-branch activation/removal remains forbidden. After merge, the exact main executor deployment must reach SUCCESS and the orchestration task must explicitly resume the production handoff before any fencing, activation, or service deletion.",

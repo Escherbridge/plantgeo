@@ -22,7 +22,10 @@ cron, migration or data-construction instruction is restarted.
 - [ ] Reconcile remaining static/product scope explicitly: static SoilGrids and
   soil-survey restoration with retirement, watershed provisioning/coverage ownership,
   upstream Open-Meteo expansion and the fire-risk feature successors. A named
-  successor is a scope handoff, not evidence that its product shipped.
+  successor is a scope handoff, not evidence that its product shipped. The
+  [product successor map](evidence/product-successors-20260911.md) records current
+  owners; item G's literal static-registry/provisioning obligation still needs
+  an accepted disposition.
 - [x] Inventory older soil-wetness, precipitation, dew-point, burn-severity and
   drought requests against their actual historical horizons in the
   [retained-task reconciliation](evidence/historical-horizons-20260911.md).

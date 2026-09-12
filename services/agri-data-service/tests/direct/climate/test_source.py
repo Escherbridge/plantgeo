@@ -6,6 +6,7 @@ import hashlib
 from dataclasses import replace
 from datetime import date, timedelta
 from decimal import Decimal
+from http import HTTPStatus
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
 from unittest.mock import AsyncMock
@@ -13,6 +14,7 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 
+from agri_data_service.pipeline.direct import PROVIDER_ACCESS_DENIED, PROVIDER_RATE_LIMITED
 from agri_data_service.pipeline.direct.climate.products import CLIMATE_SOURCE_PARAMETERS
 from agri_data_service.pipeline.direct.climate.source import (
     ClimateProviderDeferredError,
@@ -42,6 +44,14 @@ from tests.parquet.test_availability_index import MemoryAvailabilityStorage
 
 if TYPE_CHECKING:
     from agri_data_service.pipeline.direct.climate.support import NasaPowerSupport
+
+
+@pytest.fixture(autouse=True)
+def no_wall_clock_pacing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These population tests use no clock; pacing has its own controlled-clock regression tests."""
+    monkeypatch.setattr(
+        "agri_data_service.pipeline.direct.climate.source.NASA_POWER_REQUEST_START_INTERVAL_SECONDS", 0.0
+    )
 
 
 @pytest.mark.asyncio
@@ -334,9 +344,10 @@ async def test_a_fan_out_the_budget_cannot_cover_is_refused_before_a_socket_open
     """A half-spent budget must refuse the day rather than issue as many requests as it can afford."""
     cache = ClimateSourceCache(request_budget=NASA_POWER_SUPPORT_CELL_COUNT - 1)
 
-    with pytest.raises(ClimateProviderDeferredError, match="budget"):
+    with pytest.raises(ClimateProviderDeferredError, match="budget") as failure:
         await fill_cell_day_cache(day=DAY, support=support, cache=cache)
 
+    assert failure.value.outcome == "request_budget_exhausted"
     assert cache.requests_spent == 0
 
 
@@ -377,14 +388,19 @@ def test_quantize_lands_an_integer_degree_on_an_exact_key() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", [PROVIDER_RATE_LIMITED, PROVIDER_ACCESS_DENIED])
 async def test_provider_quota_stops_queued_requests_and_keeps_completed_responses(
     support: NasaPowerSupport,
     monkeypatch: pytest.MonkeyPatch,
+    outcome: str,
 ) -> None:
     """A refused fan-out cannot burn the remaining queue or restart it for another product."""
     cache = ClimateSourceCache(request_budget=len(support.cells) * 2)
     response = cell_day_response(support.cells[0], day=DAY)
-    fetch = AsyncMock(side_effect=[response, ClimateProviderDeferredError("provider quota exceeded")])
+    refusal = ClimateProviderDeferredError("provider quota exceeded")
+    if outcome == PROVIDER_ACCESS_DENIED:
+        refusal = ClimateProviderDeferredError("provider quota exceeded", outcome=PROVIDER_ACCESS_DENIED)
+    fetch = AsyncMock(side_effect=[response, refusal])
     monkeypatch.setattr("agri_data_service.pipeline.direct.climate.source._fetch_cell_day", fetch)
 
     expected_requests = 2
@@ -398,24 +414,34 @@ async def test_provider_quota_stops_queued_requests_and_keeps_completed_response
 
 
 @pytest.mark.asyncio
-async def test_http_429_becomes_a_provider_deferral_before_the_remaining_fan_out(
+@pytest.mark.parametrize(
+    ("status", "outcome"),
+    [(429, "provider_rate_limited"), (403, "provider_access_denied"), (401, "provider_access_denied")],
+)
+async def test_http_provider_refusal_stops_the_remaining_fan_out(
     support: NasaPowerSupport,
     monkeypatch: pytest.MonkeyPatch,
+    status: int,
+    outcome: str,
 ) -> None:
     """Exercise the HTTP boundary, including the bounded response's status classification."""
     requests: list[httpx.Request] = []
 
     def quota_response(request: httpx.Request) -> httpx.Response:
         requests.append(request)
-        return httpx.Response(429, text="Too Many Requests")
+        return httpx.Response(status, text="Provider refused", headers={"Retry-After": "120"})
 
     monkeypatch.setattr(
         "agri_data_service.pipeline.direct.climate.source.upstream_client",
         lambda _bounds: httpx.AsyncClient(transport=httpx.MockTransport(quota_response)),
     )
     cache = ClimateSourceCache(request_budget=len(support.cells))
-    with pytest.raises(ClimateProviderDeferredError, match="429"):
-        await fill_cell_day_cache(day=DAY, support=support, cache=cache, concurrency=1)
+    with pytest.raises(ClimateProviderDeferredError) as failure:
+        await fill_cell_day_cache(day=DAY, support=support, cache=cache, concurrency=1, now=FETCHED_AT)
+    assert failure.value.outcome == outcome
+    if status == HTTPStatus.TOO_MANY_REQUESTS:
+        assert failure.value.retry_not_before == FETCHED_AT + timedelta(minutes=2)
+    assert not isinstance(failure.value, ClimateSourceUnsettledError)
     assert len(requests) == 1
     assert cache.requests_spent == 1
     assert not cache.responses

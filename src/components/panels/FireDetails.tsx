@@ -6,6 +6,7 @@ import {
   type ParquetFireDetectionsRead,
 } from "@/hooks/useParquetFireDetections";
 import { haversineDistance } from "@/lib/map/measurement";
+import { useDebouncedLayerDay } from "@/lib/map/layer-toggle-context";
 import { trpc } from "@/lib/trpc/client";
 
 /** Beyond this, the nearest sample describes other weather than the one under the cursor. */
@@ -153,12 +154,19 @@ export function FireDetails({ center }: FireDetailsProps) {
   const fire = useParquetFireDetections(true);
   const fireDetections = fireDetectionsReading(fire);
 
+  const weatherDay = useDebouncedLayerDay("weather");
+  const weatherDayCaption = weatherDay.settledDate ?? "the live weather window";
   const weatherQuery = trpc.wildfire.getWeatherForPoint.useQuery({
     lat: center.lat,
     lon: center.lon,
+    date: weatherDay.requestDate,
   });
+  // Bind cards to the same weather request as the map; see AGENTS.md §Weather selected day.
   const published =
-    weatherQuery.data?.availability === "published"
+    weatherQuery.data?.availability === "published" &&
+    !weatherQuery.isPlaceholderData &&
+    (weatherDay.settledDate === null ||
+      weatherQuery.data.observation.proximity?.requestedDay === weatherDay.settledDate)
       ? weatherQuery.data.observation
       : null;
   // The grid is coarse (one sample per ingest cell), so how far away the sample was taken is
@@ -197,8 +205,7 @@ export function FireDetails({ center }: FireDetailsProps) {
         <div className="flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 dark:bg-amber-950/20">
           <AlertTriangle aria-hidden="true" className="h-4 w-4 shrink-0 text-amber-600" />
           <p className="text-xs font-medium text-amber-700 dark:text-amber-400">
-            No fresh weather observation has been published near this point. No fallback
-            reading is shown.
+            No weather reading is available for {weatherDayCaption} near this point.
           </p>
         </div>
       )}
@@ -215,6 +222,9 @@ export function FireDetails({ center }: FireDetailsProps) {
         </div>
       )}
 
+      <p data-testid="weather-selected-day" className="text-xs text-[hsl(var(--muted-foreground))]">
+        Weather for {weatherDayCaption}
+      </p>
       <div className="grid grid-cols-2 gap-2">
         <StatCard
           icon={<Flame className="h-3.5 w-3.5" />}
@@ -244,9 +254,8 @@ export function FireDetails({ center }: FireDetailsProps) {
 
       {published !== null && (
         <p className="text-[10px] text-[hsl(var(--muted-foreground))] leading-relaxed">
-          Observed {published.observedAt.slice(0, 16).replace("T", " ")} UTC at{" "}
-          {published.lat.toFixed(2)}, {published.lon.toFixed(2)} — the nearest point on the
-          published Open-Meteo grid.
+          Sampled estimate {published.observedAt.slice(0, 16).replace("T", " ")} UTC at{" "}
+          {published.lat.toFixed(2)}, {published.lon.toFixed(2)} — Open-Meteo current conditions.
         </p>
       )}
     </div>

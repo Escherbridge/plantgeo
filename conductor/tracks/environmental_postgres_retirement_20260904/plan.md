@@ -7,6 +7,24 @@ updated_on: 2026-09-11
 
 # Environmental retirement — remaining work
 
+The [September 11 ingestion throttle audit](evidence/ingestion-throttle-audit-20260911.md)
+is preserved byte-for-byte from legacy candidate `3a5f3902` as dated operational
+and validation evidence. The [legacy reconciliation](../parquet_duckdb_pivot_20260823/evidence/legacy-candidate-reconciliation-20260911.md)
+records its selective code repair and current successors. The audit's older
+candidate/release request is superseded by the current
+[integration release packet](../parquet_duckdb_pivot_20260823/evidence/release-packet-20260911.md);
+its recorded observations are not fresh production acceptance.
+
+## Wind & Weather acceptance addendum — September 11
+
+- [ ] Jointly with gapless publication, reconcile weather product/source
+  identity, uncited history floor/lag, published intervals and the recorded
+  2021-11-27..2026-07-31 gap containing 2025-04-28. The current toggle is sampled
+  estimates/observations with forecast horizon 0. Reanalysis cannot fill
+  current-poll history under the same identity; retain explicit source/product
+  authority for any historical replacement. See the
+  [audit handoff](../parquet_duckdb_pivot_20260823/evidence/wind-weather-handoff-20260911.md).
+
 This plan reconciles deployed repository head `fa20223` with dated September 9–11
 evidence and the September 11 local product-repair preparation. Local preparation
 is not deployed admission. The latest runtime observations are in the

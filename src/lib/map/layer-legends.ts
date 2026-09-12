@@ -579,17 +579,7 @@ export function soilFieldLegendSpec(
   };
 }
 
-/**
- * The NASA POWER spec for one signal, in the form its row is currently drawn in.
- *
- * The caption carries two things a ramp alone cannot say. The air-temperature STATISTIC,
- * because `mean`, `max` and `min` share one band table and a reader looking at the colours
- * still needs to be told which of the three they are keyed to -- the other eight signals
- * publish one value and have no statistic to name. And the FORM, because since the nine rows
- * landed the same ramp can reach the map as a filled cell, a contour or a point, and three
- * legend sections showing identical swatches over three differently-drawn layers is exactly
- * the confusion nine rows were meant to remove.
- */
+/** Climate color scale and chosen display setting; see AGENTS.md §climate viewport support. */
 export function climateFieldLegendSpec(
   signal: ClimateFieldSignalId,
   variant: AirTemperatureVariant = DEFAULT_AIR_TEMPERATURE_VARIANT,
@@ -606,8 +596,8 @@ export function climateFieldLegendSpec(
       kind: "ramp",
       caption:
         selectedVariant === undefined
-          ? formLabel
-          : `${selectedVariant.label} · ${formLabel}`,
+          ? `Display setting: ${formLabel}`
+          : `${selectedVariant.label} · Display setting: ${formLabel}`,
       stops: definition.bands.map((band) => ({ color: band.color, label: band.label })),
     },
   ];
