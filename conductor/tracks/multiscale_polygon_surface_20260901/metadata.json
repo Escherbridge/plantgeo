@@ -1,4 +1,12 @@
 {
+  "reconciliation_20260912_local_renderer": {
+    "audited_on": "2026-09-12",
+    "source_head": "843b4b313e03447594b23a67f75c3062b2b1a024",
+    "source_tree": "9533bb9e5423240630935df0cd012cd8ead15504",
+    "status": "active",
+    "evidence": "evidence/renderer-local-proof-boundary-20260912.md",
+    "next_gate": "Scalar implementation is integrated. Retained PNG counts match, but fixture cases remount and 390px captures contain no touch actions. Supply local dependencies and strengthened mounted-transition fixtures, governed cross-rung data, climate/soil picking ownership, frozen numeric budgets and exact desktop/mobile execution identities. No M3 or platform MS-01 through MS-04 gate closes."
+  },
   "reconciliation_20260911": {
     "audited_on": "2026-09-11",
     "source_head": "fa20223",
