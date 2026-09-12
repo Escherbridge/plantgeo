@@ -1,7 +1,7 @@
 ---
 type: evidence
 recorded_on: 2026-09-11
-observed_at: 2026-09-12T05:00:04Z
+observed_at: 2026-09-12T05:08:41Z
 ---
 
 # Task and candidate ledger
@@ -24,7 +24,7 @@ candidate; it can close only after the required independent verdict.
 | Intervention boundary and publication author | `01a0932a-a08f-7712-b643-bfc67bc70d01` — Fix intervention boundaries and publishing | Archived after evidence-only reconciliation | Accepted runtime source `2fc6b30ac1b024e1c955dbf95552495608608a96`; evidence-only receipt `d9e4bd21f46d5d5caf8a0a90a4f39f4f222f1241` | Archived implementation task. Broader intervention boundary, production publication and human-contributor gates remain open in Conductor. |
 | PNW land/contact planning author | `01a09326-7319-7930-bee3-ac91e6085776` — Plan PNW land contact layers | Shared main checkout; no implementation branch | Nine planning-only files under `pnw_land_context_reference_plane_20260911` and `pnw_land_contact_experience_20260911`; independent planning review and documentation sweep passed. | Archived after registration and evidence were reconciled. Parent tracks remain `planned`; no ingestion, outreach or implementation is authorized. Registration observed at `2026-09-12T01:48:27Z`. |
 | PNW Herbaria source-admission continuation | `01a093f3-0097-7971-b2fb-179de546d643` — Resume PNW Herbaria source admission | `C:/Users/atooz/.codex/worktrees/bfe6/plantgeo`, detached evidence checkout | Metadata refresh commit `47715dd984a4c15afe174bc6e6d9bef8ce1ed704`, tree `888d404c1b404f6af641ab469810f69cf068bb9b`; integrated into root `57ef4fc` | Archived after metadata-only evidence was independently verified and integrated. Seven bounded metadata GETs are retained with URL, timestamp, headers, byte count and SHA-256 receipts; UBC v16.43 EML is byte-identical to the prior capture. WTU still lacks a standalone release-bound EML/field map and UBC lacks an applicable coordinate-withholding statement, so archive acquisition and admission remain blocked. No archive, image, specimen, RTF, script, iframe or media resource was acquired. |
-| Multiscale visual-layer continuation | `01a093f3-575a-7e02-bc0d-bc2c7ce7d562` — Finish multiscale visual layer updates | `C:/Users/atooz/.codex/worktrees/4a6e/plantgeo`, active continuation checkout | Current weather repair candidate `9284d52738dbb323bbcd1dfe8c22ab6290f2a4b1`, tree `a0797ce0b4a91b2ac051dfa423382fbf3db60104` | Active. Weather labels/readings are already present but only the unavailable browser state is evidenced. The continuation is adding bounded, collision-aware numeric labels to climate and soil support polygons while retaining range legends for dissolved bands; vegetation and gauge surfaces remain separate documented gaps. |
+| Multiscale visual-layer continuation | `01a093f3-575a-7e02-bc0d-bc2c7ce7d562` — Finish multiscale visual layer updates | `C:/Users/atooz/.codex/worktrees/4a6e/plantgeo`, detached clean checkout | Reviewed commit `2b29d9f1ad475358e96fc6c0e48aabd9a3e7d29b`, tree `878a071801f472a9cbcd3cb02eb06c2845d5d3c4`; integrated into root `ac4ce70` | Archived after independent review and local integration. Climate and soil scalar surfaces now show unit-bearing numeric labels with `avg` qualifiers for aggregated features, preserve missingness/legends/opacity/style reloads, and leave climate isobands unlabeled. Twenty-six synthetic desktop/mobile captures support the mechanics; live selected-day, dense-basemap, hover, production-performance and full mobile gates remain open. |
 
 ## Authority and ownership constraints
 
@@ -48,10 +48,12 @@ candidate; it can close only after the required independent verdict.
 
 ## Next ledger update
 
-The weather owner, botanical census, integration, PNW planning and PNW Herbaria
-refresh entries are bound to immutable evidence and archived custody. Two
-continuation tasks remain active: botanical profile/agent wiring and multiscale
-visual labels. The root browser receipt is recorded at `e5eaab6` and reconciled
-into integration `9284d527`; keep the platform QA task active for the remaining
-populated-data, mobile, agent-parity and broader track gates. Superseded
-identities remain dated evidence and are not relabeled as the final candidate.
+The weather owner, botanical census, integration, PNW planning, PNW Herbaria
+refresh and multiscale visual continuation entries are bound to immutable
+evidence and archived custody. The botanical profile/agent-wiring continuation
+remains active. The root browser receipt is recorded at `e5eaab6`, weather and
+botanical runtime integration at `9284d527`, Herbaria evidence at `57ef4fc`, and
+the scalar-label integration at `ac4ce70`; keep the platform QA task active for
+the remaining populated-data, mobile, agent-parity and broader track gates.
+Superseded identities remain dated evidence and are not relabeled as the final
+candidate.
