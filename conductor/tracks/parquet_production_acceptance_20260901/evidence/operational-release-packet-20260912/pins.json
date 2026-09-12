@@ -1,0 +1,925 @@
+{
+  "schema_version": 1,
+  "packet_status": "reconciled_locally_release_blocked",
+  "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+  "branch": "codex/operational-release-packet-20260912",
+  "scope": "committed_repository_and_local_git_only",
+  "current_runtime_measured": false,
+  "remote_objects_rehashed": false,
+  "commits": {
+    "intake": {
+      "commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+      "tree": "9533bb9e5423240630935df0cd012cd8ead15504",
+      "evidence_kind": "local_git_object_not_service_identity"
+    },
+    "qa_f0": {
+      "commit": "64f4f892bd2b744cc097c7f76a1f239997b80f52",
+      "tree": "f8697da694a3f9fbbf28e70ff7581bd59546bfd6",
+      "evidence_kind": "local_git_object_not_service_identity"
+    },
+    "mtbs_publication": {
+      "commit": "3632d616dc43f3845dbcb901e625b946b82519ba",
+      "tree": "61e00986fbffe9cda13d45fdd20a3e4a35444fa4",
+      "evidence_kind": "local_git_object_not_service_identity"
+    },
+    "mtbs_reader": {
+      "commit": "fa202230958fb55521963e886eb031be5fc266c4",
+      "tree": "b356db4849b488f09a2cbdf5476c6e143cc60980",
+      "evidence_kind": "local_git_object_not_service_identity"
+    },
+    "temperature_receipt_preservation": {
+      "commit": "323e45a5fbf48072566da95f789f98e9ad63374d",
+      "tree": "6cad060013f26716f4b90aff04117e60b11be1f6",
+      "evidence_kind": "local_git_object_not_service_identity"
+    },
+    "scheduler_handoff": {
+      "commit": "e4490c3c2f2e23f75cc9d6e297f4be646e0e00a1",
+      "tree": "85ab4a4cd59a0339fdbd57fe12b0a371d0f706c2",
+      "evidence_kind": "local_git_object_not_service_identity"
+    },
+    "root_config_removal": {
+      "commit": "fd79875c2b37b33c289a2a98a0c78e401b0799dc",
+      "tree": "b636535cfdd7b15b05f409fc9caca795c905d197",
+      "evidence_kind": "local_git_object_not_service_identity"
+    }
+  },
+  "local_subtrees": {
+    "src": "1aa29ff3abd72ec825c970d8d78f96bff3437618",
+    "services/agri-data-service": "93647d7a0403acdb9623343583119df756a53ab7",
+    "infra/job-executor": "f8bd198b41b0a7fed5941728e9cc047e2a5c436f"
+  },
+  "qa_f0_to_intake_changed_paths": [
+    "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/non-herbaria-profile-contract-audit-2026-09-12.md",
+    "conductor/tracks/platform_experience_qa_20260911/evidence/remaining-acceptance-matrix-20260912.md",
+    "conductor/tracks/platform_experience_qa_20260911/evidence/task-ledger.md",
+    "conductor/tracks/pnw_herbaria_source_admission_20260911/evidence/source-governance-audit-20260912.md",
+    "conductor/tracks/postgres_shrink_ingest_repoint_20260825/evidence/ownership-removal-proof-audit-20260912.md",
+    "conductor/tracks/weather_forecast_experience_20260911/evidence/contract-receipt-20260912.md",
+    "conductor/tracks/weather_forecast_experience_20260911/metadata.json",
+    "conductor/tracks/weather_forecast_experience_20260911/plan.md",
+    "conductor/tracks/weather_forecast_parquet_lane_20260911/evidence/contract-receipt-20260912.md",
+    "conductor/tracks/weather_forecast_parquet_lane_20260911/evidence/planning-review-20260912.md",
+    "conductor/tracks/weather_forecast_parquet_lane_20260911/metadata.json",
+    "conductor/tracks/weather_forecast_parquet_lane_20260911/plan.md"
+  ],
+  "historical_project_id": "6faaf3ea-ac46-4c8b-bbfe-1351dbb9d990",
+  "historical_environment_id": "b7cfa813-8a5c-4fcd-80f2-cab736d840a7",
+  "services": [
+    {
+      "service_name": "plantgeo-main",
+      "historical_service_id": "fa08a3aa-6d1d-43eb-846b-15dbfd887d61",
+      "service_id_source": "docs/deployment.md",
+      "observations": [
+        {
+          "observed_on": "2026-09-10",
+          "deployment_id": "c9719f3a-d159-4205-9567-a1e94009d08e",
+          "reported_status": "SUCCESS",
+          "commit": null,
+          "tree": null,
+          "source": "conductor/tracks/environmental_postgres_retirement_20260904/evidence/parquet-runtime-repair-20260910.md"
+        },
+        {
+          "observed_on": "2026-09-11",
+          "deployment_id": null,
+          "commit": "fa202230958fb55521963e886eb031be5fc266c4",
+          "locally_resolved_tree": "b356db4849b488f09a2cbdf5476c6e143cc60980",
+          "reported_status": "deployed_successfully_in_narrative",
+          "raw_matrix_retained": false,
+          "source": "conductor/tracks/environmental_postgres_retirement_20260904/evidence/mtbs-live-rollout-20260911.md"
+        }
+      ],
+      "current_identity": {
+        "status": "blocked",
+        "blocked_by": [
+          "B01",
+          "B02"
+        ],
+        "fields": {
+          "observed_at": null,
+          "project_id": null,
+          "environment_id": null,
+          "service_id": null,
+          "deployment_id": null,
+          "commit": null,
+          "tree": null,
+          "image_digest": null,
+          "build_id": null,
+          "release_metadata": null,
+          "effective_config_digest": null,
+          "root_directory": null,
+          "dockerfile": null,
+          "config_path": null,
+          "watch_paths": null,
+          "start_command": null,
+          "predeploy_result": null,
+          "readiness_result": null,
+          "service_profile": null,
+          "blueprint_route_manifest": null,
+          "port": null,
+          "endpoint_reference_identity": null,
+          "database_reference_identity": null,
+          "authentication_policy_identity": null,
+          "public_build_inputs": null,
+          "coverage_policy": null,
+          "cache_settings": null,
+          "rollback_revision": null
+        }
+      }
+    },
+    {
+      "service_name": "plantgeo-parquet-api",
+      "historical_service_id": "33aed861-af76-4fdd-a95e-784bdcc95e55",
+      "service_id_source": "docs/deployment.md",
+      "observations": [
+        {
+          "observed_on": "2026-09-10",
+          "deployment_id": "4a0f8ccb-437f-4b28-9673-42534e11cd97",
+          "reported_status": "SUCCESS",
+          "commit": null,
+          "tree": null,
+          "source": "conductor/tracks/environmental_postgres_retirement_20260904/evidence/parquet-runtime-repair-20260910.md"
+        },
+        {
+          "observed_on": "2026-09-11",
+          "deployment_id": null,
+          "commit": "fa202230958fb55521963e886eb031be5fc266c4",
+          "locally_resolved_tree": "b356db4849b488f09a2cbdf5476c6e143cc60980",
+          "reported_status": "deployed_successfully_in_narrative",
+          "raw_matrix_retained": false,
+          "source": "conductor/tracks/environmental_postgres_retirement_20260904/evidence/mtbs-live-rollout-20260911.md"
+        }
+      ],
+      "current_identity": {
+        "status": "blocked",
+        "blocked_by": [
+          "B01",
+          "B02"
+        ],
+        "fields": {
+          "observed_at": null,
+          "project_id": null,
+          "environment_id": null,
+          "service_id": null,
+          "deployment_id": null,
+          "commit": null,
+          "tree": null,
+          "image_digest": null,
+          "build_id": null,
+          "release_metadata": null,
+          "effective_config_digest": null,
+          "root_directory": null,
+          "dockerfile": null,
+          "config_path": null,
+          "watch_paths": null,
+          "start_command": null,
+          "predeploy_result": null,
+          "readiness_result": null,
+          "service_profile": null,
+          "blueprint_route_manifest": null,
+          "port": null,
+          "endpoint_reference_identity": null,
+          "database_reference_identity": null,
+          "authentication_policy_identity": null,
+          "public_build_inputs": null,
+          "coverage_policy": null,
+          "cache_settings": null,
+          "rollback_revision": null
+        }
+      }
+    },
+    {
+      "service_name": "plantgeo-job-executor",
+      "historical_service_id": "565ecaad-9946-48f1-8a0b-28fa60494a16",
+      "service_id_source": "docs/deployment.md",
+      "observations": [
+        {
+          "observed_on": "2026-09-10",
+          "deployment_id": "7e851cf5-6174-43cd-8262-1d14bfbe7ac1",
+          "reported_status": "SUCCESS",
+          "commit": null,
+          "tree": null,
+          "source": "conductor/tracks/environmental_postgres_retirement_20260904/evidence/parquet-runtime-repair-20260910.md"
+        },
+        {
+          "observed_on": "2026-09-11",
+          "deployment_id": null,
+          "commit": "fa202230958fb55521963e886eb031be5fc266c4",
+          "locally_resolved_tree": "b356db4849b488f09a2cbdf5476c6e143cc60980",
+          "reported_status": "deployed_successfully_in_narrative",
+          "raw_matrix_retained": false,
+          "source": "conductor/tracks/environmental_postgres_retirement_20260904/evidence/mtbs-live-rollout-20260911.md"
+        }
+      ],
+      "current_identity": {
+        "status": "blocked",
+        "blocked_by": [
+          "B01",
+          "B02"
+        ],
+        "fields": {
+          "observed_at": null,
+          "project_id": null,
+          "environment_id": null,
+          "service_id": null,
+          "deployment_id": null,
+          "commit": null,
+          "tree": null,
+          "image_digest": null,
+          "build_id": null,
+          "release_metadata": null,
+          "effective_config_digest": null,
+          "root_directory": null,
+          "dockerfile": null,
+          "config_path": null,
+          "watch_paths": null,
+          "start_command": null,
+          "predeploy_result": null,
+          "readiness_result": null,
+          "service_profile": null,
+          "blueprint_route_manifest": null,
+          "port": null,
+          "endpoint_reference_identity": null,
+          "database_reference_identity": null,
+          "authentication_policy_identity": null,
+          "public_build_inputs": null,
+          "coverage_policy": null,
+          "cache_settings": null,
+          "rollback_revision": null
+        }
+      }
+    }
+  ],
+  "executor_current": {
+    "status": "blocked",
+    "blocked_by": [
+      "B01",
+      "B02",
+      "B03",
+      "B08"
+    ],
+    "fields": {
+      "active_lanes": null,
+      "required_lanes": null,
+      "persisted_definitions": null,
+      "definition_fingerprints": null,
+      "owner_operator": null,
+      "processes": null,
+      "leases": null,
+      "attempts": null,
+      "external_invocations": null,
+      "cutoff_effective_at": null,
+      "three_schedule_receipts": null,
+      "recovery_receipts": null
+    }
+  },
+  "historical_cutoff": {
+    "observed_at": "2026-09-10T13:48:23.7340624Z",
+    "prior_active_count": 28,
+    "configured_active_count": 20,
+    "skipDeploys": true,
+    "staged": false,
+    "status": "configured_pending_deployment",
+    "source": "conductor/tracks/environmental_postgres_retirement_20260904/evidence/parquet-runtime-repair-20260910.md"
+  },
+  "historical_temperature": [
+    {
+      "product": "climate-field-air-temperature-mean",
+      "evidence_kind": "retained_historical_machine_receipt_fields_not_remote_rehash",
+      "source": "conductor/tracks/environmental_postgres_retirement_20260904/evidence/temperature-bootstrap-receipts-20260910.json",
+      "recorded_receipt": {
+        "bootstrap_receipt_key": "layer=climate-field-air-temperature-mean/kind=observed/availability/bootstrap/receipt=7a2f6659cd5fbbdeaee0ec566887aaf2a51b0a74f6e355a697869933fd480d8d.json",
+        "bootstrap_receipt_sha256": "7a2f6659cd5fbbdeaee0ec566887aaf2a51b0a74f6e355a697869933fd480d8d",
+        "created_at": "2026-09-10T12:25:44.725543Z",
+        "earliest_terminal_day": "2022-04-30",
+        "generation_bytes": 793655,
+        "generation_key": "layer=climate-field-air-temperature-mean/kind=observed/availability/generation=527989e565b95d6369a59fa8e0b6404b58969fddc1f919d7e6a01f90c538f3b2/availability.parquet",
+        "generation_receipt_sha256": "7643dc256c25e379450086d915e3724c9539df58ba11a82f8d6dce88be1f5085",
+        "generation_sha256": "527989e565b95d6369a59fa8e0b6404b58969fddc1f919d7e6a01f90c538f3b2",
+        "lane": "climate-field-air-temperature-mean",
+        "lane_root": "layer=climate-field-air-temperature-mean/kind=observed",
+        "latest_terminal_day": "2026-08-06",
+        "nature": "daily_series",
+        "prior_generation_key": null,
+        "prior_generation_sha256": null,
+        "product": "climate-field-air-temperature-mean",
+        "required_rungs": [
+          0,
+          5,
+          9,
+          13
+        ],
+        "rows": 6240,
+        "schema_version": "1",
+        "source_ceiling": "2026-09-05",
+        "verified_complete_days": 1560,
+        "verified_earliest_complete_day": "2022-04-30",
+        "verified_latest_complete_day": "2026-08-06",
+        "verified_rows_per_rung": {
+          "0": 1560,
+          "5": 1560,
+          "9": 1560,
+          "13": 1560
+        },
+        "verified_source_inventory_root": "76c277ff405e687b0594d80336289da8a929d52e81b30f647e1b3758943b2032"
+      },
+      "historical_operator_input_sha256": "cea1d34f82163cf99b97aab713211e49b68c7c04065a7bd1cb26886f7fe134c0",
+      "historical_operator_input_key": "layer=climate-field-air-temperature-mean/kind=observed/availability/operator-input/input=cea1d34f82163cf99b97aab713211e49b68c7c04065a7bd1cb26886f7fe134c0.json",
+      "frozen_descriptor_manifest_sha256": "db41160f24db156760c7e1b72cc3b0e58f9c5893690351685d74cd40e147c3e0",
+      "frozen_descriptor_source": "services/agri-data-service/src/agri_data_service/parquet_ops/snapshot_products.py",
+      "current_binding": {
+        "status": "blocked",
+        "blocked_by": [
+          "B04",
+          "B05",
+          "B06",
+          "B07"
+        ],
+        "fields": {
+          "release_id": null,
+          "manifest_key": null,
+          "manifest_body_sha256": null,
+          "pointer_key": null,
+          "pointer_body_sha256": null,
+          "pointer_concurrency_token": null,
+          "generation_sha256": null,
+          "bootstrap_marker_body_sha256": null,
+          "source_terminal_part_inventory": null,
+          "prior_rollback_pointer": null
+        }
+      },
+      "frozen_manifest_source": "services/agri-data-service/scripts/build_nasa_power_from_canonical_snapshot.py"
+    },
+    {
+      "product": "climate-field-air-temperature-min",
+      "evidence_kind": "retained_historical_machine_receipt_fields_not_remote_rehash",
+      "source": "conductor/tracks/environmental_postgres_retirement_20260904/evidence/temperature-bootstrap-receipts-20260910.json",
+      "recorded_receipt": {
+        "bootstrap_receipt_key": "layer=climate-field-air-temperature-min/kind=observed/availability/bootstrap/receipt=457cdae7b539305efb06c4cf69b42aae63646c0940e242aa978cfe871b0c0097.json",
+        "bootstrap_receipt_sha256": "457cdae7b539305efb06c4cf69b42aae63646c0940e242aa978cfe871b0c0097",
+        "created_at": "2026-09-10T12:28:11.699054Z",
+        "earliest_terminal_day": "2022-04-30",
+        "generation_bytes": 794128,
+        "generation_key": "layer=climate-field-air-temperature-min/kind=observed/availability/generation=a607e073e88702bcdd4a7a0278ff3aabf147ef0d281acd2b283ee554823c1377/availability.parquet",
+        "generation_receipt_sha256": "1bf7e1df5977cb725f0c652f75c02257c700a923c299617e569e032302369fee",
+        "generation_sha256": "a607e073e88702bcdd4a7a0278ff3aabf147ef0d281acd2b283ee554823c1377",
+        "lane": "climate-field-air-temperature-min",
+        "lane_root": "layer=climate-field-air-temperature-min/kind=observed",
+        "latest_terminal_day": "2026-08-06",
+        "nature": "daily_series",
+        "prior_generation_key": null,
+        "prior_generation_sha256": null,
+        "product": "climate-field-air-temperature-min",
+        "required_rungs": [
+          0,
+          5,
+          9,
+          13
+        ],
+        "rows": 6240,
+        "schema_version": "1",
+        "source_ceiling": "2026-09-05",
+        "verified_complete_days": 1560,
+        "verified_earliest_complete_day": "2022-04-30",
+        "verified_latest_complete_day": "2026-08-06",
+        "verified_rows_per_rung": {
+          "0": 1560,
+          "5": 1560,
+          "9": 1560,
+          "13": 1560
+        },
+        "verified_source_inventory_root": "49773aa36e8dd5ea8d414187a63f83e69ac1ea10c76d3806e177bd0b07697b23"
+      },
+      "historical_operator_input_sha256": "6ba7bad834fffe162289888b840445252b446fa374ea7fc894cf9ea7c4e80512",
+      "historical_operator_input_key": "layer=climate-field-air-temperature-min/kind=observed/availability/operator-input/input=6ba7bad834fffe162289888b840445252b446fa374ea7fc894cf9ea7c4e80512.json",
+      "frozen_descriptor_manifest_sha256": "d5b1b5ad85f461860b1ed5460c288656650d2f9c8ff6a938c081cbeecd8e3324",
+      "frozen_descriptor_source": "services/agri-data-service/src/agri_data_service/parquet_ops/snapshot_products.py",
+      "current_binding": {
+        "status": "blocked",
+        "blocked_by": [
+          "B04",
+          "B05",
+          "B06",
+          "B07"
+        ],
+        "fields": {
+          "release_id": null,
+          "manifest_key": null,
+          "manifest_body_sha256": null,
+          "pointer_key": null,
+          "pointer_body_sha256": null,
+          "pointer_concurrency_token": null,
+          "generation_sha256": null,
+          "bootstrap_marker_body_sha256": null,
+          "source_terminal_part_inventory": null,
+          "prior_rollback_pointer": null
+        }
+      },
+      "frozen_manifest_source": "services/agri-data-service/scripts/build_nasa_power_from_canonical_snapshot.py"
+    },
+    {
+      "product": "climate-field-air-temperature-max",
+      "evidence_kind": "retained_historical_machine_receipt_fields_not_remote_rehash",
+      "source": "conductor/tracks/environmental_postgres_retirement_20260904/evidence/temperature-bootstrap-receipts-20260910.json",
+      "recorded_receipt": {
+        "bootstrap_receipt_key": "layer=climate-field-air-temperature-max/kind=observed/availability/bootstrap/receipt=78f7191eab9c043d0d5a0d22fcab587d7375d5763101585f7742ed339b097968.json",
+        "bootstrap_receipt_sha256": "78f7191eab9c043d0d5a0d22fcab587d7375d5763101585f7742ed339b097968",
+        "created_at": "2026-09-10T12:29:33.986004Z",
+        "earliest_terminal_day": "2022-04-30",
+        "generation_bytes": 793493,
+        "generation_key": "layer=climate-field-air-temperature-max/kind=observed/availability/generation=962763ebdc1325cf32949e43c8c581f77869f6a926ae2d32d012c1810a80757d/availability.parquet",
+        "generation_receipt_sha256": "4b30fe52ba823acc0e957aaac7cac9ee589ef22b58864c55d9229b98f7812da7",
+        "generation_sha256": "962763ebdc1325cf32949e43c8c581f77869f6a926ae2d32d012c1810a80757d",
+        "lane": "climate-field-air-temperature-max",
+        "lane_root": "layer=climate-field-air-temperature-max/kind=observed",
+        "latest_terminal_day": "2026-08-06",
+        "nature": "daily_series",
+        "prior_generation_key": null,
+        "prior_generation_sha256": null,
+        "product": "climate-field-air-temperature-max",
+        "required_rungs": [
+          0,
+          5,
+          9,
+          13
+        ],
+        "rows": 6240,
+        "schema_version": "1",
+        "source_ceiling": "2026-09-05",
+        "verified_complete_days": 1560,
+        "verified_earliest_complete_day": "2022-04-30",
+        "verified_latest_complete_day": "2026-08-06",
+        "verified_rows_per_rung": {
+          "0": 1560,
+          "5": 1560,
+          "9": 1560,
+          "13": 1560
+        },
+        "verified_source_inventory_root": "f92abc2c8eba0f3ec6a0c6852f9adeaa7fdbbbf93cef8010d77356fc6d77ce0e"
+      },
+      "historical_operator_input_sha256": "41a00ffbd004211eb2c938f343f9666890879fbc24d0105d73b6c967c160270a",
+      "historical_operator_input_key": "layer=climate-field-air-temperature-max/kind=observed/availability/operator-input/input=41a00ffbd004211eb2c938f343f9666890879fbc24d0105d73b6c967c160270a.json",
+      "frozen_descriptor_manifest_sha256": "14d7fa8abe932318a07ce6d215f07ec79db567c1c691e262bb257318fb9596da",
+      "frozen_descriptor_source": "services/agri-data-service/src/agri_data_service/parquet_ops/snapshot_products.py",
+      "current_binding": {
+        "status": "blocked",
+        "blocked_by": [
+          "B04",
+          "B05",
+          "B06",
+          "B07"
+        ],
+        "fields": {
+          "release_id": null,
+          "manifest_key": null,
+          "manifest_body_sha256": null,
+          "pointer_key": null,
+          "pointer_body_sha256": null,
+          "pointer_concurrency_token": null,
+          "generation_sha256": null,
+          "bootstrap_marker_body_sha256": null,
+          "source_terminal_part_inventory": null,
+          "prior_rollback_pointer": null
+        }
+      },
+      "frozen_manifest_source": "services/agri-data-service/scripts/build_nasa_power_from_canonical_snapshot.py"
+    }
+  ],
+  "temperature_canonical_source": {
+    "root": "raw-canonical/signal-observation/snapshot=prod-20260826-full-signal-v1/",
+    "manifest_sha256": "465abc4e813bf28c78acd7f97a4da9d19ad959e525de3eb1f422ca2f6e73e94f",
+    "rows": 46146568,
+    "partitions": 8364,
+    "source": "conductor/tracks/environmental_postgres_retirement_20260904/evidence/parquet-runtime-repair-20260910.md",
+    "status": "historical_reference_not_remote_rehash"
+  },
+  "historical_mtbs": {
+    "source": "conductor/tracks/environmental_postgres_retirement_20260904/evidence/mtbs-live-rollout-20260911.md",
+    "capture_source": "conductor/tracks/environmental_postgres_retirement_20260904/evidence/mtbs-current-capture-20260910.md",
+    "original_report_sha256": "4cf74d1b3c71ee5a82c384f608304a1d3704dc61d014b3a839eedf2bc5d41d20",
+    "manifest_sha256": "4690af4629e617ffbde3f5e6ae99be3eb4c1a536fe47a931d7f0a8456c8f6468",
+    "source_content_sha256": "b8652f3384493249d568f4092e78ab7716689b49097882efe8dcbc5ff4a6cb1e",
+    "sorted_fire_ids_sha256": "875ead71e552c1808182f25e7c8d6c1f05621d9cb518877b5c5c895a61a4f3a7",
+    "captured_from": "2026-09-10T20:15:57.678058Z",
+    "captured_through": "2026-09-10T20:17:58.186463Z",
+    "available_on": "2026-09-11",
+    "bounds": [
+      -125,
+      42,
+      -111,
+      49
+    ],
+    "replacement_years": [
+      2018,
+      2019,
+      2020,
+      2021,
+      2022,
+      2023,
+      2024,
+      2025,
+      2026
+    ],
+    "fires_by_year": [
+      150,
+      63,
+      100,
+      115,
+      113,
+      69,
+      130,
+      6,
+      1
+    ],
+    "unique_fires": 747,
+    "incomplete_years": [
+      2023,
+      2024,
+      2025,
+      2026
+    ],
+    "prepared_rungs": [
+      {
+        "rung": 13,
+        "sha256": "9bcbeaf3d9afcc661a78a2fae06bb44ac057eee4149512981b9c4992101dc425",
+        "bytes": 47081269
+      },
+      {
+        "rung": 9,
+        "sha256": "dee2d7d66c3fc18ffa380f237169eff3dda1bc53d2259aeb9d467f6e6ea98f29",
+        "bytes": 193363
+      },
+      {
+        "rung": 5,
+        "sha256": "d0c6c686f4dce1ca4094cbb16f3f3b4375a0f6969bd7b5461fba459b45014984",
+        "bytes": 108578
+      },
+      {
+        "rung": 0,
+        "sha256": "beb687772180d3d1fb627ff78fa013c335c7f317f68557c4bd7801e84fd61edf",
+        "bytes": 108354
+      }
+    ],
+    "prepared_bytes_retained": false,
+    "current_binding": {
+      "status": "blocked",
+      "blocked_by": [
+        "B01",
+        "B03",
+        "B04",
+        "B05",
+        "B06",
+        "B07",
+        "B08"
+      ],
+      "fields": {
+        "immutable_release_id": null,
+        "manifest_key": null,
+        "release_descriptor_sha256": null,
+        "availability_pointer": null,
+        "generation_sha256": null,
+        "bootstrap_receipt_key": null,
+        "bootstrap_receipt_sha256": null,
+        "source_inventory_root": null,
+        "prior_rollback_release": null
+      }
+    }
+  },
+  "all_other_product_slots": {
+    "inventory": "declared-executor.json",
+    "rule": "Every declared product except the three historical temperature entries and the historical MTBS slice has no reconciled publication binding in this packet. Their current identities also remain unproved. Static and terminal duties retain their own contracts.",
+    "current_binding": {
+      "status": "blocked",
+      "blocked_by": [
+        "B03",
+        "B04",
+        "B05",
+        "B08",
+        "B10"
+      ],
+      "fields": {
+        "immutable_release": null,
+        "manifest": null,
+        "source_root": null,
+        "pointer": null,
+        "generation": null,
+        "bootstrap": null,
+        "receipt_inventory": null,
+        "effective_owner": null,
+        "observed_at": null
+      }
+    }
+  },
+  "rollback": {
+    "status": "blocked",
+    "blocked_by": [
+      "B07"
+    ],
+    "fields": {
+      "application_deployment": null,
+      "application_image": null,
+      "data_service_deployment": null,
+      "data_service_image": null,
+      "executor_deployment": null,
+      "executor_image": null,
+      "effective_configuration": null,
+      "compatible_product_set": null,
+      "prior_pointers": null,
+      "observability_plan": null,
+      "operator_approval": null
+    }
+  },
+  "retained_quality_receipt": {
+    "checks": [
+      {
+        "command": "ruff format --check src tests scripts",
+        "duration_seconds": 0.174,
+        "name": "format",
+        "status": "pass"
+      },
+      {
+        "command": "ruff check src tests scripts",
+        "duration_seconds": 0.087,
+        "name": "lint",
+        "status": "pass"
+      },
+      {
+        "command": "mypy src scripts",
+        "duration_seconds": 8.094,
+        "name": "mypy",
+        "status": "pass"
+      },
+      {
+        "command": "pytest -q",
+        "duration_seconds": 187.144,
+        "name": "pytest",
+        "status": "pass"
+      }
+    ],
+    "digest_domain": "plantgeo.agri-data-service.quality-receipt.v2",
+    "digest_file_count": 1307,
+    "generated_at": "2026-09-11T05:50:04.680279Z",
+    "schema_version": 2,
+    "tools": {
+      "mypy": "mypy 2.3.0 (compiled: yes)",
+      "pytest": "pytest 9.1.1",
+      "python": "3.12.10",
+      "ruff": "ruff 0.15.22",
+      "uv": "uv 0.9.18 (0cee76417 2025-12-16)"
+    },
+    "tree_digest": "sha256:c9739cb76c667db0820727b2f634beee725b98938c78537f8f78ec86469c53c1"
+  },
+  "missing_artifacts": [
+    {
+      "path": ".omc/research/mtbs-final-deployments-20260911.json",
+      "retained_at_base": false,
+      "present_in_worktree": false,
+      "blocked_by": [
+        "B06"
+      ]
+    },
+    {
+      "path": ".omc/research/mtbs-publication-outcome-20260911.json",
+      "retained_at_base": false,
+      "present_in_worktree": false,
+      "blocked_by": [
+        "B06"
+      ]
+    },
+    {
+      "path": ".omc/research/mtbs-catalog-diagnosis-20260911.json",
+      "retained_at_base": false,
+      "present_in_worktree": false,
+      "blocked_by": [
+        "B06"
+      ]
+    },
+    {
+      "path": ".omc/research/mtbs-publication-audit-verified-20260911.json",
+      "retained_at_base": false,
+      "present_in_worktree": false,
+      "blocked_by": [
+        "B06"
+      ]
+    },
+    {
+      "path": ".omc/research/mtbs-prepared-fire-identity-proof-20260911.json",
+      "retained_at_base": false,
+      "present_in_worktree": false,
+      "blocked_by": [
+        "B06"
+      ]
+    },
+    {
+      "path": ".omc/research/mtbs-lane-post-rollout-before-reconcile-20260911.json",
+      "retained_at_base": false,
+      "present_in_worktree": false,
+      "blocked_by": [
+        "B06"
+      ]
+    },
+    {
+      "path": ".omc/research/mtbs-paused-definition-reconciliation-applied-20260911.json",
+      "retained_at_base": false,
+      "present_in_worktree": false,
+      "blocked_by": [
+        "B06"
+      ]
+    },
+    {
+      "path": ".omc/research/mtbs-public-http-readback-v2-20260911/audit.json",
+      "retained_at_base": false,
+      "present_in_worktree": false,
+      "blocked_by": [
+        "B06"
+      ]
+    },
+    {
+      "path": ".omc/research/mtbs-prepared-viewport-proof-20260911.json",
+      "retained_at_base": false,
+      "present_in_worktree": false,
+      "blocked_by": [
+        "B06"
+      ]
+    },
+    {
+      "path": ".omc/research/mtbs-live-ui-verification-20260911.json",
+      "retained_at_base": false,
+      "present_in_worktree": false,
+      "blocked_by": [
+        "B06"
+      ]
+    },
+    {
+      "path": ".omc/research/mtbs-lane-resume-20260911.json",
+      "retained_at_base": false,
+      "present_in_worktree": false,
+      "blocked_by": [
+        "B06"
+      ]
+    },
+    {
+      "path": ".omc/research/mtbs-lane-post-rollout-inspection-20260911.json",
+      "retained_at_base": false,
+      "present_in_worktree": false,
+      "blocked_by": [
+        "B06"
+      ]
+    },
+    {
+      "path": ".omc/research/temperature-mean-publication-verified-20260910.log",
+      "retained_at_base": false,
+      "present_in_worktree": false,
+      "blocked_by": [
+        "B06"
+      ]
+    },
+    {
+      "path": ".omc/research/temperature-min-publication-verified-20260910.log",
+      "retained_at_base": false,
+      "present_in_worktree": false,
+      "blocked_by": [
+        "B06"
+      ]
+    },
+    {
+      "path": ".omc/research/temperature-max-publication-verified-20260910.log",
+      "retained_at_base": false,
+      "present_in_worktree": false,
+      "blocked_by": [
+        "B06"
+      ]
+    },
+    {
+      "path": ".omc/research/executor-ingestion-cutoff-20260910.json",
+      "retained_at_base": false,
+      "present_in_worktree": false,
+      "blocked_by": [
+        "B06"
+      ]
+    },
+    {
+      "path": "data/raster/soil",
+      "retained_at_base": false,
+      "present_in_worktree": false,
+      "blocked_by": [
+        "B06"
+      ]
+    }
+  ],
+  "blockers": [
+    {
+      "id": "B01",
+      "status": "blocked",
+      "owner_tracks": [
+        "parquet_production_acceptance_20260901"
+      ],
+      "operator_identity": null,
+      "missing_artifact": "Current per-service deployment, commit/tree, build/image/release and capture identity",
+      "next_action": "Supply timestamped raw service matrix, hashes and frozen-source comparison."
+    },
+    {
+      "id": "B02",
+      "status": "blocked",
+      "owner_tracks": [
+        "parquet_production_acceptance_20260901"
+      ],
+      "operator_identity": null,
+      "missing_artifact": "Effective build/runtime configuration, protected reference identities and release metadata",
+      "next_action": "Supply a redacted configuration/release export bound to each exact deployment; compare hashed source declarations."
+    },
+    {
+      "id": "B03",
+      "status": "blocked",
+      "owner_tracks": [
+        "gapless_parquet_publication_20260901",
+        "environmental_postgres_retirement_20260904"
+      ],
+      "operator_identity": null,
+      "missing_artifact": "Effective active/required lanes, persisted definitions, process/lease/attempt ownership and cutoff",
+      "next_action": "Supply before/after timestamped configuration, definitions and invocation/ledger readback with no-overlap proof."
+    },
+    {
+      "id": "B04",
+      "status": "blocked",
+      "owner_tracks": [
+        "gapless_parquet_publication_20260901",
+        "parquet_reader_cutover_acceptance_20260901",
+        "parquet_production_acceptance_20260901"
+      ],
+      "operator_identity": null,
+      "missing_artifact": "Current pointer/generation/bootstrap/schema/rung/source-inventory chain for each product",
+      "next_action": "Supply raw binding chain and hashes at a common observation boundary; distinguish static/census exceptions."
+    },
+    {
+      "id": "B05",
+      "status": "blocked",
+      "owner_tracks": [
+        "gapless_parquet_publication_20260901",
+        "parquet_production_acceptance_20260901"
+      ],
+      "operator_identity": null,
+      "missing_artifact": "Immutable release/manifest/source/terminal/absence/part/completion inventory and bounds",
+      "next_action": "Supply content-addressed inventories for every admitted product/day/rung and join to B04."
+    },
+    {
+      "id": "B06",
+      "status": "blocked",
+      "owner_tracks": [
+        "environmental_postgres_retirement_20260904",
+        "gapless_parquet_publication_20260901"
+      ],
+      "operator_identity": null,
+      "missing_artifact": "Named operational artifacts absent from repository",
+      "next_action": "Restore and re-hash original receipts against retained pins or obtain new separately authorized evidence."
+    },
+    {
+      "id": "B07",
+      "status": "blocked",
+      "owner_tracks": [
+        "parquet_production_acceptance_20260901",
+        "gapless_parquet_publication_20260901"
+      ],
+      "operator_identity": null,
+      "missing_artifact": "Exact compatible rollback service and product/pointer revisions plus observability proof",
+      "next_action": "Supply reviewed rollback matrix; preserve artifacts/checkpoints and disable affected executor lanes without recreating legacy writers."
+    },
+    {
+      "id": "B08",
+      "status": "blocked",
+      "owner_tracks": [
+        "gapless_parquet_publication_20260901",
+        "parquet_production_acceptance_20260901"
+      ],
+      "operator_identity": null,
+      "missing_artifact": "Three scheduled advances per active product plus retry/restart/lease recovery",
+      "next_action": "Supply run/time/input/output/receipt/checkpoint identities and no-overlap evidence for each interval and recovery exercise."
+    },
+    {
+      "id": "B09",
+      "status": "blocked",
+      "owner_tracks": [
+        "parquet_production_acceptance_20260901",
+        "platform_experience_qa_20260911",
+        "parquet_reader_cutover_acceptance_20260901",
+        "multiscale_polygon_surface_20260901"
+      ],
+      "operator_identity": null,
+      "missing_artifact": "Exact deployed-tree quality and route/cache/browser/spatial/mobile acceptance",
+      "next_action": "Supply complete owner packets and final integrated release checks with independent verdict; retain failing/unrun gates."
+    },
+    {
+      "id": "B10",
+      "status": "blocked",
+      "owner_tracks": [
+        "environmental_postgres_retirement_20260904",
+        "weather_forecast_parquet_lane_20260911",
+        "pnw_herbaria_source_admission_20260911",
+        "botanical_species_profile_lookup_20260911",
+        "botanical_occurrence_parquet_lane_20260911"
+      ],
+      "operator_identity": null,
+      "missing_artifact": "Separate pending product/support admissions and immutable evidence",
+      "next_action": "Supply contract-specific admitted artifact, rights/lineage/review and reader proofs; prepared inputs and authoring lookup cannot certify releases."
+    }
+  ]
+}

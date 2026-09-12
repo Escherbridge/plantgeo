@@ -1,0 +1,277 @@
+{
+  "schema_version": 1,
+  "source_commit": "843b4b313e03447594b23a67f75c3062b2b1a024",
+  "hash_scope": "Committed Git blob bytes, not worktree line endings or remote objects. Additional executor source pins are in declared-executor.json.",
+  "sources": [
+    {
+      "path": "AGENTS.md",
+      "git_blob": "37d5cfb70c832b4012e74153f230b08aa81f5c94",
+      "committed_bytes": 6342,
+      "committed_sha256": "378ba41560160043e4b12b260f0b536744dd36e99c7534f620f5d04b6a8923af"
+    },
+    {
+      "path": "Dockerfile",
+      "git_blob": "098ac6bf6ecc77d68cc1f4fb54997c8105af7662",
+      "committed_bytes": 4636,
+      "committed_sha256": "d8937df2b5891838ef1e83fc20366a01b9fe8090e3f3674a0864a77a23b1db9e"
+    },
+    {
+      "path": "conductor/README.md",
+      "git_blob": "238134f83c52a8babba63665b9164ed4b36e0a9e",
+      "committed_bytes": 1894,
+      "committed_sha256": "c0f46f4e0ef071fc702285a85106b6202a90fe0df33bfbc5eb98405de262a359"
+    },
+    {
+      "path": "conductor/RUNBOOK.md",
+      "git_blob": "4048f7d111f9bae5de013808528608290ac3251f",
+      "committed_bytes": 20283,
+      "committed_sha256": "f24db76639abafa8ed8b6d96853de4c5b9dfd5d347cd89f3b2c9b5509bc9837c"
+    },
+    {
+      "path": "conductor/release-governance.md",
+      "git_blob": "5173f526bdb3d575d360b1c0a1da2e0c802399ca",
+      "committed_bytes": 4760,
+      "committed_sha256": "2214451d64e50eb63b3720ea7a779781105e142b2bc4cebe463e1ef3fffc586c"
+    },
+    {
+      "path": "conductor/retros/parquet_operational_checkpoints_20260911/README.md",
+      "git_blob": "6d4f924240774e8bc7df9961f6b873a42e518de4",
+      "committed_bytes": 5305,
+      "committed_sha256": "c6cb556751c8fdaaba36465543a671f0ebfccc5011db7b6704ac18d218b1948f"
+    },
+    {
+      "path": "conductor/tracks.md",
+      "git_blob": "e93bc8f4ad886cc6fc13c4648d61b77e7f3685b8",
+      "committed_bytes": 14359,
+      "committed_sha256": "8c7ed4f5e72020f4e0e14eb808ebabbb257282cd5cfba9e9ec0fb2efe77ca4de"
+    },
+    {
+      "path": "conductor/tracks/environmental_postgres_retirement_20260904/evidence/active-lane-database-boundary-20260910.md",
+      "git_blob": "ad0be09a8056a65275e69eaf780fb5f6ad9a45ad",
+      "committed_bytes": 11697,
+      "committed_sha256": "5776b7cbd16488972477018390ac71ee51b47be52148978eee3c25d2052ce01b"
+    },
+    {
+      "path": "conductor/tracks/environmental_postgres_retirement_20260904/evidence/local-admission-cutoff-reconciliation-20260912.md",
+      "git_blob": "d384490c1eeca43be936d06031c7ec18ba2338b1",
+      "committed_bytes": 5407,
+      "committed_sha256": "4ca586c57c3349068ea2247e67d34578029ab0ddb10d5c3ee4c26709668d7cf9"
+    },
+    {
+      "path": "conductor/tracks/environmental_postgres_retirement_20260904/evidence/mtbs-current-capture-20260910.md",
+      "git_blob": "e03401a21cd0ecfdff97f5976df1a6f6cc5ba2f6",
+      "committed_bytes": 6765,
+      "committed_sha256": "d020492858fae1c6b863d53a6ef2a302f859ebd75eeb63ecdf7f5b1e38588dcf"
+    },
+    {
+      "path": "conductor/tracks/environmental_postgres_retirement_20260904/evidence/mtbs-live-rollout-20260911.md",
+      "git_blob": "9250874c5ebc6264ad3f14ae9a29686905cff8e7",
+      "committed_bytes": 5493,
+      "committed_sha256": "f95e55f05042639f62de1fe97d040d1e8c7cf1edb7ee318a5031a3e903e5d088"
+    },
+    {
+      "path": "conductor/tracks/environmental_postgres_retirement_20260904/evidence/parquet-runtime-repair-20260910.md",
+      "git_blob": "551fe6ed1d98c4da90abdf627f8c336d70a21696",
+      "committed_bytes": 19558,
+      "committed_sha256": "4c31b42b263efde5f53fff98b9d559c7f9a7bc1528d125271196e13cf77fd7ee"
+    },
+    {
+      "path": "conductor/tracks/environmental_postgres_retirement_20260904/evidence/repair-preparation-20260910.md",
+      "git_blob": "656eccecb716a52e2baf66d537f86db7f820ed6d",
+      "committed_bytes": 14361,
+      "committed_sha256": "4f6f458346dd4afbcaa938581024082cf920e228029aba62cc58e5ce5b3e3320"
+    },
+    {
+      "path": "conductor/tracks/environmental_postgres_retirement_20260904/evidence/soil-static-admission-preparation-20260910.md",
+      "git_blob": "cbf5191b5f20c35f635cafd41a8806232f723bf4",
+      "committed_bytes": 6193,
+      "committed_sha256": "84024f49b7ec46019d7f6391be47af9820bfd1380649c66003a97b254124d9e8"
+    },
+    {
+      "path": "conductor/tracks/environmental_postgres_retirement_20260904/evidence/temperature-bootstrap-receipts-20260910.json",
+      "git_blob": "bfbd03914dc220281315ef4a493473d0d953e8fa",
+      "committed_bytes": 4862,
+      "committed_sha256": "f918a86d2dd6551e6d6bbe4a89c8cc2e97c454f9f7b4c785f554857daeb54f2c"
+    },
+    {
+      "path": "conductor/tracks/gapless_parquet_publication_20260901/evidence/post-deploy-tick-2026-09-03.md",
+      "git_blob": "d25068bfb7351a6cc46d852048e197cd26103062",
+      "committed_bytes": 24623,
+      "committed_sha256": "bb59e27768cb94f3a794ff8e400806b59ceb8cb4c738e696e4e4179e780cde73"
+    },
+    {
+      "path": "conductor/tracks/gapless_parquet_publication_20260901/evidence/scheduler-handoff-20260902.md",
+      "git_blob": "9386cb1131016fffd7e736bda89fbdc93b3d743a",
+      "committed_bytes": 22323,
+      "committed_sha256": "e0a6a0a13a7cfc4c0a73ca1615bb656f1513a3d665065e2c1b4ff81431e25ce2"
+    },
+    {
+      "path": "conductor/tracks/parquet_production_acceptance_20260901/metadata.json",
+      "git_blob": "13b645f12433bd5f33314ba98f192c9dedc0444c",
+      "committed_bytes": 5773,
+      "committed_sha256": "0bba47f28a0be56002f4bd13b6dc5f0f46da8f9c754dda14d3a44cecdf419674"
+    },
+    {
+      "path": "conductor/tracks/parquet_production_acceptance_20260901/plan.md",
+      "git_blob": "d09c82c5e40813fe61bafa1df31e77fa7b582466",
+      "committed_bytes": 2534,
+      "committed_sha256": "0c5e236297ced154548304864f54002f34ae31c271190d38c72efe9129798ddc"
+    },
+    {
+      "path": "conductor/tracks/parquet_production_acceptance_20260901/spec.md",
+      "git_blob": "7136a08bfad89ee0241c5165b2b5e72d518179d5",
+      "committed_bytes": 2234,
+      "committed_sha256": "18b4a247ed7bca3a78ea398949c1f21de2420380b8775f1395e26eded53129d9"
+    },
+    {
+      "path": "conductor/tracks/parquet_reader_cutover_acceptance_20260901/evidence/local-acceptance-blockers-20260912.md",
+      "git_blob": "39e1b0a7a86b2f4d0127256a82357ff158266c1d",
+      "committed_bytes": 4760,
+      "committed_sha256": "8d698bf8e5b61027762aae1faa06f72751cf2cd6bb0066366fc534f7c626c568"
+    },
+    {
+      "path": "conductor/tracks/platform_experience_qa_20260911/evidence/remaining-acceptance-matrix-20260912.md",
+      "git_blob": "cd41cbe837d9e668fc7e4c263c282857cdb8b1f7",
+      "committed_bytes": 38064,
+      "committed_sha256": "e9ae92415c7d16e553fd05b4a2d880077a1d109df8ab9872d4b5a4579b648dea"
+    },
+    {
+      "path": "conductor/tracks/platform_experience_qa_20260911/evidence/root-integrated-checks-20260912.md",
+      "git_blob": "cea2f3038917b12fec9eb7b6a7a25f1cb862e874",
+      "committed_bytes": 2412,
+      "committed_sha256": "7cc11d3364050193f3d50cd9b21f933d9cebb040b15ac4e370117f6800da214a"
+    },
+    {
+      "path": "docs/deployment.md",
+      "git_blob": "182524e9dc86f6e29a931bcd62696165b5272b29",
+      "committed_bytes": 59327,
+      "committed_sha256": "ec7f8e5c4af2115d7580506347532708e7e2de8cef1704df53281ad220a6a30a"
+    },
+    {
+      "path": "docs/testing.md",
+      "git_blob": "380d62e06ff7b5383e6576e2a8ec2b3f3cd8affd",
+      "committed_bytes": 4716,
+      "committed_sha256": "3933ee9d0fd3a8e51ab699244e6f88c9a4ee3a3fe5b59e49c93758a98fe53a0f"
+    },
+    {
+      "path": "infra/job-executor/AGENTS.md",
+      "git_blob": "cd2c080c3becda27d5997c4029d3a96788e73f43",
+      "committed_bytes": 1868,
+      "committed_sha256": "628de04734fd66fb347183185b8c7e5a274790959a7d7ad35b12a118185db346"
+    },
+    {
+      "path": "infra/job-executor/Dockerfile",
+      "git_blob": "21dddb68bb32d805990408e73cd9b3be32556847",
+      "committed_bytes": 3828,
+      "committed_sha256": "14a281c595f591470881aa7e875b725983a6a469be71671df09e9af9dd45403f"
+    },
+    {
+      "path": "package-lock.json",
+      "git_blob": "a999593ff5233cd4b8477129672fe47611a4a6b3",
+      "committed_bytes": 459172,
+      "committed_sha256": "62d6afb5a658e96d6ce7f955b298eca450cbd6c93eaf7b57c964f59bc87b9808"
+    },
+    {
+      "path": "package.json",
+      "git_blob": "f0547f033b3400f13d698795f990526bd2aadb76",
+      "committed_bytes": 3151,
+      "committed_sha256": "81863096c7e4cb4ed56b768dfbeb089be3898635773e89317a30406e4daf3e36"
+    },
+    {
+      "path": "scripts/migrate.mjs",
+      "git_blob": "b528cc5f77aa6d0e372a4935898a088c869a7900",
+      "committed_bytes": 1803,
+      "committed_sha256": "30a861aeec7bd3c3d65cb6f9d891a70937f4377532bc35fd18fe2c3f9938730a"
+    },
+    {
+      "path": "services/agri-data-service/Dockerfile",
+      "git_blob": "3559993bfca1255abc48d4a12176a23d77781409",
+      "committed_bytes": 4487,
+      "committed_sha256": "79ce900ec2d3af622e00e6d3f107b580f1820c5af2e1717e3412b62c3e404c8c"
+    },
+    {
+      "path": "services/agri-data-service/QUALITY_RECEIPT.json",
+      "git_blob": "4f89cd4f2c6c9517951f5ce7d0ea0c640272693f",
+      "committed_bytes": 1014,
+      "committed_sha256": "346e324aa2d588ea38583873ef883154b861807a44d7f83ada0f71479699249f"
+    },
+    {
+      "path": "services/agri-data-service/pyproject.toml",
+      "git_blob": "69f788c68b0afe810dc18fb6474c0fd67a714b9c",
+      "committed_bytes": 1316,
+      "committed_sha256": "98c59b9bbf4bc80aec1cd3dc36ae45403657bcdd711a0763a1e29f39eb4df498"
+    },
+    {
+      "path": "services/agri-data-service/railway.job-executor.json",
+      "git_blob": "80c820cb6df8d4d295f05f67bea08c681338a52b",
+      "committed_bytes": 306,
+      "committed_sha256": "39ccd1b9d1e32e0f02f7a0a20be76abc095da20e6e8cb16d55df35daec683f40"
+    },
+    {
+      "path": "services/agri-data-service/railway.json",
+      "git_blob": "933f2c3436f9c922831834f5d14fc03b03652ab6",
+      "committed_bytes": 261,
+      "committed_sha256": "70814f8db7262f54547e234b50aeeb00098099c83db4b9d131d8af344ba540b5"
+    },
+    {
+      "path": "services/agri-data-service/scripts/build_nasa_power_from_canonical_snapshot.py",
+      "git_blob": "1d95bfbf6001fce2386677c53922f263e9235d96",
+      "committed_bytes": 93828,
+      "committed_sha256": "d99cb59f527960153969b0b286ba3ea9eca6663527231fd3281088808c5505f1"
+    },
+    {
+      "path": "services/agri-data-service/scripts/quality_receipt.py",
+      "git_blob": "65f5d34ab8818a4749ea530ec747f7853e073c92",
+      "committed_bytes": 7383,
+      "committed_sha256": "6ad2420fe87c44016cfa8272c035d4f0c12c72efee3c1ee8153962f04fd79a7b"
+    },
+    {
+      "path": "services/agri-data-service/scripts/verify_quality_receipt.py",
+      "git_blob": "be37d6f60514a8371a6cd0436365293723a911ff",
+      "committed_bytes": 4458,
+      "committed_sha256": "f6cd9f00afe9d5616be08b0365b19ae7a91a0f2a1b97cdd409992f192d5c040c"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/app.py",
+      "git_blob": "67e968854bbd3e7084e60ed50a5a64938d3f4dbf",
+      "committed_bytes": 4682,
+      "committed_sha256": "117ea7fa99126b3b375f030bc72a6baa21721cd14c111a0049f77c490fba3a64"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/config.py",
+      "git_blob": "836e328f07cc27f6533fb6dd3f7452440b6ac188",
+      "committed_bytes": 25256,
+      "committed_sha256": "b608575bc4219f8dafa447d4d638e22010029776521bdc693b51ccc710c0fbb3"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/parquet_ops/snapshot_products.py",
+      "git_blob": "17920f54b01862044f71628058b7905e6302603d",
+      "committed_bytes": 103375,
+      "committed_sha256": "784f8190802246af969f390053fcaebdcf4a78d74f8d31f036f2ec3112aeb5a1"
+    },
+    {
+      "path": "services/agri-data-service/uv.lock",
+      "git_blob": "fdc3684a179c21cd4b2a152fd0abd681407cfcc9",
+      "committed_bytes": 414086,
+      "committed_sha256": "930dea83dbb12804e8d5356858feeb4cb7ce0fdeecda8ff951ea7b7e0cdf5319"
+    },
+    {
+      "path": "src/lib/server/db/migration-contract.ts",
+      "git_blob": "42ea0907c12ac6181919214fbcd290a8495762dc",
+      "committed_bytes": 201,
+      "committed_sha256": "455a1db5a88be00ec88cc0cf0ba3f6b1024a244c8ffdd12925dcce47db1b1e98"
+    },
+    {
+      "path": "src/lib/server/services/parquet-plane-client.ts",
+      "git_blob": "1bafae6a1b8a0323dff7d6919cc29493aab5124d",
+      "committed_bytes": 38668,
+      "committed_sha256": "45ffe73eb014acca662891d31cf8fd47c90acc30959c7c84f114c4aa8d7029e4"
+    },
+    {
+      "path": "src/lib/server/services/parquet-slider-capabilities.ts",
+      "git_blob": "df65af37f6ebdb33cff0bd54a8172dcadb4cb1ba",
+      "committed_bytes": 42635,
+      "committed_sha256": "a630beab06ff37326cbd8a8554b7478b5e6c1e162f8bfe54ed5adf3ade3f8e5a"
+    }
+  ]
+}
