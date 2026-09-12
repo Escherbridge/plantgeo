@@ -168,3 +168,53 @@ surface. This integration executes documentation checks only; it makes no new
 application-test, service, populated-data, mobile/touch, deployment, scheduled
 burn-in or production-release claim. Local author and reviewer custody does not
 fill any unbound operational-owner or release-reviewer gate in the RED packet.
+
+### Visual pair integration after the approved evidence candidate
+
+The visual continuation starts from approved integration
+`33f8a885796ea7aa2885e8da6cf9055cc27124cf`, tree
+`8c0ac6182b37b746cc840968d9dafd6d69d1e35c`, on the same reader integration
+branch and worktree. The documentation-only validation and unchanged-runtime
+claim above belong to that earlier integration. This later visual pair changes
+runtime source and receives its own final integrated checks and bounded browser
+receipt. All earlier custody entries remain historical evidence.
+
+| Role | Task and source checkout | Immutable source and review history |
+| --- | --- | --- |
+| Original visual author | `01a09485-9640-7ef3-8901-4e651ae6bbb5`; `C:/Users/atooz/.codex/worktrees/2764/plantgeo` | Commit `f62666363abd06e8c4aab287ad5f7353b1ec305d`, tree `10d00468d1c3d621814f7111056a39ce3ca24865`. Initial internal PASS was followed by external compatibility CHANGES REQUESTED. The source is preserved immutable and integrated only with the refusal repair; it was never accepted as a standalone integrated candidate. |
+| Refusal repair author | `01a094d1-776f-7920-a448-6394f5c7c736`; `C:/Users/atooz/.codex/worktrees/067b/plantgeo` | Commit `51d7f36ce007fba12ac35fa4e86737056a4051cd`, tree `a63b9eead80f852b75fe611eccc5b5124bf88e6d`. Source/custody PASS; preserves the original author commit as its parent and repairs refusal while native layout is pending. |
+| External compatibility reviewer | `01a0949c-ff3f-72e1-96b8-f49cf11b5272` | CHANGES REQUESTED on `f626663` alone, then PASS on the ordered pair `f626663` + `51d7f36` for local integration, as supplied by the coordinator. This approval does not close production or M3 gates. |
+
+The authorized pair was cherry-picked in order, without importing either source
+parent history. Both applied commits retain their original source trailers:
+
+| Order | Source commit | Applied commit | Applied tree |
+| --- | --- | --- | --- |
+| 1 — visual feature | `f62666363abd06e8c4aab287ad5f7353b1ec305d` | `86e3661ad4f34ddfeebde739d2e5340f22f465f4` | `d3d09dbc359aa81d105b4b652d0588626d88b91c` |
+| 2 — P2 refusal repair | `51d7f36ce007fba12ac35fa4e86737056a4051cd` | `0fa16a53b2936c95a053cd68ea4590c10728f4f9` | `d1bb86c0ea52554ecbecd92ee282971038a75868` |
+
+Only the multiscale `plan.md` conflicted, during the first cherry-pick. Resolution
+preserved the approved plan verbatim, including “September 12 — current local
+evidence boundary,” then appended the complete “September 12 — isolated vegetation
+scalar field candidate” section from the visual patch. Its active frontmatter
+and every open M3 gate remain unchanged. The combined pair contains 82 paths;
+this ledger-only custody follow-up is separate from that pair.
+
+The [visual packet](../../multiscale_polygon_surface_20260901/evidence/scalar-field-vegetation-20260912.md)
+and its [refusal repair receipt](../../multiscale_polygon_surface_20260901/evidence/scalar-field-refusal-repair-20260912/report.json)
+remain source-bound evidence. Final integrated validation consists of one run
+each of `check:data-boundary`, `type-check`, `lint` and `test:changed` against
+`33f8a885`, plus the selected scalar fixture scenarios `field,mixed-days,detail,mode-race,refusal-layout,reload`.
+That browser selection is exactly 12 cases across desktop and mobile; it is not
+the full 29-case fixture or live-data acceptance. The frozen integrated result,
+exact path/blob comparisons, check counts and separate reviewer verdict are bound
+in the final integration handoff, rather than attributed to the original author
+receipts or embedded as a circular commit hash here.
+
+The default-off `NEXT_PUBLIC_SCALAR_FIELD_RENDERER_LAYERS` flag remains unset in
+the application environment; the standalone synthetic fixture opts in only
+inside its own bundle. Reader paths retain their approved `33f8a885` blobs.
+The excluded audit commit and matrix remain absent, production acceptance stays
+**blocked / RED**, and all operational-owner, live-data, M3 and release gates
+remain open. This continuation performs no push, deployment or live
+infrastructure/data access.
