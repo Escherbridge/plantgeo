@@ -65,6 +65,25 @@ candidate; it can close only after the required independent verdict.
 
 ## Next ledger update
 
+### 2026-09-12 live restart addendum
+
+The [live restart receipt](session-restart-20260912-live.md) supersedes the
+stale lifecycle labels for the two unresolved owners without rewriting their
+historical custody rows. Forecast task `01a09323-6f59-7822-9e6f-146892776749`
+was restarted with a read-only superseded-branch audit, remained active through
+the bounded wait, and its restart turn was then interrupted/stopped; the task
+is now idle. No new completed restart receipt was produced; earlier completed
+audit evidence remains retained in its historical custody record. Ingestion task
+`01a08b00-2a50-73c2-b39b-39523c74ceb2` was restarted, made no progress for the
+bounded wait, was stopped cleanly and is idle; its candidate remains
+unintegrated and unresolved. The fresh queue aliases
+`client-new-thread:bfb15326-7832-47bc-a0cf-2415b0127c45` and
+`client-new-thread:5a83705b-98c6-4717-b9bd-519af214817d` were requested from
+current `main` but had not materialized in `list_threads` at observation time.
+They are not task IDs and are not completion evidence. The botanical candidate
+audit independently returned HOLD for `edc6afd` and `3135d6b`; retain both as
+unaccepted custody and keep the current census/transitional lookup state.
+
 The weather owner, botanical census, botanical profile/agent wiring,
 integration, PNW planning, PNW Herbaria refresh, multiscale visual continuation
 and acceptance continuation, historical QA candidate and historical
