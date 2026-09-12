@@ -17,8 +17,13 @@ service or test case. The scalar-label subset is integrated and remains useful
 within its synthetic scope. **M3 and MS-01 through MS-04 remain open.** Neither
 source inspection nor recomputing pixels from old screenshots establishes live
 or production behavior. The [multiscale specification](../spec.md), lines 32–47,
-and [remaining acceptance matrix](../../platform_experience_qa_20260911/evidence/remaining-acceptance-matrix-20260912.md),
-lines 143–155, remain the governing gates.
+and the separately preserved remaining acceptance matrix, lines 143–155, remain
+the governing gates. The matrix is retained at audit commit
+`ad7ae728b48d975bca248187716ad03896506313`, tree
+`b3973d15965061496b6a6fac0fe297ba0ab80bd6`, path
+`conductor/tracks/platform_experience_qa_20260911/evidence/remaining-acceptance-matrix-20260912.md`.
+That audit commit and file are excluded from this integration; this custody
+reference replaces the source packet's local link.
 
 ## Custody and reconciliation
 

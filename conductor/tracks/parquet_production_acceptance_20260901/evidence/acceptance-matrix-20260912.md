@@ -30,8 +30,13 @@ deployment or live service was accessed. Git changes are local; no push occurs.
 The [production specification](../spec.md), [plan](../plan.md),
 [registry](../../../tracks.md), [release policy](../../../release-governance.md),
 [platform matrix contract](../../platform_experience_qa_20260911/matrix.md) and
-[September 12 remaining matrix](../../platform_experience_qa_20260911/evidence/remaining-acceptance-matrix-20260912.md)
-govern the verdict. The [source custody index](source-custody-20260912.json)
+separately preserved September 12 remaining matrix govern the verdict. The latter
+is retained at audit commit `ad7ae728b48d975bca248187716ad03896506313`, tree
+`b3973d15965061496b6a6fac0fe297ba0ab80bd6`, path
+`conductor/tracks/platform_experience_qa_20260911/evidence/remaining-acceptance-matrix-20260912.md`.
+That audit commit and file are excluded from this integration; this custody
+reference replaces the source packet's local link.
+The [source custody index](source-custody-20260912.json)
 binds retained files to this source commit with Git object IDs and SHA-256 hashes.
 Hashing a retained receipt proves custody, not its scientific or runtime claims.
 

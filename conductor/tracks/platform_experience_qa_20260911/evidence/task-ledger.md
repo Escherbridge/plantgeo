@@ -94,3 +94,77 @@ worktrees and read-only boundaries remain bound above; parent tracks stay open
 for their unresolved production, source, populated-data and proof gates.
 Superseded identities remain dated evidence and are not relabeled as the final
 candidate.
+
+## 2026-09-12 acceptance-execution custody
+
+This bounded addition records the acceptance continuations and their local
+integration on `codex/reader-ui-contract-20260912` in
+`C:/Users/atooz/.codex/worktrees/0831/plantgeo`. Historical rows, observations and
+ownership above remain unchanged. The coordinator's shared checkout is task
+custody, not a newly measured candidate or an operational authorization.
+
+| Role | Task identity | Checkout custody | Immutable source and bounded outcome |
+| --- | --- | --- | --- |
+| Acceptance coordinator | `01a09475-01c4-7252-8710-a8a57559c919` | `C:/Users/atooz/Programming/plantgeo` | Coordinates the local evidence integration and supplied the reader review outcome below. No shared-checkout HEAD or production state is inferred. |
+| Reader author and local integrator | `01a0947d-457c-7e33-8fce-71dec96e5b34` | `C:/Users/atooz/.codex/worktrees/0831/plantgeo` | Final reader commit `ee81a641d6f1f3fcd38bb96a7e860b0065710419`, tree `410864c3b6f77702d269178bc93e6bf3ee15a98c`; reader correction PASS within its recorded local scope. |
+| Independent reader reviewer | `01a0949c-ff3f-72e1-96b8-f49cf11b5272` | `C:/Users/atooz/.codex/worktrees/5265/plantgeo` | CHANGES REQUESTED on `3143a227d680feb4c2379b936115e20030dd8b7f`, tree `56c8613f1bca6f2ec5bd03f194f8638ae268cf78`; then PASS on `ee81a641d6f1f3fcd38bb96a7e860b0065710419`, tree `410864c3b6f77702d269178bc93e6bf3ee15a98c`, as reported by the coordinator. The final verdict does not erase the initial review. |
+| Gapless publication author | `01a0947d-554e-7002-8e47-53f88e76bc85` | `C:/Users/atooz/.codex/worktrees/511c/plantgeo` | Reviewed local packet `ff5fc9f5a971083fbcc5254067818734c55c69e3`, tree `eba5b0ad50e793b2565020d233dae303e7f6d8ab`; historical scope and publication blockers reconciled, remaining writer gates open. |
+| Renderer boundary author | `01a0947d-704e-7d31-bf21-7d3f47002a61` | `C:/Users/atooz/.codex/worktrees/3b59/plantgeo` | Reviewed local packet `7f6f2e5945496fc9b3ab1bddece35e76eb3224a0`, tree `b63a22b4e5e4a290a1b70a180d70b1e84d679f9b`; retained synthetic artifacts bounded, live renderer and mobile gates open. |
+| Executor reconciliation author | `01a0947d-86e9-7472-90d4-7e7c230ef838` | `C:/Users/atooz/.codex/worktrees/ad33/plantgeo` | Reviewed local packet `f84da6169740604112c71d95379c6493109e4e5e`, tree `ad9dcc1e65938a28a60269c7e5514339db0bbe75`; definition custody reconciled, effective ownership, cutoff and recovery proofs remain open. |
+| Operational release packet author | `01a0947d-9cac-78a3-93ee-2ca18b7b05cd` | `C:/Users/atooz/.codex/worktrees/b292/plantgeo` | Reviewed local packet `5af6c398944b0ab34c4c5b6a900f3c55cf709156`, tree `81dae514941b60bb4d6375627cfdf3d7168771ee`; retained release custody only, no release authorization or fresh operational validation. |
+| Production verdict author | `01a0947d-b44b-7540-b06e-8532c19de1fb` | `C:/Users/atooz/.codex/worktrees/229e/plantgeo` | Reviewed local packet `6b1088dd6c834140c82ee21970a2ea7e91e231c2`, tree `0f5d7bfeb00f9b411c269d65239487dd8a14279c`; verdict RED, production acceptance blocked. |
+
+The [reader correction receipt](../../parquet_reader_cutover_acceptance_20260901/evidence/reader-ui-contract-20260912.md),
+[publication packet](../../gapless_parquet_publication_20260901/evidence/publication-evidence-packet-20260912.md),
+[renderer boundary](../../multiscale_polygon_surface_20260901/evidence/renderer-local-proof-boundary-20260912.md),
+[executor reconciliation](../../gapless_parquet_publication_20260901/evidence/executor-definition-reconciliation-20260912.md),
+[operational release packet](../../parquet_production_acceptance_20260901/evidence/operational-release-packet-20260912/README.md)
+and [RED verdict](../../parquet_production_acceptance_20260901/evidence/final-verdict-20260912.md)
+retain each lane's evidence and open gates.
+
+The five evidence deltas were cherry-picked in the requested order, with source
+commit trailers, after the final reader commit. Their local integration custody
+is distinct from the author commits and trees above:
+
+| Order | Source commit | Applied commit | Applied tree |
+| --- | --- | --- | --- |
+| 1 — gapless publication | `ff5fc9f5a971083fbcc5254067818734c55c69e3` | `e9a3bd1983a83e1082b789ac2cc841ea7f9bbefd` | `865ce294a85ee7ca4c793059ba32ef9d22e514d1` |
+| 2 — renderer boundary | `7f6f2e5945496fc9b3ab1bddece35e76eb3224a0` | `a4f83eba30c336f6e1882ce5163930f764ac498a` | `9bee1f2b970521b44359d2c3b6585aec94ce89f1` |
+| 3 — executor reconciliation | `f84da6169740604112c71d95379c6493109e4e5e` | `c7d0050f32fd472d97f2bb7e2c599de224cce18c` | `7cf0b8276b070a47536b6782ad3a5450513c4cb2` |
+| 4 — operational release | `5af6c398944b0ab34c4c5b6a900f3c55cf709156` | `43bf932c303bb48b8fc08c98a6ad9ad0524adcc4` | `3d62ac0448fa8495103160efd69eabac0019ca54` |
+| 5 — local production RED verdict | `6b1088dd6c834140c82ee21970a2ea7e91e231c2` | `2469180d87ae28a832436f21b2a13a6383d0298d` | `58c2a45b16c2ad7aab8b85c11ab0df3fd29b484b` |
+
+Only `conductor/tracks.md` conflicted, in the first cherry-pick. Resolution kept
+the final reader row from `ee81a641` and the incoming gapless publication row;
+every registry status was preserved. No incomplete track was closed or archived.
+The reader, gapless publication and multiscale tracks remain `active`; production
+acceptance remains `blocked`, with its local verdict **RED** and G0–G7 open.
+
+The audit is separately preserved and excluded: commit
+`ad7ae728b48d975bca248187716ad03896506313`, tree
+`b3973d15965061496b6a6fac0fe297ba0ab80bd6`, parent/base
+`64f4f892bd2b744cc097c7f76a1f239997b80f52`. Its sole added path,
+`conductor/tracks/platform_experience_qa_20260911/evidence/remaining-acceptance-matrix-20260912.md`,
+is not imported. These are the Git-verified identities confirmed by the
+coordinator's custody correction. The audit commit, `15347eaa` and `843b4b3` are
+not integration ancestors; no merge or cherry-pick of `main` was performed.
+
+The five author packets retain their original parent/source attribution to
+`843b4b313e03447594b23a67f75c3062b2b1a024`, tree
+`9533bb9e5423240630935df0cd012cd8ead15504`. Original source-manifest hashes,
+documentation-review receipts and retained measurements continue to describe
+those frozen source snapshots, not the integrated tree. The final documentation
+commit appends this section and replaces exactly two absent audit-file links,
+in the renderer boundary and production acceptance matrix, with the exact
+commit/tree/path custody above. Those integration-only edits receive separate
+documentation validation and independent review; original packet receipts do
+not certify the substituted text. The final commit/tree and validation result
+are reported in the integration handoff, avoiding a circular self-hash here.
+
+Application receipt reuse is conditional on exact equality to `ee81a641` of the
+`src` tree and every tracked blob outside `conductor/`, including package and
+test-harness files, plus a changed-test selector plan with no application
+surface. This integration executes documentation checks only; it makes no new
+application-test, service, populated-data, mobile/touch, deployment, scheduled
+burn-in or production-release claim. Local author and reviewer custody does not
+fill any unbound operational-owner or release-reviewer gate in the RED packet.
