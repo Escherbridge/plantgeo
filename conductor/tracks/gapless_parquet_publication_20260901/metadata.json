@@ -1,4 +1,13 @@
 {
+  "publication_evidence_packet_20260912": {
+    "audited_on": "2026-09-12",
+    "source_head": "843b4b313e03447594b23a67f75c3062b2b1a024",
+    "source_tree": "9533bb9e5423240630935df0cd012cd8ead15504",
+    "status": "active",
+    "scope": "Repository and retained receipts only; 27 time-bearing streams plus five static registrations, five older requests, absence categories, effective executor and fencing limits reconciled. No current runtime state or publication claimed.",
+    "next_gate": "Bind remaining historical artifacts and interval owners; obtain exact deployed active/required definitions, effective cutoff and recovery evidence, then three scheduled advances per activated product and acceptance handoff.",
+    "evidence": "conductor/tracks/gapless_parquet_publication_20260901/evidence/publication-evidence-packet-20260912.md"
+  },
   "reconciliation_20260912": {
     "audited_on": "2026-09-12",
     "source_head": "8c14ea0117ba14d5584f737b793f989566102514",
