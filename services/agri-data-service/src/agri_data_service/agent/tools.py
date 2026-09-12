@@ -24,6 +24,7 @@ from anthropic import beta_async_tool
 from sqlalchemy import ARRAY, Float, Text, bindparam, text
 
 from agri_data_service.agent import parquet_reads, warehouse
+from agri_data_service.agent.botanical_species_profiles import record_profile_tools, species_information
 from agri_data_service.agent.surfaces import (
     AGENT_SURFACE_NAMES,
     FEATURE_SURFACE_NAMES,
@@ -317,7 +318,8 @@ async def run_context(
     plane_token = _plane_state.set({})
     source_token = warehouse.set_source(warehouse_source)
     try:
-        yield ledger
+        with record_profile_tools(_record):
+            yield ledger
     finally:
         warehouse.reset_source(source_token)
         _plane_state.reset(plane_token)
@@ -2193,4 +2195,5 @@ WAREHOUSE_TOOLS: Final = (
     observation_coverage_on_day,
     observation_temporal_neighbors,
     feature_value_near_point,
+    species_information,
 )

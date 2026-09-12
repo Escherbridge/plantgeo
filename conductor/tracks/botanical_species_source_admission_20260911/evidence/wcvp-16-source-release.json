@@ -1,0 +1,27 @@
+{
+  "source_id": "kew-wcvp",
+  "version": "16",
+  "admitted_traits": [
+    "growth_habit",
+    "climate_summary"
+  ],
+  "admitted_taxon_ids": [
+    "2439997",
+    "379633",
+    "380358",
+    "6584"
+  ],
+  "release_url": "https://sftp.kew.org/pub/data-repositories/WCVP/",
+  "download_url": "https://sftp.kew.org/pub/data-repositories/WCVP/wcvp.zip",
+  "licence_id": "CC-BY-3.0",
+  "licence_url": "https://creativecommons.org/licenses/by/3.0/",
+  "content_sha256": "d32ea2b3a85e489b14e83bcc9eae7274532e1d113753f7be290d4b2dfde573fa",
+  "terms_sha256": "b4741be05ea3937b3604589602e1e24bcd3a0f558dcf8e06797eaa28b5207eaa",
+  "retrieved_at": "2026-09-11T23:17:41Z",
+  "reviewer": "source-admission-agent",
+  "reviewed_at": "2026-09-11T23:27:56.915Z",
+  "review_basis": "Source-field mapping author review only; independent botanical/data-governance acceptance is pending profile-track p5 after p4 integration. Exact downloaded README_WCVP.xlsx (terms_sha256) identifies version 16, extraction 2026-06-04, and CC BY 3.0 at README!A5:A6. Both pipe-delimited UTF-8 CSV schemas and full row counts were verified. Candidate permits four accepted family-reviewed taxa, source taxonomy links, unchanged lifeform descriptions and published habitat categories only; no quantitative growth, fuel, agricultural-effect or companion assertions. The reviewed flag concerns family peer review, not per-value approval. Attribution: Govaerts R (ed.). 2026. WCVP: World Checklist of Vascular Plants. Facilitated by the Royal Botanic Gardens, Kew. Version 16, extracted 04 June 2026; archive URL and licence must remain attached and derivative changes described. See botanical_species_source_admission_20260911/evidence/source-admission.json for exact IDs, hashes and exclusions.",
+  "machine_readable_verified": true,
+  "reuse_allowed": true,
+  "access": "public"
+}

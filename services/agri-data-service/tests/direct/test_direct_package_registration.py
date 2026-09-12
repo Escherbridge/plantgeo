@@ -51,6 +51,10 @@ PROBE_DAY = date(2026, 8, 6)
 # DEFAULT-DENY, the same convention as `test_lane_registry.py::UNREGISTERED_LANE_MODULES`: a package
 # added later is policed the day it lands, with nothing to remember to register.
 PENDING_REGISTRATION: dict[str, str] = {
+    "botanical_species_profiles": "botanical_species_profile_lookup_20260911: a reviewed, nonspatial "
+    "reference publication keyed by immutable source/profile release IDs. The explicit offline publisher "
+    "has no observation day, gap-fill cursor or environmental cron; LANE_REGISTRY registration is "
+    "inapplicable. HTTP and agent registration are proved by the botanical profile integration tests.",
     "vegetation": "environmental_postgres_retirement_20260904 F-B3/join: writer built "
     "(pipeline/direct/vegetation/) and its executor lane IS registered "
     "(vegetation-sentinel2-ndvi-direct-forward, execution/job_executor_service.py), but "

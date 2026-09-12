@@ -361,7 +361,7 @@ class AssessSufficiency:
     def decide(evidence: WarehouseEvidence, *, has_question: bool) -> SufficiencyVerdict:
         """Pure budget rule: fewer distinct populated sources buys more search budget."""
         populated = len(evidence.populated_tools)
-        available = len(warehouse_tools.WAREHOUSE_TOOLS)
+        available = sum(tool.name != "species_information" for tool in warehouse_tools.WAREHOUSE_TOOLS)
         coverage = {
             "populated_tools": list(evidence.populated_tools),
             "tool_calls_made": len(evidence.tool_calls),

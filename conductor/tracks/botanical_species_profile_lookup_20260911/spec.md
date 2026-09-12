@@ -20,8 +20,19 @@ recommendation input: approved values must be frozen into one immutable
 `botanical-species-profile` Parquet release before serving or training consumes
 them. No database fallback may silently replace an absent published profile.
 
-No runtime, source download or database change is authorized by this planning
-pass.
+The implementation session authorizes bounded non-Herbaria source inspection and
+local immutable profile construction, plus HTTP and agent integration. Source
+release/rights decisions belong to the dependency
+`botanical_species_source_admission_20260911`. Anonymous official public downloads
+are explicitly authorized; provider correspondence, external agreements,
+restricted data, all database writes and production mutation remain excluded.
+The continuation after host shutdown is local only: do not open private
+environment files, access Railway or another remote service, ingest source data,
+write to a database, publish a data release or deploy. The existing four-taxon
+WCVP artifacts remain an unaccepted local fixture/candidate. Production authoring
+census and source admission are pending gates; local code/API review does not
+satisfy them. Local PostgreSQL and `pgt` belong to another project and cannot
+establish PlantGeo table contents.
 
 ## Identity and release grains
 
@@ -74,7 +85,8 @@ effect contract.
 
 ## Source strategy
 
-Admit the first trait source field by field. Record source terms, version,
+Consume the first trait source admitted field by field by
+`botanical_species_source_admission_20260911`. Record source terms, version,
 coverage, identifiers, units, evidence class and missingness before loading it.
 A second source is deferred enrichment: it may expand coverage or provide an
 independent assertion after its own admission review, but it is not a prerequisite

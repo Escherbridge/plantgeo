@@ -674,10 +674,9 @@ async def test_every_tool_statement_is_read_only() -> None:
         await agent_tools.query_feature_value_near_point(
             surface_name="water-gauges", day=selected_day, longitude=-116.2, latitude=43.6
         )
-    # Every published tool is driven above, so a tool added to WAREHOUSE_TOOLS without a call here
-    # breaks this assertion rather than slipping through unscanned.
+    # Botanical reference serving has its own write-refusing storage tests and executes no SQL.
     published_tool_count = 10
-    assert len(agent_tools.WAREHOUSE_TOOLS) == published_tool_count
+    assert sum(tool.name != "species_information" for tool in agent_tools.WAREHOUSE_TOOLS) == published_tool_count
     # The two PostgreSQL statements that survive, and nothing else: the ML forecast plane and the
     # ingest lane's absence ledger. Both are governance relations the retirement inventory keeps.
     assert session.markers_excluding_plane_probes() == [
@@ -712,6 +711,8 @@ def test_tool_schemas_publish_bounded_arguments() -> None:
         properties = definition["input_schema"]["properties"]
         if name in surface_only:
             assert {"surface_name", "day"} <= set(properties), name
+        elif name == "species_information":
+            assert {"authority", "authority_version", "taxon_id", "release_id"} <= set(properties), name
         else:
             assert {"longitude", "latitude"} <= set(properties), name
         assert definition["description"]

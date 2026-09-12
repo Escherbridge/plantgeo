@@ -5,7 +5,8 @@
   "status": "active",
   "created_on": "2026-09-11",
   "depends_on": [
-    "parquet_duckdb_pivot_20260823"
+    "parquet_duckdb_pivot_20260823",
+    "botanical_species_source_admission_20260911"
   ],
   "related_tracks": [
     "pnw_herbaria_source_admission_20260911",
@@ -14,14 +15,15 @@
     "botanical_species_recommendation_validation_20260911",
     "repository_conformity_hardening_20260901"
   ],
-  "next_gate": "Freeze the canonical taxon key, per-value evidence schema, reviewed database-authoring contract and immutable botanical-species-profile Parquet publication contract before admitting a first trait source.",
+  "next_gate": "Production authoring census and preservation of reviewed rows, independent source admission, owner integration, and explicitly authorized data publication/deployment. The local implementation is verified and independently reviewed; the existing WCVP bundle is unaccepted.",
   "serving_contract": {
     "kind": "static_lookup",
     "spatial": false,
     "authoring_system": "agri.species and its reviewed evidence records",
     "published_product": "botanical-species-profile",
     "serving_source": "release-pinned Parquet",
-    "database_fallback": "none"
+    "database_fallback": "none",
+    "current_candidate_authoring": "Offline WCVP source-author fixture; no production-row import or production census claim."
   },
   "partitions": {
     "confidence": "active",
@@ -32,50 +34,101 @@
         "model": "gpt-6-astra",
         "depends_on": [],
         "owns": [
-          {"path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/schema-inventory.md", "status": "future"},
-          {"path": "services/agri-data-service/src/agri_data_service/foundation/botanical_species_profiles/", "status": "future"}
+          {
+            "path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/schema-inventory.md",
+            "status": "implemented_and_locally_verified"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/warehouse/botanical_species_profiles/",
+            "status": "implemented_and_locally_verified"
+          }
         ]
       },
       {
         "id": "p2",
         "task": "Reviewed authoring, deterministic source reconciliation and immutable Parquet lookup publication",
         "model": "gpt-5.6-sol",
-        "depends_on": ["p1"],
+        "depends_on": [
+          "p1"
+        ],
         "owns": [
-          {"path": "services/agri-data-service/src/agri_data_service/warehouse/schemas/botanical_species_profiles.py", "status": "future"},
-          {"path": "services/agri-data-service/src/agri_data_service/pipeline/direct/botanical_species_profiles/", "status": "future"}
+          {
+            "path": "services/agri-data-service/src/agri_data_service/warehouse/schemas/botanical_species_profile.py",
+            "status": "implemented_and_locally_verified"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/pipeline/direct/botanical_species_profiles/",
+            "status": "implemented_and_locally_verified"
+          }
         ]
       },
       {
         "id": "p3",
         "task": "Release-pinned species profile API and agent lookup",
         "model": "gpt-6-astra",
-        "depends_on": ["p1", "p2"],
+        "depends_on": [
+          "p1",
+          "p2"
+        ],
         "owns": [
-          {"path": "services/agri-data-service/src/agri_data_service/planes/botanical_species_profiles.py", "status": "future"},
-          {"path": "services/agri-data-service/src/agri_data_service/interface/http/botanical_species_profiles.py", "status": "future"},
-          {"path": "services/agri-data-service/src/agri_data_service/agent/botanical_species_profiles.py", "status": "future"},
-          {"path": "services/agri-data-service/tests/planes/test_botanical_species_profiles.py", "status": "future"},
-          {"path": "services/agri-data-service/tests/interface/test_botanical_species_profile_routes.py", "status": "future"},
-          {"path": "services/agri-data-service/tests/test_botanical_species_profile_agent.py", "status": "future"}
+          {
+            "path": "services/agri-data-service/src/agri_data_service/planes/botanical_species_profiles.py",
+            "status": "implemented_and_locally_verified"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/interface/http/botanical_species_profiles.py",
+            "status": "implemented_and_locally_verified"
+          },
+          {
+            "path": "services/agri-data-service/src/agri_data_service/agent/botanical_species_profiles.py",
+            "status": "implemented_and_locally_verified"
+          },
+          {
+            "path": "services/agri-data-service/tests/planes/test_botanical_species_profiles.py",
+            "status": "implemented_and_locally_verified"
+          },
+          {
+            "path": "services/agri-data-service/tests/interface/test_botanical_species_profile_routes.py",
+            "status": "implemented_and_locally_verified"
+          },
+          {
+            "path": "services/agri-data-service/tests/test_botanical_species_profile_agent.py",
+            "status": "implemented_and_locally_verified"
+          }
         ]
       },
       {
         "id": "p4",
         "task": "Integrated profile publication, API and agent conformance receipt",
         "model": "gpt-6-astra",
-        "depends_on": ["p1", "p2", "p3"],
+        "depends_on": [
+          "p1",
+          "p2",
+          "p3"
+        ],
         "owns": [
-          {"path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/integration-receipt.json", "status": "future"}
+          {
+            "path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/integration-receipt.json",
+            "status": "implemented_and_locally_verified"
+          }
         ]
       },
       {
         "id": "p5",
         "task": "Independent data-governance, botanical-science and agent-honesty verdict",
         "model": "gpt-6-astra",
-        "depends_on": ["p4"],
+        "depends_on": [
+          "p4"
+        ],
         "owns": [
-          {"path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/independent-review.md", "status": "future"}
+          {
+            "path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/independent-review.md",
+            "status": "independently_reviewed_local_code_api_agent"
+          },
+          {
+            "path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/independent-review.json",
+            "status": "independently_reviewed_local_code_api_agent"
+          }
         ]
       }
     ],
@@ -130,5 +183,35 @@
       }
     ],
     "integration_slice": "p4"
+  },
+  "implementation_base": "bc7b5e1ff5dbb6eac929d5db927acd6b7ff2ea4a",
+  "implementation_state": "complete_local_implementation",
+  "placement_adjustment": {
+    "proposed": "foundation/botanical_species_profiles/",
+    "implemented": "warehouse/botanical_species_profiles/",
+    "reason": "Botanical concepts are domain data; the Foundation admission contract excludes new domain-specific helpers. See evidence/schema-inventory.md."
+  },
+  "shared_integration": {
+    "mode": "isolated_patch_for_owner_integration",
+    "base_commit": "bc7b5e1ff5dbb6eac929d5db927acd6b7ff2ea4a",
+    "production_integrated": false,
+    "base_receipt": "evidence/shared-integration-base.json",
+    "reviewed_relational_model_modified": false,
+    "patch": "evidence/shared-registration.patch"
+  },
+  "local_continuation_scope": "Local-only continuation after host shutdown: no private environment files, remote services, source ingestion, database writes, publication or deployment. Existing WCVP artifacts are an unaccepted local candidate.",
+  "production_authoring_census": "pending",
+  "source_admission": "pending",
+  "verification": {
+    "service_tree_digest": "b0ddaeeb60a4374bbd5c98b96de6e679de19ec5b2de206beacdb90eebf4b3674",
+    "receipt": "evidence/verification.json",
+    "candidate_state": "unaccepted_local_fixture"
+  },
+  "independent_local_review": {
+    "state": "approved_for_bounded_local_integration",
+    "verdict": "evidence/independent-review.md",
+    "receipt": "evidence/independent-review.json",
+    "source_admission": "not_granted",
+    "production_acceptance": "not_granted"
   }
 }

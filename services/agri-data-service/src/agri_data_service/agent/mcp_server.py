@@ -1,4 +1,4 @@
-"""An MCP stdio server publishing the agent's ten bounded warehouse tools.
+"""An MCP stdio server publishing the agent's bounded warehouse tools.
 
 The tools were always the reusable half of this package: `agent/graph.py` is one consumer of them
 and an opinionated one, with a sufficiency gate and a web pass wired in. MCP is the second
@@ -43,8 +43,11 @@ SUPPORTED_PROTOCOL_VERSIONS: Final = ("2024-11-05", "2025-03-26", "2025-06-18")
 DEFAULT_PROTOCOL_VERSION: Final = SUPPORTED_PROTOCOL_VERSIONS[-1]
 
 INSTRUCTIONS: Final = (
-    "Bounded, read-only reads of PlantGeo's governed Parquet warehouse at a coordinate. Every tool "
-    "caps its own radius, time window and row count and reports the applied bounds back. A tool "
+    "Bounded, read-only reads of PlantGeo's governed warehouse. Environmental tools scope by "
+    "coordinate or map surface and day, with enforced spatial, time and row bounds. "
+    "species_information is a nonspatial lookup requiring the complete canonical taxon "
+    "authority/version/ID and exact immutable bspf- profile release ID, with bounded assertion "
+    "pages. It has no coordinate or selected-day axis and does not rank species or recommend planting. A tool "
     "that cannot honestly answer returns a typed refusal -- lane_columns_absent, "
     "parquet_availability_withheld, day_not_written -- rather than an empty result; read the "
     "refusal, do not treat it as 'no data here'."

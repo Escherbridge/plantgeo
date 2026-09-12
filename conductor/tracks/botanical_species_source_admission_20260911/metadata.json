@@ -1,0 +1,46 @@
+{
+  "slug": "botanical_species_source_admission_20260911",
+  "title": "Non-Herbaria botanical reference source admission",
+  "type": "infrastructure",
+  "status": "active",
+  "created_on": "2026-09-11",
+  "depends_on": [],
+  "related_tracks": [
+    "botanical_species_profile_lookup_20260911",
+    "botanical_species_recommendation_validation_20260911",
+    "pnw_herbaria_source_admission_20260911"
+  ],
+  "next_gate": "Complete local code/API/agent verification and commit. Production authoring census and independent source admission remain pending before any further source ingestion or publication.",
+  "scope": {
+    "owns": [
+      "official source admission",
+      "release identity",
+      "reuse rights",
+      "field semantics",
+      "source coverage and gaps"
+    ],
+    "downstream_profile_owner": "botanical_species_profile_lookup_20260911",
+    "database_writes": false,
+    "production_changes": false,
+    "provider_correspondence": false,
+    "restricted_data_requests": false,
+    "terms_acceptance": false,
+    "anonymous_official_public_downloads_authorized": true,
+    "herbaria_ingestion": false
+  },
+  "candidate_source_release": "kew-wcvp-16-2026-06-04",
+  "admission_state": "pending_production_census_and_source_admission",
+  "evidence": [
+    "evidence/source-admission.md",
+    "evidence/source-admission.json",
+    "evidence/wcvp-16-source-release.json"
+  ],
+  "independent_review": {
+    "state": "source_admission_pending",
+    "may_be_satisfied_by": "Separate source-admission decision after production authoring census; local code/API review does not admit this candidate.",
+    "self_approval_permitted": false
+  },
+  "local_continuation_scope": "Local-only continuation after host shutdown: no private environment files, remote services, source ingestion, database writes, publication or deployment. Existing WCVP artifacts are an unaccepted local candidate.",
+  "production_authoring_census": "pending",
+  "source_admission": "pending"
+}
