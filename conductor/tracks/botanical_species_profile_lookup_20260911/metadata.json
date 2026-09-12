@@ -14,7 +14,19 @@
     "botanical_species_recommendation_validation_20260911",
     "repository_conformity_hardening_20260901"
   ],
-  "next_gate": "Supply an operator-authorized Railway read target for the bounded authoring census, then reconcile reviewed identities and publish an independently admitted immutable profile release.",
+  "next_gate": "Resolve credential-authorization and raw-evidence custody blockers; supply an operator-authorized Railway read target for the bounded authoring census; then complete reviewed-row preservation and independent source admission. Local implementation and canonical local intake are retained; source data and production acceptance remain pending. See evidence/census-handoff-20260912.md.",
+  "census_handoff": {
+    "status": "blocked_before_database_connection",
+    "handoff": "evidence/census-handoff-20260912.md",
+    "receipt": "evidence/census-reconciliation-20260912.json",
+    "original_implementation_commit": "edc6afdeb23f339b40049ec0828551c2fe1a4d45",
+    "canonical_local_intake": "32a13c604e6da4331051e6a584f7942e7165af1e",
+    "canonical_local_evidence_checkpoint": "2317ee3a2ac35de489d27503dfec91ea3285bd66",
+    "original_worktree_registered_at_latest_inspection": false,
+    "raw_source_archive_custody": "unknown_outside_four_checked_absent_locations",
+    "private_credential_access_in_latest_continuation": false,
+    "database_queries_executed": 0
+  },
   "serving_contract": {
     "kind": "static_lookup",
     "spatial": false,

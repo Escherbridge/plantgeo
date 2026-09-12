@@ -1,0 +1,52 @@
+{
+  "schema_version": "botanical-census-handoff-independent-review/v1",
+  "reviewed_at": "2026-09-12T07:34:56Z",
+  "reviewer": "local-independent-review",
+  "verdict": "approved_documentation_and_evidence_update_only",
+  "branch": "codex/botanical-census-handoff",
+  "base_commit": "edc6afdeb23f339b40049ec0828551c2fe1a4d45",
+  "reviewed_files_sha256": {
+    "conductor/tracks/botanical_species_profile_lookup_20260911/metadata.json": "0b4b4cea42c889612b825aae8217a7d283ee9b1c58616fca10e456ed6f623450",
+    "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/census-handoff-20260912.md": "7363391d33beb4fa174c94f87d2078a6800c7ebff694aec4986a87675e216a05",
+    "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/census-reconciliation-20260912.json": "0c56a3111c81c2a5e8beb8c4f6e8db73197dddd1ee35dc6cdbfc4ab42278795c"
+  },
+  "material_findings": [],
+  "verified_locally": {
+    "json_parsing": "pass",
+    "markdown_okf_type": "handoff",
+    "markdown_links_resolve": true,
+    "metadata_change_scope": "next_gate and additive census_handoff only",
+    "original_implementation_branch_commit": "edc6afdeb23f339b40049ec0828551c2fe1a4d45",
+    "original_implementation_tree": "01ad55b6220a13604e8fbf8a4ceda773e35d5658",
+    "original_receipt_and_patch_hashes_retained": 5,
+    "original_portable_object_hashes_retained": 5,
+    "original_portable_object_bytes": 55323,
+    "original_source_digest_reference_preserved": true,
+    "original_directory_exists": true,
+    "original_directory_has_git_metadata": false,
+    "original_worktree_registered": false,
+    "source_zip_absent_at_all_four_listed_locations": true,
+    "canonical_local_intake_commit_exists": true,
+    "canonical_evidence_checkpoint_source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+    "canonical_evidence_checkpoint_grants_production_acceptance": false
+  },
+  "acceptance_limits": {
+    "runtime_review_or_test_execution": false,
+    "private_credentials_or_environment_contents_read": false,
+    "remote_services_contacted": false,
+    "database_access": false,
+    "source_download_or_ingestion": false,
+    "implementation_or_historical_evidence_edited": false,
+    "census_completed": false,
+    "source_or_production_acceptance_granted": false,
+    "current_raw_zip_hash_verified": false,
+    "raw_zip_custody_elsewhere": "unknown",
+    "platform_metadata_approval_rejection_and_process_inventory": "Reviewed as author-reported prior observations; no remote, credential or process-inventory re-execution by this reviewer."
+  },
+  "remaining_gates": [
+    "Explicitly authorized, scoped production authoring census and reviewed-row preservation.",
+    "Independent source admission and scientific applicability decisions.",
+    "Raw source ZIP and original local verification-evidence custody.",
+    "Separate data publication, production readback, deployed HTTP/MCP and recommendation acceptance."
+  ]
+}

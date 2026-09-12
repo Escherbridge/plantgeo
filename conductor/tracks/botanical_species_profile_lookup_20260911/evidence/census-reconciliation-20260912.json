@@ -1,0 +1,163 @@
+{
+  "schema_version": "botanical-production-census-reconciliation/v1",
+  "captured_at": "2026-09-12T03:50:36Z",
+  "status": "blocked_before_credential_inspection_and_database_connection",
+  "implementation": {
+    "verification_source": "existing main repository Git objects; original task worktree is no longer registered",
+    "repository": "C:/Users/atooz/Programming/plantgeo",
+    "branch": "codex/botanical-species-profile-lookup",
+    "commit": "edc6afdeb23f339b40049ec0828551c2fe1a4d45",
+    "tree": "01ad55b6220a13604e8fbf8a4ceda773e35d5658",
+    "base": "bc7b5e1ff5dbb6eac929d5db927acd6b7ff2ea4a",
+    "branch_points_to_expected_commit": true,
+    "receipts_rehashed_from_commit": {
+      "integration-receipt.json": "5d4b6a712c4a6486de34386f0d75eef5c6dcc1895e2d11c738619c95da4584f7",
+      "independent-review.json": "1859f0b288fb735b6b6697208ab840f7f63e0f65aec4e31e2c007fa71af5469e",
+      "verification.json": "fffecc734a8d55646148591214e75147b14cf1b1b18e0974024ee228ea850439",
+      "python-quality-receipt.json": "babaeb1ac075d26073273f9a4c80ba302d25653177404fee7bc377ab8b52e335",
+      "shared-registration.patch": "ae0f07070de4872c870433c60e213111311c8c315ea829fcfcf7e5f2c1156def"
+    },
+    "tests_rerun": false,
+    "previous_verification": {
+      "passed": 6086,
+      "skipped": 150,
+      "xfailed": 1,
+      "scope": "historical full Python service sweep on original service digest; not a new execution"
+    },
+    "new_implementation_commit_created": false
+  },
+  "worktree": {
+    "path": "C:/Users/atooz/.codex/worktrees/0caf/plantgeo",
+    "directory_exists": true,
+    "git_file_exists": false,
+    "registered": false,
+    "original_research_directory_exists": false,
+    "current_clean_status": "not_applicable_without_git_worktree",
+    "removed_by": "unknown",
+    "reconstructed": false
+  },
+  "railway_metadata": {
+    "source": "authenticated mcp__railway__describe_service read",
+    "project_id": "6faaf3ea-ac46-4c8b-bbfe-1351dbb9d990",
+    "service_id": "1e166530-9c8a-4d4a-b685-a70c801fc449",
+    "service_name": "plantgeo-spatiotemporal-db",
+    "service_state": "live",
+    "environment_id": "b7cfa813-8a5c-4fcd-80f2-cab736d840a7",
+    "environment_name": "production",
+    "tcp_proxy": {
+      "domain": "switchback.proxy.rlwy.net",
+      "proxy_port": 37967,
+      "application_port": 5432,
+      "sync_status": "ACTIVE"
+    },
+    "database_url_variable_name_present": true,
+    "credential_values_read": false,
+    "limits": "Platform identity and proxy metadata establish the scoped service, not database authentication, read-only privileges, reachability or table contents."
+  },
+  "access_blocker": {
+    "kind": "automatic_approval_review_rejection",
+    "attempted_action": "Read only relevant DSN fields from C:/Users/atooz/Programming/plantgeo/.env and .env.local, without printing values, to check their match to the verified PlantGeo proxy.",
+    "reviewer_reason": "The trusted transcript authorizes public downloads but does not authorize opening private environment files or accessing production credentials.",
+    "command_executed": false,
+    "alternate_credential_path_attempted": false,
+    "explicit_user_approval_required": "Read the PlantGeo DSN fields from the two named private environment files and use a matching DSN for bounded read-only metadata/count/review-state queries against the verified PlantGeo service.",
+    "candidate_environment_files_exist": true,
+    "usable_dsn": "unknown",
+    "database_role_read_only_privileges": "unknown"
+  },
+  "census": {
+    "status": "not_run",
+    "database_connections": 0,
+    "database_queries": 0,
+    "target_database_name": null,
+    "deployed_schema": null,
+    "table_presence": null,
+    "row_counts": null,
+    "review_state_columns": null,
+    "review_state_counts": null,
+    "reviewed_row_preservation": "not_established",
+    "intended_table_scope": [
+      "agri.species",
+      "agri.companion_relationships"
+    ],
+    "proposed_controls_not_executed": {
+      "startup_default_transaction_read_only": true,
+      "transaction": "REPEATABLE READ READ ONLY",
+      "statement_timeout_ms": 5000,
+      "lock_timeout_ms": 1000,
+      "connect_timeout_seconds": 10,
+      "no_row_content_or_credentials_in_receipt": true,
+      "close_with_rollback": true
+    }
+  },
+  "candidate": {
+    "release_id": "bspf-0f6b58aba4610edf9b6bcde1e7a0da0c44cf3e4671c1b624b13d7ed95b5ab501",
+    "acceptance": "unaccepted_local_candidate",
+    "committed_portable_objects_verified": [
+      {
+        "object": "taxa",
+        "bytes": 8782,
+        "sha256": "42583d98e56a74aa48ba0e1bc6f3c24ed48275ce6494fe2310c96ae34186b71d"
+      },
+      {
+        "object": "assertions",
+        "bytes": 11969,
+        "sha256": "49320848d79779c4fa7c9646428b690bef89c7cab5702c417ffc05c65e6658a6"
+      },
+      {
+        "object": "decisions",
+        "bytes": 11757,
+        "sha256": "1590c4446cdf7d70f6dfe5cb038aca3b92a820e94b4870b3d09d0b562049ad69"
+      },
+      {
+        "object": "profiles",
+        "bytes": 12742,
+        "sha256": "05152ecb8552f768cf444a7a2fe1c7d5a7a8a70de90dc573a01911fe6f11cf92"
+      },
+      {
+        "object": "manifest",
+        "bytes": 10073,
+        "sha256": "f4db0f8fc52357e2fcee754ea50a46c335bb30cc108adffca1c17ed4cfd452c0"
+      }
+    ],
+    "committed_portable_total_bytes": 55323,
+    "all_objects_match_original_receipt": true,
+    "original_zip": {
+      "recorded_bytes": 88179649,
+      "recorded_sha256": "d32ea2b3a85e489b14e83bcc9eae7274532e1d113753f7be290d4b2dfde573fa",
+      "current_hash_reverified": false,
+      "status": "absent_at_four_checked_locations; custody_elsewhere_unknown",
+      "checked_absent_locations": [
+        "C:/Users/atooz/.codex/worktrees/0caf/plantgeo/local-artifacts/botanical-species-profile/source-admission/wcvp-2026-06-04.zip",
+        "C:/Users/atooz/Programming/plantgeo/local-artifacts/botanical-species-profile/source-admission/wcvp-2026-06-04.zip",
+        "C:/Users/atooz/.codex/worktrees/4ccb/plantgeo/local-artifacts/botanical-species-profile/source-admission/wcvp-2026-06-04.zip",
+        "C:/Users/atooz/.codex/worktrees/3529/plantgeo/local-artifacts/botanical-species-profile/source-admission/wcvp-2026-06-04.zip"
+      ],
+      "downloaded_again": false
+    }
+  },
+  "operations": {
+    "source_downloads": 0,
+    "source_ingestions": 0,
+    "database_writes": 0,
+    "migrations": 0,
+    "data_publications": 0,
+    "deployments": 0,
+    "source_or_existing_receipt_rewrites": 0,
+    "new_files": "This separate evidence-only reconciliation receipt and its review, if produced."
+  },
+  "remaining_gates": [
+    "Explicit user approval recognized by automatic approval review for private PlantGeo DSN inspection and the narrowly scoped read-only census.",
+    "Verify a DSN matches the authenticated PlantGeo production target; execute bounded read-only metadata/count/review-state queries.",
+    "Preserve existing relational UUIDs and reviewed evidence; complete reviewed canonical crosswalk and provenance decisions before any successor candidate.",
+    "Obtain an independent source-admission verdict; the local implementation review does not admit WCVP data.",
+    "Resolve original source ZIP and raw local verification-evidence custody without re-downloading or re-ingesting.",
+    "Keep publication, production readback, deployed HTTP/MCP acceptance and scientific recommendation gates separate."
+  ],
+  "integration_disposition": {
+    "implementation": "Committed implementation and portable objects remain available and verified for integration consumption.",
+    "task_archival": "Do not treat the former clean-worktree/ZIP-custody checkpoint as current. The worktree is no longer registered; committed evidence survives, raw archive custody remains open.",
+    "conductor_tracks": "Remain active for census, source admission and production/scientific gates.",
+    "immutable_evidence": "Preserve original receipt and object hashes. This receipt supplements historical observations and does not overwrite them."
+  }
+}
