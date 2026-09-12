@@ -1,0 +1,50 @@
+{
+  "slug": "pnw_land_context_reference_plane_20260911",
+  "title": "PNW land context and public contact reference plane",
+  "type": "data-governance",
+  "status": "planned",
+  "created_on": "2026-09-11",
+  "registration_status": "registered_planned",
+  "execution_scope": "Planning packet only. No implementation, acquisition/ingestion, outreach, publication, deployment or runtime configuration is authorized.",
+  "depends_on": [],
+  "related_tracks": [
+    "pnw_land_contact_experience_20260911",
+    "parquet_reader_cutover_acceptance_20260901",
+    "multiscale_polygon_surface_20260901",
+    "gapless_parquet_publication_20260901"
+  ],
+  "next_gate": "Resolve per-source rights, current production feeds, native identity, source watermarks and PNW coverage before any acquisition or implementation decision.",
+  "geographic_scope": {
+    "states": [
+      "WA",
+      "OR",
+      "ID"
+    ],
+    "query_bbox_wgs84": [
+      -125,
+      42,
+      -111,
+      49
+    ],
+    "product_mask": "Washington, Oregon and Idaho administrative footprint"
+  },
+  "product_families": [
+    "parcels-and-nonpersonal-land-use",
+    "electric-service-territories",
+    "blm-surface-management-and-office-jurisdictions",
+    "state-managed-land"
+  ],
+  "source_inventory": "evidence/source-inventory.md",
+  "independent_review": "evidence/independent-review.md",
+  "admitted_releases": [],
+  "private_owner_data_policy": "Private owner names and personal owner contact data excluded by default; exclusion is not a coverage gap.",
+  "open_gates": [
+    "Idaho utility polygon source",
+    "Idaho production state-land source",
+    "Oregon current utility machine feed",
+    "County parcel field and rights coverage",
+    "Per-source reuse and licensing",
+    "Native keys and source watermarks",
+    "Verified office/topic assignments"
+  ]
+}

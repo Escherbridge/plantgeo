@@ -1,0 +1,2651 @@
+{
+  "schema": "qa-pnw-intake-preparation/v1",
+  "prepared_at": "2026-09-12T02:26:20.472476+00:00",
+  "preparer_lane": "/root/legacy_reconciliation",
+  "verdict": "READY_FOR_ADDITIVE_DOC_INTAKE",
+  "source_commit": "abdf99b993117f77a1912c05ccabd3df082a8903",
+  "source_tree": "7d7d4f06ce2d3d98fd37e713e1824e0e30ba4413",
+  "source_parent": "26b69d386946308830bc202cd6e773f03a4d23a4",
+  "actual_merge_base": "bc7b5e1ff5dbb6eac929d5db927acd6b7ff2ea4a",
+  "comparison_candidate": "416342fa5bea836e6a062549b87c2706f53ce45e",
+  "comparison_tree": "df12542ffa00937e0213d10c938e715849030492",
+  "head_observed_at_end": "416342fa5bea836e6a062549b87c2706f53ce45e",
+  "source_scope": {
+    "files": 16,
+    "added_files": 11,
+    "modified_files": 5,
+    "insertions": 1526,
+    "deletions": 2,
+    "runtime_paths": [],
+    "numstat": [
+      {
+        "path": "conductor/RUNBOOK.md",
+        "insertions": 1,
+        "deletions": 0
+      },
+      {
+        "path": "conductor/tracks.md",
+        "insertions": 2,
+        "deletions": 0
+      },
+      {
+        "path": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "insertions": 447,
+        "deletions": 0
+      },
+      {
+        "path": "conductor/tracks/platform_experience_qa_20260911/evidence/intervention-boundary-spec.md",
+        "insertions": 47,
+        "deletions": 0
+      },
+      {
+        "path": "conductor/tracks/platform_experience_qa_20260911/evidence/task-ledger.md",
+        "insertions": 1,
+        "deletions": 1
+      },
+      {
+        "path": "conductor/tracks/platform_experience_qa_20260911/metadata.json",
+        "insertions": 2,
+        "deletions": 0
+      },
+      {
+        "path": "conductor/tracks/platform_experience_qa_20260911/spec.md",
+        "insertions": 2,
+        "deletions": 1
+      },
+      {
+        "path": "conductor/tracks/pnw_land_contact_experience_20260911/metadata.json",
+        "insertions": 91,
+        "deletions": 0
+      },
+      {
+        "path": "conductor/tracks/pnw_land_contact_experience_20260911/plan.md",
+        "insertions": 132,
+        "deletions": 0
+      },
+      {
+        "path": "conductor/tracks/pnw_land_contact_experience_20260911/spec.md",
+        "insertions": 235,
+        "deletions": 0
+      },
+      {
+        "path": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/independent-review.md",
+        "insertions": 81,
+        "deletions": 0
+      },
+      {
+        "path": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/parent-registration-review.md",
+        "insertions": 28,
+        "deletions": 0
+      },
+      {
+        "path": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+        "insertions": 124,
+        "deletions": 0
+      },
+      {
+        "path": "conductor/tracks/pnw_land_context_reference_plane_20260911/metadata.json",
+        "insertions": 50,
+        "deletions": 0
+      },
+      {
+        "path": "conductor/tracks/pnw_land_context_reference_plane_20260911/plan.md",
+        "insertions": 76,
+        "deletions": 0
+      },
+      {
+        "path": "conductor/tracks/pnw_land_context_reference_plane_20260911/spec.md",
+        "insertions": 207,
+        "deletions": 0
+      }
+    ]
+  },
+  "source_file_pins": [
+    {
+      "path": "conductor/RUNBOOK.md",
+      "source_parent_blob": "16c86af1bda683f5f2115b014ea4b3c736b5bf35",
+      "source_blob": "7ab8dc1031d72326a15ced3bab08788086036be5",
+      "source_raw_sha256": "fa2a3a3ac77fe4bb5939a6793692fe6a51f939e8dabc812cae2e23fbe8865148",
+      "current_blob": "e174315b1589ac0ea9573d3180c06edc3f0a471f",
+      "disposition": "compose_only_source_row_insertions"
+    },
+    {
+      "path": "conductor/tracks.md",
+      "source_parent_blob": "0e076834fcadbb492ca8e54e539c85b1667dc21a",
+      "source_blob": "93276503daebb058b75b876b1156043bd1b29b8b",
+      "source_raw_sha256": "2115acff29ba870ab98dce2fde6ff0d11adcaec995c335da7f046442f71bf3ee",
+      "current_blob": "46954314516212768f6d0b30e4643baeff540087",
+      "disposition": "compose_only_source_row_insertions"
+    },
+    {
+      "path": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+      "source_parent_blob": null,
+      "source_blob": "3a31757b1b7a1db3b7b34cc7859e4f2ef0f28c97",
+      "source_raw_sha256": "1efde3c255a3c9a566d53f8fcf7a1af734dffb1ef4384b40b3e4b522b578cc25",
+      "current_blob": null,
+      "disposition": "add_exact_source_blob"
+    },
+    {
+      "path": "conductor/tracks/platform_experience_qa_20260911/evidence/intervention-boundary-spec.md",
+      "source_parent_blob": null,
+      "source_blob": "60fde2137d12ae0c2aa257062208b4c307bb0675",
+      "source_raw_sha256": "e65dd243e6d48bde5ecc5bb44586d9a1c92eb8da01c20e8bfbdab64f0f33f65b",
+      "current_blob": null,
+      "disposition": "add_exact_source_blob"
+    },
+    {
+      "path": "conductor/tracks/platform_experience_qa_20260911/evidence/task-ledger.md",
+      "source_parent_blob": "94fc5893f83255fc8173b1790923e3f81fda9a87",
+      "source_blob": "4a8f65134078792b4100a4c626e98dbc47770fa1",
+      "source_raw_sha256": "b1237d67a5395cb8febf547d00b13dbbaa5e70dae9db16bfc340580c2e793be1",
+      "current_blob": "94fc5893f83255fc8173b1790923e3f81fda9a87",
+      "disposition": "source_change_applies_to_exact_parent_blob"
+    },
+    {
+      "path": "conductor/tracks/platform_experience_qa_20260911/metadata.json",
+      "source_parent_blob": "260e2dd28d32d2ca5b76fb51c804e41fa1f1b6d5",
+      "source_blob": "242ffbe7393a123a2345e17383e5be3f3f59e795",
+      "source_raw_sha256": "5f55457fdba93835b88678e1ca8c11818c5ff6cc662cbba0d5f47296beedcb7b",
+      "current_blob": "260e2dd28d32d2ca5b76fb51c804e41fa1f1b6d5",
+      "disposition": "source_change_applies_to_exact_parent_blob"
+    },
+    {
+      "path": "conductor/tracks/platform_experience_qa_20260911/spec.md",
+      "source_parent_blob": "1716672068c648c82157cf53ec79ddfbeef79c99",
+      "source_blob": "0aca102658dcbb0f0e99b582f61efef1fc940b75",
+      "source_raw_sha256": "354f4d29417d5eebef6a87b924abb85f35f7c418227076b2513ce91c84b5007f",
+      "current_blob": "1716672068c648c82157cf53ec79ddfbeef79c99",
+      "disposition": "source_change_applies_to_exact_parent_blob"
+    },
+    {
+      "path": "conductor/tracks/pnw_land_contact_experience_20260911/metadata.json",
+      "source_parent_blob": null,
+      "source_blob": "140630c93663d36bdfae50cd6de71c04d8503575",
+      "source_raw_sha256": "897a53d260a6a4fa99bfb5b95bc11949b3841d20981908b06491dda0cb3dd298",
+      "current_blob": null,
+      "disposition": "add_exact_source_blob"
+    },
+    {
+      "path": "conductor/tracks/pnw_land_contact_experience_20260911/plan.md",
+      "source_parent_blob": null,
+      "source_blob": "79969f688321ac64cfd7d5bac2c033e47351419d",
+      "source_raw_sha256": "17690031cf15c2e12224d3d57f7acd44ea75cb14ec37ea936891d8fe49d5bbb8",
+      "current_blob": null,
+      "disposition": "add_exact_source_blob"
+    },
+    {
+      "path": "conductor/tracks/pnw_land_contact_experience_20260911/spec.md",
+      "source_parent_blob": null,
+      "source_blob": "e2c490a4c78ebf3bfd93c405be292d8e244ab6d7",
+      "source_raw_sha256": "4babfa0a36df6685bbb47f9a8fb0822e8a0e1e562f574f574982636bfc6c828b",
+      "current_blob": null,
+      "disposition": "add_exact_source_blob"
+    },
+    {
+      "path": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/independent-review.md",
+      "source_parent_blob": null,
+      "source_blob": "b54678df4cd62fed07eae8991a17dd1298bafdc5",
+      "source_raw_sha256": "1963c50093eb381d5ce5d068d626db1b69b71ec73e525e1f754966775ba5532d",
+      "current_blob": null,
+      "disposition": "add_exact_source_blob"
+    },
+    {
+      "path": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/parent-registration-review.md",
+      "source_parent_blob": null,
+      "source_blob": "7d55d6f26002fb9a21d164268071994f3c4315c3",
+      "source_raw_sha256": "a1c92accd558417191435d0e3374b52aa542a0029a610d96dac10f0beb06cfe8",
+      "current_blob": null,
+      "disposition": "add_exact_source_blob"
+    },
+    {
+      "path": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+      "source_parent_blob": null,
+      "source_blob": "e0e2323bac8ab7556704757933372bfa7ea583a7",
+      "source_raw_sha256": "a7a0ae172f2eb4f456a935620ca608bb706347ed2de0eb1dd8dcbe06be58298d",
+      "current_blob": null,
+      "disposition": "add_exact_source_blob"
+    },
+    {
+      "path": "conductor/tracks/pnw_land_context_reference_plane_20260911/metadata.json",
+      "source_parent_blob": null,
+      "source_blob": "d56c661c2eb13d9a448ec77f53cd46c1786abdce",
+      "source_raw_sha256": "6a6ddb91e9237e31bdebb1c2a80ff75e06fa634722dddbac29acaee48f13c950",
+      "current_blob": null,
+      "disposition": "add_exact_source_blob"
+    },
+    {
+      "path": "conductor/tracks/pnw_land_context_reference_plane_20260911/plan.md",
+      "source_parent_blob": null,
+      "source_blob": "98615b664c395c1d539a4f1b0c4bb641f327883d",
+      "source_raw_sha256": "e25b3acf99be5f408c25d4b556a9626faa950df8e25d8b5b6dfa36d7f2d5919f",
+      "current_blob": null,
+      "disposition": "add_exact_source_blob"
+    },
+    {
+      "path": "conductor/tracks/pnw_land_context_reference_plane_20260911/spec.md",
+      "source_parent_blob": null,
+      "source_blob": "538439eaa3a3d08f68096c96a9f85d47d26b8ff1",
+      "source_raw_sha256": "de34a31a100a56779e3173233266d71a0690d821e1507ac4ef09aa77fd818b51",
+      "current_blob": null,
+      "disposition": "add_exact_source_blob"
+    }
+  ],
+  "shared_composition": [
+    {
+      "path": "conductor/RUNBOOK.md",
+      "parent_blob": "16c86af1bda683f5f2115b014ea4b3c736b5bf35",
+      "current_blob": "e174315b1589ac0ea9573d3180c06edc3f0a471f",
+      "source_blob": "7ab8dc1031d72326a15ced3bab08788086036be5",
+      "additions": [
+        "| PNW land context and public contact planning | [Reference-plane plan](tracks/pnw_land_context_reference_plane_20260911/plan.md) and [experience plan](tracks/pnw_land_contact_experience_20260911/plan.md) | Resolve Idaho utility/state-land feeds, Oregon's current utility feed, county parcel fields/rights and every exact distribution's reuse terms before acquisition. Keep private owner names excluded; preserve boundaries, offices, advisers and contact-process routes as distinct evidence. Registration is planning only and authorizes no ingestion, outreach or implementation. |\n"
+      ],
+      "added_row_count": 1,
+      "reconciliation": "Restore current pre-intake Git bytes, insert only these exact source rows once, then require removing them to reconstruct the current bytes exactly."
+    },
+    {
+      "path": "conductor/tracks.md",
+      "parent_blob": "0e076834fcadbb492ca8e54e539c85b1667dc21a",
+      "current_blob": "46954314516212768f6d0b30e4643baeff540087",
+      "source_blob": "93276503daebb058b75b876b1156043bd1b29b8b",
+      "additions": [
+        "| [pnw_land_context_reference_plane_20260911](tracks/pnw_land_context_reference_plane_20260911/plan.md) | planned | Resolve exact source rights, current feeds, native IDs, watermarks and WA/OR/ID coverage for nonpersonal parcel/land-use context, electric territories, BLM surface/office jurisdictions, state-managed lands and a separately versioned public contact directory. Private owner names remain excluded. No acquisition or implementation is authorized. |\n| [pnw_land_contact_experience_20260911](tracks/pnw_land_contact_experience_20260911/plan.md) | planned | After the reference plane is admitted, build four truthful map groups plus a persistent selected-area contact panel and read-only agent parity. Explain why a public office or adviser applies, distinguish records help from responsibility or documented forwarding, and prepare inquiries for user review without sending. |\n"
+      ],
+      "added_row_count": 2,
+      "reconciliation": "Restore current pre-intake Git bytes, insert only these exact source rows once, then require removing them to reconstruct the current bytes exactly."
+    }
+  ],
+  "qa_inventory": {
+    "path": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+    "source_blob": "3a31757b1b7a1db3b7b34cc7859e4f2ef0f28c97",
+    "stable_case_count": 206,
+    "unique_case_count": 206,
+    "statuses": {
+      "not_run": 165,
+      "blocked": 41
+    },
+    "families": {
+      "R": 23,
+      "G": 10,
+      "M": 13,
+      "L": 27,
+      "T": 12,
+      "D": 13,
+      "S": 11,
+      "C": 16,
+      "O": 10,
+      "X": 10,
+      "A": 17,
+      "P": 9,
+      "B": 11,
+      "W": 8,
+      "I": 5,
+      "N": 11
+    },
+    "cases": [
+      {
+        "id": "PGQA-R01",
+        "line": 58,
+        "status": "not_run",
+        "family": "R"
+      },
+      {
+        "id": "PGQA-R02",
+        "line": 59,
+        "status": "not_run",
+        "family": "R"
+      },
+      {
+        "id": "PGQA-R03",
+        "line": 60,
+        "status": "not_run",
+        "family": "R"
+      },
+      {
+        "id": "PGQA-R04",
+        "line": 61,
+        "status": "not_run",
+        "family": "R"
+      },
+      {
+        "id": "PGQA-R05",
+        "line": 62,
+        "status": "not_run",
+        "family": "R"
+      },
+      {
+        "id": "PGQA-R06",
+        "line": 63,
+        "status": "not_run",
+        "family": "R"
+      },
+      {
+        "id": "PGQA-R07",
+        "line": 64,
+        "status": "not_run",
+        "family": "R"
+      },
+      {
+        "id": "PGQA-R08",
+        "line": 65,
+        "status": "not_run",
+        "family": "R"
+      },
+      {
+        "id": "PGQA-R09",
+        "line": 66,
+        "status": "not_run",
+        "family": "R"
+      },
+      {
+        "id": "PGQA-R10",
+        "line": 67,
+        "status": "not_run",
+        "family": "R"
+      },
+      {
+        "id": "PGQA-R11",
+        "line": 68,
+        "status": "not_run",
+        "family": "R"
+      },
+      {
+        "id": "PGQA-R12",
+        "line": 69,
+        "status": "not_run",
+        "family": "R"
+      },
+      {
+        "id": "PGQA-R13",
+        "line": 70,
+        "status": "not_run",
+        "family": "R"
+      },
+      {
+        "id": "PGQA-R14",
+        "line": 71,
+        "status": "not_run",
+        "family": "R"
+      },
+      {
+        "id": "PGQA-R15",
+        "line": 72,
+        "status": "not_run",
+        "family": "R"
+      },
+      {
+        "id": "PGQA-R16",
+        "line": 73,
+        "status": "not_run",
+        "family": "R"
+      },
+      {
+        "id": "PGQA-R17",
+        "line": 74,
+        "status": "not_run",
+        "family": "R"
+      },
+      {
+        "id": "PGQA-R18",
+        "line": 75,
+        "status": "not_run",
+        "family": "R"
+      },
+      {
+        "id": "PGQA-R19",
+        "line": 76,
+        "status": "not_run",
+        "family": "R"
+      },
+      {
+        "id": "PGQA-R20",
+        "line": 77,
+        "status": "not_run",
+        "family": "R"
+      },
+      {
+        "id": "PGQA-R21",
+        "line": 78,
+        "status": "not_run",
+        "family": "R"
+      },
+      {
+        "id": "PGQA-R22",
+        "line": 79,
+        "status": "not_run",
+        "family": "R"
+      },
+      {
+        "id": "PGQA-R23",
+        "line": 80,
+        "status": "not_run",
+        "family": "R"
+      },
+      {
+        "id": "PGQA-G01",
+        "line": 88,
+        "status": "not_run",
+        "family": "G"
+      },
+      {
+        "id": "PGQA-G02",
+        "line": 89,
+        "status": "not_run",
+        "family": "G"
+      },
+      {
+        "id": "PGQA-G03",
+        "line": 90,
+        "status": "not_run",
+        "family": "G"
+      },
+      {
+        "id": "PGQA-G04",
+        "line": 91,
+        "status": "not_run",
+        "family": "G"
+      },
+      {
+        "id": "PGQA-G05",
+        "line": 92,
+        "status": "not_run",
+        "family": "G"
+      },
+      {
+        "id": "PGQA-G06",
+        "line": 93,
+        "status": "not_run",
+        "family": "G"
+      },
+      {
+        "id": "PGQA-G07",
+        "line": 94,
+        "status": "not_run",
+        "family": "G"
+      },
+      {
+        "id": "PGQA-G08",
+        "line": 95,
+        "status": "not_run",
+        "family": "G"
+      },
+      {
+        "id": "PGQA-G09",
+        "line": 96,
+        "status": "not_run",
+        "family": "G"
+      },
+      {
+        "id": "PGQA-G10",
+        "line": 97,
+        "status": "not_run",
+        "family": "G"
+      },
+      {
+        "id": "PGQA-M01",
+        "line": 105,
+        "status": "not_run",
+        "family": "M"
+      },
+      {
+        "id": "PGQA-M02",
+        "line": 106,
+        "status": "not_run",
+        "family": "M"
+      },
+      {
+        "id": "PGQA-M03",
+        "line": 107,
+        "status": "not_run",
+        "family": "M"
+      },
+      {
+        "id": "PGQA-M04",
+        "line": 108,
+        "status": "not_run",
+        "family": "M"
+      },
+      {
+        "id": "PGQA-M05",
+        "line": 109,
+        "status": "not_run",
+        "family": "M"
+      },
+      {
+        "id": "PGQA-M06",
+        "line": 110,
+        "status": "not_run",
+        "family": "M"
+      },
+      {
+        "id": "PGQA-M07",
+        "line": 111,
+        "status": "not_run",
+        "family": "M"
+      },
+      {
+        "id": "PGQA-M08",
+        "line": 112,
+        "status": "not_run",
+        "family": "M"
+      },
+      {
+        "id": "PGQA-M09",
+        "line": 113,
+        "status": "not_run",
+        "family": "M"
+      },
+      {
+        "id": "PGQA-M10",
+        "line": 114,
+        "status": "not_run",
+        "family": "M"
+      },
+      {
+        "id": "PGQA-M11",
+        "line": 115,
+        "status": "not_run",
+        "family": "M"
+      },
+      {
+        "id": "PGQA-M12",
+        "line": 116,
+        "status": "not_run",
+        "family": "M"
+      },
+      {
+        "id": "PGQA-M13",
+        "line": 117,
+        "status": "not_run",
+        "family": "M"
+      },
+      {
+        "id": "PGQA-L01",
+        "line": 127,
+        "status": "not_run",
+        "family": "L"
+      },
+      {
+        "id": "PGQA-L02",
+        "line": 128,
+        "status": "not_run",
+        "family": "L"
+      },
+      {
+        "id": "PGQA-L03",
+        "line": 129,
+        "status": "not_run",
+        "family": "L"
+      },
+      {
+        "id": "PGQA-L04",
+        "line": 130,
+        "status": "not_run",
+        "family": "L"
+      },
+      {
+        "id": "PGQA-L05",
+        "line": 131,
+        "status": "not_run",
+        "family": "L"
+      },
+      {
+        "id": "PGQA-L06",
+        "line": 132,
+        "status": "not_run",
+        "family": "L"
+      },
+      {
+        "id": "PGQA-L07",
+        "line": 133,
+        "status": "not_run",
+        "family": "L"
+      },
+      {
+        "id": "PGQA-L08",
+        "line": 134,
+        "status": "not_run",
+        "family": "L"
+      },
+      {
+        "id": "PGQA-L09",
+        "line": 135,
+        "status": "not_run",
+        "family": "L"
+      },
+      {
+        "id": "PGQA-L10",
+        "line": 136,
+        "status": "not_run",
+        "family": "L"
+      },
+      {
+        "id": "PGQA-L11",
+        "line": 137,
+        "status": "not_run",
+        "family": "L"
+      },
+      {
+        "id": "PGQA-L12",
+        "line": 138,
+        "status": "not_run",
+        "family": "L"
+      },
+      {
+        "id": "PGQA-L13",
+        "line": 139,
+        "status": "not_run",
+        "family": "L"
+      },
+      {
+        "id": "PGQA-L14",
+        "line": 140,
+        "status": "not_run",
+        "family": "L"
+      },
+      {
+        "id": "PGQA-L15",
+        "line": 141,
+        "status": "not_run",
+        "family": "L"
+      },
+      {
+        "id": "PGQA-L16",
+        "line": 142,
+        "status": "not_run",
+        "family": "L"
+      },
+      {
+        "id": "PGQA-L17",
+        "line": 143,
+        "status": "not_run",
+        "family": "L"
+      },
+      {
+        "id": "PGQA-L18",
+        "line": 144,
+        "status": "not_run",
+        "family": "L"
+      },
+      {
+        "id": "PGQA-L19",
+        "line": 145,
+        "status": "not_run",
+        "family": "L"
+      },
+      {
+        "id": "PGQA-L20",
+        "line": 146,
+        "status": "not_run",
+        "family": "L"
+      },
+      {
+        "id": "PGQA-L21",
+        "line": 147,
+        "status": "not_run",
+        "family": "L"
+      },
+      {
+        "id": "PGQA-L22",
+        "line": 148,
+        "status": "not_run",
+        "family": "L"
+      },
+      {
+        "id": "PGQA-L23",
+        "line": 149,
+        "status": "not_run",
+        "family": "L"
+      },
+      {
+        "id": "PGQA-L24",
+        "line": 150,
+        "status": "not_run",
+        "family": "L"
+      },
+      {
+        "id": "PGQA-L25",
+        "line": 151,
+        "status": "not_run",
+        "family": "L"
+      },
+      {
+        "id": "PGQA-L26",
+        "line": 152,
+        "status": "not_run",
+        "family": "L"
+      },
+      {
+        "id": "PGQA-L27",
+        "line": 153,
+        "status": "not_run",
+        "family": "L"
+      },
+      {
+        "id": "PGQA-T01",
+        "line": 161,
+        "status": "not_run",
+        "family": "T"
+      },
+      {
+        "id": "PGQA-T02",
+        "line": 162,
+        "status": "not_run",
+        "family": "T"
+      },
+      {
+        "id": "PGQA-T03",
+        "line": 163,
+        "status": "not_run",
+        "family": "T"
+      },
+      {
+        "id": "PGQA-T04",
+        "line": 164,
+        "status": "not_run",
+        "family": "T"
+      },
+      {
+        "id": "PGQA-T05",
+        "line": 165,
+        "status": "not_run",
+        "family": "T"
+      },
+      {
+        "id": "PGQA-T06",
+        "line": 166,
+        "status": "not_run",
+        "family": "T"
+      },
+      {
+        "id": "PGQA-T07",
+        "line": 167,
+        "status": "not_run",
+        "family": "T"
+      },
+      {
+        "id": "PGQA-T08",
+        "line": 168,
+        "status": "not_run",
+        "family": "T"
+      },
+      {
+        "id": "PGQA-T09",
+        "line": 169,
+        "status": "not_run",
+        "family": "T"
+      },
+      {
+        "id": "PGQA-T10",
+        "line": 170,
+        "status": "not_run",
+        "family": "T"
+      },
+      {
+        "id": "PGQA-T11",
+        "line": 171,
+        "status": "not_run",
+        "family": "T"
+      },
+      {
+        "id": "PGQA-T12",
+        "line": 172,
+        "status": "not_run",
+        "family": "T"
+      },
+      {
+        "id": "PGQA-D01",
+        "line": 180,
+        "status": "not_run",
+        "family": "D"
+      },
+      {
+        "id": "PGQA-D02",
+        "line": 181,
+        "status": "not_run",
+        "family": "D"
+      },
+      {
+        "id": "PGQA-D03",
+        "line": 182,
+        "status": "not_run",
+        "family": "D"
+      },
+      {
+        "id": "PGQA-D04",
+        "line": 183,
+        "status": "not_run",
+        "family": "D"
+      },
+      {
+        "id": "PGQA-D05",
+        "line": 184,
+        "status": "not_run",
+        "family": "D"
+      },
+      {
+        "id": "PGQA-D06",
+        "line": 185,
+        "status": "not_run",
+        "family": "D"
+      },
+      {
+        "id": "PGQA-D07",
+        "line": 186,
+        "status": "not_run",
+        "family": "D"
+      },
+      {
+        "id": "PGQA-D08",
+        "line": 187,
+        "status": "not_run",
+        "family": "D"
+      },
+      {
+        "id": "PGQA-D09",
+        "line": 188,
+        "status": "not_run",
+        "family": "D"
+      },
+      {
+        "id": "PGQA-D10",
+        "line": 189,
+        "status": "not_run",
+        "family": "D"
+      },
+      {
+        "id": "PGQA-D11",
+        "line": 190,
+        "status": "not_run",
+        "family": "D"
+      },
+      {
+        "id": "PGQA-D12",
+        "line": 191,
+        "status": "not_run",
+        "family": "D"
+      },
+      {
+        "id": "PGQA-D13",
+        "line": 192,
+        "status": "not_run",
+        "family": "D"
+      },
+      {
+        "id": "PGQA-S01",
+        "line": 200,
+        "status": "not_run",
+        "family": "S"
+      },
+      {
+        "id": "PGQA-S02",
+        "line": 201,
+        "status": "not_run",
+        "family": "S"
+      },
+      {
+        "id": "PGQA-S03",
+        "line": 202,
+        "status": "not_run",
+        "family": "S"
+      },
+      {
+        "id": "PGQA-S04",
+        "line": 203,
+        "status": "not_run",
+        "family": "S"
+      },
+      {
+        "id": "PGQA-S05",
+        "line": 204,
+        "status": "not_run",
+        "family": "S"
+      },
+      {
+        "id": "PGQA-S06",
+        "line": 205,
+        "status": "not_run",
+        "family": "S"
+      },
+      {
+        "id": "PGQA-S07",
+        "line": 206,
+        "status": "not_run",
+        "family": "S"
+      },
+      {
+        "id": "PGQA-S08",
+        "line": 207,
+        "status": "blocked",
+        "family": "S"
+      },
+      {
+        "id": "PGQA-S09",
+        "line": 208,
+        "status": "not_run",
+        "family": "S"
+      },
+      {
+        "id": "PGQA-S10",
+        "line": 209,
+        "status": "not_run",
+        "family": "S"
+      },
+      {
+        "id": "PGQA-S11",
+        "line": 210,
+        "status": "not_run",
+        "family": "S"
+      },
+      {
+        "id": "PGQA-C01",
+        "line": 218,
+        "status": "not_run",
+        "family": "C"
+      },
+      {
+        "id": "PGQA-C02",
+        "line": 219,
+        "status": "not_run",
+        "family": "C"
+      },
+      {
+        "id": "PGQA-C03",
+        "line": 220,
+        "status": "not_run",
+        "family": "C"
+      },
+      {
+        "id": "PGQA-C04",
+        "line": 221,
+        "status": "not_run",
+        "family": "C"
+      },
+      {
+        "id": "PGQA-C05",
+        "line": 222,
+        "status": "not_run",
+        "family": "C"
+      },
+      {
+        "id": "PGQA-C06",
+        "line": 223,
+        "status": "not_run",
+        "family": "C"
+      },
+      {
+        "id": "PGQA-C07",
+        "line": 224,
+        "status": "not_run",
+        "family": "C"
+      },
+      {
+        "id": "PGQA-C08",
+        "line": 225,
+        "status": "not_run",
+        "family": "C"
+      },
+      {
+        "id": "PGQA-C09",
+        "line": 226,
+        "status": "not_run",
+        "family": "C"
+      },
+      {
+        "id": "PGQA-C10",
+        "line": 227,
+        "status": "not_run",
+        "family": "C"
+      },
+      {
+        "id": "PGQA-C11",
+        "line": 228,
+        "status": "not_run",
+        "family": "C"
+      },
+      {
+        "id": "PGQA-C12",
+        "line": 229,
+        "status": "not_run",
+        "family": "C"
+      },
+      {
+        "id": "PGQA-C13",
+        "line": 230,
+        "status": "not_run",
+        "family": "C"
+      },
+      {
+        "id": "PGQA-C14",
+        "line": 231,
+        "status": "not_run",
+        "family": "C"
+      },
+      {
+        "id": "PGQA-C15",
+        "line": 232,
+        "status": "blocked",
+        "family": "C"
+      },
+      {
+        "id": "PGQA-C16",
+        "line": 233,
+        "status": "blocked",
+        "family": "C"
+      },
+      {
+        "id": "PGQA-O01",
+        "line": 241,
+        "status": "not_run",
+        "family": "O"
+      },
+      {
+        "id": "PGQA-O02",
+        "line": 242,
+        "status": "not_run",
+        "family": "O"
+      },
+      {
+        "id": "PGQA-O03",
+        "line": 243,
+        "status": "not_run",
+        "family": "O"
+      },
+      {
+        "id": "PGQA-O04",
+        "line": 244,
+        "status": "not_run",
+        "family": "O"
+      },
+      {
+        "id": "PGQA-O05",
+        "line": 245,
+        "status": "not_run",
+        "family": "O"
+      },
+      {
+        "id": "PGQA-O06",
+        "line": 246,
+        "status": "not_run",
+        "family": "O"
+      },
+      {
+        "id": "PGQA-O07",
+        "line": 247,
+        "status": "not_run",
+        "family": "O"
+      },
+      {
+        "id": "PGQA-O08",
+        "line": 248,
+        "status": "not_run",
+        "family": "O"
+      },
+      {
+        "id": "PGQA-O09",
+        "line": 249,
+        "status": "not_run",
+        "family": "O"
+      },
+      {
+        "id": "PGQA-O10",
+        "line": 250,
+        "status": "blocked",
+        "family": "O"
+      },
+      {
+        "id": "PGQA-X01",
+        "line": 258,
+        "status": "not_run",
+        "family": "X"
+      },
+      {
+        "id": "PGQA-X02",
+        "line": 259,
+        "status": "not_run",
+        "family": "X"
+      },
+      {
+        "id": "PGQA-X03",
+        "line": 260,
+        "status": "not_run",
+        "family": "X"
+      },
+      {
+        "id": "PGQA-X04",
+        "line": 261,
+        "status": "not_run",
+        "family": "X"
+      },
+      {
+        "id": "PGQA-X05",
+        "line": 262,
+        "status": "not_run",
+        "family": "X"
+      },
+      {
+        "id": "PGQA-X06",
+        "line": 263,
+        "status": "not_run",
+        "family": "X"
+      },
+      {
+        "id": "PGQA-X07",
+        "line": 264,
+        "status": "blocked",
+        "family": "X"
+      },
+      {
+        "id": "PGQA-X08",
+        "line": 265,
+        "status": "not_run",
+        "family": "X"
+      },
+      {
+        "id": "PGQA-X09",
+        "line": 266,
+        "status": "blocked",
+        "family": "X"
+      },
+      {
+        "id": "PGQA-X10",
+        "line": 267,
+        "status": "not_run",
+        "family": "X"
+      },
+      {
+        "id": "PGQA-A01",
+        "line": 277,
+        "status": "not_run",
+        "family": "A"
+      },
+      {
+        "id": "PGQA-A02",
+        "line": 278,
+        "status": "not_run",
+        "family": "A"
+      },
+      {
+        "id": "PGQA-A03",
+        "line": 279,
+        "status": "not_run",
+        "family": "A"
+      },
+      {
+        "id": "PGQA-A04",
+        "line": 280,
+        "status": "not_run",
+        "family": "A"
+      },
+      {
+        "id": "PGQA-A05",
+        "line": 281,
+        "status": "not_run",
+        "family": "A"
+      },
+      {
+        "id": "PGQA-A06",
+        "line": 282,
+        "status": "not_run",
+        "family": "A"
+      },
+      {
+        "id": "PGQA-A07",
+        "line": 283,
+        "status": "not_run",
+        "family": "A"
+      },
+      {
+        "id": "PGQA-A08",
+        "line": 284,
+        "status": "not_run",
+        "family": "A"
+      },
+      {
+        "id": "PGQA-A09",
+        "line": 285,
+        "status": "not_run",
+        "family": "A"
+      },
+      {
+        "id": "PGQA-A10",
+        "line": 286,
+        "status": "not_run",
+        "family": "A"
+      },
+      {
+        "id": "PGQA-A11",
+        "line": 287,
+        "status": "not_run",
+        "family": "A"
+      },
+      {
+        "id": "PGQA-A12",
+        "line": 288,
+        "status": "not_run",
+        "family": "A"
+      },
+      {
+        "id": "PGQA-A13",
+        "line": 289,
+        "status": "not_run",
+        "family": "A"
+      },
+      {
+        "id": "PGQA-A14",
+        "line": 290,
+        "status": "not_run",
+        "family": "A"
+      },
+      {
+        "id": "PGQA-A15",
+        "line": 291,
+        "status": "not_run",
+        "family": "A"
+      },
+      {
+        "id": "PGQA-A16",
+        "line": 292,
+        "status": "not_run",
+        "family": "A"
+      },
+      {
+        "id": "PGQA-A17",
+        "line": 293,
+        "status": "not_run",
+        "family": "A"
+      },
+      {
+        "id": "PGQA-P01",
+        "line": 301,
+        "status": "not_run",
+        "family": "P"
+      },
+      {
+        "id": "PGQA-P02",
+        "line": 302,
+        "status": "not_run",
+        "family": "P"
+      },
+      {
+        "id": "PGQA-P03",
+        "line": 303,
+        "status": "not_run",
+        "family": "P"
+      },
+      {
+        "id": "PGQA-P04",
+        "line": 304,
+        "status": "not_run",
+        "family": "P"
+      },
+      {
+        "id": "PGQA-P05",
+        "line": 305,
+        "status": "not_run",
+        "family": "P"
+      },
+      {
+        "id": "PGQA-P06",
+        "line": 306,
+        "status": "not_run",
+        "family": "P"
+      },
+      {
+        "id": "PGQA-P07",
+        "line": 307,
+        "status": "not_run",
+        "family": "P"
+      },
+      {
+        "id": "PGQA-P08",
+        "line": 308,
+        "status": "not_run",
+        "family": "P"
+      },
+      {
+        "id": "PGQA-P09",
+        "line": 309,
+        "status": "not_run",
+        "family": "P"
+      },
+      {
+        "id": "PGQA-B01",
+        "line": 317,
+        "status": "blocked",
+        "family": "B"
+      },
+      {
+        "id": "PGQA-B02",
+        "line": 318,
+        "status": "blocked",
+        "family": "B"
+      },
+      {
+        "id": "PGQA-B03",
+        "line": 319,
+        "status": "blocked",
+        "family": "B"
+      },
+      {
+        "id": "PGQA-B04",
+        "line": 320,
+        "status": "blocked",
+        "family": "B"
+      },
+      {
+        "id": "PGQA-B05",
+        "line": 321,
+        "status": "blocked",
+        "family": "B"
+      },
+      {
+        "id": "PGQA-B06",
+        "line": 322,
+        "status": "blocked",
+        "family": "B"
+      },
+      {
+        "id": "PGQA-B07",
+        "line": 323,
+        "status": "blocked",
+        "family": "B"
+      },
+      {
+        "id": "PGQA-B08",
+        "line": 324,
+        "status": "blocked",
+        "family": "B"
+      },
+      {
+        "id": "PGQA-B09",
+        "line": 325,
+        "status": "blocked",
+        "family": "B"
+      },
+      {
+        "id": "PGQA-B10",
+        "line": 326,
+        "status": "blocked",
+        "family": "B"
+      },
+      {
+        "id": "PGQA-B11",
+        "line": 327,
+        "status": "blocked",
+        "family": "B"
+      },
+      {
+        "id": "PGQA-W01",
+        "line": 328,
+        "status": "blocked",
+        "family": "W"
+      },
+      {
+        "id": "PGQA-W02",
+        "line": 329,
+        "status": "blocked",
+        "family": "W"
+      },
+      {
+        "id": "PGQA-W03",
+        "line": 330,
+        "status": "blocked",
+        "family": "W"
+      },
+      {
+        "id": "PGQA-W04",
+        "line": 331,
+        "status": "blocked",
+        "family": "W"
+      },
+      {
+        "id": "PGQA-W05",
+        "line": 332,
+        "status": "blocked",
+        "family": "W"
+      },
+      {
+        "id": "PGQA-W06",
+        "line": 333,
+        "status": "blocked",
+        "family": "W"
+      },
+      {
+        "id": "PGQA-W07",
+        "line": 334,
+        "status": "blocked",
+        "family": "W"
+      },
+      {
+        "id": "PGQA-W08",
+        "line": 335,
+        "status": "blocked",
+        "family": "W"
+      },
+      {
+        "id": "PGQA-I01",
+        "line": 336,
+        "status": "blocked",
+        "family": "I"
+      },
+      {
+        "id": "PGQA-I02",
+        "line": 337,
+        "status": "blocked",
+        "family": "I"
+      },
+      {
+        "id": "PGQA-I03",
+        "line": 338,
+        "status": "blocked",
+        "family": "I"
+      },
+      {
+        "id": "PGQA-I04",
+        "line": 339,
+        "status": "blocked",
+        "family": "I"
+      },
+      {
+        "id": "PGQA-I05",
+        "line": 340,
+        "status": "blocked",
+        "family": "I"
+      },
+      {
+        "id": "PGQA-N01",
+        "line": 341,
+        "status": "blocked",
+        "family": "N"
+      },
+      {
+        "id": "PGQA-N02",
+        "line": 342,
+        "status": "blocked",
+        "family": "N"
+      },
+      {
+        "id": "PGQA-N03",
+        "line": 343,
+        "status": "blocked",
+        "family": "N"
+      },
+      {
+        "id": "PGQA-N04",
+        "line": 344,
+        "status": "blocked",
+        "family": "N"
+      },
+      {
+        "id": "PGQA-N05",
+        "line": 345,
+        "status": "blocked",
+        "family": "N"
+      },
+      {
+        "id": "PGQA-N06",
+        "line": 346,
+        "status": "blocked",
+        "family": "N"
+      },
+      {
+        "id": "PGQA-N07",
+        "line": 347,
+        "status": "blocked",
+        "family": "N"
+      },
+      {
+        "id": "PGQA-N08",
+        "line": 348,
+        "status": "blocked",
+        "family": "N"
+      },
+      {
+        "id": "PGQA-N09",
+        "line": 349,
+        "status": "blocked",
+        "family": "N"
+      },
+      {
+        "id": "PGQA-N10",
+        "line": 350,
+        "status": "blocked",
+        "family": "N"
+      },
+      {
+        "id": "PGQA-N11",
+        "line": 351,
+        "status": "blocked",
+        "family": "N"
+      }
+    ],
+    "observed_at": "2026-09-12T01:46:35Z",
+    "source_main_commit": "26b69d386946308830bc202cd6e773f03a4d23a4",
+    "interpretation": "Authored source-baseline inventory, not browser execution or exact current-candidate coverage. Preserve the dated observation. Before execution, reconcile the ten-tool/main route census and incoming-case statuses against the later botanical+QA+intervention freeze; no case is passed."
+  },
+  "durable_intervention_snapshot": {
+    "path": "conductor/tracks/platform_experience_qa_20260911/evidence/intervention-boundary-spec.md",
+    "source_blob": "60fde2137d12ae0c2aa257062208b4c307bb0675",
+    "incoming_commit": "2fc6b30ac1b024e1c955dbf95552495608608a96",
+    "incoming_spec_path": "conductor/tracks/intervention_boundary_authoring_20260911/spec.md",
+    "incoming_spec_blob": "338de05eafced6290b2babc41505e529645b64a0",
+    "requirements_from_Contributors_choose_to_end_equal_after_whitespace_normalization": true,
+    "link_from_cases": "./intervention-boundary-spec.md",
+    "interpretation": "Retained requirements snapshot with provenance wrapper; no execution receipt or new ownership authorization."
+  },
+  "pnw_registration": {
+    "review_path": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/parent-registration-review.md",
+    "source_blob": "7d55d6f26002fb9a21d164268071994f3c4315c3",
+    "observed_at": "2026-09-12T02:18:00Z",
+    "verdict": "pass",
+    "scope": "Independent parent-registration review is planning only; prior pre-registration review is explicitly historical and points to this successor.",
+    "geography": [
+      "WA",
+      "OR",
+      "ID"
+    ],
+    "private_owner_names_and_contact_data_excluded": true,
+    "admitted_releases": [],
+    "open_gates": [
+      "Idaho utility polygon and production state-land sources",
+      "Oregon current utility machine feed",
+      "County parcel fields/rights and coverage",
+      "Exact distribution reuse terms/native identities/source watermarks",
+      "Verified office/topic relationships and contact freshness",
+      "Explicit implementation/acquisition/publication/deployment/outreach authority"
+    ],
+    "qa_status": "active",
+    "pnw_track_statuses": "planned"
+  },
+  "metadata": [
+    {
+      "path": "conductor/tracks/platform_experience_qa_20260911/metadata.json",
+      "status": "active",
+      "registration_status": null,
+      "admitted_releases": null,
+      "next_gate": "Bind current task/candidate ownership, inventory every surfaced requirement and freeze the local role/device/data/cache matrix before claiming browser acceptance."
+    },
+    {
+      "path": "conductor/tracks/pnw_land_contact_experience_20260911/metadata.json",
+      "status": "planned",
+      "registration_status": "registered_planned",
+      "admitted_releases": null,
+      "next_gate": "Freeze source-backed selection/contact/time contracts with the reference-plane owner, resolve its admission gates, and explicitly authorize implementation and shared-file ownership before any execution."
+    },
+    {
+      "path": "conductor/tracks/pnw_land_context_reference_plane_20260911/metadata.json",
+      "status": "planned",
+      "registration_status": "registered_planned",
+      "admitted_releases": [],
+      "next_gate": "Resolve per-source rights, current production feeds, native identity, source watermarks and PNW coverage before any acquisition or implementation decision."
+    }
+  ],
+  "okf": [
+    {
+      "path": "conductor/RUNBOOK.md",
+      "type": "runbook",
+      "status": null,
+      "observed_at": null,
+      "verdict": null
+    },
+    {
+      "path": "conductor/tracks.md",
+      "type": "work-registry",
+      "status": null,
+      "observed_at": null,
+      "verdict": null
+    },
+    {
+      "path": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+      "type": "evidence",
+      "status": "not_run",
+      "observed_at": "\"2026-09-12T01:46:35Z\"",
+      "verdict": null
+    },
+    {
+      "path": "conductor/tracks/platform_experience_qa_20260911/evidence/intervention-boundary-spec.md",
+      "type": "evidence",
+      "status": "retained_snapshot",
+      "observed_at": "\"2026-09-12T02:21:00Z\"",
+      "verdict": null
+    },
+    {
+      "path": "conductor/tracks/platform_experience_qa_20260911/evidence/task-ledger.md",
+      "type": "evidence",
+      "status": null,
+      "observed_at": "2026-09-12T01:39:43Z",
+      "verdict": null
+    },
+    {
+      "path": "conductor/tracks/platform_experience_qa_20260911/spec.md",
+      "type": "track-spec",
+      "status": "active",
+      "observed_at": null,
+      "verdict": null
+    },
+    {
+      "path": "conductor/tracks/pnw_land_contact_experience_20260911/plan.md",
+      "type": "track-plan",
+      "status": "planned",
+      "observed_at": null,
+      "verdict": null
+    },
+    {
+      "path": "conductor/tracks/pnw_land_contact_experience_20260911/spec.md",
+      "type": "track-spec",
+      "status": "planned",
+      "observed_at": null,
+      "verdict": null
+    },
+    {
+      "path": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/independent-review.md",
+      "type": "evidence",
+      "status": "planning-reviewed",
+      "observed_at": null,
+      "verdict": "accept-planning-packet"
+    },
+    {
+      "path": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/parent-registration-review.md",
+      "type": "evidence",
+      "status": null,
+      "observed_at": "2026-09-12T02:18:00Z",
+      "verdict": "pass"
+    },
+    {
+      "path": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+      "type": "evidence",
+      "status": "research-baseline",
+      "observed_at": null,
+      "verdict": null
+    },
+    {
+      "path": "conductor/tracks/pnw_land_context_reference_plane_20260911/plan.md",
+      "type": "track-plan",
+      "status": "planned",
+      "observed_at": null,
+      "verdict": null
+    },
+    {
+      "path": "conductor/tracks/pnw_land_context_reference_plane_20260911/spec.md",
+      "type": "track-spec",
+      "status": "planned",
+      "observed_at": null,
+      "verdict": null
+    }
+  ],
+  "links": {
+    "checked_unique_local": 92,
+    "local": [
+      {
+        "source": "conductor/RUNBOOK.md",
+        "target": "tracks/pnw_land_contact_experience_20260911/plan.md",
+        "resolved_path": "conductor/tracks/pnw_land_contact_experience_20260911/plan.md",
+        "exists": true,
+        "source_commit": "abdf99b993117f77a1912c05ccabd3df082a8903",
+        "anchor": null
+      },
+      {
+        "source": "conductor/RUNBOOK.md",
+        "target": "tracks/pnw_land_context_reference_plane_20260911/plan.md",
+        "resolved_path": "conductor/tracks/pnw_land_context_reference_plane_20260911/plan.md",
+        "exists": true,
+        "source_commit": "abdf99b993117f77a1912c05ccabd3df082a8903",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks.md",
+        "target": "tracks/pnw_land_contact_experience_20260911/plan.md",
+        "resolved_path": "conductor/tracks/pnw_land_contact_experience_20260911/plan.md",
+        "exists": true,
+        "source_commit": "abdf99b993117f77a1912c05ccabd3df082a8903",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks.md",
+        "target": "tracks/pnw_land_context_reference_plane_20260911/plan.md",
+        "resolved_path": "conductor/tracks/pnw_land_context_reference_plane_20260911/plan.md",
+        "exists": true,
+        "source_commit": "abdf99b993117f77a1912c05ccabd3df082a8903",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "target": "../../../../docs/layer-lane-standard.md",
+        "resolved_path": "docs/layer-lane-standard.md",
+        "exists": true,
+        "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "target": "../../../../services/agri-data-service/src/agri_data_service/agent/mcp_server.py",
+        "resolved_path": "services/agri-data-service/src/agri_data_service/agent/mcp_server.py",
+        "exists": true,
+        "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "target": "../../../../services/agri-data-service/src/agri_data_service/agent/surfaces.py",
+        "resolved_path": "services/agri-data-service/src/agri_data_service/agent/surfaces.py",
+        "exists": true,
+        "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "target": "../../../../services/agri-data-service/src/agri_data_service/agent/tools.py",
+        "resolved_path": "services/agri-data-service/src/agri_data_service/agent/tools.py",
+        "exists": true,
+        "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "target": "../../../../src/app/",
+        "resolved_path": "src/app",
+        "exists": true,
+        "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "target": "../../../../src/app/api/",
+        "resolved_path": "src/app/api",
+        "exists": true,
+        "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "target": "../../../../src/app/api/stream/[layerId]/route.ts",
+        "resolved_path": "src/app/api/stream/[layerId]/route.ts",
+        "exists": true,
+        "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "target": "../../../../src/app/api/ws/route.ts",
+        "resolved_path": "src/app/api/ws/route.ts",
+        "exists": true,
+        "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "target": "../../../../src/app/community/CommunityLedger.tsx",
+        "resolved_path": "src/app/community/CommunityLedger.tsx",
+        "exists": true,
+        "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "target": "../../../../src/app/dashboard/conversations/",
+        "resolved_path": "src/app/dashboard/conversations",
+        "exists": true,
+        "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "target": "../../../../src/app/dashboard/org/",
+        "resolved_path": "src/app/dashboard/org",
+        "exists": true,
+        "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "target": "../../../../src/app/dashboard/page.tsx",
+        "resolved_path": "src/app/dashboard/page.tsx",
+        "exists": true,
+        "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "target": "../../../../src/app/docs/ApiTester.tsx",
+        "resolved_path": "src/app/docs/ApiTester.tsx",
+        "exists": true,
+        "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "target": "../../../../src/app/feed/InterventionFeed.tsx",
+        "resolved_path": "src/app/feed/InterventionFeed.tsx",
+        "exists": true,
+        "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "target": "../../../../src/app/moderation/page.tsx",
+        "resolved_path": "src/app/moderation/page.tsx",
+        "exists": true,
+        "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "target": "../../../../src/app/page.tsx",
+        "resolved_path": "src/app/page.tsx",
+        "exists": true,
+        "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "target": "../../../../src/components/auth/",
+        "resolved_path": "src/components/auth",
+        "exists": true,
+        "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "target": "../../../../src/components/embed/",
+        "resolved_path": "src/components/embed",
+        "exists": true,
+        "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "target": "../../../../src/components/embed/EmbedMap.tsx",
+        "resolved_path": "src/components/embed/EmbedMap.tsx",
+        "exists": true,
+        "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "target": "../../../../src/components/layout/ApplicationShell.tsx",
+        "resolved_path": "src/components/layout/ApplicationShell.tsx",
+        "exists": true,
+        "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "target": "../../../../src/components/layout/TopBar.tsx",
+        "resolved_path": "src/components/layout/TopBar.tsx",
+        "exists": true,
+        "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "target": "../../../../src/components/map/AgentInteraction.tsx",
+        "resolved_path": "src/components/map/AgentInteraction.tsx",
+        "exists": true,
+        "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "target": "../../../../src/components/map/MapKeyboardShortcuts.tsx",
+        "resolved_path": "src/components/map/MapKeyboardShortcuts.tsx",
+        "exists": true,
+        "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "target": "../../../../src/components/map/MapView.tsx",
+        "resolved_path": "src/components/map/MapView.tsx",
+        "exists": true,
+        "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "target": "../../../../src/components/map/layer-panel/",
+        "resolved_path": "src/components/map/layer-panel",
+        "exists": true,
+        "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "target": "../../../../src/components/map/layer-panel/SearchDockSection.tsx",
+        "resolved_path": "src/components/map/layer-panel/SearchDockSection.tsx",
+        "exists": true,
+        "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "target": "../../../../src/components/map/layer-panel/ViewDockSection.tsx",
+        "resolved_path": "src/components/map/layer-panel/ViewDockSection.tsx",
+        "exists": true,
+        "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "target": "../../../../src/components/onboarding/",
+        "resolved_path": "src/components/onboarding",
+        "exists": true,
+        "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "target": "../../../../src/components/panels/",
+        "resolved_path": "src/components/panels",
+        "exists": true,
+        "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "target": "../../../../src/components/panels/AGENTS.md",
+        "resolved_path": "src/components/panels/AGENTS.md",
+        "exists": true,
+        "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "target": "../../../../src/components/panels/JobRunnerDashboard.tsx",
+        "resolved_path": "src/components/panels/JobRunnerDashboard.tsx",
+        "exists": true,
+        "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "target": "../../../../src/components/routing/",
+        "resolved_path": "src/components/routing",
+        "exists": true,
+        "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "target": "../../../../src/components/search/ReverseGeocode.tsx",
+        "resolved_path": "src/components/search/ReverseGeocode.tsx",
+        "exists": true,
+        "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "target": "../../../../src/components/tools/ServiceAreaDrawTool.tsx",
+        "resolved_path": "src/components/tools/ServiceAreaDrawTool.tsx",
+        "exists": true,
+        "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "target": "../../../../src/components/ui/SyncIndicator.tsx",
+        "resolved_path": "src/components/ui/SyncIndicator.tsx",
+        "exists": true,
+        "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "target": "../../../../src/lib/environmental/climate-field.ts",
+        "resolved_path": "src/lib/environmental/climate-field.ts",
+        "exists": true,
+        "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "target": "../../../../src/lib/map/layer-registry.ts",
+        "resolved_path": "src/lib/map/layer-registry.ts",
+        "exists": true,
+        "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "target": "../../../../src/lib/server/services/parquet-slider-capabilities.ts",
+        "resolved_path": "src/lib/server/services/parquet-slider-capabilities.ts",
+        "exists": true,
+        "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "target": "../../../../src/lib/server/trpc/routers/",
+        "resolved_path": "src/lib/server/trpc/routers",
+        "exists": true,
+        "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "target": "../../../../src/lib/server/trpc/routers/contributions.ts",
+        "resolved_path": "src/lib/server/trpc/routers/contributions.ts",
+        "exists": true,
+        "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "target": "../../../../src/lib/server/trpc/routers/interventions.ts",
+        "resolved_path": "src/lib/server/trpc/routers/interventions.ts",
+        "exists": true,
+        "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "target": "../../../../src/lib/server/trpc/routers/layers.ts",
+        "resolved_path": "src/lib/server/trpc/routers/layers.ts",
+        "exists": true,
+        "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "target": "../../../../src/lib/server/trpc/routers/routing.ts",
+        "resolved_path": "src/lib/server/trpc/routers/routing.ts",
+        "exists": true,
+        "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "target": "../../../../src/lib/server/trpc/routers/teams.ts",
+        "resolved_path": "src/lib/server/trpc/routers/teams.ts",
+        "exists": true,
+        "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "target": "../../../../src/stores/time-slider-store.ts",
+        "resolved_path": "src/stores/time-slider-store.ts",
+        "exists": true,
+        "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "target": "../../../../src/stores/useMetricAtDate.ts",
+        "resolved_path": "src/stores/useMetricAtDate.ts",
+        "exists": true,
+        "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "target": "../../../../src/types/time-slider.ts",
+        "resolved_path": "src/types/time-slider.ts",
+        "exists": true,
+        "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "target": "../../botanical_occurrence_experience_20260911/spec.md",
+        "resolved_path": "conductor/tracks/botanical_occurrence_experience_20260911/spec.md",
+        "exists": true,
+        "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "target": "../../botanical_occurrence_parquet_lane_20260911/spec.md",
+        "resolved_path": "conductor/tracks/botanical_occurrence_parquet_lane_20260911/spec.md",
+        "exists": true,
+        "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "target": "../../botanical_species_profile_lookup_20260911/spec.md",
+        "resolved_path": "conductor/tracks/botanical_species_profile_lookup_20260911/spec.md",
+        "exists": true,
+        "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "target": "../../community_engagement_completion_20260805/spec.md",
+        "resolved_path": "conductor/tracks/community_engagement_completion_20260805/spec.md",
+        "exists": true,
+        "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "target": "../../parquet_production_acceptance_20260901/plan.md",
+        "resolved_path": "conductor/tracks/parquet_production_acceptance_20260901/plan.md",
+        "exists": true,
+        "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "target": "../../pnw_herbaria_source_admission_20260911/spec.md",
+        "resolved_path": "conductor/tracks/pnw_herbaria_source_admission_20260911/spec.md",
+        "exists": true,
+        "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "target": "../../pnw_land_contact_experience_20260911/spec.md",
+        "resolved_path": "conductor/tracks/pnw_land_contact_experience_20260911/spec.md",
+        "exists": true,
+        "source_commit": "abdf99b993117f77a1912c05ccabd3df082a8903",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "target": "../../pnw_land_context_reference_plane_20260911/spec.md",
+        "resolved_path": "conductor/tracks/pnw_land_context_reference_plane_20260911/spec.md",
+        "exists": true,
+        "source_commit": "abdf99b993117f77a1912c05ccabd3df082a8903",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "target": "../../weather_forecast_experience_20260911/spec.md",
+        "resolved_path": "conductor/tracks/weather_forecast_experience_20260911/spec.md",
+        "exists": true,
+        "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "target": "../../weather_forecast_parquet_lane_20260911/spec.md",
+        "resolved_path": "conductor/tracks/weather_forecast_parquet_lane_20260911/spec.md",
+        "exists": true,
+        "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "target": "../matrix.md",
+        "resolved_path": "conductor/tracks/platform_experience_qa_20260911/matrix.md",
+        "exists": true,
+        "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "target": "../spec.md",
+        "resolved_path": "conductor/tracks/platform_experience_qa_20260911/spec.md",
+        "exists": true,
+        "source_commit": "abdf99b993117f77a1912c05ccabd3df082a8903",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+        "target": "./intervention-boundary-spec.md",
+        "resolved_path": "conductor/tracks/platform_experience_qa_20260911/evidence/intervention-boundary-spec.md",
+        "exists": true,
+        "source_commit": "abdf99b993117f77a1912c05ccabd3df082a8903",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/spec.md",
+        "target": "../pnw_herbaria_source_admission_20260911/plan.md",
+        "resolved_path": "conductor/tracks/pnw_herbaria_source_admission_20260911/plan.md",
+        "exists": true,
+        "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/spec.md",
+        "target": "../pnw_land_contact_experience_20260911/plan.md",
+        "resolved_path": "conductor/tracks/pnw_land_contact_experience_20260911/plan.md",
+        "exists": true,
+        "source_commit": "abdf99b993117f77a1912c05ccabd3df082a8903",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/platform_experience_qa_20260911/spec.md",
+        "target": "../pnw_land_context_reference_plane_20260911/plan.md",
+        "resolved_path": "conductor/tracks/pnw_land_context_reference_plane_20260911/plan.md",
+        "exists": true,
+        "source_commit": "abdf99b993117f77a1912c05ccabd3df082a8903",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/pnw_land_contact_experience_20260911/plan.md",
+        "target": "../../tracks.md",
+        "resolved_path": "conductor/tracks.md",
+        "exists": true,
+        "source_commit": "abdf99b993117f77a1912c05ccabd3df082a8903",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/pnw_land_contact_experience_20260911/plan.md",
+        "target": "../pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+        "resolved_path": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+        "exists": true,
+        "source_commit": "abdf99b993117f77a1912c05ccabd3df082a8903",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/pnw_land_contact_experience_20260911/plan.md",
+        "target": "../pnw_land_context_reference_plane_20260911/spec.md",
+        "resolved_path": "conductor/tracks/pnw_land_context_reference_plane_20260911/spec.md",
+        "exists": true,
+        "source_commit": "abdf99b993117f77a1912c05ccabd3df082a8903",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/pnw_land_contact_experience_20260911/spec.md",
+        "target": "../../tracks.md",
+        "resolved_path": "conductor/tracks.md",
+        "exists": true,
+        "source_commit": "abdf99b993117f77a1912c05ccabd3df082a8903",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/pnw_land_contact_experience_20260911/spec.md",
+        "target": "../pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+        "resolved_path": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+        "exists": true,
+        "source_commit": "abdf99b993117f77a1912c05ccabd3df082a8903",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/pnw_land_contact_experience_20260911/spec.md",
+        "target": "../pnw_land_context_reference_plane_20260911/spec.md",
+        "resolved_path": "conductor/tracks/pnw_land_context_reference_plane_20260911/spec.md",
+        "exists": true,
+        "source_commit": "abdf99b993117f77a1912c05ccabd3df082a8903",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/independent-review.md",
+        "target": "../../pnw_land_contact_experience_20260911/metadata.json",
+        "resolved_path": "conductor/tracks/pnw_land_contact_experience_20260911/metadata.json",
+        "exists": true,
+        "source_commit": "abdf99b993117f77a1912c05ccabd3df082a8903",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/independent-review.md",
+        "target": "../../pnw_land_contact_experience_20260911/plan.md",
+        "resolved_path": "conductor/tracks/pnw_land_contact_experience_20260911/plan.md",
+        "exists": true,
+        "source_commit": "abdf99b993117f77a1912c05ccabd3df082a8903",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/independent-review.md",
+        "target": "../../pnw_land_contact_experience_20260911/spec.md",
+        "resolved_path": "conductor/tracks/pnw_land_contact_experience_20260911/spec.md",
+        "exists": true,
+        "source_commit": "abdf99b993117f77a1912c05ccabd3df082a8903",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/independent-review.md",
+        "target": "../metadata.json",
+        "resolved_path": "conductor/tracks/pnw_land_context_reference_plane_20260911/metadata.json",
+        "exists": true,
+        "source_commit": "abdf99b993117f77a1912c05ccabd3df082a8903",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/independent-review.md",
+        "target": "../plan.md",
+        "resolved_path": "conductor/tracks/pnw_land_context_reference_plane_20260911/plan.md",
+        "exists": true,
+        "source_commit": "abdf99b993117f77a1912c05ccabd3df082a8903",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/independent-review.md",
+        "target": "../spec.md",
+        "resolved_path": "conductor/tracks/pnw_land_context_reference_plane_20260911/spec.md",
+        "exists": true,
+        "source_commit": "abdf99b993117f77a1912c05ccabd3df082a8903",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/independent-review.md",
+        "target": "parent-registration-review.md",
+        "resolved_path": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/parent-registration-review.md",
+        "exists": true,
+        "source_commit": "abdf99b993117f77a1912c05ccabd3df082a8903",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/independent-review.md",
+        "target": "source-inventory.md",
+        "resolved_path": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+        "exists": true,
+        "source_commit": "abdf99b993117f77a1912c05ccabd3df082a8903",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+        "target": "../../pnw_land_contact_experience_20260911/spec.md",
+        "resolved_path": "conductor/tracks/pnw_land_contact_experience_20260911/spec.md",
+        "exists": true,
+        "source_commit": "abdf99b993117f77a1912c05ccabd3df082a8903",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+        "target": "../spec.md",
+        "resolved_path": "conductor/tracks/pnw_land_context_reference_plane_20260911/spec.md",
+        "exists": true,
+        "source_commit": "abdf99b993117f77a1912c05ccabd3df082a8903",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/spec.md",
+        "target": "../../../docs/layer-lane-standard.md",
+        "resolved_path": "docs/layer-lane-standard.md",
+        "exists": true,
+        "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/spec.md",
+        "target": "../../../docs/runbooks/pmtiles-pnw.md",
+        "resolved_path": "docs/runbooks/pmtiles-pnw.md",
+        "exists": true,
+        "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/spec.md",
+        "target": "../../code_styleguides/layer-lanes.md",
+        "resolved_path": "conductor/code_styleguides/layer-lanes.md",
+        "exists": true,
+        "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/spec.md",
+        "target": "../../release-governance.md",
+        "resolved_path": "conductor/release-governance.md",
+        "exists": true,
+        "source_commit": "416342fa5bea836e6a062549b87c2706f53ce45e",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/spec.md",
+        "target": "../../tracks.md",
+        "resolved_path": "conductor/tracks.md",
+        "exists": true,
+        "source_commit": "abdf99b993117f77a1912c05ccabd3df082a8903",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/spec.md",
+        "target": "../pnw_land_contact_experience_20260911/spec.md",
+        "resolved_path": "conductor/tracks/pnw_land_contact_experience_20260911/spec.md",
+        "exists": true,
+        "source_commit": "abdf99b993117f77a1912c05ccabd3df082a8903",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/spec.md",
+        "target": "evidence/independent-review.md",
+        "resolved_path": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/independent-review.md",
+        "exists": true,
+        "source_commit": "abdf99b993117f77a1912c05ccabd3df082a8903",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/spec.md",
+        "target": "evidence/source-inventory.md",
+        "resolved_path": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+        "exists": true,
+        "source_commit": "abdf99b993117f77a1912c05ccabd3df082a8903",
+        "anchor": null
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/spec.md",
+        "target": "plan.md",
+        "resolved_path": "conductor/tracks/pnw_land_context_reference_plane_20260911/plan.md",
+        "exists": true,
+        "source_commit": "abdf99b993117f77a1912c05ccabd3df082a8903",
+        "anchor": null
+      }
+    ],
+    "unresolved": [],
+    "undefined_references": [],
+    "external_source_links_not_revalidated": [
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+        "target": "https://catalog.data.gov/dataset/electric-retail-service-territories"
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+        "target": "https://extension.oregonstate.edu/find-us"
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+        "target": "https://extension.wsu.edu/in-your-county-or-tribe/"
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+        "target": "https://geo.maps.arcgis.com/home/item.html?id=878e9d5f51ff4eedb68484fa6f7cfefd"
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+        "target": "https://gis.blm.gov/arcgis/rest/services/admin_boundaries/BLM_Natl_AdminUnit/MapServer/3"
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+        "target": "https://gis.blm.gov/arcgis/rest/services/admin_boundaries/BLM_Natl_AdminUnit/MapServer/layers"
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+        "target": "https://gis.blm.gov/arcgis/rest/services/lands/BLM_Natl_SMA_LimitedScale/MapServer"
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+        "target": "https://gis.blm.gov/orarcgis/rest/services/Land_Status/BLM_OR_Ownership/MapServer"
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+        "target": "https://gis.dnr.wa.gov/site3/rest/services/Public_Boundaries/WADNR_PUBLIC_Cadastre_OpenData/MapServer/6"
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+        "target": "https://gis.ecology.wa.gov/serverext/rest/services/CPR/CPR/FeatureServer/0"
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+        "target": "https://gis.idaho.gov/parcel-technical-working-group-standard"
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+        "target": "https://gis.idwr.idaho.gov/hosting/rest/services/Reference/Parcels/FeatureServer"
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+        "target": "https://gis1.idl.idaho.gov/arcgis/rest/services/Portal/IDL_Supervisory_Area_Boundary/MapServer"
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+        "target": "https://kingcounty.gov/en/dept/assessor/about-king-county/about-king-county-assessor/contact"
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+        "target": "https://kingcounty.gov/en/dept/assessor/buildings-and-property/property-value-and-information/look-up-property-information"
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+        "target": "https://maps.dsl.state.or.us/arcgis/rest/services/SlisPublic/FeatureServer/0"
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+        "target": "https://maps.dsl.state.or.us/arcgis/rest/services/SlisPublic/FeatureServer/0/metadata?f=html&format=default"
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+        "target": "https://multco.us/info/contact-division-assessment-recording-taxation"
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+        "target": "https://multco.us/info/property-search-tools-and-maps"
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+        "target": "https://portlandgeneral.com/renewable-installers/interconnection-qualifications"
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+        "target": "https://puc.idaho.gov/Fileroom/PublicFiles/maps/elec.pdf"
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+        "target": "https://puc.idaho.gov/Page/Standard/20"
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+        "target": "https://rlisdiscovery.oregonmetro.gov/pages/open-database-license"
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+        "target": "https://services.arcgis.com/uUvqNMGPm7axC2dD/arcgis/rest/services/OregonElectric_Utilities_WGS_1984_6_26_2023/FeatureServer"
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+        "target": "https://services1.arcgis.com/CNPdEkvnGl65jCX8/arcgis/rest/services/Public_Idaho_Parcels_/FeatureServer"
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+        "target": "https://services2.arcgis.com/1cvrwLhZRFh3okEF/arcgis/rest/services/State_Ownership/FeatureServer"
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+        "target": "https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/Urban/MapServer/0"
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+        "target": "https://wisaard.dahp.wa.gov/server/rest/services/County_Parcels/MapServer/0"
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+        "target": "https://www.arcgis.com/sharing/rest/content/items/4ec898f8fb104ce4910932d02791563a/info/metadata/metadata.xml?format=default&output=html"
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+        "target": "https://www.arcgis.com/sharing/rest/content/items/65a3f7c6d4ca404ba6ab677913953b35/info/metadata/metadata.xml?format=default&output=html"
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+        "target": "https://www.arcgis.com/sharing/rest/content/items/b3cabe5845ec47eab61c54e0c631313c/info/metadata/metadata.xml?format=default&output=html"
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+        "target": "https://www.blm.gov/media/public-room/oregon-washington"
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+        "target": "https://www.blm.gov/programs/lands-and-realty/Rights-of-way/contact-list"
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+        "target": "https://www.census.gov/programs-surveys/geography/guidance/geo-areas/urban-rural.html"
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+        "target": "https://www.conserve.wa.gov/map"
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+        "target": "https://www.dnr.wa.gov/about/contact-dnr"
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+        "target": "https://www.eia.gov/electricity/data/eia861/"
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+        "target": "https://www.epa.gov/ground-water-and-drinking-water/public-water-system-service-areas"
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+        "target": "https://www.farmers.gov/working-with-us/service-center-locator"
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+        "target": "https://www.idahopower.com/about-us/economic-development/"
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+        "target": "https://www.idl.idaho.gov/about-us/supervisory-areas/"
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+        "target": "https://www.idl.idaho.gov/contact-us/"
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+        "target": "https://www.idl.idaho.gov/idl-gis-program-idaho-maps-and-land-records/"
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+        "target": "https://www.kcgov.us/182/Land-Records-Division"
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+        "target": "https://www.kcgov.us/343/Recorder"
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+        "target": "https://www.nass.usda.gov/Research_and_Science/Cropland/Release/"
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+        "target": "https://www.nass.usda.gov/Research_and_Science/Cropland/sarsfaqs2.php"
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+        "target": "https://www.oregon.gov/dsl/lands/Pages/land-staff.aspx"
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+        "target": "https://www.oregon.gov/energy/energy-oregon/pages/find-your-utility.aspx"
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+        "target": "https://www.oregon.gov/energy/energy-oregon/pages/oregon-utilities.aspx"
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+        "target": "https://www.pse.com/en/construction-services/cs-project-steps"
+      },
+      {
+        "source": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+        "target": "https://www.uidaho.edu/extension/county"
+      }
+    ]
+  },
+  "planned_intervention": {
+    "commit": "2fc6b30ac1b024e1c955dbf95552495608608a96",
+    "tree": "739509a6cfef8a601bae631e4810c697b6988a41",
+    "parent": "89e8494422b8232c8f16dbffdcf2321c7ea17bc8",
+    "direct_changed_path_overlap": [],
+    "ownership": "Intervention candidate owns its routers/components and the MapView two-line publication-sync mount. This docs candidate grants no implementation transfer."
+  },
+  "recommended_order": [
+    "Retain the tested 416342f second-sweep logs/receipts and evidence boundary unchanged",
+    "Root applies intervention 2fc6b30 once under the current parent instruction",
+    "Root intakes only abdf99b docs delta; the prior 362422e/820753d/26b69d documentation equivalents are already integrated and must not be replayed",
+    "At actual intake, recheck pre-intake blobs; preserve complete current registry/RUNBOOK bytes and insert exactly two PNW registry rows plus one PNW handoff row",
+    "Preserve the 206-case and task-ledger observations as dated evidence; append/bind actual immutable intake dispositions before executing QA",
+    "Release the actual post-intervention+docs base/tree and shared pins to the dedicated weather owner; do not apply old weather commits or label 416342f as the released weather base"
+  ],
+  "findings": [],
+  "limits": [
+    "Read-only Git/doc inspection plus this scratch receipt only",
+    "No apply/cherry-pick, tracked edit, HEAD/index/stash change, test, runtime import, source receipt/context mutation, production action or external message",
+    "No fresh source-rights/coverage, live task-status census, browser QA or runtime acceptance is inferred",
+    "This is bounded intake preparation, not independent approval of the eventual composed candidate"
+  ]
+}

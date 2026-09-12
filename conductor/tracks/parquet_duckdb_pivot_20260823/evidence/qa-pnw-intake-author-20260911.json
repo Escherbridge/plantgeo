@@ -1,0 +1,284 @@
+{
+  "type": "intake-author",
+  "at_utc": "2026-09-12T02:36:40.864424+00:00",
+  "base_commit": "2317ee3a2ac35de489d27503dfec91ea3285bd66",
+  "source_commit": "abdf99b993117f77a1912c05ccabd3df082a8903",
+  "source_tree": "7d7d4f06ce2d3d98fd37e713e1824e0e30ba4413",
+  "application": "Exactly one no-commit cherry-pick; one RUNBOOK conflict resolved from complete current bytes plus exact incomingPNWrow",
+  "head_unchanged": true,
+  "tests_run": false,
+  "paths": [
+    {
+      "path": "conductor/RUNBOOK.md",
+      "base": {
+        "blob": "e174315b1589ac0ea9573d3180c06edc3f0a471f",
+        "mode": "100644",
+        "bytes": 16997,
+        "sha256": "f688e6b0e50357bc966eefd00d462d64a3c957a522e77a28238c56ca670ac6ff"
+      },
+      "source": {
+        "blob": "7ab8dc1031d72326a15ced3bab08788086036be5",
+        "mode": "100644",
+        "bytes": 15799,
+        "sha256": "fa2a3a3ac77fe4bb5939a6793692fe6a51f939e8dabc812cae2e23fbe8865148"
+      },
+      "staged_blob": "8d81a450356d3998273b0a709ba089c5dd34ec35",
+      "staged_bytes": 17578,
+      "staged_sha256": "ecf2a6b8481674c7623533900e163947e70065713cbee04bb2065709fa0a1c74",
+      "disposition": "additive_composition"
+    },
+    {
+      "path": "conductor/tracks.md",
+      "base": {
+        "blob": "46954314516212768f6d0b30e4643baeff540087",
+        "mode": "100644",
+        "bytes": 13848,
+        "sha256": "7c933a2b495ef91951f3339ba55c9bfd0d5f71420c253abcfd749c8f3cb611f2"
+      },
+      "source": {
+        "blob": "93276503daebb058b75b876b1156043bd1b29b8b",
+        "mode": "100644",
+        "bytes": 14070,
+        "sha256": "2115acff29ba870ab98dce2fde6ff0d11adcaec995c335da7f046442f71bf3ee"
+      },
+      "staged_blob": "18134ad92de6dc4c8c571b6d81939d7b8b0d9105",
+      "staged_bytes": 14736,
+      "staged_sha256": "03b75c8648fd49b4262d8d53a81a8dd789f9516899226ee448154746bf232995",
+      "disposition": "additive_composition"
+    },
+    {
+      "path": "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md",
+      "base": null,
+      "source": {
+        "blob": "3a31757b1b7a1db3b7b34cc7859e4f2ef0f28c97",
+        "mode": "100644",
+        "bytes": 65947,
+        "sha256": "1efde3c255a3c9a566d53f8fcf7a1af734dffb1ef4384b40b3e4b522b578cc25"
+      },
+      "staged_blob": "3a31757b1b7a1db3b7b34cc7859e4f2ef0f28c97",
+      "staged_bytes": 65947,
+      "staged_sha256": "1efde3c255a3c9a566d53f8fcf7a1af734dffb1ef4384b40b3e4b522b578cc25",
+      "disposition": "exact_source"
+    },
+    {
+      "path": "conductor/tracks/platform_experience_qa_20260911/evidence/intervention-boundary-spec.md",
+      "base": null,
+      "source": {
+        "blob": "60fde2137d12ae0c2aa257062208b4c307bb0675",
+        "mode": "100644",
+        "bytes": 2552,
+        "sha256": "e65dd243e6d48bde5ecc5bb44586d9a1c92eb8da01c20e8bfbdab64f0f33f65b"
+      },
+      "staged_blob": "60fde2137d12ae0c2aa257062208b4c307bb0675",
+      "staged_bytes": 2552,
+      "staged_sha256": "e65dd243e6d48bde5ecc5bb44586d9a1c92eb8da01c20e8bfbdab64f0f33f65b",
+      "disposition": "exact_source"
+    },
+    {
+      "path": "conductor/tracks/platform_experience_qa_20260911/evidence/task-ledger.md",
+      "base": {
+        "blob": "94fc5893f83255fc8173b1790923e3f81fda9a87",
+        "mode": "100644",
+        "bytes": 5298,
+        "sha256": "620f7af3d28db0c26ce179dc1ece58db40a88f17f31c5dbbd75435b62a5b7212"
+      },
+      "source": {
+        "blob": "4a8f65134078792b4100a4c626e98dbc47770fa1",
+        "mode": "100644",
+        "bytes": 5421,
+        "sha256": "b1237d67a5395cb8febf547d00b13dbbaa5e70dae9db16bfc340580c2e793be1"
+      },
+      "staged_blob": "4a8f65134078792b4100a4c626e98dbc47770fa1",
+      "staged_bytes": 5421,
+      "staged_sha256": "b1237d67a5395cb8febf547d00b13dbbaa5e70dae9db16bfc340580c2e793be1",
+      "disposition": "exact_source"
+    },
+    {
+      "path": "conductor/tracks/platform_experience_qa_20260911/metadata.json",
+      "base": {
+        "blob": "260e2dd28d32d2ca5b76fb51c804e41fa1f1b6d5",
+        "mode": "100644",
+        "bytes": 4787,
+        "sha256": "b7c75e4ed5da69341c6760b91f1c06c4af2ff57d807c9e615fc8d07c670d1fbe"
+      },
+      "source": {
+        "blob": "242ffbe7393a123a2345e17383e5be3f3f59e795",
+        "mode": "100644",
+        "bytes": 4880,
+        "sha256": "5f55457fdba93835b88678e1ca8c11818c5ff6cc662cbba0d5f47296beedcb7b"
+      },
+      "staged_blob": "242ffbe7393a123a2345e17383e5be3f3f59e795",
+      "staged_bytes": 4880,
+      "staged_sha256": "5f55457fdba93835b88678e1ca8c11818c5ff6cc662cbba0d5f47296beedcb7b",
+      "disposition": "exact_source"
+    },
+    {
+      "path": "conductor/tracks/platform_experience_qa_20260911/spec.md",
+      "base": {
+        "blob": "1716672068c648c82157cf53ec79ddfbeef79c99",
+        "mode": "100644",
+        "bytes": 9398,
+        "sha256": "3390367ff43beeb28890503d895fa604cc7c4722b86d8980c3aa84dacdaf2e6e"
+      },
+      "source": {
+        "blob": "0aca102658dcbb0f0e99b582f61efef1fc940b75",
+        "mode": "100644",
+        "bytes": 9779,
+        "sha256": "354f4d29417d5eebef6a87b924abb85f35f7c418227076b2513ce91c84b5007f"
+      },
+      "staged_blob": "0aca102658dcbb0f0e99b582f61efef1fc940b75",
+      "staged_bytes": 9779,
+      "staged_sha256": "354f4d29417d5eebef6a87b924abb85f35f7c418227076b2513ce91c84b5007f",
+      "disposition": "exact_source"
+    },
+    {
+      "path": "conductor/tracks/pnw_land_contact_experience_20260911/metadata.json",
+      "base": null,
+      "source": {
+        "blob": "140630c93663d36bdfae50cd6de71c04d8503575",
+        "mode": "100644",
+        "bytes": 2865,
+        "sha256": "897a53d260a6a4fa99bfb5b95bc11949b3841d20981908b06491dda0cb3dd298"
+      },
+      "staged_blob": "140630c93663d36bdfae50cd6de71c04d8503575",
+      "staged_bytes": 2865,
+      "staged_sha256": "897a53d260a6a4fa99bfb5b95bc11949b3841d20981908b06491dda0cb3dd298",
+      "disposition": "exact_source"
+    },
+    {
+      "path": "conductor/tracks/pnw_land_contact_experience_20260911/plan.md",
+      "base": null,
+      "source": {
+        "blob": "79969f688321ac64cfd7d5bac2c033e47351419d",
+        "mode": "100644",
+        "bytes": 8299,
+        "sha256": "17690031cf15c2e12224d3d57f7acd44ea75cb14ec37ea936891d8fe49d5bbb8"
+      },
+      "staged_blob": "79969f688321ac64cfd7d5bac2c033e47351419d",
+      "staged_bytes": 8299,
+      "staged_sha256": "17690031cf15c2e12224d3d57f7acd44ea75cb14ec37ea936891d8fe49d5bbb8",
+      "disposition": "exact_source"
+    },
+    {
+      "path": "conductor/tracks/pnw_land_contact_experience_20260911/spec.md",
+      "base": null,
+      "source": {
+        "blob": "e2c490a4c78ebf3bfd93c405be292d8e244ab6d7",
+        "mode": "100644",
+        "bytes": 14314,
+        "sha256": "4babfa0a36df6685bbb47f9a8fb0822e8a0e1e562f574f574982636bfc6c828b"
+      },
+      "staged_blob": "e2c490a4c78ebf3bfd93c405be292d8e244ab6d7",
+      "staged_bytes": 14314,
+      "staged_sha256": "4babfa0a36df6685bbb47f9a8fb0822e8a0e1e562f574f574982636bfc6c828b",
+      "disposition": "exact_source"
+    },
+    {
+      "path": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/independent-review.md",
+      "base": null,
+      "source": {
+        "blob": "b54678df4cd62fed07eae8991a17dd1298bafdc5",
+        "mode": "100644",
+        "bytes": 6551,
+        "sha256": "1963c50093eb381d5ce5d068d626db1b69b71ec73e525e1f754966775ba5532d"
+      },
+      "staged_blob": "b54678df4cd62fed07eae8991a17dd1298bafdc5",
+      "staged_bytes": 6551,
+      "staged_sha256": "1963c50093eb381d5ce5d068d626db1b69b71ec73e525e1f754966775ba5532d",
+      "disposition": "exact_source"
+    },
+    {
+      "path": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/parent-registration-review.md",
+      "base": null,
+      "source": {
+        "blob": "7d55d6f26002fb9a21d164268071994f3c4315c3",
+        "mode": "100644",
+        "bytes": 1217,
+        "sha256": "a1c92accd558417191435d0e3374b52aa542a0029a610d96dac10f0beb06cfe8"
+      },
+      "staged_blob": "7d55d6f26002fb9a21d164268071994f3c4315c3",
+      "staged_bytes": 1217,
+      "staged_sha256": "a1c92accd558417191435d0e3374b52aa542a0029a610d96dac10f0beb06cfe8",
+      "disposition": "exact_source"
+    },
+    {
+      "path": "conductor/tracks/pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+      "base": null,
+      "source": {
+        "blob": "e0e2323bac8ab7556704757933372bfa7ea583a7",
+        "mode": "100644",
+        "bytes": 16496,
+        "sha256": "a7a0ae172f2eb4f456a935620ca608bb706347ed2de0eb1dd8dcbe06be58298d"
+      },
+      "staged_blob": "e0e2323bac8ab7556704757933372bfa7ea583a7",
+      "staged_bytes": 16496,
+      "staged_sha256": "a7a0ae172f2eb4f456a935620ca608bb706347ed2de0eb1dd8dcbe06be58298d",
+      "disposition": "exact_source"
+    },
+    {
+      "path": "conductor/tracks/pnw_land_context_reference_plane_20260911/metadata.json",
+      "base": null,
+      "source": {
+        "blob": "d56c661c2eb13d9a448ec77f53cd46c1786abdce",
+        "mode": "100644",
+        "bytes": 1829,
+        "sha256": "6a6ddb91e9237e31bdebb1c2a80ff75e06fa634722dddbac29acaee48f13c950"
+      },
+      "staged_blob": "d56c661c2eb13d9a448ec77f53cd46c1786abdce",
+      "staged_bytes": 1829,
+      "staged_sha256": "6a6ddb91e9237e31bdebb1c2a80ff75e06fa634722dddbac29acaee48f13c950",
+      "disposition": "exact_source"
+    },
+    {
+      "path": "conductor/tracks/pnw_land_context_reference_plane_20260911/plan.md",
+      "base": null,
+      "source": {
+        "blob": "98615b664c395c1d539a4f1b0c4bb641f327883d",
+        "mode": "100644",
+        "bytes": 4417,
+        "sha256": "e25b3acf99be5f408c25d4b556a9626faa950df8e25d8b5b6dfa36d7f2d5919f"
+      },
+      "staged_blob": "98615b664c395c1d539a4f1b0c4bb641f327883d",
+      "staged_bytes": 4417,
+      "staged_sha256": "e25b3acf99be5f408c25d4b556a9626faa950df8e25d8b5b6dfa36d7f2d5919f",
+      "disposition": "exact_source"
+    },
+    {
+      "path": "conductor/tracks/pnw_land_context_reference_plane_20260911/spec.md",
+      "base": null,
+      "source": {
+        "blob": "538439eaa3a3d08f68096c96a9f85d47d26b8ff1",
+        "mode": "100644",
+        "bytes": 13125,
+        "sha256": "de34a31a100a56779e3173233266d71a0690d821e1507ac4ef09aa77fd818b51"
+      },
+      "staged_blob": "538439eaa3a3d08f68096c96a9f85d47d26b8ff1",
+      "staged_bytes": 13125,
+      "staged_sha256": "de34a31a100a56779e3173233266d71a0690d821e1507ac4ef09aa77fd818b51",
+      "disposition": "exact_source"
+    }
+  ],
+  "shared_compositions": {
+    "conductor/RUNBOOK.md": {
+      "addition_count": 1,
+      "exact_additions": [
+        "| PNW land context and public contact planning | [Reference-plane plan](tracks/pnw_land_context_reference_plane_20260911/plan.md) and [experience plan](tracks/pnw_land_contact_experience_20260911/plan.md) | Resolve Idaho utility/state-land feeds, Oregon's current utility feed, county parcel fields/rights and every exact distribution's reuse terms before acquisition. Keep private owner names excluded; preserve boundaries, offices, advisers and contact-process routes as distinct evidence. Registration is planning only and authorizes no ingestion, outreach or implementation. |"
+      ],
+      "removing_additions_recovers_base_git_bytes": true
+    },
+    "conductor/tracks.md": {
+      "addition_count": 2,
+      "exact_additions": [
+        "| [pnw_land_context_reference_plane_20260911](tracks/pnw_land_context_reference_plane_20260911/plan.md) | planned | Resolve exact source rights, current feeds, native IDs, watermarks and WA/OR/ID coverage for nonpersonal parcel/land-use context, electric territories, BLM surface/office jurisdictions, state-managed lands and a separately versioned public contact directory. Private owner names remain excluded. No acquisition or implementation is authorized. |",
+        "| [pnw_land_contact_experience_20260911](tracks/pnw_land_contact_experience_20260911/plan.md) | planned | After the reference plane is admitted, build four truthful map groups plus a persistent selected-area contact panel and read-only agent parity. Explain why a public office or adviser applies, distinguish records help from responsibility or documented forwarding, and prepare inquiries for user review without sending. |"
+      ],
+      "removing_additions_recovers_base_git_bytes": true
+    }
+  },
+  "preserved": {
+    "quality_receipt_sha256": "ac3190a42f2d04d111765cb064bd332d364808f4cb6e791b2d81b91c91f644f7",
+    "preexisting_omc_state_sha256": "abfc56277b0a05b8c68ed4ff071ed1900ced24f4c4758b63263a1632d3d2bd6a"
+  },
+  "source_exact_paths": 14,
+  "composed_paths": 2
+}

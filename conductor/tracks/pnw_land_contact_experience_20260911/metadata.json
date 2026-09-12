@@ -1,0 +1,91 @@
+{
+  "slug": "pnw_land_contact_experience_20260911",
+  "title": "PNW land context and public contact experience",
+  "type": "feature",
+  "status": "planned",
+  "created_on": "2026-09-11",
+  "depends_on": [
+    "pnw_land_context_reference_plane_20260911"
+  ],
+  "related_tracks": [
+    "platform_experience_qa_20260911",
+    "parquet_reader_cutover_acceptance_20260901",
+    "multiscale_polygon_surface_20260901"
+  ],
+  "next_gate": "Freeze source-backed selection/contact/time contracts with the reference-plane owner, resolve its admission gates, and explicitly authorize implementation and shared-file ownership before any execution.",
+  "registration_status": "registered_planned",
+  "registry": "conductor/tracks.md",
+  "authorization_scope": "planning_only",
+  "source_inventory": "../pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
+  "geography": {
+    "states": [
+      "WA",
+      "OR",
+      "ID"
+    ],
+    "query_envelope": [
+      -125,
+      42,
+      -111,
+      49
+    ],
+    "product_scope": "WA/OR/ID administrative footprint; the query envelope alone does not define coverage"
+  },
+  "surfaces": [
+    "pnw-parcels-land-use",
+    "pnw-electric-service-territories",
+    "pnw-blm-land-context",
+    "pnw-state-managed-land-context",
+    "pnw-place-contact-details"
+  ],
+  "surfaces_status": "proposed_only_not_implemented",
+  "partitions": {
+    "confidence": "planned",
+    "ownership_status": "Future code write sets and shared-file transfers must be assigned at the authorization gate; these slices allocate no implementation ownership.",
+    "slices": [
+      {
+        "id": "x0",
+        "task": "Freeze four-toggle product meaning, selected point/area, source versions, optional facets and public-contact route contract",
+        "depends_on": []
+      },
+      {
+        "id": "x1",
+        "task": "Persistent map selection, parcel/location detail panel, overlap browsing and four-toggle presentation",
+        "depends_on": [
+          "x0"
+        ]
+      },
+      {
+        "id": "x2",
+        "task": "Source-backed contact routes, documented-help explanations and user-reviewed inquiry drafts",
+        "depends_on": [
+          "x0"
+        ]
+      },
+      {
+        "id": "x3",
+        "task": "Agent parity for selected geometry, applicable offices, temporal claims and inquiry drafts",
+        "depends_on": [
+          "x0"
+        ]
+      },
+      {
+        "id": "x4",
+        "task": "Integrate keyboard/mobile/accessibility, scoped coverage and bounded performance",
+        "depends_on": [
+          "x1",
+          "x2",
+          "x3"
+        ]
+      },
+      {
+        "id": "x5",
+        "task": "One final integrated verification sweep and independent product/source/accessibility acceptance",
+        "depends_on": [
+          "x4"
+        ]
+      }
+    ],
+    "integration_slice": "x5"
+  }
+}
