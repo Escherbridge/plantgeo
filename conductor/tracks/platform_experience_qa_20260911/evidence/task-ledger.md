@@ -185,3 +185,23 @@ provider/product admission and the April 28, 2025 screenshot/catalogue/reader
 reconciliation remain open. The superseded forecast implementation remains
 archived custody and is not a candidate. No forecast data, external service,
 database, writer, scheduler, deployment or push action occurred.
+
+### 2026-09-12 latest restart reconciliation
+
+The [latest restart receipt](session-restart-20260912-latest.md) records a
+fresh read-only restart of botanical task
+`01a092bd-c71d-7bb3-bc46-e0dac684f751` and ingestion task
+`01a08b00-2a50-73c2-b39b-39523c74ceb2`. Botanical completed with no file or ref
+change and returned `HOLD`, but identified a concrete P2 agent-parity defect:
+the later web graph pass re-exposes `WAREHOUSE_TOOLS` after the
+`allowed_species_id` context has exited (`graph.py:311-320`, `423-425`,
+`_run_pass` at `253`; `tools.py:310-313`, `538`). The smallest next packet is a
+synthetic web-pass regression for a mismatched UUID and an omitted UUID, then
+an owner fix that preserves the constraint or excludes the tool from that
+pass. The botanical task is archived after this receipt; source, census,
+publication, Herbaria and recommendation gates remain active.
+
+The ingestion restart completed with no assistant, tool, command or revision
+evidence. It remains idle and unresolved and is intentionally retained open.
+No database, provider, object-store, writer, scheduler, deployment or push
+operation occurred in either restart.

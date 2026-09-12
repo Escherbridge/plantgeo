@@ -1,0 +1,62 @@
+---
+type: evidence-receipt
+track: platform_experience_qa_20260911
+recorded_on: 2026-09-12
+observed_at: 2026-09-12T12:08:10Z
+status: restart_reconciliation_read_only
+---
+
+# Latest restart reconciliation
+
+This receipt records the latest bounded restart of the unresolved ingestion
+owner and the preserved botanical profile task. Both lanes were instructed to
+remain read-only. No database, `pgt`, Railway, object-store, provider,
+download, writer, scheduler, deployment, or push operation occurred.
+
+## Botanical profile task
+
+Task `01a092bd-c71d-7bb3-bc46-e0dac684f751` was reopened from archive and
+completed a read-only comparison against current `main`
+(`356630ea6506d9c0989a00b6b44d26de14158e1b`, tree
+`f30f71c1ad9515e5b325c1210801fc0cc281d81a`). It confirmed that current main
+serves the exact-lowercase internal Species UUID transitional lookup through
+the API, agent graph and MCP surface, with explicit missingness and an
+unpublished profile release. The historical WCVP implementation remains
+branch-only custody and is not a current serving or release-parity candidate.
+
+The task found one concrete P2 agent-parity defect. `graph.py:311-320` binds
+`allowed_species_id` inside the warehouse `run_context`, but
+`graph.py:423-425` re-exposes `WAREHOUSE_TOOLS` after that context exits;
+`_run_pass` at `graph.py:253` supplies those tools directly. Because
+`tools.py:310-313` defaults the constraint to `None`,
+`tools.py:538` can accept a syntactically valid UUID that was not supplied by
+the caller, and the injected session provider is reset. The later web pass has
+no regression covering this path.
+
+The smallest safe follow-up is a local synthetic graph regression that enters
+the web pass with (a) a UUID different from the caller's and (b) no caller
+UUID, using an injected session provider, and proves refusal before lookup.
+The agent owner should then keep the constraint alive for the later pass or
+exclude `species_information` from that pass. This requires no live data or
+credentials.
+
+The source, census, non-Herbaria, Herbaria, publication, occurrence-plane and
+recommendation gates remain HOLD. The task made no file or ref change and is
+archived after this receipt; the parent botanical and Herbaria tracks remain
+active.
+
+## Ingestion task
+
+Task `01a08b00-2a50-73c2-b39b-39523c74ceb2` was restarted with the same
+read-only preflight. Its turn completed without an assistant message, tool
+event, command, or revision. That is terminal task state but not completion
+evidence. It remains idle, unresolved, and open; it must not be archived.
+
+## Coordination disposition
+
+The historical weather presentation approval remains bounded and unchanged.
+The visual presentation candidate is already integrated locally at `e54d091`;
+no second visual task is created. The superseded forecast implementation stays
+archived custody. The current orchestration task retains ownership of the P2
+agent finding, the ingestion hold, and the remaining production and populated
+experience gates.
