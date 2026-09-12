@@ -251,21 +251,14 @@ counterparts because a circle layer cannot hit-test a Polygon — the same reaso
 `interventions-points` and `soil-survey-summary` are listed. Both shapes of one aggregate share a
 formatter, so the square and the dot can never caption the same cell differently.
 
-`burn-severity` and `drought-fill` joined the list on 2026-09-02. They are the native-polygon
-products an event aggregate must be distinguishable *from*, and a reader who cannot hover a real
-burn scar to see whose it is has no way to check that the fire cell beside it is a different kind
-of thing. `formatBurnSeverity` reads the MVT's snake_case attributes (`fire_name`, `fire_year`,
-`severity_class`), not the camelCase keys the `geo.features` JSONB holds; `severity_class` is null
-on every published row because MTBS distributes severity as a raster, so it is read and simply
-produces no line until the source starts publishing it.
+`burn-severity` and `drought-fill` are native-polygon products an event aggregate must be
+distinguishable from. A reader who cannot hover a real burn scar to see whose it is has no way to
+check that the fire cell beside it is a different kind of thing.
 
-## Which environmental layers read Parquet (all of them, since 2026-09-04)
+## Environmental layer serving
 
-Wave C (lane C1) of `conductor/tracks/environmental_postgres_retirement_20260904` moved four of the
-five environmental tile functions off PostgreSQL, and lane FP3 moved the fifth. **No environmental
-layer reads Martin any more**; Martin's remaining function sources are `intervention_tiles` and
-`building_tiles`. The table is the whole answer; the paragraphs below it are the things that are
-easy to get wrong afterwards.
+No environmental layer reads Martin. Martin publishes only the relational
+`intervention_tiles` source; environmental layers use the governed Parquet plane.
 
 | layer | drawn from | read through | rung mapping |
 | --- | --- | --- | --- |
