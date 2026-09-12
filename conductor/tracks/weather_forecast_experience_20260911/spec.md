@@ -1,7 +1,7 @@
 ---
 type: track-spec
 slug: weather_forecast_experience_20260911
-status: planned
+status: in_progress
 ---
 
 # Traditional weather forecast map and location experience

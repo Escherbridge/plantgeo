@@ -1,7 +1,7 @@
 ---
 type: track-spec
 slug: weather_forecast_parquet_lane_20260911
-status: planned
+status: in_progress
 ---
 
 # Governed weather-forecast Parquet plane

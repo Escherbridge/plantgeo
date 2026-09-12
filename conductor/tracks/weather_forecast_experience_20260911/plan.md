@@ -1,10 +1,17 @@
 ---
 type: track-plan
 track: weather_forecast_experience_20260911
-status: planned
+status: in_progress
 ---
 
 # Plan
+
+Independent card, scalar-sample and static-vector components are prepared but
+unmounted pending shared-file transfer. `current-product-reconciliation.md` and
+`catalogue-unavailable-fixture.json` bind the saved April 28 catalogue gap; the
+exact screenshot response remains unknown. The forecast plane's
+`integration-handoff.md` lists registrations and real-data acceptance still owed.
+No checklist item below implies an integrated or production experience.
 
 ## X0 — observed-versus-forecast meaning
 

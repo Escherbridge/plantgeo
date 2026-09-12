@@ -1,37 +1,38 @@
 ---
 type: track-plan
 track: weather_forecast_parquet_lane_20260911
-status: planned
+status: in_progress
 ---
 
 # Plan
 
-This planning slice does not change runtime behavior. Implementation starts only
-after the source/product contract is frozen and the active shared-file owners
-complete or explicitly transfer their files.
+An independent local implementation is prepared; see `integration-handoff.md`,
+`source-reconciliation.md` and `independent-review.md`. Shared registration still
+waits for the exact canonical post-botanical transfer. The source probe admits a
+bounded local adapter candidate only, not a production product or active service.
 
 ## F0 — source and contract freeze
 
-- [ ] Reconcile the deterministic and ensemble capabilities already scoped by
+- [x] Reconcile the deterministic and ensemble capabilities already scoped by
   `upstream_dataset_expansion_20260806`; record what is implemented, what is only
   scaffolded and what still requires a provider probe.
 - [ ] Admit one exact provider/model product with licence, variables, units,
   cadence, horizon, domain, native support, quotas and missingness.
-- [ ] Choose native-grid, sampled-point or separately derived-field publication
+- [x] Choose native-grid, sampled-point or separately derived-field publication
   per variable. Do not infer a native footprint from sampled points.
-- [ ] Freeze model initialization/run, provider issue/release, PlantGeo
+- [x] Freeze model initialization/run, provider issue/release, PlantGeo
   fetch/admission/publication, valid, interval and lead-time identities and the
   rule that one response series uses one pinned run.
-- [ ] Freeze deterministic-first delivery; record ensemble uncertainty as a
+- [x] Freeze deterministic-first delivery; record ensemble uncertainty as a
   compatible later slice rather than a blocker.
 
 ## F1 — immutable forecast artifacts
 
 - [ ] Define run manifest, variable catalogue, support/domain mask, spatial field
   and selected-location window schemas.
-- [ ] Retain or derive wind `u`/`v` components and define valid vector
+- [x] Retain or derive wind `u`/`v` components and define valid vector
   aggregation, cancellation and direction conventions.
-- [ ] Define missing, outside-domain, stale, not-generated and upstream-failed
+- [x] Define missing, outside-domain, stale, not-generated and upstream-failed
   states without overloading null or zero.
 - [ ] Set measured row, byte, memory, provider-call and run-retention ceilings.
 

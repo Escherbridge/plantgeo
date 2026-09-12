@@ -2,7 +2,7 @@
   "slug": "weather_forecast_parquet_lane_20260911",
   "title": "Governed weather-forecast Parquet plane",
   "type": "infrastructure",
-  "status": "planned",
+  "status": "in_progress",
   "created_on": "2026-09-11",
   "depends_on": [
     "gapless_parquet_publication_20260901",
@@ -14,7 +14,7 @@
     "multiscale_polygon_surface_20260901",
     "weather_forecast_experience_20260911"
   ],
-  "next_gate": "Admit one exact deterministic forecast product and freeze model-run, valid-time, variable, support, missingness and immutable-run publication contracts.",
+  "next_gate": "Obtain exact canonical post-botanical shared-file handoff; local verification is recorded, while remote publication, schedules, production admission and real-data experience acceptance remain open.",
   "partitions": {
     "confidence": "planned",
     "slices": [

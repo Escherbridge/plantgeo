@@ -1,0 +1,10 @@
+{
+  "url": "https://single-runs-api.open-meteo.com/v1/forecast?latitude=43.615&longitude=-116.2023&models=ecmwf_ifs&run=2026-09-08T00%3A00&hourly=temperature_2m,relative_humidity_2m,apparent_temperature,dew_point_2m,cloud_cover,pressure_msl,precipitation,weather_code,wind_speed_10m,wind_direction_10m,wind_gusts_10m&timezone=GMT&timeformat=unixtime&wind_speed_unit=ms&temperature_unit=celsius&precipitation_unit=mm&cell_selection=nearest&elevation=nan&forecast_days=10",
+  "fetched_at": "2026-09-12T01:07:51.7473851Z",
+  "status": 200,
+  "bytes": 14573,
+  "capture_file_sha256": "34812e5101395d607ca9c61454a0aee140dbc5628a052b2b276fc85f01e45186",
+  "capture_file_bytes": 14575,
+  "source_response_sha256": "6909f2b34b420fa34c4bd66c4e812e4f605b564dd7c3751139b570a33593297d",
+  "capture_note": "PowerShell appended CRLF; source_response_sha256 hashes the first bytes reported by the HTTP response receipt, capture_file_sha256 hashes the complete saved fixture."
+}
