@@ -359,7 +359,7 @@ async def test_graph_happy_path_skips_web_and_emits_a_report() -> None:
 
 
 async def test_graph_runs_the_web_pass_when_the_warehouse_is_empty() -> None:
-    """An empty warehouse must open the web pass, which then carries the search tool."""
+    """An empty warehouse opens web search without re-exposing scoped botanical access."""
     warehouse_runner = _Runner([_Stream(_message(_text_block("Nothing stored here.")))])
     web_message = _message(
         SimpleNamespace(
@@ -386,6 +386,8 @@ async def test_graph_runs_the_web_pass_when_the_warehouse_is_empty() -> None:
     warehouse_tool_names = {getattr(tool, "name", None) for tool in calls[0]["tools"]}
     assert "web_search" not in warehouse_tool_names
     web_tools = calls[1]["tools"]
+    web_tool_names = {getattr(tool, "name", None) for tool in web_tools}
+    assert "species_information" not in web_tool_names
     search_tool = next(tool for tool in web_tools if isinstance(tool, dict))
     assert search_tool["type"] == "web_search_20260209"
     assert search_tool["max_uses"] == agent_graph.MAX_SEARCHES_PER_REQUEST

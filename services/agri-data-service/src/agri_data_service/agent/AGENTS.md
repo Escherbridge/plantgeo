@@ -101,6 +101,12 @@ Ambient state (the session provider, the per-run tool ledger, the per-run plane-
 travels in `ContextVar`s because a tool function's signature *is* its model-facing schema — a
 `session` parameter would become something the model is asked to supply.
 
+The botanical `species_information` tool is scoped to the warehouse pass. Its exact UUID is bound
+by `tools.run_context`, while the optional web pass runs after that context exits. The graph therefore
+uses `WAREHOUSE_TOOLS_FOR_WEB`, which omits `species_information`, instead of re-exposing a tool
+whose UUID constraint has expired. If a later pass needs botanical access, it must re-enter the same
+context with the caller's UUID and add a regression for mismatched and omitted UUIDs.
+
 ## Reading the Parquet warehouse
 
 **Repointed 2026-09-04** by the `environmental_postgres_retirement_20260904` track, lane C2. Every

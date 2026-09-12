@@ -48,6 +48,10 @@ MODEL: Final = "claude-opus-5"
 # Adaptive thinking is Claude Opus 5's default, so `thinking` is deliberately never sent.
 SERVER_SIDE_FALLBACK_BETA: Final = "server-side-fallback-2026-07-01"
 WEB_SEARCH_TOOL: Final[dict[str, Any]] = {"type": "web_search_20260209", "name": "web_search"}
+# The scoped species tool is available only during the warehouse pass.
+WAREHOUSE_TOOLS_FOR_WEB: Final = tuple(
+    tool for tool in warehouse_tools.WAREHOUSE_TOOLS if tool.name != "species_information"
+)
 
 MAX_OUTPUT_TOKENS: Final = 16_000
 MAX_WAREHOUSE_ITERATIONS: Final = 6
@@ -422,7 +426,7 @@ class GatherWebEvidence:
         search_tool = {**WEB_SEARCH_TOOL, "max_uses": verdict.searches_allowed}
         refused = await _run_pass(
             ctx,
-            tool_list=[*warehouse_tools.WAREHOUSE_TOOLS, search_tool],
+            tool_list=[*WAREHOUSE_TOOLS_FOR_WEB, search_tool],
             max_iterations=MAX_WEB_ITERATIONS,
             collect_web=True,
         )
