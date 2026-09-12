@@ -1,0 +1,68 @@
+{
+  "slug": "platform_experience_qa_20260911",
+  "title": "Platform experience QA and track orchestration",
+  "type": "verification",
+  "status": "active",
+  "created_on": "2026-09-11",
+  "depends_on": [
+    "botanical_species_profile_lookup_20260911",
+    "weather_forecast_parquet_lane_20260911",
+    "weather_forecast_experience_20260911",
+    "community_engagement_completion_20260805"
+  ],
+  "related_tracks": [
+    "pnw_herbaria_source_admission_20260911",
+    "parquet_production_acceptance_20260901",
+    "botanical_occurrence_parquet_lane_20260911",
+    "botanical_occurrence_experience_20260911",
+    "multiscale_polygon_surface_20260901",
+    "parquet_reader_cutover_acceptance_20260901"
+  ],
+  "task_bindings": {
+    "resolution": "Bind live IDs, checkouts, bases, commits, trees and receipts in evidence/task-ledger.md before consuming task handoffs; names here are roles, not status claims.",
+    "roles": [
+      "coordinating UX QA task",
+      "integration task",
+      "botanical species profile author task",
+      "weather forecast lane and experience author tasks",
+      "community engagement and boundary authoring task",
+      "PNW/GIS contact research task",
+      "independent verifier task"
+    ]
+  },
+  "next_gate": "Bind current task/candidate ownership, inventory every surfaced requirement and freeze the local role/device/data/cache matrix before claiming browser acceptance.",
+  "authority": {
+    "execution": "isolated local QA only",
+    "production_mutation": false,
+    "railway_mutation": false,
+    "external_messages": false,
+    "independent_verifier_required": true,
+    "production_acceptance": "Remains owned by parquet_production_acceptance_20260901; local UX proof does not close that gate."
+  },
+  "partitions": {
+    "confidence": "active_plan_no_execution_verdict",
+    "shared_writes": [
+      "This track owns only conductor/tracks/platform_experience_qa_20260911/ documentation and evidence.",
+      "Feature authors own application fixes in their tracks; the integration task serializes shared files and records ownership transfers and merge order.",
+      "The integration/coordinating owner adds the initial active entry and current handoff routing in conductor/tracks.md and conductor/RUNBOOK.md now; final closure/status updates wait for independent GREEN."
+    ],
+    "tripwires": [
+      "Production or Railway mutation is outside this track.",
+      "No synthetic intervention seeding, production fixtures, real-user personal data or credential capture.",
+      "Agent-created local intervention rows prove synthetic mechanics only; they cannot close the community real human contributor requirement or production/training acceptance.",
+      "Rendering or unit tests alone cannot close UX requirements.",
+      "Missing browser, mobile, role, accessibility, temporal, canvas or agent parity evidence blocks GREEN where required.",
+      "No author self-approval; changed candidate identities require evidence reconciliation.",
+      "Check existing owner/track/dependencies/checkout/paths/authority before spawning, bind each task, and keep blocked/unresolved owners open; done requires immutable candidate integration and independent verification.",
+      "No session archive or pruning before integrated proof and retained evidence links."
+    ],
+    "slices": [
+      {"id": "q0", "task": "Task binding, ownership and requirement matrix", "status": "active", "depends_on": [], "owns": ["conductor/tracks/platform_experience_qa_20260911/evidence/task-ledger.md", "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md"]},
+      {"id": "q1", "task": "Local browser, canvas, accessibility and agent parity evidence", "status": "planned", "depends_on": ["q0"], "owns": ["conductor/tracks/platform_experience_qa_20260911/evidence/captures/"]},
+      {"id": "q2", "task": "Defect routing, integration and task/commit/tree reconciliation before verdict", "status": "planned", "depends_on": ["q1"], "owns": ["conductor/tracks/platform_experience_qa_20260911/evidence/defects.md", "conductor/tracks/platform_experience_qa_20260911/evidence/reconciliation.md"]},
+      {"id": "q3", "task": "Final check receipt reconciliation followed by independent integrated verdict", "status": "planned", "depends_on": ["q2"], "owns": ["conductor/tracks/platform_experience_qa_20260911/evidence/final-verdict.md"], "handoff": "Q2 transfers evidence/reconciliation.md for final receipt binding before independent review; q3 is the integrated proof gate."},
+      {"id": "q4", "task": "Final registry/runbook status handoff and proof-gated session cleanup", "status": "planned", "depends_on": ["q3"], "owns": ["conductor/tracks/platform_experience_qa_20260911/evidence/closure-handoff.md"]}
+    ],
+    "integration_slice": "q3"
+  }
+}
