@@ -45,7 +45,7 @@ function createScriptedDatabase(
     insert: () => createQueryStub(queue, calls),
     update: () => createQueryStub(queue, calls),
     delete: () => createQueryStub(queue, calls),
-    execute: async () => [],
+    execute: async () => [{ valid: true }],
     transaction: async (callback: (tx: unknown) => Promise<unknown>) =>
       callback(runner),
   };

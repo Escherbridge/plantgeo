@@ -217,10 +217,12 @@ export function InterventionFeed() {
       <EditorialSection index="02" title="Proposing a site" id="submit">
         <EditorialProse>
           <p>
-            An intervention is anchored to ground you draw, so it is proposed
-            from the map rather than from this page. Open the map, find the
-            parcel, draw the site, and submit it; it lands in this feed and in
-            the moderation queue at the same moment.
+            Open the map, find the parcel, and choose Community → Recommend.
+            Draw a polygon or rectangle boundary, or explicitly choose a point.
+            Review the site and publication notice, then submit it for expert
+            review. Your recommendation stays off the public map until a
+            reviewer publishes it. Community shows its status and any request
+            for revision.
           </p>
           <p>
             If you would rather note that a place needs attention without

@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
-import { redirect } from "next/navigation";
+import Link from "next/link";
 import { getServerSession } from "@/lib/server/auth";
-import { ModerationPanel } from "@/components/panels/ModerationPanel";
 import { ContributionQueue } from "@/components/panels/ContributionQueue";
 
 export const metadata: Metadata = {
@@ -12,12 +11,22 @@ export const metadata: Metadata = {
 const MODERATION_ROLES = ["expert", "admin"];
 
 export default async function ModerationPage() {
-  const session = await getServerSession();
+  let session: Awaited<ReturnType<typeof getServerSession>>;
+  try {
+    session = await getServerSession();
+  } catch {
+    return <p role="alert" className="p-8 text-zinc-200">The sign-in service is unavailable. Community review could not be loaded. Please try again.</p>;
+  }
   const role = (session?.user as { platformRole?: string } | undefined)?.platformRole;
 
-  if (!role || !MODERATION_ROLES.includes(role)) {
-    redirect("/");
-    return null;
+  if (!session || !role || !MODERATION_ROLES.includes(role)) {
+    return (
+      <div className="p-8 text-zinc-200">
+        <h1 className="text-lg font-semibold">Community review</h1>
+        <p className="mt-2">{!session ? "Sign in to review community recommendations." : "Only experts and administrators can review community recommendations."}</p>
+        <Link className="mt-3 inline-block underline" href={!session ? "/api/auth/signin?callbackUrl=%2Fmoderation" : "/"}>{!session ? "Sign in" : "Return to map"}</Link>
+      </div>
+    );
   }
 
   return (
@@ -28,9 +37,6 @@ export default async function ModerationPage() {
           <p className="mt-1 mb-3 text-sm text-zinc-400">Review submitted sites and approve suitable recommendations for the public map.</p>
           <ContributionQueue />
         </section>
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 shadow-2xl">
-          <ModerationPanel />
-        </div>
       </div>
     </div>
   );

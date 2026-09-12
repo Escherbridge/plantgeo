@@ -1,0 +1,102 @@
+{
+  "baseCommit": "89e8494422b8232c8f16dbffdcf2321c7ea17bc8",
+  "baseTree": "777fe20689dd68c337677cc49e3fd4e63bfd4bcc",
+  "branch": "codex/intervention-boundary-publication-20260911",
+  "gates": [
+    {
+      "label": "tests",
+      "command": [
+        "C:\\Program Files\\nodejs\\node.exe",
+        "scripts/test-surface.mjs",
+        "--changed",
+        "--base",
+        "89e8494422b8232c8f16dbffdcf2321c7ea17bc8"
+      ],
+      "exitCode": 0,
+      "startedAt": "2026-09-12T01:45:32.556Z",
+      "finishedAt": "2026-09-12T01:48:46.597Z",
+      "logSha256": "96d63fff0edb3124fe4ff559e603b1df6f61e6b546cef20acf789b0336f2c674"
+    },
+    {
+      "label": "types",
+      "command": [
+        "C:\\Program Files\\nodejs\\node.exe",
+        "node_modules/typescript/bin/tsc",
+        "--noEmit"
+      ],
+      "exitCode": 0,
+      "startedAt": "2026-09-12T01:51:14.833Z",
+      "finishedAt": "2026-09-12T01:51:21.445Z",
+      "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "lint",
+      "command": [
+        "C:\\Program Files\\nodejs\\node.exe",
+        "node_modules/eslint/bin/eslint.js",
+        "."
+      ],
+      "exitCode": 0,
+      "startedAt": "2026-09-12T01:51:14.845Z",
+      "finishedAt": "2026-09-12T01:51:50.311Z",
+      "logSha256": "34bf5b4d8d50632f3789a9b37eb42e97ba4cf983472f965be85822b44da80f4a"
+    },
+    {
+      "label": "boundary",
+      "command": [
+        "C:\\Program Files\\nodejs\\node.exe",
+        "scripts/check-data-boundaries.mjs"
+      ],
+      "exitCode": 0,
+      "startedAt": "2026-09-12T01:45:32.534Z",
+      "finishedAt": "2026-09-12T01:45:33.038Z",
+      "logSha256": "bdace32d4e9d976a4bd3aaa051952e30f8c3772a6d8f4e253c0a57740d90dbb4"
+    }
+  ],
+  "tests": {
+    "selectorMode": "full",
+    "filesPassed": 151,
+    "testsSkipped": 13,
+    "testsPassed": 2328,
+    "filesSkipped": 2,
+    "communityPostgisPassed": 8
+  },
+  "lint": {
+    "warnings": 545,
+    "errors": 0
+  },
+  "browser": {
+    "logSha256": "6889cffef95813ac05ba9f8e277408bf7a6997c7d0de41436d6d2bead23d578f",
+    "duration": "1.2 minutes",
+    "command": "npx playwright test --config e2e/community-publication.config.ts",
+    "exitCode": 0,
+    "passed": 3
+  },
+  "database": {
+    "postgresql": "17.5",
+    "isolatedClusterStopped": true,
+    "port": 55439,
+    "postgis": "3.5.2",
+    "disposableDatabasesRemoved": true,
+    "host": "127.0.0.1"
+  },
+  "cleanup": {
+    "ports3307_3308_55439HaveNoListeners": true,
+    "nativeDatabaseUnchanged": true
+  },
+  "independentReview": {
+    "evidence": "review-and-verification.md",
+    "verdict": "accept",
+    "openActionableFindings": 0,
+    "staleReviewP1": "resolved"
+  },
+  "limitations": [
+    "13 unrelated opt-in database tests skipped",
+    "Baseline-derived bounded community DDL, not full migration replay",
+    "Local HTTP adapter for real tile SQL, not Martin executable",
+    "Synthetic basemap and unrelated environmental responses",
+    "PG17/PostGIS3.5 rather than documented PG16/PostGIS3.4",
+    "Browser-local cross-tab notification, not cross-device push",
+    "No production acceptance or deployment"
+  ]
+}

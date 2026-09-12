@@ -1,0 +1,17 @@
+{
+  "id": "intervention_boundary_authoring_20260911",
+  "type": "feature",
+  "status": "in_progress",
+  "created_at": "2026-09-11T00:00:00Z",
+  "description": "Bounded polygon/rectangle/point authoring for contributor intervention recommendations",
+  "canonical_publication_track": "community_engagement_completion_20260805",
+  "base_commit": "89e8494422b8232c8f16dbffdcf2321c7ea17bc8",
+  "out_of_scope": [
+    "production data",
+    "deployment",
+    "environmental Parquet",
+    "lifecycle migration",
+    "holes and MultiPolygon authoring"
+  ],
+  "candidate_status": "verified_ready_for_integration"
+}

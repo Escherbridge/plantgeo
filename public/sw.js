@@ -63,12 +63,15 @@ function isDynamicTileRequest(url) {
   var hostMatch = DYNAMIC_TILE_URL_PATTERNS.some(function(pattern) {
     return url.includes(pattern);
   });
-  if (!hostMatch) return false;
   // PMTiles are served from a different host, but guard the shape anyway: a Range request
   // yields a 206 that cache.put() rejects, so it must never reach a caching strategy.
   if (url.indexOf('.pmtiles') !== -1) return false;
   try {
-    return DYNAMIC_TILE_PATH.test(new URL(url).pathname);
+    var path = new URL(url).pathname;
+    var parts = path.split('/').filter(Boolean);
+    var source = parts[parts.length - 4] || '';
+    return DYNAMIC_TILE_PATH.test(path) &&
+      (hostMatch || source.split(',').indexOf('intervention_tiles') !== -1);
   } catch (_e) {
     return false;
   }
@@ -276,7 +279,7 @@ self.addEventListener('message', function(event) {
     // Pass `sourceId` (e.g. "sensor_tiles") to drop one layer, or omit it to drop all dynamic
     // tiles while leaving prefetched basemap tiles and the app shell alone -- which is what
     // separates this from CLEAR_TILE_CACHE below.
-    refreshDynamicTiles(event.data.sourceId || null).then(function(dropped) {
+    event.waitUntil(refreshDynamicTiles(event.data.sourceId || null).then(function(dropped) {
       if (event.source && event.source.postMessage) {
         event.source.postMessage({
           type: 'REFRESH_DYNAMIC_TILES_COMPLETE',
@@ -284,7 +287,7 @@ self.addEventListener('message', function(event) {
           dropped: dropped,
         });
       }
-    });
+    }));
   } else if (event.data.type === 'CLEAR_TILE_CACHE') {
     caches.delete(CACHE_NAME).then(function() {
       caches.open(CACHE_NAME).then(function(cache) {
@@ -296,4 +299,3 @@ self.addEventListener('message', function(event) {
     });
   }
 });
-

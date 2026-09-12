@@ -9,6 +9,7 @@ import {
 } from "@/lib/server/trpc/init";
 import { features, layers, teamMembers } from "@/lib/server/db/schema";
 import { isTeamEditorRole } from "@/lib/server/security/access-control";
+import { assertValidInterventionGeometry } from "@/lib/server/services/intervention-geometry-validation";
 import {
   countInterventionGeometryPositions,
   InterventionGeometrySchema,
@@ -171,6 +172,8 @@ export const interventionsRouter = router({
       }
       const layerId = await resolveInterventionsLayerId(ctx);
 
+      await assertValidInterventionGeometry(ctx.db, input.geometry);
+
       // `geo.features.geom` is populated by the `geo_features_sync_geom`
       // BEFORE trigger from `properties.geometry`; `geometry_id` stays NULL
       // because a one-off user submission never enters the Type-2 conformed
@@ -293,146 +296,42 @@ export const interventionsRouter = router({
         .limit(input.limit);
     }),
 
-  /**
-   * Propose a new community intervention linked to a MapLibre click & ML strategy cell.
-   */
-  proposeIntervention: contributorProcedure
-    .input(
-      z.object({
-        title: z.string().min(3).max(255),
-        strategyType: z.string(),
-        lat: z.number().min(-90).max(90),
-        lon: z.number().min(-180).max(180),
-        cellId: z.string().optional(),
-        causalTauEst: z.number().optional(),
-        description: z.string().optional(),
-      })
-    )
+  /** Resubmit an owned rejected or revision-requested site for a new expert review. */
+  reviseIntervention: contributorProcedure
+    .input(z.object({
+      featureId: z.string().uuid(),
+      name: z.string().trim().min(3).max(256),
+      type: InterventionTypeSchema,
+      description: z.string().trim().max(MAX_SUBMISSION_DESCRIPTION_LENGTH).optional(),
+      geometry: BoundedInterventionGeometrySchema,
+      publicationConsent: z.literal(true),
+    }))
     .mutation(async ({ ctx, input }) => {
       const userId = currentUserId(ctx.session);
       const layerId = await resolveInterventionsLayerId(ctx);
-
-      const [proposed] = await ctx.db
-        .insert(features)
-        .values({
-          layerId,
-          status: "proposed",
-          properties: {
-            name: input.title,
-            type: input.strategyType,
-            description: input.description ?? null,
-            cellId: input.cellId ?? null,
-            // Absent, never defaulted: until 2026-09-02 an omitted estimate was persisted as
-            // 0.15, so a row nobody had estimated was indistinguishable from one somebody had.
-            // The key is simply not written when the submitter supplied nothing.
-            ...(input.causalTauEst === undefined
-              ? {}
-              : { causalTauEst: input.causalTauEst }),
-            submittedByUserId: userId,
-            publicationConsent: true,
-          },
-        })
-        .returning(submissionProjection);
-
-      return proposed;
-    }),
-
-  /**
-   * Expert voting procedure for moderation queue.
-   */
-  castModerationVote: contributorProcedure
-    .input(
-      z.object({
-        interventionId: z.string().uuid(),
-        vote: z.enum(["approve", "reject", "request_revision"]),
-        note: z.string().optional(),
-      })
-    )
-    .mutation(async ({ ctx, input }) => {
-      const role = (ctx.session?.user as { platformRole?: string } | undefined)?.platformRole;
-      if (!role || !["expert", "admin"].includes(role)) {
-        throw new TRPCError({ code: "FORBIDDEN", message: "Expert or Admin role required" });
+      const [feature] = await ctx.db.select(submissionProjection).from(features)
+        .where(and(eq(features.id, input.featureId), eq(features.layerId, layerId),
+          sql`${features.properties} ->> 'submittedByUserId' = ${userId}`)).limit(1);
+      if (!feature) throw new TRPCError({ code: "NOT_FOUND", message: "Submission not found" });
+      if (feature.status !== "rejected" && feature.status !== "revision_requested") {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Only rejected submissions or requested revisions can be resubmitted." });
       }
-
-      const [feature] = await ctx.db
-        .select()
-        .from(features)
-        .where(eq(features.id, input.interventionId))
-        .limit(1);
-
-      if (!feature) {
-        throw new TRPCError({ code: "NOT_FOUND", message: "Intervention not found" });
-      }
-
-      const newStatus = input.vote === "approve" ? "approved" : input.vote === "reject" ? "rejected" : "pending_review";
-
-      const [updated] = await ctx.db
-        .update(features)
-        .set({
-          status: newStatus,
-          reviewNote: input.note ?? `Vote cast: ${input.vote}`,
-          updatedAt: new Date(),
-        })
-        // `layer_id` pins the update to the one partition already found above,
-        // instead of an update-by-id probing every partition.
-        .where(
-          and(eq(features.id, input.interventionId), eq(features.layerId, feature.layerId))
-        )
-        .returning(submissionProjection);
-
-      // The SELECT above prunes; it does not prove the row survived to the UPDATE. A delete
-      // racing between the two matches nothing, and that must error rather than resolve.
-      if (!updated) {
-        throw new TRPCError({ code: "NOT_FOUND", message: "Intervention not found" });
-      }
-
-      return updated;
-    }),
-
-  /**
-   * State machine transition for intervention lifecycle (`proposed` -> `approved` -> `active` -> `monitored`).
-   */
-  transitionLifecycleState: contributorProcedure
-    .input(
-      z.object({
-        interventionId: z.string().uuid(),
-        targetState: z.enum(["proposed", "approved", "active", "monitored"]),
-      })
-    )
-    .mutation(async ({ ctx, input }) => {
-      const role = (ctx.session?.user as { platformRole?: string } | undefined)?.platformRole;
-      if (!role || !["expert", "admin"].includes(role)) {
-        throw new TRPCError({ code: "FORBIDDEN", message: "Expert or Admin role required" });
-      }
-
-      // Resolved first so the update below can pin `layer_id` and touch one
-      // partition instead of probing every partition for a bare `id` match.
-      const [feature] = await ctx.db
-        .select({ layerId: features.layerId })
-        .from(features)
-        .where(eq(features.id, input.interventionId))
-        .limit(1);
-      if (!feature) {
-        throw new TRPCError({ code: "NOT_FOUND", message: "Intervention not found" });
-      }
-
-      const [updated] = await ctx.db
-        .update(features)
-        .set({
-          status: input.targetState,
-          updatedAt: new Date(),
-        })
-        .where(
-          and(eq(features.id, input.interventionId), eq(features.layerId, feature.layerId))
-        )
-        .returning(submissionProjection);
-
-      // Kept from before the pre-flight SELECT existed: the SELECT prunes the UPDATE to one
-      // partition, it does not stand in for checking that the UPDATE matched a row.
-      if (!updated) {
-        throw new TRPCError({ code: "NOT_FOUND", message: "Intervention not found" });
-      }
-
+      const properties = feature.properties as Record<string, unknown>;
+      const teamId = properties.submittedByTeamId;
+      if (typeof teamId === "string") await requireTeamAccess(ctx, teamId, userId, true);
+      await assertValidInterventionGeometry(ctx.db, input.geometry);
+      const [updated] = await ctx.db.update(features).set({
+        status: RECOMMENDATION_STATUS,
+        reviewNote: null,
+        properties: { ...properties, name: input.name, type: input.type,
+          description: input.description ?? null, geometry: input.geometry, publicationConsent: true },
+        updatedAt: new Date(),
+      }).where(and(eq(features.id, input.featureId), eq(features.layerId, layerId),
+        eq(features.status, feature.status),
+        sql`${features.properties} = ${JSON.stringify(feature.properties)}::jsonb`,
+        sql`date_trunc('milliseconds', ${features.updatedAt}) is not distinct from ${feature.updatedAt?.toISOString() ?? null}::timestamptz`,
+        sql`${features.properties} ->> 'submittedByUserId' = ${userId}`)).returning(submissionProjection);
+      if (!updated) throw new TRPCError({ code: "CONFLICT", message: "This submission changed. Reload it before resubmitting." });
       return updated;
     }),
 });

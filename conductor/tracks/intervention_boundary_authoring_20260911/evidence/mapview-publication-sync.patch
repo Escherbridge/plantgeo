@@ -1,0 +1,20 @@
+diff --git a/src/components/map/MapView.tsx b/src/components/map/MapView.tsx
+index 5355ec7..ae4d470 100644
+--- a/src/components/map/MapView.tsx
++++ b/src/components/map/MapView.tsx
+@@ -14,6 +14,7 @@ import { MapFocus } from "./MapFocus";
+ import { readMapFocus } from "@/lib/map/focus-params";
+ import { ReverseGeocode } from "@/components/search/ReverseGeocode";
+ import MapKeyboardShortcuts from "./MapKeyboardShortcuts";
++import InterventionPublicationSync from "./InterventionPublicationSync";
+ import { ManagerRail } from "./layer-panel/ManagerRail";
+ import { LayerPanel } from "./layer-panel/LayerPanel";
+ import LayerManager from "./LayerManager";
+@@ -371,6 +372,7 @@ export default function MapView() {
+                 used to bind these collapse now, and a collapsed section is an unmounted
+                 section, so the bindings cannot live inside one. */}
+             <MapKeyboardShortcuts />
++            <InterventionPublicationSync />
+             {/* The collapsed manager: the way back in, the unread alert count and the legend,
+                 in one row. Mounted before the panel so the panel paints over its shadow
+                 rather than under it; it renders nothing while the panel is open. */}

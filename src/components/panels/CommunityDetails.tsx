@@ -1,10 +1,12 @@
 "use client";
 
 import { useState } from "react";
+import { useSession } from "next-auth/react";
 import { trpc } from "@/lib/trpc/client";
 import { RequestSubmitModal } from "@/components/panels/RequestSubmitModal";
 import { InterventionSubmitModal } from "@/components/panels/InterventionSubmitModal";
 import { useAuthStore } from "@/stores/auth-store";
+import type { InterventionSiteGeometry } from "@/lib/map/intervention-boundary";
 
 const STRATEGY_TYPES = [
   { value: "", label: "All Types" },
@@ -38,7 +40,9 @@ const STRATEGY_LABELS: Record<string, string> = {
 
 const INTERVENTION_STATUS_LABELS: Record<string, string> = {
   pending_review: "In review",
-  published: "Approved",
+  published: "Published",
+  approved: "Awaiting publication review",
+  revision_requested: "Revision requested",
   rejected: "Not accepted",
 };
 
@@ -90,20 +94,23 @@ export function CommunityDetails({ mapCenter, bbox }: CommunityDetailsProps) {
   const [strategyFilter, setStrategyFilter] = useState<StrategyFilter>("");
   const [showSubmitModal, setShowSubmitModal] = useState(false);
   const [showInterventionModal, setShowInterventionModal] = useState(false);
+  const [revision, setRevision] = useState<{ featureId: string; name: string; type: string; description?: string; geometry?: InterventionSiteGeometry } | undefined>();
+  const { data: session } = useSession();
   const { activeTeamId } = useAuthStore();
-  const { data: memberships } = trpc.teams.listMyTeams.useQuery(undefined);
+  const { data: memberships, isLoading: membershipsLoading, error: membershipsError } = trpc.teams.listMyTeams.useQuery(undefined);
   const activeMembership = memberships?.find(
     ({ team }) => team.id === activeTeamId
   );
   const activeTeam = activeMembership?.team;
   const canSubmitToActiveTeam =
-    !activeTeamId ||
+    (!activeTeamId && !membershipsLoading && !membershipsError) ||
     activeMembership?.role === "owner" ||
     activeMembership?.role === "member";
 
   const {
     data: requests,
     error: requestsError,
+    isLoading: requestsLoading,
     refetch,
   } = trpc.community.getRequests.useQuery({
     bbox,
@@ -114,11 +121,13 @@ export function CommunityDetails({ mapCenter, bbox }: CommunityDetailsProps) {
 
   const {
     data: interventionSubmissions,
+    error: interventionsError,
+    isLoading: interventionsLoading,
     refetch: refetchInterventions,
   } = trpc.interventions.listMySubmissions.useQuery({
     teamId: activeTeamId ?? undefined,
     limit: 25,
-  });
+  }, { refetchInterval: 30_000 });
 
   const submitLat = mapCenter?.lat ?? 0;
   const submitLon = mapCenter?.lon ?? 0;
@@ -143,7 +152,7 @@ export function CommunityDetails({ mapCenter, bbox }: CommunityDetailsProps) {
             </h3>
             <button
               type="button"
-              onClick={() => setShowInterventionModal(true)}
+              onClick={() => { setRevision(undefined); setShowInterventionModal(true); }}
               disabled={!canSubmitToActiveTeam}
               title={
                 canSubmitToActiveTeam
@@ -160,11 +169,20 @@ export function CommunityDetails({ mapCenter, bbox }: CommunityDetailsProps) {
               fates, and only this one can ever reach the map. Each says which it is. */}
           <p className="text-xs text-[hsl(var(--muted-foreground))] mb-2">
             Proposes a site for the public map. Recommendations are held for
-            expert review and only appear on the map once a reviewer approves
+            expert review and only appear on the map once a reviewer publishes
             them.
           </p>
 
-          {!interventionSubmissions || interventionSubmissions.length === 0 ? (
+          {membershipsLoading && <p role="status" className="text-xs">Loading workspace permissions…</p>}
+          {membershipsError && <p role="alert" className="text-xs">{membershipsError.data?.code === "UNAUTHORIZED" ? "Sign in to recommend an intervention." : "Workspace permissions are unavailable. Try again shortly."}</p>}
+          {interventionsError ? (
+            <div role="alert" className="text-xs py-2">
+              <p>{interventionsError.data?.code === "UNAUTHORIZED" ? "Sign in to view your recommendations." : interventionsError.data?.code === "FORBIDDEN" ? "You do not have access to recommendations in this workspace." : interventionsError.message.toLowerCase().includes("provision") ? "The interventions layer has not been provisioned in this environment." : "Recommendations could not be loaded. The service may be unavailable."}</p>
+              <button type="button" className="min-h-11 underline" onClick={() => refetchInterventions()}>Retry recommendations</button>
+            </div>
+          ) : interventionsLoading || !interventionSubmissions ? (
+            <p role="status" className="text-xs py-2">Loading recommendations…</p>
+          ) : interventionSubmissions.length === 0 ? (
             <p className="text-xs text-[hsl(var(--muted-foreground))] py-2">
               {activeTeamId
                 ? "This partner workspace has not recommended any interventions yet."
@@ -190,10 +208,18 @@ export function CommunityDetails({ mapCenter, bbox }: CommunityDetailsProps) {
                       {type && " · "}
                       {INTERVENTION_STATUS_LABELS[status] ?? status}
                     </p>
-                    {status === "rejected" && submission.reviewNote && (
+                    {(status === "rejected" || status === "revision_requested") && submission.reviewNote && (
                       <p className="text-[10px] text-[hsl(var(--muted-foreground))] mt-1">
                         Reviewer note: {submission.reviewNote}
                       </p>
+                    )}
+                    {(status === "rejected" || status === "revision_requested") && canSubmitToActiveTeam && (submission.properties as { submittedByUserId?: string } | null)?.submittedByUserId === session?.user?.id && session?.user?.id && (
+                      <button type="button" className="min-h-11 text-xs underline" onClick={() => {
+                        const properties = submission.properties as { description?: string; geometry?: InterventionSiteGeometry } | null;
+                        const savedGeometry = properties?.geometry;
+                        setRevision({ featureId: submission.id, name, type, description: typeof properties?.description === "string" ? properties.description : undefined, geometry: savedGeometry?.type === "Point" || savedGeometry?.type === "Polygon" || savedGeometry?.type === "MultiPolygon" ? savedGeometry : undefined });
+                        setShowInterventionModal(true);
+                      }}>Edit and resubmit</button>
                     )}
                   </li>
                 );
@@ -254,7 +280,7 @@ export function CommunityDetails({ mapCenter, bbox }: CommunityDetailsProps) {
           waypoint, or draws anything on the map.
         </p>
 
-        {activeTeamId && !canSubmitToActiveTeam && (
+        {activeTeamId && !membershipsLoading && !membershipsError && !canSubmitToActiveTeam && (
           <p role="status" className="mb-3 text-xs text-[hsl(var(--muted-foreground))]">
             You can view this workspace, but only an owner or member can
             submit a shared request.
@@ -269,7 +295,9 @@ export function CommunityDetails({ mapCenter, bbox }: CommunityDetailsProps) {
                 ? "Sign in and select a workspace you belong to before viewing strategy requests."
                 : requestsError.message}
             </p>
-          ) : !requests || requests.length === 0 ? (
+          ) : requestsLoading || !requests ? (
+            <p role="status" className="text-sm text-center py-8">Loading strategy requests…</p>
+          ) : requests.length === 0 ? (
             <p className="text-sm text-[hsl(var(--muted-foreground))] text-center py-8">
               {activeTeamId
                 ? "No strategy requests from this partner workspace are in this area."
@@ -345,6 +373,8 @@ export function CommunityDetails({ mapCenter, bbox }: CommunityDetailsProps) {
 
       {showInterventionModal && (
         <InterventionSubmitModal
+          key={activeTeamId ?? "personal"}
+          revision={revision}
           lat={submitLat}
           lon={submitLon}
           teamId={activeTeamId ?? undefined}

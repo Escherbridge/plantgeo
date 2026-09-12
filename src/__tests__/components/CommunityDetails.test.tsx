@@ -10,7 +10,7 @@ import { renderWithProviders } from "@/test/utils";
  * TimeSliderCapabilitiesLoader.test.tsx.
  */
 const listMySubmissionsQuery = vi.hoisted(() =>
-  vi.fn((..._args: unknown[]) => ({ data: undefined as unknown }))
+  vi.fn((..._args: unknown[]): { data: unknown; isLoading?: boolean; error?: { message: string; data?: { code: string } }; refetch?: () => void } => ({ data: [] }))
 );
 const listMyTeamsQuery = vi.hoisted(() =>
   vi.fn((..._args: unknown[]) => ({ data: [] as unknown[] }))
@@ -23,18 +23,23 @@ vi.mock("@/lib/trpc/client", () => ({
   trpc: {
     teams: { listMyTeams: { useQuery: listMyTeamsQuery } },
     community: { getRequests: { useQuery: getRequestsQuery } },
-    interventions: { listMySubmissions: { useQuery: listMySubmissionsQuery } },
+    interventions: {
+      listMySubmissions: { useQuery: listMySubmissionsQuery },
+      submitIntervention: { useMutation: () => ({ mutate: vi.fn(), isPending: false }) },
+      reviseIntervention: { useMutation: () => ({ mutate: vi.fn(), isPending: false }) },
+    },
   },
 }));
 
 import { CommunityDetails } from "@/components/panels/CommunityDetails";
+vi.mock("next-auth/react", () => ({ useSession: () => ({ data: { user: { id: "current-contributor" } } }) }));
 import { useAuthStore } from "@/stores/auth-store";
 
 const INITIAL_AUTH_STATE = useAuthStore.getState();
 
 beforeEach(() => {
   useAuthStore.setState(INITIAL_AUTH_STATE, true);
-  listMySubmissionsQuery.mockReturnValue({ data: undefined });
+  listMySubmissionsQuery.mockReturnValue({ data: [] });
   listMyTeamsQuery.mockReturnValue({ data: [] });
   getRequestsQuery.mockReturnValue({ data: [], error: null, refetch: vi.fn() });
 });
@@ -51,6 +56,43 @@ function renderPanel() {
 }
 
 describe("CommunityDetails submission status", () => {
+  it("keeps loading and service errors distinct from an empty ledger", () => {
+    listMySubmissionsQuery.mockReturnValue({ data: undefined, isLoading: true });
+    const view = renderPanel();
+    expect(screen.getByText("Loading recommendations…")).toBeTruthy();
+    expect(screen.queryByText("You have not recommended any interventions yet.")).toBeNull();
+    view.unmount();
+    listMySubmissionsQuery.mockReturnValue({ data: undefined, error: { message: "Database timeout", data: { code: "INTERNAL_SERVER_ERROR" } } });
+    renderPanel();
+    expect(screen.getByText(/Recommendations could not be loaded/)).toBeTruthy();
+    expect(screen.queryByText("You have not recommended any interventions yet.")).toBeNull();
+  });
+
+  it.each([
+    ["UNAUTHORIZED", "Sign in to view your recommendations."],
+    ["FORBIDDEN", "You do not have access to recommendations in this workspace."],
+  ])("names %s access failures", (code, message) => {
+    listMySubmissionsQuery.mockReturnValue({ data: undefined, error: { message: "Request failed", data: { code } } });
+    renderPanel();
+    expect(screen.getByText(message)).toBeTruthy();
+  });
+
+  it("names missing layer provisioning without claiming no submissions exist", () => {
+    listMySubmissionsQuery.mockReturnValue({ data: undefined, error: { message: "The interventions layer is not provisioned", data: { code: "PRECONDITION_FAILED" } } });
+    renderPanel();
+    expect(screen.getByText("The interventions layer has not been provisioned in this environment.")).toBeTruthy();
+  });
+
+  it("offers resubmission only to the original contributor", () => {
+    listMySubmissionsQuery.mockReturnValue({ data: [
+      { id: "own", status: "revision_requested", properties: { name: "Own site", type: "biochar", submittedByUserId: "current-contributor" }, reviewNote: "Adjust the boundary" },
+      { id: "other", status: "rejected", properties: { name: "Another site", type: "biochar", submittedByUserId: "other-contributor" }, reviewNote: "Not suitable" },
+    ] });
+    renderPanel();
+    expect(screen.getAllByRole("button", { name: "Edit and resubmit" })).toHaveLength(1);
+    expect(screen.getByText("Reviewer note: Adjust the boundary")).toBeTruthy();
+  });
+
   it("shows an empty state before any recommendation has been submitted", () => {
     renderPanel();
 
@@ -79,7 +121,7 @@ describe("CommunityDetails submission status", () => {
     expect(screen.queryByText(/Reviewer note:/)).toBeNull();
   });
 
-  it("labels a published row as approved", () => {
+  it("labels a published row as published", () => {
     listMySubmissionsQuery.mockReturnValue({
       data: [
         {
@@ -95,7 +137,7 @@ describe("CommunityDetails submission status", () => {
     renderPanel();
 
     expect(screen.getByText("Creekside keyline berm")).toBeTruthy();
-    expect(screen.getByText(/Approved/)).toBeTruthy();
+    expect(screen.getByText(/Published/)).toBeTruthy();
     expect(screen.queryByText(/Reviewer note:/)).toBeNull();
   });
 
