@@ -15,6 +15,9 @@ The native polygon source remains authoritative for inspection and runtime fallb
 Globe, terrain, pitched views, unsupported WebGL2, invalid geometry, and GPU/style failures retain native
 cells. Returning to a supported view may restore the optional surface; an empty collection
 clears both representations. Satellite imagery retains its existing independent lifecycle.
+Empty or refused replacements immediately withdraw the previous cells, labels and inspection,
+including any open caption, even when a pending label relayout delays clearing the native
+source. Paint and inspection stay suppressed until a later accepted populated source is ready.
 
 The first profile accepts a uniform rectangular grid with compatible day, unit and declared
 support dimensions. Mixed-day collections use the native cells, preserving each cell's day.

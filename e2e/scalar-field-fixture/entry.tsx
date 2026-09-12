@@ -5,25 +5,30 @@ import TinySDF from "@mapbox/tiny-sdf";
 import { VegetationLayer } from "../../src/components/map/layers/VegetationLayer";
 import HoverTooltip from "../../src/components/map/HoverTooltip";
 import { useVegetationStore } from "../../src/stores/vegetation-store";
+import { isScalarFieldInspectionAllowed } from "../../src/lib/map/scalar-field-inspection";
 
-type Scenario = "field" | "duplicate" | "half-opacity" | "missing" | "mixed-days" | "mixed-units" | "empty" | "detail" | "mode-race" | "reload" | "globe" | "pitch";
+type Scenario = "field" | "duplicate" | "half-opacity" | "missing" | "mixed-days" | "mixed-units" | "empty" | "detail" | "mode-race" | "refusal-layout" | "reload" | "globe" | "pitch";
+
+interface ScalarCaseSnapshot {
+  scenario: Scenario;
+  zoom: number;
+  errors: string[];
+  layers: string[];
+  customPresent: boolean;
+  nativeOpacity: unknown;
+  probes: Record<string, { x: number; y: number }>;
+  labelCount: number;
+  unrestrictedPickCount: number;
+  inspectablePickCount: number;
+  diagnostics: Record<string, unknown>;
+  webgl2: boolean;
+}
 
 declare global {
   interface Window {
     fixtureReady: boolean;
-    runScalarCase: (scenario: Scenario) => Promise<{
-      scenario: Scenario;
-      zoom: number;
-      errors: string[];
-      layers: string[];
-      customPresent: boolean;
-      nativeOpacity: unknown;
-      probes: Record<string, { x: number; y: number }>;
-      labelCount: number;
-      unrestrictedPickCount: number;
-      diagnostics: Record<string, unknown>;
-      webgl2: boolean;
-    }>;
+    runScalarCase: (scenario: Scenario) => Promise<ScalarCaseSnapshot>;
+    runScalarRefusalPhase: (phase: "empty" | "null" | "settle" | "recover") => Promise<ScalarCaseSnapshot>;
   }
 }
 
@@ -144,9 +149,81 @@ async function settle(): Promise<void> {
   });
 }
 
+let heldIdleEvents = 0;
+let releaseIdle: (() => void) | null = null;
+
+// Hold controller notifications after the SDK settles placement; see AGENTS.md.
+function holdIdle(): Promise<void> {
+  const eventMap = map as unknown as {
+    fire: (event: string | { type: string }, properties?: unknown) => typeof map;
+  };
+  const originalFire = eventMap.fire;
+  heldIdleEvents = 0;
+  return new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      releaseIdle?.();
+      reject(new Error("Fixture did not attempt idle during held label layout"));
+    }, 8000);
+    releaseIdle = () => {
+      clearTimeout(timeout);
+      eventMap.fire = originalFire;
+      releaseIdle = null;
+    };
+    eventMap.fire = (event, properties) => {
+      if ((typeof event === "string" ? event : event.type) === "idle") {
+        heldIdleEvents++;
+        clearTimeout(timeout);
+        resolve();
+        return map;
+      }
+      return originalFire.call(map, event, properties);
+    };
+  });
+}
+
+function renderRefusalData(data: GeoJSON.FeatureCollection | null): void {
+  flushSync(() => root.render(<>
+    <VegetationLayer map={map} geojson={data} opacity={1} />
+    <HoverTooltip map={map} />
+  </>));
+}
+
+window.runScalarRefusalPhase = async (phase) => {
+  if (phase === "settle") {
+    releaseIdle?.();
+    await settle();
+  } else if (phase === "recover") {
+    renderRefusalData(collection("mode-race"));
+    await settle();
+  } else {
+    if (!releaseIdle) throw new Error("Refusal replacement requires held idle delivery");
+    renderRefusalData(phase === "null" ? null : collection("empty"));
+    await new Promise<void>((resolve) => {
+      map.once("render", () => requestAnimationFrame(() => resolve()));
+      map.triggerRepaint();
+    });
+  }
+  return snapshot("refusal-layout");
+};
+
 window.runScalarCase = async (scenario) => {
   errors.length = 0;
   glErrors.length = 0;
+  releaseIdle?.();
+  if (scenario === "refusal-layout") {
+    map.setProjection({ type: "mercator" });
+    map.jumpTo({ center: [-120, 45], zoom: 7, pitch: 0 });
+    renderRefusalData(collection("field"));
+    await settle();
+    const coarse = snapshot(scenario);
+    const pendingIdle = holdIdle();
+    map.jumpTo({ center: [-120.25, 45], zoom: 10 });
+    await pendingIdle;
+    const locked = snapshot(scenario);
+    locked.diagnostics.coarseCustomActive = coarse.diagnostics.active;
+    locked.diagnostics.coarseCustomReady = coarse.diagnostics.ready;
+    return locked;
+  }
   if (scenario === "reload") {
     map.setStyle(style(), { diff: false });
     await settle();
@@ -168,6 +245,10 @@ window.runScalarCase = async (scenario) => {
     flushSync(() => useVegetationStore.getState().setSource("measured"));
   }
   await settle();
+  return snapshot(scenario, { modeRaceStartedWhileSourceLoading });
+};
+
+function snapshot(scenario: Scenario, extraDiagnostics: Record<string, unknown> = {}): ScalarCaseSnapshot {
   const probes: Record<string, { x: number; y: number }> = {};
   for (const [name, coordinate] of Object.entries({
     negative: [-120.25, 45], center: [-120, 45], positive: [-119.75, 45],
@@ -181,6 +262,8 @@ window.runScalarCase = async (scenario) => {
     implementation?: Record<string, unknown>;
   } | undefined)?.implementation;
   const mesh = scalar?.mesh as { cells?: unknown[] } | null | undefined;
+  const picks = map.queryRenderedFeatures([probes.negative.x, probes.negative.y]);
+  const nativeSource = map.getStyle().sources["vegetation-ndvi-cells"] as { data?: GeoJSON.FeatureCollection } | undefined;
   return {
     scenario, zoom: map.getZoom(), errors: [...errors],
     layers: map.getStyle().layers.map((layer) => layer.id),
@@ -188,7 +271,8 @@ window.runScalarCase = async (scenario) => {
     nativeOpacity: map.getPaintProperty("vegetation-ndvi-cells-fill", "fill-opacity"),
     probes,
     labelCount: map.getLayer(labels) ? map.queryRenderedFeatures(undefined, { layers: [labels] }).length : 0,
-    unrestrictedPickCount: map.queryRenderedFeatures([probes.negative.x, probes.negative.y]).length,
+    unrestrictedPickCount: picks.length,
+    inspectablePickCount: picks.filter((feature) => isScalarFieldInspectionAllowed(map, feature.layer.id)).length,
     diagnostics: {
       failed: scalar?.failed, active: scalar?.active, ready: scalar?.ready,
       visible: scalar?.visible, meshCells: mesh?.cells?.length,
@@ -197,10 +281,17 @@ window.runScalarCase = async (scenario) => {
       projection: map.getProjection().type, terrain: map.getTerrain(), pitch: map.getPitch(),
       bounds: map.getBounds().toArray(), sourceLoaded: map.isSourceLoaded("vegetation-ndvi-cells"),
       labelVisibility: map.getLayer(labels) ? map.getLayoutProperty(labels, "visibility") : null,
+      outlineOpacity: map.getPaintProperty("vegetation-ndvi-cells-outline", "line-opacity"),
+      labelOpacity: map.getPaintProperty(labels, "text-opacity"),
+      layoutPending: scalar?.layoutPending, dataPending: scalar?.dataPending,
+      nativeSuppressed: scalar?.nativeSuppressed,
+      sourceFeatureCount: nativeSource?.data?.features.length,
+      renderedSourceFeatureCount: map.querySourceFeatures("vegetation-ndvi-cells").length,
+      idleHeld: releaseIdle !== null, heldIdleEvents,
       glErrors: [...glErrors],
-      modeRaceStartedWhileSourceLoading,
+      ...extraDiagnostics,
     },
     webgl2: map.getCanvas().getContext("webgl2") !== null,
   };
-};
+}
 map.once("load", () => { window.fixtureReady = true; });

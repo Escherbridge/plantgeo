@@ -1,5 +1,6 @@
 import type { CustomLayerInterface, CustomRenderMethodInput, GeoJSONSource, Map as MapLibreMap, MapSourceDataEvent } from "maplibre-gl";
 import { buildScalarFieldMesh, scalarFieldCellSpacing, type ScalarFieldMesh } from "./scalar-field";
+import { setScalarFieldInspectionSuppressed } from "./scalar-field-inspection";
 
 interface ScalarFieldOptions {
   id: string;
@@ -31,6 +32,10 @@ export class ScalarFieldLayer implements CustomLayerInterface {
   private failed = false;
   private ready = false;
   private nativeOpacity: number | undefined;
+  private nativeOutlineOpacity: unknown;
+  private nativeOutlineVisible: boolean | undefined;
+  private nativeLabelOpacity: number | undefined;
+  private nativeSuppressed = false;
   private source: GeoJSONSource | null = null;
   private layoutPending = false;
   private dataPending = false;
@@ -42,6 +47,7 @@ export class ScalarFieldLayer implements CustomLayerInterface {
   update(collection: GeoJSON.FeatureCollection | null, opacity: number, visible: boolean): void {
     this.opacity = Math.max(0, Math.min(1, opacity));
     this.visible = visible;
+    if (!collection?.features.length) this.nativeSuppressed = true;
     if (this.collection !== collection) {
       this.collection = collection;
       this.dataPending = this.map !== null;
@@ -56,6 +62,8 @@ export class ScalarFieldLayer implements CustomLayerInterface {
     }
     // The native owner also writes paint during prop updates.
     this.nativeOpacity = undefined;
+    this.nativeOutlineVisible = undefined;
+    this.nativeLabelOpacity = undefined;
     this.flushSource();
     this.sync();
     this.map?.triggerRepaint();
@@ -64,6 +72,19 @@ export class ScalarFieldLayer implements CustomLayerInterface {
   onAdd(map: MapLibreMap, context: WebGLRenderingContext | WebGL2RenderingContext): void {
     this.map = map;
     this.source = map.getSource(this.options.nativeSourceId) as GeoJSONSource;
+    this.nativeOutlineOpacity = map.getPaintProperty(this.options.nativeOutlineId, "line-opacity");
+    this.nativeOpacity = undefined;
+    this.nativeOutlineVisible = undefined;
+    this.nativeLabelOpacity = undefined;
+    this.ready = false;
+    this.nativeSuppressed = !this.collection?.features.length;
+    for (const [id, property] of [
+      [this.options.nativeFillId, "fill-opacity-transition"],
+      [this.options.nativeOutlineId, "line-opacity-transition"],
+      [this.options.labelId, "text-opacity-transition"],
+    ]) {
+      if (map.getLayer(id)) map.setPaintProperty(id, property, { duration: 0, delay: 0 });
+    }
     map.on("move", this.sync);
     map.on("styledata", this.sync);
     map.on("sourcedata", this.sourceReady);
@@ -184,6 +205,7 @@ export class ScalarFieldLayer implements CustomLayerInterface {
     if (!map || map.getSource(this.options.nativeSourceId) !== this.source || !map.isSourceLoaded(this.options.nativeSourceId)) return;
     this.layoutPending = false;
     this.flushSource();
+    if (!this.dataPending && this.collection?.features.length && map.isSourceLoaded(this.options.nativeSourceId)) this.nativeSuppressed = false;
     this.sync();
   };
 
@@ -197,9 +219,29 @@ export class ScalarFieldLayer implements CustomLayerInterface {
     }
   }
 
+  private syncNativePaint(fillOpacity: number, suppressed: boolean): void {
+    const map = this.map;
+    if (!map) return;
+    const labelOpacity = suppressed ? 0 : this.opacity;
+    if (this.nativeOutlineVisible !== !suppressed && map.getLayer(this.options.nativeOutlineId)) {
+      this.nativeOutlineVisible = !suppressed;
+      map.setPaintProperty(this.options.nativeOutlineId, "line-opacity", suppressed ? 0 : this.nativeOutlineOpacity);
+    }
+    if (this.nativeLabelOpacity !== labelOpacity && map.getLayer(this.options.labelId)) {
+      this.nativeLabelOpacity = labelOpacity;
+      map.setPaintProperty(this.options.labelId, "text-opacity", labelOpacity);
+    }
+    if (this.nativeOpacity !== fillOpacity && map.getLayer(this.options.nativeFillId)) {
+      this.nativeOpacity = fillOpacity;
+      map.setPaintProperty(this.options.nativeFillId, "fill-opacity", fillOpacity);
+    }
+  }
+
   private sync = (): void => {
     const map = this.map;
     if (!map) return;
+    const suppressed = !this.visible || this.nativeSuppressed;
+    setScalarFieldInspectionSuppressed(map, [this.options.nativeFillId, this.options.nativeOutlineId, this.options.labelId], suppressed);
     try {
       const mercator = map.getProjection()?.type === "mercator";
       const bounds = map.getBounds();
@@ -208,15 +250,12 @@ export class ScalarFieldLayer implements CustomLayerInterface {
       const spacing = this.mesh ? scalarFieldCellSpacing(this.spacingCells, (point) => map.project(point)) : 0;
       const inspect = spacing >= 64;
       const sourceLoaded = map.getSource(this.options.nativeSourceId) === this.source && map.isSourceLoaded(this.options.nativeSourceId);
-      this.active = this.visible && supported && !this.failed && !!this.mesh && !inspect && !this.dataPending && sourceLoaded;
-      const nativeOpacity = !this.visible || (this.active && this.ready) ? 0 : this.opacity;
-      const labelVisibility = this.visible && inspect ? "visible" : "none";
-      if (nativeOpacity !== this.nativeOpacity && map.getLayer(this.options.nativeFillId)) {
-        this.nativeOpacity = nativeOpacity;
-        map.setPaintProperty(this.options.nativeFillId, "fill-opacity", nativeOpacity);
-      }
+      this.active = !suppressed && supported && !this.failed && !!this.mesh && !inspect && !this.dataPending && sourceLoaded;
+      const nativeOpacity = suppressed || (this.active && this.ready) ? 0 : this.opacity;
+      const labelVisibility = !suppressed && inspect ? "visible" : "none";
+      this.syncNativePaint(nativeOpacity, suppressed);
       if (sourceLoaded && !this.dataPending && !this.layoutPending) {
-        const nativeVisibility = this.visible ? "visible" : "none";
+        const nativeVisibility = suppressed ? "none" : "visible";
         const changes = [
           [this.options.nativeFillId, nativeVisibility],
           [this.options.nativeOutlineId, nativeVisibility],
@@ -230,7 +269,7 @@ export class ScalarFieldLayer implements CustomLayerInterface {
       this.active = false;
       this.nativeOpacity = undefined;
       try {
-        if (map.getLayer(this.options.nativeFillId)) map.setPaintProperty(this.options.nativeFillId, "fill-opacity", this.visible ? this.opacity : 0);
+        this.syncNativePaint(suppressed ? 0 : this.opacity, suppressed);
       } catch { /* The next style load rebuilds native layers. */ }
     }
   };
@@ -274,8 +313,9 @@ export class ScalarFieldLayer implements CustomLayerInterface {
 
   onRemove(): void {
     try {
-      if (this.map?.getLayer(this.options.nativeFillId)) this.map.setPaintProperty(this.options.nativeFillId, "fill-opacity", this.visible ? this.opacity : 0);
+      this.syncNativePaint(this.visible && !this.nativeSuppressed ? this.opacity : 0, !this.visible || this.nativeSuppressed);
     } catch { /* A replaced style recreates its own native layers. */ }
+    if (this.map) setScalarFieldInspectionSuppressed(this.map, [this.options.nativeFillId, this.options.nativeOutlineId, this.options.labelId], false);
     this.map?.off("move", this.sync);
     this.map?.off("styledata", this.sync);
     this.map?.off("sourcedata", this.sourceReady);

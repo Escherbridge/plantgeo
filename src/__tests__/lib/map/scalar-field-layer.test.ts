@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CustomRenderMethodInput, Map as MapLibreMap } from "maplibre-gl";
 import { ScalarFieldLayer } from "@/lib/map/scalar-field-layer";
+import { isScalarFieldInspectionAllowed } from "@/lib/map/scalar-field-inspection";
 import { NDVI_COLOR_RAMP } from "@/lib/vegetation";
 
 const collection: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [{
@@ -30,6 +31,7 @@ function harness({ webgl2 = true, shader = true, projectionReady = true } = {}) 
   const nativeSource = { setData: vi.fn(() => { state.sourceLoaded = false; }) };
   let currentSource = nativeSource;
   const layoutVisibility = new Map([ ["fill", "visible"], ["outline", "visible"], ["labels", "none"] ]);
+  const paint = new Map<string, unknown>([["outline:line-opacity", ["interpolate", ["linear"], ["zoom"], 8, 0, 9, 0.35]]]);
   type Listener = (event: { sourceId: string; sourceDataType?: string }) => void;
   const events = new Map<string, Set<Listener>>();
   const map = {
@@ -39,7 +41,8 @@ function harness({ webgl2 = true, shader = true, projectionReady = true } = {}) 
     project: ([x, y]: [number, number]) => ({ x: x * state.scale, y: y * state.scale }),
     getLayer: () => ({}), getSource: () => currentSource,
     getLayoutProperty: (id: string) => layoutVisibility.get(id),
-    setPaintProperty: vi.fn(), setLayoutProperty: vi.fn((id: string, _property: string, value: string) => { layoutVisibility.set(id, value); }), triggerRepaint: vi.fn(),
+    getPaintProperty: (id: string, property: string) => paint.get(`${id}:${property}`),
+    setPaintProperty: vi.fn((id: string, property: string, value: unknown) => { paint.set(`${id}:${property}`, value); }), setLayoutProperty: vi.fn((id: string, _property: string, value: string) => { layoutVisibility.set(id, value); }), triggerRepaint: vi.fn(),
     getCenter: () => ({ lng: 0 }), getRenderWorldCopies: () => state.worldCopies,
     getBounds: () => ({ getWest: () => state.west, getEast: () => state.east }),
     isSourceLoaded: () => state.sourceLoaded,
@@ -134,7 +137,7 @@ describe("scalar layer native fallback and lifecycle", () => {
     h.layer.update(collection, 0.3, false); h.draw();
     expect(h.gl.drawArrays).toHaveBeenCalledTimes(1);
     h.layer.update({ type: "FeatureCollection", features: [] }, 0.3, true); h.draw();
-    expect(h.map.setPaintProperty).toHaveBeenLastCalledWith("fill", "fill-opacity", 0.3);
+    expect(h.map.setPaintProperty).toHaveBeenLastCalledWith("fill", "fill-opacity", 0);
     expect(h.gl.drawArrays).toHaveBeenCalledTimes(1);
   });
   it("releases listeners and GPU objects on style removal", () => {
@@ -212,6 +215,75 @@ describe("scalar layer native fallback and lifecycle", () => {
     expect(h.gl.drawArrays).toHaveBeenCalledTimes(1);
     h.state.sourceLoaded = true; h.emit("sourcedata"); h.draw();
     expect(h.gl.drawArrays).toHaveBeenCalledTimes(2);
+  });
+  it.each([null, { type: "FeatureCollection", features: [] } as GeoJSON.FeatureCollection])("immediately suppresses empty/refused replacement %j during pending label layout", replacement => {
+    const h = harness();
+    h.draw();
+    h.state.scale = 256; h.emit("move");
+    expect(h.map.getLayoutProperty("labels")).toBe("visible");
+    h.map.setLayoutProperty.mockClear();
+    h.layer.update(replacement, 0.75, true);
+    h.draw();
+    expect(h.gl.drawArrays).toHaveBeenCalledTimes(1);
+    expect(h.gl.bufferData).toHaveBeenLastCalledWith(h.gl.ARRAY_BUFFER, new Float32Array(), h.gl.STATIC_DRAW);
+    for (const [id, property] of [["fill", "fill-opacity"], ["outline", "line-opacity"], ["labels", "text-opacity"]]) {
+      expect(h.map.getPaintProperty(id, property)).toBe(0);
+      expect(h.map.getPaintProperty(id, `${property}-transition`)).toEqual({ duration: 0, delay: 0 });
+      expect(isScalarFieldInspectionAllowed(h.map, id)).toBe(false);
+    }
+    expect(h.map.setLayoutProperty).not.toHaveBeenCalled();
+    expect(h.nativeSource.setData).not.toHaveBeenCalled();
+    h.emit("sourcedata"); h.emit("styledata");
+    h.layer.update(replacement, 0.4, true);
+    expect(h.nativeSource.setData).not.toHaveBeenCalled();
+    expect(h.map.getPaintProperty("fill", "fill-opacity")).toBe(0);
+    h.emit("idle");
+    expect(h.nativeSource.setData).toHaveBeenCalledExactlyOnceWith({ type: "FeatureCollection", features: [] });
+    expect(h.map.setLayoutProperty).not.toHaveBeenCalled();
+    h.state.sourceLoaded = true; h.emit("sourcedata");
+    for (const id of ["fill", "outline", "labels"]) {
+      expect(h.map.getLayoutProperty(id)).toBe("none");
+      expect(isScalarFieldInspectionAllowed(h.map, id)).toBe(false);
+    }
+  });
+  it("keeps refused native features suppressed until the latest queued nonempty replacement finishes", () => {
+    const h = harness();
+    h.draw();
+    h.state.scale = 256; h.emit("move");
+    h.layer.update(null, 0.75, true);
+    const first = { ...collection, features: [...collection.features] };
+    const latest = { ...collection, features: [...collection.features] };
+    h.layer.update(first, 0.75, true);
+    h.layer.update(latest, 0.4, true);
+    h.emit("sourcedata");
+    expect(h.nativeSource.setData).not.toHaveBeenCalled();
+    expect(isScalarFieldInspectionAllowed(h.map, "fill")).toBe(false);
+    h.emit("idle");
+    expect(h.nativeSource.setData).toHaveBeenCalledExactlyOnceWith(latest);
+    h.state.scale = 10; h.emit("move"); h.draw();
+    expect(h.gl.drawArrays).toHaveBeenCalledTimes(1);
+    for (const [id, property] of [["fill", "fill-opacity"], ["outline", "line-opacity"], ["labels", "text-opacity"]]) expect(h.map.getPaintProperty(id, property)).toBe(0);
+    expect(isScalarFieldInspectionAllowed(h.map, "fill")).toBe(false);
+    h.state.sourceLoaded = true;
+    h.emit("sourcedata", "unrelated"); h.emit("sourcedata", "cells", "metadata");
+    expect(isScalarFieldInspectionAllowed(h.map, "fill")).toBe(false);
+    h.emit("sourcedata");
+    expect(h.map.getPaintProperty("fill", "fill-opacity")).toBe(0.4);
+    expect(h.map.getPaintProperty("outline", "line-opacity")).toEqual(["interpolate", ["linear"], ["zoom"], 8, 0, 9, 0.35]);
+    expect(h.map.getPaintProperty("labels", "text-opacity")).toBe(0.4);
+    expect(isScalarFieldInspectionAllowed(h.map, "fill")).toBe(true);
+    h.draw();
+    expect(h.gl.drawArrays).toHaveBeenCalledTimes(2);
+  });
+  it("retains native fallback for nonempty data that the custom mesh cannot support", () => {
+    const h = harness();
+    const nativeOnly: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [{ ...collection.features[0], properties: { ...collection.features[0].properties, gridName: undefined } }] };
+    h.layer.update(null, 0.75, true);
+    h.layer.update(nativeOnly, 0.6, true);
+    h.state.sourceLoaded = true; h.emit("sourcedata"); h.draw();
+    expect(h.gl.drawArrays).not.toHaveBeenCalled();
+    expect(h.map.getPaintProperty("fill", "fill-opacity")).toBe(0.6);
+    expect(isScalarFieldInspectionAllowed(h.map, "fill")).toBe(true);
   });
   it("queues data behind a native source-mode relayout and never drains into a replacement style source", () => {
     const h = harness();

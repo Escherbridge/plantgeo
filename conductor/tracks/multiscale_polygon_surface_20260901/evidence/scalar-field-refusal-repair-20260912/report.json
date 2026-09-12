@@ -1,0 +1,3122 @@
+{
+  "fixture": true,
+  "runDir": "C:\\Users\\atooz\\.codex\\worktrees\\067b\\plantgeo\\.tmp\\scalar-field-fixture\\run-2026-09-12T09-03-21-585Z-39572",
+  "sourceHashEncoding": "utf8-lf",
+  "sourceHashBefore": {
+    "e2e/scalar-field-fixture/entry.tsx": "8c76b8d991f9b1738089a34ddb267853f7d1c7234a014a6a54460611067568da",
+    "e2e/scalar-field-fixture/run.mjs": "8154c1e2e6093ce474107f59bbf2b286356b95e0cabca8e887ce96ef2beddd50",
+    "src/components/map/layers/VegetationLayer.tsx": "0c0e5185d01259a9bc30c97a2070dd107f2a560b40bd606f9cce62f215cca494",
+    "src/components/map/HoverTooltip.tsx": "48ce07c502e454ec874cc089f20e3ce0ce1763f05378dd3854ed3ec375b9ce98",
+    "src/lib/map/scalar-field.ts": "67878d48f3b07d9c89e4ebe50884a2793b912420c1ed8feef685b388ec3aaae4",
+    "src/lib/map/scalar-field-layer.ts": "8981cee1d31f5be12568768df14bd873f1d73c3394d9de109bc98fd72efbe927",
+    "src/lib/map/scalar-field-inspection.ts": "eb2db8ea26dbbd8a4bab546bb48c0be6783a4427810abe6807d0cc6771576370",
+    "src/lib/map/hover-fields.ts": "b6c10cbfa449dee95f5f06e4fc46e6a9748562b255d0b7eb19fb7325a29de5a4",
+    "src/lib/map/layer-utils.ts": "1765148f050fc0e875231bf5c0837215b33d2a92e8ebda3c1c9c64a44df29022",
+    "src/lib/vegetation.ts": "5244f3030be5cc5cbb23ae647285f92b5fdba171d854926c472ee9e2ab89bc46",
+    "src/stores/vegetation-store.ts": "b24bb4a7d5bea94847fec04c070aedccdfad3465a199ec895f6111d33401811d",
+    "package-lock.json": "62d6afb5a658e96d6ce7f955b298eca450cbd6c93eaf7b57c964f59bc87b9808"
+  },
+  "sourceHashAfter": {
+    "e2e/scalar-field-fixture/entry.tsx": "8c76b8d991f9b1738089a34ddb267853f7d1c7234a014a6a54460611067568da",
+    "e2e/scalar-field-fixture/run.mjs": "8154c1e2e6093ce474107f59bbf2b286356b95e0cabca8e887ce96ef2beddd50",
+    "src/components/map/layers/VegetationLayer.tsx": "0c0e5185d01259a9bc30c97a2070dd107f2a560b40bd606f9cce62f215cca494",
+    "src/components/map/HoverTooltip.tsx": "48ce07c502e454ec874cc089f20e3ce0ce1763f05378dd3854ed3ec375b9ce98",
+    "src/lib/map/scalar-field.ts": "67878d48f3b07d9c89e4ebe50884a2793b912420c1ed8feef685b388ec3aaae4",
+    "src/lib/map/scalar-field-layer.ts": "8981cee1d31f5be12568768df14bd873f1d73c3394d9de109bc98fd72efbe927",
+    "src/lib/map/scalar-field-inspection.ts": "eb2db8ea26dbbd8a4bab546bb48c0be6783a4427810abe6807d0cc6771576370",
+    "src/lib/map/hover-fields.ts": "b6c10cbfa449dee95f5f06e4fc46e6a9748562b255d0b7eb19fb7325a29de5a4",
+    "src/lib/map/layer-utils.ts": "1765148f050fc0e875231bf5c0837215b33d2a92e8ebda3c1c9c64a44df29022",
+    "src/lib/vegetation.ts": "5244f3030be5cc5cbb23ae647285f92b5fdba171d854926c472ee9e2ab89bc46",
+    "src/stores/vegetation-store.ts": "b24bb4a7d5bea94847fec04c070aedccdfad3465a199ec895f6111d33401811d",
+    "package-lock.json": "62d6afb5a658e96d6ce7f955b298eca450cbd6c93eaf7b57c964f59bc87b9808"
+  },
+  "results": [
+    {
+      "device": "desktop",
+      "sequence": "standard",
+      "scenario": "field",
+      "zoom": 7,
+      "errors": [],
+      "layers": [
+        "background",
+        "vegetation-ndvi-cells-fill",
+        "vegetation-ndvi-cells-outline",
+        "vegetation-ndvi-cells-values"
+      ],
+      "customPresent": true,
+      "nativeOpacity": 0,
+      "probes": {
+        "negative": {
+          "x": 594.4888888888889,
+          "y": 359.99999999999653
+        },
+        "center": {
+          "x": 640,
+          "y": 359.99999999999653
+        },
+        "positive": {
+          "x": 685.5111111111111,
+          "y": 359.99999999999653
+        },
+        "leftEdge": {
+          "x": 616.334222222223,
+          "y": 359.99999999999653
+        },
+        "rightEdge": {
+          "x": 618.1546666666659,
+          "y": 359.99999999999653
+        },
+        "outside": {
+          "x": 640,
+          "y": 230.70852964564952
+        }
+      },
+      "labelCount": 0,
+      "unrestrictedPickCount": 1,
+      "inspectablePickCount": 1,
+      "diagnostics": {
+        "failed": false,
+        "active": true,
+        "ready": true,
+        "visible": true,
+        "meshCells": 9,
+        "nativeOpacity": 0,
+        "sameWebglContext": true,
+        "projection": "mercator",
+        "terrain": null,
+        "pitch": 0,
+        "bounds": [
+          [
+            -123.51562499999957,
+            43.584608679721526
+          ],
+          [
+            -116.48437499999966,
+            46.3812711428418
+          ]
+        ],
+        "sourceLoaded": true,
+        "labelVisibility": "none",
+        "outlineOpacity": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          0,
+          0,
+          8,
+          0,
+          9,
+          0.35
+        ],
+        "labelOpacity": 1,
+        "layoutPending": false,
+        "dataPending": false,
+        "nativeSuppressed": false,
+        "sourceFeatureCount": 9,
+        "renderedSourceFeatureCount": 24,
+        "idleHeld": false,
+        "heldIdleEvents": 0,
+        "glErrors": []
+      },
+      "webgl2": true,
+      "samples": {
+        "negative": [
+          140,
+          81,
+          10,
+          255
+        ],
+        "center": [
+          246,
+          232,
+          195,
+          255
+        ],
+        "positive": [
+          1,
+          88,
+          79,
+          255
+        ],
+        "leftEdge": [
+          140,
+          81,
+          10,
+          255
+        ],
+        "rightEdge": [
+          246,
+          232,
+          195,
+          255
+        ],
+        "outside": [
+          21,
+          34,
+          43,
+          255
+        ]
+      },
+      "nonBackgroundPixels": 26248,
+      "digest": "cbd28639d62f39821c74bbcd061e211cadeaed887e7d92f49a59ccf4d35aac2f",
+      "screenshot": "desktop-field.png",
+      "pageErrors": []
+    },
+    {
+      "device": "desktop",
+      "sequence": "standard",
+      "scenario": "mixed-days",
+      "zoom": 7,
+      "errors": [],
+      "layers": [
+        "background",
+        "vegetation-ndvi-cells-fill",
+        "vegetation-ndvi-cells-outline",
+        "vegetation-ndvi-cells-values"
+      ],
+      "customPresent": true,
+      "nativeOpacity": 1,
+      "probes": {
+        "negative": {
+          "x": 594.4888888888889,
+          "y": 359.99999999999653
+        },
+        "center": {
+          "x": 640,
+          "y": 359.99999999999653
+        },
+        "positive": {
+          "x": 685.5111111111111,
+          "y": 359.99999999999653
+        },
+        "leftEdge": {
+          "x": 616.334222222223,
+          "y": 359.99999999999653
+        },
+        "rightEdge": {
+          "x": 618.1546666666659,
+          "y": 359.99999999999653
+        },
+        "outside": {
+          "x": 640,
+          "y": 230.70852964564952
+        }
+      },
+      "labelCount": 0,
+      "unrestrictedPickCount": 1,
+      "inspectablePickCount": 1,
+      "diagnostics": {
+        "failed": false,
+        "active": false,
+        "ready": false,
+        "visible": true,
+        "nativeOpacity": 1,
+        "sameWebglContext": true,
+        "projection": "mercator",
+        "terrain": null,
+        "pitch": 0,
+        "bounds": [
+          [
+            -123.51562499999957,
+            43.584608679721526
+          ],
+          [
+            -116.48437499999966,
+            46.3812711428418
+          ]
+        ],
+        "sourceLoaded": true,
+        "labelVisibility": "none",
+        "outlineOpacity": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          0,
+          0,
+          8,
+          0,
+          9,
+          0.35
+        ],
+        "labelOpacity": 1,
+        "layoutPending": false,
+        "dataPending": false,
+        "nativeSuppressed": false,
+        "sourceFeatureCount": 9,
+        "renderedSourceFeatureCount": 24,
+        "idleHeld": false,
+        "heldIdleEvents": 0,
+        "glErrors": []
+      },
+      "webgl2": true,
+      "samples": {
+        "negative": [
+          140,
+          81,
+          10,
+          255
+        ],
+        "center": [
+          246,
+          232,
+          195,
+          255
+        ],
+        "positive": [
+          0,
+          88,
+          78,
+          255
+        ],
+        "leftEdge": [
+          140,
+          81,
+          10,
+          255
+        ],
+        "rightEdge": [
+          246,
+          232,
+          195,
+          255
+        ],
+        "outside": [
+          21,
+          34,
+          43,
+          255
+        ]
+      },
+      "nonBackgroundPixels": 26770,
+      "digest": "d86d229ea61a2a97ab99d09ed5636055c0bfd9e3a291130d8416672531cf7f36",
+      "screenshot": "desktop-mixed-days.png",
+      "pageErrors": []
+    },
+    {
+      "device": "desktop",
+      "sequence": "standard",
+      "scenario": "detail",
+      "zoom": 10,
+      "errors": [],
+      "layers": [
+        "background",
+        "vegetation-ndvi-cells-fill",
+        "vegetation-ndvi-cells-outline",
+        "vegetation-ndvi-cells-values"
+      ],
+      "customPresent": true,
+      "nativeOpacity": 1,
+      "probes": {
+        "negative": {
+          "x": 640,
+          "y": 359.99999999997243
+        },
+        "center": {
+          "x": 1004.0888888888888,
+          "y": 359.99999999997243
+        },
+        "positive": {
+          "x": 1368.1777777777777,
+          "y": 359.99999999997243
+        },
+        "leftEdge": {
+          "x": 814.7626666666733,
+          "y": 359.99999999997243
+        },
+        "rightEdge": {
+          "x": 829.3262222222156,
+          "y": 359.99999999997243
+        },
+        "outside": {
+          "x": 1004.0888888888888,
+          "y": -674.331762834804
+        }
+      },
+      "labelCount": 2,
+      "unrestrictedPickCount": 2,
+      "inspectablePickCount": 2,
+      "diagnostics": {
+        "failed": false,
+        "active": false,
+        "ready": false,
+        "visible": true,
+        "meshCells": 9,
+        "nativeOpacity": 1,
+        "sameWebglContext": true,
+        "projection": "mercator",
+        "terrain": null,
+        "pitch": 0,
+        "bounds": [
+          [
+            -120.68945312499977,
+            44.82494197386353
+          ],
+          [
+            -119.81054687499974,
+            45.17452479414942
+          ]
+        ],
+        "sourceLoaded": true,
+        "labelVisibility": "visible",
+        "outlineOpacity": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          0,
+          0,
+          8,
+          0,
+          9,
+          0.35
+        ],
+        "labelOpacity": 1,
+        "layoutPending": false,
+        "dataPending": false,
+        "nativeSuppressed": false,
+        "sourceFeatureCount": 9,
+        "renderedSourceFeatureCount": 42,
+        "idleHeld": false,
+        "heldIdleEvents": 0,
+        "glErrors": []
+      },
+      "webgl2": true,
+      "tooltipBounds": {
+        "x": 654,
+        "y": 374,
+        "width": 240,
+        "height": 154
+      },
+      "interaction": "native mouse tooltip passed",
+      "samples": {
+        "negative": [
+          140,
+          81,
+          10,
+          255
+        ],
+        "center": [
+          246,
+          232,
+          195,
+          255
+        ],
+        "leftEdge": [
+          140,
+          81,
+          10,
+          255
+        ],
+        "rightEdge": [
+          246,
+          232,
+          195,
+          255
+        ]
+      },
+      "nonBackgroundPixels": 592560,
+      "digest": "508f4436933fa5ed7ca9c91c1f73fc991043b74e507ace979b3479e1493eebc2",
+      "screenshot": "desktop-detail.png",
+      "pageErrors": []
+    },
+    {
+      "device": "desktop",
+      "sequence": "standard",
+      "scenario": "mode-race",
+      "zoom": 10,
+      "errors": [],
+      "layers": [
+        "background",
+        "vegetation-ndvi-cells-fill",
+        "vegetation-ndvi-cells-outline",
+        "vegetation-ndvi-cells-values"
+      ],
+      "customPresent": true,
+      "nativeOpacity": 1,
+      "probes": {
+        "negative": {
+          "x": 640,
+          "y": 359.99999999997243
+        },
+        "center": {
+          "x": 1004.0888888888888,
+          "y": 359.99999999997243
+        },
+        "positive": {
+          "x": 1368.1777777777777,
+          "y": 359.99999999997243
+        },
+        "leftEdge": {
+          "x": 814.7626666666733,
+          "y": 359.99999999997243
+        },
+        "rightEdge": {
+          "x": 829.3262222222156,
+          "y": 359.99999999997243
+        },
+        "outside": {
+          "x": 1004.0888888888888,
+          "y": -674.331762834804
+        }
+      },
+      "labelCount": 2,
+      "unrestrictedPickCount": 2,
+      "inspectablePickCount": 2,
+      "diagnostics": {
+        "failed": false,
+        "active": false,
+        "ready": false,
+        "visible": true,
+        "meshCells": 9,
+        "nativeOpacity": 1,
+        "sameWebglContext": true,
+        "projection": "mercator",
+        "terrain": null,
+        "pitch": 0,
+        "bounds": [
+          [
+            -120.68945312499977,
+            44.82494197386353
+          ],
+          [
+            -119.81054687499974,
+            45.17452479414942
+          ]
+        ],
+        "sourceLoaded": true,
+        "labelVisibility": "visible",
+        "outlineOpacity": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          0,
+          0,
+          8,
+          0,
+          9,
+          0.35
+        ],
+        "labelOpacity": 1,
+        "layoutPending": false,
+        "dataPending": false,
+        "nativeSuppressed": false,
+        "sourceFeatureCount": 9,
+        "renderedSourceFeatureCount": 42,
+        "idleHeld": false,
+        "heldIdleEvents": 0,
+        "glErrors": [],
+        "modeRaceStartedWhileSourceLoading": true
+      },
+      "webgl2": true,
+      "tooltipBounds": {
+        "x": 654,
+        "y": 374,
+        "width": 240,
+        "height": 154
+      },
+      "interaction": "native mouse tooltip passed",
+      "samples": {
+        "negative": [
+          140,
+          81,
+          10,
+          255
+        ],
+        "center": [
+          246,
+          232,
+          195,
+          255
+        ],
+        "leftEdge": [
+          140,
+          81,
+          10,
+          255
+        ],
+        "rightEdge": [
+          246,
+          232,
+          195,
+          255
+        ]
+      },
+      "nonBackgroundPixels": 592560,
+      "digest": "faac2c0bbfb778071977f126225c95660670acdef291abcb09ae59796d07c16f",
+      "screenshot": "desktop-mode-race.png",
+      "pageErrors": []
+    },
+    {
+      "device": "desktop",
+      "sequence": "standard",
+      "scenario": "refusal-layout",
+      "zoom": 10,
+      "errors": [],
+      "layers": [
+        "background",
+        "vegetation-ndvi-cells-fill",
+        "vegetation-ndvi-cells-outline",
+        "vegetation-ndvi-cells-values"
+      ],
+      "customPresent": true,
+      "nativeOpacity": 1,
+      "probes": {
+        "negative": {
+          "x": 640,
+          "y": 359.99999999997243
+        },
+        "center": {
+          "x": 1004.0888888888888,
+          "y": 359.99999999997243
+        },
+        "positive": {
+          "x": 1368.1777777777777,
+          "y": 359.99999999997243
+        },
+        "leftEdge": {
+          "x": 814.7626666666733,
+          "y": 359.99999999997243
+        },
+        "rightEdge": {
+          "x": 829.3262222222156,
+          "y": 359.99999999997243
+        },
+        "outside": {
+          "x": 1004.0888888888888,
+          "y": -674.331762834804
+        }
+      },
+      "labelCount": 2,
+      "unrestrictedPickCount": 2,
+      "inspectablePickCount": 2,
+      "diagnostics": {
+        "failed": false,
+        "active": false,
+        "ready": false,
+        "visible": true,
+        "meshCells": 9,
+        "nativeOpacity": 1,
+        "sameWebglContext": true,
+        "projection": "mercator",
+        "terrain": null,
+        "pitch": 0,
+        "bounds": [
+          [
+            -120.68945312499977,
+            44.82494197386353
+          ],
+          [
+            -119.81054687499974,
+            45.17452479414942
+          ]
+        ],
+        "sourceLoaded": true,
+        "labelVisibility": "visible",
+        "outlineOpacity": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          0,
+          0,
+          8,
+          0,
+          9,
+          0.35
+        ],
+        "labelOpacity": 1,
+        "layoutPending": false,
+        "dataPending": false,
+        "nativeSuppressed": false,
+        "sourceFeatureCount": 9,
+        "renderedSourceFeatureCount": 42,
+        "idleHeld": false,
+        "heldIdleEvents": 1,
+        "glErrors": []
+      },
+      "webgl2": true,
+      "refusalCycles": [
+        {
+          "replacement": "empty",
+          "locked": {
+            "scenario": "refusal-layout",
+            "zoom": 10,
+            "errors": [],
+            "layers": [
+              "background",
+              "vegetation-ndvi-cells-fill",
+              "vegetation-ndvi-cells-outline",
+              "vegetation-ndvi-cells-values"
+            ],
+            "customPresent": true,
+            "nativeOpacity": 1,
+            "probes": {
+              "negative": {
+                "x": 640,
+                "y": 359.99999999997243
+              },
+              "center": {
+                "x": 1004.0888888888888,
+                "y": 359.99999999997243
+              },
+              "positive": {
+                "x": 1368.1777777777777,
+                "y": 359.99999999997243
+              },
+              "leftEdge": {
+                "x": 814.7626666666733,
+                "y": 359.99999999997243
+              },
+              "rightEdge": {
+                "x": 829.3262222222156,
+                "y": 359.99999999997243
+              },
+              "outside": {
+                "x": 1004.0888888888888,
+                "y": -674.331762834804
+              }
+            },
+            "labelCount": 2,
+            "unrestrictedPickCount": 2,
+            "inspectablePickCount": 2,
+            "diagnostics": {
+              "failed": false,
+              "active": false,
+              "ready": true,
+              "visible": true,
+              "meshCells": 9,
+              "nativeOpacity": 1,
+              "sameWebglContext": true,
+              "projection": "mercator",
+              "terrain": null,
+              "pitch": 0,
+              "bounds": [
+                [
+                  -120.68945312499977,
+                  44.82494197386353
+                ],
+                [
+                  -119.81054687499974,
+                  45.17452479414942
+                ]
+              ],
+              "sourceLoaded": true,
+              "labelVisibility": "visible",
+              "outlineOpacity": [
+                "interpolate",
+                [
+                  "linear"
+                ],
+                [
+                  "zoom"
+                ],
+                0,
+                0,
+                8,
+                0,
+                9,
+                0.35
+              ],
+              "labelOpacity": 1,
+              "layoutPending": true,
+              "dataPending": false,
+              "nativeSuppressed": false,
+              "sourceFeatureCount": 9,
+              "renderedSourceFeatureCount": 42,
+              "idleHeld": true,
+              "heldIdleEvents": 1,
+              "glErrors": [],
+              "coarseCustomActive": true,
+              "coarseCustomReady": true
+            },
+            "webgl2": true
+          },
+          "suppressed": {
+            "scenario": "refusal-layout",
+            "zoom": 10,
+            "errors": [],
+            "layers": [
+              "background",
+              "vegetation-ndvi-cells-fill",
+              "vegetation-ndvi-cells-outline",
+              "vegetation-ndvi-cells-values"
+            ],
+            "customPresent": true,
+            "nativeOpacity": 0,
+            "probes": {
+              "negative": {
+                "x": 640,
+                "y": 359.99999999997243
+              },
+              "center": {
+                "x": 1004.0888888888888,
+                "y": 359.99999999997243
+              },
+              "positive": {
+                "x": 1368.1777777777777,
+                "y": 359.99999999997243
+              },
+              "leftEdge": {
+                "x": 814.7626666666733,
+                "y": 359.99999999997243
+              },
+              "rightEdge": {
+                "x": 829.3262222222156,
+                "y": 359.99999999997243
+              },
+              "outside": {
+                "x": 1004.0888888888888,
+                "y": -674.331762834804
+              }
+            },
+            "labelCount": 2,
+            "unrestrictedPickCount": 2,
+            "inspectablePickCount": 0,
+            "diagnostics": {
+              "failed": false,
+              "active": false,
+              "ready": false,
+              "visible": true,
+              "nativeOpacity": 0,
+              "sameWebglContext": true,
+              "projection": "mercator",
+              "terrain": null,
+              "pitch": 0,
+              "bounds": [
+                [
+                  -120.68945312499977,
+                  44.82494197386353
+                ],
+                [
+                  -119.81054687499974,
+                  45.17452479414942
+                ]
+              ],
+              "sourceLoaded": true,
+              "labelVisibility": "visible",
+              "outlineOpacity": 0,
+              "labelOpacity": 0,
+              "layoutPending": true,
+              "dataPending": true,
+              "nativeSuppressed": true,
+              "sourceFeatureCount": 9,
+              "renderedSourceFeatureCount": 42,
+              "idleHeld": true,
+              "heldIdleEvents": 1,
+              "glErrors": []
+            },
+            "webgl2": true,
+            "samples": {
+              "negative": [
+                21,
+                34,
+                43,
+                255
+              ],
+              "center": [
+                21,
+                34,
+                43,
+                255
+              ],
+              "leftEdge": [
+                21,
+                34,
+                43,
+                255
+              ],
+              "rightEdge": [
+                21,
+                34,
+                43,
+                255
+              ]
+            },
+            "nonBackgroundPixels": 0
+          },
+          "settled": {
+            "scenario": "refusal-layout",
+            "zoom": 10,
+            "errors": [],
+            "layers": [
+              "background",
+              "vegetation-ndvi-cells-fill",
+              "vegetation-ndvi-cells-outline",
+              "vegetation-ndvi-cells-values"
+            ],
+            "customPresent": true,
+            "nativeOpacity": 0,
+            "probes": {
+              "negative": {
+                "x": 640,
+                "y": 359.99999999997243
+              },
+              "center": {
+                "x": 1004.0888888888888,
+                "y": 359.99999999997243
+              },
+              "positive": {
+                "x": 1368.1777777777777,
+                "y": 359.99999999997243
+              },
+              "leftEdge": {
+                "x": 814.7626666666733,
+                "y": 359.99999999997243
+              },
+              "rightEdge": {
+                "x": 829.3262222222156,
+                "y": 359.99999999997243
+              },
+              "outside": {
+                "x": 1004.0888888888888,
+                "y": -674.331762834804
+              }
+            },
+            "labelCount": 0,
+            "unrestrictedPickCount": 0,
+            "inspectablePickCount": 0,
+            "diagnostics": {
+              "failed": false,
+              "active": false,
+              "ready": false,
+              "visible": true,
+              "nativeOpacity": 0,
+              "sameWebglContext": true,
+              "projection": "mercator",
+              "terrain": null,
+              "pitch": 0,
+              "bounds": [
+                [
+                  -120.68945312499977,
+                  44.82494197386353
+                ],
+                [
+                  -119.81054687499974,
+                  45.17452479414942
+                ]
+              ],
+              "sourceLoaded": true,
+              "labelVisibility": "none",
+              "outlineOpacity": 0,
+              "labelOpacity": 0,
+              "layoutPending": false,
+              "dataPending": false,
+              "nativeSuppressed": true,
+              "sourceFeatureCount": 0,
+              "renderedSourceFeatureCount": 0,
+              "idleHeld": false,
+              "heldIdleEvents": 1,
+              "glErrors": []
+            },
+            "webgl2": true
+          },
+          "recovered": {
+            "scenario": "refusal-layout",
+            "zoom": 10,
+            "errors": [],
+            "layers": [
+              "background",
+              "vegetation-ndvi-cells-fill",
+              "vegetation-ndvi-cells-outline",
+              "vegetation-ndvi-cells-values"
+            ],
+            "customPresent": true,
+            "nativeOpacity": 1,
+            "probes": {
+              "negative": {
+                "x": 640,
+                "y": 359.99999999997243
+              },
+              "center": {
+                "x": 1004.0888888888888,
+                "y": 359.99999999997243
+              },
+              "positive": {
+                "x": 1368.1777777777777,
+                "y": 359.99999999997243
+              },
+              "leftEdge": {
+                "x": 814.7626666666733,
+                "y": 359.99999999997243
+              },
+              "rightEdge": {
+                "x": 829.3262222222156,
+                "y": 359.99999999997243
+              },
+              "outside": {
+                "x": 1004.0888888888888,
+                "y": -674.331762834804
+              }
+            },
+            "labelCount": 2,
+            "unrestrictedPickCount": 2,
+            "inspectablePickCount": 2,
+            "diagnostics": {
+              "failed": false,
+              "active": false,
+              "ready": false,
+              "visible": true,
+              "meshCells": 9,
+              "nativeOpacity": 1,
+              "sameWebglContext": true,
+              "projection": "mercator",
+              "terrain": null,
+              "pitch": 0,
+              "bounds": [
+                [
+                  -120.68945312499977,
+                  44.82494197386353
+                ],
+                [
+                  -119.81054687499974,
+                  45.17452479414942
+                ]
+              ],
+              "sourceLoaded": true,
+              "labelVisibility": "visible",
+              "outlineOpacity": [
+                "interpolate",
+                [
+                  "linear"
+                ],
+                [
+                  "zoom"
+                ],
+                0,
+                0,
+                8,
+                0,
+                9,
+                0.35
+              ],
+              "labelOpacity": 1,
+              "layoutPending": false,
+              "dataPending": false,
+              "nativeSuppressed": false,
+              "sourceFeatureCount": 9,
+              "renderedSourceFeatureCount": 42,
+              "idleHeld": false,
+              "heldIdleEvents": 1,
+              "glErrors": []
+            },
+            "webgl2": true
+          },
+          "interaction": "native mouse refusal lifecycle",
+          "priorTooltipVisible": true,
+          "priorTooltipCleared": true,
+          "reinspectionBlocked": true,
+          "priorTooltipBounds": {
+            "x": 654,
+            "y": 374,
+            "width": 240,
+            "height": 154
+          },
+          "recoveredTooltipBounds": {
+            "x": 654,
+            "y": 374,
+            "width": 240,
+            "height": 154
+          },
+          "screenshots": {
+            "before": "desktop-refusal-layout-empty-before.png",
+            "suppressed": "desktop-refusal-layout-empty-suppressed.png",
+            "recovered": "desktop-refusal-layout-empty-recovered.png"
+          }
+        },
+        {
+          "replacement": "null",
+          "locked": {
+            "scenario": "refusal-layout",
+            "zoom": 10,
+            "errors": [],
+            "layers": [
+              "background",
+              "vegetation-ndvi-cells-fill",
+              "vegetation-ndvi-cells-outline",
+              "vegetation-ndvi-cells-values"
+            ],
+            "customPresent": true,
+            "nativeOpacity": 1,
+            "probes": {
+              "negative": {
+                "x": 640,
+                "y": 359.99999999997243
+              },
+              "center": {
+                "x": 1004.0888888888888,
+                "y": 359.99999999997243
+              },
+              "positive": {
+                "x": 1368.1777777777777,
+                "y": 359.99999999997243
+              },
+              "leftEdge": {
+                "x": 814.7626666666733,
+                "y": 359.99999999997243
+              },
+              "rightEdge": {
+                "x": 829.3262222222156,
+                "y": 359.99999999997243
+              },
+              "outside": {
+                "x": 1004.0888888888888,
+                "y": -674.331762834804
+              }
+            },
+            "labelCount": 2,
+            "unrestrictedPickCount": 2,
+            "inspectablePickCount": 2,
+            "diagnostics": {
+              "failed": false,
+              "active": false,
+              "ready": true,
+              "visible": true,
+              "meshCells": 9,
+              "nativeOpacity": 1,
+              "sameWebglContext": true,
+              "projection": "mercator",
+              "terrain": null,
+              "pitch": 0,
+              "bounds": [
+                [
+                  -120.68945312499977,
+                  44.82494197386353
+                ],
+                [
+                  -119.81054687499974,
+                  45.17452479414942
+                ]
+              ],
+              "sourceLoaded": true,
+              "labelVisibility": "visible",
+              "outlineOpacity": [
+                "interpolate",
+                [
+                  "linear"
+                ],
+                [
+                  "zoom"
+                ],
+                0,
+                0,
+                8,
+                0,
+                9,
+                0.35
+              ],
+              "labelOpacity": 1,
+              "layoutPending": true,
+              "dataPending": false,
+              "nativeSuppressed": false,
+              "sourceFeatureCount": 9,
+              "renderedSourceFeatureCount": 42,
+              "idleHeld": true,
+              "heldIdleEvents": 1,
+              "glErrors": [],
+              "coarseCustomActive": true,
+              "coarseCustomReady": true
+            },
+            "webgl2": true
+          },
+          "suppressed": {
+            "scenario": "refusal-layout",
+            "zoom": 10,
+            "errors": [],
+            "layers": [
+              "background",
+              "vegetation-ndvi-cells-fill",
+              "vegetation-ndvi-cells-outline",
+              "vegetation-ndvi-cells-values"
+            ],
+            "customPresent": true,
+            "nativeOpacity": 0,
+            "probes": {
+              "negative": {
+                "x": 640,
+                "y": 359.99999999997243
+              },
+              "center": {
+                "x": 1004.0888888888888,
+                "y": 359.99999999997243
+              },
+              "positive": {
+                "x": 1368.1777777777777,
+                "y": 359.99999999997243
+              },
+              "leftEdge": {
+                "x": 814.7626666666733,
+                "y": 359.99999999997243
+              },
+              "rightEdge": {
+                "x": 829.3262222222156,
+                "y": 359.99999999997243
+              },
+              "outside": {
+                "x": 1004.0888888888888,
+                "y": -674.331762834804
+              }
+            },
+            "labelCount": 2,
+            "unrestrictedPickCount": 2,
+            "inspectablePickCount": 0,
+            "diagnostics": {
+              "failed": false,
+              "active": false,
+              "ready": false,
+              "visible": true,
+              "nativeOpacity": 0,
+              "sameWebglContext": true,
+              "projection": "mercator",
+              "terrain": null,
+              "pitch": 0,
+              "bounds": [
+                [
+                  -120.68945312499977,
+                  44.82494197386353
+                ],
+                [
+                  -119.81054687499974,
+                  45.17452479414942
+                ]
+              ],
+              "sourceLoaded": true,
+              "labelVisibility": "visible",
+              "outlineOpacity": 0,
+              "labelOpacity": 0,
+              "layoutPending": true,
+              "dataPending": true,
+              "nativeSuppressed": true,
+              "sourceFeatureCount": 9,
+              "renderedSourceFeatureCount": 42,
+              "idleHeld": true,
+              "heldIdleEvents": 1,
+              "glErrors": []
+            },
+            "webgl2": true,
+            "samples": {
+              "negative": [
+                21,
+                34,
+                43,
+                255
+              ],
+              "center": [
+                21,
+                34,
+                43,
+                255
+              ],
+              "leftEdge": [
+                21,
+                34,
+                43,
+                255
+              ],
+              "rightEdge": [
+                21,
+                34,
+                43,
+                255
+              ]
+            },
+            "nonBackgroundPixels": 0
+          },
+          "settled": {
+            "scenario": "refusal-layout",
+            "zoom": 10,
+            "errors": [],
+            "layers": [
+              "background",
+              "vegetation-ndvi-cells-fill",
+              "vegetation-ndvi-cells-outline",
+              "vegetation-ndvi-cells-values"
+            ],
+            "customPresent": true,
+            "nativeOpacity": 0,
+            "probes": {
+              "negative": {
+                "x": 640,
+                "y": 359.99999999997243
+              },
+              "center": {
+                "x": 1004.0888888888888,
+                "y": 359.99999999997243
+              },
+              "positive": {
+                "x": 1368.1777777777777,
+                "y": 359.99999999997243
+              },
+              "leftEdge": {
+                "x": 814.7626666666733,
+                "y": 359.99999999997243
+              },
+              "rightEdge": {
+                "x": 829.3262222222156,
+                "y": 359.99999999997243
+              },
+              "outside": {
+                "x": 1004.0888888888888,
+                "y": -674.331762834804
+              }
+            },
+            "labelCount": 0,
+            "unrestrictedPickCount": 0,
+            "inspectablePickCount": 0,
+            "diagnostics": {
+              "failed": false,
+              "active": false,
+              "ready": false,
+              "visible": true,
+              "nativeOpacity": 0,
+              "sameWebglContext": true,
+              "projection": "mercator",
+              "terrain": null,
+              "pitch": 0,
+              "bounds": [
+                [
+                  -120.68945312499977,
+                  44.82494197386353
+                ],
+                [
+                  -119.81054687499974,
+                  45.17452479414942
+                ]
+              ],
+              "sourceLoaded": true,
+              "labelVisibility": "none",
+              "outlineOpacity": 0,
+              "labelOpacity": 0,
+              "layoutPending": false,
+              "dataPending": false,
+              "nativeSuppressed": true,
+              "sourceFeatureCount": 0,
+              "renderedSourceFeatureCount": 0,
+              "idleHeld": false,
+              "heldIdleEvents": 1,
+              "glErrors": []
+            },
+            "webgl2": true
+          },
+          "recovered": {
+            "scenario": "refusal-layout",
+            "zoom": 10,
+            "errors": [],
+            "layers": [
+              "background",
+              "vegetation-ndvi-cells-fill",
+              "vegetation-ndvi-cells-outline",
+              "vegetation-ndvi-cells-values"
+            ],
+            "customPresent": true,
+            "nativeOpacity": 1,
+            "probes": {
+              "negative": {
+                "x": 640,
+                "y": 359.99999999997243
+              },
+              "center": {
+                "x": 1004.0888888888888,
+                "y": 359.99999999997243
+              },
+              "positive": {
+                "x": 1368.1777777777777,
+                "y": 359.99999999997243
+              },
+              "leftEdge": {
+                "x": 814.7626666666733,
+                "y": 359.99999999997243
+              },
+              "rightEdge": {
+                "x": 829.3262222222156,
+                "y": 359.99999999997243
+              },
+              "outside": {
+                "x": 1004.0888888888888,
+                "y": -674.331762834804
+              }
+            },
+            "labelCount": 2,
+            "unrestrictedPickCount": 2,
+            "inspectablePickCount": 2,
+            "diagnostics": {
+              "failed": false,
+              "active": false,
+              "ready": false,
+              "visible": true,
+              "meshCells": 9,
+              "nativeOpacity": 1,
+              "sameWebglContext": true,
+              "projection": "mercator",
+              "terrain": null,
+              "pitch": 0,
+              "bounds": [
+                [
+                  -120.68945312499977,
+                  44.82494197386353
+                ],
+                [
+                  -119.81054687499974,
+                  45.17452479414942
+                ]
+              ],
+              "sourceLoaded": true,
+              "labelVisibility": "visible",
+              "outlineOpacity": [
+                "interpolate",
+                [
+                  "linear"
+                ],
+                [
+                  "zoom"
+                ],
+                0,
+                0,
+                8,
+                0,
+                9,
+                0.35
+              ],
+              "labelOpacity": 1,
+              "layoutPending": false,
+              "dataPending": false,
+              "nativeSuppressed": false,
+              "sourceFeatureCount": 9,
+              "renderedSourceFeatureCount": 42,
+              "idleHeld": false,
+              "heldIdleEvents": 1,
+              "glErrors": []
+            },
+            "webgl2": true
+          },
+          "interaction": "native mouse refusal lifecycle",
+          "priorTooltipVisible": true,
+          "priorTooltipCleared": true,
+          "reinspectionBlocked": true,
+          "priorTooltipBounds": {
+            "x": 654,
+            "y": 374,
+            "width": 240,
+            "height": 154
+          },
+          "recoveredTooltipBounds": {
+            "x": 654,
+            "y": 374,
+            "width": 240,
+            "height": 154
+          },
+          "screenshots": {
+            "before": "desktop-refusal-layout-null-before.png",
+            "suppressed": "desktop-refusal-layout-null-suppressed.png",
+            "recovered": "desktop-refusal-layout-null-recovered.png"
+          }
+        }
+      ],
+      "samples": {
+        "negative": [
+          140,
+          81,
+          10,
+          255
+        ],
+        "center": [
+          246,
+          232,
+          195,
+          255
+        ],
+        "leftEdge": [
+          140,
+          81,
+          10,
+          255
+        ],
+        "rightEdge": [
+          246,
+          232,
+          195,
+          255
+        ]
+      },
+      "nonBackgroundPixels": 592560,
+      "digest": "faac2c0bbfb778071977f126225c95660670acdef291abcb09ae59796d07c16f",
+      "screenshot": "desktop-refusal-layout.png",
+      "pageErrors": []
+    },
+    {
+      "device": "desktop",
+      "sequence": "standard",
+      "scenario": "reload",
+      "zoom": 7,
+      "errors": [],
+      "layers": [
+        "background",
+        "vegetation-ndvi-cells-fill",
+        "vegetation-ndvi-cells-outline",
+        "vegetation-ndvi-cells-values"
+      ],
+      "customPresent": true,
+      "nativeOpacity": 0,
+      "probes": {
+        "negative": {
+          "x": 594.4888888888889,
+          "y": 359.99999999999653
+        },
+        "center": {
+          "x": 640,
+          "y": 359.99999999999653
+        },
+        "positive": {
+          "x": 685.5111111111111,
+          "y": 359.99999999999653
+        },
+        "leftEdge": {
+          "x": 616.334222222223,
+          "y": 359.99999999999653
+        },
+        "rightEdge": {
+          "x": 618.1546666666659,
+          "y": 359.99999999999653
+        },
+        "outside": {
+          "x": 640,
+          "y": 230.70852964564952
+        }
+      },
+      "labelCount": 0,
+      "unrestrictedPickCount": 1,
+      "inspectablePickCount": 1,
+      "diagnostics": {
+        "failed": false,
+        "active": true,
+        "ready": true,
+        "visible": true,
+        "meshCells": 9,
+        "nativeOpacity": 0,
+        "sameWebglContext": true,
+        "projection": "mercator",
+        "terrain": null,
+        "pitch": 0,
+        "bounds": [
+          [
+            -123.51562499999957,
+            43.584608679721526
+          ],
+          [
+            -116.48437499999966,
+            46.3812711428418
+          ]
+        ],
+        "sourceLoaded": true,
+        "labelVisibility": "none",
+        "outlineOpacity": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          0,
+          0,
+          8,
+          0,
+          9,
+          0.35
+        ],
+        "labelOpacity": 1,
+        "layoutPending": false,
+        "dataPending": false,
+        "nativeSuppressed": false,
+        "sourceFeatureCount": 9,
+        "renderedSourceFeatureCount": 24,
+        "idleHeld": false,
+        "heldIdleEvents": 1,
+        "glErrors": []
+      },
+      "webgl2": true,
+      "samples": {
+        "negative": [
+          140,
+          81,
+          10,
+          255
+        ],
+        "center": [
+          246,
+          232,
+          195,
+          255
+        ],
+        "positive": [
+          1,
+          88,
+          79,
+          255
+        ],
+        "leftEdge": [
+          140,
+          81,
+          10,
+          255
+        ],
+        "rightEdge": [
+          246,
+          232,
+          195,
+          255
+        ],
+        "outside": [
+          21,
+          34,
+          43,
+          255
+        ]
+      },
+      "nonBackgroundPixels": 26248,
+      "digest": "cbd28639d62f39821c74bbcd061e211cadeaed887e7d92f49a59ccf4d35aac2f",
+      "screenshot": "desktop-reload.png",
+      "pageErrors": []
+    },
+    {
+      "device": "mobile",
+      "sequence": "standard",
+      "scenario": "field",
+      "zoom": 7,
+      "errors": [],
+      "layers": [
+        "background",
+        "vegetation-ndvi-cells-fill",
+        "vegetation-ndvi-cells-outline",
+        "vegetation-ndvi-cells-values"
+      ],
+      "customPresent": true,
+      "nativeOpacity": 0,
+      "probes": {
+        "negative": {
+          "x": 149.48888888888908,
+          "y": 421.99999999999704
+        },
+        "center": {
+          "x": 195,
+          "y": 421.99999999999704
+        },
+        "positive": {
+          "x": 240.51111111111092,
+          "y": 421.99999999999704
+        },
+        "leftEdge": {
+          "x": 171.33422222222373,
+          "y": 421.99999999999704
+        },
+        "rightEdge": {
+          "x": 173.15466666666683,
+          "y": 421.99999999999704
+        },
+        "outside": {
+          "x": 195,
+          "y": 292.70852964565063
+        }
+      },
+      "labelCount": 0,
+      "unrestrictedPickCount": 1,
+      "inspectablePickCount": 1,
+      "diagnostics": {
+        "failed": false,
+        "active": true,
+        "ready": true,
+        "visible": true,
+        "meshCells": 9,
+        "nativeOpacity": 0,
+        "sameWebglContext": true,
+        "projection": "mercator",
+        "terrain": null,
+        "pitch": 0,
+        "bounds": [
+          [
+            -121.07116699218778,
+            43.33740449726733
+          ],
+          [
+            -118.92883300781274,
+            46.61571428134587
+          ]
+        ],
+        "sourceLoaded": true,
+        "labelVisibility": "none",
+        "outlineOpacity": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          0,
+          0,
+          8,
+          0,
+          9,
+          0.35
+        ],
+        "labelOpacity": 1,
+        "layoutPending": false,
+        "dataPending": false,
+        "nativeSuppressed": false,
+        "sourceFeatureCount": 9,
+        "renderedSourceFeatureCount": 24,
+        "idleHeld": false,
+        "heldIdleEvents": 0,
+        "glErrors": []
+      },
+      "webgl2": true,
+      "samples": {
+        "negative": [
+          140,
+          81,
+          10,
+          255
+        ],
+        "center": [
+          246,
+          232,
+          195,
+          255
+        ],
+        "positive": [
+          1,
+          88,
+          79,
+          255
+        ],
+        "leftEdge": [
+          140,
+          81,
+          10,
+          255
+        ],
+        "rightEdge": [
+          246,
+          232,
+          195,
+          255
+        ],
+        "outside": [
+          21,
+          34,
+          43,
+          255
+        ]
+      },
+      "nonBackgroundPixels": 26248,
+      "digest": "40389f1858364407d2c4b85955dcf045c5ee572e05f71bb173a676abdaace75e",
+      "screenshot": "mobile-field.png",
+      "pageErrors": []
+    },
+    {
+      "device": "mobile",
+      "sequence": "standard",
+      "scenario": "mixed-days",
+      "zoom": 7,
+      "errors": [],
+      "layers": [
+        "background",
+        "vegetation-ndvi-cells-fill",
+        "vegetation-ndvi-cells-outline",
+        "vegetation-ndvi-cells-values"
+      ],
+      "customPresent": true,
+      "nativeOpacity": 1,
+      "probes": {
+        "negative": {
+          "x": 149.48888888888908,
+          "y": 421.99999999999704
+        },
+        "center": {
+          "x": 195,
+          "y": 421.99999999999704
+        },
+        "positive": {
+          "x": 240.51111111111092,
+          "y": 421.99999999999704
+        },
+        "leftEdge": {
+          "x": 171.33422222222373,
+          "y": 421.99999999999704
+        },
+        "rightEdge": {
+          "x": 173.15466666666683,
+          "y": 421.99999999999704
+        },
+        "outside": {
+          "x": 195,
+          "y": 292.70852964565063
+        }
+      },
+      "labelCount": 0,
+      "unrestrictedPickCount": 1,
+      "inspectablePickCount": 1,
+      "diagnostics": {
+        "failed": false,
+        "active": false,
+        "ready": false,
+        "visible": true,
+        "nativeOpacity": 1,
+        "sameWebglContext": true,
+        "projection": "mercator",
+        "terrain": null,
+        "pitch": 0,
+        "bounds": [
+          [
+            -121.07116699218778,
+            43.33740449726733
+          ],
+          [
+            -118.92883300781274,
+            46.61571428134587
+          ]
+        ],
+        "sourceLoaded": true,
+        "labelVisibility": "none",
+        "outlineOpacity": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          0,
+          0,
+          8,
+          0,
+          9,
+          0.35
+        ],
+        "labelOpacity": 1,
+        "layoutPending": false,
+        "dataPending": false,
+        "nativeSuppressed": false,
+        "sourceFeatureCount": 9,
+        "renderedSourceFeatureCount": 24,
+        "idleHeld": false,
+        "heldIdleEvents": 0,
+        "glErrors": []
+      },
+      "webgl2": true,
+      "samples": {
+        "negative": [
+          140,
+          81,
+          10,
+          255
+        ],
+        "center": [
+          246,
+          232,
+          195,
+          255
+        ],
+        "positive": [
+          0,
+          88,
+          78,
+          255
+        ],
+        "leftEdge": [
+          140,
+          81,
+          10,
+          255
+        ],
+        "rightEdge": [
+          246,
+          232,
+          195,
+          255
+        ],
+        "outside": [
+          21,
+          34,
+          43,
+          255
+        ]
+      },
+      "nonBackgroundPixels": 26770,
+      "digest": "bc18a41b446efed6cc93b9e178e3352302cc77fcac1a0a909e3712f7362776a4",
+      "screenshot": "mobile-mixed-days.png",
+      "pageErrors": []
+    },
+    {
+      "device": "mobile",
+      "sequence": "standard",
+      "scenario": "detail",
+      "zoom": 10,
+      "errors": [],
+      "layers": [
+        "background",
+        "vegetation-ndvi-cells-fill",
+        "vegetation-ndvi-cells-outline",
+        "vegetation-ndvi-cells-values"
+      ],
+      "customPresent": true,
+      "nativeOpacity": 1,
+      "probes": {
+        "negative": {
+          "x": 195.00000000001177,
+          "y": 421.99999999997647
+        },
+        "center": {
+          "x": 559.0888888888991,
+          "y": 421.99999999997647
+        },
+        "positive": {
+          "x": 923.1777777777864,
+          "y": 421.99999999997647
+        },
+        "leftEdge": {
+          "x": 369.762666666689,
+          "y": 421.99999999997647
+        },
+        "rightEdge": {
+          "x": 384.32622222223364,
+          "y": 421.99999999997647
+        },
+        "outside": {
+          "x": 559.0888888888991,
+          "y": -612.3317628347949
+        }
+      },
+      "labelCount": 1,
+      "unrestrictedPickCount": 2,
+      "inspectablePickCount": 2,
+      "diagnostics": {
+        "failed": false,
+        "active": false,
+        "ready": false,
+        "visible": true,
+        "meshCells": 9,
+        "nativeOpacity": 1,
+        "sameWebglContext": true,
+        "projection": "mercator",
+        "terrain": null,
+        "pitch": 0,
+        "bounds": [
+          [
+            -120.38389587402347,
+            44.79473926685114
+          ],
+          [
+            -120.11610412597659,
+            45.204528017294194
+          ]
+        ],
+        "sourceLoaded": true,
+        "labelVisibility": "visible",
+        "outlineOpacity": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          0,
+          0,
+          8,
+          0,
+          9,
+          0.35
+        ],
+        "labelOpacity": 1,
+        "layoutPending": false,
+        "dataPending": false,
+        "nativeSuppressed": false,
+        "sourceFeatureCount": 9,
+        "renderedSourceFeatureCount": 28,
+        "idleHeld": false,
+        "heldIdleEvents": 0,
+        "glErrors": []
+      },
+      "webgl2": true,
+      "tooltipBounds": {
+        "x": 0,
+        "y": 436,
+        "width": 240,
+        "height": 154
+      },
+      "interaction": "native touch tooltip passed",
+      "samples": {
+        "negative": [
+          140,
+          81,
+          10,
+          255
+        ],
+        "leftEdge": [
+          140,
+          81,
+          10,
+          255
+        ],
+        "rightEdge": [
+          246,
+          232,
+          195,
+          255
+        ]
+      },
+      "nonBackgroundPixels": 319032,
+      "digest": "0dd86e705323eeed6ec16e45258d48f996fa085191517214a2e78c70788a7ed4",
+      "screenshot": "mobile-detail.png",
+      "pageErrors": []
+    },
+    {
+      "device": "mobile",
+      "sequence": "standard",
+      "scenario": "mode-race",
+      "zoom": 10,
+      "errors": [],
+      "layers": [
+        "background",
+        "vegetation-ndvi-cells-fill",
+        "vegetation-ndvi-cells-outline",
+        "vegetation-ndvi-cells-values"
+      ],
+      "customPresent": true,
+      "nativeOpacity": 1,
+      "probes": {
+        "negative": {
+          "x": 195.00000000001177,
+          "y": 421.99999999997647
+        },
+        "center": {
+          "x": 559.0888888888991,
+          "y": 421.99999999997647
+        },
+        "positive": {
+          "x": 923.1777777777864,
+          "y": 421.99999999997647
+        },
+        "leftEdge": {
+          "x": 369.762666666689,
+          "y": 421.99999999997647
+        },
+        "rightEdge": {
+          "x": 384.32622222223364,
+          "y": 421.99999999997647
+        },
+        "outside": {
+          "x": 559.0888888888991,
+          "y": -612.3317628347949
+        }
+      },
+      "labelCount": 1,
+      "unrestrictedPickCount": 2,
+      "inspectablePickCount": 2,
+      "diagnostics": {
+        "failed": false,
+        "active": false,
+        "ready": false,
+        "visible": true,
+        "meshCells": 9,
+        "nativeOpacity": 1,
+        "sameWebglContext": true,
+        "projection": "mercator",
+        "terrain": null,
+        "pitch": 0,
+        "bounds": [
+          [
+            -120.38389587402347,
+            44.79473926685114
+          ],
+          [
+            -120.11610412597659,
+            45.204528017294194
+          ]
+        ],
+        "sourceLoaded": true,
+        "labelVisibility": "visible",
+        "outlineOpacity": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          0,
+          0,
+          8,
+          0,
+          9,
+          0.35
+        ],
+        "labelOpacity": 1,
+        "layoutPending": false,
+        "dataPending": false,
+        "nativeSuppressed": false,
+        "sourceFeatureCount": 9,
+        "renderedSourceFeatureCount": 28,
+        "idleHeld": false,
+        "heldIdleEvents": 0,
+        "glErrors": [],
+        "modeRaceStartedWhileSourceLoading": true
+      },
+      "webgl2": true,
+      "tooltipBounds": {
+        "x": 0,
+        "y": 436,
+        "width": 240,
+        "height": 154
+      },
+      "interaction": "native touch tooltip passed",
+      "samples": {
+        "negative": [
+          140,
+          81,
+          10,
+          255
+        ],
+        "leftEdge": [
+          140,
+          81,
+          10,
+          255
+        ],
+        "rightEdge": [
+          246,
+          232,
+          195,
+          255
+        ]
+      },
+      "nonBackgroundPixels": 319032,
+      "digest": "68cf2bb4e9e55a632a6949dcad20c3a00aafa7d9e529759e65033344e0f5e4a4",
+      "screenshot": "mobile-mode-race.png",
+      "pageErrors": []
+    },
+    {
+      "device": "mobile",
+      "sequence": "standard",
+      "scenario": "refusal-layout",
+      "zoom": 11,
+      "errors": [],
+      "layers": [
+        "background",
+        "vegetation-ndvi-cells-fill",
+        "vegetation-ndvi-cells-outline",
+        "vegetation-ndvi-cells-values"
+      ],
+      "customPresent": true,
+      "nativeOpacity": 1,
+      "probes": {
+        "negative": {
+          "x": 195.00000000002353,
+          "y": 422.00000000065916
+        },
+        "center": {
+          "x": 923.1777777777982,
+          "y": 422.00000000065916
+        },
+        "positive": {
+          "x": 1651.355555555573,
+          "y": 422.00000000065916
+        },
+        "leftEdge": {
+          "x": 544.525333333378,
+          "y": 422.00000000065916
+        },
+        "rightEdge": {
+          "x": 573.6524444444673,
+          "y": 422.00000000065916
+        },
+        "outside": {
+          "x": 923.1777777777982,
+          "y": -1646.6635256688835
+        }
+      },
+      "labelCount": 6,
+      "unrestrictedPickCount": 1,
+      "inspectablePickCount": 1,
+      "diagnostics": {
+        "failed": false,
+        "active": false,
+        "ready": false,
+        "visible": true,
+        "meshCells": 9,
+        "nativeOpacity": 1,
+        "sameWebglContext": true,
+        "projection": "mercator",
+        "terrain": null,
+        "pitch": 0,
+        "bounds": [
+          [
+            -120.31694793701189,
+            44.89746122261266
+          ],
+          [
+            -120.18305206298845,
+            45.10235559783706
+          ]
+        ],
+        "sourceLoaded": true,
+        "labelVisibility": "visible",
+        "outlineOpacity": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          0,
+          0,
+          8,
+          0,
+          9,
+          0.35
+        ],
+        "labelOpacity": 1,
+        "layoutPending": false,
+        "dataPending": false,
+        "nativeSuppressed": false,
+        "sourceFeatureCount": 9,
+        "renderedSourceFeatureCount": 15,
+        "idleHeld": false,
+        "heldIdleEvents": 2,
+        "glErrors": []
+      },
+      "webgl2": true,
+      "refusalCycles": [
+        {
+          "replacement": "empty",
+          "locked": {
+            "scenario": "refusal-layout",
+            "zoom": 10,
+            "errors": [],
+            "layers": [
+              "background",
+              "vegetation-ndvi-cells-fill",
+              "vegetation-ndvi-cells-outline",
+              "vegetation-ndvi-cells-values"
+            ],
+            "customPresent": true,
+            "nativeOpacity": 1,
+            "probes": {
+              "negative": {
+                "x": 195.00000000001177,
+                "y": 421.99999999997647
+              },
+              "center": {
+                "x": 559.0888888888991,
+                "y": 421.99999999997647
+              },
+              "positive": {
+                "x": 923.1777777777864,
+                "y": 421.99999999997647
+              },
+              "leftEdge": {
+                "x": 369.762666666689,
+                "y": 421.99999999997647
+              },
+              "rightEdge": {
+                "x": 384.32622222223364,
+                "y": 421.99999999997647
+              },
+              "outside": {
+                "x": 559.0888888888991,
+                "y": -612.3317628347949
+              }
+            },
+            "labelCount": 1,
+            "unrestrictedPickCount": 2,
+            "inspectablePickCount": 2,
+            "diagnostics": {
+              "failed": false,
+              "active": false,
+              "ready": true,
+              "visible": true,
+              "meshCells": 9,
+              "nativeOpacity": 1,
+              "sameWebglContext": true,
+              "projection": "mercator",
+              "terrain": null,
+              "pitch": 0,
+              "bounds": [
+                [
+                  -120.38389587402347,
+                  44.79473926685114
+                ],
+                [
+                  -120.11610412597659,
+                  45.204528017294194
+                ]
+              ],
+              "sourceLoaded": true,
+              "labelVisibility": "visible",
+              "outlineOpacity": [
+                "interpolate",
+                [
+                  "linear"
+                ],
+                [
+                  "zoom"
+                ],
+                0,
+                0,
+                8,
+                0,
+                9,
+                0.35
+              ],
+              "labelOpacity": 1,
+              "layoutPending": true,
+              "dataPending": false,
+              "nativeSuppressed": false,
+              "sourceFeatureCount": 9,
+              "renderedSourceFeatureCount": 28,
+              "idleHeld": true,
+              "heldIdleEvents": 1,
+              "glErrors": [],
+              "coarseCustomActive": true,
+              "coarseCustomReady": true
+            },
+            "webgl2": true
+          },
+          "suppressed": {
+            "scenario": "refusal-layout",
+            "zoom": 10,
+            "errors": [],
+            "layers": [
+              "background",
+              "vegetation-ndvi-cells-fill",
+              "vegetation-ndvi-cells-outline",
+              "vegetation-ndvi-cells-values"
+            ],
+            "customPresent": true,
+            "nativeOpacity": 0,
+            "probes": {
+              "negative": {
+                "x": 195.00000000001177,
+                "y": 421.99999999997647
+              },
+              "center": {
+                "x": 559.0888888888991,
+                "y": 421.99999999997647
+              },
+              "positive": {
+                "x": 923.1777777777864,
+                "y": 421.99999999997647
+              },
+              "leftEdge": {
+                "x": 369.762666666689,
+                "y": 421.99999999997647
+              },
+              "rightEdge": {
+                "x": 384.32622222223364,
+                "y": 421.99999999997647
+              },
+              "outside": {
+                "x": 559.0888888888991,
+                "y": -612.3317628347949
+              }
+            },
+            "labelCount": 1,
+            "unrestrictedPickCount": 2,
+            "inspectablePickCount": 0,
+            "diagnostics": {
+              "failed": false,
+              "active": false,
+              "ready": false,
+              "visible": true,
+              "nativeOpacity": 0,
+              "sameWebglContext": true,
+              "projection": "mercator",
+              "terrain": null,
+              "pitch": 0,
+              "bounds": [
+                [
+                  -120.38389587402347,
+                  44.79473926685114
+                ],
+                [
+                  -120.11610412597659,
+                  45.204528017294194
+                ]
+              ],
+              "sourceLoaded": true,
+              "labelVisibility": "visible",
+              "outlineOpacity": 0,
+              "labelOpacity": 0,
+              "layoutPending": true,
+              "dataPending": true,
+              "nativeSuppressed": true,
+              "sourceFeatureCount": 9,
+              "renderedSourceFeatureCount": 28,
+              "idleHeld": true,
+              "heldIdleEvents": 2,
+              "glErrors": []
+            },
+            "webgl2": true,
+            "samples": {
+              "negative": [
+                21,
+                34,
+                43,
+                255
+              ],
+              "leftEdge": [
+                21,
+                34,
+                43,
+                255
+              ],
+              "rightEdge": [
+                21,
+                34,
+                43,
+                255
+              ]
+            },
+            "nonBackgroundPixels": 0
+          },
+          "settled": {
+            "scenario": "refusal-layout",
+            "zoom": 11,
+            "errors": [],
+            "layers": [
+              "background",
+              "vegetation-ndvi-cells-fill",
+              "vegetation-ndvi-cells-outline",
+              "vegetation-ndvi-cells-values"
+            ],
+            "customPresent": true,
+            "nativeOpacity": 0,
+            "probes": {
+              "negative": {
+                "x": 195.00000000002353,
+                "y": 422.00000000065916
+              },
+              "center": {
+                "x": 923.1777777777982,
+                "y": 422.00000000065916
+              },
+              "positive": {
+                "x": 1651.355555555573,
+                "y": 422.00000000065916
+              },
+              "leftEdge": {
+                "x": 544.525333333378,
+                "y": 422.00000000065916
+              },
+              "rightEdge": {
+                "x": 573.6524444444673,
+                "y": 422.00000000065916
+              },
+              "outside": {
+                "x": 923.1777777777982,
+                "y": -1646.6635256688835
+              }
+            },
+            "labelCount": 0,
+            "unrestrictedPickCount": 0,
+            "inspectablePickCount": 0,
+            "diagnostics": {
+              "failed": false,
+              "active": false,
+              "ready": false,
+              "visible": true,
+              "nativeOpacity": 0,
+              "sameWebglContext": true,
+              "projection": "mercator",
+              "terrain": null,
+              "pitch": 0,
+              "bounds": [
+                [
+                  -120.31694793701189,
+                  44.89746122261266
+                ],
+                [
+                  -120.18305206298845,
+                  45.10235559783706
+                ]
+              ],
+              "sourceLoaded": true,
+              "labelVisibility": "none",
+              "outlineOpacity": 0,
+              "labelOpacity": 0,
+              "layoutPending": false,
+              "dataPending": false,
+              "nativeSuppressed": true,
+              "sourceFeatureCount": 0,
+              "renderedSourceFeatureCount": 0,
+              "idleHeld": false,
+              "heldIdleEvents": 2,
+              "glErrors": []
+            },
+            "webgl2": true
+          },
+          "recovered": {
+            "scenario": "refusal-layout",
+            "zoom": 11,
+            "errors": [],
+            "layers": [
+              "background",
+              "vegetation-ndvi-cells-fill",
+              "vegetation-ndvi-cells-outline",
+              "vegetation-ndvi-cells-values"
+            ],
+            "customPresent": true,
+            "nativeOpacity": 1,
+            "probes": {
+              "negative": {
+                "x": 195.00000000002353,
+                "y": 422.00000000065916
+              },
+              "center": {
+                "x": 923.1777777777982,
+                "y": 422.00000000065916
+              },
+              "positive": {
+                "x": 1651.355555555573,
+                "y": 422.00000000065916
+              },
+              "leftEdge": {
+                "x": 544.525333333378,
+                "y": 422.00000000065916
+              },
+              "rightEdge": {
+                "x": 573.6524444444673,
+                "y": 422.00000000065916
+              },
+              "outside": {
+                "x": 923.1777777777982,
+                "y": -1646.6635256688835
+              }
+            },
+            "labelCount": 6,
+            "unrestrictedPickCount": 1,
+            "inspectablePickCount": 1,
+            "diagnostics": {
+              "failed": false,
+              "active": false,
+              "ready": false,
+              "visible": true,
+              "meshCells": 9,
+              "nativeOpacity": 1,
+              "sameWebglContext": true,
+              "projection": "mercator",
+              "terrain": null,
+              "pitch": 0,
+              "bounds": [
+                [
+                  -120.31694793701189,
+                  44.89746122261266
+                ],
+                [
+                  -120.18305206298845,
+                  45.10235559783706
+                ]
+              ],
+              "sourceLoaded": true,
+              "labelVisibility": "visible",
+              "outlineOpacity": [
+                "interpolate",
+                [
+                  "linear"
+                ],
+                [
+                  "zoom"
+                ],
+                0,
+                0,
+                8,
+                0,
+                9,
+                0.35
+              ],
+              "labelOpacity": 1,
+              "layoutPending": false,
+              "dataPending": false,
+              "nativeSuppressed": false,
+              "sourceFeatureCount": 9,
+              "renderedSourceFeatureCount": 15,
+              "idleHeld": false,
+              "heldIdleEvents": 2,
+              "glErrors": []
+            },
+            "webgl2": true
+          },
+          "interaction": "native touch refusal lifecycle",
+          "priorTooltipVisible": true,
+          "priorTooltipCleared": true,
+          "reinspectionBlocked": true,
+          "priorTooltipBounds": {
+            "x": 0,
+            "y": 436,
+            "width": 240,
+            "height": 154
+          },
+          "recoveredTooltipBounds": {
+            "x": 0,
+            "y": 436,
+            "width": 240,
+            "height": 154
+          },
+          "screenshots": {
+            "before": "mobile-refusal-layout-empty-before.png",
+            "suppressed": "mobile-refusal-layout-empty-suppressed.png",
+            "recovered": "mobile-refusal-layout-empty-recovered.png"
+          }
+        },
+        {
+          "replacement": "null",
+          "locked": {
+            "scenario": "refusal-layout",
+            "zoom": 10,
+            "errors": [],
+            "layers": [
+              "background",
+              "vegetation-ndvi-cells-fill",
+              "vegetation-ndvi-cells-outline",
+              "vegetation-ndvi-cells-values"
+            ],
+            "customPresent": true,
+            "nativeOpacity": 1,
+            "probes": {
+              "negative": {
+                "x": 195.00000000001177,
+                "y": 421.99999999997647
+              },
+              "center": {
+                "x": 559.0888888888991,
+                "y": 421.99999999997647
+              },
+              "positive": {
+                "x": 923.1777777777864,
+                "y": 421.99999999997647
+              },
+              "leftEdge": {
+                "x": 369.762666666689,
+                "y": 421.99999999997647
+              },
+              "rightEdge": {
+                "x": 384.32622222223364,
+                "y": 421.99999999997647
+              },
+              "outside": {
+                "x": 559.0888888888991,
+                "y": -612.3317628347949
+              }
+            },
+            "labelCount": 1,
+            "unrestrictedPickCount": 2,
+            "inspectablePickCount": 2,
+            "diagnostics": {
+              "failed": false,
+              "active": false,
+              "ready": true,
+              "visible": true,
+              "meshCells": 9,
+              "nativeOpacity": 1,
+              "sameWebglContext": true,
+              "projection": "mercator",
+              "terrain": null,
+              "pitch": 0,
+              "bounds": [
+                [
+                  -120.38389587402347,
+                  44.79473926685114
+                ],
+                [
+                  -120.11610412597659,
+                  45.204528017294194
+                ]
+              ],
+              "sourceLoaded": true,
+              "labelVisibility": "visible",
+              "outlineOpacity": [
+                "interpolate",
+                [
+                  "linear"
+                ],
+                [
+                  "zoom"
+                ],
+                0,
+                0,
+                8,
+                0,
+                9,
+                0.35
+              ],
+              "labelOpacity": 1,
+              "layoutPending": true,
+              "dataPending": false,
+              "nativeSuppressed": false,
+              "sourceFeatureCount": 9,
+              "renderedSourceFeatureCount": 28,
+              "idleHeld": true,
+              "heldIdleEvents": 1,
+              "glErrors": [],
+              "coarseCustomActive": true,
+              "coarseCustomReady": true
+            },
+            "webgl2": true
+          },
+          "suppressed": {
+            "scenario": "refusal-layout",
+            "zoom": 10,
+            "errors": [],
+            "layers": [
+              "background",
+              "vegetation-ndvi-cells-fill",
+              "vegetation-ndvi-cells-outline",
+              "vegetation-ndvi-cells-values"
+            ],
+            "customPresent": true,
+            "nativeOpacity": 0,
+            "probes": {
+              "negative": {
+                "x": 195.00000000001177,
+                "y": 421.99999999997647
+              },
+              "center": {
+                "x": 559.0888888888991,
+                "y": 421.99999999997647
+              },
+              "positive": {
+                "x": 923.1777777777864,
+                "y": 421.99999999997647
+              },
+              "leftEdge": {
+                "x": 369.762666666689,
+                "y": 421.99999999997647
+              },
+              "rightEdge": {
+                "x": 384.32622222223364,
+                "y": 421.99999999997647
+              },
+              "outside": {
+                "x": 559.0888888888991,
+                "y": -612.3317628347949
+              }
+            },
+            "labelCount": 1,
+            "unrestrictedPickCount": 2,
+            "inspectablePickCount": 0,
+            "diagnostics": {
+              "failed": false,
+              "active": false,
+              "ready": false,
+              "visible": true,
+              "nativeOpacity": 0,
+              "sameWebglContext": true,
+              "projection": "mercator",
+              "terrain": null,
+              "pitch": 0,
+              "bounds": [
+                [
+                  -120.38389587402347,
+                  44.79473926685114
+                ],
+                [
+                  -120.11610412597659,
+                  45.204528017294194
+                ]
+              ],
+              "sourceLoaded": true,
+              "labelVisibility": "visible",
+              "outlineOpacity": 0,
+              "labelOpacity": 0,
+              "layoutPending": true,
+              "dataPending": true,
+              "nativeSuppressed": true,
+              "sourceFeatureCount": 9,
+              "renderedSourceFeatureCount": 28,
+              "idleHeld": true,
+              "heldIdleEvents": 2,
+              "glErrors": []
+            },
+            "webgl2": true,
+            "samples": {
+              "negative": [
+                21,
+                34,
+                43,
+                255
+              ],
+              "leftEdge": [
+                21,
+                34,
+                43,
+                255
+              ],
+              "rightEdge": [
+                21,
+                34,
+                43,
+                255
+              ]
+            },
+            "nonBackgroundPixels": 0
+          },
+          "settled": {
+            "scenario": "refusal-layout",
+            "zoom": 11,
+            "errors": [],
+            "layers": [
+              "background",
+              "vegetation-ndvi-cells-fill",
+              "vegetation-ndvi-cells-outline",
+              "vegetation-ndvi-cells-values"
+            ],
+            "customPresent": true,
+            "nativeOpacity": 0,
+            "probes": {
+              "negative": {
+                "x": 195.00000000002353,
+                "y": 422.00000000065916
+              },
+              "center": {
+                "x": 923.1777777777982,
+                "y": 422.00000000065916
+              },
+              "positive": {
+                "x": 1651.355555555573,
+                "y": 422.00000000065916
+              },
+              "leftEdge": {
+                "x": 544.525333333378,
+                "y": 422.00000000065916
+              },
+              "rightEdge": {
+                "x": 573.6524444444673,
+                "y": 422.00000000065916
+              },
+              "outside": {
+                "x": 923.1777777777982,
+                "y": -1646.6635256688835
+              }
+            },
+            "labelCount": 0,
+            "unrestrictedPickCount": 0,
+            "inspectablePickCount": 0,
+            "diagnostics": {
+              "failed": false,
+              "active": false,
+              "ready": false,
+              "visible": true,
+              "nativeOpacity": 0,
+              "sameWebglContext": true,
+              "projection": "mercator",
+              "terrain": null,
+              "pitch": 0,
+              "bounds": [
+                [
+                  -120.31694793701189,
+                  44.89746122261266
+                ],
+                [
+                  -120.18305206298845,
+                  45.10235559783706
+                ]
+              ],
+              "sourceLoaded": true,
+              "labelVisibility": "none",
+              "outlineOpacity": 0,
+              "labelOpacity": 0,
+              "layoutPending": false,
+              "dataPending": false,
+              "nativeSuppressed": true,
+              "sourceFeatureCount": 0,
+              "renderedSourceFeatureCount": 0,
+              "idleHeld": false,
+              "heldIdleEvents": 2,
+              "glErrors": []
+            },
+            "webgl2": true
+          },
+          "recovered": {
+            "scenario": "refusal-layout",
+            "zoom": 11,
+            "errors": [],
+            "layers": [
+              "background",
+              "vegetation-ndvi-cells-fill",
+              "vegetation-ndvi-cells-outline",
+              "vegetation-ndvi-cells-values"
+            ],
+            "customPresent": true,
+            "nativeOpacity": 1,
+            "probes": {
+              "negative": {
+                "x": 195.00000000002353,
+                "y": 422.00000000065916
+              },
+              "center": {
+                "x": 923.1777777777982,
+                "y": 422.00000000065916
+              },
+              "positive": {
+                "x": 1651.355555555573,
+                "y": 422.00000000065916
+              },
+              "leftEdge": {
+                "x": 544.525333333378,
+                "y": 422.00000000065916
+              },
+              "rightEdge": {
+                "x": 573.6524444444673,
+                "y": 422.00000000065916
+              },
+              "outside": {
+                "x": 923.1777777777982,
+                "y": -1646.6635256688835
+              }
+            },
+            "labelCount": 6,
+            "unrestrictedPickCount": 1,
+            "inspectablePickCount": 1,
+            "diagnostics": {
+              "failed": false,
+              "active": false,
+              "ready": false,
+              "visible": true,
+              "meshCells": 9,
+              "nativeOpacity": 1,
+              "sameWebglContext": true,
+              "projection": "mercator",
+              "terrain": null,
+              "pitch": 0,
+              "bounds": [
+                [
+                  -120.31694793701189,
+                  44.89746122261266
+                ],
+                [
+                  -120.18305206298845,
+                  45.10235559783706
+                ]
+              ],
+              "sourceLoaded": true,
+              "labelVisibility": "visible",
+              "outlineOpacity": [
+                "interpolate",
+                [
+                  "linear"
+                ],
+                [
+                  "zoom"
+                ],
+                0,
+                0,
+                8,
+                0,
+                9,
+                0.35
+              ],
+              "labelOpacity": 1,
+              "layoutPending": false,
+              "dataPending": false,
+              "nativeSuppressed": false,
+              "sourceFeatureCount": 9,
+              "renderedSourceFeatureCount": 15,
+              "idleHeld": false,
+              "heldIdleEvents": 2,
+              "glErrors": []
+            },
+            "webgl2": true
+          },
+          "interaction": "native touch refusal lifecycle",
+          "priorTooltipVisible": true,
+          "priorTooltipCleared": true,
+          "reinspectionBlocked": true,
+          "priorTooltipBounds": {
+            "x": 0,
+            "y": 436,
+            "width": 240,
+            "height": 154
+          },
+          "recoveredTooltipBounds": {
+            "x": 0,
+            "y": 436,
+            "width": 240,
+            "height": 154
+          },
+          "screenshots": {
+            "before": "mobile-refusal-layout-null-before.png",
+            "suppressed": "mobile-refusal-layout-null-suppressed.png",
+            "recovered": "mobile-refusal-layout-null-recovered.png"
+          }
+        }
+      ],
+      "samples": {
+        "negative": [
+          140,
+          81,
+          10,
+          255
+        ]
+      },
+      "nonBackgroundPixels": 329160,
+      "digest": "a6010f77086e29324a2783d060f0f5d67e0de17ea7c8569f08f1ecd22c40fd5e",
+      "screenshot": "mobile-refusal-layout.png",
+      "pageErrors": []
+    },
+    {
+      "device": "mobile",
+      "sequence": "standard",
+      "scenario": "reload",
+      "zoom": 7,
+      "errors": [],
+      "layers": [
+        "background",
+        "vegetation-ndvi-cells-fill",
+        "vegetation-ndvi-cells-outline",
+        "vegetation-ndvi-cells-values"
+      ],
+      "customPresent": true,
+      "nativeOpacity": 0,
+      "probes": {
+        "negative": {
+          "x": 149.48888888888908,
+          "y": 421.99999999999704
+        },
+        "center": {
+          "x": 195,
+          "y": 421.99999999999704
+        },
+        "positive": {
+          "x": 240.51111111111092,
+          "y": 421.99999999999704
+        },
+        "leftEdge": {
+          "x": 171.33422222222373,
+          "y": 421.99999999999704
+        },
+        "rightEdge": {
+          "x": 173.15466666666683,
+          "y": 421.99999999999704
+        },
+        "outside": {
+          "x": 195,
+          "y": 292.70852964565063
+        }
+      },
+      "labelCount": 0,
+      "unrestrictedPickCount": 1,
+      "inspectablePickCount": 1,
+      "diagnostics": {
+        "failed": false,
+        "active": true,
+        "ready": true,
+        "visible": true,
+        "meshCells": 9,
+        "nativeOpacity": 0,
+        "sameWebglContext": true,
+        "projection": "mercator",
+        "terrain": null,
+        "pitch": 0,
+        "bounds": [
+          [
+            -121.07116699218778,
+            43.33740449726733
+          ],
+          [
+            -118.92883300781274,
+            46.61571428134587
+          ]
+        ],
+        "sourceLoaded": true,
+        "labelVisibility": "none",
+        "outlineOpacity": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          0,
+          0,
+          8,
+          0,
+          9,
+          0.35
+        ],
+        "labelOpacity": 1,
+        "layoutPending": false,
+        "dataPending": false,
+        "nativeSuppressed": false,
+        "sourceFeatureCount": 9,
+        "renderedSourceFeatureCount": 24,
+        "idleHeld": false,
+        "heldIdleEvents": 2,
+        "glErrors": []
+      },
+      "webgl2": true,
+      "samples": {
+        "negative": [
+          140,
+          81,
+          10,
+          255
+        ],
+        "center": [
+          246,
+          232,
+          195,
+          255
+        ],
+        "positive": [
+          1,
+          88,
+          79,
+          255
+        ],
+        "leftEdge": [
+          140,
+          81,
+          10,
+          255
+        ],
+        "rightEdge": [
+          246,
+          232,
+          195,
+          255
+        ],
+        "outside": [
+          21,
+          34,
+          43,
+          255
+        ]
+      },
+      "nonBackgroundPixels": 26248,
+      "digest": "40389f1858364407d2c4b85955dcf045c5ee572e05f71bb173a676abdaace75e",
+      "screenshot": "mobile-reload.png",
+      "pageErrors": []
+    }
+  ],
+  "failures": []
+}

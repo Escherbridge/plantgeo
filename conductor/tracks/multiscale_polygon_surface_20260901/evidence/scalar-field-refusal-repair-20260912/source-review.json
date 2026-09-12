@@ -1,0 +1,28 @@
+{
+  "reviewer": "/root/source_reviewer",
+  "base": "f62666363abd06e8c4aab287ad5f7353b1ec305d",
+  "verdict": "PASS",
+  "scope": "Independent source review of frozen production changes, changed tests, and scalar fixture",
+  "sourceHashEncoding": "utf8-lf",
+  "hashAlgorithm": "sha256",
+  "findings": [],
+  "dimensions": {
+    "correctness": "PASS",
+    "security": "PASS",
+    "performance": "PASS",
+    "maintainability": "PASS"
+  },
+  "checksExecutedByReviewer": [],
+  "sourceHashes": {
+    "src/lib/map/scalar-field-layer.ts": "8981cee1d31f5be12568768df14bd873f1d73c3394d9de109bc98fd72efbe927",
+    "src/lib/map/scalar-field-inspection.ts": "eb2db8ea26dbbd8a4bab546bb48c0be6783a4427810abe6807d0cc6771576370",
+    "src/components/map/HoverTooltip.tsx": "48ce07c502e454ec874cc089f20e3ce0ce1763f05378dd3854ed3ec375b9ce98",
+    "src/components/map/MapView.tsx": "d695590f32dc0370e955a428997d35758424c59a2ad0ee147bdfb8a63ba11091",
+    "src/__tests__/lib/map/scalar-field-layer.test.ts": "5a1141fedf8b6744ba9b7807e68deb816b57096d9ff97c11c4c1bc25d99832f6",
+    "src/__tests__/components/HoverTooltip.test.tsx": "872c52568ff3a9ce05a91c79121d049605b1cc39bfd05b649092eeb990670210",
+    "src/__tests__/components/map-view-render-count.test.tsx": "1bbc82eacdcfde8a8addadfc0199f839db8737ae6db8b7c62a9ce5c9d50344dd",
+    "e2e/scalar-field-fixture/entry.tsx": "8c76b8d991f9b1738089a34ddb267853f7d1c7234a014a6a54460611067568da",
+    "e2e/scalar-field-fixture/run.mjs": "8154c1e2e6093ce474107f59bbf2b286356b95e0cabca8e887ce96ef2beddd50",
+    "e2e/scalar-field-fixture/AGENTS.md": "d37d9dfac85e833e7cb19cde08a28c1fd6521912389662d0300fc9bb3f45fd9f"
+  }
+}
