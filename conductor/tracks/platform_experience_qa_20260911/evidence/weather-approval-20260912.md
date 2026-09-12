@@ -55,6 +55,12 @@ not approve a populated-data release or the separate forecast tracks.
 - The same continuation independently re-reviewed the ready-to-outage report
   regression and found no actionable defect; its test is synthetic-fixture-only
   and does not widen the data or forecast approval scope.
+- A follow-up presentation-only candidate, `a9ff85e`, was independently
+  reviewed and integrated locally as root `e54d091`. It gives stronger wind
+  labels placement priority while retaining collision avoidance and documents
+  that rule in the legend. The data-boundary check passed; type-check, lint and
+  Vitest could not start in the current checkout because their binaries are
+  absent, so live dense-label behavior remains unverified.
 - The root recheck receipt records that JavaScript dependencies were absent in
   the current checkout, so the owner receipts remain the executable test
   authority for this change.
@@ -62,7 +68,7 @@ not approve a populated-data release or the separate forecast tracks.
 ## Conditions that remain open
 
 The platform QA track remains active. Governed populated-data browser evidence
-is still required for raw and aggregate temperature labels, dense wind-label
+is still required for raw and aggregate temperature labels, live dense wind-label
 collision behavior, precipitation hover and real selected-day transitions.
 Narrow-mobile reflow and touch behavior are also open. The weather forecast
 plane and forecast-experience tracks still own model-run/valid-time fields,

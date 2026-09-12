@@ -73,3 +73,35 @@ archival of that task. The ingestion owner is unresolved and remains open. The
 visual task is pending materialization. The platform QA track remains active;
 forecast, source admission, populated-data, mobile, agent/MCP and production
 gates remain unchanged.
+
+### 2026-09-12 lane restart pass
+
+The ingestion task `01a08b00-2a50-73c2-b39b-39523c74ceb2` was restarted again
+with a concrete read-only preflight. Its bounded turn completed without an
+assistant message, tool marker, command result or revision. It is idle and
+unresolved, so it remains open and is not restarted again in this pass. No
+writer or data-load process was started and no data, database, Railway,
+object-store, scheduler, deployment or push action occurred.
+
+The archived botanical owner was replaced with a lightweight current-main
+reconciliation lane. That lane returned `HOLD`: the exact-UUID transitional
+lookup and fail-closed provenance/missingness boundary remain intact, while
+the production census, WCVP/USDA/TRY/FEIS admission, WTU/UBC Herbaria release,
+occurrence publication and immutable profile-release gates remain blocked. It
+made no file, ref or data changes. A new app task was also requested as queue
+alias `client-new-thread:61f18f53-af63-403b-ad09-21be6a0b6cc8`; it had not
+materialized in `list_threads` at this observation.
+
+A fresh medium-depth presentation lane was dispatched from current `main`.
+It produced candidate `a9ff85e0485171cde8030d33cd3fd8da17b48017`, tree
+`997728b9ff38dd9c85773ba2fe17e97e40ef77f3`, which was independently reviewed
+and integrated locally as root `e54d091`. The three-file change gives stronger
+wind labels collision priority while retaining collision avoidance and records
+that rule in the legend. The single final verification sweep was attempted:
+the data-boundary check passed, while type-check, lint and Vitest could not
+start because this checkout has no `tsc`, `eslint` or `vitest` binaries. Its
+app-task queue alias was
+`client-new-thread:b4b4d56b-f44d-4d39-9b58-636d218f8bb8`; it had not
+materialized in `list_threads` at this observation. The approved weather scope
+remains the fixed desktop historical unavailable-state only; populated-data,
+mobile/touch and forecast gates remain open.

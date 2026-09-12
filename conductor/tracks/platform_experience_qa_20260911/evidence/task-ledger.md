@@ -152,3 +152,29 @@ an isolated worktree with presentation-only scope. It had not materialized in
 `list_threads` at observation and is not completion evidence. No Python or
 matching data-writer process was observed, and no external/data mutation was
 performed.
+
+### 2026-09-12 lane restart pass
+
+The ingestion owner `01a08b00-2a50-73c2-b39b-39523c74ceb2` was restarted with
+a read-only preflight and again completed without any assistant, tool,
+command or revision evidence. It remains idle and unresolved; retain the
+task open and do not archive it. A lightweight botanical reconciliation lane
+returned `HOLD` with no file or ref change after rechecking the current
+exact-UUID lookup and its source-admission blockers. Its replacement app task
+is queued as `client-new-thread:61f18f53-af63-403b-ad09-21be6a0b6cc8` and had
+not materialized in `list_threads`.
+
+The presentation lane produced independently reviewed candidate
+`a9ff85e0485171cde8030d33cd3fd8da17b48017`, tree
+`997728b9ff38dd9c85773ba2fe17e97e40ef77f3`, from current `main`. Its exact
+three-file scope prioritizes stronger wind labels under collision avoidance,
+documents that behavior in the legend, and adds a focused layout assertion.
+It was integrated locally as root `e54d091`. The single final verification
+sweep passed the data-boundary check, but type-check, lint and Vitest could not
+start because this checkout has no `tsc`, `eslint` or `vitest` binaries. The
+replacement app task remains
+queue alias `client-new-thread:b4b4d56b-f44d-4d39-9b58-636d218f8bb8` and had
+not materialized at observation. No data, database, writer, Railway,
+object-store, scheduler, deployment or push action occurred. The bounded
+historical weather approval remains in force; forecast and populated-data
+gates remain open.

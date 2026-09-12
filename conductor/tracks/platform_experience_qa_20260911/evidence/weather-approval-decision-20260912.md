@@ -18,7 +18,9 @@ source/product and SI units; an explicit retrying or unavailable state with no
 spaced-square placeholder grid or fallback frame; refusal of stale responses;
 sampled, aggregate and unmeasured support labels; idempotent recovery after a
 late `style.load`; and clearing a ready report when the next response is
-upstream-unavailable.
+upstream-unavailable. The follow-up local presentation candidate integrated at
+root `e54d091` also gives stronger wind labels placement priority while
+retaining collision avoidance and states that rule in the legend.
 
 This approval covers local presentation behavior only. It does not approve
 populated-data release, forecast implementation, provider or model admission,
