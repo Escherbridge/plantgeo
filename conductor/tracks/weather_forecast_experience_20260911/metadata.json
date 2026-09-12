@@ -2,7 +2,7 @@
   "slug": "weather_forecast_experience_20260911",
   "title": "Traditional weather forecast map and location experience",
   "type": "feature",
-  "status": "in_progress",
+  "status": "planned",
   "created_on": "2026-09-11",
   "depends_on": [
     "weather_forecast_parquet_lane_20260911",
@@ -14,7 +14,7 @@
     "upstream_dataset_expansion_20260806",
     "environmental_postgres_retirement_20260904"
   ],
-  "next_gate": "Obtain exact canonical post-botanical shared-file handoff; local verification is recorded, while sampled-product relabeling, shared mode/request integration and real-data experience acceptance remain open.",
+  "next_gate": "Freeze observed-versus-forecast modes, selected-location cards, scalar-field support, wind-vector presentation, time semantics and real-data acceptance budgets against the admitted forecast schema.",
   "surfaces": [
     "sampled-weather-estimates",
     "weather-forecast-field",

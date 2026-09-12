@@ -1,9 +1,0 @@
-........................................................................ [ 63%]
-..........................................                               [100%]
-============================== warnings summary ===============================
-..\..\..\..\..\..\Programming\plantgeo\services\agri-data-service\.venv\Lib\site-packages\_pytest\cacheprovider.py:469
-  C:\Users\atooz\Programming\plantgeo\services\agri-data-service\.venv\Lib\site-packages\_pytest\cacheprovider.py:469: PytestCacheWarning: could not create cache path C:\Users\atooz\.codex\worktrees\32be\plantgeo\services\agri-data-service\.pytest_cache\v\cache\nodeids: [WinError 5] Access is denied: 'C:\\Users\\atooz\\.codex\\worktrees\\32be\\plantgeo\\services\\agri-data-service\\.pytest_cache\\v\\cache'
-    config.cache.set("cache/nodeids", sorted(self.cached_nodeids))
-
--- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
-114 passed, 1 warning in 5.00s
