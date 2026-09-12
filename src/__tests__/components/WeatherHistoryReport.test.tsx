@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, screen } from "@testing-library/react";
+import { act, fireEvent, screen } from "@testing-library/react";
 import { WeatherHistoryReport, windDirectionLabel } from "@/components/panels/WeatherHistoryReport";
 import { useMapStore } from "@/stores/map-store";
 import { useTimeSliderStore } from "@/stores/time-slider-store";
+import { SCRUB_SETTLE_MS } from "@/stores/useMetricAtDate";
 import { renderWithProviders } from "@/test/utils";
 import type {
   ParquetBrowserReaderResult,
@@ -16,6 +17,7 @@ interface WeatherQueryResult {
   isFetching?: boolean;
   isPlaceholderData?: boolean;
   isError?: boolean;
+  isSuccess?: boolean;
 }
 
 const queries = vi.hoisted(() => ({
@@ -227,6 +229,61 @@ describe("WeatherHistoryReport", () => {
 
     expect(screen.getByText(/retained response has not been verified for its original requested day/)).toBeTruthy();
     expect(screen.queryByText("21.5 \u00b0C")).toBeNull();
+  });
+
+  it("accepts the settled request's landing during another scrub and retains it for the next request", async () => {
+    vi.useFakeTimers();
+    const requestedDay = "2026-07-31";
+    const selectedDay = "2026-07-30";
+    const response: ParquetBrowserReaderResult<readonly ParquetBrowserWeatherObservation[]> = {
+      state: "ready", requestedDay, servedDay: requestedDay, truncated: false,
+      data: [{
+        ...observation,
+        observedDay: requestedDay,
+        observedAt: `${requestedDay}T12:00:00Z`,
+        support: { ...support, provenance: { ...support.provenance, observedDay: requestedDay } },
+      }],
+    };
+    const rendered = renderWithProviders(<WeatherHistoryReport bbox="-117,43,-115,45" zoom={13} />);
+
+    try {
+      act(() => { useTimeSliderStore.getState().setLayerDate("weather", requestedDay); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(SCRUB_SETTLE_MS); });
+      expect(queries.getWeatherForBbox).toHaveBeenLastCalledWith(
+        expect.objectContaining({ date: requestedDay }), expect.any(Object)
+      );
+
+      act(() => { useTimeSliderStore.getState().setLayerDate("weather", selectedDay); });
+      queries.getWeatherForBbox.mockReturnValue({
+        data: response, isSuccess: true, isFetching: false, isPlaceholderData: false,
+      });
+      rendered.rerender(<WeatherHistoryReport bbox="-117,43,-115,45" zoom={13} />);
+
+      expect(queries.getWeatherForBbox).toHaveBeenLastCalledWith(
+        expect.objectContaining({ date: requestedDay }), expect.any(Object)
+      );
+      expect(screen.getByText(`${selectedDay} \u00b7 Open-Meteo historical estimates \u00b7 SI units`)).toBeTruthy();
+      expect(screen.getByText(`Showing the ${requestedDay} frame while the ${selectedDay} selection settles.`)).toBeTruthy();
+      expect(screen.getAllByText("21.5 \u00b0C").length).toBeGreaterThan(0);
+      expect(screen.queryByText(/The response is not shown/)).toBeNull();
+      expect(screen.queryByText(/no earlier frame is shown/)).toBeNull();
+
+      queries.getWeatherForBbox.mockReturnValue({
+        data: response, isSuccess: true, isFetching: true, isPlaceholderData: true,
+      });
+      await act(async () => { await vi.advanceTimersByTimeAsync(SCRUB_SETTLE_MS); });
+
+      expect(queries.getWeatherForBbox).toHaveBeenLastCalledWith(
+        expect.objectContaining({ date: selectedDay }), expect.any(Object)
+      );
+      expect(screen.getByText(`Showing the retained ${requestedDay} frame while ${selectedDay} loads.`)).toBeTruthy();
+      expect(screen.getAllByText("21.5 \u00b0C").length).toBeGreaterThan(0);
+      expect(screen.queryByText(/retained response has not been verified/)).toBeNull();
+      expect(screen.queryByText(/The response is not shown/)).toBeNull();
+    } finally {
+      rendered.unmount();
+      vi.useRealTimers();
+    }
   });
 
   it("withholds a persisted prior-day frame from the dateless current-day query", () => {

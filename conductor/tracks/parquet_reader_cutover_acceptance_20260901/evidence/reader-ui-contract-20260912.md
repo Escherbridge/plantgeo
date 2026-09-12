@@ -11,6 +11,12 @@ branch: codex/reader-ui-contract-20260912
 
 # Reader UI contract correction
 
+The original internal source approval below predates the external checkout review
+of `3143a227d680feb4c2379b936115e20030dd8b7f`. That external review returned
+**changes requested**, with the two P2 findings and follow-up recorded in
+"External checkout review and follow-up" below. The original commit is retained
+unchanged as review history.
+
 This local Priority 1 slice starts directly at the named audit base. It does not
 carry the subsequent documentation-only audit commit into the code branch. The
 final immutable commit, tree, changed paths, verification results and log digests
@@ -123,6 +129,72 @@ type-check recheck. The scoped test command was not repeated. Its tested tree
 above remains distinct from the final commit/tree named in the local handoff;
 the final type-check result is recorded there. No test, lint or boundary result is
 silently relabelled as having executed against a different tree.
+
+## External checkout review and follow-up
+
+External review task: `01a0949c-ff3f-72e1-96b8-f49cf11b5272`, titled
+"PlantGeo reader contract reviewer". Its independent verdict was **changes
+requested: two P2 findings**, against commit
+`3143a227d680feb4c2379b936115e20030dd8b7f`, tree
+`56c8613f1bca6f2ec5bd03f194f8638ae268cf78`. The reviewer verified the original
+31-path custody record and all seven log digests; it did not grant the candidate
+an independent pass. Its focused reproductions were local and in memory.
+
+1. `WeatherHistoryReport` validated against the immediate slider selection while
+   its request still used the debounced day. A valid day-B response landing during
+   B-to-C debounce was refused and never acquired the provenance needed to remain
+   a retained frame during C's fetch. The follow-up validates against the settled
+   request while keeping immediate selection and loading presentation separate.
+2. A window terminal absence could claim one requested partition and an older
+   served partition, even though that evidence represents one exact day envelope.
+   The follow-up requires the absence's own requested and served days to match for
+   vegetation/live-observation windows. That matched day may still precede the
+   selected window endpoint; release/snapshot absence carry remains separate.
+
+Regression scope includes B landing during the real B-to-C debounce then retaining
+its accepted identity during C's fetch, older served-partition mismatches inside
+both allowed windows, and preservation of valid earlier matched absences. A fresh
+source reviewer evaluates this four-file implementation/test follow-up separately
+from its author before the focused check batch and new commit.
+
+Follow-up source review: **approved**, with no unresolved findings. The fresh
+reviewer confirmed that the debounce regression exercises the actual slider timer
+and accepted-state effect with stable payload identity, that both mismatched
+absence regressions are inside their otherwise allowed windows, and that valid
+release/snapshot absences remain admitted. Query keys, cancellation and the
+acceptance hook are unchanged. This is the follow-up source review's verdict;
+the external task's changes-requested verdict remains the historical disposition
+of the unchanged original commit.
+
+The follow-up is a new child of `3143a227`; no amend, rebase or replacement of that
+reviewed commit is authorized. Its exact commit/tree, changed paths, command exit
+codes, test counts and log digests are recorded in the final local follow-up
+handoff. Only the affected helper, acceptance hook, weather panel, map manager and
+fire-hook suites plus final type/diff checks are selected; unrelated suites and
+production acceptance are not rerun or inferred.
+
+Follow-up recheck result: **passed**. The complete implementation/test batch was
+frozen at tree `ad3074ff03f8ac67a8404fc493e0a7ab36f89ee2`. One focused Vitest
+invocation (`node node_modules/vitest/vitest.mjs run --configLoader runner
+--maxWorkers=2`, with the five files below) passed all **172 tests in 5 files**, with
+no skips:
+
+| Focused file | Passed tests |
+| --- | --- |
+| `src/__tests__/components/WeatherHistoryReport.test.tsx` | 13 |
+| `src/__tests__/lib/environmental/parquet-day-contract.test.ts` | 55 |
+| `src/__tests__/hooks/useParquetDayContract.test.ts` | 11 |
+| `src/__tests__/components/LayerManager.test.tsx` | 75 |
+| `src/__tests__/hooks/useParquetFireDetections.test.ts` | 18 |
+
+`npm run type-check` passed. ESLint on the four changed implementation/test files
+passed with zero errors and eleven warnings. The initial diff check against
+`3143a227d680feb4c2379b936115e20030dd8b7f` passed. Tests and types were not rerun
+after these result paragraphs were added: only this evidence and its metadata
+summary changed, and the final diff check covers that documentation update.
+The final handoff records the final tree and verifies that its implementation/test
+blobs match the tested tree. Logs retain the React `act(...)` warnings from the
+focused run; this is local mocked verification, not browser or production evidence.
 
 ## Remaining acceptance gates
 

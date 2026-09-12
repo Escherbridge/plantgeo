@@ -74,7 +74,7 @@ function SummaryCard({
   );
 }
 
-function weatherStateNotice(result: WeatherResult | undefined, selectedDay: string | null): string | null {
+function weatherStateNotice(result: WeatherResult | undefined): string | null {
   if (result === undefined) return null;
   if (result.state === "absent") {
     return `The governed record confirms no weather readings for ${result.servedDay}. Nothing is drawn.`;
@@ -90,15 +90,12 @@ function weatherStateNotice(result: WeatherResult | undefined, selectedDay: stri
   if (result.data.length === 0) {
     return `Weather was published for ${result.servedDay}, but no weather support intersects this view.`;
   }
-  if (selectedDay !== null && result.requestedDay !== selectedDay) {
-    return `Loading weather for ${selectedDay}. The previous day is not shown.`;
-  }
   return null;
 }
 
 /** A weather-forecast-style reading of the selected historical sample day. */
 export function WeatherHistoryReport({ bbox, zoom }: WeatherHistoryReportProps) {
-  const { requestDate, serverCurrentDate } = useDebouncedLayerDay("weather");
+  const { requestDate, settledDate, serverCurrentDate } = useDebouncedLayerDay("weather");
   const selectedDay = useLayerDay("weather").selectedDate;
   const queryPoint = useMapStore((state) => state.queryPoint);
   const setQueryPoint = useMapStore((state) => state.setQueryPoint);
@@ -128,10 +125,13 @@ export function WeatherHistoryReport({ bbox, zoom }: WeatherHistoryReportProps) 
   );
 
   const query = useParquetDayContract(rawQuery, {
-    requestedDay: selectedDay, today: serverCurrentDate ?? undefined, policy: "live-observations", subject: "Weather observations",
+    requestedDay: settledDate, today: serverCurrentDate ?? undefined, policy: "live-observations", subject: "Weather observations",
   });
   const presentedResult = query.data;
   const rows = presentedResult?.state === "ready" ? presentedResult.data : [];
+  const isSelectionSettling = selectedDay !== settledDate;
+  const isShowingEarlierFrame = presentedResult?.state === "ready" &&
+    (query.isPlaceholderData || isSelectionSettling);
 
   const weatherPoint =
     queryPoint !== null &&
@@ -170,7 +170,7 @@ export function WeatherHistoryReport({ bbox, zoom }: WeatherHistoryReportProps) 
   const aggregateCellCount = rows.length - pointReadingCount;
   const stateNotice = query.temporalNotice ?? (query.isPlaceholderData
     ? null
-    : weatherStateNotice(presentedResult, selectedDay));
+    : weatherStateNotice(presentedResult));
 
   return (
     <section aria-labelledby="historical-weather-heading" className="flex flex-col gap-2.5">
@@ -183,14 +183,18 @@ export function WeatherHistoryReport({ bbox, zoom }: WeatherHistoryReportProps) 
         </p>
       </div>
 
-      {query.isFetching && !query.isPlaceholderData && (
+      {(query.isFetching || isSelectionSettling) && !query.isPlaceholderData && !isShowingEarlierFrame && (
         <p role="status" aria-live="polite" className="text-xs text-[hsl(var(--muted-foreground))]">
-          Loading {selectedDay ?? "the latest published weather"}; no earlier frame is shown.
+          {isSelectionSettling
+            ? `Waiting for the ${selectedDay ?? "latest day"} selection to settle; no earlier frame is shown.`
+            : `Loading ${selectedDay ?? "the latest published weather"}; no earlier frame is shown.`}
         </p>
       )}
-      {query.isPlaceholderData && presentedResult?.state === "ready" && (
+      {isShowingEarlierFrame && presentedResult?.state === "ready" && (
         <p role="status" aria-live="polite" className={NOTICE_CLASS_NAME}>
-          Showing the retained {presentedResult.servedDay} frame while {selectedDay ?? "the latest day"} loads.
+          {isSelectionSettling
+            ? `Showing the ${presentedResult.servedDay} frame while the ${selectedDay ?? "latest day"} selection settles.`
+            : `Showing the retained ${presentedResult.servedDay} frame while ${selectedDay ?? "the latest day"} loads.`}
         </p>
       )}
       {query.isError && (

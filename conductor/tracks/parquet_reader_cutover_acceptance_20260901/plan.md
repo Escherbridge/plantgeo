@@ -17,6 +17,13 @@ coverage authority/source-ceiling captions. It starts at
 immutable commit/tree, independent review and scoped verification. It does not
 close the current all-reader production packet or change a serving/writer policy.
 
+External checkout review task `01a0949c-ff3f-72e1-96b8-f49cf11b5272` returned
+**changes requested** for `3143a227`: weather acceptance used the immediate slider
+day during debounce, and a window absence did not require matching partition
+dates. The receipt's follow-up records both repairs, a fresh source review and
+focused rechecks in a new child commit. The reviewed commit remains immutable;
+production acceptance remains open.
+
 The [local availability contract reconciliation](evidence/local-availability-contract-20260912.md)
 freezes the current coverage v3 wire, checksum/refusal semantics and actual cache/policy
 boundaries against `8c14ea0117ba14d5584f737b793f989566102514`. This closes only the local

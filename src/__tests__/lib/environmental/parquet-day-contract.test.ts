@@ -209,6 +209,30 @@ describe("withParquetDayContract", () => {
   });
 
   it.each([
+    ["vegetation-window", YESTERDAY, "2026-09-10"],
+    ["live-observations", TODAY, YESTERDAY],
+  ] as const)("refuses %s absence evidence for a different older partition still inside the window", (policy, requestedDay, servedDay) => {
+    const query = guard(absent(requestedDay, servedDay), policy);
+
+    expect(query.temporalRefused).toBe(true);
+    expect(query.data).toMatchObject({ state: "upstream_unavailable", fault: { kind: "contract" } });
+    expect(query.temporalNotice).toContain(`absence requested ${requestedDay} but served ${servedDay}`);
+    expect(query.answeredDate).toBeUndefined();
+    expect(query.servedDate).toBeUndefined();
+  });
+
+  it.each(["release", "snapshot"] as const)("preserves a legitimate older %s governed absence", (policy) => {
+    const result = absent(TODAY, YESTERDAY);
+    const query = guard(result, policy);
+
+    expect(query.temporalRefused).toBe(false);
+    expect(query.data).toBe(result);
+    expect(query.answeredDate).toBe(TODAY);
+    expect(query.servedDate).toBe(YESTERDAY);
+    expect(query.temporalNotice).toContain("governed absence");
+  });
+
+  it.each([
     ["vegetation-window", "2026-08-13"],
     ["live-observations", "2026-09-10"],
     ["live-observations", "2026-09-13"],

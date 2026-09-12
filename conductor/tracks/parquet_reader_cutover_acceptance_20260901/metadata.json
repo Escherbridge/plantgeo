@@ -1,4 +1,18 @@
 {
+  "reader_ui_external_review_followup_20260912": {
+    "review_task": "01a0949c-ff3f-72e1-96b8-f49cf11b5272",
+    "external_verdict": "changes_requested",
+    "reviewed_commit": "3143a227d680feb4c2379b936115e20030dd8b7f",
+    "reviewed_tree": "56c8613f1bca6f2ec5bd03f194f8638ae268cf78",
+    "status": "active",
+    "evidence": "evidence/reader-ui-contract-20260912.md",
+    "scope": "Two P2 follow-ups: validate weather responses against the settled request during debounce; require a window terminal absence's own requested/served partition days to match.",
+    "fix_status": "verified_locally",
+    "followup_source_review": "approved_no_unresolved_findings",
+    "focused_recheck": "172 tests passed in 5 files, no skips; type check passed; changed-file lint passed with 0 errors and 11 warnings; final diff check is recorded in the handoff. Tested tree ad3074ff03f8ac67a8404fc493e0a7ab36f89ee2; only evidence and this summary changed after those checks.",
+    "verification": "Fresh source review before focused affected tests and final type/diff checks. New child commit; preserve reviewed commit unchanged. Exact check results and final identities belong to the follow-up handoff.",
+    "production_acceptance": "open"
+  },
   "reader_ui_contract_20260912": {
     "base_commit": "64f4f892bd2b744cc097c7f76a1f239997b80f52",
     "base_tree": "f8697da694a3f9fbbf28e70ff7581bd59546bfd6",

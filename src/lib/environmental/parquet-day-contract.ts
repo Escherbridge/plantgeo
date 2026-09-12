@@ -68,6 +68,9 @@ export function withParquetDayContract<Q extends ParquetQuery>(query: Q, request
     } else if (!isWithin(result.requestedDay, expected, terminalLag)) {
       temporalRefused = true;
       temporalNotice = `${request.subject}: response requested ${result.requestedDay}, but the selected day is ${expected}. The response is not shown.`;
+    } else if (isWindow && result.state === "absent" && result.servedDay !== result.requestedDay) {
+      temporalRefused = true;
+      temporalNotice = `${request.subject}: the governed absence requested ${result.requestedDay} but served ${result.servedDay}. A window absence must describe one partition day. The response is not shown.`;
     } else if ("servedDay" in result && (
       !isWithin(result.servedDay, expected, lag) ||
       !isWithin(result.servedDay, result.requestedDay, Number.POSITIVE_INFINITY)
