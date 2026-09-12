@@ -60,3 +60,8 @@ no second visual task is created. The superseded forecast implementation stays
 archived custody. The current orchestration task retains ownership of the P2
 agent finding, the ingestion hold, and the remaining production and populated
 experience gates.
+
+The stale completed QA task `01a08af2-569e-7532-a16c-79823255e487` was also
+archived from the `PlantGeo Pending Reconcile` section after its last completed
+candidate receipt was rechecked. No active worktree or running turn was
+associated with that task.

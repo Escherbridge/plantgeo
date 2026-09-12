@@ -205,3 +205,8 @@ The ingestion restart completed with no assistant, tool, command or revision
 evidence. It remains idle and unresolved and is intentionally retained open.
 No database, provider, object-store, writer, scheduler, deployment or push
 operation occurred in either restart.
+
+The stale completed QA task `01a08af2-569e-7532-a16c-79823255e487` was pruned
+from the Codex sidebar after its completed candidate receipt was rechecked. It
+had no live turn or active worktree; the current orchestration task and the
+unresolved ingestion owner remain retained.
