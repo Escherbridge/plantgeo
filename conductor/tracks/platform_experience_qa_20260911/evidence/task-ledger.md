@@ -131,3 +131,24 @@ authorize no writers, databases, Railway, object storage, schedulers, APIs,
 UI runtime changes or deployment.
 Superseded identities remain dated evidence and are not relabeled as the final
 candidate.
+
+### 2026-09-12 restart continuation
+
+The [continuation receipt](session-restart-20260912-continuation.md) records a
+new bounded lifecycle pass. Botanical task
+`01a092bd-c71d-7bb3-bc46-e0dac684f751` was reopened, polled twice without an
+assistant or tool event, then stopped at its verified handle and returned idle
+with a read-only HOLD report. It made no file or ref changes; its preserved
+`edc6afd` implementation and current census/source-admission blockers remain
+unaccepted. The completed task can be archived again after this record is
+retained, while its source, census and production owners remain open.
+
+Ingestion task `01a08b00-2a50-73c2-b39b-39523c74ceb2` was restarted with a
+read-only preflight instruction, then completed the bounded wait without any
+assistant, tool, command or revision. It is idle and unresolved; retain it
+open. The dedicated visual owner was requested as queue alias
+`client-new-thread:9f7291c1-48bc-4e45-bfe1-4845d2d80df8` from current `main` in
+an isolated worktree with presentation-only scope. It had not materialized in
+`list_threads` at observation and is not completion evidence. No Python or
+matching data-writer process was observed, and no external/data mutation was
+performed.
