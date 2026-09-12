@@ -49,6 +49,7 @@ export const HOVERABLE_LAYER_IDS: string[] = [
   "soil-survey-summary",
   "weather-temperature",
   "weather-temperature-cells",
+  "vegetation-ndvi-cells-fill",
   "osm-roads",
   "osm-waterways",
 ];
@@ -482,6 +483,22 @@ function formatWeatherObservation(props: Properties): HoverContent | null {
   ]);
 }
 
+/** Exact served NDVI metadata; see src/lib/map/AGENTS.md. */
+function formatVegetationCell(props: Properties): HoverContent | null {
+  const value = typeof props.ndvi === "number" ? props.ndvi : NaN;
+  if (!Number.isFinite(value)) return null;
+  const day = formatCalendarDay(stringField(props.observedDay));
+  const grid = stringField(props.gridName);
+  const cell = stringField(props.cellId) ?? stringField(props.supportId);
+  return buildContent("Measured vegetation cell", [
+    `NDVI: ${value} (dimensionless)`,
+    day ? `Observed: ${day}` : "Observation day not reported",
+    grid ? `Grid: ${grid}` : null,
+    cell ? `Cell: ${cell}` : null,
+    "Color represents this cell's value; blank cells have no displayed measurement.",
+  ]);
+}
+
 function formatRoad(props: Properties): HoverContent | null {
   const title = stringField(props.name) ?? stringField(props.highway) ?? "Road";
   const highway = stringField(props.highway);
@@ -528,6 +545,7 @@ const FORMATTERS: Record<string, (props: Properties) => HoverContent | null> = {
   "soil-survey-summary": formatSoilSurvey,
   "weather-temperature": formatWeatherObservation,
   "weather-temperature-cells": formatWeatherObservation,
+  "vegetation-ndvi-cells-fill": formatVegetationCell,
   "osm-roads": formatRoad,
   "osm-waterways": formatWaterway,
 };

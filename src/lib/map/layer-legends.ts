@@ -546,7 +546,8 @@ export function vegetationLegendSpec(
       kind: "note",
       text:
         `Each cell is one measured ${declaredSupportDegrees}° sample, not a smoothed surface ` +
-        `between samples.`,
+        `between samples. Blank cells have no displayed measurement. Hover or tap a cell ` +
+        `for its exact NDVI and observation day.`,
     });
   }
   // The measured cells are painted on absolute NDVI whatever the mode says, because the

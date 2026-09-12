@@ -59,6 +59,7 @@ describe("HOVERABLE_LAYER_IDS", () => {
       // placement collides away at density.
       "weather-temperature",
       "weather-temperature-cells",
+      "vegetation-ndvi-cells-fill",
       "osm-roads",
       "osm-waterways",
     ]);
@@ -796,5 +797,30 @@ describe("formatHoverContent: native polygons", () => {
     } finally {
       localizedDate.mockRestore();
     }
+  });
+});
+
+describe("measured vegetation inspection", () => {
+  it("exposes the exact negative scalar, actual day, grid and cell on hover and tap", () => {
+    expect(TOOLTIP_TAP_LAYER_IDS).toContain("vegetation-ndvi-cells-fill");
+    const content = formatHoverContent("vegetation-ndvi-cells-fill", {
+      ndvi: -0.123456, observedDay: "2026-08-31", gridName: "ndvi-grid", cellId: "cell-12",
+    });
+    expect(content?.title).toBe("Measured vegetation cell");
+    expect(content?.lines).toContain("NDVI: -0.123456 (dimensionless)");
+    expect(content?.lines).toContain("Grid: ndvi-grid");
+    expect(content?.lines).toContain("Cell: cell-12");
+    expect(content?.lines.some(line => line.startsWith("Observed:"))).toBe(true);
+    assertNoSentinels(content);
+  });
+
+  it.each([null, undefined, NaN, Infinity, "", "0.2"])("does not invent a measurement from %s", ndvi => {
+    expect(formatHoverContent("vegetation-ndvi-cells-fill", { ndvi })).toBeNull();
+  });
+
+  it("retains real zero and distinguishes unknown dates", () => {
+    const content = formatHoverContent("vegetation-ndvi-cells-fill", { ndvi: 0, observedDay: "2026-02-30" });
+    expect(content?.lines).toContain("NDVI: 0 (dimensionless)");
+    expect(content?.lines).toContain("Observation day not reported");
   });
 });

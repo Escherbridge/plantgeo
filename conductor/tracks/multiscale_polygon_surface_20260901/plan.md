@@ -54,3 +54,12 @@ captures at all four zoom rungs. It does not close M3: live cross-product
 conservation, dense basemap/hover interaction, published-day transitions and
 request-to-paint budgets remain open. Weather remains the integrated repair;
 vegetation and soil-survey contract limits are documented rather than widened.
+
+## September 12 — isolated vegetation scalar field candidate
+
+The [vegetation scalar field packet](evidence/scalar-field-vegetation-20260912.md)
+reconciles the archived dot-renderer audit with the current measured-cell contract.
+The local candidate adds a default-off reusable nearest-cell WebGL2 paint path,
+projected-spacing inspection cues, and exact native-cell hover/tap metadata.
+Vegetation remains discrete; climate and weather ownership remain unchanged.
+This packet is a bounded local candidate and does not close any open M3 gate.
