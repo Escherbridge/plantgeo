@@ -10,6 +10,11 @@ This planning slice does not change runtime behavior. Implementation starts only
 after the source/product contract is frozen and the active shared-file owners
 complete or explicitly transfer their files.
 
+The [September 12 evidence/contract receipt](evidence/contract-receipt-20260912.md)
+freezes the next-gate obligations, screenshot evidence limits, initial acceptance
+ceilings and cross-track dependency order. Source admission remains open; this
+documentation slice completes none of the implementation checkboxes below.
+
 ## F0 — source and contract freeze
 
 - [ ] Reconcile the deterministic and ensemble capabilities already scoped by

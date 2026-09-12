@@ -14,7 +14,8 @@
     "multiscale_polygon_surface_20260901",
     "weather_forecast_experience_20260911"
   ],
-  "next_gate": "Admit one exact deterministic forecast product and freeze model-run, valid-time, variable, support, missingness and immutable-run publication contracts.",
+  "next_gate": "F0 remains open: independently review the 2026-09-12 planning receipt, then obtain exact deterministic source admission and the historical owners' April 28 evidence packet; resolve provider-specific identity, support and budgets before F1 implementation.",
+  "planning_receipt": "evidence/contract-receipt-20260912.md",
   "partitions": {
     "confidence": "planned",
     "slices": [

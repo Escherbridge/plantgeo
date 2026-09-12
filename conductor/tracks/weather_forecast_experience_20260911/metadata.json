@@ -14,7 +14,8 @@
     "upstream_dataset_expansion_20260806",
     "environmental_postgres_retirement_20260904"
   ],
-  "next_gate": "Freeze observed-versus-forecast modes, selected-location cards, scalar-field support, wind-vector presentation, time semantics and real-data acceptance budgets against the admitted forecast schema.",
+  "next_gate": "Independently review the 2026-09-12 planning receipt; X0 runtime work waits for F3's admitted run/valid-time reader and capability contract, the April 28 evidence handoff and reader/renderer ownership transfers. Initial experience budgets remain unmeasured targets.",
+  "planning_receipt": "evidence/contract-receipt-20260912.md",
   "surfaces": [
     "sampled-weather-estimates",
     "weather-forecast-field",

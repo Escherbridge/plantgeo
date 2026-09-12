@@ -6,6 +6,12 @@ status: planned
 
 # Plan
 
+The [September 12 experience contract receipt](evidence/contract-receipt-20260912.md)
+freezes modes, selected-location cards, support/vector rules and initial
+acceptance targets with measurement protocols. It consumes the companion forecast-plane receipt; X0 runtime
+work still waits for F3, screenshot evidence handoff and shared-owner transfers.
+This documentation slice completes none of the implementation checkboxes below.
+
 ## X0 — observed-versus-forecast meaning
 
 - [ ] Relabel the current forecast-horizon-zero product as **Sampled weather
