@@ -87,3 +87,12 @@ resource: ./spec.md
 - [ ] Archive/prune sessions only after integrated proof, evidence links and
   unresolved handoffs are preserved; do not archive blocked owners or delete
   their only evidence. Keep this track active until its full scope is verified.
+
+## September 12 — local scalar-renderer evidence intake
+
+The [bounded climate/soil label candidate](../multiscale_polygon_surface_20260901/evidence/scalar-labels-20260912/README.md)
+adds synthetic desktop and narrow-mobile canvas evidence after the historical
+weather repair. It is an author handoff awaiting root integration. The actual
+components render unit-bearing scalar labels and preserve empty/zero-opacity
+frames, with independent source review. This does not satisfy Q1 live selected-day,
+full mobile application, hover, dense-basemap or Q3 integrated-candidate gates.

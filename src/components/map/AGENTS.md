@@ -1138,3 +1138,19 @@ The burn-history ready result may carry verified `mtbsSnapshot` metadata even wh
 empty. Show capture time, publication availability, covered fire years and the exact partial-year
 list as a separate notice from row/history truncation. A complete captured query is not evidence
 that MTBS has finished mapping those fire seasons. Only an enabled layer displays this notice.
+
+## Climate and soil value labels (2026-09-12)
+
+Climate field (and legacy symbol) forms and ERA5-Land soil fields add measured-value symbol
+labels on the same GeoJSON source as their original marks. Fills, outlines, selected-day
+values, legends and support geometry stay as served. Climate contours omit numeric labels:
+their `value` is a band representative, not an observation. Each eligible instance owns one
+additional label id, removes it before its source, reloads it with current props on style
+replacement, and applies the live opacity multiplier to text. The shared formatter and
+collision limits are documented in `src/lib/map/AGENTS.md` under Measured scalar labels.
+
+The cell readers' `aggregated` flag derives from the served rung, so `avg` is never inferred
+from the current camera zoom. Labels can be collision-suppressed at crowded scales; they do
+not promise one visible number per cell. Shared hover registration for these two components
+was already absent and is not supplied by this label slice; source geometry and existing
+picking behavior are preserved. This is value legibility work, not closure of that hover gap.

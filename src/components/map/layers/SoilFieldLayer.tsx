@@ -5,12 +5,14 @@ import type { Map as MapLibreMap, GeoJSONSource } from "maplibre-gl";
 import { getFirstSymbolLayer, safeRemoveLayerAndSource } from "@/lib/map/layer-utils";
 import {
   soilFieldColorStops,
+  soilFieldMeasureDefinition,
   SOIL_FIELD_ATTRIBUTION,
   type SoilFieldMeasure,
 } from "@/lib/environmental/soil-field";
 import { useStyleReady } from "@/components/map/layers/use-style-ready";
 import { scaleOpacityValue } from "@/lib/map/layer-opacity";
 import type { ExpressionSpecification } from "@/types/map";
+import { measuredValueLabelLayer } from "@/lib/map/measured-value-label";
 
 /**
  * One ERA5-Land soil field -- volumetric water or temperature -- drawn from whatever
@@ -35,6 +37,7 @@ interface SoilFieldLayerIds {
   source: string;
   fill: string;
   outline: string;
+  label: string;
 }
 
 function layerIdsFor(measure: SoilFieldMeasure): SoilFieldLayerIds {
@@ -42,6 +45,7 @@ function layerIdsFor(measure: SoilFieldMeasure): SoilFieldLayerIds {
     source: `soil-${measure}-field`,
     fill: `soil-${measure}-field-fill`,
     outline: `soil-${measure}-field-outline`,
+    label: `soil-${measure}-field-value-labels`,
   };
 }
 
@@ -108,6 +112,7 @@ export function SoilFieldLayer({
   const ids = useMemo(() => layerIdsFor(measure), [measure]);
   const fillColor = useMemo(() => fillColorFor(measure), [measure]);
   const fillOpacity = opacity * opacityScale;
+  const labelOpacity = scaleOpacityValue(1, opacityScale) as number;
   /**
    * The one place in production where the expression path is exercised.
    *
@@ -121,8 +126,8 @@ export function SoilFieldLayer({
     [opacityScale]
   );
   // Latest props behind a ref so the style.load handler re-attaches with current values.
-  const propsRef = useRef({ geojson, fillOpacity, outlineOpacity });
-  propsRef.current = { geojson, fillOpacity, outlineOpacity };
+  const propsRef = useRef({ geojson, fillOpacity, outlineOpacity, labelOpacity });
+  propsRef.current = { geojson, fillOpacity, outlineOpacity, labelOpacity };
   const styleReady = useStyleReady(map);
 
   const addLayers = useCallback(
@@ -131,6 +136,7 @@ export function SoilFieldLayer({
         geojson: currentGeoJson,
         fillOpacity: currentFillOpacity,
         outlineOpacity: currentOutlineOpacity,
+        labelOpacity: currentLabelOpacity,
       } = propsRef.current;
       const beforeId = getFirstSymbolLayer(mapInstance);
 
@@ -167,13 +173,22 @@ export function SoilFieldLayer({
           beforeId
         );
       }
+      if (!mapInstance.getLayer(ids.label)) {
+        mapInstance.addLayer(measuredValueLabelLayer({
+          id: ids.label,
+          source: ids.source,
+          unit: soilFieldMeasureDefinition(measure).unitLabel,
+          fractionDigits: measure === "moisture" ? 3 : measure === "vpd" ? 2 : 1,
+          opacity: currentLabelOpacity,
+        }), beforeId);
+      }
     },
-    [ids, fillColor]
+    [ids, fillColor, measure]
   );
 
   const removeLayers = useCallback(
     (mapInstance: MapLibreMap) => {
-      safeRemoveLayerAndSource(mapInstance, [ids.outline, ids.fill], ids.source);
+      safeRemoveLayerAndSource(mapInstance, [ids.label, ids.outline, ids.fill], ids.source);
     },
     [ids]
   );
@@ -225,7 +240,10 @@ export function SoilFieldLayer({
     if (map.getLayer(ids.outline)) {
       map.setPaintProperty(ids.outline, "line-opacity", outlineOpacity);
     }
-  }, [map, ids, geojson, fillOpacity, outlineOpacity, visible]);
+    if (map.getLayer(ids.label)) {
+      map.setPaintProperty(ids.label, "text-opacity", labelOpacity);
+    }
+  }, [map, ids, geojson, fillOpacity, outlineOpacity, labelOpacity, visible]);
 
   return null;
 }

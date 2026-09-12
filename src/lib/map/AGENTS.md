@@ -378,3 +378,19 @@ Open-Meteo model estimates from stations and daily captured-reading aggregate me
 from latest detail samples. The aggregate timestamp is the newest contributing reading,
 not the instant at which the mean was measured. The separate sensors layer remains
 station-based.
+
+## Measured scalar labels (2026-09-12)
+
+`measured-value-label.ts` builds one collision-aware symbol layer over the existing served
+source. It adds no features, source, aggregation, interpolated values, or inferred support.
+Only finite numeric `value` properties receive text; missing, string, NaN and infinite values
+receive none. Units come from each environmental definition. Moisture and wetness use three
+decimal places, VPD two, other scalars one; nonzero values below that displayed precision
+use a signed threshold caption rather than falsely reading as zero. Real zero stays zero.
+
+`aggregated: true` prefixes the value with `avg` only for the climate/soil cell callers whose
+readers declare means at aggregated rungs. This helper is not a general-purpose statistic
+classifier. Climate isobands carry representative band values and never call it. Text remains
+11–14 px across zoom, with halo and ordinary MapLibre collision placement; dense cells may
+have no placed label. Existing server row caps remain the only feature budget. Polygon label
+anchors are MapLibre placement positions within the served geometry, not new observations.

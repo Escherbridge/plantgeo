@@ -44,3 +44,13 @@ pixel-continuity, mobile or request-to-paint matrix below.
 - [ ] Record response size, feature count and request-to-paint budgets.
 - [ ] Run screenshot and canvas-pixel checks on desktop and mobile viewports.
 - [ ] Submit the exact renderer packet to `parquet_production_acceptance_20260901`.
+
+## September 12 — bounded scalar label follow-up
+
+The local [scalar-label receipt](evidence/scalar-labels-20260912/README.md) adds
+reusable numeric annotations to the existing climate and soil scalar renderers.
+It includes independent source review and synthetic desktop/mobile canvas
+captures at all four zoom rungs. It does not close M3: live cross-product
+conservation, dense basemap/hover interaction, published-day transitions and
+request-to-paint budgets remain open. Weather remains the integrated repair;
+vegetation and soil-survey contract limits are documented rather than widened.

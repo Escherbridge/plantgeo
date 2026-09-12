@@ -14,6 +14,7 @@ import { useStyleReady } from "@/components/map/layers/use-style-ready";
 import { scaleOpacityValue } from "@/lib/map/layer-opacity";
 import { BASE_ZOOM_TIER, type ZoomTier } from "@/lib/map/zoom-tiers";
 import type { ExpressionSpecification } from "@/types/map";
+import { measuredValueLabelLayer } from "@/lib/map/measured-value-label";
 
 /**
  * One NASA POWER signal, drawn from whatever `environmental.getClimateField` served for it --
@@ -51,6 +52,7 @@ function layerIdsFor(signal: ClimateFieldSignalId) {
     isobandFillId: `${sourceId}-isoband-fill`,
     isolineId: `${sourceId}-isoline`,
     pointId: `${sourceId}-point`,
+    labelId: `${sourceId}-value-labels`,
   };
 }
 
@@ -193,6 +195,7 @@ export function ClimateFieldLayer({
     renderForm,
     zoomTier,
     ids,
+    signal,
   });
   propsRef.current = {
     geojson,
@@ -204,6 +207,7 @@ export function ClimateFieldLayer({
     renderForm,
     zoomTier,
     ids,
+    signal,
   };
   const styleReady = useStyleReady(map);
 
@@ -218,6 +222,7 @@ export function ClimateFieldLayer({
       renderForm: currentRenderForm,
       zoomTier: currentZoomTier,
       ids: currentIds,
+      signal: currentSignal,
     } = propsRef.current;
     const beforeId = getFirstSymbolLayer(mapInstance);
 
@@ -228,6 +233,17 @@ export function ClimateFieldLayer({
         attribution: CLIMATE_FIELD_ATTRIBUTION,
       });
     }
+
+    const addValueLabels = () => {
+      if (mapInstance.getLayer(currentIds.labelId)) return;
+      mapInstance.addLayer(measuredValueLabelLayer({
+        id: currentIds.labelId,
+        source: currentIds.sourceId,
+        unit: climateFieldSignalDefinition(currentSignal).unitLabel,
+        fractionDigits: currentSignal.includes("wetness") ? 3 : 1,
+        opacity: currentMarkOpacity,
+      }), beforeId);
+    };
 
     if (currentRenderForm === "field") {
       if (!mapInstance.getLayer(currentIds.fillId)) {
@@ -262,6 +278,7 @@ export function ClimateFieldLayer({
           beforeId
         );
       }
+      addValueLabels();
       return;
     }
 
@@ -320,6 +337,7 @@ export function ClimateFieldLayer({
         beforeId
       );
     }
+    addValueLabels();
   }, []);
 
   const removeLayers = useCallback((mapInstance: MapLibreMap) => {
@@ -330,6 +348,7 @@ export function ClimateFieldLayer({
     safeRemoveLayerAndSource(
       mapInstance,
       [
+        currentIds.labelId,
         currentIds.outlineId,
         currentIds.fillId,
         currentIds.isolineId,
@@ -413,6 +432,9 @@ export function ClimateFieldLayer({
       map.setPaintProperty(ids.pointId, "circle-radius", pointRadius);
       map.setPaintProperty(ids.pointId, "circle-opacity", markOpacity);
       map.setPaintProperty(ids.pointId, "circle-stroke-opacity", markOpacity);
+    }
+    if (map.getLayer(ids.labelId)) {
+      map.setPaintProperty(ids.labelId, "text-opacity", markOpacity);
     }
   }, [
     map,

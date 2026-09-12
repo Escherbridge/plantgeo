@@ -462,11 +462,11 @@ describe("each climate row draws the form the server actually served", () => {
     }
 
     it("builds a circle layer for the served points form, never a fill or a line", async () => {
-      expect(await renderRealLayer("symbol")).toEqual(["circle"]);
+      expect(await renderRealLayer("symbol")).toEqual(["circle", "symbol"]);
     });
 
     it("builds the fill and its outline only when the served form is the filled one", async () => {
-      expect(await renderRealLayer("field")).toEqual(["fill", "line"]);
+      expect(await renderRealLayer("field")).toEqual(["fill", "line", "symbol"]);
     });
 
     /**
@@ -475,7 +475,7 @@ describe("each climate row draws the form the server actually served", () => {
      * "continuous fields fill polygons rather than drawing contour strokes only".
      */
     it("builds the fill for the served form at a coarse rung", async () => {
-      expect(await renderRealLayer("field", 9)).toEqual(["fill"]);
+      expect(await renderRealLayer("field", 9)).toEqual(["fill", "symbol"]);
     });
 
     /**
@@ -494,7 +494,7 @@ describe("each climate row draws the form the server actually served", () => {
      * the same as knowing it is the detail one.
      */
     it("draws no per-cell outline while the rung is still unknown", async () => {
-      expect(await renderRealLayer("field", null)).toEqual(["fill"]);
+      expect(await renderRealLayer("field", null)).toEqual(["fill", "symbol"]);
     });
 
     /**
