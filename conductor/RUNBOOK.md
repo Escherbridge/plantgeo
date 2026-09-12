@@ -1,16 +1,16 @@
 ---
 type: runbook
 reviewed: 2026-09-12
-source_revision: 3e35971
+source_revision: d81cb3b
 ---
 
 # PlantGeo operational runbook
 
 This is the current entry point for operations and handoffs. Reconciled on
-September 11 against checkout `fa20223`, committed evidence through September 10,
-and the saved September 11 MTBS rollout receipt. This maintenance pass performed
-no production checks or mutations. Dates below identify when the cited evidence
-was collected; they are not fresh guarantees of runtime state.
+September 12 against the root QA checkout `d81cb3b`, committed evidence through
+September 12, and the saved September 11 MTBS rollout receipt. This maintenance
+pass performed no production checks or mutations. Dates below identify when the
+cited evidence was collected; they are not fresh guarantees of runtime state.
 
 Start from the [work registry](tracks.md) and the owning plan. The
 [authority order](README.md#authority-order), [release policy](release-governance.md)
