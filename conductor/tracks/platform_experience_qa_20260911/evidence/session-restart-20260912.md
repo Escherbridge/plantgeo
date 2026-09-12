@@ -3,7 +3,7 @@ type: evidence-receipt
 track: platform_experience_qa_20260911
 recorded_on: 2026-09-12
 observed_at: 2026-09-12T06:44:00Z
-status: materialized
+status: archived
 ---
 
 # Restarted continuation task setup
