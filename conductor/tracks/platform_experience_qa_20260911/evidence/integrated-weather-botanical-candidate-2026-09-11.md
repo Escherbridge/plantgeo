@@ -55,10 +55,14 @@ substituted.
 
 ## Remaining acceptance gates
 
-1. Root QA still owns final browser verification of the immutable integrated
-   candidate.
+1. Root QA completed the available fixed-desktop unavailable-state browser
+   check on the immutable candidate. The result is **partial**, as recorded in
+   [`browser-weather-20260911.md`](browser-weather-20260911.md): the traditional
+   report treatment, Climate placement, explicit retry/unavailable state and
+   no-stale-frame behavior passed, while populated and mobile journeys remain
+   open.
 2. The governed Parquet reader and slider-capability services were unavailable
-   during owner browser acceptance. Live raw-point and aggregate-cell
+   during root-QA browser acceptance. Live raw-point and aggregate-cell
    temperature labels, wind-label collision behavior, precipitation hover and
    actual selected-day transitions therefore remain visually unproven. The
    accepted browser evidence covers the unavailable-day/no-stale-frame state,
