@@ -2,7 +2,7 @@
 type: evidence-receipt
 track: platform_experience_qa_20260911
 recorded_on: 2026-09-12
-observed_at: 2026-09-12T06:32:00Z
+observed_at: 2026-09-12T06:25:23Z
 status: conditionally_approved
 ---
 
@@ -12,7 +12,8 @@ The historical Wind & Weather repair is approved for the bounded local fixed
 desktop unavailable-state scope. This approval covers the implementation owned
 by `8e53b416ce5dc5287295a707dae2f9c121e1e993`, plus the independently reviewed
 style-readiness recovery in `5cf7f59b23d61d8291c05ff9915e523710606ca1`, now
-integrated in root commit `5bbe3dc039714d785cfe347ba5d9ffc61582b0bf`. It does
+integrated in root commit `5bbe3dc039714d785cfe347ba5d9ffc61582b0bf`, and the
+ready-to-outage regression in `994760e`, integrated in root `37eb50a`. It does
 not approve a populated-data release or the separate forecast tracks.
 
 ## Accepted behavior
@@ -33,6 +34,9 @@ not approve a populated-data release or the separate forecast tracks.
   `styledata` readiness transition recreates the weather source and all four
   visual layers idempotently; the layer does not remain blank until a future
   basemap swap.
+- A ready selected-day report loses its readings and map-marking action when
+  the next response is typed `upstream_unavailable`; the explicit no-fallback
+  state is preserved through that transition.
 
 ## Evidence and verification
 
@@ -48,6 +52,9 @@ not approve a populated-data release or the separate forecast tracks.
   style-readiness correction and approved it for this same local scope. Its
   focused test reproduces a missed `style.load` event and verifies source plus
   temperature, label and wind layers are restored.
+- The same continuation independently re-reviewed the ready-to-outage report
+  regression and found no actionable defect; its test is synthetic-fixture-only
+  and does not widen the data or forecast approval scope.
 - The root recheck receipt records that JavaScript dependencies were absent in
   the current checkout, so the owner receipts remain the executable test
   authority for this change.
