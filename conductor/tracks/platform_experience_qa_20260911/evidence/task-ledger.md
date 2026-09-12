@@ -1,7 +1,7 @@
 ---
 type: evidence
-recorded_on: 2026-09-11
-observed_at: 2026-09-12T05:56:00Z
+recorded_on: 2026-09-12
+observed_at: 2026-09-12T06:23:15Z
 ---
 
 # Task and candidate ledger
@@ -16,6 +16,11 @@ candidate; it can close only after the required independent verdict.
 | Role | Codex task | Checkout and branch | Bound source or candidate | Current disposition |
 | --- | --- | --- | --- | --- |
 | QA and orchestration | `01a0904b-756b-7961-b991-cab666123be2` — PlantGeo QA and track orchestration | `C:/Users/atooz/Programming/plantgeo`, `main` | QA planning commit `820753d73543514f534c9c1386e1f84012152775`, tree `b3205373e373641059c3edf10ce01c7f5f61d994` | Active. Owns this ledger, requirement matrix, defect routing, shared Conductor registry/runbook and proof-gated task archival. Runtime integration is complete; populated-data, mobile, agent-parity and broader track verdicts remain open. |
+| Botanical profile source-admission continuation | `01a09445-e497-7e30-9cc8-23982fbc5ee4` — Resume botanical profile source admission (`client-new-thread:2c8eff2e-ec3b-4ed3-a841-7e87747e9e1c`) | `C:/Users/atooz/.codex/worktrees/7f2f/plantgeo`, active worktree | No commit yet; authoring is bounded to P0/P1 source-admission evidence and read-only contract review | Active. No database, pgt, Railway, production, object-store, writer, scheduler or deployment access; independent review required before any integration. |
+| Parquet reader and gapless acceptance continuation | `01a09446-41c3-7683-b7cb-a78f9c370916` — Resume Parquet reader and gapless acceptance (`client-new-thread:4e903414-5148-4d7a-8cea-62e8eb724933`) | `C:/Users/atooz/.codex/worktrees/828b/plantgeo`, active worktree | No commit yet; read-only requested/served-day, ceiling/caption and recovery evidence reconciliation | Active. No runtime data load or writer/scheduler/pointer mutation; parent reader and gapless tracks remain open. |
+| Weather and visual acceptance continuation | `01a09446-5355-7251-86b1-48a0ea891eed` — Resume weather and visual acceptance (`client-new-thread:c67bcc49-a6c6-4ba5-8748-22437a984b9e`) | `C:/Users/atooz/.codex/worktrees/1b03/plantgeo`, active worktree | No commit yet; fixture-only report-state regression and visual contract audit | Active. Populated-data and forecast claims remain out of scope; no Railway, production, database, object-store, writer, scheduler or deployment action. |
+| Repository conformity evidence continuation | `01a09446-6856-7780-8a33-132eb0ee2e3e` — Resume repository conformity evidence (`client-new-thread:02e707ef-d506-4897-8ff8-e327708a463d`) | `C:/Users/atooz/.codex/worktrees/c54e/plantgeo`, active worktree | No commit yet; bounded candidate inventory and proof-gated documentation only | Active. No unproven deletion/refactor, runtime or data-plane change; independent review required. |
+| Environmental retirement and offline-export continuation | `01a09446-85d7-7943-a4aa-cc4f12beb760` — Resume environmental retirement and offline export (`client-new-thread:aaa02c39-564d-4867-acd0-790e4fab2605`) | `C:/Users/atooz/.codex/worktrees/ab41/plantgeo`, active worktree | No commit yet; read-only retirement/export contract and receipt reconciliation | Active. No Railway, production object-store, PostgreSQL, pgt, writer, scheduler, pointer or deployment action. |
 | Parquet reader and gapless acceptance continuation | `01a0941d-41b7-7483-b87b-61c94fab4120` — Resume Parquet reader and gapless acceptance | `C:/Users/atooz/.codex/worktrees/b893/plantgeo`, detached clean checkout | Reviewed commit `6213b303da54e91204c3da1ff4f9a7def896dbdf`, tree `11be3de73b218a008233f1053598e5248f7f37f8`; integrated into root `267e197` | Archived after independent review and local integration of the reader R0 availability-contract definition and gapless ownership reconciliation. The receipt records wire v3 coverage, recorded versus carried day ceilings, checksum/unconditional GET behavior, rollups, cache lifetimes, derived-empty support and the distinction between recovery code and observed recovery. Both parent tracks remain active for production traces, complete history, ownership/cutoff/lease evidence and scheduled advances. |
 | Environmental retirement and export continuation | `01a0941d-8488-7b00-845c-1ad3caeb0b5e` — Resume environmental retirement and export acceptance | `C:/Users/atooz/.codex/worktrees/25f9/plantgeo`, detached clean checkout | Reviewed commit `575c8902c796a51a6e465121791d3defff1964b9`, tree `757aca71689d72d384957144963dc09eeb13b26a`; integrated into root `eee2b0f` | Archived after independent review and local integration of the NASA POWER prepared-versus-published reconciliation. The receipt binds the three published temperature generations and historical window, scopes the stale dead-letter, removes an unsupported VPD count, and preserves missing artifacts and forward-health uncertainty. The environmental-retirement and offline-export parent tracks remain active; no production, PostgreSQL, scheduler, deployment or object-store mutation occurred. |
 | Repository conformity continuation | `01a0941d-ac50-70e0-8314-44e098436d20` — Resume repository conformity acceptance | `C:/Users/atooz/.codex/worktrees/a1e1/plantgeo`, detached clean checkout | Reviewed commit `a3ceca8644c5b9d09388238e1702060ee8e7daef`, tree `5dabbe83bfda5ca40f73048d3f2c4df8c42fdd96`; integrated into root `c894436` | Archived after independent review and local integration of one bounded conformity slice. The verified Zustand-only state model now replaces stale Jotai/atomWithQuery guidance in architecture, style guidance and the MapView comment; the broader canonical-core, dead-code and dependency proof gates remain active. No deletion or cross-track cleanup was authorized. |
@@ -77,5 +82,13 @@ The multiscale visual acceptance continuation is archived at root `5bbe3dc`
 after independent approval. Both parent tracks remain active for their
 remaining production, populated-data, mobile and proof packets. Client queue
 identifiers are lifecycle aliases, not task or commit identities.
+Five newly dispatched continuations are now materialized and active: botanical
+profile source admission (`01a09445-e497-7e30-9cc8-23982fbc5ee4`), reader and
+gapless acceptance (`01a09446-41c3-7683-b7cb-a78f9c370916`), weather and visual
+acceptance (`01a09446-5355-7251-86b1-48a0ea891eed`), repository conformity
+(`01a09446-6856-7780-8a33-132eb0ee2e3e`) and environmental/offline export
+(`01a09446-85d7-7943-a4aa-cc4f12beb760`). Their queue aliases, worktrees and
+read-only boundaries are bound above; no commit is accepted until independent
+review and exact tree reconciliation.
 Superseded identities remain dated evidence and are not relabeled as the final
 candidate.
