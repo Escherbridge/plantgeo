@@ -14,7 +14,7 @@
     "upstream_dataset_expansion_20260806",
     "environmental_postgres_retirement_20260904"
   ],
-  "next_gate": "Independently review the 2026-09-12 planning receipt; X0 runtime work waits for F3's admitted run/valid-time reader and capability contract, the April 28 evidence handoff and reader/renderer ownership transfers. Initial experience budgets remain unmeasured targets.",
+  "next_gate": "Local fixture slice verified with scoped frontend checks and full Python sweep plus targeted recovery; full browser rendering remains blocked. Next: explicit local-code integration decision accepting this evidence; real source admission remains open. Shared integration requires explicit ownership transfers recorded in evidence/local-slice-20260912.md. No production registration, source publication, scheduler activation or main merge is authorized by local acceptance.",
   "planning_receipt": "evidence/contract-receipt-20260912.md",
   "surfaces": [
     "sampled-weather-estimates",
@@ -114,5 +114,13 @@
       }
     ],
     "integration_slice": "x4"
+  },
+  "local_slice": {
+    "status": "locally_verified_fixture_only",
+    "branch": "codex/weather-forecast-local-slice",
+    "review_base": "0ee4f5bd99666760a5881ed1427301944dc7b001",
+    "evidence": "evidence/local-slice-20260912.md",
+    "source_admission": "fixture_only_real_source_not_admitted",
+    "shared_owner_transfers": []
   }
 }

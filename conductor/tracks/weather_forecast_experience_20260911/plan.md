@@ -6,6 +6,20 @@ status: planned
 
 # Plan
 
+## September 12 local implementation exception
+
+The current task authorizes an isolated `/weather-forecast` fixture experience
+and local HTTP boundary while shared map, tRPC and catalogue ownership remains
+reserved. See the [local implementation receipt](evidence/local-slice-20260912.md).
+This exception does not close the real-data X0–X4 acceptance items below or
+transfer any shared reader/renderer file.
+
+- [x] Consume the synthetic run/valid-time contract and record owner handoffs.
+- [x] Complete the isolated selected-location hourly/daily page and timeline.
+- [x] Obtain separate verifier review and final local check evidence (component
+  and handler acceptance; full browser rendering remains blocked).
+- [ ] Record exact-file commit and narrow branch push gate result.
+
 The [September 12 experience contract receipt](evidence/contract-receipt-20260912.md)
 freezes modes, selected-location cards, support/vector rules and initial
 acceptance targets with measurement protocols. It consumes the companion forecast-plane receipt; X0 runtime

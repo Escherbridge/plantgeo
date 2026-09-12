@@ -6,6 +6,22 @@ status: planned
 
 # Plan
 
+## September 12 local implementation exception
+
+The current task explicitly authorizes an isolated fixture-backed vertical slice
+while real source admission remains open. See the [local implementation receipt](evidence/local-slice-20260912.md)
+and [source-admission decision](evidence/source-admission.md). The earlier
+planning-only language below describes the real-product gate; this narrow local
+exception transfers no shared owner files and completes none of F0–F4's
+real-source or production-integration acceptance checkboxes.
+
+- [x] Freeze the synthetic local product and document real admission gaps.
+- [x] Record exact shared integration owners and required handoffs.
+- [x] Complete the isolated artifact-to-reader-to-HTTP/UI fixture implementation.
+- [x] Obtain separate verifier review and final local check evidence (full sweep
+  plus targeted recovery; no final full-suite-green or production claim).
+- [ ] Record exact-file commit and narrow branch push gate result.
+
 This planning slice does not change runtime behavior. Implementation starts only
 after the source/product contract is frozen and the active shared-file owners
 complete or explicitly transfer their files.

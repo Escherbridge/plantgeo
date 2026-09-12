@@ -51,6 +51,9 @@ PROBE_DAY = date(2026, 8, 6)
 # DEFAULT-DENY, the same convention as `test_lane_registry.py::UNREGISTERED_LANE_MODULES`: a package
 # added later is policed the day it lands, with nothing to remember to register.
 PENDING_REGISTRATION: dict[str, str] = {
+    "weather_forecast": "weather_forecast_parquet_lane_20260911: deterministic local fixture only, "
+    "with no admitted provider product. Shared lane/availability/executor ownership has not transferred; "
+    "run-aware availability and the three durable duties are required before production registration.",
     "vegetation": "environmental_postgres_retirement_20260904 F-B3/join: writer built "
     "(pipeline/direct/vegetation/) and its executor lane IS registered "
     "(vegetation-sentinel2-ndvi-direct-forward, execution/job_executor_service.py), but "

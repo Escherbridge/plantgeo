@@ -84,6 +84,9 @@ WRITER_MODULES: Final[dict[str, str]] = {
 #: entry, with its reason, because "eleven writers" is a claim this file should be able to prove
 #: rather than a number it inherits.
 NON_WRITER_MODULES: Final[dict[str, str]] = {
+    "weather_forecast": "weather_forecast_parquet_lane_20260911: explicit synthetic local fixture "
+    "adapter only; no admitted provider, production lane turn or scheduled forward writer. Remove "
+    "this exception when source admission and shared owner transfers permit the real run-aware writer.",
     "water_gauges": "a TRANSFORMER, not a writer: it holds `publisher_named_day`, "
     "`tables_by_publisher_day` and `merge_water_gauges_day`, which the water-gauges gap-fill lane "
     "calls. It has no `parser()`, no turn, and no bounded run to report an outcome for, so every "
