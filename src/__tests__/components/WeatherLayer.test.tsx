@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { render } from '@testing-library/react';
+import { act, render, waitFor } from '@testing-library/react';
 import type { Map as MapLibreMap, LayerSpecification } from 'maplibre-gl';
 import { WeatherLayer, directionToArrow, weatherFeatures, type WeatherPoint } from '@/components/map/layers/WeatherLayer';
 
@@ -33,6 +33,41 @@ describe('weather spatial support and wind', () => {
     mounted.unmount();
     expect(layers.size).toBe(0);
     expect(sources.size).toBe(0);
+  });
+  it('retries a missed style-load event when the current style becomes ready', async () => {
+    const layers = new Map<string, LayerSpecification>();
+    const sources = new Map<string, { setData: ReturnType<typeof vi.fn> }>();
+    const listeners = new Map<string, Set<() => void>>();
+    let styleLoaded = false;
+    const map = {
+      getLayer: (id: string) => layers.get(id), getSource: (id: string) => sources.get(id),
+      addLayer: (layer: LayerSpecification) => layers.set(layer.id, layer),
+      addSource: (id: string) => sources.set(id, { setData: vi.fn() }),
+      removeLayer: (id: string) => layers.delete(id), removeSource: (id: string) => sources.delete(id),
+      isStyleLoaded: () => styleLoaded, getStyle: () => ({}),
+      on: (type: string, listener: () => void) => {
+        const subscribers = listeners.get(type) ?? new Set<() => void>();
+        subscribers.add(listener);
+        listeners.set(type, subscribers);
+      },
+      off: (type: string, listener: () => void) => listeners.get(type)?.delete(listener),
+      setPaintProperty: vi.fn(),
+    };
+    const mounted = render(<WeatherLayer map={map as unknown as MapLibreMap} data={[sample]} />);
+    expect(layers.size).toBe(0);
+
+    styleLoaded = true;
+    act(() => listeners.get('styledata')?.forEach(listener => listener()));
+
+    await waitFor(() => expect(layers.size).toBe(4));
+    expect(sources.size).toBe(1);
+    expect([...layers.keys()]).toEqual(expect.arrayContaining([
+      'weather-temperature-cells',
+      'weather-temperature',
+      'weather-temperature-labels',
+      'weather-wind',
+    ]));
+    mounted.unmount();
   });
   it.each([[0, '↓'], [90, '←'], [180, '↑'], [270, '→'], [360, '↓']] as const)('points wind FROM %s toward %s', (direction, arrow) => {
     expect(directionToArrow(direction)).toBe(arrow);

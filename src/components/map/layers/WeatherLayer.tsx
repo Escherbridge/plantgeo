@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import type { Map as MapLibreMap } from "maplibre-gl";
 import { safeRemoveLayerAndSource } from "@/lib/map/layer-utils";
+import { useStyleReady } from "@/components/map/layers/use-style-ready";
 import { supportCellPolygon, type AggregateEnvelopeSupport } from "@/lib/map/layer-render-contract";
 
 /** A published sample or declared aggregate; each drawn signal remains independently nullable. */
@@ -140,6 +141,7 @@ export function WeatherLayer({
   sourceId = "weather-wind-source",
   opacityScale = 1,
 }: WeatherLayerProps) {
+  const styleReady = useStyleReady(map);
   const geojson = useMemo<GeoJSON.FeatureCollection>(
     () => weatherFeatures(data),
     [data]
@@ -304,6 +306,14 @@ export function WeatherLayer({
       removeAllLayers(map);
     };
   }, [map, visible, addAllLayers, removeAllLayers]);
+
+  // `style.load` can happen before this dynamically imported component registers its
+  // listener. Re-read the live readiness on every style-data transition so that missed
+  // event cannot leave a visible weather layer blank until the next basemap swap.
+  useEffect(() => {
+    if (!map || !visible || !map.isStyleLoaded()) return;
+    addAllLayers(map);
+  }, [map, visible, styleReady, addAllLayers]);
 
   // Push new observations into the existing source without a remount cycle.
   useEffect(() => {
