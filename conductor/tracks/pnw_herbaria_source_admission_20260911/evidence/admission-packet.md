@@ -48,12 +48,17 @@ institutional UBC version route; it does not rewrite that historical note.
 
 Governing precedents read: [layer outcomes](../../../../docs/layer-lane-standard.md),
 [current Parquet lattice](../../../code_styleguides/layer-lanes.md),
-[release governance](../../../release-governance.md),
-[runbook archive, sections 0.23 and 0.24](../../../RUNBOOK-archive-2026-08.md),
-and [soil admission preparation](../../environmental_postgres_retirement_20260904/evidence/soil-static-admission-preparation-20260910.md).
+[release governance](../../../release-governance.md), and
+[soil admission preparation](../../environmental_postgres_retirement_20260904/evidence/soil-static-admission-preparation-20260910.md).
 Their relevant rules are complete versus partial, measured bytes versus advertised
 metadata, source watermark versus polling time, source custody and rollback,
 independent certification, and no runtime database observation fallback.
+
+The [September 12 metadata refresh](metadata-refresh-20260912.md) remeasured the
+allowlisted metadata surface without requesting an archive. It did not close a
+pre-acquisition gate: WTU still has no standalone release-bound EML or field map,
+and UBC still has no published coordinate-withholding policy applicable to the
+institutional IPT distribution. Acquisition therefore stopped before transfer.
 
 Sources were captured under `.omc/research/` before bounded scrt filtering.
 See [source register](source-register.md) and [HTTP custody receipts](../../../../.omc/research/pnw-admission-http-receipts-20260911.json).

@@ -69,3 +69,19 @@ normalization for only the four direct HTML/XML captures so their hashes survive
 commit and checkout. The first verification attempt found one trailing blank
 line, corrected before the passing sweep; staging also exposed the need for
 these byte-preservation attributes.
+
+## September 12 metadata refresh
+
+The [bounded refresh receipt](metadata-refresh-20260912.md) adds byte-level
+custody for seven metadata-only GETs: portal inventory and usage policy, WTU and
+UBC provider pages, current and explicitly versioned UBC IPT pages, and UBC
+v16.43 EML. Each response remained below 1 MiB; requested and final URLs were
+identical, so no redirect hop occurred. The receipt records UTC retrieval time,
+status, content headers, bytes and SHA-256. The executable recipe and raw HTTP
+receipt are retained under `.omc/research/`.
+
+The refresh did not request either candidate archive, any image, RTF, script or
+iframe. It found no standalone WTU EML/meta.xml route and no institutional UBC
+coordinate-withholding/generalization statement. Archive-local field maps remain
+unmeasured by design because both pre-acquisition permission gates are still
+open. The UBC v16.43 EML remains byte-identical to the September 11 capture.

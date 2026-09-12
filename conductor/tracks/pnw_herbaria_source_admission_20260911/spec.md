@@ -41,6 +41,11 @@ See the [source register](evidence/source-register.md),
 [independent verdict](evidence/independent-review.md) and
 [requests and handoff](evidence/requests-and-handoff.md).
 
+The [September 12 refresh](evidence/metadata-refresh-20260912.md) captured seven
+metadata-only HTTP responses and confirmed that the pre-acquisition gates remain
+open. It requested no archive or image, admits no release and does not widen the
+two-archive or one-transfer-at-a-time ceilings.
+
 The owner subsequently made occurrence ingestion an intended outcome and
 authorized a bounded WTU/UBC data-only pilot after collection redistribution
 rights, stable release identity, attribution, coordinate withholding and archive

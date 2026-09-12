@@ -32,7 +32,9 @@ track relationships and the verification receipt for this merge.
 
 - [ ] Fetch EML, field mappings and response metadata under the documented caps.
   Partial: UBC v16.43 standalone EML and three HTML metadata receipts captured;
-  WTU EML and both archive field maps remain unmeasured.
+  a September 12 refresh captured seven metadata responses and confirmed the UBC
+  EML hash. WTU EML and both archive field maps remain unmeasured because they
+  are not exposed on the measured metadata surface and archive transfer is gated.
 - [ ] If terms permit, capture each complete archive once into quarantine and
   verify the ZIP/member safety, hashes, counts and schema.
 - [ ] Reconcile accepted, out-of-envelope, excluded-by-rights, nonspatial,
