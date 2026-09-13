@@ -5,7 +5,7 @@ import { useLandContextStore } from "@/stores/land-context-store";
 import { trpc } from "@/lib/trpc/client";
 import { LandContextPanel } from "./LandContextPanel";
 import { toLandContextPanelData } from "./adapter";
-import type { LandContextResult } from "@/lib/server/services/land-context/types";
+import type { LandContextResult } from "@/lib/environmental/land-context-contract";
 
 /**
  * Wires the persistent selection store + reference-plane reader into

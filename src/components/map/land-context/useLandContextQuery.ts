@@ -7,7 +7,7 @@ import {
   type LandContextResultMeta,
   type LandContextSelectionInput,
 } from "@/stores/land-context-store";
-import type { LandContextResult } from "@/lib/server/services/land-context/types";
+import type { LandContextResult } from "@/lib/environmental/land-context-contract";
 
 /**
  * Reads the PNW land-context reference plane via the read-only

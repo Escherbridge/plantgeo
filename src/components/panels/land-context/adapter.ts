@@ -1,4 +1,4 @@
-import type { LandContextResult } from "@/lib/server/services/land-context/types";
+import type { LandContextResult } from "@/lib/environmental/land-context-contract";
 import type {
   AdviserCardData,
   EvidenceTimeEntry,
