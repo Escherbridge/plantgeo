@@ -141,6 +141,15 @@ vi.mock("@/components/map/layer-panel/ManagerRail", () => ({ ManagerRail: stub }
 vi.mock("@/components/map/layer-panel/LayerPanel", () => ({ LayerPanel: stub }));
 vi.mock("@/components/search/ReverseGeocode", () => ({ ReverseGeocode: stub }));
 vi.mock("@/components/ui/SyncIndicator", () => ({ SyncIndicator: stub }));
+// This file is about MapView's store subscriptions, not land-context; its components each query
+// the real `landContext` tRPC router, which has no provider in this test tree.
+vi.mock("@/components/map/land-context", () => ({
+  LandContextController: stub,
+  LandContextLayer: stub,
+  LandContextIdentityCard: stub,
+  LandContextAccessibleFeatureList: stub,
+}));
+vi.mock("@/components/panels/land-context", () => ({ LandContextPanelHost: stub }));
 
 const { default: MapView } = await import("@/components/map/MapView");
 const { useMapStore, DEFAULT_VIEWPORT } = await import("@/stores/map-store");

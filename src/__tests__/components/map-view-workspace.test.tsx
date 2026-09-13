@@ -32,7 +32,12 @@ vi.mock("maplibre-gl", () => {
         for (const handler of this.handlers.get(type) ?? []) handler(event);
       };
     }
-    on(type: string, handler: (...args: unknown[]) => void) {
+    // MapLibre's real `on`/`off` overload on a third, layer-id argument for a layer-scoped
+    // listener (`map.on("click", layerId, handler)`, as `LandContextLayer` uses for its
+    // hover/click wiring) -- this fake never filters by layer, so it just needs to find the
+    // actual handler regardless of which position it landed in.
+    on(type: string, layerIdOrHandler: string | ((...args: unknown[]) => void), maybeHandler?: (...args: unknown[]) => void) {
+      const handler = maybeHandler ?? (layerIdOrHandler as (...args: unknown[]) => void);
       const set = this.handlers.get(type) ?? new Set();
       set.add(handler);
       this.handlers.set(type, set);
@@ -41,7 +46,8 @@ vi.mock("maplibre-gl", () => {
     once(type: string, handler: (...args: unknown[]) => void) {
       return this.on(type, handler);
     }
-    off(type: string, handler: (...args: unknown[]) => void) {
+    off(type: string, layerIdOrHandler: string | ((...args: unknown[]) => void), maybeHandler?: (...args: unknown[]) => void) {
+      const handler = maybeHandler ?? (layerIdOrHandler as (...args: unknown[]) => void);
       this.handlers.get(type)?.delete(handler);
       return this;
     }
@@ -113,6 +119,20 @@ vi.mock("@/lib/trpc/client", () => ({
     useUtils: () => ({}),
     interventions: {
       submitIntervention: { useMutation: () => ({ mutate: vi.fn(), isPending: false }) },
+    },
+    // `LandContextController` mounts unconditionally in `MapView` and queries both routes on
+    // every render; this file is about workspace routing, not land-context, so both queries stay
+    // permanently idle rather than asserting anything about their data.
+    landContext: {
+      resolveBoundaryAtPoint: {
+        useQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+      },
+      resolveBoundaryInArea: {
+        useQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+      },
+      lookupContactsForSubject: {
+        useQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+      },
     },
   },
 }));
