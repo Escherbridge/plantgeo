@@ -32,9 +32,9 @@ Sources: [BLM National SMA Limited Scale Service](https://gis.blm.gov/arcgis/res
 
 ## County parcels — no outreach drafted yet
 
-Washington reads as the strongest state (King, Spokane, Snohomish, Whatcom — 4/4 admittable-leaning, Whatcom carries an explicit redistribution grant). Oregon reads as consistently restrictive (Washington County + Lane County both carry an indemnify-on-redistribution clause, likely a statewide template). Idaho is mixed (Canyon County blocked, Ada County unresolved — its terms PDF has a "RESTRICTIONS ON USE" section whose body text couldn't be extracted automatically, Bonneville County has no discoverable terms). See the full county table in the evidence file.
+12 WA counties, 2 OR counties, and 2 ID counties checked so far. **Washington is not one clean policy question** — King, Spokane, Snohomish, and Clark read cleanly admittable, but Thurston uses the identical "license to... redistribute" grant Whatcom has while pairing it with a clause that appears to prohibit exactly that (a genuine contradiction needing a human read, not resolvable by more automated research), and Grant/Yakima are silent on redistribution rather than permissive. Oregon reads consistently restrictive (Washington County + Lane County both carry an indemnify-on-redistribution clause, likely a statewide template). Idaho is mixed (Canyon County blocked, Ada County unresolved — its terms PDF has a "RESTRICTIONS ON USE" section whose body text couldn't be extracted automatically). See the full county table in the evidence file.
 
-No draft is written yet for any county — King County's terms are already public enough that a confirmation email (draft #6 above) covers the most promising one. If Spokane, Snohomish, or Whatcom become the actual acquisition target, they'll each need their own confirmation email before ingestion.
+No draft is written yet for any county — King County's terms are already public enough that a confirmation email (draft #6 above) covers the most promising one. If Spokane or Clark become an actual acquisition target, they'll each need their own confirmation email before ingestion. Do not send a Whatcom or Thurston email using the same template without separately verifying which of the two contradictory Thurston clauses controls.
 
 ---
 
