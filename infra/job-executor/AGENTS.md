@@ -19,6 +19,14 @@ loop or a second periodic service. Source cadence belongs in the executor regist
 belongs in `agri.job_*`; source/domain checkpoints remain in their existing database rows, manifests
 and marker-last R2 objects.
 
+Before merging a lane or tier retirement, reconcile three surfaces as one change: the executable
+catalogue in `LANE_SPECS`, the files and runtimes copied by this Dockerfile, and the production
+`PLANTGEO_JOB_EXECUTOR_ACTIVE_LANES` value. The production value is the intersection of its prior
+value with the new catalogue; cleanup never activates a previously inactive lane. Search the image
+and Railway watch paths for every deleted helper name so a stale `COPY` cannot fail after the code is
+gone. The release path is a merge to `main` through Railway's GitHub integration, followed by build
+and startup verification. See `docs/layer-lane-standard.md` §13.1.
+
 Rollback removes the affected lane from `PLANTGEO_JOB_EXECUTOR_ACTIVE_LANES` or pauses its
 `agri.job_definition` row, then waits for its fenced lease/process to end. Never restore, reconnect or
 recreate a retired Railway cron/one-shot writer service. Never delete PostgreSQL/R2 data, manifests,
