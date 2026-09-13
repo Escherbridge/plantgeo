@@ -446,6 +446,15 @@ def _read_aggregate(reader: GenerationReader, request: BotanicalOccurrenceReques
                 "possible_only_records": row["possible_only_records"],
             }
         )
+    # Densest cells first, so a wide viewport whose cell count exceeds the limit is truncated to
+    # its most informative cells rather than to whatever order the support Parquet happened to be
+    # written in (a grid scan order with no relationship to where records actually are). Without
+    # this, a bbox spanning both a sparse and a dense region could fill its whole page from the
+    # sparse side and never surface the dense one -- silently, since `truncated` is still honestly
+    # reported, just over the wrong subset. `cell_id` breaks ties so pagination stays deterministic
+    # across identical `record_count`s (Python's sort is stable, but two equal counts from
+    # `iter_rows` in varying file order would otherwise reorder between requests).
+    selected.sort(key=lambda cell: (-cell["record_count"], cell["cell_id"]))
     window = selected[request.offset : request.offset + request.limit]
     truncated = request.offset + len(window) < len(selected)
     manifest = read_manifest(reader.target, request.release_set_id) or {}

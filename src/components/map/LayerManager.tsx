@@ -70,6 +70,7 @@ import {
 // Imported statically while the components above are dynamic -- these are pure functions with
 // no MapLibre dependency, so they cost nothing at SSR.
 import { botanicalOccurrencesToGeoJSON } from "@/components/map/layers/BotanicalOccurrencesLayer";
+import { BOTANICAL_DETAIL_MIN_ZOOM } from "@/lib/botanical-occurrences";
 import { botanicalRichnessToGeoJSON } from "@/components/map/layers/BotanicalRichnessLayer";
 import { botanicalEffortToGeoJSON } from "@/components/map/layers/BotanicalCollectionEffortLayer";
 
@@ -882,6 +883,18 @@ export default function LayerManager() {
           layerId: "botanical-withheld",
           tone: "notice" as const,
           message: `${botanicalDetail?.counts.withheld} specimen records in this release have their locality withheld by the publisher and cannot be drawn anywhere.`,
+        }
+      : null,
+    // The Occurrences toggle is switched on but the map is below the detail floor, so nothing is
+    // drawn and nothing was even fetched (`botanicalQueryEnabled` is false in that case, since the
+    // detail layer cannot draw at this band). Without this line a reader who turned the toggle on
+    // at a continental zoom sees an empty map and no explanation -- indistinguishable from the
+    // layer being broken.
+    botanicalOccurrencesVisible && botanicalBand !== "detail"
+      ? {
+          layerId: "botanical-below-detail-floor",
+          tone: "notice" as const,
+          message: `Individual specimen points draw at zoom ${BOTANICAL_DETAIL_MIN_ZOOM} and above. Zoom in to see them, or turn on Documented Taxon Richness / Collection Evidence & Effort for this zoom.`,
         }
       : null,
   ].filter((fault): fault is NonNullable<typeof fault> => fault !== null);
