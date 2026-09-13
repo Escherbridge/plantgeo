@@ -12,7 +12,9 @@ import {
   openConversation,
   recordExchange,
 } from '@/lib/server/services/ai-conversations';
-import { remediationReportSchema } from '@/lib/server/services/remediation-report';
+import { remediationReportSchema, reportWarehouseEvidenceIssues } from '@/lib/server/services/remediation-report';
+import { readRegionalAnalysisEvidence } from '@/lib/regional-analysis-evidence';
+import type { RegionalAnalysisEvidence } from '@/lib/regional-intelligence';
 export { remediationReportSchema } from '@/lib/server/services/remediation-report';
 import {
   REGIONAL_INTELLIGENCE_INACTIVE_MESSAGE,
@@ -222,6 +224,7 @@ export async function POST(request: NextRequest) {
           let narration = '';
           let report: unknown;
           let webSources: { title: string; url: string }[] = [];
+          let analysisEvidence: RegionalAnalysisEvidence | undefined;
           let refused = false;
 
           for await (const event of streamRegionalIntelligence(
@@ -249,6 +252,14 @@ export async function POST(request: NextRequest) {
               case 'sources':
                 webSources = event.sources;
                 break;
+              case 'evidence': {
+                const validatedEvidence = readRegionalAnalysisEvidence(event.evidence);
+                if (validatedEvidence) {
+                  analysisEvidence = validatedEvidence;
+                  send('evidence', validatedEvidence);
+                }
+                break;
+              }
               case 'report':
                 report = event.report;
                 break;
@@ -278,12 +289,22 @@ export async function POST(request: NextRequest) {
             });
             return;
           }
+          const warehouseIssues = reportWarehouseEvidenceIssues(parsed.data, payload, analysisEvidence, dataFreshness);
+          if (warehouseIssues.length > 0) {
+            console.error('[AI] report warehouse evidence validation failed', warehouseIssues);
+            send('error', {
+              message: 'The analysis could not be completed. Please try again.',
+              retryable: true,
+            });
+            return;
+          }
 
           const answer = {
             aiGenerated: true as const,
             ...parsed.data,
             webSources,
             dataFreshness,
+            ...(analysisEvidence ? { analysisEvidence } : {}),
           };
 
           try {

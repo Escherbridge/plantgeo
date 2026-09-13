@@ -23,6 +23,26 @@ export const REGIONAL_EVIDENCE_SOURCES = [
 export type RegionalEvidenceSource =
   (typeof REGIONAL_EVIDENCE_SOURCES)[number];
 
+/** Governed tool surfaces; see services/AGENTS.md for their separate freshness contract. */
+export const REGIONAL_TOOL_EVIDENCE_SOURCES = [
+  "burn-severity", "evacuation-zones", "fire-detections", "fire-perimeters",
+  "interventions", "sensors", "soil-survey", "vegetation", "watersheds",
+  "water-gauges", "weather-observations", "climate-field-air-temperature",
+  "climate-field-dew-point", "climate-field-precipitation",
+  "climate-field-relative-humidity", "climate-field-shortwave-radiation",
+  "climate-field-soil-wetness-profile", "climate-field-soil-wetness-root-zone",
+  "climate-field-soil-wetness-surface", "climate-field-wind-speed", "drought-areas",
+  "soil-field-moisture", "soil-field-temperature", "soil-field-vpd",
+] as const;
+
+export const REGIONAL_CLAIM_EVIDENCE_SOURCES = [
+  ...REGIONAL_EVIDENCE_SOURCES,
+  ...REGIONAL_TOOL_EVIDENCE_SOURCES,
+] as const;
+
+export type RegionalClaimEvidenceSource =
+  (typeof REGIONAL_CLAIM_EVIDENCE_SOURCES)[number];
+
 /** Provenance label attached to every claim the agent renders. */
 export const EVIDENCE_ORIGINS = [
   "warehouse",
@@ -167,7 +187,34 @@ export interface RemediationRecommendation {
   /** Disciplines to consult before this recommendation is acted on. */
   consultProfessionals: ProfessionalDiscipline[];
   evidenceOrigin: EvidenceOrigin;
-  evidenceSource?: RegionalEvidenceSource;
+  evidenceSource?: RegionalClaimEvidenceSource;
+  evidenceReadIds?: string[];
+}
+
+/** Server-recorded evidence work; this contains no model reasoning text. */
+export interface RegionalAnalysisEvidence {
+  version: 1;
+  stages: {
+    id: string;
+    label: string;
+    status: "completed" | "partial" | "unavailable";
+  }[];
+  toolCalls: {
+    id: string;
+    stage: string;
+    tool: string;
+    source?: string;
+    sources?: string[];
+    selectedDate?: string;
+    validDates?: string[];
+    observedDates?: string[];
+    servedDates?: string[];
+    location?: { lat: number; lon: number };
+    status: "observed" | "unavailable" | "refused" | "error" | "not_queried" | "governed_absence";
+    summary?: string;
+    reason?: string;
+  }[];
+  limitations: string[];
 }
 
 export interface RegionalIntelligenceResponse {
@@ -178,15 +225,18 @@ export interface RegionalIntelligenceResponse {
     headline: string;
     factors: string[];
     evidenceOrigin: EvidenceOrigin;
-    evidenceSources: RegionalEvidenceSource[];
+    evidenceSources: RegionalClaimEvidenceSource[];
+    evidenceReadIds?: string[];
   };
   observations: {
     statement: string;
     evidenceOrigin: EvidenceOrigin;
-    evidenceSource?: RegionalEvidenceSource;
+    evidenceSource?: RegionalClaimEvidenceSource;
+    evidenceReadIds?: string[];
   }[];
   remediation: RemediationRecommendation[];
   professionalConsultation: string;
   webSources: WebSourceCitation[];
   dataFreshness: Record<string, string>;
+  analysisEvidence?: RegionalAnalysisEvidence;
 }

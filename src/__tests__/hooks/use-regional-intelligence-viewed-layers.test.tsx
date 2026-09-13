@@ -87,6 +87,24 @@ afterEach(() => {
 });
 
 describe("posting the days the user is viewing with an analysis request", () => {
+  it('receives server evidence updates and clears prior request evidence before a follow-up', async () => {
+    const store = useRegionalIntelligenceStore.getState();
+    store.openPanel(44, -116, 'approximate');
+    const evidence = { version: 1, stages: [{ id: 'history', label: 'Historical comparison', status: 'partial' }], toolCalls: [{ id: 'one', stage: 'history', tool: 'surface_values_near_point', source: 'soil-field-moisture', selectedDate: '2025-09-10', status: 'unavailable' }], limitations: ['No publication on that day.'] };
+    const answer = { aiGenerated: true, riskSummary: { level: 'low' }, observations: [], remediation: [], analysisEvidence: evidence };
+    const text = `event: evidence\ndata: ${JSON.stringify(evidence)}\n\nevent: done\ndata: ${JSON.stringify(answer)}\n\n`;
+    const read = vi.fn().mockResolvedValueOnce({ done: false, value: new TextEncoder().encode(text) }).mockResolvedValueOnce({ done: true });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, body: { getReader: () => ({ read }) } }));
+    const { result } = renderHook(() => useRegionalIntelligence());
+    await act(async () => { await result.current.sendFollowUp('Compare the prior season'); });
+    expect(useRegionalIntelligenceStore.getState().analysisEvidence).toEqual(evidence);
+    expect(useRegionalIntelligenceStore.getState().messages.at(-1)?.parsedResponse?.analysisEvidence).toEqual(evidence);
+    vi.stubGlobal('fetch', refusingFetch());
+    await act(async () => { await result.current.sendFollowUp('Compare another date'); });
+    expect(useRegionalIntelligenceStore.getState().analysisEvidence).toBeNull();
+    expect(useRegionalIntelligenceStore.getState().messages.find((message) => message.parsedResponse)?.parsedResponse?.analysisEvidence).toEqual(evidence);
+  });
+
   it('replays only the saved conversation ID and records actual SSE activity and persisted answer identity', async () => {
     useRegionalIntelligenceStore.getState().resumeConversation({ id: 'owned-conversation', lat: 44.66, lon: -118.83, messages: [{ id: 'old', role: 'assistant', content: 'Saved answer' }] });
     const answer = { aiGenerated: true, riskSummary: { level: 'low' }, observations: [], remediation: [] };

@@ -9,7 +9,7 @@
     "commit": "35624ddbaf93670b839333ae51d7ef15e1f5a85e",
     "path": "conductor/research/pnw-herbaria-source-viability-20260910.md"
   },
-  "next_gate": "Resolve WTU exact-release/EML evidence and UBC institutional public-coordinate policy; report permission verdict before any bounded archive acquisition. No occurrence release is admitted.",
+  "next_gate": "WTU EML/release-identity gate is measured (GBIF UUID 8310f570-f762-11e1-a439-00145eb45e9a, two dated releases; see evidence/wtu-gbif-identity-20260912.md); WTU's remaining pre-acquisition gate is public-coordinate/terms binding under the now-corrected CC-BY licence at ipt.pnwherbaria.org. Resolve that plus UBC institutional public-coordinate policy; report permission verdict before any bounded archive acquisition. No occurrence release is admitted.",
   "updated_on": "2026-09-12",
   "admission_packet": "evidence/admission-packet.md",
   "independent_review": "evidence/independent-review.md",

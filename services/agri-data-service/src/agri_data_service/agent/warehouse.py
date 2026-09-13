@@ -26,22 +26,24 @@ from agri_data_service.parquet_ops.availability_coverage import (
 )
 from agri_data_service.parquet_ops.coverage import registered_census_lanes
 from agri_data_service.parquet_ops.duckdb_session import run_serving_read
+from agri_data_service.parquet_ops.mtbs_snapshot_catalog import configured_snapshot_loader
 from agri_data_service.parquet_ops.request_params import ReadScope
-from agri_data_service.parquet_ops.serving import day_status_sets, read_absence_evidence
-from agri_data_service.parquet_ops.warehouse_reader import ObjectStoreListing, part_keys_for_day
+from agri_data_service.parquet_ops.serving import day_status_sets, read_absence_evidence, resolve_release
+from agri_data_service.parquet_ops.warehouse_reader import ObjectStoreListing, RowReadResult, part_keys_for_day
 from agri_data_service.pipeline.parquet.objectstore import BotoObjectStoreBackend
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, Sequence
+    from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
     from contextvars import Token
 
     from agri_data_service.foundation.parquet.paths import PartitionKind
     from agri_data_service.foundation.parquet.zoom import ZoomTier
     from agri_data_service.parquet_ops.coverage import CensusLane
     from agri_data_service.parquet_ops.duckdb_session import ServingSession
+    from agri_data_service.parquet_ops.mtbs_snapshot_catalog import VerifiedMtbsSnapshot
     from agri_data_service.parquet_ops.serving import DayStatusSets
-    from agri_data_service.parquet_ops.warehouse_reader import WarehouseListing
-    from agri_data_service.parquet_ops.wire import AbsenceEvidence
+    from agri_data_service.parquet_ops.warehouse_reader import RowRead, WarehouseListing
+    from agri_data_service.parquet_ops.wire import AbsenceEvidence, DayEnvelope, ServedRow
     from agri_data_service.pipeline.parquet.availability_index import AvailabilityIndex
 
 #: Every agent read addresses the OBSERVED half of a lane. A forecast is a different question and
@@ -189,6 +191,7 @@ class _ObjectStoreSource:
             self._listing = ObjectStoreListing(
                 backend=BotoObjectStoreBackend.from_credentials(credentials),
                 prefix=settings.object_store_prefix,
+                mtbs_snapshot_loader=configured_snapshot_loader(settings),
             )
         return self._listing
 
@@ -294,9 +297,7 @@ async def lane_window(
     def walk() -> LaneWindow:
         keys = _keys_for_months(listing, layer=layer, kind=kind, tier=tier, first_day=first_day, last_day=last_day)
         statuses = day_status_sets(keys, layer=layer, kind=kind, tier=tier)
-        # A non-empty month listing already proves the lane wrote SOMETHING at this tier, so the
-        # whole-tier probe is paid only by a window that fell outside every written month.
-        lane_written = bool(keys) or bool(listing.list_keys(layer, kind, tier))
+        lane_written = bool(keys) or _lane_has_objects(listing, layer=layer, kind=kind, tier=tier)
         return LaneWindow(layer=layer, kind=kind, tier=tier, keys=keys, statuses=statuses, lane_written=lane_written)
 
     return await asyncio.to_thread(walk)
@@ -316,10 +317,104 @@ async def lane_years(
     def walk() -> LaneWindow:
         keys = tuple(sorted({key for year in wanted for key in listing.list_keys(layer, kind, tier, year=year)}))
         statuses = day_status_sets(keys, layer=layer, kind=kind, tier=tier)
-        lane_written = bool(keys) or bool(listing.list_keys(layer, kind, tier))
+        lane_written = bool(keys) or _lane_has_objects(listing, layer=layer, kind=kind, tier=tier)
         return LaneWindow(layer=layer, kind=kind, tier=tier, keys=keys, statuses=statuses, lane_written=lane_written)
 
     return await asyncio.to_thread(walk)
+
+
+def _lane_has_objects(listing: WarehouseListing, *, layer: str, kind: PartitionKind, tier: ZoomTier) -> bool:
+    """Stop the existence probe at the first layout key; never materialize the whole tier."""
+    return next(listing.iter_tier_keys(layer, kind, tier), None) is not None
+
+
+@dataclass
+class _ReleaseListing:
+    """Freeze one release resolution's evidence; see agent/AGENTS.md, snapshot reads."""
+
+    underlying: WarehouseListing
+    inventories: dict[tuple[str, PartitionKind, ZoomTier, int | None, int | None], tuple[str, ...]] = field(
+        default_factory=dict
+    )
+    snapshots: dict[date, VerifiedMtbsSnapshot | None] = field(default_factory=dict)
+
+    def list_keys(
+        self,
+        layer: str,
+        kind: PartitionKind,
+        tier: ZoomTier,
+        *,
+        year: int | None = None,
+        month: int | None = None,
+    ) -> tuple[str, ...]:
+        key = (layer, kind, tier, year, month)
+        if key not in self.inventories:
+            if year is None:
+                first = next(self.underlying.iter_tier_keys(layer, kind, tier), None)
+                self.inventories[key] = () if first is None else (first,)
+            else:
+                self.inventories[key] = self.underlying.list_keys(layer, kind, tier, year=year, month=month)
+        return self.inventories[key]
+
+    def iter_tier_keys(self, layer: str, kind: PartitionKind, tier: ZoomTier) -> Iterator[str]:
+        return self.underlying.iter_tier_keys(layer, kind, tier)
+
+    def iter_stream_keys(self, layer: str, kind: PartitionKind) -> Iterator[str]:
+        return self.underlying.iter_stream_keys(layer, kind)
+
+    def read_object(self, relative_key: str) -> bytes | None:
+        return self.underlying.read_object(relative_key)
+
+    def mtbs_snapshot_loader(self, day: date) -> VerifiedMtbsSnapshot | None:
+        if day not in self.snapshots:
+            loader = getattr(self.underlying, "mtbs_snapshot_loader", None)
+            self.snapshots[day] = None if loader is None else loader(day)
+        return self.snapshots[day]
+
+
+class _ReleaseReadNeededError(Exception):
+    """Suspend the synchronous map resolver at its admitted row-read boundary."""
+
+
+@dataclass
+class _ReleaseRows:
+    """Capture exact part keys, then replay actual proximity rows through the map's proof."""
+
+    limit: int
+    planned: RowRead | None = None
+    rows: Sequence[ServedRow] | None = None
+
+    def read_rows(self, read: RowRead) -> RowReadResult:
+        if self.rows is None:
+            self.planned = read
+            raise _ReleaseReadNeededError
+        if read != self.planned:
+            raise faults.ServingRefusalError("release_read_changed", "Release changed while its rows were read")
+        return RowReadResult(
+            rows=tuple((read.keys[0], row) for row in self.rows),
+            budget_exhausted=len(self.rows) >= self.limit,
+            unpositioned_rows=0,
+        )
+
+
+async def release_rows(
+    *,
+    layer: str,
+    as_of: date,
+    row_limit: int,
+    read: Callable[[tuple[str, ...]], Awaitable[Sequence[ServedRow]]],
+) -> DayEnvelope:
+    """Resolve the map's latest applicable release, then validate the bounded rows it actually serves."""
+    listing = _ReleaseListing(source().listing())
+    reader = _ReleaseRows(limit=row_limit)
+    scope = ReadScope(layer=layer, kind=OBSERVED, tier=AGENT_ZOOM_TIER, bbox=None)
+    try:
+        return await asyncio.to_thread(resolve_release, listing, reader, scope=scope, as_of=as_of)
+    except _ReleaseReadNeededError:
+        if reader.planned is None:
+            raise RuntimeError("release resolver did not supply a row-read plan") from None
+        reader.rows = await read(reader.planned.keys)
+    return await asyncio.to_thread(resolve_release, listing, reader, scope=scope, as_of=as_of)
 
 
 async def absence_evidence(window: LaneWindow, day: date) -> AbsenceEvidence:

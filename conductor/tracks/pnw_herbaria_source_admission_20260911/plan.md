@@ -33,8 +33,13 @@ track relationships and the verification receipt for this merge.
 - [ ] Fetch EML, field mappings and response metadata under the documented caps.
   Partial: UBC v16.43 standalone EML and three HTML metadata receipts captured;
   a September 12 refresh captured seven metadata responses and confirmed the UBC
-  EML hash. WTU EML and both archive field maps remain unmeasured because they
-  are not exposed on the measured metadata surface and archive transfer is gated.
+  EML hash. A second September 12 pass (redirect-refusing, GBIF-registry-
+  corroborated) captured **release-bound WTU EML for two complete releases**
+  (v1.0 2025-11-06, v1.1 2026-03-12, GBIF UUID `8310f570-f762-11e1-a439-00145eb45e9a`)
+  from the actual distribution host `ipt.pnwherbaria.org`, and found the
+  release-bound licence is CC-BY 4.0, not the CC0 the portal page implied — see
+  [evidence/wtu-gbif-identity-20260912.md](evidence/wtu-gbif-identity-20260912.md).
+  Both archive field maps remain unmeasured because archive transfer is gated.
 - [ ] If terms permit, capture each complete archive once into quarantine and
   verify the ZIP/member safety, hashes, counts and schema.
 - [ ] Reconcile accepted, out-of-envelope, excluded-by-rights, nonspatial,
@@ -69,7 +74,10 @@ least one exact collection release.
 The final report supplies the bounded commit and remaining gates to parent and
 integration tasks; no merge or push is authorized by this packet.
 
-Admission remains blocked on WTU release/EML evidence, UBC institutional
-coordinate-policy applicability and both collections' unmeasured archive/schema
-and native-ID stability receipts. A two-release UBC pilot consumes the two-archive
-budget and must defer WTU rather than silently widening acquisition.
+Admission remains blocked on WTU coordinate-policy applicability and release-bound
+terms reconciliation, UBC institutional coordinate-policy applicability, and both
+collections' archive-custody, ZIP/member-safety, schema and native-ID stability
+receipts. The external `claude/herbaria-botanical-lanes` worktree contains pending,
+uncommitted implementation and evidence work; it does not close these acquisition
+gates. A two-release UBC pilot consumes the two-archive budget and must defer WTU
+rather than silently widening acquisition.

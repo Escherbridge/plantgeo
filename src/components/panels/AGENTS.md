@@ -1,5 +1,9 @@
 # Panels
 
+Evidence checks retain requested dates separately from the reader's served dataset dates.
+For a static snapshot the dataset date is its publication/release day, not a measurement at the
+requested day. Never derive either date by truncating or localizing an observation timestamp.
+
 ## Regional evidence release labels
 
 MTBS `publication_available_YYYY-MM-DD` is validated only for the MTBS source and
@@ -156,3 +160,24 @@ owns authorization and idempotent storage; the UI does not fabricate ratings or 
 report evidence. History resumes from ownership-checked server messages. Activity
 lists actual request/context/search/saved/completed/error events in this browser
 session; it is not a reconstructed model reasoning trace or a persistent audit log.
+
+## Recorded evidence review (2026-09-12)
+
+The optional `analysisEvidence` field is a server-produced tool ledger, attached after
+model report validation and preserved on saved reports and exports. The report tool cannot
+author it. The disclosure presents recorded stages and the source, day, location, refusal,
+confirmed absence or missing query of each check. A completed stage means its checks ran,
+not that every source had evidence or that an intervention was validated. Missing historical
+audit fields stay missing; the renderer never reconstructs checks from claim citations.
+
+The freshness footer is labeled "Initial context sources" because its legacy roster is
+only the initial context subset. "No dated evidence in initial context" neither means the
+source was queried nor that there was a confirmed absence. Additional governed tool reads
+belong in the evidence review with their requested days and comparison locations. Streaming
+audit state is reset between requests and locations; completed reports retain their own audit.
+
+Claims can carry up to eight `evidenceReadIds` pointing to that report's recorded reads.
+Render the resolved stage, source, requested and actual dates, and coordinates directly beside
+the risk summary, observation, or recommendation and retain that association in Markdown.
+An unknown reference or missing historical ledger does not become a displayed raw ID or an
+invented evidence scope. JSON exports retain the original references and their recorded audit.

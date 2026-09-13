@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
-import type { RegionalIntelligenceResponse } from '@/lib/regional-intelligence';
+import type { RegionalAnalysisEvidence, RegionalIntelligenceResponse } from '@/lib/regional-intelligence';
 
 export interface ChatMessage {
   id: string;
@@ -29,6 +29,7 @@ interface RegionalIntelligenceState {
   errorRetryable: boolean;
   analysisCancelled: boolean;
   dataFreshness: Record<string, string>;
+  analysisEvidence: RegionalAnalysisEvidence | null;
   abortController: AbortController | null;
   conversationId: string | null;
   /** Human-readable note about what the agent is doing between text deltas. */
@@ -43,6 +44,7 @@ interface RegionalIntelligenceState {
   setLoading: (loading: boolean) => void;
   setError: (error: string | null, retryable?: boolean) => void;
   setDataFreshness: (freshness: Record<string, string>) => void;
+  setAnalysisEvidence: (evidence: RegionalAnalysisEvidence | null) => void;
   setAbortController: (controller: AbortController | null) => void;
   cancelAnalysis: () => void;
   setAnalysisCancelled: (cancelled: boolean) => void;
@@ -63,6 +65,7 @@ export const useRegionalIntelligenceStore = create<RegionalIntelligenceState>()(
       errorRetryable: false,
       analysisCancelled: false,
       dataFreshness: {},
+      analysisEvidence: null,
       abortController: null,
       conversationId: null,
       toolActivity: null,
@@ -79,6 +82,7 @@ export const useRegionalIntelligenceStore = create<RegionalIntelligenceState>()(
           errorRetryable: false,
           analysisCancelled: false,
           dataFreshness: {},
+          analysisEvidence: null,
           abortController: null,
           conversationId: null,
           toolActivity: null,
@@ -97,6 +101,7 @@ export const useRegionalIntelligenceStore = create<RegionalIntelligenceState>()(
           errorRetryable: false,
           analysisCancelled: false,
           dataFreshness: {},
+          analysisEvidence: null,
           abortController: null,
           conversationId: null,
           toolActivity: null,
@@ -114,6 +119,7 @@ export const useRegionalIntelligenceStore = create<RegionalIntelligenceState>()(
           errorRetryable: false,
           analysisCancelled: false,
           dataFreshness: {},
+          analysisEvidence: null,
           abortController: null,
           conversationId: null,
           toolActivity: null,
@@ -140,6 +146,7 @@ export const useRegionalIntelligenceStore = create<RegionalIntelligenceState>()(
       setError: (error, errorRetryable = false) =>
         set({ error, errorRetryable: error === null ? false : errorRetryable }),
       setDataFreshness: (dataFreshness) => set({ dataFreshness }),
+      setAnalysisEvidence: (analysisEvidence) => set({ analysisEvidence }),
       setAbortController: (abortController) => set({ abortController }),
       cancelAnalysis: () => {
         const wasActive = get().isLoading || get().abortController !== null;
@@ -175,7 +182,7 @@ export const useRegionalIntelligenceStore = create<RegionalIntelligenceState>()(
         set({ isOpen: true, selectedLocation: { lat: conversation.lat, lon: conversation.lon, precision: 'approximate' },
           conversationId: conversation.id, messages: conversation.messages, isLoading: false,
           abortController: null, error: null, errorRetryable: false, analysisCancelled: false,
-          dataFreshness: {}, toolActivity: null, activity: [],
+          dataFreshness: {}, analysisEvidence: null, toolActivity: null, activity: [],
         });
         get().addActivity('Saved conversation opened. No new analysis has been requested.');
       },

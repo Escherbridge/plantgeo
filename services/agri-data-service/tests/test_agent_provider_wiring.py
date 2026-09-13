@@ -50,7 +50,7 @@ from tests.agent_fakes import FakeAgentWarehouse
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-WAREHOUSE_TOOL_COUNT = 11
+WAREHOUSE_TOOL_COUNT = 12
 SENTINEL_KEY = "sk-test-not-a-real-credential"
 COVERAGE_TOOL = "observation_coverage_on_day"
 COVERAGE_ARGUMENTS = {"surface_name": "vegetation", "day": "2026-03-14"}

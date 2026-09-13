@@ -4,7 +4,9 @@ import { incompleteReportDiagnostic, providerErrorDiagnostic, reportValidationDi
 import { geminiReportSchema } from './gemini-report-schema';
 import { reportFlowGroundingIssues } from './report-flow-grounding';
 import { soilAiEvidence } from './soil-ai-evidence';
-import { remediationReportSchema, REMEDIATION_REPORT_JSON_SCHEMA, type RemediationReport } from './remediation-report';
+import { boundedEvidence, prepareRegionalAnalysis, regionalEvidenceAuditCall, regionalEvidenceDay, regionalEvidenceStageStatus } from './regional-analysis-workflow';
+import { callRegionalEvidenceTool } from './regional-evidence-tools';
+import { remediationReportSchema, REMEDIATION_REPORT_JSON_SCHEMA, reportWarehouseEvidenceIssues, type RemediationReport } from './remediation-report';
 import type {
   RegionalContextPayload,
   TemporalContext,
@@ -20,6 +22,7 @@ import {
   AI_GENERATED_DISCLAIMER,
   type ConversationTurn,
   type WebSourceCitation,
+  type RegionalAnalysisEvidence,
 } from '@/lib/regional-intelligence';
 
 export type {
@@ -33,6 +36,7 @@ const MAX_HISTORY_TURNS = MAX_REPLAYED_TURNS;
 const MAX_TOOL_ROUNDS = 4;
 const MAX_REPORT_CORRECTIONS = 1;
 const MAX_SEARCHES_PER_REQUEST = 3;
+const MAX_EVIDENCE_CALLS_PER_REQUEST = 6;
 /**
  * Bounded by the report this feature actually emits, and it must stay under the serving model's own
  * completion ceiling -- a provider REJECTS an over-large request rather than clamping it, so a model
@@ -98,6 +102,7 @@ function readToolArguments(raw: string): Record<string, unknown> | null {
 }
 
 export type AgentStreamEvent =
+  | { type: 'evidence'; evidence: RegionalAnalysisEvidence }
   | { type: 'text'; text: string }
   | { type: 'search'; query: string; resultCount: number }
   | { type: 'sources'; sources: WebSourceCitation[] }
@@ -163,6 +168,9 @@ function buildSystemPrompt(hasWebSearch: boolean): string {
 
 ## Recommending remediation
 - Recommend strategies that fit the observed conditions, terrain, and season. Two or three well-argued strategies beat six generic ones.
+- Screen the supplied strategy matrix before selecting recommendations: silvopasture, biochar, managed grazing, water harvesting, riparian buffers, cover cropping, reforestation, erosion control and fuel reduction. Do not default to fuel reduction merely because drought is the only populated observation.
+- Silvopasture requires compatible trees, forage, livestock management and water balance; trees or drought alone do not establish its suitability. Biochar requires soil tests, feedstock, production conditions and material quality; carbon or drought alone do not establish its suitability or an application rate. State missing prerequisites and distinguish a conditional feasibility assessment from a recommendation to install a practice.
+- Include a concise account of the most relevant alternatives considered and why they are supported, conditional or unsuitable in observations and recommendation rationales. A strategy is not owed a recommendation merely because it was screened.
 - Ground unfamiliar practices in cited literature and dataset sources rather than an unstated number. Soil texture and drought metrics, when supplied, are useful context for whether a practice is a physical fit for this ground — not material for a causal comparison.
 - Explain why each strategy fits this place, not why the strategy is good in the abstract.
 - Sequence matters: mark what should happen now versus over years.
@@ -172,6 +180,15 @@ function buildSystemPrompt(hasWebSearch: boolean): string {
 - Strategy-model evidence is unavailable: \`strategyContext\` is empty and \`strategyRecommendations\` is null. Do not claim a trained model ranked or validated a strategy for this location. You may still suggest remediation grounded in the supplied environmental evidence and labelled AI inference.
 - Never state or imply a causal effect size, an expected-benefit percentage, or any other outcome magnitude for a strategy. No validated evidence release supports those claims. If asked for a numeric benefit, say plainly that one is not available rather than estimating one yourself.
 - You may also be given \`communityProposals\`: nearby intervention proposals other users have submitted. These are unreviewed and not yet approved — you may mention them as local context (what neighbors are already considering), never as evidence supporting your own recommendation's confidence.
+
+## Evidence graph and additional environmental tools
+- The server runs source inventory, local reads, temporal comparison, regional comparison and strategy screening before synthesis. The supplied graph is an audit of executed evidence retrieval and explicit gaps, not a validated strategy model.
+- Inspect each stage and its raw dated evidence. A failed, refused, not_queried or unavailable read is not an observation. Catalogue membership only means a tool can be called, not that its lane is published. Do not fill gaps with a zero or infer a trend from publication dates alone.
+- You may call the deployed environmental tools to resolve a material gap, request another historical date or inspect a candidate region, even when web search is unavailable. Up to ${MAX_EVIDENCE_CALLS_PER_REQUEST} additional calls are allowed. Use the source's selected day for local reads and explicitly name comparison dates and coordinates. History windows must supply as_of_day so they end at the relevant selected day.
+- Regional samples are geographic contrasts, not ecological analogues. Compare measured climate, soil moisture, terrain, land use and management prerequisites before discussing transfer; missing matching factors remain unknown. Nearby or environmentally similar conditions never establish treatment efficacy or a causal effect.
+- In the report, cite the environmental source and observation date for material findings, explain historical and regional comparison limits, and name evidence gaps that change strategy feasibility. Do not expose private deliberation; give concise conclusions and their supporting evidence.
+- Attach evidenceReadIds to findings and inferences supported by tool observations. Use the executed read ID supplied with its result. Historical, regional and additional reads require these references; their actual stage, dates and location will be displayed beside your claim. Describe those scopes in the prose too. Never describe a regional comparison as a measurement at the selected point or a historical observation as a current condition.
+- Coverage inventories, publication neighbors and nearest reporting-cell metadata help plan reads. They contain no environmental measurement and cannot be used as evidenceReadIds for a measured-condition claim; retrieve actual surface values or measured history first.
 ${
   hasWebSearch
     ? `\n## Web search\n- You may call search_web up to ${MAX_SEARCHES_PER_REQUEST} times to ground a recommendation in current regional guidance, agency programs, or cost-share funding.\n- Search when local specifics would change your advice. Do not search to confirm general knowledge.\n- Anything you take from a search is evidenceOrigin "web".`
@@ -300,8 +317,8 @@ function buildUserMessage(
     'Assess this location and recommend remediation strategies for it.';
 
   const coverageNote = contextIsEmpty
-    ? 'No warehouse source resolved for this location. Say so explicitly, and base any advice on reasoning labelled model_inference.'
-    : 'Sources marked "unavailable" were not observed. Do not describe them as absent conditions — they are simply unmeasured.';
+    ? 'No warehouse source resolved in the initial regional snapshot. Check the server evidence graph and later tool results for additional observations before concluding that local evidence is unavailable. Label advice based only on reasoning as model_inference.'
+    : 'Sources marked "unavailable" were not observed in the initial regional snapshot. Later graph or tool reads may supply dated evidence. Do not describe an unavailable read as an absent condition.';
   const gauge = payload.waterScarcity?.nearestGauge;
   const flowGuidance: string[] = [];
   if (gauge) {
@@ -378,6 +395,10 @@ export async function* streamRegionalIntelligence(
   });
   const model = process.env.OPENROUTER_MODEL?.trim() || DEFAULT_MODEL;
   const searchProvider = getWebEvidenceProvider();
+  const analysis = await prepareRegionalAnalysis(payload, temporalContext, signal);
+  yield { type: 'evidence', evidence: structuredClone(analysis.evidence) };
+  const evidenceTools = analysis.catalogue?.tools ?? [];
+  const evidenceToolNames = new Set(evidenceTools.map((tool) => tool.name));
 
   // GENERATE_REMEDIATION_REPORT_TOOL is sent alongside REPORT_TOOL rather than replacing it: the
   // system prompt's Finishing section has always told the model it may call either name, but
@@ -386,9 +407,9 @@ export async function* streamRegionalIntelligence(
   // below recognized — see the report-matching fix just below.
   const tools = (
     searchProvider
-      ? [SEARCH_TOOL, REPORT_TOOL, GENERATE_REMEDIATION_REPORT_TOOL]
-      : [REPORT_TOOL, GENERATE_REMEDIATION_REPORT_TOOL]
-  ).map((tool) => asFunctionTool(model === COMPATIBLE_REPORT_SCHEMA_MODEL && tool !== SEARCH_TOOL
+      ? [SEARCH_TOOL, REPORT_TOOL, GENERATE_REMEDIATION_REPORT_TOOL, ...evidenceTools]
+      : [REPORT_TOOL, GENERATE_REMEDIATION_REPORT_TOOL, ...evidenceTools]
+  ).map((tool) => asFunctionTool(model === COMPATIBLE_REPORT_SCHEMA_MODEL && (tool === REPORT_TOOL || tool === GENERATE_REMEDIATION_REPORT_TOOL)
     ? { ...tool, input_schema: geminiReportSchema(tool.input_schema) }
     : tool));
   const system = buildSystemPrompt(searchProvider !== null);
@@ -411,18 +432,20 @@ export async function* streamRegionalIntelligence(
       contextIsEmpty,
       temporalContext,
       userQuestion
-    ),
+    ) + `\n\n## Server evidence graph and strategy screening\n${analysis.context}`,
   });
 
   const citations: WebSourceCitation[] = [];
   let searchesUsed = 0;
+  let evidenceCallsUsed = 0;
+  let evidenceCallsAttempted = 0;
   let reportCorrections = 0;
   let correctingReport = false;
 
   for (let round = 0; round < MAX_TOOL_ROUNDS + MAX_REPORT_CORRECTIONS; round += 1) {
     if (round >= MAX_TOOL_ROUNDS && !correctingReport) break;
     const isFinalRound = correctingReport || round >= MAX_TOOL_ROUNDS - 1;
-    const forceReportTool = !searchProvider || isFinalRound;
+    const forceReportTool = (!searchProvider && evidenceTools.length === 0) || isFinalRound;
 
     const completionRequest = {
       model,
@@ -488,12 +511,19 @@ export async function* streamRegionalIntelligence(
         (use.function.name === REPORT_TOOL.name ||
           use.function.name === GENERATE_REMEDIATION_REPORT_TOOL.name)
     );
-    if (report && report.type === 'function') {
+    const pendingEvidence = toolUses.some((use) => use.type === 'function'
+      && (evidenceToolNames.has(use.function.name) || (searchProvider && use.function.name === SEARCH_TOOL.name)));
+    if (report && report.type === 'function' && !pendingEvidence) {
       const parsed = remediationReportSchema.safeParse(readToolArguments(report.function.arguments));
       const validationIssues = parsed.success
-        ? reportFlowGroundingIssues(parsed.data, payload.waterScarcity?.nearestGauge ?? null)
+        ? [
+          ...reportFlowGroundingIssues(parsed.data, payload.waterScarcity?.nearestGauge ?? null),
+          ...reportWarehouseEvidenceIssues(parsed.data, payload, analysis.evidence, dataFreshness),
+        ]
         : parsed.error.issues;
       if (parsed.success && validationIssues.length === 0) {
+        analysis.evidence.stages.push({ id: 'synthesis', label: 'Synthesize evidence and recommendations', status: 'completed' });
+        yield { type: 'evidence', evidence: structuredClone(analysis.evidence) };
         if (roundNarration) yield { type: 'text', text: roundNarration };
         if (citations.length) yield { type: 'sources', sources: citations };
         yield { type: 'report', report: parsed.data };
@@ -525,11 +555,18 @@ export async function* streamRegionalIntelligence(
     }
     logIncomplete('report_missing');
     if (correctingReport) throw new Error('The correction attempt did not return a report.');
+    if (report && pendingEvidence && isFinalRound) correctingReport = true;
 
     const searches = toolUses.filter(
       (use) => use.type === 'function' && use.function.name === SEARCH_TOOL.name
     );
-    if (searches.length && roundNarration) yield { type: 'text', text: roundNarration };
+    const evidenceUses = toolUses.filter(
+      (use) => use.type === 'function' && evidenceToolNames.has(use.function.name)
+    );
+    if (evidenceUses.length && !analysis.evidence.stages.some((stage) => stage.id === 'additional')) {
+      analysis.evidence.stages.push({ id: 'additional', label: 'Investigate additional evidence', status: 'partial' });
+    }
+    if ((searches.length || evidenceUses.length) && roundNarration) yield { type: 'text', text: roundNarration };
 
     // EVERY tool call in an assistant message must be answered by a `tool` message before the next
     // request, or the provider rejects the whole conversation. Anthropic tolerated an unanswered
@@ -537,7 +574,7 @@ export async function* streamRegionalIntelligence(
     // execute -- an unrecognised tool name, or a report whose arguments would not parse.
     messages.push(message);
 
-    if (!searches.length) {
+    if (!searches.length && !evidenceUses.length) {
       for (const use of toolUses) {
         messages.push({
           role: 'tool',
@@ -557,13 +594,58 @@ export async function* streamRegionalIntelligence(
     const toolResults: OpenAI.Chat.Completions.ChatCompletionToolMessageParam[] = [];
     // Any tool call this round is NOT going to execute still owes an answer, per the rule above.
     for (const use of toolUses) {
-      if (!searches.includes(use)) {
+      if (!searches.includes(use) && !evidenceUses.includes(use)) {
         toolResults.push({
           role: 'tool',
           tool_call_id: use.id,
-          content: 'Unrecognised tool. Ignore it and produce the report.',
+          content: use.id === report?.id
+            ? 'Report deferred until the requested evidence reads finish. Use their returned observations and limitations in the next complete report.'
+            : 'Unrecognised tool. Ignore it and produce the report.',
         });
       }
+    }
+    for (let index = 0; index < evidenceUses.length; index += 3) {
+      await Promise.all(evidenceUses.slice(index, index + 3).map(async (use) => {
+      if (use.type !== 'function') return;
+      const evidenceId = `additional-${++evidenceCallsAttempted}`;
+      const args = readToolArguments(use.function.arguments);
+      if (!args || evidenceCallsUsed >= MAX_EVIDENCE_CALLS_PER_REQUEST) {
+        toolResults.push({ role: 'tool', tool_call_id: use.id, content: args ? 'The additional environmental evidence budget is exhausted. Synthesize the report and state remaining gaps.' : 'Environmental read failed: arguments must be a JSON object.' });
+        if (analysis.evidence.toolCalls.length < 128) analysis.evidence.toolCalls.push({
+          ...regionalEvidenceAuditCall(evidenceId, 'additional', use.function.name, args ?? {}, { error: 'invalid_arguments' }),
+          status: args ? 'not_queried' : 'refused',
+          reason: args ? 'The additional environmental evidence budget was exhausted.' : 'The tool arguments were not a JSON object.',
+        });
+        return;
+      }
+      evidenceCallsUsed += 1;
+      if (['signals_near_point', 'drought_history_at_point', 'fire_history_near_point'].includes(use.function.name) && typeof args.as_of_day !== 'string') {
+        const source = use.function.name === 'drought_history_at_point' ? 'drought-areas' : use.function.name === 'fire_history_near_point' ? 'burn-severity' : 'climate-field-precipitation';
+        args.as_of_day = regionalEvidenceDay(temporalContext, source);
+      }
+      try {
+        const content = await callRegionalEvidenceTool(use.function.name, args, signal);
+        const result: unknown = JSON.parse(content);
+        if (analysis.evidence.toolCalls.length < 128) analysis.evidence.toolCalls.push(regionalEvidenceAuditCall(evidenceId, 'additional', use.function.name, args, result));
+        toolResults.push({ role: 'tool', tool_call_id: use.id, content: JSON.stringify({ evidenceReadId: evidenceId, result: boundedEvidence(result) }) });
+      } catch (error) {
+        if (signal?.aborted) throw error;
+        if (analysis.evidence.toolCalls.length < 128) analysis.evidence.toolCalls.push({
+          ...regionalEvidenceAuditCall(evidenceId, 'additional', use.function.name, args, { error: 'read_failed' }),
+          status: 'error', reason: 'The additional environmental read failed.',
+        });
+        toolResults.push({ role: 'tool', tool_call_id: use.id, content: 'Environmental read failed. This is not an observed absence; continue with the evidence already supplied.' });
+      }
+      }));
+    }
+    if (evidenceUses.length) {
+      const additional = analysis.evidence.stages.find((stage) => stage.id === 'additional');
+      if (additional) {
+        additional.status = regionalEvidenceStageStatus(
+          analysis.evidence.toolCalls.filter((call) => call.stage === 'additional'),
+        );
+      }
+      yield { type: 'evidence', evidence: structuredClone(analysis.evidence) };
     }
     for (const search of searches) {
       // `is_error` has no counterpart in this dialect -- a tool message is just text -- so a

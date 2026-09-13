@@ -33,6 +33,7 @@ from agri_data_service.agent.surfaces import (
     surface_lanes,
 )
 from agri_data_service.db.engine import published_reader_session
+from agri_data_service.parquet_ops.coverage import registered_census_lanes
 from agri_data_service.parquet_ops.faults import ServingRefusalError
 from agri_data_service.parquet_ops.warehouse_reader import (
     GeometrySupport,
@@ -40,6 +41,7 @@ from agri_data_service.parquet_ops.warehouse_reader import (
     PointSupport,
     spatial_support,
 )
+from agri_data_service.parquet_ops.wire import PublishedDay
 from agri_data_service.planes.botanical_species_information import (
     DEFAULT_COMPANION_LIMIT,
     MAX_COMPANION_LIMIT,
@@ -680,9 +682,9 @@ async def query_signals_near_point(  # noqa: PLR0913 - the parameter list is the
                 "-- so an empty signal_summaries with governed_absence days is a measured absence "
                 "and one with day_not_written days is a gap about which nothing follows. "
                 "days_back is a SCAN BUDGET, not the depth of the record: the lane may run years "
-                "deeper than max_days_back. observation_coverage_on_day is MEANT to answer how much "
-                "deeper, but it currently refuses on every lane -- no lane has a published "
-                "availability receipt yet -- so that is not a working next step today. "
+                "deeper than max_days_back. Use observation_coverage_on_day and "
+                "observation_temporal_neighbors for published coverage; if their availability "
+                "evidence is withheld, the refusal does not establish the depth of history. "
                 "A signal outside the governed contract is absent here because it is out of scope, "
                 "not because it was unmeasured."
             ),
@@ -754,10 +756,9 @@ async def query_drought_history_at_point(
                 "all, so nothing is known either way, and you must not report that as the absence "
                 "of drought. prev_valid_date and next_valid_date give the neighbouring releases so "
                 "a day between two Tuesdays can be answered with the real gap stated. weeks_back "
-                "is a SCAN BUDGET rather than the depth of the record; observation_coverage_on_day "
-                "is MEANT to answer how far the lane runs but currently refuses on every lane -- no "
-                "lane has a published availability receipt yet -- so that is not a working next "
-                "step today."
+                "is a SCAN BUDGET rather than the depth of the record. Use observation_coverage_on_day "
+                "and observation_temporal_neighbors for published coverage; a refusal means the "
+                "index cannot prove that coverage, not that no historical releases exist."
             ),
         }
     )
@@ -874,10 +875,9 @@ async def query_fire_history_near_point(
                 "radius, so a lane whose latest_day is months old has stopped ingesting, which is "
                 "a different fact from there being no fire near this point; when it reports "
                 "withheld, the lane could not prove its history and nothing follows about its "
-                "depth. years_back is a SCAN BUDGET rather than the depth of the record, and the "
-                "hardest-clamped one of the three: observation_coverage_on_day is MEANT to answer "
-                "how much deeper this lane runs but currently refuses on every lane -- no lane has "
-                "a published availability receipt yet -- so that is not a working next step today. "
+                "depth. years_back is a SCAN BUDGET rather than the depth of the record. Use "
+                "observation_coverage_on_day and observation_temporal_neighbors for published "
+                "coverage; a withheld index cannot establish historical depth. "
                 "A satellite detection is a thermal anomaly, not a confirmed fire perimeter."
             ),
         }
@@ -1654,16 +1654,142 @@ def _feature_row(row: dict[str, Any], *, served_day: date) -> dict[str, Any]:
     return carried
 
 
+async def _surface_lane_result(  # noqa: PLR0913 - one coordinate per bounded surface read.
+    lane: str,
+    *,
+    selected_day: date,
+    longitude: float,
+    latitude: float,
+    radius_meters: float,
+    row_limit: int,
+) -> dict[str, Any]:
+    """Read a daily partition or the map's applicable snapshot and retain both calendar days."""
+    nature = next((entry.nature for entry in registered_census_lanes() if entry.layer == lane), None)
+
+    async def read(keys: tuple[str, ...]) -> list[dict[str, Any]]:
+        return await _lane_rows(
+            lane,
+            part_keys=keys,
+            longitude=longitude,
+            latitude=latitude,
+            radius_meters=radius_meters,
+            row_limit=row_limit,
+            operation="agent_surface_value_near_point",
+        )
+
+    rows: list[dict[str, Any]] = []
+    served_day: date | None = None
+    if nature in {"static_lookup", "release_series"}:
+        envelope = await warehouse.release_rows(layer=lane, as_of=selected_day, row_limit=row_limit, read=read)
+        day_state = envelope.to_wire()
+        day_state.pop("rows", None)
+        day_state.pop("truncated", None)
+        served_day = getattr(envelope, "served_day", None)
+        if isinstance(envelope, PublishedDay):
+            rows = [dict(row) for row in envelope.rows]
+    else:
+        window = await warehouse.lane_window(layer=lane, first_day=selected_day, last_day=selected_day)
+        window.raise_on_unserveable([selected_day])
+        state = window.state_of(selected_day)
+        day_state = await _day_state(window, selected_day, state)
+        if state in {"published", "governed_absence"}:
+            served_day = selected_day
+        if state == "published":
+            rows = await read(window.part_keys([selected_day]))
+    return {
+        "parquet_lane": lane,
+        "lane_nature": nature,
+        "requested_day": selected_day,
+        "served_day": served_day,
+        "day_state": day_state,
+        "features": [_feature_row(row, served_day=served_day) for row in rows] if served_day is not None else [],
+        "features_truncated": len(rows) >= row_limit,
+        "search_shape": "bounding_box" if _is_geometry_lane(lane) else "radius",
+    }
+
+
+@_refuses_serving_faults("surface_value_near_point")
+async def query_surface_value_near_point(  # noqa: PLR0913 - published bounded tool schema.
+    surface_name: str,
+    day: str,
+    longitude: float,
+    latitude: float,
+    radius_meters: float = DEFAULT_RADIUS_METERS,
+    feature_count: int = DEFAULT_SURFACE_FEATURE_ROWS,
+) -> str:
+    """Read each map-owned lane of a surface, keeping depth and metric values separate."""
+    if not _valid_coordinate(longitude, latitude):
+        return _coordinate_error("surface_value_near_point")
+    selected_day = _parse_day(day)
+    if selected_day is None:
+        return _day_error("surface_value_near_point", day)
+    surface = surface_name.strip()[:MAX_NAME_LENGTH]
+    if surface not in AGENT_SURFACE_NAMES:
+        return _surface_error("surface_value_near_point", surface_name)
+    if surface == "drought-areas":
+        return _payload({"error": "use_drought_history_at_point", "requested_day": selected_day})
+    lanes = surface_lanes(surface)
+    if not lanes:
+        return _surface_not_on_parquet("surface_value_near_point", surface)
+    radius = _clamp(radius_meters, MIN_RADIUS_METERS, MAX_RADIUS_METERS)
+    count = _clamp_int(feature_count, 1, MAX_SURFACE_FEATURE_ROWS)
+    results = [
+        await _surface_lane_result(
+            lane,
+            selected_day=selected_day,
+            longitude=longitude,
+            latitude=latitude,
+            radius_meters=radius,
+            row_limit=count,
+        )
+        for lane in lanes
+    ]
+    _record(
+        "surface_value_near_point",
+        sum(len(lane["features"]) for lane in results),
+        {"surface_name": surface, "requested_day": selected_day, "radius_meters": radius},
+    )
+    return _payload(
+        {
+            "surface_name": surface,
+            "requested_day": selected_day,
+            "applied_bounds": {"radius_meters": radius, "feature_count_per_lane": count, "lane_count": len(lanes)},
+            "lanes": results,
+            "note": (
+                "Values come from each surface's own map-serving Parquet lane. Daily lanes read requested_day; "
+                "static and release lanes use the latest applicable snapshot at or before requested_day, "
+                "with its own served_day stated separately. A snapshot date is not a daily observation. "
+                "Read every lane's day_state before interpreting its features; a missing depth or metric "
+                "is unknown, never zero. Each feature carries its distance and original typed properties. "
+                "For polygons distance is to the centroid and membership is a bounding-box search; "
+                "covers_probe_point answers exact containment. Neighbours remain observations at their "
+                "own coordinates and dates, not measurements at the requested point."
+            ),
+        }
+    )
+
+
+def _history_anchor(raw_day: str | None) -> datetime | None:
+    """Resolve an optional history anchor without substituting the current day for malformed input."""
+    if raw_day is None:
+        return None
+    parsed = _parse_day(raw_day)
+    if parsed is None:
+        raise ValueError("as_of_day must be an ISO calendar day")
+    return datetime(parsed.year, parsed.month, parsed.day, tzinfo=UTC)
+
+
 # --- Model-facing tools ------------------------------------------------------------
 
 
 @beta_async_tool
-async def signals_near_point(
+async def signals_near_point(  # noqa: PLR0913 - stable published tool contract
     longitude: float,
     latitude: float,
     radius_meters: float = DEFAULT_RADIUS_METERS,
     days_back: int = DEFAULT_DAYS_BACK,
     signal_names: list[str] | None = None,
+    as_of_day: str | None = None,
 ) -> str:
     """Summarise PlantGeo's governed environmental signal observations near a coordinate.
 
@@ -1675,9 +1801,9 @@ async def signals_near_point(
     service; values beyond the cap are clamped and the applied bounds are reported back to you.
 
     The time window is a SCAN BUDGET and not the depth of the record: the lane usually runs years
-    deeper than days_back allows in one call. observation_coverage_on_day is meant to answer how far
-    back it goes, but it currently refuses on every lane -- no lane has a published availability
-    receipt -- so that is not a working next step today.
+    deeper than days_back allows in one call. Inspect observation_coverage_on_day and
+    observation_temporal_neighbors for published coverage; a withheld index means history is
+    unknown, not absent.
 
     Args:
         longitude: WGS84 longitude in decimal degrees, -180 to 180.
@@ -1685,6 +1811,7 @@ async def signals_near_point(
         radius_meters: Search radius around the point in metres; capped at 50000.
         days_back: How far back to look in days; capped at 120.
         signal_names: Optional exact signal names to restrict to. Omit for every signal.
+        as_of_day: End the history window on this ISO YYYY-MM-DD; use the caller's selected day.
     """
     return await query_signals_near_point(
         longitude=longitude,
@@ -1692,6 +1819,7 @@ async def signals_near_point(
         radius_meters=radius_meters,
         days_back=days_back,
         signal_names=signal_names,
+        as_of=_history_anchor(as_of_day),
     )
 
 
@@ -1700,6 +1828,7 @@ async def drought_history_at_point(
     longitude: float,
     latitude: float,
     weeks_back: int = DEFAULT_WEEKS_BACK,
+    as_of_day: str | None = None,
 ) -> str:
     """Return the U.S. Drought Monitor severity that covered a coordinate, release by release.
 
@@ -1715,11 +1844,13 @@ async def drought_history_at_point(
         longitude: WGS84 longitude in decimal degrees, -180 to 180.
         latitude: WGS84 latitude in decimal degrees, -90 to 90.
         weeks_back: How many weeks of drought history to return; capped at 120.
+        as_of_day: End the history window on this ISO YYYY-MM-DD; use the caller's selected day.
     """
     return await query_drought_history_at_point(
         longitude=longitude,
         latitude=latitude,
         weeks_back=weeks_back,
+        as_of=_history_anchor(as_of_day),
     )
 
 
@@ -1729,6 +1860,7 @@ async def fire_history_near_point(
     latitude: float,
     radius_meters: float = DEFAULT_RADIUS_METERS,
     years_back: int = DEFAULT_FIRE_YEARS_BACK,
+    as_of_day: str | None = None,
 ) -> str:
     """Summarise served satellite fire detections and mapped burn perimeters near a coordinate.
 
@@ -1737,20 +1869,22 @@ async def fire_history_near_point(
     describes the whole lane and tells you whether an empty radius means "no fire here" or "this
     lane stopped ingesting". Satellite detections are thermal anomalies rather than confirmed
     fires; burn perimeters are post-fire mapped boundaries. Radius is capped at 50000 metres and
-    the lookback at 2 years per call; observation_coverage_on_day is meant to answer about the
-    deeper record but currently refuses on every lane, so that is not a working next step today.
+    the lookback at 2 years per call. Use observation_coverage_on_day and observation_temporal_neighbors
+    for published coverage; withheld availability evidence cannot establish the depth of history.
 
     Args:
         longitude: WGS84 longitude in decimal degrees, -180 to 180.
         latitude: WGS84 latitude in decimal degrees, -90 to 90.
         radius_meters: Search radius around the point in metres; capped at 50000.
         years_back: How many years of fire history to include; capped at 2.
+        as_of_day: End the history window on this ISO YYYY-MM-DD; use the caller's selected day.
     """
     return await query_fire_history_near_point(
         longitude=longitude,
         latitude=latitude,
         radius_meters=radius_meters,
         years_back=years_back,
+        as_of=_history_anchor(as_of_day),
     )
 
 
@@ -1994,6 +2128,43 @@ async def feature_value_near_point(  # noqa: PLR0913 - the parameter list is the
     )
 
 
+@beta_async_tool
+async def surface_value_near_point(  # noqa: PLR0913 - published bounded tool schema.
+    surface_name: str,
+    day: str,
+    longitude: float,
+    latitude: float,
+    radius_meters: float = DEFAULT_RADIUS_METERS,
+    feature_count: int = DEFAULT_SURFACE_FEATURE_ROWS,
+) -> str:
+    """Read any feature, climate-field or soil-field map surface on the caller's selected day.
+
+    Reads the surface's own lanes instead of assuming its values exist in the generic signal lane.
+    Air-temperature mean/min/max and soil depths are returned separately with their own day states.
+    Static and release lanes use the latest applicable snapshot at or before the selected day,
+    reporting its served_day separately; daily lanes require the exact selected day.
+    Missing/unwritten lanes are unknown, and neighbours retain real distances and original dates.
+    Drought uses drought_history_at_point with as_of_day instead; interventions explicitly refuse
+    until their governed Parquet lane is published.
+
+    Args:
+        surface_name: Exact name from the map surface catalogue, including climate-field and soil-field names.
+        day: ISO YYYY-MM-DD; use the caller's selected day or explicitly labelled historical comparison day.
+        longitude: WGS84 longitude, -180 to 180.
+        latitude: WGS84 latitude, -90 to 90.
+        radius_meters: Search radius in metres, capped at 50000.
+        feature_count: Nearest values per lane, capped at 50.
+    """
+    return await query_surface_value_near_point(
+        surface_name=surface_name,
+        day=day,
+        longitude=longitude,
+        latitude=latitude,
+        radius_meters=radius_meters,
+        feature_count=feature_count,
+    )
+
+
 WAREHOUSE_TOOLS: Final = (
     signals_near_point,
     drought_history_at_point,
@@ -2005,5 +2176,6 @@ WAREHOUSE_TOOLS: Final = (
     observation_coverage_on_day,
     observation_temporal_neighbors,
     feature_value_near_point,
+    surface_value_near_point,
     species_information,
 )

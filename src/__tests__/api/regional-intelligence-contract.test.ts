@@ -9,6 +9,12 @@ const mocks = vi.hoisted(() => ({
   // rather than passed in, exactly like every other service call in this file, so the request
   // it actually issues -- the `tools` array in particular -- is observable from the test.
   completionStream: vi.fn(),
+  loadEvidenceTools: vi.fn().mockResolvedValue(null),
+  callEvidenceTool: vi.fn(),
+}));
+vi.mock('@/lib/server/services/regional-evidence-tools', () => ({
+  loadRegionalEvidenceTools: mocks.loadEvidenceTools,
+  callRegionalEvidenceTool: mocks.callEvidenceTool,
 }));
 vi.mock("@/lib/server/auth", () => ({
   getServerSession: mocks.getServerSession,
@@ -34,14 +40,13 @@ const validReport = {
     level: "high" as const,
     headline: "Active fire detections sit within 25 km of this point.",
     factors: ["Six FIRMS detections in the last 24 hours."],
-    evidenceOrigin: "warehouse" as const,
-    evidenceSources: ["fireDetections" as const],
+    evidenceOrigin: "model_inference" as const,
+    evidenceSources: [],
   },
   observations: [
     {
       statement: "Six fire detections were observed nearby today.",
-      evidenceOrigin: "warehouse" as const,
-      evidenceSource: "fireDetections" as const,
+      evidenceOrigin: "model_inference" as const,
     },
   ],
   remediation: [
@@ -171,7 +176,7 @@ describe("remediation report contract", () => {
         riskSummary: { properties: {
           headline: { minLength: 1, maxLength: 300 },
           factors: { maxItems: 8, items: { minLength: 1, maxLength: 240 } },
-          evidenceSources: { maxItems: 9 },
+          evidenceSources: { maxItems: 33 },
         } },
         observations: { maxItems: 12, items: { properties: { statement: { minLength: 1, maxLength: 500 } } } },
         remediation: { maxItems: 8, items: { properties: {
@@ -252,6 +257,8 @@ describe("remediation report contract", () => {
 describe("generate_remediation_report tool wiring", () => {
   afterEach(() => {
     mocks.completionStream.mockReset();
+    mocks.loadEvidenceTools.mockReset().mockResolvedValue(null);
+    mocks.callEvidenceTool.mockReset();
     vi.unstubAllEnvs();
   });
 
@@ -319,6 +326,59 @@ describe("generate_remediation_report tool wiring", () => {
     };
   }
 
+  it('offers environmental tools without web and synthesizes only after simultaneous evidence requests return', async () => {
+    const webEvidence = await import('@/lib/server/services/web-evidence');
+    const provider = vi.spyOn(webEvidence, 'getWebEvidenceProvider').mockReturnValue(null);
+    const { streamRegionalIntelligence } = await import('@/lib/server/services/ai-prompt');
+    mocks.loadEvidenceTools.mockResolvedValue({
+      tools: [{ name: 'surface_value_near_point', description: 'Read governed surface evidence', input_schema: { type: 'object' } }],
+      surfaces: ['vegetation'], featureSurfaces: ['vegetation'], valueSurfaces: ['vegetation'],
+    });
+    mocks.callEvidenceTool.mockResolvedValue(JSON.stringify({ features: [{ served_day: '2024-05-01', properties: { cover: 0.25 } }], day_state: { state: 'published' } }));
+    const groundedReport = { ...validReport, observations: [{
+      statement: 'The vegetation read at 43.6, -116.2 returned dated evidence for 2024-05-01.',
+      evidenceOrigin: 'warehouse', evidenceSource: 'vegetation', evidenceReadIds: ['additional-1'],
+    }] };
+    mocks.completionStream
+      .mockReturnValueOnce(fakeCompletionStream([
+        { id: 'premature', name: 'remediation_report', input: { ...validReport, riskSummary: { ...validReport.riskSummary, headline: 'Premature report' } } },
+        { id: 'vegetation', name: 'surface_value_near_point', input: { surface_name: 'vegetation', day: '2024-05-01', longitude: -116.2, latitude: 43.6 } },
+      ]))
+      .mockReturnValueOnce(fakeCompletionStream([{ id: 'grounded', name: 'remediation_report', input: groundedReport }]));
+    try {
+      const events = [];
+      for await (const event of streamRegionalIntelligence(minimalPayload(), {}, true, minimalTemporalContext(), [])) events.push(event);
+      expect(mocks.completionStream).toHaveBeenCalledTimes(2);
+      expect(mocks.completionStream.mock.calls[0][0].tool_choice).toBe('auto');
+      expect(mocks.completionStream.mock.calls[0][0].tools.map((tool: { function: { name: string } }) => tool.function.name)).toContain('surface_value_near_point');
+      expect(events.filter((event) => event.type === 'report')).toEqual([{ type: 'report', report: groundedReport }]);
+      expect(mocks.completionStream.mock.calls[1][0].messages).toEqual(expect.arrayContaining([
+        expect.objectContaining({ role: 'tool', tool_call_id: 'vegetation', content: expect.stringContaining('2024-05-01') }),
+        expect.objectContaining({ role: 'tool', tool_call_id: 'vegetation', content: expect.stringContaining('additional-1') }),
+        expect.objectContaining({ role: 'tool', tool_call_id: 'premature', content: expect.stringContaining('Report deferred') }),
+      ]));
+      const audit = events.filter((event) => event.type === 'evidence').at(-1);
+      expect(audit?.evidence.toolCalls).toEqual(expect.arrayContaining([expect.objectContaining({ stage: 'additional', source: 'vegetation', selectedDate: '2024-05-01', status: 'observed' })]));
+      expect(JSON.stringify(mocks.completionStream.mock.calls[0][0].messages)).toContain('initial regional snapshot');
+    } finally { provider.mockRestore(); }
+  });
+
+  it('bounds extra evidence calls and supplies missing history anchors while recording the skipped request', async () => {
+    const { streamRegionalIntelligence } = await import('@/lib/server/services/ai-prompt');
+    mocks.loadEvidenceTools.mockResolvedValue({ tools: [{ name: 'drought_history_at_point', description: 'Dated history', input_schema: { type: 'object' } }], surfaces: [], featureSurfaces: [], valueSurfaces: [] });
+    mocks.callEvidenceTool.mockResolvedValue(JSON.stringify({ weekly_severity: [{ valid_date: '2024-01-01', severity_class: null }] }));
+    mocks.completionStream
+      .mockReturnValueOnce(fakeCompletionStream(Array.from({ length: 7 }, (_, index) => ({ id: `history-${index}`, name: 'drought_history_at_point', input: { longitude: -116.2, latitude: 43.6 } }))))
+      .mockReturnValueOnce(fakeCompletionStream([{ id: 'final', name: 'remediation_report', input: validReport }]));
+    const events = [];
+    for await (const event of streamRegionalIntelligence(minimalPayload(), {}, true, { ...minimalTemporalContext(), viewedDates: ['2024-01-02'] }, [])) events.push(event);
+    const audit = events.filter((event) => event.type === 'evidence').at(-1);
+    const additional = audit?.evidence.toolCalls.filter((call) => call.stage === 'additional') ?? [];
+    expect(additional.filter((call) => call.status === 'observed')).toHaveLength(6);
+    expect(additional.filter((call) => call.status === 'not_queried')).toHaveLength(1);
+    expect(mocks.callEvidenceTool.mock.calls.every((call) => call[1].as_of_day === '2024-01-02')).toBe(true);
+  });
+
   it("includes generate_remediation_report in the tools array actually sent to the provider", async () => {
     const { streamRegionalIntelligence, REPORT_TOOL, GENERATE_REMEDIATION_REPORT_TOOL } =
       await import("@/lib/server/services/ai-prompt");
@@ -344,7 +404,7 @@ describe("generate_remediation_report tool wiring", () => {
       [],
       "What should I do here?"
     )) {
-      events.push(event);
+      if (event.type !== 'evidence') events.push(event);
     }
 
     expect(capturedTools?.map((tool) => tool.function.name)).toEqual(
@@ -370,7 +430,7 @@ describe("generate_remediation_report tool wiring", () => {
       [],
       "What should I do here?"
     )) {
-      events.push(event as { type: string; report?: unknown });
+      if (event.type !== 'evidence') events.push(event as { type: string; report?: unknown });
     }
 
     const reportEvent = events.find((event) => event.type === "report");
@@ -386,7 +446,7 @@ describe("generate_remediation_report tool wiring", () => {
     const payload = minimalPayload();
     payload.soilProperties = { ph: 6.6, organicCarbon: 61.9, nitrogen: 5.12, bulkDensity: 1.25, cec: 14, ocd: 3.2 };
     const events = [];
-    for await (const event of streamRegionalIntelligence(payload, {}, false, minimalTemporalContext(), [])) events.push(event);
+    for await (const event of streamRegionalIntelligence(payload, {}, false, minimalTemporalContext(), [])) if (event.type !== 'evidence') events.push(event);
     const sent = JSON.stringify(mocks.completionStream.mock.calls[0]?.[0]);
     expect(sent).toContain("SoilGrids model predictions; not a local soil sample");
     expect(sent).toContain("g/kg");
@@ -434,7 +494,7 @@ describe("generate_remediation_report tool wiring", () => {
       .mockReturnValueOnce(fakeCompletionStream([{ id: 'correction', name: 'remediation_report', input: repeated ? unsupported : corrected }]));
     const events: Array<{ type: string }> = [];
     const collect = async () => {
-      for await (const event of streamRegionalIntelligence(payload, {}, false, minimalTemporalContext(), [])) events.push(event);
+      for await (const event of streamRegionalIntelligence(payload, {}, false, minimalTemporalContext(), [])) if (event.type !== 'evidence') events.push(event);
     };
     if (repeated) await expect(collect()).rejects.toThrow('bounded correction attempt');
     else await collect();
@@ -452,7 +512,7 @@ describe("generate_remediation_report tool wiring", () => {
       .mockReturnValueOnce(fakeCompletionStream([{ id: 'short', name: 'remediation_report', input: repeated ? overlong : corrected }]));
     const events: Array<{ type: string }> = [];
     const collect = async () => {
-      for await (const event of streamRegionalIntelligence(minimalPayload(), {}, true, minimalTemporalContext(), [])) events.push(event);
+      for await (const event of streamRegionalIntelligence(minimalPayload(), {}, true, minimalTemporalContext(), [])) if (event.type !== 'evidence') events.push(event);
     };
     if (repeated) await expect(collect()).rejects.toThrow('bounded correction attempt');
     else await collect();
@@ -475,7 +535,7 @@ describe("generate_remediation_report tool wiring", () => {
       ], "Unvalidated answer"))
       .mockReturnValueOnce(fakeCompletionStream([{ id: "corrected", name: "remediation_report", input: validReport }], "Validated answer"));
     const events: Array<{ type: string; report?: unknown; text?: string }> = [];
-    for await (const event of streamRegionalIntelligence(minimalPayload(), {}, true, minimalTemporalContext(), [])) events.push(event);
+    for await (const event of streamRegionalIntelligence(minimalPayload(), {}, true, minimalTemporalContext(), [])) if (event.type !== 'evidence') events.push(event);
     expect(events).toEqual([{ type: "text", text: "Validated answer" }, { type: "report", report: validReport }]);
     expect(mocks.completionStream).toHaveBeenCalledTimes(2);
     const correctiveRequest = mocks.completionStream.mock.calls[1][0];
@@ -499,7 +559,7 @@ describe("generate_remediation_report tool wiring", () => {
       .mockReturnValueOnce(fakeCompletionStream([{ id: "invalid", name: "remediation_report", input: tooMany }]))
       .mockReturnValueOnce(fakeCompletionStream([{ id: "corrected", name: "remediation_report", input: validReport }]));
     const events: Array<{ type: string; report?: unknown; text?: string }> = [];
-    for await (const event of streamRegionalIntelligence(minimalPayload(), {}, true, minimalTemporalContext(), [])) events.push(event);
+    for await (const event of streamRegionalIntelligence(minimalPayload(), {}, true, minimalTemporalContext(), [])) if (event.type !== 'evidence') events.push(event);
     expect(events).toEqual([{ type: "report", report: validReport }]);
     expect(mocks.completionStream).toHaveBeenCalledTimes(5);
     expect(mocks.completionStream.mock.calls[3][0].tool_choice).toEqual({ type: "function", function: { name: "remediation_report" } });
@@ -513,7 +573,7 @@ describe("generate_remediation_report tool wiring", () => {
       .mockReturnValueOnce(fakeCompletionStream([{ id: "invalid", name: "remediation_report", input: {} }]))
       .mockReturnValueOnce(fakeCompletionStream([{ id: "valid", name: "remediation_report", input: validReport }]));
     const events = [];
-    for await (const event of streamRegionalIntelligence(minimalPayload(), {}, true, minimalTemporalContext(), [])) events.push(event);
+    for await (const event of streamRegionalIntelligence(minimalPayload(), {}, true, minimalTemporalContext(), [])) if (event.type !== 'evidence') events.push(event);
     expect(events).toEqual([{ type: "report", report: validReport }]);
     expect(mocks.completionStream.mock.calls[1][0].tool_choice).toEqual({ type: "function", function: { name: "remediation_report" } });
     expect(mocks.completionStream.mock.calls[0][0].tools[0].function.parameters).toHaveProperty("properties.observations.maxItems", 12);
@@ -527,7 +587,7 @@ describe("generate_remediation_report tool wiring", () => {
     mocks.completionStream.mockReturnValue(fakeCompletionStream([{ id: "first", name: "remediation_report", input: validReport }]));
     try {
       const events = [];
-      for await (const event of streamRegionalIntelligence(minimalPayload(), {}, true, minimalTemporalContext(), [])) events.push(event);
+      for await (const event of streamRegionalIntelligence(minimalPayload(), {}, true, minimalTemporalContext(), [])) if (event.type !== 'evidence') events.push(event);
       expect(events).toEqual([{ type: "report", report: validReport }]);
       expect(mocks.completionStream).toHaveBeenCalledTimes(1);
       const request = mocks.completionStream.mock.calls[0][0];
@@ -563,7 +623,7 @@ describe("generate_remediation_report tool wiring", () => {
       .mockReturnValueOnce(fakeCompletionStream([], "Unstructured fallback"));
     const events: Array<{ type: string }> = [];
     const collect = async () => {
-      for await (const event of streamRegionalIntelligence(minimalPayload(), {}, true, minimalTemporalContext(), [])) events.push(event);
+      for await (const event of streamRegionalIntelligence(minimalPayload(), {}, true, minimalTemporalContext(), [])) if (event.type !== 'evidence') events.push(event);
     };
     await expect(collect()).rejects.toThrow("The correction attempt did not return a report.");
     expect(events).toEqual([]);
@@ -577,7 +637,7 @@ describe("generate_remediation_report tool wiring", () => {
     mocks.completionStream.mockImplementation(() => fakeCompletionStream([{ id: "invalid", name: "remediation_report", input: tooMany }], "Not yet valid"));
     const events: Array<{ type: string; report?: unknown; text?: string }> = [];
     const collect = async () => {
-      for await (const event of streamRegionalIntelligence(minimalPayload(), {}, true, minimalTemporalContext(), [])) events.push(event);
+      for await (const event of streamRegionalIntelligence(minimalPayload(), {}, true, minimalTemporalContext(), [])) if (event.type !== 'evidence') events.push(event);
     };
     await expect(collect()).rejects.toThrow("bounded correction attempt");
     expect(events).toEqual([]);
@@ -592,7 +652,7 @@ describe("generate_remediation_report tool wiring", () => {
     mocks.completionStream.mockImplementation(() => fakeCompletionStream([], privateNarration));
     const events: Array<{ type: string }> = [];
     try {
-      for await (const event of streamRegionalIntelligence(minimalPayload(), {}, true, minimalTemporalContext(), [])) events.push(event);
+      for await (const event of streamRegionalIntelligence(minimalPayload(), {}, true, minimalTemporalContext(), [])) if (event.type !== 'evidence') events.push(event);
       expect(events).toEqual([]);
       expect(mocks.completionStream).toHaveBeenCalledTimes(4);
       expect(warn).toHaveBeenCalledWith("[AI] incomplete report response", expect.objectContaining({ round: 4, reason: "report_missing", finishReason: "stop", contentKind: "text", reportToolCount: 0, toolChoiceMode: "forced_report" }));

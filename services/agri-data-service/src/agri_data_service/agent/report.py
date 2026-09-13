@@ -5,9 +5,9 @@
 
 from __future__ import annotations
 
-from typing import Any, Final, Literal
+from typing import Annotated, Any, Final, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 # Vocabularies mirrored from src/lib/regional-intelligence.ts. That module is the single
 # definition; these are its Python projection and must not drift. See agent/AGENTS.md.
@@ -24,6 +24,34 @@ RegionalEvidenceSource = Literal[
     "mtbsPerimeters",
     "carbonPotential",
 ]
+
+RegionalToolEvidenceSource = Literal[
+    "burn-severity",
+    "evacuation-zones",
+    "fire-detections",
+    "fire-perimeters",
+    "interventions",
+    "sensors",
+    "soil-survey",
+    "vegetation",
+    "watersheds",
+    "water-gauges",
+    "weather-observations",
+    "climate-field-air-temperature",
+    "climate-field-dew-point",
+    "climate-field-precipitation",
+    "climate-field-relative-humidity",
+    "climate-field-shortwave-radiation",
+    "climate-field-soil-wetness-profile",
+    "climate-field-soil-wetness-root-zone",
+    "climate-field-soil-wetness-surface",
+    "climate-field-wind-speed",
+    "drought-areas",
+    "soil-field-moisture",
+    "soil-field-temperature",
+    "soil-field-vpd",
+]
+RegionalClaimEvidenceSource = RegionalEvidenceSource | RegionalToolEvidenceSource
 
 InterventionStrategy = Literal[
     "keyline",
@@ -54,6 +82,7 @@ ProfessionalDiscipline = Literal[
 RiskLevel = Literal["low", "moderate", "high", "critical"]
 Timeframe = Literal["immediate", "short_term", "long_term"]
 ConfidenceLevel = Literal["low", "moderate", "high"]
+EvidenceReadId = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
 
 # Rendered verbatim wherever agent output appears; copied from regional-intelligence.ts.
 AI_GENERATED_DISCLAIMER: Final = (
@@ -62,32 +91,42 @@ AI_GENERATED_DISCLAIMER: Final = (
 )
 
 
-class RiskSummary(BaseModel):
-    """Headline risk judgement and the provenance it rests on."""
+class EvidenceClaim(BaseModel):
+    """Shared evidence origin and optional executed-read references."""
 
     model_config = ConfigDict(extra="forbid")
+
+    evidenceOrigin: EvidenceOrigin
+    evidenceReadIds: list[EvidenceReadId] = Field(
+        default_factory=list, max_length=8, exclude_if=lambda value: not value
+    )
+
+    @model_validator(mode="after")
+    def read_ids_require_warehouse_origin(self) -> EvidenceClaim:
+        """Keep server read references off web and model-inference claims."""
+        if "evidenceReadIds" in self.model_fields_set and self.evidenceOrigin != "warehouse":
+            raise ValueError("evidenceReadIds are allowed only on warehouse-origin claims")
+        return self
+
+
+class RiskSummary(EvidenceClaim):
+    """Headline risk judgement and the provenance it rests on."""
 
     level: RiskLevel
     headline: str
     factors: list[str]
-    evidenceOrigin: EvidenceOrigin
-    evidenceSources: list[RegionalEvidenceSource]
+    evidenceSources: list[RegionalClaimEvidenceSource] = Field(max_length=33)
 
 
-class Observation(BaseModel):
+class Observation(EvidenceClaim):
     """One statement about what the supplied data actually shows."""
 
-    model_config = ConfigDict(extra="forbid")
-
     statement: str
-    evidenceOrigin: EvidenceOrigin
-    evidenceSource: RegionalEvidenceSource | None = None
+    evidenceSource: RegionalClaimEvidenceSource | None = None
 
 
-class RemediationRecommendation(BaseModel):
+class RemediationRecommendation(EvidenceClaim):
     """One recommended intervention, with the disciplines to consult before acting."""
-
-    model_config = ConfigDict(extra="forbid")
 
     strategy: InterventionStrategy
     title: str
@@ -95,8 +134,7 @@ class RemediationRecommendation(BaseModel):
     timeframe: Timeframe
     confidence: ConfidenceLevel
     consultProfessionals: list[ProfessionalDiscipline]
-    evidenceOrigin: EvidenceOrigin
-    evidenceSource: RegionalEvidenceSource | None = None
+    evidenceSource: RegionalClaimEvidenceSource | None = None
 
 
 class RemediationReport(BaseModel):

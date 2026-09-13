@@ -26,6 +26,7 @@ from agri_data_service.agent.report import (
     RiskSummary,
     report_json_schema,
 )
+from agri_data_service.agent.surfaces import AGENT_SURFACE_NAMES
 from agri_data_service.config import settings
 from agri_data_service.routes import agent_analysis as agent_route
 from tests.agent_fakes import FakeAgentWarehouse, published_lane
@@ -570,15 +571,9 @@ async def test_tools_reject_an_out_of_range_coordinate_without_querying() -> Non
     assert source.markers() == []
 
 
-async def test_forecast_tool_reads_only_the_published_serving_matview() -> None:
-    """The agent must not be able to see a draft or unvalidated forecast.
-
-    The ML forecast plane is NOT environmental data -- the retirement inventory classes it "keep" --
-    so it is the one plane that stayed in PostgreSQL when everything else moved to Parquet. What
-    moved out of this statement is the `agri.spatial_cell` lookup that used to resolve the point to
-    a cell; that relation is already gone from production, and the cell now comes from the Parquet
-    signal plane. There is deliberately still NO fallback to `agri.v_forecast_series_serving`.
-    """
+@pytest.mark.parametrize("as_of", [None, _AS_OF])
+async def test_forecast_tool_refuses_retired_plane_without_any_database_read(as_of: datetime | None) -> None:
+    """The retired forecast plane stays closed until its governed Parquet replacement is admitted."""
     source = _warehouse(published=[_SELECTED_DATE])
     source.answer(
         "agent_signal_admitted_cells",
@@ -586,39 +581,14 @@ async def test_forecast_tool_reads_only_the_published_serving_matview() -> None:
     )
     session = _Session([])
     async with agent_tools.run_context(session_provider=_session_provider(session), warehouse_source=source):
-        await agent_tools.query_forecast_summary_for_cell(longitude=-116.2, latitude=43.6, as_of=_AS_OF)
-    statement = session.statements_excluding_plane_probes()[0]
-    assert "agri.mv_forecast_ml_daily_serving" in statement
-    assert "agri.v_forecast_series_serving" not in executable_sql(statement)
-    assert "agri.forecast_value" not in executable_sql(statement)
-    assert "agri.spatial_cell" not in executable_sql(statement)
+        raw = await agent_tools.query_forecast_summary_for_cell(longitude=-116.2, latitude=43.6, as_of=as_of)
 
-
-async def test_the_forecast_tool_refuses_an_unbuilt_plane_instead_of_falling_back() -> None:
-    """Its matview shipped with relispopulated false; a silent fallback would hide that forever."""
-
-    class _UnpopulatedSession(_Session):
-        async def execute(self, statement: object, parameters: dict[str, Any]) -> _Result:
-            sql = str(statement)
-            self.statements.append(sql)
-            self.parameters.append(parameters)
-            return _Result(
-                [
-                    {"relation_name": name, "relation_exists": True, "relation_kind": "m", "is_populated": False}
-                    for name in parameters.get("relation_names", [])
-                ]
-            )
-
-    session = _UnpopulatedSession([])
-    source = _warehouse(published=[_SELECTED_DATE])
-    async with agent_tools.run_context(session_provider=_session_provider(session), warehouse_source=source):
-        raw = await agent_tools.query_forecast_summary_for_cell(longitude=-116.2, latitude=43.6)
-
-    assert session.statements_excluding_plane_probes() == []
-    assert source.markers() == [], "the probe fails before any warehouse read is attempted"
+    assert session.statements == [], "retired relations must not even receive a readiness probe"
+    assert source.markers() == [], "an unpublished forecast must not borrow observed environmental readings"
     payload = json.loads(raw)
-    assert payload["error"] == "pre_aggregated_plane_unbuilt"
-    assert payload["unbuilt_relations"] == [agent_tools.FORECAST_DAILY_RELATION]
+    assert payload["error"] == "forecast_parquet_lane_not_published"
+    assert payload["resolved_cell"] is None
+    assert payload["forecast_values"] == []
 
 
 async def test_the_drought_tool_reads_the_lane_the_map_serves_and_not_the_empty_one() -> None:
@@ -716,6 +686,7 @@ async def test_every_tool_statement_is_read_only() -> None:
     source.listing_store.write_day("fire-detections", "observed", 13, _SELECTED_DATE)
     source.listing_store.write_day("burn-severity", "observed", 13, _SELECTED_DATE)
     source.listing_store.write_day("water-gauges", "observed", 13, _SELECTED_DATE)
+    source.listing_store.write_day("soil-field-moisture-0-7cm", "observed", 13, _SELECTED_DATE)
     source.answer(
         "agent_signal_admitted_cells",
         [{"cell_id": "aaaaaaaa-0000-0000-0000-000000000001", "distance_meters": 4210.5}],
@@ -734,20 +705,14 @@ async def test_every_tool_statement_is_read_only() -> None:
         await agent_tools.query_feature_value_near_point(
             surface_name="water-gauges", day=selected_day, longitude=-116.2, latitude=43.6
         )
+        await agent_tools.query_surface_value_near_point(
+            surface_name="soil-field-moisture", day=selected_day, longitude=-116.2, latitude=43.6
+        )
     # Every published tool is driven above, so a tool added to WAREHOUSE_TOOLS without a call here
     # breaks this assertion rather than slipping through unscanned.
-    published_tool_count = 11
+    published_tool_count = 12
     assert len(agent_tools.WAREHOUSE_TOOLS) == published_tool_count
-    # The two PostgreSQL statements that survive, and nothing else: the ML forecast plane and the
-    # ingest lane's absence ledger. Both are governance relations the retirement inventory keeps.
-    assert session.markers_excluding_plane_probes() == [
-        "agent_forecast_summary_for_cell",
-        "agent_signal_coverage_on_day",
-    ]
-    # The catalog probe is answered once for the whole run and then remembered, because a matview
-    # never becomes unpopulated again once refreshed.
-    probe_count = len(session.statements) - len(session.statements_excluding_plane_probes())
-    assert probe_count == 1, "the plane probe must be cached, not re-asked per tool"
+    assert session.statements == [], "environmental tools must not query retired PostgreSQL relations"
     for statement in [sql for sql, _ in source.executed] + session.statements:
         # The beginner-doc headers are prose and legitimately contain English words that
         # collide with SQL verbs ("drops the rest"); only executable lines are scanned.
@@ -797,6 +762,28 @@ def test_report_round_trips_through_pydantic() -> None:
     assert RemediationReport.model_validate(dumped) == report
 
 
+def test_evidence_read_ids_match_the_typescript_optional_contract() -> None:
+    """IDs are trimmed, non-null, bounded, and reserved for warehouse-origin claims."""
+    payload = _report().model_dump()
+    payload["riskSummary"]["evidenceReadIds"] = ["  temporal-1  "]
+    parsed = RemediationReport.model_validate(payload)
+    assert parsed.riskSummary.evidenceReadIds == ["temporal-1"]
+    assert parsed.model_dump()["riskSummary"]["evidenceReadIds"] == ["temporal-1"]
+
+    for invalid in (None, ["   "], ["x" * 101]):
+        changed = _report().model_dump()
+        changed["riskSummary"]["evidenceReadIds"] = invalid
+        with pytest.raises(ValueError, match=r"evidenceReadIds|string"):
+            RemediationReport.model_validate(changed)
+
+    for origin in ("web", "model_inference"):
+        changed = _report().model_dump()
+        changed["riskSummary"]["evidenceOrigin"] = origin
+        changed["riskSummary"]["evidenceReadIds"] = []
+        with pytest.raises(ValueError, match="warehouse-origin"):
+            RemediationReport.model_validate(changed)
+
+
 def test_report_json_schema_is_closed() -> None:
     """Structured outputs require every object to forbid unknown properties."""
     schema = report_json_schema()
@@ -804,6 +791,15 @@ def test_report_json_schema_is_closed() -> None:
     for definition in schema.get("$defs", {}).values():
         if definition.get("type") == "object":
             assert definition["additionalProperties"] is False
+
+
+def test_report_accepts_each_governed_surface_as_claim_evidence() -> None:
+    """Tool surfaces remain citable without widening the initial freshness roster."""
+    for surface in AGENT_SURFACE_NAMES:
+        payload = _report().model_dump()
+        payload["riskSummary"]["evidenceSources"] = [surface]
+        payload["observations"][0]["evidenceSource"] = surface
+        assert RemediationReport.model_validate(payload).riskSummary.evidenceSources == [surface]
 
 
 def test_report_rejects_a_vocabulary_the_frontend_cannot_render() -> None:
