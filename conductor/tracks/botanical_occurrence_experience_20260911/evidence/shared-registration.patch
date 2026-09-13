@@ -1,0 +1,72 @@
+Pending shared-file hunks for the botanical occurrence experience.
+
+Not applied by this slice — src/lib/map/layer-registry.ts, src/lib/map/layer-render-contract.ts,
+src/types/time-slider.ts and src/lib/server/services/parquet-slider-capabilities.ts are owned by
+the serialized shared integrator per the track's X2 plan step ("Serialize shared registry/render-
+contract integration in one owner"). This file records the hunks that owner should apply, plus
+what this slice already provides so nothing gets re-derived.
+
+Already provided by this slice (paste-ready source):
+- src/lib/botanical-occurrences.ts exports BOTANICAL_LAYER_DEFINITIONS, an array of
+  { toggleId, label, icon, panelId } literals in the same shape LayerRegistryEntry's identity
+  fields use. It deliberately does NOT import LayerRegistryEntry/LayerToggleId/PanelId, since
+  editing layer-registry.ts is out of scope here.
+
+--- a/src/lib/map/layer-registry.ts
++++ b/src/lib/map/layer-registry.ts
+@@ export type LayerToggleId =
+   | "evacuation-zones"
+   | "burn-severity"
++  | "botanical-occurrences"
++  | "botanical-richness"
++  | "botanical-collection-effort"
+
+--- a/src/stores/panel-store.ts
++++ b/src/stores/panel-store.ts
+@@ export type PanelId =
+   ... existing members ...
++  | "botanical"
+
+--- a/src/lib/map/layer-registry.ts (entries object, alongside the other buildEntries() calls)
++  entries["botanical-occurrences"] = {
++    toggleId: "botanical-occurrences",
++    label: "Botanical Specimen Occurrences",
++    icon: "leaf",
++    renderKind: "component",
++    styleLayerIds: [],
++    warehouseLayerName: null, // occurrence plane is not a time-slider stream; confirm with the data-plane owner
++    panelId: "botanical",
++    permanentlyUnavailableReason: null,
++  };
++  entries["botanical-richness"] = {
++    toggleId: "botanical-richness",
++    label: "Documented Taxon Richness",
++    icon: "layers",
++    renderKind: "component",
++    styleLayerIds: [],
++    warehouseLayerName: null,
++    panelId: "botanical",
++    permanentlyUnavailableReason: null,
++  };
++  entries["botanical-collection-effort"] = {
++    toggleId: "botanical-collection-effort",
++    label: "Collection Evidence & Effort",
++    icon: "users",
++    renderKind: "component",
++    styleLayerIds: [],
++    warehouseLayerName: null,
++    panelId: "botanical",
++    permanentlyUnavailableReason: null,
++  };
+
+Open questions for the integrator (do not guess at implementation time):
+1. Whether `warehouseLayerName` should actually resolve to a real
+   `geo.layers.name`/`SLIDER_STREAM_LAYER_NAMES`/`SNAPSHOT_SURFACE_LAYER_NAMES` entry, or stay
+   null because the collecting-event window is not the global day slider (see spec's "must not
+   reuse a daily environmental slider" constraint). This slice assumes null; the shared owner must
+   confirm this doesn't silently drop the layer per the §9 LEFT JOIN warning in layer-registry.ts.
+2. Whether the map/layer-render-contract.ts and parquet-slider-capabilities.ts need new members at
+   all, given (1) — if warehouseLayerName stays null, no capability entry is needed for the day
+   axis, but the occurrence plane's own bbox/zoom/release-set query still needs a route. This
+   slice calls the agri-data-service directly (see src/lib/botanical-occurrences.ts's module doc);
+   the integrator may prefer a Next.js proxy route instead.

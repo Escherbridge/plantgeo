@@ -1,0 +1,72 @@
+{
+  "schema_version": "botanical-profile-shared-integration/v1",
+  "base_commit": "bc7b5e1ff5dbb6eac929d5db927acd6b7ff2ea4a",
+  "files": [
+    {
+      "path": "services/agri-data-service/src/agri_data_service/app.py",
+      "sha256": "9aaa0f40da7dc1d36077ee1dfeab693111dd9a2f8690366d699fa61867f1d725",
+      "git_blob": "223bc153287e2eb671298554303f7ea77e75bd72",
+      "final_sha256": "2e5f341b1793ed5f41d4bd4bd78a535911381598ff3622e75387a8d53952c8dd"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/agent/tools.py",
+      "sha256": "806f0facbf65ac7b93cea7846d9e9e3edabd5f8c0df4d18e0c4ef3204928f4a1",
+      "git_blob": "a012da8e5cf962a3690c3c0373afb81d33f22b2f",
+      "final_sha256": "9232f79f50bc4779ea7039e2ff25fbb2230b61ae6c18616c81272d79de34940f"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/agent/prompts.py",
+      "sha256": "e9403ac8c2309ac527041edd9d357d8f0069e3f255f01e1fed2a283323dcc15f",
+      "git_blob": "4f11a1a8efb9fc426d2053503514a8854f7109f5",
+      "final_sha256": "881a38e530dad770741698d6a20557b456fbd1c9eb75b99e51f69ae3ccbb8073"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/agent/AGENTS.md",
+      "sha256": "10bd5262baa550edf76cf4e4c0cfb22bba60c878a601cad85f21871ce8f3bb12",
+      "git_blob": "e586fea54bd2fd2819b43ee090de3df585e40bce",
+      "final_sha256": "517d3736d3b8abf6557ccc2c22ce54c6eec4dfb76c2f21af2cbe5ccc510891bb"
+    },
+    {
+      "path": "services/agri-data-service/tests/test_agent_graph.py",
+      "sha256": "4c50ba02b50dfdb5efa7fac8c632a264ebda46863e30d4a0936913cd50c55682",
+      "git_blob": "37a54519f234346b0b4ea2e0416fea2a8471ab0a",
+      "final_sha256": "8c1ddff728d1b4fcffafc5afe7b54858b47b67a63e8889861738f5ab92017e59"
+    },
+    {
+      "path": "services/agri-data-service/tests/test_agent_provider_wiring.py",
+      "sha256": "98bd7093551d5170e8fd76dda1cea42f18659a0068fb44fc9ff84e1aca16958b",
+      "git_blob": "a20eb92064066761d1b8426a05dc2e181c408cf0",
+      "final_sha256": "8c7afa307d618a5859a5721699bc1386d282a242d7f7c39bf521134d7a49850d"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/planes/AGENTS.md",
+      "sha256": "c80b2dce5f83a94c831cd7a4aacf992ddb951b835ae28b75bb6f067f47d0071c",
+      "git_blob": "05aef8eaf22bad4e1bcdfacb2ebb0cd9d288a32b",
+      "final_sha256": "9c4a61c4ca8bb13d733603e431e8e3d56a4a427b4b3a9ed43aaa74896ebec8ce"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/interface/http/AGENTS.md",
+      "sha256": "cedcff47b7bfce0f44ddd11e978ca45e7fc931efe6211d1cd1703b2593d74d04",
+      "git_blob": "28f138da9d4f13a9fc25fc189aebcba2670629eb",
+      "final_sha256": "6d7840f74a774e6c0569399e7bb9ffffe5a794741e63068d74dbed98dac743bc"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/agent/graph.py",
+      "sha256": "1d6a6107456356816d0dc875ba007223fd7f72aa3150a232b26507f23e66144e",
+      "git_blob": "ff11ff43c3fed26650d6d9eb9fe9e25585a394c4",
+      "final_sha256": "c758aaeb6bb5dfb5f639c0ab99c23afe2eaf40ced3a730a490dea4afa6176303"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/agent/mcp_server.py",
+      "sha256": "6d9582d3a956da5808544a5cd5f70c333771ee0e6a4ab6bd03a449e2e0bfe535",
+      "git_blob": "94137284fec91c61553f984d84e427f468a7832c",
+      "final_sha256": "c08c0295cc25b08aa49651876fc453ee17fcce3942e5ad6d2bae051c3a1c7150"
+    }
+  ],
+  "integration_rule": "The implementation commit contains the coherent tested candidate. For parallel-owner integration, apply shared-registration.patch only after the new profile modules are present. Check every base blob and reconcile changed owner hunks; do not replace shared files wholesale.",
+  "patch": {
+    "path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/shared-registration.patch",
+    "sha256": "ae0f07070de4872c870433c60e213111311c8c315ea829fcfcf7e5f2c1156def",
+    "bytes": 16596
+  }
+}

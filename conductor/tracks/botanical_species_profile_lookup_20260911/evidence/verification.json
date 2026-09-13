@@ -1,0 +1,125 @@
+{
+  "carried_forward_notice": "This receipt describes commit edc6afd on codex/botanical-species-profile-lookup, not the current claude/herbaria-botanical-lanes port. See evidence/port-notes-20260912.md for this port's own test results (4566/4603 relevant backend tests passing; the remainder gated on pending shared-file registrations).",
+  "schema_version": "botanical-profile-local-verification/v1",
+  "captured_at": "2026-09-12T00:48:39.112735+00:00",
+  "base_commit": "bc7b5e1ff5dbb6eac929d5db927acd6b7ff2ea4a",
+  "service_tree_digest": "b0ddaeeb60a4374bbd5c98b96de6e679de19ec5b2de206beacdb90eebf4b3674",
+  "checks": [
+    {
+      "name": "python-full-quality",
+      "command": [
+        "C:\\Users\\atooz\\Programming\\plantgeo\\services\\agri-data-service\\.venv\\Scripts\\python.exe",
+        "scripts/check.py",
+        "--write-receipt"
+      ],
+      "working_directory": "C:\\Users\\atooz\\.codex\\worktrees\\0caf\\plantgeo\\services\\agri-data-service",
+      "started_at": "2026-09-12T00:44:50.766110+00:00",
+      "duration_seconds": 175.516,
+      "returncode": 0,
+      "log": ".omc/research/botanical-verified-python-full-quality.log",
+      "log_sha256": "a358b9cf76e2b9f5a31fb5e1c7349347d7052eeb99a86b8dde6e3169edecd88f"
+    },
+    {
+      "name": "check:data-boundary",
+      "command": [
+        "cmd.exe",
+        "/d",
+        "/c",
+        "npm.cmd",
+        "run",
+        "check:data-boundary"
+      ],
+      "working_directory": "C:\\Users\\atooz\\.codex\\worktrees\\0caf\\plantgeo",
+      "started_at": "2026-09-11T23:57:36.733418+00:00",
+      "duration_seconds": 1.031,
+      "returncode": 0,
+      "log": ".omc/research/botanical-final-check-data-boundary.log",
+      "log_sha256": "7cd85c42797a9825c40dc47c5e7c8add2f0961f0af9b39ab9109f3182a10231a"
+    },
+    {
+      "name": "type-check",
+      "command": [
+        "cmd.exe",
+        "/d",
+        "/c",
+        "npm.cmd",
+        "run",
+        "type-check"
+      ],
+      "working_directory": "C:\\Users\\atooz\\.codex\\worktrees\\0caf\\plantgeo",
+      "started_at": "2026-09-11T23:57:37.772814+00:00",
+      "duration_seconds": 14.547,
+      "returncode": 0,
+      "log": ".omc/research/botanical-final-type-check.log",
+      "log_sha256": "14a8d580c8ca9cbb71db2a138d653ce4622f0d23b39cc953fa285f60f58d26f5"
+    },
+    {
+      "name": "test:changed",
+      "command": [
+        "cmd.exe",
+        "/d",
+        "/c",
+        "npm.cmd",
+        "run",
+        "test:changed",
+        "--",
+        "--base",
+        "bc7b5e1ff5dbb6eac929d5db927acd6b7ff2ea4a"
+      ],
+      "working_directory": "C:\\Users\\atooz\\.codex\\worktrees\\0caf\\plantgeo",
+      "started_at": "2026-09-11T23:58:46.378158+00:00",
+      "duration_seconds": 0.984,
+      "returncode": 0,
+      "log": ".omc/research/botanical-final-test-changed.log",
+      "log_sha256": "a583599f7bb57a0d284caf48051ea9702ac6008d3372cd369ddae0b907e0ea0a"
+    },
+    {
+      "name": "lint",
+      "command": [
+        "cmd.exe",
+        "/d",
+        "/c",
+        "npm.cmd",
+        "run",
+        "lint"
+      ],
+      "working_directory": "C:\\Users\\atooz\\.codex\\worktrees\\0caf\\plantgeo",
+      "started_at": "2026-09-12T00:41:53.374311+00:00",
+      "duration_seconds": 55.203,
+      "returncode": 0,
+      "log": ".omc/research/botanical-post-resume-lint.log",
+      "log_sha256": "ce790ed050b09247c867001fcc41042e8ae92d226f274b52224fc3608742ef28"
+    }
+  ],
+  "python_test_counts": {
+    "passed": 6086,
+    "skipped": 150,
+    "xfailed": 1,
+    "failed": 0,
+    "errors": 0
+  },
+  "python_scope": "full suite; explicit external database tests skipped with database variables absent",
+  "frontend_test_scope": "changed selector returned mode none; no changed JavaScript/TypeScript test surface; not a full frontend suite pass",
+  "eslint": {
+    "errors": 0,
+    "pre_existing_warnings": 542,
+    "baseline": "26 warning-bearing tracked files byte-identical to bc7b5e1"
+  },
+  "temporary_directory": "authorized writable visualization root/.botanical-local-verification/pytest; outside repository so ancestor-root negative test remains valid",
+  "private_environment_files_opened_in_continuation": false,
+  "remote_services_accessed_in_continuation": false,
+  "source_ingestion_performed_in_continuation": false,
+  "database_access_performed_in_continuation": false,
+  "production_mutated": false,
+  "prior_sweep": {
+    "result": "not green",
+    "python": "5515 passed, 147 skipped, 1 xfailed, 570 setup PermissionErrors; three static findings",
+    "frontend_lint": "all 396 errors from a raw research .js capture, renamed .js.txt without content changes",
+    "resolution": "all local fixes applied before this one integrated rerun"
+  },
+  "post_resume_sweep": {
+    "result": "not green",
+    "python": "6084 passed, 150 skipped, 1 xfailed; static gates passed; synthetic CSV quoting and scratch-under-repository root-discovery failures",
+    "resolution": "fixture quotechar=None and authorized scratch outside repository applied together; no production parser or baseline retirement-code changes"
+  }
+}

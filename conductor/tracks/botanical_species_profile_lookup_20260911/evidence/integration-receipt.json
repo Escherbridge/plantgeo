@@ -1,0 +1,513 @@
+{
+  "schema_version": "botanical-profile-integration/v1",
+  "phase": "local-implementation-verified-candidate-unaccepted",
+  "base_commit": "bc7b5e1ff5dbb6eac929d5db927acd6b7ff2ea4a",
+  "captured_at": "2026-09-12T00:48:39.203226+00:00",
+  "service_tree_digest": "b0ddaeeb60a4374bbd5c98b96de6e679de19ec5b2de206beacdb90eebf4b3674",
+  "digest_domain": "plantgeo.agri-data-service.quality-receipt.v2",
+  "digest_file_count": 1328,
+  "profile_release_id": "bspf-0f6b58aba4610edf9b6bcde1e7a0da0c44cf3e4671c1b624b13d7ed95b5ab501",
+  "source_releases": [
+    {
+      "source_id": "kew-wcvp",
+      "version": "16",
+      "release_url": "https://sftp.kew.org/pub/data-repositories/WCVP/",
+      "download_url": "https://sftp.kew.org/pub/data-repositories/WCVP/wcvp.zip",
+      "licence_id": "CC-BY-3.0",
+      "licence_url": "https://creativecommons.org/licenses/by/3.0/",
+      "content_sha256": "d32ea2b3a85e489b14e83bcc9eae7274532e1d113753f7be290d4b2dfde573fa",
+      "terms_sha256": "b4741be05ea3937b3604589602e1e24bcd3a0f558dcf8e06797eaa28b5207eaa",
+      "retrieved_at": "2026-09-11T23:17:41Z",
+      "reviewer": "source-admission-agent",
+      "reviewed_at": "2026-09-11T23:27:56.915000Z",
+      "review_basis": "Source-field mapping author review only; independent botanical/data-governance acceptance is pending profile-track p5 after p4 integration. Exact downloaded README_WCVP.xlsx (terms_sha256) identifies version 16, extraction 2026-06-04, and CC BY 3.0 at README!A5:A6. Both pipe-delimited UTF-8 CSV schemas and full row counts were verified. Candidate permits four accepted family-reviewed taxa, source taxonomy links, unchanged lifeform descriptions and published habitat categories only; no quantitative growth, fuel, agricultural-effect or companion assertions. The reviewed flag concerns family peer review, not per-value approval. Attribution: Govaerts R (ed.). 2026. WCVP: World Checklist of Vascular Plants. Facilitated by the Royal Botanic Gardens, Kew. Version 16, extracted 04 June 2026; archive URL and licence must remain attached and derivative changes described. See botanical_species_source_admission_20260911/evidence/source-admission.json for exact IDs, hashes and exclusions.",
+      "machine_readable_verified": true,
+      "reuse_allowed": true,
+      "access": "public",
+      "admitted_traits": [
+        "climate_summary",
+        "growth_habit"
+      ],
+      "admitted_taxon_ids": [
+        "2439997",
+        "379633",
+        "380358",
+        "6584"
+      ]
+    }
+  ],
+  "source_evidence_sha256": {
+    "conductor/tracks/botanical_species_source_admission_20260911/.gitattributes": "b3b54dd99c68dbd65d4e3886ecc65b2ad1b3b4969cba1cebe0aaf9e616a654fa",
+    "conductor/tracks/botanical_species_source_admission_20260911/evidence/README_WCVP-v16.xlsx": "b4741be05ea3937b3604589602e1e24bcd3a0f558dcf8e06797eaa28b5207eaa",
+    "conductor/tracks/botanical_species_source_admission_20260911/evidence/source-admission.json": "d75c9f1b4e675e4d0d76f9f9ee760554fa565c52f040c06d2d9497d9cb31436b",
+    "conductor/tracks/botanical_species_source_admission_20260911/evidence/source-admission.md": "224228c41fefc5eb58b68631fd0d5d8bdc43a6692a23f886b9f1f03740d1fd18",
+    "conductor/tracks/botanical_species_source_admission_20260911/evidence/wcvp-16-source-release.json": "d2c094b2e97f4cbba53aa13998286102f682af80cf8e8606331f6284ad0dc966",
+    "conductor/tracks/botanical_species_source_admission_20260911/metadata.json": "bc0b309b4b8e7a801c0a9cb59cd6767d7da887b760206501a987d8be86c23c89",
+    "conductor/tracks/botanical_species_source_admission_20260911/plan.md": "5217b1f4adbb217e69a589d1741b07250c899956036d605aa6e06b1789aed28e",
+    "conductor/tracks/botanical_species_source_admission_20260911/spec.md": "bd25ea48cec2ce76eb39d858b3906a41f2a257338122bcf12054fffd0618adc1"
+  },
+  "local_store": "C:\\Users\\atooz\\.codex\\worktrees\\0caf\\plantgeo\\local-artifacts\\botanical-species-profile\\published",
+  "artifacts": {
+    "taxa": {
+      "key": "lookups/botanical-species-profile/releases/bspf-0f6b58aba4610edf9b6bcde1e7a0da0c44cf3e4671c1b624b13d7ed95b5ab501/taxa.parquet",
+      "sha256": "42583d98e56a74aa48ba0e1bc6f3c24ed48275ce6494fe2310c96ae34186b71d",
+      "bytes": 8782,
+      "portable_path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/releases/bspf-0f6b58aba4610edf9b6bcde1e7a0da0c44cf3e4671c1b624b13d7ed95b5ab501/taxa.parquet"
+    },
+    "assertions": {
+      "key": "lookups/botanical-species-profile/releases/bspf-0f6b58aba4610edf9b6bcde1e7a0da0c44cf3e4671c1b624b13d7ed95b5ab501/assertions.parquet",
+      "sha256": "49320848d79779c4fa7c9646428b690bef89c7cab5702c417ffc05c65e6658a6",
+      "bytes": 11969,
+      "portable_path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/releases/bspf-0f6b58aba4610edf9b6bcde1e7a0da0c44cf3e4671c1b624b13d7ed95b5ab501/assertions.parquet"
+    },
+    "decisions": {
+      "key": "lookups/botanical-species-profile/releases/bspf-0f6b58aba4610edf9b6bcde1e7a0da0c44cf3e4671c1b624b13d7ed95b5ab501/decisions.parquet",
+      "sha256": "1590c4446cdf7d70f6dfe5cb038aca3b92a820e94b4870b3d09d0b562049ad69",
+      "bytes": 11757,
+      "portable_path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/releases/bspf-0f6b58aba4610edf9b6bcde1e7a0da0c44cf3e4671c1b624b13d7ed95b5ab501/decisions.parquet"
+    },
+    "profiles": {
+      "key": "lookups/botanical-species-profile/releases/bspf-0f6b58aba4610edf9b6bcde1e7a0da0c44cf3e4671c1b624b13d7ed95b5ab501/profiles.parquet",
+      "sha256": "05152ecb8552f768cf444a7a2fe1c7d5a7a8a70de90dc573a01911fe6f11cf92",
+      "bytes": 12742,
+      "portable_path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/releases/bspf-0f6b58aba4610edf9b6bcde1e7a0da0c44cf3e4671c1b624b13d7ed95b5ab501/profiles.parquet"
+    },
+    "manifest": {
+      "key": "lookups/botanical-species-profile/releases/bspf-0f6b58aba4610edf9b6bcde1e7a0da0c44cf3e4671c1b624b13d7ed95b5ab501/manifest.parquet",
+      "sha256": "f4db0f8fc52357e2fcee754ea50a46c335bb30cc108adffca1c17ed4cfd452c0",
+      "bytes": 10073,
+      "portable_path": "conductor/tracks/botanical_species_profile_lookup_20260911/evidence/releases/bspf-0f6b58aba4610edf9b6bcde1e7a0da0c44cf3e4671c1b624b13d7ed95b5ab501/manifest.parquet"
+    }
+  },
+  "counts": {
+    "canonical_taxa": 4,
+    "synonym_names": 6,
+    "cultivar_names": 0,
+    "assertions": 8,
+    "decisions": 188,
+    "profiles": 4,
+    "manifest_rows": 1
+  },
+  "field_coverage": {
+    "growth_habit": {
+      "section": "growth_requirements",
+      "known": 4,
+      "unknown": 0,
+      "conflict": 0,
+      "refused": 0,
+      "withdrawn": 0
+    },
+    "climate_summary": {
+      "section": "growth_requirements",
+      "known": 4,
+      "unknown": 0,
+      "conflict": 0,
+      "refused": 0,
+      "withdrawn": 0
+    },
+    "native_status": {
+      "section": "growth_requirements",
+      "known": 0,
+      "unknown": 4,
+      "conflict": 0,
+      "refused": 0,
+      "withdrawn": 0
+    },
+    "hardiness_range": {
+      "section": "growth_requirements",
+      "known": 0,
+      "unknown": 4,
+      "conflict": 0,
+      "refused": 0,
+      "withdrawn": 0
+    },
+    "temperature_envelope": {
+      "section": "growth_requirements",
+      "known": 0,
+      "unknown": 4,
+      "conflict": 0,
+      "refused": 0,
+      "withdrawn": 0
+    },
+    "precipitation_envelope": {
+      "section": "growth_requirements",
+      "known": 0,
+      "unknown": 4,
+      "conflict": 0,
+      "refused": 0,
+      "withdrawn": 0
+    },
+    "light_requirement": {
+      "section": "growth_requirements",
+      "known": 0,
+      "unknown": 4,
+      "conflict": 0,
+      "refused": 0,
+      "withdrawn": 0
+    },
+    "soil_moisture": {
+      "section": "growth_requirements",
+      "known": 0,
+      "unknown": 4,
+      "conflict": 0,
+      "refused": 0,
+      "withdrawn": 0
+    },
+    "soil_drainage": {
+      "section": "growth_requirements",
+      "known": 0,
+      "unknown": 4,
+      "conflict": 0,
+      "refused": 0,
+      "withdrawn": 0
+    },
+    "soil_texture": {
+      "section": "growth_requirements",
+      "known": 0,
+      "unknown": 4,
+      "conflict": 0,
+      "refused": 0,
+      "withdrawn": 0
+    },
+    "soil_ph": {
+      "section": "growth_requirements",
+      "known": 0,
+      "unknown": 4,
+      "conflict": 0,
+      "refused": 0,
+      "withdrawn": 0
+    },
+    "salinity": {
+      "section": "growth_requirements",
+      "known": 0,
+      "unknown": 4,
+      "conflict": 0,
+      "refused": 0,
+      "withdrawn": 0
+    },
+    "elevation": {
+      "section": "growth_requirements",
+      "known": 0,
+      "unknown": 4,
+      "conflict": 0,
+      "refused": 0,
+      "withdrawn": 0
+    },
+    "drought_tolerance": {
+      "section": "growth_requirements",
+      "known": 0,
+      "unknown": 4,
+      "conflict": 0,
+      "refused": 0,
+      "withdrawn": 0
+    },
+    "phenology": {
+      "section": "growth_requirements",
+      "known": 0,
+      "unknown": 4,
+      "conflict": 0,
+      "refused": 0,
+      "withdrawn": 0
+    },
+    "tissue_water_content": {
+      "section": "fuel_traits",
+      "known": 0,
+      "unknown": 4,
+      "conflict": 0,
+      "refused": 0,
+      "withdrawn": 0
+    },
+    "live_fuel_moisture": {
+      "section": "fuel_traits",
+      "known": 0,
+      "unknown": 4,
+      "conflict": 0,
+      "refused": 0,
+      "withdrawn": 0
+    },
+    "dead_fuel_moisture": {
+      "section": "fuel_traits",
+      "known": 0,
+      "unknown": 4,
+      "conflict": 0,
+      "refused": 0,
+      "withdrawn": 0
+    },
+    "leaf_dry_matter_content": {
+      "section": "fuel_traits",
+      "known": 0,
+      "unknown": 4,
+      "conflict": 0,
+      "refused": 0,
+      "withdrawn": 0
+    },
+    "volatile_oils": {
+      "section": "fuel_traits",
+      "known": 0,
+      "unknown": 4,
+      "conflict": 0,
+      "refused": 0,
+      "withdrawn": 0
+    },
+    "resins": {
+      "section": "fuel_traits",
+      "known": 0,
+      "unknown": 4,
+      "conflict": 0,
+      "refused": 0,
+      "withdrawn": 0
+    },
+    "extractives": {
+      "section": "fuel_traits",
+      "known": 0,
+      "unknown": 4,
+      "conflict": 0,
+      "refused": 0,
+      "withdrawn": 0
+    },
+    "heat_content": {
+      "section": "fuel_traits",
+      "known": 0,
+      "unknown": 4,
+      "conflict": 0,
+      "refused": 0,
+      "withdrawn": 0
+    },
+    "ash_content": {
+      "section": "fuel_traits",
+      "known": 0,
+      "unknown": 4,
+      "conflict": 0,
+      "refused": 0,
+      "withdrawn": 0
+    },
+    "mineral_content": {
+      "section": "fuel_traits",
+      "known": 0,
+      "unknown": 4,
+      "conflict": 0,
+      "refused": 0,
+      "withdrawn": 0
+    },
+    "surface_area_to_volume_ratio": {
+      "section": "fuel_traits",
+      "known": 0,
+      "unknown": 4,
+      "conflict": 0,
+      "refused": 0,
+      "withdrawn": 0
+    },
+    "bulk_density": {
+      "section": "fuel_traits",
+      "known": 0,
+      "unknown": 4,
+      "conflict": 0,
+      "refused": 0,
+      "withdrawn": 0
+    },
+    "curing": {
+      "section": "fuel_traits",
+      "known": 0,
+      "unknown": 4,
+      "conflict": 0,
+      "refused": 0,
+      "withdrawn": 0
+    },
+    "canopy_architecture": {
+      "section": "fuel_traits",
+      "known": 0,
+      "unknown": 4,
+      "conflict": 0,
+      "refused": 0,
+      "withdrawn": 0
+    },
+    "branching_architecture": {
+      "section": "fuel_traits",
+      "known": 0,
+      "unknown": 4,
+      "conflict": 0,
+      "refused": 0,
+      "withdrawn": 0
+    },
+    "litter_persistence": {
+      "section": "fuel_traits",
+      "known": 0,
+      "unknown": 4,
+      "conflict": 0,
+      "refused": 0,
+      "withdrawn": 0
+    },
+    "litter_behavior": {
+      "section": "fuel_traits",
+      "known": 0,
+      "unknown": 4,
+      "conflict": 0,
+      "refused": 0,
+      "withdrawn": 0
+    },
+    "fuel_bed_behavior": {
+      "section": "fuel_traits",
+      "known": 0,
+      "unknown": 4,
+      "conflict": 0,
+      "refused": 0,
+      "withdrawn": 0
+    },
+    "flammability": {
+      "section": "fuel_traits",
+      "known": 0,
+      "unknown": 4,
+      "conflict": 0,
+      "refused": 0,
+      "withdrawn": 0
+    },
+    "fire_tolerance": {
+      "section": "fire_response",
+      "known": 0,
+      "unknown": 4,
+      "conflict": 0,
+      "refused": 0,
+      "withdrawn": 0
+    },
+    "fire_response": {
+      "section": "fire_response",
+      "known": 0,
+      "unknown": 4,
+      "conflict": 0,
+      "refused": 0,
+      "withdrawn": 0
+    },
+    "post_fire_recovery": {
+      "section": "fire_response",
+      "known": 0,
+      "unknown": 4,
+      "conflict": 0,
+      "refused": 0,
+      "withdrawn": 0
+    },
+    "agricultural_use": {
+      "section": "agricultural_roles",
+      "known": 0,
+      "unknown": 4,
+      "conflict": 0,
+      "refused": 0,
+      "withdrawn": 0
+    },
+    "pollinator_value": {
+      "section": "agricultural_roles",
+      "known": 0,
+      "unknown": 4,
+      "conflict": 0,
+      "refused": 0,
+      "withdrawn": 0
+    },
+    "edible": {
+      "section": "agricultural_roles",
+      "known": 0,
+      "unknown": 4,
+      "conflict": 0,
+      "refused": 0,
+      "withdrawn": 0
+    },
+    "timber_value": {
+      "section": "agricultural_roles",
+      "known": 0,
+      "unknown": 4,
+      "conflict": 0,
+      "refused": 0,
+      "withdrawn": 0
+    },
+    "guild_roles": {
+      "section": "agricultural_roles",
+      "known": 0,
+      "unknown": 4,
+      "conflict": 0,
+      "refused": 0,
+      "withdrawn": 0
+    },
+    "nitrogen_fixation": {
+      "section": "agricultural_roles",
+      "known": 0,
+      "unknown": 4,
+      "conflict": 0,
+      "refused": 0,
+      "withdrawn": 0
+    },
+    "rooting_form": {
+      "section": "agricultural_roles",
+      "known": 0,
+      "unknown": 4,
+      "conflict": 0,
+      "refused": 0,
+      "withdrawn": 0
+    },
+    "biomass_accumulation": {
+      "section": "agricultural_roles",
+      "known": 0,
+      "unknown": 4,
+      "conflict": 0,
+      "refused": 0,
+      "withdrawn": 0
+    },
+    "companion_relationship": {
+      "section": "companion_evidence",
+      "known": 0,
+      "unknown": 4,
+      "conflict": 0,
+      "refused": 0,
+      "withdrawn": 0
+    },
+    "objective_effect": {
+      "section": "objective_effects",
+      "known": 0,
+      "unknown": 4,
+      "conflict": 0,
+      "refused": 0,
+      "withdrawn": 0
+    }
+  },
+  "authoring_census_state": "unavailable",
+  "authoring_census_note": "Local PostgreSQL census unavailable: documented credentials rejected on 2026-09-11. No database reads or writes used in this release; existing reviewed rows may exist. This bounded source snapshot does not supersede them. Later census imports require an explicit canonical crosswalk and separate assertions in a new reviewed release.",
+  "http_route": "GET /api/v1/botanical-species-profiles/lookup",
+  "registered_tool": "species_information",
+  "verification": {
+    "state": "passed_local_implementation_checks",
+    "receipt": "evidence/verification.json",
+    "sha256": "fffecc734a8d55646148591214e75147b14cf1b1b18e0974024ee228ea850439",
+    "quality_receipt": "evidence/python-quality-receipt.json",
+    "python_test_counts": {
+      "passed": 6086,
+      "skipped": 150,
+      "xfailed": 1,
+      "failed": 0,
+      "errors": 0
+    }
+  },
+  "production": {
+    "deployed": false,
+    "database_written": false,
+    "object_store_written": false,
+    "herbaria_ingested": false
+  },
+  "independent_review": {
+    "scope": "local-code-api-agent-honesty-only",
+    "verdict_path": "evidence/independent-review.md",
+    "source_admission_authority": false
+  },
+  "candidate_state": "unaccepted_local_fixture_preserved_byte_for_byte",
+  "candidate_readback": "all five existing objects verified locally; no build, source ingestion, pointer change or publication in continuation",
+  "production_authoring_census": "pending; no verified deployed schema, row count, review state or value claim",
+  "source_admission": "pending; local code/API/agent review does not admit source data",
+  "local_continuation": {
+    "private_environment_access": false,
+    "remote_access": false,
+    "database_access": false,
+    "source_ingestion": false,
+    "data_release_publication": false,
+    "deployment": false
+  },
+  "shared_integration_receipt": {
+    "path": "evidence/shared-integration-base.json",
+    "sha256": "a75a34b997e4885d9eafd4d90ec483ea5606a456434cf66ddb698816df4d974f"
+  }
+}

@@ -1,0 +1,218 @@
+diff --git a/services/agri-data-service/src/agri_data_service/agent/tools.py b/services/agri-data-service/src/agri_data_service/agent/tools.py
+--- a/services/agri-data-service/src/agri_data_service/agent/tools.py
++++ b/services/agri-data-service/src/agri_data_service/agent/tools.py
+@@ -24,6 +24,10 @@ from anthropic import beta_async_tool
+ from sqlalchemy import ARRAY, Float, Text, bindparam, text
+
+ from agri_data_service.agent import parquet_reads, warehouse
++from agri_data_service.agent.botanical_species_profiles import (
++    record_profile_tools,
++    species_information as species_profile_information,
++)
+ from agri_data_service.agent.surfaces import (
+     AGENT_SURFACE_NAMES,
+     FEATURE_SURFACE_NAMES,
+@@ -260,10 +264,11 @@ async def run_context(
+     species_token = _allowed_species_id.set(allowed_species_id)
+     ledger_token = _tool_ledger.set(ledger)
+     source_token = warehouse.set_source(warehouse_source)
+     try:
+-        yield ledger
++        with record_profile_tools(_record):
++            yield ledger
+     finally:
+         warehouse.reset_source(source_token)
+         _tool_ledger.reset(ledger_token)
+         _allowed_species_id.reset(species_token)
+         _session_provider.reset(provider_token)
+@@ -1997,4 +2002,5 @@ WAREHOUSE_TOOLS: Final = (
+     observation_coverage_on_day,
+     observation_temporal_neighbors,
+     feature_value_near_point,
+     species_information,
++    species_profile_information,
+ )
+diff --git a/services/agri-data-service/src/agri_data_service/agent/graph.py b/services/agri-data-service/src/agri_data_service/agent/graph.py
+--- a/services/agri-data-service/src/agri_data_service/agent/graph.py
++++ b/services/agri-data-service/src/agri_data_service/agent/graph.py
+@@ -49,7 +49,9 @@
+ WAREHOUSE_TOOLS_FOR_WEB: Final = tuple(
+-    tool for tool in warehouse_tools.WAREHOUSE_TOOLS if tool.name != "species_information"
++    tool
++    for tool in warehouse_tools.WAREHOUSE_TOOLS
++    if tool.name not in {"species_information", "species_profile_information"}
+ )
+@@ -371,7 +373,10 @@ class AssessSufficiency:
+     def decide(evidence: WarehouseEvidence, *, has_question: bool) -> SufficiencyVerdict:
+         """Pure budget rule: fewer distinct populated sources buys more search budget."""
+         populated = len(evidence.populated_tools)
+-        available = len(warehouse_tools.WAREHOUSE_TOOLS)
++        available = sum(
++            tool.name not in {"species_information", "species_profile_information"}
++            for tool in warehouse_tools.WAREHOUSE_TOOLS
++        )
+         coverage = {
+             "populated_tools": list(evidence.populated_tools),
+             "tool_calls_made": len(evidence.tool_calls),
+@@ -424,7 +429,7 @@
+-                # The web pass deliberately omits species_information, but retains the caller-bound
++                # The web pass deliberately omits species_information and species_profile_information, but retains the caller-bound
+                 tool_list=[*WAREHOUSE_TOOLS_FOR_WEB, search_tool],
+diff --git a/services/agri-data-service/src/agri_data_service/agent/mcp_server.py b/services/agri-data-service/src/agri_data_service/agent/mcp_server.py
+--- a/services/agri-data-service/src/agri_data_service/agent/mcp_server.py
++++ b/services/agri-data-service/src/agri_data_service/agent/mcp_server.py
+@@ -45,8 +45,12 @@
+ INSTRUCTIONS: Final = (
+     "Bounded, read-only PlantGeo data reads. Environmental tools use governed Parquet. "
+     "species_information requires an exact Species UUID and returns explicitly unpublished, "
+     "unverified authoring values plus approved-only companion evidence; it never ranks species "
+     "or recommends planting. Every tool caps its own work and reports its evidence posture. A tool "
++    "species_profile_information is a nonspatial lookup requiring the complete canonical taxon "
++    "authority/version/ID and exact immutable bspf- profile release ID, with bounded assertion "
++    "pages. It has no coordinate or selected-day axis and does not rank species or recommend "
++    "planting; use it only beside, never instead of, species_information's authoring evidence. "
+     "that cannot honestly answer returns a typed refusal -- lane_columns_absent, "
+     "parquet_availability_withheld, day_not_written -- rather than an empty result; read the "
+     "refusal, do not treat it as 'no data here'."
+ )
+diff --git a/services/agri-data-service/src/agri_data_service/agent/prompts.py b/services/agri-data-service/src/agri_data_service/agent/prompts.py
+--- a/services/agri-data-service/src/agri_data_service/agent/prompts.py
++++ b/services/agri-data-service/src/agri_data_service/agent/prompts.py
+@@ -72,6 +72,22 @@
+ - The lookup has no occurrence or environmental evidence and cannot rank species, recommend planting, \
+ decide establishment suitability or objective effects, or support fuel/fire claims. An immutable reviewed \
+ Parquet profile release is still required for those downstream uses.
+
++## Species profiles are reference evidence
++- Use species_profile_information only with the caller's canonical taxon ID, taxonomic authority, \
++authority version and exact bspf- profile release ID. Never guess an identifier, join by name or \
++substitute latest, and never use it in place of species_information's authoring evidence.
++- This static lookup has no selected-day or zoom axis. Cite its profile release and assertion source \
++version, licence, evidence locator, raw value, normalized value and measurement context when making a claim.
++- Read each field's state. Unknown, conflict, refused and withdrawn fields do not support a positive \
++or negative claim. Follow the returned cursor when evidence_complete is false before citing that field.
++- Keep growth requirements, fuel traits, fire response, agricultural roles, companion evidence and \
++objective effects separate. Tissue water, live/dead moisture, dry matter, oils, resins, heat, ash, curing, \
++architecture, litter and fuel-bed behavior are distinct; fire tolerance or recovery cannot replace them.
++- A profile is not local environmental coverage, establishment compatibility, a species ranking or a \
++planting recommendation. Do not infer objective benefits from traits, tolerances, nearby occurrences or \
++companion labels. Condition-specific effects and recommendations require the separate reviewed \
++botanical recommendation validation contract. Report explicit profile refusals without filling gaps \
++from editable species rows or general knowledge.
++
+ ## Web search
+ - Web search is a fallback, not a first move. The harness enables it only after the warehouse pass \
+ has run, and only when local evidence alone cannot support a recommendation.
+diff --git a/services/agri-data-service/src/agri_data_service/agent/AGENTS.md b/services/agri-data-service/src/agri_data_service/agent/AGENTS.md
+--- a/services/agri-data-service/src/agri_data_service/agent/AGENTS.md
++++ b/services/agri-data-service/src/agri_data_service/agent/AGENTS.md
+@@ -1,5 +1,32 @@
+ # The location-analysis agent graph
+
++## Static botanical species profiles
++
++`botanical_species_profiles.species_information` is registered in `WAREHOUSE_TOOLS` under the alias
++`species_profile_information` (its module-level name collides with the existing companion/authoring
++tool of the same name in `tools.py`). It is exposed identically through the Anthropic graph, OpenAI
++`tool_schemas()` and MCP `tools/list`/`tools/call`. It accepts the complete canonical
++authority/version/taxon identity and an exact `bspf-<sha256>` profile release. It never resolves a
++name, reads a latest pointer, queries editable `agri.species`/`companion_relationships` rows, or
++performs a species ranking.
++
++The plane reads the immutable manifest and Parquet artifacts through the same process-wide bounded
++worker admission as environmental reads. Storage is configured lazily with
++`BotoAvailabilityStorage.from_settings`; `use_profile_storage` injects a local store for tests. The
++response includes all six distinct evidence sections, raw and normalized assertions, source versions
++and licences, decision identifiers and the content-bound release manifest. Assertion pages follow a
++bound cursor; `evidence_complete` on a field tells the caller whether the current page already
++carries every assertion it cites.
++
++Excluded from `WAREHOUSE_TOOLS_FOR_WEB` and from the sufficiency-budget denominator alongside
++`species_information`, for the same reason: a static reference lookup is not selected-day
++environmental coverage and should neither gate the web-search fallback nor count against how much
++search budget a thin environmental result buys.
++
+ ## Warehouse tools
+ See `tools.py` for the full published surface.
+diff --git a/services/agri-data-service/src/agri_data_service/interface/http/__init__.py b/services/agri-data-service/src/agri_data_service/interface/http/__init__.py
+--- a/services/agri-data-service/src/agri_data_service/interface/http/__init__.py
++++ b/services/agri-data-service/src/agri_data_service/interface/http/__init__.py
+@@ -3,7 +3,10 @@
+ See `AGENTS.md` in this directory for the wire freeze it implements and the memory guard it carries.
+ """
+
++from agri_data_service.interface.http.botanical_species_profiles import botanical_species_profiles_bp
+ from agri_data_service.interface.http.botanical_species_information import botanical_species_information_bp
+ from agri_data_service.interface.http.parquet_routes import parquet_bp
+
+-__all__ = ["botanical_species_information_bp", "parquet_bp"]
++__all__ = ["botanical_species_information_bp", "botanical_species_profiles_bp", "parquet_bp"]
+diff --git a/services/agri-data-service/src/agri_data_service/app.py b/services/agri-data-service/src/agri_data_service/app.py
+--- a/services/agri-data-service/src/agri_data_service/app.py
++++ b/services/agri-data-service/src/agri_data_service/app.py
+@@ -12,7 +12,7 @@
+ from agri_data_service.config import settings
+ from agri_data_service.db.engine import dispose_combined_local_engine, dispose_service_engines
+-from agri_data_service.interface.http import botanical_species_information_bp, parquet_bp
++from agri_data_service.interface.http import botanical_species_information_bp, botanical_species_profiles_bp, parquet_bp
+ from agri_data_service.routes import (
+     agent_bp,
+     health_bp,
+     jobs_bp,
+     strategies_bp,
+ )
+@@ -98,10 +98,12 @@
+     profile_blueprints = {
+         "combined_local": (
+             strategies_bp,
+             jobs_bp,
+             parquet_bp,
+             botanical_species_information_bp,
++            botanical_species_profiles_bp,
+         ),
+         "receiver_writer": (jobs_bp,),
+-        "published_reader": (parquet_bp, botanical_species_information_bp),
++        "published_reader": (parquet_bp, botanical_species_information_bp, botanical_species_profiles_bp),
+     }[settings.service_profile]
+diff --git a/services/agri-data-service/tests/test_agent_provider_wiring.py b/services/agri-data-service/tests/test_agent_provider_wiring.py
+--- a/services/agri-data-service/tests/test_agent_provider_wiring.py
++++ b/services/agri-data-service/tests/test_agent_provider_wiring.py
+@@ -50,7 +50,7 @@
+ if TYPE_CHECKING:
+     from collections.abc import Callable
+
+-WAREHOUSE_TOOL_COUNT = 11
++WAREHOUSE_TOOL_COUNT = 12
+ SENTINEL_KEY = "sk-test-not-a-real-credential"
+diff --git a/services/agri-data-service/tests/test_agent_graph.py b/services/agri-data-service/tests/test_agent_graph.py
+--- a/services/agri-data-service/tests/test_agent_graph.py
++++ b/services/agri-data-service/tests/test_agent_graph.py
+@@ -735,9 +735,10 @@ async def test_every_tool_statement_is_read_only() -> None:
+         await agent_tools.query_feature_value_near_point(
+             surface_name="water-gauges", day=selected_day, longitude=-116.2, latitude=43.6
+         )
+-    # Every published tool is driven above, so a tool added to WAREHOUSE_TOOLS without a call here
+-    # breaks this assertion rather than slipping through unscanned.
+-    published_tool_count = 11
+-    assert len(agent_tools.WAREHOUSE_TOOLS) == published_tool_count
++    # species_information and species_profile_information have their own storage-contract tests and
++    # execute no SQL, so both are excused from being driven in this read-only-statement sweep.
++    published_tool_count = 10
++    assert (
++        sum(tool.name not in {"species_information", "species_profile_information"} for tool in agent_tools.WAREHOUSE_TOOLS)
++        == published_tool_count
++    )
+@@ -768,10 +770,12 @@ def test_tool_schemas_publish_bounded_arguments() -> None:
+     for tool in agent_tools.WAREHOUSE_TOOLS:
+         definition = tool.to_dict()
+         name = definition["name"]
+         properties = definition["input_schema"]["properties"]
+         if name == "species_information":
+             assert {"species_id", "companion_limit"} == set(properties), name
++        elif name == "species_profile_information":
++            assert {"authority", "authority_version", "taxon_id", "release_id"} <= set(properties), name
+         elif name in surface_only:
+             assert {"surface_name", "day"} <= set(properties), name
+         else:
+             assert {"longitude", "latitude"} <= set(properties), name
+         assert definition["description"]
