@@ -73,6 +73,11 @@ export function draftInquiry(input: DraftInquiryInput): DraftInquiryResult {
     case "advisory_sme":
       lines.push("Question: Given your documented topic area, what guidance or referral can you offer here?");
       break;
+    case "documented_introduction_forwarding":
+      lines.push(
+        "Question: What is your documented introduction or forwarding process for this kind of request, and what are its stated limits?"
+      );
+      break;
     default:
       lines.push("Question: What is the appropriate next step for this inquiry?");
   }

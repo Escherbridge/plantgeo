@@ -131,4 +131,22 @@ describe("draftInquiry", () => {
       "introduction/forwarding capability is not documented for this route and is not claimed by this draft"
     );
   });
+
+  it("asks about the documented process AND its stated limits for documented_introduction_forwarding routes, instead of the generic fallback", () => {
+    const contact = buildContact(
+      buildRoute({ routeMeaning: "documented_introduction_forwarding", supportsIntroductionOrForwarding: true })
+    );
+    const result = draftInquiry({
+      parcelKey: { sourceNamespace: "wa-king-county-assessor", originalId: "0002", state: "WA" },
+      county: "King",
+      state: "WA",
+      userProvidedIdea: "Test idea",
+      contact,
+    });
+
+    expect(result.draftText).toMatch(
+      /documented introduction or forwarding process.*stated limits/i
+    );
+    expect(result.draftText).not.toMatch(/What is the appropriate next step for this inquiry\?/);
+  });
 });
