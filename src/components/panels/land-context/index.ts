@@ -1,4 +1,6 @@
 export { LandContextPanel } from "./LandContextPanel";
+export { LandContextPanelHost } from "./LandContextPanelHost";
+export { toLandContextPanelData } from "./adapter";
 export { OfficeCard } from "./OfficeCard";
 export { AdviserCard } from "./AdviserCard";
 export { RouteBadge } from "./RouteBadge";
