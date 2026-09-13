@@ -24,6 +24,8 @@ TERM_COLUMNS: Final[dict[str, str]] = {
     f"{_DWC}scientificName": "scientificName",
     f"{_DWC}family": "family",
     f"{_DWC}genus": "genus",
+    f"{_DWC}specificEpithet": "specificEpithet",
+    f"{_DWC}infraspecificEpithet": "infraspecificEpithet",
     f"{_DWC}taxonRank": "taxonRank",
     f"{_DWC}identifiedBy": "identifiedBy",
     f"{_DWC}dateIdentified": "dateIdentified",
