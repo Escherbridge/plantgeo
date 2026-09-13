@@ -40,6 +40,14 @@ export interface BoundaryVersionRef {
   interestType: string;
   state: PilotState;
   county: string | null;
+  /**
+   * Hex-encoded WKB/EWKB geometry for this feature, or `null` when no
+   * geometry is available (e.g. an unwired reader placeholder). Decode with
+   * `decodeBoundaryGeometry` from `./geometry/boundary-geometry-adapter`
+   * rather than reading this field directly — see that module for the
+   * null-vs-throw contract.
+   */
+  geometryWkb: string | null;
 }
 
 export interface OrganizationOfficeRef {

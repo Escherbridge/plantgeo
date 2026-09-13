@@ -26,6 +26,15 @@ import type {
   PublicContactRouteRef,
   SourceReleaseRef,
 } from "./types";
+import { decodeBoundaryGeometry } from "./geometry/boundary-geometry-adapter";
+
+// Re-exported so callers of this reader (and its eventual real Parquet-lane
+// replacement) can decode `CandidateBoundaryFeature.boundary.geometryWkb`
+// without importing from `./geometry` directly. See
+// `./geometry/boundary-geometry-adapter.ts` for the null-vs-throw contract:
+// a `null` `geometryWkb` decodes to `null`, malformed-but-present WKB
+// throws `WkbDecodeError`.
+export { decodeBoundaryGeometry };
 
 export interface BboxDegrees {
   west: number;
