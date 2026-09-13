@@ -45,6 +45,7 @@ This registry contains planned, active, and blocked work only. Completed impleme
 
 | Track | State |
 | --- | --- |
+| [Intervention drawing + visibility](tracks/intervention_drawing_visibility_20260912/plan.md) | planned |
 | [Community engagement completion](tracks/community_engagement_completion_20260805/plan.md) | planned |
 | [CDS-only products](tracks/cds_only_products_20260808/plan.md) | planned |
 | [Rangeland carbon lane](tracks/rangeland_carbon_lane_20260824/spec.md) | planned |

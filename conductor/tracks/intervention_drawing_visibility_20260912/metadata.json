@@ -1,0 +1,36 @@
+{
+  "track_id": "intervention_drawing_visibility_20260912",
+  "title": "Intervention drawing + visibility",
+  "type": "feature",
+  "status": "pending",
+  "created": "2026-09-12",
+  "description": "Add a polygon/point drawing tool (terra-draw) to intervention submission, a typed land/air intervention category with server-side area caps, and client-side map visibility for drafted/proposed interventions.",
+  "dependencies": [
+    {
+      "track": "community_engagement_completion_20260805",
+      "relationship": "blocks_acceptance",
+      "note": "This track's 'published interventions visible' criterion is gated on that track landing the publishContribution/rejectContribution UI fix; this track's own scope (drawing, area caps, category, draft/proposed overlay) does not depend on it."
+    },
+    {
+      "track": "mycelium_cloud_seeding_spike_20260802",
+      "relationship": "informational_only",
+      "note": "Blocked research spike, no product/schema decisions to reuse; the air-intervention category introduced here stays generic and must not duplicate or unblock that spike."
+    }
+  ],
+  "partitions": {
+    "owns": [
+      "src/components/panels/InterventionSubmitModal.tsx",
+      "src/lib/server/services/intervention-geometry.ts",
+      "src/lib/environmental/intervention.ts",
+      "src/lib/map/layer-registry.ts (additive: new draft/proposed source+layer only)"
+    ],
+    "touches": [
+      "src/lib/server/trpc/routers/interventions.ts (submitIntervention, listMySubmissions, listProposed only; proposeIntervention untouched)",
+      "src/lib/map/measurement.ts (export polygonArea for reuse; no behavior change)",
+      "src/lib/server/db/schema.ts (only if category becomes a first-class column, decided in Phase 1)"
+    ],
+    "confidence": "medium",
+    "computed_at_commit": "b98e438"
+  },
+  "resource": "./spec.md"
+}
