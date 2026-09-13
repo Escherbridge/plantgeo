@@ -29,6 +29,20 @@
       "when": 1789344100000,
       "tag": "0003_land_context",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1789344200000,
+      "tag": "0004_public_strategy_requests",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1789344300000,
+      "tag": "0005_intervention_tiles_kind",
+      "breakpoints": true
     }
   ]
 }

@@ -1,42 +1,66 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { trpc } from "@/lib/trpc/client";
-
-const STRATEGY_TYPES = [
-  { value: "keyline", label: "Keyline Design" },
-  { value: "silvopasture", label: "Silvopasture" },
-  { value: "reforestation", label: "Reforestation" },
-  { value: "biochar", label: "Biochar" },
-  { value: "water_harvesting", label: "Water Harvesting" },
-  { value: "cover_cropping", label: "Cover Cropping" },
-] as const;
-
-type StrategyType = (typeof STRATEGY_TYPES)[number]["value"];
+import type { InterventionType } from "@/lib/environmental/intervention";
+import {
+  INTERVENTION_TYPE_LABELS,
+  TYPES_BY_CATEGORY,
+} from "@/lib/environmental/intervention-form";
+import type { InterventionGeometry } from "@/lib/geo/intervention-geometry-schema";
 
 interface RequestSubmitModalProps {
+  /** Map centre the request is pinned to; recentring the map moves the pin. */
   lat: number;
   lon: number;
-  teamId?: string;
-  workspaceName?: string;
   onClose: () => void;
   onSuccess?: () => void;
 }
 
+/**
+ * Captures one signed-in contributor's PUBLIC strategy request -- "this area could use X".
+ *
+ * What changed in `public_strategy_requests_20260913` Phase 3: this form used to write
+ * `community.submitRequest`, a private, owner/team-scoped `strategy_requests` row with bare
+ * lat/lon columns that no map layer could ever draw, and its copy said so. It now writes
+ * `interventions.submitRequest`, which creates a published `geo.features` row carrying
+ * `properties.kind = "request"` -- on the map the moment it is written, clickable and commentable
+ * by every reader. The team/workspace props went with the boundary: public is the only mode, so
+ * there is no workspace to scope a request to and no second consent story to tell.
+ *
+ * Geometry, and why there is no drawing tool here: `submitRequest` requires a real
+ * `InterventionGeometry`, never a bare coordinate pair, so the map centre is promoted to a GeoJSON
+ * Point below. That is deliberately the whole flow. A request is a low-friction ask about an area
+ * ("people can make recommendations even if they don't even live here"), not a surveyed parcel
+ * boundary; OQ-F resolved to defaulting requests to a single Point rather than pushing every
+ * submitter through the polygon picker `InterventionSubmitModal` mounts. A Point has no area, so
+ * the land-category area cap has nothing to say about it, and an optional drawn request area later
+ * reuses the same validator with no schema change.
+ */
 export function RequestSubmitModal({
   lat,
   lon,
-  teamId,
-  workspaceName,
   onClose,
   onSuccess,
 }: RequestSubmitModalProps) {
-  const [strategyType, setStrategyType] = useState<StrategyType>("reforestation");
+  const [requestType, setRequestType] = useState<InterventionType>(
+    TYPES_BY_CATEGORY.land[0]
+  );
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [locationConsent, setLocationConsent] = useState(false);
+  const [publicationConsent, setPublicationConsent] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+
+  // Land-category only (OQ-D): nothing in the request flow reaches an air-category type, so the
+  // category picker `InterventionSubmitModal` shows has no counterpart here.
+  const typeOptions = TYPES_BY_CATEGORY.land;
+
+  /** The map centre, promoted to the real geometry the mutation requires. */
+  const geometry = useMemo<InterventionGeometry>(
+    () => ({ type: "Point", coordinates: [lon, lat] }),
+    [lat, lon]
+  );
 
   useEffect(() => {
     const previouslyFocused = document.activeElement;
@@ -51,7 +75,7 @@ export function RequestSubmitModal({
     };
   }, [onClose]);
 
-  const submitMutation = trpc.community.submitRequest.useMutation({
+  const submitMutation = trpc.interventions.submitRequest.useMutation({
     onSuccess: () => {
       onSuccess?.();
       onClose();
@@ -68,18 +92,16 @@ export function RequestSubmitModal({
       setError("Title must be at least 3 characters.");
       return;
     }
-    if (!locationConsent) {
-      setError("Confirm the private location storage notice before submitting.");
+    if (!publicationConsent) {
+      setError("Confirm that this request may be published before submitting.");
       return;
     }
     submitMutation.mutate({
-      strategyType,
-      title: title.trim(),
+      name: title.trim(),
+      type: requestType,
       description: description.trim() || undefined,
-      lat,
-      lon,
-      teamId,
-      locationConsent: true,
+      geometry,
+      publicationConsent: true,
     });
   }
 
@@ -93,7 +115,7 @@ export function RequestSubmitModal({
       >
         <div className="flex items-center justify-between border-b border-[hsl(var(--border))] p-4 sm:border-none sm:p-6 sm:pb-0">
           <h2 id="strategy-request-title" className="text-lg font-semibold text-[hsl(var(--foreground))]">
-            Submit Strategy Request
+            Request a Strategy Here
           </h2>
           <button
             ref={closeButtonRef}
@@ -110,8 +132,9 @@ export function RequestSubmitModal({
 
         <div className="flex-1 overflow-y-auto p-4 sm:p-6">
         <p className="text-xs text-[hsl(var(--muted-foreground))] mb-4">
-          Approximate area: {lat.toFixed(2)}, {lon.toFixed(2)} &middot; this
-          private request is not shown on the public map.
+          Pinned at {lat.toFixed(4)}, {lon.toFixed(4)} &middot; recentre the map to
+          move the pin. Your request goes on the public map straight away, with no
+          review queue.
         </p>
 
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">
@@ -121,13 +144,13 @@ export function RequestSubmitModal({
             </label>
             <select
               id="strategy-request-type"
-              value={strategyType}
-              onChange={(e) => setStrategyType(e.target.value as StrategyType)}
+              value={requestType}
+              onChange={(e) => setRequestType(e.target.value as InterventionType)}
               className="min-h-11 rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-[hsl(var(--foreground))] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
             >
-              {STRATEGY_TYPES.map((s) => (
-                <option key={s.value} value={s.value}>
-                  {s.label}
+              {typeOptions.map((type) => (
+                <option key={type} value={type}>
+                  {INTERVENTION_TYPE_LABELS[type]}
                 </option>
               ))}
             </select>
@@ -157,27 +180,27 @@ export function RequestSubmitModal({
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               rows={3}
+              maxLength={2000}
               placeholder="Describe why this area needs intervention (optional)"
               className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-[hsl(var(--foreground))] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))] placeholder:text-[hsl(var(--muted-foreground))] resize-none"
             />
           </div>
 
+          {/* The same explicit consent gate `submitIntervention` uses, and for the same reason: a
+              request is exactly as public as a published intervention, so it takes the identical
+              gate rather than a weaker one. `publicationConsent: true` is a literal the server
+              re-checks -- unticking this box cannot be routed around by the client. */}
           <label className="flex items-start gap-2 rounded-lg border border-[hsl(var(--border))] p-3 text-sm text-[hsl(var(--foreground))]">
             <input
               type="checkbox"
-              checked={locationConsent}
-              onChange={(event) => setLocationConsent(event.target.checked)}
+              checked={publicationConsent}
+              onChange={(event) => setPublicationConsent(event.target.checked)}
               className="mt-0.5"
             />
             <span>
-              I understand that the exact map location is stored with this
-              {teamId
-                ? ` request and shared with authenticated members of ${
-                    workspaceName ?? "the selected partner workspace"
-                  }.`
-                : " private request."}{" "}
-              It is never shown on the map. To propose a site that can appear
-              on the map after review, use &ldquo;+ Recommend&rdquo; instead.
+              I understand this request is published immediately: its location, title
+              and description appear on the public map for anyone to read, comment on
+              and respond to.
             </span>
           </label>
 
@@ -195,10 +218,10 @@ export function RequestSubmitModal({
             </button>
             <button
               type="submit"
-              disabled={submitMutation.isPending || !locationConsent}
+              disabled={submitMutation.isPending || !publicationConsent}
               className="min-h-11 px-4 py-2 rounded-lg bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))] text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
             >
-              {submitMutation.isPending ? "Submitting..." : "Submit Request"}
+              {submitMutation.isPending ? "Posting..." : "Post Request"}
             </button>
           </div>
         </form>

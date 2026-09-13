@@ -161,13 +161,14 @@ function ClimateDetailsBody() {
 }
 
 function CommunityDetailsBody() {
-  const { bbox } = useViewportBounds();
+  // No bbox: the panel stopped listing requests when they became public map features
+  // (`public_strategy_requests_20260913` Phase 3), so nothing here is viewport-scoped any more.
   const latitude = useMapStore((state) => state.viewport.latitude);
   const longitude = useMapStore((state) => state.viewport.longitude);
   // Memoized because it is a prop object rebuilt on every pan; the region reads it for the
   // submit form's default place, not for a query key.
   const mapCenter = useMemo(() => ({ lat: latitude, lon: longitude }), [latitude, longitude]);
-  return <CommunityDetails mapCenter={mapCenter} bbox={bbox ?? undefined} />;
+  return <CommunityDetails mapCenter={mapCenter} />;
 }
 
 function TeamDetailsBody() {

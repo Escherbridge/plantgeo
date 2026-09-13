@@ -15,7 +15,7 @@ const MAX_FEATURES = 2_000;
 
 /**
  * Requests per minute per caller. This endpoint is unauthenticated and each call is a full
- * grouped scan of strategy_requests, so an unlimited caller can both spend the database and
+ * grouped scan of the request features, so an unlimited caller can both spend the database and
  * sweep the whole grid cell by cell; the whole-cell filter in aggregateActivityGrid stops that
  * sweep resolving a point, and this stops it being free.
  */

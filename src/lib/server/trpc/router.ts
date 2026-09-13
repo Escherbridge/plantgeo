@@ -9,7 +9,6 @@ import { wildfireRouter } from "@/lib/server/trpc/routers/wildfire";
 import { visualizationRouter } from "@/lib/server/trpc/routers/visualization";
 import { placesRouter } from "@/lib/server/trpc/routers/places";
 import { environmentalRouter } from "@/lib/server/trpc/routers/environmental";
-import { communityRouter } from "@/lib/server/trpc/routers/community";
 import { interventionsRouter } from "@/lib/server/trpc/routers/interventions";
 import { interventionSocialRouter } from "@/lib/server/trpc/routers/intervention-social";
 import { strategyRouter } from "@/lib/server/trpc/routers/strategy";
@@ -31,7 +30,10 @@ export const appRouter = router({
   visualization: visualizationRouter,
   places: placesRouter,
   environmental: environmentalRouter,
-  community: communityRouter,
+  // No `community` namespace: its five procedures (submitRequest/voteOnRequest/getRequests/
+  // getPriorityZones/getRequestById) were the private strategy-request path, retired by
+  // `public_strategy_requests_20260913` Phase 3. Submitting is now
+  // `interventions.submitRequest`; reading is the map itself.
   interventions: interventionsRouter,
   interventionSocial: interventionSocialRouter,
   strategy: strategyRouter,

@@ -363,38 +363,33 @@ export const alerts = trackingSchema.table("alerts", {
 // Community Strategy Requests (public schema)
 // ============================================
 
-export const strategyRequests = pgTable("strategy_requests", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  userId: uuid("user_id").references(() => users.id),
-  teamId: uuid("team_id").references(() => teams.id),
-  strategyType: varchar("strategy_type", { length: 50 }).notNull(), // 'keyline'|'silvopasture'|'reforestation'|'biochar'|'water_harvesting'|'cover_cropping'
-  title: text("title").notNull(),
-  description: text("description"),
-  lat: doublePrecision("lat").notNull(),
-  lon: doublePrecision("lon").notNull(),
-  status: varchar("status", { length: 20 }).default("open"), // 'open'|'in_progress'|'completed'
-  voteCount: integer("vote_count").default(0),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
-});
+// `strategy_requests` and `priority_zones` were dropped by
+// `drizzle/0004_public_strategy_requests.sql` (track `public_strategy_requests_20260913`,
+// Phase 3). A strategy request is now a published `geo.features` row carrying
+// `properties.kind = 'request'`, written by `interventions.submitRequest` -- on the map, readable
+// by everyone, and commentable/likeable through the same feature-social backend an intervention
+// uses. The DBSCAN `priority_zones` rollup went with its only data source and is not rebuilt.
 
+/**
+ * A no-toggle-off "support" vote on a public strategy request.
+ *
+ * Phase 1 (OQ-C) deliberately kept this SEPARATE from `geo.feature_likes`: a like is a per-user
+ * toggle whose count is always `count(*)`, a vote is a one-way signal. The foreign key moved from
+ * the dropped `strategy_requests.id` to `geo.features.id` so the vote follows the request to its
+ * new home.
+ *
+ * DORMANT as of Phase 3: `community.voteOnRequest`, its only writer, was deleted with the rest of
+ * the retired private path and no replacement procedure is wired yet. The table is kept, empty,
+ * because the product decision is that votes survive as a concept -- not because anything reads it
+ * today. Wiring it is a future track's work.
+ */
 export const requestVotes = pgTable("request_votes", {
-  requestId: uuid("request_id").notNull().references(() => strategyRequests.id, { onDelete: "cascade" }),
+  featureId: uuid("feature_id").notNull().references(() => features.id, { onDelete: "cascade" }),
   userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 }, (rv) => ({
-  pk: primaryKey({ columns: [rv.requestId, rv.userId] }),
+  pk: primaryKey({ columns: [rv.featureId, rv.userId] }),
 }));
-
-export const priorityZones = pgTable("priority_zones", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  strategyType: varchar("strategy_type", { length: 50 }).notNull(),
-  requestCount: integer("request_count").notNull(),
-  totalVotes: integer("total_votes").notNull(),
-  centroidLat: doublePrecision("centroid_lat"),
-  centroidLon: doublePrecision("centroid_lon"),
-  geojson: jsonb("geojson"), // ConvexHull polygon from DBSCAN cluster
-  computedAt: timestamp("computed_at", { withTimezone: true }).defaultNow(),
-});
 
 // ============================================
 // Raster Publication Catalog (geo schema)

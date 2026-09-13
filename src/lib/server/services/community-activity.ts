@@ -1,9 +1,55 @@
-/** Server-side aggregates over community strategy requests. See `src/lib/server/AGENTS.md` §community-activity. */
+/**
+ * Server-side aggregates over community strategy requests. See `src/lib/server/AGENTS.md`
+ * §community-activity.
+ *
+ * SOURCE MOVED 2026-09-13 (`public_strategy_requests_20260913`, Phase 3). These aggregates read
+ * `strategy_requests` until that table was dropped; a request is now a published `geo.features`
+ * row stamped `properties.kind = 'request'`, and the grid reads `ST_X/ST_Y(geom)` where it used to
+ * read the bare `lat`/`lon` columns. The grid maths, the whole-cell filter and the
+ * `MINIMUM_CELL_MEMBERS` floor are unchanged: `/api/v1/action-network` is still unauthenticated,
+ * and a floor that is cheap to keep is not worth re-deriving from the fact that the underlying
+ * rows became public.
+ *
+ * `voteCount` now counts `request_votes` rows keyed on the feature. That table is dormant in this
+ * pass (its writer was retired with the private path and no replacement is wired yet), so every
+ * cell currently reports zero votes -- a real count of a real, empty table, not a fabricated zero.
+ */
 
-import { and, eq, isNull, or, sql, type SQL } from "drizzle-orm";
+import { sql, type SQL } from "drizzle-orm";
 import type { db } from "@/lib/server/db";
-import { strategyRequests, teamMembers } from "@/lib/server/db/schema";
+import { features, layers } from "@/lib/server/db/schema";
 import type { BoundingBox } from "@/lib/server/security/bbox";
+
+/**
+ * Restricts every aggregate below to published request features on the interventions layer.
+ *
+ * Intervention recommendations live in the same table and must not be counted as community
+ * demand: the two are different product objects and the heatmap has only ever meant "people asked
+ * for something here".
+ */
+const REQUEST_FEATURE_FILTER = sql`
+  ${features.status} = 'published'
+  and ${features.properties} ->> 'kind' = 'request'
+  and ${features.geom} is not null
+  and exists (
+    select 1 from ${layers} where ${layers.id} = ${features.layerId}
+      and ${layers.name} = 'interventions'
+  )
+`;
+
+/** Longitude of a request feature, in the same units the dropped `lon` column carried. */
+const REQUEST_LONGITUDE = sql`st_x(${features.geom}::geometry)`;
+
+/** Latitude of a request feature, in the same units the dropped `lat` column carried. */
+const REQUEST_LATITUDE = sql`st_y(${features.geom}::geometry)`;
+
+/** Votes cast on one request feature. Dormant in this pass -- see the module note above. */
+const REQUEST_VOTES = sql`(
+  select count(*) from request_votes v where v.feature_id = ${features.id}
+)`;
+
+/** The unified `InterventionType` a request carries, replacing `strategy_requests.strategy_type`. */
+const REQUEST_STRATEGY_TYPE = sql`coalesce(${features.properties} ->> 'type', 'unspecified')`;
 
 type Database = typeof db;
 
@@ -130,7 +176,7 @@ export async function aggregateActivityGrid(
   options: ActivityGridOptions
 ): Promise<ActivityGrid> {
   const cellDegrees = gridCellDegrees(options.zoom);
-  const conditions: SQL[] = [];
+  const conditions: SQL[] = [REQUEST_FEATURE_FILTER];
 
   if (options.boundingBox) {
     // Whole cells only -- see activityCellRange. The BETWEEN bounds are the real filter and use
@@ -140,12 +186,12 @@ export async function aggregateActivityGrid(
     // disagree at a cell boundary, which is the same differencing hole in a smaller costume.
     const range = activityCellRange(options.boundingBox, cellDegrees);
     conditions.push(
-      sql`${strategyRequests.lon} >= ${range.minimumLongitude}`,
-      sql`${strategyRequests.lon} <= ${range.maximumLongitude}`,
-      sql`${strategyRequests.lat} >= ${range.minimumLatitude}`,
-      sql`${strategyRequests.lat} <= ${range.maximumLatitude}`,
-      sql`floor(${strategyRequests.lon} / ${cellDegrees}) BETWEEN ${range.westCell} AND ${range.eastCell}`,
-      sql`floor(${strategyRequests.lat} / ${cellDegrees}) BETWEEN ${range.southCell} AND ${range.northCell}`
+      sql`${REQUEST_LONGITUDE} >= ${range.minimumLongitude}`,
+      sql`${REQUEST_LONGITUDE} <= ${range.maximumLongitude}`,
+      sql`${REQUEST_LATITUDE} >= ${range.minimumLatitude}`,
+      sql`${REQUEST_LATITUDE} <= ${range.maximumLatitude}`,
+      sql`floor(${REQUEST_LONGITUDE} / ${cellDegrees}) BETWEEN ${range.westCell} AND ${range.eastCell}`,
+      sql`floor(${REQUEST_LATITUDE} / ${cellDegrees}) BETWEEN ${range.southCell} AND ${range.northCell}`
     );
   }
 
@@ -153,17 +199,17 @@ export async function aggregateActivityGrid(
   // written once; repeating a parameterized expression is not GROUP BY-safe.
   const rows = await database
     .select({
-      longitudeIndex: sql<number>`floor(${strategyRequests.lon} / ${cellDegrees})::int`,
-      latitudeIndex: sql<number>`floor(${strategyRequests.lat} / ${cellDegrees})::int`,
+      longitudeIndex: sql<number>`floor(${REQUEST_LONGITUDE} / ${cellDegrees})::int`,
+      latitudeIndex: sql<number>`floor(${REQUEST_LATITUDE} / ${cellDegrees})::int`,
       featureCount: sql<number>`count(*)::int`,
-      voteCount: sql<number>`coalesce(sum(${strategyRequests.voteCount}), 0)::int`,
-      newestCreatedAt: sql<unknown>`max(${strategyRequests.createdAt})`,
+      voteCount: sql<number>`coalesce(sum(${REQUEST_VOTES}), 0)::int`,
+      newestCreatedAt: sql<unknown>`max(${features.createdAt})`,
     })
-    .from(strategyRequests)
-    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .from(features)
+    .where(sql.join(conditions, sql` and `))
     .groupBy(sql`1`, sql`2`)
     .having(
-      sql`count(*) >= ${Math.max(MINIMUM_CELL_MEMBERS, options.minimumFeatureCount)} and coalesce(sum(${strategyRequests.voteCount}), 0) >= ${options.minimumVotes}`
+      sql`count(*) >= ${Math.max(MINIMUM_CELL_MEMBERS, options.minimumFeatureCount)} and coalesce(sum(${REQUEST_VOTES}), 0) >= ${options.minimumVotes}`
     )
     .orderBy(sql`3 desc`, sql`1`, sql`2`)
     .limit(options.limit);
@@ -201,37 +247,42 @@ export function activityGridToFeatureCollection(
   };
 }
 
-/** Restricts requests to the ones an account may already read: its own, or its workspaces'. */
-function visibleRequestCondition(userId: string, teamId?: string): SQL {
-  if (teamId) return eq(strategyRequests.teamId, teamId);
-  return or(
-    and(eq(strategyRequests.userId, userId), isNull(strategyRequests.teamId)),
-    sql`${strategyRequests.teamId} in (select ${teamMembers.teamId} from ${teamMembers} where ${teamMembers.userId} = ${userId})`
-  )!;
-}
-
-/** Counts requests and votes per strategy type across the requests a caller may read. */
+/**
+ * Counts requests and votes per strategy type.
+ *
+ * There is no visibility condition any more, and its absence is the point. The old version
+ * restricted the aggregate to "requests the caller may already read" -- own rows, or a workspace's
+ * -- because a strategy request was private. Phase 3 of `public_strategy_requests_20260913`
+ * retired that boundary: every request is a published feature every reader can already click on
+ * the map, so scoping the *summary* of public rows would hide nothing and would only make the
+ * number disagree with the map.
+ *
+ * `scope.userId`/`scope.teamId` are therefore accepted and NOT used as filters. They are kept in
+ * the signature because the one remaining caller (`teams.getTeamDashboard`) has already
+ * authenticated and authorized by the time it calls, and dropping the parameters would read as
+ * "this call needs no caller" rather than "this answer is the same for every caller". The
+ * behaviour change is real and worth naming: a workspace dashboard's priority-zone list now
+ * summarizes community-wide request demand, not that workspace's own private asks.
+ */
 export async function summarizeStrategyActivity(
   database: Database,
   scope: { userId: string; teamId?: string; strategyType?: string }
 ): Promise<StrategyActivitySummary[]> {
-  const conditions: SQL[] = [
-    visibleRequestCondition(scope.userId, scope.teamId),
-  ];
+  const conditions: SQL[] = [REQUEST_FEATURE_FILTER];
   if (scope.strategyType) {
-    conditions.push(eq(strategyRequests.strategyType, scope.strategyType));
+    conditions.push(sql`${REQUEST_STRATEGY_TYPE} = ${scope.strategyType}`);
   }
 
   const rows = await database
     .select({
-      strategyType: strategyRequests.strategyType,
+      strategyType: sql<string>`${REQUEST_STRATEGY_TYPE}`,
       requestCount: sql<number>`count(*)::int`,
-      totalVotes: sql<number>`coalesce(sum(${strategyRequests.voteCount}), 0)::int`,
+      totalVotes: sql<number>`coalesce(sum(${REQUEST_VOTES}), 0)::int`,
     })
-    .from(strategyRequests)
-    .where(and(...conditions))
-    .groupBy(strategyRequests.strategyType)
-    .orderBy(sql`2 desc`, strategyRequests.strategyType);
+    .from(features)
+    .where(sql.join(conditions, sql` and `))
+    .groupBy(sql`1`)
+    .orderBy(sql`2 desc`, sql`1`);
 
   return rows.map((row) => ({
     id: row.strategyType,

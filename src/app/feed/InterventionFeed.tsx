@@ -244,16 +244,16 @@ export function InterventionFeed() {
             the moderation queue at the same moment.
           </p>
           <p>
-            If you would rather note that a place needs attention without
-            putting it in front of anyone, record a strategy request instead.
-            Those stay with your account or your workspace, and the location
-            never leaves the database.
+            If you would rather point at a place and say it needs attention,
+            without committing to a drawn boundary or waiting on review, submit
+            a strategy request instead. A request is pinned to a single point,
+            published immediately, and open for anyone to respond to.
           </p>
         </EditorialProse>
         <div className="mt-comfortable flex flex-wrap gap-tight">
           <EditorialActionLink href="/">Open the map</EditorialActionLink>
           <EditorialActionLink href="/community" tone="outline">
-            Your private requests
+            About strategy requests
           </EditorialActionLink>
         </div>
       </EditorialSection>

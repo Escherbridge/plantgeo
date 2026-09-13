@@ -36,6 +36,33 @@ Neither table participates in the review lifecycle. `features.status` and
 `rejectContribution`; the social router reads `status` only as a visibility
 predicate and issues no `UPDATE` against `geo.features` at all.
 
+## strategy-requests
+
+`strategy_requests` and `priority_zones` no longer exist (migration
+`0004_public_strategy_requests`). A strategy request is a published
+`geo.features` row carrying `properties.kind = 'request'`, written by
+`interventions.submitRequest` — the same table, layer, geometry validator and
+properties bag an intervention recommendation uses, minus the review queue. The
+three production rows were copied across by
+`scripts/backfill-strategy-requests.mjs` before the drop; that script must run
+before the migration, never after, and is idempotent through
+`properties.migratedFromStrategyRequestId`.
+
+`request_votes` survived the drop with its foreign key moved from
+`strategy_requests.id` to `geo.features.id` (column renamed `request_id` →
+`feature_id`). Votes and likes stay distinct concepts by product decision: a
+like is `geo.feature_likes`'s per-user toggle counted with `count(*)`, a vote is
+one-way support. Nothing writes the table today — its only writer,
+`community.voteOnRequest`, went with the retired router — so it is deliberately
+dormant infrastructure, not a wired feature. Wire it by inserting
+`(feature_id, user_id)` and deriving the count; the denormalized counter it used
+to increment no longer exists to drift.
+
+`geo.intervention_tiles()` projects `properties ->> 'kind'` as of
+`0005_intervention_tiles_kind`, which is what lets the published tile source
+paint a request its own colour. **Restart Martin after applying it** — the same
+caveat `0002_intervention_tiles_category` carries.
+
 For a future relational change, add one forward Drizzle migration and update
 the migration contract in the same review. The migration must land with the
 application code that requires it.

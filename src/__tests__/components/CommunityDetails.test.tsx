@@ -18,9 +18,6 @@ const listMySubmissionsQuery = vi.hoisted(() =>
 const listMyTeamsQuery = vi.hoisted(() =>
   vi.fn((..._args: unknown[]) => ({ data: [] as unknown[] }))
 );
-const getRequestsQuery = vi.hoisted(() =>
-  vi.fn((..._args: unknown[]) => ({ data: [] as unknown[], error: null, refetch: vi.fn() }))
-);
 /** Asserted directly by the intervention-drafts-overlay invalidation test below. */
 const draftsInvalidateMocks = vi.hoisted(() => ({
   listMySubmissions: vi.fn().mockResolvedValue(undefined),
@@ -30,7 +27,6 @@ const draftsInvalidateMocks = vi.hoisted(() => ({
 vi.mock("@/lib/trpc/client", () => ({
   trpc: {
     teams: { listMyTeams: { useQuery: listMyTeamsQuery } },
-    community: { getRequests: { useQuery: getRequestsQuery } },
     interventions: { listMySubmissions: { useQuery: listMySubmissionsQuery } },
     useUtils: () => ({
       interventions: {
@@ -55,6 +51,15 @@ vi.mock("@/components/panels/InterventionSubmitModal", () => ({
   ),
 }));
 
+/** Same rationale: the request modal's own wiring is asserted in RequestSubmitModal.test.tsx. */
+vi.mock("@/components/panels/RequestSubmitModal", () => ({
+  RequestSubmitModal: ({ onSuccess }: { onSuccess?: () => void }) => (
+    <button type="button" onClick={() => onSuccess?.()}>
+      Fake request success
+    </button>
+  ),
+}));
+
 import { CommunityDetails } from "@/components/panels/CommunityDetails";
 import { useAuthStore } from "@/stores/auth-store";
 
@@ -64,7 +69,6 @@ beforeEach(() => {
   useAuthStore.setState(INITIAL_AUTH_STATE, true);
   listMySubmissionsQuery.mockReturnValue({ data: undefined, refetch: vi.fn() });
   listMyTeamsQuery.mockReturnValue({ data: [] });
-  getRequestsQuery.mockReturnValue({ data: [], error: null, refetch: vi.fn() });
   draftsInvalidateMocks.listMySubmissions.mockClear();
   draftsInvalidateMocks.listProposed.mockClear();
 });
@@ -181,5 +185,57 @@ describe("CommunityDetails intervention-drafts overlay invalidation", () => {
 
     expect(draftsInvalidateMocks.listMySubmissions).toHaveBeenCalledTimes(1);
     expect(draftsInvalidateMocks.listProposed).toHaveBeenCalledTimes(1);
+  });
+
+  it("refreshes the map overlay when a REQUEST succeeds, since a request has no panel list", () => {
+    renderPanel();
+
+    fireEvent.click(screen.getByText("+ Request"));
+    fireEvent.click(screen.getByText("Fake request success"));
+
+    expect(draftsInvalidateMocks.listMySubmissions).toHaveBeenCalledTimes(1);
+    expect(draftsInvalidateMocks.listProposed).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * Phase 3 of `public_strategy_requests_20260913`. The panel used to render a private,
+ * `community.getRequests`-backed list with copy promising the request was never shown on the map.
+ * Both the read and the promise are gone; what must survive is the ability to SUBMIT one.
+ */
+describe("CommunityDetails strategy-request section after the private path was retired", () => {
+  it("reads nothing from the deleted community router", () => {
+    // The tRPC stub above exposes no `community` namespace at all, so any surviving
+    // `trpc.community.*` call would throw on render rather than quietly return undefined.
+    expect(() => renderPanel()).not.toThrow();
+  });
+
+  it("keeps the + Request entry point", () => {
+    renderPanel();
+
+    expect(screen.getByText("+ Request")).toBeTruthy();
+  });
+
+  it("points the reader at the map instead of promising privacy", () => {
+    const { container } = renderPanel();
+    const text = container.textContent ?? "";
+
+    expect(text).toMatch(/appears on the map|on the map/i);
+    for (const retired of [
+      /private community request/i,
+      /never shown on the map/i,
+      /requests are private/i,
+      /shared only with authenticated members of/i,
+      /private location/i,
+      /no private strategy requests/i,
+    ]) {
+      expect(text).not.toMatch(retired);
+    }
+  });
+
+  it("no longer offers a strategy-type filter over a list it does not render", () => {
+    renderPanel();
+
+    expect(screen.queryByText("All Types")).toBeNull();
   });
 });

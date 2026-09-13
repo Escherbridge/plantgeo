@@ -1,5 +1,5 @@
 import { db } from "@/lib/server/db";
-import { environmentalAlerts, priorityZones } from "@/lib/server/db/schema";
+import { environmentalAlerts } from "@/lib/server/db/schema";
 import { and, eq, gte, sql } from "drizzle-orm";
 import { getContextWaterGauges } from "@/lib/server/services/parquet-context-readers";
 import {
@@ -36,7 +36,6 @@ function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): nu
 
 const DROUGHT_RELEASE_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
 const MAX_CLOCK_SKEW_MS = 5 * 60 * 1000;
-const PRIORITY_ZONE_ALERTS_STATE: "inactive" | "runnable" = "inactive";
 
 /** Rejects stale or malformed drought observations and release receipts. */
 export function isFreshDroughtRelease(
@@ -367,53 +366,24 @@ export async function checkStreamflowAlerts(
 }
 
 /**
- * Check if new priority zones appeared within radiusKm in the past 24 hours.
+ * Priority-zone proximity alerts. Permanently empty, and now permanently sourceless.
+ *
+ * A `PRIORITY_ZONE_ALERTS_STATE` constant pinned to "inactive" guarded this from its first commit,
+ * so the body behind that guard never executed. As of `public_strategy_requests_20260913` Phase 3
+ * it also has nothing to execute against: `priority_zones` was a DBSCAN rollup over the private
+ * `strategy_requests` table, and `drizzle/0004_public_strategy_requests.sql` drops both. The read
+ * is removed rather than left to fail on a missing relation the moment someone flips the constant.
+ *
+ * The exported function itself stays: `alert-dispatcher.ts` composes it into its fan-out and the
+ * dispatcher test mocks it by name. Reviving the feature means rebuilding the aggregate over
+ * request-kind `geo.features` rows first -- explicitly Out of Scope for that track, not forgotten.
  */
 export async function checkPriorityZoneAlerts(
-  userId: string,
-  locationId: string,
-  lat: number,
-  lon: number,
-  radiusKm: number
+  _userId: string,
+  _locationId: string,
+  _lat: number,
+  _lon: number,
+  _radiusKm: number
 ): Promise<NewAlert[]> {
-  if (PRIORITY_ZONE_ALERTS_STATE === "inactive") return [];
-
-  const isDuplicate = await deduplicateAlert(userId, "priority_zone_created", locationId);
-  if (isDuplicate) return [];
-
-  const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
-
-  const recentZones = await db
-    .select()
-    .from(priorityZones)
-    .where(gte(priorityZones.computedAt, cutoff))
-    .limit(100);
-
-  if (recentZones.length === 0) return [];
-
-  const nearbyZones = recentZones.filter((z) => {
-    if (z.centroidLat === null || z.centroidLon === null) return false;
-    return haversineKm(lat, lon, z.centroidLat, z.centroidLon) <= radiusKm;
-  });
-
-  if (nearbyZones.length === 0) return [];
-
-  const zoneTypes = [...new Set(nearbyZones.map((z) => z.strategyType))].join(", ");
-
-  return [
-    {
-      userId,
-      alertType: "priority_zone_created",
-      severity: "info",
-      title: `${nearbyZones.length} new priority zone${nearbyZones.length > 1 ? "s" : ""} near your location`,
-      body: `Community members have identified ${nearbyZones.length} new priority zone${nearbyZones.length > 1 ? "s" : ""} (${zoneTypes}) within ${radiusKm} km of your watched location.`,
-      metadata: {
-        watchedLocationId: locationId,
-        zoneCount: nearbyZones.length,
-        strategyTypes: zoneTypes,
-        lat,
-        lon,
-      },
-    },
-  ];
+  return [];
 }

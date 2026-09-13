@@ -442,9 +442,10 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
   ...CLIMATE_FIELD_ENTRIES,
   // Served by /api/v1/action-network's k-anonymity-floored activity grid --
   // aggregateActivityGrid in src/lib/server/services/community-activity.ts groups
-  // strategy_requests into zoom-derived cells with a HAVING count(*) >= 3 floor and
-  // bbox-independent cell membership, so publishing it never leaks a single private
-  // submission's location (see community-activity-anonymity.test.ts). That is the
+  // request-kind geo.features rows into zoom-derived cells with a HAVING count(*) >= 3
+  // floor and bbox-independent cell membership (it read the now-dropped strategy_requests
+  // until 2026-09-13), so publishing it never resolves a single submission's exact point
+  // (see community-activity-anonymity.test.ts). That is the
   // "reviewed, access-controlled warehouse publication" this switch was withheld
   // pending; the 2026-08-03 owner decision reversed the governance stubs generally
   // ("open the gates rather than preserving them"), and this one's gate was already

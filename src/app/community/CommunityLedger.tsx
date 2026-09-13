@@ -1,311 +1,60 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { useSession } from "next-auth/react";
-import { trpc } from "@/lib/trpc/client";
 import {
   EditorialActionLink,
-  EditorialButton,
-  EditorialCaption,
   EditorialContainer,
-  EditorialHeading,
   EditorialNotice,
   EditorialProse,
   EditorialRule,
   EditorialSection,
-  EditorialTag,
 } from "@/components/ui/editorial";
-import { EditorialSelectField } from "@/components/ui/editorial/fields";
 
-/** Mirrors the enum in src/lib/server/trpc/routers/community.ts. */
-const STRATEGY_OPTIONS = [
-  { value: "", label: "All strategies" },
-  { value: "keyline", label: "Keyline design" },
-  { value: "silvopasture", label: "Silvopasture" },
-  { value: "reforestation", label: "Reforestation" },
-  { value: "biochar", label: "Biochar" },
-  { value: "water_harvesting", label: "Water harvesting" },
-  { value: "cover_cropping", label: "Cover cropping" },
-] as const;
-
-type StrategyFilter = (typeof STRATEGY_OPTIONS)[number]["value"];
-
-const PRIVATE_SCOPE = "";
-
-function strategyLabel(strategyType: string): string {
-  return (
-    STRATEGY_OPTIONS.find((option) => option.value === strategyType)?.label ??
-    strategyType
-  );
-}
-
-function formatDate(value: Date | string | null): string | null {
-  if (!value) return null;
-  const parsed = value instanceof Date ? value : new Date(value);
-  return Number.isNaN(parsed.getTime()) ? null : parsed.toLocaleDateString();
-}
-
-function LedgerControls({
-  scope,
-  onScopeChange,
-  scopeOptions,
-  strategy,
-  onStrategyChange,
-}: {
-  scope: string;
-  onScopeChange: (value: string) => void;
-  scopeOptions: { value: string; label: string }[];
-  strategy: StrategyFilter;
-  onStrategyChange: (value: StrategyFilter) => void;
-}) {
-  return (
-    <div className="grid grid-cols-4 gap-gutter md:grid-cols-8">
-      <EditorialSelectField
-        className="col-span-4"
-        label="Scope"
-        value={scope}
-        onValueChange={onScopeChange}
-        options={scopeOptions}
-      />
-      <EditorialSelectField
-        className="col-span-4"
-        label="Strategy"
-        value={strategy}
-        onValueChange={(value) => onStrategyChange(value as StrategyFilter)}
-        options={STRATEGY_OPTIONS.map((option) => ({ ...option }))}
-      />
-    </div>
-  );
-}
-
-function SignedOutGate() {
-  return (
-    <EditorialSection index="01" title="Access" id="access">
-      <EditorialNotice title="Sign in required" role="status">
-        <p>
-          The ledger holds strategy requests that are private to an account or to
-          a partner workspace. None of it is public, so this page shows nothing
-          until it knows who you are. Proposed interventions — sites drawn and
-          submitted for expert review — are a separate record, kept in the feed.
-        </p>
-      </EditorialNotice>
-      <div className="mt-comfortable flex flex-wrap gap-tight">
-        <EditorialActionLink href="/login?callbackUrl=%2Fcommunity">
-          Log in
-        </EditorialActionLink>
-        <EditorialActionLink href="/register" tone="outline">
-          Create an account
-        </EditorialActionLink>
-      </div>
-    </EditorialSection>
-  );
-}
-
-function RequestRow({
-  request,
-  canVote,
-  onVote,
-  voting,
-}: {
-  request: {
-    id: string;
-    title: string;
-    description: string | null;
-    strategyType: string;
-    voteCount: number | null;
-    createdAt: Date | string | null;
-  };
-  canVote: boolean;
-  onVote: (requestId: string) => void;
-  voting: boolean;
-}) {
-  const submitted = formatDate(request.createdAt);
-
-  return (
-    <article className="rule-bottom-hairline grid grid-cols-4 gap-x-gutter border-b-rule-faint py-comfortable md:grid-cols-12">
-      <div className="col-span-4 md:col-span-6">
-        <h3 className="font-editorial-display text-subheading font-semibold text-ink">
-          {request.title}
-        </h3>
-        {request.description && (
-          <p className="mt-tight max-w-measure font-editorial-text text-caption text-ink-muted">
-            {request.description}
-          </p>
-        )}
-        <p className="mt-tight font-editorial-label text-label text-ink-muted uppercase">
-          Location held privately
-          {submitted && <> — submitted {submitted}</>}
-        </p>
-      </div>
-
-      <div className="col-span-2 mt-snug md:col-span-3 md:mt-0">
-        <EditorialTag>{strategyLabel(request.strategyType)}</EditorialTag>
-      </div>
-
-      <div className="col-span-2 mt-snug flex items-start justify-end gap-snug md:col-span-3 md:mt-0">
-        <div className="text-right">
-          <p className="font-editorial-display text-heading font-bold text-ink">
-            {request.voteCount ?? 0}
-          </p>
-          <EditorialCaption>
-            {request.voteCount === 1 ? "vote" : "votes"}
-          </EditorialCaption>
-        </div>
-        {canVote && (
-          <EditorialButton
-            tone="outline"
-            disabled={voting}
-            onClick={() => onVote(request.id)}
-          >
-            {voting ? "Voting" : "Vote"}
-          </EditorialButton>
-        )}
-      </div>
-    </article>
-  );
-}
-
+/**
+ * The `/community` page after strategy requests became public.
+ *
+ * This page WAS the private ledger: a `community.getRequests` list scoped to the reader's own
+ * account or a workspace they belong to, with a `community.voteOnRequest` button beside each row
+ * and copy explaining that coordinates never leave the database. Phase 3 of
+ * `public_strategy_requests_20260913` retired all five of those procedures along with the
+ * `strategy_requests` table behind them, because a request is now a published `geo.features` row
+ * that everyone can already see on the map.
+ *
+ * What replaces the list is a pointer, not a rebuilt list. A panel or page that re-lists public
+ * map features would be a second, worse view of the map -- and the one thing the page must not
+ * lose, the route to submitting a request, lives on the map anyway (the community panel's
+ * "+ Request" button, pinned to the map centre). The signed-in/signed-out split went with the
+ * private data: there is nothing here to gate any more.
+ */
 export function CommunityLedger() {
-  const { status } = useSession();
-  const authenticated = status === "authenticated";
-
-  const [scope, setScope] = useState<string>(PRIVATE_SCOPE);
-  const [strategy, setStrategy] = useState<StrategyFilter>("");
-  const [voteError, setVoteError] = useState<string | null>(null);
-
-  const teamsQuery = trpc.teams.listMyTeams.useQuery(undefined, {
-    enabled: authenticated,
-    retry: false,
-  });
-
-  const requestsQuery = trpc.community.getRequests.useQuery(
-    {
-      teamId: scope === PRIVATE_SCOPE ? undefined : scope,
-      strategyType: strategy === "" ? undefined : strategy,
-      limit: 100,
-    },
-    { enabled: authenticated, retry: false }
-  );
-
-
-  const voteMutation = trpc.community.voteOnRequest.useMutation({
-    onSuccess: () => {
-      setVoteError(null);
-      requestsQuery.refetch();
-    },
-    onError: (error) => setVoteError(error.message),
-  });
-
-  const scopeOptions = useMemo(() => {
-    const memberships = teamsQuery.data ?? [];
-    return [
-      { value: PRIVATE_SCOPE, label: "Private to you" },
-      ...memberships.map(({ team }) => ({
-        value: team.id,
-        label: team.name,
-      })),
-    ];
-  }, [teamsQuery.data]);
-
-  if (status === "loading") {
-    return (
-      <EditorialContainer>
-        <EditorialSection index="01" title="Ledger" id="ledger">
-          <EditorialCaption>Checking your session…</EditorialCaption>
-        </EditorialSection>
-      </EditorialContainer>
-    );
-  }
-
-  if (!authenticated) {
-    return (
-      <EditorialContainer>
-        <SignedOutGate />
-      </EditorialContainer>
-    );
-  }
-
-  const requests = requestsQuery.data ?? [];
-  const teamScoped = scope !== PRIVATE_SCOPE;
-
   return (
     <EditorialContainer>
       <EditorialSection index="01" title="The ledger" id="ledger">
-        <LedgerControls
-          scope={scope}
-          onScopeChange={(value) => {
-            setScope(value);
-            setVoteError(null);
-          }}
-          scopeOptions={scopeOptions}
-          strategy={strategy}
-          onStrategyChange={setStrategy}
-        />
+        <EditorialNotice title="Requests live on the map now" role="status">
+          <p>
+            Strategy requests used to be recorded here, readable only by the
+            account that submitted one or by a workspace it was shared with. They
+            are now ordinary features of the public map: published the moment they
+            are submitted, drawn in their own colour, and open for anyone to read,
+            comment on and respond to.
+          </p>
+        </EditorialNotice>
 
         <EditorialProse className="mt-comfortable">
           <p>
-            {teamScoped
-              ? "These requests are visible to authenticated members of the selected workspace and to nobody else. Coordinates stay in the database; the ledger shows that a place exists, never where it is."
-              : "These requests are private to your account. Nothing here is published, shared with a workspace, or turned into a public waypoint."}
+            Open the map and click a request to see who asked for it, what they
+            asked for and the conversation underneath. Nothing needs to be
+            approved first &mdash; a request is an ask, not a claim about what has
+            been built, so it skips the review queue that intervention proposals
+            go through.
           </p>
         </EditorialProse>
 
-        {voteError && (
-          <EditorialNotice
-            tone="signal"
-            title="Vote not recorded"
-            role="alert"
-            className="mt-comfortable"
-          >
-            <p>{voteError}</p>
-          </EditorialNotice>
-        )}
-
-        <div className="mt-roomy rule-top-medium border-t-rule">
-          {requestsQuery.isPending ? (
-            <p className="py-roomy font-editorial-label text-label text-ink-muted uppercase">
-              Loading requests…
-            </p>
-          ) : requestsQuery.error ? (
-            <EditorialNotice
-              tone="signal"
-              title="Ledger unavailable"
-              role="alert"
-              className="my-roomy"
-            >
-              <p>{requestsQuery.error.message}</p>
-            </EditorialNotice>
-          ) : requests.length === 0 ? (
-            <div className="py-roomy">
-              <EditorialHeading>Nothing recorded yet</EditorialHeading>
-              <p className="mt-tight max-w-measure font-editorial-text text-body text-ink-muted">
-                {teamScoped
-                  ? "This workspace has not submitted a strategy request. The first one will appear here the moment it lands."
-                  : "You have not submitted a private strategy request yet."}
-              </p>
-            </div>
-          ) : (
-            requests.map((request) => (
-              <RequestRow
-                key={request.id}
-                request={request}
-                canVote={teamScoped}
-                voting={
-                  voteMutation.isPending &&
-                  voteMutation.variables?.requestId === request.id
-                }
-                onVote={(requestId) => voteMutation.mutate({ requestId })}
-              />
-            ))
-          )}
+        <div className="mt-comfortable flex flex-wrap gap-tight">
+          <EditorialActionLink href="/">Open the map</EditorialActionLink>
+          <EditorialActionLink href="/feed" tone="outline">
+            Proposals awaiting review
+          </EditorialActionLink>
         </div>
-
-        {!teamScoped && requests.length > 0 && (
-          <EditorialCaption className="mt-comfortable">
-            Voting applies to workspace requests only. Switch scope to a
-            workspace to vote.
-          </EditorialCaption>
-        )}
       </EditorialSection>
 
       <EditorialSection index="02" title="Adding a request" id="submit">
@@ -314,23 +63,19 @@ export function CommunityLedger() {
             A strategy request is anchored to a point on the ground, so it is
             created from the map rather than from this page. Open the map, centre
             it on the parcel you have in mind, open the community panel, and
-            choose + Request; the request is recorded at the map&rsquo;s centre point.
-            The location is stored against your account or your workspace and is
-            never made public by the act of submitting it.
+            choose + Request; the request is recorded at the map&rsquo;s centre
+            point and appears there immediately for every reader.
           </p>
           <p>
-            Drawing a site and asking to have it reviewed is the other, louder
-            move: that is a proposal, it is shared with every signed-in account,
-            and it is submitted from the map as well.
+            Drawing a site and asking to have it reviewed is the other, heavier
+            move: that is a proposal, it carries a drawn boundary, and it only
+            reaches the map once a reviewer approves it.
           </p>
         </EditorialProse>
         <div className="mt-comfortable flex flex-wrap gap-tight">
           <EditorialActionLink href="/">Open the map</EditorialActionLink>
-          <EditorialActionLink href="/feed" tone="outline">
-            Proposals awaiting review
-          </EditorialActionLink>
           <EditorialActionLink href="/about#principles" tone="outline">
-            Why this stays private
+            How this platform handles what you share
           </EditorialActionLink>
         </div>
       </EditorialSection>

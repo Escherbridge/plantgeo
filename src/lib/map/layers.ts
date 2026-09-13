@@ -395,11 +395,11 @@ export const INTERVENTION_STATUS_COLOR: DataDrivenPropertyValueSpecification<str
   // this one expression rather than adding a sibling keeps the guarantee the merge
   // bought -- all six style layers paint one feature one colour.
   //
-  // `kind` reaches the client from the drafts GeoJSON directly; the published tile
-  // source projects it once `geo.intervention_tiles()` is redefined in Phase 3's
-  // migration pass, alongside the `strategy_requests` drop. Until then a
-  // tile-sourced request falls through to the category arm, which is the same
-  // colour it had before this arm existed -- degraded, never wrong.
+  // `kind` reaches the client from the drafts GeoJSON directly, and from the published
+  // tile source since `drizzle/0005_intervention_tiles_kind.sql` added it to
+  // `geo.intervention_tiles()`'s projection. That migration needs a Martin RESTART to take
+  // effect (Martin caches each function's column set at startup); until Martin restarts, a
+  // tile-sourced request falls through to the category arm -- degraded, never wrong.
   ["==", ["get", "kind"], "request"],
   INTERVENTION_REQUEST_COLOR,
   ["==", ["get", "status"], "pending_review"],
