@@ -251,6 +251,62 @@ export const features = geoSchema.table(
 );
 
 // ============================================
+// Feature Social Graph (geo schema)
+// Likes and flat comments keyed on `geo.features.id`. See
+// `src/lib/server/db/AGENTS.md` §feature-social.
+// ============================================
+
+/** One row per (feature, user) like; absence is "not liked". The count is always derived. */
+export const featureLikes = geoSchema.table(
+  "feature_likes",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    featureId: uuid("feature_id")
+      .notNull()
+      .references(() => features.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    unique("uq_feature_likes_feature_user").on(table.featureId, table.userId),
+    index("ix_feature_likes_feature").on(table.featureId),
+  ]
+);
+
+/** One flat, author-attributed comment. Soft-deleted so author-or-moderator removal keeps an audit trail. */
+export const featureComments = geoSchema.table(
+  "feature_comments",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    featureId: uuid("feature_id")
+      .notNull()
+      .references(() => features.id, { onDelete: "cascade" }),
+    authorUserId: uuid("author_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    body: text("body").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    // ON DELETE SET NULL, not cascade: erasing the moderator's account must not
+    // erase the record that the comment was removed.
+    deletedByUserId: uuid("deleted_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+  },
+  (table) => [
+    index("ix_feature_comments_feature_created")
+      .on(table.featureId, table.createdAt)
+      .where(sql`${table.deletedAt} IS NULL`),
+  ]
+);
+
+// ============================================
 // Tracking Schema
 // ============================================
 

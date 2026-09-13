@@ -1,5 +1,5 @@
 export const EXPECTED_DRIZZLE_MIGRATION = {
-  tag: "0000_baseline",
-  createdAt: 1_789_200_000_000,
-  sha256: "b5dbe78c681b551b774e3193200f65314488090981412b72d113ef23080f2e9c",
+  tag: "0002_intervention_tiles_category",
+  createdAt: 1_789_344_000_000,
+  sha256: "82654a84ceb0eda736543b9cff114d564e504372d31af4e15a8c6fad847f4edd",
 } as const;

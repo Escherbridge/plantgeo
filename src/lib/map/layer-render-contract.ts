@@ -574,11 +574,11 @@ export const LAYER_RENDER_CONTRACT: Readonly<Record<LayerToggleId, LayerRenderCo
   // community surfaces have no declared spatial support in this contract yet.
   soil: referenceOrUnavailableEntry("soil"),
   "demand-heatmap": referenceOrUnavailableEntry("demand-heatmap"),
+  // Both halves of the merged toggle: the Martin-tile published set and the signed-in
+  // draft/proposed overlay it absorbed on 2026-09-13. Neither is lane-backed by a Parquet
+  // reader -- the drafts' features come from `useInterventionDraftsOverlay`'s merge of two tRPC
+  // queries -- so the one entry carries no declared spatial support.
   interventions: referenceOrUnavailableEntry("interventions"),
-  // The signed-in draft/proposed overlay. Not lane-backed by any Parquet reader -- its features
-  // come from `useInterventionDraftsOverlay`'s merge of two tRPC queries, set onto a plain
-  // client-side GeoJSON source -- so it carries no declared spatial support here either.
-  "intervention-drafts": referenceOrUnavailableEntry("intervention-drafts"),
   "strategy-recommendations": referenceOrUnavailableEntry("strategy-recommendations"),
 };
 

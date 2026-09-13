@@ -8,6 +8,20 @@
       "when": 1789200000000,
       "tag": "0000_baseline",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1789257600000,
+      "tag": "0001_feature_social",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1789344000000,
+      "tag": "0002_intervention_tiles_category",
+      "breakpoints": true
     }
   ]
 }

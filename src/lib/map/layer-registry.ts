@@ -32,7 +32,6 @@ export type LayerToggleId =
   | "soil-vpd"
   | "demand-heatmap"
   | "interventions"
-  | "intervention-drafts"
   | "strategy-recommendations"
   | "evacuation-zones"
   | "burn-severity"
@@ -460,41 +459,44 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
     panelId: "community",
     permanentlyUnavailableReason: null,
   },
-  // Three style layers, not two: the fill and its dashed outline draw ingested zones, and
-  // "interventions-points" draws the Point geometry every interactive submission carries.
-  // A fill layer cannot render a Point, so before the circle layer existed this toggle was
-  // switched on, served its tile and painted nothing for approved recommendations. All
-  // three must be listed here or applyVisibility flips only part of the layer.
+  // SIX style layers over TWO sources, under ONE switch.
+  //
+  // Three of them are the Martin-tile published set: the fill and its dashed outline draw
+  // ingested zones, and "interventions-points" draws the Point geometry every interactive
+  // submission carries (a fill layer cannot render a Point, so before the circle layer existed
+  // this toggle was switched on, served its tile and painted nothing for approved
+  // recommendations). The other three draw the signed-in caller's own drafts and the consenting
+  // `pending_review` queue from a plain client-side GeoJSON source
+  // (`intervention-drafts-source`, see sources.ts), filled by `useInterventionDraftsOverlay`
+  // (src/lib/map/use-intervention-drafts.ts) -- `geo.intervention_tiles()` only ever answers
+  // `status = 'published'`, so a draft has no tile to arrive in.
+  //
+  // They shipped as TWO toggles (`interventions` and `intervention-drafts`) until 2026-09-13,
+  // when the unified_intervention_layer track's OQ-1 merged them: which SOURCE a site's bytes
+  // came from is an implementation fact, and asking a reader to know it before they can see
+  // their own just-submitted intervention was the whole complaint. One switch, one legend, one
+  // paint expression (INTERVENTION_STATUS_COLOR in layers.ts) across all six -- and all six must
+  // stay listed here, or applyVisibility flips only part of the layer.
+  //
+  // The drafts overlay's own layer/source specs are untouched in layers.ts and sources.ts; only
+  // the second SWITCH is gone. Its data fetch was never gated on a toggle (the hook is
+  // auth-gated, not visibility-gated), so nothing else had to move.
   interventions: {
     toggleId: "interventions",
     label: "Interventions",
-    icon: "sprout",
-    renderKind: "style",
-    styleLayerIds: ["interventions", "interventions-outline", "interventions-points"],
-    warehouseLayerName: "interventions",
-    panelId: "community",
-    permanentlyUnavailableReason: null,
-  },
-  // Additive, alongside the Martin-tile `interventions` entry above -- not a replacement for it.
-  // `intervention_tiles` only ever answers `status = 'published'`; this toggle draws the
-  // signed-in caller's own drafts and every consenting contributor's `pending_review` queue from
-  // a plain client-side GeoJSON source (`intervention-drafts-source`, see sources.ts), filled by
-  // `useInterventionDraftsOverlay` (src/lib/map/use-intervention-drafts.ts) rather than by a
-  // Martin function or a Parquet reader. Three style layers for the same geometry-type split
-  // reason `interventions` above documents: a fill+outline for polygons, a circle for points.
-  "intervention-drafts": {
-    toggleId: "intervention-drafts",
-    label: "My & Proposed Interventions",
     description:
-      "Your own submitted interventions plus other pending-review proposals. Turn this on after submitting to see it here — published interventions use a separate always-on layer.",
+      "Published intervention sites plus, when you are signed in, your own submissions and the wider review queue. Anything still in review draws orange; published sites draw in their category colour (land or air).",
     icon: "sprout",
     renderKind: "style",
     styleLayerIds: [
+      "interventions",
+      "interventions-outline",
+      "interventions-points",
       "intervention-drafts-fill",
       "intervention-drafts-outline",
       "intervention-drafts-points",
     ],
-    warehouseLayerName: null,
+    warehouseLayerName: "interventions",
     panelId: "community",
     permanentlyUnavailableReason: null,
   },

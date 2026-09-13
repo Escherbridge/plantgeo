@@ -43,7 +43,7 @@ Goal: one layer-panel row controls both the published Martin-tile layer and the 
 client GeoJSON overlay, styled by status.
 
 Tasks:
-- [ ] Task (TDD, per OQ-1's resolution): Write a failing test asserting that toggling
+- [x] Task (TDD, per OQ-1's resolution): Write a failing test asserting that toggling
       `activeLayers.interventions` (or whatever the single surviving toggle id is) controls the
       visibility of all six current style layer ids (`interventions`, `interventions-outline`,
       `interventions-points`, `intervention-drafts-fill`, `intervention-drafts-outline`,
@@ -52,12 +52,12 @@ Tasks:
       overlay's visibility read (in `LayerManager.tsx` and wherever `applyVisibility` iterates
       `styleBackedLayerEntries()`) onto the `interventions` toggle, per OQ-1(b) unless the checkpoint
       chose OQ-1(a).
-- [ ] Task (TDD, per OQ-2's resolution): Write a failing test for the SQL/migration change to
+- [x] Task (TDD, per OQ-2's resolution): Write a failing test for the SQL/migration change to
       `geo.intervention_tiles()` asserting it now projects `category` (and `status`, always
       `'published'`) alongside its existing `priority` column. Implement the migration; note the
       Martin-restart-after-tile-migration step explicitly in this task's completion notes (a
       correct migration with no restart silently serves the old column set).
-- [ ] Task (TDD): Write a failing test for a new shared `INTERVENTION_STATUS_COLOR` (or equivalently
+- [x] Task (TDD): Write a failing test for a new shared `INTERVENTION_STATUS_COLOR` (or equivalently
       named) style expression asserting: a `pending_review` feature (from either source) paints
       orange regardless of `category`; a `published` feature paints by `category` (land/air); an
       unclassified/missing-category feature falls back to the existing neutral color. Implement by
@@ -65,12 +65,12 @@ Tasks:
       `interventionsOutlineLayer`/`interventionsPointsLayer`'s `priority`-keyed `fill-color`/
       `circle-color` paint with the shared expression, applied identically across all six style
       layers.
-- [ ] Task: Update the layer panel's rendered toggle list and the `interventions` entry's
+- [x] Task: Update the layer panel's rendered toggle list and the `interventions` entry's
       `description` copy to describe the merged behavior; remove or unlist the `intervention-drafts`
       registry entry per the Phase 1 checkpoint's OQ-1 answer (confirm whether
       `unreachableLayerToggleIds` or another registry consumer needs an explicit allowance for an
       entry that stays declared but unlisted).
-- [ ] Verification: Run the layer-registry and layer-manager test suites; manually confirm (per
+- [~] Verification (automated half done; manual prod/Martin half owed): Run the layer-registry and layer-manager test suites; manually confirm (per
       "Never run PlantGeo locally" — test against prod + live Martin) that a signed-in reader with
       an in-review draft sees it orange under the single toggle, a signed-out reader sees only
       published sites in their category color under the same toggle, and the Martin tile source
@@ -125,30 +125,55 @@ Tasks:
 Goal: a generic, feature-id-scoped comment/like data model and tRPC surface exists, ready for a UI
 consumer, per OQ-4/OQ-5's confirmed answers from Phase 1.
 
+**As built 2026-09-13.** Tables: `geo.feature_likes` (surrogate `id`, `feature_id` FK ->
+`geo.features.id` ON DELETE CASCADE, `user_id` FK -> `public.users.id`, `created_at`, UNIQUE
+`uq_feature_likes_feature_user (feature_id, user_id)`) and `geo.feature_comments` (`id`,
+`feature_id` FK, `author_user_id` FK, `body` text, `created_at`, `deleted_at`,
+`deleted_by_user_id` FK ON DELETE SET NULL). Soft delete, filtered by a partial index
+`ix_feature_comments_feature_created ... WHERE deleted_at IS NULL`. Migration
+`drizzle/0001_feature_social.sql`; `src/lib/server/db/migration-contract.ts` re-pinned in the same
+change per `src/lib/server/db/AGENTS.md` (a Phase 2 `0002` later stacked on top and re-pinned
+again, which is the same convention applied twice, not a conflict). Procedures live in
+`src/lib/server/trpc/routers/intervention-social.ts`, mounted as `interventionSocial`:
+`toggleLike`, `getLikeState`, `listComments`, `postComment`, `deleteComment`.
+
 Tasks:
-- [ ] Task (TDD): Write a failing Drizzle schema test / migration test asserting a new likes table
+- [x] Task (TDD): Write a failing Drizzle schema test / migration test asserting a new likes table
       (unique on `(feature_id, user_id)`) and a new comments table (`feature_id`, `author_user_id`,
       `body`, `created_at`, and a deletion marker/column supporting author-or-admin delete) exist and
       carry a foreign key to `features.id`. Implement the migration.
-- [ ] Task (TDD): Write a failing test for a `toggleLike` (or equivalently named) mutation asserting:
+- [x] Task (TDD): Write a failing test for a `toggleLike` (or equivalently named) mutation asserting:
       idempotent toggle behavior (call twice, ends up in the opposite state each time), returns the
       caller's own like state and the current total count, requires `contributorProcedure` (or
       equivalent) authentication, and respects FR's visibility-scoping (cannot like a feature the
       caller cannot see, per OQ-4's "who can comment/like on what" answer). Implement.
-- [ ] Task (TDD): Write a failing test for a `listComments` query (paginated, feature-id-scoped) and
+- [x] Task (TDD): Write a failing test for a `listComments` query (paginated, feature-id-scoped) and
       a `postComment` mutation (`contributorProcedure`-gated, `body` length-bounded the way
       `submitIntervention`'s `description` is bounded, visibility-scoped the same way `toggleLike`
       is). Implement.
-- [ ] Task (TDD): Write a failing test for a `deleteComment` mutation asserting only the comment's
+- [x] Task (TDD): Write a failing test for a `deleteComment` mutation asserting only the comment's
       author or a caller with `platformRole` `expert`/`admin` (mirroring `castModerationVote`'s
       existing role check) may delete it, and that deletion is visible to subsequent `listComments`
       calls (soft- or hard-delete, per the migration's chosen shape). Implement.
-- [ ] Task: Confirm (via a short written note in this plan or the track's retrospective) that none of
+- [x] Task: Confirm (via a short written note in this plan or the track's retrospective) that none of
       the four procedures above write through or duplicate `castModerationVote`/
       `transitionLifecycleState` or `contributions.publishContribution`/`rejectContribution` —
       grep every new procedure's write path against those four existing procedures' tables/columns
       to confirm no overlap.
-- [ ] Verification: Run the schema/migration tests and the four procedure test suites together;
+      **Confirmed 2026-09-13, by enumeration rather than assertion.** Every write in
+      `intervention-social.ts` is one of exactly four statements, and all four target the two new
+      tables: `delete(featureLikes)`, `insert(featureLikes)`, `insert(featureComments)`,
+      `update(featureComments)`. There is no `insert`/`update`/`delete` against `features` in the
+      file at all, so the `status` + `reviewNote` columns those four existing procedures write are
+      untouched by construction. `geo.features` is read exactly once, in `requireVisibleFeature`,
+      projecting `id`, `status` and three `properties ->>` keys — `status` as a *visibility*
+      predicate (`published` / `pending_review`), never re-written and never re-interpreted through
+      `castModerationVote`'s `approved`/`active`/`monitored` vocabulary, which appears nowhere in
+      the file. `review_note` appears nowhere either, including in the migration (asserted by
+      `feature-social-schema.test.ts` -> "does not touch the review vocabulary owned by the
+      contributions router"). The two new tables are net-new in `0001_feature_social` and have no
+      reader or writer outside this router.
+- [x] Verification: Run the schema/migration tests and the four procedure test suites together;
       confirm (per NFR-2) that a signed-out or unrelated caller cannot toggle a like or read/post a
       comment against a `pending_review` draft that is not theirs and not in the shared review
       queue, by writing and passing an explicit negative-authorization test for each procedure.

@@ -119,13 +119,10 @@ const NATURE_BY_LAYER: Readonly<Record<LayerToggleId, LayerCacheNature>> = {
   // Client-derived from whatever is already on the map; it has no warehouse lane and no
   // allowlisted procedure, so this entry only exists to keep the record exhaustive.
   "demand-heatmap": "static_lookup",
-  // User-authored rows in `geo.features`; they change whenever somebody adds one.
+  // User-authored rows in `geo.features`; they change whenever somebody adds one. Keyed on the
+  // published Martin tiles: the draft overlay this toggle absorbed on 2026-09-13 is fed by two
+  // client-side tRPC queries with no allowlisted procedure, so it has nothing in this path.
   interventions: "daily_series",
-  // Not a Parquet lane and not persisted like the entry above -- fed by two tRPC queries
-  // merged client-side (useInterventionDraftsOverlay) with no allowlisted procedure or
-  // warehouse day axis of its own. Kept out of the persistent cache path the same way
-  // demand-heatmap is: this entry exists only to keep the record exhaustive.
-  "intervention-drafts": "static_lookup",
   // The governed model plane republishes in whole releases, not per day.
   "strategy-recommendations": "release_series",
   // The three herbarium rows. `release_series`, not `daily_series`: the plane is pinned to a

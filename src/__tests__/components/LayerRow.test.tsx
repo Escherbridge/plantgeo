@@ -721,7 +721,6 @@ describe("LayerRow publication standings", () => {
       // Only the declared non-lane surfaces may carry one; the rest of the dock stays silent.
       expect([
         "interventions",
-        "intervention-drafts",
         "strategy-recommendations",
         "demand-heatmap",
       ]).toContain(layerId);

@@ -54,8 +54,12 @@ describe('layer registry derivations', () => {
       sensors: ['sensors'],
       watersheds: ['watersheds-fill', 'watersheds-outline'],
       'evacuation-zones': ['evacuation-zones', 'evacuation-zones-outline'],
-      interventions: ['interventions', 'interventions-outline', 'interventions-points'],
-      'intervention-drafts': [
+      // ONE entry over six ids since the 2026-09-13 toggle merge: the published Martin trio
+      // and the client-GeoJSON draft trio flip together. See unified-intervention-layer.test.ts.
+      interventions: [
+        'interventions',
+        'interventions-outline',
+        'interventions-points',
         'intervention-drafts-fill',
         'intervention-drafts-outline',
         'intervention-drafts-points',
@@ -71,7 +75,6 @@ describe('layer registry derivations', () => {
       'sensors',
       'watersheds',
       'interventions',
-      'intervention-drafts',
       'evacuation-zones',
       'burn-severity',
     ])
@@ -159,7 +162,6 @@ describe('layer registry derivations', () => {
     expect(getLayersForPanel('community')).toEqual([
       'demand-heatmap',
       'interventions',
-      'intervention-drafts',
       'strategy-recommendations',
     ])
     expect(getLayersForPanel('team')).toEqual([])
@@ -276,7 +278,6 @@ describe('layer registry derivations', () => {
       'climate-soil-wetness-profile': 'Soil wetness (profile)',
       'demand-heatmap': 'Demand Heatmap',
       interventions: 'Interventions',
-      'intervention-drafts': 'My & Proposed Interventions',
       'strategy-recommendations': 'ML Strategy Recommendations',
       'evacuation-zones': 'Evacuation Zones',
       'burn-severity': 'Burn History (MTBS)',

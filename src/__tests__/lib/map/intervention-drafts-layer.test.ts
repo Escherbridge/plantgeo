@@ -10,6 +10,8 @@ import {
   interventionDraftsOutlineLayer as interventionDraftsOutlineLayerSpec,
   interventionDraftsPointsLayer as interventionDraftsPointsLayerSpec,
   getLayers,
+  INTERVENTION_STATUS_COLOR,
+  UNCLASSIFIED_FILL_COLOR,
 } from "@/lib/map/layers";
 import {
   DYNAMIC_TILE_SOURCE_IDS_FOR_TEST,
@@ -25,32 +27,32 @@ const interventionDraftsFillLayer = interventionDraftsFillLayerSpec as FillLayer
 const interventionDraftsOutlineLayer = interventionDraftsOutlineLayerSpec as LineLayerSpecification;
 const interventionDraftsPointsLayer = interventionDraftsPointsLayerSpec as CircleLayerSpecification;
 
-describe("intervention-drafts overlay: additive registration", () => {
-  it("registers a new toggle alongside the existing Martin-backed interventions entry, not in place of it", () => {
+describe("intervention-drafts overlay: registration under the merged toggle", () => {
+  // ADDITIVE UNTIL 2026-09-13, MERGED SINCE: the overlay had a toggle of its own
+  // ("intervention-drafts") from the intervention_drawing_visibility track until the
+  // unified_intervention_layer track's OQ-1 folded its three style layer ids into the
+  // `interventions` entry. The LAYER SPECS below are untouched by that merge -- only the second
+  // switch is gone -- which is exactly what this file still pins.
+  it("draws under the single interventions toggle, with no entry of its own", () => {
     const interventions = LAYER_REGISTRY.interventions;
-    const drafts = LAYER_REGISTRY["intervention-drafts"];
 
-    // The existing Martin entry is untouched.
     expect(interventions.styleLayerIds).toEqual([
       "interventions",
       "interventions-outline",
       "interventions-points",
-    ]);
-
-    expect(drafts.renderKind).toBe("style");
-    expect(drafts.styleLayerIds).toEqual([
       "intervention-drafts-fill",
       "intervention-drafts-outline",
       "intervention-drafts-points",
     ]);
-    expect(styleBackedLayerEntries().map((e) => e.toggleId)).toContain("intervention-drafts");
+    expect(interventions.renderKind).toBe("style");
+    expect(styleBackedLayerEntries().map((e) => e.toggleId)).not.toContain("intervention-drafts");
   });
 
   it("carries a tooltip description distinct from its short label", () => {
-    const drafts = LAYER_REGISTRY["intervention-drafts"];
-    expect(drafts.description).toBeDefined();
-    expect(drafts.description).not.toBe(drafts.label);
-    expect(drafts.description).toContain("published interventions");
+    const interventions = LAYER_REGISTRY.interventions;
+    expect(interventions.description).toBeDefined();
+    expect(interventions.description).not.toBe(interventions.label);
+    expect(interventions.description).toContain("review");
   });
 
   it("uses its own plain GeoJSON source, distinct from the Martin intervention_tiles source", () => {
@@ -109,12 +111,16 @@ describe("intervention-drafts overlay: distinct, category-differentiated styling
       ])
     );
 
+    // The SHARED expression since the merge -- the same object the three published layers
+    // paint with -- so a draft and a published site of one category never read apart by hue.
+    // Its unclassified fallback is the map-wide neutral grey, not a category colour.
     const fillColor = interventionDraftsFillLayer.paint?.["fill-color"];
+    expect(fillColor).toEqual(INTERVENTION_STATUS_COLOR);
     expect(fillColor).toEqual([
       "case",
       ["==", ["get", "status"], "pending_review"],
       "#f97316",
-      ["match", ["get", "category"], "land", "#0d9488", "air", "#7c3aed", "#0d9488"],
+      ["match", ["get", "category"], "land", "#0d9488", "air", "#7c3aed", UNCLASSIFIED_FILL_COLOR],
     ]);
   });
 

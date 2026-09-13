@@ -68,11 +68,10 @@ import {
   FIRE_PERIMETER_OUTLINE_COLOR,
   FIRE_PERIMETER_SEVERITY_CLASSES,
   FIRE_PERIMETER_UNCLASSIFIED_LABEL,
-  INTERVENTION_OUTLINE_COLOR,
-  INTERVENTION_PRIORITY_CLASSES,
+  INTERVENTION_CATEGORY_CLASSES,
+  INTERVENTION_PENDING_REVIEW_COLOR,
+  INTERVENTION_PENDING_REVIEW_LABEL,
   INTERVENTION_UNCLASSIFIED_LABEL,
-  INTERVENTION_UNPRIORITIZED_POINT_COLOR,
-  INTERVENTION_UNPRIORITIZED_POINT_LABEL,
   SENSOR_NETWORK_CLASSES,
   SENSOR_UNCLASSIFIED_LABEL,
   SOIL_SURVEY_DRAINAGE_CLASSES,
@@ -508,36 +507,39 @@ const STATIC_LAYER_LEGENDS: Partial<Record<LayerToggleId, LayerLegendSpec>> = {
       { kind: "ramp", caption: "Request density", stops: demandDensityRampStops() },
     ],
   },
-  // Two shapes, because the toggle draws two geometries from one tile: ingested zones as
-  // filled polygons, and interactively submitted sites as points. They share the priority
-  // palette but not its fallback -- see INTERVENTION_UNPRIORITIZED_POINT_COLOR in layers.ts
-  // for why a submitted site's "no priority" is a normal state and not a missing value.
+  // ONE palette for what used to be two toggles and two legends. The `priority` palette this
+  // replaced on 2026-09-13 legended a field `submitIntervention` never writes, so every real
+  // row read as the fallback; `category` is written on every submission. Status wins over
+  // category in the paint (INTERVENTION_STATUS_COLOR in layers.ts), so the in-review swatch is
+  // listed first -- it is the one colour that overrides the rest.
   interventions: {
     title: "Interventions",
     blocks: [
       {
         kind: "classes",
-        caption: "Zones",
+        caption: "Published sites",
         shape: "swatch",
         classes: classesWithFallback(
-          INTERVENTION_PRIORITY_CLASSES,
+          INTERVENTION_CATEGORY_CLASSES,
           INTERVENTION_UNCLASSIFIED_LABEL
         ),
       },
-      { kind: "swatch", label: "Zone outline (dashed)", outlineColor: INTERVENTION_OUTLINE_COLOR },
       {
         kind: "classes",
-        caption: "Submitted sites",
+        caption: "Awaiting review",
         shape: "dot",
-        classes: classesWithFallback(
-          INTERVENTION_PRIORITY_CLASSES,
-          INTERVENTION_UNPRIORITIZED_POINT_LABEL,
-          INTERVENTION_UNPRIORITIZED_POINT_COLOR
-        ),
+        classes: [
+          {
+            color: INTERVENTION_PENDING_REVIEW_COLOR,
+            label: INTERVENTION_PENDING_REVIEW_LABEL,
+          },
+        ],
       },
       {
         kind: "note",
-        text: "Submitted sites appear only after a reviewer publishes them.",
+        text:
+          "Sites still in review are visible to their submitter and to signed-in reviewers, " +
+          "and draw orange whatever their category. Everyone sees published sites.",
       },
     ],
   },
