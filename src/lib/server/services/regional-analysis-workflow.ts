@@ -134,13 +134,24 @@ export function regionalEvidenceAuditCall(
   const selectedDate = args.day ?? args.as_of_day;
   const validDate = isCalendarDay(selectedDate);
   const provenance = collectProvenanceDays(result);
+  const summaries = object(result)?.layer_summaries;
+  const observedFireSummaries = tool === 'fire_history_near_point' && Array.isArray(summaries)
+    ? summaries.filter((summary) => Number(object(summary)?.row_count ?? 0) > 0)
+    : [];
+  for (const summary of observedFireSummaries) {
+    for (const field of ['earliest_observed_day', 'latest_observed_day']) {
+      const day = object(summary)?.[field];
+      if (isCalendarDay(day)) provenance.observed_day.add(day);
+    }
+  }
   const validDates = [...provenance.valid_date].sort();
   const observedDates = [...provenance.observed_day].sort();
   const servedDates = [...provenance.served_day].sort();
   const source = typeof args.surface_name === 'string' ? args.surface_name.trim()
     : tool === 'drought_history_at_point' ? 'drought-areas' : '';
-  const sources = tool === 'fire_history_near_point'
-    ? ['burn-severity', 'fire-detections']
+  const sources = observedFireSummaries.length > 0
+    ? ['burn-severity', 'fire-detections'].filter((lane) => observedFireSummaries.some((summary) =>
+      object(summary)?.layer_name === lane && Number(object(summary)?.row_count ?? 0) > 0))
     : [];
   return {
     id, stage, tool,

@@ -11,7 +11,7 @@ import {
 import type { RegionalContextPayload } from './regional-context';
 
 const evidenceReadIdsSchema = z.array(z.string().trim().min(1).max(100)).max(8).optional()
-  .describe('IDs of executed evidence reads supporting this claim. Required for historical, regional or additional tool evidence; their dates and locations are shown beside the claim.');
+  .describe('Only warehouse-origin claims may include these IDs of executed measurement reads for their exact tool source. Required for historical, regional or additional warehouse findings; dates and locations are shown beside the claim. Omit on inference and web claims.');
 
 function warehouseReadIdsOnly(
   value: { evidenceOrigin: string; evidenceReadIds?: string[] },
@@ -141,7 +141,7 @@ export function reportWarehouseEvidenceIssues(
     const toolSources = sources.filter((source) => !isRegionalEvidenceSource(source));
     for (const [index, id] of (readIds ?? []).entries()) {
       const call = evidence?.toolCalls.find((entry) => entry.id === id);
-      if (!call || !isMeasurementRead(call) || !auditSources(call).some((source) => toolSources.includes(source as RegionalClaimEvidenceSource))) {
+      if (!call || !isMeasurementRead(call) || !auditSources(call).some((source) => toolSources.some((candidate) => candidate === source))) {
         referenceIssues.push({ code: 'custom', path: [...path, 'evidenceReadIds', index], message: `Evidence read ${id} is not an observed measurement for one of this claim's exact tool-surface citations. Legacy payload sources, coverage dates and reporting-cell metadata cannot be linked through a tool read ID.` });
       }
     }

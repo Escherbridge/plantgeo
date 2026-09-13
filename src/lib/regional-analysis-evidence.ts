@@ -19,7 +19,7 @@ export const regionalAnalysisEvidenceSchema = z.object({
     stage: z.string().min(1).max(100),
     tool: z.string().min(1).max(100),
     source: z.string().min(1).max(100).optional(),
-    sources: z.array(z.string().min(1).max(100)).min(2).max(8).optional(),
+    sources: z.array(z.string().min(1).max(100)).min(1).max(8).optional(),
     selectedDate: calendarDay.optional(),
     validDates: z.array(calendarDay).max(128).optional(),
     observedDates: z.array(calendarDay).max(128).optional(),

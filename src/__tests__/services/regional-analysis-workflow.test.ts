@@ -119,12 +119,32 @@ describe('evidence audit honesty', () => {
     expect(entry.servedDates).toEqual(['2026-09-01']);
     expect(readRegionalAnalysisEvidence({ version: 1, stages: [], toolCalls: [entry], limitations: [] })).not.toBeNull();
   });
-  it('attributes the combined fire history read to both physical source lanes', () => {
+  it('attributes combined fire history only to physical lanes with actual returned rows', () => {
     const entry = regionalEvidenceAuditCall('temporal-fire', 'temporal', 'fire_history_near_point', {
       longitude: -116, latitude: 44, as_of_day: '2026-09-10',
-    }, { layer_summaries: [{ row_count: 2 }] });
+    }, { layer_summaries: [{ layer_name: 'burn-severity', row_count: 1 }, { layer_name: 'fire-detections', row_count: 2 }] });
     expect(entry).not.toHaveProperty('source');
     expect(entry.sources).toEqual(['burn-severity', 'fire-detections']);
+    const partial = regionalEvidenceAuditCall('temporal-fire', 'temporal', 'fire_history_near_point', {
+      longitude: -116, latitude: 44, as_of_day: '2026-09-10',
+    }, { layer_summaries: [
+      { layer_name: 'burn-severity', row_count: 0 },
+      { layer_name: 'fire-detections', row_count: 2, earliest_observed_day: '2024-09-10', latest_observed_day: '2026-09-09' },
+    ] });
+    expect(partial.sources).toEqual(['fire-detections']);
+    expect(partial.observedDates).toEqual(['2024-09-10', '2026-09-09']);
+    expect(readRegionalAnalysisEvidence({ version: 1, stages: [], toolCalls: [partial], limitations: [] })).not.toBeNull();
+    const report = { riskSummary: { level: 'low' as const, headline: 'Burn history.', factors: [], evidenceOrigin: 'warehouse' as const, evidenceSources: ['burn-severity' as const], evidenceReadIds: ['temporal-fire'] }, observations: [], remediation: [], professionalConsultation: 'Consult a forester.' };
+    expect(reportWarehouseEvidenceIssues(report, payload, { version: 1, stages: [], toolCalls: [partial], limitations: [] }).length).toBeGreaterThan(0);
+  });
+  it('does not present availability bounds as observed measurement dates', () => {
+    const entry = regionalEvidenceAuditCall('coverage-1', 'inventory', 'observation_coverage_on_day', {
+      surface_name: 'weather-observations', day: '2026-09-10',
+    }, {
+      coverage: { earliest_observed_day: '2020-01-01', latest_observed_day: '2026-09-09' },
+      cells: [{ state: 'published' }],
+    });
+    expect(entry).not.toHaveProperty('observedDates');
   });
   it('bounds total actual date provenance across all three warehouse date fields', () => {
     const history = Array.from({ length: 200 }, (_, index) => ({
