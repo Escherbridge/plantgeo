@@ -105,10 +105,24 @@ moderation, drawing/geometry validation, or the review pipeline owned by prior t
 
 ## Open Questions
 
-Each is genuinely undecided and carries a stated recommendation, following this repo's convention
-(no silent default). Per the product owner's explicit confirmation in the requesting conversation,
-OQ-A and OQ-E's high-level direction ("merge into the public/social system," "show real display
-names") are **already decided**; the sub-questions below settle the mechanics.
+**Resolved 2026-09-13 by the product owner, and both hard preconditions verified directly against
+production:**
+- **OQ-A/OQ-F → promote into `geo.features`, with real geometry.** Requests reuse the exact
+  intervention pipeline (submission, unified layer, click-to-inspect modal) rather than a parallel
+  system; a request gets a Point via the same `InterventionGeometrySchema` tool interventions use.
+- **OQ-B → retire the private/team-scoped path entirely; public becomes the only mode.** Verified
+  against production directly (`strategy_requests`: 3 rows, all from one user; `request_votes`: 0
+  rows) — cheap enough to **migrate**, not discard: the 3 existing rows become published
+  request-kind `geo.features` rows rather than being dropped.
+- **OQ-C → keep votes and likes as separate concepts**, diverging from this spec's original
+  recommendation. `request_votes` is NOT replaced by `feature_likes`; it keeps its own
+  no-toggle-off, denormalized-count semantics, but its foreign key moves from
+  `strategy_requests.id` to `features.id` once the request row lives there.
+- **OQ-D → unify the type vocabulary.** Merge into `InterventionType`, adding `water_harvesting`;
+  requests stay land-category-only for now (no `cloud_seeding` via the request flow).
+- **OQ-E → confirmed safe.** Both current production users have `users.name` populated — the
+  precondition holds; proceed with `users.name`-backed display-name resolution as recommended, no
+  new column needed.
 
 ### OQ-A: Promote into `geo.features`, or build a parallel public table?
 

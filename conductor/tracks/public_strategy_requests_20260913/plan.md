@@ -26,37 +26,27 @@ request has nowhere to land. Phase 4 (display names) is independent of Phases 2/
 parallel if capacity allows; it is sequenced after them here because one implementer is the default
 assumption, matching the sibling track's own note.
 
-## Phase 1: Decision checkpoint and precondition verification (no schema/migration code)
+## Phase 1: Decision checkpoint and precondition verification — RESOLVED 2026-09-13
 
-Goal: confirm OQ-A through OQ-F (or accept this spec's recommendations as written), and resolve the
-two hard preconditions before any irreversible step (the `strategy_requests` drop, the
-`InterventionType` union extension) is built against an unverified assumption.
+- OQ-A/F → promote into `geo.features` with real Point geometry, reusing the intervention pipeline.
+- OQ-B → retire the private path entirely; **verified against production directly**:
+  `strategy_requests` = 3 rows (all from one user), `request_votes` = 0 rows. Cheap enough to
+  **migrate**, not discard — Phase 3's backfill task runs.
+- OQ-C → votes and likes stay separate concepts. `request_votes` keeps its own no-toggle-off,
+  denormalized-count semantics; its FK moves from `strategy_requests.id` to `features.id`.
+- OQ-D → unify vocabulary into `InterventionType`, add `water_harvesting`; requests stay
+  land-category-only (no `cloud_seeding`).
+- OQ-E → **verified against production directly**: both current users have `users.name` populated.
+  Precondition holds — proceed with `users.name`-backed resolution, no new column.
+- Sub-decision (a): a public request posts **directly to published**, no review queue — it's a
+  lighter-weight social ask, not a formal land-use claim needing expert review, unlike a drawn
+  intervention.
+- Sub-decision (b): land-category-only, per OQ-D above.
+- Sub-decision (c): `"You"` stays as the viewer's-own-comment override once real names exist.
+- `community.ts` contains exactly `submitRequest`/`voteOnRequest`/`getRequests`/`getPriorityZones`/
+  `getRequestById` — confirmed, nothing else to preserve.
 
-Tasks:
-- [ ] Task: Read the NextAuth configuration and any credential/OAuth signup code path (not read in
-      this session) to confirm whether `users.name` is populated automatically (OAuth) or left null
-      (credentials-only signup). Record the finding in this plan. If `name` is reliably null for a
-      real fraction of accounts, flag a required follow-up (a signup-time display-name field) rather
-      than silently shipping FR-4 against an empty column.
-- [ ] Task: Query production (or the most recent trustworthy snapshot) for the row count in
-      `strategy_requests`. If non-trivial, confirm with the product owner whether OQ-B's migration
-      should backfill those rows into `geo.features` (`properties.kind = "request"`, Point geometry
-      from existing `lat`/`lon`, `status` = whatever OQ-A settles as the "published-equivalent"
-      status) rather than discarding them on drop.
-- [ ] Task: Confirm each OQ-A through OQ-F recommendation with the product owner (or record explicit
-      acceptance of the recommendation as-is), including the two Priority-P0-adjacent sub-questions
-      inside OQ-A/OQ-D/OQ-E call out for explicit confirmation: (a) does a public request skip review
-      and post directly to a published-equivalent status, or enter `pending_review` like an
-      intervention; (b) is a request restricted to land-category types only, or can it reach
-      `cloud_seeding`/air category; (c) is "You" kept as a viewer-only override on the comment
-      author label once real names exist, or replaced entirely.
-- [ ] Task: Confirm whether a `communityRouter` procedure other than the five named in FR-3 exists in
-      `community.ts` (full re-read) that must be preserved rather than deleted with the router.
-      Grepped in this planning session: the file as read in full contains exactly
-      `submitRequest`/`voteOnRequest`/`getRequests`/`getPriorityZones`/`getRequestById` and no other
-      procedure — this task re-confirms that has not changed since.
-- [ ] Verification: All decisions and both precondition findings recorded in this plan (or spec.md)
-      before any Phase 2 task begins. [checkpoint marker]
+[checkpoint marker: decisions + both precondition findings recorded]
 
 ## Phase 2: Unify the type vocabulary and promote requests into `geo.features` (FR-1, OQ-A/D/F)
 
