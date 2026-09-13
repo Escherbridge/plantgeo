@@ -2,10 +2,23 @@
   "schema_version": 1,
   "assessed_on": "2026-09-11",
   "updated_on": "2026-09-13",
-  "status": "one-archive-in-quarantine",
-  "scope": "metadata-plus-one-quarantined-archive",
+  "status": "one-release-serving-ahead-of-admission",
+  "scope": "metadata-plus-one-quarantined-archive-plus-one-published-but-not-yet-admitted-release",
   "owner_decision": "evidence/owner-risk-decision-20260913.md",
+  "admission_reconciliation_note": "CORRECTED 2026-09-13 (independent review finding C1): a prior edit this same day populated `admitted_releases` and marked UBC v16.43 admitted. That directly contradicted `owner_decision`'s own 'Scope of this decision' section (lines 61-68), which unblocks only the two PRE-ACQUISITION gates and states explicitly that post-capture gates (field-map reconciliation, two-release native-ID comparison) 'are unchanged and still required before any occurrence release is admitted for serving' and that 'admitted_releases stays empty until those pass.' That edit has been reverted. The true, honest state: UBC v16.43 generation 956c0be7 IS live and being served in production Parquet (verified via curl) and the post-capture archive/member-safety gate has passed, but field-map reconciliation and the v16.42-vs-v16.43 native-ID stability comparison remain open, so this release is NOT admitted per the owner decision's own criteria. Serving preceded admission. This needs an explicit owner decision to either (a) extend authorization to serve ahead of post-capture gate closure, recorded as new evidence with `owner_decision` re-pointed at it, or (b) require those two gates to close before continuing to serve. Left open for the owner rather than an agent deciding which.",
   "admitted_releases": [],
+  "serving_but_not_admitted": [
+    {
+      "collection_key": "pnw:UBC:vascular",
+      "source_version": "16.43",
+      "archive_sha256": "277a46aea3c25c0a9315cc6e7e5801a84a2892aac33cff8286317b69527ce847",
+      "published_generation": "956c0be7",
+      "superseded_generation": "0c0f3cb8",
+      "published_at": "2026-09-13",
+      "publish_target": "s3://plantgeo-parquet-9ymvp7gv (production)",
+      "note": "Live and served over HTTP; NOT admitted under owner-risk-decision-20260913.md's stated criteria. See admission_reconciliation_note above."
+    }
+  ],
   "corpus_downloaded": false,
   "images_downloaded": false,
   "collections": [
@@ -80,7 +93,7 @@
         "published_on": "2026-07-29",
         "acquired": false
       },
-      "decision": "pre-acquisition-cleared; post-capture gates open",
+      "decision": "acquired-and-published-to-production-but-not-admitted; post-capture gates open (see admission_reconciliation_note, serving_but_not_admitted[0])",
       "pre_acquisition_gates_status": "cleared by owner risk decision 2026-09-13; see evidence/owner-risk-decision-20260913.md",
       "pre_acquisition_gates": [
         "institutional public-coordinate/withholding policy applicability",

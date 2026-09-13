@@ -1,0 +1,43 @@
+{
+  "track_id": "unified_intervention_layer_20260913",
+  "title": "Unified intervention layer with click-to-inspect detail panel",
+  "type": "feature",
+  "status": "pending",
+  "created": "2026-09-13",
+  "description": "Merge the published Martin-tile 'Interventions' layer and the client-side draft/proposed 'My & Proposed Interventions' overlay into one layer toggle, styled by status; add click interactivity on any intervention feature (point or polygon, any status) opening a detail panel that shows the full drawn geometry plus every field; add net-new commenting and liking to that panel, with an explicit design question about /feed parity.",
+  "dependencies": [
+    {
+      "track": "intervention_drawing_visibility_20260912",
+      "relationship": "builds_on",
+      "note": "Landed the draft/proposed client GeoJSON overlay (intervention-drafts-source), its status-based orange-for-pending-review styling, and the drawing tool that produces the full polygon/point geometry this track's detail panel must display."
+    },
+    {
+      "track": "ai_intervention_workspace_20260913",
+      "relationship": "related",
+      "note": "Just shipped the AiInterventionWorkspace shell (switchable AI-analysis / intervention-proposal panes, right-edge, keep-alive state). This track's detail panel is a candidate third mode or a separate popup; the spec makes an explicit recommendation rather than silently colliding with that shell's OQ-2 'new dedicated surface, nothing else joins it uninvited' precedent."
+    },
+    {
+      "track": "community_engagement_completion_20260805",
+      "relationship": "must_not_duplicate",
+      "note": "castModerationVote/transitionLifecycleState is dead/misleading; contributions.publishContribution/rejectContribution (expertProcedure) is the only real publish/reject path. This track's detail panel reads status and reviewNote; it must not add a second moderation surface or re-solve that landmine."
+    }
+  ],
+  "partitions": {
+    "owns": [
+      "src/lib/map/layer-registry.ts (interventions/intervention-drafts toggle consolidation)",
+      "src/lib/map/layers.ts (interventions*/interventionDrafts* style layer merge)",
+      "New detail-panel component(s), location TBD in planning (candidate: src/components/panels/InterventionDetailPanel.tsx or a mode inside AiInterventionWorkspace)",
+      "New comment/like tRPC procedures and schema, location TBD (candidate: new interventions.ts procedures + a new schema table)"
+    ],
+    "touches": [
+      "src/components/map/LayerManager.tsx (click handler wiring for the merged layer)",
+      "src/components/map/HoverTooltip.tsx (read-only reference for the existing hover pattern; not expected to change)",
+      "src/lib/server/trpc/routers/interventions.ts (read path only; no change to submitIntervention/castModerationVote/transitionLifecycleState)",
+      "src/lib/server/db/schema.ts (new comment/like table(s), additive migration)",
+      "src/app/feed/InterventionFeed.tsx (only if OQ resolves toward shared detail-panel component reuse)"
+    ],
+    "confidence": "low",
+    "computed_at_commit": "b98e438"
+  },
+  "resource": "./spec.md"
+}

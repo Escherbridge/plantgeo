@@ -1,6 +1,6 @@
 ---
 type: track-registry
-updated_on: 2026-09-12
+updated_on: 2026-09-13
 ---
 
 # Current tracks
@@ -11,7 +11,7 @@ This registry contains planned, active, and blocked work only. Completed impleme
 
 | Track | State | Outstanding work |
 | --- | --- | --- |
-| [Environmental Parquet serving](tracks/environmental_parquet_serving_20260912/plan.md) | active | Remove the remaining environmental PostgreSQL surface; complete direct writers, governed readers, layer registration, and agent parity. |
+| [Environmental Parquet serving](tracks/environmental_parquet_serving_20260912/plan.md) | active | September 13 freshness audit complete; execute the linked recovery plan for missing soil publication, interrupted refresh, historical repair and governed serving acceptance. |
 | [Gapless Parquet publication](tracks/gapless_parquet_publication_20260901/plan.md) | active | Close full historical horizons, governed absences, repair ownership, and sustained forward publication. |
 | [Multiscale polygon surfaces](tracks/multiscale_polygon_surface_20260901/plan.md) | active | Complete low-zoom support geometry, live selected-day rendering, performance, and browser evidence. |
 | [Parquet production acceptance](tracks/parquet_production_acceptance_20260901/plan.md) | blocked | Run cross-layer conservation, freshness, cold/warm, schedule burn-in, and release checks after serving work is ready. |
@@ -45,6 +45,7 @@ This registry contains planned, active, and blocked work only. Completed impleme
 
 | Track | State |
 | --- | --- |
+| [Unified intervention layer + detail panel](tracks/unified_intervention_layer_20260913/plan.md) | planned |
 | [AI intervention workspace](tracks/ai_intervention_workspace_20260913/plan.md) | planned |
 | [Intervention drawing + visibility](tracks/intervention_drawing_visibility_20260912/plan.md) | planned |
 | [Community engagement completion](tracks/community_engagement_completion_20260805/plan.md) | planned |

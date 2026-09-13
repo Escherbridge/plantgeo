@@ -36,6 +36,13 @@ import {
   type SoilFieldMeasure,
 } from "@/lib/environmental/soil-field";
 import {
+  getBotanicalOccurrences,
+  BotanicalOccurrencesContractError,
+  BotanicalOccurrencesRequestError,
+  BotanicalOccurrencesUnavailableError,
+  type BotanicalOccurrencesQueryResult,
+} from "@/lib/server/services/botanical-occurrences-client";
+import {
   getWatersheds,
   MAX_WATERSHED_BBOX_SQUARE_DEGREES,
   WatershedResponseError,
@@ -721,5 +728,85 @@ export const environmentalRouter = router({
         data,
         truncated: false,
       };
+    }),
+
+  /**
+   * Herbarium specimen occurrences for the viewport, at the band this zoom selects.
+   *
+   * The browser-reachable end of `botanical-occurrences-client.ts`, which is a server-only
+   * module (it reads `AGRI_PARQUET_SERVICE_URL` and goes through `fetchBoundedJson`). A tRPC
+   * procedure rather than a route handler because that is what every other viewport-scoped
+   * layer on this map uses -- `getSoilSurvey`, `getSoilField`, `getClimateField` above -- and
+   * the point of matching them is that the map and any panel describing it land on ONE
+   * react-query entry keyed by the same inputs.
+   *
+   * `zoom` IS the band selector and is therefore part of the key, like `getClimateField`'s.
+   * It is a RAW INTEGER, deliberately NOT a `ZoomTier`: this plane's detail floor is 11, which
+   * sits between the `ZOOM_TIERS` ladder's z9 and z13 rungs, and its aggregate support id comes
+   * off continuous zoom bands that do not align with that ladder at all. Forcing it through
+   * `resolveZoomTier` would round a zoom-11 detail request down to the z9 aggregate rung and
+   * draw grid cells where a reader asked for specimens. See the client's WIRE block.
+   *
+   * `release_set_id` is never an input: the client resolves the current generation itself via
+   * `getCurrentBotanicalReleaseSetId`, because the service refuses the literal `"current"` and
+   * a browser has no other way to name a generation. That also means a caller cannot pin a
+   * stale one by accident.
+   *
+   * The plane's four states are RETURNED, not thrown -- `detail`/`aggregate` are answers and
+   * `refused`/`unavailable` are honest facts about the plane, so the client switches on
+   * `.state` rather than reading a failed query. Only transport and contract faults become a
+   * `TRPCError`, matching `getSoilField`'s split. A `refused` reaching here as an exception
+   * would make a governed refusal indistinguishable from an outage.
+   */
+  getBotanicalOccurrences: publicProcedure
+    .input(
+      z.object({
+        bbox: bboxSchema,
+        /** Viewport zoom; at/above 11 the plane answers `detail`, below it `aggregate`. */
+        zoom: mapZoomSchema,
+        taxonConceptId: z.string().min(1).max(200).optional(),
+        family: z.string().min(1).max(200).optional(),
+        collectionKey: z.string().min(1).max(200).optional(),
+        eventStart: observationDateSchema.optional(),
+        eventEnd: observationDateSchema.optional(),
+        spatialQuality: z.enum(["confirmed", "possible", "all"]).optional(),
+        limit: z.number().int().positive().max(2000).optional(),
+        cursor: z.string().min(1).max(500).optional(),
+      })
+    )
+    .query(async ({ input, signal }): Promise<BotanicalOccurrencesQueryResult> => {
+      try {
+        return await getBotanicalOccurrences({ ...input, signal });
+      } catch (error) {
+        // `/current` resolving to unavailable is the plane saying nothing has ever been
+        // published. Folded into the SAME `unavailable` member the query route returns rather
+        // than surfaced as an error, so a client has one shape to handle for "this plane has
+        // no answer" instead of a union member and an exception that mean the same thing.
+        if (error instanceof BotanicalOccurrencesUnavailableError) {
+          return {
+            state: "unavailable",
+            reason: error.reason,
+            note: "No botanical occurrence generation has been published yet.",
+          };
+        }
+        // A caller mistake this procedure's own zod input should already have caught; if one
+        // gets through it is a bug here, not an outage upstream.
+        if (error instanceof BotanicalOccurrencesRequestError) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: error.message });
+        }
+        // A 200 whose body broke the published shape. Permanent until a deploy fixes one side,
+        // so it is not retryable and must not be dressed as a transient outage.
+        if (error instanceof BotanicalOccurrencesContractError) {
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: error.message });
+        }
+        const failure = parquetUpstreamFailure(error);
+        if (failure !== null) {
+          throw new TRPCError({
+            code: failure.fault.kind === "aborted" ? "CLIENT_CLOSED_REQUEST" : "SERVICE_UNAVAILABLE",
+            message: failure.fault.message,
+          });
+        }
+        throw error;
+      }
     }),
 });

@@ -4,11 +4,13 @@ import { useEffect, useRef, useCallback } from "react";
 import type { Map as MapLibreMap, GeoJSONSource, MapMouseEvent } from "maplibre-gl";
 import { getFirstSymbolLayer, safeRemoveLayerAndSource } from "@/lib/map/layer-utils";
 import { BOTANICAL_DETAIL_MIN_ZOOM, type BotanicalOccurrenceFeature } from "@/lib/botanical-occurrences";
+import { isProvisionalBotanicalCollection } from "@/lib/environmental/botanical-governance-status";
 
 const SOURCE_ID = "botanical-occurrences";
 const LAYER_ID_EXACT = "botanical-occurrences-exact";
 const LAYER_ID_GENERALIZED = "botanical-occurrences-generalized";
 const LAYER_ID_POSSIBLE = "botanical-occurrences-possible";
+const LAYER_ID_PROVISIONAL_RING = "botanical-occurrences-provisional-ring";
 
 /**
  * Circle-radius/style legend for the detail layer. Confirmed-exact records draw the smallest,
@@ -21,7 +23,11 @@ export const BOTANICAL_OCCURRENCE_LEGEND = [
   { label: "Confirmed, exact locality", color: "#5ec26a" },
   { label: "Confirmed, generalized locality", color: "#2f7d3a" },
   { label: "Possible determination", color: "#e0c341" },
+  { label: "Provisional: not yet governance-admitted", color: "#e8813f" },
 ] as const;
+
+/** Circle-radius of the outer provisional ring; drawn slightly larger than the widest base dot. */
+const PROVISIONAL_RING_RADIUS = 9;
 
 /** A specimen record has no coordinates to place; the caller must never synthesize a centroid. */
 function isSpatial(
@@ -34,9 +40,17 @@ function isSpatial(
  * Builds the GeoJSON this layer draws from raw wire features, dropping nonspatial records.
  * Exported so the surrounding data hook and the test suite can both build the same shape
  * without duplicating the spatial guard.
+ *
+ * The first four properties are what the PAINT FILTERS key on. The rest are PROVENANCE, carried
+ * because the shared hover manager (`lib/map/hover-fields.ts`) reads MapLibre feature properties
+ * and nothing else -- a tooltip cannot reach back into the response -- and a specimen dot whose
+ * source and rights are not reachable on hover is an unattributed use of somebody's collection.
+ * `publishedAt` is the RESPONSE's publication timestamp rather than a per-feature field, threaded
+ * in by the caller so a reader can see how stale the generation they are looking at is.
  */
 export function botanicalOccurrencesToGeoJSON(
-  features: BotanicalOccurrenceFeature[]
+  features: BotanicalOccurrenceFeature[],
+  publishedAt: string | null = null
 ): GeoJSON.FeatureCollection {
   return {
     type: "FeatureCollection",
@@ -47,7 +61,20 @@ export function botanicalOccurrencesToGeoJSON(
         occurrence_id: feature.occurrence_id,
         spatial_class: feature.spatial_class,
         membership: feature.membership,
+        resolution_state: feature.resolution_state,
+        provisional: isProvisionalBotanicalCollection(feature.collection_key),
         scientific_name: feature.scientific_name,
+        family: feature.family,
+        collection_key: feature.collection_key,
+        catalog_number: feature.catalog_number,
+        recorded_by: feature.recorded_by,
+        event_start: feature.event_interval.start,
+        event_end: feature.event_interval.end,
+        event_precision: feature.event_interval.precision,
+        coordinate_uncertainty_m: feature.coordinate_uncertainty_m,
+        rights_uri: feature.rights_uri,
+        attribution_text: feature.attribution_text,
+        published_at: publishedAt,
       },
     })),
   };
@@ -144,10 +171,38 @@ export function BotanicalOccurrencesLayer({
         beforeId
       );
     }
+    // A distinct outer ring for records from a collection serving ahead of governance admission
+    // (see `isProvisionalBotanicalCollection`) -- drawn on EVERY membership/spatial_class style
+    // above rather than a fourth mutually-exclusive class, because "provisional" is an orthogonal
+    // governance fact, not a competing claim about the coordinate or the determination. MapLibre
+    // has no native dashed-circle-stroke; a ring one size up in a clearly non-taxonomic colour is
+    // the plain-canvas equivalent, and it never obscures the base dot it surrounds.
+    if (!m.getLayer(LAYER_ID_PROVISIONAL_RING)) {
+      m.addLayer(
+        {
+          id: LAYER_ID_PROVISIONAL_RING,
+          type: "circle",
+          source: SOURCE_ID,
+          filter: ["==", ["get", "provisional"], true],
+          paint: {
+            "circle-radius": PROVISIONAL_RING_RADIUS,
+            "circle-color": "transparent",
+            "circle-stroke-width": 1.5,
+            "circle-stroke-color": BOTANICAL_OCCURRENCE_LEGEND[3].color,
+            "circle-stroke-opacity": 0.85,
+          },
+        },
+        beforeId
+      );
+    }
   }, []);
 
   const removeLayers = useCallback((m: MapLibreMap) => {
-    safeRemoveLayerAndSource(m, [LAYER_ID_EXACT, LAYER_ID_GENERALIZED, LAYER_ID_POSSIBLE], SOURCE_ID);
+    safeRemoveLayerAndSource(
+      m,
+      [LAYER_ID_EXACT, LAYER_ID_GENERALIZED, LAYER_ID_POSSIBLE, LAYER_ID_PROVISIONAL_RING],
+      SOURCE_ID
+    );
   }, []);
 
   useEffect(() => {

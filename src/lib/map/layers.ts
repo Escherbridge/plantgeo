@@ -341,31 +341,48 @@ export const burnSeverityOutlineLayer: LayerSpecification = {
   },
 };
 
-// Styled on "priority" because that is the only classification createIntervention
-// actually persists; "intervention_type" is never written, so colouring by it painted
-// every zone the same fabricated hue.
-export const INTERVENTION_PRIORITY_CLASSES: readonly StyleClass[] = [
-  { value: "High", color: "#b45309", label: "High priority" },
-  { value: "Medium", color: "#6d28d9", label: "Medium priority" },
-  { value: "Low", color: "#0369a1", label: "Low priority" },
+/**
+ * Land vs air, the one classification every intervention row actually carries.
+ *
+ * Replaces the former `priority`-keyed palette on 2026-09-13 (unified_intervention_layer
+ * track, OQ-2). `submitIntervention` has never written `priority`, so essentially every
+ * real row fell through to the neutral fallback and the three priority colours were a
+ * palette for a field nobody produced. `category` is written on every submission and is
+ * projected by `geo.intervention_tiles()` as of drizzle/0001_intervention_tiles_category.sql
+ * (Martin must be restarted for the published tiles to carry it).
+ */
+export const INTERVENTION_CATEGORY_CLASSES: readonly StyleClass[] = [
+  { value: "land", color: "#0d9488", label: "Land intervention" },
+  { value: "air", color: "#7c3aed", label: "Air intervention" },
 ];
 
-export const INTERVENTION_UNCLASSIFIED_LABEL = "Priority not set";
+export const INTERVENTION_UNCLASSIFIED_LABEL = "Category not set";
 
-export const INTERVENTION_OUTLINE_COLOR = "#4b5563";
+/** Still-in-review submissions paint orange regardless of category. */
+export const INTERVENTION_PENDING_REVIEW_COLOR = "#f97316";
+
+export const INTERVENTION_PENDING_REVIEW_LABEL = "In review";
 
 /**
- * The colour a submitted site takes when it carries no priority, and deliberately NOT the
- * neutral `UNCLASSIFIED_FILL_COLOR` the classified fills fall back to.
+ * The ONE paint expression all six intervention style layers share -- the three published
+ * Martin-tile layers and the three client-GeoJSON draft layers alike.
  *
- * `interventions.submitIntervention` persists name, type, description, geometry, submitter
- * and consent -- it never writes `priority` -- so "no priority" is what essentially every
- * interactively submitted site carries, not an anomaly. Grey would report the common case
- * as a missing value; this teal reads as what it is, an approved site nobody has triaged.
+ * Status first, category second: a `pending_review` row is a row whose standing is the thing
+ * a reader needs to see, and letting its category colour win would make an unreviewed
+ * proposal indistinguishable from a published site. Everything else paints by category, and
+ * a row with no category reported falls to the shared neutral grey rather than borrowing a
+ * category colour it was never classified into.
+ *
+ * Shared rather than duplicated per source because the merged toggle draws both sources at
+ * once (see LAYER_REGISTRY.interventions' six `styleLayerIds`): two expressions would let the
+ * same status paint two colours depending on which side of publication a feature sat on.
  */
-export const INTERVENTION_UNPRIORITIZED_POINT_COLOR = "#0f766e";
-
-export const INTERVENTION_UNPRIORITIZED_POINT_LABEL = "Submitted site, not yet prioritised";
+export const INTERVENTION_STATUS_COLOR: DataDrivenPropertyValueSpecification<string> = [
+  "case",
+  ["==", ["get", "status"], "pending_review"],
+  INTERVENTION_PENDING_REVIEW_COLOR,
+  matchClasses("category", INTERVENTION_CATEGORY_CLASSES, UNCLASSIFIED_FILL_COLOR),
+] as unknown as DataDrivenPropertyValueSpecification<string>;
 
 export const interventionsLayer: LayerSpecification = {
   id: "interventions",
@@ -375,11 +392,7 @@ export const interventionsLayer: LayerSpecification = {
   minzoom: 6,
   layout: { visibility: "none" },
   paint: {
-    "fill-color": matchClasses(
-      "priority",
-      INTERVENTION_PRIORITY_CLASSES,
-      UNCLASSIFIED_FILL_COLOR
-    ),
+    "fill-color": INTERVENTION_STATUS_COLOR,
     "fill-opacity": 0.4,
   },
 };
@@ -392,7 +405,9 @@ export const interventionsOutlineLayer: LayerSpecification = {
   minzoom: 6,
   layout: { visibility: "none" },
   paint: {
-    "line-color": INTERVENTION_OUTLINE_COLOR,
+    // The same shared status/category expression the fill takes: an outline in its own grey
+    // would re-introduce exactly the two-colours-for-one-feature split the merge removed.
+    "line-color": INTERVENTION_STATUS_COLOR,
     "line-width": 1,
     "line-dasharray": [2, 1],
   },
@@ -419,11 +434,7 @@ export const interventionsPointsLayer: LayerSpecification = {
   layout: { visibility: "none" },
   filter: ["==", ["geometry-type"], "Point"],
   paint: {
-    "circle-color": matchClasses(
-      "priority",
-      INTERVENTION_PRIORITY_CLASSES,
-      INTERVENTION_UNPRIORITIZED_POINT_COLOR
-    ),
+    "circle-color": INTERVENTION_STATUS_COLOR,
     "circle-radius": ["interpolate", ["linear"], ["zoom"], 6, 4, 10, 6, 14, 9],
     // A white ring, as sensors uses: it separates sites clustered on one parcel and keeps
     // the dot legible over both the light and the dark basemap.
@@ -437,8 +448,6 @@ export const interventionsPointsLayer: LayerSpecification = {
 // keep out of DYNAMIC_TILE_SOURCE_IDS in sources.ts.
 export const INTERVENTION_DRAFTS_SOURCE = "intervention-drafts-source";
 
-export const INTERVENTION_DRAFT_FILL_COLOR = "#0d9488";
-
 const INTERVENTION_DRAFT_CATEGORY_DASHARRAY: DataDrivenPropertyValueSpecification<
   [number, number]
 > = [
@@ -451,14 +460,11 @@ const INTERVENTION_DRAFT_CATEGORY_DASHARRAY: DataDrivenPropertyValueSpecificatio
   ["literal", [3, 2]],
 ] as unknown as DataDrivenPropertyValueSpecification<[number, number]>;
 
-const INTERVENTION_DRAFT_CATEGORY_COLOR = matchClasses(
-  "category",
-  [
-    { value: "land", color: "#0d9488", label: "Land intervention (draft)" },
-    { value: "air", color: "#7c3aed", label: "Air intervention (draft)" },
-  ],
-  INTERVENTION_DRAFT_FILL_COLOR
-);
+// The drafts overlay keeps its dashed outline and its reduced opacity -- what tells a draft
+// from a published site is its WEIGHT, not its hue -- but takes its colour from the shared
+// INTERVENTION_STATUS_COLOR above, the same expression the published tile layers take.
+// The old draft-only `INTERVENTION_DRAFT_COLOR` (a second copy of the same case/match) was folded
+// into it on 2026-09-13 with the toggle merge.
 
 export const interventionDraftsFillLayer: LayerSpecification = {
   id: "intervention-drafts-fill",
@@ -468,7 +474,7 @@ export const interventionDraftsFillLayer: LayerSpecification = {
   layout: { visibility: "none" },
   filter: ["!=", ["geometry-type"], "Point"],
   paint: {
-    "fill-color": INTERVENTION_DRAFT_CATEGORY_COLOR,
+    "fill-color": INTERVENTION_STATUS_COLOR,
     "fill-opacity": 0.2,
   },
 };
@@ -481,7 +487,7 @@ export const interventionDraftsOutlineLayer: LayerSpecification = {
   layout: { visibility: "none" },
   filter: ["!=", ["geometry-type"], "Point"],
   paint: {
-    "line-color": INTERVENTION_DRAFT_CATEGORY_COLOR,
+    "line-color": INTERVENTION_STATUS_COLOR,
     "line-width": 1.5,
     "line-dasharray": INTERVENTION_DRAFT_CATEGORY_DASHARRAY,
   },
@@ -495,7 +501,7 @@ export const interventionDraftsPointsLayer: LayerSpecification = {
   layout: { visibility: "none" },
   filter: ["==", ["geometry-type"], "Point"],
   paint: {
-    "circle-color": INTERVENTION_DRAFT_CATEGORY_COLOR,
+    "circle-color": INTERVENTION_STATUS_COLOR,
     "circle-radius": ["interpolate", ["linear"], ["zoom"], 6, 4, 10, 6, 14, 9],
     "circle-stroke-width": 1.5,
     "circle-stroke-color": "#ffffff",

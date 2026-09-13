@@ -17,6 +17,7 @@ import {
   WATER_CELL_AGGREGATE_NOTE,
   WATER_CELL_CAPTION_TITLE,
 } from "@/lib/map/water-cell-caption";
+import { PROVISIONAL_BOTANICAL_NOTICE } from "@/lib/environmental/botanical-governance-status";
 
 /** Style layer ids the shared hover manager queries via queryRenderedFeatures. */
 export const HOVERABLE_LAYER_IDS: string[] = [
@@ -50,6 +51,15 @@ export const HOVERABLE_LAYER_IDS: string[] = [
   "weather-temperature",
   "weather-temperature-cells",
   "vegetation-ndvi-cells-fill",
+  // The three herbarium surfaces. All three carry `published_at` and their contributing
+  // collection onto every feature specifically so a hover can state SOURCE AND STALENESS: a
+  // specimen record is somebody else's collection under somebody else's licence, and a dot that
+  // cannot say whose it is or how old the generation behind it is cannot be used responsibly.
+  "botanical-occurrences-exact",
+  "botanical-occurrences-generalized",
+  "botanical-occurrences-possible",
+  "botanical-richness-fill",
+  "botanical-collection-effort-fill",
 ];
 
 /**
@@ -497,6 +507,125 @@ function formatVegetationCell(props: Properties): HoverContent | null {
   ]);
 }
 
+/**
+ * The one line every botanical surface ends with: where the record came from and how old the
+ * generation is. Shared by all three formatters so the wording cannot drift between the specimen
+ * dot and the cells summarising it.
+ *
+ * `published_at` is the generation's publication timestamp, not an observation date, so it is
+ * rendered with its relative age -- "how stale is what I am looking at" is exactly the question
+ * it answers. A collecting-event date is a different fact and is stated separately.
+ */
+function botanicalProvenanceLines(props: Properties): (string | null)[] {
+  const publishedAt = formatTimestampWithRelative(toIsoTimestamp(stringField(props.published_at)));
+  const attribution = stringField(props.attribution_text);
+  const rights = stringField(props.rights_uri);
+  return [
+    publishedAt ? `Published: ${publishedAt}` : "Publication date not reported",
+    attribution ? `Source: ${attribution}` : null,
+    rights ? `Rights: ${rights}` : null,
+  ];
+}
+
+/**
+ * One herbarium specimen. The three paint layers (exact, generalized, possible) share it: they
+ * are one record drawn three ways, and the properties say which.
+ *
+ * The generalized/possible qualifications are stated rather than left to the colour, because the
+ * whole claim a specimen dot makes is "this was collected HERE, and this determination is
+ * trusted to THIS degree" -- and both halves are routinely wrong in ways only the record knows.
+ */
+function formatBotanicalOccurrence(props: Properties): HoverContent | null {
+  const name = stringField(props.scientific_name);
+  const family = stringField(props.family);
+  const spatialClass = stringField(props.spatial_class);
+  const membership = stringField(props.membership);
+  const resolutionState = stringField(props.resolution_state);
+  const provisional = props.provisional === true;
+  const uncertainty = formatInteger(props.coordinate_uncertainty_m, " m");
+  const collection = stringField(props.collection_key);
+  const catalogNumber = stringField(props.catalog_number);
+  const recordedBy = stringField(props.recorded_by);
+  const eventStart = stringField(props.event_start);
+  const eventEnd = stringField(props.event_end);
+  const precision = stringField(props.event_precision);
+
+  const collected =
+    eventStart && eventEnd && eventStart !== eventEnd
+      ? `${eventStart} – ${eventEnd}`
+      : (eventStart ?? eventEnd);
+
+  return buildContent(name ?? "Specimen record", [
+    provisional ? PROVISIONAL_BOTANICAL_NOTICE : null,
+    family ? `Family: ${family}` : null,
+    collected
+      ? `Collected: ${collected}${precision ? ` (${precision} precision)` : ""}`
+      : "Collecting date not recorded",
+    recordedBy ? `Recorded by: ${recordedBy}` : null,
+    collection
+      ? `Collection: ${collection}${catalogNumber ? ` ${catalogNumber}` : ""}`
+      : null,
+    membership === "possible"
+      ? "Determination: possible, not admitted evidence"
+      : "Determination: confirmed",
+    spatialClass === "generalized"
+      ? `Locality: generalized${uncertainty ? `, uncertainty ${uncertainty}` : ""}`
+      : uncertainty
+        ? `Locality: exact, uncertainty ${uncertainty}`
+        : "Locality: exact",
+    resolutionState && resolutionState !== "resolved" ? `Determination: name ${resolutionState}` : null,
+    ...botanicalProvenanceLines(props),
+    "A specimen documents a collection event; it does not prove current occupancy or absence.",
+  ]);
+}
+
+/**
+ * One documented-taxon-richness cell.
+ *
+ * The closing line is not decoration. A richness cell counts what has been COLLECTED, and the
+ * single most common misreading of such a map is as a statement about what grows there -- so the
+ * cell says which it is, next to the number, every time it is hovered.
+ */
+function formatBotanicalRichnessCell(props: Properties): HoverContent | null {
+  const evaluation = stringField(props.evaluation);
+  const documentedTaxa = formatInteger(props.documented_taxa, "");
+  const recordCount = formatInteger(props.record_count, "");
+  const collectionCount = formatInteger(props.collection_count, "");
+  const excludedByQc = toFiniteNumber(props.excluded_by_qc);
+  const possibleOnly = toFiniteNumber(props.possible_only_records);
+
+  return buildContent("Documented taxon richness", [
+    evaluation && evaluation !== "documented"
+      ? `Cell state: ${humanizeSnakeCase(evaluation)}`
+      : null,
+    documentedTaxa ? `Documented taxa: ${documentedTaxa}` : null,
+    recordCount ? `Specimen records: ${recordCount}` : null,
+    collectionCount ? `Contributing collections: ${collectionCount}` : null,
+    excludedByQc ? `Excluded by quality control: ${excludedByQc}` : null,
+    possibleOnly ? `Possible-determination only: ${possibleOnly}` : null,
+    ...botanicalProvenanceLines(props),
+    "Counts taxa that have been collected here, not taxa that grow here.",
+  ]);
+}
+
+/**
+ * One collecting-effort cell. The closing line states the aggregation the layer's own
+ * `BOTANICAL_EFFORT_MEASURE_LABELS` declares in prose: this is a record of where botanists went.
+ */
+function formatBotanicalEffortCell(props: Properties): HoverContent | null {
+  const recordCount = formatInteger(props.record_count, "");
+  const eventEstimate = formatInteger(props.event_estimate, "");
+  const collectionCount = formatInteger(props.collection_count, "");
+
+  return buildContent("Collection evidence & effort", [
+    recordCount ? `Specimen records: ${recordCount}` : null,
+    eventEstimate ? `Distinct collecting events (estimate): ${eventEstimate}` : null,
+    collectionCount ? `Contributing collections: ${collectionCount}` : null,
+    ...botanicalProvenanceLines(props),
+    "Measures collecting effort, not abundance: a blank cell means nobody looked.",
+  ]);
+}
+
 const FORMATTERS: Record<string, (props: Properties) => HoverContent | null> = {
   "published-fire-circles": formatFireDetection,
   // The same formatter for both of the cell's shapes: the square at coarse and middle zoom and
@@ -522,6 +651,14 @@ const FORMATTERS: Record<string, (props: Properties) => HoverContent | null> = {
   "weather-temperature": formatWeatherObservation,
   "weather-temperature-cells": formatWeatherObservation,
   "vegetation-ndvi-cells-fill": formatVegetationCell,
+  // One formatter across the three specimen paint layers: they draw one record in three styles
+  // (exact / generalized / possible), and the properties already say which, so three formatters
+  // would be three places for one wording to drift.
+  "botanical-occurrences-exact": formatBotanicalOccurrence,
+  "botanical-occurrences-generalized": formatBotanicalOccurrence,
+  "botanical-occurrences-possible": formatBotanicalOccurrence,
+  "botanical-richness-fill": formatBotanicalRichnessCell,
+  "botanical-collection-effort-fill": formatBotanicalEffortCell,
 };
 
 /** Per-layer field selection + unit formatting for the hover tooltip. Null when nothing to show. */

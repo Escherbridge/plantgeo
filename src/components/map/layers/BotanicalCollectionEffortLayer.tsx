@@ -22,8 +22,12 @@ export const BOTANICAL_EFFORT_MEASURE_LABELS: Record<BotanicalEffortMeasure, str
   collection_count: "contributing collections — count per cell",
 };
 
-/** Muted, desaturated ramp -- deliberately unlike the richness layer's saturated green ramp. */
-const EFFORT_RAMP: [number, string][] = [
+/**
+ * Muted, desaturated ramp -- deliberately unlike the richness layer's saturated green ramp.
+ * Exported so `layer-legends.ts` legends the colours this file paints rather than a second copy
+ * of them; see that module's rule 1.
+ */
+export const EFFORT_RAMP: [number, string][] = [
   [0, "#3f3f46"],
   [10, "#71717a"],
   [50, "#a1a1aa"],
@@ -35,8 +39,17 @@ function buildEffortFillExpression(measure: BotanicalEffortMeasure): unknown[] {
   return ["interpolate", ["linear"], ["get", measure], ...stops];
 }
 
-/** Converts wire aggregate cells into the FeatureCollection this layer draws. */
-export function botanicalEffortToGeoJSON(cells: BotanicalAggregateCell[]): GeoJSON.FeatureCollection {
+/**
+ * Converts wire aggregate cells into the FeatureCollection this layer draws.
+ *
+ * Carries the response's publication facts onto every cell for the same reason the richness
+ * builder does: the shared hover manager reads feature properties and cannot reach the response.
+ */
+export function botanicalEffortToGeoJSON(
+  cells: BotanicalAggregateCell[],
+  publishedAt: string | null = null,
+  releaseSetId: string | null = null
+): GeoJSON.FeatureCollection {
   return {
     type: "FeatureCollection",
     features: cells.map((cell) => ({
@@ -47,6 +60,9 @@ export function botanicalEffortToGeoJSON(cells: BotanicalAggregateCell[]): GeoJS
         record_count: cell.record_count,
         event_estimate: cell.event_estimate,
         collection_count: cell.collection_count,
+        excluded_by_qc: cell.excluded_by_qc,
+        published_at: publishedAt,
+        release_set_id: releaseSetId,
       },
     })),
   };

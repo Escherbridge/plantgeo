@@ -520,6 +520,39 @@ export const LAYER_RENDER_CONTRACT: Readonly<Record<LayerToggleId, LayerRenderCo
     },
   },
 
+  // Herbarium specimens: real determinations at real coordinates, so `event_point` -- the same
+  // class as gauges and stations, and for the same reason. The detail band is `raw_point`
+  // because unlike fire this plane DOES serve a raw rung: at zoom >= 11 it answers individual
+  // occurrence records with their own coordinates and uncertainties, which is exactly the claim
+  // `raw_point` licenses.
+  //
+  // The aggregate bands are `aggregate_cell` alone -- not heatmap, not cluster. Both of the
+  // withheld forms assert density that reads as ecological abundance, and this plane's cells
+  // count SPECIMENS COLLECTED, which is a record of where botanists went. The richness and
+  // effort layers both draw the declared support cell and caption the count as what it is; a
+  // heatmap of collecting effort smoothed across un-collected ground is precisely the
+  // misreading the effort layer's own "context layer, not abundance heatmap" note forbids.
+  "botanical-occurrences": eventPointEntry("botanical-occurrences"),
+  "botanical-richness": {
+    ...eventPointEntry("botanical-richness"),
+    permittedForms: {
+      coarse: ["aggregate_cell"],
+      middle: ["aggregate_cell"],
+      // No detail forms beyond the cell: below zoom 11 is the only band this layer draws in at
+      // all (the occurrence layer takes over above it), so a detail entry exists to keep the
+      // record total rather than to license anything.
+      detail: ["aggregate_cell"],
+    },
+  },
+  "botanical-collection-effort": {
+    ...eventPointEntry("botanical-collection-effort"),
+    permittedForms: {
+      coarse: ["aggregate_cell"],
+      middle: ["aggregate_cell"],
+      detail: ["aggregate_cell"],
+    },
+  },
+
   // Continuous fields. The three ERA5-Land lanes, aggregated onto a coarser lattice by the
   // reader at every rung below z13 and drawn as cells, isobands or a surface.
   "soil-moisture": continuousFieldEntry("soil-moisture"),
@@ -541,11 +574,11 @@ export const LAYER_RENDER_CONTRACT: Readonly<Record<LayerToggleId, LayerRenderCo
   // community surfaces have no declared spatial support in this contract yet.
   soil: referenceOrUnavailableEntry("soil"),
   "demand-heatmap": referenceOrUnavailableEntry("demand-heatmap"),
+  // Both halves of the merged toggle: the Martin-tile published set and the signed-in
+  // draft/proposed overlay it absorbed on 2026-09-13. Neither is lane-backed by a Parquet
+  // reader -- the drafts' features come from `useInterventionDraftsOverlay`'s merge of two tRPC
+  // queries -- so the one entry carries no declared spatial support.
   interventions: referenceOrUnavailableEntry("interventions"),
-  // The signed-in draft/proposed overlay. Not lane-backed by any Parquet reader -- its features
-  // come from `useInterventionDraftsOverlay`'s merge of two tRPC queries, set onto a plain
-  // client-side GeoJSON source -- so it carries no declared spatial support here either.
-  "intervention-drafts": referenceOrUnavailableEntry("intervention-drafts"),
   "strategy-recommendations": referenceOrUnavailableEntry("strategy-recommendations"),
 };
 

@@ -32,10 +32,12 @@ export type LayerToggleId =
   | "soil-vpd"
   | "demand-heatmap"
   | "interventions"
-  | "intervention-drafts"
   | "strategy-recommendations"
   | "evacuation-zones"
-  | "burn-severity";
+  | "burn-severity"
+  | "botanical-occurrences"
+  | "botanical-richness"
+  | "botanical-collection-effort";
 
 /** How a toggle reaches the map: a React-mounted layer component, or baked style layers. */
 export type LayerRenderKind = "component" | "style";
@@ -288,6 +290,63 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
     panelId: "vegetation",
     permanentlyUnavailableReason: null,
   },
+  // The three herbarium specimen rows, read through environmental.getBotanicalOccurrences.
+  //
+  // `panelId: "vegetation"` rather than a "botanical" section of their own. The pending
+  // shared-registration.patch that this slice implements proposed a new PanelId, but a PanelId
+  // is a DOCK SECTION WITH A REPORT: `DETAILS_LABELS` and `DETAILS_BODIES` are both exhaustive
+  // over `DockDetailsId`, so an eighth member is a compile error in two more files until it has
+  // a title and a whole details body nobody has specified. Specimen occurrences are plant
+  // observations and the Vegetation section already owns that vocabulary, so they file under it
+  // until someone actually wants a botanical report.
+  //
+  // `warehouseLayerName: null` for all three, and this is the deliberate answer to the patch's
+  // open question 1. A stream name is what gives a row a DAY AXIS, and a collecting-event
+  // interval is not a day the environmental slider can scrub: these records span two centuries,
+  // carry `year`/`month`/`interval` precisions, and the plane filters them by
+  // `event_start`/`event_end` rather than by an observation day. A name here would put a
+  // daily slider on a row whose data has no daily grain. The §9 LEFT JOIN warning above is
+  // about a name that resolves to nothing; null is the honest absence, not a dropped name.
+  //
+  // Three toggles over ONE query: all three read the same viewport/zoom answer, and the zoom
+  // band decides which of them can draw at all (see LayerManager's botanical block). Separate
+  // switches because a reader may want richness without the effort context under it.
+  "botanical-occurrences": {
+    toggleId: "botanical-occurrences",
+    label: "Botanical Specimen Occurrences",
+    description:
+      "Individual herbarium specimen records, drawn at high zoom only. A specimen documents a collection event; it does not prove current occupancy or absence.",
+    icon: "leaf",
+    renderKind: "component",
+    styleLayerIds: [],
+    warehouseLayerName: null,
+    panelId: "vegetation",
+    permanentlyUnavailableReason: null,
+  },
+  "botanical-richness": {
+    toggleId: "botanical-richness",
+    label: "Documented Taxon Richness",
+    description:
+      "How many distinct taxa are documented per support cell, at regional and coarse zoom. Reflects what has been collected, not what grows there.",
+    icon: "layers",
+    renderKind: "component",
+    styleLayerIds: [],
+    warehouseLayerName: null,
+    panelId: "vegetation",
+    permanentlyUnavailableReason: null,
+  },
+  "botanical-collection-effort": {
+    toggleId: "botanical-collection-effort",
+    label: "Collection Evidence & Effort",
+    description:
+      "Where collecting effort has concentrated, as context for the richness layer above. A context layer, not an abundance heatmap.",
+    icon: "users",
+    renderKind: "component",
+    styleLayerIds: [],
+    warehouseLayerName: null,
+    panelId: "vegetation",
+    permanentlyUnavailableReason: null,
+  },
   // Rendered from raster tiles, not from a geo.layers feed.
   soil: {
     toggleId: "soil",
@@ -400,41 +459,44 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
     panelId: "community",
     permanentlyUnavailableReason: null,
   },
-  // Three style layers, not two: the fill and its dashed outline draw ingested zones, and
-  // "interventions-points" draws the Point geometry every interactive submission carries.
-  // A fill layer cannot render a Point, so before the circle layer existed this toggle was
-  // switched on, served its tile and painted nothing for approved recommendations. All
-  // three must be listed here or applyVisibility flips only part of the layer.
+  // SIX style layers over TWO sources, under ONE switch.
+  //
+  // Three of them are the Martin-tile published set: the fill and its dashed outline draw
+  // ingested zones, and "interventions-points" draws the Point geometry every interactive
+  // submission carries (a fill layer cannot render a Point, so before the circle layer existed
+  // this toggle was switched on, served its tile and painted nothing for approved
+  // recommendations). The other three draw the signed-in caller's own drafts and the consenting
+  // `pending_review` queue from a plain client-side GeoJSON source
+  // (`intervention-drafts-source`, see sources.ts), filled by `useInterventionDraftsOverlay`
+  // (src/lib/map/use-intervention-drafts.ts) -- `geo.intervention_tiles()` only ever answers
+  // `status = 'published'`, so a draft has no tile to arrive in.
+  //
+  // They shipped as TWO toggles (`interventions` and `intervention-drafts`) until 2026-09-13,
+  // when the unified_intervention_layer track's OQ-1 merged them: which SOURCE a site's bytes
+  // came from is an implementation fact, and asking a reader to know it before they can see
+  // their own just-submitted intervention was the whole complaint. One switch, one legend, one
+  // paint expression (INTERVENTION_STATUS_COLOR in layers.ts) across all six -- and all six must
+  // stay listed here, or applyVisibility flips only part of the layer.
+  //
+  // The drafts overlay's own layer/source specs are untouched in layers.ts and sources.ts; only
+  // the second SWITCH is gone. Its data fetch was never gated on a toggle (the hook is
+  // auth-gated, not visibility-gated), so nothing else had to move.
   interventions: {
     toggleId: "interventions",
     label: "Interventions",
-    icon: "sprout",
-    renderKind: "style",
-    styleLayerIds: ["interventions", "interventions-outline", "interventions-points"],
-    warehouseLayerName: "interventions",
-    panelId: "community",
-    permanentlyUnavailableReason: null,
-  },
-  // Additive, alongside the Martin-tile `interventions` entry above -- not a replacement for it.
-  // `intervention_tiles` only ever answers `status = 'published'`; this toggle draws the
-  // signed-in caller's own drafts and every consenting contributor's `pending_review` queue from
-  // a plain client-side GeoJSON source (`intervention-drafts-source`, see sources.ts), filled by
-  // `useInterventionDraftsOverlay` (src/lib/map/use-intervention-drafts.ts) rather than by a
-  // Martin function or a Parquet reader. Three style layers for the same geometry-type split
-  // reason `interventions` above documents: a fill+outline for polygons, a circle for points.
-  "intervention-drafts": {
-    toggleId: "intervention-drafts",
-    label: "My & Proposed Interventions",
     description:
-      "Your own submitted interventions plus other pending-review proposals. Turn this on after submitting to see it here — published interventions use a separate always-on layer.",
+      "Published intervention sites plus, when you are signed in, your own submissions and the wider review queue. Anything still in review draws orange; published sites draw in their category colour (land or air).",
     icon: "sprout",
     renderKind: "style",
     styleLayerIds: [
+      "interventions",
+      "interventions-outline",
+      "interventions-points",
       "intervention-drafts-fill",
       "intervention-drafts-outline",
       "intervention-drafts-points",
     ],
-    warehouseLayerName: null,
+    warehouseLayerName: "interventions",
     panelId: "community",
     permanentlyUnavailableReason: null,
   },
@@ -524,6 +586,23 @@ export function layerLabel(toggleId: LayerToggleId): string {
  */
 export function isLayerPermanentlyWithheld(toggleId: LayerToggleId): boolean {
   return LAYER_REGISTRY[toggleId].permanentlyUnavailableReason !== null;
+}
+
+/**
+ * The six style layers the one `interventions` toggle owns, derived from the
+ * registry rather than re-listed.
+ *
+ * Two unrelated readers need this exact list and must never drift from the
+ * toggle: the click-to-inspect handlers (`use-intervention-detail-clicks.ts`)
+ * bind one handler per id, and `MapView`'s bare click handler stands down over
+ * them so a single click cannot open both the AI popup and the detail modal.
+ */
+export const INTERVENTION_STYLE_LAYER_IDS: readonly string[] =
+  LAYER_REGISTRY.interventions.styleLayerIds;
+
+/** True for any style layer the merged intervention toggle draws. */
+export function isInterventionStyleLayerId(layerId: string): boolean {
+  return INTERVENTION_STYLE_LAYER_IDS.includes(layerId);
 }
 
 /** Entries whose visibility is flipped with setLayoutProperty instead of mount/unmount. */

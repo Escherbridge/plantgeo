@@ -35,16 +35,11 @@ export const LAYER_PUBLICATION_STANDINGS: Partial<
 > = {
   interventions: {
     reason:
-      "Shows community intervention recommendations that have been reviewed and published.",
+      "Shows community intervention recommendations that have been reviewed and published, " +
+      "plus — for a signed-in reader — their own submissions and the wider review queue.",
     unblockedBy:
-      "New recommendations stay in the review queue until an expert approves them for the map.",
-  },
-  "intervention-drafts": {
-    reason:
-      "Shows your own draft recommendations and the wider review queue to signed-in readers, " +
-      "read from a client-side query rather than a warehouse lane.",
-    unblockedBy:
-      "Sign in to see it; nothing here waits on a lane, since it is never fed by one.",
+      "New recommendations stay in the review queue until an expert approves them for the map; " +
+      "sign in to see queued ones, which draw orange until then.",
   },
   "strategy-recommendations": {
     reason:

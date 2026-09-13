@@ -16,11 +16,18 @@ import {
 import { scaleOpacityValue, styleLayerOpacityTargets } from "@/lib/map/layer-opacity";
 import { useParquetFireDetections } from "@/hooks/useParquetFireDetections";
 import {
+  botanicalBandForZoom,
+  useBotanicalOccurrencesQuery,
   useSoilFieldQuery,
   useSoilSurveyQuery,
   useViewportBounds,
 } from "@/hooks/useViewportProxiedLayers";
+import { useBotanicalOccurrenceStore } from "@/stores/botanical-occurrence-store";
 import { trpc } from "@/lib/trpc/client";
+import { useInterventionDraftsOverlay } from "@/lib/map/use-intervention-drafts";
+import { INTERVENTION_DRAFTS_SOURCE_ID } from "@/lib/map/sources";
+import { useInterventionDetailClicks } from "@/lib/map/use-intervention-detail-clicks";
+import { InterventionDetailModal } from "@/components/map/InterventionDetailModal";
 import {
   LAYER_REGISTRY,
   styleBackedLayerEntries,
@@ -54,6 +61,17 @@ import {
   PARQUET_FEATURE_SOURCE_IDS,
   type ParquetFeatureSourceId,
 } from "@/lib/map/sources";
+import {
+  presentBotanicalCell,
+  presentBotanicalOccurrence,
+} from "@/lib/environmental/botanical-presentation";
+// The three GeoJSON builders come from the layer modules themselves, which is why they are
+// exported there: the spatial guard that drops nonspatial specimens must not exist twice.
+// Imported statically while the components above are dynamic -- these are pure functions with
+// no MapLibre dependency, so they cost nothing at SSR.
+import { botanicalOccurrencesToGeoJSON } from "@/components/map/layers/BotanicalOccurrencesLayer";
+import { botanicalRichnessToGeoJSON } from "@/components/map/layers/BotanicalRichnessLayer";
+import { botanicalEffortToGeoJSON } from "@/components/map/layers/BotanicalCollectionEffortLayer";
 
 const EMPTY_FEATURE_COLLECTION: GeoJSON.FeatureCollection = {
   type: "FeatureCollection",
@@ -171,6 +189,27 @@ const WeatherLayer = dynamic(
   () => import("@/components/map/layers/WeatherLayer").then((m) => ({ default: m.WeatherLayer })),
   { ssr: false }
 );
+const BotanicalOccurrencesLayer = dynamic(
+  () =>
+    import("@/components/map/layers/BotanicalOccurrencesLayer").then((m) => ({
+      default: m.BotanicalOccurrencesLayer,
+    })),
+  { ssr: false }
+);
+const BotanicalRichnessLayer = dynamic(
+  () =>
+    import("@/components/map/layers/BotanicalRichnessLayer").then((m) => ({
+      default: m.BotanicalRichnessLayer,
+    })),
+  { ssr: false }
+);
+const BotanicalCollectionEffortLayer = dynamic(
+  () =>
+    import("@/components/map/layers/BotanicalCollectionEffortLayer").then((m) => ({
+      default: m.BotanicalCollectionEffortLayer,
+    })),
+  { ssr: false }
+);
 const QueryPointLayer = dynamic(
   () => import("@/components/map/layers/QueryPointLayer").then((m) => ({ default: m.QueryPointLayer })),
   { ssr: false }
@@ -181,6 +220,14 @@ export default function LayerManager() {
   // One read of the toggle context covers every layer below: which are switched on, and
   // the mode each draws in. Nothing here reads a toggle id as a bare string.
   const layerVisibility = useLayerVisibility();
+  // The signed-in-only draft/proposed overlay's data. Not bbox-scoped like the Parquet
+  // queries above it -- it's the caller's own submissions plus the review queue, not a
+  // viewport-sized dataset -- and gated purely on auth inside the hook itself.
+  const interventionDraftsOverlay = useInterventionDraftsOverlay();
+  // Click-to-inspect for all six merged intervention style layers, bound in one
+  // place. The overlay's records are handed in so a draft click resolves from
+  // memory; only a published Martin-tile click costs a round trip (NFR-1).
+  useInterventionDetailClicks(map, interventionDraftsOverlay.recordsById);
   // The per-layer opacity MULTIPLIER for every registry layer. Style-baked layers are applied
   // from here (nothing else owns them); component-mounted layers take theirs as an
   // `opacityScale` prop and fold it into whatever they already compute -- one writer per
@@ -425,6 +472,135 @@ export default function LayerManager() {
   // SoilDetails instead, from this same query key. See src/lib/server/AGENTS.md §soil-survey.
   const soilSurveyGeoJSON = soilSurveyQuery.data ?? EMPTY_FEATURE_COLLECTION;
 
+  // The three herbarium specimen rows, over ONE read.
+  //
+  // The plane answers `detail` (individual specimens) at zoom >= 11 and `aggregate` (support
+  // cells) below it, from the same route on the same inputs -- so one query serves all three
+  // toggles and they can never disagree about which generation they are drawing. The zoom band
+  // is what decides which of them can draw at all, which is the exclusivity
+  // `BotanicalOccurrencesLayer`'s own docstring delegates to "whichever container chooses which
+  // layer to mount". This is that container.
+  //
+  // The floor is 11 and the `ZOOM_TIERS` ladder's rungs are 0/5/9/13, so `botanicalBandForZoom`
+  // is a bare comparison rather than a `resolveZoomTier` call -- rounding onto the ladder would
+  // send a zoom-11 detail request to the z9 aggregate rung.
+  const botanicalFilters = useBotanicalOccurrenceStore((state) => state.filters);
+  const setBotanicalResponse = useBotanicalOccurrenceStore((state) => state.setLastResponse);
+  const setSelectedBotanicalFeature = useBotanicalOccurrenceStore(
+    (state) => state.setSelectedFeature
+  );
+  const botanicalBand = botanicalBandForZoom(zoom);
+  const botanicalOccurrencesVisible = layerVisibility["botanical-occurrences"];
+  const botanicalRichnessVisible = layerVisibility["botanical-richness"];
+  const botanicalEffortVisible = layerVisibility["botanical-collection-effort"];
+  // Enabled when a toggle that could actually DRAW at this band is on. A lit occurrence switch
+  // at zoom 4 fetches nothing, because the detail layer cannot draw there and the aggregate
+  // layers are off -- the gate is about what is drawable, not about what is switched on.
+  const botanicalQueryEnabled =
+    botanicalBand === "detail"
+      ? botanicalOccurrencesVisible
+      : botanicalRichnessVisible || botanicalEffortVisible;
+  // Empty filter strings are "unset" in the store, never sent as an empty query parameter --
+  // the service would read `family=` as a filter matching nothing.
+  const botanicalQuery = useBotanicalOccurrencesQuery(bbox, {
+    enabled: botanicalQueryEnabled,
+    zoom,
+    taxonConceptId: botanicalFilters.taxon_concept_id || undefined,
+    family: botanicalFilters.family || undefined,
+    collectionKey: botanicalFilters.collection_key || undefined,
+    eventStart: botanicalFilters.event_start || undefined,
+    eventEnd: botanicalFilters.event_end || undefined,
+    spatialQuality: botanicalFilters.spatial_quality,
+  });
+  // The RETURNED state, never the requested band. A retained frame outlives the zoom it was
+  // fetched for (`placeholderData` holds the previous answer across a pan or a zoom), so during
+  // a zoom across the floor the band says "detail" while the cells in hand are still aggregate.
+  // Reading the answer's own state is what keeps aggregate cells out of the detail layer and
+  // specimen points out of the two choropleths.
+  const botanicalResult = botanicalQuery.data;
+  const botanicalDetail = botanicalResult?.state === "detail" ? botanicalResult : null;
+  const botanicalAggregate = botanicalResult?.state === "aggregate" ? botanicalResult : null;
+  // Presented into the snake_case vocabulary the three layer components were built against;
+  // see src/lib/environmental/botanical-presentation.ts for why the two vocabularies differ.
+  const botanicalFeatures = useMemo(
+    () => (botanicalDetail?.features ?? []).map(presentBotanicalOccurrence),
+    [botanicalDetail]
+  );
+  const botanicalCells = useMemo(
+    () => (botanicalAggregate?.cells ?? []).map(presentBotanicalCell),
+    [botanicalAggregate]
+  );
+  // `publishedAt` and the release id are threaded onto every drawn feature, not kept beside the
+  // collection: the shared hover manager (`lib/map/hover-fields.ts`) reads MapLibre feature
+  // properties and cannot reach a response object, and source + staleness on hover is the point.
+  const botanicalOccurrencesGeoJSON = useMemo(
+    () =>
+      botanicalDetail === null
+        ? null
+        : botanicalOccurrencesToGeoJSON(botanicalFeatures, botanicalDetail.publishedAt),
+    [botanicalDetail, botanicalFeatures]
+  );
+  const botanicalRichnessGeoJSON = useMemo(
+    () =>
+      botanicalAggregate === null
+        ? null
+        : botanicalRichnessToGeoJSON(
+            botanicalCells,
+            botanicalAggregate.publishedAt,
+            botanicalAggregate.releaseSetId
+          ),
+    [botanicalAggregate, botanicalCells]
+  );
+  const botanicalEffortGeoJSON = useMemo(
+    () =>
+      botanicalAggregate === null
+        ? null
+        : botanicalEffortToGeoJSON(
+            botanicalCells,
+            botanicalAggregate.publishedAt,
+            botanicalAggregate.releaseSetId
+          ),
+    [botanicalAggregate, botanicalCells]
+  );
+  // Published to the store so `BotanicalFilters` and the details panel describe the SAME answer
+  // the map is drawing rather than issuing a second read of their own. Written in an effect
+  // rather than during render because it is a store write; the dependency is the query result
+  // object, which react-query keeps referentially stable until a new answer lands.
+  useEffect(() => {
+    if (botanicalResult === undefined) return;
+    setBotanicalResponse(botanicalResult as never);
+  }, [botanicalResult, setBotanicalResponse]);
+  // The generation the answer was actually served from, published back into the store.
+  //
+  // `BotanicalFilters` was built expecting a reader to TYPE a `release_set_id` and gates its
+  // whole form until one is set, because when it was written this plane had no pointer route on
+  // the client. It does now: `getBotanicalOccurrences` resolves `/current` server-side and the
+  // browser never names a generation. So the id flows the other way -- the answer reports which
+  // generation it came from, and the panel displays it. Written from the RESPONSE rather than
+  // from a second `/current` read, so the id the panel shows is provably the one the cells on
+  // the map were read from and not a pointer that has since moved.
+  const servedBotanicalReleaseSetId =
+    botanicalDetail?.releaseSetId ?? botanicalAggregate?.releaseSetId ?? null;
+  const setBotanicalReleaseSetId = useBotanicalOccurrenceStore((state) => state.setReleaseSetId);
+  useEffect(() => {
+    if (servedBotanicalReleaseSetId === null) return;
+    setBotanicalReleaseSetId(servedBotanicalReleaseSetId);
+  }, [servedBotanicalReleaseSetId, setBotanicalReleaseSetId]);
+  // Clicking a specimen opens the details panel, the same way every other layer with a detail
+  // surface does it: the layer reports an id, this component resolves it against the features it
+  // already holds, and the store slice the panel reads is the only thing that changes. Resolved
+  // here rather than in the layer because the layer only carries MapLibre feature properties --
+  // four fields -- and the panel needs the whole record including rights and attribution.
+  const handleSelectBotanicalOccurrence = useCallback(
+    (occurrenceId: string) => {
+      const selected = botanicalFeatures.find(
+        (feature) => feature.occurrence_id === occurrenceId
+      );
+      setSelectedBotanicalFeature(selected ?? null);
+    },
+    [botanicalFeatures, setSelectedBotanicalFeature]
+  );
+
   // The three ERA5-Land soil fields. `zoom` is not a hint here -- it selects the server-side
   // aggregation tier, so zooming out makes the answer SMALLER (isobands over a coarse
   // lattice) rather than shipping 1,568 squares. Each takes ITS OWN row's settled day, like
@@ -656,6 +832,58 @@ export default function LayerManager() {
               : "This day has not been written for the fire lane, so no detections can be drawn for it.",
         }
       : null,
+    // The occurrence plane's own two non-answers, surfaced because an empty canvas beside a lit
+    // switch reads as "no specimens were ever collected here" -- which is the one thing a
+    // collection-bias layer must never imply.
+    //
+    // Both are a `notice`, not a `fault`, and the split is the same one the fire lane makes: the
+    // service ANSWERED in both cases. `refused` is a governed refusal (a request the plane
+    // declines to serve -- too wide a bbox, a filter combination it will not honour) and
+    // `unavailable` is the plane reporting that no generation is published. Neither is an
+    // outage, so neither is dressed as one. The service-authored `note` is quoted verbatim for
+    // the same reason the fire lane quotes its evidence: the plane's own words are what a reader
+    // can act on, and paraphrasing them would put this component in the business of explaining a
+    // refusal it did not make. A genuine transport fault throws in the procedure instead and
+    // reaches the map as a failed query, not as a state here.
+    botanicalQueryEnabled && botanicalResult?.state === "refused"
+      ? {
+          layerId: "botanical-refused",
+          tone: "notice" as const,
+          message: `The specimen occurrence plane declined this request: ${botanicalResult.note}`,
+        }
+      : null,
+    botanicalQueryEnabled && botanicalResult?.state === "unavailable"
+      ? {
+          layerId: "botanical-unavailable",
+          tone: "notice" as const,
+          message: `Specimen occurrences are not published: ${botanicalResult.note}`,
+        }
+      : null,
+    // A `notice` for the same reason every other lane's is: the records drawn are real, they
+    // just stop short of the viewport. Saying so is what keeps a capped read from looking like
+    // a collecting gap -- which, for this plane specifically, is a claim about where botanists
+    // have and have not been.
+    botanicalQueryEnabled &&
+    (botanicalDetail?.truncated === true || botanicalAggregate?.truncated === true)
+      ? {
+          layerId: "botanical-truncated",
+          tone: "notice" as const,
+          message:
+            botanicalBand === "detail"
+              ? "The specimen row budget was reached. The occurrences drawn are a subset of this viewport."
+              : "The cell budget was reached. The support cells drawn are a subset of this viewport.",
+        }
+      : null,
+    // Withheld records are a POSITIVE fact the plane reports and the map cannot show: a specimen
+    // whose locality is protected has no dot, and without this line its absence is
+    // indistinguishable from it never having been collected.
+    botanicalQueryEnabled && (botanicalDetail?.counts.withheld ?? 0) > 0
+      ? {
+          layerId: "botanical-withheld",
+          tone: "notice" as const,
+          message: `${botanicalDetail?.counts.withheld} specimen records in this release have their locality withheld by the publisher and cannot be drawn anywhere.`,
+        }
+      : null,
   ].filter((fault): fault is NonNullable<typeof fault> => fault !== null);
 
   // What each live layer is actually DRAWING, for the surfaces that caption the map. The other
@@ -831,6 +1059,22 @@ export default function LayerManager() {
     []
   );
 
+  /**
+   * The intervention-drafts source's own writer, kept separate from `applyParquetFeatureData`
+   * above even though the mechanism (empty geojson source, filled by setData, re-applied on
+   * style reload) is identical -- that source is explicitly NOT Parquet-fed (see sources.ts),
+   * and folding it into `PARQUET_FEATURE_SOURCE_IDS` would misdescribe it for the next reader.
+   * Guarded the same way: a missing/mid-rebuild source is a no-op, never a thrown error.
+   */
+  const applyInterventionDraftsData = useCallback(
+    (mapInstance: NonNullable<typeof map>, geojson: GeoJSON.FeatureCollection) => {
+      const source = mapInstance.getSource(INTERVENTION_DRAFTS_SOURCE_ID);
+      if (typeof (source as { setData?: unknown } | undefined)?.setData !== "function") return;
+      (source as GeoJSONSource).setData(geojson);
+    },
+    []
+  );
+
   // Sync visibility of every style-baked layer (fire-perimeters, interventions, sensors,
   // evacuation-zones, burn-severity, watersheds) with activeLayers -- these are declared in the
   // style rather than mounted as React components, so they need setLayoutProperty instead of an
@@ -983,6 +1227,12 @@ export default function LayerManager() {
     parquetFeatureCollectionsRef.current = parquetFeatureCollections;
   }, [parquetFeatureCollections]);
 
+  // Same discipline for the intervention-drafts source's data.
+  const interventionDraftsGeoJSONRef = useRef(interventionDraftsOverlay.geojson);
+  useEffect(() => {
+    interventionDraftsGeoJSONRef.current = interventionDraftsOverlay.geojson;
+  }, [interventionDraftsOverlay.geojson]);
+
   // True once the CURRENT style has actually finished loading, per isStyleLoaded() --
   // not merely "style.load fired". isStyleLoaded() also requires every source's tiles
   // to be in, so it can still read false the instant style.load fires; styledata fires
@@ -1012,6 +1262,7 @@ export default function LayerManager() {
       // Data first: the filter and the opacity pass below both write onto layers whose source was
       // just rebuilt empty by the swap, and a layer with no features has nothing to filter.
       applyParquetFeatureData(mapInstance, parquetFeatureCollectionsRef.current);
+      applyInterventionDraftsData(mapInstance, interventionDraftsGeoJSONRef.current);
       applyVisibility(mapInstance, layerVisibilityRef.current);
       applyDateFilter(mapInstance, filterDaysRef.current);
       // A basemap swap rebuilds every style layer from its authored paint, so the multiplier
@@ -1046,7 +1297,14 @@ export default function LayerManager() {
       mapInstance.off("styledata", onStyleData);
     };
     // applyOpacity is a stable useCallback; the opacity RECORD must never appear here.
-  }, [map, applyVisibility, applyDateFilter, applyOpacity, applyParquetFeatureData]);
+  }, [
+    map,
+    applyVisibility,
+    applyDateFilter,
+    applyOpacity,
+    applyParquetFeatureData,
+    applyInterventionDraftsData,
+  ]);
 
   // The data sibling of the filter effect below, and ungated for the same reason: a read that has
   // landed must reach the map even while `isStyleLoaded()` is false, and `applyParquetFeatureData`
@@ -1056,6 +1314,15 @@ export default function LayerManager() {
     if (!map) return;
     applyParquetFeatureData(map, parquetFeatureCollections);
   }, [map, parquetFeatureCollections, applyParquetFeatureData, styleReady]);
+
+  // The intervention-drafts source's own reactive write, same reasoning as its sibling above:
+  // a fetch that has landed (the overlay hook re-fetches on auth change, on submission success
+  // via invalidateInterventionDraftsOverlay, etc.) must reach the map even while the style is
+  // still settling.
+  useEffect(() => {
+    if (!map) return;
+    applyInterventionDraftsData(map, interventionDraftsOverlay.geojson);
+  }, [map, interventionDraftsOverlay.geojson, applyInterventionDraftsData, styleReady]);
 
   // Apply toggles once the style is actually ready, and again whenever styleReady
   // flips true -- without styleReady in the deps, this ran once on first paint while
@@ -1179,6 +1446,55 @@ export default function LayerManager() {
         opacityScale={layerOpacity["soil-vpd"]}
         visible={soilVpdVisible}
       />
+      {/* The three herbarium rows off ONE read. Zoom-band exclusivity is enforced here, in the
+          container, which is where `BotanicalOccurrencesLayer`'s docstring says it belongs --
+          the component draws unconditionally once handed geojson.
+
+          `visible` is gated on the RETURNED state rather than on the requested band: each layer
+          is handed null geojson whenever the answer in hand is the other shape, so a retained
+          aggregate frame cannot be drawn as specimens (or the reverse) while a zoom across the
+          floor is in flight. Passing the band alone would draw the previous answer in the new
+          band's layer for one round trip. The detail component ALSO re-checks the floor itself,
+          which is belt-and-braces rather than duplication: it removes its layers below zoom 11
+          whatever it was handed. */}
+      <BotanicalOccurrencesLayer
+        map={map}
+        geojson={botanicalOccurrencesGeoJSON}
+        zoom={zoom}
+        visible={botanicalOccurrencesVisible && botanicalBand === "detail"}
+        onSelectFeature={handleSelectBotanicalOccurrence}
+      />
+      {/* Richness is the primary aggregate read -- "how many taxa are documented here" -- and
+          effort is the context layer UNDER it that says how hard anyone looked. They are two
+          toggles over one response rather than one layer with a mode, because a reader
+          interpreting a richness cell needs to be able to put the effort cell beside it; that
+          is the whole point of shipping a collection-bias layer at all. Both draw across the
+          entire aggregate band (every zoom below the detail floor) rather than splitting it
+          between them: the plane returns ONE `aggregate` answer per viewport with both measures
+          on the same cells, so there is no sub-band where one has data and the other does not,
+          and inventing a split would hide the bias layer at exactly the coarse zooms where
+          collecting bias is most visible.
+
+          The opacity multiplier is a plain multiply rather than `scaleOpacityValue`: that helper
+          returns `unknown` because it may emit a MapLibre `["*", ...]` expression for a
+          style-authored base, and both of these components take a `number` prop and fold it into
+          their own authored base themselves. Same rule as every other component-mounted layer --
+          one writer per (layer, paint property) -- reached through the arithmetic these props
+          allow. */}
+      <BotanicalRichnessLayer
+        map={map}
+        geojson={botanicalRichnessGeoJSON}
+        releaseSetId={botanicalAggregate?.releaseSetId ?? null}
+        visible={botanicalRichnessVisible && botanicalBand === "aggregate"}
+        opacity={0.75 * layerOpacity["botanical-richness"]}
+      />
+      <BotanicalCollectionEffortLayer
+        map={map}
+        geojson={botanicalEffortGeoJSON}
+        measure={botanicalFilters.effort_measure}
+        visible={botanicalEffortVisible && botanicalBand === "aggregate"}
+        opacity={0.55 * layerOpacity["botanical-collection-effort"]}
+      />
       {/* Nine instances, one per signal, each on its own row's day and in its own form. The
           ERA5-Land fields above get one instance per measure for the same reason: these are
           toggles a reader may have on at once, and one instance cannot hold two days. */}
@@ -1222,6 +1538,13 @@ export default function LayerManager() {
           only thing that ever sets it. */}
       <QueryPointLayer map={map} point={queryPoint} />
 
+      {/* Click-to-inspect for the merged intervention layer. Mounted here, not
+          in MapView, because this component already owns both of that layer's
+          sources -- and because MapView's render-count contract
+          (map-view-render-count.test.tsx) is a contract about MapView's own
+          subscriptions, which this adds nothing to. Phase 5 (FR-4) passes the
+          like/comment UI in as this modal's children. */}
+      <InterventionDetailModal />
     </>
   );
 }

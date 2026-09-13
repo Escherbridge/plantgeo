@@ -23,6 +23,9 @@ import { bboxSquareDegrees, viewportBbox } from "@/lib/map/viewport-bbox";
 export const WATERSHED_LIST_MAX_SQUARE_DEGREES = 1;
 import { trpc } from "@/lib/trpc/client";
 import { useMapStore } from "@/stores/map-store";
+// The detail floor is the PLANE's own (`DETAIL_ZOOM_FLOOR = 11` server-side), not a rung on the
+// `ZOOM_TIERS` ladder; imported rather than restated so the two cannot drift.
+import { BOTANICAL_DETAIL_MIN_ZOOM } from "@/lib/botanical-occurrences";
 import {
   soilFieldMeasureDefinition,
   type SoilFieldDepth,
@@ -225,6 +228,102 @@ export function useSoilFieldQuery(
     {
       enabled: enabled && requested !== null && !isWithheld(toggleId),
       staleTime: SOIL_FIELD_STALE_TIME_MS,
+      retry: PROXIED_RETRY_COUNT,
+      placeholderData: KEEP_PREVIOUS_WHILE_PANNING,
+    }
+  );
+}
+
+/**
+ * Herbarium specimens: the plane is pinned to a `release_set_id` its own `/current` pointer
+ * resolves, and a generation never changes once published, so a pan back is a local read. The
+ * hour matches the other release-pinned lanes rather than the 15-minute observation feeds; a
+ * republish becomes visible through the client's own 120-second `/current` revalidate window
+ * plus this stale time, not sooner.
+ */
+const BOTANICAL_OCCURRENCES_STALE_TIME_MS = 60 * 60 * 1000;
+
+/** Which of the plane's two answers a given map zoom will get back. */
+export type BotanicalBand = "detail" | "aggregate";
+
+/**
+ * The band a zoom selects, mirroring the service's own `zoom >= DETAIL_ZOOM_FLOOR` test.
+ *
+ * Deliberately a bare comparison against a raw integer rather than a `ZoomTier` resolution.
+ * The ladder's rungs are 0/5/9/13 and this floor is 11, so rounding a zoom-11 or zoom-12
+ * request onto the ladder lands on z9 -- the aggregate rung -- and the map would draw grid
+ * cells at the exact zooms a reader asked for specimens. The zoom sent upstream is the raw one
+ * for the same reason; the service does its own `int()` coercion.
+ */
+export function botanicalBandForZoom(zoom: number): BotanicalBand {
+  return zoom >= BOTANICAL_DETAIL_MIN_ZOOM ? "detail" : "aggregate";
+}
+
+/**
+ * Herbarium specimen occurrences for the viewport, at whichever band the zoom selects.
+ *
+ * ONE query for all three botanical toggles. The plane answers `detail` or `aggregate` from the
+ * same route on the same inputs, so splitting it per toggle would key three cache entries for
+ * one upstream answer and let the richness and effort layers disagree about the generation they
+ * are drawing. `enabled` is therefore "any botanical layer that can draw at this band is on",
+ * computed by the caller -- it is a gate, never part of the key, exactly as
+ * `ProxiedQueryOptions` documents.
+ *
+ * `zoom` IS in the key, like `useClimateFieldQuery`'s and unlike `useSoilFieldQuery`'s optional
+ * one: it selects which of two shapes comes back, so two zooms are two different answers rather
+ * than two aggregations of one.
+ *
+ * Retained while panning, like every other query the MAP draws: the cells and points in hand are
+ * still true where they are. Note the band-switch caveat -- see `useBotanicalOccurrences`'s
+ * consumer in `LayerManager`, which reads the RETURNED `state` rather than the requested band, so
+ * a retained aggregate frame is never fed to the detail layer during a zoom across the floor.
+ */
+export function useBotanicalOccurrencesQuery(
+  bbox: string | null | undefined,
+  {
+    enabled,
+    zoom,
+    taxonConceptId,
+    family,
+    collectionKey,
+    eventStart,
+    eventEnd,
+    spatialQuality,
+  }: ProxiedQueryOptions & {
+    zoom: number;
+    taxonConceptId?: string;
+    family?: string;
+    collectionKey?: string;
+    eventStart?: string;
+    eventEnd?: string;
+    spatialQuality?: "confirmed" | "possible" | "all";
+  }
+) {
+  const requested = bbox ?? null;
+  return trpc.environmental.getBotanicalOccurrences.useQuery(
+    {
+      bbox: requested ?? NO_VIEWPORT_BBOX,
+      zoom,
+      taxonConceptId,
+      family,
+      collectionKey,
+      eventStart,
+      eventEnd,
+      spatialQuality,
+    },
+    {
+      // All three toggles share this one read, so the governance gate is the conjunction: the
+      // query is withheld only when EVERY botanical row is, which is the same thing as none of
+      // them being drawable.
+      enabled:
+        enabled &&
+        requested !== null &&
+        !(
+          isWithheld("botanical-occurrences") &&
+          isWithheld("botanical-richness") &&
+          isWithheld("botanical-collection-effort")
+        ),
+      staleTime: BOTANICAL_OCCURRENCES_STALE_TIME_MS,
       retry: PROXIED_RETRY_COUNT,
       placeholderData: KEEP_PREVIOUS_WHILE_PANNING,
     }

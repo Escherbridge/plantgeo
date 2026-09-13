@@ -255,6 +255,25 @@ formatter, so the square and the dot can never caption the same cell differently
 distinguishable from. A reader who cannot hover a real burn scar to see whose it is has no way to
 check that the fire cell beside it is a different kind of thing.
 
+## The interventions toggle draws two sources
+
+`interventions` is ONE registry entry over SIX style layers since 2026-09-13
+(`conductor/tracks/unified_intervention_layer_20260913`, OQ-1): the three Martin-tile layers over
+`intervention_tiles` (published rows only) and the three `intervention-drafts-*` layers over the
+client-side `intervention-drafts-source` GeoJSON (`useInterventionDraftsOverlay` — the caller's own
+submissions plus the consenting `pending_review` queue). The drafts' layer and source specs are
+unchanged; only their separate toggle is gone, because which source a site's bytes came from is an
+implementation fact and a reader looking for their own just-submitted intervention should not have
+to know it. `applyVisibility` needed no change: it folds over `styleBackedLayerEntries()`, so all
+six ids flip off one boolean.
+
+All six paint with `INTERVENTION_STATUS_COLOR` (layers.ts) — one `case` on `status` over a `match`
+on `category`, so `pending_review` is orange whatever its category, everything else is land teal /
+air violet, and an unclassified row falls to the shared neutral grey. It replaced a `priority`-keyed
+palette for a field `submitIntervention` never writes. `category` reaches the PUBLISHED tiles only
+via `drizzle/0002_intervention_tiles_category.sql`, and **Martin must be restarted after that
+migration** or the tiles keep serving the old attribute set and every published site draws grey.
+
 ## Environmental layer serving
 
 No environmental layer reads Martin. Martin publishes only the relational

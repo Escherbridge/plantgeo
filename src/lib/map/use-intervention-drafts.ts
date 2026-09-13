@@ -6,6 +6,7 @@ import { useMemo } from "react";
 import { useSession } from "next-auth/react";
 import { trpc } from "@/lib/trpc/client";
 import type { InterventionCategory } from "@/lib/environmental/intervention";
+import type { InterventionDetailRecord } from "@/lib/map/intervention-detail";
 
 /** One drafted or proposed intervention feature's properties, as the overlay paints it. */
 export interface InterventionDraftProperties {
@@ -41,6 +42,9 @@ interface OwnSubmissionRow {
   id: string;
   status: string;
   properties: Record<string, unknown> | null;
+  reviewNote?: string | null;
+  createdAt?: Date | string | null;
+  updatedAt?: Date | string | null;
 }
 
 /** `listMySubmissions` carries the drawn geometry, so its own copy always wins a dedupe. */
@@ -67,8 +71,10 @@ interface ProposedRow {
   name: string | null;
   type: string | null;
   category: string | null;
+  description?: string | null;
   longitude: number | null;
   latitude: number | null;
+  createdAt?: Date | string | null;
 }
 
 /** `listProposed` only ever carries a centroid -- there is no other geometry to draw here. */
@@ -89,9 +95,75 @@ function proposedFeature(row: ProposedRow): InterventionDraftFeature | null {
   };
 }
 
+/**
+ * The detail record for one overlay row, kept beside the GeoJSON rather than
+ * inside its `properties`.
+ *
+ * MapLibre serializes feature properties into the tile pipeline, so the fields
+ * the detail modal needs but the paint expressions do not (timestamps, the
+ * reviewer note, the submitter) are held here instead of widening the painted
+ * properties. This is what makes a drafts-overlay click cost zero network
+ * round trips (NFR-1): the record is already in memory.
+ */
+function ownSubmissionRecord(row: OwnSubmissionRow): InterventionDetailRecord {
+  const properties = row.properties ?? {};
+  const geometry = properties.geometry;
+  const asString = (value: unknown) =>
+    typeof value === "string" ? value : null;
+  return {
+    id: row.id,
+    name: asString(properties.name),
+    type: asString(properties.type),
+    category: toCategory(properties.category),
+    status: row.status,
+    description: asString(properties.description),
+    geometry:
+      geometry && typeof geometry === "object" && "type" in geometry
+        ? (geometry as GeoJSON.Geometry)
+        : null,
+    submittedByUserId: asString(properties.submittedByUserId),
+    submittedByTeamId: asString(properties.submittedByTeamId),
+    createdAt: (row.createdAt as Date | string | null | undefined) ?? null,
+    updatedAt: (row.updatedAt as Date | string | null | undefined) ?? null,
+    // Only ever meaningful on a rejected row, exactly as
+    // `contributions.rejectContribution` writes it.
+    reviewNote:
+      row.status === "rejected" ? asString(row.reviewNote) : null,
+    hasFullGeometry: Boolean(
+      geometry && typeof geometry === "object" && "type" in geometry
+    ),
+  };
+}
+
+/** `listProposed` projects a centroid and no authorship, so the record says so. */
+function proposedRecord(row: ProposedRow): InterventionDetailRecord {
+  return {
+    id: row.id,
+    name: row.name,
+    type: row.type,
+    category: toCategory(row.category),
+    status: "pending_review",
+    description: row.description ?? null,
+    geometry:
+      row.longitude === null || row.latitude === null
+        ? null
+        : { type: "Point", coordinates: [row.longitude, row.latitude] },
+    submittedByUserId: null,
+    submittedByTeamId: null,
+    createdAt: row.createdAt ?? null,
+    updatedAt: null,
+    reviewNote: null,
+    // A centroid, not the drawn shape: the modal labels it rather than passing
+    // it off as the submitted geometry.
+    hasFullGeometry: false,
+  };
+}
+
 export interface UseInterventionDraftsOverlayResult {
   /** Empty (never `undefined`) while signed out, loading, or errored -- the overlay draws nothing. */
   geojson: InterventionDraftFeatureCollection;
+  /** Full detail records by feature id, for click-to-inspect without a round trip. */
+  recordsById: Map<string, InterventionDetailRecord>;
   isLoading: boolean;
   isError: boolean;
   /** False for a signed-out reader; nothing is fetched and the overlay is inert. */
@@ -140,8 +212,24 @@ export function useInterventionDraftsOverlay(): UseInterventionDraftsOverlayResu
     };
   }, [isEnabled, mySubmissionsQuery.data, proposedQuery.data]);
 
+  // Same dedupe as the GeoJSON above, own copy winning: it is the one that
+  // carries the drawn geometry and the submitter's own timestamps.
+  const recordsById = useMemo<Map<string, InterventionDetailRecord>>(() => {
+    const records = new Map<string, InterventionDetailRecord>();
+    if (!isEnabled) return records;
+
+    for (const row of (proposedQuery.data ?? []) as ProposedRow[]) {
+      records.set(row.id, proposedRecord(row));
+    }
+    for (const row of (mySubmissionsQuery.data ?? []) as OwnSubmissionRow[]) {
+      records.set(row.id, ownSubmissionRecord(row));
+    }
+    return records;
+  }, [isEnabled, mySubmissionsQuery.data, proposedQuery.data]);
+
   return {
     geojson,
+    recordsById,
     isLoading: isEnabled && (mySubmissionsQuery.isLoading || proposedQuery.isLoading),
     isError: isEnabled && (mySubmissionsQuery.isError || proposedQuery.isError),
     isEnabled,

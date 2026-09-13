@@ -60,6 +60,18 @@ describe("HOVERABLE_LAYER_IDS", () => {
       "weather-temperature",
       "weather-temperature-cells",
       "vegetation-ndvi-cells-fill",
+      // The three specimen paint layers, all three hoverable: they are one record drawn in
+      // three styles (confirmed-exact, confirmed-generalized, possible), and a reader who
+      // hovers a hollow "possible" ring must get the same record a filled dot gives.
+      "botanical-occurrences-exact",
+      "botanical-occurrences-generalized",
+      "botanical-occurrences-possible",
+      // The two aggregate choropleths. A specimen record is somebody else's collection under
+      // somebody else's licence, so every one of these five carries `published_at`, its
+      // contributing collection and its rights/attribution onto the drawn feature specifically
+      // so a hover can state source AND staleness.
+      "botanical-richness-fill",
+      "botanical-collection-effort-fill",
     ]);
   });
 });

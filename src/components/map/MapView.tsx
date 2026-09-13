@@ -13,6 +13,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { MapFocus } from "./MapFocus";
 import { readMapFocus } from "@/lib/map/focus-params";
 import { isScalarFieldInspectionAllowed } from "@/lib/map/scalar-field-inspection";
+import { isInterventionStyleLayerId } from "@/lib/map/layer-registry";
 import { ReverseGeocode } from "@/components/search/ReverseGeocode";
 import MapKeyboardShortcuts from "./MapKeyboardShortcuts";
 import { ManagerRail } from "./layer-panel/ManagerRail";
@@ -209,6 +210,10 @@ export default function MapView() {
       pitch: is3DEnabled ? 60 : 0,
       maxPitch: 85,
       canvasContextAttributes: { antialias: false, failIfMajorPerformanceCaveat: false },
+      // Attribution text lives on /about#attribution instead of the map chrome;
+      // MapLibre's default bar otherwise squeezes into the bottom-right corner
+      // that SyncIndicator claims (see the comment above it).
+      attributionControl: false,
     });
 
     mapRef.current = m;
@@ -278,7 +283,15 @@ export default function MapView() {
       if (useMapStore.getState().isCapturingQueryPoint) return;
       // Do not send coordinates to the analysis service until the user confirms.
       const features = m.queryRenderedFeatures(e.point);
-      if (features?.some(feature => isScalarFieldInspectionAllowed(m, feature.layer.id))) return;
+      // An intervention feature owns its click unconditionally: it opens the
+      // detail modal (use-intervention-detail-clicks.ts), and the AI popup must
+      // not open behind it. The `isScalarFieldInspectionAllowed` arm alone would
+      // hand the click back the moment those layers were ever suppressed, which
+      // is a state the drafts overlay reaches while a submission refetches.
+      if (features?.some(feature =>
+        isInterventionStyleLayerId(feature.layer.id) ||
+        isScalarFieldInspectionAllowed(m, feature.layer.id)
+      )) return;
       const { lat, lng } = e.lngLat;
       setAgentCoords([lng, lat]);
     });
