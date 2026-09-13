@@ -60,8 +60,18 @@ function buildFillColorExpression(): unknown[] {
   ];
 }
 
-/** Converts wire aggregate cells into the FeatureCollection this layer draws. */
-export function botanicalRichnessToGeoJSON(cells: BotanicalAggregateCell[]): GeoJSON.FeatureCollection {
+/**
+ * Converts wire aggregate cells into the FeatureCollection this layer draws.
+ *
+ * `publishedAt` and `releaseSetId` are RESPONSE-level facts threaded onto every cell because the
+ * shared hover manager reads feature properties and nothing else; a cell that cannot say which
+ * generation it came from cannot be checked for staleness.
+ */
+export function botanicalRichnessToGeoJSON(
+  cells: BotanicalAggregateCell[],
+  publishedAt: string | null = null,
+  releaseSetId: string | null = null
+): GeoJSON.FeatureCollection {
   return {
     type: "FeatureCollection",
     features: cells.map((cell) => ({
@@ -74,6 +84,9 @@ export function botanicalRichnessToGeoJSON(cells: BotanicalAggregateCell[]): Geo
         record_count: cell.record_count,
         collection_count: cell.collection_count,
         excluded_by_qc: cell.excluded_by_qc,
+        possible_only_records: cell.possible_only_records,
+        published_at: publishedAt,
+        release_set_id: releaseSetId,
       },
     })),
   };

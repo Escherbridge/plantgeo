@@ -137,10 +137,45 @@ describe("fire detections are never a perimeter", () => {
     expect(LAYER_RENDER_CONTRACT.fire.permittedForms.detail).toEqual(["aggregate_cell"]);
   });
 
+  /**
+   * The event_point layers that draw CELLS at detail rather than raw points, and why each does.
+   *
+   * `fire` is the original carve-out: FIRMS publishes no raw rung, so the cell is the truthful
+   * detail form (see the case above). The two botanical aggregates are the second kind of case --
+   * they never draw in the detail band AT ALL. Their plane hands the detail band to
+   * `botanical-occurrences`, which is the raw-point layer of that trio and is checked by the
+   * assertion below like every other genuine-observation layer. A `raw_point` detail entry on
+   * either of them would license a renderer to claim individual specimens from a counted cell,
+   * which is the precise misreading a collection-bias layer must not permit.
+   */
+  const CELLS_AT_DETAIL_BAND = ["fire", "botanical-richness", "botanical-collection-effort"];
+
   it("leaves every other event_point layer on raw points at detail", () => {
     for (const entry of layerRenderContractEntries()) {
-      if (entry.renderClass !== "event_point" || entry.layerId === "fire") continue;
+      if (entry.renderClass !== "event_point") continue;
+      if (CELLS_AT_DETAIL_BAND.includes(entry.layerId)) continue;
       expect(entry.permittedForms.detail, `${entry.layerId} detail band`).toEqual(["raw_point"]);
+    }
+  });
+
+  // The counterpart of the carve-out above: the trio's detail band belongs to the occurrence
+  // layer, and it is a genuine raw rung -- the plane serves individual records with their own
+  // coordinates at zoom >= 11.
+  it("draws individual specimens as raw points at the botanical detail band", () => {
+    expect(LAYER_RENDER_CONTRACT["botanical-occurrences"].permittedForms.detail).toEqual([
+      "raw_point",
+    ]);
+  });
+
+  // Neither aggregate may be drawn as a heatmap or a cluster at any band: both smooth a count of
+  // where botanists WENT into something that reads as where plants ARE.
+  it("permits only the declared cell for the two botanical aggregates", () => {
+    for (const layerId of ["botanical-richness", "botanical-collection-effort"] as const) {
+      for (const band of ZOOM_BANDS) {
+        expect(LAYER_RENDER_CONTRACT[layerId].permittedForms[band], `${layerId} ${band}`).toEqual([
+          "aggregate_cell",
+        ]);
+      }
     }
   });
 });

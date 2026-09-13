@@ -35,7 +35,10 @@ export type LayerToggleId =
   | "intervention-drafts"
   | "strategy-recommendations"
   | "evacuation-zones"
-  | "burn-severity";
+  | "burn-severity"
+  | "botanical-occurrences"
+  | "botanical-richness"
+  | "botanical-collection-effort";
 
 /** How a toggle reaches the map: a React-mounted layer component, or baked style layers. */
 export type LayerRenderKind = "component" | "style";
@@ -285,6 +288,63 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
     renderKind: "component",
     styleLayerIds: [],
     warehouseLayerName: "vegetation",
+    panelId: "vegetation",
+    permanentlyUnavailableReason: null,
+  },
+  // The three herbarium specimen rows, read through environmental.getBotanicalOccurrences.
+  //
+  // `panelId: "vegetation"` rather than a "botanical" section of their own. The pending
+  // shared-registration.patch that this slice implements proposed a new PanelId, but a PanelId
+  // is a DOCK SECTION WITH A REPORT: `DETAILS_LABELS` and `DETAILS_BODIES` are both exhaustive
+  // over `DockDetailsId`, so an eighth member is a compile error in two more files until it has
+  // a title and a whole details body nobody has specified. Specimen occurrences are plant
+  // observations and the Vegetation section already owns that vocabulary, so they file under it
+  // until someone actually wants a botanical report.
+  //
+  // `warehouseLayerName: null` for all three, and this is the deliberate answer to the patch's
+  // open question 1. A stream name is what gives a row a DAY AXIS, and a collecting-event
+  // interval is not a day the environmental slider can scrub: these records span two centuries,
+  // carry `year`/`month`/`interval` precisions, and the plane filters them by
+  // `event_start`/`event_end` rather than by an observation day. A name here would put a
+  // daily slider on a row whose data has no daily grain. The §9 LEFT JOIN warning above is
+  // about a name that resolves to nothing; null is the honest absence, not a dropped name.
+  //
+  // Three toggles over ONE query: all three read the same viewport/zoom answer, and the zoom
+  // band decides which of them can draw at all (see LayerManager's botanical block). Separate
+  // switches because a reader may want richness without the effort context under it.
+  "botanical-occurrences": {
+    toggleId: "botanical-occurrences",
+    label: "Botanical Specimen Occurrences",
+    description:
+      "Individual herbarium specimen records, drawn at high zoom only. A specimen documents a collection event; it does not prove current occupancy or absence.",
+    icon: "leaf",
+    renderKind: "component",
+    styleLayerIds: [],
+    warehouseLayerName: null,
+    panelId: "vegetation",
+    permanentlyUnavailableReason: null,
+  },
+  "botanical-richness": {
+    toggleId: "botanical-richness",
+    label: "Documented Taxon Richness",
+    description:
+      "How many distinct taxa are documented per support cell, at regional and coarse zoom. Reflects what has been collected, not what grows there.",
+    icon: "layers",
+    renderKind: "component",
+    styleLayerIds: [],
+    warehouseLayerName: null,
+    panelId: "vegetation",
+    permanentlyUnavailableReason: null,
+  },
+  "botanical-collection-effort": {
+    toggleId: "botanical-collection-effort",
+    label: "Collection Evidence & Effort",
+    description:
+      "Where collecting effort has concentrated, as context for the richness layer above. A context layer, not an abundance heatmap.",
+    icon: "users",
+    renderKind: "component",
+    styleLayerIds: [],
+    warehouseLayerName: null,
     panelId: "vegetation",
     permanentlyUnavailableReason: null,
   },

@@ -109,3 +109,20 @@ async def test_every_answer_forbids_caching() -> None:
         _request({"release_set_id": "current", "bbox": "-1,-1,1,1", "zoom": "13"})
     )
     assert response.headers["Cache-Control"] == "no-store"
+
+
+async def test_current_resolves_the_pinned_release_set_id(published: tuple[LocalPublicationTarget, str]) -> None:
+    target, release_set_id = published
+    response = await routes.current_botanical_release(_request({}, target))
+    assert response.status == routes.HTTP_OK
+    payload = json.loads(response.body)
+    assert payload["state"] == "current"
+    assert payload["release_set_id"] == release_set_id
+    assert response.headers["Cache-Control"] == "no-store"
+
+
+async def test_current_is_unavailable_when_the_pointer_has_never_been_written(tmp_path: Path) -> None:
+    empty_target = LocalPublicationTarget(tmp_path / "empty-publication")
+    response = await routes.current_botanical_release(_request({}, empty_target))
+    assert response.status == routes.HTTP_SERVICE_UNAVAILABLE
+    assert json.loads(response.body)["state"] == "unavailable"

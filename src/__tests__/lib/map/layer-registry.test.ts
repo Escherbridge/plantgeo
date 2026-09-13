@@ -131,7 +131,16 @@ describe('layer registry derivations', () => {
       'sensors',
       'watersheds',
     ])
-    expect(getLayersForPanel('vegetation')).toEqual(['vegetation'])
+    // The three herbarium rows file under Vegetation rather than under a botanical section of
+    // their own: a new PanelId is a new dock section WITH A REPORT (`DETAILS_LABELS` and
+    // `DETAILS_BODIES` are both exhaustive over `DockDetailsId`), and specimen occurrences are
+    // plant observations the Vegetation section already has the vocabulary for.
+    expect(getLayersForPanel('vegetation')).toEqual([
+      'vegetation',
+      'botanical-occurrences',
+      'botanical-richness',
+      'botanical-collection-effort',
+    ])
     expect(getLayersForPanel('soil')).toEqual([
       'soil',
       'soil-survey',
@@ -240,6 +249,11 @@ describe('layer registry derivations', () => {
       sensors: 'Sensor Stations',
       watersheds: 'Watershed Boundaries',
       vegetation: 'Vegetation (NDVI)',
+      // The three herbarium rows. These have no <LayerToggle> predecessor: they were built as
+      // unmounted components and reached the map on 2026-09-13.
+      'botanical-occurrences': 'Botanical Specimen Occurrences',
+      'botanical-richness': 'Documented Taxon Richness',
+      'botanical-collection-effort': 'Collection Evidence & Effort',
       soil: 'Soil Properties',
       'soil-survey': 'Soil Survey (SSURGO)',
       // Read off SOIL_FIELD_MEASURES rather than restated, which is why the soil section

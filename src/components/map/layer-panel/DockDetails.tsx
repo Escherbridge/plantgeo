@@ -20,8 +20,10 @@ import dynamic from "next/dynamic";
 import { useSession } from "next-auth/react";
 import { useMapQueryPoint } from "@/hooks/useMapQueryPoint";
 import { useViewportBounds } from "@/hooks/useViewportProxiedLayers";
+import { useLayerVisibility } from "@/lib/map/layer-toggle-context";
 import { useMap } from "@/lib/map/map-context";
 import { useAuthStore } from "@/stores/auth-store";
+import { useBotanicalOccurrenceStore } from "@/stores/botanical-occurrence-store";
 import { useMapStore } from "@/stores/map-store";
 import type { DockDetailsId } from "@/stores/panel-store";
 
@@ -37,6 +39,18 @@ const FireDetails = dynamic(
 );
 const WaterDetails = dynamic(
   () => import("@/components/panels/WaterDetails").then((m) => ({ default: m.WaterDetails })),
+  { ssr: false, loading: DetailsLoading }
+);
+const BotanicalFilters = dynamic(
+  () =>
+    import("@/components/panels/BotanicalFilters").then((m) => ({ default: m.BotanicalFilters })),
+  { ssr: false, loading: DetailsLoading }
+);
+const BotanicalOccurrenceDetails = dynamic(
+  () =>
+    import("@/components/panels/BotanicalOccurrenceDetails").then((m) => ({
+      default: m.BotanicalOccurrenceDetails,
+    })),
   { ssr: false, loading: DetailsLoading }
 );
 const VegetationDetails = dynamic(
@@ -88,8 +102,36 @@ function WaterDetailsBody() {
   return <WaterDetails bbox={bbox ?? undefined} zoom={zoom} />;
 }
 
+/**
+ * Vegetation, plus the botanical specimen surfaces that file under the same section.
+ *
+ * The three botanical toggles live in the Vegetation category (`layer-registry.ts`), so their
+ * filters and their selected-record panel belong to this region rather than to a dock section of
+ * their own -- a new `PanelId` would demand its own title and its own body here, which is a
+ * section nobody specified.
+ *
+ * Neither reads the plane: `BotanicalFilters` writes the store slice `LayerManager`'s query keys
+ * on, and the record panel renders whatever that query already selected. That is what keeps the
+ * map and this region on ONE read instead of two that could disagree about the generation.
+ */
 function VegetationDetailsBody() {
-  return <VegetationDetails />;
+  const selectedOccurrence = useBotanicalOccurrenceStore((state) => state.selectedFeature);
+  const visibility = useLayerVisibility();
+  const anyBotanicalLayerOn =
+    visibility["botanical-occurrences"] ||
+    visibility["botanical-richness"] ||
+    visibility["botanical-collection-effort"];
+  return (
+    <div className="flex flex-col gap-4">
+      <VegetationDetails />
+      {anyBotanicalLayerOn && (
+        <>
+          <BotanicalFilters />
+          <BotanicalOccurrenceDetails feature={selectedOccurrence} />
+        </>
+      )}
+    </div>
+  );
 }
 
 function SoilDetailsBody() {

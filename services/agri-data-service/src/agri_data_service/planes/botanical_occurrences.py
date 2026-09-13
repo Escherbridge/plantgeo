@@ -26,6 +26,7 @@ from agri_data_service.pipeline.direct.botanical_occurrences.publish import (
     PART_NAME,
     LocalPublicationTarget,
     generation_prefix,
+    pointer_path,
     publication_target,
     read_manifest,
 )
@@ -492,6 +493,45 @@ def read_botanical_occurrences(
         ) from error
 
 
+def read_current_botanical_release(
+    *,
+    root: str | Path | None = None,
+    source: Settings | None = None,
+    target: PublicationTarget | None = None,
+) -> dict[str, Any]:
+    """Resolve the pointer to its pinned generation id, or answer `unavailable` when it cannot.
+
+    Reads `current.json` directly rather than through `read_pointer`, because a malformed or
+    key-missing pointer must answer `unavailable` here (never raise) -- this is the one place a
+    caller asks "what do I pin?" without already knowing an id to check. Target resolution mirrors
+    `open_generation`: an explicit target wins, otherwise one is built from `root`/`source`.
+    """
+    try:
+        resolved_target = target or publication_target(root, source=source)
+    except ValueError:
+        return unavailable("no generation has ever been published for botanical-occurrences")
+    payload = resolved_target.read_bytes(pointer_path())
+    if payload is None:
+        return unavailable("no generation has ever been published for botanical-occurrences")
+    try:
+        pointer = json.loads(payload)
+        release_set_id = pointer["release_set_id"]
+    except (json.JSONDecodeError, KeyError, TypeError) as error:
+        return unavailable(f"the current pointer is not readable: {error}")
+    if not isinstance(release_set_id, str) or not release_set_id:
+        return unavailable("the current pointer does not name a release_set_id")
+    manifest = read_manifest(resolved_target, release_set_id) or {}
+    result: dict[str, Any] = {
+        "product": PRODUCT,
+        "state": "current",
+        "release_set_id": release_set_id,
+    }
+    published_at = manifest.get("published_at")
+    if published_at is not None:
+        result["published_at"] = published_at
+    return result
+
+
 def encode_botanical_occurrences(result: Mapping[str, Any]) -> bytes:
     """Render one answer as the JSON body a route or tool returns."""
     return json.dumps(result, sort_keys=True, default=str).encode("utf-8")
@@ -520,6 +560,7 @@ __all__ = [
     "open_generation",
     "parse_botanical_occurrence_request",
     "read_botanical_occurrences",
+    "read_current_botanical_release",
     "refused",
     "supports",
     "unavailable",

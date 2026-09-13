@@ -21,6 +21,7 @@ from agri_data_service.planes.botanical_occurrences import (
     encode_botanical_occurrences,
     parse_botanical_occurrence_request,
     read_botanical_occurrences,
+    read_current_botanical_release,
     refused,
     unavailable,
 )
@@ -73,4 +74,18 @@ async def query_botanical_occurrences(request: Request) -> HTTPResponse:
     )
 
 
-__all__ = ["botanical_occurrences_bp", "query_botanical_occurrences"]
+@botanical_occurrences_bp.get("/current")
+async def current_botanical_release(request: Request) -> HTTPResponse:
+    """Resolve the mutable pointer to the release_set_id a caller should pin for `/query`."""
+    root = getattr(request.app.ctx, "botanical_occurrences_root", None)
+    target = getattr(request.app.ctx, "botanical_occurrences_target", None)
+    result = read_current_botanical_release(root=root, target=target)
+    return HTTPResponse(
+        body=encode_botanical_occurrences(result),
+        status=_status_for(result),
+        headers={"Cache-Control": "no-store"},
+        content_type="application/json",
+    )
+
+
+__all__ = ["botanical_occurrences_bp", "current_botanical_release", "query_botanical_occurrences"]

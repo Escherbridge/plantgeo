@@ -128,6 +128,13 @@ const NATURE_BY_LAYER: Readonly<Record<LayerToggleId, LayerCacheNature>> = {
   "intervention-drafts": "static_lookup",
   // The governed model plane republishes in whole releases, not per day.
   "strategy-recommendations": "release_series",
+  // The three herbarium rows. `release_series`, not `daily_series`: the plane is pinned to a
+  // `release_set_id` resolved from its own `/current` pointer, which moves on a publication and
+  // never on a clock -- the same shape drought and burn-severity have. A daily nature would put
+  // automatic revalidation on a generation that cannot change underneath it.
+  "botanical-occurrences": "release_series",
+  "botanical-richness": "release_series",
+  "botanical-collection-effort": "release_series",
 };
 
 /**
