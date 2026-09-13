@@ -27,6 +27,8 @@ import { useRegionalIntelligence } from "@/hooks/useRegionalIntelligence";
 import { AgentInteraction } from "./AgentInteraction";
 import { trpc } from "@/lib/trpc/client";
 import { invalidateInterventionDraftsOverlay } from "@/lib/map/use-intervention-drafts";
+import { LandContextController, LandContextLayer } from "@/components/map/land-context";
+import { LandContextPanelHost } from "@/components/panels/land-context";
 
 const RegionalIntelligencePanel = dynamic(
   () => import("@/components/panels/RegionalIntelligencePanel"),
@@ -438,6 +440,16 @@ export default function MapView() {
                 first -- see the ordering note in ServiceAreaLayer.tsx. */}
             <ServiceAreaLayer map={mapInstance} />
             <LayerManager />
+            {/* PNW land-context reference plane (parcels/land-use, electric utility
+                territories, BLM lands, state-managed lands). Controller bridges the
+                bounded tRPC reader into the store; Layer renders native MapLibre
+                source/layers per group and wires hover/click; PanelHost renders the
+                persistent detail panel from the same store selection. Toggle controls
+                (LandContextToggles) are not yet mounted into LayerPanel's own toggle
+                list -- still an open integration item. */}
+            <LandContextController />
+            <LandContextLayer map={mapInstance} />
+            <LandContextPanelHost />
             {/* The one thing about time that never leaves the screen: what the drawn layers are
                 showing, and whether that is one day or several. It replaced `TimeDatePill` on
                 2026-08-09 -- the pill asserted the map's ONE date, and there is no such date now

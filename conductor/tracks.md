@@ -38,8 +38,8 @@ This registry contains planned, active, and blocked work only. Completed impleme
 | [Botanical occurrence Parquet lane](tracks/botanical_occurrence_parquet_lane_20260911/plan.md) | planned | Publish governed occurrence and taxonomy data after source admission. |
 | [Botanical occurrence experience](tracks/botanical_occurrence_experience_20260911/plan.md) | planned | Add map and agent experiences after the occurrence product is accepted. |
 | [Species recommendation validation](tracks/botanical_species_recommendation_validation_20260911/plan.md) | planned | Establish evidence and evaluation for species-specific recommendations. |
-| [PNW land reference plane](tracks/pnw_land_context_reference_plane_20260911/plan.md) | planned | Resolve source rights and publish public boundaries, offices, advisers, and contact-process references. |
-| [PNW land contact experience](tracks/pnw_land_contact_experience_20260911/plan.md) | planned | Design the public contact workflow after reference-plane admission. |
+| [PNW land reference plane](tracks/pnw_land_context_reference_plane_20260911/plan.md) | in_progress | Implement schema, UI, and reader contracts. Four source rights gates deferred (see evidence/rights-gate-verdicts-20260912.md); ingestion blocked pending gate clearance. |
+| [PNW land contact experience](tracks/pnw_land_contact_experience_20260911/plan.md) | in_progress | Implement UI, reader contracts, and agent integration. Proceeding in parallel with reference-plane rights review (see evidence/rights-gate-verdicts-20260912.md). |
 
 ## Other planned or blocked work
 
