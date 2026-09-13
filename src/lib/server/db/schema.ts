@@ -19,6 +19,8 @@ import {
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
+export * from "./schema/land-context";
+
 export const geoSchema = pgSchema("geo");
 export const trackingSchema = pgSchema("tracking");
 // No `agri` schema is declared here, deliberately. That schema is owned end to end by the

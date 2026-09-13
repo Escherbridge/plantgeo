@@ -2,7 +2,7 @@
   "slug": "pnw_land_contact_experience_20260911",
   "title": "PNW land context and public contact experience",
   "type": "feature",
-  "status": "planned",
+  "status": "in_progress",
   "created_on": "2026-09-11",
   "updated_on": "2026-09-12",
   "coordination_gates": "../pnw_land_context_reference_plane_20260911/evidence/land-herbaria-coordination-20260912.md",
@@ -15,9 +15,10 @@
     "multiscale_polygon_surface_20260901"
   ],
   "next_gate": "Freeze source-backed selection/contact/time contracts and source-admission gates with the reference-plane owner, including refusal of unauthorized occurrence-derived parcel/contact claims. Any optional botanical association needs separate admission/precision review; implementation and shared-file ownership remain unauthorized.",
-  "registration_status": "registered_planned",
+  "registration_status": "registered_in_progress",
   "registry": "conductor/tracks.md",
-  "authorization_scope": "planning_only",
+  "authorization_scope": "implementation_authorized_2026-09-12_owner_override. Schema, UI, reader contracts, and agent integration are authorized. Real ingestion against the four reference-plane-defined gated sources remains blocked.",
+  "rights_gates_status": "Four source-specific rights gates (defined in pnw_land_context_reference_plane) remain unresolved and block data acquisition. Gate verdicts documented in ../pnw_land_context_reference_plane_20260911/evidence/rights-gate-verdicts-20260912.md. Schema/UI/contract implementation is not blocked by these gates.",
   "source_inventory": "../pnw_land_context_reference_plane_20260911/evidence/source-inventory.md",
   "geography": {
     "states": [

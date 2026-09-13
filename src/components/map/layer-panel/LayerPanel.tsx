@@ -1,7 +1,13 @@
 "use client";
 
-import { useEffect } from "react";
-import { PanelLeftClose } from "lucide-react";
+import { useEffect, useState } from "react";
+import {
+  ChevronDown,
+  ChevronRight,
+  MapPinned,
+  PanelLeftClose,
+  type LucideIcon,
+} from "lucide-react";
 import { DockSections } from "@/components/map/layer-panel/DockSections";
 import {
   PANEL_FIXED_ROW,
@@ -13,6 +19,11 @@ import { ViewDockSection } from "@/components/map/layer-panel/ViewDockSection";
 import { Button } from "@/components/ui/button";
 import { useMap } from "@/lib/map/map-context";
 import { usePanelStore } from "@/stores/panel-store";
+import {
+  LAND_CONTEXT_GROUP_IDS,
+  LAND_CONTEXT_GROUP_LABELS,
+  useLandContextStore,
+} from "@/stores/land-context-store";
 
 /**
  * How far the camera's centre shifts when the manager opens, in CSS pixels: the panel's own
@@ -65,6 +76,121 @@ function useMapPaddingForPanel(isOpen: boolean): void {
     }
     applyPadding();
   }, [map, isOpen]);
+}
+
+/**
+ * One land-context group: an icon, its label, and an animated switch. Styled identically to
+ * `ViewDockSection`'s `RenderModeRow` -- the closest existing precedent for a control that
+ * toggles something other than a `LayerToggleId` in `activeLayers`. Land-context groups paint
+ * through `LandContextLayer` off `land-context-store.enabledGroups`, not through the registry,
+ * so they cannot join `DockSections`' `LayerGroupSection` list without becoming a real
+ * `LayerToggleId` -- out of scope for this file alone.
+ */
+function LandContextGroupRow({
+  icon: Icon,
+  label,
+  isOn,
+  onToggle,
+}: {
+  icon: LucideIcon;
+  label: string;
+  isOn: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={isOn}
+      onClick={onToggle}
+      className="flex min-h-8 w-full items-center justify-between gap-2 rounded-md px-1 py-1 text-left text-xs text-[hsl(var(--foreground))] transition-colors hover:bg-[hsl(var(--muted)/0.4)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))] max-sm:min-h-11"
+    >
+      <span className="flex min-w-0 items-center gap-1.5">
+        <Icon aria-hidden="true" className="h-3.5 w-3.5 shrink-0 opacity-70" />
+        <span className="truncate">{label}</span>
+      </span>
+      <span
+        aria-hidden="true"
+        className={[
+          "flex h-4 w-7 shrink-0 items-center rounded-full p-0.5 transition-colors",
+          isOn ? "bg-emerald-500" : "bg-[hsl(var(--border))]",
+        ].join(" ")}
+      >
+        <span
+          className={[
+            "block h-3 w-3 rounded-full bg-white transition-transform",
+            isOn ? "translate-x-3" : "translate-x-0",
+          ].join(" ")}
+        />
+      </span>
+    </button>
+  );
+}
+
+/**
+ * "Land context": the four independently toggleable land-context groups (parcels/land use,
+ * electric utility territories, BLM lands, state-managed lands -- `LAND_CONTEXT_GROUP_IDS`).
+ *
+ * Shares `ControlDockSection`'s caret-and-label shell by hand rather than by import: that
+ * component types its `id` as `DockSectionId`, a closed union owned by `panel-store.ts`, and
+ * this file's edit scope is `LayerPanel.tsx` alone. Local `useState` in place of
+ * `panel-store`'s `expandedDetails` is the one deliberate deviation from the shared shell --
+ * this section issues no query when opened (`land-context-store` is pure client toggle state),
+ * so there is nothing here for a shared "close on navigate" or "scroll to on shortcut" behaviour
+ * to coordinate with the way there is for a report section.
+ */
+function LandContextDockSection() {
+  const [isExpanded, setIsExpanded] = useState(true);
+  const enabledGroups = useLandContextStore((state) => state.enabledGroups);
+  const toggleGroup = useLandContextStore((state) => state.toggleGroup);
+
+  return (
+    <div
+      data-testid="dock-section-land-context"
+      className="border-b border-(--glass-border) pb-1"
+    >
+      <button
+        type="button"
+        aria-expanded={isExpanded}
+        aria-controls="land-context-dock-section-body"
+        onClick={() => setIsExpanded((expanded) => !expanded)}
+        className={[
+          "flex min-h-8 w-full items-center gap-1.5 rounded-md px-1 py-1 text-left text-[11px]",
+          "font-medium transition-colors focus-visible:outline-none focus-visible:ring-2",
+          "focus-visible:ring-[hsl(var(--ring))] max-sm:min-h-11",
+          isExpanded
+            ? "bg-[hsl(var(--muted)/0.5)] text-[hsl(var(--foreground))]"
+            : "text-[hsl(var(--muted-foreground))] hover:bg-[hsl(var(--muted)/0.4)] hover:text-[hsl(var(--foreground))]",
+        ].join(" ")}
+      >
+        {isExpanded ? (
+          <ChevronDown aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
+        ) : (
+          <ChevronRight aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
+        )}
+        <MapPinned aria-hidden="true" className="h-3.5 w-3.5 shrink-0 opacity-70" />
+        <span className="min-w-0 flex-1 truncate">Land context</span>
+      </button>
+
+      {isExpanded && (
+        <div
+          id="land-context-dock-section-body"
+          data-testid="dock-section-body-land-context"
+          className="mb-1 mt-1 flex flex-col gap-1"
+        >
+          {LAND_CONTEXT_GROUP_IDS.map((group) => (
+            <LandContextGroupRow
+              key={group}
+              icon={MapPinned}
+              label={LAND_CONTEXT_GROUP_LABELS[group]}
+              isOn={enabledGroups[group]}
+              onToggle={() => toggleGroup(group)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 /**
@@ -147,6 +273,7 @@ export function LayerPanel() {
             date that no longer exists. */}
         <SearchDockSection />
         <ViewDockSection />
+        <LandContextDockSection />
         <DockSections />
       </div>
 
