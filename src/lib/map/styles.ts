@@ -5,6 +5,8 @@ import {
   parquetFeatureSources,
   terrainSource,
   pmtilesSource,
+  interventionDraftsSource,
+  INTERVENTION_DRAFTS_SOURCE_ID,
 } from "./sources";
 import { buildings3dLayer, getLayers } from "./layers";
 
@@ -72,6 +74,7 @@ export const darkStyle: StyleSpecification = {
     // sets their data from the Parquet readers and re-sets it on every style.load, because a
     // basemap swap rebuilds each source from this spec and would otherwise blank them.
     ...parquetFeatureSources,
+    [INTERVENTION_DRAFTS_SOURCE_ID]: interventionDraftsSource,
     "terrain-dem": terrainSource,
   },
   // terrain enabled on-demand via MapView controls
@@ -185,6 +188,7 @@ export const lightStyle: StyleSpecification = {
     // sets their data from the Parquet readers and re-sets it on every style.load, because a
     // basemap swap rebuilds each source from this spec and would otherwise blank them.
     ...parquetFeatureSources,
+    [INTERVENTION_DRAFTS_SOURCE_ID]: interventionDraftsSource,
     "terrain-dem": terrainSource,
   },
   // terrain enabled on-demand via MapView controls
@@ -304,6 +308,7 @@ export const satelliteStyle: StyleSpecification = {
       attribution: "&copy; Esri, Maxar, Earthstar Geographics",
       maxzoom: 19,
     },
+    [INTERVENTION_DRAFTS_SOURCE_ID]: interventionDraftsSource,
     "terrain-dem": terrainSource,
     protomaps: pmtilesSource,
     // One source per Martin function, spread in by id (sources.ts). NOT a single

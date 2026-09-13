@@ -87,6 +87,32 @@ def source_record_key(row: SourceRow, collection_key: str) -> str:
     return f"{collection_key}#{row.member_name}:{row.row_number}"
 
 
+def _joined_scientific_name(row_values: Mapping[str, str | None]) -> str | None:
+    """Fall back to the publisher's own atomized name parts when there is no combined field.
+
+    Some archives (UBC's `occurrence.txt` among them) export `genus`/`specificEpithet`/
+    `infraspecificEpithet`/`taxonRank` instead of a single `scientificName` column. Joining those
+    verbatim is not a determination this pipeline makes -- it is reading the same name the publisher
+    already asserted, just spelled across four columns instead of one. A genus with no specific
+    epithet stays exactly that (e.g. a family-only or genus-only determination), never padded with
+    an invented species.
+    """
+    genus = _blank_to_none(row_values.get("genus"))
+    if genus is None:
+        return None
+    parts = [genus]
+    specific_epithet = _blank_to_none(row_values.get("specificEpithet"))
+    if specific_epithet is not None:
+        parts.append(specific_epithet)
+        infraspecific_epithet = _blank_to_none(row_values.get("infraspecificEpithet"))
+        if infraspecific_epithet is not None:
+            taxon_rank = _blank_to_none(row_values.get("taxonRank"))
+            if taxon_rank is not None and taxon_rank.lower() not in {"species", "sp.", "sp"}:
+                parts.append(taxon_rank)
+            parts.append(infraspecific_epithet)
+    return " ".join(parts)
+
+
 def _resolve_taxon(
     scientific_name: str | None,
     *,
@@ -135,7 +161,7 @@ def normalize_row(  # noqa: PLR0913 - one release-level binding per argument; no
         month=row.values.get("month"),
         day=row.values.get("day"),
     )
-    scientific_name = _blank_to_none(row.values.get("scientificName"))
+    scientific_name = _blank_to_none(row.values.get("scientificName")) or _joined_scientific_name(row.values)
     taxon_concept_id, resolution_state = _resolve_taxon(
         scientific_name, collection_key=collection_key, authority=authority
     )

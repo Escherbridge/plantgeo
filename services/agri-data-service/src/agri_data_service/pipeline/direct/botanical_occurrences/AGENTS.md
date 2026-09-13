@@ -78,11 +78,16 @@ DOWNLOADS, not duplicate SPECIMENS: two sheets from one collecting event legitim
 collector, date and locality, and the spec's rule is that name/location/date coincidence is not a
 deletion rule.
 
-Taxon resolution under `source-names-v0` binds NO external authority. An exact string match against
-an in-memory table supplied by the caller resolves; a name matching two concepts stays `ambiguous`;
-everything else is `unmatched` under a `source:<collection>:<sha>` key. A pinned external authority
-is a LATER recipe with a later version — never a silent upgrade of this one, because that would
-change every concept id in a served generation without changing its identity.
+Taxon resolution under `source-names-v1` binds NO external authority. The name read is the
+archive's own verbatim `scientificName` when it exports one, else `_joined_scientific_name()`'s
+verbatim join of the archive's own `genus`/`specificEpithet`/`infraspecificEpithet`/`taxonRank`
+columns (UBC's `occurrence.txt` exports the atomized form only, with no combined column at all —
+`v0` read only the combined field and so left every one of its ~193k records `unmatched`). An exact
+string match against an in-memory table supplied by the caller resolves; a name matching two
+concepts stays `ambiguous`; everything else is `unmatched` under a `source:<collection>:<sha>` key.
+A pinned external authority is a LATER recipe with a later version — never a silent upgrade of this
+one, because that would change every concept id in a served generation without changing its
+identity.
 
 ## Fan-out has a cap, and past it the claim weakens rather than the evidence disappearing
 

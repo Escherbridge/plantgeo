@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { MapPin, Sparkles, X } from "lucide-react";
+import { MapPin, Sparkles, Sprout, X } from "lucide-react";
 
 interface AgentInteractionProps {
   coordinates: [number, number];
   onAnalyze: (precision: "approximate" | "exact") => void;
+  onProposeIntervention: () => void;
   onClose: () => void;
 }
 
@@ -13,6 +14,7 @@ interface AgentInteractionProps {
 export function AgentInteraction({
   coordinates,
   onAnalyze,
+  onProposeIntervention,
   onClose,
 }: AgentInteractionProps) {
   const [lon, lat] = coordinates;
@@ -101,13 +103,21 @@ export function AgentInteraction({
         </label>
       </fieldset>
 
-      <div className="mt-4 flex justify-end gap-2">
+      <div className="mt-4 flex flex-wrap justify-end gap-2">
         <button
           type="button"
           onClick={onClose}
           className="min-h-11 rounded-lg px-3 py-2 text-sm font-medium text-[hsl(var(--muted-foreground))] hover:bg-[hsl(var(--muted))] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))]"
         >
           Cancel
+        </button>
+        <button
+          type="button"
+          onClick={onProposeIntervention}
+          className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-[hsl(var(--border))] px-3 py-2 text-sm font-semibold text-[hsl(var(--foreground))] hover:bg-[hsl(var(--muted))] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))] focus-visible:ring-offset-2"
+        >
+          <Sprout aria-hidden="true" className="h-4 w-4" />
+          Propose intervention here
         </button>
         <button
           type="button"

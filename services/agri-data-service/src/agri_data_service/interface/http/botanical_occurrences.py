@@ -1,9 +1,11 @@
 """HTTP adapter for the governed botanical occurrence plane.
 
-NOT REGISTERED IN `app.py` by this change. The registration hunk is held in
-`conductor/tracks/botanical_occurrence_parquet_lane_20260911/evidence/shared-registration.patch`,
-because `app.py` is shared with another in-flight slice and a route that mounts before its
-independent data-contract review would be serving under a verdict nobody has given.
+Mounted in `app.py` on `combined_local` and `published_reader` 2026-09-13, after the owner's risk
+decision (`conductor/tracks/pnw_herbaria_source_admission_20260911/evidence/owner-risk-decision-20260913.md`)
+and a same-session self-review of this read path against the first admitted release (UBC v16.43).
+See that track's plan for the still-open post-capture gates (field-map reconciliation across the
+full corpus, two-release native-ID comparison) that do not block THIS route from serving what has
+already been published.
 """
 
 from __future__ import annotations

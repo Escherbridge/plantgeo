@@ -1,0 +1,32 @@
+{
+  "track_id": "ai_intervention_workspace_20260913",
+  "title": "AI intervention workspace",
+  "type": "feature",
+  "status": "pending",
+  "created": "2026-09-13",
+  "description": "Merge the map's AI regional-analysis session (RegionalIntelligencePanel / useRegionalIntelligence) with intervention proposal creation (InterventionSubmitModal / InterventionDrawControl) into one persistent, switchable workspace UI, alongside the existing LayerPanel data-layer dock, so a user can move between an active AI chat and drawing/proposing an intervention without losing either session's state.",
+  "dependencies": [
+    {
+      "track": "intervention_drawing_visibility_20260912",
+      "relationship": "builds_on",
+      "note": "Extends the just-landed AgentInteraction second action ('Propose intervention here' seeding InterventionSubmitModal with the picked point). This track does not re-scope coordinate-picking; it unifies the UI shell around it."
+    }
+  ],
+  "partitions": {
+    "owns": [
+      "src/components/map/MapView.tsx (agentCoords/interventionCoords state and the two overlay mount points)",
+      "src/components/map/AgentInteraction.tsx (button wiring only, no new coordinate logic)",
+      "src/components/panels/RegionalIntelligencePanel.tsx (host/shell change only; internals largely unchanged)",
+      "src/components/panels/InterventionSubmitModal.tsx (host/shell change only; form internals largely unchanged)",
+      "New workspace shell component(s) under src/components/map/ or src/components/panels/, name TBD in planning"
+    ],
+    "touches": [
+      "src/stores/regional-intelligence-store.ts (only if open question 1 resolves to a keep-alive/multi-session model; additive fields, not a rewrite of existing actions' external contract)",
+      "src/components/map/layer-panel/ (only if open question 2 resolves to extending the dock; no changes to LayerPanel's own sections otherwise)",
+      "src/components/map/AGENTS.md, src/components/panels/AGENTS.md (documentation of whatever exception or extension this track lands, per 'One manager, no floating surfaces')"
+    ],
+    "confidence": "low",
+    "computed_at_commit": "b98e438"
+  },
+  "resource": "./spec.md"
+}

@@ -156,6 +156,59 @@ def test_an_exact_authority_match_resolves() -> None:
     assert record.taxon_concept_id == "concept:a"
 
 
+def _atomized_row(number: int, occurrence_id: str, **name_parts: str) -> SourceRow:
+    values = {"occurrenceID": occurrence_id, **name_parts}
+    return SourceRow(
+        member_name="occurrence.txt",
+        row_number=number,
+        row_sha256=f"hash-atomized-{number}",
+        record_id=occurrence_id,
+        values=values,
+        verbatim=dict(values),
+    )
+
+
+def test_atomized_genus_and_species_join_when_no_combined_field_is_exported() -> None:
+    """UBC's occurrence.txt exports genus/specificEpithet, never a combined scientificName column."""
+    row = _atomized_row(1, "urn:occ:atomized", genus="Lupinus", specificEpithet="argenteus")
+    (record,) = normalize_rows([row], collection_key="test:COLL:vascular", release_key="release-1")
+    assert record.scientific_name == "Lupinus argenteus"
+
+
+def test_a_combined_field_wins_over_atomized_parts_when_both_are_present() -> None:
+    row = _atomized_row(
+        1, "urn:occ:combined", scientificName="Lupinus argenteus Pursh", genus="Lupinus", specificEpithet="argenteus"
+    )
+    (record,) = normalize_rows([row], collection_key="test:COLL:vascular", release_key="release-1")
+    assert record.scientific_name == "Lupinus argenteus Pursh"
+
+
+def test_a_genus_only_determination_is_not_padded_with_an_invented_species() -> None:
+    row = _atomized_row(1, "urn:occ:genus-only", genus="Lupinus")
+    (record,) = normalize_rows([row], collection_key="test:COLL:vascular", release_key="release-1")
+    assert record.scientific_name == "Lupinus"
+
+
+def test_an_infraspecific_epithet_joins_with_its_rank() -> None:
+    row = _atomized_row(
+        1,
+        "urn:occ:infraspecific",
+        genus="Lupinus",
+        specificEpithet="argenteus",
+        infraspecificEpithet="argophyllus",
+        taxonRank="variety",
+    )
+    (record,) = normalize_rows([row], collection_key="test:COLL:vascular", release_key="release-1")
+    assert record.scientific_name == "Lupinus argenteus variety argophyllus"
+
+
+def test_no_genus_and_no_combined_field_stays_unmatched_with_no_name() -> None:
+    row = _atomized_row(1, "urn:occ:blank", recordedBy="A. Botanist")
+    (record,) = normalize_rows([row], collection_key="test:COLL:vascular", release_key="release-1")
+    assert record.scientific_name is None
+    assert record.resolution_state == "unmatched"
+
+
 def test_a_keyless_row_is_kept_under_a_locator_key_and_flagged() -> None:
     keyless = SourceRow("occurrence.txt", 7, "hash", "", {"scientificName": "Carex sp."}, {})
     (record,) = normalize_rows([keyless], collection_key="test:COLL:vascular", release_key="release-1")

@@ -17,10 +17,14 @@ PARSER_VERSION: Final = "dwca-parser-v1"
 #: The normalization/QC recipe bound onto every normalized row.
 QC_POLICY_VERSION: Final = "botanical-qc-v1"
 
-#: The taxonomy recipe. `source-names-v0` binds NO external authority: it keeps the publisher's own
-#: names and resolves nothing it was not handed an exact match for. A pinned external authority is a
-#: later recipe with a later version, never a silent upgrade of this one.
-TAXONOMY_RECIPE_VERSION: Final = "source-names-v0"
+#: The taxonomy recipe. `source-names-v1` binds NO external authority: it keeps the publisher's own
+#: names (verbatim `scientificName` if the archive exports one, else the publisher's own atomized
+#: genus/specificEpithet/infraspecificEpithet joined verbatim -- never invented, never corrected) and
+#: resolves nothing it was not handed an exact match for. `v0` read only the combined field, which
+#: left every archive that exports atomized name parts (no single `scientificName` column) entirely
+#: unmatched. A pinned external authority is a later recipe with a later version, never a silent
+#: upgrade of this one.
+TAXONOMY_RECIPE_VERSION: Final = "source-names-v1"
 
 #: The support family version, bound into the release-set identity alongside the two recipes above.
 SUPPORT_VERSION: Final = "grid-support-v1"

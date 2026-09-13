@@ -84,14 +84,14 @@ export function RequestSubmitModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 sm:p-4">
       <section
         role="dialog"
         aria-modal="true"
         aria-labelledby="strategy-request-title"
-        className="bg-[hsl(var(--background))] border border-[hsl(var(--border))] rounded-xl shadow-xl w-full max-w-md mx-4 p-6"
+        className="flex h-full w-full flex-col overflow-hidden bg-[hsl(var(--background))] shadow-xl sm:h-auto sm:max-h-[90vh] sm:w-full sm:max-w-md sm:rounded-xl sm:border sm:border-[hsl(var(--border))]"
       >
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center justify-between border-b border-[hsl(var(--border))] p-4 sm:border-none sm:p-6 sm:pb-0">
           <h2 id="strategy-request-title" className="text-lg font-semibold text-[hsl(var(--foreground))]">
             Submit Strategy Request
           </h2>
@@ -108,8 +108,10 @@ export function RequestSubmitModal({
           </button>
         </div>
 
+        <div className="flex-1 overflow-y-auto p-4 sm:p-6">
         <p className="text-xs text-[hsl(var(--muted-foreground))] mb-4">
-          Approximate area: {lat.toFixed(2)}, {lon.toFixed(2)}
+          Approximate area: {lat.toFixed(2)}, {lon.toFixed(2)} &middot; this
+          private request is not shown on the public map.
         </p>
 
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">
@@ -121,7 +123,7 @@ export function RequestSubmitModal({
               id="strategy-request-type"
               value={strategyType}
               onChange={(e) => setStrategyType(e.target.value as StrategyType)}
-              className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-[hsl(var(--foreground))] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
+              className="min-h-11 rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-[hsl(var(--foreground))] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
             >
               {STRATEGY_TYPES.map((s) => (
                 <option key={s.value} value={s.value}>
@@ -142,7 +144,7 @@ export function RequestSubmitModal({
               onChange={(e) => setTitle(e.target.value)}
               maxLength={200}
               placeholder="Brief title for this request"
-              className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-[hsl(var(--foreground))] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))] placeholder:text-[hsl(var(--muted-foreground))]"
+              className="min-h-11 rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-[hsl(var(--foreground))] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))] placeholder:text-[hsl(var(--muted-foreground))]"
             />
           </div>
 
@@ -200,6 +202,7 @@ export function RequestSubmitModal({
             </button>
           </div>
         </form>
+        </div>
       </section>
     </div>
   );

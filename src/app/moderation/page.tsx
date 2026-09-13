@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { getServerSession } from "@/lib/server/auth";
-import { ModerationPanel } from "@/components/panels/ModerationPanel";
 import { ContributionQueue } from "@/components/panels/ContributionQueue";
 
 export const metadata: Metadata = {
@@ -28,9 +27,6 @@ export default async function ModerationPage() {
           <p className="mt-1 mb-3 text-sm text-zinc-400">Review submitted sites and approve suitable recommendations for the public map.</p>
           <ContributionQueue />
         </section>
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 shadow-2xl">
-          <ModerationPanel />
-        </div>
       </div>
     </div>
   );

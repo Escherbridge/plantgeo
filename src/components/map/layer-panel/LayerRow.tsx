@@ -451,7 +451,7 @@ export function LayerRow({ layerId, legendContext, isFetchingSelectedDay }: Laye
           ].join(" ")}
         >
           <LayerIcon name={entry.icon} className="h-3 w-3 shrink-0 opacity-70" />
-          <span className="truncate" title={entry.label}>
+          <span className="truncate" title={entry.description ?? entry.label}>
             {entry.label}
           </span>
         </span>

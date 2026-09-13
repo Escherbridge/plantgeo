@@ -153,6 +153,7 @@ describe("refused responses", () => {
     const detail: BotanicalOccurrenceResponse = {
       state: "detail",
       release_set_id: "release-2026-08",
+      published_at: "2026-08-08T06:00:00Z",
       taxonomy_recipe_version: "v1",
       qc_policy_version: "v1",
       support_id: null,
