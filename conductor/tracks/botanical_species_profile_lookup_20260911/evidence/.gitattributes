@@ -1,0 +1,4 @@
+# Keep the bytes bound by evidence receipts independent of checkout line endings.
+* -text whitespace=trailing-space,space-before-tab,cr-at-eol
+# Context lines in an exported patch contain required whitespace.
+*.patch -whitespace

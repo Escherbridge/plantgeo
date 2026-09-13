@@ -1,0 +1,143 @@
+From: botanical occurrence lane implementation slice, 2026-09-12
+Subject: [PENDING] shared-file hunks the botanical occurrence lane needs
+
+NOT APPLIED. Every file below is owned by another in-flight slice. These hunks are held here so the
+owner of each file can apply them in one reviewed pass. Line context is from the tree at the time of
+writing; re-anchor before applying.
+
+================================================================================
+1. services/agri-data-service/src/agri_data_service/pipeline/parquet/lane_registry.py
+================================================================================
+Needed by `tests/direct/test_direct_package_registration.py`, which is default-deny over every
+directory under `pipeline/direct/`. TWO OPTIONS; the file's owner picks, and the choice is a real
+decision rather than a formality:
+
+  OPTION A (this diff) -- a refusal adapter AND a `static_lookup` registration. Satisfies the test
+  as written. COST: the registration declares a lane whose partition day is a version stamp, and
+  this lane does not write day partitions at all, so its `history_floor` and `publication_lag_days`
+  would be inert fields that read as coverage claims.
+
+  OPTION B -- a refusal adapter only, plus an exemption entry in the registration test for a
+  direct package that publishes a release-set generation rather than lane-days. Honest about the
+  shape, but requires editing a shared test file this slice may not touch.
+
+--- a/src/agri_data_service/pipeline/parquet/lane_registry.py
++++ b/src/agri_data_service/pipeline/parquet/lane_registry.py
+@@ (after `_refuse_water_gauges_direct_export`, ~line 445)
+ _refuse_water_gauges_direct_export: Final[LaneAdapter] = _source_direct_refusal(
+     "agri_data_service.pipeline.direct.water_gauges"
+ )
++# The botanical occurrence lane publishes a release-set GENERATION, not a lane-day, so this adapter
++# exists to satisfy the default-deny package registration rather than to route any write. Nothing
++# calls it on a successful path; `pipeline/direct/botanical_occurrences/forward.py` owns the write.
++_refuse_botanical_occurrences_direct_export: Final[LaneAdapter] = _source_direct_refusal(
++    "agri_data_service.pipeline.direct.botanical_occurrences"
++)
+
+@@ (inside `_HAND_WRITTEN_REGISTRATIONS`, OPTION A only)
++    LaneRegistration(
++        slug="botanical-occurrences",
++        adapter=_refuse_botanical_occurrences_direct_export,
++        history_floor=date(2026, 9, 12),
++        publication_lag_days=0,
++        nature="static_lookup",
++        floor_basis=(
++            "NATURE static_lookup, and BOTH numbers above are INERT. This lane's unit is an immutable "
++            "release set addressed by content hash under `botanical-occurrences/<release_set_id>/`, not a "
++            "day under `layer=/kind=/zoom=/day=`. The floor is the day this registration was written and "
++            "is not a coverage claim; the lag is zero because a release is not settled by waiting. See "
++            "pipeline/direct/botanical_occurrences/AGENTS.md, 'The unit is a release set, not a day'."
++        ),
++    ),
+
+================================================================================
+2. services/agri-data-service/tests/direct/test_direct_writer_contract.py
+================================================================================
+Default-deny table: `test_every_direct_writer_is_in_this_table` fails the day this package lands.
+
+--- a/tests/direct/test_direct_writer_contract.py
++++ b/tests/direct/test_direct_writer_contract.py
+@@ WRITER_MODULES
+ WRITER_MODULES: Final[dict[str, str]] = {
++    "botanical_occurrences": "agri_data_service.pipeline.direct.botanical_occurrences.forward",
+     "burn_severity": "agri_data_service.pipeline.direct.burn_severity.forward",
+
+Note for the owner: the new writer already declares `WRITER_CONTRACT` and `parser()` and exposes
+`--max-days` and `--run-id`, so the uniformity assertions should pass unchanged. Two of the negative
+controls count sets and WILL need re-reading, not editing:
+`test_fire_detections_is_still_the_lone_identity_refuser_and_says_so` asserts the SKIP_AND_COUNT set
+is exactly `{fire_perimeters, sensors, watersheds}`; this writer declares `skip_and_count` for an
+unkeyable core row and therefore joins that set. Whether the paragraph in
+`pipeline/direct/__init__.py` needs rewriting is the file owner's call, not this slice's.
+
+================================================================================
+3. services/agri-data-service/src/agri_data_service/app.py
+================================================================================
+--- a/src/agri_data_service/app.py
++++ b/src/agri_data_service/app.py
+@@ imports
+-from agri_data_service.interface.http import botanical_species_information_bp, parquet_bp
++from agri_data_service.interface.http import (
++    botanical_occurrences_bp,
++    botanical_species_information_bp,
++    parquet_bp,
++)
+@@ profile_blueprints
+         "combined_local": (
+             strategies_bp,
+             jobs_bp,
+             parquet_bp,
+             botanical_species_information_bp,
++            botanical_occurrences_bp,
+         ),
+         "receiver_writer": (jobs_bp,),
+-        "published_reader": (parquet_bp, botanical_species_information_bp),
++        "published_reader": (parquet_bp, botanical_species_information_bp, botanical_occurrences_bp),
+
+(`interface/http/__init__.py` needs the matching re-export; it is also a shared file.)
+MOUNT ONLY AFTER the independent data-contract verdict the track's acceptance section requires. A
+route mounted before that review is serving under a verdict nobody gave.
+
+================================================================================
+4. services/agri-data-service/src/agri_data_service/agent/tools.py
+================================================================================
+--- a/src/agri_data_service/agent/tools.py
++++ b/src/agri_data_service/agent/tools.py
+@@ imports
++from agri_data_service.agent.botanical_occurrences import (
++    botanical_occurrence_spatial_neighbours,
++    botanical_occurrence_temporal_neighbours,
++    botanical_occurrences_in_region,
++)
+@@ WAREHOUSE_TOOLS
+ WAREHOUSE_TOOLS: Final = (
+     ...
+     species_information,
++    botanical_occurrences_in_region,
++    botanical_occurrence_spatial_neighbours,
++    botanical_occurrence_temporal_neighbours,
+ )
+
+================================================================================
+5. services/agri-data-service/src/agri_data_service/execution/job_executor_service.py
+================================================================================
+THREE duties, and the track spec is explicit that they are registered "only after implementation
+review". They are written here rather than added.
+
+  botanical-occurrences-source-refresh   weekly; checks the admitted collection's advertised version
+                                         against the newest published release. READS NOTHING FROM A
+                                         PORTAL BEYOND THE ADVERTISED VERSION and NEVER transfers:
+                                         a transfer needs a granted permission verdict per URL.
+  botanical-occurrences-repair           bounded; re-reads a quarantined archive after an operator
+                                         fixed the refusal, and authors bounded follow-up work.
+  botanical-occurrences-coverage-status  reports which release sets are published, which generation
+                                         the pointer names, and every release whose outcome is
+                                         `partial` or `quarantined`.
+
+--- a/src/agri_data_service/execution/job_executor_service.py
++++ b/src/agri_data_service/execution/job_executor_service.py
+@@ (beside the existing explicit environmental source schedules)
++        # Deferred until the independent implementation review; see the track's plan D2.
++        # schedule="30 6 * * 1"  botanical-occurrences-source-refresh
++        # schedule=None          botanical-occurrences-repair (operator-triggered, bounded)
++        # schedule="10 * * * *"  botanical-occurrences-coverage-status

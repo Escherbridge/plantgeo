@@ -1,0 +1,63 @@
+{
+  "schema_version": "botanical-profile-independent-local-review/v1",
+  "reviewer": "local-independent-code-api-review",
+  "reviewed_at": "2026-09-12T00:53:29Z",
+  "verdict": "approved_for_bounded_local_code_api_agent_integration",
+  "base_commit": "bc7b5e1ff5dbb6eac929d5db927acd6b7ff2ea4a",
+  "integration_receipt": "evidence/integration-receipt.json",
+  "integration_receipt_sha256": "5d4b6a712c4a6486de34386f0d75eef5c6dcc1895e2d11c738619c95da4584f7",
+  "service_tree_digest": "b0ddaeeb60a4374bbd5c98b96de6e679de19ec5b2de206beacdb90eebf4b3674",
+  "digest_domain": "plantgeo.agri-data-service.quality-receipt.v2",
+  "digest_file_count": 1328,
+  "verification_receipt_sha256": "fffecc734a8d55646148591214e75147b14cf1b1b18e0974024ee228ea850439",
+  "python_quality_receipt_sha256": "babaeb1ac075d26073273f9a4c80ba302d25653177404fee7bc377ab8b52e335",
+  "junit_sha256": "78fd08f91f2032dcb3c7776d2440295b4a58dae95b6f2eff25a366b818c6ebed",
+  "open_material_code_findings": 0,
+  "resolved_findings": [
+    "canonical_identity_documentation",
+    "approved_missingness_correction",
+    "canonical_source_record_binding",
+    "unknown_response_byte_ceiling",
+    "http_unicode_serialization_byte_ceiling"
+  ],
+  "independently_verified": {
+    "service_digest_matches_p4_and_full_quality_receipt": true,
+    "quality_receipt_copy_byte_identical": true,
+    "gate_log_hashes_checked": 5,
+    "source_evidence_hashes_checked": 8,
+    "source_evidence_hash_mismatches": 0,
+    "python_junit_counts": {
+      "passed": 6086,
+      "skipped": 150,
+      "xfailed": 1,
+      "failed": 0,
+      "errors": 0
+    },
+    "botanical_cases_passed": 111,
+    "unicode_route_boundary_cases_passed": 4,
+    "unchanged_pnw_files": 28,
+    "unchanged_candidate_artifacts": 5,
+    "candidate_artifact_total_bytes": 55323,
+    "eslint_errors": 0,
+    "eslint_warnings": 542,
+    "unchanged_tracked_warning_bearing_files": 26,
+    "frontend_test_selector_mode": "none"
+  },
+  "candidate_release_id": "bspf-0f6b58aba4610edf9b6bcde1e7a0da0c44cf3e4671c1b624b13d7ed95b5ab501",
+  "candidate_status": "unaccepted_local_fixture_candidate",
+  "production_authoring_census": "pending",
+  "source_admission": "pending",
+  "source_scientific_or_production_acceptance_granted": false,
+  "private_environment_files_read_by_reviewer": false,
+  "remote_services_contacted_by_reviewer": false,
+  "database_access_by_reviewer": false,
+  "source_ingestion_by_reviewer": false,
+  "tests_run_by_reviewer": false,
+  "scope_limitations": [
+    "Review is limited to the exact bounded local service tree.",
+    "JUnit, quality receipts and gate logs were inspected; tests were executed by the integrator.",
+    "No full frontend suite pass is claimed because the changed selector selected no JavaScript tests.",
+    "HTTP evidence exercises registered local handlers; provider and MCP evidence exercises local schemas and dispatch.",
+    "No live model-provider call, production HTTP/MCP smoke test, source admission, authoring census or deployment was performed."
+  ]
+}
