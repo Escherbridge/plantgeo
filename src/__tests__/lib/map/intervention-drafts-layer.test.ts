@@ -46,6 +46,13 @@ describe("intervention-drafts overlay: additive registration", () => {
     expect(styleBackedLayerEntries().map((e) => e.toggleId)).toContain("intervention-drafts");
   });
 
+  it("carries a tooltip description distinct from its short label", () => {
+    const drafts = LAYER_REGISTRY["intervention-drafts"];
+    expect(drafts.description).toBeDefined();
+    expect(drafts.description).not.toBe(drafts.label);
+    expect(drafts.description).toContain("published interventions");
+  });
+
   it("uses its own plain GeoJSON source, distinct from the Martin intervention_tiles source", () => {
     expect(interventionDraftsFillLayer.source).toBe(INTERVENTION_DRAFTS_SOURCE);
     expect(interventionDraftsOutlineLayer.source).toBe(INTERVENTION_DRAFTS_SOURCE);

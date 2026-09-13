@@ -77,6 +77,8 @@ export interface LayerRegistryEntry {
    * grouped by category had no way to name a layer without duplicating sixteen strings.
    */
   label: string;
+  /** Longer explanatory tooltip text; falls back to `label` when absent. */
+  description?: string;
   /** The glyph the layer tree draws beside `label`. */
   icon: LayerIconName;
   renderKind: LayerRenderKind;
@@ -423,6 +425,8 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
   "intervention-drafts": {
     toggleId: "intervention-drafts",
     label: "My & Proposed Interventions",
+    description:
+      "Your own submitted interventions plus other pending-review proposals. Turn this on after submitting to see it here — published interventions use a separate always-on layer.",
     icon: "sprout",
     renderKind: "style",
     styleLayerIds: [

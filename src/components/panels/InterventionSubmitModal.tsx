@@ -201,14 +201,14 @@ export function InterventionSubmitModal({
     geometry !== null && geometryError === null && !submitMutation.isPending;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 sm:p-4">
       <section
         role="dialog"
         aria-modal="true"
         aria-labelledby="intervention-submit-title"
-        className="bg-[hsl(var(--background))] border border-[hsl(var(--border))] rounded-xl shadow-xl w-full max-w-md mx-4 p-6"
+        className="flex h-full w-full flex-col overflow-hidden bg-[hsl(var(--background))] shadow-xl sm:h-auto sm:max-h-[90vh] sm:w-full sm:max-w-md sm:rounded-xl sm:border sm:border-[hsl(var(--border))]"
       >
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center justify-between border-b border-[hsl(var(--border))] p-4 sm:border-none sm:p-6 sm:pb-0">
           <h2
             id="intervention-submit-title"
             className="text-lg font-semibold text-[hsl(var(--foreground))]"
@@ -228,12 +228,13 @@ export function InterventionSubmitModal({
           </button>
         </div>
 
-        <p className="text-xs text-[hsl(var(--muted-foreground))] mb-4">
-          Site location: {lat.toFixed(4)}, {lon.toFixed(4)} &middot; recentre the
-          map to move the pin.
-        </p>
+        <div className="flex-1 overflow-y-auto p-4 sm:p-6">
+          <p className="text-xs text-[hsl(var(--muted-foreground))] mb-4">
+            Site location: {lat.toFixed(4)}, {lon.toFixed(4)} &middot; recentre the
+            map to move the pin.
+          </p>
 
-        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+          <form onSubmit={handleSubmit} className="flex flex-col gap-4">
           <div className="flex flex-col gap-1">
             <label
               htmlFor="intervention-category"
@@ -247,7 +248,7 @@ export function InterventionSubmitModal({
               onChange={(event) =>
                 handleCategoryChange(event.target.value as InterventionCategory)
               }
-              className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-[hsl(var(--foreground))] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
+              className="min-h-11 rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-[hsl(var(--foreground))] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
             >
               <option value="land">Land</option>
               <option value="air">Air</option>
@@ -267,7 +268,7 @@ export function InterventionSubmitModal({
               onChange={(event) =>
                 setInterventionType(event.target.value as InterventionType)
               }
-              className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-[hsl(var(--foreground))] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
+              className="min-h-11 rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-[hsl(var(--foreground))] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
             >
               {typeOptions.map((type) => (
                 <option key={type} value={type}>
@@ -283,7 +284,7 @@ export function InterventionSubmitModal({
             </span>
             <div
               ref={mapContainerRef}
-              className="h-48 w-full rounded-lg border border-[hsl(var(--border))] overflow-hidden"
+              className="h-56 w-full rounded-lg border border-[hsl(var(--border))] overflow-hidden sm:h-72"
             />
             {map && (
               <InterventionDrawControl
@@ -312,7 +313,7 @@ export function InterventionSubmitModal({
               onChange={(event) => setName(event.target.value)}
               maxLength={256}
               placeholder="Name for this intervention site"
-              className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-[hsl(var(--foreground))] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))] placeholder:text-[hsl(var(--muted-foreground))]"
+              className="min-h-11 rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-[hsl(var(--foreground))] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))] placeholder:text-[hsl(var(--muted-foreground))]"
             />
           </div>
 
@@ -377,7 +378,8 @@ export function InterventionSubmitModal({
                 : "Submit Recommendation"}
             </button>
           </div>
-        </form>
+          </form>
+        </div>
       </section>
     </div>
   );

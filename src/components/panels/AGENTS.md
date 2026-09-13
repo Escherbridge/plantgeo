@@ -146,6 +146,14 @@ Their backend workflows remain separate and unchanged. Community forms, submissi
 intervention map rendering remain supported; captions state review/publication and privacy rules
 without describing internal database systems or asserting the map must always be empty.
 
+**Correction, 2026-09-13.** `ModerationPanel` was unmounted from `/moderation` again. Its "Approve
+& Publish" button calls `interventions.castModerationVote`, which sets `status="approved"`, not
+`"published"` — only `contributions.publishContribution` (called by `ContributionQueue`) does
+that, and Martin's `geo.intervention_tiles` only serves `status='published'` rows. With both
+panels mounted, a reviewer had two queues on one page and picking `ModerationPanel` silently
+published nothing. `ContributionQueue` is the sole reachable moderation surface again; the
+component and its pinned test above are untouched.
+
 ## Private chat controls (2026-09-10)
 
 The regional panel links to owned chat history and the current saved conversation.
