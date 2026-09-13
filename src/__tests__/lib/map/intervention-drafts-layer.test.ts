@@ -118,6 +118,11 @@ describe("intervention-drafts overlay: distinct, category-differentiated styling
     expect(fillColor).toEqual(INTERVENTION_STATUS_COLOR);
     expect(fillColor).toEqual([
       "case",
+      // The request arm leads the case since 2026-09-13 (public strategy
+      // requests): a request is always published, so an arm behind the status
+      // check would never win and every request would paint as a recommendation.
+      ["==", ["get", "kind"], "request"],
+      "#2563eb",
       ["==", ["get", "status"], "pending_review"],
       "#f97316",
       ["match", ["get", "category"], "land", "#0d9488", "air", "#7c3aed", UNCLASSIFIED_FILL_COLOR],

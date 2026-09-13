@@ -37,6 +37,13 @@ vi.mock("@/lib/trpc/client", () => ({
         useQuery: () => ({ data: undefined, isLoading: true, isError: false }),
       },
     },
+    // The detail modal resolves its submitter's display name (Phase 4 / FR-4);
+    // that behaviour is pinned in `InterventionDetailModal.test.tsx`.
+    users: {
+      getDisplayNames: {
+        useQuery: () => ({ data: [], isLoading: false, isError: false }),
+      },
+    },
   },
 }));
 

@@ -24,6 +24,7 @@ export const INTERVENTION_TYPE_LABELS: Record<InterventionType, string> = {
   cover_cropping: "Cover Cropping",
   biochar: "Biochar",
   keyline: "Keyline Design",
+  water_harvesting: "Water Harvesting",
   cloud_seeding: "Cloud Seeding",
 };
 

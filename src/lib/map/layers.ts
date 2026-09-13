@@ -364,6 +364,16 @@ export const INTERVENTION_PENDING_REVIEW_COLOR = "#f97316";
 export const INTERVENTION_PENDING_REVIEW_LABEL = "In review";
 
 /**
+ * A public strategy request -- `properties.kind = "request"` -- paints its own blue,
+ * chosen to sit far from every other colour this expression can produce (teal land,
+ * violet air, orange in-review, grey unclassified) so a reader tells an ask from a
+ * proposal at a glance without clicking either.
+ */
+export const INTERVENTION_REQUEST_COLOR = "#2563eb";
+
+export const INTERVENTION_REQUEST_LABEL = "Community request";
+
+/**
  * The ONE paint expression all six intervention style layers share -- the three published
  * Martin-tile layers and the three client-GeoJSON draft layers alike.
  *
@@ -379,6 +389,19 @@ export const INTERVENTION_PENDING_REVIEW_LABEL = "In review";
  */
 export const INTERVENTION_STATUS_COLOR: DataDrivenPropertyValueSpecification<string> = [
   "case",
+  // Kind first, ahead of status: a request is always published (it skips review
+  // entirely), so were the arms the other way round every request would simply take
+  // its category colour and be indistinguishable from a recommendation. Extending
+  // this one expression rather than adding a sibling keeps the guarantee the merge
+  // bought -- all six style layers paint one feature one colour.
+  //
+  // `kind` reaches the client from the drafts GeoJSON directly; the published tile
+  // source projects it once `geo.intervention_tiles()` is redefined in Phase 3's
+  // migration pass, alongside the `strategy_requests` drop. Until then a
+  // tile-sourced request falls through to the category arm, which is the same
+  // colour it had before this arm existed -- degraded, never wrong.
+  ["==", ["get", "kind"], "request"],
+  INTERVENTION_REQUEST_COLOR,
   ["==", ["get", "status"], "pending_review"],
   INTERVENTION_PENDING_REVIEW_COLOR,
   matchClasses("category", INTERVENTION_CATEGORY_CLASSES, UNCLASSIFIED_FILL_COLOR),

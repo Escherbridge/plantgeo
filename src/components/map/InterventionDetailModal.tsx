@@ -4,11 +4,17 @@ import { useMemo, type ReactNode } from "react";
 import { trpc } from "@/lib/trpc/client";
 import { InterventionCommentThread } from "@/components/intervention/InterventionCommentThread";
 import { InterventionLikeButton } from "@/components/intervention/InterventionLikeButton";
+import {
+  contributorFallbackLabel,
+  useDisplayNames,
+} from "@/components/intervention/use-display-names";
 import type { InterventionDetailRecord } from "@/lib/map/intervention-detail";
 import {
   INTERVENTION_CATEGORY_CLASSES,
   INTERVENTION_PENDING_REVIEW_COLOR,
   INTERVENTION_PENDING_REVIEW_LABEL,
+  INTERVENTION_REQUEST_COLOR,
+  INTERVENTION_REQUEST_LABEL,
   INTERVENTION_UNCLASSIFIED_LABEL,
 } from "@/lib/map/layers";
 import { useInterventionDetailStore } from "@/stores/intervention-detail-store";
@@ -67,13 +73,59 @@ export function InterventionDetailModal({ children }: { children?: ReactNode }) 
   // `useQuery` would still reach the tRPC client on every render of every
   // consumer -- including `LayerManager`, which mounts this modal closed.
   return heldRecord ? (
-    <InterventionDetailCard record={heldRecord} isLoading={false} isError={false} {...shell}>
+    <HeldInterventionDetail record={heldRecord} {...shell}>
       {social}
-    </InterventionDetailCard>
+    </HeldInterventionDetail>
   ) : (
     <FetchedInterventionDetail featureId={featureId} {...shell}>
       {social}
     </FetchedInterventionDetail>
+  );
+}
+
+/**
+ * The submitter's display name for one record (Phase 4 / FR-4).
+ *
+ * Resolved in the container rather than in `InterventionDetailCard` so the card
+ * stays prop-driven and renders without a tRPC client, which is how its own
+ * test exercises it. Same procedure and same fallback as the comment thread.
+ */
+function useSubmitterLabel(
+  submittedByUserId: string | null | undefined
+): string | null {
+  const ids = useMemo(
+    () => (submittedByUserId ? [submittedByUserId] : []),
+    [submittedByUserId]
+  );
+  const directory = useDisplayNames(ids);
+  if (!submittedByUserId) return null;
+  return directory.nameFor(submittedByUserId) ?? contributorFallbackLabel(submittedByUserId);
+}
+
+/** The already-resolved record a drafts-overlay click arrived with. */
+function HeldInterventionDetail({
+  record,
+  children,
+  ...shell
+}: {
+  record: InterventionDetailRecord;
+  isExpanded: boolean;
+  onToggleExpanded: () => void;
+  onClose: () => void;
+  children?: ReactNode;
+}) {
+  const submitterLabel = useSubmitterLabel(record.submittedByUserId);
+
+  return (
+    <InterventionDetailCard
+      record={record}
+      submitterLabel={submitterLabel}
+      isLoading={false}
+      isError={false}
+      {...shell}
+    >
+      {children}
+    </InterventionDetailCard>
   );
 }
 
@@ -93,10 +145,13 @@ function FetchedInterventionDetail({
     { featureId },
     { retry: false }
   );
+  const record = (detailQuery.data as InterventionDetailRecord | undefined) ?? null;
+  const submitterLabel = useSubmitterLabel(record?.submittedByUserId);
 
   return (
     <InterventionDetailCard
-      record={(detailQuery.data as InterventionDetailRecord | undefined) ?? null}
+      record={record}
+      submitterLabel={submitterLabel}
       isLoading={detailQuery.isLoading}
       isError={detailQuery.isError}
       {...shell}
@@ -109,6 +164,13 @@ function FetchedInterventionDetail({
 export interface InterventionDetailCardProps {
   /** Null while the by-id fetch is in flight, or when it failed. */
   record: InterventionDetailRecord | null;
+  /**
+   * `submittedByUserId` resolved through `users.getDisplayNames` by the
+   * container. Omitted (the card's own default) means "no directory read has
+   * happened", and the card applies the same id-fragment fallback the comment
+   * thread uses rather than printing a raw uuid at a reader.
+   */
+  submitterLabel?: string | null;
   isLoading: boolean;
   isError: boolean;
   /** False is the compact card; true is the full-viewport lightbox. */
@@ -127,6 +189,7 @@ export interface InterventionDetailCardProps {
 /** The presentational half, kept prop-driven so it renders without a tRPC client. */
 export function InterventionDetailCard({
   record,
+  submitterLabel,
   isLoading,
   isError,
   isExpanded,
@@ -144,7 +207,12 @@ export function InterventionDetailCard({
     <div
       role="dialog"
       aria-modal={isExpanded}
-      aria-label="Intervention details"
+      aria-label={
+        record && isRequestRecord(record)
+          ? "Strategy request details"
+          : "Intervention details"
+      }
+      data-kind={record ? (isRequestRecord(record) ? "request" : "intervention") : undefined}
       data-testid="intervention-detail-modal"
       data-expanded={isExpanded}
       className={`absolute z-40 flex max-h-[calc(100%-3rem)] flex-col overflow-hidden rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-[hsl(var(--card-foreground))] shadow-2xl ${shell}`}
@@ -154,7 +222,12 @@ export function InterventionDetailCard({
           <h2 className="truncate text-sm font-semibold">
             {record?.name ?? (isLoading ? "Loading intervention" : "Intervention")}
           </h2>
-          {record ? <StatusPill status={record.status} category={record.category} /> : null}
+          {record ? (
+            <div className="mt-1 flex flex-wrap items-center gap-1">
+              {isRequestRecord(record) ? <RequestBadge /> : null}
+              <StatusPill status={record.status} category={record.category} />
+            </div>
+          ) : null}
         </div>
         <button
           type="button"
@@ -180,7 +253,11 @@ export function InterventionDetailCard({
         ) : isLoading || !record ? (
           <p>Loading intervention details…</p>
         ) : (
-          <InterventionDetailBody record={record} isExpanded={isExpanded} />
+          <InterventionDetailBody
+            record={record}
+            submitterLabel={submitterLabel}
+            isExpanded={isExpanded}
+          />
         )}
         {/* Phase 5 (FR-4) mounts the like control and comment thread here. */}
         {children}
@@ -191,11 +268,19 @@ export function InterventionDetailCard({
 
 function InterventionDetailBody({
   record,
+  submitterLabel,
   isExpanded,
 }: {
   record: InterventionDetailRecord;
+  submitterLabel?: string | null;
   isExpanded: boolean;
 }) {
+  const submittedBy =
+    submitterLabel ??
+    (record.submittedByUserId
+      ? contributorFallbackLabel(record.submittedByUserId)
+      : null);
+
   return (
     <div className="space-y-3">
       <GeometryPreview record={record} size={isExpanded ? 320 : 160} />
@@ -203,7 +288,7 @@ function InterventionDetailBody({
         <Field label="Type" value={record.type} />
         <Field label="Category" value={categoryLabel(record.category)} />
         <Field label="Status" value={statusLabel(record.status)} />
-        <Field label="Submitted by" value={record.submittedByUserId} />
+        <Field label="Submitted by" value={submittedBy} />
         <Field label="Workspace" value={record.submittedByTeamId} />
         <Field label="Created" value={formatTimestamp(record.createdAt)} />
         <Field label="Updated" value={formatTimestamp(record.updatedAt)} />
@@ -230,6 +315,42 @@ function Field({ label, value }: { label: string; value: string | null }) {
       <dt className="text-[hsl(var(--muted-foreground))]">{label}</dt>
       <dd className="truncate">{value ?? "Not recorded"}</dd>
     </div>
+  );
+}
+
+/**
+ * Is this row a public strategy request rather than a drawn recommendation?
+ *
+ * Stated once, here, because `kind` is absent on every row written before
+ * 2026-09-13 and on every drafts-overlay record (a request publishes
+ * immediately and so never reaches the draft path) -- an absent value is an
+ * intervention, and three call sites re-deriving that default is how the two
+ * would eventually disagree.
+ */
+export function isRequestRecord(record: InterventionDetailRecord): boolean {
+  return record.kind === "request";
+}
+
+/**
+ * What tells a reader they are looking at an ask rather than a proposal.
+ *
+ * Its own badge, next to the status pill, rather than a value folded into the
+ * Type or Category field: type and category say what KIND OF WORK is involved,
+ * which a request and a recommendation answer identically -- the thing that
+ * differs is whether anybody has committed to doing it. It carries the same blue
+ * the map paints a request with (`INTERVENTION_REQUEST_COLOR`), so the dot the
+ * reader clicked and the panel that opened agree on sight.
+ */
+function RequestBadge() {
+  return (
+    <span
+      data-testid="intervention-kind-badge"
+      data-kind="request"
+      style={{ backgroundColor: INTERVENTION_REQUEST_COLOR }}
+      className="inline-block rounded px-2 py-0.5 text-[10px] font-medium text-white"
+    >
+      {INTERVENTION_REQUEST_LABEL}
+    </span>
   );
 }
 
@@ -277,6 +398,14 @@ export function GeometryPreview({
   record: InterventionDetailRecord;
   size: number;
 }) {
+  // The same precedence the map paints with, so the preview of a request is the
+  // colour of the dot the reader just clicked: kind first, then status, then the
+  // published default.
+  const strokeColor = isRequestRecord(record)
+    ? INTERVENTION_REQUEST_COLOR
+    : record.status === "pending_review"
+      ? INTERVENTION_PENDING_REVIEW_COLOR
+      : "#0d9488";
   const rings = useMemo(
     () => (record.geometry ? geometryRings(record.geometry) : []),
     [record.geometry]
@@ -321,11 +450,7 @@ export function GeometryPreview({
               key={`ring-${index}`}
               points={ring.map(project).map(([x, y]) => `${x},${y}`).join(" ")}
               fill="rgba(13,148,136,0.25)"
-              stroke={
-                record.status === "pending_review"
-                  ? INTERVENTION_PENDING_REVIEW_COLOR
-                  : "#0d9488"
-              }
+              stroke={strokeColor}
               strokeWidth={1}
             />
           ) : null
@@ -338,11 +463,7 @@ export function GeometryPreview({
               cx={x}
               cy={y}
               r={positions.length > 1 ? 1.2 : 3}
-              fill={
-                record.status === "pending_review"
-                  ? INTERVENTION_PENDING_REVIEW_COLOR
-                  : "#0d9488"
-              }
+              fill={strokeColor}
             />
           );
         })}

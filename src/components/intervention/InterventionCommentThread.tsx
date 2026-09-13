@@ -1,9 +1,13 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useSession } from "next-auth/react";
 import { trpc } from "@/lib/trpc/client";
 import { SocialSignInPrompt } from "@/components/intervention/sign-in-gate";
+import {
+  contributorFallbackLabel,
+  useDisplayNames,
+} from "@/components/intervention/use-display-names";
 
 /** Exactly `listComments`' projection, restated so the component stays prop-shaped. */
 export interface InterventionComment {
@@ -37,10 +41,11 @@ const DEFAULT_PAGE_SIZE = 20;
  * accumulated list in place, so neither remounts the thread or reloads the
  * page around it.
  *
- * Author display: this codebase has NO user-id -> display-name read for an
- * arbitrary user (`teams.listMembers` is team-scoped and is not a directory),
- * so an author is shown as the viewer ("You") or as a stable short fragment of
- * their id. Building a user-lookup surface is deliberately out of scope here.
+ * Author display (Phase 4 / FR-4): names come from `users.getDisplayNames` via
+ * `useDisplayNames`, batched ONCE per distinct set of loaded authors. The
+ * viewer's own comment still reads "You" (it is a stronger signal than their
+ * own name), and an author whose `users.name` is unset keeps the pre-directory
+ * id-fragment fallback.
  *
  * Escaping: every body is rendered as JSX text (`{comment.body}`), never
  * `dangerouslySetInnerHTML`, so markup in a comment is inert text by
@@ -69,6 +74,15 @@ export function InterventionCommentThread({
   );
 
   const page = commentsQuery.data;
+
+  // The DISTINCT author set of everything loaded so far. Recomputed only when
+  // `loaded` changes identity, and de-duplicated again inside the hook, so the
+  // directory read is one call per author set rather than one call per comment.
+  const authorIds = useMemo(
+    () => Array.from(new Set(loaded.map((comment) => comment.authorUserId))),
+    [loaded]
+  );
+  const directory = useDisplayNames(authorIds);
 
   useEffect(() => {
     if (!page) return;
@@ -125,7 +139,11 @@ export function InterventionCommentThread({
           <CommentRow
             key={comment.id}
             comment={comment}
-            isOwn={comment.authorUserId === viewer.id}
+            authorLabel={authorLabel(
+              comment.authorUserId,
+              comment.authorUserId === viewer.id,
+              directory.nameFor(comment.authorUserId)
+            )}
             canDelete={comment.authorUserId === viewer.id || isModerator}
             onDelete={() => deleteComment.mutate({ commentId: comment.id })}
           />
@@ -184,12 +202,13 @@ export function InterventionCommentThread({
 
 function CommentRow({
   comment,
-  isOwn,
+  authorLabel,
   canDelete,
   onDelete,
 }: {
   comment: InterventionComment;
-  isOwn: boolean;
+  /** Already resolved by the parent, which owns the one directory read. */
+  authorLabel: string;
   canDelete: boolean;
   onDelete: () => void;
 }) {
@@ -205,7 +224,7 @@ function CommentRow({
       className="rounded border border-[hsl(var(--border))] px-2 py-1 text-xs"
     >
       <div className="flex items-baseline gap-2">
-        <span className="font-medium">{authorLabel(comment.authorUserId, isOwn)}</span>
+        <span className="font-medium">{authorLabel}</span>
         {iso ? (
           <time
             data-testid={`intervention-comment-time-${comment.id}`}
@@ -232,9 +251,17 @@ function CommentRow({
   );
 }
 
-/** No user directory exists; the viewer is "You" and anyone else is an id fragment. */
-function authorLabel(authorUserId: string, isOwn: boolean): string {
-  return isOwn ? "You" : `Contributor ${authorUserId.slice(0, 8)}`;
+/**
+ * "You" wins over the viewer's own resolved name (sub-decision (c)); anyone
+ * else is their `users.name`, falling back to the id fragment when unset.
+ */
+export function authorLabel(
+  authorUserId: string,
+  isOwn: boolean,
+  resolvedName: string | null
+): string {
+  if (isOwn) return "You";
+  return resolvedName ?? contributorFallbackLabel(authorUserId);
 }
 
 /** Append only the rows not already held, preserving order and identity. */

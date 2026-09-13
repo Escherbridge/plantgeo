@@ -108,19 +108,34 @@ describe("shared intervention paint expression (FR-1, OQ-2)", () => {
     category: "land",
   };
 
-  /** A tiny evaluator for the exact `case`/`match` shape this expression takes. */
+  /**
+   * A tiny evaluator for the `case` (of `["==", ["get", field], value]` arms)
+   * over a trailing `match` shape this expression takes. Written as a walk over
+   * however many `case` arms there are rather than a fixed destructure, so an
+   * added arm (the `kind = "request"` one, 2026-09-13) is covered by the request
+   * paint test next to it instead of silently shifting this one's indices.
+   */
   function paint(feature: Record<string, string | undefined>): string {
-    const [, , pendingColor, categoryMatch] = INTERVENTION_STATUS_COLOR as unknown as [
-      string,
-      unknown,
-      string,
-      [string, unknown, ...string[]],
-    ];
-    if (feature.status === "pending_review") return pendingColor;
+    const expression = INTERVENTION_STATUS_COLOR as unknown as unknown[];
+    expect(expression[0]).toBe("case");
+    let index = 1;
+    while (index + 1 < expression.length) {
+      const [operator, getter, expected] = expression[index] as [
+        string,
+        [string, string],
+        string,
+      ];
+      expect(operator).toBe("==");
+      expect(getter[0]).toBe("get");
+      if (feature[getter[1]] === expected) return expression[index + 1] as string;
+      index += 2;
+    }
+    const categoryMatch = expression[index] as [string, unknown, ...string[]];
+    expect(categoryMatch[0]).toBe("match");
     const arms = categoryMatch.slice(2) as string[];
     const fallback = arms[arms.length - 1];
-    for (let index = 0; index < arms.length - 1; index += 2) {
-      if (arms[index] === feature.category) return arms[index + 1];
+    for (let arm = 0; arm < arms.length - 1; arm += 2) {
+      if (arms[arm] === feature.category) return arms[arm + 1];
     }
     return fallback;
   }

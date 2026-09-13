@@ -267,6 +267,15 @@ implementation fact and a reader looking for their own just-submitted interventi
 to know it. `applyVisibility` needed no change: it folds over `styleBackedLayerEntries()`, so all
 six ids flip off one boolean.
 
+Since 2026-09-13 the same six layers also draw PUBLIC STRATEGY REQUESTS (`properties.kind =
+"request"`, written by `interventions.submitRequest` straight to `published`, no review queue). They
+get the leading arm of `INTERVENTION_STATUS_COLOR` and their own blue (`INTERVENTION_REQUEST_COLOR`,
+`#2563eb`) — leading because a request is always `published`, so an arm behind the status check could
+never win and every request would paint as a recommendation. `kind` reaches the drafts GeoJSON
+directly but **not yet the published tiles**: `geo.intervention_tiles()` must project it, which lands
+with the track's Phase 3 migration (and, as ever, a Martin restart). Until then a tile-sourced
+request falls through to the category arm — the colour it would have had anyway, never a wrong one.
+
 All six paint with `INTERVENTION_STATUS_COLOR` (layers.ts) — one `case` on `status` over a `match`
 on `category`, so `pending_review` is orange whatever its category, everything else is land teal /
 air violet, and an unclassified row falls to the shared neutral grey. It replaced a `priority`-keyed

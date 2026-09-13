@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   session: { data: null as unknown, status: "authenticated" as string },
   listCommentsQuery: vi.fn(),
+  displayNamesQuery: vi.fn(),
   postMutate: vi.fn(),
   deleteMutate: vi.fn(),
 }));
@@ -24,6 +25,9 @@ vi.mock("next-auth/react", () => ({
 
 vi.mock("@/lib/trpc/client", () => ({
   trpc: {
+    users: {
+      getDisplayNames: { useQuery: mocks.displayNamesQuery },
+    },
     interventionSocial: {
       listComments: { useQuery: mocks.listCommentsQuery },
       postComment: {
@@ -69,6 +73,31 @@ function signIn(userId: string, platformRole?: string) {
   };
 }
 
+/** What `users.getDisplayNames` hands back for this render. */
+function directory(rows: { id: string; name: string | null; image?: string | null }[]) {
+  mocks.displayNamesQuery.mockReturnValue({
+    data: rows.map((row) => ({ image: null, ...row })),
+    isLoading: false,
+    isError: false,
+  });
+}
+
+/**
+ * Every distinct NON-EMPTY `userIds` batch the component asked the directory
+ * for. The empty first-render batch is excluded deliberately: it is issued with
+ * `enabled: false` (the comments have not arrived yet) and costs no request.
+ */
+function requestedBatches(): string[] {
+  return Array.from(
+    new Set(
+      mocks.displayNamesQuery.mock.calls
+        .map(([input]) => (input as { userIds: string[] }).userIds)
+        .filter((userIds) => userIds.length > 0)
+        .map((userIds) => JSON.stringify(userIds))
+    )
+  );
+}
+
 function onePage(comments: unknown[], nextOffset: number | null = null) {
   mocks.listCommentsQuery.mockReturnValue({
     data: { comments, nextOffset },
@@ -81,6 +110,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   signIn(STRANGER_ID);
   onePage([COMMENT]);
+  directory([]);
   mocks.postMutate.mockImplementation(
     (input: { featureId: string; body: string }) => ({
       id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa9",
@@ -104,8 +134,8 @@ describe("InterventionCommentThread", () => {
 
     const item = screen.getByTestId(`intervention-comment-${COMMENT.id}`);
     expect(item.textContent).toContain("The north edge floods every spring.");
-    // No user-directory read exists for an arbitrary author id, so the handle is
-    // a stable short fragment of it rather than an invented lookup.
+    // No `users.name` for this author, so the pre-directory fallback stands: a
+    // stable short fragment of the id rather than a raw uuid.
     expect(item.textContent).toContain(AUTHOR_ID.slice(0, 8));
     expect(screen.getByTestId(`intervention-comment-time-${COMMENT.id}`)
       .getAttribute("dateTime")).toBe("2026-09-10T12:00:00.000Z");
@@ -118,6 +148,82 @@ describe("InterventionCommentThread", () => {
     expect(
       screen.getByTestId(`intervention-comment-${COMMENT.id}`).textContent
     ).toContain("You");
+  });
+
+  describe("display-name resolution (Phase 4 / FR-4)", () => {
+    const SECOND_AUTHOR_ID = "44444444-4444-4444-8444-444444444444";
+    const secondComment = {
+      ...COMMENT,
+      id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa5",
+      authorUserId: SECOND_AUTHOR_ID,
+      body: "Second author's comment.",
+    };
+
+    it("renders the resolved users.name when the directory has one", () => {
+      directory([{ id: AUTHOR_ID, name: "Ada Okafor" }]);
+      render(<InterventionCommentThread featureId={FEATURE_ID} />);
+
+      const item = screen.getByTestId(`intervention-comment-${COMMENT.id}`);
+      expect(item.textContent).toContain("Ada Okafor");
+      expect(item.textContent).not.toContain("Contributor");
+      expect(item.textContent).not.toContain(AUTHOR_ID);
+    });
+
+    it("falls back to the id fragment when the resolved name is null", () => {
+      directory([{ id: AUTHOR_ID, name: null }]);
+      render(<InterventionCommentThread featureId={FEATURE_ID} />);
+
+      expect(
+        screen.getByTestId(`intervention-comment-${COMMENT.id}`).textContent
+      ).toContain(`Contributor ${AUTHOR_ID.slice(0, 8)}`);
+    });
+
+    it('keeps "You" for the viewer, even when their own name resolves', () => {
+      signIn(AUTHOR_ID);
+      directory([{ id: AUTHOR_ID, name: "Ada Okafor" }]);
+      render(<InterventionCommentThread featureId={FEATURE_ID} />);
+
+      const item = screen.getByTestId(`intervention-comment-${COMMENT.id}`);
+      expect(item.textContent).toContain("You");
+      expect(item.textContent).not.toContain("Ada Okafor");
+    });
+
+    it("asks for the whole author set in ONE batch, not once per comment", () => {
+      onePage([COMMENT, secondComment, { ...COMMENT, id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa6" }]);
+      directory([
+        { id: AUTHOR_ID, name: "Ada Okafor" },
+        { id: SECOND_AUTHOR_ID, name: "Bo Lind" },
+      ]);
+      render(<InterventionCommentThread featureId={FEATURE_ID} />);
+
+      // Three comments, two distinct authors, ONE distinct request payload --
+      // and the repeated author appears in it once.
+      const batches = requestedBatches();
+      expect(batches).toHaveLength(1);
+      expect(JSON.parse(batches[0]).sort()).toEqual(
+        [AUTHOR_ID, SECOND_AUTHOR_ID].sort()
+      );
+      expect(screen.getByTestId("intervention-comment-list").textContent).toContain(
+        "Bo Lind"
+      );
+      // The only other payload ever issued is the pre-load empty one, and it is
+      // disabled -- so three comments cost exactly one directory request.
+      for (const [input, options] of mocks.displayNamesQuery.mock.calls) {
+        if ((input as { userIds: string[] }).userIds.length === 0) {
+          expect(options).toMatchObject({ enabled: false });
+        }
+      }
+    });
+
+    it("does not issue a directory read for a signed-out viewer", () => {
+      mocks.session = { data: null, status: "unauthenticated" };
+      render(<InterventionCommentThread featureId={FEATURE_ID} />);
+
+      expect(mocks.displayNamesQuery).toHaveBeenCalledWith(
+        { userIds: [] },
+        expect.objectContaining({ enabled: false })
+      );
+    });
   });
 
   it("posts a comment and shows it without a full remount", () => {

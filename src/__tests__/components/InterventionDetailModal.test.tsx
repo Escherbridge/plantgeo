@@ -17,6 +17,14 @@ vi.mock("@/components/intervention/InterventionCommentThread", () => ({
     <div data-testid="comment-thread-stub" data-feature-id={featureId} />
   ),
 }));
+const mocks = vi.hoisted(() => ({
+  displayNamesQuery: vi.fn(() => ({
+    data: [] as unknown[],
+    isLoading: false,
+    isError: false,
+  })),
+}));
+
 vi.mock("@/lib/trpc/client", () => ({
   trpc: {
     interventions: {
@@ -24,6 +32,7 @@ vi.mock("@/lib/trpc/client", () => ({
         useQuery: () => ({ data: undefined, isLoading: true, isError: false }),
       },
     },
+    users: { getDisplayNames: { useQuery: mocks.displayNamesQuery } },
   },
 }));
 
@@ -99,9 +108,12 @@ describe("InterventionDetailCard", () => {
     expect(screen.getByText("reforestation")).toBeTruthy();
     expect(screen.getByText("Land intervention")).toBeTruthy();
     expect(screen.getByText("Two hundred acres of mixed conifer.")).toBeTruthy();
+    // A raw uuid is never shown at a reader: with no resolved name the card
+    // applies the comment thread's own id-fragment fallback (Phase 4 / FR-4).
+    expect(screen.getByText("Contributor 22222222")).toBeTruthy();
     expect(
-      screen.getByText("22222222-2222-4222-8222-222222222222")
-    ).toBeTruthy();
+      screen.queryByText("22222222-2222-4222-8222-222222222222")
+    ).toBeNull();
     expect(screen.getByText("2026-09-01")).toBeTruthy();
     expect(screen.getByText("2026-09-02")).toBeTruthy();
   });
@@ -210,6 +222,56 @@ describe("InterventionDetailCard", () => {
   it("renders the Phase 5 social slot without owning any social state", () => {
     renderCard({ children: <div data-testid="phase-5-slot" /> });
     expect(screen.getByTestId("phase-5-slot")).toBeTruthy();
+  });
+
+  it("shows the resolved submitter name the container handed it", () => {
+    renderCard({ submitterLabel: "Ada Okafor" });
+
+    expect(screen.getByText("Ada Okafor")).toBeTruthy();
+    expect(screen.queryByText("Contributor 22222222")).toBeNull();
+  });
+});
+
+describe("InterventionDetailModal submitter resolution (Phase 4 / FR-4)", () => {
+  afterEach(() => {
+    useInterventionDetailStore.getState().close();
+    mocks.displayNamesQuery.mockReturnValue({
+      data: [],
+      isLoading: false,
+      isError: false,
+    });
+  });
+
+  it("resolves submittedByUserId through users.getDisplayNames and shows the name", () => {
+    mocks.displayNamesQuery.mockReturnValue({
+      data: [
+        {
+          id: RECORD.submittedByUserId,
+          name: "Ada Okafor",
+          image: null,
+        },
+      ],
+      isLoading: false,
+      isError: false,
+    });
+    useInterventionDetailStore.getState().openWithRecord(RECORD);
+    render(<InterventionDetailModal />);
+
+    expect(mocks.displayNamesQuery).toHaveBeenCalledWith(
+      { userIds: [RECORD.submittedByUserId] },
+      expect.objectContaining({ enabled: true })
+    );
+    expect(screen.getByText("Ada Okafor")).toBeTruthy();
+  });
+
+  it("falls back to the same id fragment the comment thread uses", () => {
+    useInterventionDetailStore.getState().openWithRecord(RECORD);
+    render(<InterventionDetailModal />);
+
+    expect(screen.getByText("Contributor 22222222")).toBeTruthy();
+    expect(
+      screen.queryByText("22222222-2222-4222-8222-222222222222")
+    ).toBeNull();
   });
 });
 

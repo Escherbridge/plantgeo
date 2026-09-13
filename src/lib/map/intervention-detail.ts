@@ -25,6 +25,19 @@ export interface InterventionDetailRecord {
    * honoured by `geo.intervention_tiles` and is never presented as live state.
    */
   status: string;
+  /**
+   * Which of the two things sharing the `interventions` layer this row is
+   * (`properties.kind`, track `public_strategy_requests_20260913`): a public
+   * strategy request -- somebody asking for an intervention here -- or a drawn
+   * recommendation.
+   *
+   * Optional, and absent means `"intervention"`: every row written before
+   * 2026-09-13 predates the discriminator and is deliberately not backfilled, so
+   * readers default rather than fail. The drafts overlay leaves it unset for the
+   * same reason -- a draft is never a request, since a request publishes
+   * immediately and so never reaches the draft path.
+   */
+  kind?: "intervention" | "request" | null;
   description: string | null;
   /** The real drawn geometry, not a centroid -- null only when the row has none. */
   geometry: GeoJSON.Geometry | null;

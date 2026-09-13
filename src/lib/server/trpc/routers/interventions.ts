@@ -11,7 +11,12 @@ import {
 import type { InterventionDetailRecord } from "@/lib/map/intervention-detail";
 import { features, layers, teamMembers } from "@/lib/server/db/schema";
 import { isTeamEditorRole } from "@/lib/server/security/access-control";
-import { InterventionCategorySchema } from "@/lib/environmental/intervention";
+import {
+  AIR_INTERVENTION_TYPES,
+  InterventionCategorySchema,
+  LAND_INTERVENTION_TYPES,
+  type InterventionType,
+} from "@/lib/environmental/intervention";
 import {
   countInterventionGeometryPositions,
   getInterventionAreaCapIssue,
@@ -55,6 +60,28 @@ const INTERVENTIONS_LAYER_NAME = "interventions";
  */
 const RECOMMENDATION_STATUS = "pending_review";
 
+/**
+ * A public strategy request posts straight to the published-equivalent status,
+ * skipping the review queue a drawn recommendation enters.
+ *
+ * This is the exact string `contributions.publishContribution` writes and
+ * `geo.intervention_tiles` / `isFeatureVisibleTo` filter on -- deliberately the
+ * same value and not a request-only synonym, so a request is visible to a
+ * signed-out reader through the one published rule rather than a second one
+ * (track `public_strategy_requests_20260913`, OQ-A sub-decision (a): a request
+ * is a lighter-weight social ask, not a land-use claim whose accuracy the map's
+ * factual record depends on).
+ */
+const REQUEST_STATUS = "published";
+
+/**
+ * The `properties.kind` discriminator separating the two things that now share
+ * the `interventions` layer. Absent means `"intervention"`: every row written
+ * before 2026-09-13 predates the field and is not backfilled, so readers treat
+ * a missing `kind` as a recommendation rather than failing on it.
+ */
+const REQUEST_KIND = "request";
+
 const MAX_SUBMISSION_DESCRIPTION_LENGTH = 2_000;
 
 /**
@@ -79,15 +106,30 @@ const BoundedInterventionGeometrySchema = InterventionGeometrySchema.superRefine
   }
 );
 
-/** Mirrors `InterventionType` in `src/lib/environmental/intervention.ts`. */
+/**
+ * Derived from `src/lib/environmental/intervention.ts` rather than re-typed
+ * here: a hand-mirrored copy is exactly how the retired `STRATEGY_TYPES` list
+ * drifted out of step with `InterventionType` in the first place.
+ */
 const InterventionTypeSchema = z.enum([
-  "reforestation",
-  "silvopasture",
-  "cover_cropping",
-  "biochar",
-  "keyline",
-  "cloud_seeding",
-]);
+  ...LAND_INTERVENTION_TYPES,
+  ...AIR_INTERVENTION_TYPES,
+] as [InterventionType, ...InterventionType[]]);
+
+/**
+ * The request flow's narrower vocabulary (OQ-D): land types only. An
+ * air-category type submitted as a request is a validation error, not a silently
+ * re-categorised row.
+ */
+const LandInterventionTypeSchema = z.enum(
+  LAND_INTERVENTION_TYPES as [InterventionType, ...InterventionType[]],
+  {
+    errorMap: () => ({
+      message:
+        "A strategy request must name a land-category intervention type; air-category types are not requestable",
+    }),
+  }
+);
 
 export type InterventionSubmissionType = z.infer<typeof InterventionTypeSchema>;
 
@@ -271,6 +313,89 @@ export const interventionsRouter = router({
     }),
 
   /**
+   * Record one signed-in contributor's PUBLIC strategy request -- "this area
+   * could use X" -- as a feature that is on the map the moment it is written.
+   *
+   * It lives here, next to `submitIntervention`, because it is the same table,
+   * the same layer, the same geometry validator and the same properties bag; the
+   * only three differences are deliberate and each is load-bearing:
+   *   - `status` is `REQUEST_STATUS` (`published`), not `RECOMMENDATION_STATUS`.
+   *     An ask needs no expert adjudication before anyone may read it, the way a
+   *     drawn site whose accuracy the map asserts does (OQ-A sub-decision (a)).
+   *   - `properties.kind` is stamped `"request"`, which is what the merged map
+   *     layer paints on and what the detail modal labels on.
+   *   - the type vocabulary is the land-only subset (OQ-D).
+   * `publicationConsent` is NOT one of the differences: a request is exactly as
+   * public as a published intervention, so it takes the identical explicit
+   * consent gate rather than a weaker one.
+   *
+   * It replaces `community.submitRequest`, which wrote a non-geospatial,
+   * owner/team-private `strategy_requests` row that no map layer could ever
+   * draw. `title` there is `name` here, matching `submitIntervention`'s field so
+   * one properties bag describes both kinds.
+   */
+  submitRequest: contributorProcedure
+    .input(
+      z.object({
+        name: z.string().trim().min(3).max(256),
+        type: LandInterventionTypeSchema,
+        description: z
+          .string()
+          .trim()
+          .max(MAX_SUBMISSION_DESCRIPTION_LENGTH)
+          .optional(),
+        // The same validator and the same interactive vertex ceiling the drawn
+        // submission takes. A request is a Point in practice (the submit form
+        // only ever collects a pin), and a Point has no area, so the
+        // land-category area cap `submitIntervention` refines on has nothing to
+        // say here -- it is applied anyway, below, so an optional future drawn
+        // request area cannot slip past it.
+        geometry: BoundedInterventionGeometrySchema,
+        publicationConsent: z.literal(true),
+      }).superRefine((value, context) => {
+        const issue = getInterventionAreaCapIssue(value.geometry, "land");
+        if (issue) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: issue,
+            path: ["geometry"],
+          });
+        }
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const userId = currentUserId(ctx.session);
+      const layerId = await resolveInterventionsLayerId(ctx);
+
+      const [submitted] = await ctx.db
+        .insert(features)
+        .values({
+          layerId,
+          status: REQUEST_STATUS,
+          properties: {
+            kind: REQUEST_KIND,
+            name: input.name,
+            type: input.type,
+            // Requests are land-category-only, so the category is not asked for
+            // and not inferred -- it is the one value it can be.
+            category: "land",
+            description: input.description ?? null,
+            geometry: input.geometry,
+            submittedByUserId: userId,
+            // No team arm at all: the private/team-scoped visibility the old
+            // `getRequests` enforced is the boundary this track removes, and a
+            // `submittedByTeamId` written here would quietly re-create it
+            // through `isFeatureVisibleTo`'s workspace clause.
+            submittedByTeamId: null,
+            publicationConsent: input.publicationConsent,
+          },
+        })
+        .returning(submissionProjection);
+
+      return submitted;
+    }),
+
+  /**
    * Read back the caller's own recommendations, including the ones still in
    * review that the public map deliberately does not show. Without `teamId`
    * this is what the caller authored; with one it is what the workspace shares,
@@ -399,6 +524,9 @@ export const interventionsRouter = router({
           name: sql<string | null>`${features.properties} ->> 'name'`,
           type: sql<string | null>`${features.properties} ->> 'type'`,
           category: sql<string | null>`${features.properties} ->> 'category'`,
+          // NULL on every row written before 2026-09-13, which is read as
+          // `"intervention"` below rather than backfilled.
+          kind: sql<string | null>`${features.properties} ->> 'kind'`,
           description: sql<
             string | null
           >`${features.properties} ->> 'description'`,
@@ -437,6 +565,7 @@ export const interventionsRouter = router({
         name: row.name,
         type: row.type,
         category: row.category,
+        kind: row.kind === REQUEST_KIND ? "request" : "intervention",
         // `unknown`, never a plausible-looking default: a NULL status is a data
         // fault, and naming it one is better than showing a reader a standing
         // the row does not actually have.
