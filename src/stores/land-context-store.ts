@@ -82,6 +82,23 @@ export interface LandContextResultMeta {
   nextCursor?: string | null;
   /** True when the selection area only partially overlaps admitted source coverage. */
   partialCoverage?: boolean;
+  /**
+   * Populated only for a typed `{status: "budget_exceeded"}` reader response (see
+   * `BudgetExceededResult` in `src/lib/server/services/land-context/types.ts`) -- distinct from
+   * `partialCoverage`, which describes a genuine but incomplete source-coverage match. A
+   * budget-exceeded selection never reaches the reader at all, so it must never be reported as
+   * "partial coverage". `null`/absent means the current result is not budget-exceeded.
+   */
+  budgetExceeded?: {
+    reason:
+      | "aoi_area_exceeds_limit"
+      | "geometry_vertices_exceed_limit"
+      | "feature_count_would_exceed_limit"
+      | "response_bytes_would_exceed_limit"
+      | "outside_pilot_states";
+    limit: number;
+    requested: number | null;
+  } | null;
 }
 
 interface LandContextState {
