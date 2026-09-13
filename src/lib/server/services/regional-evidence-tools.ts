@@ -4,6 +4,7 @@ import {
   providerUrl,
   UpstreamPayloadError,
 } from "@/lib/server/http/bounded-upstream";
+import { LAND_CONTEXT_TOOLS, callLandContextTool, isLandContextTool } from "@/lib/server/services/land-context-tools";
 
 export interface RegionalEvidenceTool {
   name: string;
@@ -55,12 +56,26 @@ export async function loadRegionalEvidenceTools(
   if (new Set(names).size !== names.length || names.includes("species_information")) {
     throw new UpstreamPayloadError("Invalid environmental tool registry");
   }
+  const remoteTools = parsed.data.tools.map(({ function: tool }) => ({
+    name: tool.name,
+    description: tool.description,
+    input_schema: tool.parameters,
+  }));
+  // Land-context tools are registered in-process (see land-context-tools.ts)
+  // rather than served by the deployed agri Parquet bridge, but they share
+  // this same catalogue so `ai-prompt.ts` dispatches both uniformly. Guard
+  // against a name collision with the remote registry rather than silently
+  // shadowing one tool with the other.
+  const landContextTools = LAND_CONTEXT_TOOLS.map(({ name, description, input_schema }) => ({
+    name,
+    description,
+    input_schema,
+  }));
+  if (remoteTools.some((tool) => isLandContextTool(tool.name))) {
+    throw new UpstreamPayloadError("Environmental tool registry collides with a land-context tool name");
+  }
   return {
-    tools: parsed.data.tools.map(({ function: tool }) => ({
-      name: tool.name,
-      description: tool.description,
-      input_schema: tool.parameters,
-    })),
+    tools: [...remoteTools, ...landContextTools],
     surfaces: parsed.data.surfaces,
     featureSurfaces: parsed.data.feature_surfaces,
     valueSurfaces: parsed.data.value_surfaces,
@@ -73,6 +88,12 @@ export async function callRegionalEvidenceTool(
   args: Record<string, unknown>,
   signal?: AbortSignal,
 ): Promise<string> {
+  // Land-context tools run in-process against this app's own Postgres-backed
+  // reader service (see land-context-tools.ts) and never touch the agri
+  // Parquet bridge below, so they work even when AGRI_PARQUET_SERVICE_URL is
+  // unconfigured and carry no network transport bound.
+  if (isLandContextTool(name)) return callLandContextTool(name, args);
+
   const body = JSON.stringify({ name, arguments: args });
   if (new TextEncoder().encode(body).byteLength > 32 * 1024) {
     throw new UpstreamPayloadError("Environmental tool request exceeded the byte limit");
