@@ -90,6 +90,7 @@ if TYPE_CHECKING:
     from agri_data_service.pipeline.direct.soil.products import SoilFieldProduct
     from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 
+
 class LaneRegistryError(RuntimeError):
     """Raised when a lane's arguments cannot be resolved, or an export reports an impossible shape."""
 
@@ -431,9 +432,7 @@ _refuse_fire_detections_direct_export: Final[LaneAdapter] = _source_direct_refus
 _refuse_fire_perimeters_direct_export: Final[LaneAdapter] = _source_direct_refusal(
     "agri_data_service.pipeline.direct.fire_perimeters"
 )
-_refuse_signal_direct_export: Final[LaneAdapter] = _source_direct_refusal(
-    "agri_data_service.pipeline.direct.signal"
-)
+_refuse_signal_direct_export: Final[LaneAdapter] = _source_direct_refusal("agri_data_service.pipeline.direct.signal")
 _refuse_soil_survey_direct_export: Final[LaneAdapter] = _source_direct_refusal(
     "agri_data_service.pipeline.direct.soil_survey"
 )

@@ -11,12 +11,15 @@ import posixpath
 import unicodedata
 import zipfile
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING, Final
+from zlib import crc32
 
 from agri_data_service.foundation.botanical_occurrences.limits import ADMITTED_LIMITS
+from agri_data_service.pipeline.direct import RELEASE_ACCEPTED, RELEASE_REJECTED
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from agri_data_service.foundation.botanical_occurrences.limits import AcquisitionLimits
 
 #: Read granularity. Small enough that a decompression bomb trips a cap inside the first megabyte,
@@ -30,7 +33,9 @@ _ALLOWED_SUFFIXES: Final[frozenset[str]] = frozenset({".xml", ".txt", ".csv", ".
 
 #: Suffixes and magic bytes that mean a member is itself an archive. Refused: a nested archive is an
 #: unbounded budget, because nothing inside it was counted against the caps this one was checked with.
-_NESTED_ARCHIVE_SUFFIXES: Final[frozenset[str]] = frozenset({".zip", ".gz", ".tgz", ".tar", ".bz2", ".xz", ".7z", ".rar"})
+_NESTED_ARCHIVE_SUFFIXES: Final[frozenset[str]] = frozenset(
+    {".zip", ".gz", ".tgz", ".tar", ".bz2", ".xz", ".7z", ".rar"}
+)
 _NESTED_ARCHIVE_MAGIC: Final[tuple[bytes, ...]] = (b"PK\x03\x04", b"\x1f\x8b", b"BZh", b"\xfd7zXZ", b"7z\xbc\xaf")
 
 #: `flag_bits & 0x1` is ZIP's encryption bit. An encrypted member is refused rather than prompted
@@ -94,7 +99,7 @@ class ArchiveReceipt:
     @property
     def accepted(self) -> bool:
         """True only when every control passed. There is no partially-safe archive."""
-        return self.outcome == "accepted"
+        return self.outcome == RELEASE_ACCEPTED
 
     def member(self, member_name: str) -> MemberReceipt | None:
         """Return one member's receipt by name, or None when the archive does not hold it."""
@@ -160,7 +165,7 @@ def _stream_member(
             if not head:
                 head = chunk[:8]
             digest.update(chunk)
-            crc = zipfile.crc32(chunk, crc)
+            crc = crc32(chunk, crc)
             measured += len(chunk)
             if already_decompressed + measured > limits.decompressed_bytes_total:
                 reasons.append("archive_over_decompressed_byte_cap")
@@ -206,7 +211,7 @@ def inspect_archive(path: Path, limits: AcquisitionLimits = ADMITTED_LIMITS) -> 
             total_decompressed_bytes=0,
             meta_sha256=None,
             eml_sha256=None,
-            outcome="rejected",
+            outcome=RELEASE_REJECTED,
             reasons=("not_a_zip_archive", *reasons),
         )
 
@@ -250,9 +255,7 @@ def inspect_archive(path: Path, limits: AcquisitionLimits = ADMITTED_LIMITS) -> 
                 break
 
     by_basename = {posixpath.basename(entry.member_name).casefold(): entry for entry in members}
-    for required in _REQUIRED_MEMBERS:
-        if required not in by_basename:
-            reasons.append("missing_required_member")
+    reasons.extend("missing_required_member" for required in _REQUIRED_MEMBERS if required not in by_basename)
     if total_compressed > limits.compressed_bytes_total:
         reasons.append("archive_over_compressed_byte_cap")
 
@@ -266,7 +269,7 @@ def inspect_archive(path: Path, limits: AcquisitionLimits = ADMITTED_LIMITS) -> 
         total_decompressed_bytes=total_decompressed,
         meta_sha256=by_basename["meta.xml"].sha256 if "meta.xml" in by_basename else None,
         eml_sha256=by_basename["eml.xml"].sha256 if "eml.xml" in by_basename else None,
-        outcome="rejected" if ordered_reasons else "accepted",
+        outcome=RELEASE_REJECTED if ordered_reasons else RELEASE_ACCEPTED,
         reasons=ordered_reasons,
     )
 

@@ -8,9 +8,7 @@ from decimal import Decimal
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Final, Literal
 
-from agri_data_service.ingest.archive_walk import archive_lane_definition_name
 from agri_data_service.ingest.identity import MAX_NATURAL_KEY_LENGTH, PRODUCER_BY_LAYER_NAME
-from agri_data_service.ingest.lanes import BACKFILL_LANES
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -209,20 +207,4 @@ VALIDITY_CHECK_CONSEQUENCES: Final[Mapping[str, str]] = MappingProxyType(
 # remaining caller, in `_read_observations`.)
 _FEATURE_ONLY_CHECKS: Final[frozenset[str]] = frozenset(
     {UNLINKED_GEOMETRY_CHECK, MISSING_EXTERNAL_ID_CHECK, MALFORMED_IDENTITY_CHECK, DUPLICATE_IDENTITY_CHECK}
-)
-
-# Every `agri.job_definition.name` the durable runtime can actually mint, DERIVED and never spelled here.
-# `archive_walk.archive_lane_definition_name` is the only producer of a definition name and
-# `lanes.BACKFILL_LANES` is the only registry of lanes it can be handed, so this set is the entire namespace a
-# `LaneState.lane` can ever carry.
-#
-# This is a regression guard, not decoration. This report first shipped naming its lanes `agri.backfill.firms`
-# and `agri.backfill.streamflow` -- a parallel namespace matching no row in the ledger. Every stream's lane list
-# was therefore EMPTY against production and two guarantees died silently together: `decide_verdict` saw no
-# dead-lettered lane, so the 169 dead-lettered FIRMS windows measured on 2026-08-07 were no evidence at all and
-# a clean validity sweep reported the stream COMPLETE; and `_resolve_expected_first_day` found no lane floor,
-# fell through to `first_observed`, and the 2000->2022 hole the full-archive walk exists to fill measured as
-# zero missing days, because a head gap requires `expected_first_day < first_observed`.
-ARCHIVE_LANE_DEFINITION_NAMES: Final[frozenset[str]] = frozenset(
-    archive_lane_definition_name(lane) for lane in BACKFILL_LANES.values()
 )

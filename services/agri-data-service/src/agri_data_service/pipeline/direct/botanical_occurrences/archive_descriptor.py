@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import re
-import xml.etree.ElementTree as ElementTree  # noqa: S405 - hardened below; see `parse_xml_document`
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final
+from xml.etree import ElementTree
 
 from agri_data_service.foundation.botanical_occurrences.terms import (
     OCCURRENCE_ROW_TYPE,
@@ -60,18 +60,20 @@ def parse_xml_document(payload: bytes) -> ElementTree.Element:
         if pattern.search(payload):
             raise ArchiveDescriptorError(f"refused XML document containing {reason}")
     try:  # pragma: no cover - exercised only where the optional dependency is installed
-        from defusedxml.ElementTree import fromstring as defused_fromstring  # type: ignore[import-not-found]
+        from defusedxml.ElementTree import (  # type: ignore[import-untyped]  # noqa: PLC0415 - optional dependency probed only here
+            fromstring as defused_fromstring,
+        )
     except ImportError:
         # Stdlib fallback, safe BECAUSE of the byte scan above: with no DOCTYPE and no <!ENTITY able
         # to reach the parser, the only entity references it can meet are the five XML predefines,
         # and any other reference fails as an undefined entity rather than resolving to a file.
         try:
-            return ElementTree.fromstring(payload)  # noqa: S314 - see the byte scan and this comment
+            return ElementTree.fromstring(payload)
         except ElementTree.ParseError as error:
             raise ArchiveDescriptorError(f"XML document is not well formed: {error}") from error
     try:
         parsed: ElementTree.Element = defused_fromstring(payload)
-    except Exception as error:  # noqa: BLE001 - defusedxml raises its own family of refusals
+    except Exception as error:
         raise ArchiveDescriptorError(f"XML document refused by defusedxml: {error}") from error
     return parsed
 

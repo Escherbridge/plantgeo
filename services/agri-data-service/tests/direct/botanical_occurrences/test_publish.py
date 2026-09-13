@@ -45,7 +45,7 @@ class RecordingTarget:
         return self.inner.exists(relative_path)
 
 
-def _turn(archive: Path, target: Any, tmp_path: Path) -> dict[str, Any]:  # noqa: ANN401 - any PublicationTarget
+def _turn(archive: Path, target: Any, tmp_path: Path) -> dict[str, Any]:
     return run_botanical_occurrences_forward(
         BotanicalForwardConfig(
             archives=(ArchiveRequest(path=archive, collection_key="test:COLL:vascular", source_version="1.0"),),

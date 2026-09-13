@@ -1,5 +1,7 @@
 """Streaming row reads: verbatim values, source locators, content hashes and the partial cap."""
 
+# ruff: noqa: PLR2004 - the small literal counts ARE the assertion; naming each one hides it.
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -7,6 +9,7 @@ from typing import TYPE_CHECKING
 from agri_data_service.pipeline.direct.botanical_occurrences.archive_descriptor import parse_meta_descriptor
 from agri_data_service.pipeline.direct.botanical_occurrences.quarantine import read_member_bytes
 from agri_data_service.pipeline.direct.botanical_occurrences.rows import read_member
+from tests.direct.botanical_occurrences.conftest import CORE_COLUMNS, DEFAULT_RECORDS, delimited
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -38,8 +41,6 @@ def test_verbatim_keeps_every_column_under_its_term_uri(valid_archive: Path) -> 
 
 
 def test_the_row_hash_changes_with_content_and_only_with_content(valid_archive: Path, archive_factory) -> None:  # noqa: ANN001
-    from tests.direct.botanical_occurrences.conftest import DEFAULT_RECORDS, CORE_COLUMNS, delimited
-
     rows, _ = read_member(valid_archive, _core_descriptor(valid_archive), max_rows=1000)
     edited = list(DEFAULT_RECORDS)
     edited[0] = (*edited[0][:3], "Renamed Collector", *edited[0][4:])

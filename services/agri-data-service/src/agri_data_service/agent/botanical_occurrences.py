@@ -104,7 +104,7 @@ def _exact_block(features: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
 
 
 @beta_async_tool
-async def botanical_occurrences_in_region(
+async def botanical_occurrences_in_region(  # noqa: PLR0913 - the parameter list is the published tool schema.
     release_set_id: ReleaseSetId,
     minimum_longitude: Longitude,
     minimum_latitude: Latitude,
@@ -146,7 +146,7 @@ async def botanical_occurrences_in_region(
 
 
 @beta_async_tool
-async def botanical_occurrence_spatial_neighbours(
+async def botanical_occurrence_spatial_neighbours(  # noqa: PLR0913 - the parameter list is the published tool schema.
     release_set_id: ReleaseSetId,
     longitude: Longitude,
     latitude: Latitude,

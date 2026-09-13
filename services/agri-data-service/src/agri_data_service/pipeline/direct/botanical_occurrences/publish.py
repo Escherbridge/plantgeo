@@ -107,7 +107,9 @@ def publication_target(root: str | Path | None = None, *, source: Settings | Non
     """Resolve a target from a local path, or from the configured bucket when none is given."""
     if root is not None and not str(root).startswith("s3://"):
         return LocalPublicationTarget(Path(root))
-    from agri_data_service.pipeline.parquet.objectstore import BotoObjectStoreBackend
+    from agri_data_service.pipeline.parquet.objectstore import (  # noqa: PLC0415 - only needed for the bucket path
+        BotoObjectStoreBackend,
+    )
 
     resolved = default_settings if source is None else source
     credentials = resolved.require_object_store()
@@ -223,7 +225,9 @@ def publish_generation(
         _parquet_bytes(contents.associations, BOTANICAL_SPATIAL_ASSOCIATION_SCHEMA),
     )
     for support_id, cells in sorted(contents.support_cells.items()):
-        write(f"{prefix}/support/{support_id}/cells.parquet", _parquet_bytes(cells, BOTANICAL_SUPPORT_EVALUATION_SCHEMA))
+        write(
+            f"{prefix}/support/{support_id}/cells.parquet", _parquet_bytes(cells, BOTANICAL_SUPPORT_EVALUATION_SCHEMA)
+        )
     for support_id, summaries in sorted(contents.cell_taxon_summaries.items()):
         write(
             f"{prefix}/summary/{support_id}/cell_taxon.parquet",

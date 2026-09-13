@@ -23,6 +23,7 @@ import pyarrow as pa  # type: ignore[import-untyped]
 import pytest
 
 from agri_data_service.foundation.parquet.completion import PartitionCompletion
+from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.direct.fire_perimeters.products import FIRE_PERIMETERS_DIRECT_KIND
 from agri_data_service.pipeline.direct.fire_perimeters.rows import FirePerimeterPopulation
 from agri_data_service.pipeline.direct.fire_perimeters.watermark import (
@@ -36,7 +37,6 @@ from agri_data_service.pipeline.direct.fire_perimeters.watermark import (
     read_published_version,
     table_content_digest,
 )
-from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 from agri_data_service.warehouse.schemas.fire_perimeters import FIRE_PERIMETERS_SCHEMA, FIRE_PERIMETERS_STREAM
 from tests.parquet.test_objectstore_writer import RecordingBackend

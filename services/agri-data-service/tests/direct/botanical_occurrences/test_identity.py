@@ -18,7 +18,8 @@ def test_two_identical_complete_releases_are_stable() -> None:
     )
     assert report.verdict == "stable"
     assert report.continued == ("a", "b")
-    assert report.added == () and report.missing == ()
+    assert report.added == ()
+    assert report.missing == ()
 
 
 def test_an_added_record_alone_is_still_stable() -> None:

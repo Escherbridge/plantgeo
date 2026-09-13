@@ -358,7 +358,9 @@ def _feature(row: Mapping[str, Any], membership: str | None) -> dict[str, Any]:
 
 def _read_detail(reader: GenerationReader, request: BotanicalOccurrenceRequest) -> dict[str, Any]:
     min_longitude, min_latitude, max_longitude, max_latitude = request.bbox
-    occurrences = _apply_common_filters(reader.scan(f"{generation_prefix(request.release_set_id)}/occurrences/{PART_NAME}"), request)
+    occurrences = _apply_common_filters(
+        reader.scan(f"{generation_prefix(request.release_set_id)}/occurrences/{PART_NAME}"), request
+    )
     occurrences = occurrences.filter(
         pl.col("longitude").is_between(min_longitude, max_longitude)
         & pl.col("latitude").is_between(min_latitude, max_latitude)

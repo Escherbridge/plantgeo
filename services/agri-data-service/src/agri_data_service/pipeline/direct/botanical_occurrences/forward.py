@@ -30,10 +30,15 @@ from agri_data_service.foundation.botanical_occurrences.release_identity import 
 from agri_data_service.pipeline.direct import (
     IDEMPOTENT_NOOP,
     LANE_DAY_OUTCOMES,
-    NOT_BBOX_BOUNDED,
     NO_WINDOW,
+    NOT_BBOX_BOUNDED,
     PUBLISHED,
     REFUSE_WHOLE_RELEASE,
+    RELEASE_ACCEPTED,
+    RELEASE_COMPLETE,
+    RELEASE_PARTIAL,
+    RELEASE_QUARANTINED,
+    RELEASE_REJECTED,
     SKIP_AND_COUNT,
     TIME_BUDGET_EXHAUSTED,
     DirectWriterContract,
@@ -74,7 +79,7 @@ if TYPE_CHECKING:
 #: with the shared `blocked` word rather than a lane-private one: a monitor reading eleven writers
 #: can only do that against the enumerable vocabulary in `pipeline/direct/__init__.py`.
 BLOCKED_BY_QUARANTINE: Final = "blocked"
-assert BLOCKED_BY_QUARANTINE in LANE_DAY_OUTCOMES  # noqa: S101 - anti-drift pin on a borrowed word
+assert BLOCKED_BY_QUARANTINE in LANE_DAY_OUTCOMES
 
 BOTANICAL_RUN_ID_PREFIX: Final = "botanical-occurrences-forward:"
 #: One turn publishes at most one generation; `--max-days` bounds how many ARCHIVES it reads into it.
@@ -89,7 +94,23 @@ WRITER_CONTRACT: Final = DirectWriterContract(
     identity_defect=SKIP_AND_COUNT,
     geometry_defect=REFUSE_WHOLE_RELEASE,
     unconfigured_bbox=NOT_BBOX_BOUNDED,
-    turn_outcomes=frozenset({PUBLISHED, IDEMPOTENT_NOOP, NO_WINDOW, TIME_BUDGET_EXHAUSTED, BLOCKED_BY_QUARANTINE}),
+    turn_outcomes=frozenset(
+        {
+            PUBLISHED,
+            IDEMPOTENT_NOOP,
+            NO_WINDOW,
+            TIME_BUDGET_EXHAUSTED,
+            BLOCKED_BY_QUARANTINE,
+            # Release/archive-level, not turn-level: one turn reads several archives, and each carries
+            # its own outcome independent of the turn-level word above. See their definitions in
+            # `pipeline/direct/__init__.py` for why they are distinct from the run-level COMPLETE.
+            RELEASE_ACCEPTED,
+            RELEASE_REJECTED,
+            RELEASE_QUARANTINED,
+            RELEASE_PARTIAL,
+            RELEASE_COMPLETE,
+        }
+    ),
     flags_absent_on_purpose={
         "--bbox": "an admitted archive is a WHOLE institutional collection export, and the envelope "
         "this lane bounds is a publication-time support decision rather than a query filter. Clipping "
@@ -262,16 +283,16 @@ def read_release(request: ArchiveRequest, config: BotanicalForwardConfig) -> Rea
         "core_row_count": 0,
         "extension_row_counts": "{}",
         "parser_version": PARSER_VERSION,
-        "outcome": "quarantined",
+        "outcome": RELEASE_QUARANTINED,
         "reasons": list(receipt.reasons),
     }
     if not receipt.accepted:
-        return ReadRelease(key, base_row, (), (), (), "quarantined", receipt.reasons)
+        return ReadRelease(key, base_row, (), (), (), RELEASE_QUARANTINED, receipt.reasons)
 
     meta_name = resolve_member_name(receipt, "meta.xml")
     eml_name = resolve_member_name(receipt, "eml.xml")
     if meta_name is None or eml_name is None:  # pragma: no cover - `inspect_archive` already refused this
-        return ReadRelease(key, base_row, (), (), (), "quarantined", ("missing_required_member",))
+        return ReadRelease(key, base_row, (), (), (), RELEASE_QUARANTINED, ("missing_required_member",))
     descriptor = parse_meta_descriptor(read_member_bytes(request.path, meta_name))
     facts = parse_eml_facts(read_member_bytes(request.path, eml_name))
 
@@ -305,9 +326,9 @@ def read_release(request: ArchiveRequest, config: BotanicalForwardConfig) -> Rea
             _identification_row(row, collection_key=request.collection_key, release_key_value=key) for row in rows
         )
 
-    reasons = tuple(
-        f"unread_extension_row_type:{row_type}" for row_type in descriptor.unread_row_types
-    ) + (("row_cap_truncated_population",) if truncated else ())
+    reasons = tuple(f"unread_extension_row_type:{row_type}" for row_type in descriptor.unread_row_types) + (
+        ("row_cap_truncated_population",) if truncated else ()
+    )
     release_row = {
         **base_row,
         "package_id": facts.package_id,
@@ -317,7 +338,7 @@ def read_release(request: ArchiveRequest, config: BotanicalForwardConfig) -> Rea
         "publisher_pub_date": facts.pub_date,
         "core_row_count": core_result.rows_read,
         "extension_row_counts": json.dumps(extension_counts, sort_keys=True),
-        "outcome": "partial" if truncated else "complete",
+        "outcome": RELEASE_PARTIAL if truncated else RELEASE_COMPLETE,
         "reasons": list(reasons),
     }
     return ReadRelease(
@@ -348,9 +369,7 @@ def build_generation_contents(
     summaries: dict[str, list[dict[str, Any]]] = {}
     for support_id in supports:
         support = support_for(support_id)
-        associations = tuple(
-            association for record in spatial for association in associate_record(record, support)
-        )
+        associations = tuple(association for record in spatial for association in associate_record(record, support))
         association_rows.extend(
             {
                 "occurrence_id": association.occurrence_id,
@@ -436,7 +455,7 @@ def run_botanical_occurrences_forward(config: BotanicalForwardConfig) -> dict[st
             }
         releases.append(read_release(request, config))
 
-    publishable = [release for release in releases if release.outcome != "quarantined"]
+    publishable = [release for release in releases if release.outcome != RELEASE_QUARANTINED]
     if not publishable:
         return {
             "outcome": BLOCKED_BY_QUARANTINE,

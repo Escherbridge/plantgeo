@@ -23,15 +23,14 @@ from agri_data_service.foundation.botanical_occurrences.limits import ADMITTED_L
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+    from http.client import HTTPMessage
     from pathlib import Path
 
     from agri_data_service.foundation.botanical_occurrences.limits import AcquisitionLimits
 
 #: The only hosts an archive may be fetched from. Extending this list is an admission decision, not
 #: a code change: a host outside it has never been through a custody or rights review.
-ALLOWED_HOSTS: Final[frozenset[str]] = frozenset(
-    {"ipt.pnwherbaria.org", "data.canadensys.net", "www.pnwherbaria.org"}
-)
+ALLOWED_HOSTS: Final[frozenset[str]] = frozenset({"ipt.pnwherbaria.org", "data.canadensys.net", "www.pnwherbaria.org"})
 
 #: Headers never written into a receipt. A receipt is evidence that gets read and copied around; a
 #: session cookie in one is a credential in a place nobody expects to find one.
@@ -61,10 +60,10 @@ class _RefusingRedirectHandler(urllib.request.HTTPRedirectHandler):
     def redirect_request(  # noqa: PLR0913 - the urllib handler signature, which cannot be narrowed
         self,
         req: urllib.request.Request,
-        fp: Any,  # noqa: ANN401 - urllib passes its own file object type here
+        fp: Any,  # noqa: ARG002 - required by the base class signature, unused by this refusal
         code: int,
-        msg: str,
-        headers: Mapping[str, str],
+        msg: str,  # noqa: ARG002 - required by the base class signature, unused by this refusal
+        headers: HTTPMessage,  # noqa: ARG002 - required by the base class signature, unused by this refusal
         newurl: str,
     ) -> None:
         raise RedirectRefusedError(f"refused redirect {code} from {req.full_url} to {newurl}")
@@ -142,7 +141,7 @@ def fetch_archive(  # noqa: PLR0913 - one argument per governance input; none ma
     for attempt in range(resolved_attempts):
         if time.monotonic() > deadline:
             raise AcquisitionLimitError(f"wall budget of {limits.wall_seconds}s exhausted after {attempt} attempts")
-        request = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT}, method="GET")  # noqa: S310 - scheme and host checked above
+        request = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT}, method="GET")
         try:
             with director.open(request, timeout=limits.request_seconds) as response:
                 digest = hashlib.sha256()

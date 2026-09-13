@@ -26,6 +26,14 @@ EXEMPT_FROM_LANE_REGISTRATION: dict[str, str] = {
     "reference publication keyed by immutable source/profile release IDs. The explicit offline publisher "
     "has no observation day, gap-fill cursor or environmental cron; LANE_REGISTRY registration is "
     "inapplicable. HTTP and agent registration are proved by the botanical profile integration tests.",
+    "botanical_occurrences": "botanical_occurrence_parquet_lane_20260911: a `static_lookup` LANE_REGISTRATIONS "
+    "entry requires a real source watermark (LaneRegistration.__post_init__ refuses a static_lookup lane with "
+    "none), and no occurrence source is admitted yet (pnw_herbaria_source_admission_20260911, "
+    "admitted_releases=[]) -- inventing a watermark for an unadmitted source would fabricate a version signal "
+    "for a source this lane cannot yet poll. Exempted rather than registered until an admitted release's own "
+    "watermark exists; the writer contract itself IS checked (see WRITER_MODULES in "
+    "test_direct_writer_contract.py). See conductor/tracks/botanical_occurrence_parquet_lane_20260911/"
+    "evidence/shared-registration.patch, hunk 1, Option B.",
 }
 
 
@@ -43,9 +51,7 @@ async def _refused_writer_message(registration: LaneRegistration) -> str | None:
 @pytest.mark.asyncio
 async def test_every_direct_package_is_registered_without_a_postgres_fallback() -> None:
     packages = {
-        path.name
-        for path in DIRECT_PACKAGE_DIRECTORY.iterdir()
-        if path.is_dir() and (path / "__init__.py").is_file()
+        path.name for path in DIRECT_PACKAGE_DIRECTORY.iterdir() if path.is_dir() and (path / "__init__.py").is_file()
     } - set(EXEMPT_FROM_LANE_REGISTRATION)
     messages = [
         message
@@ -53,9 +59,7 @@ async def test_every_direct_package_is_registered_without_a_postgres_fallback() 
         if message is not None
     ]
     registered = {
-        package
-        for package in packages
-        if any(f"pipeline.direct.{package}" in message for message in messages)
+        package for package in packages if any(f"pipeline.direct.{package}" in message for message in messages)
     }
 
     assert registered == packages

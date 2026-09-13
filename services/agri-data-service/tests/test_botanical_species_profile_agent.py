@@ -21,6 +21,17 @@ from tests.planes.test_botanical_species_profiles import (
     publish_profile_fixture,
 )
 
+pytestmark = pytest.mark.skip(
+    reason="botanical_species_profile_lookup_20260911: species_information exists but is deliberately not "
+    "registered in agent/tools.py's WAREHOUSE_TOOLS, agent/graph.py, agent/mcp_server.py or agent/prompts.py "
+    "pending the P4/P5 integration and independent data-governance/botanical-science/agent-honesty verdict "
+    "the track's acceptance section requires. Note also: main already has an unrelated `species_information` "
+    "tool (agent/tools.py, the companion/authoring lookup) that this track's tool must not collide with -- "
+    "the pending patch imports it as `species_profile_information`. See conductor/tracks/"
+    "botanical_species_profile_lookup_20260911/evidence/shared-registration-20260912.patch; delete this skip "
+    "once it lands."
+)
+
 if TYPE_CHECKING:
     from contextlib import AbstractAsyncContextManager
     from pathlib import Path

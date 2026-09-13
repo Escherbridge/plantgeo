@@ -40,16 +40,26 @@ CORE_COLUMNS: Final[tuple[str, ...]] = (
 
 IDENTIFICATION_COLUMNS: Final[tuple[str, ...]] = ("occurrenceID", "identifiedBy", "dateIdentified", "scientificName")
 
+
+def _field_lines(columns: Sequence[str]) -> str:
+    """Render one `<field index=... term=.../>` line per column, joined for embedding in `META_XML`."""
+    return "".join(f'    <field index="{index}" term="{DWC}{column}"/>\n' for index, column in enumerate(columns))
+
+
+_CORE_FIELD_LINES: Final = _field_lines(CORE_COLUMNS)
+_IDENTIFICATION_FIELD_LINES: Final = _field_lines(IDENTIFICATION_COLUMNS)
+_ROW_TYPE_ATTRIBUTES: Final = 'fieldsTerminatedBy="\\t" linesTerminatedBy="\\n" encoding="UTF-8" ignoreHeaderLines="1"'
+
 META_XML: Final = f"""<?xml version="1.0" encoding="UTF-8"?>
 <archive xmlns="http://rs.tdwg.org/dwc/text/">
-  <core rowType="{DWC}Occurrence" fieldsTerminatedBy="\\t" linesTerminatedBy="\\n" encoding="UTF-8" ignoreHeaderLines="1">
+  <core rowType="{DWC}Occurrence" {_ROW_TYPE_ATTRIBUTES}>
     <files><location>occurrence.txt</location></files>
     <id index="0"/>
-{"".join(f'    <field index="{index}" term="{DWC}{column}"/>' + chr(10) for index, column in enumerate(CORE_COLUMNS))}  </core>
-  <extension rowType="{DWC}Identification" fieldsTerminatedBy="\\t" linesTerminatedBy="\\n" encoding="UTF-8" ignoreHeaderLines="1">
+{_CORE_FIELD_LINES}  </core>
+  <extension rowType="{DWC}Identification" {_ROW_TYPE_ATTRIBUTES}>
     <files><location>identification.txt</location></files>
     <coreid index="0"/>
-{"".join(f'    <field index="{index}" term="{DWC}{column}"/>' + chr(10) for index, column in enumerate(IDENTIFICATION_COLUMNS))}  </extension>
+{_IDENTIFICATION_FIELD_LINES}  </extension>
 </archive>
 """
 
@@ -70,20 +80,76 @@ EML_XML: Final = """<?xml version="1.0" encoding="UTF-8"?>
 #: Four records exercising the four spatial classes and three event precisions.
 DEFAULT_RECORDS: Final[tuple[tuple[str, ...], ...]] = (
     (
-        "urn:occ:1", "WTU-1", "PreservedSpecimen", "A. Collector", "1987-06-15", "1987", "6", "15",
-        "Lupinus argenteus", "Fabaceae", "47.6", "-122.3", "WGS84", "30", "", "",
+        "urn:occ:1",
+        "WTU-1",
+        "PreservedSpecimen",
+        "A. Collector",
+        "1987-06-15",
+        "1987",
+        "6",
+        "15",
+        "Lupinus argenteus",
+        "Fabaceae",
+        "47.6",
+        "-122.3",
+        "WGS84",
+        "30",
+        "",
+        "",
     ),
     (
-        "urn:occ:2", "WTU-2", "PreservedSpecimen", "B. Collector", "1987-06", "1987", "6", "",
-        "Lupinus argenteus", "Fabaceae", "47.65", "-122.35", "WGS84", "25000", "", "Coordinates generalized",
+        "urn:occ:2",
+        "WTU-2",
+        "PreservedSpecimen",
+        "B. Collector",
+        "1987-06",
+        "1987",
+        "6",
+        "",
+        "Lupinus argenteus",
+        "Fabaceae",
+        "47.65",
+        "-122.35",
+        "WGS84",
+        "25000",
+        "",
+        "Coordinates generalized",
     ),
     (
-        "urn:occ:3", "WTU-3", "PreservedSpecimen", "C. Collector", "1913", "1913", "", "",
-        "Camassia quamash", "Asparagaceae", "47.1", "-122.9", "WGS84", "", "Coordinates withheld", "",
+        "urn:occ:3",
+        "WTU-3",
+        "PreservedSpecimen",
+        "C. Collector",
+        "1913",
+        "1913",
+        "",
+        "",
+        "Camassia quamash",
+        "Asparagaceae",
+        "47.1",
+        "-122.9",
+        "WGS84",
+        "",
+        "Coordinates withheld",
+        "",
     ),
     (
-        "urn:occ:4", "WTU-4", "PreservedSpecimen", "D. Collector", "", "", "", "",
-        "Camassia quamash", "Asparagaceae", "", "", "", "", "", "",
+        "urn:occ:4",
+        "WTU-4",
+        "PreservedSpecimen",
+        "D. Collector",
+        "",
+        "",
+        "",
+        "",
+        "Camassia quamash",
+        "Asparagaceae",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
     ),
 )
 

@@ -175,6 +175,35 @@ NO_WINDOW: Final = "no_window"
 #: (`vegetation/backfill.py::VEGETATION_BACKFILL_DURABLE_OUTCOMES`).
 INCOMPLETE_AFTER_WRITE: Final = "incomplete_after_write"
 
+#: One named input (an archive) a turn read passed every archive-safety control. NOT a turn-level
+#: word: `botanical_occurrences` is the first writer whose turn can process several independently
+#: admitted inputs in one pass, each with its own accept/reject verdict, rather than one calendar
+#: day -- so this and its three siblings below name a per-input state that rides alongside whatever
+#: the turn as a whole reports (`BLOCKED_BY_QUARANTINE`, `PUBLISHED`, ...), not instead of it.
+RELEASE_ACCEPTED: Final = "release_accepted"
+
+#: One named input a turn read failed at least one archive-safety control (path traversal, a
+#: missing required member, an oversized member, ...) and was never opened for its rows. Distinct
+#: from `RELEASE_QUARANTINED` below: this is the archive-safety verdict alone, before any row is read.
+RELEASE_REJECTED: Final = "release_rejected"
+
+#: One named input a turn read was `RELEASE_REJECTED` (or could not resolve its required members),
+#: so nothing from it was read into the published generation. Spelled differently from `blocked`
+#: (`BLOCKED_BY_QUARANTINE`, reused from `LANE_DAY_OUTCOMES` for the TURN-level state where every
+#: input this turn read was refused) because a turn can quarantine one input and still publish the
+#: others; the turn-level and per-input words must be able to disagree.
+RELEASE_QUARANTINED: Final = "release_quarantined"
+
+#: One accepted input's row cap (core or extension) truncated its population before every row was
+#: read. The generation still publishes from what was read; this word is how an operator learns the
+#: published population is a bounded PREFIX of the source's, not its whole population.
+RELEASE_PARTIAL: Final = "release_partial"
+
+#: One accepted input's every row was read before any cap or clock stopped it. The per-input partner
+#: of `COMPLETE`, at a different grain: `COMPLETE` is RUN-level ("every day this turn touched
+#: settled"); this is per-input ("this one archive's population was read in full").
+RELEASE_COMPLETE: Final = "release_complete"
+
 #: Words a bounded direct-writer turn may report ON TOP OF the five lane-day words.
 DIRECT_ONLY_OUTCOMES: Final[frozenset[str]] = frozenset(
     {
@@ -193,6 +222,11 @@ DIRECT_ONLY_OUTCOMES: Final[frozenset[str]] = frozenset(
         LOCK_CONTENDED,
         UNRESOLVED_DAY_BUDGET_EXHAUSTED,
         INCOMPLETE_AFTER_WRITE,
+        RELEASE_ACCEPTED,
+        RELEASE_REJECTED,
+        RELEASE_QUARANTINED,
+        RELEASE_PARTIAL,
+        RELEASE_COMPLETE,
     }
 )
 
@@ -384,6 +418,11 @@ __all__ = [
     "PUBLISHED",
     "REFUSE_UNCONFIGURED_BBOX",
     "REFUSE_WHOLE_RELEASE",
+    "RELEASE_ACCEPTED",
+    "RELEASE_COMPLETE",
+    "RELEASE_PARTIAL",
+    "RELEASE_QUARANTINED",
+    "RELEASE_REJECTED",
     "REQUEST_BUDGET_EXHAUSTED",
     "REQUIRED_FLAGS",
     "SKIP_AND_COUNT",

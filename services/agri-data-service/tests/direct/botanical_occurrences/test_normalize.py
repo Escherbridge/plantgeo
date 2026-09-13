@@ -1,5 +1,7 @@
 """Event intervals, coordinate classification and duplicate annotation, read as three tables."""
 
+# ruff: noqa: PLR2004 - the small literal counts ARE the assertion; naming each one hides it.
+
 from __future__ import annotations
 
 from datetime import date
@@ -126,9 +128,7 @@ def test_duplicate_native_keys_keep_both_rows_and_say_why() -> None:
 
 
 def test_an_unresolved_name_keeps_a_source_local_concept_and_says_it_is_unmatched() -> None:
-    (record,) = normalize_rows(
-        [_row(1, "urn:occ:9")], collection_key="test:COLL:vascular", release_key="release-1"
-    )
+    (record,) = normalize_rows([_row(1, "urn:occ:9")], collection_key="test:COLL:vascular", release_key="release-1")
     assert record.resolution_state == "unmatched"
     assert record.taxon_concept_id.startswith("source:test:COLL:vascular:")
     assert "taxon_unmatched" in record.qc_reasons

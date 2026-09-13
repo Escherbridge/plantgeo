@@ -103,13 +103,9 @@ def iter_member_rows(
             if row_number > max_rows:
                 return
             values = {
-                column: raw_values[index]
-                for index, column in descriptor.fields.items()
-                if index < len(raw_values)
+                column: raw_values[index] for index, column in descriptor.fields.items() if index < len(raw_values)
             }
-            verbatim = {
-                term: raw_values[index] for index, term in descriptor.terms.items() if index < len(raw_values)
-            }
+            verbatim = {term: raw_values[index] for index, term in descriptor.terms.items() if index < len(raw_values)}
             record_id = (
                 raw_values[descriptor.id_index]
                 if descriptor.id_index is not None and descriptor.id_index < len(raw_values)
