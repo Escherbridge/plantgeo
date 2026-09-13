@@ -77,7 +77,36 @@ integration tasks; no merge or push is authorized by this packet.
 Admission remains blocked on WTU coordinate-policy applicability and release-bound
 terms reconciliation, UBC institutional coordinate-policy applicability, and both
 collections' archive-custody, ZIP/member-safety, schema and native-ID stability
-receipts. The external `claude/herbaria-botanical-lanes` worktree contains pending,
-uncommitted implementation and evidence work; it does not close these acquisition
-gates. A two-release UBC pilot consumes the two-archive budget and must defer WTU
-rather than silently widening acquisition.
+receipts. The occurrence-lane and species-profile implementation from the former
+`claude/herbaria-botanical-lanes` worktree merged to main 2026-09-13 (PR #6); it
+does not close these acquisition gates and admits no occurrence release.
+
+## September 13 gate-narrowing pass
+
+- [x] Re-checked UBC's EML `<methodStep>` in full (empty) and searched the
+  Canadensys network's own homepage/about page for any network-wide
+  coordinate-withholding or sensitive-locality statement; found none. See
+  [evidence/coordinate-policy-search-exhausted-20260913.md](evidence/coordinate-policy-search-exhausted-20260913.md).
+  This closes the *research* side of the coordinate-policy gate: it cannot be
+  resolved by more public metadata, only by an institutional response or an
+  explicit owner risk decision.
+- [x] Corrected the WTU outreach draft's CC0 premise (it is CC-BY 4.0 in the
+  release-bound EML) and re-scoped it to the real distribution host
+  (`ipt.pnwherbaria.org`, not the `pnwherbaria.org/data` portal). See
+  [evidence/wtu-gbif-identity-correction-20260913.md](evidence/wtu-gbif-identity-correction-20260913.md).
+  Still unsent; sending remains an operator decision.
+- [x] Wrote a custody-and-archive-control preflight proposal grounding the
+  "reviewed custody" pre-acquisition gate in the controls already
+  implemented and tested in `pipeline/direct/botanical_occurrences/`
+  (allowlist, HTTPS-only, redirect refusal, explicit per-URL permission
+  gate, byte/attempt/time caps, exhaustive archive-safety checks, no
+  extraction to disk, no automatic scheduling). Narrows the gate to five
+  named operator decisions (custody owner, quarantine location, retention
+  duration/trigger, withdrawal record, and the permission manifest's actual
+  authority) rather than an open question. See
+  [evidence/custody-and-archive-control-preflight-proposal-20260913.md](evidence/custody-and-archive-control-preflight-proposal-20260913.md).
+  Does not appoint an owner or approve a retention policy; those remain
+  operator calls.
+
+Admission remains blocked. A two-release UBC pilot consumes the two-archive
+budget and must defer WTU rather than silently widening acquisition.

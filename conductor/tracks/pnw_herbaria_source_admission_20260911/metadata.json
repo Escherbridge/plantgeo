@@ -9,8 +9,8 @@
     "commit": "35624ddbaf93670b839333ae51d7ef15e1f5a85e",
     "path": "conductor/research/pnw-herbaria-source-viability-20260910.md"
   },
-  "next_gate": "WTU EML/release-identity gate is measured (GBIF UUID 8310f570-f762-11e1-a439-00145eb45e9a, two dated releases; see evidence/wtu-gbif-identity-20260912.md); WTU's remaining pre-acquisition gate is public-coordinate/terms binding under the now-corrected CC-BY licence at ipt.pnwherbaria.org. Resolve that plus UBC institutional public-coordinate policy; report permission verdict before any bounded archive acquisition. No occurrence release is admitted.",
-  "updated_on": "2026-09-12",
+  "next_gate": "Coordinate-withholding policy is unproven for both collections and the public-metadata search that could close it is exhausted (evidence/coordinate-policy-search-exhausted-20260913.md): neither WTU/UBC's EML, the institutional IPT pages, nor the Canadensys network's own about page states a sensitive-locality policy. Two paths remain, both operator decisions: send the corrected outreach (evidence/wtu-gbif-identity-correction-20260913.md) and await a reply, or accept per-record informationWithheld/dataGeneralizations fields as sufficient evidence once measured post-capture. Custody/archive-control preflight is narrowed to five named decisions against already-implemented controls (evidence/custody-and-archive-control-preflight-proposal-20260913.md): custody owner, quarantine location, retention duration/trigger, withdrawal record, and the permission manifest's actual authority. No occurrence release is admitted.",
+  "updated_on": "2026-09-13",
   "admission_packet": "evidence/admission-packet.md",
   "independent_review": "evidence/independent-review.md",
   "admitted_releases": [],
