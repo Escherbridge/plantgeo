@@ -719,7 +719,12 @@ describe("LayerRow publication standings", () => {
       const standing = LAYER_PUBLICATION_STANDINGS[layerId];
       if (standing === undefined) continue;
       // Only the declared non-lane surfaces may carry one; the rest of the dock stays silent.
-      expect(["interventions", "strategy-recommendations", "demand-heatmap"]).toContain(layerId);
+      expect([
+        "interventions",
+        "intervention-drafts",
+        "strategy-recommendations",
+        "demand-heatmap",
+      ]).toContain(layerId);
     }
   });
 });

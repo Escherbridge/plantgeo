@@ -54,6 +54,10 @@ const DYNAMIC_TILES_URL =
 // reloads. The app deploy is what stops the ask; martin.yaml's own header states the same order.
 const DYNAMIC_TILE_SOURCE_IDS = ["intervention_tiles"] as const;
 
+/** Test-only visibility into the Martin-served id list, so a regression test can assert a new
+ * source stayed out of it without re-deriving Martin's own catalogue. */
+export const DYNAMIC_TILE_SOURCE_IDS_FOR_TEST = DYNAMIC_TILE_SOURCE_IDS;
+
 /**
  * The GeoJSON sources whose data the Parquet readers fill, one per style-baked layer that used to
  * be a Martin function.
@@ -152,6 +156,20 @@ export function createMartinDynamicSources(
   );
 }
 
+/**
+ * The signed-in-only draft/proposed intervention overlay's source id. Declared here, empty,
+ * exactly like `PARQUET_FEATURE_SOURCE_IDS` above -- but it is filled by
+ * `useInterventionDraftsOverlay` (src/lib/map/use-intervention-drafts.ts) over `setData`, not by
+ * a Parquet reader, and it is deliberately absent from `DYNAMIC_TILE_SOURCE_IDS`: nothing here
+ * is ever published to a Martin function, since `pending_review` and drafted rows are exactly
+ * what the published `intervention_tiles` source excludes.
+ */
+export const INTERVENTION_DRAFTS_SOURCE_ID = "intervention-drafts-source";
+
+export function createInterventionDraftsSource(): SourceSpecification {
+  return { type: "geojson", data: EMPTY_FEATURE_COLLECTION };
+}
+
 export function getSources(
   dynamicTilesUrl: string = DYNAMIC_TILES_URL,
   pmtilesArchiveUrl: string = PMTILES_ARCHIVE_URL
@@ -160,6 +178,7 @@ export function getSources(
     protomaps: createPmtilesSource(pmtilesArchiveUrl),
     ...createMartinDynamicSources(dynamicTilesUrl),
     ...createParquetFeatureSources(),
+    [INTERVENTION_DRAFTS_SOURCE_ID]: createInterventionDraftsSource(),
     "terrain-dem": terrainSource,
     satellite: {
       type: "raster",

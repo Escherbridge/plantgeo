@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { screen } from "@testing-library/react";
+import { fireEvent, screen } from "@testing-library/react";
 import { renderWithProviders } from "@/test/utils";
 
 /**
@@ -10,7 +10,10 @@ import { renderWithProviders } from "@/test/utils";
  * TimeSliderCapabilitiesLoader.test.tsx.
  */
 const listMySubmissionsQuery = vi.hoisted(() =>
-  vi.fn((..._args: unknown[]) => ({ data: undefined as unknown }))
+  vi.fn((..._args: unknown[]) => {
+    const result: { data: unknown; refetch?: () => void } = { data: undefined };
+    return result;
+  })
 );
 const listMyTeamsQuery = vi.hoisted(() =>
   vi.fn((..._args: unknown[]) => ({ data: [] as unknown[] }))
@@ -18,13 +21,38 @@ const listMyTeamsQuery = vi.hoisted(() =>
 const getRequestsQuery = vi.hoisted(() =>
   vi.fn((..._args: unknown[]) => ({ data: [] as unknown[], error: null, refetch: vi.fn() }))
 );
+/** Asserted directly by the intervention-drafts-overlay invalidation test below. */
+const draftsInvalidateMocks = vi.hoisted(() => ({
+  listMySubmissions: vi.fn().mockResolvedValue(undefined),
+  listProposed: vi.fn().mockResolvedValue(undefined),
+}));
 
 vi.mock("@/lib/trpc/client", () => ({
   trpc: {
     teams: { listMyTeams: { useQuery: listMyTeamsQuery } },
     community: { getRequests: { useQuery: getRequestsQuery } },
     interventions: { listMySubmissions: { useQuery: listMySubmissionsQuery } },
+    useUtils: () => ({
+      interventions: {
+        listMySubmissions: { invalidate: draftsInvalidateMocks.listMySubmissions },
+        listProposed: { invalidate: draftsInvalidateMocks.listProposed },
+      },
+    }),
   },
+}));
+
+/**
+ * The real modal drives a live `submitIntervention` mutation; what this file asserts is the
+ * WIRING from that mutation's success to the overlay invalidation, so the modal is stubbed down
+ * to a button that fires `onSuccess` -- same rationale ContributionQueue.test.tsx uses for its
+ * tRPC stubs.
+ */
+vi.mock("@/components/panels/InterventionSubmitModal", () => ({
+  InterventionSubmitModal: ({ onSuccess }: { onSuccess?: () => void }) => (
+    <button type="button" onClick={() => onSuccess?.()}>
+      Fake submit success
+    </button>
+  ),
 }));
 
 import { CommunityDetails } from "@/components/panels/CommunityDetails";
@@ -34,9 +62,11 @@ const INITIAL_AUTH_STATE = useAuthStore.getState();
 
 beforeEach(() => {
   useAuthStore.setState(INITIAL_AUTH_STATE, true);
-  listMySubmissionsQuery.mockReturnValue({ data: undefined });
+  listMySubmissionsQuery.mockReturnValue({ data: undefined, refetch: vi.fn() });
   listMyTeamsQuery.mockReturnValue({ data: [] });
   getRequestsQuery.mockReturnValue({ data: [], error: null, refetch: vi.fn() });
+  draftsInvalidateMocks.listMySubmissions.mockClear();
+  draftsInvalidateMocks.listProposed.mockClear();
 });
 
 afterEach(() => {
@@ -139,5 +169,17 @@ describe("CommunityDetails submission status", () => {
     expect(screen.getByText("Noteless rejection")).toBeTruthy();
     expect(screen.getByText(/Not accepted/)).toBeTruthy();
     expect(screen.queryByText(/Reviewer note:/)).toBeNull();
+  });
+});
+
+describe("CommunityDetails intervention-drafts overlay invalidation", () => {
+  it("invalidates both listMySubmissions and listProposed when a submission succeeds", () => {
+    renderPanel();
+
+    fireEvent.click(screen.getByText("+ Recommend"));
+    fireEvent.click(screen.getByText("Fake submit success"));
+
+    expect(draftsInvalidateMocks.listMySubmissions).toHaveBeenCalledTimes(1);
+    expect(draftsInvalidateMocks.listProposed).toHaveBeenCalledTimes(1);
   });
 });
