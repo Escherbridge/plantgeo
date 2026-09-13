@@ -24,6 +24,8 @@ export function LandContextPanelHost() {
   const candidateIndex = useLandContextStore((state) => state.candidateIndex);
   const panelOpen = useLandContextStore((state) => state.panelOpen);
   const closePanel = useLandContextStore((state) => state.closePanel);
+  const focusNextCandidate = useLandContextStore((state) => state.focusNextCandidate);
+  const focusPreviousCandidate = useLandContextStore((state) => state.focusPreviousCandidate);
 
   const focused = candidateIndex !== null ? results[candidateIndex] : null;
 
@@ -52,5 +54,14 @@ export function LandContextPanelHost() {
 
   if (!panelOpen) return null;
 
-  return <LandContextPanel data={panelData} onClose={closePanel} />;
+  return (
+    <LandContextPanel
+      data={panelData}
+      onClose={closePanel}
+      resultsCount={results.length}
+      candidateIndex={candidateIndex}
+      onFocusPreviousCandidate={focusPreviousCandidate}
+      onFocusNextCandidate={focusNextCandidate}
+    />
+  );
 }

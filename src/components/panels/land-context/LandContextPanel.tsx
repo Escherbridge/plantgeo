@@ -13,6 +13,15 @@ interface LandContextPanelProps {
   data: LandContextPanelData | null;
   /** Simple close affordance; the map/store owner decides when this panel mounts at all. */
   onClose?: () => void;
+  /**
+   * Multi-candidate browsing (store's `results`/`candidateIndex`). All four are optional so a
+   * caller without a candidate list (e.g. a future non-store-backed host) can omit browsing
+   * entirely -- the controls only render when `resultsCount` is provided and > 1.
+   */
+  resultsCount?: number;
+  candidateIndex?: number | null;
+  onFocusPreviousCandidate?: () => void;
+  onFocusNextCandidate?: () => void;
 }
 
 /**
@@ -26,7 +35,14 @@ interface LandContextPanelProps {
  * Draft inquiry only renders once relevant parties exist (`data.officeCards[0]`) so it always
  * has a real, source-backed recipient rather than a placeholder office.
  */
-export function LandContextPanel({ data, onClose }: LandContextPanelProps) {
+export function LandContextPanel({
+  data,
+  onClose,
+  resultsCount,
+  candidateIndex = null,
+  onFocusPreviousCandidate,
+  onFocusNextCandidate,
+}: LandContextPanelProps) {
   if (!data) {
     return (
       <div className="p-4 text-xs text-zinc-500">
@@ -37,6 +53,11 @@ export function LandContextPanel({ data, onClose }: LandContextPanelProps) {
 
   const primaryRelationship = data.officeCards[0]?.relationships[0];
   const primaryOffice = data.officeCards[0]?.office;
+  const showCandidateBrowser =
+    typeof resultsCount === "number" &&
+    resultsCount > 1 &&
+    onFocusPreviousCandidate &&
+    onFocusNextCandidate;
 
   return (
     <div className="flex flex-col gap-4 p-4">
@@ -51,6 +72,31 @@ export function LandContextPanel({ data, onClose }: LandContextPanelProps) {
             Close
           </button>
         </div>
+      ) : null}
+
+      {showCandidateBrowser ? (
+        <nav
+          className="flex items-center justify-between gap-2 rounded-lg border border-zinc-700 bg-zinc-900 p-2"
+          aria-label="Overlapping features"
+        >
+          <button
+            type="button"
+            onClick={onFocusPreviousCandidate}
+            className="min-h-11 min-w-11 rounded border border-zinc-700 px-2 py-1.5 text-xs font-medium text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100"
+          >
+            Previous
+          </button>
+          <span aria-live="polite" className="text-xs text-zinc-400">
+            Feature {candidateIndex !== null ? candidateIndex + 1 : "–"} of {resultsCount}
+          </span>
+          <button
+            type="button"
+            onClick={onFocusNextCandidate}
+            className="min-h-11 min-w-11 rounded border border-zinc-700 px-2 py-1.5 text-xs font-medium text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100"
+          >
+            Next
+          </button>
+        </nav>
       ) : null}
 
       <PlaceDetailsSection place={data.place} />
