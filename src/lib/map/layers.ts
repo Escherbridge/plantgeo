@@ -460,6 +460,16 @@ const INTERVENTION_DRAFT_CATEGORY_COLOR = matchClasses(
   INTERVENTION_DRAFT_FILL_COLOR
 );
 
+/** Still-in-review submissions paint orange regardless of category; every other status keeps its category color. */
+export const INTERVENTION_DRAFT_PENDING_REVIEW_COLOR = "#f97316";
+
+const INTERVENTION_DRAFT_COLOR: DataDrivenPropertyValueSpecification<string> = [
+  "case",
+  ["==", ["get", "status"], "pending_review"],
+  INTERVENTION_DRAFT_PENDING_REVIEW_COLOR,
+  INTERVENTION_DRAFT_CATEGORY_COLOR,
+] as unknown as DataDrivenPropertyValueSpecification<string>;
+
 export const interventionDraftsFillLayer: LayerSpecification = {
   id: "intervention-drafts-fill",
   type: "fill",
@@ -468,7 +478,7 @@ export const interventionDraftsFillLayer: LayerSpecification = {
   layout: { visibility: "none" },
   filter: ["!=", ["geometry-type"], "Point"],
   paint: {
-    "fill-color": INTERVENTION_DRAFT_CATEGORY_COLOR,
+    "fill-color": INTERVENTION_DRAFT_COLOR,
     "fill-opacity": 0.2,
   },
 };
@@ -481,7 +491,7 @@ export const interventionDraftsOutlineLayer: LayerSpecification = {
   layout: { visibility: "none" },
   filter: ["!=", ["geometry-type"], "Point"],
   paint: {
-    "line-color": INTERVENTION_DRAFT_CATEGORY_COLOR,
+    "line-color": INTERVENTION_DRAFT_COLOR,
     "line-width": 1.5,
     "line-dasharray": INTERVENTION_DRAFT_CATEGORY_DASHARRAY,
   },
@@ -495,7 +505,7 @@ export const interventionDraftsPointsLayer: LayerSpecification = {
   layout: { visibility: "none" },
   filter: ["==", ["geometry-type"], "Point"],
   paint: {
-    "circle-color": INTERVENTION_DRAFT_CATEGORY_COLOR,
+    "circle-color": INTERVENTION_DRAFT_COLOR,
     "circle-radius": ["interpolate", ["linear"], ["zoom"], 6, 4, 10, 6, 14, 9],
     "circle-stroke-width": 1.5,
     "circle-stroke-color": "#ffffff",

@@ -110,7 +110,24 @@ describe("intervention-drafts overlay: distinct, category-differentiated styling
     );
 
     const fillColor = interventionDraftsFillLayer.paint?.["fill-color"];
-    expect(fillColor).toEqual(["match", ["get", "category"], "land", "#0d9488", "air", "#7c3aed", "#0d9488"]);
+    expect(fillColor).toEqual([
+      "case",
+      ["==", ["get", "status"], "pending_review"],
+      "#f97316",
+      ["match", ["get", "category"], "land", "#0d9488", "air", "#7c3aed", "#0d9488"],
+    ]);
+  });
+
+  it("colors a pending-review submission orange regardless of category", () => {
+    for (const paint of [
+      interventionDraftsFillLayer.paint?.["fill-color"],
+      interventionDraftsOutlineLayer.paint?.["line-color"],
+      interventionDraftsPointsLayer.paint?.["circle-color"],
+    ]) {
+      expect(paint).toEqual(
+        expect.arrayContaining(["case", ["==", ["get", "status"], "pending_review"], "#f97316"])
+      );
+    }
   });
 
   it("splits polygons from points by geometry-type filter, matching the published interventions split", () => {

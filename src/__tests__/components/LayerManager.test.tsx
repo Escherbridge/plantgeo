@@ -1,5 +1,13 @@
 import { snapshotMetadata } from "../services/mtbs-snapshot-fixture";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+// LayerManager now reads the signed-in-only intervention-drafts overlay (useInterventionDraftsOverlay,
+// which calls next-auth's useSession); this file renders without a <SessionProvider>, so the hook
+// throws unless next-auth itself is mocked -- every case here is signed-out, matching what nearly all
+// of this file's setup already assumes.
+vi.mock("next-auth/react", () => ({
+  useSession: () => ({ status: "unauthenticated" }),
+}));
 import { act } from "@testing-library/react";
 import { keepPreviousData } from "@tanstack/react-query";
 import { renderWithProviders } from "@/test/utils";
@@ -148,6 +156,9 @@ const viewportQueries = vi.hoisted(() => ({
   getBurnSeverity: vi.fn((): ViewportQueryResult => ({ data: undefined })),
   getWatershedBoundaries: vi.fn((): ViewportQueryResult => ({ data: undefined })),
   getFirePerimeters: vi.fn((): ViewportQueryResult => ({ data: undefined })),
+  // The three herbarium rows over ONE read: the plane answers detail or aggregate from the same
+  // route on the same inputs, so there is one mock here for three toggles.
+  getBotanicalOccurrences: vi.fn((): ViewportQueryResult => ({ data: undefined })),
 }));
 
 vi.mock("@/lib/trpc/client", () => ({
@@ -166,10 +177,18 @@ vi.mock("@/lib/trpc/client", () => ({
       getSoilField: { useQuery: viewportQueries.getSoilField },
       getClimateField: { useQuery: viewportQueries.getClimateField },
       getVegetationIndex: { useQuery: viewportQueries.getVegetationIndex },
+      getBotanicalOccurrences: { useQuery: viewportQueries.getBotanicalOccurrences },
     },
     wildfire: {
       getWeatherForBbox: { useQuery: viewportQueries.getWeatherForBbox },
       getFireDetections: { useQuery: viewportQueries.getFireDetections },
+    },
+    // useInterventionDraftsOverlay's two queries; every case in this file is signed-out
+    // (see the next-auth mock above), so `enabled: false` means these never actually run --
+    // they only need to exist as stub hooks.
+    interventions: {
+      listMySubmissions: { useQuery: () => ({ data: undefined, isLoading: false, isError: false }) },
+      listProposed: { useQuery: () => ({ data: undefined, isLoading: false, isError: false }) },
     },
   },
 }));

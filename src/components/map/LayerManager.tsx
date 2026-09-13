@@ -21,6 +21,8 @@ import {
   useViewportBounds,
 } from "@/hooks/useViewportProxiedLayers";
 import { trpc } from "@/lib/trpc/client";
+import { useInterventionDraftsOverlay } from "@/lib/map/use-intervention-drafts";
+import { INTERVENTION_DRAFTS_SOURCE_ID } from "@/lib/map/sources";
 import {
   LAYER_REGISTRY,
   styleBackedLayerEntries,
@@ -181,6 +183,10 @@ export default function LayerManager() {
   // One read of the toggle context covers every layer below: which are switched on, and
   // the mode each draws in. Nothing here reads a toggle id as a bare string.
   const layerVisibility = useLayerVisibility();
+  // The signed-in-only draft/proposed overlay's data. Not bbox-scoped like the Parquet
+  // queries above it -- it's the caller's own submissions plus the review queue, not a
+  // viewport-sized dataset -- and gated purely on auth inside the hook itself.
+  const interventionDraftsOverlay = useInterventionDraftsOverlay();
   // The per-layer opacity MULTIPLIER for every registry layer. Style-baked layers are applied
   // from here (nothing else owns them); component-mounted layers take theirs as an
   // `opacityScale` prop and fold it into whatever they already compute -- one writer per
@@ -831,6 +837,22 @@ export default function LayerManager() {
     []
   );
 
+  /**
+   * The intervention-drafts source's own writer, kept separate from `applyParquetFeatureData`
+   * above even though the mechanism (empty geojson source, filled by setData, re-applied on
+   * style reload) is identical -- that source is explicitly NOT Parquet-fed (see sources.ts),
+   * and folding it into `PARQUET_FEATURE_SOURCE_IDS` would misdescribe it for the next reader.
+   * Guarded the same way: a missing/mid-rebuild source is a no-op, never a thrown error.
+   */
+  const applyInterventionDraftsData = useCallback(
+    (mapInstance: NonNullable<typeof map>, geojson: GeoJSON.FeatureCollection) => {
+      const source = mapInstance.getSource(INTERVENTION_DRAFTS_SOURCE_ID);
+      if (typeof (source as { setData?: unknown } | undefined)?.setData !== "function") return;
+      (source as GeoJSONSource).setData(geojson);
+    },
+    []
+  );
+
   // Sync visibility of every style-baked layer (fire-perimeters, interventions, sensors,
   // evacuation-zones, burn-severity, watersheds) with activeLayers -- these are declared in the
   // style rather than mounted as React components, so they need setLayoutProperty instead of an
@@ -983,6 +1005,12 @@ export default function LayerManager() {
     parquetFeatureCollectionsRef.current = parquetFeatureCollections;
   }, [parquetFeatureCollections]);
 
+  // Same discipline for the intervention-drafts source's data.
+  const interventionDraftsGeoJSONRef = useRef(interventionDraftsOverlay.geojson);
+  useEffect(() => {
+    interventionDraftsGeoJSONRef.current = interventionDraftsOverlay.geojson;
+  }, [interventionDraftsOverlay.geojson]);
+
   // True once the CURRENT style has actually finished loading, per isStyleLoaded() --
   // not merely "style.load fired". isStyleLoaded() also requires every source's tiles
   // to be in, so it can still read false the instant style.load fires; styledata fires
@@ -1012,6 +1040,7 @@ export default function LayerManager() {
       // Data first: the filter and the opacity pass below both write onto layers whose source was
       // just rebuilt empty by the swap, and a layer with no features has nothing to filter.
       applyParquetFeatureData(mapInstance, parquetFeatureCollectionsRef.current);
+      applyInterventionDraftsData(mapInstance, interventionDraftsGeoJSONRef.current);
       applyVisibility(mapInstance, layerVisibilityRef.current);
       applyDateFilter(mapInstance, filterDaysRef.current);
       // A basemap swap rebuilds every style layer from its authored paint, so the multiplier
@@ -1046,7 +1075,14 @@ export default function LayerManager() {
       mapInstance.off("styledata", onStyleData);
     };
     // applyOpacity is a stable useCallback; the opacity RECORD must never appear here.
-  }, [map, applyVisibility, applyDateFilter, applyOpacity, applyParquetFeatureData]);
+  }, [
+    map,
+    applyVisibility,
+    applyDateFilter,
+    applyOpacity,
+    applyParquetFeatureData,
+    applyInterventionDraftsData,
+  ]);
 
   // The data sibling of the filter effect below, and ungated for the same reason: a read that has
   // landed must reach the map even while `isStyleLoaded()` is false, and `applyParquetFeatureData`
@@ -1056,6 +1092,15 @@ export default function LayerManager() {
     if (!map) return;
     applyParquetFeatureData(map, parquetFeatureCollections);
   }, [map, parquetFeatureCollections, applyParquetFeatureData, styleReady]);
+
+  // The intervention-drafts source's own reactive write, same reasoning as its sibling above:
+  // a fetch that has landed (the overlay hook re-fetches on auth change, on submission success
+  // via invalidateInterventionDraftsOverlay, etc.) must reach the map even while the style is
+  // still settling.
+  useEffect(() => {
+    if (!map) return;
+    applyInterventionDraftsData(map, interventionDraftsOverlay.geojson);
+  }, [map, interventionDraftsOverlay.geojson, applyInterventionDraftsData, styleReady]);
 
   // Apply toggles once the style is actually ready, and again whenever styleReady
   // flips true -- without styleReady in the deps, this ran once on first paint while
