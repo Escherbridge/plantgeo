@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "collection_key": "pnw:UBC:vascular",
+  "captured_on": "2026-09-13",
+  "transfer": {
+    "url": "https://data.canadensys.net/ipt/archive.do?r=ubc-vascular-specimens&v=16.43",
+    "status": 200,
+    "bytes": 31110199,
+    "sha256": "277a46aea3c25c0a9315cc6e7e5801a84a2892aac33cff8286317b69527ce847",
+    "retrieved_at": "2026-09-13T12:13:20.643742+00:00",
+    "quarantine_path": "s3://plantgeo-parquet-9ymvp7gv/quarantine/botanical_occurrences/ubc-vascular-v16.43.zip (staged locally pre-upload at C:/Users/atooz/plantgeo-quarantine/botanical_occurrences/ubc-vascular-v16.43.zip)",
+    "manifest": "ubc-permission-manifest.json"
+  },
+  "inspection": {
+    "outcome": "release_accepted",
+    "reasons": [],
+    "archive_sha256": "277a46aea3c25c0a9315cc6e7e5801a84a2892aac33cff8286317b69527ce847",
+    "eml_sha256": "e73735e4eafcb1a233514948f72631ceced3dd22e30445d45f34e593f7293654",
+    "eml_sha256_matches_prior_research": true,
+    "members": [
+      {"member_name": "meta.xml", "uncompressed_bytes": 3449},
+      {"member_name": "eml.xml", "uncompressed_bytes": 14208},
+      {"member_name": "occurrence.txt", "uncompressed_bytes": 161947067}
+    ],
+    "total_decompressed_bytes": 161964724
+  },
+  "status": "archive-admitted-not-yet-published",
+  "remaining_post_capture_gates": [
+    "field map and reconciled complete population (normalize.py pass over occurrence.txt)",
+    "two complete equivalent release native-ID comparison (v16.42 vs v16.43)"
+  ]
+}

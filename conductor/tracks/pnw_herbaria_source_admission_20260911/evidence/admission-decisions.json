@@ -1,8 +1,10 @@
 {
   "schema_version": 1,
   "assessed_on": "2026-09-11",
-  "status": "blocked",
-  "scope": "metadata-only",
+  "updated_on": "2026-09-13",
+  "status": "one-archive-in-quarantine",
+  "scope": "metadata-plus-one-quarantined-archive",
+  "owner_decision": "evidence/owner-risk-decision-20260913.md",
   "admitted_releases": [],
   "corpus_downloaded": false,
   "images_downloaded": false,
@@ -38,7 +40,8 @@
         "published_on": "2025-11-06",
         "acquired": false
       },
-      "decision": "blocked",
+      "decision": "pre-acquisition-cleared; deferred behind UBC per one-transfer-at-a-time budget",
+      "pre_acquisition_gates_status": "cleared by owner risk decision 2026-09-13; see evidence/owner-risk-decision-20260913.md; acquisition itself deferred to a subsequent pass",
       "pre_acquisition_gates": [
         "public-coordinate and terms binding to exact export (EML has no withholding/sensitivity statement; geographic coverage in EML is an unbounded world placeholder, not a usable envelope)",
         "reviewed custody and archive-control preflight, naming ipt.pnwherbaria.org as the distribution host"
@@ -66,9 +69,9 @@
       "eml_package_id": "07fd0d79-4883-435f-bba1-58fef110cd13/v16.43",
       "eml_sha256": "e73735e4eafcb1a233514948f72631ceced3dd22e30445d45f34e593f7293654",
       "eml_bytes": 14208,
-      "archive_sha256": null,
-      "archive_bytes": null,
-      "member_receipts": null,
+      "archive_sha256": "277a46aea3c25c0a9315cc6e7e5801a84a2892aac33cff8286317b69527ce847",
+      "archive_bytes": 31110199,
+      "member_receipts": "evidence/ubc-inspection-receipt-20260913.json",
       "schema_profile": null,
       "identity_stability": "unmeasured",
       "comparison_candidate": {
@@ -77,14 +80,15 @@
         "published_on": "2026-07-29",
         "acquired": false
       },
-      "decision": "blocked",
+      "decision": "pre-acquisition-cleared; post-capture gates open",
+      "pre_acquisition_gates_status": "cleared by owner risk decision 2026-09-13; see evidence/owner-risk-decision-20260913.md",
       "pre_acquisition_gates": [
         "institutional public-coordinate/withholding policy applicability",
         "reviewed custody and archive-control preflight"
       ],
       "post_capture_gates": [
-        "archive EML/record terms agree with standalone EML",
-        "archive/member safety and hashes",
+        "archive EML/record terms agree with standalone EML -- CONFIRMED 2026-09-13, eml.xml sha256 matches",
+        "archive/member safety and hashes -- CONFIRMED 2026-09-13, outcome release_accepted, zero reasons",
         "field map and reconciled complete population",
         "two complete equivalent release native-ID comparison"
       ]

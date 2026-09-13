@@ -110,3 +110,28 @@ does not close these acquisition gates and admits no occurrence release.
 
 Admission remains blocked. A two-release UBC pilot consumes the two-archive
 budget and must defer WTU rather than silently widening acquisition.
+
+## September 13 owner risk decision and first acquisition
+
+- [x] Owner explicitly accepted the coordinate-policy risk (per-record
+  `informationWithheld`/`dataGeneralizations` is sufficient; no
+  institutional reply required) and adopted the custody proposal as
+  written, naming the five previously-open decisions. See
+  [evidence/owner-risk-decision-20260913.md](evidence/owner-risk-decision-20260913.md).
+  This clears the **pre-acquisition** gates for both WTU and UBC; the
+  **post-capture** gates (archive safety, field-map reconciliation,
+  two-release identity comparison) are unchanged.
+- [x] Per the one-transfer-at-a-time budget, acquired UBC v16.43 first
+  (simpler CC0 terms), using
+  [evidence/ubc-permission-manifest.json](evidence/ubc-permission-manifest.json)
+  as the exact-URL permission grant. Transfer receipt: 31,110,199 bytes,
+  sha256 `277a46ae...ce847`.
+- [x] Ran `inspect_archive` against the quarantined bytes: `outcome:
+  release_accepted`, zero reasons, `eml.xml` sha256 matches the EML already
+  verified in prior research. See
+  [evidence/ubc-inspection-receipt-20260913.json](evidence/ubc-inspection-receipt-20260913.json).
+- [ ] WTU acquisition deferred to a subsequent pass (two-archive budget is
+  one transfer at a time).
+- [ ] Field-map reconciliation over `occurrence.txt` and the v16.42/v16.43
+  native-ID comparison remain open before any occurrence release is
+  admitted. `admitted_releases` stays empty.

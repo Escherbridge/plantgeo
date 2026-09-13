@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "url": "https://data.canadensys.net/ipt/archive.do?r=ubc-vascular-specimens&v=16.43",
+  "permission_verdict": "granted",
+  "authority": "CC0 1.0 stated in UBC's standalone release-bound EML (package id 07fd0d79-4883-435f-bba1-58fef110cd13/v16.43, sha256 e73735e4eafcb1a233514948f72631ceced3dd22e30445d45f34e593f7293654); CC0 places the work in the public domain and requires no separate written agreement for this reuse",
+  "recorded_by": "owner-risk-decision-20260913",
+  "granted_on": "2026-09-13",
+  "scope": "immutable source archiving, normalization, public maps, downloads, documented-taxon summaries; excludes images/media and any record an institution withholds or generalizes beyond what informationWithheld/dataGeneralizations already flags"
+}

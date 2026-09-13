@@ -9,7 +9,7 @@
     "commit": "35624ddbaf93670b839333ae51d7ef15e1f5a85e",
     "path": "conductor/research/pnw-herbaria-source-viability-20260910.md"
   },
-  "next_gate": "Coordinate-withholding policy is unproven for both collections and the public-metadata search that could close it is exhausted (evidence/coordinate-policy-search-exhausted-20260913.md): neither WTU/UBC's EML, the institutional IPT pages, nor the Canadensys network's own about page states a sensitive-locality policy. Two paths remain, both operator decisions: send the corrected outreach (evidence/wtu-gbif-identity-correction-20260913.md) and await a reply, or accept per-record informationWithheld/dataGeneralizations fields as sufficient evidence once measured post-capture. Custody/archive-control preflight is narrowed to five named decisions against already-implemented controls (evidence/custody-and-archive-control-preflight-proposal-20260913.md): custody owner, quarantine location, retention duration/trigger, withdrawal record, and the permission manifest's actual authority. No occurrence release is admitted.",
+  "next_gate": "Owner risk decision 2026-09-13 (evidence/owner-risk-decision-20260913.md) accepted per-record informationWithheld/dataGeneralizations fields as sufficient coordinate-policy evidence (no institutional reply required) and adopted the custody proposal as-is, naming the owner, the existing R2 bucket, indefinite retention, and CC-BY/CC0 EML terms as the permission authority. Both collections' pre-acquisition gates are cleared on that basis. UBC v16.43 is acquired into quarantine and passed archive-safety inspection (evidence/ubc-inspection-receipt-20260913.json, outcome release_accepted). WTU acquisition is deferred behind UBC per the one-transfer-at-a-time budget. Remaining gates before any occurrence release is admitted: field-map reconciliation over the real occurrence.txt, and a two-release native-ID stability comparison (UBC v16.42 vs v16.43). admitted_releases remains empty.",
   "updated_on": "2026-09-13",
   "admission_packet": "evidence/admission-packet.md",
   "independent_review": "evidence/independent-review.md",
@@ -69,7 +69,7 @@
     "botanical_occurrence_experience_20260911",
     "botanical_species_recommendation_validation_20260911"
   ],
-  "admission_status": "blocked",
+  "admission_status": "one-archive-quarantined-post-capture-gates-open",
   "planning_baseline": "b9b7bf4fcc0c58556d10fc58522edced8962b869",
   "synchronization_evidence": "evidence/baseline-synchronization.md"
 }
