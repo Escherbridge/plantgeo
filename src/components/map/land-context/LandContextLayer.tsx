@@ -9,6 +9,7 @@ import {
   type LandContextFeature,
   type LandContextGroupId,
 } from "@/stores/land-context-store";
+import { WideAreaSelectionAction } from "@/components/map/land-context/mobile/WideAreaSelectionAction";
 
 /**
  * Native MapLibre GL rendering for the four land-context groups.
@@ -221,5 +222,8 @@ export function LandContextLayer({ map }: LandContextLayerProps) {
     };
   }, [map, setHoveredFeature, setSelection, setCandidateIndex, openPanel]);
 
-  return null;
+  // Mount point only: the accessible area-selection alternative renders its own affordance
+  // (visible whenever a point selection exists) but owns no map click/hover wiring of its own --
+  // see `WideAreaSelectionAction.tsx` for the interaction-pattern rationale.
+  return <WideAreaSelectionAction />;
 }

@@ -22,3 +22,4 @@ export { LandContextIdentityCard } from "@/components/map/land-context/LandConte
 export { LandContextDetailPanel } from "@/components/map/land-context/LandContextDetailPanel";
 export { LandContextAccessibleFeatureList } from "@/components/map/land-context/LandContextAccessibleFeatureList";
 export { useLandContextQuery } from "@/components/map/land-context/useLandContextQuery";
+export { WideAreaSelectionAction } from "@/components/map/land-context/mobile/WideAreaSelectionAction";
