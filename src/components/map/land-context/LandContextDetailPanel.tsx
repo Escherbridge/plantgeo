@@ -65,17 +65,22 @@ export function LandContextDetailPanel({ restoreFocusTo = null }: LandContextDet
       role="dialog"
       aria-modal="false"
       aria-label="Land context selection details"
-      className="land-context-detail-panel"
+      className="z-30 w-full max-w-sm rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--background))]/95 p-4 text-sm shadow-lg backdrop-blur-sm"
     >
-      <header className="land-context-detail-panel-header">
-        <h2>Selection details</h2>
-        <button ref={closeButtonRef} type="button" onClick={handleClose}>
+      <header className="flex items-start justify-between gap-2 border-b border-[hsl(var(--border))] pb-2">
+        <h2 className="font-semibold text-[hsl(var(--foreground))]">Selection details</h2>
+        <button
+          ref={closeButtonRef}
+          type="button"
+          onClick={handleClose}
+          className="min-h-11 min-w-11 rounded px-2 py-1.5 text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))]"
+        >
           Close
         </button>
       </header>
 
       {selection?.mode === "area" ? (
-        <p className="land-context-detail-panel-coverage">
+        <p className="mt-2 text-xs text-[hsl(var(--muted-foreground))]">
           {resultMeta
             ? `${resultMeta.returnedCount} of ${resultMeta.totalCount} intersecting feature(s) shown${
                 resultMeta.hasMore ? " (more available -- refine the area for a complete list)" : ""
@@ -85,32 +90,49 @@ export function LandContextDetailPanel({ restoreFocusTo = null }: LandContextDet
       ) : null}
 
       {results.length > 1 ? (
-        <nav className="land-context-detail-panel-candidates" aria-label="Overlapping features">
-          <button type="button" onClick={focusPreviousCandidate}>
+        <nav
+          className="mt-3 flex items-center justify-between gap-2 border-t border-[hsl(var(--border))] pt-3"
+          aria-label="Overlapping features"
+        >
+          <button
+            type="button"
+            onClick={focusPreviousCandidate}
+            className="min-h-11 rounded border border-[hsl(var(--border))] px-2 py-1.5 text-xs font-medium hover:bg-[hsl(var(--muted))]"
+          >
             Previous candidate
           </button>
-          <span aria-live="polite">
+          <span aria-live="polite" className="text-xs text-[hsl(var(--muted-foreground))]">
             {candidateIndex !== null ? candidateIndex + 1 : "–"} of {results.length}
           </span>
-          <button type="button" onClick={focusNextCandidate}>
+          <button
+            type="button"
+            onClick={focusNextCandidate}
+            className="min-h-11 rounded border border-[hsl(var(--border))] px-2 py-1.5 text-xs font-medium hover:bg-[hsl(var(--muted))]"
+          >
             Next candidate
           </button>
         </nav>
       ) : null}
 
       {feature ? (
-        <div className="land-context-detail-panel-body">
+        <div className="mt-3 space-y-3 border-t border-[hsl(var(--border))] pt-3">
           <section aria-labelledby="land-context-place-details-heading">
-            <h3 id="land-context-place-details-heading">Place details</h3>
-            <p>{feature.title}</p>
-            <p>{LAND_CONTEXT_GROUP_LABELS[feature.group]}</p>
-            {feature.category ? <p>{feature.category}</p> : null}
+            <h3 id="land-context-place-details-heading" className="text-xs font-semibold uppercase tracking-wide text-[hsl(var(--muted-foreground))]">
+              Place details
+            </h3>
+            <p className="mt-1 font-medium text-[hsl(var(--foreground))]">{feature.title}</p>
+            <p className="text-xs text-[hsl(var(--muted-foreground))]">{LAND_CONTEXT_GROUP_LABELS[feature.group]}</p>
+            {feature.category ? <p className="text-xs text-[hsl(var(--muted-foreground))]">{feature.category}</p> : null}
           </section>
 
           <section aria-labelledby="land-context-evidence-heading">
-            <h3 id="land-context-evidence-heading">Evidence and time</h3>
-            <p>{feature.sourceVintage ?? "Source vintage not yet available."}</p>
-            <p>
+            <h3 id="land-context-evidence-heading" className="text-xs font-semibold uppercase tracking-wide text-[hsl(var(--muted-foreground))]">
+              Evidence and time
+            </h3>
+            <p className="mt-1 text-xs text-[hsl(var(--muted-foreground))]">
+              {feature.sourceVintage ?? "Source vintage not yet available."}
+            </p>
+            <p className="mt-1 text-xs text-[hsl(var(--muted-foreground))]">
               {feature.contactVerified === undefined
                 ? "Contact verification status unknown."
                 : feature.contactVerified
@@ -120,8 +142,12 @@ export function LandContextDetailPanel({ restoreFocusTo = null }: LandContextDet
           </section>
 
           <section aria-labelledby="land-context-help-heading">
-            <h3 id="land-context-help-heading">Documented help</h3>
-            <p>{feature.contactRouteSummary ?? "No documented contact route available yet."}</p>
+            <h3 id="land-context-help-heading" className="text-xs font-semibold uppercase tracking-wide text-[hsl(var(--muted-foreground))]">
+              Documented help
+            </h3>
+            <p className="mt-1 text-xs text-[hsl(var(--muted-foreground))]">
+              {feature.contactRouteSummary ?? "No documented contact route available yet."}
+            </p>
           </section>
 
           {/* TODO(sibling worker: reference-plane relationships/contacts): "Relevant parties",
@@ -130,7 +156,9 @@ export function LandContextDetailPanel({ restoreFocusTo = null }: LandContextDet
               office names or claim a contact capability the stub cannot back. */}
         </div>
       ) : (
-        <p>No candidate selected yet.</p>
+        <p className="mt-3 border-t border-[hsl(var(--border))] pt-3 text-xs text-[hsl(var(--muted-foreground))]">
+          No candidate selected yet.
+        </p>
       )}
 
       {/*

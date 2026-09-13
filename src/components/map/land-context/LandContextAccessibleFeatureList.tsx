@@ -26,13 +26,18 @@ export function LandContextAccessibleFeatureList() {
   if (results.length === 0) return null;
 
   return (
-    <ul className="land-context-feature-list" aria-label="Intersecting land context features">
+    <ul
+      className="max-w-sm space-y-1 rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--background))]/95 p-2 text-sm shadow-lg backdrop-blur-sm"
+      aria-label="Intersecting land context features"
+    >
       {results.map((feature, index) => (
         <li key={feature.id}>
           <button
             type="button"
             aria-pressed={candidateIndex === index}
-            className="land-context-feature-list-item"
+            className={`min-h-11 w-full rounded px-2 py-1.5 text-left hover:bg-[hsl(var(--muted))] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[hsl(var(--ring))] ${
+              candidateIndex === index ? "bg-[hsl(var(--muted))]" : ""
+            }`}
             onFocus={() => setHoveredFeature(feature, null)}
             onBlur={() => setHoveredFeature(null)}
             onClick={() => {
@@ -47,8 +52,8 @@ export function LandContextAccessibleFeatureList() {
               }
             }}
           >
-            <span className="land-context-feature-list-title">{feature.title}</span>
-            <span className="land-context-feature-list-group">
+            <span className="block font-medium text-[hsl(var(--foreground))]">{feature.title}</span>
+            <span className="block text-xs text-[hsl(var(--muted-foreground))]">
               {LAND_CONTEXT_GROUP_LABELS[feature.group]}
             </span>
           </button>

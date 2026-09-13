@@ -36,7 +36,7 @@ export function LandContextIdentityCard() {
       ref={cardRef}
       role="status"
       aria-live="polite"
-      className="land-context-identity-card"
+      className="z-30 max-w-65 rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--background))]/95 p-3 pr-10 text-xs shadow-lg backdrop-blur-sm"
       style={
         hoverPosition
           ? { position: "absolute", left: hoverPosition.x, top: hoverPosition.y }
@@ -47,20 +47,20 @@ export function LandContextIdentityCard() {
       // trigger and the card closes it.
       onMouseLeave={() => setHoveredFeature(null)}
     >
-      <p className="land-context-identity-card-title">{hoveredFeature.title}</p>
-      <p className="land-context-identity-card-group">
+      <p className="font-semibold text-[hsl(var(--foreground))]">{hoveredFeature.title}</p>
+      <p className="mt-1 text-[hsl(var(--muted-foreground))]">
         {LAND_CONTEXT_GROUP_LABELS[hoveredFeature.group]}
         {hoveredFeature.category ? ` · ${hoveredFeature.category}` : ""}
       </p>
       {hoveredFeature.sourceVintage ? (
-        <p className="land-context-identity-card-vintage">{hoveredFeature.sourceVintage}</p>
+        <p className="mt-1 text-[hsl(var(--muted-foreground))]">{hoveredFeature.sourceVintage}</p>
       ) : null}
       {hoveredFeature.contactRouteSummary ? (
-        <p className="land-context-identity-card-contact">{hoveredFeature.contactRouteSummary}</p>
+        <p className="mt-1 text-[hsl(var(--muted-foreground))]">{hoveredFeature.contactRouteSummary}</p>
       ) : null}
       <button
         type="button"
-        className="land-context-identity-card-dismiss"
+        className="absolute right-0 top-0 flex h-11 w-11 min-h-11 min-w-11 items-center justify-center rounded text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))]"
         onClick={() => setHoveredFeature(null)}
       >
         Dismiss
