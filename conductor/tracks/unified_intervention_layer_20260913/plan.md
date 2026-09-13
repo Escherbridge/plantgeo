@@ -185,23 +185,68 @@ Goal: the FR-2 detail panel gains a working comment thread and like control back
 procedures; per the Phase 1 checkpoint's OQ-5 resolution, `/feed` gets the same UI in this pass
 too, not deferred.
 
+**As built 2026-09-13 — OQ-5 implemented in full, BOTH surfaces, nothing deferred.** Two shared
+client components under a new `src/components/intervention/` directory, imported by the map detail
+modal and by `/feed` so the two surfaces cannot drift:
+`InterventionLikeButton({ featureId, className? })` and
+`InterventionCommentThread({ featureId, pageSize?, className? })`, plus
+`sign-in-gate.tsx` (`SOCIAL_SIGN_IN_HREF`, `SocialSignInPrompt`) carrying `/feed`'s `SignedOutGate`
+treatment inline.
+
+- Like update strategy: **refresh-from-server-response**, not optimistic — `toggleLike` already
+  returns the authoritative `{ liked, count }`, so the click applies that response to local state.
+  No invented count to roll back, no refetch round trip, and the same DOM node throughout (the test
+  asserts node identity across the toggle, which is what "no remount" means here).
+- Comment paging: offset-based `Load more comments` driven by `nextOffset`, accumulating pages into
+  local state via a merge that returns the SAME array when a page adds nothing (so a query hook
+  handing back a fresh object each render cannot spin the effect). Posting appends the returned row;
+  deleting drops it locally. Neither remounts the thread.
+- Author display: this codebase has **no** user-id -> display-name read for an arbitrary user
+  (`teams.listMembers` is team-scoped and is not a directory), so an author renders as `You` or as
+  `Contributor <first 8 chars of the id>`. **Known gap**, deliberately not closed here: closing it
+  means a new user-lookup surface, which is its own decision.
+- Signed-out viewers: both `getLikeState` and `listComments` are `protectedProcedure`, so both
+  queries are issued with `enabled: false` when signed out and the viewer sees a sign-in prompt
+  rather than an UNAUTHORIZED. The procedures' auth tier was NOT changed.
+- Delete gating: `authorUserId === session.user.id || platformRole ∈ {expert, admin}`, read the way
+  `moderation/page.tsx` and `TopBar.tsx` read it, mirroring `deleteComment`'s own server-side check.
+- `/feed` reuses the Phase 3 modal rather than growing a second comment UI: `ProposalRow` renders
+  the shared like button inline and a `Comments on <name>` button that calls
+  `useInterventionDetailStore.openById(proposal.id)`; `InterventionFeed` mounts one
+  `<InterventionDetailModal />` inside a click-through viewport frame (the modal positions itself
+  `absolute` for the map canvas). `/feed` was already entirely behind its `SignedOutGate`, verified
+  by test, so no new gating was needed there.
+- Escaping (NFR-2): every body renders as JSX text (`{comment.body}`), never
+  `dangerouslySetInnerHTML`, pinned by a regression test asserting a `<script>`/`<b>` body appears
+  as inert text and executes nothing.
+
+Files: created `src/components/intervention/InterventionLikeButton.tsx`,
+`src/components/intervention/InterventionCommentThread.tsx`,
+`src/components/intervention/sign-in-gate.tsx`,
+`src/__tests__/components/InterventionLikeButton.test.tsx`,
+`src/__tests__/components/InterventionCommentThread.test.tsx`,
+`src/__tests__/components/InterventionFeedSocial.test.tsx`; modified
+`src/components/map/InterventionDetailModal.tsx` (mounts both into the card's `children` slot),
+`src/app/feed/InterventionFeed.tsx`, and the two affected test files
+(`InterventionDetailModal.test.tsx`, `intervention-detail-coexistence.test.tsx`).
+
 Tasks:
-- [ ] Task (TDD): Write a failing test for the detail panel asserting it renders the current like
+- [x] Task (TDD): Write a failing test for the detail panel asserting it renders the current like
       count and the signed-in viewer's own like state, and that clicking the like control calls
       `toggleLike` and updates the displayed count/state without a full panel remount or reload.
       Implement.
-- [ ] Task (TDD): Write a failing test for the detail panel asserting it renders existing comments
+- [x] Task (TDD): Write a failing test for the detail panel asserting it renders existing comments
       (author, timestamp, body) via `listComments`, shows a compose box and working submit for a
       signed-in viewer (mirroring `/feed`'s `SignedOutGate` pattern for a signed-out one), and that a
       successfully posted comment appears in the list without a full panel remount. Implement.
-- [ ] Task (TDD): Write a failing test asserting a comment's author, or a viewer with `expert`/
+- [x] Task (TDD): Write a failing test asserting a comment's author, or a viewer with `expert`/
       `admin` `platformRole`, sees a delete affordance on that comment, and that using it calls
       `deleteComment` and removes the comment from the rendered list; a viewer with neither
       permission sees no delete affordance. Implement.
-- [ ] Task: Sanitize/escape comment `body` on render per NFR-2, consistent with how this codebase
+- [x] Task: Sanitize/escape comment `body` on render per NFR-2, consistent with how this codebase
       already renders other user-authored strings (`description`, strategy-request `title`); add a
       regression test asserting a comment containing markup does not execute/inject.
-- [ ] Task (TDD): Write a failing test for `InterventionFeed.tsx`'s `ProposalRow` (or a new row
+- [x] Task (TDD): Write a failing test for `InterventionFeed.tsx`'s `ProposalRow` (or a new row
       component it renders) asserting each feed row shows the same like count/toggle and a comment
       affordance (either an inline compact thread or a link/click-through into the same standalone
       detail modal Phase 3 built, implementer's choice — document which) backed by the identical
@@ -209,7 +254,7 @@ Tasks:
       out viewers. Implement. Reuse the Phase 3 modal component if that keeps the two surfaces from
       drifting; do not hand-roll a second comment UI unless there's a concrete reason `/feed`'s needs
       differ.
-- [ ] Verification: One full sweep per `conductor/workflow.md` — run the complete affected-boundary
+- [~] Verification: One full sweep per `conductor/workflow.md` — run the complete affected-boundary
       test suite (layer-registry, layer-manager, the new tRPC procedures, the detail-panel component,
       `map-view-render-count.test.tsx`), typecheck, and lint once at the end covering every file
       touched across all five phases (per the "one sweep" convention — do not re-run tests after
@@ -217,3 +262,19 @@ Tasks:
       against the running app (test against prod + live Martin, per "Never run PlantGeo locally").
       Record which OQ-1 through OQ-5 answers were actually implemented, and whether `/feed`'s UI
       mount was deferred or pulled forward, in the track's retrospective. [checkpoint marker]
+
+      **Automated sweep run 2026-09-13, all green, once at the end:** `npx tsc --noEmit` clean;
+      `node scripts/check-data-boundaries.mjs` clean (12 URL rules, client/server imports,
+      observation fabrication); `vitest run` over
+      `InterventionLikeButton.test.tsx` (4), `InterventionCommentThread.test.tsx` (9),
+      `InterventionFeedSocial.test.tsx` (3), `InterventionDetailModal.test.tsx` (13),
+      `intervention-detail-clicks.test.tsx`, `intervention-detail-coexistence.test.tsx`,
+      `trpc/intervention-detail.test.ts`, `trpc/intervention-social.test.ts`,
+      `security/feature-social-schema.test.ts` (10), `map-view-render-count.test.tsx`,
+      `LayerManager.test.tsx` (72), `LayerPanel.test.tsx` (36) — 205 tests, 0 failures.
+      Answers actually implemented: OQ-1 alias visibility, OQ-2 migrate + unified paint, OQ-3
+      standalone expandable modal, OQ-4 toggle likes + flat comments + visibility scoping, OQ-5
+      **pulled forward — both surfaces shipped in this pass, `/feed` not deferred.**
+      **Still owed (same manual half as Phases 2 and 3):** the against-prod click-through of FR-1
+      through FR-4 on the running app with live Martin. Nothing in this phase can be verified that
+      way from a local run, per "Never run PlantGeo locally".

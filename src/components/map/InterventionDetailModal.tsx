@@ -2,6 +2,8 @@
 
 import { useMemo, type ReactNode } from "react";
 import { trpc } from "@/lib/trpc/client";
+import { InterventionCommentThread } from "@/components/intervention/InterventionCommentThread";
+import { InterventionLikeButton } from "@/components/intervention/InterventionLikeButton";
 import type { InterventionDetailRecord } from "@/lib/map/intervention-detail";
 import {
   INTERVENTION_CATEGORY_CLASSES,
@@ -41,6 +43,18 @@ export function InterventionDetailModal({ children }: { children?: ReactNode }) 
 
   if (!featureId) return null;
 
+  // FR-4: the social surface is keyed off the feature id the store opened on,
+  // which is the resolved record's id in both branches below -- so it mounts
+  // once, here, and survives the compact/expanded transition with its
+  // half-typed comment intact.
+  const social = (
+    <div className="mt-3 space-y-3 border-t border-[hsl(var(--border))] pt-3">
+      <InterventionLikeButton featureId={featureId} />
+      <InterventionCommentThread featureId={featureId} />
+      {children}
+    </div>
+  );
+
   const shell = {
     isExpanded,
     onToggleExpanded: () => setExpanded(!isExpanded),
@@ -54,11 +68,11 @@ export function InterventionDetailModal({ children }: { children?: ReactNode }) 
   // consumer -- including `LayerManager`, which mounts this modal closed.
   return heldRecord ? (
     <InterventionDetailCard record={heldRecord} isLoading={false} isError={false} {...shell}>
-      {children}
+      {social}
     </InterventionDetailCard>
   ) : (
     <FetchedInterventionDetail featureId={featureId} {...shell}>
-      {children}
+      {social}
     </FetchedInterventionDetail>
   );
 }

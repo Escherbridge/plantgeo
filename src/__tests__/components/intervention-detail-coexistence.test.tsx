@@ -38,6 +38,18 @@ vi.mock("@/lib/trpc/client", () => ({
     },
   },
 }));
+/**
+ * Phase 5's social children read a session this test never stands up, and their
+ * own behaviour is pinned in `InterventionLikeButton.test.tsx` /
+ * `InterventionCommentThread.test.tsx`. Stubbing them keeps this file about
+ * coexistence, which is what it is for.
+ */
+vi.mock("@/components/intervention/InterventionLikeButton", () => ({
+  InterventionLikeButton: () => <div data-testid="like-button-stub" />,
+}));
+vi.mock("@/components/intervention/InterventionCommentThread", () => ({
+  InterventionCommentThread: () => <div data-testid="comment-thread-stub" />,
+}));
 vi.mock("@/components/map/InterventionDrawControl", () => ({
   InterventionDrawControl: () => null,
 }));

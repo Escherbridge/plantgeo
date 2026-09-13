@@ -1,9 +1,38 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+/**
+ * The social children are stubbed (their own behaviour is pinned in
+ * `InterventionLikeButton.test.tsx` / `InterventionCommentThread.test.tsx`);
+ * what the container test below asserts is the WIRING -- that both mount, for
+ * the resolved record's id.
+ */
+vi.mock("@/components/intervention/InterventionLikeButton", () => ({
+  InterventionLikeButton: ({ featureId }: { featureId: string }) => (
+    <div data-testid="like-button-stub" data-feature-id={featureId} />
+  ),
+}));
+vi.mock("@/components/intervention/InterventionCommentThread", () => ({
+  InterventionCommentThread: ({ featureId }: { featureId: string }) => (
+    <div data-testid="comment-thread-stub" data-feature-id={featureId} />
+  ),
+}));
+vi.mock("@/lib/trpc/client", () => ({
+  trpc: {
+    interventions: {
+      getInterventionDetail: {
+        useQuery: () => ({ data: undefined, isLoading: true, isError: false }),
+      },
+    },
+  },
+}));
+
 import {
   InterventionDetailCard,
+  InterventionDetailModal,
   type InterventionDetailCardProps,
 } from "@/components/map/InterventionDetailModal";
+import { useInterventionDetailStore } from "@/stores/intervention-detail-store";
 import { INTERVENTION_PENDING_REVIEW_COLOR } from "@/lib/map/layers";
 import type { InterventionDetailRecord } from "@/lib/map/intervention-detail";
 
@@ -181,5 +210,38 @@ describe("InterventionDetailCard", () => {
   it("renders the Phase 5 social slot without owning any social state", () => {
     renderCard({ children: <div data-testid="phase-5-slot" /> });
     expect(screen.getByTestId("phase-5-slot")).toBeTruthy();
+  });
+});
+
+describe("InterventionDetailModal social mount (FR-4)", () => {
+  afterEach(() => {
+    useInterventionDetailStore.getState().close();
+  });
+
+  it("mounts the like control and the comment thread for the held record's id", () => {
+    useInterventionDetailStore.getState().openWithRecord(RECORD);
+    render(<InterventionDetailModal />);
+
+    expect(
+      screen.getByTestId("like-button-stub").getAttribute("data-feature-id")
+    ).toBe(RECORD.id);
+    expect(
+      screen.getByTestId("comment-thread-stub").getAttribute("data-feature-id")
+    ).toBe(RECORD.id);
+  });
+
+  it("mounts them for a by-id open too, while the record is still fetching", () => {
+    useInterventionDetailStore.getState().openById(RECORD.id);
+    render(<InterventionDetailModal />);
+
+    expect(
+      screen.getByTestId("like-button-stub").getAttribute("data-feature-id")
+    ).toBe(RECORD.id);
+    expect(screen.getByTestId("comment-thread-stub")).toBeTruthy();
+  });
+
+  it("mounts nothing at all while the store is closed", () => {
+    render(<InterventionDetailModal />);
+    expect(screen.queryByTestId("like-button-stub")).toBeNull();
   });
 });

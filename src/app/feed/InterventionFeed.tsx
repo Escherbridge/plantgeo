@@ -14,8 +14,11 @@ import {
   EditorialTag,
 } from "@/components/ui/editorial";
 import { EditorialSelectField } from "@/components/ui/editorial/fields";
+import { InterventionLikeButton } from "@/components/intervention/InterventionLikeButton";
+import { InterventionDetailModal } from "@/components/map/InterventionDetailModal";
 import { buildMapFocusHref } from "@/lib/map/focus-params";
 import { trpc } from "@/lib/trpc/client";
+import { useInterventionDetailStore } from "@/stores/intervention-detail-store";
 
 /** Mirrors `InterventionTypeSchema` in src/lib/server/trpc/routers/interventions.ts. */
 const TYPE_OPTIONS = [
@@ -76,6 +79,10 @@ function ProposalRow({ proposal }: { proposal: ProposedIntervention }) {
   const submitted = formatDate(proposal.createdAt);
   const name = proposal.name ?? "Untitled proposal";
   const mapHref = buildMapFocusHref(proposal.longitude, proposal.latitude);
+  // Reuse over reinvention (FR-4): the comment affordance opens the Phase 3
+  // detail modal through its own store, so `/feed` and the map read and write
+  // one comment thread component and cannot drift apart.
+  const openDetail = useInterventionDetailStore((state) => state.openById);
 
   return (
     <article className="rule-bottom-hairline grid grid-cols-4 gap-x-gutter border-b-rule-faint py-comfortable md:grid-cols-12">
@@ -92,6 +99,20 @@ function ProposalRow({ proposal }: { proposal: ProposedIntervention }) {
           Awaiting review
           {submitted && <> — proposed {submitted}</>}
         </p>
+
+        <div className="mt-snug flex flex-wrap items-center gap-tight">
+          <InterventionLikeButton featureId={proposal.id} />
+          <button
+            type="button"
+            onClick={() => openDetail(proposal.id)}
+            // The accessible name carries the proposal: the row's controls are
+            // read out of context in a list of many identical ones.
+            aria-label={`Comments on ${name}`}
+            className="inline-flex items-center rounded border border-[hsl(var(--border))] px-2 py-1 text-xs"
+          >
+            Comments
+          </button>
+        </div>
       </div>
 
       <div className="col-span-2 mt-snug md:col-span-3 md:mt-0 flex flex-col gap-1">
@@ -238,6 +259,13 @@ export function InterventionFeed() {
       </EditorialSection>
 
       <EditorialRule weight="massive" className="mb-chapter" />
+
+      {/* The Phase 3 modal positions itself `absolute` inside the map canvas,
+          so on `/feed` it gets an equivalent viewport-sized frame. The frame
+          itself is click-through; the card inside it is not. */}
+      <div className="pointer-events-none fixed inset-0 z-50 *:pointer-events-auto">
+        <InterventionDetailModal />
+      </div>
     </EditorialContainer>
   );
 }
