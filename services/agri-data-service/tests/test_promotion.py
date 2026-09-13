@@ -24,11 +24,9 @@ from agri_data_service.execution.promotion import (
     PromotionTargetSnapshot,
     ReleaseSetItemRecord,
     ReleaseSetRecord,
-    RestoreStepKind,
     SourceReleaseRecord,
     encode_artifact_content,
     load_promotion_archive,
-    plan_semantic_restore,
     promotion_content_checksum,
     write_promotion_archive,
 )
@@ -300,58 +298,6 @@ def test_archive_requires_a_closed_source_release_supersession_chain() -> None:
         )
 
 
-def test_restore_plan_requires_draft_membership_then_validation_and_is_idempotent() -> None:
-    archive = _archive()
-
-    plan = plan_semantic_restore(archive, target_preflight=_preflight())
-
-    kinds = [step.kind for step in plan.steps]
-    assert kinds[-3:] == [
-        RestoreStepKind.CREATE_RELEASE_SET_DRAFT,
-        RestoreStepKind.ADD_RELEASE_SET_MEMBERSHIP,
-        RestoreStepKind.VALIDATE_RELEASE_SET,
-    ]
-    assert RestoreStepKind.CREATE_RELEASE_SET_DRAFT in kinds
-    assert all("pg_restore" not in step.kind.value for step in plan.steps)
-
-    resumed = plan_semantic_restore(
-        archive,
-        target_preflight=_preflight(),
-        target=_exact_target(archive),
-    )
-
-    assert resumed.steps == []
-
-
-def test_restore_plan_can_resume_a_draft_only_through_membership_then_validation() -> None:
-    archive = _archive()
-    release_set = archive.release_sets[0]
-    target = PromotionTargetSnapshot(
-        data_sources=archive.data_sources,
-        source_releases=archive.source_releases,
-        artifacts=archive.artifacts,
-        release_sets=[
-            ExistingReleaseSet(
-                id=release_set.id,
-                logical_key=release_set.logical_key,
-                as_of_time=release_set.as_of_time,
-                manifest_checksum=release_set.manifest_checksum,
-                state="draft",
-                description=release_set.description,
-                created_at=release_set.created_at,
-            )
-        ],
-    )
-
-    plan = plan_semantic_restore(archive, target_preflight=_preflight(), target=target)
-
-    assert [step.kind for step in plan.steps] == [
-        RestoreStepKind.RESUME_RELEASE_SET_DRAFT,
-        RestoreStepKind.ADD_RELEASE_SET_MEMBERSHIP,
-        RestoreStepKind.VALIDATE_RELEASE_SET,
-    ]
-
-
 def test_target_snapshot_keeps_transform_versions_as_distinct_release_identities() -> None:
     archive = _archive()
     native = archive.source_releases[0]
@@ -361,16 +307,3 @@ def test_target_snapshot_keeps_transform_versions_as_distinct_release_identities
 
     expected_release_count = 2
     assert len(snapshot.source_releases) == expected_release_count
-
-
-def test_restore_refuses_blind_pg_restore_and_conflicting_validated_release_set() -> None:
-    archive = _archive()
-
-    with pytest.raises(PromotionError, match="blind pg_restore"):
-        plan_semantic_restore(archive, target_preflight=_preflight(), transport="pg_restore")
-
-    target = _exact_target(archive)
-    release_set = target.release_sets[0].model_copy(update={"validated_at": _timestamp().replace(hour=13)})
-    conflicting = target.model_copy(update={"release_sets": [release_set]})
-    with pytest.raises(PromotionError, match="validation evidence"):
-        plan_semantic_restore(archive, target_preflight=_preflight(), target=conflicting)

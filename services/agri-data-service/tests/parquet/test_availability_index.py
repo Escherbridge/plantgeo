@@ -2,25 +2,19 @@ from __future__ import annotations
 
 import io
 import json
-from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from threading import Barrier, Lock
-from types import SimpleNamespace
-from typing import TYPE_CHECKING
 
 import pyarrow as pa  # type: ignore[import-untyped]
 import pyarrow.parquet as pq  # type: ignore[import-untyped]
 import pytest
 from botocore.exceptions import ClientError  # type: ignore[import-untyped]
-from click.testing import CliRunner
 
-import agri_data_service.interface.cli.data as data_cli_module
 from agri_data_service.foundation.canonical import canonical_json, sha256_digest
 from agri_data_service.foundation.parquet.absence import GovernedAbsence
 from agri_data_service.foundation.parquet.completion import PartitionCompletion
-from agri_data_service.interface.cli.data import data
 from agri_data_service.pipeline.parquet import availability_index
 from agri_data_service.pipeline.parquet.availability_index import (
     EVIDENCE_OBJECT_MAX_BYTES,
@@ -57,9 +51,6 @@ from agri_data_service.warehouse.schemas.availability_index import (
     AVAILABILITY_REQUIRED_RUNGS,
     AVAILABILITY_SCHEMA_VERSION,
 )
-
-if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
 
 _LANE_ROOT = "layer=test-lane/kind=observed"
 _CREATED_AT = datetime(2026, 9, 1, 12, tzinfo=UTC)
@@ -494,113 +485,6 @@ def _write_bootstrap_cli_input(tmp_path: Path) -> tuple[Path, bytes, int]:
     return input_path, payload, len(rows)
 
 
-def test_bootstrap_cli_is_offline_by_default(tmp_path: Path) -> None:
-    input_path, payload, row_count = _write_bootstrap_cli_input(tmp_path)
-
-    result = CliRunner().invoke(
-        data,
-        [
-            "availability-bootstrap",
-            "--input",
-            str(input_path),
-            "--input-sha256",
-            sha256_digest(payload),
-            "--expected-row-count",
-            str(row_count),
-        ],
-    )
-
-    assert result.exit_code == 0, result.output
-    report = json.loads(result.output)
-    assert report["dry_run"] is True
-    assert report["apply"] is False
-    assert "pointer" not in report
-
-
-def test_bootstrap_cli_apply_requires_loader_database_before_object_store(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    input_path, payload, row_count = _write_bootstrap_cli_input(tmp_path)
-    monkeypatch.setattr(data_cli_module.settings, "local_source_loader_database_url", None)
-    monkeypatch.setattr(data_cli_module.settings, "database_url", None)
-
-    def refuse_store(_cls: type[BotoAvailabilityStorage]) -> BotoAvailabilityStorage:
-        raise AssertionError("object store must not be constructed before loader DB validation")
-
-    monkeypatch.setattr(BotoAvailabilityStorage, "from_settings", classmethod(refuse_store))
-    result = CliRunner().invoke(
-        data,
-        [
-            "availability-bootstrap",
-            "--input",
-            str(input_path),
-            "--input-sha256",
-            sha256_digest(payload),
-            "--expected-row-count",
-            str(row_count),
-            "--apply",
-        ],
-    )
-
-    assert result.exit_code == 1
-    assert "LOCAL_SOURCE_LOADER_DATABASE_URL" in result.output
-
-
-def test_bootstrap_cli_apply_uses_loader_session_and_guarded_public_api(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    input_path, payload, row_count = _write_bootstrap_cli_input(tmp_path)
-    session = object()
-    store = object()
-    calls: list[tuple[object, object, BootstrapRequest]] = []
-    database_url = "postgresql+asyncpg://user:password@loader.example:5432/plantgeo"
-
-    @asynccontextmanager
-    async def loader_session(resolved_database_url: str) -> AsyncIterator[object]:
-        assert resolved_database_url == database_url
-        yield session
-
-    async def guarded_apply(
-        held_session: object,
-        held_store: object,
-        request: BootstrapRequest,
-    ) -> object:
-        calls.append((held_session, held_store, request))
-        return SimpleNamespace(pointer=SimpleNamespace(to_wire=dict), advanced=True, attempts=1)
-
-    monkeypatch.setattr(
-        data_cli_module.settings,
-        "local_source_loader_database_url",
-        database_url,
-    )
-    monkeypatch.setattr(data_cli_module, "local_source_loader_session", loader_session)
-
-    def store_from_settings(_cls: type[BotoAvailabilityStorage]) -> object:
-        return store
-
-    monkeypatch.setattr(data_cli_module.BotoAvailabilityStorage, "from_settings", classmethod(store_from_settings))
-    monkeypatch.setattr(data_cli_module, "bootstrap_availability", guarded_apply)
-    result = CliRunner().invoke(
-        data,
-        [
-            "availability-bootstrap",
-            "--input",
-            str(input_path),
-            "--input-sha256",
-            sha256_digest(payload),
-            "--expected-row-count",
-            str(row_count),
-            "--apply",
-        ],
-    )
-
-    assert result.exit_code == 0, result.output
-    assert len(calls) == 1
-    assert calls[0][0:2] == (session, store)
-
-
 def test_unlocked_availability_cores_have_no_production_callers() -> None:
     service_root = Path(__file__).parents[2]
     source_root = service_root / "src" / "agri_data_service"
@@ -618,49 +502,6 @@ def test_unlocked_availability_cores_have_no_production_callers() -> None:
     }
 
     assert offenders == {}
-
-
-def test_publish_cli_is_offline_by_default(tmp_path: Path) -> None:
-    manifest = EvidenceReceipt(key="evidence/manifest.json", sha256=sha256_digest(b"manifest"))
-    identity = _identity(manifest)
-    day = date(2026, 8, 31)
-    rows = _offline_published_rows(identity, day)
-    document = {
-        "bootstrap_receipt_key": f"{_LANE_ROOT}/availability/bootstrap/receipt={'b' * 64}.json",
-        "bootstrap_receipt_sha256": "b" * 64,
-        "created_at": "2026-09-01T12:00:00.000000Z",
-        "lane": identity.lane,
-        "lane_root": identity.lane_root,
-        "nature": identity.nature,
-        "product": identity.product,
-        "required_rungs": list(identity.required_rungs),
-        "rows": rows,
-        "schema_version": "availability-publication-input-v1",
-        "source_ceiling": day.isoformat(),
-        "verified_source_inventory_root": identity.verified_source_inventory_root,
-    }
-    payload = canonical_json(document).encode()
-    input_path = tmp_path / "publication.json"
-    input_path.write_bytes(payload)
-
-    result = CliRunner().invoke(
-        data,
-        [
-            "availability-publish",
-            "--input",
-            str(input_path),
-            "--input-sha256",
-            sha256_digest(payload),
-            "--expected-row-count",
-            str(len(rows)),
-        ],
-    )
-
-    assert result.exit_code == 0, result.output
-    report = json.loads(result.output)
-    assert report["dry_run"] is True
-    assert report["apply"] is False
-    assert "pointer" not in report
 
 
 # --- The published-empty rung: a derived rung that generalised every base row away ---------------

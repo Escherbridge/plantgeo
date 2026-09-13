@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from agri_data_service.foundation.parquet.completion import PartitionCompletion
+from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.direct.evacuation_zones import watermark as watermark_module
 from agri_data_service.pipeline.direct.evacuation_zones.products import (
     EVACUATION_ZONES_DIRECT_KIND,
@@ -35,7 +36,6 @@ from agri_data_service.pipeline.direct.evacuation_zones.watermark import (
     read_published_snapshot,
     watermark_for_capture,
 )
-from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 from tests.parquet.test_objectstore_writer import RecordingBackend
 

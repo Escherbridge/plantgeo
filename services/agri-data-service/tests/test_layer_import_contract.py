@@ -419,32 +419,7 @@ CLI_TRANSACTION_METHOD = "begin"
 #: flips to an enforced rule. The line numbers move whenever `commands.py` does: regenerate this
 #: list from the assertion message below, never by editing entries until the test passes again.
 CLI_ADAPTER_VIOLATIONS: tuple[str, ...] = (
-    "interface/cli/commands.py:623 owns a transaction boundary 'session.begin()'",
-    "interface/cli/commands.py:737 owns a transaction boundary 'session.begin()'",
-    "interface/cli/commands.py:808 owns a transaction boundary 'session.begin()'",
-    "interface/cli/commands.py:983 owns a transaction boundary 'session.begin()'",
-    "interface/cli/commands.py:1066 owns a transaction boundary 'session.begin()'",
-    "interface/cli/commands.py:1177 owns a transaction boundary 'session.begin()'",
-    "interface/cli/commands.py:1583 owns a transaction boundary 'combined_local_engine().begin()'",
-    "interface/cli/commands.py:1859 owns a transaction boundary 'session.begin()'",
-    "interface/cli/commands.py:1953 owns a transaction boundary 'session.begin()'",
-    "interface/cli/commands.py:1962 owns a transaction boundary 'session.begin()'",
-    "interface/cli/commands.py:2050 owns a transaction boundary 'session.begin()'",
-    "interface/cli/commands.py:2168 owns a transaction boundary 'session.begin()'",
-    "interface/cli/commands.py:2172 owns a transaction boundary 'session.begin()'",
-    "interface/cli/commands.py:2231 defines execution machinery 'class LaneChunkRunner'",
-    "interface/cli/commands.py:2244 defines execution machinery 'class ChunkedLane'",
-    "interface/cli/commands.py:2503 owns a transaction boundary 'session.begin()'",
-    "interface/cli/commands.py:2543 owns a transaction boundary 'session.begin()'",
-    "interface/cli/commands.py:2629 owns a transaction boundary 'session.begin()'",
-    "interface/cli/commands.py:2641 owns a transaction boundary 'session.begin()'",
-    "interface/cli/commands.py:2743 owns a transaction boundary 'session.begin()'",
-    "interface/cli/commands.py:2756 owns a transaction boundary 'session.begin()'",
-    "interface/cli/commands.py:2940 owns a transaction boundary 'session.begin()'",
-    "interface/cli/commands.py:2942 owns a transaction boundary 'session.begin()'",
-    "interface/cli/commands.py:2997 owns a transaction boundary 'session.begin()'",
-    "interface/cli/commands.py:3004 owns a transaction boundary 'session.begin()'",
-    "interface/cli/commands.py:3048 owns a transaction boundary 'session.begin()'",
+    "interface/cli/commands.py:146 owns a transaction boundary 'combined_local_engine().begin()'",
 )
 
 #: Quoted by the xfail reason below; `CLI_ADAPTER_VIOLATIONS` is the source of truth.

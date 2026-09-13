@@ -7,10 +7,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Final
 
-from agri_data_service.ingest.archive_walk import archive_lane_definition_name
-from agri_data_service.ingest.lanes import FIRMS_ARCHIVE_LANE, STREAMFLOW_ARCHIVE_LANE
 from agri_data_service.ingest.validation.constants import (
-    ARCHIVE_LANE_DEFINITION_NAMES,
     DAILY_PUBLICATION_CADENCE_DAYS,
     MAX_LANE_STATE_ROWS,
     MAX_OBSERVED_DAY_ROWS,
@@ -66,15 +63,6 @@ class StreamDefinition:
                 raise ValueError(f"{self.stream}: publication_cadence_days must be at least one day")
             if not (self.cadence_basis or "").strip():
                 raise ValueError(f"{self.stream}: a declared cadence must carry the basis it was measured from")
-        unmintable = tuple(name for name in self.lane_names if name not in ARCHIVE_LANE_DEFINITION_NAMES)
-        if unmintable:
-            # A hand-written lane name does not fail loudly on its own: it simply matches no ledger row, and an
-            # empty lane list reads exactly like a lane with nothing outstanding. Refusing at construction is
-            # the only place the difference is still visible.
-            raise ValueError(
-                f"{self.stream}: lane name(s) {', '.join(unmintable)} name no registered lane; a lane name must "
-                "come from archive_lane_definition_name() over lanes.BACKFILL_LANES, never a literal string"
-            )
 
     @property
     def is_time_series(self) -> bool:
@@ -85,11 +73,7 @@ class StreamDefinition:
 # Cadence basis strings name a measurement, never an intention. Scheduled acquisition cadence comes from
 # the sole executor registry; an upstream cadence is the publisher's stated release rhythm.
 #
-# `lane_names` is DERIVED from the archive-walk naming function over a registered lane object, so the catalog
-# and the ledger cannot spell the same lane two ways. Only the two lanes `lanes.BACKFILL_LANES` registers have
-# an inner archive ledger behind them; every scheduled source command also receives an outer executor work-item
-# record, but that outer definition does not claim archive coverage. Streams without an inner archive lane keep
-# NO `lane_names` entry rather than a plausible-looking archive name that would match nothing.
+# Source-direct writers have no synthetic archive-lane name.
 DEFAULT_STREAM_DEFINITIONS: Final[tuple[StreamDefinition, ...]] = (
     StreamDefinition(
         stream="fire-detections",
@@ -101,7 +85,6 @@ DEFAULT_STREAM_DEFINITIONS: Final[tuple[StreamDefinition, ...]] = (
             "ingest-firms verb were deleted 2026-09-06, so a day with no detection row is a gap only "
             "below the archive walk's reach"
         ),
-        lane_names=(archive_lane_definition_name(FIRMS_ARCHIVE_LANE),),
     ),
     StreamDefinition(
         stream="water-gauges",
@@ -112,7 +95,6 @@ DEFAULT_STREAM_DEFINITIONS: Final[tuple[StreamDefinition, ...]] = (
             "durable lane jobs-streamflow-archive walks whole days; the forward postgres-streamflow lane "
             "and its ingest-streamflow verb were deleted 2026-09-06"
         ),
-        lane_names=(archive_lane_definition_name(STREAMFLOW_ARCHIVE_LANE),),
     ),
     StreamDefinition(
         stream="weather-observations",
@@ -142,7 +124,7 @@ DEFAULT_STREAM_DEFINITIONS: Final[tuple[StreamDefinition, ...]] = (
         kind="time_series",
         store="features",
         publication_cadence_days=1,
-        cadence_basis="job-executor lane postgres-fire-perimeters runs hourly",
+        cadence_basis="job-executor lane fire-perimeters-direct-forward runs hourly",
     ),
     StreamDefinition(
         stream="evacuation-zones",

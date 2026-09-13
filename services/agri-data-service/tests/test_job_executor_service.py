@@ -17,7 +17,6 @@ from agri_data_service.execution.job_executor_service import (
     scheduled_bucket,
 )
 
-
 EXPECTED_SCHEDULES = {
     "fire-detections-direct-forward": "15 * * * *",
     "water-gauges-direct-forward": "15 * * * *",
@@ -76,7 +75,7 @@ def test_scheduled_bucket_uses_the_declared_phase_offset() -> None:
 
 def test_scheduled_bucket_requires_an_aware_clock() -> None:
     with pytest.raises(ExecutorConfigurationError, match="timezone"):
-        scheduled_bucket(LANE_SPECS["sensors-direct-forward"], datetime(2026, 9, 12, 12, 0))
+        scheduled_bucket(LANE_SPECS["sensors-direct-forward"], datetime.fromisoformat("2026-09-12T12:00:00"))
 
 
 def test_next_bucket_coalesces_incremental_downtime_to_current_bucket() -> None:

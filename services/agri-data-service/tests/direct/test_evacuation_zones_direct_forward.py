@@ -16,6 +16,7 @@ import pytest
 from agri_data_service.foundation.parquet.absence import GovernedAbsence
 from agri_data_service.foundation.parquet.completion import PartitionCompletion
 from agri_data_service.foundation.parquet.paths import absence_marker_path
+from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.direct.evacuation_zones.forward import (
     EVACUATION_ZONES_MAX_DAYS,
     EvacuationZonesForwardConfig,
@@ -39,7 +40,6 @@ from agri_data_service.pipeline.direct.evacuation_zones.rows import (
 )
 from agri_data_service.pipeline.direct.evacuation_zones.source import EvacuationZonesSource
 from agri_data_service.pipeline.direct.evacuation_zones.watermark import EvacuationZonesWatermarkError
-from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 from tests.parquet.test_objectstore_writer import RecordingBackend
 

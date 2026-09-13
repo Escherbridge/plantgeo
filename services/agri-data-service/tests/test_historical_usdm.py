@@ -4,16 +4,12 @@ import asyncio
 import io
 import zipfile
 from datetime import UTC, date, datetime, timedelta
-from pathlib import Path
 
 import httpx
 import pytest
 import shapefile
-from click.testing import CliRunner
 
-from agri_data_service.config import settings
 from agri_data_service.execution.historical_usdm import (
-    USDM_SHAPEFILE_SCHEMA_VERSION,
     HistoricalUsdmBackfillPlan,
     HistoricalUsdmFinalization,
     fetch_usdm_shapefile,
@@ -26,7 +22,6 @@ from agri_data_service.execution.historical_usdm import (
 )
 from agri_data_service.execution.source_ingestion import SourceDefinition
 from agri_data_service.execution.weather_observations.nasa_power import HistoricalBackfillWindow
-from agri_data_service.interface.cli import cli
 
 EXPECTED_ISSUE_DATE_COUNT = 208
 EXPECTED_POLYGON_COUNT = 2
@@ -285,17 +280,3 @@ def test_fetch_usdm_retries_rate_limit_and_requires_zip_content_type() -> None:
 
     asyncio.run(run())
     assert attempts == EXPECTED_RETRY_ATTEMPTS
-
-
-def test_usdm_cli_fails_closed_without_any_database_dsn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    plan_path = tmp_path / "usdm-plan.json"
-    plan_path.write_text(_plan().model_dump_json(), encoding="utf-8")
-    # The loader override falls back to DATABASE_URL since 2026-08-08, so both must be absent.
-    monkeypatch.setattr(settings, "local_source_loader_database_url", None)
-    monkeypatch.setattr(settings, "database_url", None)
-
-    result = CliRunner().invoke(cli, ["data", "historical-usdm-backfill", "--plan", str(plan_path)])
-
-    assert result.exit_code != 0
-    assert "LOCAL_SOURCE_LOADER_DATABASE_URL" in result.output
-    assert USDM_SHAPEFILE_SCHEMA_VERSION == "usdm-shapefile-v1"

@@ -20,6 +20,7 @@ import pytest
 import agri_data_service.pipeline.direct.evacuation_zones as package
 from agri_data_service.foundation.parquet.absence import GovernedAbsence
 from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
+from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.direct.evacuation_zones.adapter import (
     _ABSENCE_LADDER_TIERS,
     DirectEvacuationZonesAdapter,
@@ -32,7 +33,6 @@ from agri_data_service.pipeline.direct.evacuation_zones.products import (
 )
 from agri_data_service.pipeline.direct.evacuation_zones.rows import evacuation_zones_table
 from agri_data_service.pipeline.direct.evacuation_zones.source import EvacuationZonesSource
-from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 from tests.parquet.test_objectstore_writer import RecordingBackend
 

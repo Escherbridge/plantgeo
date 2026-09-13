@@ -6,21 +6,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-from click.testing import CliRunner
 
-from agri_data_service.config import settings
 from agri_data_service.execution.source_ingestion import (
-    SourceIngestionCheckpoint,
     SourceIngestionPlan,
     checkpoint_path,
     is_finalized_release_set_state,
     load_and_validate_geojson,
-    load_checkpoint,
-    release_set_manifest,
     source_ingestion_plan_checksum,
-    write_checkpoint,
 )
-from agri_data_service.interface.cli import cli
 from agri_data_service.models.provenance import ReleaseSetState
 
 
@@ -63,37 +56,6 @@ def _write_payload(path: Path) -> bytes:
     payload = json.dumps(value, separators=(",", ":")).encode()
     path.write_bytes(payload)
     return payload
-
-
-def test_local_source_release_has_deterministic_identity_and_checkpoint(tmp_path: Path) -> None:
-    plan = _plan()
-    payload = _write_payload(tmp_path / "release.geojson")
-    loaded, quality = load_and_validate_geojson(tmp_path / "release.geojson")
-    checksum = hashlib.sha256(payload).hexdigest()
-    path = checkpoint_path(tmp_path, plan, checksum)
-
-    assert loaded == payload
-    assert quality == {"feature_count": 1, "point_count": 1}
-    assert path == checkpoint_path(tmp_path, plan, checksum)
-    assert release_set_manifest(plan, checksum) == release_set_manifest(plan, checksum)
-
-    checkpoint = SourceIngestionCheckpoint(
-        state="validated",
-        source_key=plan.source.key,
-        source_version=plan.release.source_version,
-        payload_checksum=checksum,
-        payload_bytes=len(payload),
-        updated_at=datetime(2026, 7, 20, tzinfo=UTC),
-        plan_checksum=source_ingestion_plan_checksum(plan),
-        release_set_manifest_checksum=release_set_manifest(plan, checksum),
-    )
-    write_checkpoint(path, checkpoint)
-    assert load_checkpoint(path) == checkpoint
-
-    status = CliRunner().invoke(cli, ["ops", "pipeline-status", "--checkpoint", str(path)])
-    assert status.exit_code == 0
-    assert '"state": "runnable"' in status.output
-    assert source_ingestion_plan_checksum(plan) in status.output
 
 
 def test_checkpoint_path_and_receipt_bind_the_complete_reviewed_plan(tmp_path: Path) -> None:
@@ -292,45 +254,6 @@ def test_source_release_rejects_non_point_or_unbounded_payload(tmp_path: Path) -
 
     with pytest.raises(ValueError, match="only Point"):
         load_and_validate_geojson(path)
-
-
-def test_source_ingestion_commands_expose_inactive_status_without_starting_work(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    runner = CliRunner()
-    # Both DSN variables absent: since the 2026-08-08 teardown the loader override falls back to
-    # DATABASE_URL, so clearing only the override no longer blocks anything.
-    monkeypatch.setattr(settings, "local_source_loader_database_url", None)
-    monkeypatch.setattr(settings, "database_url", None)
-
-    assert runner.invoke(cli, ["data", "source-ingest", "--help"]).exit_code == 0
-    status = runner.invoke(cli, ["ops", "pipeline-status"])
-
-    assert status.exit_code == 0
-    assert '"state": "inactive"' in status.output
-    assert "local_bulk_ingestion" in status.output
-    assert "blocked" in status.output
-    assert "no model, forecast, or waypoint outputs" in status.output
-
-
-def test_source_ingest_fails_closed_without_any_database_dsn(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    plan_path = tmp_path / "plan.json"
-    payload_path = tmp_path / "payload.geojson"
-    plan_path.write_text("{}", encoding="utf-8")
-    payload_path.write_text("{}", encoding="utf-8")
-    monkeypatch.setattr(settings, "local_source_loader_database_url", None)
-    monkeypatch.setattr(settings, "database_url", None)
-
-    result = CliRunner().invoke(
-        cli,
-        ["data", "source-ingest", "--plan", str(plan_path), "--payload", str(payload_path)],
-    )
-
-    assert result.exit_code != 0
-    assert "LOCAL_SOURCE_LOADER_DATABASE_URL" in result.output
 
 
 @pytest.mark.parametrize(

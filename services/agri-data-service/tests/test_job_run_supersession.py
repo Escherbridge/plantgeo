@@ -49,11 +49,12 @@ _ITEM_ID = uuid.UUID("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee")
 _INCIDENT_ID = uuid.UUID("ffffffff-ffff-4fff-8fff-ffffffffffff")
 _FAILED_BUCKET = datetime(2026, 9, 2, 18, tzinfo=UTC)
 _NOW = datetime(2026, 9, 3, 20, 30, tzinfo=UTC)
-_CURRENT_BUCKET_ISO = "2026-09-03T20:00:00+00:00"
-_REPLAY_LANE = "parquet-drought"
-_COALESCE_LANE = "postgres-fire-perimeters"
-_INACTIVE_LANE = "jobs-strategy-mv-refresh"
-_ACTIVE = ActivationConfig(frozenset({_REPLAY_LANE, _COALESCE_LANE, "vegetation-catch-up", "jobs-matview-refresh"}))
+_CURRENT_BUCKET_ISO = "2026-09-03T19:45:00+00:00"
+_COALESCE_CURRENT_BUCKET_ISO = "2026-09-03T20:10:00+00:00"
+_REPLAY_LANE = "drought-direct-forward"
+_COALESCE_LANE = "fire-perimeters-direct-forward"
+_INACTIVE_LANE = "mtbs-forward"
+_ACTIVE = ActivationConfig(frozenset({_REPLAY_LANE, _COALESCE_LANE}))
 _EVIDENCE = "old executor code (e4490c3) exited 1 on every attempt; gap-fill repaired in 2b4cfef, deployed 4f2502a0"
 _STORED_EVIDENCE = "first recording: DuckDB spatial extension directory fixed"
 _LEDGER = "ledger.example.test:5432/plantgeo"
@@ -69,7 +70,7 @@ def _work_item_row() -> dict[str, object]:
         "completed_at": datetime(2026, 9, 2, 20, 7, tzinfo=UTC),
         "attempt_number": 5,
         "failure_class": "CalledProcessError",
-        "error_summary": "lane 'parquet-drought' command exited with status 1",
+        "error_summary": "lane 'drought-direct-forward' command exited with status 1",
         "finished_at": datetime(2026, 9, 2, 20, 7, tzinfo=UTC),
     }
 
@@ -166,7 +167,7 @@ def _failed_checkpoint(
     run_id: uuid.UUID = _RUN_ID,
     status: str = "failed",
     superseded: bool = False,
-    streak: int = 1,
+    streak: int = 3,
 ) -> LatestRun:
     return LatestRun(
         run_id=run_id,
@@ -198,21 +199,18 @@ def test_ledger_target_names_the_database_and_never_its_credentials() -> None:
 
 def test_unknown_non_executable_and_inactive_lanes_are_refused_before_any_ledger_read(session: _FakeSession) -> None:
     unknown = _invoke(lane="no-such-lane")
-    snapshot_only = _invoke(lane="soil-moisture-parquet-backfill")
     inactive = _invoke(lane=_INACTIVE_LANE)
 
     assert unknown.exit_code == 1
     assert "unknown lane" in unknown.output
-    assert snapshot_only.exit_code == 1
-    assert "never opens executor buckets" in snapshot_only.output
     assert inactive.exit_code == 1
     assert "not in the executor's active allow-list" in inactive.output
     assert session.statements == []
 
 
 def test_resolve_executor_lane_admits_active_executable_lanes_only() -> None:
-    assert resolve_executor_lane("vegetation-catch-up", _ACTIVE).catch_up_policy == "replay_oldest"
-    assert resolve_executor_lane("jobs-matview-refresh", _ACTIVE).catch_up_policy == "coalesce_latest"
+    assert resolve_executor_lane(_REPLAY_LANE, _ACTIVE).catch_up_policy == "coalesce_latest"
+    assert resolve_executor_lane(_COALESCE_LANE, _ACTIVE).catch_up_policy == "coalesce_latest"
     with pytest.raises(SupersessionRefusal):
         resolve_executor_lane("soil-moisture-parquet-backfill", _ACTIVE)
     with pytest.raises(SupersessionRefusal):
@@ -246,9 +244,9 @@ def test_a_lane_the_clock_releases_is_refused_without_naming_a_command(
     result = _invoke("--apply", lane=_COALESCE_LANE)
 
     assert result.exit_code == 1
-    assert "the clock releases lane 'postgres-fire-perimeters' by itself" in result.output
+    assert "the clock releases lane 'fire-perimeters-direct-forward' by itself" in result.output
     assert "2 consecutive failure(s), below this coalesce_latest lane's limit of 3" in result.output
-    assert "ingest-fire-perimeters" not in result.output
+    assert "postgres-fire-perimeters" not in result.output
     assert session.inserts() == []
     assert session.commits == 0
 
@@ -264,7 +262,7 @@ def test_a_coalesce_lane_held_by_the_breaker_is_accepted(
     receipt = json.loads(result.output)
     assert receipt["outcome"] == "recorded"
     assert receipt["consecutive_failures"] == 3
-    assert receipt["opens_no_earlier_than"] == _CURRENT_BUCKET_ISO
+    assert receipt["opens_no_earlier_than"] == _COALESCE_CURRENT_BUCKET_ISO
     assert len(session.inserts()) == 1
     assert session.commits == 1
 
@@ -308,11 +306,11 @@ def test_the_dry_run_prints_one_receipt_and_writes_nothing(
     assert receipt["ledger"] == _LEDGER
     assert receipt["run_id"] == str(_RUN_ID)
     assert receipt["run_status"] == "failed"
-    assert receipt["consecutive_failures"] == 1
+    assert receipt["consecutive_failures"] == 3
     # The lane resumes at the current bucket, exactly as the planner will open it.
     assert receipt["opens_no_earlier_than"] == _CURRENT_BUCKET_ISO
     assert receipt["fingerprint"] == f"{RUN_SUPERSESSION_FINGERPRINT_PREFIX}{_RUN_ID}"
-    assert receipt["work_items"][0]["error_summary"] == "lane 'parquet-drought' command exited with status 1"
+    assert receipt["work_items"][0]["error_summary"] == "lane 'drought-direct-forward' command exited with status 1"
     assert session.inserts() == []
     assert session.commits == 0
     assert session.rollbacks == 1

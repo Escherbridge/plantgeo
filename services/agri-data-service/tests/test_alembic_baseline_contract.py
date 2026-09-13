@@ -12,16 +12,41 @@ _BASELINE_SQL = _SERVICE_ROOT / "db" / "agri_baseline.sql"
 _REVISION = _SERVICE_ROOT / "alembic" / "versions" / "20260912_0000_greenfield.py"
 
 EXPECTED_TABLES = {
-    "climate_profiles", "companion_relationships", "data_source", "expert_label",
-    "expert_label_release", "expert_label_source", "job_attempt", "job_checkpoint",
-    "job_definition", "job_dependency", "job_event", "job_event_default", "job_incident",
-    "job_outbox", "job_output", "job_run", "job_work_item", "locations", "soil_profiles",
-    "spatial_cell", "species", "strategies", "topography_profiles", "water_profiles",
+    "climate_profiles",
+    "companion_relationships",
+    "data_source",
+    "expert_label",
+    "expert_label_release",
+    "expert_label_source",
+    "job_attempt",
+    "job_checkpoint",
+    "job_definition",
+    "job_dependency",
+    "job_event",
+    "job_event_default",
+    "job_incident",
+    "job_outbox",
+    "job_output",
+    "job_run",
+    "job_work_item",
+    "locations",
+    "soil_profiles",
+    "spatial_cell",
+    "species",
+    "strategies",
+    "topography_profiles",
+    "water_profiles",
 }
 
 RETIRED_TABLES = {
-    "artifact", "drought_polygon_snapshot", "forecast_model", "forecast_run",
-    "matview_refresh_state", "signal_observation", "source_release", "vegetation_publication_day",
+    "artifact",
+    "drought_polygon_snapshot",
+    "forecast_model",
+    "forecast_run",
+    "matview_refresh_state",
+    "signal_observation",
+    "source_release",
+    "vegetation_publication_day",
 }
 
 

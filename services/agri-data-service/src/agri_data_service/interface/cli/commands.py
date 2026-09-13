@@ -44,10 +44,14 @@ def _strategy_seed_statement(data: dict[str, Any]) -> Any:
     immutable = {"slug", "review_state", "reviewed_at", "reviewed_by"}
     governed = {key: value for key, value in draft.items() if key not in immutable}
     changed = or_(*(getattr(Strategy, key).is_distinct_from(value) for key, value in governed.items()))
-    return insert(Strategy).values(**draft).on_conflict_do_update(
-        index_elements=["slug"],
-        set_={key: value for key, value in draft.items() if key != "slug"},
-        where=changed,
+    return (
+        insert(Strategy)
+        .values(**draft)
+        .on_conflict_do_update(
+            index_elements=["slug"],
+            set_={key: value for key, value in draft.items() if key != "slug"},
+            where=changed,
+        )
     )
 
 

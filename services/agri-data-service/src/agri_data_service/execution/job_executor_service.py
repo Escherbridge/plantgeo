@@ -252,6 +252,7 @@ class LaneExecutionSpec:
             "source_watermark_parity": "not_evaluated",
         }
 
+
 def _registration(slug: str) -> tuple[int, int, str | None]:
     lane = LANE_REGISTRY[slug]
     ceiling = None if lane.writer_ceiling is None else lane.writer_ceiling.isoformat()
@@ -536,7 +537,7 @@ _MIGRATION_INPUT_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
             "*_DIRECT_WRITER_START_DAY and no backfill.py, so no writer_floor was guessed without a boundary "
             "day to cite. ACTIVE since 2026-09-07; the adapter became a source-direct refusal once "
             "postgres-sensors was deleted, because a FROZEN geo.features is not a deeper archive -- it "
-             "is a fixed set of past days, so no database export is registered for this lane."
+            "is a fixed set of past days, so no database export is registered for this lane."
         ),
     ),
     _spec(
@@ -590,8 +591,8 @@ _MIGRATION_INPUT_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
             "publishes only when that differs from the newest version already published, so a tick that "
             "finds nothing changed writes nothing and a skipped tick costs nothing. No writer_ceiling is "
             "possible here either -- a version-stamped lane has no calendar window to divide -- so "
-             "The direct writer is the only scheduled owner of this source-direct stream. The watermark "
-             "replacement this description used to say was still owed "
+            "The direct writer is the only scheduled owner of this source-direct stream. The watermark "
+            "replacement this description used to say was still owed "
             "LANDED 2026-09-06: _evacuation_zones_watermark no longer reads geo.features or geo.geometry, "
             "it runs the SAME content digest the writer publishes on, so census and writer cannot "
             "disagree and neither survives a last_edited_date re-stamp on an unchanged area. Hourly at "

@@ -80,9 +80,7 @@ def register_seasonal_commands(cli: Group) -> None:
         database_url: str, destination: Path, export_key: str, cell_keys: tuple[str, ...]
     ) -> None:
         """Freeze the governed series into a checksummed, database-free evaluation export."""
-        raise click.ClickException(
-            "seasonal-freeze-export is retired: forecast evidence is source-direct Parquet only"
-        )
+        raise click.ClickException("seasonal-freeze-export is retired: forecast evidence is source-direct Parquet only")
         selected = cell_keys or BOISE_AREA_CELL_KEYS
         try:
             scope = ExportScope(

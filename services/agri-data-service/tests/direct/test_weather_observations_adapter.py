@@ -16,12 +16,12 @@ import pyarrow as pa  # type: ignore[import-untyped]
 import pytest
 
 from agri_data_service.foundation.parquet.absence import GovernedAbsence
+from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.direct.weather_observations.adapter import (
     DirectWeatherObservationsError,
     DirectWeatherObservationsForwardAdapter,
     merge_weather_observations_day,
 )
-from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 from agri_data_service.warehouse.schemas.weather_observations import (
     WEATHER_OBSERVATIONS_SCHEMA,
