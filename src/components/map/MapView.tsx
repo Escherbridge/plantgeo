@@ -27,7 +27,12 @@ import { useRegionalIntelligence } from "@/hooks/useRegionalIntelligence";
 import { AgentInteraction } from "./AgentInteraction";
 import { trpc } from "@/lib/trpc/client";
 import { invalidateInterventionDraftsOverlay } from "@/lib/map/use-intervention-drafts";
-import { LandContextController, LandContextLayer } from "@/components/map/land-context";
+import {
+  LandContextController,
+  LandContextLayer,
+  LandContextIdentityCard,
+  LandContextAccessibleFeatureList,
+} from "@/components/map/land-context";
 import { LandContextPanelHost } from "@/components/panels/land-context";
 
 const RegionalIntelligencePanel = dynamic(
@@ -468,11 +473,27 @@ export default function MapView() {
                 bounded tRPC reader into the store; Layer renders native MapLibre
                 source/layers per group and wires hover/click; PanelHost renders the
                 persistent detail panel from the same store selection. Toggle controls
-                (LandContextToggles) are not yet mounted into LayerPanel's own toggle
-                list -- still an open integration item. */}
+                for the four groups live in LayerPanel's own LandContextDockSection --
+                LandContextToggles is an unstyled placeholder superseded by it and is
+                deliberately not mounted here (see land-context/index.ts). */}
             <LandContextController />
             <LandContextLayer map={mapInstance} />
+            {/* Dismissible hover/keyboard-focus identity card -- spec "concise feature
+                identity ... on hover or keyboard focus". Renders nothing while no
+                feature is hovered/focused (LandContextIdentityCard returns null),
+                so it costs nothing when the layer is off. */}
+            <LandContextIdentityCard />
             <LandContextPanelHost />
+            {/* Keyboard/screen-reader-equivalent textual feature list -- spec
+                "Provide keyboard selection and equivalent textual feature/contact
+                lists"; every action reachable via map hover/click must also be
+                reachable via keyboard focus + Enter/Space. Always mounted (renders
+                null when `results` is empty) and placed in normal document flow
+                after the map controls so it is reachable by Tab without a pointer,
+                independent of whether the pinned detail panel is open. */}
+            <div className="pointer-events-auto absolute bottom-20 left-4 z-20 max-h-[40vh] overflow-y-auto">
+              <LandContextAccessibleFeatureList />
+            </div>
             {/* The one thing about time that never leaves the screen: what the drawn layers are
                 showing, and whether that is one day or several. It replaced `TimeDatePill` on
                 2026-08-09 -- the pill asserted the map's ONE date, and there is no such date now
