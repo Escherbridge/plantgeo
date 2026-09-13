@@ -24,24 +24,40 @@ export function OfficeCard({ card }: OfficeCardProps) {
         </div>
       </div>
 
-      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-zinc-300">
+      <div className="mt-2 flex flex-wrap gap-x-2 gap-y-1 text-xs text-zinc-300">
         {office.publicPhone ? (
-          <a href={`tel:${office.publicPhone}`} className="underline hover:text-zinc-100">
+          <a
+            href={`tel:${office.publicPhone}`}
+            className="inline-block rounded px-2 py-1.5 underline hover:text-zinc-100"
+          >
             {office.publicPhone}
           </a>
         ) : null}
         {office.publicEmail ? (
-          <a href={`mailto:${office.publicEmail}`} className="underline hover:text-zinc-100">
+          <a
+            href={`mailto:${office.publicEmail}`}
+            className="inline-block rounded px-2 py-1.5 underline hover:text-zinc-100"
+          >
             {office.publicEmail}
           </a>
         ) : null}
         {office.formUrl ? (
-          <a href={office.formUrl} target="_blank" rel="noreferrer" className="underline hover:text-zinc-100">
+          <a
+            href={office.formUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-block rounded px-2 py-1.5 underline hover:text-zinc-100"
+          >
             Contact form
           </a>
         ) : null}
         {office.officialUrl ? (
-          <a href={office.officialUrl} target="_blank" rel="noreferrer" className="underline hover:text-zinc-100">
+          <a
+            href={office.officialUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-block rounded px-2 py-1.5 underline hover:text-zinc-100"
+          >
             Official page
           </a>
         ) : null}

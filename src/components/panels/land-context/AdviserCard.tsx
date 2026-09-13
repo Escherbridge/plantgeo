@@ -26,19 +26,30 @@ export function AdviserCard({ card }: AdviserCardProps) {
         {card.programLimits ? <div className="text-zinc-500">Program limits: {card.programLimits}</div> : null}
       </div>
 
-      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-zinc-300">
+      <div className="mt-2 flex flex-wrap gap-x-2 gap-y-1 text-xs text-zinc-300">
         {adviser.publicPhone ? (
-          <a href={`tel:${adviser.publicPhone}`} className="underline hover:text-zinc-100">
+          <a
+            href={`tel:${adviser.publicPhone}`}
+            className="inline-block rounded px-2 py-1.5 underline hover:text-zinc-100"
+          >
             {adviser.publicPhone}
           </a>
         ) : null}
         {adviser.publicEmail ? (
-          <a href={`mailto:${adviser.publicEmail}`} className="underline hover:text-zinc-100">
+          <a
+            href={`mailto:${adviser.publicEmail}`}
+            className="inline-block rounded px-2 py-1.5 underline hover:text-zinc-100"
+          >
             {adviser.publicEmail}
           </a>
         ) : null}
         {adviser.officialUrl ? (
-          <a href={adviser.officialUrl} target="_blank" rel="noreferrer" className="underline hover:text-zinc-100">
+          <a
+            href={adviser.officialUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-block rounded px-2 py-1.5 underline hover:text-zinc-100"
+          >
             Official page
           </a>
         ) : null}
