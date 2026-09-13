@@ -18,24 +18,14 @@ This order exists because the state-lifecycle decision (OQ-1) determines whether
 small additive change (OQ-1b) or a materially larger one (OQ-1a, keep-alive embedded map). Starting
 component work before that answer risks a rewrite.
 
-## Phase 1: Decision checkpoint (no code)
+## Phase 1: Decision checkpoint (no code) — RESOLVED 2026-09-13
 
-Goal: get explicit, recorded answers to OQ-1/OQ-2/OQ-3 from the product owner before any
-implementation, and update this plan's later phases if the answers change their shape.
+- OQ-1 → (a) true keep-alive. Phase 2 and Phase 4 below carry the resulting sub-tasks.
+- OQ-2 → (b) new dedicated surface (not a dock extension).
+- OQ-3 → dedicated layer-visibility controls inside the workspace, reading/writing the existing
+  `map-store`/`layer-registry` state (not a second store). New task added to Phase 3.
 
-Tasks:
-- [ ] Task: Present OQ-1 (true keep-alive vs. restore-from-store), OQ-2 (extend the dock vs. new
-      dedicated surface — spec recommends (b)), and OQ-3 (LayerPanel-visible-is-sufficient vs.
-      dedicated layer affordances — spec recommends "sufficient") to the user; record the answers
-      in this track's `spec.md` Open Questions section (replace "must be resolved" language with
-      the recorded decision and date) rather than in a separate document.
-- [ ] Task: If OQ-1 resolves to (a) true keep-alive, add a sub-task list to Phase 2 below for the
-      embedded-MapLibre-instance lifecycle change (see spec "Technical Considerations" — moving the
-      embedded map's mount point up into the persistent shell). If it resolves to (b), skip that
-      sub-task list entirely — Phase 2's store work is sufficient on its own.
-- [ ] Verification: Confirm the recorded decisions are unambiguous enough that a reviewer reading
-      only `spec.md` (not this conversation) could implement Phase 2 without asking a follow-up
-      question. [checkpoint marker]
+[checkpoint marker: decisions recorded in spec.md, plan updated below]
 
 ## Phase 2: Shared state layer
 
@@ -57,7 +47,7 @@ Tasks:
       `useState` calls with store selectors/actions; keep the component's exported props/behavior
       contract (`lat`, `lon`, `onClose`, `onSuccess`) unchanged so `MapView`'s existing call site
       still compiles unmodified at this point in the sequence.
-- [ ] Task (conditional on OQ-1(a)): Write a failing test asserting
+- [ ] Task (OQ-1(a), required): Write a failing test asserting
       `regional-intelligence-store.ts` exposes a `hidePanel`/`showPanel` (or equivalently named)
       transition pair that leaves `messages`/`conversationId`/`analysisEvidence`/`isLoading`
       untouched, distinct from the existing `closePanel`, which must continue to clear state exactly
@@ -100,10 +90,17 @@ Tasks:
       (per FR-1's last acceptance criterion) — assert the prior session's store state is still
       present after the new click, whatever the chosen UX (warning, or simply not auto-clearing).
       Implement the guard.
+- [ ] Task (OQ-3, TDD): Write a failing test for a new compact layer-visibility toggle strip
+      rendered inside the workspace shell (either mode, or a persistent header — implementer's
+      choice, document it), that reads/writes the *same* `map-store` layer-toggle state
+      `LayerPanel`/`LayerRow` already own (no new store, no shadow state) — assert toggling a layer
+      from the workspace strip updates the same store field `LayerRow` reads, and vice versa.
+      Implement as a thin consumer of the existing store/registry, reusing `LayerRow`'s toggle
+      logic/icons where practical rather than re-deriving it.
 - [ ] Verification: Run `map-view-render-count.test.tsx` and the new shell/MapView tests together;
       manually click through both "Send for analysis" and "Propose intervention here" from a fresh
-      map click and confirm the shell opens in the right mode with the right coordinate.
-      [checkpoint marker]
+      map click and confirm the shell opens in the right mode with the right coordinate, and that
+      the new layer-toggle strip stays in sync with the main `LayerPanel`. [checkpoint marker]
 
 ## Phase 4: Port real pane content, keep-alive wiring, and full sweep
 

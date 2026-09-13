@@ -80,6 +80,19 @@ geometry validator, and `InterventionDrawControl`'s terra-draw wiring are reused
 
 ## Open Questions
 
+**Resolved 2026-09-13 by the product owner:**
+- **OQ-1 → (a) True keep-alive.** Both panes stay mounted; hidden via CSS rather than unmounted.
+  `regional-intelligence-store.ts` needs a hide/show pair distinct from `closePanel`; the embedded
+  MapLibre draw-map instance's mount effect must move up to the shell so it survives a mode switch.
+- **OQ-2 → (b) New dedicated surface.** Not folded into the `LayerPanel` dock. The panels AGENTS.md
+  exception note gets formalized to name this workspace explicitly.
+- **OQ-3 → dedicated layer-visibility controls inside the workspace**, diverging from this spec's
+  "LayerPanel-visible-is-sufficient" recommendation. These controls must read/write the *same*
+  `map-store`/`layer-registry` state `LayerPanel` already owns — a second UI surface over one state
+  owner, not a second store — so this does not reopen the "two controls over the same state" defect
+  the dock convention exists to prevent. Scope: a compact toggle strip for the currently-active
+  layers, not a full re-implementation of `LayerPanel`'s controls.
+
 These must be resolved by the user/product owner before implementation; the plan below stages work
 so that answering them late is possible but costly (see Phase 1). None of these have been decided
 by this spec.
