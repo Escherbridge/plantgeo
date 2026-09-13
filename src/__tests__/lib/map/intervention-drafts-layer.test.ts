@@ -98,7 +98,15 @@ describe("intervention-drafts overlay: distinct, category-differentiated styling
   it("keys color and dash pattern off category so land and air read apart", () => {
     const dasharray = interventionDraftsOutlineLayer.paint?.["line-dasharray"];
     expect(dasharray).toEqual(
-      expect.arrayContaining(["match", ["get", "category"], "air", [1, 1], "land", [3, 2], [3, 2]])
+      expect.arrayContaining([
+        "match",
+        ["get", "category"],
+        "air",
+        ["literal", [1, 1]],
+        "land",
+        ["literal", [3, 2]],
+        ["literal", [3, 2]],
+      ])
     );
 
     const fillColor = interventionDraftsFillLayer.paint?.["fill-color"];

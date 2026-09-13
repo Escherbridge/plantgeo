@@ -218,3 +218,4 @@ export const pmtilesSource = createPmtilesSource(PMTILES_ARCHIVE_URL);
 
 export const martinDynamicSources = createMartinDynamicSources(DYNAMIC_TILES_URL);
 export const parquetFeatureSources = createParquetFeatureSources();
+export const interventionDraftsSource = createInterventionDraftsSource();

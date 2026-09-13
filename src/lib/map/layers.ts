@@ -445,10 +445,10 @@ const INTERVENTION_DRAFT_CATEGORY_DASHARRAY: DataDrivenPropertyValueSpecificatio
   "match",
   ["get", "category"],
   "air",
-  [1, 1],
+  ["literal", [1, 1]],
   "land",
-  [3, 2],
-  [3, 2],
+  ["literal", [3, 2]],
+  ["literal", [3, 2]],
 ] as unknown as DataDrivenPropertyValueSpecification<[number, number]>;
 
 const INTERVENTION_DRAFT_CATEGORY_COLOR = matchClasses(
