@@ -11,7 +11,7 @@ from sanic.response import BaseHTTPResponse
 
 from agri_data_service.config import settings
 from agri_data_service.db.engine import dispose_combined_local_engine, dispose_service_engines
-from agri_data_service.interface.http import botanical_species_information_bp, parquet_bp
+from agri_data_service.interface.http import botanical_occurrences_bp, botanical_species_information_bp, parquet_bp
 from agri_data_service.routes import (
     agent_bp,
     agent_tools_bp,
@@ -103,12 +103,13 @@ def create_app(_args: object | None = None) -> AgriApp:
             parquet_bp,
             agent_tools_bp,
             botanical_species_information_bp,
+            botanical_occurrences_bp,
         ),
         "receiver_writer": (jobs_bp,),
         # Forecasts are withheld until a source-direct Parquet forecast lane is published.
         # Keeping the PostgreSQL-backed blueprint mounted would violate the environmental
         # cutover even when the Next.js bridge no longer calls it.
-        "published_reader": (parquet_bp, agent_tools_bp, botanical_species_information_bp),
+        "published_reader": (parquet_bp, agent_tools_bp, botanical_species_information_bp, botanical_occurrences_bp),
     }[settings.service_profile]
     api_v1 = Blueprint.group(*profile_blueprints, url_prefix="/api/v1")
     app.blueprint(api_v1)

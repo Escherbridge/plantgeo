@@ -24,6 +24,11 @@ from anthropic import beta_async_tool
 from pydantic import Field
 
 from agri_data_service.agent import parquet_reads, warehouse
+from agri_data_service.agent.botanical_occurrences import (
+    botanical_occurrence_spatial_neighbours,
+    botanical_occurrence_temporal_neighbours,
+    botanical_occurrences_in_region,
+)
 from agri_data_service.agent.surfaces import (
     AGENT_SURFACE_NAMES,
     FEATURE_SURFACE_NAMES,
@@ -2178,4 +2183,7 @@ WAREHOUSE_TOOLS: Final = (
     feature_value_near_point,
     surface_value_near_point,
     species_information,
+    botanical_occurrences_in_region,
+    botanical_occurrence_spatial_neighbours,
+    botanical_occurrence_temporal_neighbours,
 )

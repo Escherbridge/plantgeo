@@ -16,7 +16,9 @@ import pytest
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Sequence
+    from pathlib import Path
 
+from agri_data_service.agent import botanical_occurrences as agent_botanical_occurrences
 from agri_data_service.agent import graph as agent_graph
 from agri_data_service.agent import tools as agent_tools
 from agri_data_service.agent.report import (
@@ -677,8 +679,8 @@ async def test_the_fire_tool_prefilters_on_a_degree_box_before_the_exact_geodesi
     assert "ST_MakeEnvelope(?, ?, ?, ?)" in source.statement_for("agent_geometry_lane_rows")
 
 
-async def test_every_tool_statement_is_read_only() -> None:
-    """No agent-facing statement may mutate the warehouse, in EITHER dialect, and all ten are driven."""
+async def test_every_tool_statement_is_read_only(tmp_path: Path) -> None:
+    """No agent-facing statement may mutate the warehouse, in EITHER dialect, and all published tools are driven."""
     selected_day = "2026-03-14"
     session = _Session([])
     source = _warehouse(published=[_SELECTED_DATE])
@@ -708,9 +710,34 @@ async def test_every_tool_statement_is_read_only() -> None:
         await agent_tools.query_surface_value_near_point(
             surface_name="soil-field-moisture", day=selected_day, longitude=-116.2, latitude=43.6
         )
+        # Botanical occurrence tools read Parquet, not the SQL warehouse; pinning an empty local
+        # root keeps them off the real bucket while still exercising each one's read path.
+        agent_botanical_occurrences.use_generation_root(str(tmp_path))
+        try:
+            await agent_tools.botanical_occurrences_in_region(
+                release_set_id="test0000",
+                minimum_longitude=-116.3,
+                minimum_latitude=43.5,
+                maximum_longitude=-116.1,
+                maximum_latitude=43.7,
+            )
+            await agent_tools.botanical_occurrence_spatial_neighbours(
+                release_set_id="test0000", longitude=-116.2, latitude=43.6
+            )
+            await agent_tools.botanical_occurrence_temporal_neighbours(
+                release_set_id="test0000",
+                minimum_longitude=-116.3,
+                minimum_latitude=43.5,
+                maximum_longitude=-116.1,
+                maximum_latitude=43.7,
+                window_start=selected_day,
+                window_end=selected_day,
+            )
+        finally:
+            agent_botanical_occurrences.use_generation_root(None)
     # Every published tool is driven above, so a tool added to WAREHOUSE_TOOLS without a call here
     # breaks this assertion rather than slipping through unscanned.
-    published_tool_count = 12
+    published_tool_count = 15
     assert len(agent_tools.WAREHOUSE_TOOLS) == published_tool_count
     assert session.statements == [], "environmental tools must not query retired PostgreSQL relations"
     for statement in [sql for sql, _ in source.executed] + session.statements:
@@ -731,6 +758,9 @@ def test_tool_schemas_publish_bounded_arguments() -> None:
     catalogue -- so none of them can be handed an unbounded question.
     """
     surface_only = {"observation_coverage_on_day", "observation_temporal_neighbors"}
+    # These two ask about a bounded region, not a point: a scientific name or a whole
+    # neighbourhood of specimens has no single coordinate to key on.
+    bbox_only = {"botanical_occurrences_in_region", "botanical_occurrence_temporal_neighbours"}
     for tool in agent_tools.WAREHOUSE_TOOLS:
         definition = tool.to_dict()
         name = definition["name"]
@@ -739,6 +769,10 @@ def test_tool_schemas_publish_bounded_arguments() -> None:
             assert {"species_id", "companion_limit"} == set(properties), name
         elif name in surface_only:
             assert {"surface_name", "day"} <= set(properties), name
+        elif name in bbox_only:
+            assert {"minimum_longitude", "minimum_latitude", "maximum_longitude", "maximum_latitude"} <= set(
+                properties
+            ), name
         else:
             assert {"longitude", "latitude"} <= set(properties), name
         assert definition["description"]

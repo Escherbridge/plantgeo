@@ -97,6 +97,7 @@ export interface BotanicalAggregateCell {
 interface BotanicalDetailResponse {
   state: "detail";
   release_set_id: string;
+  published_at: string | null;
   taxonomy_recipe_version: string;
   qc_policy_version: string;
   support_id: null;
@@ -109,6 +110,7 @@ interface BotanicalDetailResponse {
 interface BotanicalAggregateResponse {
   state: "aggregate";
   release_set_id: string;
+  published_at: string | null;
   support_id: string;
   cells: BotanicalAggregateCell[];
 }
