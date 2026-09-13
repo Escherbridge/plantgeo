@@ -714,6 +714,7 @@ async def test_every_tool_statement_is_read_only(tmp_path: Path) -> None:
         # root keeps them off the real bucket while still exercising each one's read path.
         agent_botanical_occurrences.use_generation_root(str(tmp_path))
         try:
+            await agent_tools.botanical_occurrence_current_release()
             await agent_tools.botanical_occurrences_in_region(
                 release_set_id="test0000",
                 minimum_longitude=-116.3,
@@ -737,7 +738,7 @@ async def test_every_tool_statement_is_read_only(tmp_path: Path) -> None:
             agent_botanical_occurrences.use_generation_root(None)
     # Every published tool is driven above, so a tool added to WAREHOUSE_TOOLS without a call here
     # breaks this assertion rather than slipping through unscanned.
-    published_tool_count = 15
+    published_tool_count = 16
     assert len(agent_tools.WAREHOUSE_TOOLS) == published_tool_count
     assert session.statements == [], "environmental tools must not query retired PostgreSQL relations"
     for statement in [sql for sql, _ in source.executed] + session.statements:
@@ -755,12 +756,16 @@ def test_tool_schemas_publish_bounded_arguments() -> None:
     observation_temporal_neighbors ask about a whole map surface on a day, so a coordinate would be
     a parameter they had nothing to do with. Every tool is still keyed by SOMETHING the service
     validates -- a coordinate it range-checks, or a surface name it checks against the hand-spelled
-    catalogue -- so none of them can be handed an unbounded question.
+    catalogue -- so none of them can be handed an unbounded question. `botanical_occurrence_current_release`
+    is the one genuine exception: "what generation is current" has no spatial or surface scope to
+    bound at all, by construction -- see `read_current_botanical_release` in `planes/botanical_occurrences.py`.
     """
     surface_only = {"observation_coverage_on_day", "observation_temporal_neighbors"}
     # These two ask about a bounded region, not a point: a scientific name or a whole
     # neighbourhood of specimens has no single coordinate to key on.
     bbox_only = {"botanical_occurrences_in_region", "botanical_occurrence_temporal_neighbours"}
+    # Answers a global pointer question, not a spatial one -- no bbox, no coordinate, no surface.
+    unscoped = {"botanical_occurrence_current_release"}
     for tool in agent_tools.WAREHOUSE_TOOLS:
         definition = tool.to_dict()
         name = definition["name"]
@@ -773,6 +778,8 @@ def test_tool_schemas_publish_bounded_arguments() -> None:
             assert {"minimum_longitude", "minimum_latitude", "maximum_longitude", "maximum_latitude"} <= set(
                 properties
             ), name
+        elif name in unscoped:
+            assert properties == {}, name
         else:
             assert {"longitude", "latitude"} <= set(properties), name
         assert definition["description"]

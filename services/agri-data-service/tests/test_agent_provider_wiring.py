@@ -50,7 +50,7 @@ from tests.agent_fakes import FakeAgentWarehouse
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-WAREHOUSE_TOOL_COUNT = 15
+WAREHOUSE_TOOL_COUNT = 16
 SENTINEL_KEY = "sk-test-not-a-real-credential"
 COVERAGE_TOOL = "observation_coverage_on_day"
 COVERAGE_ARGUMENTS = {"surface_name": "vegetation", "day": "2026-03-14"}
@@ -82,6 +82,12 @@ def completion(message: dict[str, Any], *, model: str = "test/model-1") -> dict[
 # --- The published schemas ---------------------------------------------------------
 
 
+# Answers a global pointer question ("what generation is current") with genuinely nothing to
+# bound it by -- no coordinate, no surface, no region. See `botanical_occurrence_current_release`
+# and `read_current_botanical_release` in `planes/botanical_occurrences.py`.
+UNSCOPED_WAREHOUSE_TOOLS = {"botanical_occurrence_current_release"}
+
+
 def test_every_warehouse_tool_publishes_a_usable_mcp_descriptor() -> None:
     descriptors = list(tool_descriptors())
     assert len(descriptors) == WAREHOUSE_TOOL_COUNT
@@ -90,7 +96,8 @@ def test_every_warehouse_tool_publishes_a_usable_mcp_descriptor() -> None:
         assert descriptor["description"].strip(), f"{descriptor['name']} publishes an empty description"
         schema = descriptor["inputSchema"]
         assert schema["type"] == "object", f"{descriptor['name']} must take an object"
-        assert schema["properties"], f"{descriptor['name']} publishes no parameters"
+        if descriptor["name"] not in UNSCOPED_WAREHOUSE_TOOLS:
+            assert schema["properties"], f"{descriptor['name']} publishes no parameters"
         # A descriptor that cannot survive a JSON round trip cannot cross the stdio transport.
         assert json.loads(json.dumps(descriptor)) == descriptor
 

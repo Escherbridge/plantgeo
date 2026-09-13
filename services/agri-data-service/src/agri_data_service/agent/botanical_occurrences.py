@@ -28,6 +28,7 @@ from agri_data_service.planes.botanical_occurrences import (
     BotanicalOccurrenceRequestError,
     BotanicalOccurrenceServingError,
     read_botanical_occurrences,
+    read_current_botanical_release,
     refused,
     unavailable,
 )
@@ -101,6 +102,24 @@ def _read(request: BotanicalOccurrenceRequest) -> dict[str, Any]:
 def _exact_block(features: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     """The requested result's own state. `empty` is a real answer; it is never filled by a neighbour."""
     return {"state": "found" if features else "empty", "count": len(features)}
+
+
+@beta_async_tool
+async def botanical_occurrence_current_release() -> str:
+    """Resolve the `release_set_id` to pin for the other three occurrence tools.
+
+    The other tools require an EXACT, already-published `release_set_id` and refuse `current` by
+    name -- two identical requests must answer from the same generation, never silently drift onto
+    a newer one mid-conversation. But that pinning discipline only works if something can first tell
+    the agent what id exists to pin. This tool reads the mutable `current` pointer once and returns
+    the generation it currently names, plus when it was published; call it once per conversation (or
+    whenever a fresh pin is wanted), then pass its `release_set_id` into the other three tools.
+
+    Returns `state: current` with `release_set_id` and `published_at` when a generation is published,
+    or `state: unavailable` when none is -- never a fabricated id.
+    """
+    result = read_current_botanical_release(root=_generation_root.get())
+    return _payload({"tool": "botanical_occurrence_current_release", **result})
 
 
 @beta_async_tool
@@ -278,6 +297,7 @@ async def botanical_occurrence_temporal_neighbours(  # noqa: PLR0913 - one bbox 
 
 
 BOTANICAL_OCCURRENCE_TOOLS: Final = (
+    botanical_occurrence_current_release,
     botanical_occurrences_in_region,
     botanical_occurrence_spatial_neighbours,
     botanical_occurrence_temporal_neighbours,
@@ -288,6 +308,7 @@ __all__ = [
     "DEFAULT_NEIGHBOUR_RADIUS_METERS",
     "MAX_NEIGHBOUR_RADIUS_METERS",
     "REFUSED_CLAIMS",
+    "botanical_occurrence_current_release",
     "botanical_occurrence_spatial_neighbours",
     "botanical_occurrence_temporal_neighbours",
     "botanical_occurrences_in_region",

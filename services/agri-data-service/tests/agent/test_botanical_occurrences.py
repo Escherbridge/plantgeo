@@ -9,6 +9,7 @@ import pytest
 
 from agri_data_service.agent.botanical_occurrences import (
     _exact_block,
+    botanical_occurrence_current_release,
     botanical_occurrence_spatial_neighbours,
     botanical_occurrence_temporal_neighbours,
     botanical_occurrences_in_region,
@@ -107,3 +108,23 @@ async def test_an_unknown_release_set_is_unavailable_rather_than_empty() -> None
     payload = json.loads(await botanical_occurrences_in_region("0" * 64, -122.6, 47.4, -122.0, 47.9))
     assert payload["state"] in {"unavailable", "refused"}
     assert payload.get("exact") is None, "a failed read must not present itself as an empty answer"
+
+
+async def test_current_release_resolves_the_id_the_other_three_tools_require(release_set_id: str) -> None:
+    """The pin the other tools demand has to come from somewhere; this is that somewhere."""
+    payload = json.loads(await botanical_occurrence_current_release())
+    assert payload["state"] == "current"
+    assert payload["release_set_id"] == release_set_id
+    # The resolved id must actually be accepted by a pinned tool call, not just look plausible.
+    detail = json.loads(await botanical_occurrences_in_region(payload["release_set_id"], -122.6, 47.4, -122.0, 47.9))
+    assert detail["state"] == "detail"
+
+
+async def test_current_release_is_unavailable_rather_than_fabricated_with_no_publication(tmp_path: Path) -> None:
+    # An empty root, not None: root=None would fall through to this environment's real object
+    # store settings, which is exactly the ambiguity `test_an_unknown_release_set_is_unavailable...`
+    # avoids for the pinned tools by using a bogus id rather than relying on root=None meaning "empty".
+    use_generation_root(str(tmp_path / "nothing-published-here"))
+    payload = json.loads(await botanical_occurrence_current_release())
+    assert payload["state"] == "unavailable"
+    assert "release_set_id" not in payload

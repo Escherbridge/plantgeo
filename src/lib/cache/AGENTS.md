@@ -58,6 +58,48 @@ Never add anything user-scoped, authenticated, or mutation-shaped to the allowli
 `persister` option only ever applies to `defaultOptions.queries`, so mutations are structurally
 excluded already; the allowlist is the second layer of defense for queries.
 
+## Generation pinning (the botanical plane, added 2026-09-13)
+
+`environmental.getBotanicalOccurrences` joined the allowlist on 2026-09-13 and is the first entry
+on it whose **generation is not in its query key**. Every other allowlisted layer puts everything
+identifying its answer into the key — a day, a bbox, a measure, a signal. This one resolves
+`release_set_id` SERVER-side from the plane's own `/current` pointer
+(`getCurrentBotanicalReleaseSetId`, `botanical-occurrences-client.ts:459`), deliberately, so that
+concurrent readers pin one generation instead of each resolving a slightly different "current".
+
+The consequence here is that **two reads taken either side of a publication produce the same
+`queryHash` and different provenance.** The key cannot tell them apart, and these are governed
+records: attribution, rights and the provisional-collection status ride on the release. Worse, the
+layer is `release_series` → `manual`, so its TTL is `MANUAL_TTL_MS` (365 days) and background
+revalidation — the correction path every other layer leans on — is switched off. Without a pin, a
+generation superseded this morning would be served as current for a year.
+
+`resolveEntryGeneration` reads `releaseSetId` off the payload (guarded as a non-empty string, never
+coerced — `String(null)` is `"null"`, the exact trap "revalidation policy" below records for the
+revision signal that never shipped). Every answer that comes back from the server — which by
+construction went through `/current` — records that generation per layer in module state, and a
+later cache HIT is refused if it holds a different one.
+
+**The check is deliberately asymmetric, and the asymmetry is the safety argument.** An entry is
+refused only on POSITIVE evidence that a different generation is current. An entry naming no
+generation, or a layer no current generation has been seen for, is served. "Not known to be stale"
+must not render the same as "known stale" — inverted, this would empty the cache on the first read
+of every session, since nothing is pinned until an answer has landed. Module state rather than
+IndexedDB for the same reason: the check has to be synchronous on the hit path, and a pin that
+resets on reload fails in the safe direction.
+
+Refusal drops the entry into the same lazy path a manual refetch uses: one read cannot know which
+other viewports and filter combinations are also stale, and walking the store to find out would put
+a metadata pass on the critical path of every hit, so each is caught by the identical check on its
+own next read.
+
+**Its boundary, stated plainly:** the pin is learned from requests that reach the server, so a
+reader whose every viewport hits cache sends nothing and is never told a publication happened. The
+pin's job is narrower — once ANY read proves the generation moved, no other entry of that layer is
+served again — and it does that completely. The saturated case is covered by the control `manual`
+layers already have: `requestLayerRefresh` stamps the layer and turns every older entry into a
+miss. There is a test asserting this limitation by name, so it cannot be quietly assumed away.
+
 ## Per-layer cache policy
 
 Added 2026-09-07. Before it, one TTL rule, one revalidation rule and one eviction rule governed

@@ -117,12 +117,18 @@ def _resolve_taxon(
     scientific_name: str | None,
     *,
     collection_key: str,
+    native_key: str,
     authority: TaxonAuthority | None,
 ) -> tuple[str, str]:
     """Bind a name to a concept, or keep it honestly unbound. Never a fuzzy match, never a guess."""
     name = _blank_to_none(scientific_name)
     if name is None:
-        digest = hashlib.sha256(b"").hexdigest()
+        # Hashed on the record's OWN native key, not a constant: an unnamed specimen has no name
+        # to share a concept with another unnamed specimen, so each one must resolve to a distinct
+        # concept id. Hashing `b""` here previously collapsed every nameless record in a collection
+        # onto the identical taxon_concept_id, undercounting `documented_taxa` (support.py) by
+        # (N-1) for any cell holding N unidentified vouchers from the same collection.
+        digest = hashlib.sha256(native_key.encode("utf-8")).hexdigest()
         return f"source:{collection_key}:{digest}", "unmatched"
     concepts = tuple(authority.get(name, ())) if authority else ()
     if len(concepts) == 1:
@@ -163,7 +169,7 @@ def normalize_row(  # noqa: PLR0913 - one release-level binding per argument; no
     )
     scientific_name = _blank_to_none(row.values.get("scientificName")) or _joined_scientific_name(row.values)
     taxon_concept_id, resolution_state = _resolve_taxon(
-        scientific_name, collection_key=collection_key, authority=authority
+        scientific_name, collection_key=collection_key, native_key=native_key, authority=authority
     )
     reasons = list(coordinate.reasons)
     if event.precision == "unknown":

@@ -190,6 +190,15 @@ export const CACHEABLE_LAYER_QUERIES: readonly string[] = [
   // `isPersistableQueryKey` unchanged; `zoom` and `dayRange` ride in the queryHash, so a
   // different aggregation tier is a different entry rather than a stale hit.
   "wildfire.getFireDetections",
+  // Added 2026-09-13, and the first allowlisted path whose GENERATION is not in its query key:
+  // `getBotanicalOccurrences` resolves `release_set_id` server-side from the plane's own
+  // `/current` pointer, so two reads a publication apart are the SAME key with different
+  // provenance. `resolveEntryGeneration` below is what keeps that honest -- see "generation
+  // pinning" in AGENTS.md. Its input carries `bbox` (and no `date`, which is correct: the plane
+  // is pinned to a release, not to a day), so `isPersistableQueryKey` is satisfied unchanged, and
+  // `zoom`/the five filters ride in the queryHash so a different band or filter is a different
+  // entry rather than a stale hit.
+  "environmental.getBotanicalOccurrences",
 ];
 
 /**
@@ -224,6 +233,12 @@ const TOGGLE_ID_BY_ROUTER_PATH: Readonly<Record<string, LayerToggleId>> = {
   // The detections lane, whose toggle is `fire` -- distinct from `fire-perimeters` above, which
   // is a different lane of a different nature (a `static_lookup` snapshot, not a day series).
   "wildfire.getFireDetections": "fire",
+  // ONE read serves all three herbarium toggles -- occurrences, richness and collection-effort
+  // are three renderings of the same `detail`/`aggregate` answer, not three lanes -- so they
+  // attribute to one track on exactly the rule the water pair above states. `botanical-occurrences`
+  // is the row that names the lane; a reset of it clears the bytes all three draw from, which is
+  // the truth, since there is only one stored answer between them.
+  "environmental.getBotanicalOccurrences": "botanical-occurrences",
 };
 
 /**
@@ -414,6 +429,81 @@ function isCacheableResult(value: unknown): boolean {
     if (record.state === "upstream_unavailable") return false;
   }
   return true;
+}
+
+/**
+ * The warehouse generation a cached ANSWER belongs to, when the answer names one itself.
+ *
+ * Every other allowlisted layer puts everything that identifies its answer into the query key: a
+ * day, a bbox, a measure. `environmental.getBotanicalOccurrences` does not, and cannot -- it
+ * resolves `release_set_id` SERVER-side from the plane's `/current` pointer
+ * (`getCurrentBotanicalReleaseSetId`, botanical-occurrences-client.ts:459), precisely so that
+ * concurrent readers pin one generation instead of each resolving a slightly different "current".
+ * The consequence for this cache is that two reads taken either side of a publication produce the
+ * SAME `queryHash` and different provenance, so the key alone cannot tell them apart.
+ *
+ * That matters more here than it would for a weather tile. These are governed, provenance-carrying
+ * herbarium records: attribution, rights and the provisional-collection status ride on the release,
+ * and `botanical-occurrences` is `release_series` (layer-cache-policy.ts:132), which resolves to
+ * `manual` -- MANUAL_TTL_MS is 365 days and background revalidation is off. Without a pin, a
+ * generation superseded this morning would keep being served as current for a year, and the one
+ * correction path every other layer relies on is switched off for this one.
+ *
+ * Returns `null` when the payload names no generation, which is every other layer and also this
+ * one's `refused`/`unavailable` members -- those carry no records and so misattribute nothing.
+ */
+export function resolveEntryGeneration(value: unknown): string | null {
+  if (typeof value !== "object" || value === null) return null;
+  const record = value as Record<string, unknown>;
+  // Guarded as a non-empty string rather than coerced: `String(null)` is `"null"`, and a nullable
+  // field compared that way makes two unstamped answers look like the same generation. The same
+  // trap AGENTS.md "revalidation policy" records for the revision signal that never shipped.
+  return typeof record.releaseSetId === "string" && record.releaseSetId.length > 0
+    ? record.releaseSetId
+    : null;
+}
+
+/**
+ * The generation each layer's LATEST answer was seen at, learned from the answers themselves.
+ *
+ * There is no separate pointer read to do this with, and adding one would be a second network
+ * request on the critical path of a cache whose entire purpose is removing them. Instead every
+ * fresh answer that lands -- a cold fetch, which by construction went through the server and
+ * therefore through `/current` -- publishes its generation here, and a later cache HIT is checked
+ * against it. Module state, not IndexedDB: the check must be synchronous on the hit path, and a
+ * pin that resets on reload is the SAFE direction (an unknown generation never masks an entry).
+ */
+const latestSeenGeneration = new Map<LayerToggleId, string>();
+
+/** Exported for tests only: forgets the learned pins, as a fresh page load would. */
+export function resetGenerationPinsForTests(): void {
+  latestSeenGeneration.clear();
+}
+
+/** Records the generation a freshly-fetched answer belongs to, if it names one. */
+function recordSeenGeneration(layerId: LayerToggleId | null, value: unknown): void {
+  if (layerId === null) return;
+  const generation = resolveEntryGeneration(value);
+  if (generation !== null) latestSeenGeneration.set(layerId, generation);
+}
+
+/**
+ * True when a stored entry belongs to a generation we KNOW has been superseded.
+ *
+ * Deliberately asymmetric, and the asymmetry is the whole safety argument: an entry is rejected
+ * only on positive evidence that a DIFFERENT generation is current. An entry that names no
+ * generation, or a layer we have not yet seen a current generation for, is left alone and served
+ * -- those are "not known to be stale", which must not render the same as "known stale". Getting
+ * that backwards would empty the cache on the first read of every session, since nothing is
+ * pinned until an answer has landed.
+ */
+function isSupersededGeneration(layerId: LayerToggleId | null, value: unknown): boolean {
+  if (layerId === null) return false;
+  const current = latestSeenGeneration.get(layerId);
+  if (current === undefined) return false;
+  const stored = resolveEntryGeneration(value);
+  if (stored === null) return false;
+  return stored !== current;
 }
 
 /** Rough serialized byte size, used only to weigh entries against the storage budget. */
@@ -1136,6 +1226,11 @@ export async function revalidateAgainstDW<TContext>(
       const now = Date.now();
       const approxByteSize = estimateByteSize(result);
       const attribution = attributeQueryKey(queryKey);
+      // Same rule as the cold path: this answer came back through the server's pointer, so it
+      // defines the current generation. In practice a `manual` layer never reaches here, but the
+      // pin must not depend on that -- a user flipping botanical to `automatic` would otherwise
+      // refresh the entries while leaving the pin they are checked against behind.
+      recordSeenGeneration(attribution.layerId, result);
       const expiresAt = now + resolveCacheTtlMs(queryKey);
       const byteDelta = approxByteSize - stored.approxByteSize;
 
@@ -1200,12 +1295,24 @@ export function createIndexedDbLayerQueryPersister(
       const stored = await getEntry<unknown>(STORE_CONFIG, cacheKey);
       if (stored !== null && isStoredLayerQueryEntry(stored)) {
         const attribution = attributeStoredRow(stored, cacheKey);
+        // Three independent ways an entry stops being servable, checked together because they all
+        // land in the same drop path below.
+        //
         // A manual refetch does not delete anything up front: it stamps an instant on the layer,
         // and every entry older than that instant becomes a miss the next time it is READ. One
         // click therefore reaches the days the reader is not currently looking at, lazily, and
-        // costs nothing for the days they never return to. The entry then falls into the same
-        // drop path an expired one takes, three lines below.
-        if (isEntryFresh(stored) && !isSupersededByRefreshRequest(attribution.layerId, stored.createdAt)) {
+        // costs nothing for the days they never return to.
+        //
+        // A superseded GENERATION is dropped the same lazy way, and for the same reason: one read
+        // cannot know which other viewports and filter combinations of that layer are also stale,
+        // and walking the store to find out would put a metadata pass on the critical path of
+        // every hit. Each is caught by this identical check on its own next read. Note this is not
+        // a freshness question -- an entry can be minutes old and still be the wrong provenance.
+        if (
+          isEntryFresh(stored) &&
+          !isSupersededByRefreshRequest(attribution.layerId, stored.createdAt) &&
+          !isSupersededGeneration(attribution.layerId, stored.value)
+        ) {
           // Recency is a metadata-only write, so a cache hit rewrites ~100 bytes rather than
           // re-serializing the payload it just read.
           void putMetadata(STORE_CONFIG, cacheKey, {
@@ -1247,6 +1354,10 @@ export function createIndexedDbLayerQueryPersister(
         const now = Date.now();
         const approxByteSize = estimateByteSize(result);
         const attribution = attributeQueryKey(queryKey);
+        // A cold fetch went through the server, and therefore through the plane's `/current`
+        // pointer, so the generation it carries IS the current one. Learned BEFORE the write, so
+        // an entry can never be stored under a pin older than itself.
+        recordSeenGeneration(attribution.layerId, result);
         const expiresAt = now + resolveCacheTtlMs(queryKey);
 
         const entry: StoredLayerQueryEntry = {

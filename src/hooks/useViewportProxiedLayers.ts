@@ -243,6 +243,10 @@ export function useSoilFieldQuery(
  */
 const BOTANICAL_OCCURRENCES_STALE_TIME_MS = 60 * 60 * 1000;
 
+/** The service's own row/cell ceiling (`MAX_LIMIT` in `botanical_occurrences.py`), requested
+ * outright rather than left to its 500-row default. */
+const BOTANICAL_OCCURRENCES_MAX_LIMIT = 2000;
+
 /** Which of the plane's two answers a given map zoom will get back. */
 export type BotanicalBand = "detail" | "aggregate";
 
@@ -310,6 +314,12 @@ export function useBotanicalOccurrencesQuery(
       eventStart,
       eventEnd,
       spatialQuality,
+      // The service's own ceiling (`MAX_LIMIT` in botanical_occurrences.py), not the 500-row
+      // default it falls back to when a caller omits `limit` entirely. The aggregate band's
+      // cells are sorted densest-first server-side, so raising this widens how much of a wide
+      // viewport's real coverage fits in one page before truncation -- the earlier default left
+      // 1500 rows of budget unused on every request.
+      limit: BOTANICAL_OCCURRENCES_MAX_LIMIT,
     },
     {
       // All three toggles share this one read, so the governance gate is the conjunction: the

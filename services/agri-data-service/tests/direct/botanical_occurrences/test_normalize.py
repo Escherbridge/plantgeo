@@ -209,6 +209,20 @@ def test_no_genus_and_no_combined_field_stays_unmatched_with_no_name() -> None:
     assert record.resolution_state == "unmatched"
 
 
+def test_two_unnamed_records_in_one_collection_get_distinct_taxon_concept_ids() -> None:
+    """Regression: `_resolve_taxon` once hashed a constant for a missing name, so every
+    unidentified specimen in a collection collapsed onto the same `taxon_concept_id` and
+    silently undercounted `documented_taxa` for any cell holding more than one of them."""
+    first = _atomized_row(1, "urn:occ:blank-1", recordedBy="A. Botanist")
+    second = _atomized_row(2, "urn:occ:blank-2", recordedBy="A. Botanist")
+    first_record, second_record = normalize_rows(
+        [first, second], collection_key="test:COLL:vascular", release_key="release-1"
+    )
+    assert first_record.resolution_state == "unmatched"
+    assert second_record.resolution_state == "unmatched"
+    assert first_record.taxon_concept_id != second_record.taxon_concept_id
+
+
 def test_a_keyless_row_is_kept_under_a_locator_key_and_flagged() -> None:
     keyless = SourceRow("occurrence.txt", 7, "hash", "", {"scientificName": "Carex sp."}, {})
     (record,) = normalize_rows([keyless], collection_key="test:COLL:vascular", release_key="release-1")

@@ -569,7 +569,11 @@ export default function LayerManager() {
   // object, which react-query keeps referentially stable until a new answer lands.
   useEffect(() => {
     if (botanicalResult === undefined) return;
-    setBotanicalResponse(botanicalResult as never);
+    setBotanicalResponse({
+      state: botanicalResult.state,
+      releaseSetId: "releaseSetId" in botanicalResult ? botanicalResult.releaseSetId : null,
+      publishedAt: "publishedAt" in botanicalResult ? botanicalResult.publishedAt : null,
+    });
   }, [botanicalResult, setBotanicalResponse]);
   // The generation the answer was actually served from, published back into the store.
   //

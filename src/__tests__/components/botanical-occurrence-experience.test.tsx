@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import { renderWithProviders } from "@/test/utils";
 import { useBotanicalOccurrenceStore } from "@/stores/botanical-occurrence-store";
 import {
@@ -57,20 +57,26 @@ describe("BotanicalFilters", () => {
     useBotanicalOccurrenceStore.getState().resetFilters();
   });
 
-  it("shows the no-release-pinned state and hides the rest of the form until pinned", () => {
+  it("shows the no-release-resolved status and still renders every filter, since fetching is not gated on it", () => {
     renderWithProviders(<BotanicalFilters />);
     expect(screen.getByText(BOTANICAL_NO_RELEASE_PINNED_MESSAGE)).toBeTruthy();
-    expect(screen.queryByText(/no free-text name search/i)).toBeNull();
+    // The release line is status-only now: LayerManager resolves the generation server-side and
+    // the query fires regardless, so every other filter must be usable even before any answer
+    // has landed and written a release id back into the store. See BotanicalFilters.tsx's
+    // docstring for why this field is no longer an editable gate.
+    expect(screen.getByText(/no free-text name search/i)).toBeTruthy();
+    expect(screen.queryByLabelText(/release set id/i)).toBeNull();
   });
 
-  it("reveals the rest of the filters once a release id is entered, and never fetches on its own", async () => {
+  it("switches to a read-only release display once LayerManager writes a served generation id back, and never fetches on its own", async () => {
     renderWithProviders(<BotanicalFilters />);
+    expect(mocks.fetchBotanicalOccurrences).not.toHaveBeenCalled();
 
-    const releaseInput = screen.getByLabelText(/release set id/i);
-    fireEvent.change(releaseInput, { target: { value: "release-2026-08" } });
+    useBotanicalOccurrenceStore.getState().setReleaseSetId("release-2026-08");
 
     await waitFor(() => {
-      expect(screen.getByText(/no free-text name search/i)).toBeTruthy();
+      expect(screen.getByText(/source snapshot/i)).toBeTruthy();
+      expect(screen.getByText("release-2026-08")).toBeTruthy();
     });
     expect(mocks.fetchBotanicalOccurrences).not.toHaveBeenCalled();
     expect(useBotanicalOccurrenceStore.getState().filters.release_set_id).toBe("release-2026-08");

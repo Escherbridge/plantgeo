@@ -2,9 +2,24 @@ import { create } from "zustand";
 import { devtools } from "zustand/middleware";
 import type {
   BotanicalOccurrenceFeature,
-  BotanicalOccurrenceResponse,
   BotanicalSpatialQuality,
 } from "@/lib/botanical-occurrences";
+
+/**
+ * `LayerManager` writes the raw camelCase `BotanicalOccurrencesQueryResult` union here
+ * (`src/lib/server/services/botanical-occurrences-client.ts`), not the snake_case
+ * `BotanicalOccurrenceResponse` this store previously declared -- that mismatch was masked by an
+ * `as never` cast at the one call site rather than caught by the compiler. That server-only
+ * module cannot be imported here (client/server boundary, `scripts/check-client-server-imports.mjs`),
+ * so this is a small structural mirror of just the fields this store actually needs, not a
+ * duplicate of the wire contract -- it never reads `features`/`cells`, only the metadata a status
+ * line would show.
+ */
+export interface BotanicalLastResponse {
+  state: "detail" | "aggregate" | "refused" | "unavailable";
+  releaseSetId: string | null;
+  publishedAt: string | null;
+}
 
 /**
  * The filters block owns `release_set_id` as required-but-unset (`null`), never an empty
@@ -38,12 +53,12 @@ const DEFAULT_FILTERS: BotanicalOccurrenceFilters = {
 interface BotanicalOccurrenceState {
   filters: BotanicalOccurrenceFilters;
   /** The most recent response for the active viewport/zoom band, or null before any fetch. */
-  lastResponse: BotanicalOccurrenceResponse | null;
+  lastResponse: BotanicalLastResponse | null;
   /** The specimen the details panel shows; null clears the panel. */
   selectedFeature: BotanicalOccurrenceFeature | null;
   setFilters: (patch: Partial<BotanicalOccurrenceFilters>) => void;
   setReleaseSetId: (releaseSetId: string) => void;
-  setLastResponse: (response: BotanicalOccurrenceResponse | null) => void;
+  setLastResponse: (response: BotanicalLastResponse | null) => void;
   setSelectedFeature: (feature: BotanicalOccurrenceFeature | null) => void;
   resetFilters: () => void;
 }
