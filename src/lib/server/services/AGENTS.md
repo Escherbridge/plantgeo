@@ -48,6 +48,10 @@ Stage exhaustion is recorded as skipped or failed work and does not consume the 
 reserved time. Synthesis may request six additional environmental reads in batches of three;
 each transport call has a fifteen-second deadline and the Python tool has a twelve-second
 deadline. Keep these bounds explicit when changing retrieval depth.
+All three ERA5-Land soil surfaces—moisture, temperature, and vapor-pressure deficit—belong in
+the local priority set. They jointly describe water availability, root-zone thermal conditions,
+and atmospheric drying demand; catalogue order must not allow the stage deadline to omit two
+of the three. Each read uses that layer's independently selected map day.
 The context reducer retains up to 120 weekly drought releases so the two-year history remains
 visible to synthesis. Other collections retain eight entries with an explicit omitted count;
 never interpret a reduced collection as the complete set of observations.
