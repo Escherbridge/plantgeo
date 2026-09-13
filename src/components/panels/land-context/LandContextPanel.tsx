@@ -1,5 +1,6 @@
 "use client";
 
+import { useLandContextStore } from "@/stores/land-context-store";
 import { DocumentedHelpSection } from "./DocumentedHelpSection";
 import { DraftInquiry } from "./DraftInquiry";
 import { EvidenceTimeSection } from "./EvidenceTimeSection";
@@ -26,8 +27,45 @@ interface LandContextPanelProps {
  * Draft inquiry only renders once relevant parties exist (`data.officeCards[0]`) so it always
  * has a real, source-backed recipient rather than a placeholder office.
  */
+/**
+ * Plain-language message for each `BudgetExceededResult["reason"]` value. Never surfaces the raw
+ * enum string to the user -- see `src/lib/server/services/land-context/types.ts`.
+ */
+function budgetExceededMessage(budgetExceeded: NonNullable<
+  ReturnType<typeof useLandContextStore.getState>["resultMeta"]
+>["budgetExceeded"]): string {
+  if (!budgetExceeded) return "";
+  const { reason, limit, requested } = budgetExceeded;
+  switch (reason) {
+    case "aoi_area_exceeds_limit":
+      return requested !== null
+        ? `Your selected area is too large (${requested.toLocaleString()} sq degrees vs. a ${limit.toLocaleString()} sq degree budget) -- try a smaller area.`
+        : `Your selected area is too large (over a ${limit.toLocaleString()} sq degree budget) -- try a smaller area.`;
+    case "geometry_vertices_exceed_limit":
+      return "Your selected area's shape is too detailed to process -- try a simpler or smaller area.";
+    case "feature_count_would_exceed_limit":
+      return "Your selected area contains too many results to show at once -- try a smaller area.";
+    case "response_bytes_would_exceed_limit":
+      return "Your selected area's results are too large to load at once -- try a smaller area.";
+    case "outside_pilot_states":
+      return "This location is outside the current pilot coverage area (Washington, Oregon, and Idaho only).";
+    default:
+      return "Your selection is too large to process -- try a smaller area.";
+  }
+}
+
 export function LandContextPanel({ data, onClose }: LandContextPanelProps) {
+  const budgetExceeded = useLandContextStore((state) => state.resultMeta?.budgetExceeded ?? null);
+  const partialCoverage = useLandContextStore((state) => state.resultMeta?.partialCoverage ?? false);
+
   if (!data) {
+    if (budgetExceeded) {
+      return (
+        <div className="p-4 text-xs text-amber-400" role="status">
+          {budgetExceededMessage(budgetExceeded)}
+        </div>
+      );
+    }
     return (
       <div className="p-4 text-xs text-zinc-500">
         Select a point or bounded area on the map to see place details and public routes.
@@ -40,6 +78,11 @@ export function LandContextPanel({ data, onClose }: LandContextPanelProps) {
 
   return (
     <div className="flex flex-col gap-4 p-4">
+      {partialCoverage ? (
+        <div className="text-xs text-zinc-400" role="status">
+          This area only has partial source coverage -- some results may be missing.
+        </div>
+      ) : null}
       {onClose ? (
         <div className="flex justify-end">
           <button

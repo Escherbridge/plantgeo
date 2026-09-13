@@ -121,7 +121,16 @@ export function useLandContextQuery(
     if (active.data && "status" in active.data && active.data.status === "budget_exceeded") {
       return {
         data: [],
-        meta: { totalCount: 0, returnedCount: 0, hasMore: false, partialCoverage: true },
+        meta: {
+          totalCount: 0,
+          returnedCount: 0,
+          hasMore: false,
+          budgetExceeded: {
+            reason: active.data.reason,
+            limit: active.data.limit,
+            requested: active.data.requested,
+          },
+        },
         isLoading: false,
         isError: false,
         error: null,
