@@ -588,6 +588,23 @@ export function isLayerPermanentlyWithheld(toggleId: LayerToggleId): boolean {
   return LAYER_REGISTRY[toggleId].permanentlyUnavailableReason !== null;
 }
 
+/**
+ * The six style layers the one `interventions` toggle owns, derived from the
+ * registry rather than re-listed.
+ *
+ * Two unrelated readers need this exact list and must never drift from the
+ * toggle: the click-to-inspect handlers (`use-intervention-detail-clicks.ts`)
+ * bind one handler per id, and `MapView`'s bare click handler stands down over
+ * them so a single click cannot open both the AI popup and the detail modal.
+ */
+export const INTERVENTION_STYLE_LAYER_IDS: readonly string[] =
+  LAYER_REGISTRY.interventions.styleLayerIds;
+
+/** True for any style layer the merged intervention toggle draws. */
+export function isInterventionStyleLayerId(layerId: string): boolean {
+  return INTERVENTION_STYLE_LAYER_IDS.includes(layerId);
+}
+
 /** Entries whose visibility is flipped with setLayoutProperty instead of mount/unmount. */
 export function styleBackedLayerEntries(): LayerRegistryEntry[] {
   return layerRegistryEntries().filter((entry) => entry.styleLayerIds.length > 0);

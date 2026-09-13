@@ -82,25 +82,25 @@ Goal: clicking any intervention feature opens a detail panel with the real geome
 set, without disrupting the AI-analysis click handler or `AiInterventionWorkspace`.
 
 Tasks:
-- [ ] Task (TDD): Write a failing test for a new tRPC procedure (e.g.,
+- [x] Task (TDD): Write a failing test for a new tRPC procedure (e.g.,
       `interventions.getPublishedInterventionDetail`) asserting it returns the full record
       (properties including full geometry, status, reviewNote, createdAt/updatedAt, submitter) for a
       given feature id, applies the same authorization `listMySubmissions`/the drafts overlay already
       apply (a `pending_review` row not owned by or shared with the caller must not be returned by
       id even when guessed), and 404s/NOT_FOUNDs for an id that does not exist or is not visible to
       the caller. Implement.
-- [ ] Task (TDD): Write a failing test for new per-style-layer click handlers (mirroring
+- [x] Task (TDD): Write a failing test for new per-style-layer click handlers (mirroring
       `WaterLayer.tsx`'s `map.on("click", layerId, handler)` pattern) on all six merged style layers
       asserting: a click on a drafts-overlay feature resolves its full record from the already-held
       `useInterventionDraftsOverlay` data (no network call); a click on a published-tile feature
       calls the new by-id procedure from the prior task. Implement, mounted from `LayerManager.tsx`
       or a new small hook/component it owns.
-- [ ] Task (TDD): Write a failing test asserting `MapView.tsx`'s existing bare click handler (the one
+- [x] Task (TDD): Write a failing test asserting `MapView.tsx`'s existing bare click handler (the one
       opening the AI-analysis coordinate popup, gated by `isScalarFieldInspectionAllowed`) stands
       down when the click hits any of the six merged intervention style layers — i.e., add those
       layer ids to whatever allow-list function gates that stand-down, and assert a click on an
       intervention feature does not also open the AI popup.
-- [ ] Task (TDD): Write a failing test for the new detail-panel component (standalone, per OQ-3: an
+- [x] Task (TDD): Write a failing test for the new detail-panel component (standalone, per OQ-3: an
       expandable modal that opens as a compact card and can grow to take up most/all of the
       viewport, Facebook-lightbox-style — not a MapLibre popup, not a mode of
       `AiInterventionWorkspace`) asserting it renders: the actual polygon shape and/or point(s) from
@@ -109,10 +109,10 @@ Tasks:
       note. Implement, reading `status`/`reviewNote` exactly as
       `contributions.publishContribution`/`rejectContribution` write them (never
       `castModerationVote`'s vocabulary).
-- [ ] Task (TDD): Write a failing test asserting the detail panel opening (via a map click) does not
+- [x] Task (TDD): Write a failing test asserting the detail panel opening (via a map click) does not
       close or reset `AiInterventionWorkspace` if it is currently open in either mode — the two
       surfaces coexist per OQ-3.
-- [ ] Verification: Run the new tRPC procedure test, the click-handler tests, the detail-panel
+- [~] Verification (automated sweep done; manual prod/Martin click-through owed): Run the new tRPC procedure test, the click-handler tests, the detail-panel
       component test, and `map-view-render-count.test.tsx` (to confirm the new click wiring did not
       regress `MapView`'s render-count contract) together; manually click through a published
       polygon, a published point, the caller's own pending-review draft, and (if reachable as a

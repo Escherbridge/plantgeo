@@ -4,9 +4,11 @@ import { z } from "zod";
 import {
   contributorProcedure,
   protectedProcedure,
+  publicProcedure,
   router,
   type Context,
 } from "@/lib/server/trpc/init";
+import type { InterventionDetailRecord } from "@/lib/map/intervention-detail";
 import { features, layers, teamMembers } from "@/lib/server/db/schema";
 import { isTeamEditorRole } from "@/lib/server/security/access-control";
 import { InterventionCategorySchema } from "@/lib/environmental/intervention";
@@ -125,6 +127,58 @@ async function requireTeamAccess(
       message: "Partner workspace not found",
     });
   }
+}
+
+/** `NOT_FOUND`, never `FORBIDDEN`: an id the caller may not see must not be confirmed to exist. */
+const interventionNotVisible = () =>
+  new TRPCError({ code: "NOT_FOUND", message: "Intervention not found" });
+
+/**
+ * The visibility rule the by-id detail read applies, stated once.
+ *
+ * It is deliberately the same rule set `listMySubmissions` (own / workspace
+ * rows), `listProposed` (the consenting `pending_review` queue) and
+ * `interventionSocial.requireVisibleFeature` already enforce, rather than a
+ * second one that could drift:
+ *   - `published`   -> everyone, signed in or not (it is already on the map);
+ *   - own row       -> its submitter, at any status, including `rejected`;
+ *   - workspace row -> any member of the submitting team, re-read from the
+ *                      database inside this request rather than trusted from
+ *                      the session;
+ *   - `pending_review` with `publicationConsent = true` -> every SIGNED-IN
+ *                      reader, exactly the set `/feed` already shows it to.
+ * A signed-out caller passes `userId = null` and so reaches only the first arm.
+ */
+async function isFeatureVisibleTo(
+  ctx: Context,
+  row: {
+    /** Nullable in the schema; a row with no status is nobody's published row. */
+    status: string | null;
+    submittedByUserId: string | null;
+    submittedByTeamId: string | null;
+    publicationConsent: string | null;
+  },
+  userId: string | null
+): Promise<boolean> {
+  if (row.status === "published") return true;
+  if (!userId) return false;
+  if (row.submittedByUserId === userId) return true;
+  if (row.submittedByTeamId) {
+    const [membership] = await ctx.db
+      .select({ userId: teamMembers.userId })
+      .from(teamMembers)
+      .where(
+        and(
+          eq(teamMembers.teamId, row.submittedByTeamId),
+          eq(teamMembers.userId, userId)
+        )
+      )
+      .limit(1);
+    if (membership) return true;
+  }
+  return (
+    row.status === RECOMMENDATION_STATUS && row.publicationConsent === "true"
+  );
 }
 
 /** Resolves the provisioned interventions layer; never creates one. */
@@ -308,6 +362,97 @@ export const interventionsRouter = router({
         )
         .orderBy(desc(features.createdAt))
         .limit(input.limit);
+    }),
+
+  /**
+   * One intervention's whole record, by id -- what the map's click-to-inspect
+   * modal opens for a feature that arrived as a Martin tile.
+   *
+   * Why `publicProcedure` and not `protectedProcedure`: the published layer
+   * (`geo.intervention_tiles`, `status = 'published'` only) is already drawn for
+   * a signed-out reader, so requiring a session to read what that reader can
+   * see on screen would break click-to-inspect for exactly the rows the map
+   * publishes. The tier is therefore open and the *row* is gated, inside the
+   * procedure, by `isFeatureVisibleTo` below -- which reproduces the visibility
+   * `listMySubmissions` / `listProposed` / `interventionSocial`'s
+   * `requireVisibleFeature` already enforce, with `userId = null` for a
+   * signed-out caller so nothing but `published` is reachable without a session.
+   *
+   * Every miss is `NOT_FOUND`, never `FORBIDDEN`: a correctly guessed id for a
+   * row the caller may not see must not be confirmed to exist (NFR-2).
+   *
+   * The projection carries `properties -> 'geometry'` in full, not
+   * `ST_Centroid` the way `listProposed` does, because the whole point of this
+   * read is that a vector tile's geometry is simplified and its column set is
+   * whatever the tile function happened to select.
+   */
+  getInterventionDetail: publicProcedure
+    .input(z.object({ featureId: z.string().uuid() }))
+    .query(async ({ ctx, input }): Promise<InterventionDetailRecord> => {
+      const layerId = await resolveInterventionsLayerId(ctx);
+      const userId =
+        (ctx.session?.user as { id?: string } | undefined)?.id ?? null;
+
+      const [row] = await ctx.db
+        .select({
+          id: features.id,
+          name: sql<string | null>`${features.properties} ->> 'name'`,
+          type: sql<string | null>`${features.properties} ->> 'type'`,
+          category: sql<string | null>`${features.properties} ->> 'category'`,
+          description: sql<
+            string | null
+          >`${features.properties} ->> 'description'`,
+          // The drawn shape as submitted. NULL for a row authored by a path that
+          // records no geometry (`proposeIntervention`); the client says so
+          // rather than drawing something that was never submitted.
+          geometry: sql<
+            GeoJSON.Geometry | null
+          >`${features.properties} -> 'geometry'`,
+          status: features.status,
+          reviewNote: features.reviewNote,
+          submittedByUserId: sql<
+            string | null
+          >`${features.properties} ->> 'submittedByUserId'`,
+          submittedByTeamId: sql<
+            string | null
+          >`${features.properties} ->> 'submittedByTeamId'`,
+          publicationConsent: sql<
+            string | null
+          >`${features.properties} ->> 'publicationConsent'`,
+          createdAt: features.createdAt,
+          updatedAt: features.updatedAt,
+        })
+        .from(features)
+        // `layer_id` first: it prunes the partition, and it also keeps this read
+        // from answering for any non-intervention feature that shares the table.
+        .where(and(eq(features.layerId, layerId), eq(features.id, input.featureId)))
+        .limit(1);
+
+      if (!row || !(await isFeatureVisibleTo(ctx, row, userId))) {
+        throw interventionNotVisible();
+      }
+
+      return {
+        id: row.id,
+        name: row.name,
+        type: row.type,
+        category: row.category,
+        // `unknown`, never a plausible-looking default: a NULL status is a data
+        // fault, and naming it one is better than showing a reader a standing
+        // the row does not actually have.
+        status: row.status ?? "unknown",
+        description: row.description,
+        geometry: row.geometry ?? null,
+        submittedByUserId: row.submittedByUserId,
+        submittedByTeamId: row.submittedByTeamId,
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+        // `reviewNote` is written by `contributions.rejectContribution` and is
+        // only meaningful on a rejected row; `castModerationVote` stamps the same
+        // column with a non-authoritative vote string, which no reader honours.
+        reviewNote: row.status === "rejected" ? row.reviewNote : null,
+        hasFullGeometry: Boolean(row.geometry),
+      };
     }),
 
   /** Propose a community intervention (lat/lon + strategy cell); deliberately geometry-less, guarded by a regression test in interventions.test.ts. */

@@ -26,6 +26,8 @@ import { useBotanicalOccurrenceStore } from "@/stores/botanical-occurrence-store
 import { trpc } from "@/lib/trpc/client";
 import { useInterventionDraftsOverlay } from "@/lib/map/use-intervention-drafts";
 import { INTERVENTION_DRAFTS_SOURCE_ID } from "@/lib/map/sources";
+import { useInterventionDetailClicks } from "@/lib/map/use-intervention-detail-clicks";
+import { InterventionDetailModal } from "@/components/map/InterventionDetailModal";
 import {
   LAYER_REGISTRY,
   styleBackedLayerEntries,
@@ -222,6 +224,10 @@ export default function LayerManager() {
   // queries above it -- it's the caller's own submissions plus the review queue, not a
   // viewport-sized dataset -- and gated purely on auth inside the hook itself.
   const interventionDraftsOverlay = useInterventionDraftsOverlay();
+  // Click-to-inspect for all six merged intervention style layers, bound in one
+  // place. The overlay's records are handed in so a draft click resolves from
+  // memory; only a published Martin-tile click costs a round trip (NFR-1).
+  useInterventionDetailClicks(map, interventionDraftsOverlay.recordsById);
   // The per-layer opacity MULTIPLIER for every registry layer. Style-baked layers are applied
   // from here (nothing else owns them); component-mounted layers take theirs as an
   // `opacityScale` prop and fold it into whatever they already compute -- one writer per
@@ -1532,6 +1538,13 @@ export default function LayerManager() {
           only thing that ever sets it. */}
       <QueryPointLayer map={map} point={queryPoint} />
 
+      {/* Click-to-inspect for the merged intervention layer. Mounted here, not
+          in MapView, because this component already owns both of that layer's
+          sources -- and because MapView's render-count contract
+          (map-view-render-count.test.tsx) is a contract about MapView's own
+          subscriptions, which this adds nothing to. Phase 5 (FR-4) passes the
+          like/comment UI in as this modal's children. */}
+      <InterventionDetailModal />
     </>
   );
 }
