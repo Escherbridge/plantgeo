@@ -7,7 +7,7 @@ const mocks = vi.hoisted(() => ({ load: vi.fn(), call: vi.fn() }));
 vi.mock('@/lib/server/services/regional-evidence-tools', () => ({
   loadRegionalEvidenceTools: mocks.load, callRegionalEvidenceTool: mocks.call,
 }));
-import { boundedEvidence, evidenceResultStatus, prepareRegionalAnalysis, regionalEvidenceAuditCall, regionalEvidenceDay, regionalEvidenceStageStatus, STRATEGY_SCREENING } from '@/lib/server/services/regional-analysis-workflow';
+import { boundedEvidence, evidenceResultStatus, prepareRegionalAnalysis, REGIONAL_ANALYSIS_PRIORITY_SURFACES, regionalEvidenceAuditCall, regionalEvidenceDay, regionalEvidenceStageStatus, STRATEGY_SCREENING } from '@/lib/server/services/regional-analysis-workflow';
 import { reportWarehouseEvidenceIssues } from '@/lib/server/services/remediation-report';
 
 const payload: RegionalContextPayload = {
@@ -23,8 +23,14 @@ const reading = (layer: string, viewedDate: string): ViewedLayerReading => ({
 });
 const temporal: TemporalContext = {
   serverCurrentDate: '2026-09-12', viewedLayersUnreported: false,
-  readings: [reading('climate-precipitation', '2024-06-15'), reading('climate-soil-wetness-root-zone', '2023-06-15'), reading('soil-moisture', '2022-06-15')],
-  viewedDates: ['2022-06-15', '2023-06-15', '2024-06-15'], sourcesServedAsOfLatest: [],
+  readings: [
+    reading('climate-precipitation', '2024-06-15'),
+    reading('climate-soil-wetness-root-zone', '2023-06-15'),
+    reading('soil-moisture', '2022-06-15'),
+    reading('soil-temperature', '2022-06-16'),
+    reading('soil-vpd', '2022-06-17'),
+  ],
+  viewedDates: ['2022-06-15', '2022-06-16', '2022-06-17', '2023-06-15', '2024-06-15'], sourcesServedAsOfLatest: [],
 };
 const toolNames = ['surface_value_near_point', 'observation_coverage_on_day', 'drought_history_at_point', 'fire_history_near_point', 'observation_temporal_neighbors'];
 
@@ -43,6 +49,11 @@ describe('regional evidence graph', () => {
     expect(local.find((call) => call.source === 'climate-field-precipitation')?.selectedDate).toBe('2024-06-15');
     expect(local.find((call) => call.source === 'climate-field-soil-wetness-root-zone')?.selectedDate).toBe('2023-06-15');
     expect(local.find((call) => call.source === 'soil-field-moisture')?.selectedDate).toBe('2022-06-15');
+    expect(local.find((call) => call.source === 'soil-field-temperature')?.selectedDate).toBe('2022-06-16');
+    expect(local.find((call) => call.source === 'soil-field-vpd')?.selectedDate).toBe('2022-06-17');
+    expect(REGIONAL_ANALYSIS_PRIORITY_SURFACES).toEqual(expect.arrayContaining([
+      'soil-field-moisture', 'soil-field-temperature', 'soil-field-vpd',
+    ]));
     const past = result.evidence.toolCalls.filter((call) => call.stage === 'temporal');
     expect(past).toEqual(expect.arrayContaining([
       expect.objectContaining({ source: 'climate-field-precipitation', selectedDate: '2023-06-15' }),
@@ -87,6 +98,9 @@ describe('regional evidence graph', () => {
     await vi.advanceTimersByTimeAsync(33_000);
     const result = await pending;
     expect(maximum).toBe(3);
+    expect(mocks.call.mock.calls.slice(0, 3).map((call) => call[1].surface_name)).toEqual([
+      'soil-field-moisture', 'soil-field-temperature', 'soil-field-vpd',
+    ]);
     expect(result.evidence.toolCalls.some((call) => call.stage === 'local' && call.status === 'not_queried')).toBe(true);
     expect(result.evidence.toolCalls.some((call) => call.stage === 'temporal' && call.status === 'error')).toBe(true);
     expect(result.evidence.toolCalls.some((call) => call.stage === 'regional' && call.status === 'error')).toBe(true);

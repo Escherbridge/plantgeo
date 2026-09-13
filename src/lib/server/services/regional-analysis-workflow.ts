@@ -19,10 +19,11 @@ export const REGIONAL_ANALYSIS_STAGES = [
   ['strategies', 'Screen management alternatives'],
 ] as const;
 
-const PRIORITY_SURFACES = [
+export const REGIONAL_ANALYSIS_PRIORITY_SURFACES = [
+  'soil-field-moisture', 'soil-field-temperature', 'soil-field-vpd',
   'soil-survey', 'vegetation', 'watersheds', 'water-gauges', 'drought-areas',
   'weather-observations', 'climate-field-precipitation', 'climate-field-soil-wetness-root-zone',
-  'burn-severity', 'fire-detections', 'fire-perimeters', 'soil-field-vpd',
+  'burn-severity', 'fire-detections', 'fire-perimeters',
 ];
 
 const SOURCE_SURFACE: Record<string, string> = {
@@ -260,7 +261,7 @@ export async function prepareRegionalAnalysis(
     if (node) node.status = regionalEvidenceStageStatus(entries);
   };
 
-  const surfaces = [...new Set([...PRIORITY_SURFACES.filter((source) => catalogue.surfaces.includes(source)), ...catalogue.surfaces])];
+  const surfaces = [...new Set([...REGIONAL_ANALYSIS_PRIORITY_SURFACES.filter((source) => catalogue.surfaces.includes(source)), ...catalogue.surfaces])];
   await runStage('local', surfaces.map((source) => ({
     source,
     tool: source === 'drought-areas' ? 'observation_coverage_on_day' : 'surface_value_near_point',
