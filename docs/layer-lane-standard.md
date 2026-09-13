@@ -338,6 +338,33 @@ A layer is finished when all of these are true:
       carrying their distances
 - [ ] tests cover success and failure; full sweep green
 
+### 13.1 Lane and tier retirement
+
+Retirement is one coordinated release. Removing a lane from Python does not finish the work while
+Railway still activates it or an image still copies its helper files. Apply this sequence whenever a
+lane, tier, lookup warmer, backfill, or serving rung is retired:
+
+1. Remove the registry/spec entry, command, tests whose only subject is the retired behavior, and
+   any scheduler, retry, reconciliation, or agent-tool registration that can still invoke it.
+2. Remove its Docker stages, copied files, packages, build arguments, watch paths, service variables,
+   and dedicated Railway service. A deleted helper must have no remaining `COPY` instruction.
+3. Remove a retired tier from its publisher, required-rung declaration, manifest/availability
+   contract, serving reader, slider capability, and agent response shape in the same change. Publish
+   a replacement availability generation when the retained tier set changes.
+4. Read `PLANTGEO_JOB_EXECUTOR_ACTIVE_LANES` from the target Railway environment and intersect it
+   with the post-change `LANE_SPECS`. Preserve the activation state of surviving lanes; never enable
+   a newly registered lane as a side effect of cleanup. Apply the reconciled variable before release.
+5. Merge through `main` and let Railway's GitHub integration build the declared Dockerfile. Do not
+   substitute a local source upload. If cache corruption is evidenced, use Railway's `NO_CACHE=1`
+   for one diagnostic build and remove it after the successful release.
+6. Verify the GitHub commit SHA, image build, container startup, active-lane inventory, service
+   health, and `cronSchedule: null` on every retained service. A successful image build with a
+   crashing scheduler is incomplete.
+
+The release evidence must name the removed lane/tier, the surviving active-lane set, the Railway
+deployment ID, and any retained data artifacts. Historical Parquet objects may remain as governed
+data; executable references to the retired path may not.
+
 ## 14. Verified environment facts
 
 - Prod warehouse: the loader DSN on the Railway public proxy. Alembic reads
