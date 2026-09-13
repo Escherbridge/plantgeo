@@ -25,11 +25,50 @@ import { ServiceAreaLayer } from "./ServiceAreaLayer";
 import { useRegionalIntelligenceStore } from "@/stores/regional-intelligence-store";
 import { useRegionalIntelligence } from "@/hooks/useRegionalIntelligence";
 import { AgentInteraction } from "./AgentInteraction";
+import { trpc } from "@/lib/trpc/client";
+import { invalidateInterventionDraftsOverlay } from "@/lib/map/use-intervention-drafts";
 
 const RegionalIntelligencePanel = dynamic(
   () => import("@/components/panels/RegionalIntelligencePanel"),
   { ssr: false }
 );
+
+const InterventionSubmitModal = dynamic(
+  () =>
+    import("@/components/panels/InterventionSubmitModal").then(
+      (mod) => mod.InterventionSubmitModal
+    ),
+  { ssr: false }
+);
+
+/**
+ * The intervention-proposal modal opened from the map's "Propose intervention here" action.
+ *
+ * Holds its own `trpc.useUtils()` rather than MapView doing so, for the same reason
+ * `AgentAnalysisPrompt` holds `useRegionalIntelligence`: it mounts only while a location has
+ * been picked, so MapView's own hook set -- and the render-count contract pinned in
+ * `map-view-render-count.test.tsx` -- stays untouched by a feature that isn't in use.
+ */
+function InterventionProposalModal({
+  coordinates,
+  onClose,
+}: {
+  coordinates: [number, number];
+  onClose: () => void;
+}) {
+  const trpcUtils = trpc.useUtils();
+  const [lon, lat] = coordinates;
+  return (
+    <InterventionSubmitModal
+      lon={lon}
+      lat={lat}
+      onClose={onClose}
+      onSuccess={() => {
+        void invalidateInterventionDraftsOverlay(trpcUtils);
+      }}
+    />
+  );
+}
 
 /**
  * The confirm-before-analyse popup, with the analysis controller it needs.
@@ -40,9 +79,11 @@ const RegionalIntelligencePanel = dynamic(
 function AgentAnalysisPrompt({
   coordinates,
   onClose,
+  onProposeIntervention,
 }: {
   coordinates: [number, number];
   onClose: () => void;
+  onProposeIntervention: (coordinates: [number, number]) => void;
 }) {
   const { queryLocation } = useRegionalIntelligence();
 
@@ -70,6 +111,7 @@ function AgentAnalysisPrompt({
     <AgentInteraction
       coordinates={coordinates}
       onAnalyze={handleAnalyze}
+      onProposeIntervention={() => onProposeIntervention(coordinates)}
       onClose={onClose}
     />
   );
@@ -82,6 +124,7 @@ export default function MapView() {
   const [isLoading, setIsLoading] = useState(true);
   const [webglError, setWebglError] = useState(false);
   const [agentCoords, setAgentCoords] = useState<[number, number] | null>(null);
+  const [interventionCoords, setInterventionCoords] = useState<[number, number] | null>(null);
 
   // One selector per field, never the whole store: MapView owns the map instance and every
   // layer under it, so a re-render here is the most expensive one on the page. Subscribing to
@@ -106,6 +149,15 @@ export default function MapView() {
 
   const handleCloseAgentInteraction = useCallback(() => {
     setAgentCoords(null);
+  }, []);
+
+  const handleProposeIntervention = useCallback((coordinates: [number, number]) => {
+    setInterventionCoords(coordinates);
+    setAgentCoords(null);
+  }, []);
+
+  const handleCloseInterventionModal = useCallback(() => {
+    setInterventionCoords(null);
   }, []);
 
   const initMap = useCallback(() => {
@@ -417,6 +469,13 @@ export default function MapView() {
               <AgentAnalysisPrompt
                 coordinates={agentCoords}
                 onClose={handleCloseAgentInteraction}
+                onProposeIntervention={handleProposeIntervention}
+              />
+            )}
+            {interventionCoords && (
+              <InterventionProposalModal
+                coordinates={interventionCoords}
+                onClose={handleCloseInterventionModal}
               />
             )}
           </>

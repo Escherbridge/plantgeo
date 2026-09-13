@@ -11,6 +11,8 @@ import {
   type InterventionType,
 } from "@/lib/environmental/intervention";
 import type { InterventionGeometry } from "@/lib/geo/intervention-geometry-schema";
+import { getStyle } from "@/lib/map/styles";
+import { useMapStore } from "@/stores/map-store";
 
 const InterventionDrawControl = dynamic(
   () =>
@@ -105,6 +107,7 @@ export function InterventionSubmitModal({
   const [map, setMap] = useState<maplibregl.Map | null>(null);
 
   const typeOptions = useMemo(() => TYPES_BY_CATEGORY[category], [category]);
+  const currentStyle = useMapStore((state) => state.currentStyle);
 
   function handleCategoryChange(next: InterventionCategory) {
     setCategory(next);
@@ -126,17 +129,10 @@ export function InterventionSubmitModal({
     if (!mapContainerRef.current) return;
     const instance = new maplibregl.Map({
       container: mapContainerRef.current,
-      style: {
-        version: 8,
-        sources: {},
-        layers: [
-          {
-            id: "background",
-            type: "background",
-            paint: { "background-color": "#e5e7eb" },
-          },
-        ],
-      },
+      // Reuses the same style the main map renders, so this embedded map shows real
+      // basemap tiles rather than a blank background -- the "pmtiles://" protocol is
+      // already registered globally by MapView's initMap by the time this modal opens.
+      style: getStyle(currentStyle),
       center: [lon, lat],
       zoom: 14,
     });
