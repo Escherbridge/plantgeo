@@ -22,6 +22,8 @@ interface SelectedLocation {
 
 interface RegionalIntelligenceState {
   isOpen: boolean;
+  /** Visibility-only flag, independent of `isOpen`. Toggled by `hidePanel`/`showPanel`; never touches conversation state. */
+  isVisible: boolean;
   selectedLocation: SelectedLocation | null;
   messages: ChatMessage[];
   isLoading: boolean;
@@ -38,6 +40,10 @@ interface RegionalIntelligenceState {
 
   openPanel: (lat: number, lon: number, precision: LocationPrecision) => void;
   closePanel: () => void;
+  /** Visibility-only toggle. Leaves messages/conversationId/analysisEvidence/isLoading untouched. */
+  hidePanel: () => void;
+  /** Reverses hidePanel. Leaves conversation state untouched. */
+  showPanel: () => void;
   setLocation: (lat: number, lon: number, precision: LocationPrecision) => void;
   addMessage: (message: ChatMessage) => void;
   updateLastMessage: (partial: Partial<ChatMessage>) => void;
@@ -58,6 +64,7 @@ export const useRegionalIntelligenceStore = create<RegionalIntelligenceState>()(
   devtools(
     (set, get) => ({
       isOpen: false,
+      isVisible: true,
       selectedLocation: null,
       messages: [],
       isLoading: false,
@@ -108,6 +115,9 @@ export const useRegionalIntelligenceStore = create<RegionalIntelligenceState>()(
           activity: [],
         });
       },
+
+      hidePanel: () => set({ isVisible: false }),
+      showPanel: () => set({ isVisible: true }),
 
       setLocation: (lat, lon, precision) => {
         get().abortController?.abort();

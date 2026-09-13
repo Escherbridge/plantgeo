@@ -54,8 +54,37 @@ editing one of these files is short:
   section's, and it deliberately owns no layer switch; putting one on either side of that line
   in a report re-opens the "render mode never touches a layer" rule.
 
-`RegionalIntelligencePanel`, `ContributionQueue`, `LayerUpload`, `UserPanel` and the two submit
-modals are not manager sections; they are mounted by routes or by other components.
+`ContributionQueue`, `LayerUpload` and `UserPanel` are not manager sections; they are mounted by
+routes.
+
+### The workspace is the one named exception
+
+**2026-09-13** (`conductor/tracks/ai_intervention_workspace_20260913/`). `RegionalIntelligencePanel`
+and `InterventionSubmitModal` are no longer two independent floating surfaces the dock convention
+merely tolerates. They are the two modes of ONE surface,
+`src/components/map/AiInterventionWorkspace.tsx` — a right-edge shell `MapView` mounts while a
+location action is live, with a two-way switch ("AI analysis" / "Propose intervention"), its own
+close, and a confirmation before a close that would discard a drawn-but-unsubmitted geometry or an
+in-flight analysis. OQ-2 of that track resolved this deliberately as a second control surface
+rather than a third dock section: the 304px dock is built for compact controls, and a chat
+transcript plus an embedded drawing map are neither.
+
+The exception is narrow, and these are its terms:
+
+- **Both modes stay mounted.** The inactive one is hidden with the `hidden` attribute, never
+  conditionally rendered (OQ-1(a), true keep-alive). An unmount would destroy an in-flight stream
+  and, once the embedded MapLibre draw instance lives here, the terra-draw session with it.
+- **Mode-switch is not close.** Switching modes never calls `onClose` and never resets either
+  store. `regional-intelligence-store`'s `hidePanel`/`showPanel` exist for the visibility half;
+  `closePanel` still means "the user is done" and still clears.
+- **It owns nothing the dock owns.** The workspace's compact layer strip is a second VIEW over
+  `map-store.activeLayers`, never a second copy of it: it writes through the same `useToggleLayer`
+  the dock's `LayerRow` eye uses, so it cannot drift (OQ-3). Adding any state of its own here —
+  render mode, opacity, a per-layer date — re-opens exactly the defect the dock convention exists
+  to prevent, and is not permitted.
+- **It does not touch `LayerPanel`.** The dock's open/closed state and disclosure state are
+  untouched by opening, closing or switching the workspace, and vice versa (FR-5). Right edge for
+  the workspace, left edge for the dock, bottom-left for `ManagerRail`.
 
 `src/components/search/` kept only `ReverseGeocode` after 2026-08-09: `SearchBar`,
 `SearchResults`, `RecentSearches` and `CommandPalette` became

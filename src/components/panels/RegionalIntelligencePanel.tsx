@@ -644,8 +644,23 @@ function MessageBubble({ message, conversationId }: { message: ChatMessage; conv
 // Main panel component
 // ---------------------------------------------------------------------------
 
-export default function RegionalIntelligencePanel() {
+export interface RegionalIntelligencePanelProps {
+  /**
+   * Rendered inside `AiInterventionWorkspace`'s AI slot rather than as its own right-edge
+   * overlay. Embedded, the shell owns the frame: the panel drops its absolute positioning, its
+   * own header (the shell states the coordinate and holds the close button) and its Escape
+   * binding, and it ignores `isVisible` -- that flag exists so the STANDALONE copy stands down
+   * while the workspace holds the conversation, and honouring it here would blank the pane the
+   * workspace is showing.
+   */
+  embedded?: boolean;
+}
+
+export default function RegionalIntelligencePanel({
+  embedded = false,
+}: RegionalIntelligencePanelProps = {}) {
   const isOpen = useRegionalIntelligenceStore((s) => s.isOpen);
+  const isVisible = useRegionalIntelligenceStore((s) => s.isVisible);
   const selectedLocation = useRegionalIntelligenceStore((s) => s.selectedLocation);
   const messages = useRegionalIntelligenceStore((s) => s.messages);
   const isLoading = useRegionalIntelligenceStore((s) => s.isLoading);
@@ -673,7 +688,7 @@ export default function RegionalIntelligencePanel() {
   }, [messages]);
 
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen || embedded) return;
     previousFocusRef.current =
       document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const focusFrame = window.requestAnimationFrame(() => {
@@ -689,9 +704,11 @@ export default function RegionalIntelligencePanel() {
       previousFocusRef.current?.focus();
       previousFocusRef.current = null;
     };
-  }, [closePanel, isOpen]);
+  }, [closePanel, embedded, isOpen]);
 
   if (!isOpen || !selectedLocation) return null;
+  // The standalone overlay stands down while the workspace embeds this same conversation.
+  if (!embedded && !isVisible) return null;
 
   const coordinatePrecision = selectedLocation.precision === 'exact' ? 6 : 2;
 
@@ -705,11 +722,17 @@ export default function RegionalIntelligencePanel() {
   return (
     <aside
       ref={panelRef}
-      role="dialog"
+      role={embedded ? undefined : 'dialog'}
       tabIndex={-1}
-      aria-labelledby="regional-intelligence-title"
+      aria-labelledby={embedded ? undefined : 'regional-intelligence-title'}
+      aria-label={embedded ? 'Regional intelligence analysis' : undefined}
       aria-busy={isLoading}
-      className="absolute right-0 top-0 z-50 flex h-full w-full flex-col border-l bg-white shadow-xl sm:w-96 dark:border-gray-700 dark:bg-gray-900"
+      data-testid="regional-intelligence-panel"
+      className={
+        embedded
+          ? 'flex h-full w-full flex-col bg-white dark:bg-gray-900'
+          : 'absolute right-0 top-0 z-50 flex h-full w-full flex-col border-l bg-white shadow-xl sm:w-96 dark:border-gray-700 dark:bg-gray-900'
+      }
     >
       <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">
         {isLoading
@@ -719,7 +742,9 @@ export default function RegionalIntelligencePanel() {
             : ''}
       </div>
 
-      {/* Header */}
+      {/* Header. Embedded, the workspace shell already states the coordinate and owns the one
+          close control, so a second header here would be a second X with different semantics. */}
+      {!embedded && (
       <div className="flex items-center justify-between border-b p-3 dark:border-gray-700">
         <div className="flex min-w-0 items-center gap-2">
           <MapPin aria-hidden="true" className="h-4 w-4 shrink-0 text-blue-500" />
@@ -740,6 +765,7 @@ export default function RegionalIntelligencePanel() {
           <X aria-hidden="true" className="h-4 w-4" />
         </button>
       </div>
+      )}
 
       {/* Messages */}
       <div className="flex flex-wrap gap-3 border-b px-3 py-2 text-xs">

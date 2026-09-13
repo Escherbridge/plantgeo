@@ -40,4 +40,32 @@ describe("regional intelligence request state", () => {
     resumed.openPanel(44.66, -118.83, 'approximate');
     expect(useRegionalIntelligenceStore.getState()).toMatchObject({ conversationId: null, messages: [], activity: [], isLoading: false });
   });
+
+  it('hidePanel changes only visibility, leaving conversation state untouched', () => {
+    const store = useRegionalIntelligenceStore.getState();
+    store.openPanel(40.12, -105.25, 'approximate');
+    store.addMessage({ id: 'question', role: 'user', content: 'Analyze this location' });
+    store.setConversationId('owned-chat');
+
+    store.hidePanel();
+
+    const state = useRegionalIntelligenceStore.getState();
+    expect(state.isVisible).toBe(false);
+    expect(state.isOpen).toBe(true);
+    expect(state.messages).toHaveLength(1);
+    expect(state.conversationId).toBe('owned-chat');
+  });
+
+  it('showPanel reverses hidePanel without touching conversation state', () => {
+    const store = useRegionalIntelligenceStore.getState();
+    store.openPanel(40.12, -105.25, 'approximate');
+    store.addMessage({ id: 'question', role: 'user', content: 'Analyze this location' });
+    store.hidePanel();
+
+    store.showPanel();
+
+    const state = useRegionalIntelligenceStore.getState();
+    expect(state.isVisible).toBe(true);
+    expect(state.messages).toHaveLength(1);
+  });
 });

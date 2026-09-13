@@ -4,12 +4,15 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import maplibregl from "maplibre-gl";
 import { trpc } from "@/lib/trpc/client";
-import {
-  LAND_INTERVENTION_TYPES,
-  AIR_INTERVENTION_TYPES,
-  type InterventionCategory,
-  type InterventionType,
+import type {
+  InterventionCategory,
+  InterventionType,
 } from "@/lib/environmental/intervention";
+import {
+  INTERVENTION_TYPE_LABELS,
+  TYPES_BY_CATEGORY,
+  validateDrawnGeometry,
+} from "@/lib/environmental/intervention-form";
 import type { InterventionGeometry } from "@/lib/geo/intervention-geometry-schema";
 import { getStyle } from "@/lib/map/styles";
 import { useMapStore } from "@/stores/map-store";
@@ -21,49 +24,6 @@ const InterventionDrawControl = dynamic(
     ),
   { ssr: false }
 );
-
-/** Mirrors InterventionType in src/lib/environmental/intervention.ts. */
-const INTERVENTION_TYPE_LABELS: Record<InterventionType, string> = {
-  reforestation: "Reforestation",
-  silvopasture: "Silvopasture",
-  cover_cropping: "Cover Cropping",
-  biochar: "Biochar",
-  keyline: "Keyline Design",
-  cloud_seeding: "Cloud Seeding",
-};
-
-const TYPES_BY_CATEGORY: Record<InterventionCategory, InterventionType[]> = {
-  land: LAND_INTERVENTION_TYPES,
-  air: AIR_INTERVENTION_TYPES,
-};
-
-/**
- * A Polygon must close (first position repeats the last) and describe at
- * least 3 distinct vertices (4 ring positions including the closing one).
- * Points always pass; MultiPolygon parts are checked the same way per ring.
- */
-function validateDrawnGeometry(geometry: InterventionGeometry): string | null {
-  const polygons =
-    geometry.type === "Polygon"
-      ? [geometry.coordinates]
-      : geometry.type === "MultiPolygon"
-        ? geometry.coordinates
-        : null;
-  if (polygons === null) return null;
-
-  for (const polygon of polygons) {
-    const ring = polygon[0] ?? [];
-    if (ring.length < 4) {
-      return "Draw at least 3 points, then close the polygon.";
-    }
-    const first = ring[0];
-    const last = ring[ring.length - 1];
-    if (first[0] !== last[0] || first[1] !== last[1]) {
-      return "The drawn polygon must be closed.";
-    }
-  }
-  return null;
-}
 
 interface InterventionSubmitModalProps {
   /** Map centre the recommendation is pinned to. */
@@ -83,6 +43,12 @@ interface InterventionSubmitModalProps {
  * polygon on a small map centred on the pin; whatever they draw is what gets
  * submitted, not just the map centre. The server validator already accepts
  * Point/Polygon/MultiPolygon and enforces a per-category area cap.
+ *
+ * This is the COMMUNITY "+Recommend" surface (`CommunityDetails.tsx`), seeded with the map
+ * centre. It keeps its own local `useState` on purpose: the map workspace's copy of this form
+ * (`InterventionProposalForm.tsx`) is backed by `intervention-draft-store.ts`, and opening this
+ * modal must neither adopt nor clobber an in-progress workspace draft. Labels, the category
+ * table and the geometry validator are shared via `src/lib/environmental/intervention-form.ts`.
  */
 export function InterventionSubmitModal({
   lat,

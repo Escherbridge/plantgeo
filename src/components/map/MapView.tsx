@@ -33,41 +33,48 @@ const RegionalIntelligencePanel = dynamic(
   { ssr: false }
 );
 
-const InterventionSubmitModal = dynamic(
+const AiInterventionWorkspace = dynamic(
   () =>
-    import("@/components/panels/InterventionSubmitModal").then(
-      (mod) => mod.InterventionSubmitModal
+    import("@/components/map/AiInterventionWorkspace").then(
+      (mod) => mod.AiInterventionWorkspace
     ),
   { ssr: false }
 );
 
 /**
- * The intervention-proposal modal opened from the map's "Propose intervention here" action.
+ * The one surface both location actions now open, with the query cache it will need.
  *
  * Holds its own `trpc.useUtils()` rather than MapView doing so, for the same reason
  * `AgentAnalysisPrompt` holds `useRegionalIntelligence`: it mounts only while a location has
  * been picked, so MapView's own hook set -- and the render-count contract pinned in
- * `map-view-render-count.test.tsx` -- stays untouched by a feature that isn't in use.
+ * `map-view-render-count.test.tsx` -- stays untouched by a feature that isn't in use. This
+ * wrapper is where `InterventionProposalModal`'s `invalidateInterventionDraftsOverlay` call
+ * lives on, so Phase 4 can hand it to the ported submit form without hoisting anything.
  */
-function InterventionProposalModal({
-  coordinates,
+function MapWorkspace({
+  session,
   onClose,
 }: {
-  coordinates: [number, number];
+  session: WorkspaceSession;
   onClose: () => void;
 }) {
   const trpcUtils = trpc.useUtils();
-  const [lon, lat] = coordinates;
   return (
-    <InterventionSubmitModal
-      lon={lon}
-      lat={lat}
+    <AiInterventionWorkspace
+      coordinates={session.coordinates}
+      initialMode={session.mode}
       onClose={onClose}
-      onSuccess={() => {
+      onInterventionSubmitted={() => {
         void invalidateInterventionDraftsOverlay(trpcUtils);
       }}
     />
   );
+}
+
+/** Which pane the workspace opens in, and the point it opens over. */
+interface WorkspaceSession {
+  mode: "ai" | "intervention";
+  coordinates: [number, number];
 }
 
 /**
@@ -79,11 +86,11 @@ function InterventionProposalModal({
 function AgentAnalysisPrompt({
   coordinates,
   onClose,
-  onProposeIntervention,
+  onOpenWorkspace,
 }: {
   coordinates: [number, number];
   onClose: () => void;
-  onProposeIntervention: (coordinates: [number, number]) => void;
+  onOpenWorkspace: (session: WorkspaceSession) => void;
 }) {
   const { queryLocation } = useRegionalIntelligence();
 
@@ -102,16 +109,22 @@ function AgentAnalysisPrompt({
       // viewed-layer ref synchronously and then owns its own request, so the unmount cannot
       // strand it.
       void queryLocation(requestedLat, requestedLon, undefined, precision);
+      // The workspace opens over the coordinate the user CONFIRMED, at the precision they
+      // chose -- not the raw click -- so the pane and the request it just sent name the same
+      // point. `onClose` then dismisses this popup; it never closes the workspace.
+      onOpenWorkspace({ mode: "ai", coordinates: [requestedLon, requestedLat] });
       onClose();
     },
-    [coordinates, onClose, queryLocation]
+    [coordinates, onClose, onOpenWorkspace, queryLocation]
   );
 
   return (
     <AgentInteraction
       coordinates={coordinates}
       onAnalyze={handleAnalyze}
-      onProposeIntervention={() => onProposeIntervention(coordinates)}
+      onProposeIntervention={() =>
+        onOpenWorkspace({ mode: "intervention", coordinates })
+      }
       onClose={onClose}
     />
   );
@@ -124,7 +137,10 @@ export default function MapView() {
   const [isLoading, setIsLoading] = useState(true);
   const [webglError, setWebglError] = useState(false);
   const [agentCoords, setAgentCoords] = useState<[number, number] | null>(null);
-  const [interventionCoords, setInterventionCoords] = useState<[number, number] | null>(null);
+  // ONE workspace, in one of two modes -- the two independent `agentCoords`/`interventionCoords`
+  // overlay slices this replaced could never both be open, and closing one never returned to the
+  // other. See conductor/tracks/ai_intervention_workspace_20260913/.
+  const [workspaceSession, setWorkspaceSession] = useState<WorkspaceSession | null>(null);
 
   // One selector per field, never the whole store: MapView owns the map instance and every
   // layer under it, so a re-render here is the most expensive one on the page. Subscribing to
@@ -151,13 +167,20 @@ export default function MapView() {
     setAgentCoords(null);
   }, []);
 
-  const handleProposeIntervention = useCallback((coordinates: [number, number]) => {
-    setInterventionCoords(coordinates);
+  /**
+   * Opens (or re-points) the workspace and dismisses the click popup.
+   *
+   * Deliberately writes nothing else. Neither store is reset here: the workspace itself decides
+   * whether a new coordinate may overwrite an unsubmitted draft (see its seeding guard), which
+   * is what keeps a second map click from silently destroying the first click's work.
+   */
+  const handleOpenWorkspace = useCallback((session: WorkspaceSession) => {
+    setWorkspaceSession(session);
     setAgentCoords(null);
   }, []);
 
-  const handleCloseInterventionModal = useCallback(() => {
-    setInterventionCoords(null);
+  const handleCloseWorkspace = useCallback(() => {
+    setWorkspaceSession(null);
   }, []);
 
   const initMap = useCallback(() => {
@@ -464,19 +487,21 @@ export default function MapView() {
                 <SyncIndicator />
               </div>
             </div>
+            {/* The STANDALONE analysis panel, for the conversations that were not opened from
+                the workspace (a resumed saved conversation, for instance). It stands itself
+                down -- it reads `isVisible` -- while the workspace is mounted and embedding the
+                same conversation, so the two never stack. Mount gating stays on `isOpen` alone
+                so MapView gains no new store subscription; see map-view-render-count.test.tsx. */}
             {isAIOpen && <RegionalIntelligencePanel />}
             {agentCoords && (
               <AgentAnalysisPrompt
                 coordinates={agentCoords}
                 onClose={handleCloseAgentInteraction}
-                onProposeIntervention={handleProposeIntervention}
+                onOpenWorkspace={handleOpenWorkspace}
               />
             )}
-            {interventionCoords && (
-              <InterventionProposalModal
-                coordinates={interventionCoords}
-                onClose={handleCloseInterventionModal}
-              />
+            {workspaceSession && (
+              <MapWorkspace session={workspaceSession} onClose={handleCloseWorkspace} />
             )}
           </>
         )}

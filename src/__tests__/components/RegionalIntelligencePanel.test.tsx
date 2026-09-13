@@ -20,6 +20,8 @@ Element.prototype.scrollIntoView = vi.fn();
 const mocks = vi.hoisted(() => ({
   state: {
     isOpen: true,
+    // The standalone overlay stands down only while the workspace embeds the same conversation.
+    isVisible: true,
     selectedLocation: { lat: 43.6, lon: -116.2, precision: "approximate" as const },
     messages: [] as ChatMessage[],
     isLoading: false,
