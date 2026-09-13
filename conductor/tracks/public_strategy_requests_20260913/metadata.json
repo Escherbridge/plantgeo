@@ -1,0 +1,45 @@
+{
+  "track_id": "public_strategy_requests_20260913",
+  "title": "Public strategy requests and real display names",
+  "type": "feature",
+  "status": "pending",
+  "created": "2026-09-13",
+  "description": "Reverse the private/team-scoped design of 'Strategy requests' (strategy_requests/request_votes, never shown on the map, visible only to the submitter/their team) so requests become public, map-visible, social geo.features rows reusing the unified intervention layer, click-to-inspect detail panel, and feature_likes/feature_comments backend just shipped for interventions. Also closes the known 'no user-directory lookup' gap flagged by that same track by adding a users.name-backed display-name directory used consistently in comments, submissions, and requests.",
+  "dependencies": [
+    {
+      "track": "unified_intervention_layer_20260913",
+      "relationship": "builds_on",
+      "note": "Just shipped the merged intervention layer, click-to-inspect InterventionDetailModal, and the generic feature_id-scoped feature_likes/feature_comments backend this track reuses verbatim for strategy requests. Also the source of the explicitly named 'no user-directory lookup' known gap (InterventionCommentThread.tsx authorLabel) this track closes."
+    },
+    {
+      "track": "intervention_drawing_visibility_20260912",
+      "relationship": "builds_on",
+      "note": "Source of the InterventionGeometrySchema/area-cap validation this track reuses unchanged for a request's Point geometry (OQ-F), and of the land/air InterventionCategorySchema/InterventionType vocabulary this track extends with water_harvesting (OQ-D)."
+    },
+    {
+      "track": "community_engagement_completion_20260805",
+      "relationship": "must_not_duplicate",
+      "note": "castModerationVote/transitionLifecycleState remains the dead, non-authoritative status vocabulary; this track's direct-to-published request path (OQ-A) must not route through or resemble that pipeline."
+    }
+  ],
+  "partitions": {
+    "owns": [
+      "src/lib/server/trpc/routers/community.ts (retire submitRequest/voteOnRequest/getRequests/getPriorityZones/getRequestById per FR-3)",
+      "src/lib/server/db/schema.ts (drop strategyRequests/requestVotes/priorityZones; extend InterventionType union with water_harvesting)",
+      "src/components/panels/RequestSubmitModal.tsx and src/components/panels/CommunityDetails.tsx (public-flow rewrite per FR-3)",
+      "New users router / getDisplayNames procedure, location TBD in Phase 1 (candidate: src/lib/server/trpc/routers/users.ts)",
+      "src/lib/environmental/intervention.ts (water_harvesting addition)"
+    ],
+    "touches": [
+      "src/lib/server/trpc/routers/interventions.ts (new/extended request submission mutation, kind discriminator)",
+      "src/lib/server/trpc/routers/intervention-social.ts (regression test only, per FR-2 -- no expected procedure changes)",
+      "src/components/intervention/InterventionCommentThread.tsx (authorLabel resolves real names per FR-4)",
+      "src/components/map/InterventionDetailModal.tsx (kind: request rendering, submitter name resolution)",
+      "src/lib/map/layers.ts and src/lib/map/layer-registry.ts (only if Phase 1 confirms a visual request/recommendation distinction is wanted)",
+      "conductor/RUNBOOK.md (correct stale private-strategy-request institutional knowledge)"
+    ],
+    "confidence": "low",
+    "computed_at_commit": "b98e438"
+  },
+  "resource": "./spec.md"
+}

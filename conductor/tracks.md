@@ -45,6 +45,7 @@ This registry contains planned, active, and blocked work only. Completed impleme
 
 | Track | State |
 | --- | --- |
+| [Public strategy requests + real names](tracks/public_strategy_requests_20260913/plan.md) | planned |
 | [Unified intervention layer + detail panel](tracks/unified_intervention_layer_20260913/plan.md) | planned |
 | [AI intervention workspace](tracks/ai_intervention_workspace_20260913/plan.md) | planned |
 | [Intervention drawing + visibility](tracks/intervention_drawing_visibility_20260912/plan.md) | planned |
