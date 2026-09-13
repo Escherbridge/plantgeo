@@ -66,10 +66,15 @@ Unlike the four gates above, BLM Surface Management Agency and field-office-juri
 
 | Layer | Endpoint | Notes |
 |---|---|---|
-| Surface management | `https://gis.blm.gov/arcgis/rest/services/lands/BLM_Natl_SMA_LimitedScale/MapServer` (sublayer 1); state-level higher-res variant `https://gis.blm.gov/idarcgis/rest/services/realty/BLM_ID_Surface_Management_Agency/FeatureServer` | Confirmed via BLM's own `gis.blm.gov` ArcGIS Server, not a third-party mirror. Multi-agency layer (also carries NPS/USFS/DOD/BIA/etc.) — the reference-plane spec's requirement to "filter by verified manager classification" is real and solvable: field `ADMIN_AGENCY_CODE` isolates BLM. Exact literal code string (likely `"BLM"`) still needs one live query to confirm — mechanical, not a rights question. |
-| Field-office jurisdiction | `https://gis.blm.gov/arcgis/rest/services/admin_boundaries/BLM_Natl_AdminUnit/MapServer` (sublayer 3 = Field Boundary — the parcel-to-office join layer) | Same publisher/policy umbrella. Field-level schema (office name/code) not yet confirmed via a live schema query — same "verification, not a blocker" caveat. |
+| Surface management | `https://gis.blm.gov/arcgis/rest/services/lands/BLM_Natl_SMA_LimitedScale/MapServer` (sublayer 1); state-level higher-res variant `https://gis.blm.gov/idarcgis/rest/services/realty/BLM_ID_Surface_Management_Agency/FeatureServer` | Confirmed via BLM's own `gis.blm.gov` ArcGIS Server, not a third-party mirror. Multi-agency layer (also carries NPS/USFS/DOD/BIA/etc.) — filter field is `ADMIN_AGENCY_CODE`. |
+| Field-office jurisdiction | `https://gis.blm.gov/arcgis/rest/services/admin_boundaries/BLM_Natl_AdminUnit/MapServer` (sublayer 3 = Field Boundary — the parcel-to-office join layer) | Same publisher/policy umbrella. |
 
-**No human contact needed for this lane.** Two mechanical verification steps remain (confirm the literal `ADMIN_AGENCY_CODE` value, confirm office-jurisdiction field names via a live `/3?f=json` query) before treating this as a fully closed admission, but neither requires anyone's permission.
+**2026-09-13 live verification (both mechanical steps closed):**
+
+- Surface-management filter, confirmed by a live query against sublayer 1 for `ADMIN_ST='ID' AND ADMIN_AGENCY_CODE='BLM'` (one feature returned, no error): `ADMIN_AGENCY_CODE = "BLM"`, `ADMIN_DEPT_CODE = "DOI"`, `ADMIN_UNIT_NAME = "Bureau of Land Management"`. The literal filter is `ADMIN_AGENCY_CODE = 'BLM'`.
+- Field-office jurisdiction schema, confirmed via `MapServer/3?f=json`: `ADM_UNIT_CD` (office code), `ADMU_NAME` (office name, e.g. "Bishop Field Office"), `BLM_ORG_TYPE` (State/District/Field/Other), `PARENT_CD`/`PARENT_NAME` (hierarchy), `ADMIN_ST`, `EFF_DT`/`APPRV_DT`.
+
+**No human contact needed for this lane, and no further research step remains open.** What's left is a real ingestion decision, not verification: this repo's data layers are ingested into day-partitioned Parquet lanes read by DuckDB (see `docs/layer-lane-standard.md`), not fetched live from an external API per-request. Wiring `BLM_Natl_SMA_LimitedScale`/`BLM_Natl_AdminUnit` into `src/lib/server/services/land-context/parquet-reader.ts` as a direct live fetch would bypass that pattern and constitutes real acquisition — that's an implementation decision for whoever owns the ingestion pipeline, not something to build as a shortcut inside the reader-contract stub.
 
 ## Implementation note
 

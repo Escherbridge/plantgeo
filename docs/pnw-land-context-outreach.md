@@ -21,10 +21,12 @@ No email in this document has been sent. Sending is a human action — update th
 
 BLM Surface Management Agency and field-office-jurisdiction data resolved to **likely admittable now** without contacting anyone. Federal-agency works are public domain under 17 U.S.C. § 105, and BLM's own [IM 2014-029 "Disclaimer Statement Policy for Datasets Held by BLM"](https://www.blm.gov/policy/im-2014-029) confirms this explicitly: accuracy/fitness-for-use caveats only, no reuse or redistribution restriction.
 
-| Layer | Endpoint | Remaining step |
+| Layer | Endpoint | Confirmed field mapping (2026-09-13) |
 |---|---|---|
-| Surface management | `https://gis.blm.gov/arcgis/rest/services/lands/BLM_Natl_SMA_LimitedScale/MapServer` (sublayer 1); ID-specific high-res variant `https://gis.blm.gov/idarcgis/rest/services/realty/BLM_ID_Surface_Management_Agency/FeatureServer` | Confirm the literal `ADMIN_AGENCY_CODE` value used to filter BLM out of this multi-agency layer (also carries NPS/USFS/DOD/BIA/etc.) — a live query, not a rights question |
-| Field-office jurisdiction | `https://gis.blm.gov/arcgis/rest/services/admin_boundaries/BLM_Natl_AdminUnit/MapServer` (sublayer 3 = Field Boundary) | Confirm office name/code field names via a live `/3?f=json` schema query |
+| Surface management | `https://gis.blm.gov/arcgis/rest/services/lands/BLM_Natl_SMA_LimitedScale/MapServer` (sublayer 1); ID-specific high-res variant `https://gis.blm.gov/idarcgis/rest/services/realty/BLM_ID_Surface_Management_Agency/FeatureServer` | Filter: `ADMIN_AGENCY_CODE = 'BLM'`. Also carries `ADMIN_DEPT_CODE = 'DOI'`, `ADMIN_UNIT_NAME = 'Bureau of Land Management'`. |
+| Field-office jurisdiction | `https://gis.blm.gov/arcgis/rest/services/admin_boundaries/BLM_Natl_AdminUnit/MapServer` (sublayer 3 = Field Boundary) | `ADMU_NAME` (office name), `ADM_UNIT_CD` (office code), `BLM_ORG_TYPE` (State/District/Field/Other), `PARENT_CD`/`PARENT_NAME` (hierarchy), `EFF_DT`/`APPRV_DT`. |
+
+Both mechanical verification steps are closed. What remains is a real ingestion decision (wiring these into a Parquet lane per `docs/layer-lane-standard.md`), not more research — no live fetch was wired directly into the reader-contract stub, since that would bypass this repo's ingest-then-serve pattern.
 
 Sources: [BLM National SMA Limited Scale Service](https://gis.blm.gov/arcgis/rest/services/lands/BLM_Natl_SMA_LimitedScale/MapServer) · [Layer 1 schema](https://gis.blm.gov/arcgis/rest/services/lands/BLM_Natl_SMA_LimitedScale/MapServer/1?f=json) · [BLM National Administrative Unit boundaries](https://gis.blm.gov/arcgis/rest/services/admin_boundaries/BLM_Natl_AdminUnit/MapServer) · [ScienceBase: BLM National SMA Polygons (NGDA)](https://www.sciencebase.gov/catalog/item/59b83c14e4b08b1644df5f6e) · [IM 2014-029](https://www.blm.gov/policy/im-2014-029)
 
