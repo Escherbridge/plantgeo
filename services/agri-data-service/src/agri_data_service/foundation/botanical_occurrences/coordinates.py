@@ -25,11 +25,22 @@ DECLARED_ENVELOPE: Final[tuple[float, float, float, float]] = (-125.0, 41.0, -11
 #: this list has not learned leaves the record `exact`, which is why the two terms also survive
 #: verbatim: this is a best-effort READ of a policy, not the policy itself.
 WITHHELD_MARKERS: Final[tuple[str, ...]] = (
-    "coordinate", "location", "locality", "georeference", "latitude", "longitude",
+    "coordinate",
+    "location",
+    "locality",
+    "georeference",
+    "latitude",
+    "longitude",
 )
 SUPPRESSION_MARKERS: Final[tuple[str, ...]] = ("withheld", "not for public", "redacted", "suppressed", "removed")
 GENERALIZATION_MARKERS: Final[tuple[str, ...]] = (
-    "generali", "obscur", "rounded", "fuzzed", "reduced precision", "centroid", "buffered",
+    "generali",
+    "obscur",
+    "rounded",
+    "fuzzed",
+    "reduced precision",
+    "centroid",
+    "buffered",
 )
 
 #: A coordinate uncertainty at or above this is treated as generalized rather than exact, whatever

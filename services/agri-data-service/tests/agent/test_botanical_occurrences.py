@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from agri_data_service.agent.botanical_occurrences import (
+    _exact_block,
     botanical_occurrence_spatial_neighbours,
     botanical_occurrence_temporal_neighbours,
     botanical_occurrences_in_region,
@@ -46,9 +47,7 @@ def release_set_id(tmp_path: Path) -> str:
 
 
 async def test_the_region_tool_reports_its_own_exact_state(release_set_id: str) -> None:
-    payload = json.loads(
-        await botanical_occurrences_in_region(release_set_id, -122.6, 47.4, -122.0, 47.9)
-    )
+    payload = json.loads(await botanical_occurrences_in_region(release_set_id, -122.6, 47.4, -122.0, 47.9))
     assert payload["state"] == "detail"
     assert payload["exact"]["state"] in {"found", "empty"}
     assert payload["exact"]["count"] == len(payload["features"])
@@ -75,8 +74,6 @@ async def test_spatial_neighbours_are_flagged_and_carry_a_real_distance(release_
 
 def test_an_empty_exact_result_is_never_replaced_by_a_neighbour() -> None:
     """The shape is the guarantee: `exact` and `substitutes` are different keys in one payload."""
-    from agri_data_service.agent.botanical_occurrences import _exact_block
-
     assert _exact_block([]) == {"state": "empty", "count": 0}
 
 

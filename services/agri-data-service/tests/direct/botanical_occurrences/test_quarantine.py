@@ -21,13 +21,16 @@ from agri_data_service.pipeline.direct.botanical_occurrences.quarantine import (
 if TYPE_CHECKING:
     from pathlib import Path
 
+SHA256_HEX_LENGTH = 64
+
 
 def test_a_valid_archive_is_accepted_with_measured_hashes(valid_archive: Path) -> None:
     receipt = inspect_archive(valid_archive)
     assert receipt.accepted, receipt.reasons
     assert receipt.reasons == ()
-    assert len(receipt.archive_sha256) == 64
-    assert receipt.meta_sha256 and receipt.eml_sha256
+    assert len(receipt.archive_sha256) == SHA256_HEX_LENGTH
+    assert receipt.meta_sha256
+    assert receipt.eml_sha256
     assert {member.member_name for member in receipt.members} == {
         "meta.xml",
         "eml.xml",
@@ -110,5 +113,6 @@ def test_eml_facts_carry_the_package_id_and_licence(valid_archive: Path) -> None
     facts = parse_eml_facts(read_member_bytes(valid_archive, "eml.xml"))
     assert facts.package_id == "test-collection/v1.0"
     assert facts.pub_date == "2026-09-01"
-    assert facts.rights_uri and "creativecommons.org" in facts.rights_uri
+    assert facts.rights_uri
+    assert "creativecommons.org" in facts.rights_uri
     assert facts.publisher == "Test Herbarium"

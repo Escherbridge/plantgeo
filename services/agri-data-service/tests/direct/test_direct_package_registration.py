@@ -26,6 +26,14 @@ EXEMPT_FROM_LANE_REGISTRATION: dict[str, str] = {
     "reference publication keyed by immutable source/profile release IDs. The explicit offline publisher "
     "has no observation day, gap-fill cursor or environmental cron; LANE_REGISTRY registration is "
     "inapplicable. HTTP and agent registration are proved by the botanical profile integration tests.",
+    "botanical_occurrences": "botanical_occurrence_parquet_lane_20260911: a `static_lookup` LANE_REGISTRATIONS "
+    "entry requires a real source watermark (LaneRegistration.__post_init__ refuses a static_lookup lane with "
+    "none), and no occurrence source is admitted yet (pnw_herbaria_source_admission_20260911, "
+    "admitted_releases=[]) -- inventing a watermark for an unadmitted source would fabricate a version signal "
+    "for a source this lane cannot yet poll. Exempted rather than registered until an admitted release's own "
+    "watermark exists; the writer contract itself IS checked (see WRITER_MODULES in "
+    "test_direct_writer_contract.py). See conductor/tracks/botanical_occurrence_parquet_lane_20260911/"
+    "evidence/shared-registration.patch, hunk 1, Option B.",
 }
 
 

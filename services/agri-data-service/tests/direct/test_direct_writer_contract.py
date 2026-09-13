@@ -67,6 +67,7 @@ DIRECT_ROOT = _SOURCE_ROOT / "pipeline" / "direct"
 #: somebody remembers. `water_gauges` is deliberately absent and its absence is asserted, not assumed
 #: -- see `NON_WRITER_MODULES`.
 WRITER_MODULES: Final[dict[str, str]] = {
+    "botanical_occurrences": "agri_data_service.pipeline.direct.botanical_occurrences.forward",
     "burn_severity": "agri_data_service.pipeline.direct.burn_severity.forward",
     "climate": "agri_data_service.pipeline.direct.climate.forward",
     "drought": "agri_data_service.pipeline.direct.drought.forward",
@@ -498,9 +499,15 @@ def test_fire_detections_is_still_the_lone_identity_refuser_and_says_so() -> Non
     declared it instead of changing it. The assertion is two-sided: the outlier must still BE an
     outlier, and its own declaration must still name the tension, so nobody flips it without reading
     the argument first.
+
+    `botanical_occurrences` joined the counting side 2026-09-12: an unkeyable core row (no
+    `occurrenceID`/`catalogNumber`) is still a documented specimen, so it is counted and published
+    under a locator-derived key rather than dropped -- the same argument `sensors`/`watersheds`/
+    `fire_perimeters` already made, not a new one. See `WRITER_CONTRACT.policy_basis` in
+    `pipeline/direct/botanical_occurrences/forward.py`.
     """
     counters = {package for package in PACKAGES if _contract(package).identity_defect == SKIP_AND_COUNT}
-    assert counters == {"fire_perimeters", "sensors", "watersheds"}, (
+    assert counters == {"botanical_occurrences", "fire_perimeters", "sensors", "watersheds"}, (
         "the set of writers that COUNT an identity defect changed; if a writer joined or left, "
         "pipeline/direct/__init__.py's 'the one real outlier' paragraph is now wrong"
     )
@@ -537,9 +544,15 @@ def test_watersheds_is_still_the_only_writer_without_a_retry_series() -> None:
     history -- so a failed turn costs nothing the next cron tick does not recover. Adding the retry
     trio "for parity" would double the most expensive fetch in this package to shorten a recovery
     nothing is waiting on.
+
+    `botanical_occurrences` joined this set 2026-09-12 for an unrelated reason: its turn opens no
+    socket at all. Its input is an archive `fetch.py` already transferred into quarantine under a
+    granted permission verdict; `fetch.py` itself holds the real eight-attempt retry ceiling for the
+    one command that does transfer. See `WRITER_CONTRACT.flags_absent_on_purpose["--retry-attempts"]`
+    in `pipeline/direct/botanical_occurrences/forward.py`.
     """
     without_retries = {package for package in PACKAGES if "--retry-attempts" not in _flags(package)}
-    assert without_retries == {"watersheds"}, (
+    assert without_retries == {"botanical_occurrences", "watersheds"}, (
         f"the set of writers with no retry series changed to {sorted(without_retries)}; if watersheds "
         "gained one, delete its exemption, and if another writer lost one, that is a regression"
     )

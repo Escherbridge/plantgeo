@@ -1,5 +1,7 @@
 """Cell membership, the fan-out cap, evaluation states and richness as distinct concepts."""
 
+# ruff: noqa: PLR2004 - the small literal counts ARE the assertion; naming each one hides it.
+
 from __future__ import annotations
 
 from datetime import date
@@ -109,12 +111,7 @@ def test_richness_counts_distinct_concepts_and_is_not_summed_from_the_finer_rung
 def test_a_cell_with_only_possible_records_is_not_documented() -> None:
     record = _record("g", spatial_class="generalized", uncertainty=1.0)
     associations = associate_record(record, FINE)
-    (cell,) = [
-        evaluation
-        for evaluation in evaluate_support(
-            [record], associations, FINE, release_set_id="set", include_evaluated_zero=False
-        )
-    ]
+    (cell,) = list(evaluate_support([record], associations, FINE, release_set_id="set", include_evaluated_zero=False))
     assert cell.evaluation == "withheld_or_generalized_only"
     assert cell.record_count == 0
     assert cell.possible_only_records == 1

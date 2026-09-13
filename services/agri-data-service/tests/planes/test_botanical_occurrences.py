@@ -1,5 +1,7 @@
 """The four serving states, the pinning rules, and cursor continuation over a published generation."""
 
+# ruff: noqa: PLR2004 - the small literal counts ARE the assertion; naming each one hides it.
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
