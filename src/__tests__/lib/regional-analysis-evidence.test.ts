@@ -85,6 +85,8 @@ describe('regional analysis evidence boundary', () => {
       sources: ['burn-severity', 'fire-detections'], status: 'observed',
     }] };
     expect(readRegionalAnalysisEvidence(combined)).toEqual(combined);
-    expect(readRegionalAnalysisEvidence({ ...combined, toolCalls: [{ ...combined.toolCalls[0], sources: ['burn-severity'] }] })).toBeNull();
+    const single = { ...combined, toolCalls: [{ ...combined.toolCalls[0], sources: ['burn-severity'] }] };
+    expect(readRegionalAnalysisEvidence(single)).toEqual(single);
+    expect(readRegionalAnalysisEvidence({ ...combined, toolCalls: [{ ...combined.toolCalls[0], sources: [] }] })).toBeNull();
   });
 });
