@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Map as MapLibreMap } from "maplibre-gl";
 import { TerraDraw, TerraDrawPointMode, TerraDrawPolygonMode, TerraDrawSelectMode } from "terra-draw";
 import { TerraDrawMapLibreGLAdapter } from "terra-draw-maplibre-gl-adapter";
-import type { InterventionGeometry } from "@/lib/server/services/intervention-geometry";
+import type { InterventionGeometry } from "@/lib/geo/intervention-geometry-schema";
 
 type DrawMode = "point" | "polygon";
 

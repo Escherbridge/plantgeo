@@ -10,7 +10,7 @@ import {
   type InterventionCategory,
   type InterventionType,
 } from "@/lib/environmental/intervention";
-import type { InterventionGeometry } from "@/lib/server/services/intervention-geometry";
+import type { InterventionGeometry } from "@/lib/geo/intervention-geometry-schema";
 
 const InterventionDrawControl = dynamic(
   () =>
