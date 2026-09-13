@@ -21,11 +21,13 @@ import { formatCalendarDay } from '@/lib/map/time-format';
 import {
   AI_GENERATED_DISCLAIMER,
   AI_GENERATED_LABEL,
+  REGIONAL_TOOL_EVIDENCE_SOURCES,
   isRegionalEvidenceSource,
   regionalEvidenceFreshnessState,
   regionalEvidenceSnapshotDay,
   regionalEvidencePublicationDay,
   type EvidenceOrigin,
+  type RegionalAnalysisEvidence,
   type RegionalIntelligenceResponse,
 } from '@/lib/regional-intelligence';
 
@@ -50,7 +52,105 @@ function humanize(value: string): string {
 }
 
 function originLabel(origin: EvidenceOrigin, source?: string): string {
-  return origin === 'warehouse' && source === 'soilProperties' ? 'Published estimate' : ORIGIN_LABELS[origin];
+  if (origin === 'warehouse') {
+    if (source === 'soilProperties' || source?.startsWith('climate-field-') || source?.startsWith('soil-field-')) return 'Published estimate';
+    if (source && (REGIONAL_TOOL_EVIDENCE_SOURCES as readonly string[]).includes(source)) return 'Published data';
+  }
+  return ORIGIN_LABELS[origin];
+}
+
+const CHECK_STATUS_LABELS: Record<RegionalAnalysisEvidence['toolCalls'][number]['status'], string> = {
+  observed: 'Evidence returned',
+  unavailable: 'Unavailable',
+  refused: 'Read refused',
+  error: 'Request failed',
+  not_queried: 'Not queried',
+  governed_absence: 'Confirmed absence',
+};
+
+function evidenceCheckScope(check: RegionalAnalysisEvidence['toolCalls'][number]): string {
+  return [check.selectedDate ? `Requested ${check.selectedDate}` : undefined,
+    check.validDates?.length ? `Valid dates: ${check.validDates.join(', ')}` : undefined,
+    check.observedDates?.length ? `Observed days: ${check.observedDates.join(', ')}` : undefined,
+    check.servedDates?.length ? `Served days: ${check.servedDates.join(', ')}` : undefined,
+    check.location ? `${check.location.lat}°, ${check.location.lon}°` : undefined]
+    .filter(Boolean).join(' · ');
+}
+
+function evidenceCheckSources(check: RegionalAnalysisEvidence['toolCalls'][number]): string {
+  return (check.sources ?? (check.source ? [check.source] : [check.tool]))
+    .map((source) => humanize(source).replace(/-/g, ' ')).join(', ');
+}
+
+function citedEvidenceChecks(ids: string[] | undefined, evidence: RegionalAnalysisEvidence | undefined) {
+  if (!evidence || !ids?.length) return [];
+  return [...new Set(ids)].slice(0, 8).flatMap((id) => {
+    const check = evidence.toolCalls.find((entry) => entry.id === id);
+    if (!check) return [];
+    const stage = evidence.stages.find((entry) => entry.id === check.stage)?.label ?? humanize(check.stage);
+    return [{
+      id,
+      description: [stage, evidenceCheckSources(check), evidenceCheckScope(check)]
+        .filter(Boolean).join(' · '),
+    }];
+  });
+}
+
+function ClaimEvidenceReferences({
+  ids,
+  evidence,
+}: {
+  ids: string[] | undefined;
+  evidence: RegionalAnalysisEvidence | undefined;
+}) {
+  const checks = citedEvidenceChecks(ids, evidence);
+  if (!checks.length) return null;
+  return (
+    <ul aria-label="Cited evidence" className="mt-1 space-y-1 text-xs text-gray-600 dark:text-gray-300">
+      {checks.map((check) => <li key={check.id}>Cited evidence: {check.description}</li>)}
+    </ul>
+  );
+}
+
+function evidenceDisplayStages(evidence: RegionalAnalysisEvidence): RegionalAnalysisEvidence['stages'] {
+  const known = new Set(evidence.stages.map((stage) => stage.id));
+  const additional = [...new Set(evidence.toolCalls.map((check) => check.stage))]
+    .filter((id) => !known.has(id))
+    .map((id) => ({ id, label: 'Additional evidence', status: 'partial' as const }));
+  return [...evidence.stages, ...additional];
+}
+
+function AnalysisEvidenceDetails({ evidence }: { evidence: RegionalAnalysisEvidence }) {
+  const queried = evidence.toolCalls.filter((check) => check.status !== 'not_queried').length;
+  return (
+    <details className="rounded-lg border p-3 text-xs dark:border-gray-700">
+      <summary className="min-h-8 cursor-pointer font-semibold">Evidence checks ({queried} queried)</summary>
+      <p className="mt-1 text-gray-500">Recorded source checks, dates and comparison locations for this analysis.</p>
+      <ol className="mt-2 space-y-2" aria-label="Evidence review stages">
+        {evidenceDisplayStages(evidence).map((stage) => (
+          <li key={stage.id} className="rounded bg-gray-50 p-2 dark:bg-gray-800">
+            <details>
+              <summary className="cursor-pointer font-medium">{stage.label} · {humanize(stage.status)}</summary>
+              <ul className="mt-2 space-y-2">
+                {evidence.toolCalls.filter((check) => check.stage === stage.id).map((check) => (
+                  <li key={check.id} className="break-words">
+                    <p className="font-medium">{evidenceCheckSources(check)} · {CHECK_STATUS_LABELS[check.status]}</p>
+                    {evidenceCheckScope(check) && <p className="text-gray-500">{evidenceCheckScope(check)}</p>}
+                    {check.summary && <p className="mt-0.5">{check.summary}</p>}
+                    {check.reason && <p className="mt-0.5 text-gray-500">{humanize(check.reason)}</p>}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          </li>
+        ))}
+      </ol>
+      {evidence.limitations.length > 0 && <div className="mt-3">
+        <p className="font-semibold">Evidence gaps and comparison limits</p>
+        <ul className="mt-1 list-disc space-y-1 pl-4">{evidence.limitations.map((limitation, index) => <li key={index}>{limitation}</li>)}</ul>
+      </div>}
+    </details>
+  );
 }
 
 function OriginBadge({
@@ -87,7 +187,10 @@ function AiGeneratedBanner() {
   );
 }
 
-function RiskSummaryCard({ data }: { data: RegionalIntelligenceResponse['riskSummary'] }) {
+function RiskSummaryCard({ data, evidence }: {
+  data: RegionalIntelligenceResponse['riskSummary'];
+  evidence: RegionalAnalysisEvidence | undefined;
+}) {
   const colors: Record<string, string> = {
     low: 'bg-green-100 text-green-900 dark:bg-green-950 dark:text-green-100',
     moderate: 'bg-yellow-100 text-yellow-900 dark:bg-yellow-950 dark:text-yellow-100',
@@ -113,14 +216,17 @@ function RiskSummaryCard({ data }: { data: RegionalIntelligenceResponse['riskSum
       <div className="mt-2">
         <OriginBadge origin={data.evidenceOrigin} />
       </div>
+      <ClaimEvidenceReferences ids={data.evidenceOrigin === 'warehouse' ? data.evidenceReadIds : undefined} evidence={evidence} />
     </div>
   );
 }
 
 function ObservationsList({
   observations,
+  evidence,
 }: {
   observations: RegionalIntelligenceResponse['observations'];
+  evidence: RegionalAnalysisEvidence | undefined;
 }) {
   if (!observations.length) return null;
   return (
@@ -141,6 +247,7 @@ function ObservationsList({
                 source={observation.evidenceSource}
               />
             </div>
+            <ClaimEvidenceReferences ids={observation.evidenceOrigin === 'warehouse' ? observation.evidenceReadIds : undefined} evidence={evidence} />
           </li>
         ))}
       </ul>
@@ -150,8 +257,10 @@ function ObservationsList({
 
 function RemediationCard({
   item,
+  evidence,
 }: {
   item: RegionalIntelligenceResponse['remediation'][number];
+  evidence: RegionalAnalysisEvidence | undefined;
 }) {
   const timeframeStyles: Record<string, string> = {
     immediate: 'border-red-400',
@@ -194,6 +303,7 @@ function RemediationCard({
       <div className="mt-2">
         <OriginBadge origin={item.evidenceOrigin} source={item.evidenceSource} />
       </div>
+      <ClaimEvidenceReferences ids={item.evidenceOrigin === 'warehouse' ? item.evidenceReadIds : undefined} evidence={evidence} />
     </article>
   );
 }
@@ -243,6 +353,9 @@ export function reportToMarkdown(response: RegionalIntelligenceResponse): string
   }
   lines.push('');
   lines.push(`_Evidence origin: ${ORIGIN_LABELS[response.riskSummary.evidenceOrigin]}_`);
+  for (const check of citedEvidenceChecks(response.riskSummary.evidenceOrigin === 'warehouse' ? response.riskSummary.evidenceReadIds : undefined, response.analysisEvidence)) {
+    lines.push(`- Cited evidence: ${check.description}`);
+  }
 
   if (response.observations.length) {
     lines.push('');
@@ -250,6 +363,9 @@ export function reportToMarkdown(response: RegionalIntelligenceResponse): string
     for (const observation of response.observations) {
       const source = observation.evidenceSource ? ` (${humanize(observation.evidenceSource)})` : '';
       lines.push(`- ${observation.statement} — _${originLabel(observation.evidenceOrigin, observation.evidenceSource)}${source}_`);
+      for (const check of citedEvidenceChecks(observation.evidenceOrigin === 'warehouse' ? observation.evidenceReadIds : undefined, response.analysisEvidence)) {
+        lines.push(`  Cited evidence: ${check.description}`);
+      }
     }
   }
 
@@ -272,6 +388,9 @@ export function reportToMarkdown(response: RegionalIntelligenceResponse): string
       }
       lines.push('');
       lines.push(`_Evidence origin: ${originLabel(item.evidenceOrigin, item.evidenceSource)}_`);
+      for (const check of citedEvidenceChecks(item.evidenceOrigin === 'warehouse' ? item.evidenceReadIds : undefined, response.analysisEvidence)) {
+        lines.push(`- Cited evidence: ${check.description}`);
+      }
     }
   } else {
     lines.push('');
@@ -290,6 +409,22 @@ export function reportToMarkdown(response: RegionalIntelligenceResponse): string
     for (const source of response.webSources) lines.push(`- [${source.title}](${source.url})`);
   }
 
+  if (response.analysisEvidence) {
+    lines.push('', '## Evidence checks');
+    for (const stage of evidenceDisplayStages(response.analysisEvidence)) {
+      lines.push('', `### ${stage.label} — ${stage.status}`);
+      for (const check of response.analysisEvidence.toolCalls.filter((item) => item.stage === stage.id)) {
+        const scope = evidenceCheckScope(check);
+        lines.push(`- ${check.source ?? check.tool}: ${CHECK_STATUS_LABELS[check.status]}${scope ? ` · ${scope}` : ''}`);
+        if (check.summary) lines.push(`  ${check.summary}`);
+        if (check.reason) lines.push(`  ${check.reason}`);
+      }
+    }
+    if (response.analysisEvidence.limitations.length) {
+      lines.push('', '### Evidence gaps and comparison limits');
+      for (const limitation of response.analysisEvidence.limitations) lines.push(`- ${limitation}`);
+    }
+  }
   return lines.join('\n');
 }
 
@@ -344,7 +479,7 @@ function DataFreshnessFooter({ freshness }: { freshness: Record<string, string> 
           aria-hidden="true"
           className={`h-3 w-3 transition-transform ${open ? 'rotate-180' : ''}`}
         />
-        Data sources ({entries.length})
+        Initial context sources ({entries.length})
       </button>
       {open && (
         <div id="regional-intelligence-freshness" className="mt-1 space-y-0.5">
@@ -392,7 +527,7 @@ function DataFreshnessFooter({ freshness }: { freshness: Record<string, string> 
                         dot: 'bg-amber-400',
                       }
                     : {
-                        label: 'Not observed',
+                        label: 'No dated evidence in initial context',
                         color: 'text-gray-500',
                         dot: 'bg-gray-400',
                       };
@@ -447,8 +582,8 @@ export function RegionalIntelligenceReport({ response }: { response: RegionalInt
           </button>
         </div>
       </div>
-      <RiskSummaryCard data={response.riskSummary} />
-      <ObservationsList observations={response.observations} />
+      <RiskSummaryCard data={response.riskSummary} evidence={response.analysisEvidence} />
+      <ObservationsList observations={response.observations} evidence={response.analysisEvidence} />
       {response.remediation.length > 0 ? (
         <section className="space-y-2">
           <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500">
@@ -456,7 +591,7 @@ export function RegionalIntelligenceReport({ response }: { response: RegionalInt
           </h4>
           <p className="text-xs text-gray-500">AI confidence is the model’s assessment, not a measured probability of success.</p>
           {response.remediation.map((item, index) => (
-            <RemediationCard key={`${item.strategy}-${index}`} item={item} />
+            <RemediationCard key={`${item.strategy}-${index}`} item={item} evidence={response.analysisEvidence} />
           ))}
         </section>
       ) : (
@@ -470,6 +605,7 @@ export function RegionalIntelligenceReport({ response }: { response: RegionalInt
         <p>{response.professionalConsultation}</p>
       </div>
       <WebSourcesList sources={response.webSources} />
+      {response.analysisEvidence && <AnalysisEvidenceDetails evidence={response.analysisEvidence} />}
     </div>
   );
 }
@@ -519,6 +655,7 @@ export default function RegionalIntelligencePanel() {
   const errorRetryable = useRegionalIntelligenceStore((s) => s.errorRetryable);
   const analysisCancelled = useRegionalIntelligenceStore((s) => s.analysisCancelled);
   const dataFreshness = useRegionalIntelligenceStore((s) => s.dataFreshness);
+  const analysisEvidence = useRegionalIntelligenceStore((s) => s.analysisEvidence);
   const toolActivity = useRegionalIntelligenceStore((s) => s.toolActivity);
   const closePanel = useRegionalIntelligenceStore((s) => s.closePanel);
   const cancelAnalysis = useRegionalIntelligenceStore((s) => s.cancelAnalysis);
@@ -633,6 +770,7 @@ export default function RegionalIntelligencePanel() {
             {toolActivity}
           </p>
         )}
+        {isLoading && analysisEvidence && <AnalysisEvidenceDetails evidence={analysisEvidence} />}
         {analysisCancelled && !isLoading && (
           <div role="status" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
             <p>Analysis was canceled. No analysis was completed.</p>

@@ -1,11 +1,50 @@
 # The location-analysis agent graph
 
+## Live regional agent tool bridge (2026-09-12)
+
+The existing Next.js regional agent now reads the tool registry and executes environmental
+tools through the provider-independent `routes/agent_tools.py` boundary. It retains its current
+model provider while using the same bounded readers as this Python graph and MCP surface.
+`surface_value_near_point` reads each climate/soil/feature surface's own declared Parquet lanes;
+it does not assume those values were also published into the generic `signal` lane. Multi-depth
+and multi-metric surfaces keep one result and day state per lane, including unwritten lanes.
+The returned original properties, served day, distances and geometry-distance basis prevent a
+nearby cell or historical observation from becoming an asserted local measurement.
+
+### Snapshot reads
+
+`surface_value_near_point` uses each registered lane's nature. Daily lanes address the exact
+selected partition; `static_lookup` and `release_series` lanes use the map's `resolve_release`
+rule, with its bounded twelve-year lookback. Both requested and served dates remain explicit on
+each lane and feature. A snapshot version date does not become a daily observation date.
+
+The shared resolver is synchronous while the agent's admitted proximity reader is asynchronous.
+`warehouse.release_rows` suspends the resolver at its row-read boundary, runs the existing bounded
+proximity query, then resumes resolution against the same cached inventory and snapshot metadata.
+The second pass validates the actual returned MTBS identities against the map's snapshot proof;
+an empty planning result never stands in for the real rows. Production injects the same verified
+MTBS loader as the map. The adapter changes only the resolver's final existence probe: it stops
+at the first tier layout key instead of materializing an entire tier. Daily missing-day probes
+use the same early stop. No stream census or PostgreSQL fallback participates in these reads.
+
+The history wrappers now expose `as_of_day`, carrying an explicit selected calendar day into
+the existing bounded query functions. The old default remains for callers without a selected
+day. A caller comparing years must use explicit dates and preserve each result's actual scan
+bounds: the existing newest-120-partition budget is unchanged and does not prove a complete
+multi-year trend. The map-facing bridge catalogue excludes only `species_information`, whose
+separate authoring endpoint owns canonical-UUID access.
+
 The map's location-analysis agent, rebuilt server-side where it can sit directly on the
 warehouse. It eventually replaces the hand-rolled loop in
 `src/lib/server/services/ai-prompt.ts`; until the Next.js side switches endpoints, that file
 remains the live implementation and the **authority on the product surface** — the stream
 event union, the report field names, and the enum vocabularies all come from there and from
 `src/lib/regional-intelligence.ts`.
+
+Report claims optionally carry up to eight `evidenceReadIds` referencing the server-produced
+read ledger. IDs retain the cited read's date and regional scope through the frontend report
+and export; they never author or replace the ledger. The Python projection bounds each ID and
+omits the optional field during serialization when it is absent, preserving older report payloads.
 
 ## Current cutover directive (2026-09-12)
 
@@ -424,6 +463,12 @@ PostgreSQL fallback and should be deleted rather than wired back into a caller.
 break, and `test_report_rejects_a_vocabulary_the_frontend_cannot_render` is the tripwire.
 The camelCase field names carry a file-level `ruff: noqa: N815` for exactly this reason —
 these are wire names, not Python identifiers we are free to restyle.
+
+Report claim sources also accept the 24 governed surface names through
+`RegionalClaimEvidenceSource`. The nine initial-context freshness keys remain a separate
+contract; accepting a surface citation does not create a timestamp or affirm a measurement.
+The TypeScript live flow attaches its optional server evidence ledger after model report
+validation. Historical reports without that ledger remain valid and retain their original data.
 
 `disclaimer` and `citations` are deliberately *not* fields of the report model, matching the
 TypeScript split: the disclaimer is a constant (`AI_GENERATED_DISCLAIMER`, sent once as the

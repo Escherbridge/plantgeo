@@ -24,10 +24,12 @@ def test_create_app_registers_only_the_selected_profile_routes(monkeypatch: pyte
             "postgresql+asyncpg://receiver:password@database.internal:5432/plantgeo",
         )
         receiver_paths = _route_paths(app_module.create_app())
-        assert any(path.startswith("/api/v1/local-execution/") for path in receiver_paths)
-        assert any(path.startswith("/api/v1/historical-promotions/") for path in receiver_paths)
+        assert "/api/v1/jobs/lanes" in receiver_paths
+        assert not any(path.startswith("/api/v1/local-execution") for path in receiver_paths)
+        assert not any(path.startswith("/api/v1/historical-promotions") for path in receiver_paths)
         assert not any(path.startswith("/api/v1/forecasts") for path in receiver_paths)
         assert not any(path.startswith("/api/v1/strategies") for path in receiver_paths)
+        assert not any(path.startswith("/api/v1/agent-tools") for path in receiver_paths)
 
         monkeypatch.setattr(app_module.settings, "service_profile", "published_reader")
         monkeypatch.setattr(
@@ -36,10 +38,17 @@ def test_create_app_registers_only_the_selected_profile_routes(monkeypatch: pyte
             "postgresql+asyncpg://reader:password@database.internal:5432/plantgeo",
         )
         reader_paths = _route_paths(app_module.create_app())
-        assert any(path.startswith("/api/v1/forecasts") for path in reader_paths)
+        assert not any(path.startswith("/api/v1/jobs") for path in reader_paths)
+        assert any(path.startswith("/api/v1/parquet") for path in reader_paths)
+        assert any(path.startswith("/api/v1/agent-tools") for path in reader_paths)
+        assert not any(path.startswith("/api/v1/forecasts") for path in reader_paths)
         assert not any(path.startswith("/api/v1/local-execution") for path in reader_paths)
         assert not any(path.startswith("/api/v1/historical-promotions") for path in reader_paths)
         assert not any(path.startswith("/api/v1/strategies") for path in reader_paths)
+
+        monkeypatch.setattr(app_module.settings, "service_profile", "combined_local")
+        combined_paths = _route_paths(app_module.create_app())
+        assert any(path.startswith("/api/v1/agent-tools") for path in combined_paths)
     finally:
         Sanic._app_registry.pop("agri-data-service", None)
         Sanic.test_mode = previous_test_mode

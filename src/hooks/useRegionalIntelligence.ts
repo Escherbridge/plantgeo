@@ -10,6 +10,7 @@ import {
   useTimeSliderStore,
 } from '@/stores/time-slider-store';
 import type { RegionalIntelligenceResponse } from '@/lib/regional-intelligence';
+import { readRegionalAnalysisEvidence } from '@/lib/regional-analysis-evidence';
 import type { SliderCapabilities } from '@/types/time-slider';
 import type { LocationPrecision } from '@/stores/regional-intelligence-store';
 
@@ -133,6 +134,7 @@ export function useRegionalIntelligence() {
         addMessage,
         updateLastMessage,
         setDataFreshness,
+        setAnalysisEvidence,
         setAbortController,
         setAnalysisCancelled,
         setConversationId,
@@ -147,6 +149,7 @@ export function useRegionalIntelligence() {
       setError(null);
       setAnalysisCancelled(false);
       setToolActivity(null);
+      setAnalysisEvidence(null);
       addActivity('Analysis request started.');
 
       const isCurrentRequest = () =>
@@ -238,6 +241,15 @@ export function useRegionalIntelligence() {
             if (!isCurrentRequest()) return;
 
             switch (eventType) {
+              case 'evidence': {
+                const evidence = readRegionalAnalysisEvidence(parsed);
+                if (evidence) {
+                  setAnalysisEvidence(evidence);
+                  const stage = evidence.stages.at(-1);
+                  if (stage) setToolActivity(stage.label);
+                }
+                break;
+              }
               case 'context':
                 addActivity('Source context received.');
                 setDataFreshness(
@@ -272,6 +284,9 @@ export function useRegionalIntelligence() {
               case 'done':
                 setToolActivity(null);
                 if (isRegionalIntelligenceResponse(parsed)) {
+                  if (parsed.analysisEvidence) {
+                    setAnalysisEvidence(readRegionalAnalysisEvidence(parsed.analysisEvidence));
+                  }
                   addActivity('Analysis completed.');
                   updateLastMessage({
                     isStreaming: false,

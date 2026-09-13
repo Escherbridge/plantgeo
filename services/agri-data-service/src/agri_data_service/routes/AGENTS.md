@@ -1,5 +1,19 @@
 # API route boundary
 
+## Environmental agent tools
+
+`agent_tools.py` exposes the provider-independent registry and one bounded tool call at
+`/api/v1/agent-tools/` and `/api/v1/agent-tools/call`. It is mounted only on the read-capable
+profiles and shares the Parquet service's existing private origin. The authenticated Next.js
+regional-intelligence handler calls this origin server-side; it is not a new browser endpoint.
+Deployment must retain that existing private network boundary. No model credential is needed.
+The registry derives from the Python tool objects, excluding the canonical species authoring
+lookup because this bridge has no caller-bound species UUID. Request bytes, result bytes and
+elapsed read time are capped. Each call enters `run_context` and existing Parquet serving
+admission; environmental refusals remain typed results, and no PostgreSQL fallback is introduced.
+The surface catalogue reports admitted and currently unavailable surfaces alike, so a missing
+interventions lane is reported as unavailable rather than silently removed from the vocabulary.
+
 `local_publication.py` is the only phase-one path from a workstation-produced artifact into the operational database. The receiver is fail-closed unless its explicit enable switch, strong bearer token, and configured audit actor are all present. It enforces encoded request, output-count, per-file, and aggregate byte limits before database writes and verifies the frozen run plan, release-set manifest checksum, run-level validation, output descriptor, artifact-bound validation report, byte length, and SHA-256 checksum. Rejected transactional paths raise an internal abort so staged definitions, runs, and artifacts roll back together.
 
 Staging freezes product and scope alongside the immutable manifest; commit accepts neither target nor caller identity and derives both target and audit actor from server-held state. Staging and per-output upload are idempotent; content-addressed artifacts use an atomic PostgreSQL upsert. Commit locks the target publication pointer and run, then rechecks the database-immutable release state and checksum with an ordinary read. It succeeds only when the exact declared output set exists and the run remains publishable. Each pointer revision receives a distinct outbox event. The resulting pointer is marked `artifact_only`; browser-facing APIs and Martin views must ignore it until a future typed loader promotes the data.
