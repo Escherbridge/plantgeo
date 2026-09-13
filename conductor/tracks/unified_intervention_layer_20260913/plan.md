@@ -23,21 +23,19 @@ This order exists because Phase 2's `category`-projection migration (OQ-2) and P
 and both have a stated recommendation rather than a forced default — starting either before the
 checkpoint risks building against an answer the product owner rejects.
 
-## Phase 1: Decision checkpoint (no code)
+## Phase 1: Decision checkpoint (no code) — RESOLVED 2026-09-13
 
-Goal: get explicit product-owner sign-off on OQ-1 through OQ-5's recommendations (or their
-alternatives) before any schema, registry, or component work begins.
+- OQ-1 → alias visibility (no registry restructure).
+- OQ-2 → migrate + unify styling (category projection, shared status/category paint expression).
+- OQ-3 → standalone component, as a large expandable modal (Facebook-lightbox-style: compact card
+  that expands to take up most/all of the viewport), not a MapLibre popup, not a workspace mode.
+- OQ-4 → per-user-toggle likes, flat comments, no pre-publication comment moderation,
+  visibility-scoped access.
+- OQ-5 → build BOTH the map detail panel's and `/feed`'s comment/like UI in this pass (not
+  deferred — diverges from the spec's original recommendation). Phase 5 below is updated to cover
+  both mount points.
 
-Tasks:
-- [ ] Task: Present OQ-1 (registry aliasing vs. structural change), OQ-2 (category migration +
-      shared status-color expression vs. keep priority), OQ-3 (separate detail-panel component vs.
-      third AiInterventionWorkspace mode), OQ-4 (per-user-toggle likes, flat comments, no
-      pre-publication comment moderation, visibility-scoped access), and OQ-5 (shared backend now,
-      `/feed` UI mount deferred) to the product owner for confirmation or override.
-- [ ] Verification: Record the confirmed answer to each OQ in this plan (inline, below each
-      relevant phase) and in the track's metadata/retrospective once the track completes. Do not
-      start Phase 2 until OQ-1/OQ-2 are confirmed; do not start Phase 4 until OQ-4/OQ-5 are
-      confirmed. [checkpoint marker]
+[checkpoint marker: decisions recorded in spec.md, plan updated below]
 
 ## Phase 2: Merge the two layer toggles (FR-1)
 
@@ -102,13 +100,15 @@ Tasks:
       down when the click hits any of the six merged intervention style layers — i.e., add those
       layer ids to whatever allow-list function gates that stand-down, and assert a click on an
       intervention feature does not also open the AI popup.
-- [ ] Task (TDD): Write a failing test for the new detail-panel component (per OQ-3's resolution,
-      likely a standalone component/store pair, not a mode of `AiInterventionWorkspace`) asserting
-      it renders: the actual polygon shape and/or point(s) from the resolved record (not a
-      centroid), name, type, category, status, description, submitted-by, created/updated dates, and
-      — only when `status === 'rejected'` — the reviewer note. Implement, reading `status`/
-      `reviewNote` exactly as `contributions.publishContribution`/`rejectContribution` write them
-      (never `castModerationVote`'s vocabulary).
+- [ ] Task (TDD): Write a failing test for the new detail-panel component (standalone, per OQ-3: an
+      expandable modal that opens as a compact card and can grow to take up most/all of the
+      viewport, Facebook-lightbox-style — not a MapLibre popup, not a mode of
+      `AiInterventionWorkspace`) asserting it renders: the actual polygon shape and/or point(s) from
+      the resolved record (not a centroid), name, type, category, status, description,
+      submitted-by, created/updated dates, and — only when `status === 'rejected'` — the reviewer
+      note. Implement, reading `status`/`reviewNote` exactly as
+      `contributions.publishContribution`/`rejectContribution` write them (never
+      `castModerationVote`'s vocabulary).
 - [ ] Task (TDD): Write a failing test asserting the detail panel opening (via a map click) does not
       close or reset `AiInterventionWorkspace` if it is currently open in either mode — the two
       surfaces coexist per OQ-3.
@@ -154,11 +154,11 @@ Tasks:
       queue, by writing and passing an explicit negative-authorization test for each procedure.
       [checkpoint marker]
 
-## Phase 5: Mount comment/like UI on the detail panel, and full sweep (FR-4)
+## Phase 5: Mount comment/like UI on the detail panel AND /feed, and full sweep (FR-4)
 
 Goal: the FR-2 detail panel gains a working comment thread and like control backed by Phase 4's
-procedures; `/feed`'s own mount is explicitly deferred per OQ-5 unless the Phase 1 checkpoint
-decided otherwise.
+procedures; per the Phase 1 checkpoint's OQ-5 resolution, `/feed` gets the same UI in this pass
+too, not deferred.
 
 Tasks:
 - [ ] Task (TDD): Write a failing test for the detail panel asserting it renders the current like
@@ -176,10 +176,14 @@ Tasks:
 - [ ] Task: Sanitize/escape comment `body` on render per NFR-2, consistent with how this codebase
       already renders other user-authored strings (`description`, strategy-request `title`); add a
       regression test asserting a comment containing markup does not execute/inject.
-- [ ] Task: If the Phase 1 checkpoint confirmed OQ-5's default (defer `/feed`'s UI mount), add a
-      one-paragraph note to `src/app/feed/InterventionFeed.tsx`'s file-level or section comment
-      naming the now-available shared comment/like procedures as a named, ready-to-consume follow-up
-      — so the next reader of that file does not have to rediscover that the backend already exists.
+- [ ] Task (TDD): Write a failing test for `InterventionFeed.tsx`'s `ProposalRow` (or a new row
+      component it renders) asserting each feed row shows the same like count/toggle and a comment
+      affordance (either an inline compact thread or a link/click-through into the same standalone
+      detail modal Phase 3 built, implementer's choice — document which) backed by the identical
+      Phase 4 procedures, with the same `SignedOutGate` treatment this file already uses for signed-
+      out viewers. Implement. Reuse the Phase 3 modal component if that keeps the two surfaces from
+      drifting; do not hand-roll a second comment UI unless there's a concrete reason `/feed`'s needs
+      differ.
 - [ ] Verification: One full sweep per `conductor/workflow.md` — run the complete affected-boundary
       test suite (layer-registry, layer-manager, the new tRPC procedures, the detail-panel component,
       `map-view-render-count.test.tsx`), typecheck, and lint once at the end covering every file

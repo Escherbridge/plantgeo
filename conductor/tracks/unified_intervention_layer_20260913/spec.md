@@ -127,6 +127,25 @@ geometry semantics, all owned by prior tracks named below.
 
 ## Open Questions
 
+**Resolved 2026-09-13 by the product owner:**
+- **OQ-1 → alias visibility.** No layer-registry structural change; fold the drafts toggle into the
+  existing `interventions` toggle's mount.
+- **OQ-2 → migrate + unify styling.** `geo.intervention_tiles()` gains a `category` projection; the
+  whole merged layer repaints on one shared status/category expression, retiring the dead
+  `priority`-keyed paint.
+- **OQ-3 → standalone, but as a large expandable modal, not a small popup.** Explicit product-owner
+  direction: "it should just be part of a large tooltip like a modal it can take up the screen though
+  kind of like the way facebook posts in feeds used to work" — i.e. clicking an intervention opens a
+  modal that can grow to take up most/all of the viewport (the classic Facebook photo/post
+  lightbox-expand pattern: a compact card that expands into a full-screen-capable overlay showing
+  geometry, every field, and the comment thread below), not anchored inline like a MapLibre popup and
+  not folded into `AiInterventionWorkspace`.
+- **OQ-4 → per-user-toggle likes, flat comments, no pre-publication comment moderation,
+  visibility-scoped access.** As recommended.
+- **OQ-5 → build `/feed`'s comment/like UI in this same pass, not deferred.** Diverges from this
+  spec's original recommendation (shared backend now, map-only UI, `/feed` as a follow-up) — the
+  product owner asked for both surfaces now. Phase 5 below is updated accordingly.
+
 Each open question below is genuinely undecided and gets a recommendation, not a silent default,
 following the convention set by the two sibling tracks named in Background.
 
