@@ -121,6 +121,11 @@ const NATURE_BY_LAYER: Readonly<Record<LayerToggleId, LayerCacheNature>> = {
   "demand-heatmap": "static_lookup",
   // User-authored rows in `geo.features`; they change whenever somebody adds one.
   interventions: "daily_series",
+  // Not a Parquet lane and not persisted like the entry above -- fed by two tRPC queries
+  // merged client-side (useInterventionDraftsOverlay) with no allowlisted procedure or
+  // warehouse day axis of its own. Kept out of the persistent cache path the same way
+  // demand-heatmap is: this entry exists only to keep the record exhaustive.
+  "intervention-drafts": "static_lookup",
   // The governed model plane republishes in whole releases, not per day.
   "strategy-recommendations": "release_series",
 };

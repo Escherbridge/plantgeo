@@ -5,6 +5,7 @@ import { trpc } from "@/lib/trpc/client";
 import { RequestSubmitModal } from "@/components/panels/RequestSubmitModal";
 import { InterventionSubmitModal } from "@/components/panels/InterventionSubmitModal";
 import { useAuthStore } from "@/stores/auth-store";
+import { invalidateInterventionDraftsOverlay } from "@/lib/map/use-intervention-drafts";
 
 const STRATEGY_TYPES = [
   { value: "", label: "All Types" },
@@ -119,6 +120,11 @@ export function CommunityDetails({ mapCenter, bbox }: CommunityDetailsProps) {
     teamId: activeTeamId ?? undefined,
     limit: 25,
   });
+
+  // Refetches this panel's own query above; the map's signed-in draft/proposed overlay
+  // (useInterventionDraftsOverlay) reads listMySubmissions/listProposed under different query
+  // input and needs its own invalidation so a just-submitted polygon appears without reload.
+  const trpcUtils = trpc.useUtils();
 
   const submitLat = mapCenter?.lat ?? 0;
   const submitLon = mapCenter?.lon ?? 0;
@@ -350,7 +356,10 @@ export function CommunityDetails({ mapCenter, bbox }: CommunityDetailsProps) {
           teamId={activeTeamId ?? undefined}
           workspaceName={activeTeam?.name}
           onClose={() => setShowInterventionModal(false)}
-          onSuccess={() => refetchInterventions()}
+          onSuccess={() => {
+            refetchInterventions();
+            void invalidateInterventionDraftsOverlay(trpcUtils);
+          }}
         />
       )}
     </>

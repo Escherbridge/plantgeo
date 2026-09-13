@@ -9,8 +9,10 @@ import {
 } from "@/lib/server/trpc/init";
 import { features, layers, teamMembers } from "@/lib/server/db/schema";
 import { isTeamEditorRole } from "@/lib/server/security/access-control";
+import { InterventionCategorySchema } from "@/lib/environmental/intervention";
 import {
   countInterventionGeometryPositions,
+  getInterventionAreaCapIssue,
   InterventionGeometrySchema,
   MAX_INTERVENTION_GEOMETRY_POSITIONS,
 } from "@/lib/server/services/intervention-geometry";
@@ -82,6 +84,7 @@ const InterventionTypeSchema = z.enum([
   "cover_cropping",
   "biochar",
   "keyline",
+  "cloud_seeding",
 ]);
 
 export type InterventionSubmissionType = z.infer<typeof InterventionTypeSchema>;
@@ -149,20 +152,32 @@ export const interventionsRouter = router({
    */
   submitIntervention: contributorProcedure
     .input(
-      z.object({
-        name: z.string().trim().min(3).max(256),
-        type: InterventionTypeSchema,
-        description: z
-          .string()
-          .trim()
-          .max(MAX_SUBMISSION_DESCRIPTION_LENGTH)
-          .optional(),
-        // Reuses the validator the machine-ingress route already relies on,
-        // under an interactive vertex ceiling.
-        geometry: BoundedInterventionGeometrySchema,
-        teamId: z.string().uuid().optional(),
-        publicationConsent: z.literal(true),
-      })
+      z
+        .object({
+          name: z.string().trim().min(3).max(256),
+          type: InterventionTypeSchema,
+          category: InterventionCategorySchema,
+          description: z
+            .string()
+            .trim()
+            .max(MAX_SUBMISSION_DESCRIPTION_LENGTH)
+            .optional(),
+          // Reuses the validator the machine-ingress route already relies on,
+          // under an interactive vertex ceiling.
+          geometry: BoundedInterventionGeometrySchema,
+          teamId: z.string().uuid().optional(),
+          publicationConsent: z.literal(true),
+        })
+        .superRefine((value, context) => {
+          const issue = getInterventionAreaCapIssue(value.geometry, value.category);
+          if (issue) {
+            context.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: issue,
+              path: ["geometry"],
+            });
+          }
+        })
     )
     .mutation(async ({ ctx, input }) => {
       const userId = currentUserId(ctx.session);
@@ -183,6 +198,7 @@ export const interventionsRouter = router({
           properties: {
             name: input.name,
             type: input.type,
+            category: input.category,
             description: input.description ?? null,
             geometry: input.geometry,
             submittedByUserId: userId,
@@ -267,6 +283,7 @@ export const interventionsRouter = router({
           id: features.id,
           name: sql<string | null>`${features.properties} ->> 'name'`,
           type: sql<string | null>`${features.properties} ->> 'type'`,
+          category: sql<string | null>`${features.properties} ->> 'category'`,
           description: sql<
             string | null
           >`${features.properties} ->> 'description'`,
@@ -293,9 +310,7 @@ export const interventionsRouter = router({
         .limit(input.limit);
     }),
 
-  /**
-   * Propose a new community intervention linked to a MapLibre click & ML strategy cell.
-   */
+  /** Propose a community intervention (lat/lon + strategy cell); deliberately geometry-less, guarded by a regression test in interventions.test.ts. */
   proposeIntervention: contributorProcedure
     .input(
       z.object({

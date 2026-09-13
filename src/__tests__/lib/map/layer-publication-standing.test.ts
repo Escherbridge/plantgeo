@@ -55,6 +55,7 @@ const LANE_BACKED_TOGGLE_IDS: LayerToggleId[] = [
  */
 const NON_LANE_TOGGLE_IDS: LayerToggleId[] = [
   "interventions",
+  "intervention-drafts",
   "strategy-recommendations",
   "soil",
   "demand-heatmap",

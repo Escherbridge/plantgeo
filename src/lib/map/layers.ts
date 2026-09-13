@@ -433,6 +433,76 @@ export const interventionsPointsLayer: LayerSpecification = {
   },
 };
 
+// Client-side GeoJSON source (not Martin) for the signed-in-only draft/proposed overlay;
+// keep out of DYNAMIC_TILE_SOURCE_IDS in sources.ts.
+export const INTERVENTION_DRAFTS_SOURCE = "intervention-drafts-source";
+
+export const INTERVENTION_DRAFT_FILL_COLOR = "#0d9488";
+
+const INTERVENTION_DRAFT_CATEGORY_DASHARRAY: DataDrivenPropertyValueSpecification<
+  [number, number]
+> = [
+  "match",
+  ["get", "category"],
+  "air",
+  [1, 1],
+  "land",
+  [3, 2],
+  [3, 2],
+] as unknown as DataDrivenPropertyValueSpecification<[number, number]>;
+
+const INTERVENTION_DRAFT_CATEGORY_COLOR = matchClasses(
+  "category",
+  [
+    { value: "land", color: "#0d9488", label: "Land intervention (draft)" },
+    { value: "air", color: "#7c3aed", label: "Air intervention (draft)" },
+  ],
+  INTERVENTION_DRAFT_FILL_COLOR
+);
+
+export const interventionDraftsFillLayer: LayerSpecification = {
+  id: "intervention-drafts-fill",
+  type: "fill",
+  source: INTERVENTION_DRAFTS_SOURCE,
+  minzoom: 6,
+  layout: { visibility: "none" },
+  filter: ["!=", ["geometry-type"], "Point"],
+  paint: {
+    "fill-color": INTERVENTION_DRAFT_CATEGORY_COLOR,
+    "fill-opacity": 0.2,
+  },
+};
+
+export const interventionDraftsOutlineLayer: LayerSpecification = {
+  id: "intervention-drafts-outline",
+  type: "line",
+  source: INTERVENTION_DRAFTS_SOURCE,
+  minzoom: 6,
+  layout: { visibility: "none" },
+  filter: ["!=", ["geometry-type"], "Point"],
+  paint: {
+    "line-color": INTERVENTION_DRAFT_CATEGORY_COLOR,
+    "line-width": 1.5,
+    "line-dasharray": INTERVENTION_DRAFT_CATEGORY_DASHARRAY,
+  },
+};
+
+export const interventionDraftsPointsLayer: LayerSpecification = {
+  id: "intervention-drafts-points",
+  type: "circle",
+  source: INTERVENTION_DRAFTS_SOURCE,
+  minzoom: 6,
+  layout: { visibility: "none" },
+  filter: ["==", ["geometry-type"], "Point"],
+  paint: {
+    "circle-color": INTERVENTION_DRAFT_CATEGORY_COLOR,
+    "circle-radius": ["interpolate", ["linear"], ["zoom"], 6, 4, 10, 6, 14, 9],
+    "circle-stroke-width": 1.5,
+    "circle-stroke-color": "#ffffff",
+    "circle-opacity": 0.45,
+  },
+};
+
 // USGS WBD HUC12 boundaries, read from the `watersheds` Parquet lane through
 // `environmental.getWatershedBoundaries` since wave C; geo.watershed_tiles()
 // (drizzle/0017_watershed_persistence.sql, generalized by 0023) drew them until then.
@@ -618,6 +688,9 @@ export function getLayers(): LayerSpecification[] {
     interventionsOutlineLayer,
     // After the outline so submitted sites draw over any zone they sit inside.
     interventionsPointsLayer,
+    interventionDraftsFillLayer,
+    interventionDraftsOutlineLayer,
+    interventionDraftsPointsLayer,
     watershedsLayer,
     watershedsOutlineLayer,
   ];

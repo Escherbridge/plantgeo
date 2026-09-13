@@ -1,18 +1,67 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import dynamic from "next/dynamic";
+import maplibregl from "maplibre-gl";
 import { trpc } from "@/lib/trpc/client";
+import {
+  LAND_INTERVENTION_TYPES,
+  AIR_INTERVENTION_TYPES,
+  type InterventionCategory,
+  type InterventionType,
+} from "@/lib/environmental/intervention";
+import type { InterventionGeometry } from "@/lib/server/services/intervention-geometry";
+
+const InterventionDrawControl = dynamic(
+  () =>
+    import("@/components/map/InterventionDrawControl").then(
+      (mod) => mod.InterventionDrawControl
+    ),
+  { ssr: false }
+);
 
 /** Mirrors InterventionType in src/lib/environmental/intervention.ts. */
-const INTERVENTION_TYPES = [
-  { value: "reforestation", label: "Reforestation" },
-  { value: "silvopasture", label: "Silvopasture" },
-  { value: "cover_cropping", label: "Cover Cropping" },
-  { value: "biochar", label: "Biochar" },
-  { value: "keyline", label: "Keyline Design" },
-] as const;
+const INTERVENTION_TYPE_LABELS: Record<InterventionType, string> = {
+  reforestation: "Reforestation",
+  silvopasture: "Silvopasture",
+  cover_cropping: "Cover Cropping",
+  biochar: "Biochar",
+  keyline: "Keyline Design",
+  cloud_seeding: "Cloud Seeding",
+};
 
-type InterventionType = (typeof INTERVENTION_TYPES)[number]["value"];
+const TYPES_BY_CATEGORY: Record<InterventionCategory, InterventionType[]> = {
+  land: LAND_INTERVENTION_TYPES,
+  air: AIR_INTERVENTION_TYPES,
+};
+
+/**
+ * A Polygon must close (first position repeats the last) and describe at
+ * least 3 distinct vertices (4 ring positions including the closing one).
+ * Points always pass; MultiPolygon parts are checked the same way per ring.
+ */
+function validateDrawnGeometry(geometry: InterventionGeometry): string | null {
+  const polygons =
+    geometry.type === "Polygon"
+      ? [geometry.coordinates]
+      : geometry.type === "MultiPolygon"
+        ? geometry.coordinates
+        : null;
+  if (polygons === null) return null;
+
+  for (const polygon of polygons) {
+    const ring = polygon[0] ?? [];
+    if (ring.length < 4) {
+      return "Draw at least 3 points, then close the polygon.";
+    }
+    const first = ring[0];
+    const last = ring[ring.length - 1];
+    if (first[0] !== last[0] || first[1] !== last[1]) {
+      return "The drawn polygon must be closed.";
+    }
+  }
+  return null;
+}
 
 interface InterventionSubmitModalProps {
   /** Map centre the recommendation is pinned to. */
@@ -27,9 +76,11 @@ interface InterventionSubmitModalProps {
 /**
  * Captures one signed-in contributor's own intervention recommendation.
  *
- * Point-only by design: no polygon drawing tool exists in this codebase yet, so
- * the map centre is the honest extent of what the user can express. The server
- * validator already accepts Polygon/MultiPolygon for whenever one lands.
+ * Drawing tool: an `InterventionDrawControl` (terra-draw wrapper, dynamically
+ * imported client-side only) lets the contributor place a point or trace a
+ * polygon on a small map centred on the pin; whatever they draw is what gets
+ * submitted, not just the map centre. The server validator already accepts
+ * Point/Polygon/MultiPolygon and enforces a per-category area cap.
  */
 export function InterventionSubmitModal({
   lat,
@@ -39,13 +90,63 @@ export function InterventionSubmitModal({
   onClose,
   onSuccess,
 }: InterventionSubmitModalProps) {
-  const [interventionType, setInterventionType] =
-    useState<InterventionType>("reforestation");
+  const [category, setCategory] = useState<InterventionCategory>("land");
+  const [interventionType, setInterventionType] = useState<InterventionType>(
+    TYPES_BY_CATEGORY.land[0]
+  );
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [publicationConsent, setPublicationConsent] = useState(false);
+  const [geometry, setGeometry] = useState<InterventionGeometry | null>(null);
+  const [geometryError, setGeometryError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const mapContainerRef = useRef<HTMLDivElement>(null);
+  const [map, setMap] = useState<maplibregl.Map | null>(null);
+
+  const typeOptions = useMemo(() => TYPES_BY_CATEGORY[category], [category]);
+
+  function handleCategoryChange(next: InterventionCategory) {
+    setCategory(next);
+    setInterventionType(TYPES_BY_CATEGORY[next][0]);
+  }
+
+  function handleGeometryChange(nextGeometry: InterventionGeometry | null) {
+    if (nextGeometry === null) {
+      setGeometry(null);
+      setGeometryError(null);
+      return;
+    }
+    const issue = validateDrawnGeometry(nextGeometry);
+    setGeometryError(issue);
+    setGeometry(issue ? null : nextGeometry);
+  }
+
+  useEffect(() => {
+    if (!mapContainerRef.current) return;
+    const instance = new maplibregl.Map({
+      container: mapContainerRef.current,
+      style: {
+        version: 8,
+        sources: {},
+        layers: [
+          {
+            id: "background",
+            type: "background",
+            paint: { "background-color": "#e5e7eb" },
+          },
+        ],
+      },
+      center: [lon, lat],
+      zoom: 14,
+    });
+    setMap(instance);
+    return () => {
+      instance?.remove?.();
+      setMap(null);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the drawing map centres once per open modal
+  }, []);
 
   useEffect(() => {
     const previouslyFocused = document.activeElement;
@@ -81,15 +182,23 @@ export function InterventionSubmitModal({
       setError("Confirm the review and publication notice before submitting.");
       return;
     }
+    if (geometry === null) {
+      setError("Draw a point or polygon before submitting.");
+      return;
+    }
     submitMutation.mutate({
       name: name.trim(),
       type: interventionType,
+      category,
       description: description.trim() || undefined,
-      geometry: { type: "Point", coordinates: [lon, lat] },
+      geometry,
       teamId,
       publicationConsent: true,
     });
   }
+
+  const canSubmit =
+    geometry !== null && geometryError === null && !submitMutation.isPending;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
@@ -127,6 +236,26 @@ export function InterventionSubmitModal({
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">
           <div className="flex flex-col gap-1">
             <label
+              htmlFor="intervention-category"
+              className="text-sm font-medium text-[hsl(var(--foreground))]"
+            >
+              Category
+            </label>
+            <select
+              id="intervention-category"
+              value={category}
+              onChange={(event) =>
+                handleCategoryChange(event.target.value as InterventionCategory)
+              }
+              className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-[hsl(var(--foreground))] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
+            >
+              <option value="land">Land</option>
+              <option value="air">Air</option>
+            </select>
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <label
               htmlFor="intervention-type"
               className="text-sm font-medium text-[hsl(var(--foreground))]"
             >
@@ -140,12 +269,33 @@ export function InterventionSubmitModal({
               }
               className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-[hsl(var(--foreground))] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
             >
-              {INTERVENTION_TYPES.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
+              {typeOptions.map((type) => (
+                <option key={type} value={type}>
+                  {INTERVENTION_TYPE_LABELS[type]}
                 </option>
               ))}
             </select>
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <span className="text-sm font-medium text-[hsl(var(--foreground))]">
+              Draw Site Geometry <span className="text-red-500">*</span>
+            </span>
+            <div
+              ref={mapContainerRef}
+              className="h-48 w-full rounded-lg border border-[hsl(var(--border))] overflow-hidden"
+            />
+            {map && (
+              <InterventionDrawControl
+                map={map}
+                onGeometryChange={handleGeometryChange}
+              />
+            )}
+            {geometryError && (
+              <p role="alert" className="text-sm text-red-600">
+                {geometryError}
+              </p>
+            )}
           </div>
 
           <div className="flex flex-col gap-1">
@@ -219,7 +369,7 @@ export function InterventionSubmitModal({
             </button>
             <button
               type="submit"
-              disabled={submitMutation.isPending || !publicationConsent}
+              disabled={!canSubmit || !publicationConsent}
               className="min-h-11 px-4 py-2 rounded-lg bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))] text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
             >
               {submitMutation.isPending

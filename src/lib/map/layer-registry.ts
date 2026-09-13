@@ -32,6 +32,7 @@ export type LayerToggleId =
   | "soil-vpd"
   | "demand-heatmap"
   | "interventions"
+  | "intervention-drafts"
   | "strategy-recommendations"
   | "evacuation-zones"
   | "burn-severity";
@@ -409,6 +410,27 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
     renderKind: "style",
     styleLayerIds: ["interventions", "interventions-outline", "interventions-points"],
     warehouseLayerName: "interventions",
+    panelId: "community",
+    permanentlyUnavailableReason: null,
+  },
+  // Additive, alongside the Martin-tile `interventions` entry above -- not a replacement for it.
+  // `intervention_tiles` only ever answers `status = 'published'`; this toggle draws the
+  // signed-in caller's own drafts and every consenting contributor's `pending_review` queue from
+  // a plain client-side GeoJSON source (`intervention-drafts-source`, see sources.ts), filled by
+  // `useInterventionDraftsOverlay` (src/lib/map/use-intervention-drafts.ts) rather than by a
+  // Martin function or a Parquet reader. Three style layers for the same geometry-type split
+  // reason `interventions` above documents: a fill+outline for polygons, a circle for points.
+  "intervention-drafts": {
+    toggleId: "intervention-drafts",
+    label: "My & Proposed Interventions",
+    icon: "sprout",
+    renderKind: "style",
+    styleLayerIds: [
+      "intervention-drafts-fill",
+      "intervention-drafts-outline",
+      "intervention-drafts-points",
+    ],
+    warehouseLayerName: null,
     panelId: "community",
     permanentlyUnavailableReason: null,
   },

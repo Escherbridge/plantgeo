@@ -117,11 +117,25 @@ function validSubmissionInput(overrides: Record<string, unknown> = {}) {
   return {
     name: "Riverside reforestation pilot",
     type: "reforestation" as const,
+    category: "land" as const,
     description: "Community-led planting along the river corridor",
     geometry: VALID_POINT_GEOMETRY,
     publicationConsent: true as const,
     ...overrides,
   };
+}
+
+/** A closed square ring covering roughly `sideMeters` per side near the equator. */
+function squareRingOfSide(sideMeters: number): number[][] {
+  const metersPerDegree = 111_320;
+  const d = sideMeters / metersPerDegree;
+  return [
+    [0, 0],
+    [d, 0],
+    [d, d],
+    [0, d],
+    [0, 0],
+  ];
 }
 
 /** A `geo.features` row the mocked `.returning()` hands back after insert. */
@@ -132,6 +146,7 @@ function featureRow(overrides: Row = {}): Row[] {
       properties: {
         name: "Riverside reforestation pilot",
         type: "reforestation",
+        category: "land",
         description: "Community-led planting along the river corridor",
         geometry: VALID_POINT_GEOMETRY,
         submittedByUserId: CONTRIBUTOR_USER_ID,
@@ -292,5 +307,98 @@ describe("interventions.submitIntervention", () => {
     await expect(
       caller.submitIntervention(validSubmissionInput())
     ).rejects.toMatchObject({ code: "PRECONDITION_FAILED" });
+  });
+
+  it("rejects a land polygon over the 500 acre cap", async () => {
+    const caller = callerWith([], contributorSession());
+
+    // ~3000m side ≈ 2224 acres, well over the 500 acre land cap.
+    await expect(
+      caller.submitIntervention(
+        validSubmissionInput({
+          category: "land",
+          geometry: { type: "Polygon", coordinates: [squareRingOfSide(3000)] },
+        })
+      )
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  });
+
+  it("accepts an air polygon over the land cap but under the air ceiling", async () => {
+    const caller = callerWith(
+      [[{ id: LAYER_ID }], featureRow()],
+      contributorSession()
+    );
+
+    // ~3000m side ≈ 2224 acres: over the 500 acre land cap, well under the
+    // 50,000 acre air ceiling.
+    await expect(
+      caller.submitIntervention(
+        validSubmissionInput({
+          type: "cloud_seeding",
+          category: "air",
+          geometry: { type: "Polygon", coordinates: [squareRingOfSide(3000)] },
+        })
+      )
+    ).resolves.toMatchObject({ status: "pending_review" });
+  });
+
+  it("persists the category on the submitted feature", async () => {
+    const calls: BuilderCall[] = [];
+    const caller = callerWith(
+      [[{ id: LAYER_ID }], featureRow()],
+      contributorSession(),
+      calls
+    );
+
+    await caller.submitIntervention(validSubmissionInput({ category: "land" }));
+
+    const written = insertedValues(calls);
+    expect(written.properties).toMatchObject({ category: "land" });
+  });
+});
+
+describe("interventions.proposeIntervention input schema", () => {
+  /**
+   * Regression guard for
+   * `conductor/tracks/intervention_drawing_visibility_20260912`: geometry
+   * only ever flows through `submitIntervention`. `proposeIntervention` is
+   * the older, unauthenticated-drawing-tool click flow (a lat/lon point plus
+   * a strategy cell, no polygon), and it must stay that way even if a future
+   * edit tries to bolt geometry onto it. We introspect the actual Zod shape
+   * rather than trusting the TypeScript input type, since a stray `.extend()`
+   * would still type-check.
+   */
+  it("has no geometry key", () => {
+    const inputSchema = (
+      interventionsRouter.proposeIntervention as unknown as {
+        _def: { inputs: Array<{ shape?: Record<string, unknown> }> };
+      }
+    )._def.inputs[0];
+
+    expect(inputSchema).toBeDefined();
+    expect(inputSchema?.shape).toBeDefined();
+    expect(Object.keys(inputSchema?.shape ?? {})).not.toContain("geometry");
+  });
+
+  it("rejects a payload that smuggles a geometry field", () => {
+    const inputSchema = (
+      interventionsRouter.proposeIntervention as unknown as {
+        _def: {
+          inputs: Array<{
+            strict: () => { safeParse: (value: unknown) => { success: boolean } };
+          }>;
+        };
+      }
+    )._def.inputs[0];
+
+    const result = inputSchema.strict().safeParse({
+      title: "Riverside reforestation pilot",
+      strategyType: "reforestation",
+      lat: 45.5152,
+      lon: -122.6784,
+      geometry: VALID_POINT_GEOMETRY,
+    });
+
+    expect(result.success).toBe(false);
   });
 });

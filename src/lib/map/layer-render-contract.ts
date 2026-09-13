@@ -542,6 +542,10 @@ export const LAYER_RENDER_CONTRACT: Readonly<Record<LayerToggleId, LayerRenderCo
   soil: referenceOrUnavailableEntry("soil"),
   "demand-heatmap": referenceOrUnavailableEntry("demand-heatmap"),
   interventions: referenceOrUnavailableEntry("interventions"),
+  // The signed-in draft/proposed overlay. Not lane-backed by any Parquet reader -- its features
+  // come from `useInterventionDraftsOverlay`'s merge of two tRPC queries, set onto a plain
+  // client-side GeoJSON source -- so it carries no declared spatial support here either.
+  "intervention-drafts": referenceOrUnavailableEntry("intervention-drafts"),
   "strategy-recommendations": referenceOrUnavailableEntry("strategy-recommendations"),
 };
 

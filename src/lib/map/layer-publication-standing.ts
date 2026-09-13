@@ -39,6 +39,13 @@ export const LAYER_PUBLICATION_STANDINGS: Partial<
     unblockedBy:
       "New recommendations stay in the review queue until an expert approves them for the map.",
   },
+  "intervention-drafts": {
+    reason:
+      "Shows your own draft recommendations and the wider review queue to signed-in readers, " +
+      "read from a client-side query rather than a warehouse lane.",
+    unblockedBy:
+      "Sign in to see it; nothing here waits on a lane, since it is never fed by one.",
+  },
   "strategy-recommendations": {
     reason:
       "Strategy recommendations come from a model that is not trained: its label plane holds " +
