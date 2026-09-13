@@ -87,6 +87,7 @@ class RecordingSession:
         """Every PostgreSQL statement's marker, in execution order."""
         return [marker for sql, _ in self.statements if (marker := self.marker_of(sql)) is not None]
 
+
 def session_provider(session: RecordingSession) -> Any:
     """Bind one recording session so environmental PostgreSQL access is observable."""
 

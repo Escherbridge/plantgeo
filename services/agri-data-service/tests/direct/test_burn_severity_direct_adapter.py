@@ -17,6 +17,7 @@ import pytest
 from agri_data_service.foundation.parquet.absence import GovernedAbsence
 from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
 from agri_data_service.ingest.mtbs import MtbsBurnSeverityRecord, MtbsSeverityThresholds
+from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.direct.burn_severity.adapter import (
     BURN_SEVERITY_DIRECT_KIND,
     MAX_ROWS_PER_PART,
@@ -24,7 +25,6 @@ from agri_data_service.pipeline.direct.burn_severity.adapter import (
     DirectBurnSeverityError,
 )
 from agri_data_service.pipeline.direct.burn_severity.source import BurnSeverityDaySource
-from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.parquet.gap_fill import fill_one_lane_day, unlocked_lane_day
 from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRY
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore

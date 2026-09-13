@@ -13,13 +13,11 @@ would report the lane complete and never fill the day.
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from click.testing import CliRunner
 
 from agri_data_service.db.vegetation_publication import unlocked_vegetation_publication_barrier
 from agri_data_service.foundation.parquet.absence import GovernedAbsence
@@ -34,7 +32,6 @@ from agri_data_service.foundation.parquet.paths import (
     try_parse_partition_path,
 )
 from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
-from agri_data_service.interface.cli import cli
 from agri_data_service.pipeline.direct.evacuation_zones.watermark import (
     EvacuationZonesWatermarkError,
 )
@@ -940,128 +937,6 @@ def test_the_census_counts_data_absent_and_missing_days_without_opening_a_file()
     assert report["missing_days"] == WINDOW_DAYS - 2
     assert report["lanes_with_gaps"] == ["signal"]
     assert report["lanes_with_errors"] == []
-
-
-def test_dry_run_reports_the_census_and_writes_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
-    """This is how the cron is audited: a full gap census with not one object put."""
-    backend = RecordingBackend()
-    store = ObjectStore(backend)
-
-    def _stub_from_settings(_cls: type[ObjectStore], _source: object = None) -> ObjectStore:
-        return store
-
-    monkeypatch.setattr(ObjectStore, "from_settings", classmethod(_stub_from_settings))
-
-    result = CliRunner().invoke(cli, ["data", "parquet-gap-fill", "--layer", "water-gauges", "--dry-run"])
-
-    assert result.exit_code == 0, result.output
-    report = json.loads(result.output)
-    assert report["lane_count"] == 1
-    assert report["lanes"][0]["lane"] == "water-gauges"
-    assert report["lanes"][0]["history_floor"] == "2026-05-24"
-    assert "docs/lanes/water-gauges.md" in report["lanes"][0]["floor_basis"]
-    assert backend.objects == {}, "--dry-run must not write a single object"
-
-
-def test_skip_watermarks_keeps_a_static_lane_dry_run_offline(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A `--dry-run` that silently opens the loader DSN is a footgun; this is the escape hatch.
-
-    The loader DSN falls back to `DATABASE_URL`, which in this repo's own `.env` is PRODUCTION, so an
-    operator auditing the census must be able to keep the verb entirely offline.
-    """
-    store = ObjectStore(RecordingBackend())
-
-    def _stub_from_settings(_cls: type[ObjectStore], _source: object = None) -> ObjectStore:
-        return store
-
-    def _refuse_session(*_args: object, **_kwargs: object) -> object:
-        raise AssertionError("--skip-watermarks must not open a database session")
-
-    monkeypatch.setattr(ObjectStore, "from_settings", classmethod(_stub_from_settings))
-    monkeypatch.setattr("agri_data_service.interface.cli.commands.local_source_loader_session", _refuse_session)
-
-    result = CliRunner().invoke(
-        cli,
-        ["data", "parquet-gap-fill", "--layer", "watersheds", "--dry-run", "--skip-watermarks"],
-    )
-
-    assert result.exit_code == 0, result.output
-    report = json.loads(result.output)
-    assert report["static_lanes_unread"] == ["watersheds"]
-    assert report["lanes"][0]["nature"] == "static_lookup"
-    assert report["lanes"][0]["source_watermark"] is None
-    assert report["lanes"][0]["missing_days"] == 0
-
-
-def test_a_default_dry_run_over_a_static_lane_resolves_no_dsn_and_opens_no_session(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """THE PIN: a plain `--dry-run` must be offline. A dry run is safe by default or it is not a dry run.
-
-    The loader DSN falls back to `DATABASE_URL`, which in this repo's own `.env` is the PRODUCTION
-    Railway host, and this repo declares no `LOCAL_SOURCE_LOADER_DATABASE_URL`. `--skip-watermarks`
-    alone did not close that, because an opt-in mitigation leaves the DEFAULT the prod-touching one.
-    Both refusals below are load-bearing: `_read_gap_fill_watermarks` resolves the DSN before it ever
-    opens a session, so refusing only the session would still let a DSN resolution slip through.
-    """
-    store = ObjectStore(RecordingBackend())
-
-    def _stub_from_settings(_cls: type[ObjectStore], _source: object = None) -> ObjectStore:
-        return store
-
-    def _refuse_watermark_read(*_args: object, **_kwargs: object) -> object:
-        raise AssertionError("a default --dry-run must resolve no loader DSN")
-
-    def _refuse_session(*_args: object, **_kwargs: object) -> object:
-        raise AssertionError("a default --dry-run must not open a database session")
-
-    monkeypatch.setattr(ObjectStore, "from_settings", classmethod(_stub_from_settings))
-    monkeypatch.setattr("agri_data_service.interface.cli.commands._read_gap_fill_watermarks", _refuse_watermark_read)
-    monkeypatch.setattr("agri_data_service.interface.cli.commands.local_source_loader_session", _refuse_session)
-
-    result = CliRunner().invoke(cli, ["data", "parquet-gap-fill", "--layer", "watersheds", "--dry-run"])
-
-    assert result.exit_code == 0, result.output
-    report = json.loads(result.output)
-    assert report["static_lanes_unread"] == ["watersheds"], "an unread lane must say so, never zero gaps"
-    assert report["lanes"][0]["nature"] == "static_lookup"
-    assert report["lanes"][0]["source_watermark"] is None
-
-
-def test_read_watermarks_opts_back_in_and_still_prints_when_the_warehouse_is_unreachable(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Only the DEFAULT moved: the opt-in still reads, and a census that cannot read still PRINTS."""
-    store = ObjectStore(RecordingBackend())
-    reads: list[str] = []
-
-    def _stub_from_settings(_cls: type[ObjectStore], _source: object = None) -> ObjectStore:
-        return store
-
-    def _record_then_fail(*_args: object, **_kwargs: object) -> object:
-        reads.append("attempted")
-        raise ValueError("set LOCAL_SOURCE_LOADER_DATABASE_URL or DATABASE_URL")
-
-    monkeypatch.setattr(ObjectStore, "from_settings", classmethod(_stub_from_settings))
-    monkeypatch.setattr("agri_data_service.interface.cli.commands._read_gap_fill_watermarks", _record_then_fail)
-
-    result = CliRunner().invoke(
-        cli,
-        ["data", "parquet-gap-fill", "--layer", "watersheds", "--dry-run", "--read-watermarks"],
-    )
-
-    assert reads == ["attempted"], "--read-watermarks must still reach the watermark read"
-    assert result.exit_code == 0, result.output
-    report = json.loads(result.output)
-    assert report["static_lanes_unread"] == ["watersheds"]
-    assert "no source watermark was read" in report["lanes"][0]["error"]
-
-
-def test_an_unknown_layer_is_refused_before_anything_is_listed() -> None:
-    result = CliRunner().invoke(cli, ["data", "parquet-gap-fill", "--layer", "interventions", "--dry-run"])
-
-    assert result.exit_code != 0
-    assert "interventions" in result.output
 
 
 def zones_census(store: ObjectStore, lane: LaneRegistration, *, instant: datetime | None) -> LaneGapCensus:

@@ -43,9 +43,7 @@ async def _refused_writer_message(registration: LaneRegistration) -> str | None:
 @pytest.mark.asyncio
 async def test_every_direct_package_is_registered_without_a_postgres_fallback() -> None:
     packages = {
-        path.name
-        for path in DIRECT_PACKAGE_DIRECTORY.iterdir()
-        if path.is_dir() and (path / "__init__.py").is_file()
+        path.name for path in DIRECT_PACKAGE_DIRECTORY.iterdir() if path.is_dir() and (path / "__init__.py").is_file()
     } - set(EXEMPT_FROM_LANE_REGISTRATION)
     messages = [
         message
@@ -53,9 +51,7 @@ async def test_every_direct_package_is_registered_without_a_postgres_fallback() 
         if message is not None
     ]
     registered = {
-        package
-        for package in packages
-        if any(f"pipeline.direct.{package}" in message for message in messages)
+        package for package in packages if any(f"pipeline.direct.{package}" in message for message in messages)
     }
 
     assert registered == packages

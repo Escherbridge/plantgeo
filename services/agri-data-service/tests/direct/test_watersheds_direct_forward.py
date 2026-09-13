@@ -16,6 +16,7 @@ import pytest
 import agri_data_service.pipeline.direct.watersheds.forward as forward_module
 from agri_data_service.foundation.parquet.completion import PartitionCompletion
 from agri_data_service.foundation.parquet.lane_contract import SourceWatermark
+from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.direct.watersheds.adapter import WATERSHEDS_DIRECT_KIND
 from agri_data_service.pipeline.direct.watersheds.forward import (
     WATERSHEDS_MAX_DAYS,
@@ -27,7 +28,6 @@ from agri_data_service.pipeline.direct.watersheds.forward import (
     run_watersheds_forward,
 )
 from agri_data_service.pipeline.direct.watersheds.source import WatershedsSnapshotSource
-from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 from agri_data_service.warehouse.schemas.watersheds import WATERSHEDS_SCHEMA, WATERSHEDS_STREAM
 from tests.parquet.test_objectstore_writer import RecordingBackend

@@ -15,6 +15,7 @@ import pytest
 from agri_data_service.foundation.parquet.completion import PartitionCompletion
 from agri_data_service.foundation.parquet.paths import completion_marker_path, partition_path
 from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
+from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.direct.climate import forward
 from agri_data_service.pipeline.direct.climate.adapter import CLIMATE_DIRECT_KIND
 from agri_data_service.pipeline.direct.climate.products import (
@@ -30,7 +31,6 @@ from agri_data_service.pipeline.direct.climate.source import (
     ClimateTimeBudgetExhaustedError,
 )
 from agri_data_service.pipeline.direct.climate.support import NASA_POWER_SUPPORT_CELL_COUNT
-from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.parquet.availability_extension import (
     AvailabilityExtensionOutcome,
     AvailabilityExtensionTally,

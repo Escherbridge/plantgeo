@@ -14,6 +14,7 @@ from datetime import UTC, date, datetime
 import pytest
 
 from agri_data_service.foundation.parquet.lane_contract import SourceWatermark
+from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.direct.fire_perimeters.forward import (
     FIRE_PERIMETERS_DEFAULT_MAX_DAYS,
     FIRE_PERIMETERS_DEFAULT_RETRY_ATTEMPTS,
@@ -30,7 +31,6 @@ from agri_data_service.pipeline.direct.fire_perimeters.products import (
     FIRE_PERIMETERS_DIRECT_KIND,
     fire_perimeters_lane_registration,
 )
-from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
 
 WATERMARK = SourceWatermark(
     day=date(2026, 9, 6), instant=datetime(2026, 9, 6, 14, 30, tzinfo=UTC), basis="test watermark"

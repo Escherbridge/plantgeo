@@ -13,12 +13,12 @@ from datetime import date
 
 import pytest
 
+from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.direct.burn_severity.forward import (
     BURN_SEVERITY_DIRECT_ALL_TIERS,
     DirectBurnSeverityError,
     _pending_days,
 )
-from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
 
 DAY_A = date(2020, 11, 24)
 DAY_B = date(2021, 9, 27)
