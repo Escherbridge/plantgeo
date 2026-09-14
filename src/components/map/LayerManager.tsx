@@ -70,6 +70,7 @@ import {
 // Imported statically while the components above are dynamic -- these are pure functions with
 // no MapLibre dependency, so they cost nothing at SSR.
 import { botanicalOccurrencesToGeoJSON } from "@/components/map/layers/BotanicalOccurrencesLayer";
+import { GBIF_COLLECTION_KEY } from "@/lib/environmental/botanical-governance-status";
 import { BOTANICAL_DETAIL_MIN_ZOOM } from "@/lib/botanical-occurrences";
 import { botanicalRichnessToGeoJSON } from "@/components/map/layers/BotanicalRichnessLayer";
 import { botanicalEffortToGeoJSON } from "@/components/map/layers/BotanicalCollectionEffortLayer";
@@ -201,6 +202,13 @@ const BotanicalRichnessLayer = dynamic(
   () =>
     import("@/components/map/layers/BotanicalRichnessLayer").then((m) => ({
       default: m.BotanicalRichnessLayer,
+    })),
+  { ssr: false }
+);
+const GbifOccurrencesLayer = dynamic(
+  () =>
+    import("@/components/map/layers/GbifOccurrencesLayer").then((m) => ({
+      default: m.GbifOccurrencesLayer,
     })),
   { ssr: false }
 );
@@ -494,12 +502,15 @@ export default function LayerManager() {
   const botanicalOccurrencesVisible = layerVisibility["botanical-occurrences"];
   const botanicalRichnessVisible = layerVisibility["botanical-richness"];
   const botanicalEffortVisible = layerVisibility["botanical-collection-effort"];
+  const gbifOccurrencesVisible = layerVisibility["gbif-occurrences"];
   // Enabled when a toggle that could actually DRAW at this band is on. A lit occurrence switch
   // at zoom 4 fetches nothing, because the detail layer cannot draw there and the aggregate
   // layers are off -- the gate is about what is drawable, not about what is switched on.
+  // `gbifOccurrencesVisible` joins the detail-band condition alongside the UBC toggle, since
+  // GBIF's toggle only ever draws in the same detail band and shares the same one query.
   const botanicalQueryEnabled =
     botanicalBand === "detail"
-      ? botanicalOccurrencesVisible
+      ? botanicalOccurrencesVisible || gbifOccurrencesVisible
       : botanicalRichnessVisible || botanicalEffortVisible;
   // Empty filter strings are "unset" in the store, never sent as an empty query parameter --
   // the service would read `family=` as a filter matching nothing.
@@ -534,12 +545,37 @@ export default function LayerManager() {
   // `publishedAt` and the release id are threaded onto every drawn feature, not kept beside the
   // collection: the shared hover manager (`lib/map/hover-fields.ts`) reads MapLibre feature
   // properties and cannot reach a response object, and source + staleness on hover is the point.
+  // Excludes GBIF's own collection_key: GBIF draws through its own component/toggle below, and
+  // without this exclusion a reader with BOTH toggles on would see every GBIF point drawn twice
+  // (once per source's independent MapLibre source/layer set). Any OTHER future collection_key
+  // still falls through to this, the general layer -- only GBIF is carved out, because only GBIF
+  // has its own sibling component so far.
   const botanicalOccurrencesGeoJSON = useMemo(
     () =>
       botanicalDetail === null
         ? null
-        : botanicalOccurrencesToGeoJSON(botanicalFeatures, botanicalDetail.publishedAt),
+        : botanicalOccurrencesToGeoJSON(
+            botanicalFeatures.filter((feature) => feature.collection_key !== GBIF_COLLECTION_KEY),
+            botanicalDetail.publishedAt
+          ),
     [botanicalDetail, botanicalFeatures]
+  );
+  // GBIF draws through its OWN component/toggle (`GbifOccurrencesLayer`), independently
+  // switchable from the UBC layer above, even though both read the same `botanicalFeatures`
+  // response -- collection_key is the only thing that tells the two sources apart, so the split
+  // happens here, once, on the shared feature list, rather than teaching either map component
+  // about the other's source. See `GbifOccurrencesLayer.tsx`'s module doc for why this is a new
+  // component rather than a parameterized mode of the UBC one.
+  const gbifFeatures = useMemo(
+    () => botanicalFeatures.filter((feature) => feature.collection_key === GBIF_COLLECTION_KEY),
+    [botanicalFeatures]
+  );
+  const gbifOccurrencesGeoJSON = useMemo(
+    () =>
+      botanicalDetail === null
+        ? null
+        : botanicalOccurrencesToGeoJSON(gbifFeatures, botanicalDetail.publishedAt),
+    [botanicalDetail, gbifFeatures]
   );
   const botanicalRichnessGeoJSON = useMemo(
     () =>
@@ -1479,6 +1515,17 @@ export default function LayerManager() {
         geojson={botanicalOccurrencesGeoJSON}
         zoom={zoom}
         visible={botanicalOccurrencesVisible && botanicalBand === "detail"}
+        onSelectFeature={handleSelectBotanicalOccurrence}
+      />
+      {/* GBIF's own toggle over the SAME one query, filtered above to GBIF's collection_key --
+          see `gbifOccurrencesGeoJSON`'s definition for why the split happens in this container
+          rather than inside either map component. Independently switchable from the UBC layer
+          just above: a reader can have UBC-only, GBIF-only, both, or neither on at once. */}
+      <GbifOccurrencesLayer
+        map={map}
+        geojson={gbifOccurrencesGeoJSON}
+        zoom={zoom}
+        visible={gbifOccurrencesVisible && botanicalBand === "detail"}
         onSelectFeature={handleSelectBotanicalOccurrence}
       />
       {/* Richness is the primary aggregate read -- "how many taxa are documented here" -- and

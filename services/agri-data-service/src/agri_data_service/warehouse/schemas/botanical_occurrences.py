@@ -146,6 +146,14 @@ PROMOTED_OCCURRENCE_TERMS: Final[tuple[str, ...]] = (
     "establishmentMeans",
     "occurrenceStatus",
     "modified",
+    # Per-record rights terms GBIF's export carries that UBC's does not: UBC's whole-archive EML
+    # `rights_uri`/`attribution_text` (see BOTANICAL_SOURCE_RELEASE_SCHEMA) states one rights regime
+    # for the entire archive, but GBIF aggregates many publishers into one download, so licensing is
+    # asserted per occurrence instead. Promoted here rather than only read from `verbatim` because the
+    # normalized-occurrence columns below need them per record, not per release.
+    "license",
+    "rightsHolder",
+    "publisher",
 )
 
 
@@ -248,6 +256,17 @@ BOTANICAL_NORMALIZED_OCCURRENCE_SCHEMA: Final = register_stream_schema(
                 pa.field("basis_of_record", pa.string(), nullable=True),
                 pa.field("rights_uri", pa.string(), nullable=True),
                 pa.field("attribution_text", pa.string(), nullable=True),
+                # Per-record DwC rights terms (GBIF-only today; null for release-level-only sources
+                # like UBC). `license` is the SPDX-ish token GBIF asserts per occurrence (e.g.
+                # `CC0_1_0`, `CC_BY_4_0`, `CC_BY_NC_4_0`) -- never inferred, never defaulted from the
+                # release's own `rights_uri`, since collapsing them would misstate a CC-BY-NC record
+                # as whatever the release's dominant license happens to be.
+                pa.field("license", pa.string(), nullable=True),
+                pa.field("rights_holder", pa.string(), nullable=True),
+                # The record's own publishing institution, distinct from `distributor` on the release
+                # row (who served the download bytes) -- GBIF aggregates many publishers into one
+                # release, so this is per-occurrence, not release-level.
+                pa.field("publisher", pa.string(), nullable=True),
             ]
         ),
         sort_columns=BOTANICAL_NORMALIZED_OCCURRENCE_GRAIN,

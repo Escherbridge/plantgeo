@@ -143,6 +143,7 @@ describe('layer registry derivations', () => {
       'botanical-occurrences',
       'botanical-richness',
       'botanical-collection-effort',
+      'gbif-occurrences',
     ])
     expect(getLayersForPanel('soil')).toEqual([
       'soil',
@@ -256,6 +257,9 @@ describe('layer registry derivations', () => {
       'botanical-occurrences': 'Botanical Specimen Occurrences',
       'botanical-richness': 'Documented Taxon Richness',
       'botanical-collection-effort': 'Collection Evidence & Effort',
+      // A separate source from the three UBC rows above, not a fourth herbarium row -- see
+      // layer-registry.ts's own comment on this entry for why it is a sibling toggle.
+      'gbif-occurrences': 'GBIF Specimen Occurrences',
       soil: 'Soil Properties',
       'soil-survey': 'Soil Survey (SSURGO)',
       // Read off SOIL_FIELD_MEASURES rather than restated, which is why the soil section

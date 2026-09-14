@@ -10,6 +10,14 @@
  * comparison are still open, and because an independent review found the ledger had briefly (and
  * wrongly) claimed admission before that correction. See that file's `admission_reconciliation_note`.
  *
+ * `gbif:pnw:vascular` was added 2026-09-14 for the same reason at admission time zero: a brand
+ * new source starts provisional by construction and only leaves this set once a human evidence
+ * trail (see the GBIF sibling of this track, mirroring `pnw_herbaria_source_admission_20260911/`)
+ * and the ledger both say so. If Lane 1's plan lands a different collection_key string, that
+ * string -- not this one -- is what belongs here; this entry is provisional in the same sense the
+ * data it labels is.
+ *
+
  * This list is NOT read from the ledger at runtime -- the ledger lives in `conductor/`, which does
  * not ship to the browser or the agri-data-service, and the plane itself carries no "admitted"
  * concept (admission is a governance decision about the COLLECTION, not a field on a record). A
@@ -17,8 +25,16 @@
  * that is its source of truth. Keeping it a tiny, hand-maintained set is deliberate -- a
  * mis-labelled provisional collection is worse than a manual step someone has to remember.
  */
+/**
+ * GBIF's collection_key, exported so the map layer split (`GbifOccurrencesLayer.tsx` vs.
+ * `BotanicalOccurrencesLayer.tsx`) and this governance list read the SAME string rather than two
+ * copies that could drift. If Lane 1's plan lands a different value, update it here only.
+ */
+export const GBIF_COLLECTION_KEY = "gbif:pnw:vascular";
+
 export const PROVISIONAL_BOTANICAL_COLLECTION_KEYS: ReadonlySet<string> = new Set([
   "pnw:UBC:vascular",
+  GBIF_COLLECTION_KEY,
 ]);
 
 /** Whether a record's collection is serving ahead of formal governance admission. */

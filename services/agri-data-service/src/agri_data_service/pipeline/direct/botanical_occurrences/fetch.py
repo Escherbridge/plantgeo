@@ -30,7 +30,14 @@ if TYPE_CHECKING:
 
 #: The only hosts an archive may be fetched from. Extending this list is an admission decision, not
 #: a code change: a host outside it has never been through a custody or rights review.
-ALLOWED_HOSTS: Final[frozenset[str]] = frozenset({"ipt.pnwherbaria.org", "data.canadensys.net", "www.pnwherbaria.org"})
+#: `api.gbif.org` is GBIF's Download API host, which serves the finished DwC-A zip directly (no
+#: redirect) once an operator has requested a predicate download out-of-band and polled it to
+#: `succeeded` -- the exact final `.../occurrence/download/request/<key>.zip` URL is what a granted
+#: manifest entry names, mirroring the "operator hands over an exact final URL" pattern already used
+#: for UBC. See conductor GBIF admission track for the rights review this addition rests on.
+ALLOWED_HOSTS: Final[frozenset[str]] = frozenset(
+    {"ipt.pnwherbaria.org", "data.canadensys.net", "www.pnwherbaria.org", "api.gbif.org"}
+)
 
 #: Headers never written into a receipt. A receipt is evidence that gets read and copied around; a
 #: session cookie in one is a credential in a place nobody expects to find one.

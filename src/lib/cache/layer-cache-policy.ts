@@ -132,6 +132,9 @@ const NATURE_BY_LAYER: Readonly<Record<LayerToggleId, LayerCacheNature>> = {
   "botanical-occurrences": "release_series",
   "botanical-richness": "release_series",
   "botanical-collection-effort": "release_series",
+  // Same plane, same release-set addressing, different collection_key -- see the botanical
+  // entries above for why this is `release_series` and not a daily nature.
+  "gbif-occurrences": "release_series",
 };
 
 /**

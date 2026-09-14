@@ -56,6 +56,9 @@ class NormalizedOccurrence:
     basis_of_record: str | None
     rights_uri: str | None
     attribution_text: str | None
+    license: str | None = None
+    rights_holder: str | None = None
+    publisher: str | None = None
 
     @property
     def excluded_by_qc(self) -> bool:
@@ -209,6 +212,13 @@ def normalize_row(  # noqa: PLR0913 - one release-level binding per argument; no
         basis_of_record=_blank_to_none(row.values.get("basisOfRecord")),
         rights_uri=rights_uri,
         attribution_text=attribution_text,
+        # Per-record DwC terms, read straight off the row rather than a release-level binding: unlike
+        # `rights_uri`/`attribution_text` (one EML-sourced value per release, passed in above), these
+        # vary occurrence-to-occurrence in an aggregator export. Null for archives that never export
+        # them (UBC's `occurrence.txt` has no `license` column), never defaulted.
+        license=_blank_to_none(row.values.get("license")),
+        rights_holder=_blank_to_none(row.values.get("rightsHolder")),
+        publisher=_blank_to_none(row.values.get("publisher")),
     )
 
 

@@ -533,6 +533,10 @@ export const LAYER_RENDER_CONTRACT: Readonly<Record<LayerToggleId, LayerRenderCo
   // heatmap of collecting effort smoothed across un-collected ground is precisely the
   // misreading the effort layer's own "context layer, not abundance heatmap" note forbids.
   "botanical-occurrences": eventPointEntry("botanical-occurrences"),
+  // Same claim as the UBC herbarium layer above -- real determinations at real coordinates,
+  // aggregated by a different source (GBIF) under its own collection_key. See
+  // GbifOccurrencesLayer.tsx for why this stays a sibling toggle rather than a mode switch.
+  "gbif-occurrences": eventPointEntry("gbif-occurrences"),
   "botanical-richness": {
     ...eventPointEntry("botanical-richness"),
     permittedForms: {

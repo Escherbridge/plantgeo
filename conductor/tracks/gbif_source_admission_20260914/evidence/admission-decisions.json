@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "source": "GBIF Download API (aggregator, not a single institution)",
+  "candidate_collection_key": "gbif:pnw:vascular",
+  "status": "pre-acquisition, gates open",
+  "admitted_releases": [],
+  "pre_acquisition_gates": [
+    {
+      "gate": "download-request-to-final-URL shape vs fetch.py's exact-URL, no-redirect model",
+      "status": "open",
+      "owner": "Lane 1 plan (source-and-schema) is authoritative; this track records the gate, does not close it",
+      "note": "GBIF's Download API is request-then-poll-then-download: an operator submits a predicate, GBIF builds the export asynchronously, and only then issues a final download URL keyed by a GBIF download key (and a citable DOI once complete). fetch.py's permission_granted() is exact-URL match only and _RefusingRedirectHandler refuses every redirect outright (services/agri-data-service/src/agri_data_service/pipeline/direct/botanical_occurrences/fetch.py:57,86 per the seeded architecture finding). This is the same operational shape as UBC/WTU's 'operator runs the acquisition, hands the pipeline an exact final URL' pattern (see sibling track's owner-risk-decision-20260913.md) -- NOT automatic polling inside the pipeline. This track defers to Lane 1's plan for the exact mechanism (e.g. operator captures the GBIF-issued download URL by hand after the export finishes building, same as an institutional archive URL) rather than inventing a second admission mechanism."
+    },
+    {
+      "gate": "GBIF Terms of Use / Data User Agreement acceptance",
+      "status": "open",
+      "note": "GBIF.org's Data User Agreement (accepted per-download at request time on gbif.org) is the terms authority for the aggregate export mechanism itself, distinct from and in addition to each constituent record's own license field. No agreement has been reviewed, accepted, or cited by this track; this is a placeholder gate, not a verdict. No institution has been contacted and no agreement accepted, matching the sibling track's evidentiary standard (drafts and gates only, no external action)."
+    },
+    {
+      "gate": "Per-record license/rightsHolder/publisher field mapping reconciliation",
+      "status": "open",
+      "note": "Unlike UBC (single archive-wide CC0 EML) and WTU (single archive-wide CC-BY EML), a GBIF Download API export can carry MIXED per-record licenses across its rows, since it aggregates many providers in one file. The DwC-A 'license', 'rightsHolder', and 'publisher' fields (present per-record in GBIF exports, per the seeded goal finding) must be read and carried per row, not asserted once for the whole archive the way ubc-permission-manifest.json does for UBC. Lane 2 owns the code change; this track owns recording that the permission-manifest model used for UBC/WTU (one URL -> one stated authority) does not by itself prove per-record license compliance for a GBIF export, and a serving-side or governance-side note (e.g. a per-record license display, or a documented decision that PlantGeo's stated reuse scope is compatible with the observed license mix) is likely needed before any GBIF release is admitted for serving -- exact mechanism is Lane 1's/Lane 3's call, not litigated here."
+    },
+    {
+      "gate": "Coordinate-withholding / sensitive-taxon policy for the aggregate export",
+      "status": "open",
+      "note": "The sibling track's owner-risk-decision-20260913.md accepted per-record informationWithheld/dataGeneralizations fields as sufficient coordinate-policy evidence for UBC and WTU specifically, reasoning that 'a source which generalizes a coordinate does so before export and signals it via dataGeneralizations.' Whether that reasoning transfers unchanged to a GBIF aggregate (which re-exports many providers' already-generalized coordinates through one pipeline) is a reasonable inference but has not itself been reviewed or decided by an operator for this source; recording it as open rather than assuming the prior owner call automatically extends."
+    }
+  ],
+  "post_capture_gates_unchanged_pattern": [
+    "archive/member safety and hash verification (same shape as ubc-inspection-receipt-20260913.json)",
+    "field-map reconciliation over the real occurrence.txt (license/rightsHolder/publisher additions land here)",
+    "release identity/stability check if PlantGeo re-pulls a later GBIF download for the same predicate"
+  ],
+  "no_acquisition_performed": true,
+  "no_institutional_or_gbif_contact_made": true,
+  "recorded_by": "Lane 4 (governance-evidence)",
+  "recorded_on": "2026-09-14"
+}

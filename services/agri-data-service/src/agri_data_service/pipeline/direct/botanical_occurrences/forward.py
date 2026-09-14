@@ -244,6 +244,9 @@ def _normalized_row(record: NormalizedOccurrence) -> dict[str, Any]:
         "basis_of_record": record.basis_of_record,
         "rights_uri": record.rights_uri,
         "attribution_text": record.attribution_text,
+        "license": record.license,
+        "rights_holder": record.rights_holder,
+        "publisher": record.publisher,
     }
 
 

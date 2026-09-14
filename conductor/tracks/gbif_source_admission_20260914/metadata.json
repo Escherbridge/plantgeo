@@ -1,0 +1,18 @@
+{
+  "slug": "gbif_source_admission_20260914",
+  "title": "GBIF Download API source admission and release governance",
+  "type": "data-governance",
+  "status": "active",
+  "created_on": "2026-09-14",
+  "depends_on": [],
+  "related_tracks": [
+    "pnw_herbaria_source_admission_20260911"
+  ],
+  "next_gate": "Four pre-acquisition gates recorded open in evidence/admission-decisions.json: (1) request-then-poll GBIF download shape vs fetch.py's exact-URL/no-redirect model, deferred to Lane 1's plan; (2) GBIF Data User Agreement acceptance, not reviewed; (3) per-record license/rightsHolder/publisher field reconciliation, since a GBIF export can mix licenses across rows unlike UBC/WTU's single archive-wide EML license; (4) whether the sibling track's coordinate-withholding owner decision transfers unchanged to an aggregate export. No gate is closed. admitted_releases remains empty.",
+  "updated_on": "2026-09-14",
+  "admitted_releases": [],
+  "execution_scope": "Metadata and source-governance evidence only. No code, no live network fetch, no acquisition, no institutional or GBIF outreach.",
+  "admission_status": "pre-acquisition-gates-open",
+  "evidence_dir": "evidence/",
+  "plan": "plan.md"
+}

@@ -115,6 +115,51 @@ def _row(number: int, occurrence_id: str, name: str = "Lupinus argenteus", *, co
     )
 
 
+def test_per_record_rights_terms_pass_through_when_the_source_exports_them() -> None:
+    """GBIF-shaped rows carry per-occurrence `license`/`rightsHolder`/`publisher`; UBC's do not."""
+    values = {
+        "occurrenceID": "urn:occ:gbif-1",
+        "scientificName": "Lupinus argenteus",
+        "license": "CC_BY_4_0",
+        "rightsHolder": "University of Washington Herbarium",
+        "publisher": "GBIF.org",
+    }
+    row = SourceRow(
+        member_name="occurrence.txt",
+        row_number=1,
+        row_sha256="hash-gbif-1",
+        record_id="urn:occ:gbif-1",
+        values=values,
+        verbatim=dict(values),
+    )
+    (record,) = normalize_rows([row], collection_key="gbif:pnw:vascular", release_key="release-1")
+    assert record.license == "CC_BY_4_0"
+    assert record.rights_holder == "University of Washington Herbarium"
+    assert record.publisher == "GBIF.org"
+
+
+def test_per_record_rights_terms_are_none_when_the_source_never_exports_them() -> None:
+    """UBC's export has no per-record rights columns; nothing should be invented or defaulted."""
+    (record,) = normalize_rows([_row(1, "urn:occ:1")], collection_key="test:COLL:vascular", release_key="release-1")
+    assert record.license is None
+    assert record.rights_holder is None
+    assert record.publisher is None
+
+
+def test_blank_per_record_rights_terms_are_normalized_to_none() -> None:
+    values = {"occurrenceID": "urn:occ:blank", "scientificName": "Lupinus argenteus", "license": "   "}
+    row = SourceRow(
+        member_name="occurrence.txt",
+        row_number=1,
+        row_sha256="hash-blank",
+        record_id="urn:occ:blank",
+        values=values,
+        verbatim=dict(values),
+    )
+    (record,) = normalize_rows([row], collection_key="gbif:pnw:vascular", release_key="release-1")
+    assert record.license is None
+
+
 def test_duplicate_native_keys_keep_both_rows_and_say_why() -> None:
     records = normalize_rows(
         [_row(1, "urn:occ:1", content="A"), _row(2, "urn:occ:1", content="B"), _row(3, "urn:occ:2")],

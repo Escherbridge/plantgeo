@@ -53,6 +53,9 @@ const LANE_BACKED_TOGGLE_IDS: LayerToggleId[] = [
   "botanical-occurrences",
   "botanical-richness",
   "botanical-collection-effort",
+  // Same plane and same reasoning as the three rows above -- a separate collection_key, not a
+  // separate producer.
+  "gbif-occurrences",
 ];
 
 /**

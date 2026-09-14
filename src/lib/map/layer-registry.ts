@@ -37,7 +37,8 @@ export type LayerToggleId =
   | "burn-severity"
   | "botanical-occurrences"
   | "botanical-richness"
-  | "botanical-collection-effort";
+  | "botanical-collection-effort"
+  | "gbif-occurrences";
 
 /** How a toggle reaches the map: a React-mounted layer component, or baked style layers. */
 export type LayerRenderKind = "component" | "style";
@@ -341,6 +342,25 @@ export const LAYER_REGISTRY: Record<LayerToggleId, LayerRegistryEntry> = {
     description:
       "Where collecting effort has concentrated, as context for the richness layer above. A context layer, not an abundance heatmap.",
     icon: "users",
+    renderKind: "component",
+    styleLayerIds: [],
+    warehouseLayerName: null,
+    panelId: "vegetation",
+    permanentlyUnavailableReason: null,
+  },
+  // A SEPARATE toggle from `botanical-occurrences`, not a mode of it, because it needs to be
+  // switched independently: a reader may want UBC-only, GBIF-only, or both drawn together, and
+  // one switch cannot hold two positions. GBIF rows land in the SAME plane/query/response as UBC
+  // (collection_key is the only thing that distinguishes them; see
+  // `GbifOccurrencesLayer.tsx`), so this is a rendering-side split only -- no second query, no
+  // second warehouse concept. `warehouseLayerName: null` for the same reason as the three rows
+  // above: no daily grain to scrub.
+  "gbif-occurrences": {
+    toggleId: "gbif-occurrences",
+    label: "GBIF Specimen Occurrences",
+    description:
+      "Herbarium and citizen-science (iNaturalist research-grade) occurrence records aggregated by GBIF, drawn at high zoom only. Distinct per-record licensing (CC0 / CC-BY / CC-BY-NC) applies -- see the attribution shown on hover.",
+    icon: "leaf",
     renderKind: "component",
     styleLayerIds: [],
     warehouseLayerName: null,
