@@ -812,46 +812,55 @@ const STANDARD_CLIMATE_FIELD_LANES = {
     layer: null,
     rowContract: "signal-plane",
     sourceParameter: null,
+    directFirstDay: null,
   },
   "dew-point": {
     layer: "climate-field-dew-point",
     rowContract: "signal-plane",
     sourceParameter: null,
+    directFirstDay: null,
   },
   precipitation: {
     layer: "climate-field-precipitation",
     rowContract: "snapshot-lineage",
     sourceParameter: "PRECTOTCORR",
+    directFirstDay: "2026-08-07",
   },
   "relative-humidity": {
     layer: "climate-field-relative-humidity",
     rowContract: "snapshot-lineage",
     sourceParameter: "RH2M",
+    directFirstDay: "2026-08-07",
   },
   "shortwave-radiation": {
     layer: "climate-field-shortwave-radiation",
     rowContract: "snapshot-lineage",
     sourceParameter: "ALLSKY_SFC_SW_DWN",
+    directFirstDay: "2026-06-01",
   },
   "wind-speed": {
     layer: "climate-field-wind-speed",
     rowContract: "signal-plane",
     sourceParameter: null,
+    directFirstDay: null,
   },
   "soil-wetness-surface": {
     layer: "soil-wetness-surface",
     rowContract: "soil-wetness",
     sourceParameter: null,
+    directFirstDay: null,
   },
   "soil-wetness-root-zone": {
     layer: "soil-wetness-root-zone",
     rowContract: "soil-wetness",
     sourceParameter: null,
+    directFirstDay: null,
   },
   "soil-wetness-profile": {
     layer: "soil-wetness-profile",
     rowContract: "soil-wetness",
     sourceParameter: null,
+    directFirstDay: null,
   },
 } as const satisfies Record<
   ClimateFieldSignalId,
@@ -859,6 +868,7 @@ const STANDARD_CLIMATE_FIELD_LANES = {
     layer: string | null;
     rowContract: "signal-plane" | "snapshot-lineage" | "soil-wetness";
     sourceParameter: string | null;
+    directFirstDay: string | null;
   }
 >;
 
@@ -1240,6 +1250,69 @@ function climateFieldProduct(
   };
 }
 
+/** Validate immutable-snapshot or source-direct lineage for a climate snapshot product. */
+function climateSnapshotLineageMatches(
+  row: Record<string, unknown>,
+  servedDay: string,
+  zoomTier: ZoomTier,
+  directFirstDay: string | null
+): boolean {
+  if (row.source_manifest_sha256 === SNAPSHOT_SOURCE_MANIFEST_SHA256) {
+    return directFirstDay === null || servedDay < directFirstDay;
+  }
+  const directId = `direct:${String(row.source_manifest_sha256)}`;
+  const baseOnlyColumns = [
+    "selected_source_row_id",
+    "selected_source_row_sha256",
+    "selected_source_release_id",
+    "selected_source_release_retrieved_at",
+    "selected_source_release_payload_checksum",
+    "selected_source_part_key",
+    "selected_source_part_sha256",
+    "selected_source_row_ordinal",
+    "input_source_row_digest",
+    "input_source_row_ids",
+    "input_source_row_sha256s",
+    "input_source_release_ids",
+    "input_source_part_keys",
+    "input_source_part_sha256s",
+    "input_source_row_ordinals",
+  ] as const;
+  if (directFirstDay === null || servedDay < directFirstDay || row.source_snapshot_id !== directId ||
+      row.precedence_contract !== "nasa-power-point-per-support-cell-v1") {
+    return false;
+  }
+  if (zoomTier !== BASE_ZOOM_TIER) {
+    return row.input_source_row_count !== null &&
+      typeof row.input_source_row_count === "number" &&
+      row.input_source_row_count > 0 &&
+      baseOnlyColumns.every((column) => row[column] === null);
+  }
+  const rowId = row.selected_source_row_id;
+  const rowSha = row.selected_source_row_sha256;
+  const partKey = row.selected_source_part_key;
+  const partSha = row.selected_source_part_sha256;
+  const ordinal = row.selected_source_row_ordinal;
+  return (
+    row.input_source_row_count === 1 &&
+    typeof rowId === "number" &&
+    typeof rowSha === "string" &&
+    typeof partKey === "string" &&
+    typeof partSha === "string" &&
+    rowId === ordinal &&
+    row.selected_source_release_id === directId &&
+    row.selected_source_release_payload_checksum === row.source_manifest_sha256 &&
+    row.input_source_row_digest === rowSha &&
+    Array.isArray(row.input_source_row_ids) && row.input_source_row_ids.length === 1 && row.input_source_row_ids[0] === rowId &&
+    Array.isArray(row.input_source_row_sha256s) && row.input_source_row_sha256s.length === 1 && row.input_source_row_sha256s[0] === rowSha &&
+    Array.isArray(row.input_source_release_ids) && row.input_source_release_ids.length === 1 && row.input_source_release_ids[0] === directId &&
+    Array.isArray(row.input_source_part_keys) && row.input_source_part_keys.length === 1 && row.input_source_part_keys[0] === partKey &&
+    Array.isArray(row.input_source_part_sha256s) && row.input_source_part_sha256s.length === 1 && row.input_source_part_sha256s[0] === partSha &&
+    Array.isArray(row.input_source_row_ordinals) && row.input_source_row_ordinals.length === 1 && row.input_source_row_ordinals[0] === ordinal &&
+    row.selected_source_release_retrieved_at !== null
+  );
+}
+
 function decodeClimateFieldRows(
   rows: readonly Record<string, unknown>[],
   signal: ParquetClimateFieldSignalId,
@@ -1284,8 +1357,7 @@ function decodeClimateFieldRows(
         row.source_key !== "nasa-power-daily" ||
         !("source_parameter" in row) ||
         row.source_parameter !== contract.sourceParameter ||
-        !("source_manifest_sha256" in row) ||
-        row.source_manifest_sha256 !== SNAPSHOT_SOURCE_MANIFEST_SHA256)
+        !climateSnapshotLineageMatches(row, servedDay, zoomTier, contract.directFirstDay))
     ) {
       throw contractError(`${layer} returned a row outside its pinned source contract`);
     }
