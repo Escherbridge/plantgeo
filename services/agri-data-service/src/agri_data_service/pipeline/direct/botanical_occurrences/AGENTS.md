@@ -96,11 +96,19 @@ one cell AND the coordinate is `exact`. Past `MAX_FANOUT_CELLS` (the 3×3 neighb
 keeps ONE `possible` association to the cell holding its nominal point, which makes that cell read
 `withheld_or_generalized_only` unless a real record confirms it. Evidence preserved, claim not made.
 
-`evaluated_zero` is materialised only INSIDE the declared envelope, because that is the only area
+`evaluated_zero` is materialised only INSIDE the admitted envelope, because that is the only area
 where "we looked and found nothing admitted" is a statement this lane is entitled to make. Cells
 outside it are not written at all and the reader answers `outside_coverage` for them.
 `not_evaluated` is therefore never written here — a cell this code computed was, by definition,
 evaluated — and the word exists in the schema for a future partial-coverage generation.
+
+That envelope is MEASURED, not configured. `forward.py`'s `generation_envelope` derives it once per
+turn from the admitted `exact` coordinates (`foundation/.../coordinates.py` §`derive_envelope`), and
+the one box is threaded into `build_generation_contents` for both the `within_envelope` re-stamp and
+`evaluate_support`. Deriving it in one place is the point: when normalize and evaluate_support each
+defaulted to their own module constant, the published flag and the published grey cells were two
+independent claims about coverage that nothing forced to agree. `config.envelope` is now only the
+seed the archives are first read against, and the fallback when a generation admits no exact point.
 
 ## Publication order IS the recovery story
 

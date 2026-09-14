@@ -8,7 +8,7 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 from agri_data_service.foundation.botanical_occurrences.coordinates import (
-    DECLARED_ENVELOPE,
+    SEED_ENVELOPE,
     classify_coordinate,
     point_wkb,
 )
@@ -148,7 +148,7 @@ def normalize_row(  # noqa: PLR0913 - one release-level binding per argument; no
     rights_uri: str | None = None,
     attribution_text: str | None = None,
     authority: TaxonAuthority | None = None,
-    envelope: tuple[float, float, float, float] = DECLARED_ENVELOPE,
+    envelope: tuple[float, float, float, float] = SEED_ENVELOPE,
 ) -> NormalizedOccurrence:
     """Apply the pinned recipe to one raw row, recording every reason the outcome is what it is."""
     native_key = source_record_key(row, collection_key)
@@ -252,7 +252,7 @@ def normalize_rows(  # noqa: PLR0913 - mirrors `normalize_row`; the release bind
     rights_uri: str | None = None,
     attribution_text: str | None = None,
     authority: TaxonAuthority | None = None,
-    envelope: tuple[float, float, float, float] = DECLARED_ENVELOPE,
+    envelope: tuple[float, float, float, float] = SEED_ENVELOPE,
 ) -> tuple[NormalizedOccurrence, ...]:
     """Normalize a whole member, then annotate native-key collisions across it."""
     normalized = [

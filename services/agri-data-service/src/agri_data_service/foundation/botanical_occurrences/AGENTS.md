@@ -73,11 +73,28 @@ uncertainty ≥ 10 km, or a datum this lane cannot verify demote an otherwise ex
 `generalized`. An unverified datum is NOT silently reprojected: that would move the point by an
 unknown distance and still call it exact.
 
-`DECLARED_ENVELOPE` is a PLACEHOLDER and is marked as one in the code. It is the track's scoping box,
-not a measured coverage claim, and the first admitted release's own EML coverage statement replaces
-it. Its only job is to bound where `evaluated_zero` may be asserted: "we looked here and found
-nothing" is honest only inside admitted coverage. A specimen outside the envelope is still published
-with `within_envelope=False`, because a specimen collected outside the box is a real specimen.
+The admitted-coverage envelope is now MEASURED, not declared. `derive_envelope` takes the min/max
+longitude and latitude of the generation's own `exact` records and pads each side by
+`ENVELOPE_PAD_DEGREES`; `pipeline/direct/botanical_occurrences/forward.py` computes it once per turn
+(`generation_envelope`) and threads the one box into the normalized flags, the support evaluation and
+the turn report. Its only job is unchanged: to bound where `evaluated_zero` may be asserted, since
+"we looked here and found nothing" is honest only inside admitted coverage. A specimen outside the
+envelope is still published with `within_envelope=False`, because a specimen collected outside the
+box is a real specimen.
+
+The hand-picked box it replaces was a placeholder that reached from the Pacific coast to −110°, well
+past any real PNW herbarium coverage, and `_evaluated_zero_cells` dutifully painted every empty cell
+inside it — a grey rectangle over interior BC and Alberta asserting "surveyed, nothing found" about
+land the collection never touched. A measured box cannot make that claim.
+
+The pad is one quarter degree because that is exactly one `grid-0.25` cell, the coarsest rung this
+lane publishes. The tightest possible bounding box is the opposite error: it would read the first
+unsampled cell beyond an outermost specimen as `evaluated_zero` when it was never surveyed either.
+One coarse cell of slack admits the ring the outermost specimens already sit inside and stops there.
+
+`SEED_ENVELOPE` survives only as the fallback for a generation that admits no exact coordinate at
+all. Nothing is derived from zero points, and a lane that crashed or published a degenerate box in
+that case would be worse than one that falls back to a stated scoping guess.
 
 `WITHHELD_MARKERS` and its siblings are a best-effort READ of a publisher policy, not the policy. A
 phrase they have not learned leaves a record `exact`, which is why both source terms also survive

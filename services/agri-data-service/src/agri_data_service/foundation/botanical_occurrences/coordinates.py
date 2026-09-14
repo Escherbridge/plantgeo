@@ -5,20 +5,26 @@ from __future__ import annotations
 import math
 import struct
 from dataclasses import dataclass
-from typing import Final, Literal
+from typing import TYPE_CHECKING, Final, Literal
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 SpatialClass = Literal["exact", "generalized", "withheld", "nonspatial"]
 
 #: Mean Earth radius, the value every great-circle distance in this lane is computed against.
 EARTH_RADIUS_METERS: Final = 6_371_008.8
 
-#: The lane's DECLARED ADMITTED ENVELOPE, and a PLACEHOLDER: it is the Pacific Northwest box the
-#: occurrence track was scoped against, not a measured coverage claim about any admitted collection.
-#: A record outside it is still published -- `within_envelope=False` -- because a specimen collected
-#: outside the envelope is a real specimen; what the flag bounds is where `evaluated_zero` may be
+#: The SEED envelope: used only when a generation admits no exact coordinate to measure a box from.
+#: A record outside the envelope is still published -- `within_envelope=False` -- because a specimen
+#: collected outside it is a real specimen; what the flag bounds is where `evaluated_zero` may be
 #: asserted, since "we looked here and found nothing" is only honest inside admitted coverage.
-#: CONFIGURABLE: the first admitted release's own EML coverage statement replaces these four numbers.
-DECLARED_ENVELOPE: Final[tuple[float, float, float, float]] = (-125.0, 41.0, -110.0, 50.0)
+SEED_ENVELOPE: Final[tuple[float, float, float, float]] = (-125.0, 41.0, -110.0, 50.0)
+
+#: Pad added on each side of the measured extent. One quarter degree is exactly one `grid-0.25` cell
+#: -- the coarsest rung this lane publishes -- so the pad admits the ring of cells the collection's
+#: outermost specimens already sit inside, and no second ring of land nobody sampled.
+ENVELOPE_PAD_DEGREES: Final = 0.25
 
 #: Substrings that mark a location as deliberately coarsened or suppressed by the publisher. Matched
 #: case-insensitively against `informationWithheld` and `dataGeneralizations`. A publisher phrase
@@ -88,11 +94,33 @@ def _matches(text: str | None, markers: tuple[str, ...]) -> bool:
 def within_declared_envelope(
     longitude: float,
     latitude: float,
-    envelope: tuple[float, float, float, float] = DECLARED_ENVELOPE,
+    envelope: tuple[float, float, float, float] = SEED_ENVELOPE,
 ) -> bool:
-    """Report whether a point lies inside the lane's declared admitted-coverage envelope."""
+    """Report whether a point lies inside the lane's admitted-coverage envelope."""
     min_longitude, min_latitude, max_longitude, max_latitude = envelope
     return min_longitude <= longitude <= max_longitude and min_latitude <= latitude <= max_latitude
+
+
+def derive_envelope(
+    points: Iterable[tuple[float, float]],
+    *,
+    pad_degrees: float = ENVELOPE_PAD_DEGREES,
+    seed: tuple[float, float, float, float] = SEED_ENVELOPE,
+) -> tuple[float, float, float, float]:
+    """Measure the admitted-coverage envelope from the points a generation actually admitted."""
+    longitudes: list[float] = []
+    latitudes: list[float] = []
+    for longitude, latitude in points:
+        longitudes.append(longitude)
+        latitudes.append(latitude)
+    if not longitudes:
+        return seed
+    return (
+        max(-_MAX_LONGITUDE, min(longitudes) - pad_degrees),
+        max(-_MAX_LATITUDE, min(latitudes) - pad_degrees),
+        min(_MAX_LONGITUDE, max(longitudes) + pad_degrees),
+        min(_MAX_LATITUDE, max(latitudes) + pad_degrees),
+    )
 
 
 def classify_coordinate(  # noqa: PLR0913 - one DwC term per argument, and none may be folded together
@@ -103,7 +131,7 @@ def classify_coordinate(  # noqa: PLR0913 - one DwC term per argument, and none 
     coordinate_uncertainty: str | None = None,
     information_withheld: str | None = None,
     data_generalizations: str | None = None,
-    envelope: tuple[float, float, float, float] = DECLARED_ENVELOPE,
+    envelope: tuple[float, float, float, float] = SEED_ENVELOPE,
 ) -> ParsedCoordinate:
     """Decide what one record's coordinates may be used for, and record every reason for it.
 
@@ -195,13 +223,15 @@ def polygon_wkb(ring: tuple[tuple[float, float], ...]) -> bytes:
 
 
 __all__ = [
-    "DECLARED_ENVELOPE",
     "EARTH_RADIUS_METERS",
+    "ENVELOPE_PAD_DEGREES",
     "GENERALIZED_UNCERTAINTY_METERS",
+    "SEED_ENVELOPE",
     "WGS84_DATUMS",
     "ParsedCoordinate",
     "SpatialClass",
     "classify_coordinate",
+    "derive_envelope",
     "haversine_meters",
     "parse_decimal",
     "point_wkb",

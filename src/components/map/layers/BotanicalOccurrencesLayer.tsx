@@ -5,6 +5,7 @@ import type { Map as MapLibreMap, GeoJSONSource, MapMouseEvent } from "maplibre-
 import { getFirstSymbolLayer, safeRemoveLayerAndSource } from "@/lib/map/layer-utils";
 import { BOTANICAL_DETAIL_MIN_ZOOM, type BotanicalOccurrenceFeature } from "@/lib/botanical-occurrences";
 import { isProvisionalBotanicalCollection } from "@/lib/environmental/botanical-governance-status";
+import { useStyleReady } from "@/components/map/layers/use-style-ready";
 
 const SOURCE_ID = "botanical-occurrences";
 const LAYER_ID_EXACT = "botanical-occurrences-exact";
@@ -106,6 +107,9 @@ export function BotanicalOccurrencesLayer({
   propsRef.current = { geojson, visible, zoom };
   const onSelectFeatureRef = useRef(onSelectFeature);
   onSelectFeatureRef.current = onSelectFeature;
+  // Catches the mount-time race the persistent listener below cannot: when the style finished
+  // loading before this component became drawable, no further `style.load` will ever arrive.
+  const styleReady = useStyleReady(map);
 
   const addLayers = useCallback((m: MapLibreMap) => {
     const { geojson } = propsRef.current;
@@ -205,6 +209,29 @@ export function BotanicalOccurrencesLayer({
     );
   }, []);
 
+  // The persistent `style.load` registration, keyed on `[map]` ALONE so it keeps its place in
+  // the listener queue and -- critically -- is registered even while this layer is not drawable.
+  // It used to live inside the draw effect below, AFTER that effect's
+  // `zoom < BOTANICAL_DETAIL_MIN_ZOOM` early return, so it was absent for the whole time the map
+  // sat below the detail floor and was re-registered (moving to the back of the queue) on every
+  // zoom tick above it. Paired with it was a `once("style.load", ...)` fallback taken whenever
+  // `isStyleLoaded()` read false -- and a `once` registered after that event has already fired
+  // never runs, which is the documented way a custom-added layer silently never draws. Both
+  // hazards are removed here; see `src/components/map/AGENTS.md`
+  // "`isStyleLoaded()` is a signal to retry on, never a gate to drop writes behind".
+  useEffect(() => {
+    if (!map) return;
+    const onStyleLoad = () => {
+      const current = propsRef.current;
+      if (!current.visible || !current.geojson || current.zoom < BOTANICAL_DETAIL_MIN_ZOOM) return;
+      addLayers(map);
+    };
+    map.on("style.load", onStyleLoad);
+    return () => {
+      map.off("style.load", onStyleLoad);
+    };
+  }, [map, addLayers]);
+
   useEffect(() => {
     if (!map) return;
     if (!visible || !geojson || zoom < BOTANICAL_DETAIL_MIN_ZOOM) {
@@ -212,18 +239,12 @@ export function BotanicalOccurrencesLayer({
       return;
     }
 
-    const onStyleLoad = () => {
-      const current = propsRef.current;
-      if (!current.visible || !current.geojson || current.zoom < BOTANICAL_DETAIL_MIN_ZOOM) return;
-      addLayers(map);
-    };
-
+    // Re-read live rather than trusting `styleReady`'s possibly-stale render value: the hook's
+    // boolean is in this effect's deps purely to force a re-run. `addLayers` is idempotent
+    // (every add is guarded by `getSource`/`getLayer`), so overlapping invocations are no-ops.
     if (map.isStyleLoaded()) {
       addLayers(map);
-    } else {
-      map.once("style.load", () => addLayers(map));
     }
-    map.on("style.load", onStyleLoad);
 
     const onClick = (event: MapMouseEvent) => {
       const features = map.queryRenderedFeatures(event.point, {
@@ -239,13 +260,12 @@ export function BotanicalOccurrencesLayer({
     map.on("click", LAYER_ID_POSSIBLE, onClick);
 
     return () => {
-      map.off("style.load", onStyleLoad);
       map.off("click", LAYER_ID_EXACT, onClick);
       map.off("click", LAYER_ID_GENERALIZED, onClick);
       map.off("click", LAYER_ID_POSSIBLE, onClick);
       removeLayers(map);
     };
-  }, [map, geojson, visible, zoom, addLayers, removeLayers]);
+  }, [map, geojson, visible, zoom, styleReady, addLayers, removeLayers]);
 
   return null;
 }

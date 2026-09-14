@@ -117,7 +117,7 @@ def test_a_cell_with_only_possible_records_is_not_documented() -> None:
     assert cell.possible_only_records == 1
 
 
-def test_evaluated_zero_is_written_only_inside_the_declared_envelope() -> None:
+def test_evaluated_zero_is_written_only_inside_the_admitted_envelope() -> None:
     record = _record("h")
     associations = associate_record(record, COARSE)
     evaluations = evaluate_support(

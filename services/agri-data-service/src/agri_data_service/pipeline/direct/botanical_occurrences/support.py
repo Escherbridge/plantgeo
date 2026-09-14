@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final
 
 from agri_data_service.foundation.botanical_occurrences.coordinates import (
-    DECLARED_ENVELOPE,
+    SEED_ENVELOPE,
     polygon_wkb,
     within_declared_envelope,
 )
@@ -216,7 +216,7 @@ def evaluate_support(  # noqa: PLR0913 - release set, support, records, associat
     support: GridSupport,
     *,
     release_set_id: str,
-    envelope: tuple[float, float, float, float] = DECLARED_ENVELOPE,
+    envelope: tuple[float, float, float, float] = SEED_ENVELOPE,
     include_evaluated_zero: bool = True,
 ) -> tuple[SupportEvaluation, ...]:
     """Evaluate every cell this generation can honestly speak about, and no others.
@@ -345,7 +345,7 @@ def summarise_cell_taxa(
 def cell_within_envelope(
     support: GridSupport,
     cell_id: str,
-    envelope: tuple[float, float, float, float] = DECLARED_ENVELOPE,
+    envelope: tuple[float, float, float, float] = SEED_ENVELOPE,
 ) -> bool:
     """Report whether a cell's centre lies inside the declared admitted envelope."""
     column, row = _cell_indices_from_id(cell_id)

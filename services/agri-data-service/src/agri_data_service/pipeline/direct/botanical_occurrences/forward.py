@@ -10,12 +10,16 @@ import argparse
 import json
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
 
-from agri_data_service.foundation.botanical_occurrences.coordinates import DECLARED_ENVELOPE
+from agri_data_service.foundation.botanical_occurrences.coordinates import (
+    SEED_ENVELOPE,
+    derive_envelope,
+    within_declared_envelope,
+)
 from agri_data_service.foundation.botanical_occurrences.limits import (
     ADMITTED_LIMITS,
     PARSER_VERSION,
@@ -170,7 +174,9 @@ class BotanicalForwardConfig:
     max_extension_rows: int = ADMITTED_LIMITS.extension_rows
     supports: tuple[str, ...] = tuple(sorted(SUPPORT_DEGREES))
     time_budget_seconds: float = DEFAULT_TIME_BUDGET_SECONDS
-    envelope: tuple[float, float, float, float] = DECLARED_ENVELOPE
+    #: The envelope each archive is READ against. The published one is measured from the records
+    #: this turn actually admitted (`generation_envelope`), so this is only the seed for that pass.
+    envelope: tuple[float, float, float, float] = SEED_ENVELOPE
     advance_pointer: bool = True
     target: PublicationTarget | None = field(default=None, compare=False)
 
@@ -352,15 +358,49 @@ def read_release(request: ArchiveRequest, config: BotanicalForwardConfig) -> Rea
     )
 
 
+def _restamped(
+    record: NormalizedOccurrence,
+    envelope: tuple[float, float, float, float],
+) -> NormalizedOccurrence:
+    """Re-flag one record against the envelope this generation publishes. Drops nothing."""
+    if record.longitude is None or record.latitude is None:
+        return record
+    within = within_declared_envelope(record.longitude, record.latitude, envelope)
+    return record if within == record.within_envelope else replace(record, within_envelope=within)
+
+
+def generation_envelope(
+    records: Sequence[NormalizedOccurrence],
+    *,
+    seed: tuple[float, float, float, float] = SEED_ENVELOPE,
+) -> tuple[float, float, float, float]:
+    """Measure this generation's admitted envelope from its own EXACT records; see the module AGENTS.md."""
+    return derive_envelope(
+        (
+            (record.longitude, record.latitude)
+            for record in records
+            if record.spatial_class == "exact" and record.longitude is not None and record.latitude is not None
+        ),
+        seed=seed,
+    )
+
+
 def build_generation_contents(
     releases: Sequence[ReadRelease],
     *,
     release_set_id: str,
     supports: Sequence[str],
-    envelope: tuple[float, float, float, float],
+    envelope: tuple[float, float, float, float] | None = None,
 ) -> GenerationContents:
-    """Assemble every artifact of one generation from already-read releases."""
-    records = tuple(record for release in releases for record in release.records)
+    """Assemble every artifact of one generation from already-read releases.
+
+    The envelope is MEASURED from the admitted exact records unless a caller pins one, and every
+    record's `within_envelope` is re-stamped against whichever envelope this generation publishes,
+    so the flag and the `evaluated_zero` cells can never disagree about where coverage was claimed.
+    """
+    read_records = tuple(record for release in releases for record in release.records)
+    envelope = generation_envelope(read_records) if envelope is None else envelope
+    records = tuple(_restamped(record, envelope) for record in read_records)
     spatial = [record for record in records if not record.excluded_by_qc]
     nonspatial = [record for record in records if record.excluded_by_qc]
 
@@ -473,11 +513,16 @@ def run_botanical_occurrences_forward(config: BotanicalForwardConfig) -> dict[st
         qc_policy_version=QC_POLICY_VERSION,
         support_version=SUPPORT_VERSION,
     )
+    # Measured ONCE for the turn, then threaded into both the artifacts and the report, so an
+    # operator reads back exactly the box the generation was published against.
+    envelope = generation_envelope(
+        tuple(record for release in publishable for record in release.records), seed=config.envelope
+    )
     contents = build_generation_contents(
         publishable,
         release_set_id=identity.release_set_id,
         supports=config.supports,
-        envelope=config.envelope,
+        envelope=envelope,
     )
     target = config.target or publication_target(config.root)
     receipt = publish_generation(target, identity, contents, advance_pointer=config.advance_pointer)
@@ -492,6 +537,7 @@ def run_botanical_occurrences_forward(config: BotanicalForwardConfig) -> dict[st
         "objects_written": list(receipt.objects_written),
         "pointer_advanced": receipt.pointer_advanced,
         "supports": list(config.supports),
+        "envelope": list(envelope),
     }
 
 
@@ -567,6 +613,7 @@ __all__ = [
     "BotanicalForwardError",
     "ReadRelease",
     "build_generation_contents",
+    "generation_envelope",
     "parse_archive_argument",
     "parse_args",
     "parser",
