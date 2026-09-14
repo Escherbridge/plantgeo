@@ -351,6 +351,44 @@ function climateLineageRow(day = "2026-08-06") {
   };
 }
 
+function directClimateLineageRow(
+  zoomTier: number,
+  day = "2026-09-09",
+  overrides: Record<string, unknown> = {}
+) {
+  const sha = "d".repeat(64);
+  const rowSha = "e".repeat(64);
+  const partSha = "f".repeat(64);
+  const rowId = 7;
+  const partKey = "https://power.larc.nasa.gov/api/temporal/daily/point";
+  const directId = `direct:${sha}`;
+  const coarse = zoomTier !== 13;
+  return {
+    ...climateLineageRow(day),
+    cell_id: coarse ? null : "nasa-power-001",
+    source_snapshot_id: directId,
+    source_manifest_sha256: sha,
+    precedence_contract: "nasa-power-point-per-support-cell-v1",
+    selected_source_row_id: coarse ? null : rowId,
+    selected_source_row_sha256: coarse ? null : rowSha,
+    selected_source_release_id: coarse ? null : directId,
+    selected_source_release_retrieved_at: coarse ? null : `${day}T01:00:00Z`,
+    selected_source_release_payload_checksum: coarse ? null : sha,
+    selected_source_part_key: coarse ? null : partKey,
+    selected_source_part_sha256: coarse ? null : partSha,
+    selected_source_row_ordinal: coarse ? null : rowId,
+    input_source_row_count: 1,
+    input_source_row_digest: coarse ? null : rowSha,
+    input_source_row_ids: coarse ? null : [rowId],
+    input_source_row_sha256s: coarse ? null : [rowSha],
+    input_source_release_ids: coarse ? null : [directId],
+    input_source_part_keys: coarse ? null : [partKey],
+    input_source_part_sha256s: coarse ? null : [partSha],
+    input_source_row_ordinals: coarse ? null : [rowId],
+    ...overrides,
+  };
+}
+
 beforeEach(() => {
   mockedCoverage.mockReset();
   mockedCoverage.mockResolvedValue(burnCoverage());
@@ -407,6 +445,109 @@ describe("Parquet tRPC state adapter", () => {
         attribution: "NASA POWER (NASA LaRC)",
       },
     });
+  });
+
+  it.each([13, 5] as const)("serves direct precipitation at z%s from its first forward day", async (zoomTier) => {
+    mockedDay.mockResolvedValue(
+      published("2026-09-09", [directClimateLineageRow(zoomTier)])
+    );
+
+    const { result } = await getParquetClimateField({
+      bbox: "-125,42,-111,49",
+      date: "2026-09-09",
+      mapZoom: zoomTier === 13 ? 14 : 7,
+      signal: "precipitation",
+      variant: "mean",
+    });
+
+    expect(result).toMatchObject({
+      state: "ready",
+      requestedDay: "2026-09-09",
+      servedDay: "2026-09-09",
+      data: [{ value: 2.5 }],
+    });
+  });
+
+  it.each([
+    [13, { source_snapshot_id: "direct:malformed" }],
+    [13, { precedence_contract: "unregistered" }],
+    [13, { selected_source_release_id: "release-42" }],
+    [13, { selected_source_release_payload_checksum: "f".repeat(64) }],
+    [5, { selected_source_release_id: `direct:${"d".repeat(64)}` }],
+  ] as const)("refuses invalid direct precipitation lineage at z%s", async (zoomTier, overrides) => {
+    mockedDay.mockResolvedValue(
+      published("2026-09-09", [directClimateLineageRow(zoomTier, "2026-09-09", overrides)])
+    );
+
+    const { result } = await getParquetClimateField({
+      bbox: "-125,42,-111,49",
+      date: "2026-09-09",
+      mapZoom: zoomTier === 13 ? 14 : 7,
+      signal: "precipitation",
+      variant: "mean",
+    });
+
+    expect(result).toMatchObject({ state: "upstream_unavailable", fault: { kind: "contract" } });
+  });
+
+  it.each([
+    "selected_source_row_id",
+    "selected_source_row_sha256",
+    "selected_source_release_retrieved_at",
+    "selected_source_part_key",
+    "selected_source_part_sha256",
+    "selected_source_row_ordinal",
+    "input_source_row_digest",
+    "input_source_row_ids",
+    "input_source_row_sha256s",
+    "input_source_release_ids",
+    "input_source_part_keys",
+    "input_source_part_sha256s",
+    "input_source_row_ordinals",
+  ] as const)("refuses a direct base row without %s", async (column) => {
+    mockedDay.mockResolvedValue(
+      published("2026-09-09", [directClimateLineageRow(13, "2026-09-09", { [column]: null })])
+    );
+
+    const { result } = await getParquetClimateField({
+      bbox: "-125,42,-111,49",
+      date: "2026-09-09",
+      mapZoom: 14,
+      signal: "precipitation",
+      variant: "mean",
+    });
+
+    expect(result).toMatchObject({ state: "upstream_unavailable", fault: { kind: "contract" } });
+  });
+
+  it("refuses a direct coarse row retaining base-only lineage", async () => {
+    mockedDay.mockResolvedValue(
+      published("2026-09-09", [directClimateLineageRow(5, "2026-09-09", { selected_source_row_id: 7 })])
+    );
+
+    const { result } = await getParquetClimateField({
+      bbox: "-125,42,-111,49",
+      date: "2026-09-09",
+      mapZoom: 7,
+      signal: "precipitation",
+      variant: "mean",
+    });
+
+    expect(result).toMatchObject({ state: "upstream_unavailable", fault: { kind: "contract" } });
+  });
+
+  it("refuses frozen precipitation provenance after direct ownership begins", async () => {
+    mockedDay.mockResolvedValue(published("2026-09-09", [climateLineageRow("2026-09-09")]));
+
+    const { result } = await getParquetClimateField({
+      bbox: "-125,42,-111,49",
+      date: "2026-09-09",
+      mapZoom: 14,
+      signal: "precipitation",
+      variant: "mean",
+    });
+
+    expect(result).toMatchObject({ state: "upstream_unavailable", fault: { kind: "contract" } });
   });
 
   /**
