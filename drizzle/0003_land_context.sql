@@ -1,10 +1,10 @@
-CREATE SCHEMA "geo";
+CREATE SCHEMA IF NOT EXISTS "geo";
 --> statement-breakpoint
-CREATE SCHEMA "tracking";
+CREATE SCHEMA IF NOT EXISTS "tracking";
 --> statement-breakpoint
 CREATE SCHEMA "land_context";
 --> statement-breakpoint
-CREATE TABLE "accounts" (
+CREATE TABLE IF NOT EXISTS "accounts" (
 	"user_id" uuid NOT NULL,
 	"type" text NOT NULL,
 	"provider" text NOT NULL,
@@ -19,7 +19,7 @@ CREATE TABLE "accounts" (
 	CONSTRAINT "accounts_provider_provider_account_id_pk" PRIMARY KEY("provider","provider_account_id")
 );
 --> statement-breakpoint
-CREATE TABLE "agricultural_solutions" (
+CREATE TABLE IF NOT EXISTS "agricultural_solutions" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"name" varchar(100) NOT NULL,
 	"description" text,
@@ -28,7 +28,7 @@ CREATE TABLE "agricultural_solutions" (
 	CONSTRAINT "agricultural_solutions_name_unique" UNIQUE("name")
 );
 --> statement-breakpoint
-CREATE TABLE "ai_conversations" (
+CREATE TABLE IF NOT EXISTS "ai_conversations" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"user_id" uuid NOT NULL,
 	"geohash" varchar(24) NOT NULL,
@@ -40,7 +40,7 @@ CREATE TABLE "ai_conversations" (
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
-CREATE TABLE "ai_message_feedback" (
+CREATE TABLE IF NOT EXISTS "ai_message_feedback" (
 	"message_id" uuid NOT NULL,
 	"user_id" uuid NOT NULL,
 	"rating" varchar(16) NOT NULL,
@@ -51,7 +51,7 @@ CREATE TABLE "ai_message_feedback" (
 	CONSTRAINT "ai_message_feedback_rating_check" CHECK ("ai_message_feedback"."rating" IN ('helpful', 'not_helpful'))
 );
 --> statement-breakpoint
-CREATE TABLE "ai_messages" (
+CREATE TABLE IF NOT EXISTS "ai_messages" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"conversation_id" uuid NOT NULL,
 	"role" varchar(10) NOT NULL,
@@ -61,7 +61,7 @@ CREATE TABLE "ai_messages" (
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
-CREATE TABLE "alert_subscriptions" (
+CREATE TABLE IF NOT EXISTS "alert_subscriptions" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"user_id" uuid NOT NULL,
 	"watched_location_id" uuid,
@@ -72,7 +72,7 @@ CREATE TABLE "alert_subscriptions" (
 	"created_at" timestamp with time zone DEFAULT now()
 );
 --> statement-breakpoint
-CREATE TABLE "tracking"."alerts" (
+CREATE TABLE IF NOT EXISTS "tracking"."alerts" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"asset_id" uuid,
 	"geofence_id" uuid,
@@ -83,7 +83,7 @@ CREATE TABLE "tracking"."alerts" (
 	"created_at" timestamp with time zone DEFAULT now()
 );
 --> statement-breakpoint
-CREATE TABLE "api_keys" (
+CREATE TABLE IF NOT EXISTS "api_keys" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"key_hash" text NOT NULL,
 	"user_id" uuid,
@@ -94,7 +94,7 @@ CREATE TABLE "api_keys" (
 	"last_used" timestamp with time zone
 );
 --> statement-breakpoint
-CREATE TABLE "tracking"."assets" (
+CREATE TABLE IF NOT EXISTS "tracking"."assets" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"name" varchar(100) NOT NULL,
 	"type" varchar(50) DEFAULT 'vehicle',
@@ -103,7 +103,7 @@ CREATE TABLE "tracking"."assets" (
 	"created_at" timestamp with time zone DEFAULT now()
 );
 --> statement-breakpoint
-CREATE TABLE "email_verification_tokens" (
+CREATE TABLE IF NOT EXISTS "email_verification_tokens" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"user_id" uuid NOT NULL,
 	"token_hash" text NOT NULL,
@@ -112,7 +112,7 @@ CREATE TABLE "email_verification_tokens" (
 	"created_at" timestamp with time zone DEFAULT now()
 );
 --> statement-breakpoint
-CREATE TABLE "environmental_alerts" (
+CREATE TABLE IF NOT EXISTS "environmental_alerts" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"user_id" uuid NOT NULL,
 	"dedupe_key" varchar(160),
@@ -126,7 +126,7 @@ CREATE TABLE "environmental_alerts" (
 	CONSTRAINT "environmental_alerts_dedupe_key_unique" UNIQUE("dedupe_key")
 );
 --> statement-breakpoint
-CREATE TABLE "geo"."features" (
+CREATE TABLE IF NOT EXISTS "geo"."features" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"layer_id" uuid NOT NULL,
 	"geom" geometry(GEOMETRY,4326),
@@ -139,7 +139,7 @@ CREATE TABLE "geo"."features" (
 	"data_available_at" timestamp with time zone
 );
 --> statement-breakpoint
-CREATE TABLE "tracking"."geofences" (
+CREATE TABLE IF NOT EXISTS "tracking"."geofences" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"name" varchar(100) NOT NULL,
 	"geometry" jsonb DEFAULT '{}'::jsonb NOT NULL,
@@ -148,7 +148,7 @@ CREATE TABLE "tracking"."geofences" (
 	"created_at" timestamp with time zone DEFAULT now()
 );
 --> statement-breakpoint
-CREATE TABLE "geo"."geometry" (
+CREATE TABLE IF NOT EXISTS "geo"."geometry" (
 	"geometry_id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"natural_key" varchar(255) NOT NULL,
 	"version_valid_from" timestamp with time zone NOT NULL,
@@ -165,7 +165,7 @@ CREATE TABLE "geo"."geometry" (
 	CONSTRAINT "uq_geometry_version" UNIQUE("natural_key","version_valid_from")
 );
 --> statement-breakpoint
-CREATE TABLE "geo"."layers" (
+CREATE TABLE IF NOT EXISTS "geo"."layers" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"name" varchar(100) NOT NULL,
 	"type" varchar(50) DEFAULT 'vector' NOT NULL,
@@ -181,7 +181,7 @@ CREATE TABLE "geo"."layers" (
 	CONSTRAINT "layers_name_unique" UNIQUE("name")
 );
 --> statement-breakpoint
-CREATE TABLE "open_plant_data" (
+CREATE TABLE IF NOT EXISTS "open_plant_data" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"scientific_name" varchar(200) NOT NULL,
 	"common_name" varchar(200),
@@ -193,7 +193,7 @@ CREATE TABLE "open_plant_data" (
 	"created_at" timestamp with time zone DEFAULT now()
 );
 --> statement-breakpoint
-CREATE TABLE "open_tooling_data" (
+CREATE TABLE IF NOT EXISTS "open_tooling_data" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"name" varchar(200) NOT NULL,
 	"solution_id" uuid,
@@ -203,7 +203,7 @@ CREATE TABLE "open_tooling_data" (
 	"created_at" timestamp with time zone DEFAULT now()
 );
 --> statement-breakpoint
-CREATE TABLE "password_reset_tokens" (
+CREATE TABLE IF NOT EXISTS "password_reset_tokens" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"user_id" uuid NOT NULL,
 	"token_hash" text NOT NULL,
@@ -212,7 +212,7 @@ CREATE TABLE "password_reset_tokens" (
 	"created_at" timestamp with time zone DEFAULT now()
 );
 --> statement-breakpoint
-CREATE TABLE "tracking"."positions" (
+CREATE TABLE IF NOT EXISTS "tracking"."positions" (
 	"time" timestamp with time zone NOT NULL,
 	"asset_id" uuid NOT NULL,
 	"geom" "geography(POINT,4326)",
@@ -222,7 +222,7 @@ CREATE TABLE "tracking"."positions" (
 	"metadata" jsonb DEFAULT '{}'::jsonb
 );
 --> statement-breakpoint
-CREATE TABLE "priority_zones" (
+CREATE TABLE IF NOT EXISTS "priority_zones" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"strategy_type" varchar(50) NOT NULL,
 	"request_count" integer NOT NULL,
@@ -233,7 +233,7 @@ CREATE TABLE "priority_zones" (
 	"computed_at" timestamp with time zone DEFAULT now()
 );
 --> statement-breakpoint
-CREATE TABLE "geo"."raster_release" (
+CREATE TABLE IF NOT EXISTS "geo"."raster_release" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"collection" text NOT NULL,
 	"property" text NOT NULL,
@@ -261,20 +261,20 @@ CREATE TABLE "geo"."raster_release" (
 	"superseded_at" timestamp with time zone
 );
 --> statement-breakpoint
-CREATE TABLE "request_votes" (
+CREATE TABLE IF NOT EXISTS "request_votes" (
 	"request_id" uuid NOT NULL,
 	"user_id" uuid NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now(),
 	CONSTRAINT "request_votes_request_id_user_id_pk" PRIMARY KEY("request_id","user_id")
 );
 --> statement-breakpoint
-CREATE TABLE "sessions" (
+CREATE TABLE IF NOT EXISTS "sessions" (
 	"session_token" text PRIMARY KEY NOT NULL,
 	"user_id" uuid NOT NULL,
 	"expires" timestamp with time zone NOT NULL
 );
 --> statement-breakpoint
-CREATE TABLE "strategy_requests" (
+CREATE TABLE IF NOT EXISTS "strategy_requests" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"user_id" uuid,
 	"team_id" uuid,
@@ -288,7 +288,7 @@ CREATE TABLE "strategy_requests" (
 	"created_at" timestamp with time zone DEFAULT now()
 );
 --> statement-breakpoint
-CREATE TABLE "team_invitations" (
+CREATE TABLE IF NOT EXISTS "team_invitations" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"team_id" uuid NOT NULL,
 	"email" text NOT NULL,
@@ -302,7 +302,7 @@ CREATE TABLE "team_invitations" (
 	"created_at" timestamp with time zone DEFAULT now()
 );
 --> statement-breakpoint
-CREATE TABLE "team_join_links" (
+CREATE TABLE IF NOT EXISTS "team_join_links" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"team_id" uuid NOT NULL,
 	"code_hash" text NOT NULL,
@@ -316,7 +316,7 @@ CREATE TABLE "team_join_links" (
 	"created_at" timestamp with time zone DEFAULT now()
 );
 --> statement-breakpoint
-CREATE TABLE "team_members" (
+CREATE TABLE IF NOT EXISTS "team_members" (
 	"team_id" uuid NOT NULL,
 	"user_id" uuid NOT NULL,
 	"team_role" varchar(20) DEFAULT 'member',
@@ -324,7 +324,7 @@ CREATE TABLE "team_members" (
 	CONSTRAINT "team_members_team_id_user_id_pk" PRIMARY KEY("team_id","user_id")
 );
 --> statement-breakpoint
-CREATE TABLE "teams" (
+CREATE TABLE IF NOT EXISTS "teams" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"name" text NOT NULL,
 	"slug" varchar(100),
@@ -340,7 +340,7 @@ CREATE TABLE "teams" (
 	CONSTRAINT "teams_slug_unique" UNIQUE("slug")
 );
 --> statement-breakpoint
-CREATE TABLE "users" (
+CREATE TABLE IF NOT EXISTS "users" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"name" text,
 	"email" text NOT NULL,
@@ -354,14 +354,14 @@ CREATE TABLE "users" (
 	CONSTRAINT "users_email_unique" UNIQUE("email")
 );
 --> statement-breakpoint
-CREATE TABLE "verification_tokens" (
+CREATE TABLE IF NOT EXISTS "verification_tokens" (
 	"identifier" text NOT NULL,
 	"token" text NOT NULL,
 	"expires" timestamp with time zone NOT NULL,
 	CONSTRAINT "verification_tokens_identifier_token_pk" PRIMARY KEY("identifier","token")
 );
 --> statement-breakpoint
-CREATE TABLE "watched_locations" (
+CREATE TABLE IF NOT EXISTS "watched_locations" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"user_id" uuid NOT NULL,
 	"name" text NOT NULL,
@@ -495,77 +495,225 @@ CREATE TABLE "land_context"."place_office_topic_relationships" (
 	CONSTRAINT "ck_relationships_review_status" CHECK ("land_context"."place_office_topic_relationships"."review_status" IN ('unreviewed', 'reviewed', 'rejected'))
 );
 --> statement-breakpoint
-ALTER TABLE "accounts" ADD CONSTRAINT "accounts_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "ai_conversations" ADD CONSTRAINT "ai_conversations_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "ai_message_feedback" ADD CONSTRAINT "ai_message_feedback_message_id_ai_messages_id_fk" FOREIGN KEY ("message_id") REFERENCES "public"."ai_messages"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "ai_message_feedback" ADD CONSTRAINT "ai_message_feedback_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "ai_messages" ADD CONSTRAINT "ai_messages_conversation_id_ai_conversations_id_fk" FOREIGN KEY ("conversation_id") REFERENCES "public"."ai_conversations"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "alert_subscriptions" ADD CONSTRAINT "alert_subscriptions_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "alert_subscriptions" ADD CONSTRAINT "alert_subscriptions_watched_location_id_watched_locations_id_fk" FOREIGN KEY ("watched_location_id") REFERENCES "public"."watched_locations"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "api_keys" ADD CONSTRAINT "api_keys_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "api_keys" ADD CONSTRAINT "api_keys_team_id_teams_id_fk" FOREIGN KEY ("team_id") REFERENCES "public"."teams"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "email_verification_tokens" ADD CONSTRAINT "email_verification_tokens_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "environmental_alerts" ADD CONSTRAINT "environmental_alerts_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "geo"."features" ADD CONSTRAINT "features_layer_id_layers_id_fk" FOREIGN KEY ("layer_id") REFERENCES "geo"."layers"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "geo"."features" ADD CONSTRAINT "features_geometry_id_geometry_geometry_id_fk" FOREIGN KEY ("geometry_id") REFERENCES "geo"."geometry"("geometry_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "geo"."layers" ADD CONSTRAINT "layers_team_id_teams_id_fk" FOREIGN KEY ("team_id") REFERENCES "public"."teams"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "open_plant_data" ADD CONSTRAINT "open_plant_data_solution_id_agricultural_solutions_id_fk" FOREIGN KEY ("solution_id") REFERENCES "public"."agricultural_solutions"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "open_tooling_data" ADD CONSTRAINT "open_tooling_data_solution_id_agricultural_solutions_id_fk" FOREIGN KEY ("solution_id") REFERENCES "public"."agricultural_solutions"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "password_reset_tokens" ADD CONSTRAINT "password_reset_tokens_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "tracking"."positions" ADD CONSTRAINT "positions_asset_id_assets_id_fk" FOREIGN KEY ("asset_id") REFERENCES "tracking"."assets"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "request_votes" ADD CONSTRAINT "request_votes_request_id_strategy_requests_id_fk" FOREIGN KEY ("request_id") REFERENCES "public"."strategy_requests"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "request_votes" ADD CONSTRAINT "request_votes_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "sessions" ADD CONSTRAINT "sessions_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "strategy_requests" ADD CONSTRAINT "strategy_requests_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "strategy_requests" ADD CONSTRAINT "strategy_requests_team_id_teams_id_fk" FOREIGN KEY ("team_id") REFERENCES "public"."teams"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "team_invitations" ADD CONSTRAINT "team_invitations_team_id_teams_id_fk" FOREIGN KEY ("team_id") REFERENCES "public"."teams"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "team_invitations" ADD CONSTRAINT "team_invitations_invited_by_users_id_fk" FOREIGN KEY ("invited_by") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "team_invitations" ADD CONSTRAINT "team_invitations_accepted_by_users_id_fk" FOREIGN KEY ("accepted_by") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "team_join_links" ADD CONSTRAINT "team_join_links_team_id_teams_id_fk" FOREIGN KEY ("team_id") REFERENCES "public"."teams"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "team_join_links" ADD CONSTRAINT "team_join_links_created_by_users_id_fk" FOREIGN KEY ("created_by") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "team_members" ADD CONSTRAINT "team_members_team_id_teams_id_fk" FOREIGN KEY ("team_id") REFERENCES "public"."teams"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "team_members" ADD CONSTRAINT "team_members_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "teams" ADD CONSTRAINT "teams_created_by_users_id_fk" FOREIGN KEY ("created_by") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "watched_locations" ADD CONSTRAINT "watched_locations_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "land_context"."boundary_versions" ADD CONSTRAINT "boundary_versions_source_release_id_source_releases_id_fk" FOREIGN KEY ("source_release_id") REFERENCES "land_context"."source_releases"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "land_context"."organizations" ADD CONSTRAINT "organizations_source_release_id_source_releases_id_fk" FOREIGN KEY ("source_release_id") REFERENCES "land_context"."source_releases"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "land_context"."public_contact_routes" ADD CONSTRAINT "public_contact_routes_organization_id_organizations_id_fk" FOREIGN KEY ("organization_id") REFERENCES "land_context"."organizations"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "land_context"."public_contact_routes" ADD CONSTRAINT "public_contact_routes_source_release_id_source_releases_id_fk" FOREIGN KEY ("source_release_id") REFERENCES "land_context"."source_releases"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "land_context"."place_office_topic_relationships" ADD CONSTRAINT "place_office_topic_relationships_source_release_id_source_releases_id_fk" FOREIGN KEY ("source_release_id") REFERENCES "land_context"."source_releases"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
-CREATE INDEX "ai_message_feedback_user_idx" ON "ai_message_feedback" USING btree ("user_id");--> statement-breakpoint
-CREATE UNIQUE INDEX "api_keys_key_hash_unique" ON "api_keys" USING btree ("key_hash");--> statement-breakpoint
-CREATE UNIQUE INDEX "email_verification_tokens_token_hash_unique" ON "email_verification_tokens" USING btree ("token_hash");--> statement-breakpoint
-CREATE INDEX "email_verification_tokens_user_idx" ON "email_verification_tokens" USING btree ("user_id");--> statement-breakpoint
-CREATE UNIQUE INDEX "features_layer_external_id_unique" ON "geo"."features" USING btree ("layer_id",("properties" ->> 'id')) WHERE "geo"."features"."properties" ? 'id';--> statement-breakpoint
-CREATE INDEX "ix_features_geometry_id" ON "geo"."features" USING btree ("geometry_id");--> statement-breakpoint
-CREATE INDEX "idx_features_layer_created_at" ON "geo"."features" USING btree ("layer_id","created_at");--> statement-breakpoint
-CREATE INDEX "idx_features_layer_updated_at" ON "geo"."features" USING btree ("layer_id","updated_at");--> statement-breakpoint
-CREATE UNIQUE INDEX "uq_geometry_current" ON "geo"."geometry" USING btree ("natural_key") WHERE "geo"."geometry"."version_valid_to" IS NULL;--> statement-breakpoint
-CREATE UNIQUE INDEX "uq_geometry_grid_cell" ON "geo"."geometry" USING btree ("grid_name","cell_key") WHERE "geo"."geometry"."version_valid_to" IS NULL;--> statement-breakpoint
-CREATE INDEX "ix_geometry_kind" ON "geo"."geometry" USING btree ("geom_kind","producer");--> statement-breakpoint
-CREATE INDEX "ix_geometry_asof" ON "geo"."geometry" USING btree ("natural_key","version_valid_from" DESC);--> statement-breakpoint
-CREATE UNIQUE INDEX "password_reset_tokens_token_hash_unique" ON "password_reset_tokens" USING btree ("token_hash");--> statement-breakpoint
-CREATE INDEX "password_reset_tokens_user_idx" ON "password_reset_tokens" USING btree ("user_id");--> statement-breakpoint
-CREATE UNIQUE INDEX "positions_asset_time_unique" ON "tracking"."positions" USING btree ("asset_id","time");--> statement-breakpoint
-CREATE UNIQUE INDEX "ux_raster_release_live" ON "geo"."raster_release" USING btree ("collection","property","depth","statistic","archive_format") WHERE "geo"."raster_release"."superseded_at" IS NULL;--> statement-breakpoint
-CREATE INDEX "ix_raster_release_live_collection" ON "geo"."raster_release" USING btree ("collection","property") WHERE "geo"."raster_release"."superseded_at" IS NULL;--> statement-breakpoint
-CREATE UNIQUE INDEX "team_invitations_token_hash_unique" ON "team_invitations" USING btree ("token_hash");--> statement-breakpoint
-CREATE INDEX "team_invitations_team_email_idx" ON "team_invitations" USING btree ("team_id","email");--> statement-breakpoint
-CREATE INDEX "team_invitations_email_idx" ON "team_invitations" USING btree ("email");--> statement-breakpoint
-CREATE UNIQUE INDEX "team_join_links_code_hash_unique" ON "team_join_links" USING btree ("code_hash");--> statement-breakpoint
-CREATE INDEX "team_join_links_team_idx" ON "team_join_links" USING btree ("team_id");--> statement-breakpoint
-CREATE UNIQUE INDEX "uq_source_releases_artifact_key" ON "land_context"."source_releases" USING btree ("artifact_object_key");--> statement-breakpoint
-CREATE INDEX "ix_source_releases_publisher" ON "land_context"."source_releases" USING btree ("publisher");--> statement-breakpoint
-CREATE UNIQUE INDEX "uq_boundary_versions_native_key" ON "land_context"."boundary_versions" USING btree ("source_namespace","native_feature_key","native_feature_version");--> statement-breakpoint
-CREATE INDEX "ix_boundary_versions_family_state" ON "land_context"."boundary_versions" USING btree ("family","state","county");--> statement-breakpoint
-CREATE INDEX "ix_boundary_versions_source_release" ON "land_context"."boundary_versions" USING btree ("source_release_id");--> statement-breakpoint
-CREATE INDEX "ix_organizations_parent" ON "land_context"."organizations" USING btree ("parent_organization_id");--> statement-breakpoint
-CREATE INDEX "ix_organizations_jurisdiction" ON "land_context"."organizations" USING btree ("jurisdiction_state","jurisdiction_county");--> statement-breakpoint
-CREATE INDEX "ix_organizations_source_release" ON "land_context"."organizations" USING btree ("source_release_id");--> statement-breakpoint
-CREATE INDEX "ix_contact_routes_organization" ON "land_context"."public_contact_routes" USING btree ("organization_id");--> statement-breakpoint
-CREATE INDEX "ix_contact_routes_route_type" ON "land_context"."public_contact_routes" USING btree ("route_type");--> statement-breakpoint
-CREATE INDEX "ix_contact_routes_source_release" ON "land_context"."public_contact_routes" USING btree ("source_release_id");--> statement-breakpoint
-CREATE INDEX "ix_relationships_subject" ON "land_context"."place_office_topic_relationships" USING btree ("subject_type","subject_id");--> statement-breakpoint
-CREATE INDEX "ix_relationships_object" ON "land_context"."place_office_topic_relationships" USING btree ("object_type","object_id");--> statement-breakpoint
-CREATE INDEX "ix_relationships_kind" ON "land_context"."place_office_topic_relationships" USING btree ("relationship_kind");--> statement-breakpoint
-CREATE INDEX "ix_relationships_source_release" ON "land_context"."place_office_topic_relationships" USING btree ("source_release_id");
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'accounts_user_id_users_id_fk') THEN
+    ALTER TABLE "accounts" ADD CONSTRAINT "accounts_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;
+  END IF;
+END $$;--> statement-breakpoint
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ai_conversations_user_id_users_id_fk') THEN
+    ALTER TABLE "ai_conversations" ADD CONSTRAINT "ai_conversations_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;
+  END IF;
+END $$;--> statement-breakpoint
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ai_message_feedback_message_id_ai_messages_id_fk') THEN
+    ALTER TABLE "ai_message_feedback" ADD CONSTRAINT "ai_message_feedback_message_id_ai_messages_id_fk" FOREIGN KEY ("message_id") REFERENCES "public"."ai_messages"("id") ON DELETE cascade ON UPDATE no action;
+  END IF;
+END $$;--> statement-breakpoint
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ai_message_feedback_user_id_users_id_fk') THEN
+    ALTER TABLE "ai_message_feedback" ADD CONSTRAINT "ai_message_feedback_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;
+  END IF;
+END $$;--> statement-breakpoint
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ai_messages_conversation_id_ai_conversations_id_fk') THEN
+    ALTER TABLE "ai_messages" ADD CONSTRAINT "ai_messages_conversation_id_ai_conversations_id_fk" FOREIGN KEY ("conversation_id") REFERENCES "public"."ai_conversations"("id") ON DELETE cascade ON UPDATE no action;
+  END IF;
+END $$;--> statement-breakpoint
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'alert_subscriptions_user_id_users_id_fk') THEN
+    ALTER TABLE "alert_subscriptions" ADD CONSTRAINT "alert_subscriptions_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;
+  END IF;
+END $$;--> statement-breakpoint
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'alert_subscriptions_watched_location_id_watched_locations_id_fk') THEN
+    ALTER TABLE "alert_subscriptions" ADD CONSTRAINT "alert_subscriptions_watched_location_id_watched_locations_id_fk" FOREIGN KEY ("watched_location_id") REFERENCES "public"."watched_locations"("id") ON DELETE cascade ON UPDATE no action;
+  END IF;
+END $$;--> statement-breakpoint
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'api_keys_user_id_users_id_fk') THEN
+    ALTER TABLE "api_keys" ADD CONSTRAINT "api_keys_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;
+  END IF;
+END $$;--> statement-breakpoint
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'api_keys_team_id_teams_id_fk') THEN
+    ALTER TABLE "api_keys" ADD CONSTRAINT "api_keys_team_id_teams_id_fk" FOREIGN KEY ("team_id") REFERENCES "public"."teams"("id") ON DELETE no action ON UPDATE no action;
+  END IF;
+END $$;--> statement-breakpoint
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'email_verification_tokens_user_id_users_id_fk') THEN
+    ALTER TABLE "email_verification_tokens" ADD CONSTRAINT "email_verification_tokens_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;
+  END IF;
+END $$;--> statement-breakpoint
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'environmental_alerts_user_id_users_id_fk') THEN
+    ALTER TABLE "environmental_alerts" ADD CONSTRAINT "environmental_alerts_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;
+  END IF;
+END $$;--> statement-breakpoint
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'features_layer_id_layers_id_fk') THEN
+    ALTER TABLE "geo"."features" ADD CONSTRAINT "features_layer_id_layers_id_fk" FOREIGN KEY ("layer_id") REFERENCES "geo"."layers"("id") ON DELETE cascade ON UPDATE no action;
+  END IF;
+END $$;--> statement-breakpoint
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'features_geometry_id_geometry_geometry_id_fk') THEN
+    ALTER TABLE "geo"."features" ADD CONSTRAINT "features_geometry_id_geometry_geometry_id_fk" FOREIGN KEY ("geometry_id") REFERENCES "geo"."geometry"("geometry_id") ON DELETE restrict ON UPDATE no action;
+  END IF;
+END $$;--> statement-breakpoint
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'layers_team_id_teams_id_fk') THEN
+    ALTER TABLE "geo"."layers" ADD CONSTRAINT "layers_team_id_teams_id_fk" FOREIGN KEY ("team_id") REFERENCES "public"."teams"("id") ON DELETE no action ON UPDATE no action;
+  END IF;
+END $$;--> statement-breakpoint
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'open_plant_data_solution_id_agricultural_solutions_id_fk') THEN
+    ALTER TABLE "open_plant_data" ADD CONSTRAINT "open_plant_data_solution_id_agricultural_solutions_id_fk" FOREIGN KEY ("solution_id") REFERENCES "public"."agricultural_solutions"("id") ON DELETE no action ON UPDATE no action;
+  END IF;
+END $$;--> statement-breakpoint
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'open_tooling_data_solution_id_agricultural_solutions_id_fk') THEN
+    ALTER TABLE "open_tooling_data" ADD CONSTRAINT "open_tooling_data_solution_id_agricultural_solutions_id_fk" FOREIGN KEY ("solution_id") REFERENCES "public"."agricultural_solutions"("id") ON DELETE no action ON UPDATE no action;
+  END IF;
+END $$;--> statement-breakpoint
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'password_reset_tokens_user_id_users_id_fk') THEN
+    ALTER TABLE "password_reset_tokens" ADD CONSTRAINT "password_reset_tokens_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;
+  END IF;
+END $$;--> statement-breakpoint
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'positions_asset_id_assets_id_fk') THEN
+    ALTER TABLE "tracking"."positions" ADD CONSTRAINT "positions_asset_id_assets_id_fk" FOREIGN KEY ("asset_id") REFERENCES "tracking"."assets"("id") ON DELETE cascade ON UPDATE no action;
+  END IF;
+END $$;--> statement-breakpoint
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'request_votes_request_id_strategy_requests_id_fk') THEN
+    ALTER TABLE "request_votes" ADD CONSTRAINT "request_votes_request_id_strategy_requests_id_fk" FOREIGN KEY ("request_id") REFERENCES "public"."strategy_requests"("id") ON DELETE cascade ON UPDATE no action;
+  END IF;
+END $$;--> statement-breakpoint
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'request_votes_user_id_users_id_fk') THEN
+    ALTER TABLE "request_votes" ADD CONSTRAINT "request_votes_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;
+  END IF;
+END $$;--> statement-breakpoint
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'sessions_user_id_users_id_fk') THEN
+    ALTER TABLE "sessions" ADD CONSTRAINT "sessions_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;
+  END IF;
+END $$;--> statement-breakpoint
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'strategy_requests_user_id_users_id_fk') THEN
+    ALTER TABLE "strategy_requests" ADD CONSTRAINT "strategy_requests_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;
+  END IF;
+END $$;--> statement-breakpoint
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'strategy_requests_team_id_teams_id_fk') THEN
+    ALTER TABLE "strategy_requests" ADD CONSTRAINT "strategy_requests_team_id_teams_id_fk" FOREIGN KEY ("team_id") REFERENCES "public"."teams"("id") ON DELETE no action ON UPDATE no action;
+  END IF;
+END $$;--> statement-breakpoint
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'team_invitations_team_id_teams_id_fk') THEN
+    ALTER TABLE "team_invitations" ADD CONSTRAINT "team_invitations_team_id_teams_id_fk" FOREIGN KEY ("team_id") REFERENCES "public"."teams"("id") ON DELETE cascade ON UPDATE no action;
+  END IF;
+END $$;--> statement-breakpoint
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'team_invitations_invited_by_users_id_fk') THEN
+    ALTER TABLE "team_invitations" ADD CONSTRAINT "team_invitations_invited_by_users_id_fk" FOREIGN KEY ("invited_by") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;
+  END IF;
+END $$;--> statement-breakpoint
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'team_invitations_accepted_by_users_id_fk') THEN
+    ALTER TABLE "team_invitations" ADD CONSTRAINT "team_invitations_accepted_by_users_id_fk" FOREIGN KEY ("accepted_by") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;
+  END IF;
+END $$;--> statement-breakpoint
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'team_join_links_team_id_teams_id_fk') THEN
+    ALTER TABLE "team_join_links" ADD CONSTRAINT "team_join_links_team_id_teams_id_fk" FOREIGN KEY ("team_id") REFERENCES "public"."teams"("id") ON DELETE cascade ON UPDATE no action;
+  END IF;
+END $$;--> statement-breakpoint
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'team_join_links_created_by_users_id_fk') THEN
+    ALTER TABLE "team_join_links" ADD CONSTRAINT "team_join_links_created_by_users_id_fk" FOREIGN KEY ("created_by") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;
+  END IF;
+END $$;--> statement-breakpoint
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'team_members_team_id_teams_id_fk') THEN
+    ALTER TABLE "team_members" ADD CONSTRAINT "team_members_team_id_teams_id_fk" FOREIGN KEY ("team_id") REFERENCES "public"."teams"("id") ON DELETE cascade ON UPDATE no action;
+  END IF;
+END $$;--> statement-breakpoint
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'team_members_user_id_users_id_fk') THEN
+    ALTER TABLE "team_members" ADD CONSTRAINT "team_members_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;
+  END IF;
+END $$;--> statement-breakpoint
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'teams_created_by_users_id_fk') THEN
+    ALTER TABLE "teams" ADD CONSTRAINT "teams_created_by_users_id_fk" FOREIGN KEY ("created_by") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;
+  END IF;
+END $$;--> statement-breakpoint
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'watched_locations_user_id_users_id_fk') THEN
+    ALTER TABLE "watched_locations" ADD CONSTRAINT "watched_locations_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;
+  END IF;
+END $$;--> statement-breakpoint
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'boundary_versions_source_release_id_source_releases_id_fk') THEN
+    ALTER TABLE "land_context"."boundary_versions" ADD CONSTRAINT "boundary_versions_source_release_id_source_releases_id_fk" FOREIGN KEY ("source_release_id") REFERENCES "land_context"."source_releases"("id") ON DELETE restrict ON UPDATE no action;
+  END IF;
+END $$;--> statement-breakpoint
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'organizations_source_release_id_source_releases_id_fk') THEN
+    ALTER TABLE "land_context"."organizations" ADD CONSTRAINT "organizations_source_release_id_source_releases_id_fk" FOREIGN KEY ("source_release_id") REFERENCES "land_context"."source_releases"("id") ON DELETE restrict ON UPDATE no action;
+  END IF;
+END $$;--> statement-breakpoint
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'public_contact_routes_organization_id_organizations_id_fk') THEN
+    ALTER TABLE "land_context"."public_contact_routes" ADD CONSTRAINT "public_contact_routes_organization_id_organizations_id_fk" FOREIGN KEY ("organization_id") REFERENCES "land_context"."organizations"("id") ON DELETE cascade ON UPDATE no action;
+  END IF;
+END $$;--> statement-breakpoint
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'public_contact_routes_source_release_id_source_releases_id_fk') THEN
+    ALTER TABLE "land_context"."public_contact_routes" ADD CONSTRAINT "public_contact_routes_source_release_id_source_releases_id_fk" FOREIGN KEY ("source_release_id") REFERENCES "land_context"."source_releases"("id") ON DELETE restrict ON UPDATE no action;
+  END IF;
+END $$;--> statement-breakpoint
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'place_office_topic_relationships_source_release_id_source_releases_id_fk') THEN
+    ALTER TABLE "land_context"."place_office_topic_relationships" ADD CONSTRAINT "place_office_topic_relationships_source_release_id_source_releases_id_fk" FOREIGN KEY ("source_release_id") REFERENCES "land_context"."source_releases"("id") ON DELETE restrict ON UPDATE no action;
+  END IF;
+END $$;--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "ai_message_feedback_user_idx" ON "ai_message_feedback" USING btree ("user_id");--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "api_keys_key_hash_unique" ON "api_keys" USING btree ("key_hash");--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "email_verification_tokens_token_hash_unique" ON "email_verification_tokens" USING btree ("token_hash");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "email_verification_tokens_user_idx" ON "email_verification_tokens" USING btree ("user_id");--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "features_layer_external_id_unique" ON "geo"."features" USING btree ("layer_id",("properties" ->> 'id')) WHERE "geo"."features"."properties" ? 'id';--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "ix_features_geometry_id" ON "geo"."features" USING btree ("geometry_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "idx_features_layer_created_at" ON "geo"."features" USING btree ("layer_id","created_at");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "idx_features_layer_updated_at" ON "geo"."features" USING btree ("layer_id","updated_at");--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "uq_geometry_current" ON "geo"."geometry" USING btree ("natural_key") WHERE "geo"."geometry"."version_valid_to" IS NULL;--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "uq_geometry_grid_cell" ON "geo"."geometry" USING btree ("grid_name","cell_key") WHERE "geo"."geometry"."version_valid_to" IS NULL;--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "ix_geometry_kind" ON "geo"."geometry" USING btree ("geom_kind","producer");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "ix_geometry_asof" ON "geo"."geometry" USING btree ("natural_key","version_valid_from" DESC);--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "password_reset_tokens_token_hash_unique" ON "password_reset_tokens" USING btree ("token_hash");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "password_reset_tokens_user_idx" ON "password_reset_tokens" USING btree ("user_id");--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "positions_asset_time_unique" ON "tracking"."positions" USING btree ("asset_id","time");--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "ux_raster_release_live" ON "geo"."raster_release" USING btree ("collection","property","depth","statistic","archive_format") WHERE "geo"."raster_release"."superseded_at" IS NULL;--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "ix_raster_release_live_collection" ON "geo"."raster_release" USING btree ("collection","property") WHERE "geo"."raster_release"."superseded_at" IS NULL;--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "team_invitations_token_hash_unique" ON "team_invitations" USING btree ("token_hash");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "team_invitations_team_email_idx" ON "team_invitations" USING btree ("team_id","email");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "team_invitations_email_idx" ON "team_invitations" USING btree ("email");--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "team_join_links_code_hash_unique" ON "team_join_links" USING btree ("code_hash");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "team_join_links_team_idx" ON "team_join_links" USING btree ("team_id");--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "uq_source_releases_artifact_key" ON "land_context"."source_releases" USING btree ("artifact_object_key");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "ix_source_releases_publisher" ON "land_context"."source_releases" USING btree ("publisher");--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "uq_boundary_versions_native_key" ON "land_context"."boundary_versions" USING btree ("source_namespace","native_feature_key","native_feature_version");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "ix_boundary_versions_family_state" ON "land_context"."boundary_versions" USING btree ("family","state","county");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "ix_boundary_versions_source_release" ON "land_context"."boundary_versions" USING btree ("source_release_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "ix_organizations_parent" ON "land_context"."organizations" USING btree ("parent_organization_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "ix_organizations_jurisdiction" ON "land_context"."organizations" USING btree ("jurisdiction_state","jurisdiction_county");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "ix_organizations_source_release" ON "land_context"."organizations" USING btree ("source_release_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "ix_contact_routes_organization" ON "land_context"."public_contact_routes" USING btree ("organization_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "ix_contact_routes_route_type" ON "land_context"."public_contact_routes" USING btree ("route_type");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "ix_contact_routes_source_release" ON "land_context"."public_contact_routes" USING btree ("source_release_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "ix_relationships_subject" ON "land_context"."place_office_topic_relationships" USING btree ("subject_type","subject_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "ix_relationships_object" ON "land_context"."place_office_topic_relationships" USING btree ("object_type","object_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "ix_relationships_kind" ON "land_context"."place_office_topic_relationships" USING btree ("relationship_kind");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "ix_relationships_source_release" ON "land_context"."place_office_topic_relationships" USING btree ("source_release_id");
