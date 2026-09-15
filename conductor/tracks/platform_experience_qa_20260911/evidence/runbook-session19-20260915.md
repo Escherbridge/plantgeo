@@ -99,8 +99,72 @@ without re-deriving the trade-off.
 
 ## Acceptance boundary
 
-Fixture-level only. No fixture here runs MapLibre, so runtime behavior against a real map and a
-live basemap swap remains unestablished, and listener registration order is still unproven by
-executed evidence despite now being structurally guaranteed in source. The four other renderers
-corrected in `a112a754` were not re-reviewed in this session. **No whole QA case and no runbook
+Fixture-level for the source batch: no fixture here runs MapLibre. Runtime behavior against a
+real map and a live basemap swap is covered separately by the live browser evidence recorded
+below, which was produced by a different lane against the deployed revision and which supersedes
+this section's original statement that listener registration order was unproven. The four other
+renderers corrected in `a112a754` were not re-reviewed in this session. **No whole QA case and no runbook
 checklist item is promoted; the 220-case matrix is unchanged.**
+
+## Live browser evidence — deployed `a112a754`
+
+A separately owned harness lane ran Playwright 1.62.1 with Chromium against the deployed
+production site `https://plantgeo.aevani.com`, read-only: no authentication, no submissions, no
+model requests, no server mutation. The harness, its inputs, a machine-readable report and seven
+screenshots are retained under
+`.omc/research/runbook-20260915-session19/live-admission/`, which is git-excluded.
+
+**A local-execution hazard was found and avoided.** The repository's `playwright.config.ts`
+carries a `webServer` block that boots `npm run dev`; using it would have started the application
+locally, violating the standing owner rule. The lane wrote a standalone `playwright.live.config.ts`
+with no `webServer` and pinned the base URL to the deployed site. Any future browser lane must do
+the same. The application exposes no global map handle, so the harness reaches the live MapLibre
+instance by walking the React fiber tree for `MapView`'s ref and for the `map` prop each renderer
+receives; it patches nothing. Layer rows mount only after the map-manager control is opened.
+
+Every case toggled its layer on **after** `style.load` had already fired — the exact sequence the
+corrected defect describes — and each recorded the pre-toggle absence of the source and layers
+before asserting installation. All five renderers installed:
+
+| Renderer | Pre-toggle present | Installed | Native layers | Features | State |
+| --- | --- | --- | ---: | ---: | --- |
+| BotanicalOccurrences | no | yes | 4 of 4 | 1,623 rendered / 961 source | populated |
+| GbifOccurrences | no | yes | 3 of 3 | 0 | correctly empty |
+| SoilField | no | yes | 3 of 3 | 3,052 | populated |
+| ClimateField | no | yes | 2 of 2 for the selected form | 370 | populated |
+| Vegetation | no | yes | 2 of 3 | 2,475 | populated |
+
+Days and viewports were discovered from the site's own capability responses rather than assumed,
+and each applied date was verified: soil September 6, climate September 10, vegetation
+September 8. Three viewports were probed for occurrences; Vancouver returned records and Boise
+returned none, so Vancouver at zoom 12, above the detail floor of 11, is the anchor. This
+discipline is a direct response to **D260915-32**, where a harness asserted a missing day that was
+actually populated.
+
+**The style-swap case closes the gap unit fixtures structurally cannot reach.** With both
+occurrence renderers enabled and the basemap swapped from default to light, both re-added
+themselves and their relative order against a renderer sharing a `beforeId` was preserved, with
+no page errors. This is the first executed evidence for listener registration order; until now it
+was guaranteed only by source structure.
+
+Two apparent defects were correctly identified as **harness** defects rather than product
+defects. Vegetation first read as empty because the probe ran the moment installation completed,
+while installation and data arrival are separate events; a bounded settle window resolved it to
+2,475 features. A private-field feature count read `null` everywhere because MapLibre v5 keeps
+GeoJSON data private, so the public `querySourceFeatures` is now the authority. Two apparently
+missing layers are correct behavior verified in source: ClimateField installs only the selected
+form's layers, and Vegetation's value-label layer is gated on the field renderer and ships
+hidden. GBIF's zero is correct and was confirmed against the data rather than assumed: all 994
+Vancouver records carry the UBC collection key and none carry a GBIF key, so the layer installed
+cleanly and rendered empty with no page errors, which is the intended no-throw empty path.
+
+**What this does not establish.** Sources and native layers exist and carry features; that is not
+proof that pixels painted correctly, nor of scientific value correctness, legends, accessibility,
+picking, popups or agent parity. `querySourceFeatures` counts per tile, so the counts establish
+non-emptiness rather than exact record totals. Only one signal per family was exercised, leaving
+seven climate and two soil signals untouched; only one basemap swap, one viewport per renderer,
+and GBIF's populated path remains untestable until an acquisition exists. No whole QA case and no
+runbook checklist item is promoted by this evidence; the 220-case matrix is unchanged.
+
+The lane confirmed no Playwright browsers, servers or ports were left running, no local
+application server was ever started, and no tracked file was modified.

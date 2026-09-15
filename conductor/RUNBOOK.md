@@ -310,9 +310,23 @@ here and ClimateField is not. Also carried: SoilField's owned-id list is now sta
 that can drift, and `hasParsedStyle`'s catch can turn a genuine failure into silently never
 admitting.
 
-Fixture-level only; no fixture runs MapLibre, so listener registration order is structurally
-guaranteed in source but still unproven by executed evidence. **No whole QA case or checklist
-item is promoted; the 220-case matrix is unchanged.** See
+**Live browser evidence now exists for the admission fix.** A separate harness lane ran
+Playwright against deployed `a112a754` at `https://plantgeo.aevani.com`, read-only. Each of the
+five corrected renderers was toggled on **after** `style.load` had fired — the exact defect
+sequence — with the pre-toggle absence of its source and layers recorded first. All five
+installed: Botanical 4 of 4 layers and 1,623 rendered features, SoilField 3 of 3 and 3,052,
+ClimateField 2 of 2 for the selected form and 370, Vegetation 2,475, and GBIF correctly empty,
+confirmed against the data rather than assumed. Days and viewports were discovered from the
+site's own capability responses, a direct response to **D260915-32**. The basemap swap case
+closes the gap fixtures structurally cannot reach: both occurrence renderers re-added
+themselves and their relative order against a renderer sharing a `beforeId` was preserved,
+with no page errors. Two apparent defects were correctly diagnosed as harness defects, not
+product defects. The repository's own `playwright.config.ts` boots `npm run dev` and must
+never be used by a browser lane; a standalone config pinned to the deployed site was written
+instead. This establishes installation and non-emptiness, not painted pixels, scientific
+values, legends, accessibility, picking or agent parity.
+
+**No whole QA case or checklist item is promoted; the 220-case matrix is unchanged.** See
 `evidence/runbook-session19-20260915.md` and `evidence/check-receipt-session19-20260915.json`.
 
 ## Recovery
