@@ -5,13 +5,15 @@ import dynamic from "next/dynamic";
 import maplibregl from "maplibre-gl";
 import { Eye, EyeOff, MapPin, Sparkles, Sprout, X } from "lucide-react";
 import { LayerIcon } from "@/components/map/layer-panel/layer-icons";
+import { AgentInteraction } from "@/components/map/AgentInteraction";
 import { InterventionProposalForm } from "@/components/panels/InterventionProposalForm";
 import { getStyle } from "@/lib/map/styles";
 import { LAYER_REGISTRY, type LayerToggleId } from "@/lib/map/layer-registry";
 import { useLayerToggle, useToggleLayer } from "@/lib/map/layer-toggle-context";
-import { useInterventionDraftStore } from "@/stores/intervention-draft-store";
+import { hasInterventionDraftWork, useInterventionDraftStore } from "@/stores/intervention-draft-store";
 import { useMapStore } from "@/stores/map-store";
 import { useRegionalIntelligenceStore } from "@/stores/regional-intelligence-store";
+import { useRegionalIntelligence } from "@/hooks/useRegionalIntelligence";
 import { cn } from "@/lib/utils";
 
 /**
@@ -78,9 +80,16 @@ export function AiInterventionWorkspace({
   workspaceName,
 }: AiInterventionWorkspaceProps) {
   const [mode, setMode] = useState<WorkspaceMode>(initialMode);
+  const workspaceRef = useRef<HTMLElement | null>(null);
+  const [lastRequest, setLastRequest] = useState({ coordinates, initialMode });
+  if (lastRequest.coordinates !== coordinates || lastRequest.initialMode !== initialMode) {
+    setLastRequest({ coordinates, initialMode });
+    setMode(initialMode);
+  }
   const [lon, lat] = coordinates;
 
   const isAnalysisOpen = useRegionalIntelligenceStore((state) => state.isOpen);
+  const analysisLocation = useRegionalIntelligenceStore((state) => state.selectedLocation);
   const hidePanel = useRegionalIntelligenceStore((state) => state.hidePanel);
   const showPanel = useRegionalIntelligenceStore((state) => state.showPanel);
 
@@ -112,14 +121,22 @@ export function AiInterventionWorkspace({
   const [drawMap, setDrawMap] = useState<maplibregl.Map | null>(null);
 
   useEffect(() => {
+    if (mode === "intervention") drawMap?.resize();
+  }, [drawMap, mode]);
+
+  useEffect(() => {
     const container = drawMapContainerRef.current;
     if (!container) return;
+    const draft = useInterventionDraftStore.getState();
+    const center: [number, number] = hasInterventionDraftWork(draft)
+      ? [draft.lon ?? coordinates[0], draft.lat ?? coordinates[1]]
+      : coordinates;
     const instance = new maplibregl.Map({
       container,
       // The same style the main map renders, so this shows real basemap tiles; the
       // "pmtiles://" protocol is already registered globally by MapView's initMap.
       style: getStyle(useMapStore.getState().currentStyle),
-      center: coordinates,
+      center,
       zoom: 14,
     });
     setDrawMap(instance);
@@ -133,25 +150,16 @@ export function AiInterventionWorkspace({
   const seedLocation = useInterventionDraftStore((state) => state.seedLocation);
   const draftLat = useInterventionDraftStore((state) => state.lat);
   const draftLon = useInterventionDraftStore((state) => state.lon);
-  const hasDraftGeometry = useInterventionDraftStore((state) => state.geometry !== null);
+  const hasDraftWork = useInterventionDraftStore(hasInterventionDraftWork);
   // Only the streaming flag: every token of an analysis writes this store.
   const isAnalysisStreaming = useRegionalIntelligenceStore((state) => state.isLoading);
 
-  /**
-   * Seeding is a GUARDED write, per FR-1's last acceptance criterion. `seedLocation` resets the
-   * whole draft, so applying a fresh map click over an unsubmitted geometry would be exactly the
-   * silent data loss the requirement forbids. A draft with no geometry has nothing to lose and
-   * is seeded straight away; a draft with one keeps its point and the new one is offered as a
-   * visible affordance instead.
-   *
-   * The draft is read with `getState()` rather than from the subscribed values above, on
-   * purpose: this is a write, and reading the subscribed copy would make the effect depend on
-   * values it itself changes.
-   */
+  // Preserve unfinished form fields and geometry; see panels/AGENTS.md workspace lifecycle.
   useEffect(() => {
-    const { lat: currentLat, lon: currentLon, geometry } = useInterventionDraftStore.getState();
+    const draft = useInterventionDraftStore.getState();
+    const { lat: currentLat, lon: currentLon } = draft;
     if (currentLat === lat && currentLon === lon) return;
-    if (geometry !== null) return;
+    if (hasInterventionDraftWork(draft)) return;
     seedLocation(lat, lon);
   }, [lat, lon, seedLocation]);
 
@@ -162,21 +170,20 @@ export function AiInterventionWorkspace({
    * already subscribes to is a second copy that can only go stale.
    */
   const pendingLocation: [number, number] | null =
-    hasDraftGeometry && (draftLat !== lat || draftLon !== lon) ? [lon, lat] : null;
+    hasDraftWork && (draftLat !== lat || draftLon !== lon) ? [lon, lat] : null;
 
-  const hasUnsavedWork = hasDraftGeometry || isAnalysisStreaming;
+  const hasUnsavedWork = hasDraftWork || isAnalysisStreaming;
+  const displayedLocation = mode === "ai" && analysisLocation
+    ? analysisLocation
+    : { lat: draftLat ?? lat, lon: draftLon ?? lon, precision: null };
+  const displayedDigits = displayedLocation.precision === "approximate" ? 2
+    : displayedLocation.precision === "exact" ? 6 : 4;
 
-  /**
-   * Close asks first when something would be lost. A `window.confirm` rather than an inline
-   * confirmation step: this is the Phase 3 shell, the browser dialog is unambiguously blocking
-   * (a person cannot miss it and close anyway), and Phase 4 can promote it to inline chrome
-   * without changing this contract -- the rule the tests pin is "confirm before `onClose`", not
-   * which widget asks.
-   */
+  // Explicit close ends both sessions after confirming any unfinished work.
   const handleClose = useCallback(() => {
-    if (hasDraftGeometry || isAnalysisStreaming) {
+    if (hasDraftWork || isAnalysisStreaming) {
       const losses = [
-        hasDraftGeometry ? "an intervention geometry you have drawn but not submitted" : null,
+        hasDraftWork ? "your unsubmitted intervention proposal" : null,
         isAnalysisStreaming ? "an AI analysis that is still streaming" : null,
       ].filter((loss): loss is string => loss !== null);
       const confirmed = window.confirm(
@@ -188,11 +195,26 @@ export function AiInterventionWorkspace({
     // `closePanel` aborts any request and clears the transcript. Without it the panel would
     // reappear as a right-edge overlay the moment this shell unmounted and released `hidePanel`.
     useRegionalIntelligenceStore.getState().closePanel();
+    useInterventionDraftStore.getState().clearDraft();
     onClose();
-  }, [hasDraftGeometry, isAnalysisStreaming, onClose]);
+  }, [hasDraftWork, isAnalysisStreaming, onClose]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      const dialog = event.target instanceof Element ? event.target.closest('[role="dialog"]') : null;
+      if (dialog && dialog !== workspaceRef.current) return;
+      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
+      event.preventDefault();
+      handleClose();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [handleClose]);
 
   return (
     <section
+      ref={workspaceRef}
       // Deliberately NOT `aria-modal`: the point of this track is that the map, its layers and
       // the dock stay reachable while the workspace is open. The intervention modal it replaces
       // was `aria-modal="true"` and blocked everything behind it.
@@ -215,7 +237,7 @@ export function AiInterventionWorkspace({
         <div className="flex min-w-0 items-center gap-2">
           <MapPin aria-hidden="true" className="h-4 w-4 shrink-0 text-[hsl(var(--primary))]" />
           <p className="truncate font-mono text-xs text-[hsl(var(--muted-foreground))]">
-            {lat.toFixed(4)}, {lon.toFixed(4)}
+              {displayedLocation.lat.toFixed(displayedDigits)}, {displayedLocation.lon.toFixed(displayedDigits)}
           </p>
         </div>
         <button
@@ -260,8 +282,9 @@ export function AiInterventionWorkspace({
           className="border-b border-[hsl(var(--border))] bg-[hsl(var(--muted)/0.5)] px-3 py-2 text-[11px] leading-relaxed text-[hsl(var(--muted-foreground))]"
         >
           You have an unsubmitted proposal at {draftLat?.toFixed(4)}, {draftLon?.toFixed(4)}. It
-          was kept. Clear it to start a new one at {pendingLocation[1].toFixed(4)},{" "}
-          {pendingLocation[0].toFixed(4)}.
+          was kept. To start a new proposal at {pendingLocation[1].toFixed(4)},{" "}
+          {pendingLocation[0].toFixed(4)}, close this workspace, confirm discarding the draft,
+          then select that location on the map again.
         </p>
       )}
 
@@ -281,10 +304,11 @@ export function AiInterventionWorkspace({
           {isAnalysisOpen ? (
             <RegionalIntelligencePanel embedded />
           ) : (
-            <p className="p-3 text-sm text-[hsl(var(--muted-foreground))]">
-              No analysis has been requested for this location yet. Close this workspace and
-              choose &ldquo;Send for analysis&rdquo; on the map to start one.
-            </p>
+            <WorkspaceAnalysisEntry
+              key={`${draftLon ?? lon},${draftLat ?? lat}`}
+              coordinates={[draftLon ?? lon, draftLat ?? lat]}
+              onCancel={() => setMode("intervention")}
+            />
           )}
         </div>
         <div
@@ -295,8 +319,8 @@ export function AiInterventionWorkspace({
           hidden={mode !== "intervention"}
         >
           <InterventionProposalForm
-            lat={lat}
-            lon={lon}
+            lat={draftLat ?? lat}
+            lon={draftLon ?? lon}
             teamId={teamId}
             workspaceName={workspaceName}
             map={drawMap}
@@ -312,6 +336,36 @@ export function AiInterventionWorkspace({
         </p>
       )}
     </section>
+  );
+}
+
+/** Starts analysis only after the shared location consent is explicitly submitted. */
+function WorkspaceAnalysisEntry({
+  coordinates,
+  onCancel,
+}: {
+  coordinates: [number, number];
+  onCancel: () => void;
+}) {
+  const { queryLocation } = useRegionalIntelligence();
+  const handleAnalyze = (precision: "approximate" | "exact") => {
+    const digits = precision === "approximate" ? 2 : 6;
+    const lat = Number(coordinates[1].toFixed(digits));
+    const lon = Number(coordinates[0].toFixed(digits));
+    const analysis = useRegionalIntelligenceStore.getState();
+    analysis.openPanel(lat, lon, precision);
+    analysis.hidePanel();
+    void queryLocation(lat, lon, undefined, precision);
+  };
+
+  return (
+    <AgentInteraction
+      embedded
+      coordinates={coordinates}
+      onAnalyze={handleAnalyze}
+      onProposeIntervention={onCancel}
+      onClose={onCancel}
+    />
   );
 }
 

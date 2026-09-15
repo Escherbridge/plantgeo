@@ -210,7 +210,12 @@ export function InterventionProposalForm({
             className="h-56 w-full overflow-hidden rounded-lg border border-[hsl(var(--border))]"
           />
           {map && (
-            <InterventionDrawControl map={map} onGeometryChange={handleGeometryChange} />
+            <InterventionDrawControl
+              map={map}
+              initialGeometry={geometry}
+              onGeometryChange={handleGeometryChange}
+              onRestoreError={setGeometryError}
+            />
           )}
           {geometryError && (
             <p role="alert" className="text-sm text-red-600">

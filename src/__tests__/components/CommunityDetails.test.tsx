@@ -218,9 +218,11 @@ describe("CommunityDetails strategy-request section after the private path was r
 
   it("points the reader at the map instead of promising privacy", () => {
     const { container } = renderPanel();
-    const text = container.textContent ?? "";
+    const text = (container.textContent ?? "").replace(/\s+/g, " ");
 
-    expect(text).toMatch(/appears on the map|on the map/i);
+    expect(text).toMatch(/a request is published straight away with no review queue, and appears on the public map/i);
+    expect(text).toMatch(/anyone can read it without signing in/i);
+    expect(text).toMatch(/sign in to read comments; contributor access is required to add comments or likes/i);
     for (const retired of [
       /private community request/i,
       /never shown on the map/i,

@@ -13,7 +13,7 @@ import {
 export const metadata: Metadata = {
   title: "Community - PlantGeo",
   description:
-    "Strategy requests recorded by PlantGeo accounts and partner workspaces. Private by default, with locations held in the database rather than published. For sites drawn and submitted for review, see the feed.",
+    "Strategy requests publish their location, title, and description on the public map immediately. Anyone can read a request; sign in to read comments. Intervention proposals follow a separate review process.",
 };
 
 export default function CommunityPage() {
@@ -24,10 +24,10 @@ export default function CommunityPage() {
           <EditorialGrid>
             <div className="col-span-4 md:col-span-9">
               <EditorialEyebrow>
-                Community — Strategy requests, private by default
+                Community — Public strategy requests
               </EditorialEyebrow>
               <EditorialDisplay className="mt-comfortable">
-                A ledger, not a broadcast.
+                Put a strategy request on the map.
               </EditorialDisplay>
             </div>
           </EditorialGrid>
@@ -37,16 +37,16 @@ export default function CommunityPage() {
               <EditorialLead>
                 People using PlantGeo record where a regenerative strategy ought
                 to go — keyline earthworks, silvopasture, reforestation, biochar,
-                water harvesting, cover cropping. Those records stay with the
-                account or the partner workspace that made them. This page shows
-                you yours, and tells you plainly when something is not available
-                to show.
+                water harvesting, cover cropping. A submitted request publishes
+                its location, title, and description on the public map immediately,
+                without a review queue. Anyone can read it, including people who
+                are not signed in.
               </EditorialLead>
               <EditorialLead className="mt-comfortable">
-                A request is not a proposal. A request says a strategy ought to
-                go somewhere and keeps the where to itself; a proposal is a site
-                someone has drawn and asked to have reviewed. Proposals are
-                shared with every signed-in account, and they live in the{" "}
+                Intervention proposals describe a drawn point or boundary for
+                expert review. Proposals submitted for publication review are
+                shared with signed-in readers while awaiting a decision, and
+                become public after approval. Find proposals awaiting review in the{" "}
                 <EditorialLink href="/feed">feed</EditorialLink>.
               </EditorialLead>
             </div>

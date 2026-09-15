@@ -1,0 +1,176 @@
+{
+  "base_commit": "0f16e40dae3cce1d3b6d4ac00138254a968d974f",
+  "base_tree": "399ff61a9bf20023bcdfbc4ba8b8c3190050fff9",
+  "candidate_kind": "uncommitted working tree; not deployment or immutable commit acceptance",
+  "source_manifest_sha256": "96c4c1c374ab5297de0507649713ee701796adaf1a9b2fd724028b2f70f81c73",
+  "source_file_count": 1667,
+  "manifest_path": ".omc/research/runbook-20260914/source-manifest-8.json",
+  "changed_source_files": [
+    {
+      "path": "services/agri-data-service/src/agri_data_service/agent/AGENTS.md",
+      "sha256": "f7ca74685fd9dc2165a3cedb2fadf28a3852df92fdcfc7241941f20764cd0c9f"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/agent/tools.py",
+      "sha256": "10fcd447d8d17b4a36fcac427bffe3a981053b58837bb5db94af2b1d8ccfebd2"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/interface/cli/data.py",
+      "sha256": "65dcfc8df5bc0990f4380faeeb6cc7ff20b58d8bbaf1f7f5c1a1f5da934a4c71"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/planes/AGENTS.md",
+      "sha256": "7f6e08d7e41eb19f39700793244872a33a4175c17d391ad7fcbf64df2b9e1a4d"
+    },
+    {
+      "path": "services/agri-data-service/src/agri_data_service/planes/botanical_occurrences.py",
+      "sha256": "4001e57caa4e9d87fcf32f476303aabc99b4967aa6611436e883a2205c6c5323"
+    },
+    {
+      "path": "services/agri-data-service/tests/agent/test_botanical_occurrences.py",
+      "sha256": "76581e9c9283e8b7eff8bf4cf1076ba7121c6395f9198bb40b5a5dbdc1cf27cf"
+    },
+    {
+      "path": "services/agri-data-service/tests/parquet/test_availability_provenance.py",
+      "sha256": "4b7044abb57c6818fb7f9fd5f1fbe89567717ebec3bc26b9d875d6578d28b2d4"
+    },
+    {
+      "path": "services/agri-data-service/tests/test_agent_parquet_reads.py",
+      "sha256": "81cde36e95dc84b6393eb632b935887b629bdf3f5ac8331ba66971548e7ef1b7"
+    },
+    {
+      "path": "services/agri-data-service/tests/test_agent_tools_http.py",
+      "sha256": "3ed1a3d1414095082a41d9438e7ef644b84073f2c41509f425743ae7e62ea36f"
+    },
+    {
+      "path": "src/__tests__/components/AgentInteraction.test.tsx",
+      "sha256": "3a5ee3c7f568d167259c4502cae0cc437a72b45063777cc89d90331466488e8d"
+    },
+    {
+      "path": "src/__tests__/components/AiInterventionWorkspace.test.tsx",
+      "sha256": "b99d8a21d7aaec861557a102d7e212cabdf20b569e063a92b8a36030a67b0848"
+    },
+    {
+      "path": "src/__tests__/components/CommunityDetails.test.tsx",
+      "sha256": "b6028f2f295869ad1038926523a21aa91087060371f12a41d79d98dbd9771b8b"
+    },
+    {
+      "path": "src/__tests__/components/InterventionDrawControl.test.tsx",
+      "sha256": "09596def764be90934035f99fb5801e58272e7292565e1034308095bdfe127d6"
+    },
+    {
+      "path": "src/__tests__/components/InterventionFeedSocial.test.tsx",
+      "sha256": "080bbae40a98216616c2c96e2648640737652d58fd9cc662d173025fb8d0b8fb"
+    },
+    {
+      "path": "src/__tests__/components/LayerManager.test.tsx",
+      "sha256": "1f41d6d0d8994fb00b0e9d533b7f65251286af995f2d3cf0f906900ca043658c"
+    },
+    {
+      "path": "src/__tests__/components/RequestSubmitModal.test.tsx",
+      "sha256": "c5c3f580074b0f5ef7a5cd46db1406967de59f0f83828c27c2e4a719e4dc6deb"
+    },
+    {
+      "path": "src/__tests__/components/intervention-detail-coexistence.test.tsx",
+      "sha256": "f7611abe98f2382822a46baaef28431d195a9fbffa4dc07d0612bd9dcf56d932"
+    },
+    {
+      "path": "src/__tests__/components/map-view-workspace.test.tsx",
+      "sha256": "510b4626db894e1f999ac88b850af05eea8baf230d6abf7c844844c9d0b23181"
+    },
+    {
+      "path": "src/__tests__/components/workspace-pane-keepalive.test.tsx",
+      "sha256": "3a645d9ccf6ed40e8dab9af4f33b5f1a6d56c7247804d83394280651d1c6d919"
+    },
+    {
+      "path": "src/__tests__/stores/intervention-draft-store.test.ts",
+      "sha256": "8d4010a85387ccbd22377078b021e0c3200e896cb1a61dd6c6667dbeb62fbdd1"
+    },
+    {
+      "path": "src/app/about/page.tsx",
+      "sha256": "e3691bfbd63352695bd14c7faf570b8a03901ffd64bcb3c3adca25219599163e"
+    },
+    {
+      "path": "src/app/community/AGENTS.md",
+      "sha256": "0ad5c3dcb81153150c2ff8c2b367c11521231b9956faa99471039aaa5f20bffe"
+    },
+    {
+      "path": "src/app/community/CommunityLedger.tsx",
+      "sha256": "cab6273d517a1e288167f68ddaa2c70c778e2030f4ad9f8cc5072df9a121a138"
+    },
+    {
+      "path": "src/app/community/page.tsx",
+      "sha256": "f395b1dcf4d8d68bf977b4dd6f219881832d7de3c83c0c8e9731ffb2941ccf78"
+    },
+    {
+      "path": "src/app/feed/InterventionFeed.tsx",
+      "sha256": "b37c41e2eae359a93f2d9bd78b74200e505f2a3b8dfd25f914f50b9df2c2994d"
+    },
+    {
+      "path": "src/components/map/AGENTS.md",
+      "sha256": "9eb519db7fa9d82ad5d2491fe9e27865a0570385b35a0de72286d86a4d17f283"
+    },
+    {
+      "path": "src/components/map/AgentInteraction.tsx",
+      "sha256": "ab9b4d9346d3e4273f3e2c7f05bf3e4ec8cb656cc401eebda7be5824eab40abb"
+    },
+    {
+      "path": "src/components/map/AiInterventionWorkspace.tsx",
+      "sha256": "9d2a8959d530123efb26593c75a555ee99c672d4db5cd30771953a2063bde103"
+    },
+    {
+      "path": "src/components/map/InterventionDrawControl.tsx",
+      "sha256": "562a01930ca09ee24a6e8c1de90a1be05d3a030592de062a86eca5f4f5eb7e79"
+    },
+    {
+      "path": "src/components/map/LayerManager.tsx",
+      "sha256": "4b29e57ed202d92606360a55b84ae6e6f66f95755280030f101e07b4b72b7271"
+    },
+    {
+      "path": "src/components/panels/AGENTS.md",
+      "sha256": "75326691bd9502dea8dbc916407964ab97813cae23109ae6ebb7aecca6c5a73f"
+    },
+    {
+      "path": "src/components/panels/CommunityDetails.tsx",
+      "sha256": "cd28e95f086e4586f53fcddbc2f20b571ccc2679b947343b6c04034a311afe68"
+    },
+    {
+      "path": "src/components/panels/InterventionProposalForm.tsx",
+      "sha256": "371f1bc400602aaff05ebd4120f3aed44a2fc3d1b8ab6f2355d7c8c250b5cf9f"
+    },
+    {
+      "path": "src/components/panels/RegionalIntelligencePanel.tsx",
+      "sha256": "737501fb0d2b6d8a4152aa74b8f06a61cef53cd2e8f350df92a10a3b22bce53c"
+    },
+    {
+      "path": "src/components/panels/RequestSubmitModal.tsx",
+      "sha256": "3c66659a09758de1e1d90adf6c944e0425cfa0104c0fc4644c5f797282bc8401"
+    },
+    {
+      "path": "src/stores/intervention-draft-store.ts",
+      "sha256": "e2284470b62d3a347b9ae9a7c2c41f16dc29a1b75957a4de87d9353c52140517"
+    }
+  ],
+  "preexisting_untracked_sources": [
+    {
+      "path": "services/agri-data-service/src/agri_data_service/interface/cli/availability.py",
+      "sha256": "8ce614f464fb0ccdf39d9841d5bbe76073486bd12618f0fa8182499af922663f"
+    },
+    {
+      "path": "services/agri-data-service/tests/interface/test_availability_cli.py",
+      "sha256": "92850ec6925ba802d5126976de114198bda4d281f4614e1f9c774a1e7bfc019d"
+    },
+    {
+      "path": "services/agri-data-service/tests/parquet/availability_documents.py",
+      "sha256": "aea688c7c86b30aff4b0ef2706bae09a013cd21ee6c5a1d16a9f7a28c7bf5bdd"
+    },
+    {
+      "path": "src/__tests__/components/CommunityPage.test.tsx",
+      "sha256": "0b4bb6db94b4a22e4e19c4c502ffde387508ce8d878c487411c7f37e49974364"
+    },
+    {
+      "path": "src/__tests__/components/workspace-draft-recovery.test.tsx",
+      "sha256": "11470d16031f61a1ce7b3abe1dfbcc20f5dd63e0df0223e51767336ca6024dd5"
+    }
+  ]
+}

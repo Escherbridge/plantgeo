@@ -1,0 +1,57 @@
+{
+  "type": "integrated_check_receipt",
+  "candidate": "source-candidate-20260914-5.json",
+  "source_manifest_sha256": "bcd401fc6c0194ad3091e6c243df86d33a403d19ddef3e7521d16d5a2e773b03",
+  "checks": [
+    {
+      "name": "tests",
+      "command": "npm.cmd run test:changed -- --base 0f16e40d",
+      "exit_code": 0,
+      "log_path": ".omc/research/runbook-20260914/session2-tests.log",
+      "log_sha256": "2a2a88ac8e101f029661083bfb4a67173d3dfcc4336f91ea18d3e7a1a351c3a0"
+    },
+    {
+      "name": "typecheck",
+      "command": "npm.cmd run type-check",
+      "exit_code": 0,
+      "log_path": ".omc/research/runbook-20260914/session2-typecheck.log",
+      "log_sha256": "5a73c140c0ad128d7dfaf1a28f01b54adf8c3d29c10d317d96d4e791294fc7ec"
+    },
+    {
+      "name": "boundary",
+      "command": "npm.cmd run check:data-boundary",
+      "exit_code": 0,
+      "log_path": ".omc/research/runbook-20260914/session2-boundary.log",
+      "log_sha256": "9eafe413dfe6c6bd02229c9b983c8136949d7ba2d4c4cfd272e9b4bcd9f81f0d"
+    },
+    {
+      "name": "lint",
+      "command": "npm.cmd run lint",
+      "exit_code": 0,
+      "log_path": ".omc/research/runbook-20260914/session2-lint.log",
+      "log_sha256": "714a1cb0ee633178f2f7259a2b366d463f0d3934c45239f48656862f1403121d"
+    },
+    {
+      "name": "object-read",
+      "command": ".venv/Scripts/python.exe ../../.omc/research/runbook-20260914/read-environmental-session2.py",
+      "exit_code": 0,
+      "log_path": ".omc/research/runbook-20260914/session2-object-read.log",
+      "log_sha256": "4426086cd78ecab264ad337649ff1c10eeb244b5eaa35131adea6ea325dc4496"
+    },
+    {
+      "name": "doc-links",
+      "command": "python .omc/research/runbook-20260914/check-document-links.py",
+      "exit_code": 1,
+      "log_path": ".omc/research/runbook-20260914/session2-doc-links.log",
+      "log_sha256": "b09bb438ba5c1136da54ed5ca4d1e950bccab31f0e3e1a1042e2b2cbfc993ffe"
+    }
+  ],
+  "scope": {
+    "frontend_tests": "selector chose full suite: 190 files / 2502 tests passed",
+    "lint": "0 errors / 9887 warnings",
+    "python": "unchanged from candidate4; no repeat sweep or quality receipt",
+    "browser": "not run; unavailable runtime"
+  },
+  "environment_attempt": "Initial npm.ps1 --plan blocked by PowerShell execution policy before execution; npm.cmd plan/checks ran successfully.",
+  "document_limit": "Three unrecovered historical references remain; link scan is nonzero and is not reported as a clean gate."
+}

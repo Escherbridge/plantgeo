@@ -1,0 +1,659 @@
+{
+  "type": "qa-check-receipt",
+  "session": 11,
+  "date": "2026-09-14",
+  "recorded_at": "2026-09-14T23:59:53.154198+00:00",
+  "author": "/root/workspace_social_audit",
+  "gate_executor": "/root",
+  "canonical_packet_review": "pending_independent_final_review",
+  "engineering_status": "candidate17_scoped_checks_accepted_by_independent_reviewer",
+  "overall_runbook_status": "RED",
+  "whole_case_promotions": [],
+  "source_runtime_candidate": 15,
+  "latest_source_candidate": 17,
+  "scope": [
+    "D260914-26 typed publication dates",
+    "D260914-27 pending-only moderation",
+    "three test fixtures and UTF-8 restoration"
+  ],
+  "candidates": [
+    {
+      "candidate": 15,
+      "source_manifest": {
+        "path": ".omc/research/runbook-20260914/source-manifest-15.json",
+        "bytes": 255954,
+        "sha256": "bb85c770879e058043e4e2673dd8a01c04e4f284795f66748983f885dd722547"
+      },
+      "source_summary": {
+        "path": "conductor/tracks/platform_experience_qa_20260911/evidence/source-candidate-20260914-15.json",
+        "bytes": 12953,
+        "sha256": "aecb9d23a22abcc86e1cc5612a40f8f8c167b9dd28e44811453ca1fb8a90759e"
+      },
+      "application": {
+        "path": "conductor/tracks/platform_experience_qa_20260911/evidence/application-session11-candidate15-20260914.json",
+        "bytes": 6514,
+        "sha256": "75f057bbb3081cf62f20e26e006f6a645a18a8ecd02114e5b1cea7267b516e42"
+      },
+      "retained_sweep_receipt": {
+        "path": ".omc/research/runbook-20260914/session11/candidate15-sweep.json",
+        "bytes": 2801,
+        "sha256": "43ed8f0d70c545a420bad8685b90a827031ee3b031ece857ddb4828543e051de"
+      },
+      "source_postcheck": {
+        "verified_paths": 1749,
+        "mismatches": []
+      },
+      "results": {
+        "status": "failed_full_frontend_and_typecheck",
+        "frontend": {
+          "scope": "full",
+          "files": 193,
+          "passed_files": 191,
+          "failed_files": 2,
+          "passed_tests": 2534,
+          "failed_tests": 8
+        },
+        "tooling": {
+          "passed_tests": 12,
+          "failed_tests": 0
+        },
+        "typecheck_exit": 2,
+        "typecheck_diagnostics": 2,
+        "boundary_exit": 0,
+        "lint": {
+          "scope": "full_repository_with_explicit_omc_cli_exclusion",
+          "exit": 0,
+          "errors": 0,
+          "warnings": 9887
+        }
+      },
+      "gates": [
+        {
+          "name": "frontend-tests",
+          "exit_code": 1,
+          "artifacts": [
+            {
+              "path": ".omc/research/runbook-20260914/session11/frontend-tests-candidate15.log",
+              "bytes": 852424,
+              "sha256": "cb2cca044db74b03135a51b2d0d551bc4b3213a35f3b5ae06265314329e9778d"
+            },
+            {
+              "path": ".omc/research/runbook-20260914/session11/frontend-tests-candidate15.exit",
+              "bytes": 3,
+              "sha256": "f1b2f662800122bed0ff255693df89c4487fbdcf453d3524a42d4ec20c3d9c04"
+            }
+          ]
+        },
+        {
+          "name": "typecheck",
+          "exit_code": 2,
+          "artifacts": [
+            {
+              "path": ".omc/research/runbook-20260914/session11/typecheck-candidate15.log",
+              "bytes": 744,
+              "sha256": "cc5318e24392d564eb1be4d4d05ec64c9021a69bd97e30ab759b806a75fb0999"
+            },
+            {
+              "path": ".omc/research/runbook-20260914/session11/typecheck-candidate15.exit",
+              "bytes": 3,
+              "sha256": "df4e26a04a444901b95afef44e4a96cfae34690fff2ad2c66389c70079cdff2b"
+            }
+          ]
+        },
+        {
+          "name": "boundary",
+          "exit_code": 0,
+          "artifacts": [
+            {
+              "path": ".omc/research/runbook-20260914/session11/boundary-candidate15.log",
+              "bytes": 528,
+              "sha256": "9eafe413dfe6c6bd02229c9b983c8136949d7ba2d4c4cfd272e9b4bcd9f81f0d"
+            },
+            {
+              "path": ".omc/research/runbook-20260914/session11/boundary-candidate15.exit",
+              "bytes": 3,
+              "sha256": "13bf7b3039c63bf5a50491fa3cfd8eb4e699d1ba1436315aef9cbe5711530354"
+            }
+          ]
+        },
+        {
+          "name": "lint",
+          "exit_code": 0,
+          "artifacts": [
+            {
+              "path": ".omc/research/runbook-20260914/session11/lint-candidate15.log",
+              "bytes": 3918814,
+              "sha256": "5daaf70977bc8125c347932709cb28e9b303d24bc769e4a3d74c31930428f6b1"
+            },
+            {
+              "path": ".omc/research/runbook-20260914/session11/lint-candidate15.exit",
+              "bytes": 3,
+              "sha256": "13bf7b3039c63bf5a50491fa3cfd8eb4e699d1ba1436315aef9cbe5711530354"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "candidate": 16,
+      "source_manifest": {
+        "path": ".omc/research/runbook-20260914/source-manifest-16.json",
+        "bytes": 255954,
+        "sha256": "9a3f11845181c435275ebd3b928ab1361c6e0fbc8175f5b1c727dffafb7f5efe"
+      },
+      "source_summary": {
+        "path": "conductor/tracks/platform_experience_qa_20260911/evidence/source-candidate-20260914-16.json",
+        "bytes": 13123,
+        "sha256": "bab33e3d2a41c4993ab1fb5c54a048ee694c1bfd57653a29db2f89dabc5df677"
+      },
+      "application": {
+        "path": "conductor/tracks/platform_experience_qa_20260911/evidence/application-session11-candidate16-20260914.json",
+        "bytes": 1776,
+        "sha256": "b0e70c358424c6b2de26c59bd3bf80946a5e23896c2af41772e3bce1910c4cd3"
+      },
+      "retained_sweep_receipt": {
+        "path": ".omc/research/runbook-20260914/session11/candidate16-sweep.json",
+        "bytes": 2832,
+        "sha256": "929cf797349a049f0251c5279e32fc66370eec88975c5ab8a0c50469eee4fa83"
+      },
+      "source_postcheck": {
+        "verified_paths": 1749,
+        "mismatches": []
+      },
+      "results": {
+        "status": "failed_scoped_frontend_encoding_regression",
+        "frontend": {
+          "scope": "three_affected_test_files",
+          "files": 3,
+          "passed_files": 2,
+          "failed_files": 1,
+          "passed_tests": 128,
+          "failed_tests": 1
+        },
+        "typecheck_exit": 0,
+        "boundary_exit": 0,
+        "lint": {
+          "scope": "full_repository_with_explicit_omc_cli_exclusion",
+          "exit": 0,
+          "errors": 0,
+          "warnings": 9887
+        }
+      },
+      "gates": [
+        {
+          "name": "scoped-tests",
+          "exit_code": 1,
+          "artifacts": [
+            {
+              "path": ".omc/research/runbook-20260914/session11/scoped-tests-candidate16.log",
+              "bytes": 481740,
+              "sha256": "1c4340025df115135ee8da780a015ae742ef58b339625341c75cbaa5b1e5fd36"
+            },
+            {
+              "path": ".omc/research/runbook-20260914/session11/scoped-tests-candidate16.exit",
+              "bytes": 3,
+              "sha256": "f1b2f662800122bed0ff255693df89c4487fbdcf453d3524a42d4ec20c3d9c04"
+            }
+          ]
+        },
+        {
+          "name": "typecheck",
+          "exit_code": 0,
+          "artifacts": [
+            {
+              "path": ".omc/research/runbook-20260914/session11/typecheck-candidate16.log",
+              "bytes": 100,
+              "sha256": "5a73c140c0ad128d7dfaf1a28f01b54adf8c3d29c10d317d96d4e791294fc7ec"
+            },
+            {
+              "path": ".omc/research/runbook-20260914/session11/typecheck-candidate16.exit",
+              "bytes": 3,
+              "sha256": "13bf7b3039c63bf5a50491fa3cfd8eb4e699d1ba1436315aef9cbe5711530354"
+            }
+          ]
+        },
+        {
+          "name": "boundary",
+          "exit_code": 0,
+          "artifacts": [
+            {
+              "path": ".omc/research/runbook-20260914/session11/boundary-candidate16.log",
+              "bytes": 528,
+              "sha256": "9eafe413dfe6c6bd02229c9b983c8136949d7ba2d4c4cfd272e9b4bcd9f81f0d"
+            },
+            {
+              "path": ".omc/research/runbook-20260914/session11/boundary-candidate16.exit",
+              "bytes": 3,
+              "sha256": "13bf7b3039c63bf5a50491fa3cfd8eb4e699d1ba1436315aef9cbe5711530354"
+            }
+          ]
+        },
+        {
+          "name": "lint",
+          "exit_code": 0,
+          "artifacts": [
+            {
+              "path": ".omc/research/runbook-20260914/session11/lint-candidate16.log",
+              "bytes": 3918814,
+              "sha256": "5daaf70977bc8125c347932709cb28e9b303d24bc769e4a3d74c31930428f6b1"
+            },
+            {
+              "path": ".omc/research/runbook-20260914/session11/lint-candidate16.exit",
+              "bytes": 3,
+              "sha256": "13bf7b3039c63bf5a50491fa3cfd8eb4e699d1ba1436315aef9cbe5711530354"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "candidate": 17,
+      "source_manifest": {
+        "path": ".omc/research/runbook-20260914/source-manifest-17.json",
+        "bytes": 255954,
+        "sha256": "d2e12b9af07b6b9039c623362d0ed19b7a534d599ced4add5446b126d24b9635"
+      },
+      "source_summary": {
+        "path": "conductor/tracks/platform_experience_qa_20260911/evidence/source-candidate-20260914-17.json",
+        "bytes": 13123,
+        "sha256": "98203c69e50a92dbd8f6c49fae6d9e69b5562d2798669e05f351a72a49b6f2df"
+      },
+      "application": {
+        "path": "conductor/tracks/platform_experience_qa_20260911/evidence/application-session11-candidate17-20260914.json",
+        "bytes": 2071,
+        "sha256": "55376549e64dc4314e286c21e9e6855607893ad8dc1fdc20528af14f8bf381af"
+      },
+      "retained_sweep_receipt": {
+        "path": ".omc/research/runbook-20260914/session11/candidate17-sweep.json",
+        "bytes": 2807,
+        "sha256": "706022af39b079e74fa21b554d0e96e5b9a9c03e9ef90e5c9412133a7bc1d939"
+      },
+      "source_postcheck": {
+        "verified_paths": 1749,
+        "mismatches": []
+      },
+      "results": {
+        "status": "passed_scoped_engineering_checks",
+        "frontend": {
+          "scope": "three_affected_test_files",
+          "files": 3,
+          "passed_files": 3,
+          "failed_files": 0,
+          "passed_tests": 129,
+          "failed_tests": 0
+        },
+        "typecheck_exit": 0,
+        "boundary_exit": 0,
+        "lint": {
+          "scope": "three_affected_test_files_only",
+          "exit": 0,
+          "output_bytes": 0
+        },
+        "full_frontend_executed": false,
+        "full_lint_executed": false
+      },
+      "gates": [
+        {
+          "name": "scoped-tests",
+          "exit_code": 0,
+          "artifacts": [
+            {
+              "path": ".omc/research/runbook-20260914/session11/scoped-tests-candidate17.log",
+              "bytes": 454472,
+              "sha256": "68c3b6e932823b6b26d81a93be28773636213c326db211a7c6b52a1c5cd06ea4"
+            },
+            {
+              "path": ".omc/research/runbook-20260914/session11/scoped-tests-candidate17.exit",
+              "bytes": 3,
+              "sha256": "13bf7b3039c63bf5a50491fa3cfd8eb4e699d1ba1436315aef9cbe5711530354"
+            }
+          ]
+        },
+        {
+          "name": "typecheck",
+          "exit_code": 0,
+          "artifacts": [
+            {
+              "path": ".omc/research/runbook-20260914/session11/typecheck-candidate17.log",
+              "bytes": 100,
+              "sha256": "5a73c140c0ad128d7dfaf1a28f01b54adf8c3d29c10d317d96d4e791294fc7ec"
+            },
+            {
+              "path": ".omc/research/runbook-20260914/session11/typecheck-candidate17.exit",
+              "bytes": 3,
+              "sha256": "13bf7b3039c63bf5a50491fa3cfd8eb4e699d1ba1436315aef9cbe5711530354"
+            }
+          ]
+        },
+        {
+          "name": "boundary",
+          "exit_code": 0,
+          "artifacts": [
+            {
+              "path": ".omc/research/runbook-20260914/session11/boundary-candidate17.log",
+              "bytes": 528,
+              "sha256": "9eafe413dfe6c6bd02229c9b983c8136949d7ba2d4c4cfd272e9b4bcd9f81f0d"
+            },
+            {
+              "path": ".omc/research/runbook-20260914/session11/boundary-candidate17.exit",
+              "bytes": 3,
+              "sha256": "13bf7b3039c63bf5a50491fa3cfd8eb4e699d1ba1436315aef9cbe5711530354"
+            }
+          ]
+        },
+        {
+          "name": "scoped-lint",
+          "exit_code": 0,
+          "artifacts": [
+            {
+              "path": ".omc/research/runbook-20260914/session11/scoped-lint-candidate17.log",
+              "bytes": 0,
+              "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            {
+              "path": ".omc/research/runbook-20260914/session11/scoped-lint-candidate17.exit",
+              "bytes": 3,
+              "sha256": "13bf7b3039c63bf5a50491fa3cfd8eb4e699d1ba1436315aef9cbe5711530354"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "source_transitions": {
+    "c14_to_c15": "17 paths:15 existing plus2 new; all1747 original C14 hashes verified",
+    "c15_to_c16": "three test files only; runtime unchanged",
+    "c16_to_c17": "two UTF-8 test/comment restorations only; 1747 paths unchanged including the climate test",
+    "runtime_change_after_c15": false
+  },
+  "reviews": [
+    {
+      "path": ".omc/research/runbook-20260914/session11/independent-d26-review.md",
+      "bytes": 2104,
+      "sha256": "8e4ee0adc5780ab2c335ef373b792a5643cd94e9e73a6b321c0c9526d1d50fde"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session11/independent-moderation-review.md",
+      "bytes": 2848,
+      "sha256": "bc6966c4c6b8963a73ffc402a3bb9e0c3935f863f7e738fcdefc5ad1bf55be0f"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session11/corrections/independent-review.md",
+      "bytes": 3064,
+      "sha256": "929158780d2f4004c5d5a8f5a87ae07ec1b42972d7694dc81d8b83722a43a515"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session11/corrections/independent-utf8-restoration-review.md",
+      "bytes": 3241,
+      "sha256": "d4ca866b36c6b1ab52cb117443c872ddf042134f20778c879f27c740ef5538ea"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session11/corrections/independent-reconstruction-38159a8153c9437e9b6b484f78dbb6d0/receipt.json",
+      "bytes": 3683,
+      "sha256": "2fbb9ed9f61e9cd42670613d76b2132f24e5df06f5bbaab5c71fd048cf53c240"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session11/independent-candidate17-check-review.md",
+      "bytes": 3571,
+      "sha256": "3efb788d7f53d326e548380306828ce819cd63812771fd8d055c1e31207ce6fd"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session11/encoding-audit.md",
+      "bytes": 6623,
+      "sha256": "25828cf6bee082196c0b0d4505b49056c50d8878dc7062126f60661e8ba43a41"
+    }
+  ],
+  "review_limits": "Original correction review missed default-encoding damage outside its generated diff; its preserved approval is superseded for staged-byte fidelity by independent complete-file reconstruction from UTF-8 C15 originals. D26 review note is explicitly retrospective documentation of the pre-application collaboration review.",
+  "approved_packets": [
+    {
+      "path": ".omc/research/runbook-20260914/session11/d26.patch",
+      "bytes": 29768,
+      "sha256": "319a08405ee63ef8bb98188ffb18369da9ad5c6d63c451d32b1e96e9cd06791b"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session11/d26-inputs.json",
+      "bytes": 2527,
+      "sha256": "6ca5a4f219a2ea842f5dc600ff1792ae4b2a81c33e14ba0e5ae514ccc371f92b"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session11/moderation.patch",
+      "bytes": 16664,
+      "sha256": "04dea38f0ededf4fe655b411428471f0c77f8fdb37364b1c70174e2f3b1fad3e"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session11/moderation-manifest.json",
+      "bytes": 1673,
+      "sha256": "4e1a70455825209b95e1036d470938dad7ca44c26d95d692dee3d5ac0a56425b"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session11/corrections/tests.patch",
+      "bytes": 1384,
+      "sha256": "9a2fc8caf67c173a51e39d5a6bf9791f996842c1274dd7f5eb795343d676f427"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session11/corrections/manifest.json",
+      "bytes": 724,
+      "sha256": "0ff0be2dbf3273d9aaf5c51fc039161cbc5ff964c4bb70a0bfab24a992714a4e"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session11/corrections/intended-from-candidate15.patch",
+      "bytes": 13944,
+      "sha256": "c593787eef9e87fd3de2e2dd8d017a3e38387c885d6b31a2541b0a7677b95f49"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session11/corrections/unicode-preservation.json",
+      "bytes": 1939,
+      "sha256": "d6b12be1b659a7d9880defafa8f8441635f456f55611b6e9bf8950af75aaba5b"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session11/corrections/UTF8-RESTORATION.md",
+      "bytes": 2233,
+      "sha256": "37670fce42472acc5d886d2f6e68a95d6d91e9a36f1e8e3666e8a6ac2f0dc66e"
+    }
+  ],
+  "preserved_bad_c16_packet": [
+    {
+      "path": ".omc/research/runbook-20260914/session11/corrections/candidate16-encoding-failure-packet/apply-candidate16.py",
+      "bytes": 4193,
+      "sha256": "0e90b4d7fb4b75141b8ed4bd8742deb371eda8a1a7340b2d12f12a07f18ac256"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session11/corrections/candidate16-encoding-failure-packet/archive-manifest.json",
+      "bytes": 1430,
+      "sha256": "de779b29c4d1d4405fa9c73f078a3bc418662edfd234507c90450ee96c130330"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session11/corrections/candidate16-encoding-failure-packet/independent-review.md",
+      "bytes": 3064,
+      "sha256": "929158780d2f4004c5d5a8f5a87ae07ec1b42972d7694dc81d8b83722a43a515"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session11/corrections/candidate16-encoding-failure-packet/manifest.json",
+      "bytes": 724,
+      "sha256": "712a0adce1817710369222bf2a65078b7c8d78deb9da63a4706b2cc7702495d8"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session11/corrections/candidate16-encoding-failure-packet/prepare.py",
+      "bytes": 9325,
+      "sha256": "39ce908386636b3f508f39e2f6fb3e8927f9f5ddd38a8ca17725a8db7b6ec8a6"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session11/corrections/candidate16-encoding-failure-packet/RATIONALE.md",
+      "bytes": 3092,
+      "sha256": "a30c505755a22d646271398c36daf373c9a28a086f5d4298488e9638919be461"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session11/corrections/candidate16-encoding-failure-packet/staged/src/__tests__/components/ClimateFieldLayers.test.tsx",
+      "bytes": 27339,
+      "sha256": "fcebe197e0e1006d0276dbd3496e1c851d9ed3e0d76b6f542ed7dd0ec4c481cd"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session11/corrections/candidate16-encoding-failure-packet/staged/src/__tests__/components/LayerManager.test.tsx",
+      "bytes": 113011,
+      "sha256": "6ea8671a2e2d0e1497545a217029e376aa94821395a171a9ccab6f6e47c8ac04"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session11/corrections/candidate16-encoding-failure-packet/staged/src/__tests__/stores/useMetricAtDate.test.tsx",
+      "bytes": 25826,
+      "sha256": "9b76a6a7efb0b04c9e7c0541540c90e109a10a34a65fde269541e53a5fc93634"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session11/corrections/candidate16-encoding-failure-packet/tests.patch",
+      "bytes": 13944,
+      "sha256": "c593787eef9e87fd3de2e2dd8d017a3e38387c885d6b31a2541b0a7677b95f49"
+    }
+  ],
+  "preserved_original_archives": [
+    {
+      "directory": ".omc/research/runbook-20260914/session11/application-originals",
+      "files": [
+        {
+          "path": ".omc/research/runbook-20260914/session11/application-originals/src/__tests__/components/ContributionQueue.test.tsx",
+          "bytes": 5790,
+          "sha256": "a73f863bef16cafed8d6315214e24fddfc9dfa493fc8d3e6ee6844b985e98434"
+        },
+        {
+          "path": ".omc/research/runbook-20260914/session11/application-originals/src/__tests__/components/LayerTimeSlider.test.tsx",
+          "bytes": 62086,
+          "sha256": "b3f624997528f019cb785564bf70b55ace905e08dd38efd3e0e5e503851de5b5"
+        },
+        {
+          "path": ".omc/research/runbook-20260914/session11/application-originals/src/__tests__/components/MapDateSummary.test.tsx",
+          "bytes": 21498,
+          "sha256": "7d6231586881805a70e8857f52895978ebe50ef1238fcd7ad957c5d418dbeda4"
+        },
+        {
+          "path": ".omc/research/runbook-20260914/session11/application-originals/src/__tests__/lib/map/layer-toggle-context.test.ts",
+          "bytes": 25721,
+          "sha256": "63f6307db7799a1e22bf6f8f767fac681307165a4222052455674928cc1091ef"
+        },
+        {
+          "path": ".omc/research/runbook-20260914/session11/application-originals/src/__tests__/stores/useMetricAtDate.test.tsx",
+          "bytes": 22102,
+          "sha256": "5fc5d5411e47f75ba9469976dc32b10207a9f4e5ff5c794dc448a906bca5af50"
+        },
+        {
+          "path": ".omc/research/runbook-20260914/session11/application-originals/src/components/map/AGENTS.md",
+          "bytes": 127002,
+          "sha256": "80167566c30019760bf64afb997ffba555846d4aff3ee2766b6688bed3a72044"
+        },
+        {
+          "path": ".omc/research/runbook-20260914/session11/application-originals/src/components/map/layer-panel/LayerTimeSlider.tsx",
+          "bytes": 37518,
+          "sha256": "97ab6e57e5784391184277b363ffe083c788a93a7b7d4de9451b61d46eddff00"
+        },
+        {
+          "path": ".omc/research/runbook-20260914/session11/application-originals/src/components/map/LayerManager.tsx",
+          "bytes": 84831,
+          "sha256": "4b29e57ed202d92606360a55b84ae6e6f66f95755280030f101e07b4b72b7271"
+        },
+        {
+          "path": ".omc/research/runbook-20260914/session11/application-originals/src/components/map/layers/ClimateFieldLayers.tsx",
+          "bytes": 5972,
+          "sha256": "07dfa29e4497c848b0e57bc19b5f8c57fe3d1f5fde60d862580ef4dfa46c1c38"
+        },
+        {
+          "path": ".omc/research/runbook-20260914/session11/application-originals/src/components/map/MapDateSummary.tsx",
+          "bytes": 20487,
+          "sha256": "8ef9280c1766fb5e477b78ad05edd7dec5a3a38fedcabfafb4e438ea14bb8df9"
+        },
+        {
+          "path": ".omc/research/runbook-20260914/session11/application-originals/src/components/panels/AGENTS.md",
+          "bytes": 16745,
+          "sha256": "75326691bd9502dea8dbc916407964ab97813cae23109ae6ebb7aecca6c5a73f"
+        },
+        {
+          "path": ".omc/research/runbook-20260914/session11/application-originals/src/components/panels/ContributionQueue.tsx",
+          "bytes": 8007,
+          "sha256": "7c0544e0a631e505353172718b70fa344048caf822d85aa428a00d1a984581fc"
+        },
+        {
+          "path": ".omc/research/runbook-20260914/session11/application-originals/src/lib/server/AGENTS.md",
+          "bytes": 894,
+          "sha256": "c95bf9f2da200c616dd64dd1f4c33693ee6cca4f15269082ff3e3fd3bad4c938"
+        },
+        {
+          "path": ".omc/research/runbook-20260914/session11/application-originals/src/lib/server/trpc/routers/contributions.ts",
+          "bytes": 4815,
+          "sha256": "4f8ca81ab1cd6a26f0ab87caf9d807b0f84b9d4b2f0ee04d54975d0b7294195e"
+        },
+        {
+          "path": ".omc/research/runbook-20260914/session11/application-originals/src/stores/useMetricAtDate.ts",
+          "bytes": 24700,
+          "sha256": "dff215d513f3a640ded8afcab6cf1fda6a6c6a8b0bddd4b58af596950ea24f63"
+        }
+      ]
+    },
+    {
+      "directory": ".omc/research/runbook-20260914/session11/corrections/candidate15-originals",
+      "files": [
+        {
+          "path": ".omc/research/runbook-20260914/session11/corrections/candidate15-originals/src/__tests__/components/ClimateFieldLayers.test.tsx",
+          "bytes": 26916,
+          "sha256": "fd0093ce27bd9e008a1aada024d0b9a02f2d0ef844f9672f2f946d0a00b55c14"
+        },
+        {
+          "path": ".omc/research/runbook-20260914/session11/corrections/candidate15-originals/src/__tests__/components/LayerManager.test.tsx",
+          "bytes": 111787,
+          "sha256": "1f41d6d0d8994fb00b0e9d533b7f65251286af995f2d3cf0f906900ca043658c"
+        },
+        {
+          "path": ".omc/research/runbook-20260914/session11/corrections/candidate15-originals/src/__tests__/stores/useMetricAtDate.test.tsx",
+          "bytes": 25814,
+          "sha256": "6501c41cf4c0ebf550795c9a9dfbc8d0db20b501863f22f1528ec3f3defc6225"
+        }
+      ]
+    },
+    {
+      "directory": ".omc/research/runbook-20260914/session11/corrections/candidate16-originals",
+      "files": [
+        {
+          "path": ".omc/research/runbook-20260914/session11/corrections/candidate16-originals/src/__tests__/components/LayerManager.test.tsx",
+          "bytes": 113011,
+          "sha256": "6ea8671a2e2d0e1497545a217029e376aa94821395a171a9ccab6f6e47c8ac04"
+        },
+        {
+          "path": ".omc/research/runbook-20260914/session11/corrections/candidate16-originals/src/__tests__/stores/useMetricAtDate.test.tsx",
+          "bytes": 25826,
+          "sha256": "9b76a6a7efb0b04c9e7c0541540c90e109a10a34a65fde269541e53a5fc93634"
+        }
+      ]
+    }
+  ],
+  "preexisting_dirty_patch_preservation": {
+    "reverse_patch_check_exit": 0,
+    "artifacts": [
+      {
+        "path": ".omc/research/runbook-20260914/session11/preexisting-patch-preservation.log",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": ".omc/research/runbook-20260914/session11/preexisting-patch-preservation.exit",
+        "bytes": 3,
+        "sha256": "13bf7b3039c63bf5a50491fa3cfd8eb4e699d1ba1436315aef9cbe5711530354"
+      }
+    ]
+  },
+  "launcher_failure": {
+    "artifact": {
+      "path": ".omc/research/runbook-20260914/session11/npm-ps1-launch-failure.txt",
+      "bytes": 337,
+      "sha256": "83a8dfc5ff5e132628ab34c89d5f5f53da1f75cc2b3957a73f1f8b2b376e4244"
+    },
+    "meaning": "PowerShell policy rejected npm.ps1 before gates; later npm.cmd gates are separately retained. No execution-policy change."
+  },
+  "browser_followup": {
+    "accepted_by_this_packet": false,
+    "session15": "Root reports one browser pass; independent result/frame acceptance is separate pending evidence at this packet checkpoint.",
+    "session13": "Fresh normally consented stale-review regression remains separate from engineering checks."
+  },
+  "limitations": [
+    "Candidate15 full suite remains failed8/2534; Candidate16 scoped failure remains preserved.",
+    "Candidate17 passed129 tests in3 files; not a full frontend or full lint pass.",
+    "Candidate16 full lint0errors9887warnings is retained for Candidate16, not relabeled as C17 execution.",
+    "React act warnings remain in passing test logs.",
+    "No full Python, production, immutable commit, all-layer or runbook acceptance.",
+    "This reconciliation runs no quality gates, browser, network or database operations."
+  ]
+}

@@ -1,0 +1,39 @@
+{
+  "type": "source-application-receipt",
+  "executor": "/root/workspace_social_audit",
+  "status": "approved_utf8_test_restoration_applied_candidate17_frozen_checks_pending",
+  "timestamp": "2026-09-14T23:53:55.631615+00:00",
+  "candidate16_sha256": "9a3f11845181c435275ebd3b928ab1361c6e0fbc8175f5b1c727dffafb7f5efe",
+  "candidate16_files_verified": 1749,
+  "candidate17_sha256": "d2e12b9af07b6b9039c623362d0ed19b7a534d599ced4add5446b126d24b9635",
+  "candidate17_file_count": 1749,
+  "changed_files": [
+    "src/__tests__/stores/useMetricAtDate.test.tsx",
+    "src/__tests__/components/LayerManager.test.tsx"
+  ],
+  "unchanged_files": 1747,
+  "explicitly_verified_unchanged_test": [
+    "src/__tests__/components/ClimateFieldLayers.test.tsx"
+  ],
+  "archive_directory": ".omc/research/runbook-20260914/session11/corrections/candidate16-originals",
+  "changes": {
+    "src/__tests__/stores/useMetricAtDate.test.tsx": {
+      "base_sha256": "9b76a6a7efb0b04c9e7c0541540c90e109a10a34a65fde269541e53a5fc93634",
+      "staged_sha256": "5eeffeaf4ee321a68539a4df12853a18f74b790b913aede9e8983f2eb7dc58a1"
+    },
+    "src/__tests__/components/LayerManager.test.tsx": {
+      "base_sha256": "6ea8671a2e2d0e1497545a217029e376aa94821395a171a9ccab6f6e47c8ac04",
+      "staged_sha256": "7a780289f3a63234b9bc0e3a75b9cd29f3c89691a8bad8ed2436e18c07db4369"
+    }
+  },
+  "runtime_source_changed": false,
+  "exact_staged_bytes": true,
+  "tests_run": false,
+  "approved_packet_hashes": {
+    "manifest.json": "0ff0be2dbf3273d9aaf5c51fc039161cbc5ff964c4bb70a0bfab24a992714a4e",
+    "tests.patch": "9a2fc8caf67c173a51e39d5a6bf9791f996842c1274dd7f5eb795343d676f427"
+  },
+  "review_sha256": "d4ca866b36c6b1ab52cb117443c872ddf042134f20778c879f27c740ef5538ea",
+  "application_script_sha256": "e2fe16529a9f4309059099d2088677fdf7b94e5620155e88cec293142754e715",
+  "semantics": "All1749 C16 files verified before and after archive; two exact-byte test writes, all expected C17 bytes checked, freeze inventory compared. No runtime changes or checks executed."
+}

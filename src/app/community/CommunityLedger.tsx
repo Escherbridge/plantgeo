@@ -9,43 +9,29 @@ import {
   EditorialSection,
 } from "@/components/ui/editorial";
 
-/**
- * The `/community` page after strategy requests became public.
- *
- * This page WAS the private ledger: a `community.getRequests` list scoped to the reader's own
- * account or a workspace they belong to, with a `community.voteOnRequest` button beside each row
- * and copy explaining that coordinates never leave the database. Phase 3 of
- * `public_strategy_requests_20260913` retired all five of those procedures along with the
- * `strategy_requests` table behind them, because a request is now a published `geo.features` row
- * that everyone can already see on the map.
- *
- * What replaces the list is a pointer, not a rebuilt list. A panel or page that re-lists public
- * map features would be a second, worse view of the map -- and the one thing the page must not
- * lose, the route to submitting a request, lives on the map anyway (the community panel's
- * "+ Request" button, pinned to the map centre). The signed-in/signed-out split went with the
- * private data: there is nothing here to gate any more.
- */
+/** Explains public requests and links to map submission; see AGENTS.md. */
 export function CommunityLedger() {
   return (
     <EditorialContainer>
-      <EditorialSection index="01" title="The ledger" id="ledger">
+      <EditorialSection index="01" title="Public requests" id="ledger">
         <EditorialNotice title="Requests live on the map now" role="status">
           <p>
-            Strategy requests used to be recorded here, readable only by the
-            account that submitted one or by a workspace it was shared with. They
-            are now ordinary features of the public map: published the moment they
-            are submitted, drawn in their own colour, and open for anyone to read,
-            comment on and respond to.
+            Strategy requests publish their location, title, and description on
+            the public map as soon as they are submitted. Anyone can read a
+            published request without signing in.
           </p>
         </EditorialNotice>
 
         <EditorialProse className="mt-comfortable">
           <p>
-            Open the map and click a request to see who asked for it, what they
-            asked for and the conversation underneath. Nothing needs to be
-            approved first &mdash; a request is an ask, not a claim about what has
-            been built, so it skips the review queue that intervention proposals
-            go through.
+            Open the map and click a request to read its details. Sign in to read
+            comments. Contributor access is required to post requests, add
+            comments, or like a feature.
+          </p>
+          <p>
+            A request asks for a strategy at a location; it does not claim that an
+            intervention has been built. Requests are published without the
+            expert review required for intervention proposals.
           </p>
         </EditorialProse>
 
@@ -61,15 +47,15 @@ export function CommunityLedger() {
         <EditorialProse>
           <p>
             A strategy request is anchored to a point on the ground, so it is
-            created from the map rather than from this page. Open the map, centre
-            it on the parcel you have in mind, open the community panel, and
-            choose + Request; the request is recorded at the map&rsquo;s centre
-            point and appears there immediately for every reader.
+            created from the map. Sign in with contributor access, open the map,
+            centre it on the location you have in mind, open the community panel,
+            and choose + Request. Check the pin location, title, and description,
+            then confirm that they can be published before posting.
           </p>
           <p>
-            Drawing a site and asking to have it reviewed is the other, heavier
-            move: that is a proposal, it carries a drawn boundary, and it only
-            reaches the map once a reviewer approves it.
+            To propose an intervention for review, choose + Recommend and draw a
+            point or boundary. Submitted proposals can be visible to signed-in
+            readers during review; they become public after a reviewer approves them.
           </p>
         </EditorialProse>
         <div className="mt-comfortable flex flex-wrap gap-tight">

@@ -11,6 +11,7 @@ vi.mock("maplibre-gl", () => ({
   default: {
     Map: class {
       remove() {}
+      resize() {}
     },
   },
 }));
@@ -90,6 +91,36 @@ function renderWorkspace(
 }
 
 describe("AiInterventionWorkspace mode switching", () => {
+  it("keeps a manual tab selection on stable rerenders but honors a fresh action at the same point", () => {
+    const onClose = vi.fn();
+    const coordinates: [number, number] = [-120, 46];
+    const { rerender } = render(
+      <AiInterventionWorkspace coordinates={coordinates} initialMode="ai" onClose={onClose} />
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /propose intervention/i }));
+    rerender(<AiInterventionWorkspace coordinates={coordinates} initialMode="ai" onClose={onClose} />);
+    expect(screen.getByTestId("intervention-mode-content").hasAttribute("hidden")).toBe(false);
+    rerender(<AiInterventionWorkspace coordinates={[-120, 46]} initialMode="ai" onClose={onClose} />);
+    expect(screen.getByTestId("ai-mode-content").hasAttribute("hidden")).toBe(false);
+  });
+  it("honors another map action without remounting either pane", () => {
+    const onClose = vi.fn();
+    const { rerender } = render(
+      <AiInterventionWorkspace coordinates={[-120, 46]} initialMode="ai" onClose={onClose} />
+    );
+    const pane = screen.getByTestId("intervention-mode-content");
+    rerender(
+      <AiInterventionWorkspace coordinates={[-119, 45]} initialMode="intervention" onClose={onClose} />
+    );
+    expect(screen.getByRole("tab", { name: /propose intervention/i }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByTestId("intervention-mode-content")).toBe(pane);
+    fireEvent.click(screen.getByRole("tab", { name: /ai analysis/i }));
+    rerender(
+      <AiInterventionWorkspace coordinates={[-118, 44]} initialMode="intervention" onClose={onClose} />
+    );
+    expect(pane.hasAttribute("hidden")).toBe(false);
+    expect(onClose).not.toHaveBeenCalled();
+  });
   it("names both modes on one switch control and shows the initial one", () => {
     renderWorkspace({ initialMode: "ai" });
 
@@ -138,6 +169,37 @@ describe("AiInterventionWorkspace mode switching", () => {
 });
 
 describe("AiInterventionWorkspace close confirmation", () => {
+  it("does not handle Escape addressed to another dialog", () => {
+    const { onClose } = renderWorkspace();
+    const otherDialog = document.createElement("div");
+    otherDialog.setAttribute("role", "dialog");
+    document.body.append(otherDialog);
+    fireEvent.keyDown(otherDialog, { key: "Escape" });
+    otherDialog.remove();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("preserves both sessions on canceled Escape and discards both on confirmed Escape", () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const { onClose } = renderWorkspace();
+    const controller = new AbortController();
+    act(() => {
+      useInterventionDraftStore.getState().setName("Unfinished proposal");
+      useRegionalIntelligenceStore.getState().openPanel(46, -120, "approximate");
+      useRegionalIntelligenceStore.getState().setLoading(true);
+      useRegionalIntelligenceStore.getState().setAbortController(controller);
+    });
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(onClose).not.toHaveBeenCalled();
+    expect(controller.signal.aborted).toBe(false);
+    expect(useInterventionDraftStore.getState().name).toBe("Unfinished proposal");
+    confirmSpy.mockReturnValue(true);
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(controller.signal.aborted).toBe(true);
+    expect(useRegionalIntelligenceStore.getState().isOpen).toBe(false);
+    expect(useInterventionDraftStore.getState()).toMatchObject({ name: "", geometry: null, lat: null, lon: null });
+  });
   it("closes without asking when there is nothing unsaved", () => {
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
     const { onClose } = renderWorkspace();
@@ -161,6 +223,7 @@ describe("AiInterventionWorkspace close confirmation", () => {
     confirmSpy.mockReturnValue(true);
     fireEvent.click(screen.getByRole("button", { name: /close workspace/i }));
     expect(onClose).toHaveBeenCalledTimes(1);
+    expect(useInterventionDraftStore.getState().geometry).toBeNull();
   });
 
   it("asks before closing while an AI response is mid-stream", () => {
@@ -176,6 +239,29 @@ describe("AiInterventionWorkspace close confirmation", () => {
 });
 
 describe("AiInterventionWorkspace draft preservation", () => {
+  it("preserves a typed proposal before drawing when a new coordinate arrives", () => {
+    const onClose = vi.fn();
+    const { rerender } = render(
+      <AiInterventionWorkspace coordinates={[-120, 46]} initialMode="intervention" onClose={onClose} />
+    );
+    act(() => {
+      const draft = useInterventionDraftStore.getState();
+      draft.setName("Ridge planting");
+      draft.setDescription("Retain this draft");
+      draft.setCategory("air");
+      draft.setInterventionType("cloud_seeding");
+      draft.setPublicationConsent(true);
+    });
+    rerender(
+      <AiInterventionWorkspace coordinates={[-118, 44]} initialMode="intervention" onClose={onClose} />
+    );
+    expect(useInterventionDraftStore.getState()).toMatchObject({
+      name: "Ridge planting", description: "Retain this draft", category: "air",
+      interventionType: "cloud_seeding", publicationConsent: true, geometry: null, lat: 46, lon: -120,
+    });
+    expect(screen.getByText(/Site location: 46\.0000, -120\.0000/)).toBeTruthy();
+    expect(screen.getByTestId("workspace-draft-relocate").textContent).toContain("confirm discarding the draft");
+  });
   it("does not clear an unsubmitted draft when reopened at a new coordinate", () => {
     const { unmount } = render(
       <AiInterventionWorkspace

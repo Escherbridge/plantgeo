@@ -109,3 +109,4 @@ docs/research/
 # Owner-supplied briefs and similar binary artifacts are not source.
 docs/*.pdf
 *.pdf
+.omc

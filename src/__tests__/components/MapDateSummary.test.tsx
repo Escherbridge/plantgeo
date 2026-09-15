@@ -343,20 +343,25 @@ describe("stating the day painted rather than the day requested", () => {
     expect(fullStatement()).not.toContain("(loading");
   });
 
-  /**
-   * A feed whose read carries no day at all -- SSURGO is proxied per viewport -- publishes a
-   * null drawn date and contributes only its loading state, so the row's own day still names it.
-   */
-  it("keeps the row's day for a feed that has no day of its own to draw", () => {
-    arrangeVisibleLayers(["soil-survey"]);
+  it("does not date or count an unavailable SSURGO answer", () => {
+    arrangeVisibleLayers(["soil-survey", "vegetation"]);
     arrangeDrawnDays({
-      "soil-survey": { drawnDate: null, requestedDate: null, isLoading: true },
+      "soil-survey": { drawnDate: null, requestedDate: null, isLoading: false },
+      vegetation: { drawnDate: VEGETATION_LATEST_DATE, requestedDate: VEGETATION_LATEST_DATE, isLoading: false },
     });
-
     renderWithProviders(<MapDateSummary />);
+    expect(headlineText()).toBe(VEGETATION_LATEST_DATE);
+    expect(fullStatement()).toContain("The one visible layer is");
+    expect(fullStatement()).not.toContain("Soil Survey");
+  });
 
-    expect(headlineText()).toBe(SERVER_CURRENT_DATE);
-    expect(screen.queryByTestId("map-date-summary-loading")).not.toBeNull();
+  it("dates a static snapshot by its release rather than server today", () => {
+    arrangeVisibleLayers(["watersheds"]);
+    arrangeDrawnDays({ watersheds: { drawnDate: "2026-08-07", requestedDate: null, isLoading: false } });
+    renderWithProviders(<MapDateSummary />);
+    expect(headlineText()).toBe("2026-08-07");
+    expect(fullStatement()).not.toContain(SERVER_CURRENT_DATE);
+    expect(screen.queryByTestId("map-date-summary-loading")).toBeNull();
   });
 
   /**
@@ -402,6 +407,19 @@ describe("stating the day painted rather than the day requested", () => {
    * loading" with no "Updating" chip beside it: two marks on one line disagreeing, the words
    * false, and no way for the reader to learn otherwise.
    */
+  it("does not call a settled older release a pending request", () => {
+    arrangeVisibleLayers(["vegetation"]);
+    arrangeDrawnDays({ vegetation: {
+      drawnDate: "2026-08-05", requestedDate: VEGETATION_LATEST_DATE,
+      pendingDate: null, isLoading: false,
+    } });
+    renderWithProviders(<MapDateSummary />);
+    expect(headlineText()).toBe("2026-08-05");
+    expect(fullStatement()).not.toContain("awaiting");
+    expect(fullStatement()).not.toContain("loading");
+    expect(screen.queryByTestId("map-date-summary-detail")?.textContent ?? "").not.toContain("on an earlier day");
+  });
+
   it("states an earlier day without claiming a fetch, when offline has paused one", () => {
     arrangeVisibleLayers(["vegetation"]);
     arrangeDrawnDays({
@@ -421,7 +439,7 @@ describe("stating the day painted rather than the day requested", () => {
     const detail = screen.getByTestId("map-date-summary-detail").textContent ?? "";
     expect(detail).toContain("1 layer on an earlier day");
     expect(detail).not.toContain("loading");
-    expect(fullStatement()).toContain(`(loading ${VEGETATION_LATEST_DATE})`);
+    expect(fullStatement()).toContain(`(awaiting ${VEGETATION_LATEST_DATE})`);
   });
 });
 
@@ -512,19 +530,14 @@ describe("counting the layers that are behind their own newest published day", (
     expect(fullStatement()).not.toContain("behind its latest");
   });
 
-  it("does not count a layer whose newest published day the server never named", () => {
-    // `soil-survey` names no warehouse stream (it is proxied per viewport from USDA), so
-    // nothing measures its latest; it falls back to the server's today and must not be
-    // reported as stale on a claim nobody made. This stood on `soil` until that toggle was
-    // given a permanentlyUnavailableReason -- a withheld layer is not on screen at all, so it
-    // is correctly absent from a summary of what IS being shown.
-    arrangeVisibleLayers(["soil-survey", "vegetation"]);
-
+  it("excludes an explicitly withheld layer before its reader has mounted", () => {
+    const capabilities = {
+      ...CAPABILITIES,
+      withheldParquetCapabilities: [{ layerName: "soil-survey", reason: "lane_never_written", parquetLanes: ["soil-survey"] }],
+    };
+    arrangeVisibleLayers(["soil-survey", "vegetation"], { capabilities });
     renderWithProviders(<MapDateSummary />);
-
-    expect(fullStatement()).not.toContain(
-      "Soil Survey (SSURGO): 2026-08-09 (behind its latest)"
-    );
-    expect(fullStatement()).toContain("Soil Survey (SSURGO): 2026-08-09");
+    expect(fullStatement()).not.toContain("Soil Survey");
+    expect(fullStatement()).toContain("The one visible layer is");
   });
 });

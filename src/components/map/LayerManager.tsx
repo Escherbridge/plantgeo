@@ -81,7 +81,7 @@ const EMPTY_FEATURE_COLLECTION: GeoJSON.FeatureCollection = {
 };
 
 function parquetDrawnDayFlags(query: QueryReadState) {
-  const flags = drawnDayFlagsFromQuery(query);
+  const flags = drawnDayFlagsFromQuery(query, "typed");
   const data = query.data as { state?: string } | undefined;
   return data?.state === "upstream_unavailable"
     ? { ...flags, hasLandedForRequestedDate: false }
@@ -900,6 +900,13 @@ export default function LayerManager() {
           message: `Specimen occurrences are not published: ${botanicalResult.note}`,
         }
       : null,
+    botanicalQueryEnabled && botanicalQuery.isError === true
+      ? {
+          layerId: "botanical-request-failed",
+          tone: "fault" as const,
+          message: "The botanical and GBIF occurrence request failed. Current viewport results could not be verified.",
+        }
+      : null,
     // A `notice` for the same reason every other lane's is: the records drawn are real, they
     // just stop short of the viewport. Saying so is what keeps a capped read from looking like
     // a collecting gap -- which, for this plane specifically, is a claim about where botanists
@@ -937,6 +944,30 @@ export default function LayerManager() {
           message: `Individual specimen points draw at zoom ${BOTANICAL_DETAIL_MIN_ZOOM} and above. Zoom in to see them, or turn on Documented Taxon Richness / Collection Evidence & Effort for this zoom.`,
         }
       : null,
+    gbifOccurrencesVisible && botanicalBand !== "detail"
+      ? {
+          layerId: "gbif-below-detail-floor",
+          tone: "notice" as const,
+          message: `GBIF occurrence points draw at zoom ${BOTANICAL_DETAIL_MIN_ZOOM} and above. Zoom in to see published records.`,
+        }
+      : null,
+    // Only the settled returned slice supports an empty notice; see AGENTS.md §GBIF feedback.
+    gbifOccurrencesVisible &&
+    botanicalBand === "detail" &&
+    bbox !== null &&
+    botanicalQuery.isSuccess === true &&
+    botanicalQuery.isFetching !== true &&
+    botanicalQuery.isPlaceholderData !== true &&
+    botanicalDetail !== null &&
+    gbifFeatures.length === 0
+      ? {
+          layerId: "gbif-empty",
+          tone: "notice" as const,
+          message: botanicalDetail.truncated
+            ? "No GBIF occurrence points appear in this limited result. The row limit prevents a complete assessment of this viewport and its current filters."
+            : "No GBIF occurrence points were returned for this viewport and current filters.",
+        }
+      : null,
   ].filter((fault): fault is NonNullable<typeof fault> => fault !== null);
 
   // What each live layer is actually DRAWING, for the surfaces that caption the map. The other
@@ -951,6 +982,7 @@ export default function LayerManager() {
       isDrawn: layerVisibility.fire,
       // The day the READ settled on, not a second lookup of the same row: one hook owns both.
       requestedDate: fire.settledDate,
+      ...drawnDayFlagsFromQuery({ data: fire.result }, "typed"),
       // Already derived the way `parquetDrawnDayFlags` derives them, `upstream_unavailable`
       // downgrade included -- see `useParquetFireDetections`.
       isFetching: fire.isFetching,
@@ -982,31 +1014,30 @@ export default function LayerManager() {
       ...parquetDrawnDayFlags(vegetationQuery),
     },
     {
-      // SSURGO is proxied per viewport and its key holds no date, so it has no day of its own to
-      // draw: a retained frame here is a different VIEWPORT, never a different day.
+      // No selected day; typed publication availability determines its drawn date.
       layerId: "soil-survey",
       isDrawn: soilSurveyVisible,
       requestedDate: null,
-      ...drawnDayFlagsFromQuery(soilSurveyQuery),
+      ...drawnDayFlagsFromQuery(soilSurveyQuery, "typed"),
       isShowingPreviousDay: false,
     },
     {
       layerId: "soil-moisture",
       isDrawn: soilMoistureVisible,
       requestedDate: soilMoistureDay.settledDate,
-      ...drawnDayFlagsFromQuery(soilMoistureQuery),
+      ...drawnDayFlagsFromQuery(soilMoistureQuery, "typed"),
     },
     {
       layerId: "soil-temperature",
       isDrawn: soilTemperatureVisible,
       requestedDate: soilTemperatureDay.settledDate,
-      ...drawnDayFlagsFromQuery(soilTemperatureQuery),
+      ...drawnDayFlagsFromQuery(soilTemperatureQuery, "typed"),
     },
     {
       layerId: "soil-vpd",
       isDrawn: soilVpdVisible,
       requestedDate: soilVpdDay.settledDate,
-      ...drawnDayFlagsFromQuery(soilVpdQuery),
+      ...drawnDayFlagsFromQuery(soilVpdQuery, "typed"),
     },
     {
       layerId: "weather",
@@ -1048,8 +1079,7 @@ export default function LayerManager() {
       ...parquetDrawnDayFlags(firePerimetersQuery),
     },
     {
-      // No day, for the same reason soil-survey has none: the read carries no date, so a retained
-      // frame here is a different VIEWPORT and never a different day.
+      // Static request; the typed answer supplies the actual snapshot release day.
       layerId: "watersheds",
       isDrawn: watershedsEnabled,
       requestedDate: null,

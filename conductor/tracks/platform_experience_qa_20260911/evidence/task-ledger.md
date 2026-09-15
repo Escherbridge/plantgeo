@@ -429,3 +429,107 @@ database-dependent skips and remaining live-data/mobile/forecast gates. No
 data, database, ingestion, writer, deployment or push action occurred. This
 closes the bounded local presentation candidate while leaving broader weather
 and forecast gates open.
+
+### 2026-09-14 long-horizon run intake
+
+Base: `0f16e40dae3cce1d3b6d4ac00138254a968d974f`; committed tree:
+`399ff61a9bf20023bcdfbc4ba8b8c3190050fff9`. Checkout:
+`C:/Users/atooz/Programming/plantgeo`, branch `main`, with existing working changes retained.
+No immutable integrated candidate or acceptance verdict exists yet.
+
+| Task | Role and owned paths | Disposition |
+| --- | --- | --- |
+| `/root` | Coordinator/integrator; RUNBOOK, registry, QA metadata/plan/task ledger, read receipts and verification packet | Active; serializes shared documentation and final checks |
+| `/root/qa_inventory` | Census/backend isolation in session 1; original freshness artifact recovery in session 2 | Completed bounded assignments; recovered evidence/provenance delivered, no application approval authority |
+| `/root/workspace_social_audit` | Workspace/draft-store/feed author in session 1; explicit embedded consent in session 2 | Completed bounded assignments; root's integrated frontend sweep passed, browser acceptance open |
+| `/root/gbif_feedback_executor` | LayerManager feedback, related tests and map directory documentation | Completed session 1 fix batch; no ingestion or bbox-policy changes |
+| `/root/independent_verifier` | Separate review of exact source manifests, regressions, documentation and check receipts | [Session 1 approval](independent-review-20260914.md) on candidate 4, [Session 2 approval](independent-review-session2-20260914.md) on candidate 5, [Session 3 approval](independent-review-session3-20260914.md) on candidate 6 and [Session 4 approval](independent-review-session4-20260914.md) on candidate 8 issued for bounded changes; exact check scopes, manually assisted browser cleanup, physical/API limits and local lifecycle prerequisites retained; overall platform QA RED and underlying tracks open |
+
+Pre-existing RUNBOOK/environmental-track, Python availability/data/tests, about page and
+`.agentgraph/` work remain owned by their prior sessions. Initial status/diff are retained under
+`.omc/research/runbook-20260914/`; the [session ledger](runbook-session-20260914.md) records scope,
+dependencies and remaining gates. No production writes, external messages or synthetic
+intervention rows were created. Browser inventory returned no apps or browsers.
+
+The Python correction batch explicitly transfers four additional paths to `/root/qa_inventory`:
+`planes/botanical_occurrences.py`, `planes/AGENTS.md`, `tests/agent/test_botanical_occurrences.py`
+and `tests/test_agent_parquet_reads.py` within the data service. Prior availability/data work remains
+outside that transfer. Candidate 1 records the passing frontend surface; candidate 2 was returned
+by review for a late-manifest transport path; candidate 3 contains the reviewed four-file backend
+correction. The independent verifier rehashed all 1,665 files and confirmed that only those four
+Python paths differ between candidates 1 and 3. Source snapshots remain uncommitted, and no
+immutable release-candidate or browser acceptance claim follows.
+
+Session 2 is recorded in the [second session ledger](runbook-session2-20260914.md). Root owns
+the current production read-only and physical object receipts plus candidate 5/check packet;
+the independent verifier reviews them separately. No full-run closure follows from these
+completed bounded assignments. Remaining execution follows the next-session dependency list.
+
+Session 4 is recorded in the [fourth session ledger](runbook-session4-20260914.md). The workspace
+author owns the nine-file public disclosure correction and reviewed test-only follow-up; the QA
+inventory author owns the three-file forecast-description correction and reconciliation of sixteen
+root-executed read-only agent queries. Root owns the isolated fixture-browser harness, final checks,
+candidate 7/8 reconciliation and shared documentation. The independent verifier separately checks
+source hashes, receipts and browser proof limits. Four supplementary browser fixture passes and one
+explicit routing skip do not alter the 220-case acceptance inventory. No production mutation,
+external message, intervention seed or release acceptance is implied.
+
+Session 5 is active in the [fifth session ledger](runbook-session5-20260914.md). All owners use the
+same checkout/base and candidate 8 application source. Root owns the new disposable database,
+Martin/Redis/app runtime and final execution. `/root/workspace_social_audit` owns only the browser
+harness under `.omc/research/runbook-20260914/session5/`; `/root/qa_inventory` owns the exact local
+viewer fixture there. `/root/independent_verifier` reviews their boundaries and final evidence.
+No production write or synthetic intervention seeding is included in these ownership transfers.
+
+Session 5 expanded the bounded source assignments after actual bootstrap failures:
+the workspace author owns the shared Drizzle migration helper, callers, regression tooling,
+package/Docker inclusion and deployment rationale; the QA inventory author owns the public-schema
+Alembic environment and regression plus the investigated Windows local-storage correction.
+Root retains infrastructure and execution custody. Candidate 10 and retained failed attempts
+distinguish reviewed source from passing gates; subsequent Python changes require a new candidate.
+The isolated browser harness creates synthetic contributions only through the normal consented
+user workflows, never by SQL seed or forged session.
+
+### Sessions 6–8 ownership and current candidate
+
+The assignments above preserve their original dates and candidates. Current source is Candidate 14,
+the 1,747-file manifest SHA-256 `79d15c03290945063dd228cce768e57ab0b2eb4d442ce22f9fa894c66de63685`,
+on the same dirty checkout and original HEAD. It is not an immutable commit or release. Root owns
+runtime execution, source freeze, shared Conductor updates and check packets throughout.
+
+| Owner | Current bounded assignment | Evidence and disposition |
+| --- | --- | --- |
+| `/root/workspace_social_audit` | Candidate 14 drawing lifecycle correction and owner-specific regressions; later read-only relation-retention and skip-prerequisite audits | Correction independently reviewed before the integrated checks and actual desktop/mobile unsent journeys. Session 8 preparation is confined to ignored harness files, with no source, database or production mutation. |
+| `/root/qa_inventory` | Independent inspection of workspace browser 7/8; separate authorship of Session 7 environmental harness | Workspace responses, guard counts and screenshots reviewed independently from their author. Environmental retries preserve failed attempts and require separate review before root execution. |
+| `/root/independent_verifier` | Candidate 14 source review, Session 6 isolated Linux and skip reconciliation, environmental harness review and final evidence approval | [Session 6 review](independent-review-session6-20260914.md) binds the final receipt and 23 artifacts with zero mismatches. Final Session 7 review remains pending its completed evidence packet. |
+
+Only ignored harness corrections occur during the Candidate 14 runtime freeze. Local services
+remain the exact Session 5 PostGIS/Redis/Martin identities. Browser helpers create no new network
+or mutation authority; environmental reads use the bounded public bridge. Session 6's no-network
+Linux check and 150 explicit skips remain separate from Windows results and future targeted checks.
+
+Session 8's two targeted Windows checks have now passed on the frozen source capsule. Root
+executed both; `/root/workspace_social_audit` authored the ignored harness and dependency
+preparation; `/root/independent_verifier` approved the prerequisites and exact runner revisions;
+`/root/qa_inventory` owns the independent final result/packet review. The [Session 8 ledger](runbook-session8-20260914.md)
+retains their narrow scope and original Linux/Windows outcomes. Session 9's social diagnostic
+harness belongs to the workspace author; Session 10's temperature/VPD harness belongs to the
+QA inventory author. The primary verifier reviews both before root execution. No new product
+source batch is open yet; D260914-26 and any diagnosed social defects will be grouped before
+the next integrated checks.
+
+## Session 11 source batch checkpoint
+
+The earlier Candidate 14 freeze has ended after the separately passing Session 9 likes-only run
+and source rehash. Candidate 15 applies both reviewed date/moderation patches: 1,749 files,
+manifest `bb85c770879e058043e4e2673dd8a01c04e4f284795f66748983f885dd722547`.
+The [Session 11 ledger](runbook-session11-20260914.md) records the complete application and its
+integrated failures. `/root/qa_inventory` owns the staged correction of all date-test failures and
+the helper type; `/root/independent_verifier` reviews it before application. Root owns runtime,
+source freeze and integrated checks. No new source edit occurs during the running sweep.
+
+Session 9 and Session 10 canonical packets now have separate independent reviews. Their bounded
+passes do not promote whole cases. `/root/workspace_social_audit` authors the fresh stale-only
+moderation regression and the isolated visual follow-up; `/root/qa_inventory` independently
+approved the corrected Session 12 discovery/isolation harness. Both browser continuations wait
+for the source gates, and use the existing owned local services and bounded public bridge only.

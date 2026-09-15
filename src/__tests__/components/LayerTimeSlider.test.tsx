@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createEvent, fireEvent, screen } from "@testing-library/react";
 import { renderWithProviders } from "@/test/utils";
 import { LayerTimeSlider } from "@/components/map/layer-panel/LayerTimeSlider";
+import { useDrawnLayerDayStore } from "@/stores/useMetricAtDate";
 import {
   buildCoverageSegments,
   buildSyncedDayRuns,
@@ -149,6 +150,7 @@ function leftPercentOf(element: HTMLElement): number {
 
 describe("LayerTimeSlider", () => {
   beforeEach(() => {
+    useDrawnLayerDayStore.setState({ drawnDays: {}, publications: {} });
     useTimeSliderStore.setState({
       layerDates: {},
       forecastVariant: "monte_carlo",
@@ -379,11 +381,7 @@ describe("LayerTimeSlider", () => {
     expect(screen.getByTestId("layer-time-status-detail-interventions").textContent).toContain(
       "snapshot"
     );
-    // The layer is still on the map as of some day, and a mixed-time composite is only readable
-    // while every row admits its own.
-    expect(screen.getByTestId("layer-time-status-date-interventions").textContent).toBe(
-      "2019-02-01"
-    );
+    expect(screen.queryByTestId("layer-time-status-date-interventions")).toBeNull();
   });
 
   /**
@@ -1258,6 +1256,23 @@ describe("LayerTimeSlider", () => {
       expect(indexing?.detail).not.toContain("availability_unpublished");
     });
 
+    it("withholds a drawn date with the named SSURGO publication refusal", () => {
+      withCapabilities({ layers: [], withheld: [{ layerName: "soil-survey", reason: "lane_never_written", parquetLanes: ["soil-survey"] }] });
+      renderWithProviders(<LayerTimeSlider layerId="soil-survey" />);
+      expect(statusOf("soil-survey")?.state).toBe("withheld");
+      expect(screen.getByTestId("layer-time-status-detail-soil-survey").textContent).toContain("never published");
+      expect(screen.queryByTestId("layer-time-status-date-soil-survey")).toBeNull();
+    });
+
+    it("shows the actual served snapshot release without a daily slider", () => {
+      withCapabilities({ layers: [{ ...vegetationCapability(), layerName: "watersheds", temporalKind: "snapshot" }] });
+      useDrawnLayerDayStore.setState({ drawnDays: { watersheds: { drawnDate: "2019-02-03", requestedDate: null, isLoading: false } } });
+      renderWithProviders(<LayerTimeSlider layerId="watersheds" />);
+      expect(statusOf("watersheds")?.state).toBe("no_time_axis");
+      expect(screen.getByTestId("layer-time-status-date-watersheds").textContent).toBe("2019-02-03");
+      expect(screen.queryByTestId("layer-time-slider-range-watersheds")).toBeNull();
+    });
+
     it("treats a snapshot as having no time axis rather than as empty or failed", () => {
       renderWithProviders(<LayerTimeSlider layerId="interventions" />);
 
@@ -1265,11 +1280,7 @@ describe("LayerTimeSlider", () => {
       expect(status?.state).toBe("no_time_axis");
       expect(status?.badge).toBe("No time axis");
       expect(status?.detail).toContain("draws the same on every date");
-      // It still admits the day it is on the map as of, which is what keeps a mixed-time
-      // composite readable.
-      expect(screen.getByTestId("layer-time-status-date-interventions").textContent).toBe(
-        "2019-02-01"
-      );
+      expect(screen.queryByTestId("layer-time-status-date-interventions")).toBeNull();
     });
 
     it("says a failed load is a failed load and not a gap in the record", () => {

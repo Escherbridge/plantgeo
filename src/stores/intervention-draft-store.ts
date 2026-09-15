@@ -37,6 +37,13 @@ const draftDefaults = {
   geometryError: null as string | null,
 };
 
+/** Whether a draft contains work beyond its initial location. */
+export function hasInterventionDraftWork(state: InterventionDraftState): boolean {
+  return Object.entries(draftDefaults).some(
+    ([key, value]) => state[key as keyof typeof draftDefaults] !== value
+  );
+}
+
 export const useInterventionDraftStore = create<InterventionDraftState>()(
   devtools(
     (set) => ({

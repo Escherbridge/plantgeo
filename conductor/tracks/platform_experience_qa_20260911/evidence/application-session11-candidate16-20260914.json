@@ -1,0 +1,33 @@
+{
+  "type": "source-application-receipt",
+  "executor": "/root/qa_inventory",
+  "status": "approved_test_correction_applied_candidate16_frozen_checks_pending",
+  "timestamp": "2026-09-14T23:46:59.996565+00:00",
+  "candidate15_sha256": "bb85c770879e058043e4e2673dd8a01c04e4f284795f66748983f885dd722547",
+  "candidate15_files_verified": 1749,
+  "candidate16_sha256": "9a3f11845181c435275ebd3b928ab1361c6e0fbc8175f5b1c727dffafb7f5efe",
+  "candidate16_file_count": 1749,
+  "unchanged_files": 1746,
+  "new_files": [],
+  "changes": {
+    "src/__tests__/stores/useMetricAtDate.test.tsx": {
+      "base_sha256": "6501c41cf4c0ebf550795c9a9dfbc8d0db20b501863f22f1528ec3f3defc6225",
+      "staged_sha256": "9b76a6a7efb0b04c9e7c0541540c90e109a10a34a65fde269541e53a5fc93634"
+    },
+    "src/__tests__/components/ClimateFieldLayers.test.tsx": {
+      "base_sha256": "fd0093ce27bd9e008a1aada024d0b9a02f2d0ef844f9672f2f946d0a00b55c14",
+      "staged_sha256": "fcebe197e0e1006d0276dbd3496e1c851d9ed3e0d76b6f542ed7dd0ec4c481cd"
+    },
+    "src/__tests__/components/LayerManager.test.tsx": {
+      "base_sha256": "1f41d6d0d8994fb00b0e9d533b7f65251286af995f2d3cf0f906900ca043658c",
+      "staged_sha256": "6ea8671a2e2d0e1497545a217029e376aa94821395a171a9ccab6f6e47c8ac04"
+    }
+  },
+  "runtime_source_changed": false,
+  "exact_staged_bytes": true,
+  "tests_run": false,
+  "patch_sha256": "c593787eef9e87fd3de2e2dd8d017a3e38387c885d6b31a2541b0a7677b95f49",
+  "independent_review_sha256": "929158780d2f4004c5d5a8f5a87ae07ec1b42972d7694dc81d8b83722a43a515",
+  "application_script_sha256": "0e90b4d7fb4b75141b8ed4bd8742deb371eda8a1a7340b2d12f12a07f18ac256",
+  "verification_next": "Full type/lint/boundary and three affected test files; not a new full-suite pass."
+}

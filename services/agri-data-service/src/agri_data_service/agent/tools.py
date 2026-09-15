@@ -1901,20 +1901,15 @@ async def forecast_summary_for_cell(
     radius_meters: float = DEFAULT_RADIUS_METERS,
     metric_names: list[str] | None = None,
 ) -> str:
-    """Return PlantGeo's published metric forecasts for the analysis cell nearest a coordinate.
+    """Return forecast_parquet_lane_not_published until a governed forecast Parquet lane is admitted.
 
-    Resolves the point to the single nearest analysis cell that has reported recently, then
-    returns that cell's published forecast values aggregated to one row per valid day -- metric,
-    unit, issue time, valid day, mean point value, the p10/p90 uncertainty band, and how many
-    forecast steps were folded into the day. Only published, finalized and validated forecasts are
-    visible, and only machine-learning forecasts on series enabled for daily aggregation. Row
-    count is capped at 120.
+    Forecast values and a resolved cell are unavailable; no database or forecast fallback is queried.
 
     Args:
         longitude: WGS84 longitude in decimal degrees, -180 to 180.
         latitude: WGS84 latitude in decimal degrees, -90 to 90.
-        radius_meters: How far to look for an analysis cell, in metres; capped at 50000.
-        metric_names: Optional exact metric names to restrict to. Omit for every metric.
+        radius_meters: Requested search radius, in metres; bounded but not searched while unavailable.
+        metric_names: Optional requested metric names; retained as bounds without reading forecasts.
     """
     return await query_forecast_summary_for_cell(
         longitude=longitude,

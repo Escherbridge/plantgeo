@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 from typing import TYPE_CHECKING
+from unittest.mock import Mock
 
 import pytest
+from botocore.exceptions import EndpointConnectionError, ReadTimeoutError
 
 from agri_data_service.agent.botanical_occurrences import (
     _exact_block,
@@ -20,10 +22,16 @@ from agri_data_service.pipeline.direct.botanical_occurrences.forward import (
     BotanicalForwardConfig,
     run_botanical_occurrences_forward,
 )
-from agri_data_service.pipeline.direct.botanical_occurrences.publish import LocalPublicationTarget
+from agri_data_service.pipeline.direct.botanical_occurrences.publish import (
+    LocalPublicationTarget,
+    ObjectStorePublicationTarget,
+)
+from agri_data_service.pipeline.parquet.objectstore import ObjectStoreBackend
+from agri_data_service.planes import botanical_occurrences as botanical_plane
 from tests.direct.botanical_occurrences.conftest import default_members, write_archive
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
 ENVELOPE = (-123.0, 47.0, -122.0, 48.0)
@@ -103,8 +111,8 @@ async def test_an_unparseable_window_is_refused_rather_than_guessed(release_set_
     assert payload["state"] == "refused"
 
 
-async def test_an_unknown_release_set_is_unavailable_rather_than_empty() -> None:
-    use_generation_root(None)
+async def test_an_unknown_release_set_is_unavailable_rather_than_empty(tmp_path: Path) -> None:
+    use_generation_root(str(tmp_path / "nothing-published-here"))
     payload = json.loads(await botanical_occurrences_in_region("0" * 64, -122.6, 47.4, -122.0, 47.9))
     assert payload["state"] in {"unavailable", "refused"}
     assert payload.get("exact") is None, "a failed read must not present itself as an empty answer"
@@ -121,10 +129,114 @@ async def test_current_release_resolves_the_id_the_other_three_tools_require(rel
 
 
 async def test_current_release_is_unavailable_rather_than_fabricated_with_no_publication(tmp_path: Path) -> None:
-    # An empty root, not None: root=None would fall through to this environment's real object
-    # store settings, which is exactly the ambiguity `test_an_unknown_release_set_is_unavailable...`
-    # avoids for the pinned tools by using a bogus id rather than relying on root=None meaning "empty".
+    # An empty local root keeps this refusal test independent of configured object storage.
     use_generation_root(str(tmp_path / "nothing-published-here"))
     payload = json.loads(await botanical_occurrence_current_release())
     assert payload["state"] == "unavailable"
     assert "release_set_id" not in payload
+
+
+def _failing_target(probe: str, error: Exception) -> ObjectStorePublicationTarget:
+    backend = Mock(spec=ObjectStoreBackend)
+
+    def read(key: str) -> bytes:
+        if probe == "pointer" or key.endswith("manifest.json"):
+            raise error
+        return json.dumps({"release_set_id": "0" * 64}).encode()
+
+    backend.get.side_effect = read
+    backend.size_of.return_value = None if probe == "incomplete_manifest" else 1
+    if probe == "marker":
+        backend.size_of.side_effect = error
+    return ObjectStorePublicationTarget(backend)
+
+
+async def _call_occurrence_tool(tool_name: str) -> str:
+    if tool_name == "current":
+        return await botanical_occurrence_current_release()
+    if tool_name == "spatial":
+        return await botanical_occurrence_spatial_neighbours("0" * 64, -122.32, 47.60)
+    if tool_name == "temporal":
+        return await botanical_occurrence_temporal_neighbours(
+            "0" * 64, -122.6, 47.4, -122.0, 47.9, "1987-06-10", "1987-06-20"
+        )
+    assert tool_name == "region"
+    return await botanical_occurrences_in_region("0" * 64, -122.6, 47.4, -122.0, 47.9)
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "probe", "error_factory"),
+    [
+        ("region", "marker", EndpointConnectionError),
+        ("spatial", "marker", EndpointConnectionError),
+        ("temporal", "marker", EndpointConnectionError),
+        ("region", "incomplete_manifest", ReadTimeoutError),
+        ("region", "manifest", ReadTimeoutError),
+        ("current", "pointer", EndpointConnectionError),
+        ("current", "marker", EndpointConnectionError),
+        ("current", "manifest", ReadTimeoutError),
+    ],
+)
+async def test_storage_transport_failure_is_unavailable_without_private_error_details(
+    tool_name: str, probe: str, error_factory: Callable[..., Exception], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    error = error_factory(endpoint_url="https://example.invalid/private?token=synthetic-secret")
+    target = _failing_target(probe, error)
+    monkeypatch.setattr(botanical_plane, "publication_target", Mock(return_value=target))
+    use_generation_root(str(tmp_path))
+
+    encoded = await _call_occurrence_tool(tool_name)
+    payload = json.loads(encoded)
+
+    assert payload["state"] == "unavailable"
+    assert payload["reason"] == "the botanical occurrence object store could not complete the bounded read"
+    assert "exact" not in payload
+    assert "features" not in payload
+    assert "release_set_id" not in payload
+    assert "example.invalid" not in encoded
+    assert "synthetic-secret" not in encoded
+
+
+@pytest.mark.parametrize("tool_name", ["region", "current"])
+async def test_unexpected_backend_errors_are_not_disguised_as_unavailability(
+    tool_name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = _failing_target("marker", RuntimeError("synthetic programming fault"))
+    monkeypatch.setattr(botanical_plane, "publication_target", Mock(return_value=target))
+    use_generation_root(str(tmp_path))
+
+    with pytest.raises(RuntimeError, match="synthetic programming fault"):
+        await _call_occurrence_tool(tool_name)
+
+
+@pytest.mark.parametrize("zoom", [11, 5], ids=["detail", "aggregate"])
+def test_late_manifest_transport_failure_discards_the_scanned_answer(
+    zoom: int, release_set_id: str, tmp_path: Path
+) -> None:
+    local_target = LocalPublicationTarget(tmp_path / "publication")
+    backend = Mock(spec=ObjectStoreBackend)
+    backend.size_of.side_effect = lambda key: 1 if local_target.exists(key) else None
+    manifest_read_once = False
+
+    def read(key: str) -> bytes | None:
+        nonlocal manifest_read_once
+        if key.endswith("manifest.json"):
+            if manifest_read_once:
+                raise ReadTimeoutError(endpoint_url="https://example.invalid/private?token=synthetic-secret")
+            manifest_read_once = True
+        return local_target.read_bytes(key)
+
+    backend.get.side_effect = read
+    result = botanical_plane.read_botanical_occurrences(
+        botanical_plane.BotanicalOccurrenceRequest(
+            release_set_id=release_set_id, bbox=(-122.6, 47.4, -122.0, 47.9), zoom=zoom
+        ),
+        root=local_target.root,
+        target=ObjectStorePublicationTarget(backend),
+    )
+
+    assert result["state"] == "unavailable"
+    assert result["reason"] == "the botanical occurrence object store could not complete the bounded read"
+    assert "features" not in result
+    assert "cells" not in result
+    assert "synthetic-secret" not in json.dumps(result)

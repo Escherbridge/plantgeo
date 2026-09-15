@@ -115,7 +115,7 @@ function ClimateSignalLayer({
       layerId: toggleId,
       isDrawn: visible,
       requestedDate: day.settledDate,
-      ...drawnDayFlagsFromQuery(query),
+      ...drawnDayFlagsFromQuery(query, "typed"),
     },
   ]);
 

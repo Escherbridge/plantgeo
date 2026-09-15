@@ -7,6 +7,14 @@ resource: ./spec.md
 
 # Implementation Plan: Unified intervention layer with click-to-inspect detail panel
 
+## September 14 social QA correction
+
+The [long-horizon QA session](../platform_experience_qa_20260911/evidence/runbook-session-20260914.md)
+removes the feed's unsupported constant soil-moisture benefit claim and adds regression coverage.
+The unified layer, detail modal, likes and comments already exist. Their role, browser, geometry
+and publication acceptance remains open; automated synthetic mechanics cannot close the separate
+real-human contributor gate. The source candidate remains uncommitted.
+
 ## Overview
 
 Five phases. Phase 1 is a decision checkpoint — OQ-1 through OQ-5 must be answered (or the spec's

@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
   invalidate: vi.fn(),
   publishMutate: vi.fn(),
   rejectMutate: vi.fn(),
+  reviewError: null as { data: { code: string } } | null,
 }));
 
 vi.mock("@/lib/trpc/client", () => ({
@@ -33,16 +34,21 @@ vi.mock("@/lib/trpc/client", () => ({
     contributions: {
       listPendingReview: { useQuery: mocks.listPendingReviewQuery },
       publishContribution: {
-        useMutation: () => ({
-          mutate: mocks.publishMutate,
+        useMutation: (opts?: { onSuccess?: () => void; onError?: (error: { data: { code: string } }) => void }) => ({
+          mutate: (input: { featureId: string }) => {
+            mocks.publishMutate(input);
+            if (mocks.reviewError) opts?.onError?.(mocks.reviewError);
+            else opts?.onSuccess?.();
+          },
           isPending: false,
         }),
       },
       rejectContribution: {
-        useMutation: (opts?: { onSuccess?: (data: unknown, variables: unknown) => void }) => ({
+        useMutation: (opts?: { onSuccess?: (data: unknown, variables: unknown) => void; onError?: (error: { data: { code: string } }) => void }) => ({
           mutate: (input: { featureId: string; reviewNote: string }) => {
             mocks.rejectMutate(input);
-            opts?.onSuccess?.(undefined, input);
+            if (mocks.reviewError) opts?.onError?.(mocks.reviewError);
+            else opts?.onSuccess?.(undefined, input);
           },
           isPending: false,
         }),
@@ -70,6 +76,7 @@ const PENDING_FEATURE = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.reviewError = null;
   mocks.listPendingReviewQuery.mockReturnValue({
     data: [PENDING_FEATURE],
     isLoading: false,
@@ -150,5 +157,57 @@ describe("ContributionQueue reject-note requirement", () => {
 
     fireEvent.click(approveButton);
     expect(mocks.publishMutate).toHaveBeenCalledWith({ featureId: "feature-1" });
+  });
+});
+
+
+describe("ContributionQueue refused decisions", () => {
+  it.each(["Approve", "Reject"])("shows a stale %s refusal and refreshes without clearing the rejection draft", (action) => {
+    mocks.reviewError = { data: { code: "CONFLICT" } };
+    const view = renderWithProviders(<ContributionQueue />);
+    const note = screen.getByPlaceholderText("Rejection note (required to reject)") as HTMLInputElement;
+    fireEvent.change(note, { target: { value: "Recorded review reason" } });
+    fireEvent.click(screen.getByRole("button", { name: action }));
+    expect(screen.getByRole("alert").textContent).toContain("Your decision was not applied");
+    expect(mocks.invalidate).toHaveBeenCalledTimes(1);
+    expect(note.value).toBe("Recorded review reason");
+
+    mocks.listPendingReviewQuery.mockReturnValue({ data: [], isLoading: false, error: undefined });
+    view.rerender(<ContributionQueue />);
+    expect(screen.getByText("No pending contributions.")).toBeTruthy();
+    expect(screen.getByRole("alert").textContent).toContain("no longer awaiting review");
+  });
+
+  it("keeps an unexpected review failure visible instead of presenting success", () => {
+    mocks.reviewError = { data: { code: "INTERNAL_SERVER_ERROR" } };
+    renderWithProviders(<ContributionQueue />);
+    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    expect(screen.getByRole("alert").textContent).toContain("Could not confirm this review decision");
+    expect(mocks.invalidate).toHaveBeenCalledTimes(1);
+  });
+});
+
+
+describe("ContributionQueue refresh failures", () => {
+  it("retains the mutation explanation through a failed refresh and preserves the draft on recovery", () => {
+    mocks.reviewError = { data: { code: "INTERNAL_SERVER_ERROR" } };
+    const view = renderWithProviders(<ContributionQueue />);
+    fireEvent.change(screen.getByPlaceholderText("Rejection note (required to reject)"), { target: { value: "Keep this review reason" } });
+    fireEvent.click(screen.getByRole("button", { name: "Reject" }));
+    mocks.listPendingReviewQuery.mockReturnValue({ data: undefined, isLoading: false, error: { data: { code: "INTERNAL_SERVER_ERROR" } } });
+    view.rerender(<ContributionQueue />);
+    expect(screen.getByRole("alert").textContent).toContain("Could not confirm this review decision");
+    expect(screen.getByText("Could not load the review queue. Refresh the page to try again.")).toBeTruthy();
+    expect(screen.queryByText("You do not have access to this queue.")).toBeNull();
+    mocks.listPendingReviewQuery.mockReturnValue({ data: [PENDING_FEATURE], isLoading: false, error: undefined });
+    view.rerender(<ContributionQueue />);
+    expect((screen.getByPlaceholderText("Rejection note (required to reject)") as HTMLInputElement).value).toBe("Keep this review reason");
+  });
+
+  it.each(["FORBIDDEN", "UNAUTHORIZED"])("describes an actual %s queue denial as an access failure", (code) => {
+    mocks.listPendingReviewQuery.mockReturnValue({ data: undefined, isLoading: false, error: { data: { code } } });
+    renderWithProviders(<ContributionQueue />);
+    expect(screen.getByText("You do not have access to this queue.")).toBeTruthy();
+    expect(screen.queryByText("Could not load the review queue. Refresh the page to try again.")).toBeNull();
   });
 });

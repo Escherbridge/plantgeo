@@ -4,16 +4,11 @@ import { router, contributorProcedure, expertProcedure } from "@/lib/server/trpc
 import { features, layers } from "@/lib/server/db/schema";
 import { and, eq } from "drizzle-orm";
 
-/**
- * The error a review mutation raises when its UPDATE matched no row.
- *
- * Deliberately not raised by the pre-flight SELECT, which keeps returning `undefined` as this
- * router always has for a feature that is simply gone. Passing the pre-flight and still matching
- * nothing is a delete racing the mutation, and a review decision that applied to no row must not
- * resolve as success.
- */
+/** Canonical pending-only review errors; see src/lib/server/AGENTS.md. */
 const contributionNotFound = () =>
   new TRPCError({ code: "NOT_FOUND", message: "Contribution not found" });
+const contributionNotPending = () =>
+  new TRPCError({ code: "CONFLICT", message: "Contribution is no longer awaiting review" });
 
 export const contributionsRouter = router({
   submitObservation: contributorProcedure
@@ -56,16 +51,20 @@ export const contributionsRouter = router({
         .from(features)
         .where(eq(features.id, input.featureId))
         .limit(1);
-      if (!feature) return undefined;
+      if (!feature) throw contributionNotFound();
 
       const [updated] = await ctx.db
         .update(features)
         .set({ status: "published", reviewNote: null, updatedAt: new Date() })
         .where(
-          and(eq(features.id, input.featureId), eq(features.layerId, feature.layerId))
+          and(
+            eq(features.id, input.featureId),
+            eq(features.layerId, feature.layerId),
+            eq(features.status, "pending_review")
+          )
         )
         .returning();
-      if (!updated) throw contributionNotFound();
+      if (!updated) throw contributionNotPending();
       return updated;
     }),
 
@@ -82,7 +81,7 @@ export const contributionsRouter = router({
         .from(features)
         .where(eq(features.id, input.featureId))
         .limit(1);
-      if (!feature) return undefined;
+      if (!feature) throw contributionNotFound();
 
       const [updated] = await ctx.db
         .update(features)
@@ -92,10 +91,14 @@ export const contributionsRouter = router({
           updatedAt: new Date(),
         })
         .where(
-          and(eq(features.id, input.featureId), eq(features.layerId, feature.layerId))
+          and(
+            eq(features.id, input.featureId),
+            eq(features.layerId, feature.layerId),
+            eq(features.status, "pending_review")
+          )
         )
         .returning();
-      if (!updated) throw contributionNotFound();
+      if (!updated) throw contributionNotPending();
       return updated;
     }),
 

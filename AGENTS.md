@@ -100,6 +100,13 @@ the proof-before-delete contract in
 `conductor/tracks/repository_conformity_hardening_20260901/spec.md` and delete it with its
 tests.
 
+## Development indicator
+
+`next.config.ts` disables the Next development indicator because its default
+bottom-left button overlaps the map manager. Compile and runtime error overlays
+remain enabled; this setting does not affect production UI. See the official
+[devIndicators documentation](https://nextjs.org/docs/app/api-reference/config/next-config-js/devIndicators).
+
 ## Data layers
 
 Every data layer must satisfy the contract in [`docs/layer-lane-standard.md`](docs/layer-lane-standard.md):

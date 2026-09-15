@@ -1,0 +1,112 @@
+{
+  "type": "integrated_check_receipt",
+  "candidate": "source-candidate-20260914-8.json",
+  "source_manifest_sha256": "96c4c1c374ab5297de0507649713ee701796adaf1a9b2fd724028b2f70f81c73",
+  "preceding_candidate": "source-candidate-20260914-7.json",
+  "checks": [
+    {
+      "name": "tests",
+      "command": "npm.cmd run test:changed -- --base 0f16e40d",
+      "exit_code": 1,
+      "log_path": ".omc/research/runbook-20260914/session4-tests.log",
+      "log_sha256": "b3def67c673c3fdf226314e95ff8e1962b588e0caae29ef034bdeb746b5478b7"
+    },
+    {
+      "name": "typecheck",
+      "command": "npm.cmd run type-check",
+      "exit_code": 0,
+      "log_path": ".omc/research/runbook-20260914/session4-typecheck.log",
+      "log_sha256": "5a73c140c0ad128d7dfaf1a28f01b54adf8c3d29c10d317d96d4e791294fc7ec"
+    },
+    {
+      "name": "boundary",
+      "command": "npm.cmd run check:data-boundary",
+      "exit_code": 0,
+      "log_path": ".omc/research/runbook-20260914/session4-boundary.log",
+      "log_sha256": "9eafe413dfe6c6bd02229c9b983c8136949d7ba2d4c4cfd272e9b4bcd9f81f0d"
+    },
+    {
+      "name": "lint",
+      "command": "npm.cmd run lint",
+      "exit_code": 0,
+      "log_path": ".omc/research/runbook-20260914/session4-lint.log",
+      "log_sha256": "714a1cb0ee633178f2f7259a2b366d463f0d3934c45239f48656862f1403121d"
+    },
+    {
+      "name": "python",
+      "command": ".venv/Scripts/python.exe scripts/check.py --changed --base 0f16e40d",
+      "exit_code": 0,
+      "log_path": ".omc/research/runbook-20260914/session4-python.log",
+      "log_sha256": "c776b932675ede3a5db07621bf628043b658dbb3cbed66a2eb00d4fd85b77187"
+    },
+    {
+      "name": "test-correction",
+      "command": "npx.cmd vitest run src/__tests__/components/CommunityDetails.test.tsx",
+      "exit_code": 1,
+      "log_path": ".omc/research/runbook-20260914/session4-test-correction.log",
+      "log_sha256": "c1e566e1b9eabd619392e409cf6b4d0d687a3e1962208ea2c4045d3592889e8b"
+    },
+    {
+      "name": "test-correction-runner",
+      "command": "npx.cmd vitest run --configLoader runner --maxWorkers=2 src/__tests__/components/CommunityDetails.test.tsx",
+      "exit_code": 0,
+      "log_path": ".omc/research/runbook-20260914/session4-test-correction-runner.log",
+      "log_sha256": "46188eaa89f6e272e4ae91645b72b9995c9395f019afe4cbf10aa190501f6929"
+    },
+    {
+      "name": "browser",
+      "command": "node .omc/research/runbook-20260914/run-session4-browser.mjs",
+      "exit_code": 0,
+      "log_path": ".omc/research/runbook-20260914/session4-browser.log",
+      "log_sha256": "44c5624fe5c4c9993cc67a4c403d786b669a56c09496944e0362e82ea6a3a414"
+    },
+    {
+      "name": "agent-read",
+      "command": "python .omc/research/runbook-20260914/read-session4-agent.py --execute",
+      "exit_code": 0,
+      "log_path": ".omc/research/runbook-20260914/session4-agent-read.log",
+      "log_sha256": "5b136b55f4cb97344b8382b6a3efd2c6c26e0fccac61e63faf076b0bc016c2ba"
+    },
+    {
+      "name": "doc-links",
+      "command": "python .omc/research/runbook-20260914/check-document-links.py",
+      "exit_code": 1,
+      "log_path": ".omc/research/runbook-20260914/session4-doc-links.log",
+      "log_sha256": "d27affc388b85caa408984a20db056905b4ddc5a4551b00bb7507c04c87fc8bb"
+    }
+  ],
+  "artifacts": [
+    {
+      "path": ".omc/research/runbook-20260914/session4-browser-report.json",
+      "sha256": "2e75751959c55d3882e5f0d05a6d40600326f7afdafecc1635b551226a8c1c54"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session4-browser-environment.json",
+      "sha256": "2f0728b28ac1bcb086f56ee260659bffd5bc30d708faa9ee4b3f485e11459dea"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session4-browser-stop.json",
+      "sha256": "7739311ef1c2445d8eef136df15cb117b697ca5bcc9752ffe99f611034d7fc89"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session4-browser.config.ts",
+      "sha256": "ebf4d7d0901fc02c7a2c70248ed8062816ab011234107a2f7e0e99508af1e08a"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/run-session4-browser.mjs",
+      "sha256": "fa58a820ca43b1077014d40a344ad235620fea73dc898d6bbd08ad94cd4a900c"
+    }
+  ],
+  "scope": {
+    "frontend_tests": "Candidate7 full selector: 191 files passed/1 failed, 2511 tests passed/1 failed. Candidate8 changes only the stale CommunityDetails assertion; affected file then passed all11tests. No clean full-suite run on candidate8 is claimed.",
+    "type_boundary_lint": "Candidate7 passed type and boundary; lint completed zero errors/9887 warnings. Candidate8 changes only a reviewed assertion/whitespace normalization in an existing test.",
+    "python": "Candidate7 full selected pytest plus format/lint/mypy passed; database environment variables removed. Scoped invocation is not eligible for a full Python QUALITY_RECEIPT. Python unchanged in candidate8.",
+    "browser": "Candidate7 runtime: four existing Chromium fixture tests passed; routing test explicitly skipped. Candidate8 runtime unchanged. Next teardown required manual stop of the verified test subtree; shell exit0 does not establish clean unattended shutdown.",
+    "agent": "16 direct read-only deployed typed-tool calls; no model invocation. Complete HTTP bodies, two typed refusals, ten explicitly truncated lane feature lists. Separate deployed base from local source candidates."
+  },
+  "environment_attempts": [
+    "Initial focused assertion confirmation omitted repository --configLoader runner and failed before tests on esbuild parent-directory access. Corrected invocation passed; both logs retained.",
+    "Browser tests completed19:59:30UTC but Next teardown was pending. Initial process-only diagnosis that no worker launched was wrong; final report records completed tests. Manual subtree stop at20:05:40.918589Z allowed report flush. Initial stop reason says approximately10minutes; actual elapsed from runner start is441.6seconds. No second browser run occurred."
+  ],
+  "document_limit": "Historical missing coverage.json, coverage.csv and fanout-launch references remain explicitly unresolved; nonzero link gate is retained."
+}

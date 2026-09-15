@@ -23,6 +23,11 @@ class LocalAvailabilityStorage:
     """Implement AvailabilityStorage over an isolated local publication directory."""
 
     def __init__(self, root: Path) -> None:
+        if os.name == "nt":
+            absolute = str(root.absolute())
+            if not absolute.startswith("\\\\?\\"):
+                absolute = "\\\\?\\UNC\\" + absolute[2:] if absolute.startswith("\\\\") else "\\\\?\\" + absolute
+            root = Path(absolute)
         self.root = root.resolve()
 
     def _path(self, key: str) -> Path:

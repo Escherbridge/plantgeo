@@ -84,15 +84,15 @@ const parityIndex = [
     note: "In the platform",
   },
   {
+    term: "Street-level imagery",
+    description:
+      "Mapillary, proxied first-party with rate-limited bbox, sequence and image endpoints. KartaView is not integrated.",
+    note: "In the platform",
+  },
+  {
     term: "Static map images",
     description:
       "No open drop-in we are happy with yet. Server-side rendering is still unspecified.",
-    note: "Open",
-  },
-  {
-    term: "Street-level imagery",
-    description:
-      "Mapillary and KartaView are the obvious candidates. Neither is integrated.",
     note: "Open",
   },
 ];
@@ -160,21 +160,22 @@ const stackIndex = [
   },
 ];
 
-// `note` carries the refresh rate. Every cadence here is quoted from the job that
-// actually sets it — the nine cronSchedule values under `infra/cron-<source>` — or
-// from the upstream's own release cycle where no job polls it.
+// `note` carries the refresh rate. Every cadence here is quoted from the lane
+// schedule that actually sets it — LANE_SPECS in the agri-data-service's
+// job-executor, the one long-lived service that owns every source's polling
+// interval — or from the upstream's own release cycle where no lane polls it.
 const attributionIndex = [
   {
     term: "Oregon OEM",
     description:
       "Fire evacuation areas, statewide. Oregon only: no government-run aggregator exists for Washington, Idaho or western Montana, and the one vendor feed that reaches them carries no timestamp we could honestly publish.",
-    note: "Every 15 min",
+    note: "Hourly",
   },
   {
     term: "USGS NWIS",
     description:
       "Instantaneous streamflow discharge from active stream gauges.",
-    note: "Every 30 min",
+    note: "Hourly",
   },
   {
     term: "Open-Meteo",
@@ -197,7 +198,7 @@ const attributionIndex = [
     term: "NASA FIRMS",
     description:
       "Active fire detections from VIIRS and MODIS thermal anomalies.",
-    note: "Every 3 hours",
+    note: "Hourly",
   },
   {
     term: "Sentinel-2 L2A",
@@ -209,7 +210,7 @@ const attributionIndex = [
     term: "U.S. Drought Monitor",
     description:
       "Drought classification polygons from the National Drought Mitigation Center, USDA and NOAA.",
-    note: "Weekly, Thursday",
+    note: "Hourly poll, weekly (Thu) release",
   },
   {
     term: "ERA5-Land",
@@ -227,7 +228,7 @@ const attributionIndex = [
     term: "MTBS",
     description:
       "Monitoring Trends in Burn Severity perimeters and severity classes, USGS and USDA Forest Service.",
-    note: "Annual release",
+    note: "Weekly capture, daily check",
   },
   {
     term: "USDA NRCS SSURGO",
@@ -251,6 +252,12 @@ const attributionIndex = [
     description:
       "Every line and label on the basemap, compiled into a Protomaps PMTiles archive. ODbL.",
     note: "Rebuilt on demand",
+  },
+  {
+    term: "Consortium of Pacific Northwest Herbaria",
+    description:
+      "Vascular plant occurrence records feeding the botanical layers. One release is live and being served; it is not yet formally admitted — reconciliation against the herbarium's own field map, and a stability check against the prior release, are still open.",
+    note: "Serving, admission pending",
   },
   {
     term: "NASA GIBS",
@@ -424,6 +431,14 @@ export default function AboutPage() {
               stewards, ecologists, agricultural partners — anyone whose
               questions outlive their tolerance for per-request pricing.
             </p>
+            <p>
+              It is also a place to act, not just look. An interventions
+              layer lets anyone propose and track on-the-ground work — a
+              planting, a fuel break, a restoration project — with a
+              demand-heatmap overlay showing where that work is needed most,
+              and an AI workspace that helps draft a proposal against the
+              map&rsquo;s own data instead of a blank form.
+            </p>
           </EditorialProse>
 
           <EditorialPullQuote className="mt-roomy">
@@ -525,20 +540,21 @@ export default function AboutPage() {
             </p>
             <p>
               The cadences in the right column are the real ones, read off the
-              jobs that set them rather than off an intention. Nine scheduled
-              jobs do the polling; a tenth runs hourly to repair geometry that
-              arrived malformed. Where a row says <em>Backfilled</em>, the
-              history was walked once and is not re-polled — the series is a
-              closed window, not a live feed. Where it says{" "}
-              <em>On request</em>, nothing is stored in advance: the upstream is
-              queried for the point you clicked.
+              lane schedule that sets them rather than off an intention. One
+              long-lived job-executor service owns every lane in the registry,
+              each on its own cron string. Where a row says{" "}
+              <em>Backfilled</em>, the history was walked once and is not
+              re-polled — the series is a closed window, not a live feed.
+              Where it says <em>On request</em>, nothing is stored in advance:
+              the upstream is queried for the point you clicked.
             </p>
             <p>
-              A cadence is an upper bound on staleness, not a promise of change.
-              Fire perimeters are re-read hourly whether or not a fire moved,
-              and the drought job runs Thursdays because that is when the U.S.
-              Drought Monitor publishes — polling it more often would only
-              produce the same week again.
+              A cadence is an upper bound on staleness, not a promise of
+              change. Fire perimeters are re-read hourly whether or not a fire
+              moved, and the drought lane polls hourly but only ever surfaces
+              a new week once the U.S. Drought Monitor itself publishes, on
+              Thursdays — polling it more often would only produce the same
+              week again.
             </p>
           </EditorialProse>
           <EditorialDefinitionList items={attributionIndex} />

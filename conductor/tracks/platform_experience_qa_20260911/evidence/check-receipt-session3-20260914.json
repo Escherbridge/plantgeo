@@ -1,0 +1,78 @@
+{
+  "type": "integrated_check_receipt",
+  "candidate": "source-candidate-20260914-6.json",
+  "source_manifest_sha256": "042fd11caab175b2ab321688f96500543d7e9483f2ccccdd454d2dc5ddfd26e6",
+  "checks": [
+    {
+      "name": "tests",
+      "command": "npm.cmd run test:changed -- --base 0f16e40d",
+      "exit_code": 0,
+      "log_path": ".omc/research/runbook-20260914/session3-tests.log",
+      "log_sha256": "c90f343468d47867f2b6bdcb8fc3a49d4fcda0be8e77ed1b9e1c4afb3653dc44"
+    },
+    {
+      "name": "typecheck",
+      "command": "npm.cmd run type-check",
+      "exit_code": 0,
+      "log_path": ".omc/research/runbook-20260914/session3-typecheck.log",
+      "log_sha256": "5a73c140c0ad128d7dfaf1a28f01b54adf8c3d29c10d317d96d4e791294fc7ec"
+    },
+    {
+      "name": "boundary",
+      "command": "npm.cmd run check:data-boundary",
+      "exit_code": 0,
+      "log_path": ".omc/research/runbook-20260914/session3-boundary.log",
+      "log_sha256": "9eafe413dfe6c6bd02229c9b983c8136949d7ba2d4c4cfd272e9b4bcd9f81f0d"
+    },
+    {
+      "name": "lint",
+      "command": "npm.cmd run lint",
+      "exit_code": 0,
+      "log_path": ".omc/research/runbook-20260914/session3-lint.log",
+      "log_sha256": "714a1cb0ee633178f2f7259a2b366d463f0d3934c45239f48656862f1403121d"
+    },
+    {
+      "name": "object-read",
+      "command": ".venv/Scripts/python.exe ../../.omc/research/runbook-20260914/read-environmental-session3.py",
+      "exit_code": 0,
+      "log_path": ".omc/research/runbook-20260914/session3-object-read.log",
+      "log_sha256": "4bab78839704f403f91b5ff6d68d2367cbaf6f1f02a8d277db4e4ab84f4d1f7c"
+    },
+    {
+      "name": "static-read",
+      "command": ".venv/Scripts/python.exe ../../.omc/research/runbook-20260914/read-environmental-session3-static.py",
+      "exit_code": 0,
+      "log_path": ".omc/research/runbook-20260914/session3-static-read.log",
+      "log_sha256": "a4f1cf8169495ffbb598d25db6eeef81f7d02a27d9e744357bebd43417439743"
+    },
+    {
+      "name": "evidence-read",
+      "command": ".venv/Scripts/python.exe ../../.omc/research/runbook-20260914/read-session3-publication-evidence.py",
+      "exit_code": 0,
+      "log_path": ".omc/research/runbook-20260914/session3-evidence-read.log",
+      "log_sha256": "59b64a1937684d5a2957c4b1a1d0df0de5f2a98d8fabb417099690e7c5fdb4d2"
+    },
+    {
+      "name": "api-read",
+      "command": "python .omc/research/runbook-20260914/read-session3-api.py",
+      "exit_code": 0,
+      "log_path": ".omc/research/runbook-20260914/session3-api-read.log",
+      "log_sha256": "3059bbfbc28cdfa3cf078f12fdd57db7f23d831f38a27643791ae9f43965690c"
+    },
+    {
+      "name": "doc-links",
+      "command": "python .omc/research/runbook-20260914/check-document-links.py",
+      "exit_code": 1,
+      "log_path": ".omc/research/runbook-20260914/session3-doc-links.log",
+      "log_sha256": "49a35bbea2f3e2f6ad22d3e1c7f802027b5753157cac3d1c53c297ffff78476b"
+    }
+  ],
+  "scope": {
+    "frontend_tests": "selector chose full suite: 191 files / 2509 tests passed",
+    "lint": "0 errors / 9887 warnings",
+    "python": "unchanged from candidate5; no repeat sweep or quality receipt",
+    "browser": "not run; unavailable runtime"
+  },
+  "environment_attempt": "No failed application-check invocation in this batch. Separate open-ended Railway agent investigation rejected before execution; direct read-only tools and retained logs used.",
+  "document_limit": "Three unrecovered historical references remain; link scan is nonzero and is not reported as a clean gate."
+}

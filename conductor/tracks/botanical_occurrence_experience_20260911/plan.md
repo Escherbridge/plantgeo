@@ -1,12 +1,18 @@
 ---
 type: track-plan
 track: botanical_occurrence_experience_20260911
-status: planned
+status: active
 ---
 
 # Plan
 
-No UI, service or data implementation is part of this planning pass.
+## September 14 implementation and QA intake
+
+The occurrence components are now mounted; the [long-horizon QA session](../platform_experience_qa_20260911/evidence/runbook-session-20260914.md)
+adds GBIF zoom-floor, honest empty-result and transport-failure feedback. Source admission,
+viewport support policy, source-specific provenance and full browser/agent acceptance remain open.
+The earlier planning checklist below is historical planning context, not evidence that the mounted
+components are absent or accepted.
 
 ## X0 — approve semantics
 

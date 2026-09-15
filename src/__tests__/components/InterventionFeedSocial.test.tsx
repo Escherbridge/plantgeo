@@ -80,6 +80,12 @@ afterEach(() => {
 });
 
 describe("InterventionFeed social row (FR-4)", () => {
+  it("does not claim telemetry for a proposal with no measured outcomes", () => {
+    render(<InterventionFeed />);
+    expect(screen.getByText(PROPOSAL.name)).toBeTruthy();
+    expect(screen.getByText(PROPOSAL.description)).toBeTruthy();
+    expect(screen.queryByText(/telemetry|14%|soil moisture retention/i)).toBeNull();
+  });
   it("shows the shared like control on every row, keyed by the proposal id", () => {
     render(<InterventionFeed />);
 

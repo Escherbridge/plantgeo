@@ -37,6 +37,11 @@ async def test_catalogue_covers_every_map_surface_and_omits_authoring() -> None:
     names = {tool["function"]["name"] for tool in body["tools"]}
     assert names == {tool.name for tool in tools.WAREHOUSE_TOOLS} - {"species_information"}
     assert "surface_value_near_point" in names
+    forecast = next(
+        tool["function"] for tool in body["tools"] if tool["function"]["name"] == "forecast_summary_for_cell"
+    )
+    assert "forecast_parquet_lane_not_published" in forecast["description"]
+    assert "unavailable" in forecast["description"]
 
 
 async def test_bridge_preserves_typed_missing_lane_refusal(monkeypatch: pytest.MonkeyPatch) -> None:

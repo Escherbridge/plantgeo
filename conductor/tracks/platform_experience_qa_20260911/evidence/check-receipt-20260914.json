@@ -1,0 +1,97 @@
+{
+  "captured_at": "2026-09-14T18:54:29.287227+00:00",
+  "base": "0f16e40dae3cce1d3b6d4ac00138254a968d974f",
+  "source_candidate": "source-candidate-20260914-4.json",
+  "checks": [
+    {
+      "command": "npm run check:data-boundary",
+      "log": ".omc/research/runbook-20260914/boundary.log",
+      "log_sha256": "9eafe413dfe6c6bd02229c9b983c8136949d7ba2d4c4cfd272e9b4bcd9f81f0d",
+      "exit_code": 0
+    },
+    {
+      "command": "npm run type-check (initial failure; superseded by typecheck-final)",
+      "log": ".omc/research/runbook-20260914/typecheck.log",
+      "log_sha256": "d0bd4fa85c5d7d3efa7e8f22959d2b26ab7643983fbffedef6f2a5bc2104c05f",
+      "exit_code": 2
+    },
+    {
+      "command": "npm run type-check",
+      "log": ".omc/research/runbook-20260914/typecheck-final.log",
+      "log_sha256": "5a73c140c0ad128d7dfaf1a28f01b54adf8c3d29c10d317d96d4e791294fc7ec",
+      "exit_code": 0
+    },
+    {
+      "command": "npm run lint",
+      "log": ".omc/research/runbook-20260914/lint.log",
+      "log_sha256": "714a1cb0ee633178f2f7259a2b366d463f0d3934c45239f48656862f1403121d",
+      "exit_code": 0
+    },
+    {
+      "command": "npm test",
+      "log": ".omc/research/runbook-20260914/frontend-tests.log",
+      "log_sha256": "fcae10a9921ef2dfd4c7b334bfb3aece6a4be06f91e7f9269ddfd39ccc5aedf9",
+      "exit_code": 0
+    },
+    {
+      "command": "npm exec -- vitest run src/__tests__/components/LayerManager.test.tsx --configLoader runner --maxWorkers=2",
+      "log": ".omc/research/runbook-20260914/gbif-final-tests.log",
+      "log_sha256": "e9d24aba660a3d6e51c4c80edcda3dc3471db8295ab2347af9441203067bc700",
+      "exit_code": 0
+    },
+    {
+      "command": "python scripts/check.py --changed --base 0f16e40d; initial cache denial",
+      "log": ".omc/research/runbook-20260914/python-check.log",
+      "log_sha256": "17386b710466a0a439e308584198ac8fb71a5d30148fdd1c18800ed53ddfdeeb",
+      "exit_code": 1
+    },
+    {
+      "command": "same Python selector; workspace UV cache, default temp denied",
+      "log": ".omc/research/runbook-20260914/python-check-workspace-cache.log",
+      "log_sha256": "dd9073e5ca0c54ae71f88149bc0ab628e4fd4b68f0065d36f48e5636401f997f",
+      "exit_code": 1
+    },
+    {
+      "command": "same Python selector; malformed Windows basetemp (superseded)",
+      "log": ".omc/research/runbook-20260914/python-check-final.log",
+      "log_sha256": "5b36be06e016d825bcc011d7cff1e476b220bc7ee7f3ea14f6847070ebaf159e",
+      "exit_code": 1
+    },
+    {
+      "command": "same Python selector; portable workspace cache/temp; two test failures before fixes",
+      "log": ".omc/research/runbook-20260914/python-check-portable.log",
+      "log_sha256": "3d61a11eb49d4f6ca0aad8640a0ba8ee3ac658781cb476e1a8f8f68fd932e09a",
+      "exit_code": 1
+    },
+    {
+      "command": "uv run --no-sync mypy src scripts; comment-only unused suppression removal after reviewed sweep",
+      "log": ".omc/research/runbook-20260914/python-mypy-final.log",
+      "log_sha256": "549adf7a2dfc008b208887aa52bbe63eea622ed3a80d92a3cd5e3b195291a501",
+      "exit_code": 0
+    },
+    {
+      "command": "python scripts/check.py --changed --base 0f16e40d; reviewed candidate 3; portable workspace cache/temp",
+      "log": ".omc/research/runbook-20260914/python-check-reviewed.log",
+      "log_sha256": "6671228f7c54fb2cce657bb702c503f16a8bbb34218a572288fc6ccf2db1aed4",
+      "exit_code": 1
+    }
+  ],
+  "scope": "Frontend full suite plus final affected GBIF suite; Python changed-selector conservatively chose full pytest, without full quality-receipt eligibility. DB integration variables removed. No browser, build/deployment, migration/bootstrap or production certification.",
+  "python_environment": {
+    "UV_CACHE_DIR": ".omc/research/runbook-20260914/uv-cache",
+    "TEMP": ".omc/research/runbook-20260914/temp",
+    "TMP": "same as TEMP",
+    "PYTEST_ADDOPTS": "--basetemp=<workspace>/.omc/research/runbook-20260914/pytest-reviewed",
+    "removed_variables": [
+      "AGRI_TEST_DATABASE_URL",
+      "AGRI_CROSS_MAJOR_DATABASE_URL",
+      "PLANTGEO_TEST_DATABASE_URL",
+      "POSTGIS_TEST_DSN"
+    ]
+  },
+  "documentation": {
+    "checked_local_links": 141,
+    "missing_preexisting_environmental_handoff_links": 2
+  },
+  "lint_warnings": 9887
+}

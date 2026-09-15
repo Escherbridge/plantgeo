@@ -1,0 +1,149 @@
+{
+  "type": "source-application-receipt",
+  "author_executor": "/root/qa_inventory",
+  "status": "applied_exact_approved_bytes_candidate15_frozen_checks_pending",
+  "timestamp": "2026-09-14T23:34:03.570638+00:00",
+  "candidate14_sha256": "79d15c03290945063dd228cce768e57ab0b2eb4d442ce22f9fa894c66de63685",
+  "candidate14_files_verified": 1747,
+  "approved_packet_hashes": {
+    "d26.patch": "319a08405ee63ef8bb98188ffb18369da9ad5c6d63c451d32b1e96e9cd06791b",
+    "d26-inputs.json": "6ca5a4f219a2ea842f5dc600ff1792ae4b2a81c33e14ba0e5ae514ccc371f92b",
+    "moderation.patch": "04dea38f0ededf4fe655b411428471f0c77f8fdb37364b1c70174e2f3b1fad3e",
+    "moderation-manifest.json": "4e1a70455825209b95e1036d470938dad7ca44c26d95d692dee3d5ac0a56425b"
+  },
+  "disjoint_target_count": 17,
+  "target_outputs_absent": true,
+  "changes": [
+    {
+      "path": "src/stores/useMetricAtDate.ts",
+      "owner": "D26",
+      "base_sha256": "dff215d513f3a640ded8afcab6cf1fda6a6c6a8b0bddd4b58af596950ea24f63",
+      "applied_sha256": "58a98aa258582ef2ee8c211ec88368cebebe042ef81814e8b515f5f4565a62af",
+      "bytes": 26134
+    },
+    {
+      "path": "src/components/map/LayerManager.tsx",
+      "owner": "D26",
+      "base_sha256": "4b29e57ed202d92606360a55b84ae6e6f66f95755280030f101e07b4b72b7271",
+      "applied_sha256": "909ee6bf6249621774fe5a63765505a934dbf5904af1b703ddeb4c4164da35b0",
+      "bytes": 84756
+    },
+    {
+      "path": "src/components/map/MapDateSummary.tsx",
+      "owner": "D26",
+      "base_sha256": "8ef9280c1766fb5e477b78ad05edd7dec5a3a38fedcabfafb4e438ea14bb8df9",
+      "applied_sha256": "0a6777294b857bbbe9ae674f44654ded6630e2e8383f147e38f6d64f0df7d838",
+      "bytes": 19951
+    },
+    {
+      "path": "src/components/map/layer-panel/LayerTimeSlider.tsx",
+      "owner": "D26",
+      "base_sha256": "97ab6e57e5784391184277b363ffe083c788a93a7b7d4de9451b61d46eddff00",
+      "applied_sha256": "40e0cf3ad9ebbbeb03f658001a15a03a2bc486b1a92561a3b1a4036425c6a014",
+      "bytes": 37521
+    },
+    {
+      "path": "src/stores/AGENTS.md",
+      "owner": "D26",
+      "base_sha256": null,
+      "applied_sha256": "b1c0040bbd4d937e093325dbc1d085fcaacd45865a540801ab5fba202d77aed1",
+      "bytes": 1640
+    },
+    {
+      "path": "src/components/map/AGENTS.md",
+      "owner": "D26",
+      "base_sha256": "80167566c30019760bf64afb997ffba555846d4aff3ee2766b6688bed3a72044",
+      "applied_sha256": "62a37ba977f095a8e4c4f818adf7235f5df81138ba1cba3d9de990cda1e37030",
+      "bytes": 128416
+    },
+    {
+      "path": "src/__tests__/stores/useMetricAtDate.test.tsx",
+      "owner": "D26",
+      "base_sha256": "5fc5d5411e47f75ba9469976dc32b10207a9f4e5ff5c794dc448a906bca5af50",
+      "applied_sha256": "6501c41cf4c0ebf550795c9a9dfbc8d0db20b501863f22f1528ec3f3defc6225",
+      "bytes": 25814
+    },
+    {
+      "path": "src/__tests__/components/MapDateSummary.test.tsx",
+      "owner": "D26",
+      "base_sha256": "7d6231586881805a70e8857f52895978ebe50ef1238fcd7ad957c5d418dbeda4",
+      "applied_sha256": "7019dafe026518e10a979e4894cb084f145d944edfade36292f597e1bafbdf0a",
+      "bytes": 22224
+    },
+    {
+      "path": "src/__tests__/components/LayerTimeSlider.test.tsx",
+      "owner": "D26",
+      "base_sha256": "b3f624997528f019cb785564bf70b55ace905e08dd38efd3e0e5e503851de5b5",
+      "applied_sha256": "64d337ebd122a099a6ea6d7c51d6d7660c5e205d07eb118515ee4b2f99da84da",
+      "bytes": 63144
+    },
+    {
+      "path": "src/__tests__/lib/map/layer-toggle-context.test.ts",
+      "owner": "D26",
+      "base_sha256": "63f6307db7799a1e22bf6f8f767fac681307165a4222052455674928cc1091ef",
+      "applied_sha256": "f27f58c421eb2e2d8fa8bb53e9ae6c74ad3ae0c7d7e99a95757cb41b85f9c61e",
+      "bytes": 26412
+    },
+    {
+      "path": "src/components/map/layers/ClimateFieldLayers.tsx",
+      "owner": "D26",
+      "base_sha256": "07dfa29e4497c848b0e57bc19b5f8c57fe3d1f5fde60d862580ef4dfa46c1c38",
+      "applied_sha256": "920dc027c91f92daed92e5597c66ee743f45ed2b5aa08a909600fecf77662496",
+      "bytes": 5981
+    },
+    {
+      "path": "src/__tests__/components/ContributionQueue.test.tsx",
+      "owner": "moderation",
+      "base_sha256": "a73f863bef16cafed8d6315214e24fddfc9dfa493fc8d3e6ee6844b985e98434",
+      "applied_sha256": "7c7a2b8344d77d5109f0d21569eebc7790bc35ee97f3c2230422dd51e024fbc1",
+      "bytes": 9766
+    },
+    {
+      "path": "src/__tests__/trpc/contributions.test.ts",
+      "owner": "moderation",
+      "base_sha256": null,
+      "applied_sha256": "8952c1ccb18b3f0edee42e3ea740f40591258cb3bc4cab1dbe23ea6690de728d",
+      "bytes": 3723
+    },
+    {
+      "path": "src/components/panels/AGENTS.md",
+      "owner": "moderation",
+      "base_sha256": "75326691bd9502dea8dbc916407964ab97813cae23109ae6ebb7aecca6c5a73f",
+      "applied_sha256": "a439bd02ff5a7328141b59eaea2b59a646d5020cc8aa04fdfc9acf3e2842879b",
+      "bytes": 17771
+    },
+    {
+      "path": "src/components/panels/ContributionQueue.tsx",
+      "owner": "moderation",
+      "base_sha256": "7c0544e0a631e505353172718b70fa344048caf822d85aa428a00d1a984581fc",
+      "applied_sha256": "cf587be4ff59bfd6e07167ca66469e6a845e8698073d93bafdfc13eac17d2b3b",
+      "bytes": 9129
+    },
+    {
+      "path": "src/lib/server/AGENTS.md",
+      "owner": "moderation",
+      "base_sha256": "c95bf9f2da200c616dd64dd1f4c33693ee6cca4f15269082ff3e3fd3bad4c938",
+      "applied_sha256": "acd5eeaf84531c5e0f27d17bd1ae4a325a00d73a74edef83ec39a5349c1ba374",
+      "bytes": 1787
+    },
+    {
+      "path": "src/lib/server/trpc/routers/contributions.ts",
+      "owner": "moderation",
+      "base_sha256": "4f8ca81ab1cd6a26f0ab87caf9d807b0f84b9d4b2f0ee04d54975d0b7294195e",
+      "applied_sha256": "b4b2a32b798b3a9fe7183918e05367abc97c046feda8846e7560d94ce6d28491",
+      "bytes": 4830
+    }
+  ],
+  "semantics": "All bases and staged bytes are preflighted before any write; sequential exact-byte writes, not a multi-file filesystem transaction.",
+  "tests_run": false,
+  "candidate15_sha256": "bb85c770879e058043e4e2673dd8a01c04e4f284795f66748983f885dd722547",
+  "candidate15_file_count": 1749,
+  "unchanged_candidate14_files": 1732,
+  "changed_existing_files": 15,
+  "new_files": [
+    "src/__tests__/trpc/contributions.test.ts",
+    "src/stores/AGENTS.md"
+  ],
+  "completed_at": "2026-09-14T23:34:05.586752+00:00",
+  "executor_script_sha256": "384c97c6644ff92f1b71fd4cf756134b93c2a4800f9ac04884f0f52d591ae90d"
+}

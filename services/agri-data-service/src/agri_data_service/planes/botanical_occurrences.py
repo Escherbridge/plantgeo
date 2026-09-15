@@ -19,6 +19,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
 
 import polars as pl
+from botocore.exceptions import ConnectionError as ObjectStoreConnectionError  # type: ignore[import-untyped]
+from botocore.exceptions import HTTPClientError
 
 from agri_data_service.config import settings as default_settings
 from agri_data_service.pipeline.direct.botanical_occurrences.publish import (
@@ -40,6 +42,7 @@ if TYPE_CHECKING:
     from agri_data_service.pipeline.direct.botanical_occurrences.publish import PublicationTarget
 
 PRODUCT: Final = "botanical-occurrences"
+_TRANSPORT_UNAVAILABLE_REASON: Final = "the botanical occurrence object store could not complete the bounded read"
 
 #: At or above this zoom a request is answered with detail points; below it, with support cells. The
 #: floor is a CLAIM BOUNDARY, not a rendering preference: a specimen point at continental zoom reads
@@ -298,13 +301,18 @@ def open_generation(
         prefix = settings_source.object_store_prefix.strip("/")
         resolved_root = f"s3://{credentials.bucket}/{prefix}".rstrip("/")
     prefix = generation_prefix(release_set_id)
-    if not resolved_target.exists(f"{prefix}/{COMPLETION_MARKER}"):
-        manifest_present = resolved_target.read_bytes(f"{prefix}/manifest.json") is not None
-        if manifest_present:
-            return refused("release_incomplete", f"{release_set_id} has no completion marker")
-        return unavailable(f"no completed generation is published for release_set_id {release_set_id}")
-    if read_manifest(resolved_target, release_set_id) is None:
-        return refused("release_incomplete", f"{release_set_id} carries a marker but no readable manifest")
+    try:
+        if not resolved_target.exists(f"{prefix}/{COMPLETION_MARKER}"):
+            manifest_present = resolved_target.read_bytes(f"{prefix}/manifest.json") is not None
+            return (
+                refused("release_incomplete", f"{release_set_id} has no completion marker")
+                if manifest_present
+                else unavailable(f"no completed generation is published for release_set_id {release_set_id}")
+            )
+        if read_manifest(resolved_target, release_set_id) is None:
+            return refused("release_incomplete", f"{release_set_id} carries a marker but no readable manifest")
+    except (ObjectStoreConnectionError, HTTPClientError):
+        return unavailable(_TRANSPORT_UNAVAILABLE_REASON)
     return GenerationReader(
         root=resolved_root, target=resolved_target, storage_options=_storage_options(resolved_root, source)
     )
@@ -496,6 +504,8 @@ def read_botanical_occurrences(
         return opened
     try:
         return _read_detail(opened, request) if request.wants_detail else _read_aggregate(opened, request)
+    except (ObjectStoreConnectionError, HTTPClientError):
+        return unavailable(_TRANSPORT_UNAVAILABLE_REASON)
     except (pl.exceptions.PolarsError, FileNotFoundError, OSError) as error:
         raise BotanicalOccurrenceServingError(
             f"{request.release_set_id} is marked complete but one of its artifacts could not be read: {error}"
@@ -519,17 +529,20 @@ def read_current_botanical_release(
         resolved_target = target or publication_target(root, source=source)
     except ValueError:
         return unavailable("no generation has ever been published for botanical-occurrences")
-    payload = resolved_target.read_bytes(pointer_path())
-    if payload is None:
-        return unavailable("no generation has ever been published for botanical-occurrences")
     try:
-        pointer = json.loads(payload)
-        release_set_id = pointer["release_set_id"]
-    except (json.JSONDecodeError, KeyError, TypeError) as error:
-        return unavailable(f"the current pointer is not readable: {error}")
-    if not isinstance(release_set_id, str) or not release_set_id:
-        return unavailable("the current pointer does not name a release_set_id")
-    manifest = read_manifest(resolved_target, release_set_id) or {}
+        payload = resolved_target.read_bytes(pointer_path())
+        if payload is None:
+            return unavailable("no generation has ever been published for botanical-occurrences")
+        try:
+            pointer = json.loads(payload)
+            release_set_id = pointer["release_set_id"]
+        except (json.JSONDecodeError, KeyError, TypeError) as error:
+            return unavailable(f"the current pointer is not readable: {error}")
+        if not isinstance(release_set_id, str) or not release_set_id:
+            return unavailable("the current pointer does not name a release_set_id")
+        manifest = read_manifest(resolved_target, release_set_id) or {}
+    except (ObjectStoreConnectionError, HTTPClientError):
+        return unavailable(_TRANSPORT_UNAVAILABLE_REASON)
     result: dict[str, Any] = {
         "product": PRODUCT,
         "state": "current",

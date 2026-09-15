@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { useInterventionDraftStore } from "@/stores/intervention-draft-store";
+import { hasInterventionDraftWork, useInterventionDraftStore } from "@/stores/intervention-draft-store";
 import type { InterventionGeometry } from "@/lib/geo/intervention-geometry-schema";
 
 const sampleGeometry: InterventionGeometry = {
@@ -10,6 +10,26 @@ const sampleGeometry: InterventionGeometry = {
 describe("intervention draft store", () => {
   beforeEach(() => {
     useInterventionDraftStore.getState().clearDraft();
+  });
+
+  it("does not treat the seeded location alone as unfinished work", () => {
+    useInterventionDraftStore.getState().seedLocation(46, -120);
+    expect(hasInterventionDraftWork(useInterventionDraftStore.getState())).toBe(false);
+  });
+
+  it.each([
+    { name: "Unfinished name" },
+    { description: "Unfinished description" },
+    { category: "air" as const },
+    { interventionType: "biochar" as const },
+    { publicationConsent: true },
+    { geometryError: "Finish the polygon" },
+    { geometry: sampleGeometry },
+  ])("recognizes unfinished work from a single changed field: %j", (change) => {
+    useInterventionDraftStore.setState(change);
+    expect(hasInterventionDraftWork(useInterventionDraftStore.getState())).toBe(true);
+    useInterventionDraftStore.getState().clearDraft();
+    expect(hasInterventionDraftWork(useInterventionDraftStore.getState())).toBe(false);
   });
 
   it("holds the draft fields with sane defaults", () => {

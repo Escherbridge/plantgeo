@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { MapPin, Sparkles, Sprout, X } from "lucide-react";
 
 interface AgentInteractionProps {
@@ -8,6 +8,8 @@ interface AgentInteractionProps {
   onAnalyze: (precision: "approximate" | "exact") => void;
   onProposeIntervention: () => void;
   onClose: () => void;
+  /** Uses the workspace's layout, focus, and Escape handling. */
+  embedded?: boolean;
 }
 
 /** Explicitly confirms an analysis request before the AI service receives a location. */
@@ -16,13 +18,16 @@ export function AgentInteraction({
   onAnalyze,
   onProposeIntervention,
   onClose,
+  embedded = false,
 }: AgentInteractionProps) {
   const [lon, lat] = coordinates;
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const [precision, setPrecision] = useState<"approximate" | "exact">("approximate");
   const coordinateDigits = precision === "approximate" ? 2 : 6;
+  const consentId = useId();
 
   useEffect(() => {
+    if (embedded) return;
     const previouslyFocused = document.activeElement;
     closeButtonRef.current?.focus();
 
@@ -35,27 +40,27 @@ export function AgentInteraction({
       document.removeEventListener("keydown", handleKeyDown);
       if (previouslyFocused instanceof HTMLElement) previouslyFocused.focus();
     };
-  }, [onClose]);
+  }, [embedded, onClose]);
 
   return (
     <section
-      role="dialog"
-      aria-modal="false"
-      aria-label="Location actions"
-      aria-describedby="location-actions-description"
-      className="fixed bottom-4 right-4 z-50 w-[min(24rem,calc(100vw-2rem))] rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 text-[hsl(var(--card-foreground))] shadow-xl"
+      role={embedded ? undefined : "dialog"}
+      aria-modal={embedded ? undefined : "false"}
+      aria-label={embedded ? "Confirm proposal location analysis" : "Location actions"}
+      aria-describedby={`${consentId}-description`}
+      className={embedded ? "p-4" : "fixed bottom-4 right-4 z-50 w-[min(24rem,calc(100vw-2rem))] rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-4 text-[hsl(var(--card-foreground))] shadow-xl"}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
           <MapPin aria-hidden="true" className="h-5 w-5 shrink-0 text-[hsl(var(--primary))]" />
           <div>
-            <h2 className="text-sm font-semibold">Location selected</h2>
+            <h2 className="text-sm font-semibold">{embedded ? "Analyze proposal location" : "Location selected"}</h2>
             <p className="mt-0.5 font-mono text-xs text-[hsl(var(--muted-foreground))]">
               {lat.toFixed(coordinateDigits)}, {lon.toFixed(coordinateDigits)}
             </p>
           </div>
         </div>
-        <button
+        {!embedded && <button
           ref={closeButtonRef}
           type="button"
           onClick={onClose}
@@ -63,11 +68,11 @@ export function AgentInteraction({
           className="inline-flex min-h-11 min-w-11 items-center justify-center rounded text-[hsl(var(--muted-foreground))] hover:bg-[hsl(var(--muted))] hover:text-[hsl(var(--foreground))] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))]"
         >
           <X aria-hidden="true" className="h-4 w-4" />
-        </button>
+        </button>}
       </div>
 
       <p
-        id="location-actions-description"
+        id={`${consentId}-description`}
         className="mt-3 text-sm leading-5 text-[hsl(var(--muted-foreground))]"
       >
         Choose what location precision to send. The agent can only provide
@@ -80,7 +85,7 @@ export function AgentInteraction({
         <label className="flex cursor-pointer items-start gap-2 rounded p-1 hover:bg-[hsl(var(--muted))]">
           <input
             type="radio"
-            name="agent-location-precision"
+            name={`${consentId}-precision`}
             checked={precision === "approximate"}
             onChange={() => setPrecision("approximate")}
           />
@@ -92,7 +97,7 @@ export function AgentInteraction({
         <label className="flex cursor-pointer items-start gap-2 rounded p-1 hover:bg-[hsl(var(--muted))]">
           <input
             type="radio"
-            name="agent-location-precision"
+            name={`${consentId}-precision`}
             checked={precision === "exact"}
             onChange={() => setPrecision("exact")}
           />
@@ -111,14 +116,14 @@ export function AgentInteraction({
         >
           Cancel
         </button>
-        <button
+        {!embedded && <button
           type="button"
           onClick={onProposeIntervention}
           className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-[hsl(var(--border))] px-3 py-2 text-sm font-semibold text-[hsl(var(--foreground))] hover:bg-[hsl(var(--muted))] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))] focus-visible:ring-offset-2"
         >
           <Sprout aria-hidden="true" className="h-4 w-4" />
           Propose intervention here
-        </button>
+        </button>}
         <button
           type="button"
           onClick={() => onAnalyze(precision)}

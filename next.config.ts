@@ -13,6 +13,7 @@ const NON_TOKEN_BEARING_SOURCE =
   "/((?!invite$|invite/|join$|join/|verify-email$|reset-password$).*)";
 
 const nextConfig: NextConfig = {
+  devIndicators: false,
   // Required for Docker/Railway deployment — produces a self-contained server
   // in .next/standalone that the Dockerfile copies into the runtime image.
   output: "standalone",

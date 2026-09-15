@@ -7,6 +7,19 @@ resource: ./spec.md
 
 # Execution plan
 
+## September 14 long-horizon execution
+
+The [current session ledger](evidence/runbook-session-20260914.md) binds the resumed run,
+31 registry layers plus four separate land-context groups, and the first GBIF/workspace/social
+correction batch. The initial browser connection limitation was subsequently resolved with a
+reviewed local Playwright runner. [Session 5](evidence/runbook-session5-20260914.md) records
+actual isolated database-backed desktop/mobile contribution and social journeys;
+[Session 7](evidence/runbook-session7-20260914.md) records unsent workspace recovery and the
+ongoing live environmental slice. These bounded results retain their own scope; physical-device,
+full accessibility, agent-model and whole-case acceptance remain open.
+The [botanical read receipt](evidence/botanical-read-20260914.json) independently captures four
+existing production objects without changing them. Q1–Q4 remain open.
+
 ## Q0 — establish ownership and candidate ledger
 
 - [x] Coordinating owner adds the initial active registry entry and current

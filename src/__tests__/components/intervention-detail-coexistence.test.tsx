@@ -19,6 +19,7 @@ vi.mock("maplibre-gl", () => ({
   default: {
     Map: class {
       remove() {}
+      resize() {}
     },
   },
 }));

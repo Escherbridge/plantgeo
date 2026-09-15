@@ -1,6 +1,6 @@
 ---
 type: track-registry
-updated_on: 2026-09-13
+updated_on: 2026-09-14
 ---
 
 # Current tracks
@@ -16,7 +16,7 @@ This registry contains planned, active, and blocked work only. Completed impleme
 | [Multiscale polygon surfaces](tracks/multiscale_polygon_surface_20260901/plan.md) | active | Complete low-zoom support geometry, live selected-day rendering, performance, and browser evidence. |
 | [Parquet production acceptance](tracks/parquet_production_acceptance_20260901/plan.md) | blocked | Run cross-layer conservation, freshness, cold/warm, schedule burn-in, and release checks after serving work is ready. |
 | [Offline export service](tracks/offline_export_service_20260908/plan.md) | active | Complete the production builder, availability-cost controls, and export verification. |
-| [Platform experience QA](tracks/platform_experience_qa_20260911/plan.md) | active | Run populated-data, selected-day, mobile, accessibility, cache, canvas, agent, and MCP journeys. |
+| [Platform experience QA](tracks/platform_experience_qa_20260911/plan.md) | active | September 14 long-horizon run active: reconcile 31 registry layers plus four land-context groups, fix GBIF/workspace/social defects, then collect selected-day, mobile, accessibility, cache, canvas, agent and MCP evidence. Browser and production acceptance remain open. |
 | [Repository conformity hardening](tracks/repository_conformity_hardening_20260901/plan.md) | active | Remove proven dead paths and keep executable architecture boundaries aligned with current documentation. |
 
 ## Weather and fire
@@ -36,7 +36,7 @@ This registry contains planned, active, and blocked work only. Completed impleme
 | [Botanical species profile lookup](tracks/botanical_species_profile_lookup_20260911/plan.md) | active | Census the approved Railway lookup, admit growth and composition sources, publish immutable profiles, and prove API/agent/MCP parity. |
 | [PNW Herbaria source admission](tracks/pnw_herbaria_source_admission_20260911/plan.md) | active | Resolve exact release identity, field maps, reuse and coordinate policies, and quarantine controls before a bounded specimen pilot. |
 | [Botanical occurrence Parquet lane](tracks/botanical_occurrence_parquet_lane_20260911/plan.md) | planned | Publish governed occurrence and taxonomy data after source admission. |
-| [Botanical occurrence experience](tracks/botanical_occurrence_experience_20260911/plan.md) | planned | Add map and agent experiences after the occurrence product is accepted. |
+| [Botanical occurrence experience](tracks/botanical_occurrence_experience_20260911/plan.md) | active | Mounted map experience and September 14 GBIF feedback fixes under QA; source admission, viewport policy and browser/agent acceptance remain open. |
 | [Species recommendation validation](tracks/botanical_species_recommendation_validation_20260911/plan.md) | planned | Establish evidence and evaluation for species-specific recommendations. |
 | [PNW land reference plane](tracks/pnw_land_context_reference_plane_20260911/plan.md) | in_progress | Implement schema, UI, and reader contracts. Four source rights gates deferred (see evidence/rights-gate-verdicts-20260912.md); ingestion blocked pending gate clearance. |
 | [PNW land contact experience](tracks/pnw_land_contact_experience_20260911/plan.md) | in_progress | Implement UI, reader contracts, and agent integration. Proceeding in parallel with reference-plane rights review (see evidence/rights-gate-verdicts-20260912.md). |
@@ -46,8 +46,8 @@ This registry contains planned, active, and blocked work only. Completed impleme
 | Track | State |
 | --- | --- |
 | [Public strategy requests + real names](tracks/public_strategy_requests_20260913/plan.md) | planned |
-| [Unified intervention layer + detail panel](tracks/unified_intervention_layer_20260913/plan.md) | planned |
-| [AI intervention workspace](tracks/ai_intervention_workspace_20260913/plan.md) | planned |
+| [Unified intervention layer + detail panel](tracks/unified_intervention_layer_20260913/plan.md) | active — September 14 feed correction and social QA |
+| [AI intervention workspace](tracks/ai_intervention_workspace_20260913/plan.md) | active — September 14 lifecycle correction and QA |
 | [Intervention drawing + visibility](tracks/intervention_drawing_visibility_20260912/plan.md) | planned |
 | [Community engagement completion](tracks/community_engagement_completion_20260805/plan.md) | planned |
 | [CDS-only products](tracks/cds_only_products_20260808/plan.md) | planned |

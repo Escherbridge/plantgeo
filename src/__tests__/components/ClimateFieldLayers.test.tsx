@@ -156,24 +156,21 @@ function renderWithDrawn(signals: readonly ClimateFieldSignalId[], zoom = 9) {
   return render(<ClimateFieldLayers map={null} bbox={BBOX} zoom={zoom} />);
 }
 
-/** A response that answered for the key it was asked with. */
-function landed(): Record<string, unknown> {
+/** A synthetic published field with the signal's distinct fixture day. */
+function landed(signal: ClimateFieldSignalId = "air-temperature"): Record<string, unknown> {
+  const day = `2026-07-${String(10 + CLIMATE_FIELD_SIGNAL_IDS.indexOf(signal)).padStart(2, "0")}`;
   return {
-    data: { type: "FeatureCollection", features: [] },
+    data: { type: "FeatureCollection", features: [], signal, renderForm: "field",
+      availability: "published", requestedDay: day, observedDay: day },
     isSuccess: true,
     isFetching: false,
     isPlaceholderData: false,
   };
 }
 
-/** A response still standing in from the PREVIOUS key while the current one loads. */
-function retaining(): Record<string, unknown> {
-  return {
-    data: { type: "FeatureCollection", features: [] },
-    isSuccess: true,
-    isFetching: true,
-    isPlaceholderData: true,
-  };
+/** A published prior answer still standing while another key loads or pauses. */
+function retaining(signal: ClimateFieldSignalId = "air-temperature"): Record<string, unknown> {
+  return { ...landed(signal), isFetching: true, isPlaceholderData: true };
 }
 
 /** Waits out one row's scrub settle window, which is what turns a new day into a request. */
@@ -530,7 +527,7 @@ describe("each climate row labels the day it is actually painting", () => {
    */
   it("publishes a drawn day for every signal that is switched on", () => {
     for (const signal of CLIMATE_FIELD_SIGNAL_IDS) {
-      climateQuery.resultBySignal.set(signal, landed());
+      climateQuery.resultBySignal.set(signal, landed(signal));
     }
     renderWithDrawn(CLIMATE_FIELD_SIGNAL_IDS);
 
@@ -539,6 +536,7 @@ describe("each climate row labels the day it is actually painting", () => {
       expect(publishedFor(signal), signal).toEqual({
         drawnDate: day,
         requestedDate: day,
+        pendingDate: null,
         isLoading: false,
       });
     }
@@ -548,7 +546,7 @@ describe("each climate row labels the day it is actually painting", () => {
     // The disabled-query shape: TanStack keeps `isPlaceholderData` true off `keepPreviousData`
     // even once a query stops running, so an off row would otherwise report itself mid-load for
     // good and leave its indicator lit with nothing able to clear it.
-    climateQuery.resultBySignal.set("precipitation", { ...retaining(), isFetching: false });
+    climateQuery.resultBySignal.set("precipitation", { ...retaining("precipitation"), isFetching: false });
     renderWithDrawn(["air-temperature"]);
 
     expect(publishedFor("precipitation")).toBeUndefined();
@@ -562,14 +560,14 @@ describe("each climate row labels the day it is actually painting", () => {
    */
   it("keeps naming the day in hand while a retained frame is on screen", async () => {
     for (const signal of CLIMATE_FIELD_SIGNAL_IDS) {
-      climateQuery.resultBySignal.set(signal, landed());
+      climateQuery.resultBySignal.set(signal, landed(signal));
     }
     const rendered = renderWithDrawn(CLIMATE_FIELD_SIGNAL_IDS);
     const precipitationIndex = CLIMATE_FIELD_SIGNAL_IDS.indexOf("precipitation");
     const paintedDay = `2026-07-${String(10 + precipitationIndex).padStart(2, "0")}`;
     expect(publishedFor("precipitation")?.drawnDate).toBe(paintedDay);
 
-    climateQuery.resultBySignal.set("precipitation", retaining());
+    climateQuery.resultBySignal.set("precipitation", retaining("precipitation"));
     act(() => {
       useTimeSliderStore
         .getState()
@@ -581,12 +579,14 @@ describe("each climate row labels the day it is actually painting", () => {
     expect(publishedFor("precipitation")).toEqual({
       drawnDate: paintedDay,
       requestedDate: "2023-11-30",
+      pendingDate: "2023-11-30",
       isLoading: true,
     });
     // Nine publishers, nine disjoint sets: one row's scrub must not touch another's entry.
     expect(publishedFor("air-temperature")).toEqual({
       drawnDate: "2026-07-10",
       requestedDate: "2026-07-10",
+      pendingDate: null,
       isLoading: false,
     });
   });
@@ -598,12 +598,12 @@ describe("each climate row labels the day it is actually painting", () => {
    * this as loading would light every affected row's indicator indefinitely.
    */
   it("reports a paused request as an earlier day painted, not as loading", async () => {
-    climateQuery.resultBySignal.set("precipitation", landed());
+    climateQuery.resultBySignal.set("precipitation", landed("precipitation"));
     const rendered = renderWithDrawn(["precipitation"]);
     const precipitationIndex = CLIMATE_FIELD_SIGNAL_IDS.indexOf("precipitation");
     const paintedDay = `2026-07-${String(10 + precipitationIndex).padStart(2, "0")}`;
 
-    climateQuery.resultBySignal.set("precipitation", { ...retaining(), isFetching: false });
+    climateQuery.resultBySignal.set("precipitation", { ...retaining("precipitation"), isFetching: false });
     act(() => {
       useTimeSliderStore
         .getState()
@@ -615,6 +615,7 @@ describe("each climate row labels the day it is actually painting", () => {
     expect(publishedFor("precipitation")).toEqual({
       drawnDate: paintedDay,
       requestedDate: "2023-11-30",
+      pendingDate: "2023-11-30",
       isLoading: false,
     });
   });

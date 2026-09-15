@@ -22,6 +22,7 @@ import { LayerTimeStatus } from "@/components/map/layer-panel/LayerTimeStatus";
 import { layerLabel, type LayerToggleId } from "@/lib/map/layer-registry";
 import { useLayerDay } from "@/lib/map/layer-toggle-context";
 import { cn } from "@/lib/utils";
+import { useDrawnLayerDayStore } from "@/stores/useMetricAtDate";
 // Contractually-fixed surface from the parallel lane building this store; do not stub it, do not
 // edit it. See src/components/map/AGENTS.md §synced-days-track for the pinned signatures.
 import { useSyncedDays, useSyncIndexReady } from "@/stores/sync-index-store";
@@ -258,6 +259,7 @@ export function LayerTimeSlider({
 
   const label = layerLabel(layerId);
   const { selectedDate, latestObservedDate, isBehindLatestObservedDate } = useLayerDay(layerId);
+  const drawnDate = useDrawnLayerDayStore((state) => state.drawnDays[layerId]?.drawnDate ?? null);
   const capabilities = useTimeSliderStore((state) => state.capabilities);
   const capabilitiesUnavailable = useTimeSliderStore((state) => state.capabilitiesUnavailable);
   // What THIS BROWSER holds locally, not what the server has -- see the synced-days row below
@@ -355,10 +357,8 @@ export function LayerTimeSlider({
       <LayerTimeStatus
         layerId={layerId}
         state={timeState.kind === "ready" ? AXIS_DISAGREEMENT_STATE : timeState}
-        // Still says which day this layer is drawing. It has no axis, but it is on the map as of
-        // some date, and a mixed-time composite is only readable while every row admits its own.
-        // Null only before the payload lands, where no day can be named without guessing one.
-        drawingDate={selectedDate}
+        // A snapshot date is supplied by its reader, never by the selected-day default.
+        drawingDate={timeState.kind === "no_time_axis" ? drawnDate : null}
         className={className}
       />
     );

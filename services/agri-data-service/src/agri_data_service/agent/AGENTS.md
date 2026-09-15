@@ -53,6 +53,11 @@ and environmental feature fallbacks are retired by
 `environmental_postgres_retirement_20260904` revision `20260912_0028`. No agent path may query or
 write those relations. `forecast_summary_for_cell` returns the typed
 `forecast_parquet_lane_not_published` refusal until a governed Parquet forecast lane is admitted.
+The exported forecast tool description must state this same unavailable admission boundary.
+The registry is model-facing evidence of callable capability: advertising retired cell resolution,
+forecast values or uncertainty bands would promise behavior the tool cannot supply. Keep its
+coordinate and filter schema available for the typed refusal; changing publication or enabling
+forecast reads requires the separate governed-lane admission, not a description edit.
 Every environmental surface, including soil-survey and interventions, is Parquet-owned at the
 agent boundary: an unregistered or unwritten lane returns a typed refusal and never retries a
 PostgreSQL feature query. The PostgreSQL session provider remains only for the retained

@@ -688,7 +688,7 @@ export default function RegionalIntelligencePanel({
   }, [messages]);
 
   useEffect(() => {
-    if (!isOpen || embedded) return;
+    if (!isOpen || !isVisible || embedded) return;
     previousFocusRef.current =
       document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const focusFrame = window.requestAnimationFrame(() => {
@@ -704,7 +704,7 @@ export default function RegionalIntelligencePanel({
       previousFocusRef.current?.focus();
       previousFocusRef.current = null;
     };
-  }, [closePanel, embedded, isOpen]);
+  }, [closePanel, embedded, isOpen, isVisible]);
 
   if (!isOpen || !selectedLocation) return null;
   // The standalone overlay stands down while the workspace embeds this same conversation.

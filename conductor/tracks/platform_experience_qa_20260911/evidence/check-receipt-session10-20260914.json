@@ -1,0 +1,2200 @@
+{
+  "type": "qa-check-receipt",
+  "session": 10,
+  "date": "2026-09-14",
+  "author": "/root/qa_inventory",
+  "executor": "/root",
+  "result_reviewer": "/root/workspace_social_audit",
+  "canonical_packet_review": "pending_separate_review",
+  "overall_runbook_status": "RED",
+  "whole_case_promotions": [],
+  "scope": [
+    "PGQA-L12",
+    "PGQA-L13",
+    "PGQA-T01",
+    "PGQA-T02",
+    "PGQA-T12",
+    "PGQA-M05"
+  ],
+  "source_binding": {
+    "candidate": 14,
+    "manifest": {
+      "path": ".omc/research/runbook-20260914/source-manifest-14.json",
+      "bytes": 255718,
+      "sha256": "79d15c03290945063dd228cce768e57ab0b2eb4d442ce22f9fa894c66de63685"
+    },
+    "mode": "External root-coordinated frozen candidate; source manifest was not embedded by the browser runner.",
+    "comparison_limit": "This receipt binds the retained manifest, not a new filesystem or execution-time attestation."
+  },
+  "harness_manifest": {
+    "path": ".omc/research/runbook-20260914/session10/candidate-inputs.json",
+    "bytes": 943,
+    "sha256": "c7bc4d25a02cc0d0289d930cb4dbaa58a0f8ca0bdc1a529164599588a14d7e32"
+  },
+  "independent_result_review": {
+    "path": ".omc/research/runbook-20260914/session10/independent-result-review.md",
+    "bytes": 3687,
+    "sha256": "45da7efe1254b65f05995fc8254e33234258fd6d5496418a155b506d8d82567c"
+  },
+  "attempts": [
+    {
+      "label": "desktop1",
+      "directory": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T22-52-39-624Z-cc1a7ec9",
+      "runner_receipt": {
+        "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T22-52-39-624Z-cc1a7ec9/runner-receipt.json",
+        "bytes": 22283,
+        "sha256": "25db9244d5b3ed675bb38a581616d520d07877c7d148baf59cfcdab31bf7699a"
+      },
+      "browser_report": {
+        "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T22-52-39-624Z-cc1a7ec9/browser-report.json",
+        "bytes": 10245,
+        "sha256": "1110be0445493b3acbebd6622fc2363019201de4530c4d633ed65797ffdaf647"
+      },
+      "result": "retained_harness_expectation_failure",
+      "exit_code": 1,
+      "stats": {
+        "startTime": "2026-09-14T22:52:43.553Z",
+        "duration": 36806.031,
+        "expected": 0,
+        "skipped": 0,
+        "unexpected": 1,
+        "flaky": 0
+      },
+      "project": "desktop",
+      "executed_input_hashes": {
+        "run-browser.mjs": "bdef3da733bc7a1744722b767acfba8afd31e2b2f8a843692e4635e34f4ce895",
+        "playwright.config.ts": "e36de60ae109a0c2108e3c60894d31ca46c7f4d29ac42e545c5e6c8789b7455e",
+        "browser-support.ts": "ec8a539b373e775a5985a677f1f73e0db8fe5be6512644397fb21d450c34f7fc",
+        "environmental.browser.ts": "a8dac7477254f45b6bb3a07a30a0d649c89442b99018919c1a7c48e84d626b92",
+        "serving-bridge.py": "a5d64b47753249cf648f022cbf053e4e2ae4eb9e60e7c0c2eac8cd4f35c2d699",
+        "README-browser.md": "32ed3370a448378148dda855204a468c90c3f1dc1be024dbb581306833ecb287",
+        "copy-provenance.json": "1257f3dd9539a58862d7b8b65ee15d137802b0501fa7cae8344dae9e977ae798",
+        "glyphs/0-255.pbf": "62c6d49b15fa836eb6aa45e259c7ca6762f44b011b09e47776efbe4a6db1b397",
+        "glyphs/receipt.json": "83d7c24da87b4a879585353ba600a006421187695e751267b8aae988694bcd7d",
+        "glyphs/validation.json": "4d5af8dd6a00ff5c3aaad14a61b40ada6da6c3c61e5c123b5624727c5bb6c383"
+      },
+      "differences_from_corrected_packet": {
+        "environmental.browser.ts": {
+          "executed_sha256": "a8dac7477254f45b6bb3a07a30a0d649c89442b99018919c1a7c48e84d626b92",
+          "current_sha256": "d0ecf7ebf2d455709cff9d4faba6ff107ad1970421e72a334c89f665cf5bd623"
+        },
+        "README-browser.md": {
+          "executed_sha256": "32ed3370a448378148dda855204a468c90c3f1dc1be024dbb581306833ecb287",
+          "current_sha256": "4dcb495ad030cc49a35e35cb258ed405316d7a41fb966d3ce87b0505786de771"
+        }
+      },
+      "network": {
+        "blocked": [],
+        "failures": [],
+        "pageErrors": [],
+        "evidenceErrors": [],
+        "stage": "temperature_opacity_endpoints",
+        "primaryError": {
+          "name": "Error",
+          "message": "\u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoHaveAttribute\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nLocator:  getByTestId('layer-row-soil-temperature').getByRole('slider', { name: / opacity$/ })\nExpected: \u001b[32m\"\u001b[7m0\u001b[27m percent\"\u001b[39m\nReceived: \u001b[31m\"\u001b[7m5\u001b[27m percent\"\u001b[39m\nTimeout:  20000ms\n\nCall log:\n\u001b[2m  - Expect \"toHaveAttribute\" with timeout 20000ms\u001b[22m\n\u001b[2m  - waiting for getByTestId('layer-row-soil-temperature').getByRole('slider', { name: / opacity$/ })\u001b[22m\n\u001b[2m    43 \u00d7 locator resolved to <input max=\"1\" min=\"0.05\" step=\"0.05\" type=\"range\" value=\"0.05\" aria-valuetext=\"5 percent\" class=\"plantgeo-slider w-full max-sm:h-11\" aria-label=\"Soil Temperature (ERA5-Land) opacity\"/>\u001b[22m\n\u001b[2m       - unexpected value \"5 percent\"\u001b[22m\n",
+          "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoHaveAttribute\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m failed\n\nLocator:  getByTestId('layer-row-soil-temperature').getByRole('slider', { name: / opacity$/ })\nExpected: \u001b[32m\"\u001b[7m0\u001b[27m percent\"\u001b[39m\nReceived: \u001b[31m\"\u001b[7m5\u001b[27m percent\"\u001b[39m\nTimeout:  20000ms\n\nCall log:\n\u001b[2m  - Expect \"toHaveAttribute\" with timeout 20000ms\u001b[22m\n\u001b[2m  - waiting for getByTestId('layer-row-soil-temperature').getByRole('slider', { name: / opacity$/ })\u001b[22m\n\u001b[2m    43 \u00d7 locator resolved to <input max=\"1\" min=\"0.05\" step=\"0.05\" type=\"range\" value=\"0.05\" aria-valuetext=\"5 percent\" class=\"plantgeo-slider w-full max-sm:h-11\" aria-label=\"Soil Temperature (ERA5-Land) opacity\"/>\u001b[22m\n\u001b[2m       - unexpected value \"5 percent\"\u001b[22m\n\n    at C:\\Users\\atooz\\Programming\\plantgeo\\.omc\\research\\runbook-20260914\\session10\\environmental.browser.ts:54:27"
+        }
+      },
+      "fields": [
+        {
+          "body": {
+            "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T22-52-39-624Z-cc1a7ec9/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/trpc-2.body",
+            "bytes": 90772,
+            "sha256": "443effa37ac864a462ca1f7321dd69c7c8d09e97b19a7bbd8448aaed18d43de0"
+          },
+          "request": {
+            "bbox": "-126.955078,45.407227,-119.044922,50.592773",
+            "measure": "temperature",
+            "date": "2026-09-05",
+            "depth": "surface",
+            "zoom": 8
+          },
+          "result": {
+            "availability": "published",
+            "measure": "temperature",
+            "depth": "surface",
+            "unit": "C",
+            "requestedDay": "2026-09-05",
+            "observedDay": "2026-09-05",
+            "zoomTier": 5,
+            "cellCount": 280,
+            "truncated": false
+          },
+          "polygon_count": 280,
+          "all_values_finite": true
+        },
+        {
+          "body": {
+            "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T22-52-39-624Z-cc1a7ec9/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/trpc-3.body",
+            "bytes": 91052,
+            "sha256": "0412125f1b01cd20ddb9e2b1bf7244dc66b9cba8732ebcdd66428fc32b5334c8"
+          },
+          "request": {
+            "bbox": "-126.955078,45.407227,-119.044922,50.592773",
+            "measure": "temperature",
+            "date": "2026-09-05",
+            "depth": "root-zone",
+            "zoom": 8
+          },
+          "result": {
+            "availability": "published",
+            "measure": "temperature",
+            "depth": "root-zone",
+            "unit": "C",
+            "requestedDay": "2026-09-05",
+            "observedDay": "2026-09-05",
+            "zoomTier": 5,
+            "cellCount": 280,
+            "truncated": false
+          },
+          "polygon_count": 280,
+          "all_values_finite": true
+        },
+        {
+          "body": {
+            "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T22-52-39-624Z-cc1a7ec9/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/trpc-4.body",
+            "bytes": 91612,
+            "sha256": "260eb54a9ded9331a26b727c5240105e17e33c89a56ec47be7f0371e954a3cd5"
+          },
+          "request": {
+            "bbox": "-126.955078,45.407227,-119.044922,50.592773",
+            "measure": "temperature",
+            "date": "2026-09-05",
+            "depth": "deep",
+            "zoom": 8
+          },
+          "result": {
+            "availability": "published",
+            "measure": "temperature",
+            "depth": "deep",
+            "unit": "C",
+            "requestedDay": "2026-09-05",
+            "observedDay": "2026-09-05",
+            "zoomTier": 5,
+            "cellCount": 280,
+            "truncated": false
+          },
+          "polygon_count": 280,
+          "all_values_finite": true
+        },
+        {
+          "body": {
+            "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T22-52-39-624Z-cc1a7ec9/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/trpc-5.body",
+            "bytes": 91936,
+            "sha256": "f887b8961e13dae29e027264f7757f1f42489d7d95e54f241294a2bf8dbd8c28"
+          },
+          "request": {
+            "bbox": "-126.955078,45.407227,-119.044922,50.592773",
+            "measure": "temperature",
+            "date": "2026-09-05",
+            "depth": "substratum",
+            "zoom": 8
+          },
+          "result": {
+            "availability": "published",
+            "measure": "temperature",
+            "depth": "substratum",
+            "unit": "C",
+            "requestedDay": "2026-09-05",
+            "observedDay": "2026-09-05",
+            "zoomTier": 5,
+            "cellCount": 280,
+            "truncated": false
+          },
+          "polygon_count": 280,
+          "all_values_finite": true
+        }
+      ],
+      "upstream": [
+        {
+          "receipt": {
+            "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T22-52-39-624Z-cc1a7ec9/bridge/request-001.json",
+            "bytes": 445,
+            "sha256": "2c7e5605d2ee963c9cc786e79b7a22bd8d4ac1540a078e7f604ee5737c0a4aa4"
+          },
+          "body": {
+            "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T22-52-39-624Z-cc1a7ec9/bridge/request-001.body",
+            "bytes": 284479,
+            "sha256": "6978de0c7bbffd62b25db46e9dd5415a61919f5304a7cf5b50da29dc6396e69b"
+          },
+          "url": "https://plantgeo-parquet-api-production.up.railway.app/api/v1/parquet/coverage",
+          "status": 200,
+          "complete": true
+        },
+        {
+          "receipt": {
+            "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T22-52-39-624Z-cc1a7ec9/bridge/request-002.json",
+            "bytes": 563,
+            "sha256": "c71a7ea826163337e6a21638914d324885bdb7d4a2f19e6c361af8be17ba4453"
+          },
+          "body": {
+            "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T22-52-39-624Z-cc1a7ec9/bridge/request-002.body",
+            "bytes": 219074,
+            "sha256": "bbb354721200070c68a5e58d778758d037451061cda7983402bf0160f2f8b8c6"
+          },
+          "url": "https://plantgeo-parquet-api-production.up.railway.app/api/v1/parquet/day?layer=soil-temperature-0-to-7cm&kind=observed&zoom=5&bbox=-126.955078%2C45.407227%2C-119.044922%2C50.592773&day=2026-09-05",
+          "status": 200,
+          "complete": true
+        },
+        {
+          "receipt": {
+            "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T22-52-39-624Z-cc1a7ec9/bridge/request-003.json",
+            "bytes": 564,
+            "sha256": "4bec8ad50ff06e1cd0d4c2e24a0f91199b547c809d9950fb422e8fdd145a7037"
+          },
+          "body": {
+            "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T22-52-39-624Z-cc1a7ec9/bridge/request-003.body",
+            "bytes": 219362,
+            "sha256": "f37e880af8518580eaead56c19d9be7707ce2e5867a7d28d28d849b4d7bca601"
+          },
+          "url": "https://plantgeo-parquet-api-production.up.railway.app/api/v1/parquet/day?layer=soil-temperature-7-to-28cm&kind=observed&zoom=5&bbox=-126.955078%2C45.407227%2C-119.044922%2C50.592773&day=2026-09-05",
+          "status": 200,
+          "complete": true
+        },
+        {
+          "receipt": {
+            "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T22-52-39-624Z-cc1a7ec9/bridge/request-004.json",
+            "bytes": 566,
+            "sha256": "8c128d515ea51c77fc6c48ac0e06551b3c2e37cf33d8212668b57d88c77e1bc3"
+          },
+          "body": {
+            "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T22-52-39-624Z-cc1a7ec9/bridge/request-004.body",
+            "bytes": 219946,
+            "sha256": "45d513d36dda64caa540aeaffa54cd6eefaf1fae8b955d7e1844ce555bafd9a4"
+          },
+          "url": "https://plantgeo-parquet-api-production.up.railway.app/api/v1/parquet/day?layer=soil-temperature-28-to-100cm&kind=observed&zoom=5&bbox=-126.955078%2C45.407227%2C-119.044922%2C50.592773&day=2026-09-05",
+          "status": 200,
+          "complete": true
+        },
+        {
+          "receipt": {
+            "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T22-52-39-624Z-cc1a7ec9/bridge/request-005.json",
+            "bytes": 567,
+            "sha256": "d12ca09abdffdcecf791f48f6401f9a1718ae67a569e0c0409da1bcda5bcf15f"
+          },
+          "body": {
+            "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T22-52-39-624Z-cc1a7ec9/bridge/request-005.body",
+            "bytes": 220217,
+            "sha256": "163bd0552cc87a854f2fbf2b1da212bfd6a811607a127ec504d8b21cb059932b"
+          },
+          "url": "https://plantgeo-parquet-api-production.up.railway.app/api/v1/parquet/day?layer=soil-temperature-100-to-255cm&kind=observed&zoom=5&bbox=-126.955078%2C45.407227%2C-119.044922%2C50.592773&day=2026-09-05",
+          "status": 200,
+          "complete": true
+        }
+      ],
+      "bridge": {
+        "started_at": "2026-09-14T22:52:39.887308+00:00",
+        "requests_attempted": 5,
+        "requests_admitted": 5,
+        "requests_rejected": 0,
+        "listen": "127.0.0.1:3138",
+        "origin": "https://plantgeo-parquet-api-production.up.railway.app",
+        "limit_requests": 40,
+        "concurrency": 2,
+        "worker_deadline_seconds": 15,
+        "lifetime_seconds": 600,
+        "body_limit_bytes": 2097152,
+        "script_sha256": "a5d64b47753249cf648f022cbf053e4e2ae4eb9e60e7c0c2eac8cd4f35c2d699",
+        "updated_at": "2026-09-14T22:52:57.919411+00:00"
+      },
+      "cleanup": {
+        "steps": [
+          {
+            "state": "stopped_revalidated_owned_process",
+            "pid": 70128
+          },
+          {
+            "state": "stopped_revalidated_owned_process",
+            "pid": 45148
+          },
+          {
+            "state": "already_exited",
+            "pid": 17024
+          },
+          {
+            "state": "already_exited",
+            "pid": 27400
+          },
+          {
+            "state": "already_exited",
+            "pid": 71956
+          },
+          {
+            "state": "already_exited",
+            "pid": 3108
+          }
+        ],
+        "remaining_owned_processes": [],
+        "unverified_owned_processes": [],
+        "port_3128_closed": true,
+        "port_3138_closed": true,
+        "port_checks": [
+          {
+            "port": 3128,
+            "closed": true
+          },
+          {
+            "port": 3138,
+            "closed": true
+          }
+        ],
+        "finished_at": "2026-09-14T22:53:23.227Z"
+      }
+    },
+    {
+      "label": "desktop2",
+      "directory": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2",
+      "runner_receipt": {
+        "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/runner-receipt.json",
+        "bytes": 25023,
+        "sha256": "8caddbc5886fa0fe43e11326ead8a7aea8dfbfb8035b525d32d6a2313ce5263f"
+      },
+      "browser_report": {
+        "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-report.json",
+        "bytes": 4044,
+        "sha256": "a1a360cb3db26c0f76c6e5d03b6dd96e82dec3b6dafb55c31afcc5d5bc302543"
+      },
+      "result": "bounded_pass",
+      "exit_code": 0,
+      "stats": {
+        "startTime": "2026-09-14T23:01:47.850Z",
+        "duration": 28084.66,
+        "expected": 1,
+        "skipped": 0,
+        "unexpected": 0,
+        "flaky": 0
+      },
+      "project": "desktop",
+      "executed_input_hashes": {
+        "run-browser.mjs": "bdef3da733bc7a1744722b767acfba8afd31e2b2f8a843692e4635e34f4ce895",
+        "playwright.config.ts": "e36de60ae109a0c2108e3c60894d31ca46c7f4d29ac42e545c5e6c8789b7455e",
+        "browser-support.ts": "ec8a539b373e775a5985a677f1f73e0db8fe5be6512644397fb21d450c34f7fc",
+        "environmental.browser.ts": "d0ecf7ebf2d455709cff9d4faba6ff107ad1970421e72a334c89f665cf5bd623",
+        "serving-bridge.py": "a5d64b47753249cf648f022cbf053e4e2ae4eb9e60e7c0c2eac8cd4f35c2d699",
+        "README-browser.md": "4dcb495ad030cc49a35e35cb258ed405316d7a41fb966d3ce87b0505786de771",
+        "copy-provenance.json": "1257f3dd9539a58862d7b8b65ee15d137802b0501fa7cae8344dae9e977ae798",
+        "glyphs/0-255.pbf": "62c6d49b15fa836eb6aa45e259c7ca6762f44b011b09e47776efbe4a6db1b397",
+        "glyphs/receipt.json": "83d7c24da87b4a879585353ba600a006421187695e751267b8aae988694bcd7d",
+        "glyphs/validation.json": "4d5af8dd6a00ff5c3aaad14a61b40ada6da6c3c61e5c123b5624727c5bb6c383"
+      },
+      "differences_from_corrected_packet": {},
+      "network": {
+        "blocked": [],
+        "failures": [],
+        "pageErrors": [],
+        "evidenceErrors": [],
+        "stage": "vpd_keyboard_history",
+        "primaryError": null
+      },
+      "fields": [
+        {
+          "body": {
+            "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/trpc-2.body",
+            "bytes": 90772,
+            "sha256": "443effa37ac864a462ca1f7321dd69c7c8d09e97b19a7bbd8448aaed18d43de0"
+          },
+          "request": {
+            "bbox": "-126.955078,45.407227,-119.044922,50.592773",
+            "measure": "temperature",
+            "date": "2026-09-05",
+            "depth": "surface",
+            "zoom": 8
+          },
+          "result": {
+            "availability": "published",
+            "measure": "temperature",
+            "depth": "surface",
+            "unit": "C",
+            "requestedDay": "2026-09-05",
+            "observedDay": "2026-09-05",
+            "zoomTier": 5,
+            "cellCount": 280,
+            "truncated": false
+          },
+          "polygon_count": 280,
+          "all_values_finite": true
+        },
+        {
+          "body": {
+            "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/trpc-3.body",
+            "bytes": 91052,
+            "sha256": "0412125f1b01cd20ddb9e2b1bf7244dc66b9cba8732ebcdd66428fc32b5334c8"
+          },
+          "request": {
+            "bbox": "-126.955078,45.407227,-119.044922,50.592773",
+            "measure": "temperature",
+            "date": "2026-09-05",
+            "depth": "root-zone",
+            "zoom": 8
+          },
+          "result": {
+            "availability": "published",
+            "measure": "temperature",
+            "depth": "root-zone",
+            "unit": "C",
+            "requestedDay": "2026-09-05",
+            "observedDay": "2026-09-05",
+            "zoomTier": 5,
+            "cellCount": 280,
+            "truncated": false
+          },
+          "polygon_count": 280,
+          "all_values_finite": true
+        },
+        {
+          "body": {
+            "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/trpc-4.body",
+            "bytes": 91612,
+            "sha256": "260eb54a9ded9331a26b727c5240105e17e33c89a56ec47be7f0371e954a3cd5"
+          },
+          "request": {
+            "bbox": "-126.955078,45.407227,-119.044922,50.592773",
+            "measure": "temperature",
+            "date": "2026-09-05",
+            "depth": "deep",
+            "zoom": 8
+          },
+          "result": {
+            "availability": "published",
+            "measure": "temperature",
+            "depth": "deep",
+            "unit": "C",
+            "requestedDay": "2026-09-05",
+            "observedDay": "2026-09-05",
+            "zoomTier": 5,
+            "cellCount": 280,
+            "truncated": false
+          },
+          "polygon_count": 280,
+          "all_values_finite": true
+        },
+        {
+          "body": {
+            "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/trpc-5.body",
+            "bytes": 91936,
+            "sha256": "f887b8961e13dae29e027264f7757f1f42489d7d95e54f241294a2bf8dbd8c28"
+          },
+          "request": {
+            "bbox": "-126.955078,45.407227,-119.044922,50.592773",
+            "measure": "temperature",
+            "date": "2026-09-05",
+            "depth": "substratum",
+            "zoom": 8
+          },
+          "result": {
+            "availability": "published",
+            "measure": "temperature",
+            "depth": "substratum",
+            "unit": "C",
+            "requestedDay": "2026-09-05",
+            "observedDay": "2026-09-05",
+            "zoomTier": 5,
+            "cellCount": 280,
+            "truncated": false
+          },
+          "polygon_count": 280,
+          "all_values_finite": true
+        },
+        {
+          "body": {
+            "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/trpc-6.body",
+            "bytes": 91942,
+            "sha256": "fce8be827fba987fdcd046e32ef5c7ba99e190d2f42be7e9fb7074b88baceb65"
+          },
+          "request": {
+            "bbox": "-126.955078,45.407227,-119.044922,50.592773",
+            "measure": "temperature",
+            "date": "2026-09-04",
+            "depth": "substratum",
+            "zoom": 8
+          },
+          "result": {
+            "availability": "published",
+            "measure": "temperature",
+            "depth": "substratum",
+            "unit": "C",
+            "requestedDay": "2026-09-04",
+            "observedDay": "2026-09-04",
+            "zoomTier": 5,
+            "cellCount": 280,
+            "truncated": false
+          },
+          "polygon_count": 280,
+          "all_values_finite": true
+        },
+        {
+          "body": {
+            "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/trpc-7.body",
+            "bytes": 88329,
+            "sha256": "f0ceb3c1575abf413b0a7c9d0bcf84133ab9a57405573039f2d1fb88815a228b"
+          },
+          "request": {
+            "bbox": "-126.955078,45.407227,-119.044922,50.592773",
+            "measure": "vpd",
+            "date": "2026-09-05",
+            "depth": "surface",
+            "zoom": 8
+          },
+          "result": {
+            "availability": "published",
+            "measure": "vpd",
+            "depth": "surface",
+            "unit": "kPa",
+            "requestedDay": "2026-09-05",
+            "observedDay": "2026-09-05",
+            "zoomTier": 5,
+            "cellCount": 280,
+            "truncated": false
+          },
+          "polygon_count": 280,
+          "all_values_finite": true
+        },
+        {
+          "body": {
+            "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/trpc-8.body",
+            "bytes": 88332,
+            "sha256": "2053473461fb8a707576058435c3033b1d86cce8ea8c76918ef7c390df0c3b3b"
+          },
+          "request": {
+            "bbox": "-126.955078,45.407227,-119.044922,50.592773",
+            "measure": "vpd",
+            "date": "2026-09-04",
+            "depth": "surface",
+            "zoom": 8
+          },
+          "result": {
+            "availability": "published",
+            "measure": "vpd",
+            "depth": "surface",
+            "unit": "kPa",
+            "requestedDay": "2026-09-04",
+            "observedDay": "2026-09-04",
+            "zoomTier": 5,
+            "cellCount": 280,
+            "truncated": false
+          },
+          "polygon_count": 280,
+          "all_values_finite": true
+        }
+      ],
+      "upstream": [
+        {
+          "receipt": {
+            "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/bridge/request-001.json",
+            "bytes": 445,
+            "sha256": "9204e4c9198a6875e74d57f1fa5ed540081ea1f9e5d437eeef899ed3f582244f"
+          },
+          "body": {
+            "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/bridge/request-001.body",
+            "bytes": 284479,
+            "sha256": "82183a44921b4889b425ec57a1a9d6991f704c6b5431edf786e5339dbc0d843a"
+          },
+          "url": "https://plantgeo-parquet-api-production.up.railway.app/api/v1/parquet/coverage",
+          "status": 200,
+          "complete": true
+        },
+        {
+          "receipt": {
+            "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/bridge/request-002.json",
+            "bytes": 563,
+            "sha256": "0d9c25c7e33e4818ac7c596eb3c233a00845d6979b207275f61e62e38f7c81c9"
+          },
+          "body": {
+            "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/bridge/request-002.body",
+            "bytes": 219074,
+            "sha256": "bbb354721200070c68a5e58d778758d037451061cda7983402bf0160f2f8b8c6"
+          },
+          "url": "https://plantgeo-parquet-api-production.up.railway.app/api/v1/parquet/day?layer=soil-temperature-0-to-7cm&kind=observed&zoom=5&bbox=-126.955078%2C45.407227%2C-119.044922%2C50.592773&day=2026-09-05",
+          "status": 200,
+          "complete": true
+        },
+        {
+          "receipt": {
+            "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/bridge/request-003.json",
+            "bytes": 564,
+            "sha256": "be85d1ed514e1eb5d196e62712200d819a558c79e3ebd89f623efa4baf1a4de8"
+          },
+          "body": {
+            "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/bridge/request-003.body",
+            "bytes": 219362,
+            "sha256": "f37e880af8518580eaead56c19d9be7707ce2e5867a7d28d28d849b4d7bca601"
+          },
+          "url": "https://plantgeo-parquet-api-production.up.railway.app/api/v1/parquet/day?layer=soil-temperature-7-to-28cm&kind=observed&zoom=5&bbox=-126.955078%2C45.407227%2C-119.044922%2C50.592773&day=2026-09-05",
+          "status": 200,
+          "complete": true
+        },
+        {
+          "receipt": {
+            "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/bridge/request-004.json",
+            "bytes": 566,
+            "sha256": "a90bf479cf7a3c7fb0a6bf7e577f91cec368ddfdae78a8f8e15aecc85b74ceb7"
+          },
+          "body": {
+            "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/bridge/request-004.body",
+            "bytes": 219946,
+            "sha256": "45d513d36dda64caa540aeaffa54cd6eefaf1fae8b955d7e1844ce555bafd9a4"
+          },
+          "url": "https://plantgeo-parquet-api-production.up.railway.app/api/v1/parquet/day?layer=soil-temperature-28-to-100cm&kind=observed&zoom=5&bbox=-126.955078%2C45.407227%2C-119.044922%2C50.592773&day=2026-09-05",
+          "status": 200,
+          "complete": true
+        },
+        {
+          "receipt": {
+            "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/bridge/request-005.json",
+            "bytes": 567,
+            "sha256": "6e05cdfd72bdc0c47a2caebf05003f4e223a6e33e8a569faf1b24c06f8b41a08"
+          },
+          "body": {
+            "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/bridge/request-005.body",
+            "bytes": 220217,
+            "sha256": "163bd0552cc87a854f2fbf2b1da212bfd6a811607a127ec504d8b21cb059932b"
+          },
+          "url": "https://plantgeo-parquet-api-production.up.railway.app/api/v1/parquet/day?layer=soil-temperature-100-to-255cm&kind=observed&zoom=5&bbox=-126.955078%2C45.407227%2C-119.044922%2C50.592773&day=2026-09-05",
+          "status": 200,
+          "complete": true
+        },
+        {
+          "receipt": {
+            "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/bridge/request-006.json",
+            "bytes": 567,
+            "sha256": "23aedc91ef71c1ebaa991bcafc87d2cb2a4951439706ee6a05211b73dcbec6d1"
+          },
+          "body": {
+            "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/bridge/request-006.body",
+            "bytes": 220217,
+            "sha256": "25df637880fde57eed0fd5682669c05b3e1ca84ae58cdbe28602f954501c7504"
+          },
+          "url": "https://plantgeo-parquet-api-production.up.railway.app/api/v1/parquet/day?layer=soil-temperature-100-to-255cm&kind=observed&zoom=5&bbox=-126.955078%2C45.407227%2C-119.044922%2C50.592773&day=2026-09-04",
+          "status": 200,
+          "complete": true
+        },
+        {
+          "receipt": {
+            "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/bridge/request-007.json",
+            "bytes": 551,
+            "sha256": "df4888b032bd9039bdbd13632fc7b17af7b9cc7a9ae7fb05678f457226e11057"
+          },
+          "body": {
+            "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/bridge/request-007.body",
+            "bytes": 94768,
+            "sha256": "8a3d02bb72dd446b0177a4334abe017ea4489d28780d6ddef0bf56340ca52a02"
+          },
+          "url": "https://plantgeo-parquet-api-production.up.railway.app/api/v1/parquet/day?layer=soil-field-vpd&kind=observed&zoom=5&bbox=-126.955078%2C45.407227%2C-119.044922%2C50.592773&day=2026-09-05",
+          "status": 200,
+          "complete": true
+        },
+        {
+          "receipt": {
+            "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/bridge/request-008.json",
+            "bytes": 551,
+            "sha256": "72edc6dc81a45d65dade244fdee75d436d1fa03be3776cc822333085620468b3"
+          },
+          "body": {
+            "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/bridge/request-008.body",
+            "bytes": 94775,
+            "sha256": "bd9a71ea90bfd70ff0ddf6d6366fbd578fe942d419f4335f93019fc171e8fe16"
+          },
+          "url": "https://plantgeo-parquet-api-production.up.railway.app/api/v1/parquet/day?layer=soil-field-vpd&kind=observed&zoom=5&bbox=-126.955078%2C45.407227%2C-119.044922%2C50.592773&day=2026-09-04",
+          "status": 200,
+          "complete": true
+        }
+      ],
+      "bridge": {
+        "started_at": "2026-09-14T23:01:44.621257+00:00",
+        "requests_attempted": 8,
+        "requests_admitted": 8,
+        "requests_rejected": 0,
+        "listen": "127.0.0.1:3138",
+        "origin": "https://plantgeo-parquet-api-production.up.railway.app",
+        "limit_requests": 40,
+        "concurrency": 2,
+        "worker_deadline_seconds": 15,
+        "lifetime_seconds": 600,
+        "body_limit_bytes": 2097152,
+        "script_sha256": "a5d64b47753249cf648f022cbf053e4e2ae4eb9e60e7c0c2eac8cd4f35c2d699",
+        "updated_at": "2026-09-14T23:02:13.380921+00:00"
+      },
+      "cleanup": {
+        "steps": [
+          {
+            "state": "stopped_revalidated_owned_process",
+            "pid": 49724
+          },
+          {
+            "state": "stopped_revalidated_owned_process",
+            "pid": 68488
+          },
+          {
+            "state": "already_exited",
+            "pid": 68428
+          },
+          {
+            "state": "already_exited",
+            "pid": 26788
+          },
+          {
+            "state": "already_exited",
+            "pid": 71648
+          },
+          {
+            "state": "already_exited",
+            "pid": 4232
+          }
+        ],
+        "remaining_owned_processes": [],
+        "unverified_owned_processes": [],
+        "port_3128_closed": true,
+        "port_3138_closed": true,
+        "port_checks": [
+          {
+            "port": 3128,
+            "closed": true
+          },
+          {
+            "port": 3138,
+            "closed": true
+          }
+        ],
+        "finished_at": "2026-09-14T23:02:18.724Z"
+      }
+    },
+    {
+      "label": "mobile1",
+      "directory": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca",
+      "runner_receipt": {
+        "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/runner-receipt.json",
+        "bytes": 24814,
+        "sha256": "7059c0542851b0c2fc9d7f8dda22f2bab73dfcef41f000a1d7772392cc7d8bd8"
+      },
+      "browser_report": {
+        "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-report.json",
+        "bytes": 4042,
+        "sha256": "032a907eaaab694b25df8ab8fdb304f54f28dc8ffa5d65f91b64f639c3a46f96"
+      },
+      "result": "bounded_pass",
+      "exit_code": 0,
+      "stats": {
+        "startTime": "2026-09-14T23:05:20.367Z",
+        "duration": 21697.538,
+        "expected": 1,
+        "skipped": 0,
+        "unexpected": 0,
+        "flaky": 0
+      },
+      "project": "mobile",
+      "executed_input_hashes": {
+        "run-browser.mjs": "bdef3da733bc7a1744722b767acfba8afd31e2b2f8a843692e4635e34f4ce895",
+        "playwright.config.ts": "e36de60ae109a0c2108e3c60894d31ca46c7f4d29ac42e545c5e6c8789b7455e",
+        "browser-support.ts": "ec8a539b373e775a5985a677f1f73e0db8fe5be6512644397fb21d450c34f7fc",
+        "environmental.browser.ts": "d0ecf7ebf2d455709cff9d4faba6ff107ad1970421e72a334c89f665cf5bd623",
+        "serving-bridge.py": "a5d64b47753249cf648f022cbf053e4e2ae4eb9e60e7c0c2eac8cd4f35c2d699",
+        "README-browser.md": "4dcb495ad030cc49a35e35cb258ed405316d7a41fb966d3ce87b0505786de771",
+        "copy-provenance.json": "1257f3dd9539a58862d7b8b65ee15d137802b0501fa7cae8344dae9e977ae798",
+        "glyphs/0-255.pbf": "62c6d49b15fa836eb6aa45e259c7ca6762f44b011b09e47776efbe4a6db1b397",
+        "glyphs/receipt.json": "83d7c24da87b4a879585353ba600a006421187695e751267b8aae988694bcd7d",
+        "glyphs/validation.json": "4d5af8dd6a00ff5c3aaad14a61b40ada6da6c3c61e5c123b5624727c5bb6c383"
+      },
+      "differences_from_corrected_packet": {},
+      "network": {
+        "blocked": [],
+        "failures": [],
+        "pageErrors": [],
+        "evidenceErrors": [],
+        "stage": "vpd_keyboard_history",
+        "primaryError": null
+      },
+      "fields": [
+        {
+          "body": {
+            "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-mobile/trpc-2.body",
+            "bytes": 3752,
+            "sha256": "cbe257ebf0e0f4f6507b0d1cf6d1fc8fbb76bb77fe906811a29bf1f5b517dfb8"
+          },
+          "request": {
+            "bbox": "-123.267792,47.458923,-122.732208,48.541077",
+            "measure": "temperature",
+            "date": "2026-09-05",
+            "depth": "surface",
+            "zoom": 10
+          },
+          "result": {
+            "availability": "published",
+            "measure": "temperature",
+            "depth": "surface",
+            "unit": "C",
+            "requestedDay": "2026-09-05",
+            "observedDay": "2026-09-05",
+            "zoomTier": 9,
+            "cellCount": 6,
+            "truncated": false
+          },
+          "polygon_count": 6,
+          "all_values_finite": true
+        },
+        {
+          "body": {
+            "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-mobile/trpc-3.body",
+            "bytes": 3764,
+            "sha256": "38f3b8df2e77f7389d1ee96ce7235b4e255dbcb92fa1f03136e8b9d3930f41fd"
+          },
+          "request": {
+            "bbox": "-123.267792,47.458923,-122.732208,48.541077",
+            "measure": "temperature",
+            "date": "2026-09-05",
+            "depth": "root-zone",
+            "zoom": 10
+          },
+          "result": {
+            "availability": "published",
+            "measure": "temperature",
+            "depth": "root-zone",
+            "unit": "C",
+            "requestedDay": "2026-09-05",
+            "observedDay": "2026-09-05",
+            "zoomTier": 9,
+            "cellCount": 6,
+            "truncated": false
+          },
+          "polygon_count": 6,
+          "all_values_finite": true
+        },
+        {
+          "body": {
+            "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-mobile/trpc-4.body",
+            "bytes": 3773,
+            "sha256": "56092af49f049b2a7cc2d802c74e4a2021a0490949bd451bab565d7220e4322c"
+          },
+          "request": {
+            "bbox": "-123.267792,47.458923,-122.732208,48.541077",
+            "measure": "temperature",
+            "date": "2026-09-05",
+            "depth": "deep",
+            "zoom": 10
+          },
+          "result": {
+            "availability": "published",
+            "measure": "temperature",
+            "depth": "deep",
+            "unit": "C",
+            "requestedDay": "2026-09-05",
+            "observedDay": "2026-09-05",
+            "zoomTier": 9,
+            "cellCount": 6,
+            "truncated": false
+          },
+          "polygon_count": 6,
+          "all_values_finite": true
+        },
+        {
+          "body": {
+            "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-mobile/trpc-5.body",
+            "bytes": 3789,
+            "sha256": "8cc3a05140cb11216e4c0ffd05826edd3ad20961ebbb028d9efc3d399cc09ac5"
+          },
+          "request": {
+            "bbox": "-123.267792,47.458923,-122.732208,48.541077",
+            "measure": "temperature",
+            "date": "2026-09-05",
+            "depth": "substratum",
+            "zoom": 10
+          },
+          "result": {
+            "availability": "published",
+            "measure": "temperature",
+            "depth": "substratum",
+            "unit": "C",
+            "requestedDay": "2026-09-05",
+            "observedDay": "2026-09-05",
+            "zoomTier": 9,
+            "cellCount": 6,
+            "truncated": false
+          },
+          "polygon_count": 6,
+          "all_values_finite": true
+        },
+        {
+          "body": {
+            "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-mobile/trpc-6.body",
+            "bytes": 3787,
+            "sha256": "45855026606d97217c2230821bf7523adac991b8437b10dddd5821571fc9c2c9"
+          },
+          "request": {
+            "bbox": "-123.267792,47.458923,-122.732208,48.541077",
+            "measure": "temperature",
+            "date": "2026-09-04",
+            "depth": "substratum",
+            "zoom": 10
+          },
+          "result": {
+            "availability": "published",
+            "measure": "temperature",
+            "depth": "substratum",
+            "unit": "C",
+            "requestedDay": "2026-09-04",
+            "observedDay": "2026-09-04",
+            "zoomTier": 9,
+            "cellCount": 6,
+            "truncated": false
+          },
+          "polygon_count": 6,
+          "all_values_finite": true
+        },
+        {
+          "body": {
+            "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-mobile/trpc-7.body",
+            "bytes": 3697,
+            "sha256": "a5b25906e3f8686fb3f7ff9af8458baddb7396ac84de219aa8aa9ff242144cd2"
+          },
+          "request": {
+            "bbox": "-123.267792,47.458923,-122.732208,48.541077",
+            "measure": "vpd",
+            "date": "2026-09-05",
+            "depth": "surface",
+            "zoom": 10
+          },
+          "result": {
+            "availability": "published",
+            "measure": "vpd",
+            "depth": "surface",
+            "unit": "kPa",
+            "requestedDay": "2026-09-05",
+            "observedDay": "2026-09-05",
+            "zoomTier": 9,
+            "cellCount": 6,
+            "truncated": false
+          },
+          "polygon_count": 6,
+          "all_values_finite": true
+        },
+        {
+          "body": {
+            "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-mobile/trpc-8.body",
+            "bytes": 3692,
+            "sha256": "0ad8d36537048de31ffc4e283e1d78c95ecd2648c5080453cc4c085bed73e0c0"
+          },
+          "request": {
+            "bbox": "-123.267792,47.458923,-122.732208,48.541077",
+            "measure": "vpd",
+            "date": "2026-09-04",
+            "depth": "surface",
+            "zoom": 10
+          },
+          "result": {
+            "availability": "published",
+            "measure": "vpd",
+            "depth": "surface",
+            "unit": "kPa",
+            "requestedDay": "2026-09-04",
+            "observedDay": "2026-09-04",
+            "zoomTier": 9,
+            "cellCount": 6,
+            "truncated": false
+          },
+          "polygon_count": 6,
+          "all_values_finite": true
+        }
+      ],
+      "upstream": [
+        {
+          "receipt": {
+            "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/bridge/request-001.json",
+            "bytes": 561,
+            "sha256": "40c24bf09f4c0ec3173288732b16616fa9454ad34e76698556e7f40d06d16e90"
+          },
+          "body": {
+            "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/bridge/request-001.body",
+            "bytes": 4853,
+            "sha256": "9da3f8658ab0fb1178f45532c4a9c4383a57f2655259c531c2d50072508a49fc"
+          },
+          "url": "https://plantgeo-parquet-api-production.up.railway.app/api/v1/parquet/day?layer=soil-temperature-0-to-7cm&kind=observed&zoom=9&bbox=-123.267792%2C47.458923%2C-122.732208%2C48.541077&day=2026-09-05",
+          "status": 200,
+          "complete": true
+        },
+        {
+          "receipt": {
+            "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/bridge/request-002.json",
+            "bytes": 562,
+            "sha256": "d1f6a6e70296bdc8384918e5f394f4dcafee7c5049e30f0bc12cb8d2c385b623"
+          },
+          "body": {
+            "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/bridge/request-002.body",
+            "bytes": 4859,
+            "sha256": "36f9997a1104f4a244982374297febb56dcbdbe99d0bc51aaa00f743a276780b"
+          },
+          "url": "https://plantgeo-parquet-api-production.up.railway.app/api/v1/parquet/day?layer=soil-temperature-7-to-28cm&kind=observed&zoom=9&bbox=-123.267792%2C47.458923%2C-122.732208%2C48.541077&day=2026-09-05",
+          "status": 200,
+          "complete": true
+        },
+        {
+          "receipt": {
+            "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/bridge/request-003.json",
+            "bytes": 564,
+            "sha256": "7a2306328eabe26261c57a1c5a4724568c6e2f12ea768b5dab838172a2cc9e63"
+          },
+          "body": {
+            "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/bridge/request-003.body",
+            "bytes": 4871,
+            "sha256": "1724aa159682d33dc5aefbe9e71d544bc7d543e1d42369d32e9c89cb6a2c5d28"
+          },
+          "url": "https://plantgeo-parquet-api-production.up.railway.app/api/v1/parquet/day?layer=soil-temperature-28-to-100cm&kind=observed&zoom=9&bbox=-123.267792%2C47.458923%2C-122.732208%2C48.541077&day=2026-09-05",
+          "status": 200,
+          "complete": true
+        },
+        {
+          "receipt": {
+            "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/bridge/request-004.json",
+            "bytes": 565,
+            "sha256": "eaa08783492516a4cc69ab1b48c5a79149107dd46f56007d25ed52e58c8d3352"
+          },
+          "body": {
+            "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/bridge/request-004.body",
+            "bytes": 4877,
+            "sha256": "e53f08980a178ef4074caa653d6cc966a189ead173a1271ea06eecda6bb52890"
+          },
+          "url": "https://plantgeo-parquet-api-production.up.railway.app/api/v1/parquet/day?layer=soil-temperature-100-to-255cm&kind=observed&zoom=9&bbox=-123.267792%2C47.458923%2C-122.732208%2C48.541077&day=2026-09-05",
+          "status": 200,
+          "complete": true
+        },
+        {
+          "receipt": {
+            "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/bridge/request-005.json",
+            "bytes": 565,
+            "sha256": "5fc2eb64f953750f7affda407650d888d5d46bfd6cfb0279be8db846f96eb978"
+          },
+          "body": {
+            "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/bridge/request-005.body",
+            "bytes": 4877,
+            "sha256": "5d0ca582c2c8f1bcfcd928d5f43e783fad95e32b0dcba60189969da9da7676a3"
+          },
+          "url": "https://plantgeo-parquet-api-production.up.railway.app/api/v1/parquet/day?layer=soil-temperature-100-to-255cm&kind=observed&zoom=9&bbox=-123.267792%2C47.458923%2C-122.732208%2C48.541077&day=2026-09-04",
+          "status": 200,
+          "complete": true
+        },
+        {
+          "receipt": {
+            "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/bridge/request-006.json",
+            "bytes": 550,
+            "sha256": "60c9dc66c46c023a0dc56b3efafc218cc863a208c74edd858caf1f86b26ac6f9"
+          },
+          "body": {
+            "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/bridge/request-006.body",
+            "bytes": 2188,
+            "sha256": "d3d6ce2ae6b08ee885880e5e34250cb298d58b8428d4b5a6cd976f5ebe5bc0e7"
+          },
+          "url": "https://plantgeo-parquet-api-production.up.railway.app/api/v1/parquet/day?layer=soil-field-vpd&kind=observed&zoom=9&bbox=-123.267792%2C47.458923%2C-122.732208%2C48.541077&day=2026-09-05",
+          "status": 200,
+          "complete": true
+        },
+        {
+          "receipt": {
+            "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/bridge/request-007.json",
+            "bytes": 550,
+            "sha256": "5d6b444ebb90c48c74582f4663ef7fce9a7bc281abe2f91f38abccc0ef527a80"
+          },
+          "body": {
+            "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/bridge/request-007.body",
+            "bytes": 2188,
+            "sha256": "952563c8167dc748aacab2030d028ee216d874961ba9b1c8dc1266890dbd85a8"
+          },
+          "url": "https://plantgeo-parquet-api-production.up.railway.app/api/v1/parquet/day?layer=soil-field-vpd&kind=observed&zoom=9&bbox=-123.267792%2C47.458923%2C-122.732208%2C48.541077&day=2026-09-04",
+          "status": 200,
+          "complete": true
+        }
+      ],
+      "bridge": {
+        "started_at": "2026-09-14T23:05:16.794995+00:00",
+        "requests_attempted": 7,
+        "requests_admitted": 7,
+        "requests_rejected": 0,
+        "listen": "127.0.0.1:3138",
+        "origin": "https://plantgeo-parquet-api-production.up.railway.app",
+        "limit_requests": 40,
+        "concurrency": 2,
+        "worker_deadline_seconds": 15,
+        "lifetime_seconds": 600,
+        "body_limit_bytes": 2097152,
+        "script_sha256": "a5d64b47753249cf648f022cbf053e4e2ae4eb9e60e7c0c2eac8cd4f35c2d699",
+        "updated_at": "2026-09-14T23:05:39.999851+00:00"
+      },
+      "cleanup": {
+        "steps": [
+          {
+            "state": "stopped_revalidated_owned_process",
+            "pid": 65052
+          },
+          {
+            "state": "stopped_revalidated_owned_process",
+            "pid": 41304
+          },
+          {
+            "state": "already_exited",
+            "pid": 44156
+          },
+          {
+            "state": "already_exited",
+            "pid": 31624
+          },
+          {
+            "state": "already_exited",
+            "pid": 37464
+          },
+          {
+            "state": "already_exited",
+            "pid": 70836
+          }
+        ],
+        "remaining_owned_processes": [],
+        "unverified_owned_processes": [],
+        "port_3128_closed": true,
+        "port_3138_closed": true,
+        "port_checks": [
+          {
+            "port": 3128,
+            "closed": true
+          },
+          {
+            "port": 3138,
+            "closed": true
+          }
+        ],
+        "finished_at": "2026-09-14T23:05:44.914Z"
+      }
+    }
+  ],
+  "artifacts": [
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T22-52-39-624Z-cc1a7ec9/bridge/bridge.json",
+      "bytes": 523,
+      "sha256": "67c981ccd69e325e8a95b6bc599f23bb44b582157768e958a2af4bb6cd770d58"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T22-52-39-624Z-cc1a7ec9/bridge/request-001.body",
+      "bytes": 284479,
+      "sha256": "6978de0c7bbffd62b25db46e9dd5415a61919f5304a7cf5b50da29dc6396e69b"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T22-52-39-624Z-cc1a7ec9/bridge/request-001.json",
+      "bytes": 445,
+      "sha256": "2c7e5605d2ee963c9cc786e79b7a22bd8d4ac1540a078e7f604ee5737c0a4aa4"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T22-52-39-624Z-cc1a7ec9/bridge/request-002.body",
+      "bytes": 219074,
+      "sha256": "bbb354721200070c68a5e58d778758d037451061cda7983402bf0160f2f8b8c6"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T22-52-39-624Z-cc1a7ec9/bridge/request-002.json",
+      "bytes": 563,
+      "sha256": "c71a7ea826163337e6a21638914d324885bdb7d4a2f19e6c361af8be17ba4453"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T22-52-39-624Z-cc1a7ec9/bridge/request-003.body",
+      "bytes": 219362,
+      "sha256": "f37e880af8518580eaead56c19d9be7707ce2e5867a7d28d28d849b4d7bca601"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T22-52-39-624Z-cc1a7ec9/bridge/request-003.json",
+      "bytes": 564,
+      "sha256": "4bec8ad50ff06e1cd0d4c2e24a0f91199b547c809d9950fb422e8fdd145a7037"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T22-52-39-624Z-cc1a7ec9/bridge/request-004.body",
+      "bytes": 219946,
+      "sha256": "45d513d36dda64caa540aeaffa54cd6eefaf1fae8b955d7e1844ce555bafd9a4"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T22-52-39-624Z-cc1a7ec9/bridge/request-004.json",
+      "bytes": 566,
+      "sha256": "8c128d515ea51c77fc6c48ac0e06551b3c2e37cf33d8212668b57d88c77e1bc3"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T22-52-39-624Z-cc1a7ec9/bridge/request-005.body",
+      "bytes": 220217,
+      "sha256": "163bd0552cc87a854f2fbf2b1da212bfd6a811607a127ec504d8b21cb059932b"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T22-52-39-624Z-cc1a7ec9/bridge/request-005.json",
+      "bytes": 567,
+      "sha256": "d12ca09abdffdcecf791f48f6401f9a1718ae67a569e0c0409da1bcda5bcf15f"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T22-52-39-624Z-cc1a7ec9/browser-report.json",
+      "bytes": 10245,
+      "sha256": "1110be0445493b3acbebd6622fc2363019201de4530c4d633ed65797ffdaf647"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T22-52-39-624Z-cc1a7ec9/browser-results/.last-run.json",
+      "bytes": 96,
+      "sha256": "056e49604cca85805bab115b855a97b4fd5d7dbcdfbbe1633618cd5d6dca8088"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T22-52-39-624Z-cc1a7ec9/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/01-temperature-deep-canvas.png",
+      "bytes": 188398,
+      "sha256": "88d7232e4ebab023577b484fa5c62ac08ea13106e7a6d567bc191f504326397e"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T22-52-39-624Z-cc1a7ec9/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/01-temperature-deep.json",
+      "bytes": 3958,
+      "sha256": "5ebb2304dd5268639b087b196d0b2ce72f22ef56976074237bac8fc15ecdcc60"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T22-52-39-624Z-cc1a7ec9/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/01-temperature-deep.png",
+      "bytes": 192815,
+      "sha256": "9a1b70e44e97dcaae78d05d291a982c24823bb75e652040f9ef47e697894324f"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T22-52-39-624Z-cc1a7ec9/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/01-temperature-root-zone-canvas.png",
+      "bytes": 190549,
+      "sha256": "adb08eaa451d7353e636085b64a1182d17cf3d6e3c1c95c7eb2a5eb2ca4a94d8"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T22-52-39-624Z-cc1a7ec9/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/01-temperature-root-zone.json",
+      "bytes": 3951,
+      "sha256": "a18d772e6b58c14edd3d7a1a9b6e203ffe8bf365fca1a6ef17757f187bf7ec24"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T22-52-39-624Z-cc1a7ec9/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/01-temperature-root-zone.png",
+      "bytes": 195030,
+      "sha256": "ab0e37e87ca16b20592676ac37f3e80c86b7aebf9858b5e6faf4ff4b6d435056"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T22-52-39-624Z-cc1a7ec9/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/01-temperature-substratum-canvas.png",
+      "bytes": 183914,
+      "sha256": "66e79fbc6a1c6a1962fb6a56e11786a545b97bfd6fe3dbe454428404dfc0bff1"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T22-52-39-624Z-cc1a7ec9/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/01-temperature-substratum.json",
+      "bytes": 3965,
+      "sha256": "541600a7bdbbc540d0fee4da2578aaf1699d4b254db81140b8d4c2708c83f29c"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T22-52-39-624Z-cc1a7ec9/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/01-temperature-substratum.png",
+      "bytes": 188533,
+      "sha256": "4ac1df4b46998f43c07533ff41dfcf55515e01d966f22d99b12ff62953f723d4"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T22-52-39-624Z-cc1a7ec9/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/01-temperature-surface-canvas.png",
+      "bytes": 187105,
+      "sha256": "bbd6748a4d627d2ddcc4657ebfe05cbfd7cef5535df4b6d38c8ccbc5699bc360"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T22-52-39-624Z-cc1a7ec9/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/01-temperature-surface.json",
+      "bytes": 3944,
+      "sha256": "17fb4bf540cf9274556dd0a028436b2485805a2e4973c551a1afcf560aa8a743"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T22-52-39-624Z-cc1a7ec9/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/01-temperature-surface.png",
+      "bytes": 112225,
+      "sha256": "2bb756e72881d13592a7a7be01d671b005c7f305b36ee24b8738dc90b3538a6d"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T22-52-39-624Z-cc1a7ec9/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/error-context.md",
+      "bytes": 10509,
+      "sha256": "f899cb227cd56267993b768195688c4dd5f7d4ceb9599c841767acc698e22259"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T22-52-39-624Z-cc1a7ec9/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/final-anonymous-page.png",
+      "bytes": 78335,
+      "sha256": "2c7174ba73aefadf84382c6e04dde65227c66938cfa94b56262ec3ca5b90bbdf"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T22-52-39-624Z-cc1a7ec9/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/network-summary.json",
+      "bytes": 5705,
+      "sha256": "9f40dabd6cf868575274bbafb9e51f576d2d85f23bd2f36190e6f84d2a46fca0"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T22-52-39-624Z-cc1a7ec9/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/primary-error.json",
+      "bytes": 2110,
+      "sha256": "043a4b1a6540f5a845a4d7fb06fd0c49d51231d2368f89d6f6a04cf0a9ce7b36"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T22-52-39-624Z-cc1a7ec9/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/trpc-1.body",
+      "bytes": 57993,
+      "sha256": "07d8372b1208da0485035e1017c94d948b48e9c6b77c1ceea411ff38d6fc0077"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T22-52-39-624Z-cc1a7ec9/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/trpc-1.json",
+      "bytes": 749,
+      "sha256": "fe31a2da60dede0b53a475657d82c749ea16cd4198ef3ee28eab62af4e895af8"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T22-52-39-624Z-cc1a7ec9/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/trpc-2.body",
+      "bytes": 90772,
+      "sha256": "443effa37ac864a462ca1f7321dd69c7c8d09e97b19a7bbd8448aaed18d43de0"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T22-52-39-624Z-cc1a7ec9/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/trpc-2.json",
+      "bytes": 437,
+      "sha256": "e864abb55aaa3fea9f170dbf3971e03f5fff315397e60e77286c3086ac3cd987"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T22-52-39-624Z-cc1a7ec9/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/trpc-3.body",
+      "bytes": 91052,
+      "sha256": "0412125f1b01cd20ddb9e2b1bf7244dc66b9cba8732ebcdd66428fc32b5334c8"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T22-52-39-624Z-cc1a7ec9/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/trpc-3.json",
+      "bytes": 439,
+      "sha256": "2f66ce93418e0698303996dac8ebafe01c9496135e3850490cac28d4313811e1"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T22-52-39-624Z-cc1a7ec9/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/trpc-4.body",
+      "bytes": 91612,
+      "sha256": "260eb54a9ded9331a26b727c5240105e17e33c89a56ec47be7f0371e954a3cd5"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T22-52-39-624Z-cc1a7ec9/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/trpc-4.json",
+      "bytes": 434,
+      "sha256": "502cfa32d557a0be8366a7bf680851898542b85aec67219e63c9b5ee0d7c5b69"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T22-52-39-624Z-cc1a7ec9/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/trpc-5.body",
+      "bytes": 91936,
+      "sha256": "f887b8961e13dae29e027264f7757f1f42489d7d95e54f241294a2bf8dbd8c28"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T22-52-39-624Z-cc1a7ec9/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/trpc-5.json",
+      "bytes": 440,
+      "sha256": "d26eeeee994380b7f6532dca10419ebe9459babeb56d3d4a28a245503c330841"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T22-52-39-624Z-cc1a7ec9/next.log",
+      "bytes": 2604,
+      "sha256": "a081c20dfd77857cf3806ed7ab7b23326281d044fd0f89e98354ac7f8754b21a"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T22-52-39-624Z-cc1a7ec9/playwright.log",
+      "bytes": 1953,
+      "sha256": "27fab007e608ca239705fe452227e5aa4a5e8b2e29413b3fcd53771263b0d8e7"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T22-52-39-624Z-cc1a7ec9/runner-receipt.json",
+      "bytes": 22283,
+      "sha256": "25db9244d5b3ed675bb38a581616d520d07877c7d148baf59cfcdab31bf7699a"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-desktop1.log",
+      "bytes": 440,
+      "sha256": "0cd1162a0a5bde5ada4b9b6aec0782c030c13d40a69cc70076138d1dcd5a31a5"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-desktop1.exit",
+      "bytes": 3,
+      "sha256": "f1b2f662800122bed0ff255693df89c4487fbdcf453d3524a42d4ec20c3d9c04"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/bridge/bridge.json",
+      "bytes": 523,
+      "sha256": "8d310af71e1332dbe0715e548c515a201247f4392a0caa6b81fbc6902c733914"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/bridge/request-001.body",
+      "bytes": 284479,
+      "sha256": "82183a44921b4889b425ec57a1a9d6991f704c6b5431edf786e5339dbc0d843a"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/bridge/request-001.json",
+      "bytes": 445,
+      "sha256": "9204e4c9198a6875e74d57f1fa5ed540081ea1f9e5d437eeef899ed3f582244f"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/bridge/request-002.body",
+      "bytes": 219074,
+      "sha256": "bbb354721200070c68a5e58d778758d037451061cda7983402bf0160f2f8b8c6"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/bridge/request-002.json",
+      "bytes": 563,
+      "sha256": "0d9c25c7e33e4818ac7c596eb3c233a00845d6979b207275f61e62e38f7c81c9"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/bridge/request-003.body",
+      "bytes": 219362,
+      "sha256": "f37e880af8518580eaead56c19d9be7707ce2e5867a7d28d28d849b4d7bca601"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/bridge/request-003.json",
+      "bytes": 564,
+      "sha256": "be85d1ed514e1eb5d196e62712200d819a558c79e3ebd89f623efa4baf1a4de8"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/bridge/request-004.body",
+      "bytes": 219946,
+      "sha256": "45d513d36dda64caa540aeaffa54cd6eefaf1fae8b955d7e1844ce555bafd9a4"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/bridge/request-004.json",
+      "bytes": 566,
+      "sha256": "a90bf479cf7a3c7fb0a6bf7e577f91cec368ddfdae78a8f8e15aecc85b74ceb7"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/bridge/request-005.body",
+      "bytes": 220217,
+      "sha256": "163bd0552cc87a854f2fbf2b1da212bfd6a811607a127ec504d8b21cb059932b"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/bridge/request-005.json",
+      "bytes": 567,
+      "sha256": "6e05cdfd72bdc0c47a2caebf05003f4e223a6e33e8a569faf1b24c06f8b41a08"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/bridge/request-006.body",
+      "bytes": 220217,
+      "sha256": "25df637880fde57eed0fd5682669c05b3e1ca84ae58cdbe28602f954501c7504"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/bridge/request-006.json",
+      "bytes": 567,
+      "sha256": "23aedc91ef71c1ebaa991bcafc87d2cb2a4951439706ee6a05211b73dcbec6d1"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/bridge/request-007.body",
+      "bytes": 94768,
+      "sha256": "8a3d02bb72dd446b0177a4334abe017ea4489d28780d6ddef0bf56340ca52a02"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/bridge/request-007.json",
+      "bytes": 551,
+      "sha256": "df4888b032bd9039bdbd13632fc7b17af7b9cc7a9ae7fb05678f457226e11057"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/bridge/request-008.body",
+      "bytes": 94775,
+      "sha256": "bd9a71ea90bfd70ff0ddf6d6366fbd578fe942d419f4335f93019fc171e8fe16"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/bridge/request-008.json",
+      "bytes": 551,
+      "sha256": "72edc6dc81a45d65dade244fdee75d436d1fa03be3776cc822333085620468b3"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-report.json",
+      "bytes": 4044,
+      "sha256": "a1a360cb3db26c0f76c6e5d03b6dd96e82dec3b6dafb55c31afcc5d5bc302543"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-results/.last-run.json",
+      "bytes": 45,
+      "sha256": "91d1c43004802cd49950d78eb11c8fa7d05da8ffffe219a8b13b2f561bc00903"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/01-temperature-deep-canvas.png",
+      "bytes": 188398,
+      "sha256": "88d7232e4ebab023577b484fa5c62ac08ea13106e7a6d567bc191f504326397e"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/01-temperature-deep.json",
+      "bytes": 3958,
+      "sha256": "5ebb2304dd5268639b087b196d0b2ce72f22ef56976074237bac8fc15ecdcc60"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/01-temperature-deep.png",
+      "bytes": 192815,
+      "sha256": "9a1b70e44e97dcaae78d05d291a982c24823bb75e652040f9ef47e697894324f"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/01-temperature-root-zone-canvas.png",
+      "bytes": 190549,
+      "sha256": "adb08eaa451d7353e636085b64a1182d17cf3d6e3c1c95c7eb2a5eb2ca4a94d8"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/01-temperature-root-zone.json",
+      "bytes": 3951,
+      "sha256": "a18d772e6b58c14edd3d7a1a9b6e203ffe8bf365fca1a6ef17757f187bf7ec24"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/01-temperature-root-zone.png",
+      "bytes": 195030,
+      "sha256": "ab0e37e87ca16b20592676ac37f3e80c86b7aebf9858b5e6faf4ff4b6d435056"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/01-temperature-substratum-canvas.png",
+      "bytes": 183914,
+      "sha256": "66e79fbc6a1c6a1962fb6a56e11786a545b97bfd6fe3dbe454428404dfc0bff1"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/01-temperature-substratum.json",
+      "bytes": 3965,
+      "sha256": "541600a7bdbbc540d0fee4da2578aaf1699d4b254db81140b8d4c2708c83f29c"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/01-temperature-substratum.png",
+      "bytes": 188533,
+      "sha256": "4ac1df4b46998f43c07533ff41dfcf55515e01d966f22d99b12ff62953f723d4"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/01-temperature-surface-canvas.png",
+      "bytes": 187105,
+      "sha256": "bbd6748a4d627d2ddcc4657ebfe05cbfd7cef5535df4b6d38c8ccbc5699bc360"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/01-temperature-surface.json",
+      "bytes": 3944,
+      "sha256": "17fb4bf540cf9274556dd0a028436b2485805a2e4973c551a1afcf560aa8a743"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/01-temperature-surface.png",
+      "bytes": 138654,
+      "sha256": "e1a78e120ee405a277ede9b57dafd87009e0bfc1c5ff9d9441579ffe2f0766c5"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/02-temperature-strength-minimum-canvas.png",
+      "bytes": 73845,
+      "sha256": "6b709cc03b7e534e523938a51449019e4ceeafc8fd6fc67022332a7f50f075dd"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/02-temperature-strength-minimum.json",
+      "bytes": 3965,
+      "sha256": "541600a7bdbbc540d0fee4da2578aaf1699d4b254db81140b8d4c2708c83f29c"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/02-temperature-strength-minimum.png",
+      "bytes": 78755,
+      "sha256": "683c7e1935bccc7b5dca70c87f127ae67ccd998e6bd0c0c0743f52f6b1fa5b8e"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/03-temperature-opacity-full-canvas.png",
+      "bytes": 184062,
+      "sha256": "09964e69526950fdb5b4da53998378c9ab8ff87bedd1c11a57c434a93b13fdae"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/03-temperature-opacity-full.json",
+      "bytes": 3965,
+      "sha256": "541600a7bdbbc540d0fee4da2578aaf1699d4b254db81140b8d4c2708c83f29c"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/03-temperature-opacity-full.png",
+      "bytes": 188684,
+      "sha256": "379ec0be4f5918caa95b384ddeeaeedc509752978d49f5549ae956bea7c2f014"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/03a-temperature-hidden-canvas.png",
+      "bytes": 71840,
+      "sha256": "c4a2b5a2762c7a1bf6f3eeb829b55197e391b4f75c2ebe9ca1cce272b9a4be3a"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/03a-temperature-hidden.json",
+      "bytes": 217,
+      "sha256": "e14019ae41fdf53bed0169d17e2faa0f2afc32761e3f2b7729b6423c715fb757"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/03a-temperature-hidden.png",
+      "bytes": 76298,
+      "sha256": "d4974e61660ac59c12984fc4157e5fb81ee6b6dccc1566ae653df1e779648059"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/03b-temperature-visible-restored-canvas.png",
+      "bytes": 186660,
+      "sha256": "daa235c896d68c544ae118dcdff173aefdfb5608d086324b8c778c639649b9c8"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/03b-temperature-visible-restored.json",
+      "bytes": 3965,
+      "sha256": "541600a7bdbbc540d0fee4da2578aaf1699d4b254db81140b8d4c2708c83f29c"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/03b-temperature-visible-restored.png",
+      "bytes": 191236,
+      "sha256": "44ea9973a7a9a843dc709d8cf5704ac505ffa27a7097986acfc271d49663dafd"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/04-temperature-history-vpd-latest-canvas.png",
+      "bytes": 189493,
+      "sha256": "2d6f173934b8b94e3a501d3dee58c75586a8374f05b25197c7ea3e64c14e295f"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/04-temperature-history-vpd-latest.json",
+      "bytes": 7946,
+      "sha256": "1330d7d9bdd9a283c243b9e5bbe8975ec6676e853075be7ca70620dd7d7247b2"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/04-temperature-history-vpd-latest.png",
+      "bytes": 194204,
+      "sha256": "b4ffd2e7a71bd2455650895c74c3ddc2ad191a2a5f7f358265118d1737da6cd9"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/05-vpd-history-temperature-retained-canvas.png",
+      "bytes": 189523,
+      "sha256": "4fe52fa171ba59c2ea7735d8c92a436089721cd97a4eb1a8ddd7f73ed3de213f"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/05-vpd-history-temperature-retained.json",
+      "bytes": 7948,
+      "sha256": "66a0262054499f8a43e934a342678820de5cce0a39b09ddba0cb5c90edd6327d"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/05-vpd-history-temperature-retained.png",
+      "bytes": 194193,
+      "sha256": "9bf7eb5281157874cf8670eb8f9136183003a2518fe66e38d8ea9ea9314e239f"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/06-both-latest-canvas.png",
+      "bytes": 187120,
+      "sha256": "d3d744d9447c1775e18faa0bcd382a66ced6d5bbef43343a5c10d86eb8b8cc2c"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/06-both-latest.json",
+      "bytes": 7369,
+      "sha256": "3edc66876b181896a529410c4d30d66bbc0a6760380bce56a103f365278e6659"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/06-both-latest.png",
+      "bytes": 191818,
+      "sha256": "df5ca5cdad7079e928e4b84d1014acf497436929434ba15e0b5abe780d61756a"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/final-anonymous-page.png",
+      "bytes": 188646,
+      "sha256": "a8df08b3e3e7fdb1190419c4d93f7d60d4bc8fcd0f61b0122edb1ffb71726c59"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/network-summary.json",
+      "bytes": 5037,
+      "sha256": "276cae6829936c9442209176783328eb6d7e75ccc1961f6648ceb80b359e3424"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/primary-error.json",
+      "bytes": 54,
+      "sha256": "672a09db4b647fdb30960341728b1c605deb625146a80bdd45934e7630e4e067"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/trpc-1.body",
+      "bytes": 57993,
+      "sha256": "5b87efe6483278ff35fc4973e34cbb7d19ef3bf3242e7ad576761961df102b9c"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/trpc-1.json",
+      "bytes": 749,
+      "sha256": "9ecaf41ebe30069178f6376ba79faa958ec9d454c12ed0f336a03031cd5bf43c"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/trpc-2.body",
+      "bytes": 90772,
+      "sha256": "443effa37ac864a462ca1f7321dd69c7c8d09e97b19a7bbd8448aaed18d43de0"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/trpc-2.json",
+      "bytes": 437,
+      "sha256": "e864abb55aaa3fea9f170dbf3971e03f5fff315397e60e77286c3086ac3cd987"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/trpc-3.body",
+      "bytes": 91052,
+      "sha256": "0412125f1b01cd20ddb9e2b1bf7244dc66b9cba8732ebcdd66428fc32b5334c8"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/trpc-3.json",
+      "bytes": 439,
+      "sha256": "2f66ce93418e0698303996dac8ebafe01c9496135e3850490cac28d4313811e1"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/trpc-4.body",
+      "bytes": 91612,
+      "sha256": "260eb54a9ded9331a26b727c5240105e17e33c89a56ec47be7f0371e954a3cd5"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/trpc-4.json",
+      "bytes": 434,
+      "sha256": "502cfa32d557a0be8366a7bf680851898542b85aec67219e63c9b5ee0d7c5b69"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/trpc-5.body",
+      "bytes": 91936,
+      "sha256": "f887b8961e13dae29e027264f7757f1f42489d7d95e54f241294a2bf8dbd8c28"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/trpc-5.json",
+      "bytes": 440,
+      "sha256": "d26eeeee994380b7f6532dca10419ebe9459babeb56d3d4a28a245503c330841"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/trpc-6.body",
+      "bytes": 91942,
+      "sha256": "fce8be827fba987fdcd046e32ef5c7ba99e190d2f42be7e9fb7074b88baceb65"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/trpc-6.json",
+      "bytes": 440,
+      "sha256": "09dae8f4ffa7d076ae9ef23ab37209787477181b475fc5b9adbd80dd59bc8540"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/trpc-7.body",
+      "bytes": 88329,
+      "sha256": "f0ceb3c1575abf413b0a7c9d0bcf84133ab9a57405573039f2d1fb88815a228b"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/trpc-7.json",
+      "bytes": 429,
+      "sha256": "ae55d937666088fcce90404315bb5c9e519367411444616c6296d6d0bf22ee46"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/trpc-8.body",
+      "bytes": 88332,
+      "sha256": "2053473461fb8a707576058435c3033b1d86cce8ea8c76918ef7c390df0c3b3b"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-desktop/trpc-8.json",
+      "bytes": 429,
+      "sha256": "eeea34c3c95a1b0c5660d32cfc565c56d650efa02e95398aaf53b5f80c90083e"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/next.log",
+      "bytes": 3600,
+      "sha256": "cf51e3dc8ae17a5a1839d7e5b5219b8eb2459965f44585fade2bd6e15f1604a2"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/playwright.log",
+      "bytes": 220,
+      "sha256": "2762f24c8fe3f54dcfbf6c96582138defffe889a3e0a609fbebb493464a7e3ad"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-01-44-370Z-a5e619e2/runner-receipt.json",
+      "bytes": 25023,
+      "sha256": "8caddbc5886fa0fe43e11326ead8a7aea8dfbfb8035b525d32d6a2313ce5263f"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-desktop2.log",
+      "bytes": 414,
+      "sha256": "40c8c7e1f99f6b01d0e96f1ab2f6036cfff5902d7febbd41cc1c7b2d31d61ea3"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-desktop2.exit",
+      "bytes": 3,
+      "sha256": "13bf7b3039c63bf5a50491fa3cfd8eb4e699d1ba1436315aef9cbe5711530354"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/bridge/bridge.json",
+      "bytes": 523,
+      "sha256": "526b17e8d3d1d2f538a2767a0a986504794d8d8036f829679a735accaa62fe80"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/bridge/request-001.body",
+      "bytes": 4853,
+      "sha256": "9da3f8658ab0fb1178f45532c4a9c4383a57f2655259c531c2d50072508a49fc"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/bridge/request-001.json",
+      "bytes": 561,
+      "sha256": "40c24bf09f4c0ec3173288732b16616fa9454ad34e76698556e7f40d06d16e90"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/bridge/request-002.body",
+      "bytes": 4859,
+      "sha256": "36f9997a1104f4a244982374297febb56dcbdbe99d0bc51aaa00f743a276780b"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/bridge/request-002.json",
+      "bytes": 562,
+      "sha256": "d1f6a6e70296bdc8384918e5f394f4dcafee7c5049e30f0bc12cb8d2c385b623"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/bridge/request-003.body",
+      "bytes": 4871,
+      "sha256": "1724aa159682d33dc5aefbe9e71d544bc7d543e1d42369d32e9c89cb6a2c5d28"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/bridge/request-003.json",
+      "bytes": 564,
+      "sha256": "7a2306328eabe26261c57a1c5a4724568c6e2f12ea768b5dab838172a2cc9e63"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/bridge/request-004.body",
+      "bytes": 4877,
+      "sha256": "e53f08980a178ef4074caa653d6cc966a189ead173a1271ea06eecda6bb52890"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/bridge/request-004.json",
+      "bytes": 565,
+      "sha256": "eaa08783492516a4cc69ab1b48c5a79149107dd46f56007d25ed52e58c8d3352"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/bridge/request-005.body",
+      "bytes": 4877,
+      "sha256": "5d0ca582c2c8f1bcfcd928d5f43e783fad95e32b0dcba60189969da9da7676a3"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/bridge/request-005.json",
+      "bytes": 565,
+      "sha256": "5fc2eb64f953750f7affda407650d888d5d46bfd6cfb0279be8db846f96eb978"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/bridge/request-006.body",
+      "bytes": 2188,
+      "sha256": "d3d6ce2ae6b08ee885880e5e34250cb298d58b8428d4b5a6cd976f5ebe5bc0e7"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/bridge/request-006.json",
+      "bytes": 550,
+      "sha256": "60c9dc66c46c023a0dc56b3efafc218cc863a208c74edd858caf1f86b26ac6f9"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/bridge/request-007.body",
+      "bytes": 2188,
+      "sha256": "952563c8167dc748aacab2030d028ee216d874961ba9b1c8dc1266890dbd85a8"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/bridge/request-007.json",
+      "bytes": 550,
+      "sha256": "5d6b444ebb90c48c74582f4663ef7fce9a7bc281abe2f91f38abccc0ef527a80"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-report.json",
+      "bytes": 4042,
+      "sha256": "032a907eaaab694b25df8ab8fdb304f54f28dc8ffa5d65f91b64f639c3a46f96"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-results/.last-run.json",
+      "bytes": 45,
+      "sha256": "91d1c43004802cd49950d78eb11c8fa7d05da8ffffe219a8b13b2f561bc00903"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-mobile/01-temperature-deep-canvas.png",
+      "bytes": 64187,
+      "sha256": "9598f4ebb5a4bd845e87b088d81578abafdd75c417bba814f711bea3b746c78f"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-mobile/01-temperature-deep.json",
+      "bytes": 3958,
+      "sha256": "5ebb2304dd5268639b087b196d0b2ce72f22ef56976074237bac8fc15ecdcc60"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-mobile/01-temperature-deep.png",
+      "bytes": 66187,
+      "sha256": "ccd17f8cc29d39fc05f7a0f6623342aa2e3e561c9d5e71c2ff990def4773c786"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-mobile/01-temperature-root-zone-canvas.png",
+      "bytes": 64094,
+      "sha256": "615c77e40eee3738e77fa821216d0e54ddeb88927d624a14c2c48575cb98d1d5"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-mobile/01-temperature-root-zone.json",
+      "bytes": 3951,
+      "sha256": "a18d772e6b58c14edd3d7a1a9b6e203ffe8bf365fca1a6ef17757f187bf7ec24"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-mobile/01-temperature-root-zone.png",
+      "bytes": 66114,
+      "sha256": "c86988587de56d7f8e47362b36eb9e1430c4edea5d467ed98dceb383ed298ac7"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-mobile/01-temperature-substratum-canvas.png",
+      "bytes": 64658,
+      "sha256": "c0dcfe81f6441cf8c2474d25e21031c6617f78e7934e283e92fc9f782a2f0dcc"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-mobile/01-temperature-substratum.json",
+      "bytes": 3965,
+      "sha256": "541600a7bdbbc540d0fee4da2578aaf1699d4b254db81140b8d4c2708c83f29c"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-mobile/01-temperature-substratum.png",
+      "bytes": 66643,
+      "sha256": "50e457c703f5741b6af493a85898c1e3dab3126467e95cc61d231681d6f9ffe9"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-mobile/01-temperature-surface-canvas.png",
+      "bytes": 63808,
+      "sha256": "64a609f398a4709d89f7cd8b02bada737346a8b5e647c158ace9c1d5050eaa98"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-mobile/01-temperature-surface.json",
+      "bytes": 3944,
+      "sha256": "17fb4bf540cf9274556dd0a028436b2485805a2e4973c551a1afcf560aa8a743"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-mobile/01-temperature-surface.png",
+      "bytes": 64423,
+      "sha256": "e0d04a9b661c5f4239d74363e9cd6a0a3078c791bd709c231f0531679e717a28"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-mobile/02-temperature-strength-minimum-canvas.png",
+      "bytes": 55776,
+      "sha256": "3b47988877fca8bb02e45d00c8e22d9eb9ba717b465d16bead615f8da49e13b8"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-mobile/02-temperature-strength-minimum.json",
+      "bytes": 3965,
+      "sha256": "541600a7bdbbc540d0fee4da2578aaf1699d4b254db81140b8d4c2708c83f29c"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-mobile/02-temperature-strength-minimum.png",
+      "bytes": 59850,
+      "sha256": "260b8a82bfcd0147bf0b3243d4c8a45d0a30cddcad7530062c716440563c1b46"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-mobile/03-temperature-opacity-full-canvas.png",
+      "bytes": 65394,
+      "sha256": "f67ed0367c0882a319cde637fbfdce997ce696ddaf0c31b0cb582c7782cdac20"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-mobile/03-temperature-opacity-full.json",
+      "bytes": 3965,
+      "sha256": "541600a7bdbbc540d0fee4da2578aaf1699d4b254db81140b8d4c2708c83f29c"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-mobile/03-temperature-opacity-full.png",
+      "bytes": 58583,
+      "sha256": "43ee35f9b7167fff6107b3f6af8284aa3afbf3412275131502a5075535a12501"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-mobile/03a-temperature-hidden-canvas.png",
+      "bytes": 56077,
+      "sha256": "2c00c5b7c3ab375c5990db43152748f1ae09d9432a15d909cc20d799914ecc8c"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-mobile/03a-temperature-hidden.json",
+      "bytes": 217,
+      "sha256": "e14019ae41fdf53bed0169d17e2faa0f2afc32761e3f2b7729b6423c715fb757"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-mobile/03a-temperature-hidden.png",
+      "bytes": 57973,
+      "sha256": "e8a7a224b77eaf94d3183655b5d14a6ccf4cbd5745f6f3e99f5aa19a66ed9a86"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-mobile/03b-temperature-visible-restored-canvas.png",
+      "bytes": 65273,
+      "sha256": "a0e189b4a002f959fb88e95aa5ebaad095bd322ba29791103a3ff6b45cad39fa"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-mobile/03b-temperature-visible-restored.json",
+      "bytes": 3965,
+      "sha256": "541600a7bdbbc540d0fee4da2578aaf1699d4b254db81140b8d4c2708c83f29c"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-mobile/03b-temperature-visible-restored.png",
+      "bytes": 65662,
+      "sha256": "0f3db0f1868803883f60ea993f9fe13901e5fd1ab98b689c41a109727438c6d5"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-mobile/04-temperature-history-vpd-latest-canvas.png",
+      "bytes": 71297,
+      "sha256": "1ff8a4a2fd606b92974737fca0c5cfe5667ad1e429e77ce1965ea8eafc271de5"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-mobile/04-temperature-history-vpd-latest.json",
+      "bytes": 7946,
+      "sha256": "1330d7d9bdd9a283c243b9e5bbe8975ec6676e853075be7ca70620dd7d7247b2"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-mobile/04-temperature-history-vpd-latest.png",
+      "bytes": 73212,
+      "sha256": "111a96d6477877af7b9b57d72a9c85bdec58c182aeef54a1bda33b6a6f786d6f"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-mobile/05-vpd-history-temperature-retained-canvas.png",
+      "bytes": 71011,
+      "sha256": "d34258fa13622500d22aee254679e33e710d9a9d96d8f5f6deeeee208d070d5b"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-mobile/05-vpd-history-temperature-retained.json",
+      "bytes": 7948,
+      "sha256": "66a0262054499f8a43e934a342678820de5cce0a39b09ddba0cb5c90edd6327d"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-mobile/05-vpd-history-temperature-retained.png",
+      "bytes": 72929,
+      "sha256": "84391d6bc509965a54ab254382a994fef2040cdfc954c8f2c46f00f74799d8f4"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-mobile/06-both-latest-canvas.png",
+      "bytes": 69131,
+      "sha256": "b9f3918de8ffe0aa8bfec327d92d487ed23e3f158b0b5c08090b8407140b6688"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-mobile/06-both-latest.json",
+      "bytes": 7677,
+      "sha256": "9f5c7181c5377b70d8af609dde1ef2c8c9299239b8f1b57ed10a3fb9de159a00"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-mobile/06-both-latest.png",
+      "bytes": 71159,
+      "sha256": "efcf2ecbe926618acba58b04f7d4bdab4338a4c2b7dab8c8d88f681bfe8cccad"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-mobile/final-anonymous-page.png",
+      "bytes": 71074,
+      "sha256": "e634e127d4f494ee8eb249727703cbc2c5c5bfa2d981b62c592aa6c6a8a0d421"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-mobile/network-summary.json",
+      "bytes": 5037,
+      "sha256": "bbdffde3e273929c8632c3b8e3e518fff27b2b3654182e19024a44b5d4b81ec6"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-mobile/primary-error.json",
+      "bytes": 54,
+      "sha256": "672a09db4b647fdb30960341728b1c605deb625146a80bdd45934e7630e4e067"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-mobile/trpc-1.body",
+      "bytes": 57993,
+      "sha256": "384c98ed9eb19dc2244b9db2339e6e2f67a5364e32168a12126edc58c81f6f8b"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-mobile/trpc-1.json",
+      "bytes": 749,
+      "sha256": "5882476e612f5d5ed2ec5ae2cdddbe01289058f82cb874c175b5be90443ee2a2"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-mobile/trpc-2.body",
+      "bytes": 3752,
+      "sha256": "cbe257ebf0e0f4f6507b0d1cf6d1fc8fbb76bb77fe906811a29bf1f5b517dfb8"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-mobile/trpc-2.json",
+      "bytes": 437,
+      "sha256": "32b284e89093e71bd583f1048e478dca60936c09557ab577f212ca6abab9475c"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-mobile/trpc-3.body",
+      "bytes": 3764,
+      "sha256": "38f3b8df2e77f7389d1ee96ce7235b4e255dbcb92fa1f03136e8b9d3930f41fd"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-mobile/trpc-3.json",
+      "bytes": 439,
+      "sha256": "5781fd689cdcb29e5fcb9a1b2672a21d199b97506c0df049a4639435717f9e69"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-mobile/trpc-4.body",
+      "bytes": 3773,
+      "sha256": "56092af49f049b2a7cc2d802c74e4a2021a0490949bd451bab565d7220e4322c"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-mobile/trpc-4.json",
+      "bytes": 434,
+      "sha256": "237f2f927c0e542375ddff5d8c7e57ddebb80afaa9759d86b22c13c05a6803b7"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-mobile/trpc-5.body",
+      "bytes": 3789,
+      "sha256": "8cc3a05140cb11216e4c0ffd05826edd3ad20961ebbb028d9efc3d399cc09ac5"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-mobile/trpc-5.json",
+      "bytes": 440,
+      "sha256": "15d3b3c748aaa5820c1cd56cc732c915f0763dd76074ffddb2ef40da8a173355"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-mobile/trpc-6.body",
+      "bytes": 3787,
+      "sha256": "45855026606d97217c2230821bf7523adac991b8437b10dddd5821571fc9c2c9"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-mobile/trpc-6.json",
+      "bytes": 440,
+      "sha256": "efc12ed37e97b78e1f655d2f2b8fc58ebbe3870469097e0bdae5cbf8b475088b"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-mobile/trpc-7.body",
+      "bytes": 3697,
+      "sha256": "a5b25906e3f8686fb3f7ff9af8458baddb7396ac84de219aa8aa9ff242144cd2"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-mobile/trpc-7.json",
+      "bytes": 429,
+      "sha256": "f2123c444924378e0ee7ae065a9a0084e7a1c7b89b254433a6d4721d38d4317e"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-mobile/trpc-8.body",
+      "bytes": 3692,
+      "sha256": "0ad8d36537048de31ffc4e283e1d78c95ecd2648c5080453cc4c085bed73e0c0"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/browser-results/environmental.browser.ts-s-2eb5f-dependent-dates-and-opacity-mobile/trpc-8.json",
+      "bytes": 429,
+      "sha256": "3d49caba56aca2469f3c40bc1f576401772e0af4ebe437ae3d40d09cba0c381d"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/next.log",
+      "bytes": 3607,
+      "sha256": "be6b7b8c48892cf874626dabd274dc94f79dcd2fbea91d09aea1d4bf26726d7f"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/playwright.log",
+      "bytes": 219,
+      "sha256": "9163f7def0105dfcbeeb94b4508bc38604e3f3d11d6ef08f248359d4db8ac670"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-attempt-2026-09-14T23-05-16-541Z-e59bddca/runner-receipt.json",
+      "bytes": 24814,
+      "sha256": "7059c0542851b0c2fc9d7f8dda22f2bab73dfcef41f000a1d7772392cc7d8bd8"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-mobile1.log",
+      "bytes": 414,
+      "sha256": "73e1ae5a03c0f27513c826e9217eed40c6628f0e76e01519260ac47d18e94152"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-mobile1.exit",
+      "bytes": 3,
+      "sha256": "13bf7b3039c63bf5a50491fa3cfd8eb4e699d1ba1436315aef9cbe5711530354"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/run-browser.mjs",
+      "bytes": 24295,
+      "sha256": "bdef3da733bc7a1744722b767acfba8afd31e2b2f8a843692e4635e34f4ce895"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/serving-bridge.py",
+      "bytes": 7204,
+      "sha256": "a5d64b47753249cf648f022cbf053e4e2ae4eb9e60e7c0c2eac8cd4f35c2d699"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/playwright.config.ts",
+      "bytes": 1329,
+      "sha256": "e36de60ae109a0c2108e3c60894d31ca46c7f4d29ac42e545c5e6c8789b7455e"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/browser-support.ts",
+      "bytes": 10202,
+      "sha256": "ec8a539b373e775a5985a677f1f73e0db8fe5be6512644397fb21d450c34f7fc"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/environmental.browser.ts",
+      "bytes": 8804,
+      "sha256": "d0ecf7ebf2d455709cff9d4faba6ff107ad1970421e72a334c89f665cf5bd623"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/README-browser.md",
+      "bytes": 7502,
+      "sha256": "4dcb495ad030cc49a35e35cb258ed405316d7a41fb966d3ce87b0505786de771"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/copy-provenance.json",
+      "bytes": 962,
+      "sha256": "1257f3dd9539a58862d7b8b65ee15d137802b0501fa7cae8344dae9e977ae798"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/glyphs/0-255.pbf",
+      "bytes": 76044,
+      "sha256": "62c6d49b15fa836eb6aa45e259c7ca6762f44b011b09e47776efbe4a6db1b397"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/glyphs/receipt.json",
+      "bytes": 602,
+      "sha256": "83d7c24da87b4a879585353ba600a006421187695e751267b8aae988694bcd7d"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/glyphs/validation.json",
+      "bytes": 3783,
+      "sha256": "4d5af8dd6a00ff5c3aaad14a61b40ada6da6c3c61e5c123b5624727c5bb6c383"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session10/write-receipt.py",
+      "bytes": 7720,
+      "sha256": "6c37f536bd5260ca299b31df2fcc2552205254f06241ce09b56e85ed9e08dc1f"
+    }
+  ],
+  "limits": [
+    "Mobile is emulated touch plus injected keyboard, not a physical device.",
+    "Mobile manager obscures essentially the whole canvas; unobstructed mobile map values and date summary are not accepted.",
+    "VPD kPa is proven by typed responses; isolated VPD numeric-label visuals are unproved.",
+    "Desktop both-latest screenshot captures a transient mixed-date summary; associated JSON and final page settle. Not a persistent defect or proof every frame awaited settled paint.",
+    "Different desktop/mobile bboxes and rungs are not cross-rung conservation evidence.",
+    "No full history, all-rung, hover, full T07 disagreement, dense production basemap or whole-case acceptance.",
+    "Returning to latest may reuse an earlier response. Current source availability is not repaired by these reads."
+  ]
+}

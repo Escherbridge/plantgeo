@@ -1,0 +1,442 @@
+{
+  "recorded_at": "2026-09-14T23:36:55.476127+00:00",
+  "status": "bounded_variants_verified_platform_red",
+  "candidate": {
+    "manifest_sha256": "79d15c03290945063dd228cce768e57ab0b2eb4d442ce22f9fa894c66de63685",
+    "files": 1747,
+    "binding": "External coordinator freeze; runner does not embed source digest."
+  },
+  "attempts": [
+    {
+      "directory": ".omc/research/runbook-20260914/session9/browser-attempt-2026-09-14T22-55-55-664Z-7f1b5fea",
+      "stats": {
+        "startTime": "2026-09-14T22:55:58.672Z",
+        "duration": 57856.151000000005,
+        "expected": 2,
+        "skipped": 0,
+        "unexpected": 2,
+        "flaky": 0
+      },
+      "execution": "tests_failed_or_timed_out",
+      "cleanup": {
+        "steps": [
+          {
+            "state": "stopped_revalidated_owned_process",
+            "pid": 54532
+          },
+          {
+            "state": "already_exited",
+            "pid": 27120
+          },
+          {
+            "state": "already_exited",
+            "pid": 59220
+          }
+        ],
+        "remaining_owned_processes": [],
+        "unverified_owned_processes": [],
+        "port_3128_closed": true,
+        "finished_at": "2026-09-14T22:56:58.842Z"
+      },
+      "cases": [
+        {
+          "title": "Provision or explicitly resume four synthetic identities and verify fresh sessions",
+          "project": "identity-setup",
+          "status": "expected",
+          "results": [
+            {
+              "status": "passed",
+              "duration_ms": 7184,
+              "attachment_count": 17
+            }
+          ]
+        },
+        {
+          "title": "PGQA-C11 stale second reviewer cannot reverse the first committed pending-review decision",
+          "project": "desktop",
+          "status": "unexpected",
+          "results": [
+            {
+              "status": "failed",
+              "duration_ms": 7853,
+              "attachment_count": 13
+            }
+          ]
+        },
+        {
+          "title": "FR-4 / PGQA-P04 supporting social variant: other author denial and moderator deletion survive client reload",
+          "project": "desktop",
+          "status": "expected",
+          "results": [
+            {
+              "status": "passed",
+              "duration_ms": 20452,
+              "attachment_count": 10
+            }
+          ]
+        },
+        {
+          "title": "FR-4 / PGQA-P04 supporting social variant: two clients preserve individual like state and counts after reload",
+          "project": "desktop",
+          "status": "unexpected",
+          "results": [
+            {
+              "status": "failed",
+              "duration_ms": 20455,
+              "attachment_count": 2
+            }
+          ]
+        }
+      ],
+      "artifacts": [
+        {
+          "path": ".omc/research/runbook-20260914/session9/browser-attempt-2026-09-14T22-55-55-664Z-7f1b5fea/browser-report.json",
+          "bytes": 2028847,
+          "sha256": "beca0e4016f6f3bf8d96eaf9ed701195d677e989c74e7aee09e626e9661bba4c"
+        },
+        {
+          "path": ".omc/research/runbook-20260914/session9/browser-attempt-2026-09-14T22-55-55-664Z-7f1b5fea/browser-results/.last-run.json",
+          "bytes": 145,
+          "sha256": "dfd4455a528ce280959e879dc45fab1b2af453f3fde86a0f7f6ac55af01c1b05"
+        },
+        {
+          "path": ".omc/research/runbook-20260914/session9/browser-attempt-2026-09-14T22-55-55-664Z-7f1b5fea/browser-results/social-variants-FR-4-PGQA--ed123-ate-and-counts-after-reload-desktop/error-context.md",
+          "bytes": 14488,
+          "sha256": "9cb3ac4125dee5c30385d69224fce4ba1ae2dc8752cf358184c5bb495367def9"
+        },
+        {
+          "path": ".omc/research/runbook-20260914/session9/browser-attempt-2026-09-14T22-55-55-664Z-7f1b5fea/browser-results/social-variants-PGQA-C11-s-cc9ba-ted-pending-review-decision-desktop/error-context.md",
+          "bytes": 17571,
+          "sha256": "30842fb5c6f1fe7e6351cd2801ceb63f948b2b3d724404515f6632aa2dd27756"
+        },
+        {
+          "path": ".omc/research/runbook-20260914/session9/browser-attempt-2026-09-14T22-55-55-664Z-7f1b5fea/executed-harness/manifest.json",
+          "bytes": 5940,
+          "sha256": "a09810d26412235f8d1db9a1cec636d2efce19223940d4267a9b24b375f75a48"
+        },
+        {
+          "path": ".omc/research/runbook-20260914/session9/browser-attempt-2026-09-14T22-55-55-664Z-7f1b5fea/executed-harness/original-harness-manifest.json",
+          "bytes": 2701,
+          "sha256": "1414041924559c529f5efcf53debc7007ff832f8407a5b771fe09e1bca688578"
+        },
+        {
+          "path": ".omc/research/runbook-20260914/session9/browser-attempt-2026-09-14T22-55-55-664Z-7f1b5fea/executed-harness/repo/.omc/research/runbook-20260914/session5/browser-attempt-2026-09-14T21-14-28-408Z-096c590c/browser-report.json",
+          "bytes": 1850896,
+          "sha256": "fad05404849ec0dfc70b9453a1e35082078ef19dbb810c063573f646aa1214eb"
+        },
+        {
+          "path": ".omc/research/runbook-20260914/session9/browser-attempt-2026-09-14T22-55-55-664Z-7f1b5fea/executed-harness/repo/.omc/research/runbook-20260914/session5/browser3-extracted/identity-16-identity-setup-receipt.json",
+          "bytes": 3136,
+          "sha256": "f354545790b2b06e84cb359d9feed5f4c8b43f72b981cd2b0c33eb22c4a6890a"
+        },
+        {
+          "path": ".omc/research/runbook-20260914/session9/browser-attempt-2026-09-14T22-55-55-664Z-7f1b5fea/executed-harness/repo/.omc/research/runbook-20260914/session5/browser4-extracted/proposal-08-anonymous-published-point.json",
+          "bytes": 1988,
+          "sha256": "35a6f7fa51d444496cb8c3efb4194a650bc4ef32fc0a3a37b3f7771335606d19"
+        },
+        {
+          "path": ".omc/research/runbook-20260914/session9/browser-attempt-2026-09-14T22-55-55-664Z-7f1b5fea/executed-harness/repo/.omc/research/runbook-20260914/session5/environment-plan.json",
+          "bytes": 719,
+          "sha256": "52a5efc95e03027bfa9cea8b543731261b56cf2dc4986fee7090d425c02bf495"
+        },
+        {
+          "path": ".omc/research/runbook-20260914/session9/browser-attempt-2026-09-14T22-55-55-664Z-7f1b5fea/executed-harness/repo/.omc/research/runbook-20260914/session5/helpers.ts",
+          "bytes": 12743,
+          "sha256": "c7997edf11df9dd67c8f4be30241b008eb5d75186c40de09ebde5e9c73c09ceb"
+        },
+        {
+          "path": ".omc/research/runbook-20260914/session9/browser-attempt-2026-09-14T22-55-55-664Z-7f1b5fea/executed-harness/repo/.omc/research/runbook-20260914/session5/identity-setup.spec.ts",
+          "bytes": 12448,
+          "sha256": "5e71193b0f90880c8a295d0356eec86e8cf09af508d82d60df5466943adc0313"
+        },
+        {
+          "path": ".omc/research/runbook-20260914/session9/browser-attempt-2026-09-14T22-55-55-664Z-7f1b5fea/executed-harness/repo/.omc/research/runbook-20260914/session9/identity-setup.spec.ts",
+          "bytes": 43,
+          "sha256": "f975333c3e7c1314b6f50c7cdfd959f35b1e5a085941d148e3537bed1fc6518a"
+        },
+        {
+          "path": ".omc/research/runbook-20260914/session9/browser-attempt-2026-09-14T22-55-55-664Z-7f1b5fea/executed-harness/repo/.omc/research/runbook-20260914/session9/MODERATION-CONTRACT.md",
+          "bytes": 2867,
+          "sha256": "f0a9c73926729c5e3e5e058f9fb411b7f689f7e1c5e6ed5e0cc004f34b747afa"
+        },
+        {
+          "path": ".omc/research/runbook-20260914/session9/browser-attempt-2026-09-14T22-55-55-664Z-7f1b5fea/executed-harness/repo/.omc/research/runbook-20260914/session9/parent-runner.mjs.txt",
+          "bytes": 22402,
+          "sha256": "cd4154bc53e840126f83240c0454e20677186041cbe290fb905ed436c28992c8"
+        },
+        {
+          "path": ".omc/research/runbook-20260914/session9/browser-attempt-2026-09-14T22-55-55-664Z-7f1b5fea/executed-harness/repo/.omc/research/runbook-20260914/session9/playwright.config.ts",
+          "bytes": 1630,
+          "sha256": "5bc6322cf47189882b32699511de93c240653f08f450432482795d70f4d18b5e"
+        },
+        {
+          "path": ".omc/research/runbook-20260914/session9/browser-attempt-2026-09-14T22-55-55-664Z-7f1b5fea/executed-harness/repo/.omc/research/runbook-20260914/session9/README.md",
+          "bytes": 5846,
+          "sha256": "2f34e7273c4b415c6b78fe78e5e7dc2b5c5d4fab47ecd4372c0f339df5071dfa"
+        },
+        {
+          "path": ".omc/research/runbook-20260914/session9/browser-attempt-2026-09-14T22-55-55-664Z-7f1b5fea/executed-harness/repo/.omc/research/runbook-20260914/session9/run-browser.mjs",
+          "bytes": 22533,
+          "sha256": "553b0e9e94db2adb4d4262921f99feb0b3f0063dd8366a2e370a20bc967af74e"
+        },
+        {
+          "path": ".omc/research/runbook-20260914/session9/browser-attempt-2026-09-14T22-55-55-664Z-7f1b5fea/executed-harness/repo/.omc/research/runbook-20260914/session9/social-variants.spec.ts",
+          "bytes": 14350,
+          "sha256": "5bf6be594ccc4c698307a377ecf8fc5d5653d40e62ad9039ab759091dc6d7dc9"
+        },
+        {
+          "path": ".omc/research/runbook-20260914/session9/browser-attempt-2026-09-14T22-55-55-664Z-7f1b5fea/executed-harness/repo/.omc/research/runbook-20260914/source-manifest-12.json",
+          "bytes": 254898,
+          "sha256": "8f7bdd2a71d23ba2b62cf3496de67a4661be88e5e004db92dd286afb29145e62"
+        },
+        {
+          "path": ".omc/research/runbook-20260914/session9/browser-attempt-2026-09-14T22-55-55-664Z-7f1b5fea/executed-harness/repo/e2e/fixtures/pmtiles.ts",
+          "bytes": 3854,
+          "sha256": "e27235f839258c47f67ea38d5b353e027c0c42c87e1ea8d0ccda7e301d323b93"
+        },
+        {
+          "path": ".omc/research/runbook-20260914/session9/browser-attempt-2026-09-14T22-55-55-664Z-7f1b5fea/next.log",
+          "bytes": 23173,
+          "sha256": "36d70ebd459f8a8c34ba740ed5d39f9a907d86500d6344c1c4b0c2315c1d8871"
+        },
+        {
+          "path": ".omc/research/runbook-20260914/session9/browser-attempt-2026-09-14T22-55-55-664Z-7f1b5fea/playwright.log",
+          "bytes": 6031,
+          "sha256": "d8117f6c8eb222299b85bcecaa481922fcc4e29f760dd07a28bad9506033f39a"
+        },
+        {
+          "path": ".omc/research/runbook-20260914/session9/browser-attempt-2026-09-14T22-55-55-664Z-7f1b5fea/privacy-redaction-receipt.json",
+          "bytes": 875,
+          "sha256": "061f49d3fc9feb133cf60bc489f7bf14c65b62fdd3ef1881a2024c5607d3c7b7"
+        },
+        {
+          "path": ".omc/research/runbook-20260914/session9/browser-attempt-2026-09-14T22-55-55-664Z-7f1b5fea/runner-receipt.json",
+          "bytes": 41908,
+          "sha256": "a7f510b2b266ed3316f54ceebd25d07ef128bbc2e740799cb3822e2aa0c35d95"
+        }
+      ]
+    },
+    {
+      "directory": ".omc/research/runbook-20260914/session9/browser-attempt-2026-09-14T23-31-52-300Z-616c9ccb",
+      "stats": {
+        "startTime": "2026-09-14T23:31:55.366Z",
+        "duration": 35236.044,
+        "expected": 2,
+        "skipped": 0,
+        "unexpected": 0,
+        "flaky": 0
+      },
+      "execution": "tests_passed",
+      "cleanup": {
+        "steps": [
+          {
+            "state": "stopped_revalidated_owned_process",
+            "pid": 44864
+          },
+          {
+            "state": "already_exited",
+            "pid": 45672
+          },
+          {
+            "state": "already_exited",
+            "pid": 73716
+          }
+        ],
+        "remaining_owned_processes": [],
+        "unverified_owned_processes": [],
+        "port_3128_closed": true,
+        "finished_at": "2026-09-14T23:32:32.886Z"
+      },
+      "cases": [
+        {
+          "title": "Explicitly resume four synthetic identities and verify fresh sessions",
+          "project": "identity-setup",
+          "status": "expected",
+          "results": [
+            {
+              "status": "passed",
+              "duration_ms": 7202,
+              "attachment_count": 18
+            }
+          ]
+        },
+        {
+          "title": "FR-4 / PGQA-P04 supporting social variant: two clients preserve individual like state and counts after reload",
+          "project": "desktop",
+          "status": "expected",
+          "results": [
+            {
+              "status": "passed",
+              "duration_ms": 26621,
+              "attachment_count": 10
+            }
+          ]
+        }
+      ],
+      "artifacts": [
+        {
+          "path": ".omc/research/runbook-20260914/session9/browser-attempt-2026-09-14T23-31-52-300Z-616c9ccb/browser-report.json",
+          "bytes": 1570273,
+          "sha256": "c4411f6fb4177d9f0eaa71a6fa0d5a7fe0a01cec0753840a95d712b7a794badd"
+        },
+        {
+          "path": ".omc/research/runbook-20260914/session9/browser-attempt-2026-09-14T23-31-52-300Z-616c9ccb/browser-results/.last-run.json",
+          "bytes": 45,
+          "sha256": "91d1c43004802cd49950d78eb11c8fa7d05da8ffffe219a8b13b2f561bc00903"
+        },
+        {
+          "path": ".omc/research/runbook-20260914/session9/browser-attempt-2026-09-14T23-31-52-300Z-616c9ccb/next.log",
+          "bytes": 22449,
+          "sha256": "152de1eb1ba4122c9b9976dd007510caea32ba600c3f33fd03a8a3fcb9cffab8"
+        },
+        {
+          "path": ".omc/research/runbook-20260914/session9/browser-attempt-2026-09-14T23-31-52-300Z-616c9ccb/playwright.log",
+          "bytes": 443,
+          "sha256": "6aea42ca55ad871ca796749415c2662a2cbd2bfde7918ef91945a48850b223d8"
+        },
+        {
+          "path": ".omc/research/runbook-20260914/session9/browser-attempt-2026-09-14T23-31-52-300Z-616c9ccb/privacy-scan.json",
+          "bytes": 381,
+          "sha256": "5824fe92f544cc206ce1d23a7dd0aac928ab9467cd72b6235b03347d03dc6ff9"
+        },
+        {
+          "path": ".omc/research/runbook-20260914/session9/browser-attempt-2026-09-14T23-31-52-300Z-616c9ccb/runner-receipt.json",
+          "bytes": 29067,
+          "sha256": "4e564bbd0b72a15b72e955fc4fb16f9b275a9083d42022bd8cfe0b9a3d13d573"
+        }
+      ]
+    }
+  ],
+  "supporting_artifacts": [
+    {
+      "path": ".omc/research/runbook-20260914/session9/AUTH-CAPTURE.md",
+      "bytes": 5087,
+      "sha256": "28b12f9b1a705c19535f263b9227ccbcaaa184805a1066c18a084dec5437135d"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session9/candidate14-after-likes.json",
+      "bytes": 135,
+      "sha256": "1f18b5790c438c558566c7015db6f7636b8e87c216874a3b91da52528a40c018"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session9/candidate14-before-likes.json",
+      "bytes": 135,
+      "sha256": "4f3df611be5f8ae99dee3d334343ccb07bd0a0594ad28b9aa5fabeb5150f96e3"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session9/independent-auth-likes-review.md",
+      "bytes": 8435,
+      "sha256": "3c21c3b68ed93d02f0932119892e43c001ba44d678a7359b55f2875ea346bb7b"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session9/preflight-likes-services.json",
+      "bytes": 1151,
+      "sha256": "e96b4421560e3eec2e5f11260cbe01e55b10140474e75fb3bd4178b4b8b6bbf5"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session9/scan-attempt.py",
+      "bytes": 1968,
+      "sha256": "56c44afd4e7fbb000dda317651dbdc412661d02b4f5b9f6cc82a4f1d82014024"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session9/write-receipt.py",
+      "bytes": 4504,
+      "sha256": "a61ea551e2eff68c4c1c301390c4bb96ce6b46375e5d398d17b3594247625aa2"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session9-auth-validation/.omc/research/runbook-20260914/session9-auth-validation/report.json",
+      "bytes": 8843,
+      "sha256": "af87885df833c8bb2cb3388ed1e86194916533a05b747dfb2d92183449e143ad"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session9-auth-validation/capture-original.ts.txt",
+      "bytes": 1584,
+      "sha256": "358087677c95226eba932e9ad7f42c24886878cda25f1a60e45309ae198c045a"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session9-auth-validation/capture.spec.ts",
+      "bytes": 1529,
+      "sha256": "ae1acc6e080ff57574c5bb3dde593df83a849cd028529f3552ceb30c6ad28001"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session9-auth-validation/config-original.ts.txt",
+      "bytes": 548,
+      "sha256": "207d0f5962c603df7f8c23bab81a32adc82f249f278c1e9a8423088cc8c30171"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session9-auth-validation/playwright.config.ts",
+      "bytes": 505,
+      "sha256": "38525e8f0474b5f46708a9b620ae2c038da8e9ea96be5d68b166b5a3f94ae85e"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session9-auth-validation/receipt.json",
+      "bytes": 1217,
+      "sha256": "d63736c22b490758ec709051b7e5dc2c94e5e3e99ed331e1e1958fcb8bb936fc"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session9-auth-validation/report2.json",
+      "bytes": 8957,
+      "sha256": "16341ad090987130e46362a7daa92c04ef5d6710ef224c41f30588e2ab2951b1"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session9-auth-validation/results/.last-run.json",
+      "bytes": 45,
+      "sha256": "91d1c43004802cd49950d78eb11c8fa7d05da8ffffe219a8b13b2f561bc00903"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session9-auth-validation/results/capture-expected-failure-a-525c8-eates-no-automatic-snapshot/error-context.md",
+      "bytes": 2344,
+      "sha256": "62eb2e0a9543f794aeac9851439a4e7aa8494ff95ade0969bc36f03608752714"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session9-auth-validation/results2/.last-run.json",
+      "bytes": 45,
+      "sha256": "91d1c43004802cd49950d78eb11c8fa7d05da8ffffe219a8b13b2f561bc00903"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session9-auth-validation/results2/capture-expected-failure-w-329ce-xt-creates-no-page-snapshot/error-context.md",
+      "bytes": 2275,
+      "sha256": "dce8601fcc8dce4fe78f43e72aa5e81d571ba4a908d0bb743dc839165aa41e27"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session9-auth-validation/run-original.py.txt",
+      "bytes": 2050,
+      "sha256": "84ba2d5adf8d4a4f39c50c13b3bf14b193b1cb9f4444b8329d4d14f5a151932f"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session9-auth-validation/run.log",
+      "bytes": 488,
+      "sha256": "df6822a57a523d717944f988e5d70d04d3d1f5ed48bd6aae6f5d1ea75aed5c52"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session9-auth-validation/run.py",
+      "bytes": 2177,
+      "sha256": "f4cebd74e6b9d3e9dbb00f97142b40d35ab82cd0944dc067202d8074f9804846"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session9-auth-validation/run2.log",
+      "bytes": 475,
+      "sha256": "1004e1cd41faf61fe1f2f5f815fd884a1209c3ee6ddd8c32bc15cf68fddf2945"
+    },
+    {
+      "path": ".omc/research/runbook-20260914/source-manifest-14.json",
+      "bytes": 255718,
+      "sha256": "79d15c03290945063dd228cce768e57ab0b2eb4d442ce22f9fa894c66de63685"
+    }
+  ],
+  "findings": {
+    "D260914-27": "First published pending-review decision was overwritten by stale admin rejection; retained actual failure. Applied source correction belongs to subsequent Candidate15, not these runs.",
+    "comment_ownership": "Other contributor lacks Delete and receives403; admin deletion then repeat404 and reload absence pass.",
+    "likes_first_attempt": "Eleventh normal callback429 before any like mutation; not a like behavior failure.",
+    "likes_second_attempt": "Both actors baselinefalse/count0, reloadtrue/count2 after own toggles, restore own original states. Shared final total not reread.",
+    "D260914-28": "Original automatic password snapshot sanitized after run with exact provenance. Safe revision disables automatic ARIA snapshots, retains ordinary error/source context. Dummy failure probe and actual exact-known credential scan verified."
+  },
+  "limits": [
+    "No whole-case promotion, simultaneous transaction schedule, production release, real-human acceptance or model stream.",
+    "First artifact was sanitized after capture; no unredacted copy retained. Exact known scans are not generic secret audits.",
+    "Successful login run had no pages remaining at auth cleanup; dummy probe covers failure cleanup. Dummy exception can precede sign-in activation and does not simulate429.",
+    "Original dummy collector path failure and corrected probe preserved separately.",
+    "No final shared like total reread, physical device or mounted-focus cache freshness acceptance.",
+    "Source checks after the subsequent Candidate15 fixes are separate evidence."
+  ]
+}

@@ -17,6 +17,7 @@ import {
   describeAvailability,
   findLayerCapability,
   isWithinCoverageGap,
+  isCalendarDate,
   layerAvailabilityAt,
   resolveLayerDate,
   resolveVariant,
@@ -315,12 +316,11 @@ export function useMetricAtDate(options: UseMetricAtDateOptions): UseMetricAtDat
  * captions from it, and no surface has to infer a drawn day from a control position.
  */
 export interface DrawnLayerDay {
-  /**
-   * The day the features currently on the map belong to, or null for a feed whose read carries
-   * no day at all (SSURGO is proxied per viewport, so a pan re-reads it and a scrub does not).
-   */
+  /** Published day in hand, or null when no dated answer is available. */
   drawnDate: string | null;
-  /** The day this layer's row is asking for. Differs from `drawnDate` only during a load. */
+  /** Explicit typed pending request; undefined preserves legacy date comparison. */
+  pendingDate?: string | null;
+  /** Selected request day; independent of publication availability and served day. */
   requestedDate: string | null;
   /** A request for this layer is in flight -- for a new day, or the same day over a new bbox. */
   isLoading: boolean;
@@ -363,6 +363,7 @@ function sameDrawnLayerDays(left: DrawnLayerDays, right: DrawnLayerDays): boolea
     if (before.drawnDate !== after.drawnDate) return false;
     if (before.requestedDate !== after.requestedDate) return false;
     if (before.isLoading !== after.isLoading) return false;
+    if (before.pendingDate !== after.pendingDate) return false;
   }
   return true;
 }
@@ -396,6 +397,8 @@ export const useDrawnLayerDayStore = create<DrawnLayerDayState>()((set) => ({
 /** One live layer's read, as `usePublishedDrawnLayerDays` needs to see it. */
 export interface LiveLayerDayReport {
   layerId: LayerToggleId;
+  /** Explicit typed publication date; undefined preserves legacy request bookkeeping. */
+  servedDate?: string | null;
   /** False while the toggle is off. Such a layer is not published at all -- see the hook. */
   isDrawn: boolean;
   /** The day this layer's row has settled on, or null while nothing can name one yet. */
@@ -427,6 +430,25 @@ export interface QueryReadState {
   data?: unknown;
 }
 
+/** Typed publication dates never fall back to the requested day; see stores/AGENTS.md. */
+function queryServedDate(data: unknown): string | null | undefined {
+  if (data === null || typeof data !== "object") return undefined;
+  const value = data as Record<string, unknown>;
+  if (typeof value.state === "string") {
+    if (value.state !== "ready") return null;
+    return typeof value.servedDay === "string" && isCalendarDate(value.servedDay)
+      ? value.servedDay
+      : null;
+  }
+  if (typeof value.availability === "string") {
+    if (value.availability !== "published") return null;
+    return typeof value.observedDay === "string" && isCalendarDate(value.observedDay)
+      ? value.observedDay
+      : null;
+  }
+  return undefined;
+}
+
 /**
  * The three flags a react-query read contributes, derived in ONE place.
  *
@@ -435,12 +457,16 @@ export interface QueryReadState {
  * a fetch fails, and there are a dozen reads on this map.
  */
 export function drawnDayFlagsFromQuery(
-  query: QueryReadState
+  query: QueryReadState,
+  publicationMode: "legacy" | "typed" = "legacy"
 ): Pick<
   LiveLayerDayReport,
-  "isFetching" | "hasLandedForRequestedDate" | "isShowingPreviousDay"
+  "isFetching" | "hasLandedForRequestedDate" | "isShowingPreviousDay" | "servedDate"
 > {
+  const suppliedDate = queryServedDate(query.data);
+  const servedDate = publicationMode === "typed" ? suppliedDate ?? null : suppliedDate;
   return {
+    ...(servedDate === undefined ? {} : { servedDate }),
     isFetching: query.isFetching === true,
     hasLandedForRequestedDate:
       query.isSuccess === true && query.isPlaceholderData !== true && query.data !== undefined,
@@ -479,7 +505,9 @@ export function usePublishedDrawnLayerDays(
         drawnDateByLayer.current[report.layerId] = requestedDate;
       }
       const drawnDate =
-        requestedDate === null
+        report.servedDate !== undefined
+          ? report.servedDate
+          : requestedDate === null
           ? null
           : report.isShowingPreviousDay
             ? // A retained frame is painted, so name the day it belongs to. The fallback covers
@@ -490,6 +518,9 @@ export function usePublishedDrawnLayerDays(
               requestedDate;
       drawnDays[report.layerId] = {
         drawnDate,
+        ...(report.servedDate === undefined ? {} : {
+          pendingDate: report.isShowingPreviousDay && requestedDate !== drawnDate ? requestedDate : null,
+        }),
         requestedDate,
         isLoading: report.isFetching && !report.hasLandedForRequestedDate,
       };

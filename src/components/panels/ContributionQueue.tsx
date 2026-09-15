@@ -69,30 +69,51 @@ function formatCoordinates(longitude: number, latitude: number): string {
 
 export function ContributionQueue() {
   const [rejectNote, setRejectNote] = useState<Record<string, string>>({});
+  const [reviewFailure, setReviewFailure] = useState<string | null>(null);
   const utils = trpc.useUtils();
 
   const { data: pending, isLoading, error } = trpc.contributions.listPendingReview.useQuery();
 
+  const handleReviewError = (failure: { data?: { code?: string } | null }) => {
+    setReviewFailure(
+      failure.data?.code === "CONFLICT"
+        ? "This contribution is no longer awaiting review. Your decision was not applied."
+        : "Could not confirm this review decision. Refresh the queue before trying again."
+    );
+    void utils.contributions.listPendingReview.invalidate();
+  };
+  const reviewAlert = reviewFailure ? (
+    <p role="alert" className="text-sm text-amber-300">{reviewFailure}</p>
+  ) : null;
+
   const publishMutation = trpc.contributions.publishContribution.useMutation({
-    onSuccess: () => utils.contributions.listPendingReview.invalidate(),
+    onSuccess: () => {
+      setReviewFailure(null);
+      return utils.contributions.listPendingReview.invalidate();
+    },
+    onError: handleReviewError,
   });
 
   const rejectMutation = trpc.contributions.rejectContribution.useMutation({
     onSuccess: (_data, variables) => {
+      setReviewFailure(null);
       utils.contributions.listPendingReview.invalidate();
       setRejectNote((n) => {
         const { [variables.featureId]: _removed, ...rest } = n;
         return rest;
       });
     },
+    onError: handleReviewError,
   });
 
-  // The server-side gate (expertProcedure) is authoritative; this only keeps a
-  // stale client from rendering a raw error instead of a plain message.
   if (error) {
+    const accessDenied = error.data?.code === "FORBIDDEN" || error.data?.code === "UNAUTHORIZED";
     return (
       <div className="p-4 text-sm text-zinc-400">
-        You do not have access to this queue.
+        {reviewAlert}
+        <p>{accessDenied
+          ? "You do not have access to this queue."
+          : "Could not load the review queue. Refresh the page to try again."}</p>
       </div>
     );
   }
@@ -103,12 +124,16 @@ export function ContributionQueue() {
 
   if (!pending?.length) {
     return (
-      <div className="p-4 text-sm text-zinc-400">No pending contributions.</div>
+      <div className="p-4 text-sm text-zinc-400">
+        {reviewAlert}
+        <p>No pending contributions.</p>
+      </div>
     );
   }
 
   return (
     <div className="flex flex-col gap-3 p-4">
+      {reviewAlert}
       <h2 className="text-sm font-semibold text-zinc-100">
         Pending Review ({pending.length})
       </h2>

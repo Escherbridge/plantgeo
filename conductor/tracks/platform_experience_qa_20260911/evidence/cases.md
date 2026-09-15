@@ -12,7 +12,13 @@ owner_track: platform_experience_qa_20260911
 
 This is an authored inventory, not an execution report. Source inspection establishes intended behavior and reachability candidates only. **No case is passed.** The UTC observation is September 12; the owning track retains its September 11 local-date identifier. Main was inspected at the commit above; uncommitted track/planning files and incoming worktrees are source evidence, not an integrated candidate. Freeze a candidate and bind its commit, tree, dirty diff, review base, service revisions and fixture/release identities before running any case.
 
+**September 14 reconciliation:** the original census, counts and blocked classifications below are retained as September 12 evidence. The dated delta near the end records the current 31 registry layers plus four separately mounted land-context groups and additional cases. It does not promote mounted code or previous receipts to current acceptance. Session ownership and prerequisites are bound in [the September 14 session record](runbook-session-20260914.md).
+
 The governing requirements are [QA specification][qa], [dimension/evidence matrix][matrix], [layer lane standard][lane] and the feature sources cited in each group/row. A source-derived expected result can expose a defect or an unresolved requirement; it cannot approve itself. An independent verifier must review coverage and execution in a different task context.
+
+The [September 14 execution-variant index](execution-variants-20260914.md) records bounded
+desktop/mobile contribution and unsent-workspace journeys. It preserves the whole-case counts
+and the unexecuted dimensions instead of promoting a partial journey to a full case pass.
 
 ## How to execute and record a case
 
@@ -57,7 +63,7 @@ For each route, navigate from a real link where one exists, open its URL directl
 | --- | --- | --- | --- | --- |
 | PGQA-R01 | `/` — [map entry][map-page] | Open cold map; loading resolves into an operable map, manager and truthful layer state; map init failure offers working recovery. | U/R/S/C/V; QA | not_run |
 | PGQA-R02 | `/feed` — [feed][feed] | Browse intervention feed, type filters and map links; allowed records and lifecycle meaning are accurate, empty/error states distinct. | U/R/S/C/V; COMM | not_run |
-| PGQA-R03 | `/community` — [ledger][ledger] | Browse strategy requests by type/private/team scope; role prompts and request/vote counts reflect authorized scope. | U/R/S/C; COMM | not_run |
+| PGQA-R03 | `/community` — [ledger][ledger] | Explain immediate public publication and location visibility of strategy requests consistently; route readers to map requests/conversations and the proposal flow without obsolete private/team confidentiality promises. See the dated Session 3 scope correction below. | U/R/S/C; COMM | not_run |
 | PGQA-R04 | `/about` — [app][app], `about/page.tsx` | Follow principles/mission links and anchors; content is readable on mobile and claims do not promise unimplemented features. | U/R/S/C; QA | not_run |
 | PGQA-R05 | `/docs` — [API tester][api-tester] | Read documented parameters/errors and operate all four tester endpoints locally; result/status readable and request matches selection. | U/R/S/C/A; QA | not_run |
 | PGQA-R06 | `/embed` — [embed][embed] | Load frameless map with valid/default/invalid center, zoom, style and markers; bounded parsing and attribution, no extra shell. | U/R/S/C/V; QA | not_run |
@@ -106,7 +112,7 @@ Sources: [MapView][map-view], [manager][manager], [view controls][view], [keyboa
 | PGQA-M02 | Open/close manager and navigate six layer categories plus Teams/Offline; one scroller exposes every row/report on desktop and mobile. | U/R/S/C/V; QA | not_run |
 | PGQA-M03 | Expand/collapse each category/report; report mount/unmount starts/stops relevant reads while layer visibility remains independently correct. | U/R/S/C/V; QA | not_run |
 | PGQA-M04 | Toggle group eyes through none/some/all; accessible mixed state/count excludes withheld entries and changes only that category. | U/R/S/C/V; QA | not_run |
-| PGQA-M05 | Adjust individual layer visibility and opacity including 0/100%, close manager and inspect rail chips/legend; one control determines drawn state. | U/R/S/C/T/V; QA | not_run |
+| PGQA-M05 | Adjust individual layer strength across its supported 5–100% range and separately switch visibility off/on; close manager and inspect rail chips/legend. The switch controls drawing/picking, while strength remains preserved. September 14 reconciliation: the original 0/100% wording conflicted with the explicit [map opacity contract](../../../../src/components/map/AGENTS.md), which forbids opacity zero because invisible features remain hit-testable. This corrects the authored expectation, not a passed execution status. | U/R/S/C/T/V; QA | not_run |
 | PGQA-M06 | Switch Dark/Light/Satellite repeatedly with overlays selected; sources, feature selection, opacity, labels and attribution recover without duplicates. | U/R/S/C/T/V; QA | not_run |
 | PGQA-M07 | Toggle terrain and exaggeration 0–3; relief changes coherently without changing selected overlays; resource/loading failures disclosed. | U/R/S/C/V; QA | not_run |
 | PGQA-M08 | Toggle globe and 3D tilt, pan/zoom/reset and cross world edge; correct camera/support/labels, no unexpected layer changes. | U/R/S/C/V; QA | not_run |
@@ -133,7 +139,7 @@ All layer rows inherit `U/R/S/C/T/V/A` except null-axis/reference products as st
 | PGQA-L07 | `watersheds` → same; snapshot/static lookup | Boundary support and HUC zoom rung are truthful; reference release shown without daily axis. | DATA | not_run |
 | PGQA-L08 | `vegetation` → same; daily series | Measured NDVI cells and composite alternatives keep their product/time/source meanings distinct. | DATA | not_run |
 | PGQA-L09 | `soil` → null; permanently withheld raster | Disabled row explains unpublished SoilGrids raster and point-query alternative; stored active ID cannot draw it. | DATA | not_run |
-| PGQA-L10 | `soil-survey` → same; snapshot/static, declared PostgreSQL reader gate | SSURGO supported geometry and reference meaning; catalogue withholds unsupported Parquet claim rather than inventing readiness. | DATA | not_run |
+| PGQA-L10 | `soil-survey` → same; snapshot/static, declared Parquet reader | SSURGO supported geometry and pinned reference agree with its governed Parquet reader; unavailable publication is withheld honestly. September 14 correction: the original September 12 row described a PostgreSQL reader gate; current `parquet-slider-capabilities.ts:113` declares Parquet. This wording correction is not reader/data acceptance. | DATA | not_run |
 | PGQA-L11 | `soil-moisture` → `soil-field-moisture`; daily, three-depth intersection | Correct moisture depth/support/unit and common readable days; no missing-depth substitution. | DATA | not_run |
 | PGQA-L12 | `soil-temperature` → `soil-field-temperature`; daily, four-depth intersection | Correct temperature depth including 100–255 cm and common readable days; independent of moisture selection. | DATA | not_run |
 | PGQA-L13 | `soil-vpd` → `soil-field-vpd`; daily | Atmospheric dryness in kPa, correct pseudo-depth and no claim of soil moisture measurement. | DATA | not_run |
@@ -217,7 +223,7 @@ Sources: [community ledger][ledger], [community panels/forms][panels], [interven
 | --- | --- | --- | --- |
 | PGQA-C01 | Submit strategy request with type/description/location and private/team scope; validation, consent/scope and success agree with persisted local record. | U/R/S/C/V; COMM | not_run |
 | PGQA-C02 | Browse own/private/team requests and apply strategy filters; unauthorized teams/other owners remain inaccessible, filter counts and empty state truthful. | U/R/S/C; COMM | not_run |
-| PGQA-C03 | Vote on eligible request and repeat/reload; count and eligibility follow API rules, denied role and failed mutation restore truthful state. | U/R/S/C; COMM | not_run |
+| PGQA-C03 | Once the owning replacement voting contract is defined, verify eligible targets, authorization, one-way voting and count semantics across repeat/reload/failed mutation. Existing retained votes do not establish a callable replacement writer. | U/R/S/C; COMM; replacement voting contract required | blocked |
 | PGQA-C04 | Submit intervention recommendation through current form; valid type/text/geometry and explicit publication consent create pending review only. | U/R/S/C/V; COMM | not_run |
 | PGQA-C05 | Missing consent, invalid/oversized geometry, invalid text and insufficient role block submission; pending/retry/double-click does not misrepresent outcome. | U/R/S/C/V; COMM | not_run |
 | PGQA-C06 | Contributor list shows pending/published/rejected own submissions with accurate review note and team scope; other contributor records remain private. | U/R/S/C; COMM | not_run |
@@ -384,6 +390,66 @@ The row counts below are inventory counts, never successful-test counts. Variant
 8. Incoming botanical/forecast/boundary branches need full candidate/diff/receipt intake; profile is a nonspatial reference product, occurrence is separate, and existing forecast-summary tool is not evidence of traditional weather UI.
 9. PNW planned source/rights/office relationships, county/state coverage, geometry-directory version compatibility, permitted field set and contact freshness remain prerequisites. Research establishes no outreach authorization or ready layer.
 10. Reconcile complete API/MCP `tools/list` and route manifests on the frozen candidate, including incoming tools; this inventory explicitly lists current ten tools and 23 pages but does not assume future additions retain those totals.
+
+## September 14 current-surface and case delta
+
+Source base: `0f16e40dae3cce1d3b6d4ac00138254a968d974f`, committed tree `399ff61a9bf20023bcdfbc4ba8b8c3190050fff9`, with the pre-existing dirty checkout preserved as described in the [session record](runbook-session-20260914.md). This is a source census, not a frozen integrated candidate or live coverage assertion. The original 206-case accounting above remains historical. Its references to ten tools, 24 agent surfaces, incoming-only botanical/land UI and a PostgreSQL SSURGO gate must not be used as the current execution manifest without reconciliation.
+
+### Current layer census
+
+| Family | Current registry toggle IDs | Existing or new cases |
+| --- | --- | --- |
+| Fire | `fire`, `fire-perimeters`, `burn-severity`, `evacuation-zones` | L01, L02, L27, L26 |
+| Water | `water`, `drought`, `sensors`, `watersheds` | L03, L04, L06, L07 |
+| Weather observations | `weather` | L05, W06 |
+| Vegetation and specimens | `vegetation`, `botanical-occurrences`, `botanical-richness`, `botanical-collection-effort`, `gbif-occurrences` | L08, L28–L31; B07–B11 retained |
+| Soil | `soil`, `soil-survey`, `soil-moisture`, `soil-temperature`, `soil-vpd` | L09–L13; `soil` is intentionally withheld |
+| Climate | `climate-air-temperature`, `climate-dew-point`, `climate-precipitation`, `climate-relative-humidity`, `climate-shortwave-radiation`, `climate-wind-speed`, `climate-soil-wetness-surface`, `climate-soil-wetness-root-zone`, `climate-soil-wetness-profile` | L14–L22 |
+| Community | `demand-heatmap`, `interventions`, `strategy-recommendations` | L23–L25, C01–C17 |
+
+These are **31 registry entries**: 22 explicit entries plus nine generated climate entries in `src/lib/map/layer-registry.ts`. The four botanical entries at lines 315–369 explain the increase from 27. Separately, `src/stores/land-context-store.ts:10` declares `parcels-land-use`, `electric-utility-territories`, `blm-lands` and `state-managed-lands`; `LayerPanel.tsx:276` and `MapView.tsx:492` mount their controls and renderer. **35 named switchable surfaces are therefore in scope**, with four outside the registry, not 35 daily sliders. N01–N11 own those reference journeys. Mounted botanical and land UI supersedes the historical incoming-only reachability description; original `blocked` rows remain unpassed until their precise source/reader/release prerequisites are re-evaluated and evidence recorded.
+
+Daily/event layers retain independent sliders, latest reset, date input, keyboard stepping, requested/painted-day distinction and coverage/saved-day tracks under T01–T12. Snapshot/reference layers do not acquire daily axes. Botanical toggles deliberately have `warehouseLayerName: null`; their separate collecting-event interval controls are mounted by `DockDetails.tsx:129` and implemented in `BotanicalFilters.tsx:88`. The 30-day future axis in `slider-policy.ts:5` does not establish forecast availability. No mounted forecast-variant selector was established by this source audit; the store's variant state and chart component alone are not UI acceptance evidence.
+
+### Additional stable cases
+
+Every row inherits the original evidence, role, accessibility, cache and local-write boundary. `not_run` means no behavioral verdict; browser execution currently has the session-level blocked prerequisite recorded below. Existing B/N/I rows are retained rather than renumbered or silently passed.
+
+| ID | Journey and expected result | Dimensions / owner | Status |
+| --- | --- | --- | --- |
+| PGQA-L28 | `botanical-occurrences`: toggle admitted herbarium detail points at the declared detail floor, inspect taxon/event/collection/uncertainty/rights and change style; preserve release identity and explicit zoom/refusal states. Pair with B07/B10/B11. | U/R/S/C/ref/V/A; OCC/DATA | not_run |
+| PGQA-L29 | `botanical-richness`: compare coarse/fine support, exact distinct taxa and zoom/bbox limits; no summed-child richness, occupied-ground or surveyed-absence claim. Pair with B08. | U/R/S/C/ref/V/A; OCC/DATA | not_run |
+| PGQA-L30 | `botanical-collection-effort`: switch record count/event estimate/collection count, compare shared filters and richness context across support rungs; no abundance or vegetation-density claim. Pair with B09. | U/R/S/C/ref/V/A; OCC/DATA | not_run |
+| PGQA-L31 | `gbif-occurrences`: exercise GBIF only, herbarium only, both and neither; no duplicate cross-source drawing, stale point selection or incorrect attribution. Distinguish empty GBIF results, loading, withheld release, request failure and detail zoom floor without claiming an unverified acquisition history. Preserve per-record licence and style-reload recovery. | U/R/S/C/ref/V/A; OCC/DATA | not_run |
+| PGQA-T13 | Botanical collecting-event start/end filters: valid one-sided and closed windows, clear/reset, inverted bounds, year/month/interval precision and empty result; UI request/details/agent retain event-window semantics and pinned release, independent of environmental daily sliders. | U/R/S/C/T/V/A; OCC/DATA | not_run |
+| PGQA-T14 | Rapid botanical interval, collection, taxon, spatial-quality and camera changes with reordered replies; only current query supplies points, aggregates, banners and details. Coarse/fine/detail transitions disclose bbox refusal and cannot leave a stale prior result painted. | U/R/S/C/T/V/A; OCC/DATA | not_run |
+| PGQA-C17 | Intervention feed cards show only measured/provenance-backed outcomes; absent metrics never render invented soil-moisture improvement or other fixed benefit. Compare initial, filtered, refreshed and empty feed views. | U/R/S/C; COMM | not_run |
+| PGQA-A18 | While the agent/intervention workspace remains mounted, invoke another map action targeting AI or proposal; the requested pane opens with its intended context, preserving other pane state unless explicitly reset. | U/R/S/C/V/A; QA/COMM | not_run |
+| PGQA-A19 | Enter proposal name, description, category and consent before drawing any geometry, then select another map coordinate; typed draft fields remain intact while the new location is handled explicitly. | U/R/S/C/V/A; QA/COMM | not_run |
+| PGQA-A20 | Close or Escape a workspace containing proposal and AI state: canceling the discard prompt preserves both; confirming discard clears both and closes. Reopen and verify no stale draft/messages appear. | U/R/S/C/V/A; QA/COMM | not_run |
+| PGQA-A21 | Open a drawing map initialized in a hidden workspace pane and reveal it at desktop/mobile sizes; resize produces an operable correctly sized canvas without recreating the map or losing draft geometry. | U/R/S/C/V; QA/COMM | not_run |
+| PGQA-A22 | Repeatedly switch panes or hide/reveal the workspace during a live drawing; vertices, editor state, map identity and handlers survive, with no duplicate listeners or unwanted cleanup. | U/R/S/C/V; QA/COMM | not_run |
+| PGQA-A23 | Enter AI from a proposal-only workspace with no analysis: provide an explicit consent/precision path before analysis, or state the current unavailable entry honestly. Declining sends no analysis; retry cannot bypass consent. The existing close/reopen guidance alone does not pass a promised direct-entry journey. | U/R/S/C/V/A; QA/COMM; consent-entry owner required | not_run |
+| PGQA-A24 | Draw a Point/Polygon and enter draft fields; navigate away without explicit discard, reopen at another map point and recover the saved location/fields/geometry on a fresh drawing map. Cover delayed/transient readiness, failed restoration, repeated tab switches and confirmed discard. No page-reload or destroyed-instance undo persistence is implied. | U/R/S/C/V; QA/COMM | not_run |
+
+**Dated addition: 13 stable cases, all `not_run`. Combined authored inventory: 219 unique cases, 178 `not_run`, 41 historically `blocked`, zero passes or failures.** These are source-ledger statuses, not counts of executable or accepted browser cells. The single source correction to L10 changes no status. Runtime tool discovery, role fixtures, source identities, incoming dependency status and execution variants still require intake; these totals do not waive any surfaced feature found later.
+
+### Session 3 scope correction
+
+The preceding 219-case census is historical. Session 3 adds A24 and moves C03 from `not_run`
+to `blocked` on the explicit dormant-writer/replacement-policy gate. Current inventory: **220
+unique cases, 178 `not_run`, 42 `blocked`, zero passes or failures**. Source tests/API samples do
+not promote browser journey statuses.
+
+R03's former expected behavior was "Browse strategy requests by type/private/team scope; role
+prompts and request/vote counts reflect authorized scope." That expectation describes the retired
+private ledger. The [owning scope reconciliation](public-request-voting-scope-session3-20260914.md)
+retains the separate voting intent and its missing implementation contract. R03 now checks the
+defined public-request disclosure and routes. Current page-heading/metadata copy still promises
+private handling while its ledger component explains public requests; this is an open copy defect,
+not acceptance of either contradictory statement.
+
+The workspace/social additions follow `/root/workspace_social_audit`'s source handoff; the map/time additions follow `/root/qa_inventory`. Root owns integration and an independent verifier must evaluate the final candidate. Browser automation reported no available browser or tab (`cua.getBrowser` returned none; `cua.getState` returned empty apps/browsers), so no desktop/mobile, keyboard/touch, screen-reader or canvas verdict is inferred from these source additions.
 
 [qa]: ../spec.md
 [matrix]: ../matrix.md

@@ -1,0 +1,365 @@
+{
+  "recorded_at": "2026-09-14T22:17:05.494711+00:00",
+  "status": "active",
+  "overall_platform_qa": "RED",
+  "purpose": "Offline Linux comparison with explicit no-database skip ledger; not release certification",
+  "inventories": [
+    {
+      "path": ".omc/research/runbook-20260914/session6/source-inventory-52f75c60a3733a51c3ab8347fedacefad1dc154984ce43318cfc7c2effd17626.json",
+      "sha256": "52f75c60a3733a51c3ab8347fedacefad1dc154984ce43318cfc7c2effd17626",
+      "bytes": 424344
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session6/source-inventory-b8352b2b07fa0eb814ca04e8ab519ba46621179dd91c9aa23dc4550aa7aadddb.json",
+      "sha256": "b8352b2b07fa0eb814ca04e8ab519ba46621179dd91c9aa23dc4550aa7aadddb",
+      "bytes": 423675
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session6/source-inventory-f2b2ca107f21393b7b663c2420c0234491c26a138167672c9c63925204833953.json",
+      "sha256": "f2b2ca107f21393b7b663c2420c0234491c26a138167672c9c63925204833953",
+      "bytes": 424792
+    }
+  ],
+  "captures": [
+    {
+      "path": ".omc/research/runbook-20260914/session6/capture-65c13921b9e54e488e1c657d281b4302/capture-receipt.json",
+      "sha256": "b2c088e3656b5478c2bc0aff459c75e141d2e84fdd5a62c5203eed3a797dc190",
+      "bytes": 157
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session6/capture-6fe525746f194e48bc8d323454ba4fec/capture-receipt.json",
+      "sha256": "4c8112d0172f40ec8a810c1902596162b9477af689cbd68c76e0ae730bd1a01d",
+      "bytes": 157
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session6/capture-a7a4809910594e0898f08756a32107ea/capture-receipt.json",
+      "sha256": "7be9b9ec2c77c686589572fa71b79ab63827dc06fe0a0acb792c24de792e9281",
+      "bytes": 157
+    }
+  ],
+  "builds": [
+    {
+      "receipt": {
+        "path": ".omc/research/runbook-20260914/session6/build-8574cc2670564b6fb060df4971b3a392/build-receipt.json",
+        "sha256": "a00588ed3d2c685e4b99fb9e5352e04855bdab22365b05bebb0249c6c8f8792d",
+        "bytes": 1617
+      },
+      "facts": {
+        "capacity": {
+          "approved_cpus": 2,
+          "approved_memory_mib": 4096,
+          "available_disk_bytes": 988219187200,
+          "available_memory_mib": 29084,
+          "machine": "podman-machine-default",
+          "measurement_commands": [
+            "podman machine ssh podman-machine-default cat /proc/meminfo",
+            "podman machine ssh podman-machine-default df -B1 /",
+            "podman ps --format json"
+          ],
+          "observed_at": "2026-09-14T21:53:57.914574+00:00",
+          "receipt_sha256": "22150bae6ca4c403c514e5415f2b1251328bca8914c6a9d4ced678473a8ee111",
+          "running_owned_container_ids": [
+            "7c70921abb2b5923f646ac7eb458444b69c120fdce2e0c4c3d84e1785cd9f943",
+            "5d0a0f386c0b01600b20f574902c094f3b0c546d1417729d4592c1c6dd8eec79",
+            "dee2c89edeee381d318d8596ea9b84ab5ee3d4dad69efa28fbf4a9003707d6c4"
+          ],
+          "scope": "Actual WSL guest capacity; no resource configuration or workload changes.",
+          "total_memory_mib": 30082,
+          "workloads_reviewed": true
+        },
+        "capture": "C:\\Users\\atooz\\Programming\\plantgeo\\.omc\\research\\runbook-20260914\\session6\\capture-6fe525746f194e48bc8d323454ba4fec",
+        "finished_at": "2026-09-14T22:07:46.331349+00:00",
+        "image_id": "sha256:f4825cc79c1138be702d8b22bbb3c67c67740e3a5e45caa73e8c972017aa2158",
+        "image_size_bytes": 2592049183,
+        "inventory_sha256": "f2b2ca107f21393b7b663c2420c0234491c26a138167672c9c63925204833953",
+        "owner": "8574cc2670564b6fb060df4971b3a392",
+        "public_downloads": true,
+        "runner_sha256": "bd18f355c071a9ddc3db24856fc9058547e0903934e633d0b036745d6bade672",
+        "schema": 1,
+        "started_at": "2026-09-14T22:04:03.900463+00:00",
+        "status": "built"
+      },
+      "log": {
+        "path": ".omc/research/runbook-20260914/session6/build-8574cc2670564b6fb060df4971b3a392/build.log",
+        "sha256": "a971460b3e4e091abc1c74b09f372294a583386326fa3ea207d57bfa361ba40c",
+        "bytes": 15575
+      }
+    },
+    {
+      "receipt": {
+        "path": ".omc/research/runbook-20260914/session6/build-ec858fddf814429b84241ca75f634850/build-receipt.json",
+        "sha256": "1430afaf09f89da8509a12b42469f98fdf6f26d2cae3cab747f11fabc82cd2a0",
+        "bytes": 1617
+      },
+      "facts": {
+        "capacity": {
+          "approved_cpus": 2,
+          "approved_memory_mib": 4096,
+          "available_disk_bytes": 990988042240,
+          "available_memory_mib": 29098,
+          "machine": "podman-machine-default",
+          "measurement_commands": [
+            "podman machine ssh podman-machine-default cat /proc/meminfo",
+            "podman machine ssh podman-machine-default df -B1 /",
+            "podman ps --format json"
+          ],
+          "observed_at": "2026-09-14T21:34:02.592667+00:00",
+          "receipt_sha256": "a1addb2f0e26dde739faeba3ad1b0d4d194477d9c89f1dc4690dba4a4de797c4",
+          "running_owned_container_ids": [
+            "7c70921abb2b5923f646ac7eb458444b69c120fdce2e0c4c3d84e1785cd9f943",
+            "5d0a0f386c0b01600b20f574902c094f3b0c546d1417729d4592c1c6dd8eec79",
+            "dee2c89edeee381d318d8596ea9b84ab5ee3d4dad69efa28fbf4a9003707d6c4"
+          ],
+          "scope": "Actual WSL guest capacity; no resource configuration or workload changes.",
+          "total_memory_mib": 30082,
+          "workloads_reviewed": true
+        },
+        "capture": "C:\\Users\\atooz\\Programming\\plantgeo\\.omc\\research\\runbook-20260914\\session6\\capture-65c13921b9e54e488e1c657d281b4302",
+        "finished_at": "2026-09-14T21:43:19.613938+00:00",
+        "image_id": "sha256:1f9c267c3527eda88b4187111b51665026d4b1ca392fbbb9816e4c05dd065041",
+        "image_size_bytes": 2591771090,
+        "inventory_sha256": "b8352b2b07fa0eb814ca04e8ab519ba46621179dd91c9aa23dc4550aa7aadddb",
+        "owner": "ec858fddf814429b84241ca75f634850",
+        "public_downloads": true,
+        "runner_sha256": "c62397be218f75b5edc5a32b26ccfc9bd1bcf23519b2ad485b2e6099146aa85d",
+        "schema": 1,
+        "started_at": "2026-09-14T21:40:10.904527+00:00",
+        "status": "built"
+      },
+      "log": {
+        "path": ".omc/research/runbook-20260914/session6/build-ec858fddf814429b84241ca75f634850/build.log",
+        "sha256": "4e9a6018388fdc78c5ea3522bc1c05477248d792e8029e71112910d991708555",
+        "bytes": 15538
+      }
+    }
+  ],
+  "attempts": [
+    {
+      "receipt": {
+        "path": ".omc/research/runbook-20260914/session6/linux-attempt-432edc6217d04dff970710ec1c1f7456/runner-receipt.json",
+        "sha256": "898eab06c6230f0c194e12f891483f96aef829e673a25e6eeccb2b4d11d66302",
+        "bytes": 2518
+      },
+      "facts": {
+        "capacity": {
+          "approved_cpus": 2,
+          "approved_memory_mib": 4096,
+          "available_disk_bytes": 985649254400,
+          "available_memory_mib": 29070,
+          "machine": "podman-machine-default",
+          "measurement_commands": [
+            "podman machine ssh podman-machine-default cat /proc/meminfo",
+            "podman machine ssh podman-machine-default df -B1 /",
+            "podman ps --format json"
+          ],
+          "observed_at": "2026-09-14T22:08:38.502145+00:00",
+          "receipt_sha256": "8f264e243d4112e66704bb50832b4859776112d4a99d95473d8a9f2022822d0a",
+          "running_owned_container_ids": [
+            "7c70921abb2b5923f646ac7eb458444b69c120fdce2e0c4c3d84e1785cd9f943",
+            "5d0a0f386c0b01600b20f574902c094f3b0c546d1417729d4592c1c6dd8eec79",
+            "dee2c89edeee381d318d8596ea9b84ab5ee3d4dad69efa28fbf4a9003707d6c4"
+          ],
+          "scope": "Actual WSL guest capacity; no resource configuration or workload changes.",
+          "total_memory_mib": 30082,
+          "workloads_reviewed": true
+        },
+        "cleanup": {
+          "container_retained_for_evidence": true,
+          "running": false,
+          "state": {
+            "CheckpointedAt": "0001-01-01T00:00:00Z",
+            "Dead": false,
+            "Error": "",
+            "ExitCode": 0,
+            "FinishedAt": "2026-09-14T16:12:56.515939991-06:00",
+            "OOMKilled": false,
+            "OciVersion": "1.2.1",
+            "Paused": false,
+            "Pid": 0,
+            "Restarting": false,
+            "RestoredAt": "0001-01-01T00:00:00Z",
+            "Running": false,
+            "StartedAt": "2026-09-14T16:10:02.342625687-06:00",
+            "Status": "exited"
+          }
+        },
+        "container_id": "b56dc415694a7c0c48ad4de8b17926f69803decf5ed64abdb832db1967d418ce",
+        "container_state": {
+          "CheckpointedAt": "0001-01-01T00:00:00Z",
+          "Dead": false,
+          "Error": "",
+          "ExitCode": 0,
+          "FinishedAt": "2026-09-14T16:12:56.515939991-06:00",
+          "OOMKilled": false,
+          "OciVersion": "1.2.1",
+          "Paused": false,
+          "Pid": 0,
+          "Restarting": false,
+          "RestoredAt": "0001-01-01T00:00:00Z",
+          "Running": false,
+          "StartedAt": "2026-09-14T16:10:02.342625687-06:00",
+          "Status": "exited"
+        },
+        "finished_at": "2026-09-14T22:12:59.479943+00:00",
+        "image_id": "sha256:f4825cc79c1138be702d8b22bbb3c67c67740e3a5e45caa73e8c972017aa2158",
+        "inventory_sha256": "f2b2ca107f21393b7b663c2420c0234491c26a138167672c9c63925204833953",
+        "owner": "432edc6217d04dff970710ec1c1f7456",
+        "runner_sha256": "bd18f355c071a9ddc3db24856fc9058547e0903934e633d0b036745d6bade672",
+        "schema": 1,
+        "started_at": "2026-09-14T22:10:01.281854+00:00",
+        "status": "linux_checks_passed_with_skip_ledger"
+      },
+      "artifacts": [
+        {
+          "path": ".omc/research/runbook-20260914/session6/linux-attempt-432edc6217d04dff970710ec1c1f7456/linux-receipt.json",
+          "sha256": "46d1b72b1ec681bbfee28fbe31aa5876942bccaff046603bca957c55a69f81d4",
+          "bytes": 3451
+        },
+        {
+          "path": ".omc/research/runbook-20260914/session6/linux-attempt-432edc6217d04dff970710ec1c1f7456/checks.log",
+          "sha256": "43b621c0744edc0d27208756166bf25d900303f6c4facca2293b6ce906d03d36",
+          "bytes": 236
+        },
+        {
+          "path": ".omc/research/runbook-20260914/session6/linux-attempt-432edc6217d04dff970710ec1c1f7456/pytest.xml",
+          "sha256": "648187b32bc2f032e2f0644e54cbf7e7b5022ca4678b87b18ae4e264234751fa",
+          "bytes": 782320
+        },
+        {
+          "path": ".omc/research/runbook-20260914/session6/linux-attempt-432edc6217d04dff970710ec1c1f7456/independent-skip-ledger.json",
+          "sha256": "81ab9cec66e3692bf03da0d970d6659a15831e9a08fc0d994b0bb9039294a091",
+          "bytes": 123482
+        },
+        {
+          "path": ".omc/research/runbook-20260914/session6/linux-attempt-432edc6217d04dff970710ec1c1f7456/independent-review-notes.json",
+          "sha256": "0478529017ea464ba2cee34218739a1f8dcb046925eb2160cab0a0bdf7c43750",
+          "bytes": 1818
+        },
+        {
+          "path": ".omc/research/runbook-20260914/session6/linux-attempt-432edc6217d04dff970710ec1c1f7456/container.log",
+          "sha256": "5de22c1f49938a439e0ff02993826c20c5de5a212e0451930f55484c8246edab",
+          "bytes": 105
+        },
+        {
+          "path": ".omc/research/runbook-20260914/session6/linux-attempt-432edc6217d04dff970710ec1c1f7456/wait.log",
+          "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+          "bytes": 2
+        }
+      ]
+    },
+    {
+      "receipt": {
+        "path": ".omc/research/runbook-20260914/session6/linux-attempt-cba896d4dcc94e90bc46ade851e57fbf/runner-receipt.json",
+        "sha256": "1a22fd2be04c32cfe7da622ef68d2e1f2f7d8e30afa57d32ce0514e4ec3cf2c3",
+        "bytes": 2501
+      },
+      "facts": {
+        "capacity": {
+          "approved_cpus": 2,
+          "approved_memory_mib": 4096,
+          "available_disk_bytes": 988426797056,
+          "available_memory_mib": 29073,
+          "machine": "podman-machine-default",
+          "measurement_commands": [
+            "podman machine ssh podman-machine-default cat /proc/meminfo",
+            "podman machine ssh podman-machine-default df -B1 /",
+            "podman ps --format json"
+          ],
+          "observed_at": "2026-09-14T21:43:57.052815+00:00",
+          "receipt_sha256": "e12d59cef748042594f570213f3b3951881a88717866bfeb8730ab2a4ad3ca2b",
+          "running_owned_container_ids": [
+            "7c70921abb2b5923f646ac7eb458444b69c120fdce2e0c4c3d84e1785cd9f943",
+            "5d0a0f386c0b01600b20f574902c094f3b0c546d1417729d4592c1c6dd8eec79",
+            "dee2c89edeee381d318d8596ea9b84ab5ee3d4dad69efa28fbf4a9003707d6c4"
+          ],
+          "scope": "Actual WSL guest capacity; no resource configuration or workload changes.",
+          "total_memory_mib": 30082,
+          "workloads_reviewed": true
+        },
+        "cleanup": {
+          "container_retained_for_evidence": true,
+          "running": false,
+          "state": {
+            "CheckpointedAt": "0001-01-01T00:00:00Z",
+            "Dead": false,
+            "Error": "",
+            "ExitCode": 1,
+            "FinishedAt": "2026-09-14T15:48:11.208419539-06:00",
+            "OOMKilled": false,
+            "OciVersion": "1.2.1",
+            "Paused": false,
+            "Pid": 0,
+            "Restarting": false,
+            "RestoredAt": "0001-01-01T00:00:00Z",
+            "Running": false,
+            "StartedAt": "2026-09-14T15:45:15.338608861-06:00",
+            "Status": "exited"
+          }
+        },
+        "container_id": "ec4d6904db5d9ab060a7a5ea71044937faa8f8bb42b6fee7882178b970d16e94",
+        "container_state": {
+          "CheckpointedAt": "0001-01-01T00:00:00Z",
+          "Dead": false,
+          "Error": "",
+          "ExitCode": 1,
+          "FinishedAt": "2026-09-14T15:48:11.208419539-06:00",
+          "OOMKilled": false,
+          "OciVersion": "1.2.1",
+          "Paused": false,
+          "Pid": 0,
+          "Restarting": false,
+          "RestoredAt": "0001-01-01T00:00:00Z",
+          "Running": false,
+          "StartedAt": "2026-09-14T15:45:15.338608861-06:00",
+          "Status": "exited"
+        },
+        "finished_at": "2026-09-14T21:48:13.807657+00:00",
+        "image_id": "sha256:1f9c267c3527eda88b4187111b51665026d4b1ca392fbbb9816e4c05dd065041",
+        "inventory_sha256": "b8352b2b07fa0eb814ca04e8ab519ba46621179dd91c9aa23dc4550aa7aadddb",
+        "owner": "cba896d4dcc94e90bc46ade851e57fbf",
+        "runner_sha256": "c62397be218f75b5edc5a32b26ccfc9bd1bcf23519b2ad485b2e6099146aa85d",
+        "schema": 1,
+        "started_at": "2026-09-14T21:45:14.206083+00:00",
+        "status": "linux_checks_failed"
+      },
+      "artifacts": [
+        {
+          "path": ".omc/research/runbook-20260914/session6/linux-attempt-cba896d4dcc94e90bc46ade851e57fbf/linux-receipt.json",
+          "sha256": "951fff82fd0e27976b033eedceb5aa708d313e65444e8bb4fbeec6e79dadafbb",
+          "bytes": 3451
+        },
+        {
+          "path": ".omc/research/runbook-20260914/session6/linux-attempt-cba896d4dcc94e90bc46ade851e57fbf/checks.log",
+          "sha256": "97171593c6a2f06a136669b4c92441f81b9327fc0c6dd0b2162bd9f6d639213c",
+          "bytes": 26370
+        },
+        {
+          "path": ".omc/research/runbook-20260914/session6/linux-attempt-cba896d4dcc94e90bc46ade851e57fbf/container.log",
+          "sha256": "f2b76f7b3d123178aa06ef74ba1a393eba691ac2c35d5d8167c1a45a1f45ac96",
+          "bytes": 105
+        },
+        {
+          "path": ".omc/research/runbook-20260914/session6/linux-attempt-cba896d4dcc94e90bc46ade851e57fbf/wait.log",
+          "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865",
+          "bytes": 2
+        }
+      ]
+    }
+  ],
+  "linux_verified_result": {
+    "attempt": "432edc6217d04dff970710ec1c1f7456",
+    "gates": "format/lint/mypy/pytest PASS",
+    "cases": 4645,
+    "passed": 4494,
+    "skipped": 150,
+    "xfailed": 1,
+    "failures": 0,
+    "errors": 0
+  },
+  "limits": [
+    "Windows Candidate11 rename failure remains unresolved.",
+    "No database integration URLs or provider credentials supplied; no full Python quality receipt written.",
+    "The 150 skips include 103 unconfigured database cases, 34 pending botanical registrations, two disabled live-model tests, two Windows-only cases, five non-bbox writers, and four individual fixture/retired-lane/packaging cases. Wheel packaging skipped because its offline isolated build could not resolve hatchling; it is not validated by the four-gate pass.",
+    "All failed captures/builds/check attempts retain their original identity and scope."
+  ]
+}

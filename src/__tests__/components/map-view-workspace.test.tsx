@@ -87,6 +87,7 @@ vi.mock("maplibre-gl", () => {
     setProjection() {}
     easeTo() {}
     remove() {}
+    resize() {}
   }
   const control = class {};
   return {
@@ -205,7 +206,7 @@ describe("MapView workspace routing", () => {
     ).toBe("true");
     // Approximate is the default precision, so the confirmed point is the rounded one -- the
     // same one handed to the analysis request.
-    expect(workspace.textContent).toContain("46.6500, -120.1200");
+    expect(workspace.textContent).toContain("46.65, -120.12");
     expect(queryLocation).toHaveBeenCalledWith(46.65, -120.12, undefined, "approximate");
   });
 

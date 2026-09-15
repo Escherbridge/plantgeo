@@ -78,6 +78,16 @@ describe("RequestSubmitModal copy", () => {
     expect(screen.getByRole("button", { name: /post request/i })).toBeTruthy();
   });
 
+  it("discloses anonymous reading without promising anonymous comments or likes", () => {
+    const { container } = renderModal();
+    const text = (container.textContent ?? "").replace(/\s+/g, " ");
+    expect(text).toMatch(/sign in to read comments; contributor access is required to add comments or likes/i);
+    const consent = screen.getByRole("checkbox").closest("label")?.textContent ?? "";
+    expect(consent).toMatch(/location, title and description/i);
+    expect(consent).toMatch(/including people who are not signed in/i);
+    expect(consent).not.toMatch(/anyone to read, comment/i);
+  });
+
   it("still gates submission behind an explicit publication consent checkbox", () => {
     renderModal();
 

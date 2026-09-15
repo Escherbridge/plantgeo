@@ -2,7 +2,8 @@
   "track_id": "ai_intervention_workspace_20260913",
   "title": "AI intervention workspace",
   "type": "feature",
-  "status": "pending",
+  "status": "active",
+  "next_gate": "September14 navigation geometry recovery and recurring readiness checks passed engineering sweep. Browser canvas/mobile/streaming/recovery acceptance remains open. See platform_experience_qa_20260911/evidence/runbook-session3-20260914.md.",
   "created": "2026-09-13",
   "description": "Merge the map's AI regional-analysis session (RegionalIntelligencePanel / useRegionalIntelligence) with intervention proposal creation (InterventionSubmitModal / InterventionDrawControl) into one persistent, switchable workspace UI, alongside the existing LayerPanel data-layer dock, so a user can move between an active AI chat and drawing/proposing an intervention without losing either session's state.",
   "dependencies": [

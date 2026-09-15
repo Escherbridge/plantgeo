@@ -188,13 +188,19 @@ def postgresql_window_summary(rows: Sequence[dict[str, Any]]) -> list[dict[str, 
 
 
 def assert_row_matches(measured: dict[str, Any], expected: dict[str, Any]) -> None:
-    """Compare one answered row against the reference, allowing only the stated distance tolerance."""
+    """Compare rows with geodesic distance tolerance and weighted-mean rounding tolerance."""
     for column, want in expected.items():
         got = measured[column]
         if column.endswith(("distance_m", "distance_meters")):
             assert math.isclose(got, want, rel_tol=SPHERICAL_TO_SPHEROIDAL_TOLERANCE), (
                 f"{column}: DuckDB answered {got} and the spherical reference {want}; the two engines "
                 "are ellipsoidal and spherical respectively and may differ only by the stated tolerance"
+            )
+            continue
+        if column == "mean_value" and got is not None and want is not None:
+            # Floating-point weighted sums can round differently across reduction orders.
+            assert math.isclose(got, want, rel_tol=1e-14, abs_tol=1e-14), (
+                f"{column}: DuckDB answered {got!r} and the PostgreSQL reference {want!r}"
             )
             continue
         assert got == want, f"{column}: DuckDB answered {got!r} and the PostgreSQL reference {want!r}"

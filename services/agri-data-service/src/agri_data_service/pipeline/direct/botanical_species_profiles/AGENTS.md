@@ -31,6 +31,16 @@ creates no server and performs no production operation. The existing
 `BotoAvailabilityStorage` is the object-store implementation; callers supply it
 with their ordinary validated configuration when a future publication is approved.
 
+On Windows, local storage anchors its root in the explicit extended drive or UNC
+namespace before resolving it. CPython 3.12 otherwise performs a second filesystem
+lookup while removing the extended prefix; a concurrently disappearing lock file
+can leave the prefix intact and make lexical containment reject the same location.
+Using one namespace avoids that representation transition without removing resolved
+containment or the symbolic-link checks. Deterministic native-call regressions
+characterize this simulated transition for drive and UNC roots; they do not claim
+to capture the cause of a particular concurrent test failure. The actual competing
+CAS test remains unchanged, and resolved escapes and linked parents/leaves still refuse.
+
 Ceilings are 100 taxa, 10,000 assertions, one decision per declared field/taxon,
 32 MiB per encoded or decoded artifact and 64 MiB of encoded or decoded artifacts per
 release. API and agent layers impose their own smaller response and time limits.

@@ -13,6 +13,7 @@ const fakeDraw = {
   stop: vi.fn(),
   setMode: vi.fn(),
   clear: vi.fn(),
+  addFeatures: vi.fn(() => [{ valid: true }]),
   getSnapshot: vi.fn(() => [] as GeoJSON.Feature[]),
   on: vi.fn((event: string, listener: (ids: string[], type: string) => void) => {
     if (event === "change") changeListeners.push(listener);
@@ -33,7 +34,7 @@ vi.mock("terra-draw-maplibre-gl-adapter", () => ({
 
 import { InterventionDrawControl } from "@/components/map/InterventionDrawControl";
 
-const fakeMap = {} as MapLibreMap;
+const fakeMap = { isStyleLoaded: () => true, on: vi.fn(), off: vi.fn() } as unknown as MapLibreMap;
 
 describe("InterventionDrawControl", () => {
   beforeEach(() => {
@@ -42,7 +43,8 @@ describe("InterventionDrawControl", () => {
     fakeDraw.stop.mockClear();
     fakeDraw.setMode.mockClear();
     fakeDraw.clear.mockClear();
-    fakeDraw.getSnapshot.mockClear();
+    fakeDraw.addFeatures.mockReset().mockReturnValue([{ valid: true }]);
+    fakeDraw.getSnapshot.mockReset().mockReturnValue([]);
   });
 
   it("starts terra-draw in point mode by default", () => {
@@ -50,6 +52,91 @@ describe("InterventionDrawControl", () => {
 
     expect(fakeDraw.start).toHaveBeenCalled();
     expect(fakeDraw.setMode).toHaveBeenCalledWith("point");
+  });
+
+  it("restores a saved point without emitting a new drawing change", () => {
+    const initialGeometry = { type: "Point" as const, coordinates: [-116.2, 43.6] };
+    const onGeometryChange = vi.fn();
+    render(<InterventionDrawControl map={fakeMap} initialGeometry={initialGeometry} onGeometryChange={onGeometryChange} />);
+    expect(fakeDraw.addFeatures).toHaveBeenCalledWith([{
+      type: "Feature", geometry: initialGeometry, properties: { mode: "point" },
+    }]);
+    expect(onGeometryChange).not.toHaveBeenCalled();
+  });
+
+  it("restores only on attachment and uses the latest saved geometry if the map is replaced", () => {
+    const point = { type: "Point" as const, coordinates: [-116.2, 43.6] };
+    const polygon = { type: "Polygon" as const, coordinates: [[[-116.3, 43.6], [-116.2, 43.6], [-116.2, 43.7], [-116.3, 43.6]]] };
+    const onGeometryChange = vi.fn();
+    const { rerender } = render(<InterventionDrawControl map={fakeMap} initialGeometry={point} onGeometryChange={onGeometryChange} />);
+    rerender(<InterventionDrawControl map={fakeMap} initialGeometry={polygon} onGeometryChange={onGeometryChange} />);
+    expect(fakeDraw.addFeatures).toHaveBeenCalledTimes(1);
+    expect(fakeDraw.stop).not.toHaveBeenCalled();
+    const replacementMap = { isStyleLoaded: () => true, on: vi.fn(), off: vi.fn() } as unknown as MapLibreMap;
+    rerender(<InterventionDrawControl map={replacementMap} initialGeometry={polygon} onGeometryChange={onGeometryChange} />);
+    expect(fakeDraw.addFeatures).toHaveBeenLastCalledWith([{
+      type: "Feature", geometry: polygon, properties: { mode: "polygon" },
+    }]);
+    expect(fakeDraw.stop).toHaveBeenCalledTimes(1);
+    expect(onGeometryChange).not.toHaveBeenCalled();
+  });
+
+  it("reports failed recovery without replacing the saved geometry with an empty snapshot", () => {
+    const initialGeometry = { type: "Point" as const, coordinates: [-116.2, 43.6] };
+    const onGeometryChange = vi.fn();
+    const onRestoreError = vi.fn();
+    fakeDraw.addFeatures.mockReturnValue([{ valid: false }]);
+    render(<InterventionDrawControl map={fakeMap} initialGeometry={initialGeometry} onGeometryChange={onGeometryChange} onRestoreError={onRestoreError} />);
+    expect(fakeDraw.clear).toHaveBeenCalledTimes(1);
+    expect(onRestoreError).toHaveBeenCalledWith(expect.stringContaining("It is still saved"));
+    expect(onGeometryChange).not.toHaveBeenCalled();
+  });
+
+  it("waits for a fresh map to load and cancels the attachment if unmounted first", () => {
+    const load = new Set<() => void>();
+    let ready = false;
+    const pendingMap = {
+      isStyleLoaded: () => ready,
+      on: (_event: string, listener: () => void) => load.add(listener),
+      off: (_event: string, listener: () => void) => load.delete(listener),
+    } as unknown as MapLibreMap;
+    const first = render(<InterventionDrawControl map={pendingMap} onGeometryChange={vi.fn()} />);
+    expect(fakeDraw.start).not.toHaveBeenCalled();
+    first.unmount();
+    expect(load.size).toBe(0);
+    render(<InterventionDrawControl map={pendingMap} initialGeometry={{ type: "Point", coordinates: [-116.2, 43.6] }} onGeometryChange={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Polygon" }));
+    ready = true;
+    load.forEach((listener) => listener());
+    load.forEach((listener) => listener());
+    expect(fakeDraw.start).toHaveBeenCalledTimes(1);
+    expect(fakeDraw.setMode).toHaveBeenCalledWith("polygon");
+    expect(fakeDraw.addFeatures).toHaveBeenCalledTimes(1);
+  });
+
+  it("attaches after transient unreadiness on an already-loaded map without another load event", () => {
+    let ready = false;
+    const events = new Map<string, Set<() => void>>();
+    const loadedMap = {
+      isStyleLoaded: () => ready,
+      on: (event: string, listener: () => void) => {
+        const listeners = events.get(event) ?? new Set<() => void>();
+        listeners.add(listener);
+        events.set(event, listeners);
+      },
+      off: (event: string, listener: () => void) => events.get(event)?.delete(listener),
+    } as unknown as MapLibreMap;
+    render(<InterventionDrawControl map={loadedMap} initialGeometry={{ type: "Point", coordinates: [-116.2, 43.6] }} onGeometryChange={vi.fn()} />);
+    const renderListeners = [...(events.get("render") ?? [])];
+    renderListeners.forEach((listener) => listener());
+    expect(fakeDraw.start).not.toHaveBeenCalled();
+    ready = true;
+    renderListeners.forEach((listener) => listener());
+    renderListeners.forEach((listener) => listener());
+    expect(fakeDraw.start).toHaveBeenCalledTimes(1);
+    expect(fakeDraw.addFeatures).toHaveBeenCalledTimes(1);
+    expect(events.get("render")?.size).toBe(0);
+    expect(events.get("load")?.size).toBe(0);
   });
 
   it("switches to polygon mode when the polygon button is pressed", () => {

@@ -1,7 +1,7 @@
 ---
 type: runbook
 status: active
-updated_on: 2026-09-13
+updated_on: 2026-09-14
 ---
 
 # Current operating runbook
@@ -29,6 +29,144 @@ PostgreSQL remains for transactional application data, community interventions, 
 
 ## Operating sequence
 
+### Current progress and incremental release policy — September 15, 2026
+
+The [auditable checklist rollup](tracks/platform_experience_qa_20260911/evidence/progress-rollup-20260915.md)
+counts 33/218 current directly owned checklist items complete (15.14%). Including the declared
+workspace, requests, unified-intervention and land-context scope gives 54/333 (16.22%), with
+three in progress and 276 open. Explicitly historical phases are excluded. These are literal
+plan-status counts, not percentages of total effort or final acceptance: some obligations remain
+in prose and some implemented work still has open verification. The 220-case formal QA matrix
+has no whole-case signoffs; bounded execution variants retain their separate evidence.
+
+The user has authorized incremental pushes and live-site QA, reporting no active users. Verified
+code checkpoints may now follow the existing `main` → Railway build → migration readiness →
+traffic path. Source admission, governed publication and real-human acceptance are not waived.
+Each checkpoint must record its commit/deployment identity, build result and live QA evidence;
+the runbook remains open while later batches continue.
+
+Candidate 17's complete frontend release sweep passes all 193 files / 2,542 tests and 12 tooling
+tests. Type and data-boundary checks pass; its scoped test-file lint and Candidate 16's full lint
+are recorded distinctly in Session 11. Real local D26 publication-date and stale-moderation browser
+regressions pass independent review, as does unobstructed desktop temperature/VPD rendering.
+The mobile visual continuation remains failed at the local QA bridge before its first field
+capture; no product-renderer conclusion is drawn from that failure. Live deployment is being prepared.
+
+### Active long-horizon run — September 14, 2026
+
+The current coordinating session is `/root`, starting from `0f16e40dae3cce1d3b6d4ac00138254a968d974f`
+with pre-existing working changes retained. The [session ledger](tracks/platform_experience_qa_20260911/evidence/runbook-session-20260914.md)
+records bounded sessions, ownership, candidate evidence and outstanding gates. This run covers
+the declared runbook, all 31 registry layers and four separate land-context groups, their time
+controls, intervention/social journeys and the AI intervention workspace. Existing historical
+receipts retain their original scope; implementation presence does not establish acceptance.
+
+First engineering batch applied: GBIF feedback, workspace lifecycle corrections, removal of the
+feed's unsupported telemetry claim, botanical metadata transport handling and QA census reconciliation.
+The [check receipt](tracks/platform_experience_qa_20260911/evidence/check-receipt-20260914.json)
+records passing frontend tests, final type checking, zero-error lint, boundary checks and Python
+format/lint/full-selected-pytest plus the final targeted mypy correction. Source remains local and
+uncommitted; this checkpoint does not certify a release or close the runbook.
+The [independent review](tracks/platform_experience_qa_20260911/evidence/independent-review-20260914.md)
+approves the bounded authored code and reconciled checks; overall platform QA remains RED.
+At that first checkpoint the computer-use inventory had no available browser. Subsequent sessions
+use the local Playwright runner; its bounded results below do not close overall browser acceptance.
+Production data certification, scheduled advances, source admission and real-human contribution
+acceptance retain their separate gates.
+
+The [second session](tracks/platform_experience_qa_20260911/evidence/runbook-session2-20260914.md)
+adds explicit proposal-to-AI consent and records a passing 190-file / 2,502-test frontend sweep.
+It verifies ten environmental availability generations and audits forty populated physical rung samples
+(27 full part-metadata matches, nine availability-digest matches, four counts-only legacy samples),
+while confirming missing weather September 6 and shortwave June 1 publication. Sensor refresh
+remains operator-held. Historical freshness documents and three checksum-verified JSON artifacts
+were recovered; original coverage JSON/CSV and launch notes remain missing. All local fixes remain
+uncommitted and undeployed; browser and production acceptance remain open.
+
+The [third session](tracks/platform_experience_qa_20260911/evidence/runbook-session3-20260914.md)
+adds workspace geometry recovery after navigation, expands physical sampling to thirty streams
+across Sessions 2/3, and records 37 selected-day API cases queried twice. It identifies the original
+sensor absent-state conflict and its artifact-gated correction path. Legacy indexed absences
+remain source-unproven; incomplete SSURGO parts remain withheld. Dormant request voting requires
+an owning implementation contract, while defined request/like/comment journeys remain required.
+
+The [fourth session](tracks/platform_experience_qa_20260911/evidence/runbook-session4-20260914.md)
+corrects public-request disclosure and the forecast tool's unavailable-capability description.
+Sixteen read-only agent probes preserve selected days, grouped depths, static release dates and
+typed refusals within their stated bounds. Four existing Chromium fixture tests passed, with one
+routing skip; the local Next server required manual teardown. These supplementary fixture results
+do not close the 220-case live, authenticated, slider, drawing, accessibility or release matrix.
+The full frontend sweep found one stale assertion, corrected and confirmed by its eleven-test
+file; Python's full selected checks passed. Exact candidate distinctions and retained failed
+attempts are in the [Session 4 receipt](tracks/platform_experience_qa_20260911/evidence/check-receipt-session4-20260914.json).
+
+The [fifth session](tracks/platform_experience_qa_20260911/evidence/runbook-session5-20260914.md)
+is exercising isolated authenticated social and workspace journeys. Fresh database bootstrap
+exposed Alembic and Drizzle search-path failures; independently reviewed fixes now pass the real
+local bootstrap and deployment migration no-op without changing historical migration hashes.
+Candidate 13 passes all 192 frontend files / 2,512 tests and 12 tooling tests; type checking,
+data-boundary checking and lint exit zero. Lint retains 9,887 warnings and the explicit `.omc/**`
+CLI exclusion for inaccessible historical scratch directories. Candidate 11's Python sweep remains
+FAILED: one failure, 4,497 passes, 146 skips and one expected failure. Desktop browser attempt 4
+passes identity resume and both real database-backed proposal/social journeys, 3/3 tests in 50.2
+seconds, with runner exit zero and verified closed-port cleanup. Separate mobile attempt 5 passes
+the identity dependency and both 390×844 touch journeys, 3/3 tests in 35.2 seconds, also with clean
+cleanup. Earlier failures remain preserved. These bounded results do not close whole cases or
+release acceptance.
+
+The [sixth session](tracks/platform_experience_qa_20260911/evidence/runbook-session6-20260914.md)
+compares the current Python service on an isolated Linux filesystem. After correcting two omitted
+capture fixtures, its final offline format/lint/mypy/pytest gates pass: 4,494 passed, 150 skipped
+and one expected failure, with complete per-case skip evidence. The first failed attempt remains
+preserved. Database integration, pending registration, wheel packaging and the other skipped
+surfaces are not certified; the Windows rename failure remains unresolved.
+
+The [seventh session](tracks/platform_experience_qa_20260911/evidence/runbook-session7-20260914.md)
+fixes a real drawing teardown crash exposed by About navigation. Candidate 14 passes the integrated
+frontend gates, 12 tooling tests and 2,514 Vitest tests. Actual desktop and mobile browser journeys
+now restore unsent Point/Polygon drawings after client navigation and confirm discard, with no
+analysis or submission mutation and verified process cleanup. The bounded desktop environmental
+scenario now passes real weather/moisture date changes, three moisture depths and static/withheld
+controls; its first three failed attempts remain retained. Independent review found a new defect:
+the date summary assigns never-published SSURGO a selected date as though data were drawn.
+That fix, physical-device, accessibility, model-stream, all-layer slider and whole-platform
+acceptance remain open.
+
+The [eighth session](tracks/platform_experience_qa_20260911/evidence/runbook-session8-20260914.md)
+adds two targeted Windows passes: the existing frozen-input hash test and the existing wheel SQL
+resource test using verified local build dependencies. These supplement the Linux skip ledger
+without rewriting it.
+
+The [ninth session](tracks/platform_experience_qa_20260911/evidence/runbook-session9-20260914.md)
+reproduces a stale moderation decision overwriting an earlier publication, while passing comment
+ownership and administrator deletion checks. Its first likes case hit the normal login limit before
+reaching a like action. A separate reviewed likes-only run now passes two-client state, count and
+reload checks with normal authentication and clean process shutdown. The initial automatic login
+snapshot exposed a synthetic credential; that artifact was sanitized, and the revised capture
+guard passed a dummy-field failure probe and a clean exact-known-credential scan of the real run.
+The moderation and publication-date fixes are approved for the next complete local source batch;
+their integrated checks and fresh browser regressions remain required.
+
+The [tenth session](tracks/platform_experience_qa_20260911/evidence/runbook-session10-20260914.md)
+passes corrected desktop and mobile temperature/VPD controls and governed reads, including four
+temperature depths, September 4/5 selections, return to latest, 5–100 percent strength and separate
+visibility controls. The original unsupported zero-strength expectation remains a failed harness
+attempt. Desktop numeric temperature rendering is independently reviewed. Mobile's open manager
+obscures the canvas, and isolated VPD numeric-label rendering remains unproved; a separate bounded
+follow-up targets those visual gaps. Different viewports and rungs do not establish conservation.
+
+Fresh read-only botanical evidence is in the [September 14 receipt](tracks/platform_experience_qa_20260911/evidence/botanical-read-20260914.json).
+The current pointer still selects `956c0be71910469005fb494d92aac035223be49d1f5c895c0b1206a716b16ac4`.
+The wide zoom-8 request still returns `bbox_too_large_for_zoom`; the grid-policy decision is pending.
+The identification object is a valid zero-row Parquet file matching manifest count zero. Its source
+receipt reports `extension_row_counts: {}` and no unread-extension reasons. This closes the
+receipt-inspection step in historical Finding 3; it does not prove an independent source-archive
+field-map reconciliation or close admission gates.
+
+The contribution queue currently calls `publishContribution`, and that procedure sets
+`status: published`. The outstanding intervention publication issue in the table above therefore
+requires end-to-end revalidation before being treated as a missing implementation.
+
 1. Choose one layer and freeze its source, day horizon, resolutions, current publication generation, and owning schedule.
 2. Read the physical Parquet objects, completion markers, and availability entry independently. Do not infer one from another.
 3. If coverage is missing, create bounded repair work against the original source. Preserve source identity, request bounds, and checksums.
@@ -47,6 +185,146 @@ PostgreSQL remains for transactional application data, community interventions, 
 ## Validation
 
 Apply the complete change batch before the final integrated check. Run the data-boundary check, type check, lint, affected frontend and Python tests, migration/bootstrap verification, and relation census appropriate to the change. Production acceptance additionally requires cold and warm request traces, browser evidence, schedule burn-in, and an independent release verdict.
+
+## Handoff — four rendering gaps diagnosed, none fixed yet (2026-09-14)
+
+Follows the GBIF-occurrences-layer session below. This session added browser-side caching, raised
+the cell budget, ran a code review, built the GBIF layer as a separate source via a 5-lane
+AgentGraph mission, then investigated a fresh user report: botanical/GBIF layers not rendering at
+a wide regional zoom, and land-context layers (parcels/utility/BLM/state-lands) toggled on but
+drawing nothing. Two parallel investigation agents plus live curl verification produced four
+findings below. **None are fixed** — this is diagnosis only.
+
+### Finding 1 — botanical/GBIF aggregate layer: a real, CONFIRMED serving defect
+
+`services/agri-data-service/src/agri_data_service/planes/botanical_occurrences.py:47-60` bounds
+each support rung's answerable bbox area:
+
+```python
+MAX_BBOX_SQUARE_DEGREES = {"detail": 4.0, "grid-0.05": 100.0, "grid-0.25": 1600.0}
+```
+
+Zooms 7-10 select the `grid-0.05` fine rung, whose ceiling is only 100 square degrees — one eighth
+of the coarse rung's 1600. Confirmed live against production
+(`https://plantgeo-parquet-api-production.up.railway.app/api/v1/botanical-occurrences/query`,
+release `956c0be7...`):
+
+| bbox | area (sq deg) | zoom | result |
+| --- | --- | --- | --- |
+| `-125,42,-111,49` | 98 | 5, 8, 9 | real cells returned, no refusal |
+| `-130,40,-110,50` | 140 | 8 | **refused**: `bbox_too_large_for_zoom`, `"a grid-0.05 answer is bounded at 100.0 square degrees"` |
+| `-125,41,-108,50` | ~150 | 8 | refused, same reason |
+
+A normal wide-PNW viewport at zoom 7-10 sits right on or over this ceiling. The refusal does raise
+a client banner (`src/components/map/LayerManager.tsx:889-895`), so whether the user actually saw
+it is open — but the underlying defect is real: the fine rung's budget is too tight for a viewport
+that legitimately wants regional coverage in that zoom band, while the coarse rung right below it
+(zoom <7) comfortably covers the same area at 16x the budget. **Not decided**: raise the `grid-0.05`
+ceiling, have the frontend clamp/downsample its requested bbox before crossing into that zoom band,
+or pick the rung from combined zoom+bbox-size rather than zoom alone. This is a server-load-vs-UX
+tradeoff, not a one-line constant bump — needs a decision before a fix lands.
+
+### Finding 2 — GBIF layer: correctly empty, but indistinguishable from broken (UX gap)
+
+No real GBIF acquisition has run yet — by design, this session's own GBIF commit built the
+pipeline/schema/layer without running one. `src/components/map/layers/GbifOccurrencesLayer.tsx`
+handles the empty-geojson case correctly (early return, no throw), but produces **no banner or
+empty-state message at all**, unlike the UBC layer's zoom-floor banner. A user toggling it on sees
+nothing — identical to what a broken layer looks like. The ingestion pipeline itself
+(`pipeline/direct/botanical_occurrences/`) was swept for TODO/stub/`NotImplementedError` markers
+and came back clean; the UBC lane is fully implemented, only genuinely never-run for GBIF. Fix is a
+UX addition (an explicit "no data ingested for this source yet" indicator), not a data fix.
+
+### Finding 3 — the 2KB `identifications/part-0000.parquet`: probably not a bug, one check short of closed
+
+Initially looked suspicious next to the collection's real scale (confirmed live: 177,728
+`excluded_by_qc`/`nonspatial` records exist in this release for even a small Vancouver-area
+bbox query). But `identifications` is populated only from Darwin Core *extension* rows
+(`forward.py:330-336`) — a different table from `occurrences`/`raw_occurrences`, where the real
+specimen volume lives (`forward.py:461-464`). UBC's export may simply carry no Identification
+extension, or one `parse_meta_descriptor` didn't recognize (tracked in `descriptor.unread_row_types`,
+`archive_descriptor.py:176-182`). **Not yet verified**: whether this generation's publish receipt
+(`forward.py:338-349`, fields `extension_row_counts` and reasons prefixed
+`unread_extension_row_type:`) shows the extension was seen-and-skipped rather than never processed.
+Pull that receipt before concluding anything further.
+
+### Finding 4 — land-context layers: three independent, fully diagnosed blockers (NOT this session's feature)
+
+Belongs to a different, concurrent session's in-flight work
+(`conductor/tracks/environmental_parquet_serving_20260912/**` was seen actively modified throughout
+this session) — diagnosed here for the handoff, not claimed or touched.
+
+1. **No data plane exists.** `src/lib/server/services/land-context/parquet-reader.ts:1-17` is an
+   explicit placeholder ("No real data source is wired in yet... always resolves to an
+   empty-with-gap-stated result"). A `TODO(worker-1/integrator)` names the missing reads:
+   `boundary_versions` / `organizations_offices` / `public_contact_routes` / `source_releases`.
+   Every accessor returns empty-with-gap; the tRPC router answers 200 with zero matched features,
+   so nothing surfaces as a visible failure.
+2. **Geometry is discarded even where data exists.** `src/components/map/land-context/useLandContextQuery.ts:63`
+   hardcodes `geometry: { type: "GeometryCollection", geometries: [] }`. This is now stale — the
+   contract carries `geometryWkb: string | null` (`src/lib/environmental/land-context-contract.ts:60`)
+   and a decoder already exists (`geometry/boundary-geometry-adapter.ts`) but isn't called here.
+   Fixing (1) alone still renders nothing until `toFeature` calls `decodeBoundaryGeometry`.
+3. **The query never fires on a plain viewport view.** `useLandContextQuery.ts:87-95` gates both
+   queries behind `selection.mode === "point"|"area"`, defaulting to `selection: null`
+   (`land-context-store.ts:168`), which short-circuits to empty with no request issued. This is
+   click-driven point/parcel lookup by original design, not a viewport overlay — toggling the layer
+   on over a wide regional view was never going to draw anything regardless of (1) and (2). The
+   frontend rendering itself is real and correctly wired (`LandContextLayer.tsx:105-177`, genuine
+   fill+line layers, correctly mounted at `MapView.tsx:492-493`, correctly toggled via the store) —
+   the toggle is not a no-op, there's simply nothing feeding it and no auto-fire on pan/zoom.
+
+Recommended unblock order: (1) implement the four `parquet-reader.ts` bodies against a real Parquet
+lane, (2) wire `decodeBoundaryGeometry` into `toFeature`, (3) decide — as a product question, not an
+obvious fix — whether land-context stays click-driven (current, correct-per-spec) or gains an auto
+viewport-bbox query; only that third option would match a user's expectation of seeing overlays on
+pan/zoom without clicking.
+
+### Session state
+
+- Botanical envelope fix (data-derived coverage box, not a hardcoded placeholder), the
+  `BotanicalOccurrencesLayer` `style.load` race fix, and the full GBIF-occurrences-as-a-new-layer
+  feature (5-lane AgentGraph mission: source/schema plan, pipeline field mapping, map layer,
+  governance evidence, verify sweep) are committed and pushed to `main` — `f18b3f47`, `0f16e40d`.
+- A concurrent session has ongoing uncommitted work in
+  `conductor/tracks/environmental_parquet_serving_20260912/**`, `src/app/about/page.tsx`, and
+  (now-restored after a stash mishap this session — verified via its own 6/6 test suite, nothing
+  lost) `services/agri-data-service/src/agri_data_service/interface/cli/availability.py` and its
+  tests. Re-check `git status`/`git log` before touching anything nearby; do not assume stability.
+
+### Continuation plan
+
+1. **Pull the release receipt for `956c0be7...`** and check `extension_row_counts` /
+   `unread_extension_row_type:` reasons to close Finding 3 (`forward.py:338-349` names the fields).
+   Cheap, do this first — it's a read, not a decision.
+2. **Take Finding 1 (bbox ceiling) to the owner as a decision**, not straight to a code change —
+   the three fix directions trade off server load against UX differently. Once decided,
+   `oh-my-claudecode:executor` can apply it; it is a small, well-localized change once the direction
+   is picked.
+3. **Add an empty-state indicator to `GbifOccurrencesLayer.tsx`** (Finding 2) — small, no decision
+   needed, matches the existing banner pattern already in `LayerManager.tsx`.
+4. **Land-context (Finding 4) is not this session's track.** Hand it to whoever owns
+   `environmental_parquet_serving_20260912` rather than picking it up independently — re-verify its
+   current state first, since that track has been actively moving underneath this session.
+
+```
+Resume work on the four rendering-gap findings recorded in this handoff (botanical/GBIF layer
+zoom-band bbox ceiling, GBIF empty-state UX, the 2KB identifications file, and land-context's three
+blockers). Read this RUNBOOK section first — state, decisions still open, and the continuation plan
+above. Verify the botanical bbox-ceiling finding still holds with a fresh curl against
+https://plantgeo-parquet-api-production.up.railway.app/api/v1/botanical-occurrences/query before
+acting — data may have changed. Start at step 1.
+
+Watch out for: Finding 1's fix direction is NOT decided — do not just raise the constant without
+flagging the server-load tradeoff to the owner first. Finding 4 (land-context) belongs to a
+different, concurrent session's track — check its current state before touching it.
+
+Suggested: `oh-my-claudecode:executor` for step 1 (a read) and step 3 (a small, undecided-free UX
+add) · an owner decision (not an agent) for step 2 · re-scope step 4 against
+`conductor/tracks/environmental_parquet_serving_20260912/plan.md`'s current state before acting.
+```
+
+---
 
 ## Handoff — botanical occurrences: map wiring complete, independently reviewed, one governance question open for the owner (2026-09-13)
 

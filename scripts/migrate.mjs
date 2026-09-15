@@ -2,8 +2,8 @@
 // as the plantgeo-main preDeployCommand before the release receives traffic.
 import { fileURLToPath } from "node:url";
 import { drizzle } from "drizzle-orm/postgres-js";
-import { migrate } from "drizzle-orm/postgres-js/migrator";
 import postgres from "postgres";
+import { migrateDatabase } from "./migrate-database.mjs";
 
 // The migrator always issues CREATE SCHEMA/TABLE IF NOT EXISTS for its ledger,
 // which needs CREATE on the database even when nothing is pending. Set
@@ -32,7 +32,7 @@ const client = postgres(connectionString, {
 });
 
 try {
-  await migrate(drizzle(client), { migrationsFolder });
+  await migrateDatabase(drizzle(client), { migrationsFolder });
   console.log("migrate: drizzle migrations are up to date");
 } catch (error) {
   console.error("migrate: failed to apply drizzle migrations");

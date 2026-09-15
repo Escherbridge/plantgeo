@@ -14,6 +14,9 @@ import { renderWithProviders } from "@/test/utils";
 import { MapProvider } from "@/lib/map/map-context";
 import { useLayerStore } from "@/stores/layer-store";
 import { useMapStore } from "@/stores/map-store";
+import { useBotanicalOccurrenceStore } from "@/stores/botanical-occurrence-store";
+import { GBIF_COLLECTION_KEY } from "@/lib/environmental/botanical-governance-status";
+import type { BotanicalOccurrencesQueryResult } from "@/lib/server/services/botanical-occurrences-client";
 import { useSoilStore } from "@/stores/soil-store";
 import { useTimeSliderStore } from "@/stores/time-slider-store";
 import { SCRUB_SETTLE_MS, useDrawnLayerDayStore } from "@/stores/useMetricAtDate";
@@ -76,13 +79,23 @@ function lastRenderOf(component: string): Record<string, unknown> | null {
  * stub of `useFireData`. `fireRequestDate()` still asks the same question the hook spy asked:
  * fire takes the `fire` ROW's day, and no other layer's.
  */
-function fireDetectionWindow(cells: unknown[] = [], truncated = false) {
+function fireDetectionWindow(cells: unknown[] = [], truncated = false, day = "2026-08-28") {
   return {
     state: "ready",
-    requestedDay: "2026-08-28",
-    servedDay: "2026-08-28",
+    requestedDay: day,
+    servedDay: day,
     truncated,
-    data: { firstDay: "2026-08-28", lastDay: "2026-08-28", cells, days: [] },
+    data: { firstDay: day, lastDay: day, cells, days: [] },
+  };
+}
+
+/** Synthetic weekly release; its publication day stays distinct from the requested day. */
+function droughtRelease(servedDay: string, requestedDay = servedDay) {
+  return {
+    state: "ready", requestedDay, servedDay, truncated: false,
+    data: [{ areaId: "qa-drought", validDate: servedDay, droughtCategory: 1,
+      sourceUrl: "https://example.test/drought", ingestedAt: `${servedDay}T00:00:00Z`,
+      geometry: { type: "Polygon", coordinates: [[[-124, 45], [-123, 45], [-123, 46], [-124, 45]]] } }],
   };
 }
 
@@ -525,6 +538,7 @@ beforeEach(() => {
   // collection would otherwise keep handing one to every case after it, since `clearAllMocks`
   // clears calls and not implementations.
   viewportQueries.getFirePerimeters.mockReturnValue({ data: undefined });
+  viewportQueries.getBotanicalOccurrences.mockReturnValue({ data: undefined });
 });
 
 afterEach(() => {
@@ -1807,7 +1821,7 @@ describe("LayerManager holds the previous day while the next one loads", () => {
     });
     useMapStore.setState({ activeLayers: ["drought"] });
     viewportQueries.getDroughtClassification.mockReturnValue({
-      ...landed(polygonCollection()),
+      ...landed(droughtRelease("2026-07-28")),
     });
     const fakeMap = createFakeMap();
     fakeMap.setStyleLoaded(true);
@@ -1816,45 +1830,42 @@ describe("LayerManager holds the previous day while the next one loads", () => {
     expect(useDrawnLayerDayStore.getState().drawnDays.drought).toEqual({
       drawnDate: "2026-07-28",
       requestedDate: "2026-07-28",
+      pendingDate: null,
       isLoading: false,
     });
   });
 
   it("does not retain an upstream-unavailable Parquet answer as a landed frame", async () => {
     useTimeSliderStore.setState({
-      layerDates: {},
-      forecastVariant: "monte_carlo",
+      layerDates: { drought: "2026-07-21" }, forecastVariant: "monte_carlo",
       capabilities: streamBackedCapabilities,
     });
     useMapStore.setState({ activeLayers: ["drought"] });
-    viewportQueries.getDroughtClassification.mockReturnValue({
-      ...landed({
-        state: "upstream_unavailable",
-        fault: { kind: "http", message: "upstream 503", status: 503 },
-      }),
-    });
+    viewportQueries.getDroughtClassification.mockReturnValue(landed(droughtRelease("2026-07-21")));
     const fakeMap = createFakeMap();
     fakeMap.setStyleLoaded(true);
     const rendered = renderLayerManager(fakeMap);
+    expect(useDrawnLayerDayStore.getState().drawnDays.drought?.drawnDate).toBe("2026-07-21");
 
-    // A failed request has no painted frame, so the registry names the requested day as its
-    // neutral value. The load-bearing proof is the next retained answer: the failed day must
-    // not have entered the hook's last-landed ref and be relabelled as what is on screen.
-    viewportQueries.getDroughtClassification.mockReturnValue({
-      ...retaining(polygonCollection()),
-    });
-    act(() => {
-      useTimeSliderStore.getState().setLayerDate("drought", "2026-06-01");
-    });
+    viewportQueries.getDroughtClassification.mockReturnValue(landed({
+      state: "upstream_unavailable",
+      fault: { kind: "http", message: "upstream 503", status: 503 },
+    }));
+    act(() => { useTimeSliderStore.getState().setLayerDate("drought", "2026-07-28"); });
     await settleScrub();
-    act(() => {
-      rerenderLayerManager(rendered, fakeMap);
-    });
-
+    act(() => { rerenderLayerManager(rendered, fakeMap); });
     expect(useDrawnLayerDayStore.getState().drawnDays.drought).toEqual({
-      drawnDate: "2026-06-01",
-      requestedDate: "2026-06-01",
-      isLoading: true,
+      drawnDate: null, requestedDate: "2026-07-28", pendingDate: null, isLoading: false,
+    });
+    expect(lastRenderOf("DroughtLayer")?.geojson).toEqual({ type: "FeatureCollection", features: [] });
+
+    // A cached earlier publication states its own day, never the failed request's date.
+    viewportQueries.getDroughtClassification.mockReturnValue(retaining(droughtRelease("2026-07-21")));
+    act(() => { useTimeSliderStore.getState().setLayerDate("drought", "2026-06-01"); });
+    await settleScrub();
+    act(() => { rerenderLayerManager(rendered, fakeMap); });
+    expect(useDrawnLayerDayStore.getState().drawnDays.drought).toEqual({
+      drawnDate: "2026-07-21", requestedDate: "2026-06-01", pendingDate: "2026-06-01", isLoading: true,
     });
   });
 
@@ -2037,8 +2048,9 @@ describe("LayerManager holds the previous day while the next one loads", () => {
 
     expect(lastRenderOf("WeatherLayer")?.data).toEqual([]);
     expect(useDrawnLayerDayStore.getState().drawnDays.weather).toEqual({
-      drawnDate: nextDay,
+      drawnDate: null,
       requestedDate: nextDay,
+      pendingDate: null,
       isLoading: true,
     });
   });
@@ -2273,7 +2285,7 @@ describe("LayerManager holds the previous day while the next one loads", () => {
     });
     useMapStore.setState({ activeLayers: ["drought"] });
     viewportQueries.getDroughtClassification.mockReturnValue({
-      ...landed(polygonCollection()),
+      ...landed(droughtRelease("2026-07-28")),
     });
     const fakeMap = createFakeMap();
     fakeMap.setStyleLoaded(true);
@@ -2282,7 +2294,7 @@ describe("LayerManager holds the previous day while the next one loads", () => {
     // The reader scrubs; react-query hands back the previous day's collection as a placeholder
     // while the new day loads.
     viewportQueries.getDroughtClassification.mockReturnValue({
-      ...retaining(polygonCollection()),
+      ...retaining(droughtRelease("2026-07-28")),
     });
     act(() => {
       useTimeSliderStore.getState().setLayerDate("drought", "2026-06-01");
@@ -2292,20 +2304,22 @@ describe("LayerManager holds the previous day while the next one loads", () => {
     expect(useDrawnLayerDayStore.getState().drawnDays.drought).toEqual({
       drawnDate: "2026-07-28",
       requestedDate: "2026-06-01",
+      pendingDate: "2026-06-01",
       isLoading: true,
     });
 
-    // ...and adopts the new day the moment its collection actually lands.
+    // The landed weekly release names its own day without a pending request.
     viewportQueries.getDroughtClassification.mockReturnValue({
-      ...landed(polygonCollection()),
+      ...landed(droughtRelease("2026-05-26", "2026-06-01")),
     });
     act(() => {
       rerenderLayerManager(rendered, fakeMap);
     });
 
     expect(useDrawnLayerDayStore.getState().drawnDays.drought).toEqual({
-      drawnDate: "2026-06-01",
+      drawnDate: "2026-05-26",
       requestedDate: "2026-06-01",
+      pendingDate: null,
       isLoading: false,
     });
   });
@@ -2325,7 +2339,7 @@ describe("LayerManager holds the previous day while the next one loads", () => {
     useMapStore.setState({ activeLayers: [] });
     viewportQueries.getDroughtClassification.mockReturnValue({
       // The disabled-query shape: a placeholder still standing, nothing in flight.
-      ...retaining(polygonCollection()),
+      ...retaining(droughtRelease("2026-07-28")),
       isFetching: false,
     });
     const fakeMap = createFakeMap();
@@ -2348,6 +2362,7 @@ describe("LayerManager holds the previous day while the next one loads", () => {
       capabilities: sliderCapabilities,
     });
     useMapStore.setState({ activeLayers: ["fire"] });
+    viewportQueries.getFireDetections.mockReturnValue(landed(fireDetectionWindow([], false, "2026-07-30")));
     const fakeMap = createFakeMap();
     fakeMap.setStyleLoaded(true);
     renderLayerManager(fakeMap);
@@ -2356,13 +2371,13 @@ describe("LayerManager holds the previous day while the next one loads", () => {
     expect(useDrawnLayerDayStore.getState().drawnDays.fire).toEqual({
       drawnDate: "2026-07-30",
       requestedDate: "2026-07-30",
+      pendingDate: null,
       isLoading: false,
     });
 
     // The reader scrubs back; that day's request has not landed, so the cells still painted are
-    // 2026-07-30's -- reported as such without LayerManager ever being told which day they came
-    // from, because the previous settled day is what it already watched land.
-    viewportQueries.getFireDetections.mockReturnValue(retaining(fireDetectionWindow()));
+    // 2026-07-30's -- reported by the retained typed envelope rather than inferred from the selected day.
+    viewportQueries.getFireDetections.mockReturnValue(retaining(fireDetectionWindow([], false, "2026-07-30")));
     act(() => {
       useTimeSliderStore.getState().setLayerDate("fire", "2026-07-25");
     });
@@ -2371,6 +2386,7 @@ describe("LayerManager holds the previous day while the next one loads", () => {
     expect(useDrawnLayerDayStore.getState().drawnDays.fire).toEqual({
       drawnDate: "2026-07-30",
       requestedDate: "2026-07-25",
+      pendingDate: "2026-07-25",
       isLoading: true,
     });
   });
@@ -2430,6 +2446,142 @@ describe("LayerManager holds the previous day while the next one loads", () => {
     });
 
     expect(useDrawnLayerDayStore.getState().drawnDays).toEqual({});
+  });
+});
+
+describe("GBIF occurrence feedback", () => {
+  const emptyNotice = "parquet-layer-unavailable-gbif-empty";
+  const floorNotice = "parquet-layer-unavailable-gbif-below-detail-floor";
+
+  function detailResult(collections: string[] = [], truncated = false): BotanicalOccurrencesQueryResult {
+    return {
+      state: "detail",
+      releaseSetId: "published-release",
+      publishedAt: "2026-09-13T00:00:00Z",
+      taxonomyRecipeVersion: "taxonomy-v1",
+      qcPolicyVersion: "qc-v1",
+      truncated,
+      nextCursor: truncated ? "next-page" : null,
+      counts: { returned: collections.length, matched: collections.length, withheld: 0, nonspatial: 0, excludedByQc: 0 },
+      features: collections.map((collectionKey, index) => ({
+        occurrenceId: `occurrence-${index}`,
+        collectionKey,
+        sourceRecordKey: `source-${index}`,
+        taxonConceptId: "taxon-1",
+        resolutionState: "resolved",
+        scientificName: "Acer macrophyllum",
+        family: "Sapindaceae",
+        eventInterval: { start: "2025-06-01", end: "2025-06-01", precision: "day" },
+        longitude: -123.1,
+        latitude: 49.2,
+        coordinateUncertaintyMeters: 10,
+        spatialClass: "exact",
+        membership: "confirmed",
+        catalogNumber: null,
+        recordedBy: null,
+        basisOfRecord: "PRESERVED_SPECIMEN",
+        rightsUri: null,
+        attributionText: null,
+      })),
+    };
+  }
+
+  beforeEach(() => {
+    useBotanicalOccurrenceStore.getState().resetFilters();
+    useBotanicalOccurrenceStore.getState().setLastResponse(null);
+    useMapStore.setState({
+      activeLayers: ["gbif-occurrences"],
+      viewport: { ...INITIAL_MAP_STATE.viewport, zoom: 11, widthPx: 1024, heightPx: 768 },
+    });
+  });
+
+  afterEach(() => {
+    useBotanicalOccurrenceStore.getState().resetFilters();
+    useBotanicalOccurrenceStore.getState().setLastResponse(null);
+  });
+
+  it("explains the GBIF detail floor and keeps its query disabled below it", () => {
+    useMapStore.setState({ viewport: { ...useMapStore.getState().viewport, zoom: 10.9 } });
+    const rendered = renderLayerManager(createFakeMap());
+    expect(rendered.getByTestId(floorNotice).textContent).toContain("GBIF occurrence points draw at zoom 11");
+    expect(enabledFlagOf(viewportQueries.getBotanicalOccurrences)).toBe(false);
+    expect(lastRenderOf("GbifOccurrencesLayer")?.visible).toBe(false);
+    expect(rendered.queryByTestId(emptyNotice)).toBeNull();
+  });
+
+  it.each([{ collections: [] }, { collections: ["ubc:herbarium"] }])("explains an empty GBIF slice when the response contains $collections", ({ collections }) => {
+    viewportQueries.getBotanicalOccurrences.mockReturnValue(landed(detailResult(collections)));
+    const rendered = renderLayerManager(createFakeMap());
+    expect(rendered.getByTestId(emptyNotice).textContent).toBe(
+      "No GBIF occurrence points were returned for this viewport and current filters."
+    );
+    expect(rendered.queryByTestId(floorNotice)).toBeNull();
+    expect(enabledFlagOf(viewportQueries.getBotanicalOccurrences)).toBe(true);
+  });
+
+  it("qualifies the empty GBIF slice when the shared result hits its row limit", () => {
+    viewportQueries.getBotanicalOccurrences.mockReturnValue(landed(detailResult(["ubc:herbarium"], true)));
+    const rendered = renderLayerManager(createFakeMap());
+    expect(rendered.getByTestId(emptyNotice).textContent).toContain("limited result");
+    expect(rendered.getByTestId(emptyNotice).textContent).toContain("prevents a complete assessment");
+    expect(rendered.getByTestId("parquet-layer-unavailable-botanical-truncated")).toBeTruthy();
+  });
+
+  it("keeps the active collection filter in the request and qualifies the empty result", () => {
+    useBotanicalOccurrenceStore.getState().setFilters({ collection_key: "ubc:herbarium" });
+    viewportQueries.getBotanicalOccurrences.mockReturnValue(landed(detailResult(["ubc:herbarium"])));
+    const rendered = renderLayerManager(createFakeMap());
+    expect(inputOf(viewportQueries.getBotanicalOccurrences)).toMatchObject({ collectionKey: "ubc:herbarium" });
+    expect(rendered.getByTestId(emptyNotice).textContent).toContain("current filters");
+  });
+
+  it("removes the empty notice when GBIF points arrive", () => {
+    viewportQueries.getBotanicalOccurrences.mockReturnValue(landed(detailResult()));
+    const fakeMap = createFakeMap();
+    const rendered = renderLayerManager(fakeMap);
+    expect(rendered.getByTestId(emptyNotice)).toBeTruthy();
+    viewportQueries.getBotanicalOccurrences.mockReturnValue(landed(detailResult([GBIF_COLLECTION_KEY])));
+    rerenderLayerManager(rendered, fakeMap);
+    expect(rendered.queryByTestId(emptyNotice)).toBeNull();
+    expect(lastRenderOf("GbifOccurrencesLayer")?.geojson).toMatchObject({ features: [{ properties: { collection_key: GBIF_COLLECTION_KEY } }] });
+  });
+
+  it.each(["pending", "placeholder", "refreshing", "error", "aggregate"])("does not turn a %s response into a current-view empty claim", (state) => {
+    const query: ViewportQueryResult = state === "pending"
+      ? { data: undefined, isFetching: true }
+      : state === "placeholder"
+        ? retaining(detailResult())
+        : state === "refreshing"
+          ? { ...landed(detailResult()), isFetching: true }
+          : state === "error"
+            ? { data: detailResult(), isError: true }
+            : landed({ state: "aggregate", cells: [], counts: { returned: 0, matched: 0 } });
+    viewportQueries.getBotanicalOccurrences.mockReturnValue(query);
+    const rendered = renderLayerManager(createFakeMap());
+    expect(rendered.queryByTestId(emptyNotice)).toBeNull();
+  });
+
+  it.each(["refused", "unavailable"] as const)("keeps the shared %s reason visible with only GBIF enabled", (state) => {
+    viewportQueries.getBotanicalOccurrences.mockReturnValue(landed({ state, note: "Service-authored reason" }));
+    const rendered = renderLayerManager(createFakeMap());
+    expect(rendered.getByTestId(`parquet-layer-unavailable-botanical-${state}`).textContent).toContain("Service-authored reason");
+    expect(rendered.queryByTestId(emptyNotice)).toBeNull();
+  });
+
+  it("surfaces a transport failure with only GBIF enabled", () => {
+    viewportQueries.getBotanicalOccurrences.mockReturnValue({ data: undefined, isError: true });
+    const rendered = renderLayerManager(createFakeMap());
+    expect(rendered.getByTestId("parquet-layer-unavailable-botanical-request-failed").textContent).toContain("request failed");
+    expect(rendered.queryByTestId(emptyNotice)).toBeNull();
+  });
+
+  it("removes GBIF feedback when its toggle turns off", () => {
+    viewportQueries.getBotanicalOccurrences.mockReturnValue(landed(detailResult()));
+    const rendered = renderLayerManager(createFakeMap());
+    expect(rendered.getByTestId(emptyNotice)).toBeTruthy();
+    act(() => useMapStore.setState({ activeLayers: [] }));
+    expect(rendered.queryByTestId(emptyNotice)).toBeNull();
+    expect(rendered.queryByTestId(floorNotice)).toBeNull();
   });
 });
 

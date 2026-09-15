@@ -32,7 +32,7 @@
       "independent verifier task"
     ]
   },
-  "next_gate": "Bind current task/candidate ownership, inventory every surfaced requirement and freeze the local role/device/data/cache matrix before claiming browser acceptance.",
+  "next_gate": "Session4 disclosure and forecast description reviewed; candidate8 corrects one stale assertion with11test confirmation after candidate7 fullfrontend1failure. Pythonfullselected/type/boundary/lint passed. Four supplementary Chromium fixtures passed with1routing skip and manualNextteardown;16agentqueries reconciled. Continue220case live/role/slider/agent matrix with isolatedDB extension prerequisites, source custody and release gates open.",
   "authority": {
     "execution": "isolated local QA only",
     "production_mutation": false,
@@ -59,11 +59,62 @@
       "No session archive or pruning before integrated proof and retained evidence links."
     ],
     "slices": [
-      {"id": "q0", "task": "Task binding, ownership and requirement matrix", "status": "active", "depends_on": [], "owns": ["conductor/tracks/platform_experience_qa_20260911/evidence/task-ledger.md", "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md"]},
-      {"id": "q1", "task": "Local browser, canvas, accessibility and agent parity evidence", "status": "planned", "depends_on": ["q0"], "owns": ["conductor/tracks/platform_experience_qa_20260911/evidence/captures/"]},
-      {"id": "q2", "task": "Defect routing, integration and task/commit/tree reconciliation before verdict", "status": "planned", "depends_on": ["q1"], "owns": ["conductor/tracks/platform_experience_qa_20260911/evidence/defects.md", "conductor/tracks/platform_experience_qa_20260911/evidence/reconciliation.md"]},
-      {"id": "q3", "task": "Final check receipt reconciliation followed by independent integrated verdict", "status": "planned", "depends_on": ["q2"], "owns": ["conductor/tracks/platform_experience_qa_20260911/evidence/final-verdict.md"], "handoff": "Q2 transfers evidence/reconciliation.md for final receipt binding before independent review; q3 is the integrated proof gate."},
-      {"id": "q4", "task": "Final registry/runbook status handoff and proof-gated session cleanup", "status": "planned", "depends_on": ["q3"], "owns": ["conductor/tracks/platform_experience_qa_20260911/evidence/closure-handoff.md"]}
+      {
+        "id": "q0",
+        "task": "Task binding, ownership and requirement matrix",
+        "status": "active",
+        "depends_on": [],
+        "owns": [
+          "conductor/tracks/platform_experience_qa_20260911/evidence/task-ledger.md",
+          "conductor/tracks/platform_experience_qa_20260911/evidence/cases.md"
+        ]
+      },
+      {
+        "id": "q1",
+        "task": "Local browser, canvas, accessibility and agent parity evidence",
+        "status": "planned",
+        "depends_on": [
+          "q0"
+        ],
+        "owns": [
+          "conductor/tracks/platform_experience_qa_20260911/evidence/captures/"
+        ]
+      },
+      {
+        "id": "q2",
+        "task": "Defect routing, integration and task/commit/tree reconciliation before verdict",
+        "status": "planned",
+        "depends_on": [
+          "q1"
+        ],
+        "owns": [
+          "conductor/tracks/platform_experience_qa_20260911/evidence/defects.md",
+          "conductor/tracks/platform_experience_qa_20260911/evidence/reconciliation.md"
+        ]
+      },
+      {
+        "id": "q3",
+        "task": "Final check receipt reconciliation followed by independent integrated verdict",
+        "status": "planned",
+        "depends_on": [
+          "q2"
+        ],
+        "owns": [
+          "conductor/tracks/platform_experience_qa_20260911/evidence/final-verdict.md"
+        ],
+        "handoff": "Q2 transfers evidence/reconciliation.md for final receipt binding before independent review; q3 is the integrated proof gate."
+      },
+      {
+        "id": "q4",
+        "task": "Final registry/runbook status handoff and proof-gated session cleanup",
+        "status": "planned",
+        "depends_on": [
+          "q3"
+        ],
+        "owns": [
+          "conductor/tracks/platform_experience_qa_20260911/evidence/closure-handoff.md"
+        ]
+      }
     ],
     "integration_slice": "q3"
   }

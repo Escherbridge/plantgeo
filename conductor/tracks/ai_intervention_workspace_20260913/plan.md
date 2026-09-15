@@ -5,7 +5,32 @@ tags: [ai_intervention_workspace_20260913]
 resource: ./spec.md
 ---
 
+September 14 session 2: proposal-first AI entry now uses explicit shared precision/consent
+controls, preserving draft/map state. The integrated frontend suite passed 190 files / 2,502
+tests, with type/boundary checks and zero-error lint. See the [session evidence](../platform_experience_qa_20260911/evidence/runbook-session2-20260914.md).
+Browser drawing, mobile, streaming and navigation recovery remain open; historical checkboxes
+below retain their original evidence scope.
+
 # Implementation Plan: AI intervention workspace
+
+## September 14 navigation recovery
+
+The [third QA session](../platform_experience_qa_20260911/evidence/runbook-session3-20260914.md)
+restores saved Point/Polygon geometry after non-explicit unmount and preserves original draft
+coordinates on reopen. Map attachment waits for current style readiness on recurring events;
+failed restoration retains the draft and reports an error. Candidate 6 passed 191 frontend files /
+2,509 tests plus type/boundary checks and zero-error lint. Actual browser drawing/recovery and
+mobile/streaming behavior remain open; this checkpoint does not close the track.
+
+## September 14 lifecycle QA correction
+
+The [long-horizon QA session](../platform_experience_qa_20260911/evidence/runbook-session-20260914.md)
+reconciles existing implementation and repairs requested-mode changes, preservation of form work,
+confirmed close/Escape behavior, the hidden standalone panel's competing Escape listener, and
+drawing-map resize on reveal. Caption and relocation guidance retain the actual draft coordinates.
+The source candidate remains uncommitted; automated evidence does not close browser acceptance.
+Proposal-first AI consent entry, non-explicit navigation persistence, mobile and real drawing/stream
+journeys remain open. Historical phase checkboxes below retain their dated evidence.
 
 ## Overview
 

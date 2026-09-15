@@ -64,7 +64,7 @@ and `InterventionSubmitModal` are no longer two independent floating surfaces th
 merely tolerates. They are the two modes of ONE surface,
 `src/components/map/AiInterventionWorkspace.tsx` — a right-edge shell `MapView` mounts while a
 location action is live, with a two-way switch ("AI analysis" / "Propose intervention"), its own
-close, and a confirmation before a close that would discard a drawn-but-unsubmitted geometry or an
+close, and a confirmation before a close that would discard any unfinished proposal fields or an
 in-flight analysis. OQ-2 of that track resolved this deliberately as a second control surface
 rather than a third dock section: the 304px dock is built for compact controls, and a chat
 transcript plus an embedded drawing map are neither.
@@ -77,6 +77,23 @@ The exception is narrow, and these are its terms:
 - **Mode-switch is not close.** Switching modes never calls `onClose` and never resets either
   store. `regional-intelligence-store`'s `hidePanel`/`showPanel` exist for the visibility half;
   `closePanel` still means "the user is done" and still clears.
+- **Analysis entry still requires consent.** A proposal-first workspace shows the shared
+  `AgentInteraction` precision and Send controls inside its AI pane. Cancel returns to the
+  proposal. Starting analysis preserves the draft and map, and uses the proposal's saved
+  location even if a later map click targeted somewhere else. The AI pane names the rounded
+  coordinates actually sent; opening a pane alone never starts a request.
+- **A deliberate close discards both sessions.** Escape and the close button share the same
+  confirmation. Declining preserves the draft and stream; confirming clears the draft and
+  closes the AI session. Escape inside another dialog must not close the workspace beneath it.
+- **New location actions preserve unfinished fields.** A draft counts as unfinished before its
+  first geometry if its form fields differ from defaults. New actions select their requested
+  pane, but cannot reset that draft or its original coordinates. The drawing map stays alive
+  between tabs and resizes after its hidden container becomes visible.
+- **Navigation restores saved drawing values.** The proposal form passes the draft geometry to
+  the drawing control for initial recovery on a fresh map. Restoration errors remain visible
+  and block submission without clearing the draft; a successful recovery clears a prior error.
+  A deliberate close still discards the draft. No storage beyond the existing in-memory store
+  is introduced, and undo history belongs to the live instance only.
 - **It owns nothing the dock owns.** The workspace's compact layer strip is a second VIEW over
   `map-store.activeLayers`, never a second copy of it: it writes through the same `useToggleLayer`
   the dock's `LayerRow` eye uses, so it cannot drift (OQ-3). Adding any state of its own here —
@@ -167,6 +184,12 @@ is retained; restoration criteria are in the Parquet pivot track's deferred anal
 
 ## Community publishing route restored — 2026-09-10
 
+Current public requests publish their location, title, and description without review. Request
+consent must disclose that signed-out readers can read those fields. Comments/like-state reads
+require sign-in; request, comment, and like writes require contributor access. Recommendation
+copy distinguishes visibility to signed-in readers during review from public publication after
+approval. The complete request disclosure contract lives in `src/app/community/AGENTS.md`.
+
 The map's intervention caption claimed nothing invoked publishing, while `publishContribution`
 remained callable and `ContributionQueue` had its approve/reject controls. The queue had been
 replaced at `/moderation` by a different `ModerationPanel`, making the community publisher
@@ -218,3 +241,14 @@ Render the resolved stage, source, requested and actual dates, and coordinates d
 the risk summary, observation, or recommendation and retain that association in Markdown.
 An unknown reference or missing historical ledger does not become a displayed raw ID or an
 invented evidence scope. JSON exports retain the original references and their recorded audit.
+
+## Stale contribution review decisions
+
+The pending queue's Approve and Reject controls do not override an earlier reviewer. Server
+CONFLICT means no decision was applied; refresh the queue and show that explanation even if
+the refresh removes the last row. Other mutation errors must remain visible and must not be
+presented as success. Keep an unsent rejection note until a successful rejection. The server
+owns the atomic pending-status guard; client invalidation is feedback, not concurrency control.
+A failed query refresh must retain any mutation explanation. Only explicit FORBIDDEN or
+UNAUTHORIZED errors are described as access denial; other query errors say the queue could
+not load. A failed refresh must not clear the unsent review note from component state.

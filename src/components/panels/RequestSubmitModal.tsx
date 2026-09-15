@@ -17,26 +17,7 @@ interface RequestSubmitModalProps {
   onSuccess?: () => void;
 }
 
-/**
- * Captures one signed-in contributor's PUBLIC strategy request -- "this area could use X".
- *
- * What changed in `public_strategy_requests_20260913` Phase 3: this form used to write
- * `community.submitRequest`, a private, owner/team-scoped `strategy_requests` row with bare
- * lat/lon columns that no map layer could ever draw, and its copy said so. It now writes
- * `interventions.submitRequest`, which creates a published `geo.features` row carrying
- * `properties.kind = "request"` -- on the map the moment it is written, clickable and commentable
- * by every reader. The team/workspace props went with the boundary: public is the only mode, so
- * there is no workspace to scope a request to and no second consent story to tell.
- *
- * Geometry, and why there is no drawing tool here: `submitRequest` requires a real
- * `InterventionGeometry`, never a bare coordinate pair, so the map centre is promoted to a GeoJSON
- * Point below. That is deliberately the whole flow. A request is a low-friction ask about an area
- * ("people can make recommendations even if they don't even live here"), not a surveyed parcel
- * boundary; OQ-F resolved to defaulting requests to a single Point rather than pushing every
- * submitter through the polygon picker `InterventionSubmitModal` mounts. A Point has no area, so
- * the land-category area cap has nothing to say about it, and an optional drawn request area later
- * reuses the same validator with no schema change.
- */
+/** Publishes a contributor request at the map centre; see panels/AGENTS.md. */
 export function RequestSubmitModal({
   lat,
   lon,
@@ -134,7 +115,9 @@ export function RequestSubmitModal({
         <p className="text-xs text-[hsl(var(--muted-foreground))] mb-4">
           Pinned at {lat.toFixed(4)}, {lon.toFixed(4)} &middot; recentre the map to
           move the pin. Your request goes on the public map straight away, with no
-          review queue.
+          review queue. Anyone can read the published request without signing in.
+          Sign in to read comments; contributor access is required to add comments
+          or likes.
         </p>
 
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">
@@ -199,8 +182,8 @@ export function RequestSubmitModal({
             />
             <span>
               I understand this request is published immediately: its location, title
-              and description appear on the public map for anyone to read, comment on
-              and respond to.
+              and description appear on the public map for anyone to read, including
+              people who are not signed in.
             </span>
           </label>
 

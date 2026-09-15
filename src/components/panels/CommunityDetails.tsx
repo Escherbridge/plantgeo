@@ -117,12 +117,11 @@ export function CommunityDetails({ mapCenter }: CommunityDetailsProps) {
             </button>
           </div>
 
-          {/* The two submit paths in this panel write to different tables with different
-              fates, and only this one can ever reach the map. Each says which it is. */}
+          {/* Recommendations require review before public publication. */}
           <p className="text-xs text-[hsl(var(--muted-foreground))] mb-2">
             Proposes a site for the public map. Recommendations are held for
-            expert review and only appear on the map once a reviewer approves
-            them.
+            expert review. Submitted proposals can be visible to signed-in readers
+            during review; they become public after a reviewer approves them.
           </p>
 
           {!interventionSubmissions || interventionSubmissions.length === 0 ? (
@@ -186,8 +185,9 @@ export function CommunityDetails({ mapCenter }: CommunityDetailsProps) {
           <p className="text-xs text-[hsl(var(--muted-foreground))]">
             Asks for a strategy at the map&rsquo;s centre point &mdash; &ldquo;this
             area could use X.&rdquo; A request is published straight away with no
-            review queue, and appears on the map in its own colour. Click one on
-            the map to read it, comment on it, or back it.
+            review queue, and appears on the public map in its own colour. Anyone
+            can read it without signing in. Sign in to read comments; contributor
+            access is required to add comments or likes.
           </p>
         </section>
       </div>

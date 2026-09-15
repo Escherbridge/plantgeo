@@ -1,5 +1,17 @@
 # Layer L3: Planes
 
+## Botanical occurrence metadata transport failures
+
+The pinned-generation marker/manifest probes, post-scan manifest rereads and current-pointer/manifest reads in
+`botanical_occurrences.py` translate botocore connection and HTTP transport failures into
+`unavailable`. This shared plane boundary serves HTTP and every occurrence agent tool.
+Endpoint, proxy, TLS, timeout and response-stream errors do not prove a missing or empty
+release; the public reason is constant and never includes backend exception text, endpoints
+or credentials. Existing absent-object and incomplete-publication decisions retain their
+`unavailable` and `refused` meanings. Programming errors and other exception families are not
+caught by this transport rule. Tests use an injected fake backend and empty local publication
+roots; `use_generation_root(None)` means configured object storage, not an empty test fixture.
+
 ## Responsibility
 Domain execution planes that bind method algorithms and pipeline acquisition outputs into warehouse persistence.
 

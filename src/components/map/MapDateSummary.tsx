@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
+import { findWithheldCapability } from "@/components/map/layer-panel/layer-time-state";
 import { CalendarDays } from "lucide-react";
 import {
   LAYER_REGISTRY,
@@ -65,43 +66,35 @@ export interface ViewedDateSummary {
   pendingCount: number;
 }
 
-/**
- * Each visible layer restated on the day it is actually drawing.
- *
- * `isOnLatest` is RE-ANSWERED against that day rather than carried over. `useViewedLayerDays`
- * answers it for the day the row is asking for, which is right for the agent payload and wrong
- * here: every qualifier in a sentence must be about the day that sentence names. Carrying it
- * over put two different days in one line -- click "Latest" on a scrubbed layer and the row read
- * an old date with no "behind its latest" mark, while the reverse case marked a day that WAS the
- * latest as behind it. The rule itself is `useViewedLayerDays`'s, unchanged; only its subject is.
- *
- * A layer nothing has published for keeps its row's day and reports no loading state. That is
- * honest only while unpublished layers BLANK during a load rather than retaining — a layer given
- * `keepPreviousData` without a report here would be captioned with a day it is not painting, so
- * the two must be added together.
- */
+/** Published dates only; selected request context remains separate in useViewedLayerDays. */
 export function resolveDrawnViewedDays(
   viewed: ViewedLayerDay[],
   drawnDays: Partial<Record<LayerToggleId, DrawnLayerDay>>,
   capabilities: SliderCapabilities | null
 ): DrawnViewedLayerDay[] {
-  return viewed.map((layer) => {
+  return viewed.flatMap((layer): DrawnViewedLayerDay[] => {
+    if (findWithheldCapability(capabilities, layer.warehouseLayerName) !== null) return [];
     const drawn = drawnDays[layer.layerId];
-    if (drawn === undefined) return { ...layer, pendingDate: null, isLoading: false };
-    // A feed whose read carries no day (SSURGO, proxied per viewport) publishes a null drawn
-    // date and contributes only its loading state; the row's own day still names it.
-    const drawnDate = drawn.drawnDate ?? layer.date;
+    if (drawn === undefined) {
+      const capability = capabilities?.layers.find((entry) => entry.layerName === layer.warehouseLayerName);
+      if (capability?.temporalKind === "snapshot") return [];
+      return [{ ...layer, pendingDate: null, isLoading: false }];
+    }
+    if (drawn.drawnDate === null) return [];
+    const drawnDate = drawn.drawnDate;
     const latestObservedDate = latestObservedDateFor(capabilities, layer.layerId);
-    return {
+    return [{
       ...layer,
       date: drawnDate,
       pendingDate:
-        drawn.requestedDate !== null && drawn.requestedDate !== drawnDate
+        drawn.pendingDate !== undefined
+          ? drawn.pendingDate
+          : drawn.requestedDate !== null && drawn.requestedDate !== drawnDate
           ? drawn.requestedDate
           : null,
       isLoading: drawn.isLoading,
       isOnLatest: latestObservedDate === null || drawnDate >= latestObservedDate,
-    };
+    }];
   });
 }
 
@@ -208,7 +201,7 @@ export function describeViewedDays(
     .map(
       (layer) =>
         `${layerLabel(layer.layerId)}: ${layer.date}` +
-        (layer.pendingDate === null ? "" : ` (loading ${layer.pendingDate})`) +
+        (layer.pendingDate === null ? "" : ` (${layer.isLoading ? "loading" : "awaiting"} ${layer.pendingDate})`) +
         (layer.isOnLatest ? "" : " (behind its latest)")
     );
   return [headline, ...loading, ...rows].join("\n");

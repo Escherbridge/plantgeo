@@ -2,7 +2,8 @@
   "track_id": "unified_intervention_layer_20260913",
   "title": "Unified intervention layer with click-to-inspect detail panel",
   "type": "feature",
-  "status": "pending",
+  "status": "active",
+  "next_gate": "September 14 QA removes unsupported feed telemetry. Existing unified layer, details, likes and comments still require local role/browser journeys and separately governed real-human publication acceptance.",
   "created": "2026-09-13",
   "description": "Merge the published Martin-tile 'Interventions' layer and the client-side draft/proposed 'My & Proposed Interventions' overlay into one layer toggle, styled by status; add click interactivity on any intervention feature (point or polygon, any status) opening a detail panel that shows the full drawn geometry plus every field; add net-new commenting and liking to that panel, with an explicit design question about /feed parity.",
   "dependencies": [

@@ -1,8 +1,55 @@
 # Map interaction boundary
 
+## GBIF feedback
+
+`LayerManager` uses the shared occurrence query's established banners for refusal,
+unavailable publication, and request failures. GBIF additionally names its detail zoom floor
+and a settled empty GBIF slice. The empty notice describes returned points for the current
+viewport and filters, never source ingestion history or ecological absence. A truncated
+shared result cannot establish complete GBIF coverage, and says so explicitly. Loading,
+placeholder, and errored responses cannot support a current-view empty claim. The GBIF
+toggle controls these notices without changing the shared query or its source partition.
+
 Which spatial form a layer may be drawn in is frozen in `src/lib/map/AGENTS.md` §The layer render contract.
 
 Location selection is a privacy boundary. `AgentInteraction` requires an explicit user choice before analysis begins and defaults to an approximate (two-decimal) location; exact coordinates are opt-in. Regional analysis remains informational only: it cannot take external actions, and unavailable data must remain visibly unavailable rather than producing substitute recommendations.
+
+The workspace reuses `AgentInteraction` in embedded mode when a proposal has no analysis yet.
+It displays the preserved proposal location, the same precision controls, and an explicit Send
+action. Mounting, switching tabs, changing precision, and Cancel never dispatch analysis. Send
+rounds coordinates to the selected two or six decimals and calls the existing regional analysis
+hook; it leaves the proposal store and live drawing map untouched. The workspace header then
+shows the actual analysis coordinates while that pane is selected. An unsubmitted proposal at a
+different location retains its own coordinates and consent entry. Precision choices reset to
+approximate when the consent entry's proposal location changes.
+
+Embedded consent owns neither a floating dialog nor Escape/focus restoration; the workspace
+owns those. The standalone map popup keeps its original lifecycle. Each consent instance has a
+unique radio group and description ID so a map popup cannot alter a mounted workspace's choice.
+
+Non-explicit navigation can unmount the workspace while its in-memory draft remains. On return,
+the drawing map starts at the saved proposal coordinates and `InterventionDrawControl` restores
+its saved Point or Polygon once the new map's style is loaded. Attachment checks readiness
+immediately and on render/load, then removes both listeners after success or unmount. MapLibre
+fires load once per map; recurring render checks also recover an already-loaded map whose style
+is temporarily waiting for source updates. Rehydration precedes change
+subscription so it cannot clear or replace the store as a synthetic drawing event. Prop changes
+and tab switches never rebuild the live drawing session. A failed import keeps the geometry in
+the store, reports a visible error, and blocks submission until the user clears/redraws it or a
+later recovery succeeds. MultiPolygon remains a server geometry type, not a drawing mode; a
+saved value of that type gets the same explicit recovery error rather than silently losing parts.
+Explicit workspace close still clears the draft. This restores values after navigation, not a
+destroyed instance's undo history, and does not add persistence across a page reload.
+
+The drawing controller attaches and disposes in a layout effect. Both map owners
+(`AiInterventionWorkspace` and `InterventionSubmitModal`) remove MapLibre in passive
+cleanup, so the child's layout cleanup must stop TerraDraw first. MapLibre's remove
+contract forbids subsequent map calls; TerraDraw stop clears source data and removes
+its layers and sources. A remove event is too late because MapLibre has already
+destroyed its style. Keep the latest drawing props synchronized in the preceding
+layout effect so map replacement restores the current geometry. The integration
+regression mounts both real owner components and checks disposal through Strict Mode
+replay, without suppressing SDK errors or changing the draft's navigation lifetime.
 
 ## The layer toggle is the only source of layer visibility
 
@@ -1179,3 +1226,23 @@ path, so an invalidated collection disappears before a queued source clear. The 
 scalar inspection gate excludes retained transparent features from hover/tap and map-click
 decisions and retires an open caption. It releases only when replacement native data is ready.
 Weather and all other renderers keep their current ordering and representations.
+
+## Selected dates and published drawing dates (2026-09-14)
+
+The agent's selected request context remains `useViewedLayerDays`, including missing daily
+dates. `MapDateSummary` applies publication evidence separately: explicitly withheld layers
+and null drawn dates do not contribute a date or count. Typed reader responses supply actual
+served dates, including static snapshot releases; a request default is not a publication date.
+A retained typed placeholder preserves a pending date even when offline pauses the fetch.
+A settled older release has explicit pendingDate null; loading and pending are independent.
+
+`LayerTimeSlider` continues to display selected dates for real daily controls. Its non-axis
+status displays a date only for a snapshot with a reader-published drawn date. Withheld,
+empty, loading and failed capability states retain their explanations without inventing a
+date. This supersedes earlier SSURGO proxy assumptions in the summary tests and comments.
+See `src/stores/AGENTS.md` for typed versus legacy response behavior and retained frames.
+
+Typed manager and climate readers opt into publicationMode typed, so absent data on cold
+load or error has no served date. Legacy untyped adapters retain request bookkeeping. The
+combined streamflow/groundwater water row remains legacy in this bounded change; aggregate
+publication-date semantics require separate work and are not certified here.

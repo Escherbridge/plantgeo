@@ -17,6 +17,7 @@ Element.prototype.scrollIntoView = vi.fn();
 const mapSpies = vi.hoisted(() => ({
   constructed: [] as unknown[],
   removed: 0,
+  resized: 0,
 }));
 
 vi.mock("maplibre-gl", () => {
@@ -26,6 +27,9 @@ vi.mock("maplibre-gl", () => {
     }
     remove() {
       mapSpies.removed += 1;
+    }
+    resize() {
+      mapSpies.resized += 1;
     }
   }
   return { default: { Map: FakeMap } };
@@ -40,6 +44,7 @@ const submitStub = vi.hoisted(() => ({
   mutate: vi.fn(),
   options: null as { onSuccess?: () => void; onError?: (error: { message: string }) => void } | null,
 }));
+const analysisSpy = vi.hoisted(() => ({ queryLocation: vi.fn() }));
 
 vi.mock("@/lib/trpc/client", () => ({
   trpc: {
@@ -62,7 +67,7 @@ vi.mock("@/lib/trpc/client", () => ({
 /** The analysis controller's network side. The store is the real one; only the fetch is stubbed. */
 vi.mock("@/hooks/useRegionalIntelligence", () => ({
   useRegionalIntelligence: () => ({
-    queryLocation: vi.fn(),
+    queryLocation: analysisSpy.queryLocation,
     sendFollowUp: vi.fn(),
     retryLastRequest: vi.fn(),
   }),
@@ -74,6 +79,7 @@ vi.mock("@/components/map/InterventionDrawControl", () => ({
 }));
 
 import { AiInterventionWorkspace } from "@/components/map/AiInterventionWorkspace";
+import RegionalIntelligencePanel from "@/components/panels/RegionalIntelligencePanel";
 import { useInterventionDraftStore } from "@/stores/intervention-draft-store";
 import { useRegionalIntelligenceStore } from "@/stores/regional-intelligence-store";
 import { useMapStore } from "@/stores/map-store";
@@ -104,6 +110,7 @@ beforeEach(() => {
   submitStub.options = null;
   mapSpies.constructed.length = 0;
   mapSpies.removed = 0;
+  mapSpies.resized = 0;
   useInterventionDraftStore.getState().clearDraft();
   useRegionalIntelligenceStore.getState().closePanel();
   useRegionalIntelligenceStore.setState({ isVisible: true });
@@ -112,10 +119,95 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
   vi.clearAllMocks();
 });
 
 describe("workspace AI pane keep-alive", () => {
+  it("defaults back to approximate consent when an empty proposal moves to a new location", () => {
+    const onClose = vi.fn();
+    const { rerender } = render(<AiInterventionWorkspace coordinates={[-116.23456789, 43.61234567]} initialMode="ai" onClose={onClose} />);
+    fireEvent.click(screen.getByRole("radio", { name: /high-precision selected location/i }));
+    rerender(<AiInterventionWorkspace coordinates={[-115.3456789, 42.7654321]} initialMode="ai" onClose={onClose} />);
+    expect((screen.getByRole("radio", { name: /approximate location/i }) as HTMLInputElement).checked).toBe(true);
+    expect(analysisSpy.queryLocation).not.toHaveBeenCalled();
+  });
+
+  it("does not send analysis when the proposal opens, tabs switch, precision changes, or consent is canceled", () => {
+    render(<AiInterventionWorkspace coordinates={[-116.23456789, 43.61234567]} initialMode="intervention" onClose={vi.fn()} />);
+    expect(analysisSpy.queryLocation).not.toHaveBeenCalled();
+    switchTo("ai");
+    expect((screen.getByRole("radio", { name: /approximate location/i }) as HTMLInputElement).checked).toBe(true);
+    fireEvent.click(screen.getByRole("radio", { name: /high-precision selected location/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.getByTestId("intervention-mode-content").hasAttribute("hidden")).toBe(false);
+    expect(useRegionalIntelligenceStore.getState().isOpen).toBe(false);
+    expect(analysisSpy.queryLocation).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { precision: "approximate", lat: 43.61, lon: -116.23 },
+    { precision: "exact", lat: 43.612346, lon: -116.234568 },
+  ] as const)("starts $precision analysis of the preserved proposal location without losing the drawing session", ({ precision, lat, lon }) => {
+    const onClose = vi.fn();
+    const { rerender } = render(
+      <AiInterventionWorkspace coordinates={[-116.23456789, 43.61234567]} initialMode="intervention" onClose={onClose} />
+    );
+    const instance = mapSpies.constructed[0];
+    const drawContainer = screen.getByTestId("intervention-draw-map");
+    act(() => {
+      useInterventionDraftStore.getState().setName("Keep this proposal");
+      useInterventionDraftStore.getState().setGeometry(DRAWN_POLYGON);
+    });
+    rerender(<AiInterventionWorkspace coordinates={[-100, 40]} initialMode="intervention" onClose={onClose} />);
+    switchTo("ai");
+    if (precision === "exact") {
+      fireEvent.click(screen.getByRole("radio", { name: /high-precision selected location/i }));
+    }
+    expect(analysisSpy.queryLocation).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Send for analysis" }));
+    expect(analysisSpy.queryLocation).toHaveBeenCalledExactlyOnceWith(lat, lon, undefined, precision);
+    expect(useRegionalIntelligenceStore.getState()).toMatchObject({
+      isOpen: true, isVisible: false, selectedLocation: { lat, lon, precision },
+    });
+    expect(screen.getByTestId("ai-intervention-workspace").textContent).toContain(`${lat}, ${lon}`);
+    switchTo("intervention");
+    expect(useInterventionDraftStore.getState()).toMatchObject({
+      name: "Keep this proposal", geometry: DRAWN_POLYGON, lat: 43.61234567, lon: -116.23456789,
+    });
+    expect(screen.getByTestId("intervention-draw-map")).toBe(drawContainer);
+    expect(mapSpies.constructed).toEqual([instance]);
+    expect(mapSpies.removed).toBe(0);
+    switchTo("ai");
+    expect(analysisSpy.queryLocation).toHaveBeenCalledTimes(1);
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("keeps the hidden standalone panel from bypassing a canceled workspace Escape", () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const controller = new AbortController();
+    const onClose = vi.fn();
+    useRegionalIntelligenceStore.getState().openPanel(43.6, -116.2, "approximate");
+    useRegionalIntelligenceStore.getState().setLoading(true);
+    useRegionalIntelligenceStore.getState().setAbortController(controller);
+    const { rerender } = render(<RegionalIntelligencePanel />);
+    rerender(
+      <>
+        <RegionalIntelligencePanel />
+        <AiInterventionWorkspace coordinates={[-116.2, 43.6]} initialMode="ai" onClose={onClose} />
+      </>
+    );
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    expect(onClose).not.toHaveBeenCalled();
+    expect(useRegionalIntelligenceStore.getState().isOpen).toBe(true);
+    expect(useRegionalIntelligenceStore.getState().isLoading).toBe(true);
+    expect(controller.signal.aborted).toBe(false);
+    confirmSpy.mockReturnValue(true);
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(controller.signal.aborted).toBe(true);
+  });
   it("keeps an in-flight analysis streaming while the mode is switched away and back", async () => {
     const abortController = new AbortController();
     act(() => {
@@ -189,6 +281,18 @@ describe("workspace AI pane keep-alive", () => {
 });
 
 describe("workspace intervention pane keep-alive", () => {
+  it("resizes a hidden-created draw map on each reveal without recreating it", () => {
+    render(<AiInterventionWorkspace coordinates={[-116.2, 43.6]} initialMode="ai" onClose={vi.fn()} />);
+    expect(mapSpies.resized).toBe(0);
+    switchTo("intervention");
+    expect(mapSpies.resized).toBe(1);
+    switchTo("ai");
+    expect(mapSpies.resized).toBe(1);
+    switchTo("intervention");
+    expect(mapSpies.resized).toBe(2);
+    expect(mapSpies.constructed).toHaveLength(1);
+    expect(mapSpies.removed).toBe(0);
+  });
   it("keeps one MapLibre instance, and the drawn geometry, across a switch away and back", async () => {
     render(
       <AiInterventionWorkspace

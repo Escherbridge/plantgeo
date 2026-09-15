@@ -1,0 +1,491 @@
+{
+  "recorded_at": "2026-09-14T21:35:34.597450+00:00",
+  "session_status": "active",
+  "overall_platform_qa": "RED",
+  "source_candidates": [
+    {
+      "path": "conductor/tracks/platform_experience_qa_20260911/evidence/source-candidate-20260914-9.json",
+      "sha256": "e96c0a52bc174061ed4678a8935b3d0cd191293b84ea21cd88b5e05de6ee43b9",
+      "bytes": 7626
+    },
+    {
+      "path": "conductor/tracks/platform_experience_qa_20260911/evidence/source-candidate-20260914-10.json",
+      "sha256": "57fec5c95b25e6c78ccb5d665ed0396b5e296c0d0f6647e4a53cc606aae44766",
+      "bytes": 9444
+    },
+    {
+      "path": "conductor/tracks/platform_experience_qa_20260911/evidence/source-candidate-20260914-11.json",
+      "sha256": "8391e2deba1a023d5b7ac08bcc3c382163b248d556f89af9bbb1d6dd341e1684",
+      "bytes": 10088
+    },
+    {
+      "path": "conductor/tracks/platform_experience_qa_20260911/evidence/source-candidate-20260914-12.json",
+      "sha256": "559288d8241167687e2631b62dbbd3651c08985c470484ecff540b59b6602fcd",
+      "bytes": 10366
+    },
+    {
+      "path": "conductor/tracks/platform_experience_qa_20260911/evidence/source-candidate-20260914-13.json",
+      "sha256": "1d1d6b6f268fa1b595ee7bc8fc3c61722eeaae67447e0eb1e96a4fbc89f3ddc6",
+      "bytes": 10723
+    }
+  ],
+  "checks": [
+    {
+      "name": "frontend-tests-candidate10",
+      "candidate": 10,
+      "command": "npm.cmd run test:changed -- --base 0f16e40d",
+      "exit_code": 0,
+      "log": {
+        "path": ".omc/research/runbook-20260914/session5/frontend-tests-candidate10.log",
+        "sha256": "63f20ff5878f086b14d897718f854accd953a3611738d25f6d7cb5d3c71649e7",
+        "bytes": 824002
+      }
+    },
+    {
+      "name": "typecheck-candidate10",
+      "candidate": 10,
+      "command": "npm.cmd run type-check",
+      "exit_code": 0,
+      "log": {
+        "path": ".omc/research/runbook-20260914/session5/typecheck-candidate10.log",
+        "sha256": "5a73c140c0ad128d7dfaf1a28f01b54adf8c3d29c10d317d96d4e791294fc7ec",
+        "bytes": 100
+      }
+    },
+    {
+      "name": "boundary-candidate10",
+      "candidate": 10,
+      "command": "npm.cmd run check:data-boundary",
+      "exit_code": 0,
+      "log": {
+        "path": ".omc/research/runbook-20260914/session5/boundary-candidate10.log",
+        "sha256": "9eafe413dfe6c6bd02229c9b983c8136949d7ba2d4c4cfd272e9b4bcd9f81f0d",
+        "bytes": 528
+      }
+    },
+    {
+      "name": "lint-candidate10",
+      "candidate": 10,
+      "command": "npm.cmd run lint",
+      "exit_code": 2,
+      "log": {
+        "path": ".omc/research/runbook-20260914/session5/lint-candidate10.log",
+        "sha256": "2a192893b2cf0a4aec9047228e818f5ee070a5e5a26e454b3de6588170ad11c2",
+        "bytes": 3110
+      }
+    },
+    {
+      "name": "lint-candidate10-retry1",
+      "candidate": 10,
+      "command": "npm.cmd run lint -- --ignore-pattern .omc/pytest-regional-cdef25b26296488e9a3580bffd13b001/**",
+      "exit_code": 2,
+      "log": {
+        "path": ".omc/research/runbook-20260914/session5/lint-candidate10-retry1.log",
+        "sha256": "c09a08e63f2cea812f282a20160b88a82f570c824e9625e8b58b58e65805127a",
+        "bytes": 3414
+      }
+    },
+    {
+      "name": "lint-candidate10-retry2",
+      "candidate": 10,
+      "command": "npm.cmd run lint -- --ignore-pattern .omc/**",
+      "exit_code": 0,
+      "log": {
+        "path": ".omc/research/runbook-20260914/session5/lint-candidate10-retry2.log",
+        "sha256": "a30f554e2589d773006f28358e96e8246afe93b2b2068e3eef19c91a7fb147f4",
+        "bytes": 3918814
+      }
+    },
+    {
+      "name": "python-checks",
+      "candidate": 9,
+      "command": ".venv/Scripts/python.exe scripts/check.py --changed --base 0f16e40d",
+      "exit_code": 1,
+      "log": {
+        "path": ".omc/research/runbook-20260914/session5/python-checks.log",
+        "sha256": "fc4bc138f9b0da23fbd2676c8469ba9a1906a5f6db4b3c1cc378f48b80a95fbc",
+        "bytes": 57702
+      }
+    },
+    {
+      "name": "python-checks-candidate10",
+      "candidate": 10,
+      "command": ".venv/Scripts/python.exe scripts/check.py --changed --base 0f16e40d",
+      "exit_code": 1,
+      "log": {
+        "path": ".omc/research/runbook-20260914/session5/python-checks-candidate10.log",
+        "sha256": "d380a1c62dff78614eae9948ba442ef3baa32b454f8320288d1d08d051c8336c",
+        "bytes": 56278
+      }
+    },
+    {
+      "name": "python-checks-candidate11",
+      "candidate": 11,
+      "command": ".venv/Scripts/python.exe scripts/check.py --changed --base 0f16e40d",
+      "exit_code": 1,
+      "log": {
+        "path": ".omc/research/runbook-20260914/session5/python-checks-candidate11.log",
+        "sha256": "927ddaf16cd279995dde27d72640ae39da3aa2f41ac692a959fdf0b9eb2fd421",
+        "bytes": 44904
+      }
+    },
+    {
+      "name": "frontend-tests-candidate13",
+      "candidate": 13,
+      "command": "npm.cmd run test:changed -- --base 0f16e40d",
+      "exit_code": 0,
+      "log": {
+        "path": ".omc/research/runbook-20260914/session5/frontend-tests-candidate13.log",
+        "sha256": "a88a5ea3d3a96cdfcbd82c35aeb3c23b5e9daab7be5d398b91febc6d2e03fb3f",
+        "bytes": 3145442
+      }
+    },
+    {
+      "name": "typecheck-candidate13",
+      "candidate": 13,
+      "command": "npm.cmd run type-check",
+      "exit_code": 0,
+      "log": {
+        "path": ".omc/research/runbook-20260914/session5/typecheck-candidate13.log",
+        "sha256": "5a73c140c0ad128d7dfaf1a28f01b54adf8c3d29c10d317d96d4e791294fc7ec",
+        "bytes": 100
+      }
+    },
+    {
+      "name": "boundary-candidate13",
+      "candidate": 13,
+      "command": "npm.cmd run check:data-boundary",
+      "exit_code": 0,
+      "log": {
+        "path": ".omc/research/runbook-20260914/session5/boundary-candidate13.log",
+        "sha256": "9eafe413dfe6c6bd02229c9b983c8136949d7ba2d4c4cfd272e9b4bcd9f81f0d",
+        "bytes": 528
+      }
+    },
+    {
+      "name": "lint-candidate13",
+      "candidate": 13,
+      "command": "npm.cmd run lint -- --ignore-pattern .omc/**",
+      "exit_code": 0,
+      "log": {
+        "path": ".omc/research/runbook-20260914/session5/lint-candidate13.log",
+        "sha256": "a30f554e2589d773006f28358e96e8246afe93b2b2068e3eef19c91a7fb147f4",
+        "bytes": 3918814
+      }
+    }
+  ],
+  "artifacts": [
+    {
+      "path": ".omc/research/runbook-20260914/session5/resume-drizzle-sourcefix2.json",
+      "sha256": "3eea760395e9a9c39fe33e97c507720a6724309c323e31342d1e95bf5a5208d1",
+      "bytes": 3471
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session5/bootstrap-drizzle-sourcefix2.log",
+      "sha256": "30e14bd67f167407fb272f1661e42eafea585060399eb1f2466ce9c2146321dc",
+      "bytes": 249
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session5/migration-noop-sourcefix2.log",
+      "sha256": "3a5cd1a5213ad676db560c601bea6fcd048690cd382cad39be8fe9aa92bdbf38",
+      "bytes": 44
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session5/database-runtime.json",
+      "sha256": "a4b341956287be6b8827868e82e8fe47d40fe38d2d68443d43fe90b6f297465c",
+      "bytes": 3737
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session5/support-runtime.json",
+      "sha256": "9bc8f946f4ed21b20d876d88482c7fb75112572b685205540b91a0f7307c855b",
+      "bytes": 1054
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session5/support-host-check.json",
+      "sha256": "5b0e7aca41bd4f32d70d965d5892a413e558974c2642aaea78aa33d642070b33",
+      "bytes": 334
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session5/bootstrap-relation-census.json",
+      "sha256": "77711030f79ba4433f24f98b75afb751558f760189b51e398c6dbb5518a0bbc3",
+      "bytes": 4109
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session5/bootstrap-relation-classification.md",
+      "sha256": "57ab3ba4b004521f3b30f84a5eae06660026060b31931c2c711e36e33baf0b79",
+      "bytes": 15215
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session5/cas-diagnostic-findings.md",
+      "sha256": "d6f3ffab593290eb111f10454b110de17a7b7b5cebdb3255537bdd2641f3bf81",
+      "bytes": 5853
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session5/windows-directory-rename-investigation.md",
+      "sha256": "578dadfc952924129a8c4ed668b34beb96169f1f76f5c2f00695c9f54f858f58",
+      "bytes": 4155
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session5/linux-verification-plan.md",
+      "sha256": "e7eb8655394d6f89981b52d4205d7590e94ba9a7e16b3216c7aac00bdb3e01e2",
+      "bytes": 10339
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session5/preexisting-patch-preservation.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session5/preexisting-patch-preservation.exit",
+      "sha256": "13bf7b3039c63bf5a50491fa3cfd8eb4e699d1ba1436315aef9cbe5711530354",
+      "bytes": 3
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session5/browser-run1-manual-cleanup.json",
+      "sha256": "a798d97f6415420ce6896f5fabf8023a29eb20db7a694be27f5a60a842a6999d",
+      "bytes": 304
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session5/browser-run1-postexit-port.json",
+      "sha256": "36db59e22dc3356eacdf8ddb5fd070088fcb7339decaf5091e02d562298da038",
+      "bytes": 129
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session5/browser-run2-stop.json",
+      "sha256": "17dad48eb4209e3543d495e651f9bceaa26e41da96393fc7c87093735ac3604d",
+      "bytes": 301
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session5/browser-run2-manual-cleanup.json",
+      "sha256": "35cdee19919f9fca4500b15b1ae10bded3c38756aae7b23434557b6334fbfe28",
+      "bytes": 828
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session5/browser-run2-postexit-port.json",
+      "sha256": "e23e0776dfb7bfecf40c9156479556106d0f812cde9503819e508fa7d50b3a83",
+      "bytes": 129
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session5/browser3-database-state.json",
+      "sha256": "d7c6ede15e58923732ad8d3ec78e12bc463c3850920c3a43a99f6f5cbf74bd98",
+      "bytes": 858
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session5/browser3-extracted/case-summary.json",
+      "sha256": "74a979553b95cbc1861fefc3616b2f68eca3302e0c0e846f766a59fe2427ba62",
+      "bytes": 6143
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session5/browser4-extracted/case-summary.json",
+      "sha256": "7a70c91c2fef85e86df15dc6632eeb6fa59be3d738218ba159c2442ba4fc8f5e",
+      "bytes": 3464
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session5/browser5-extracted/case-summary.json",
+      "sha256": "18cb1a90b554012ef7a364a8a764c05a0f7f5fed8d5bdce22f4d6094cb1cfa3c",
+      "bytes": 3461
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session5/preexisting-patch-preservation-final.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": ".omc/research/runbook-20260914/session5/preexisting-patch-preservation-final.exit",
+      "sha256": "13bf7b3039c63bf5a50491fa3cfd8eb4e699d1ba1436315aef9cbe5711530354",
+      "bytes": 3
+    }
+  ],
+  "browser_attempts": [
+    {
+      "receipt": {
+        "path": ".omc/research/runbook-20260914/session5/browser-attempt-2026-09-14T20-52-10-869Z-dadc61b8/runner-receipt.json",
+        "sha256": "db3406cd3fe28e0b91526b7e9bc9af39a0c6120a4ebc27a4e0d295df8018cb85",
+        "bytes": 5856
+      },
+      "execution": "prepared_not_started",
+      "tests": null,
+      "cleanup": null,
+      "report": null
+    },
+    {
+      "receipt": {
+        "path": ".omc/research/runbook-20260914/session5/browser-attempt-2026-09-14T20-53-33-717Z-57e3a31d/runner-receipt.json",
+        "sha256": "7876b65a86e079eee19f0c73da589bc603d25a0b0ce680a1d5e3f2c2b4b692ae",
+        "bytes": 8051
+      },
+      "execution": "runner_failed",
+      "tests": null,
+      "cleanup": {
+        "steps": [
+          {
+            "state": "cleanup_inspection_failed_no_broad_kill"
+          }
+        ],
+        "remaining_owned_processes": null,
+        "port_3128_closed": false,
+        "finished_at": "2026-09-14T20:57:04.621Z"
+      },
+      "report": null
+    },
+    {
+      "receipt": {
+        "path": ".omc/research/runbook-20260914/session5/browser-attempt-2026-09-14T21-04-09-088Z-c706c659/runner-receipt.json",
+        "sha256": "38be2415e659001df63d15f8b87e9bc9cc1c673e9dcdf4e9f0ed70f3cc1b1958",
+        "bytes": 16976
+      },
+      "execution": "tests_failed_or_timed_out",
+      "tests": {
+        "code": 4294967295,
+        "signal": null
+      },
+      "cleanup": {
+        "steps": [
+          {
+            "state": "known_custody_cleanup_failed_no_broad_kill"
+          }
+        ],
+        "remaining_owned_processes": [
+          {
+            "pid": 1964,
+            "created": "2026-09-14T21:04:09.1182080Z"
+          },
+          {
+            "pid": 47752,
+            "created": "2026-09-14T21:04:09.4191010Z"
+          },
+          {
+            "pid": 27592,
+            "created": "2026-09-14T21:04:09.1134580Z"
+          },
+          {
+            "pid": 11836,
+            "created": "2026-09-14T21:04:15.5213640Z"
+          }
+        ],
+        "unverified_owned_processes": [],
+        "port_3128_closed": false,
+        "finished_at": "2026-09-14T21:10:23.535Z"
+      },
+      "report": null
+    },
+    {
+      "receipt": {
+        "path": ".omc/research/runbook-20260914/session5/browser-attempt-2026-09-14T21-14-28-408Z-096c590c/runner-receipt.json",
+        "sha256": "bb8d67db55e1b1d57e9e0c3d73050f1e3e22d8ea1679ffff32a7005aaf6da63c",
+        "bytes": 45578
+      },
+      "execution": "tests_failed_or_timed_out",
+      "tests": {
+        "code": 1,
+        "signal": null
+      },
+      "cleanup": {
+        "steps": [
+          {
+            "state": "known_custody_cleanup_failed_no_broad_kill",
+            "failure": {
+              "kind": "timeout",
+              "exit_code": null,
+              "timeout_ms": 8000,
+              "script_sha256": "0ad0654cfafba9df71bf30b6dadf154f2b41f0c451e371a3045f2d018284d4da",
+              "message": "owned-process inspection or cleanup timed out",
+              "stderr": ""
+            }
+          }
+        ],
+        "remaining_owned_processes": [],
+        "unverified_owned_processes": [],
+        "port_3128_closed": true,
+        "finished_at": "2026-09-14T21:16:05.313Z"
+      },
+      "report": {
+        "path": ".omc/research/runbook-20260914/session5/browser-attempt-2026-09-14T21-14-28-408Z-096c590c/browser-report.json",
+        "sha256": "fad05404849ec0dfc70b9453a1e35082078ef19dbb810c063573f646aa1214eb",
+        "bytes": 1850896
+      }
+    },
+    {
+      "receipt": {
+        "path": ".omc/research/runbook-20260914/session5/browser-attempt-2026-09-14T21-24-09-624Z-08bfadac/runner-receipt.json",
+        "sha256": "653aabd9f5ef0decd250a2684ae67612a284f7d995172a4bf360d7548f6937a6",
+        "bytes": 33322
+      },
+      "execution": "tests_passed",
+      "tests": {
+        "code": 0,
+        "signal": null
+      },
+      "cleanup": {
+        "steps": [
+          {
+            "state": "stopped_revalidated_owned_process",
+            "pid": 63360
+          },
+          {
+            "state": "already_exited",
+            "pid": 72368
+          },
+          {
+            "state": "already_exited",
+            "pid": 32000
+          }
+        ],
+        "remaining_owned_processes": [],
+        "unverified_owned_processes": [],
+        "port_3128_closed": true,
+        "finished_at": "2026-09-14T21:25:06.058Z"
+      },
+      "report": {
+        "path": ".omc/research/runbook-20260914/session5/browser-attempt-2026-09-14T21-24-09-624Z-08bfadac/browser-report.json",
+        "sha256": "0898b7794ec9e0f1ff71d16a01f6e9d0a18ad0e7575f66e23374a57799aa7c9a",
+        "bytes": 2619086
+      }
+    },
+    {
+      "receipt": {
+        "path": ".omc/research/runbook-20260914/session5/browser-attempt-2026-09-14T21-33-04-594Z-658183c4/runner-receipt.json",
+        "sha256": "caf0e9b95dac23a406b6c44fe9f5db28a25fcf9aeca38ae6c88fcb1a89039f86",
+        "bytes": 33088
+      },
+      "execution": "tests_passed",
+      "tests": {
+        "code": 0,
+        "signal": null
+      },
+      "cleanup": {
+        "steps": [
+          {
+            "state": "stopped_revalidated_owned_process",
+            "pid": 17520
+          },
+          {
+            "state": "already_exited",
+            "pid": 60680
+          },
+          {
+            "state": "already_exited",
+            "pid": 72044
+          }
+        ],
+        "remaining_owned_processes": [],
+        "unverified_owned_processes": [],
+        "port_3128_closed": true,
+        "finished_at": "2026-09-14T21:33:49.648Z"
+      },
+      "report": {
+        "path": ".omc/research/runbook-20260914/session5/browser-attempt-2026-09-14T21-33-04-594Z-658183c4/browser-report.json",
+        "sha256": "2ae32fff066a666945717bda571d9f28f7b4d4aa2c87cef562cdfdae956e283d",
+        "bytes": 2171993
+      }
+    }
+  ],
+  "scope": {
+    "frontend": "Candidate13 integrated frontend gates passed: 12 tooling tests plus 192 files / 2512 Vitest tests, type checking, data boundary and lint. Candidate10 and prior failed attempts retain their original evidence.",
+    "python": "Candidate11 full-selected pytest remains failed: 1 failed,4497 passed,146 skipped,1 xfailed; format/lint/mypy passed. Database integration URLs unset; no full Python quality receipt.",
+    "lint": "Successful retry excludes .omc orchestration/research scratch only; no tracked JavaScript resides there. 0 errors,9887 warnings. Both earlier EPERM attempts retained.",
+    "database": "Pinned local synthetic database only. Original migration hashes preserved; bootstrap and deployment no-op verified, with zero users/features at that checkpoint.",
+    "browser": "Desktop attempt4 and mobile touch attempt5 each passed identity reuse and two synthetic lifecycle journeys. These are bounded supplementary proofs, not whole-case, production, human or agent-stream acceptance. The baseline map uses fixtures; actual app APIs and Martin intervention tiles are retained. All earlier failed attempts remain recorded.",
+    "production": "No production mutation, source admission, scheduled-advance certification or release acceptance."
+  }
+}

@@ -548,6 +548,19 @@ describe("useViewedLayerDays", () => {
     });
   });
 
+  it("preserves the UI-selected missing day for agent request context", () => {
+    useMapStore.setState({ activeLayers: ["weather"] });
+    const unavailableCapabilities = {
+      ...capabilities,
+      withheldParquetCapabilities: [{ layerName: "weather-observations", reason: "lane_never_written", parquetLanes: ["weather-observations"] }],
+    };
+    useTimeSliderStore.setState({ capabilities: unavailableCapabilities, layerDates: { weather: "2026-07-20" } });
+    const { result } = renderHook(() => useViewedLayerDays());
+    expect(result.current).toEqual([{
+      layerId: "weather", warehouseLayerName: "weather-observations", date: "2026-07-20", isOnLatest: true,
+    }]);
+  });
+
   it("omits a layer whose day cannot be named rather than reporting a sentinel", () => {
     useMapStore.setState({ activeLayers: ["water", "vegetation"] });
     const { result } = renderHook(() => useViewedLayerDays());

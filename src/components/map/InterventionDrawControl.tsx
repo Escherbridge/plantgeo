@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import type { Map as MapLibreMap } from "maplibre-gl";
 import { TerraDraw, TerraDrawPointMode, TerraDrawPolygonMode, TerraDrawSelectMode } from "terra-draw";
 import { TerraDrawMapLibreGLAdapter } from "terra-draw-maplibre-gl-adapter";
@@ -13,40 +13,79 @@ export interface InterventionDrawControlProps {
   map: MapLibreMap;
   /** Called with the currently drawn geometry, or `null` once nothing is drawn. */
   onGeometryChange: (geometry: InterventionGeometry | null) => void;
+  /** Restores a saved geometry when a new drawing session attaches. */
+  initialGeometry?: InterventionGeometry | null;
+  /** Reports restoration failure or clears a previous error after success. */
+  onRestoreError?: (message: string | null) => void;
 }
 
 /** Thin wrapper around terra-draw: point/polygon/clear toggle emitting `InterventionGeometry`. */
-export function InterventionDrawControl({ map, onGeometryChange }: InterventionDrawControlProps) {
+export function InterventionDrawControl({ map, onGeometryChange, initialGeometry, onRestoreError }: InterventionDrawControlProps) {
   const drawRef = useRef<TerraDraw | null>(null);
   const [mode, setMode] = useState<DrawMode>("point");
+  const modeRef = useRef<DrawMode>("point");
+  const latestProps = useRef({ initialGeometry, onGeometryChange, onRestoreError });
 
-  useEffect(() => {
-    const draw = new TerraDraw({
-      adapter: new TerraDrawMapLibreGLAdapter({ map }),
-      modes: [new TerraDrawPointMode(), new TerraDrawPolygonMode(), new TerraDrawSelectMode()],
-    });
-    drawRef.current = draw;
-    draw.start();
-    draw.setMode("point");
+  useLayoutEffect(() => {
+    latestProps.current = { initialGeometry, onGeometryChange, onRestoreError };
+  }, [initialGeometry, onGeometryChange, onRestoreError]);
 
+  // Dispose drawing before the map owner's passive cleanup; see map/AGENTS.md.
+  useLayoutEffect(() => {
+    let draw: TerraDraw | null = null;
     const handleChange = () => {
-      const snapshot = draw.getSnapshot();
+      const snapshot = draw?.getSnapshot() ?? [];
       const latest = snapshot.at(-1);
-      onGeometryChange(
+      latestProps.current.onGeometryChange(
         latest ? (latest.geometry as unknown as InterventionGeometry) : null
       );
     };
-    draw.on("change", handleChange);
+
+    const attach = () => {
+      if (draw || !map.isStyleLoaded()) return;
+      draw = new TerraDraw({
+        adapter: new TerraDrawMapLibreGLAdapter({ map }),
+        modes: [new TerraDrawPointMode(), new TerraDrawPolygonMode(), new TerraDrawSelectMode()],
+      });
+      drawRef.current = draw;
+      draw.start();
+      draw.setMode(modeRef.current);
+
+      const savedGeometry = latestProps.current.initialGeometry;
+      if (savedGeometry) {
+        try {
+          if (savedGeometry.type === "MultiPolygon") throw new Error("Unsupported drawing geometry");
+          const results = draw.addFeatures([{
+            type: "Feature",
+            geometry: savedGeometry,
+            properties: { mode: savedGeometry.type === "Point" ? "point" : "polygon" },
+          }]);
+          if (results.length !== 1 || !results[0].valid) throw new Error("Invalid drawing geometry");
+          latestProps.current.onRestoreError?.(null);
+        } catch {
+          draw.clear();
+          latestProps.current.onRestoreError?.("Your saved geometry could not be restored. It is still saved; clear and redraw it to continue.");
+        }
+      }
+      draw.on("change", handleChange);
+      map.off("load", attach);
+      map.off("render", attach);
+    };
+    map.on("load", attach);
+    map.on("render", attach);
+    attach();
 
     return () => {
-      draw.off("change", handleChange);
-      draw.stop();
+      map.off("load", attach);
+      map.off("render", attach);
+      draw?.off("change", handleChange);
+      draw?.stop();
       drawRef.current = null;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- map identity is what re-attaches terra-draw
   }, [map]);
 
   function selectMode(next: DrawMode) {
+    modeRef.current = next;
     setMode(next);
     drawRef.current?.setMode(next);
   }

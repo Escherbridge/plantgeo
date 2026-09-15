@@ -23,6 +23,20 @@ For an empty database:
 The production service uses `scripts/migrate.mjs` as its pre-deploy command. Any new relational
 migration must update its matching readiness pin in the same change.
 
+For an existing database, `npm run db:migrate` invokes that same pre-deploy runner.
+Supply the intended connection in the process environment as `MIGRATION_DATABASE_URL`,
+or `DATABASE_URL` as its fallback. For a fresh database, bootstrap accepts
+`BOOTSTRAP_DATABASE_URL`, then `MIGRATION_DATABASE_URL`, then `DATABASE_URL`; Alembic
+separately requires `DATABASE_URL_SYNC`. These Node runners do not load dotenv files.
+Use the supported runner rather than invoking `drizzle-kit migrate` directly.
+
+Bootstrap and pre-deploy share `scripts/migrate-database.mjs`. It sets the canonical
+`public` search path before execution and between migration files, preventing the
+pg_dump baseline's empty search path from leaking into later public table creation.
+It also restores `public` after completion for bootstrap's seed phase. Migration SQL,
+file hashes, journal timestamps and the single pending-batch transaction are preserved;
+an already-current database retains its ledger without rerunning migration statements.
+
 ## Environmental data
 
 Environmental ingestion writes source captures and normalized products directly to Parquet.

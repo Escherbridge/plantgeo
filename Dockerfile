@@ -87,6 +87,7 @@ COPY --from=build --chown=nextjs:nodejs /app/.next/static ./.next/static
 # copy drizzle-orm and postgres whole — the migrator entrypoints are not traced.
 COPY --from=build --chown=nextjs:nodejs /app/drizzle ./drizzle
 COPY --from=build --chown=nextjs:nodejs /app/scripts/migrate.mjs ./scripts/migrate.mjs
+COPY --from=build --chown=nextjs:nodejs /app/scripts/migrate-database.mjs ./scripts/migrate-database.mjs
 COPY --from=build --chown=nextjs:nodejs /app/node_modules/drizzle-orm ./node_modules/drizzle-orm
 COPY --from=build --chown=nextjs:nodejs /app/node_modules/postgres ./node_modules/postgres
 

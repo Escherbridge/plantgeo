@@ -207,7 +207,7 @@ describe("publishing what each layer is actually drawing", () => {
   }
 
   /** A layer whose collection has landed for the day its row asks for. */
-  function settled(layerId: "water" | "drought", date: string): LiveLayerDayReport {
+  function settled(layerId: LiveLayerDayReport["layerId"], date: string): LiveLayerDayReport {
     return {
       layerId,
       isDrawn: true,
@@ -232,6 +232,74 @@ describe("publishing what each layer is actually drawing", () => {
 
   beforeEach(() => {
     useDrawnLayerDayStore.setState({ drawnDays: {}, publications: {} });
+  });
+
+  it("does not call a typed same-day viewport placeholder an earlier day", () => {
+    renderReports([{
+      ...settled("weather", "2026-09-05"),
+      ...drawnDayFlagsFromQuery({ isSuccess: true, isPlaceholderData: true, isFetching: true,
+        data: { state: "ready", servedDay: "2026-09-05" } }, "typed"),
+    }]);
+    expect(useDrawnLayerDayStore.getState().drawnDays.weather).toEqual({
+      drawnDate: "2026-09-05", requestedDate: "2026-09-05", pendingDate: null, isLoading: true,
+    });
+  });
+
+  it("does not invent a typed date on cold load or after a new-day error", () => {
+    const report = (day: string, query: Parameters<typeof drawnDayFlagsFromQuery>[0]) => ({
+      ...settled("weather", day), ...drawnDayFlagsFromQuery(query, "typed"),
+    });
+    const { rerender } = renderReports([report("2026-09-05", { isFetching: true })]);
+    expect(useDrawnLayerDayStore.getState().drawnDays.weather).toEqual({
+      drawnDate: null, requestedDate: "2026-09-05", pendingDate: null, isLoading: true,
+    });
+    rerender({ current: [report("2026-09-05", { isSuccess: true,
+      data: { state: "ready", servedDay: "2026-09-05" } })] });
+    expect(useDrawnLayerDayStore.getState().drawnDays.weather?.drawnDate).toBe("2026-09-05");
+    rerender({ current: [report("2026-09-06", { isSuccess: true, isPlaceholderData: true,
+      data: { state: "ready", servedDay: "2026-09-05" } })] });
+    expect(useDrawnLayerDayStore.getState().drawnDays.weather).toEqual({
+      drawnDate: "2026-09-05", requestedDate: "2026-09-06", pendingDate: "2026-09-06", isLoading: false,
+    });
+    rerender({ current: [report("2026-09-06", { isSuccess: false, data: undefined })] });
+    expect(useDrawnLayerDayStore.getState().drawnDays.weather).toEqual({
+      drawnDate: null, requestedDate: "2026-09-06", pendingDate: null, isLoading: false,
+    });
+  });
+
+  it("keeps a missing selected day while publishing no drawn date", () => {
+    renderReports([{
+      ...settled("water", "2026-09-06"),
+      ...drawnDayFlagsFromQuery({ isSuccess: true, data: { state: "not_generated", requestedDay: "2026-09-06", reason: "day_not_written" } }),
+    }]);
+    expect(useDrawnLayerDayStore.getState().drawnDays.water).toEqual({
+      drawnDate: null, requestedDate: "2026-09-06", pendingDate: null, isLoading: false,
+    });
+  });
+
+  it("uses the actual snapshot release without inventing a selected date", () => {
+    renderReports([{
+      layerId: "watersheds", isDrawn: true, requestedDate: null,
+      ...drawnDayFlagsFromQuery({ isSuccess: true, data: { state: "ready", servedDay: "2026-08-07", data: [] } }),
+    }]);
+    expect(useDrawnLayerDayStore.getState().drawnDays.watersheds).toEqual({
+      drawnDate: "2026-08-07", requestedDate: null, pendingDate: null, isLoading: false,
+    });
+  });
+
+  it("retains typed field dates while the new selected day loads, then clears a refusal", () => {
+    const report = (query: Parameters<typeof drawnDayFlagsFromQuery>[0]) => ({
+      ...settled("water", "2026-09-06"), ...drawnDayFlagsFromQuery(query),
+    });
+    const { rerender } = renderReports([report({ isSuccess: true, isPlaceholderData: true, isFetching: true,
+      data: { availability: "published", observedDay: "2026-09-05" } })]);
+    expect(useDrawnLayerDayStore.getState().drawnDays.water).toEqual({
+      drawnDate: "2026-09-05", requestedDate: "2026-09-06", pendingDate: "2026-09-06", isLoading: true,
+    });
+    rerender({ current: [report({ isSuccess: true, data: { availability: "unavailable", reason: "not_published" } })] });
+    expect(useDrawnLayerDayStore.getState().drawnDays.water).toEqual({
+      drawnDate: null, requestedDate: "2026-09-06", pendingDate: null, isLoading: false,
+    });
   });
 
   it("names the requested day once that day's collection is the one in hand", () => {
