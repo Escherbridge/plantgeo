@@ -1,0 +1,117 @@
+{
+  "type": "qa-check-receipt",
+  "session": 17,
+  "candidate": 1,
+  "recorded_at": "2026-09-15T01:53:59.367928+00:00",
+  "author": "/root",
+  "base_commit": "286eb91b62aeb2a53c8484184d5adec1336f5c82",
+  "status": "failed_integrated_test_gate",
+  "source_manifest": {
+    "path": ".omc/research/runbook-20260915-session17/source-manifest.json",
+    "bytes": 256188,
+    "sha256": "f8ba0f5e928791adc5df52a932765754b4a243d1606485bdc373fbe8e6ca7807"
+  },
+  "source_files": 1751,
+  "source_mismatches": [],
+  "application": {
+    "path": ".omc/research/runbook-20260915-session17/application.json",
+    "bytes": 1417,
+    "sha256": "7fadbe6246c87f1165ccdd8115b72ede98c1b69261defd117bd6c6b1d09c0c9f"
+  },
+  "checks": [
+    {
+      "name": "test",
+      "command": "npm.cmd test",
+      "exit_code": 1,
+      "log": {
+        "path": ".omc/research/runbook-20260915-session17/checks/test.log",
+        "bytes": 809272,
+        "sha256": "85aa025b8df186922bae516e968bdcb457fff43358029a6f4fa4c58e9b27fa28"
+      },
+      "exit": {
+        "path": ".omc/research/runbook-20260915-session17/checks/test.exit",
+        "bytes": 6,
+        "sha256": "07846b783c23904a75834c1932bc2fad41e388e18bc32ffd73ed87bfa3844d87"
+      }
+    },
+    {
+      "name": "type",
+      "command": "npm.cmd run type-check",
+      "exit_code": 0,
+      "log": {
+        "path": ".omc/research/runbook-20260915-session17/checks/type.log",
+        "bytes": 100,
+        "sha256": "5a73c140c0ad128d7dfaf1a28f01b54adf8c3d29c10d317d96d4e791294fc7ec"
+      },
+      "exit": {
+        "path": ".omc/research/runbook-20260915-session17/checks/type.exit",
+        "bytes": 6,
+        "sha256": "9585fbece5c402088f2d6a2def7e60d1c7ffecc24b16d32d5823a064b008935b"
+      }
+    },
+    {
+      "name": "lint",
+      "command": "npm.cmd run lint -- --ignore-pattern '.omc/**'",
+      "exit_code": 0,
+      "log": {
+        "path": ".omc/research/runbook-20260915-session17/checks/lint.log",
+        "bytes": 3918814,
+        "sha256": "3901c56f32ff1eac37d24151943609a6cc0dc06104e0ca2c1d76e73d3fe33bf6"
+      },
+      "exit": {
+        "path": ".omc/research/runbook-20260915-session17/checks/lint.exit",
+        "bytes": 6,
+        "sha256": "9585fbece5c402088f2d6a2def7e60d1c7ffecc24b16d32d5823a064b008935b"
+      }
+    },
+    {
+      "name": "boundary",
+      "command": "npm.cmd run check:data-boundary",
+      "exit_code": 0,
+      "log": {
+        "path": ".omc/research/runbook-20260915-session17/checks/boundary.log",
+        "bytes": 528,
+        "sha256": "9eafe413dfe6c6bd02229c9b983c8136949d7ba2d4c4cfd272e9b4bcd9f81f0d"
+      },
+      "exit": {
+        "path": ".omc/research/runbook-20260915-session17/checks/boundary.exit",
+        "bytes": 6,
+        "sha256": "9585fbece5c402088f2d6a2def7e60d1c7ffecc24b16d32d5823a064b008935b"
+      }
+    },
+    {
+      "name": "python-receipt",
+      "command": "python services/agri-data-service/scripts/verify_quality_receipt.py",
+      "exit_code": 0,
+      "log": {
+        "path": ".omc/research/runbook-20260915-session17/checks/python-receipt.log",
+        "bytes": 308,
+        "sha256": "1f90197c7aeaa9fabadf7e1470894cc73ed808c7e994ced573cf0ddc9c3653e8"
+      },
+      "exit": {
+        "path": ".omc/research/runbook-20260915-session17/checks/python-receipt.exit",
+        "bytes": 6,
+        "sha256": "9585fbece5c402088f2d6a2def7e60d1c7ffecc24b16d32d5823a064b008935b"
+      }
+    }
+  ],
+  "frontend": {
+    "files_passed": 192,
+    "files_failed": 1,
+    "tests_passed": 2547,
+    "tests_failed": 1,
+    "tests_total": 2548,
+    "duration_seconds": 209.25,
+    "failure": "event-aggregation-rendering.test.tsx:665 expects no Fire polygon in a parsed style while unrelated sources are pending"
+  },
+  "lint": {
+    "errors": 0,
+    "warnings": 9887,
+    "exclusion": ".omc/**"
+  },
+  "python": {
+    "action": "verify existing unchanged receipt only",
+    "suite_rerun": false
+  },
+  "disposition": "Preserve this failed sweep. Review the remaining readiness fixture as a separate complete follow-up batch before further verification. No deployment or whole-case acceptance."
+}

@@ -13,6 +13,37 @@ candidate; it can close only after the required independent verdict.
 
 ## Bound tasks
 
+### September 15 continuation — Session 17
+
+The table below records the current long-horizon thread; older entries retain their
+original dates and dispositions. Review base is `286eb91b62aeb2a53c8484184d5adec1336f5c82`
+on `main` in `C:/Users/atooz/Programming/plantgeo`. Root thread identity is
+`01a0a126-4abf-7773-a07f-b6b30d62b190`. All four existing lanes are reused in the shared
+checkout. The [Session 17 note](runbook-session17-20260915.md) owns the current candidate
+and result narrative; source checks and live execution are pending at intake.
+
+| Role / task | Owned paths or operations | Intake disposition |
+| --- | --- | --- |
+| Coordinator `/root` | Canonical runbook/evidence, proposal application, source freeze, integrated checks, Git and deployment | Active; serializes shared-file changes and preserves three local Session 16 post-deployment documents |
+| Author `/root/qa_inventory` | `src/components/map/layers/FireLayer.tsx`, `WaterLayer.tsx`, `src/__tests__/components/dark-mode-layer-visibility.test.tsx`, relevant `src/components/map/AGENTS.md` sections | Active; proposal copies and exact before/after hashes before root application; no inline test sweep |
+| Reviewer `/root/workspace_social_audit` | Independent review of exact source proposal, tests, data families and lifecycle | Active; no source writes and no author self-approval |
+| Harness author `/root/independent_verifier` | `.omc/research/runbook-20260915-session17/live/` only | Active; bounded anonymous real-data harness, independently reviewed before execution; no production writes |
+
+The source author exclusively owns the four proposal paths until handoff. Root applies
+only an approved frozen proposal. Harness work is independent of application authoring.
+No owning track is closed or archived by starting this session, and no existing source
+admission, schedule burn-in, real-human or full QA gate is waived.
+
+Session 17 follow-up transfer: root additionally assigned
+`src/__tests__/components/event-aggregation-rendering.test.tsx` to `/root/qa_inventory`
+after the integrated sweep exposed its obsolete readiness expectation. The exact one-file
+proposal received independent review before root application. Candidate 1 failure is
+retained; Candidate 2's five changed source/test/documentation paths now pass the final
+integrated sweep. Root retains release ownership; the live harness lane uses independently
+reviewed discovery evidence and cannot promote a whole case from its bounded variants.
+
+### Earlier bound tasks
+
 | Role | Codex task | Checkout and branch | Bound source or candidate | Current disposition |
 | --- | --- | --- | --- | --- |
 | QA and orchestration | `01a0904b-756b-7961-b991-cab666123be2` — PlantGeo QA and track orchestration | `C:/Users/atooz/Programming/plantgeo`, `main` | QA planning commit `820753d73543514f534c9c1386e1f84012152775`, tree `b3205373e373641059c3edf10ce01c7f5f61d994` | Active. Owns this ledger, requirement matrix, defect routing, shared Conductor registry/runbook and proof-gated task archival. Runtime integration is complete; populated-data, mobile, agent-parity and broader track verdicts remain open. |

@@ -85,8 +85,26 @@ Its integrated sweep passes 193 files / 2,545 frontend tests plus 12 tooling tes
 data-boundary checking, and lint excluding local `.omc` artifacts (zero errors; 9,887 warnings).
 The unchanged Python quality receipt verifies. See the
 [Session 16 evidence](tracks/platform_experience_qa_20260911/evidence/runbook-session16-20260915.md).
-The new deployment and first-enable desktop/mobile rendering validation remain pending;
-no full-case or checklist completion is inferred from these local checks.
+Checkpoint `286eb91b62aeb2a53c8484184d5adec1336f5c82` is pushed and deployed successfully
+for the frontend and Martin. The unchanged data API and job executor were skipped by their
+configured watch patterns and retain their successful `d167e7f` deployments. The production
+frontend again passed 193 files / 2,545 tests, compilation, migration and readiness gates.
+Four post-deploy desktop/mobile cases passed in 47.396 seconds. Independent visual review
+confirmed first-enable weather cells/labels, missing-day clearing and Latest restoration
+without an off/on recovery, plus the corrected anonymous feed disclosure. This resolves the
+bounded installation and disclosure defects; all-layer, full weather/social/workspace and
+220-case acceptance remain open. The checklist rollup is unchanged. Post-deploy evidence is
+updated locally for the next incremental checkpoint.
+
+[Session 17](tracks/platform_experience_qa_20260911/evidence/runbook-session17-20260915.md)
+applies the independently reviewed Fire/Water parsed-style correction and related
+regressions. The first full sweep exposed one additional stale event-aggregation readiness
+expectation; its failure is retained. The final complete candidate passes 193 files /
+2,550 frontend tests, 12 tooling tests, type, lint and data-boundary checks, plus verification
+of the unchanged Python receipt. Current live discovery on the predecessor reproduced
+Water's missing installation despite 26 returned aggregate rows, and found populated Fire
+and raw-gauge Water locations for final aggregate/detail testing. This next checkpoint's
+deployment and corrected live acceptance remain pending; the overall checklist is unchanged.
 
 ### Active long-horizon run — September 14, 2026
 

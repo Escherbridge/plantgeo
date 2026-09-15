@@ -280,7 +280,7 @@ toggle visibility.
 
 A style swap wipes custom layers, so every layer component re-adds its own on `style.load`. MapLibre stacks later-added layers above earlier ones sharing the same `beforeId`, which makes the listener registration order load-bearing: `ServiceAreaLayer` mounts before `LayerManager` in `MapView` so its dimming mask lands beneath the data pins that later components add.
 
-That invariant only holds if each `style.load` handler registers exactly once per map. An effect that lists changing values (`activeLayers`, bbox corners) in its deps tears down and re-registers its listener on every change, moving it to the back of the queue and inverting the stacking. Such handlers read their inputs from a ref and register with `[map]`-shaped deps only; a separate, cheap effect applies the change immediately without touching the registration. For the same reason, do not pair a `once("style.load", add)` with an `on("style.load", add)` — the persistent listener already covers every future swap, and an `isStyleLoaded()` check covers the current one.
+That invariant only holds if each `style.load` handler registers exactly once per map. An effect that lists changing values (`activeLayers`, bbox corners) in its deps tears down and re-registers its listener on every change, moving it to the back of the queue and inverting the stacking. Such handlers read their inputs from a ref and register with `[map]`-shaped deps only; a separate, cheap effect applies the change immediately without touching the registration. For the same reason, do not pair a `once("style.load", add)` with an `on("style.load", add)` — the persistent listener covers every future swap; initial source/layer creation checks parsed-style admission, not all-source `isStyleLoaded()` readiness (see below).
 
 ## `isStyleLoaded()` is a signal to retry on, never a gate to drop writes behind
 
@@ -313,11 +313,14 @@ style.load even though the parsed style already permits addSource/addLayer.
 The September 15 weather correction below uses public parsed-style admission plus a
 persistent style.load listener. Weather had already adopted `useStyleReady` before this
 correction and now leaves that hook; recommending another hook adoption would not address
-the source-only sequence. The other eight direct component consumers (Water, Fire,
-Vegetation, SoilSurvey, SoilField, ClimateField, Gbif and Botanical layers) remain
-unaudited for that sequence. This weather-only batch neither repairs them nor certifies
-their individual source/layer admission assumptions. Review each renderer's identity,
-current-data refs, listener ordering and cleanup before choosing its admission contract.
+the source-only sequence. That weather-only batch left eight component consumers
+unchanged. The subsequent Fire/Water correction applies the same local admission contract
+to those two native renderers. SoilField, ClimateField, Vegetation, Gbif and Botanical
+still have a source-only admission gap on source inspection; their individual renderer,
+form/rung, zoom and selection behavior needs separate correction and review. SoilSurvey's
+existing data effect already admits a missing source against a parsed style, so it is
+excluded from this same-gap patch. None of this source inventory is a live reproduction
+or full acceptance verdict for the remaining six consumers. The shared hook is unchanged.
 
 ## Popups and hover labels
 
@@ -1281,3 +1284,32 @@ source-only completion without fabricating styledata; genuinely unparsed style a
 current data/opacity on swaps; empty and hidden states; listener order; and cleanup/map replacement.
 This fixes a source-proven admission gap. The earlier live blank weather captures still need
 separate bounded observation and visual verification before this is called their proved cause.
+
+## Fire and water parsed-style admission (September 15 follow-up)
+
+FireLayer and WaterLayer use the same public parsed-style contract as WeatherLayer above.
+Their persistent style.load listeners register once per map, including when hidden, and
+read current visibility/data/opacity refs. An independent visibility effect creates their
+sources/layers immediately when getStyle returns a parsed style, or removes them when
+hidden. A truly unparsed style waits for style.load. This separates permission to create
+native style resources from the completion of unrelated source tile requests; it does not
+claim that admitted data has finished painting. Neither renderer uses useStyleReady now.
+
+Fire retains its one source and three cell/circle/outline layers, including the outline's
+zero fill and separately scaled stroke. Water retains independent named-gauge, anonymous
+aggregate-cell and groundwater-well sources and all four native layers. Current data and
+paint still update without a rebuild; empty collections clear every source while enabled.
+The persistent listener uses the latest refs after a swap. Visibility does not move its
+registration behind another renderer, and map replacement/unmount detaches the old listener
+and removes owned sources/layers. Existing delegated clicks and popup paths are unchanged;
+this correction does not claim to resolve separate asynchronous-popup lifecycle concerns.
+
+The shared Fire/Water regression fixture distinguishes parsed style from source completion
+and rejects creation before parsing. A delayed mount installs while isStyleLoaded remains
+false; subsequent completion emits only sourcedata. Separate cases cover truly unparsed
+arrival with current props, source identity during updates, current paint and empty data
+across swaps, initially hidden/show transitions, listener ordering, map replacement and
+cleanup. Water's named callbacks receive the current gauge/well after updates and swaps.
+No synthetic styledata event stands in for tile completion. Scientific rendering, serving
+availability, water composite-date semantics and production first-enable evidence remain
+separate from this bounded code-level lifecycle regression.

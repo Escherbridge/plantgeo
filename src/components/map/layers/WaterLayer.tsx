@@ -5,7 +5,6 @@ import type { Map as MapLibreMap, Popup, GeoJSONSource } from "maplibre-gl";
 import type { GroundwaterWell, WaterGauge } from "@/lib/environmental/water";
 import type { WaterGaugeCell } from "@/lib/environmental/parquet-presentation";
 import { getFirstSymbolLayer, safeRemoveLayerAndSource } from "@/lib/map/layer-utils";
-import { useStyleReady } from "@/components/map/layers/use-style-ready";
 import { formatTimestampWithRelative, toIsoTimestamp } from "@/lib/map/time-format";
 import {
   formatSupportCellSize,
@@ -366,22 +365,12 @@ export function WaterLayer({
     safeRemoveLayerAndSource(m, ["groundwater-wells-circle"], "groundwater-wells");
   }, []);
 
-  // Persist layers across every future style change (basemap swap included).
-  // addLayer/addSource work as soon as "style.load" fires -- see
-  // src/components/map/AGENTS.md -- and addPointLayers is idempotent (guarded on
-  // getLayer/getSource), so calling it unconditionally here is safe even if it races with
-  // the styleReady effect below.
+  // Keep style-listener ordering independent of visibility and current observations.
   useEffect(() => {
     if (!map) return;
 
-    if (!visible) {
-      removePointLayers(map);
-      return;
-    }
-
     const onStyleLoad = () => {
-      if (!dataRef.current.visible) return;
-      addPointLayers(map);
+      if (dataRef.current.visible) addPointLayers(map);
     };
     map.on("style.load", onStyleLoad);
 
@@ -389,20 +378,17 @@ export function WaterLayer({
       map.off("style.load", onStyleLoad);
       removePointLayers(map);
     };
-  }, [map, visible, addPointLayers, removePointLayers]);
+  }, [map, addPointLayers, removePointLayers]);
 
-  // Add (or retry adding) once the style is actually ready. This is what
-  // covers the bug this hook exists for: a mount (or a swap) where
-  // isStyleLoaded() reads false at the moment "style.load" fires, and no
-  // further "style.load" arrives to retry -- only "styledata" events do, as
-  // tiles land. styleReady is only used to force these effects to re-run;
-  // the actual gate re-reads the live map so it can never act on a stale
-  // value. See use-style-ready.ts and AGENTS.md.
-  const styleReady = useStyleReady(map);
+  // Parsed style admits sources before unrelated tiles finish; see map/AGENTS.md.
   useEffect(() => {
-    if (!map || !visible || !map.isStyleLoaded()) return;
-    addPointLayers(map);
-  }, [map, visible, addPointLayers, styleReady]);
+    if (!map) return;
+    if (!visible) {
+      removePointLayers(map);
+    } else if (map.getStyle()) {
+      addPointLayers(map);
+    }
+  }, [map, visible, addPointLayers, removePointLayers]);
 
   // Update gauge data when gauges prop changes
   useEffect(() => {

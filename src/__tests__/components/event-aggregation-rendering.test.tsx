@@ -57,11 +57,12 @@ import { useVegetationStore } from "@/stores/vegetation-store";
  */
 
 /** The parts of maplibre-gl these three components touch, with every added layer kept. */
-function createFakeMap() {
+function createFakeMap(parsed = true, sourcesReady = true) {
   const listeners = new Map<string, Set<(...args: unknown[]) => void>>();
   const sources = new Map<string, { data: unknown }>();
   const layers = new Map<string, Record<string, unknown>>();
-  let styleLoaded = true;
+  let styleParsed = parsed;
+  let sourcesLoaded = sourcesReady;
 
   function on(type: string, a: unknown, b?: unknown) {
     const handler = (typeof b === "function" ? b : a) as (...args: unknown[]) => void;
@@ -76,15 +77,19 @@ function createFakeMap() {
   return {
     on,
     off,
-    isStyleLoaded: () => styleLoaded,
-    setStyleLoaded(value: boolean) {
-      styleLoaded = value;
+    isStyleLoaded: () => styleParsed && sourcesLoaded,
+    setStyleParsed(value: boolean) {
+      styleParsed = value;
+    },
+    setSourcesLoaded(value: boolean) {
+      sourcesLoaded = value;
     },
     emit(type: string) {
       for (const handler of Array.from(listeners.get(type) ?? [])) handler();
     },
-    getStyle: () => ({ layers: [] }),
+    getStyle: () => styleParsed ? { layers: [] } : undefined,
     addSource: (id: string, options: { data?: unknown }) => {
+      if (!styleParsed) throw new Error("Style is not done loading.");
       sources.set(id, { data: options.data });
     },
     getSource: (id: string) => {
@@ -99,6 +104,7 @@ function createFakeMap() {
     },
     removeSource: (id: string) => sources.delete(id),
     addLayer: (spec: Record<string, unknown>) => {
+      if (!styleParsed) throw new Error("Style is not done loading.");
       layers.set(spec.id as string, spec);
     },
     getLayer: (id: string) => (layers.has(id) ? { id } : undefined),
@@ -657,21 +663,60 @@ describe("no declared footprint, no square", () => {
 });
 
 describe("style readiness", () => {
-  it("attaches the new polygon layers on the same retry the dots use", () => {
-    const fakeMap = createFakeMap();
-    fakeMap.setStyleLoaded(false);
-    const geojson = presentParquetFireDetections(readyFireWindow([fireCell()]));
+  it.each([
+    { zoomTier: 5 as const, geometry: "Polygon" },
+    { zoomTier: 13 as const, geometry: "Point" },
+  ])("admits the declared $geometry at z$zoomTier before source-only completion", ({ zoomTier, geometry }) => {
+    const fakeMap = createFakeMap(true, false);
+    fakeMap.emit("style.load"); // Parsed-style event precedes the dynamic layer mount.
+    const geojson = presentParquetFireDetections(
+      readyFireWindow([fireCell({ support: envelope(zoomTier) })])
+    );
     render(<FireLayer map={asMap(fakeMap)} visible geojson={geojson} />);
-    expect(fakeMap.hasLayer("published-fire-cells-fill")).toBe(false);
+    expect(fakeMap.isStyleLoaded()).toBe(false);
+    expect(fakeMap.dataOf("published-fire-source")).toBe(geojson);
+    expect(fakeMap.dataOf("published-fire-source").features[0].geometry.type).toBe(geometry);
+    const fill = fakeMap.layerSpec("published-fire-cells-fill");
+    const circles = fakeMap.layerSpec("published-fire-circles");
+    const outlines = fakeMap.layerSpec("published-fire-outlines");
+    expect(fill).toMatchObject({ type: "fill", filter: ["==", ["geometry-type"], "Polygon"] });
+    expect(circles).toMatchObject({ type: "circle", filter: ["==", ["geometry-type"], "Point"] });
+    expect(outlines).toMatchObject({ type: "circle", filter: ["==", ["geometry-type"], "Point"] });
 
     act(() => {
-      fakeMap.setStyleLoaded(true);
-      fakeMap.emit("styledata");
+      fakeMap.setSourcesLoaded(true);
+      fakeMap.emit("sourcedata");
     });
+    expect(fakeMap.isStyleLoaded()).toBe(true);
+    expect(fakeMap.dataOf("published-fire-source")).toBe(geojson);
+    expect(fakeMap.layerSpec("published-fire-cells-fill")).toBe(fill);
+    expect(fakeMap.layerSpec("published-fire-circles")).toBe(circles);
+    expect(fakeMap.layerSpec("published-fire-outlines")).toBe(outlines);
+  });
 
-    // A fill that only appeared after a second style event would leave every zoom under 13
-    // blank on a dark-mode hard load -- the bug `use-style-ready` exists for, now with a third
-    // layer to cover.
-    expect(fakeMap.hasLayer("published-fire-cells-fill")).toBe(true);
+  it("waits for style parsing and then installs the latest declared rung geometry", () => {
+    const fakeMap = createFakeMap(false, false);
+    const coarse = presentParquetFireDetections(readyFireWindow([fireCell()]));
+    const detail = presentParquetFireDetections(
+      readyFireWindow([fireCell({ support: envelope(13) })])
+    );
+    const mounted = render(<FireLayer map={asMap(fakeMap)} visible geojson={coarse} />);
+    mounted.rerender(<FireLayer map={asMap(fakeMap)} visible geojson={detail} />);
+    act(() => fakeMap.emit("sourcedata"));
+    expect(fakeMap.getSource("published-fire-source")).toBeUndefined();
+    expect(fakeMap.hasLayer("published-fire-cells-fill")).toBe(false);
+    expect(fakeMap.hasLayer("published-fire-circles")).toBe(false);
+    expect(fakeMap.hasLayer("published-fire-outlines")).toBe(false);
+
+    act(() => {
+      fakeMap.setStyleParsed(true);
+      fakeMap.emit("style.load");
+    });
+    expect(fakeMap.isStyleLoaded()).toBe(false);
+    expect(fakeMap.dataOf("published-fire-source")).toBe(detail);
+    expect(fakeMap.dataOf("published-fire-source").features[0].geometry.type).toBe("Point");
+    expect(fakeMap.layerSpec("published-fire-cells-fill")?.filter).toEqual(["==", ["geometry-type"], "Polygon"]);
+    expect(fakeMap.layerSpec("published-fire-circles")?.filter).toEqual(["==", ["geometry-type"], "Point"]);
+    expect(fakeMap.layerSpec("published-fire-outlines")?.filter).toEqual(["==", ["geometry-type"], "Point"]);
   });
 });

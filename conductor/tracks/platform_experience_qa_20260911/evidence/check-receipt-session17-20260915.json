@@ -1,0 +1,330 @@
+{
+  "type": "qa-check-receipt",
+  "session": 17,
+  "candidate": 2,
+  "date": "2026-09-15",
+  "recorded_at": "2026-09-15T02:04:30.188579+00:00",
+  "author": "/root/qa_inventory",
+  "gate_executor": "/root",
+  "canonical_packet_review": "pending_separate_independent_review",
+  "base_commit": "286eb91b62aeb2a53c8484184d5adec1336f5c82",
+  "engineering_status": "integrated_checks_passed",
+  "deployment_status": "pending_new_revision",
+  "post_fix_live_status": "pending",
+  "overall_runbook_status": "RED",
+  "whole_case_promotions": [],
+  "source": {
+    "manifest": {
+      "path": ".omc/research/runbook-20260915-session17/candidate2/source-manifest.json",
+      "bytes": 256188,
+      "sha256": "d11d38642bf5e6f87e3f1180b53f04262232a2b27f10dc9d5f98eccf1fc554f4"
+    },
+    "file_count": 1751,
+    "post_check_current_hash_mismatches": [],
+    "verification": "All listed current files match the frozen manifest; five application outputs across two approved batches, originals and staged copies match their bound hashes."
+  },
+  "checks": [
+    {
+      "name": "type",
+      "command": "npm run type-check",
+      "exit_code": 0,
+      "status": "pass",
+      "log_encoding": "UTF-16 LE with BOM; ANSI removed for parsing only",
+      "exit_encoding": "UTF-8 with BOM",
+      "log": {
+        "path": ".omc/research/runbook-20260915-session17/candidate2/checks/type.log",
+        "bytes": 100,
+        "sha256": "5a73c140c0ad128d7dfaf1a28f01b54adf8c3d29c10d317d96d4e791294fc7ec"
+      },
+      "exit": {
+        "path": ".omc/research/runbook-20260915-session17/candidate2/checks/type.exit",
+        "bytes": 6,
+        "sha256": "9585fbece5c402088f2d6a2def7e60d1c7ffecc24b16d32d5823a064b008935b"
+      }
+    },
+    {
+      "name": "boundary",
+      "command": "npm run check:data-boundary",
+      "exit_code": 0,
+      "status": "pass",
+      "log_encoding": "UTF-16 LE with BOM; ANSI removed for parsing only",
+      "exit_encoding": "UTF-8 with BOM",
+      "log": {
+        "path": ".omc/research/runbook-20260915-session17/candidate2/checks/boundary.log",
+        "bytes": 528,
+        "sha256": "9eafe413dfe6c6bd02229c9b983c8136949d7ba2d4c4cfd272e9b4bcd9f81f0d"
+      },
+      "exit": {
+        "path": ".omc/research/runbook-20260915-session17/candidate2/checks/boundary.exit",
+        "bytes": 6,
+        "sha256": "9585fbece5c402088f2d6a2def7e60d1c7ffecc24b16d32d5823a064b008935b"
+      }
+    },
+    {
+      "name": "lint",
+      "command": "npm run lint -- --ignore-pattern .omc/**",
+      "exit_code": 0,
+      "status": "pass",
+      "log_encoding": "UTF-16 LE with BOM; ANSI removed for parsing only",
+      "exit_encoding": "UTF-8 with BOM",
+      "log": {
+        "path": ".omc/research/runbook-20260915-session17/candidate2/checks/lint.log",
+        "bytes": 3918814,
+        "sha256": "3901c56f32ff1eac37d24151943609a6cc0dc06104e0ca2c1d76e73d3fe33bf6"
+      },
+      "exit": {
+        "path": ".omc/research/runbook-20260915-session17/candidate2/checks/lint.exit",
+        "bytes": 6,
+        "sha256": "9585fbece5c402088f2d6a2def7e60d1c7ffecc24b16d32d5823a064b008935b"
+      }
+    },
+    {
+      "name": "test",
+      "command": "npm.cmd test",
+      "exit_code": 0,
+      "status": "pass",
+      "log_encoding": "UTF-16 LE with BOM; ANSI removed for parsing only",
+      "exit_encoding": "UTF-8 with BOM",
+      "log": {
+        "path": ".omc/research/runbook-20260915-session17/candidate2/checks/test.log",
+        "bytes": 804818,
+        "sha256": "3ea096702aef5f0437fe19061981ed871cb1fffcc77cf1c1c4b49b8715d61484"
+      },
+      "exit": {
+        "path": ".omc/research/runbook-20260915-session17/candidate2/checks/test.exit",
+        "bytes": 6,
+        "sha256": "9585fbece5c402088f2d6a2def7e60d1c7ffecc24b16d32d5823a064b008935b"
+      }
+    },
+    {
+      "name": "python-receipt",
+      "command": "Existing scripts/verify_quality_receipt.py verification; exact launcher not printed in retained log",
+      "exit_code": 0,
+      "status": "pass",
+      "log_encoding": "UTF-16 LE with BOM; ANSI removed for parsing only",
+      "exit_encoding": "UTF-8 with BOM",
+      "log": {
+        "path": ".omc/research/runbook-20260915-session17/candidate2/checks/python-receipt.log",
+        "bytes": 308,
+        "sha256": "1f90197c7aeaa9fabadf7e1470894cc73ed808c7e994ced573cf0ddc9c3653e8"
+      },
+      "exit": {
+        "path": ".omc/research/runbook-20260915-session17/candidate2/checks/python-receipt.exit",
+        "bytes": 6,
+        "sha256": "9585fbece5c402088f2d6a2def7e60d1c7ffecc24b16d32d5823a064b008935b"
+      }
+    }
+  ],
+  "prior_failed_candidate": {
+    "receipt": {
+      "path": "conductor/tracks/platform_experience_qa_20260911/evidence/check-receipt-session17-candidate1-20260915.json",
+      "bytes": 4090,
+      "sha256": "ef6e67cd35bdc91111509b9695325c709f5236b568c414d28e3fb0d096761aee"
+    },
+    "status": "failed_integrated_test_gate",
+    "frontend": {
+      "files_passed": 192,
+      "files_failed": 1,
+      "tests_passed": 2547,
+      "tests_failed": 1,
+      "tests_total": 2548,
+      "duration_seconds": 209.25,
+      "failure": "event-aggregation-rendering.test.tsx:665 expects no Fire polygon in a parsed style while unrelated sources are pending"
+    },
+    "artifacts": [
+      {
+        "path": "conductor/tracks/platform_experience_qa_20260911/evidence/check-receipt-session17-candidate1-20260915.json",
+        "bytes": 4090,
+        "sha256": "ef6e67cd35bdc91111509b9695325c709f5236b568c414d28e3fb0d096761aee"
+      },
+      {
+        "path": ".omc/research/runbook-20260915-session17/checks/test.log",
+        "bytes": 809272,
+        "sha256": "85aa025b8df186922bae516e968bdcb457fff43358029a6f4fa4c58e9b27fa28"
+      },
+      {
+        "path": ".omc/research/runbook-20260915-session17/checks/test.exit",
+        "bytes": 6,
+        "sha256": "07846b783c23904a75834c1932bc2fad41e388e18bc32ffd73ed87bfa3844d87"
+      },
+      {
+        "path": ".omc/research/runbook-20260915-session17/checks/type.log",
+        "bytes": 100,
+        "sha256": "5a73c140c0ad128d7dfaf1a28f01b54adf8c3d29c10d317d96d4e791294fc7ec"
+      },
+      {
+        "path": ".omc/research/runbook-20260915-session17/checks/type.exit",
+        "bytes": 6,
+        "sha256": "9585fbece5c402088f2d6a2def7e60d1c7ffecc24b16d32d5823a064b008935b"
+      },
+      {
+        "path": ".omc/research/runbook-20260915-session17/checks/lint.log",
+        "bytes": 3918814,
+        "sha256": "3901c56f32ff1eac37d24151943609a6cc0dc06104e0ca2c1d76e73d3fe33bf6"
+      },
+      {
+        "path": ".omc/research/runbook-20260915-session17/checks/lint.exit",
+        "bytes": 6,
+        "sha256": "9585fbece5c402088f2d6a2def7e60d1c7ffecc24b16d32d5823a064b008935b"
+      },
+      {
+        "path": ".omc/research/runbook-20260915-session17/checks/boundary.log",
+        "bytes": 528,
+        "sha256": "9eafe413dfe6c6bd02229c9b983c8136949d7ba2d4c4cfd272e9b4bcd9f81f0d"
+      },
+      {
+        "path": ".omc/research/runbook-20260915-session17/checks/boundary.exit",
+        "bytes": 6,
+        "sha256": "9585fbece5c402088f2d6a2def7e60d1c7ffecc24b16d32d5823a064b008935b"
+      },
+      {
+        "path": ".omc/research/runbook-20260915-session17/checks/python-receipt.log",
+        "bytes": 308,
+        "sha256": "1f90197c7aeaa9fabadf7e1470894cc73ed808c7e994ced573cf0ddc9c3653e8"
+      },
+      {
+        "path": ".omc/research/runbook-20260915-session17/checks/python-receipt.exit",
+        "bytes": 6,
+        "sha256": "9585fbece5c402088f2d6a2def7e60d1c7ffecc24b16d32d5823a064b008935b"
+      }
+    ],
+    "source_manifest": {
+      "path": ".omc/research/runbook-20260915-session17/source-manifest.json",
+      "bytes": 256188,
+      "sha256": "f8ba0f5e928791adc5df52a932765754b4a243d1606485bdc373fbe8e6ca7807"
+    },
+    "candidate2_delta": [
+      "src/__tests__/components/event-aggregation-rendering.test.tsx"
+    ],
+    "disposition": "Historical failed complete sweep retained unchanged; final complete-batch sweep is separately bound below."
+  },
+  "applied_source_files": [
+    {
+      "path": "src/components/map/layers/FireLayer.tsx",
+      "base_sha256": "ee84d49aed10d76db4e9c082b91322a1aaa6e86395a7e50631d1fb938bdc7f9e",
+      "staged_sha256": "555cc7c1b91414c3588136b957cd6301c59371d48667f998243c4117b3445ec7",
+      "bytes": 16103
+    },
+    {
+      "path": "src/components/map/layers/WaterLayer.tsx",
+      "base_sha256": "c2fe8a74291dfe5d5fa54e5bf4c81694fa40d02f109f15f1c42d124f9c9c75f4",
+      "staged_sha256": "d4cbecdd3231ce6e8ef04c6e2f3b6575b76ca1def05913bac67fdbe7ec58fdaf",
+      "bytes": 23513
+    },
+    {
+      "path": "src/__tests__/components/dark-mode-layer-visibility.test.tsx",
+      "base_sha256": "99a5c0ec0766375b07517ee896a67b4fe7b36247f9a7b74cccf135942ee56cda",
+      "staged_sha256": "9b400919d7cc143d61dd2cb3aa6d1215b2f2d0d34310d443297f3fd02a9e8b41",
+      "bytes": 14610
+    },
+    {
+      "path": "src/components/map/AGENTS.md",
+      "base_sha256": "c1229239d44f5bcd92f45c059e22da9c43e2bf4ec0db7b2ceb7b43f26bb34e2c",
+      "staged_sha256": "a7771f74cfc910c6edaad621168ecd97da0939b9c671f3655d790f3fd91efff3",
+      "bytes": 130760
+    },
+    {
+      "path": "src/__tests__/components/event-aggregation-rendering.test.tsx",
+      "base_sha256": "1475985513b4985fa0caa7865e9f820937210a4d2f3b8e1cb5a377527c1672ad",
+      "base_bytes": 25191,
+      "staged_sha256": "57e4f319543056482c1988240edd546d01e1918b6bbc38f28fcf123ff7243af7",
+      "bytes": 27932
+    }
+  ],
+  "results": {
+    "frontend": {
+      "test_files_passed": 193,
+      "tests_passed": 2550,
+      "vitest_duration_seconds": 183.75,
+      "scope": "full Vitest run via npm.cmd test"
+    },
+    "tooling": {
+      "tests": 12,
+      "passed": 12,
+      "failed": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0,
+      "scope": "Node tooling tests invoked by npm.cmd test; information-symbol summary parsed"
+    },
+    "lint": {
+      "errors": 0,
+      "warnings": 9887,
+      "scope": "eslint . --ignore-pattern .omc/**; historical .claude worktrees remain included",
+      "clean_warning_claim": false
+    },
+    "boundary": {
+      "documented_url_rules": 12,
+      "restricted_import_check": "pass",
+      "observation_fabrication_rules": 2,
+      "display_roots": 7
+    },
+    "python": {
+      "action": "verify existing receipt only",
+      "suite_rerun": false,
+      "receipt": {
+        "path": "services/agri-data-service/QUALITY_RECEIPT.json",
+        "bytes": 1019,
+        "sha256": "4229c16dcd0ac081abe50f26b367e3a6997708f73916401df8f67b7670e4cf77"
+      },
+      "tree_digest": "sha256:e73ccd5b704f9009e45deed33d0dc2db60f072cf22d8992a5e3463a1030e0f05",
+      "digest_file_count": 885,
+      "original_receipt_generated_at": "2026-09-15T00:29:21.185841Z",
+      "source_and_receipt_unchanged_by_session17": true
+    }
+  },
+  "application_and_review_artifacts": [
+    {
+      "path": ".omc/research/runbook-20260915-session17/application.json",
+      "bytes": 1417,
+      "sha256": "7fadbe6246c87f1165ccdd8115b72ede98c1b69261defd117bd6c6b1d09c0c9f"
+    },
+    {
+      "path": ".omc/research/runbook-20260915-session17/manifest.json",
+      "bytes": 1344,
+      "sha256": "eb8b7213a6ac760c6e3809b3be49ed778b7fb69999832f94fa199a51b8368437"
+    },
+    {
+      "path": ".omc/research/runbook-20260915-session17/readiness.patch",
+      "bytes": 35984,
+      "sha256": "de13030f2550a3223eec65b9cc55c618b054712049d0eba2d86e53724e814fc3"
+    },
+    {
+      "path": ".omc/research/runbook-20260915-session17/independent-source-review.md",
+      "bytes": 3799,
+      "sha256": "67f1915a8f87f7f5a036bbcbaa6f54bf711c5ccf934776c9f280c3d7e42fc3f9"
+    },
+    {
+      "path": ".omc/research/runbook-20260915-session17/candidate2/application.json",
+      "bytes": 826,
+      "sha256": "70aedac400fbc95dc438265b02441397bb70100d32b3248725c52283e215dab5"
+    },
+    {
+      "path": ".omc/research/runbook-20260915-session17/candidate2/manifest.json",
+      "bytes": 874,
+      "sha256": "e2916489254f119a53f3f1da4da5d6aa59ecfec19f5bd48e993556fecf982340"
+    },
+    {
+      "path": ".omc/research/runbook-20260915-session17/candidate2/correction.patch",
+      "bytes": 5801,
+      "sha256": "bba31e3882588866b2e8713f352a17059f45ce3f8b6e8e30272a0b6c009aeb90"
+    },
+    {
+      "path": ".omc/research/runbook-20260915-session17/candidate2/independent-review.md",
+      "bytes": 1923,
+      "sha256": "77bda890100d5983d59d8805f5eb44013f210e342a4ba9c7bad56d4f70be10d8"
+    },
+    {
+      "path": ".omc/research/runbook-20260915-session17/candidate2/collect-checks.py",
+      "bytes": 13501,
+      "sha256": "e9326d5fa5c97c2cfa2a2708344bae70659c83400fb59ebc748b145971e18994"
+    }
+  ],
+  "limits": [
+    "Candidate1 failed; this receipt does not relabel its failed logs.",
+    "No Python suite rerun or new Python quality receipt generated.",
+    "Source admission regressions do not establish deployed Fire/Water rendering.",
+    "Other shared-hook consumers remain outside this correction; no whole QA case or runbook promotion.",
+    "New deployment and post-fix live behavior remain pending."
+  ]
+}

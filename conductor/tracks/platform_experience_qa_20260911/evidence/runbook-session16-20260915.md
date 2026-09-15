@@ -8,10 +8,11 @@ recorded_on: 2026-09-15
 
 The production diagnostic reproduced a weather source/layer installation failure on base
 `d167e7f0231804827422f0788f3b0604393a8ba8`. A separately reviewed four-file correction has
-been applied locally. **All five integrated checks passed; a new deployment and post-fix
-live validation remain pending.** Root will append actual release identity and live results
-after those gates complete. This note does not close D260915-29/D260915-30 or promote a
-formal QA case or the whole runbook.
+been applied and deployed in frontend revision `286eb91b62aeb2a53c8484184d5adec1336f5c82`.
+**All five integrated checks and all four post-deploy automated live tests passed.** Separate
+independent review accepted the exercised weather rendering and anonymous feed disclosure
+on desktop and emulated mobile, with the limits below. This note does not
+close D260915-29/D260915-30 or promote a formal QA case or the whole runbook.
 
 ## Production evidence before the correction
 
@@ -89,11 +90,18 @@ records the subsequent actual application.
 
 ## Integrated verification
 
-The [canonical check receipt](check-receipt-session16-20260915.json) has SHA-256
-`e73656240d7a9567718a19741df386b2a93dc0b36aea3de9a58620ec0080c068`. It binds all five raw logs and exit files,
+The [canonical check receipt](check-receipt-session16-20260915.json) has committed Git LF
+SHA-256 `6bd8aceb44415e2e235978e61742cc51a447722b80aaf2fd002467bec260408e`.
+The reviewed working-tree CRLF bytes have SHA-256
+`e73656240d7a9567718a19741df386b2a93dc0b36aea3de9a58620ec0080c068`.
+These are distinct line-ending representations of the same receipt; no receipt bytes were
+modified for this append. It binds all five raw logs and exit files,
 the source/application records, independent source reviews and pre-fix diagnostic references.
-Root executed the gates; this collector only read retained artifacts. Separate root review of
-this authored check packet remains pending.
+Root executed the gates; this collector only read retained artifacts. The separate
+[independent pre-push review](../../../../.omc/research/runbook-20260915-session16/independent-pre-push-review.md)
+(SHA-256 `6d435e03b0e8dabacc065e54c51803b6e6945a816543f3d5b7df8c5bbd64ac5a`)
+approved the source, retained checks and canonical packet after the accurate test-launcher
+correction. That review predates the deployment/live append below.
 
 Full frontend verification passed **193 test files and 2,545 tests**, plus **12 tooling tests**
 with zero tooling failures, skips or cancellations. Vitest reported 212.61 seconds. Full
@@ -111,12 +119,85 @@ summary parsing. An earlier collector incorrectly expected `# tests 12`; the act
 summary uses the information-symbol prefix. That metadata assertion failure did not change
 the successful tests. Raw artifacts were preserved and no checks were repeated.
 
+## Deployment and post-fix automated live result
+
+The [deployment capture](../../../../.omc/research/runbook-20260915-session16/deployments-success.json)
+(SHA-256 `aba7d40b7958c835c764c5d4a4527611abcea00e7cae0e202c13e4cf061e3bc6`)
+binds frontend revision `286eb91b62aeb2a53c8484184d5adec1336f5c82` to deployment
+`7cd08f66-71cf-4c19-93b9-86f29eed2e62`, SUCCESS at 2026-09-15T01:24:06.339Z.
+Martin deployment `15b9b7dd-f4eb-4945-9793-9a0e76898bf7` reached SUCCESS at
+01:19:12.164Z for the same commit. API and jobs were SKIPPED for this commit; their prior
+successful d167e7f deployments remain active. The [watch-pattern capture](../../../../.omc/research/runbook-20260915-session16/deployment-watch-patterns.json)
+(SHA-256 `79fa95120f7799bc41609f840d59f6a0e749fc3787a86a4ea3404be64d220fcc`)
+records that this change touched neither service's watched paths. This is not an all-services
+redeployment claim.
+
+The [frontend deployment logs](../../../../.omc/research/runbook-20260915-session16/frontend-deployment-logs.json)
+(SHA-256 `60d32410f14fc233e2ebc8cc9abd6f457445ccbf8d5b525de6fc77cbb142e6d5`)
+record 193 passing test files / 2,545 passing tests in the production build, successful
+compilation in 7.3 seconds, and the pre-deploy message that Drizzle migrations are up to date.
+The original local check receipt above remains unchanged; these are additional deployment
+results, not a retrospective replacement of its pending-deployment snapshot.
+
+The [post-deploy report](../../../../.omc/research/runbook-20260915-session16/post-deploy/attempt-20260915-0124/report.json)
+(SHA-256 `25d8110f79c2900ca0046d09ef6e9d9dc1226b6d0dcbd8a03b95e004baae5492`)
+records **four expected passes, zero skips/unexpected/flaky, no retries**, in 47.395839 seconds
+starting at 2026-09-15T01:24:51.632Z. Desktop and mobile each exercised anonymous health/readiness
+and public social entry pages, plus weather and unsent workspace entry. The map journeys
+asserted weather on first enable before any recovery, then selected missing September 6,
+then returned to Latest without an off/on recovery. They subsequently opened proposal and
+unsent analysis entry without submitting a proposal or sending analysis.
+
+| Retained map evidence | Desktop | Mobile |
+| --- | --- | --- |
+| Initial ready requested/served day | September 15, 18 API rows | September 15, 6 API rows |
+| First-enable source/rendered query counts | 26 / 16 | 8 / 8 |
+| September 6 response | not_generated / day_not_written | not_generated / day_not_written |
+| September 6 source/rendered query counts | 0 / 0 | 0 / 0 |
+| Latest-restored source/rendered query counts | 26 / 16 | 8 / 8 |
+
+All four layers remained installed/visible while missing-day data cleared. The Latest
+restoration reuses the settled data path; the retained summaries contain one ready and one
+missing-day response per project, not evidence of a third fresh upstream request. Feature
+query counts are not unique API observations. The desktop map summary SHA-256 is
+`e528383e3d2d25a009d61bed15370f0426d156a30aff6cbddcf50ca120309e55`;
+the mobile map summary is
+`fec312f74ea2e4afd3198c1a08885dee54013a56720f7cab01cb7ae0cfac03bb`.
+Both are retained beneath the report's results directory with selected-days records and
+screenshots. Anonymous entry assertions include the corrected feed disclosure; signed-in
+submission/moderation behavior was not exercised by this live run.
+
+Across all four summaries there are no page errors, blocked product requests, HTTP errors
+or primary failures. There are **four non-telemetry net::ERR_ABORTED asset requests**:
+one desktop terrain tile; two mobile terrain tiles and one mobile PMTiles request. These
+were tolerated by the reviewed harness and remain explicit evidence, not zero network
+failures. Six exact analytics-script exclusions were intentional and separately classified.
+No model or authenticated mutation was permitted.
+
+The [independent actual-result review](../../../../.omc/research/runbook-20260915-session16/post-deploy/independent-actual-result-review.md)
+(SHA-256 `fce66dd5a5995cddb506a7385ef2d97668b6d89144d42d64d8f005907391bd33`)
+accepts the exercised first-enable/date-clear/restore rendering and anonymous feed disclosure
+on desktop and emulated mobile. Its reviewer personally inspected fourteen original images:
+six map stages, six date/control stages and both feed frames. Both maps show visible cells
+and numeric labels, empty September 6, then restored Latest; the mobile upper-right cell is
+partly covered by native controls, so label placement is not universally accepted. Both feed
+frames show the corrected pending-signed-in / approved-public disclosure and anonymous gate.
+Root separately reported viewing the six weather map frames; this document author reviewed
+scalar evidence and attributes visual acceptance to those reviewers.
+
+The [independent result bindings](../../../../.omc/research/runbook-20260915-session16/post-deploy/independent-actual-result-bindings.json)
+(SHA-256 `cff888ed7a420d1c13390c52ae46bcd317803d6a810328d66159849226846262`)
+cover 35 artifacts, including those fourteen images. The accepted scope excludes real mobile
+hardware, every native weather sublayer/scale/day, live style swaps, authenticated feed and
+moderation, submission/streaming behavior, the eight other readiness consumers and full QA.
+Earlier failed/blank evidence remains retained. The successful CLI/context-finalizer evidence
+is not a separate OS process census.
+
 ## Remaining gates and limits
 
-The integrated checks are bound to the source manifest above. Root must record a successful
-new deployment before post-fix live observations can be attributed to the correction. The
-live gate must demonstrate initial weather installation without the recovery toggle and
-verify the deployed feed disclosure. Deployment and live results are pending here.
+The integrated checks, successful frontend deployment and independently accepted bounded
+live result are now retained above. Root owns subsequent defect-ledger and release
+dispositions. No checkbox or formal-case status was changed by this documentation update.
 
 The [shared-hook impact inventory](../../../../.omc/research/runbook-20260915-session16/use-style-ready-impact.md)
 (SHA-256 `fe6ddde524604a9a16bda24024001f5dbb4cf89daf4f2cfdf2bd64050b2627e1`)

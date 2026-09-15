@@ -3,7 +3,6 @@
 import { useEffect, useRef, useCallback } from "react";
 import type { Map as MapLibreMap, Popup } from "maplibre-gl";
 import { getFirstSymbolLayer, safeRemoveLayerAndSource } from "@/lib/map/layer-utils";
-import { useStyleReady } from "@/components/map/layers/use-style-ready";
 import {
   fireCellCaptionText,
   fireDetectionCellLines,
@@ -289,22 +288,12 @@ export function FireLayer({
     );
   }, []);
 
-  // Persist layers across every future style change (basemap swap included).
-  // addLayer/addSource work as soon as "style.load" fires -- see
-  // src/components/map/AGENTS.md -- and addAllLayers is idempotent (guards
-  // on getLayer/getSource), so calling it unconditionally here is safe even
-  // if it races with the styleReady effect below.
+  // Keep style-listener ordering independent of visibility and current observations.
   useEffect(() => {
     if (!map) return;
 
-    if (!visible) {
-      removeAllLayers(map);
-      return;
-    }
-
     const onStyleLoad = () => {
-      if (!propsRef.current.visible) return;
-      addAllLayers(map);
+      if (propsRef.current.visible) addAllLayers(map);
     };
     map.on("style.load", onStyleLoad);
 
@@ -312,20 +301,17 @@ export function FireLayer({
       map.off("style.load", onStyleLoad);
       removeAllLayers(map);
     };
-  }, [map, visible, addAllLayers, removeAllLayers]);
+  }, [map, addAllLayers, removeAllLayers]);
 
-  // Add (or retry adding) once the style is actually ready. This is what
-  // covers the bug this hook exists for: a mount (or a swap) where
-  // isStyleLoaded() reads false at the moment "style.load" fires, and no
-  // further "style.load" arrives to retry -- only "styledata" events do, as
-  // tiles land. styleReady is only used to force this effect to re-run;
-  // the actual gate re-reads the live map so it can never act on a stale
-  // value. See use-style-ready.ts and AGENTS.md.
-  const styleReady = useStyleReady(map);
+  // Parsed style admits sources before unrelated tiles finish; see map/AGENTS.md.
   useEffect(() => {
-    if (!map || !visible || !map.isStyleLoaded()) return;
-    addAllLayers(map);
-  }, [map, visible, addAllLayers, styleReady]);
+    if (!map) return;
+    if (!visible) {
+      removeAllLayers(map);
+    } else if (map.getStyle()) {
+      addAllLayers(map);
+    }
+  }, [map, visible, addAllLayers, removeAllLayers]);
 
   // Update fire data when new geojson arrives
   useEffect(() => {

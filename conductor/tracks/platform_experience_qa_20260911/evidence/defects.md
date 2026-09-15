@@ -108,3 +108,45 @@ new deployment and post-fix live checks. The approved harness requires first-ena
 weather rendering, missing-day clearing and Latest restoration before any recovery
 toggle, and the corrected anonymous feed disclosure on desktop and emulated mobile.
 See [Session 16](runbook-session16-20260915.md) for exact source and evidence bindings.
+
+After deployment of `286eb91b62aeb2a53c8484184d5adec1336f5c82`, the four approved
+desktop/emulated-mobile cases passed in 47.396 seconds with no retries or skips.
+Independent review of the six weather map stages, six control stages and both feed
+screenshots confirms the corrected disclosure and visible first-enable weather,
+missing-day clearing and Latest restoration. Renderer source/rendered counts are
+26/16 -> 0/0 -> 26/16 on desktop and 8/8 -> 0/0 -> 8/8 on mobile, with all four
+layers present and no recovery toggle. These are renderer counts, not conservation.
+
+**D260915-29 is resolved for the disclosure correction**: both paragraphs are source
+reviewed; the anonymous paragraph is verified live on both viewports. Authenticated
+feed workflow acceptance remains separate. **D260915-30 is resolved for the reproduced
+weather installation/visibility defect** and its bounded missing-day/Latest regression.
+Earlier proposal-map entry captures were already resolved as described above; geometry
+interaction and full map/workspace acceptance remain open. Original failures are retained.
+Four aborted asset requests remain in the raw evidence; no HTTP errors, page errors or
+blocked product requests were captured. No whole formal QA case or plan checkbox is closed.
+
+## Session 17 — Fire and Water admission
+
+| ID | Severity / requirement | Evidence and observed behavior | Owner / disposition |
+| --- | --- | --- | --- |
+| D260915-31 | Rendering lifecycle / PGQA-L01, PGQA-L03, PGQA-M12 | Source inspection on `286eb91b` shows Fire/Water initial installation waiting for all-source isStyleLoaded after style.load may already have fired. The hook observes styledata, while tile completion emits sourcedata; existing data effects cannot create the skipped sources. Earlier tests encoded the wrong completion event. This is a concrete source path, not yet a newly reproduced live Fire/Water failure. | `/root/qa_inventory` authored the four-file correction; `/root/workspace_social_audit` independently approved it. Root applied exact bytes and froze 1,751 source files. Integrated checks and current-data live discovery are in progress. No layer or whole-case closure. |
+
+See [Session 17](runbook-session17-20260915.md) for ownership, candidate identity and
+actual results as they arrive. Reserved empty groundwater remains unpublished; mounting
+its empty source does not satisfy populated-well or groundwater-data acceptance.
+
+Independent review of the first actual discovery now confirms the Water half of
+D260915-31 on predecessor `286eb91b`: 26 ready aggregate rows, enabled Water controls,
+globally ready parsed style, but all three sources and four layers absent. Fire's empty
+September 13 northern viewport is not classified as an installation failure. A broader
+Fire discovery and two Water detail searches subsequently found real populated locations.
+Independent review of that second discovery additionally confirms missing installation
+in the populated refined Fire viewport and both populated Water detail viewports, with
+sources absent at globally ready snapshots. Broad Fire does show a visible cell. The
+defect concerns the missed lifecycle path, not a claim that Fire never renders.
+
+The final local Candidate 2 passes 193 files / 2,550 tests and 12 tooling tests, with
+type/boundary/zero-error lint and unchanged Python receipt verification passing. Candidate 1's
+single outdated test expectation and its full failed sweep remain retained. D260915-31
+stays open until the new revision is deployed and its bounded live renderer checks pass.
