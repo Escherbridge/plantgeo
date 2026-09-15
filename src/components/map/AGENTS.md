@@ -316,11 +316,12 @@ correction and now leaves that hook; recommending another hook adoption would no
 the source-only sequence. That weather-only batch left eight component consumers
 unchanged. The subsequent Fire/Water correction applies the same local admission contract
 to those two native renderers. SoilField, ClimateField, Vegetation, Gbif and Botanical
-still have a source-only admission gap on source inspection; their individual renderer,
-form/rung, zoom and selection behavior needs separate correction and review. SoilSurvey's
+had the same source-only admission gap on source inspection and are corrected in the
+September 15 completion section at the end of this file, each with its own renderer,
+form/rung, zoom and selection behavior preserved and asserted. SoilSurvey's
 existing data effect already admits a missing source against a parsed style, so it is
 excluded from this same-gap patch. None of this source inventory is a live reproduction
-or full acceptance verdict for the remaining six consumers. The shared hook is unchanged.
+or full acceptance verdict for any corrected consumer. The shared hook is unchanged.
 
 ## Popups and hover labels
 
@@ -1313,3 +1314,50 @@ cleanup. Water's named callbacks receive the current gauge/well after updates an
 No synthetic styledata event stands in for tile completion. Scientific rendering, serving
 availability, water composite-date semantics and production first-enable evidence remain
 separate from this bounded code-level lifecycle regression.
+
+## Scalar, vegetation and occurrence parsed-style admission (September 15 completion)
+
+This batch applies the same public parsed-style admission contract to the five consumers the
+Fire/Water correction left open: SoilFieldLayer, ClimateFieldLayer, VegetationLayer,
+GbifOccurrencesLayer and BotanicalOccurrencesLayer. None of them uses `useStyleReady` now.
+`use-style-ready.ts` is unchanged and has exactly one remaining consumer, `SoilSurveyLayer`,
+whose existing data effect already admits a missing source against a parsed style. The hook is
+now single-consumer; do not adopt it in a new renderer without re-reading this section first.
+
+Each corrected renderer registers its persistent `style.load` listener exactly once per map,
+including while hidden, with `[map, addAllLayers, removeAllLayers]`-shaped deps and current
+visibility read from a ref. A separate visibility effect creates the sources/layers immediately
+when `getStyle()` returns a parsed style, or removes them when hidden; a genuinely unparsed
+style waits for `style.load`. This separates permission to create native style resources from
+the completion of unrelated source tile requests. It does not claim admitted data has painted.
+
+Three renderer-specific constraints survive the change and are asserted, not merely described.
+ClimateField still tears down and rebuilds on form, rung and id changes, in an effect separate
+from the listener registration so that a rebuild never moves the handler behind another
+renderer; its cleanup removes every form's ids for the source, so an isoline/field swap cannot
+strand the outgoing wash. SoilField retains its measure ids and the aggregated-cell outline
+opacity expression exactly. Vegetation keeps the scalar controller construction, the inspection
+gate published through `ScalarFieldLayer.sync`, and raster/measured exclusivity resolved by the
+single `ndviEncodingVisibility` call; because `ndviTemplateFor` returns an empty template while
+no day is named, its update effect now calls idempotent `addAllLayers` first so a source that
+could not be created at admission is created when the period arrives.
+
+The two occurrence renderers carried a failure Fire and Water did not. Their draw effect's
+cleanup removed layers on every data or zoom change and re-added only behind an all-source
+readiness check, so a rerender during the pending window removed installed layers and never
+restored them, with no later `style.load` to retry. Admission now has no cleanup, teardown
+moved to the stable listener effect, and `addLayers` is idempotent and current, so a rerender
+always ends installed and carrying the newest collection. Click and picking handlers moved to
+their own `[map]`-keyed effect so repeated draw cycles cannot duplicate them. Botanical keeps
+its detail zoom floor, its three picking layers and its distinct source identity; GBIF keeps
+two picking layers and its own source, and an empty collection remains a clean no-throw path
+because no GBIF acquisition has run yet. Coarse Polygon and detail Point semantics are retained.
+
+Every fixture in this batch distinguishes a parsed style from source readiness, rejects
+`addSource`/`addLayer` against a genuinely unparsed style, and models tile completion as
+`sourcedata` only; no synthetic `styledata` stands in for tile completion. The occurrence
+fixture keys recorded listeners by type *and* layer id in an array, because the previous
+type-keyed set silently deduplicated and would have hidden a duplicate-handler regression.
+These are bounded code-level lifecycle regressions. Scientific rendering, serving availability,
+legends, accessibility, agent parity and production first-enable evidence remain separate
+obligations and are not established here.

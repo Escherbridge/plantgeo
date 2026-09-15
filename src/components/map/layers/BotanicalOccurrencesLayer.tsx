@@ -5,7 +5,6 @@ import type { Map as MapLibreMap, GeoJSONSource, MapMouseEvent } from "maplibre-
 import { getFirstSymbolLayer, safeRemoveLayerAndSource } from "@/lib/map/layer-utils";
 import { BOTANICAL_DETAIL_MIN_ZOOM, type BotanicalOccurrenceFeature } from "@/lib/botanical-occurrences";
 import { isProvisionalBotanicalCollection } from "@/lib/environmental/botanical-governance-status";
-import { useStyleReady } from "@/components/map/layers/use-style-ready";
 
 const SOURCE_ID = "botanical-occurrences";
 const LAYER_ID_EXACT = "botanical-occurrences-exact";
@@ -107,9 +106,6 @@ export function BotanicalOccurrencesLayer({
   propsRef.current = { geojson, visible, zoom };
   const onSelectFeatureRef = useRef(onSelectFeature);
   onSelectFeatureRef.current = onSelectFeature;
-  // Catches the mount-time race the persistent listener below cannot: when the style finished
-  // loading before this component became drawable, no further `style.load` will ever arrive.
-  const styleReady = useStyleReady(map);
 
   const addLayers = useCallback((m: MapLibreMap) => {
     const { geojson } = propsRef.current;
@@ -229,23 +225,32 @@ export function BotanicalOccurrencesLayer({
     map.on("style.load", onStyleLoad);
     return () => {
       map.off("style.load", onStyleLoad);
+      removeLayers(map);
     };
-  }, [map, addLayers]);
+  }, [map, addLayers, removeLayers]);
 
+  // Parsed-style admission, not all-source `isStyleLoaded()` readiness: `getStyle()` returning a
+  // style means `addSource`/`addLayer` are legal, while `isStyleLoaded()` also waits on unrelated
+  // sources' tiles. See `src/components/map/AGENTS.md`. This effect deliberately has NO cleanup --
+  // the previous version removed the layers on every data/zoom rerender and re-added them only
+  // behind the global readiness gate, so any tick while readiness was pending left the layers
+  // removed and never re-added. `addLayers` is idempotent and re-`setData`s an existing source, so
+  // the drawable branch always ends installed AND current; an unparsed style waits for the
+  // persistent `style.load` listener above, which reads the latest props off the ref.
   useEffect(() => {
     if (!map) return;
     if (!visible || !geojson || zoom < BOTANICAL_DETAIL_MIN_ZOOM) {
       removeLayers(map);
-      return;
-    }
-
-    // Re-read live rather than trusting `styleReady`'s possibly-stale render value: the hook's
-    // boolean is in this effect's deps purely to force a re-run. `addLayers` is idempotent
-    // (every add is guarded by `getSource`/`getLayer`), so overlapping invocations are no-ops.
-    if (map.isStyleLoaded()) {
+    } else if (map.getStyle()) {
       addLayers(map);
     }
+  }, [map, geojson, visible, zoom, addLayers, removeLayers]);
 
+  // Delegated picking attaches ONCE per map. Keying it on data/zoom stacked a fresh pair of
+  // layer-scoped click handlers on every draw cycle; a handler bound to a not-yet-created layer
+  // never fires, and the query re-filters on `getLayer`, so binding early is safe.
+  useEffect(() => {
+    if (!map) return;
     const onClick = (event: MapMouseEvent) => {
       const features = map.queryRenderedFeatures(event.point, {
         layers: [LAYER_ID_EXACT, LAYER_ID_GENERALIZED, LAYER_ID_POSSIBLE].filter((id) => map.getLayer(id)),
@@ -263,9 +268,8 @@ export function BotanicalOccurrencesLayer({
       map.off("click", LAYER_ID_EXACT, onClick);
       map.off("click", LAYER_ID_GENERALIZED, onClick);
       map.off("click", LAYER_ID_POSSIBLE, onClick);
-      removeLayers(map);
     };
-  }, [map, geojson, visible, zoom, styleReady, addLayers, removeLayers]);
+  }, [map]);
 
   return null;
 }

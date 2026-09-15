@@ -10,7 +10,6 @@ import {
   type ClimateFieldSignalId,
   type ClimateRenderForm,
 } from "@/lib/environmental/climate-field";
-import { useStyleReady } from "@/components/map/layers/use-style-ready";
 import { scaleOpacityValue } from "@/lib/map/layer-opacity";
 import { BASE_ZOOM_TIER, type ZoomTier } from "@/lib/map/zoom-tiers";
 import type { ExpressionSpecification } from "@/types/map";
@@ -196,6 +195,7 @@ export function ClimateFieldLayer({
     zoomTier,
     ids,
     signal,
+    visible,
   });
   propsRef.current = {
     geojson,
@@ -208,8 +208,8 @@ export function ClimateFieldLayer({
     zoomTier,
     ids,
     signal,
+    visible,
   };
-  const styleReady = useStyleReady(map);
 
   const addLayers = useCallback((mapInstance: MapLibreMap) => {
     const {
@@ -360,40 +360,50 @@ export function ClimateFieldLayer({
   }, []);
 
   // Persistent listener, never `once` alongside `on` -- see src/components/map/AGENTS.md
-  // "Style.load listener order". This is what survives a basemap swap.
+  // "Style.load listener order". This is what survives a basemap swap. It registers ONCE per
+  // map: `visible`, `renderForm`, `zoomTier` and `ids` are deliberately absent from the deps,
+  // because re-registering on every toggle or rung change would re-order this layer's handler
+  // against every other layer's. Current visibility is read off propsRef at fire time; the
+  // rebuild the form/rung/id changes need is the effect below, not this one.
+  useEffect(() => {
+    if (!map) return;
+
+    const onStyleLoad = () => {
+      if (propsRef.current.visible) addLayers(map);
+    };
+    map.on("style.load", onStyleLoad);
+
+    return () => {
+      map.off("style.load", onStyleLoad);
+      removeLayers(map);
+    };
+  }, [map, addLayers, removeLayers]);
+
+  // Admission AND rebuild.
   //
-  // `renderForm` and `ids` are dependencies because both change what is BUILT rather than what
-  // is painted: a form change swaps the MapLibre layer type and the geometry under it, and a
-  // signal change swaps every id. Neither can be applied with setPaintProperty, so both tear
-  // down and rebuild -- cheap, at 512 features and no tile fetch.
+  // Admission: a PARSED style admits addSource/addLayer -- it does not have to be a LOADED one.
+  // The old gate was `isStyleLoaded()`, which stays false until every unrelated source's tiles
+  // land, so a late mount (after `style.load` had already fired) installed nothing and then only
+  // ever saw `sourcedata`, whose handler updates sources that already exist. A genuinely
+  // unparsed style falls through to the `style.load` listener above.
+  //
+  // Rebuild: `renderForm`, `zoomTier` and `ids` are dependencies because each changes what is
+  // BUILT rather than what is painted -- a form change swaps the MapLibre layer type and the
+  // geometry under it, a rung change swaps the cell size and whether the outline exists at all,
+  // and a signal change swaps every id. None can be applied with setPaintProperty, so the
+  // cleanup tears the previous build down (removeLayers covers every form's ids) and the body
+  // rebuilds -- cheap, at 512 features and no tile fetch.
   useEffect(() => {
     if (!map) return;
     if (!visible) {
       removeLayers(map);
       return;
     }
-    const onStyleLoad = () => addLayers(map);
-    if (map.isStyleLoaded()) addLayers(map);
-    map.on("style.load", onStyleLoad);
+    if (map.getStyle()) addLayers(map);
     return () => {
-      map.off("style.load", onStyleLoad);
       removeLayers(map);
     };
-    // `zoomTier` is a dependency for the same reason `renderForm` is: a rung change swaps the
-    // cell size under every feature and whether the outline exists at all, and leaving the old
-    // rung's layers up would draw two rungs of one field at once.
   }, [map, visible, renderForm, zoomTier, ids, addLayers, removeLayers]);
-
-  // The mount-time race the persistent listener above cannot catch: if the current style had
-  // already finished loading when this component mounted, no further `style.load` arrives and
-  // nothing retries. `styleReady` is a trigger, not a gate -- it can be a tick stale
-  // mid-render, so the live `isStyleLoaded()` below is what decides. `addLayers` is
-  // idempotent, so the overlap with the effect above is a no-op rather than a throw.
-  useEffect(() => {
-    if (!map || !visible) return;
-    if (!map.isStyleLoaded()) return;
-    addLayers(map);
-  }, [map, visible, styleReady, addLayers]);
 
   useEffect(() => {
     if (!map || !visible) return;

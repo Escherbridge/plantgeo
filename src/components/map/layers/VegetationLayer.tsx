@@ -14,7 +14,6 @@ import { useVegetationStore } from "@/stores/vegetation-store";
 import type { ExpressionSpecification } from "@/types/map";
 import { scalarFieldEnabled } from "@/lib/map/scalar-field";
 import { ScalarFieldLayer } from "@/lib/map/scalar-field-layer";
-import { useStyleReady } from "./use-style-ready";
 
 export type VegetationMode = "ndvi" | "ndwi" | "nbr";
 
@@ -184,7 +183,6 @@ export function VegetationLayer({
   const fieldEnabled = scalarFieldEnabled("vegetation", process.env.NEXT_PUBLIC_SCALAR_FIELD_RENDERER_LAYERS);
   const fieldRef = useRef<ScalarFieldLayer | null>(null);
   const cellDataRef = useRef<{ source: GeoJSONSource; data: GeoJSON.FeatureCollection | null } | null>(null);
-  const styleReady = useStyleReady(map);
 
   // The one value every paint below is written from: the authored strength times the reader's
   // multiplier. Computed once here so the attach path and the update effect cannot drift.
@@ -413,36 +411,36 @@ export function VegetationLayer({
     );
   }, []);
 
-  // Main effect: add/remove layers and listen for style changes
+  // Keep style-listener ordering independent of visibility, the selected encoding and the
+  // current cells: registration order decides MapLibre layer stacking across a basemap swap,
+  // so this listener is registered exactly once per map and reads live props from the ref.
   useEffect(() => {
     if (!map) return;
 
-    if (!visible) {
-      removeAllLayers(map);
-      return;
-    }
-
-    // Handler that re-adds all layers after a style change
     const onStyleLoad = () => {
-      if (!propsRef.current.visible) return;
-      addAllLayers(map);
+      if (propsRef.current.visible) addAllLayers(map);
     };
-
-    // Add now if the style is ready; the persistent listener covers both the
-    // first load and every later swap. See src/components/map/AGENTS.md
-    // "Style.load listener order" -- no `once` alongside `on`.
-    if (map.isStyleLoaded()) addAllLayers(map);
     map.on("style.load", onStyleLoad);
 
     return () => {
       map.off("style.load", onStyleLoad);
       removeAllLayers(map);
     };
-  }, [map, visible, addAllLayers, removeAllLayers]);
+  }, [map, addAllLayers, removeAllLayers]);
 
+  // Parsed style admits sources before unrelated tiles finish; see map/AGENTS.md. A component
+  // mounting after "style.load" already fired gets no second one, and isStyleLoaded() waits on
+  // every unrelated source, so gating on it left this layer permanently unattached. A genuinely
+  // unparsed style falls through to the listener above, which attaches from the latest props --
+  // including the current `source`/`mode`, so exactly one NDVI encoding is ever shown.
   useEffect(() => {
-    if (map && visible && map.isStyleLoaded()) addAllLayers(map);
-  }, [map, visible, styleReady, addAllLayers]);
+    if (!map) return;
+    if (!visible) {
+      removeAllLayers(map);
+    } else if (map.getStyle()) {
+      addAllLayers(map);
+    }
+  }, [map, visible, addAllLayers, removeAllLayers]);
 
   // Update tile URLs, visibility and opacity when the composite period, the selected source,
   // the mode or the opacity change. `year` and `month` move only when the slider's day crosses
@@ -455,6 +453,13 @@ export function VegetationLayer({
     } catch {
       return;
     }
+
+    // Attach anything that only became requestable now. Every raster below is gated on a tile
+    // template, and the template is null until capabilities name a day -- so an admission that
+    // ran before the slider landed legitimately created no raster source, and the setTiles calls
+    // below can only retarget a source that exists. addAllLayers is idempotent, so running it
+    // here costs nothing when everything is already attached.
+    addAllLayers(map);
 
     // Same resolver the attach path uses, so a style swap cannot leave the two encodings
     // disagreeing about which one is on.
@@ -525,6 +530,7 @@ export function VegetationLayer({
     showNDWI,
     drawnOpacity,
     visible,
+    addAllLayers,
   ]);
 
   return null;

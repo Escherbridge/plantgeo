@@ -221,6 +221,51 @@ The contribution queue currently calls `publishContribution`, and that procedure
 `status: published`. The outstanding intervention publication issue in the table above therefore
 requires end-to-end revalidation before being treated as a missing implementation.
 
+### Session 17 (Fire/Water parsed-style admission) — deployed and bounded-live-verified
+
+`ec172e881e4aa640231ae073a1d04408fd05ad5a` deployed 2026-09-15: frontend
+`69fbe03b-3c2e-452d-aa9d-0eaa6d28b9d6` SUCCESS 02:24:14.199Z, Martin
+`de34dea0-dccb-4916-b251-4e1e8c01e8ec` SUCCESS 02:19:25.401Z; data-API/job-executor SKIPPED
+(unchanged scope, retaining successful `d167e7f0`). Approved eight-case live regression
+(`live-regression/attempt-20260915-0224`): 4 passes / 4 failures / 0 skips / 0 retries,
+127.490632s. All four Fire journeys passed. All four Water journeys passed their native
+first-enable install/render assertions, then failed on a harness anchor defect
+(**D260915-32**): the September 6 missing-day anchor was actually a ready, populated day.
+**D260915-31 is updated, not closed** — missing-day clearing and Latest-restoration remain
+unexercised for Water; full independent image review across all eight cases is pending.
+No whole QA case or checklist item is promoted; the 220-case matrix is unchanged. See
+`evidence/runbook-session17-20260915.md`, `evidence/defects.md`, `evidence/task-ledger.md`.
+
+### Session 18 (scalar, vegetation and occurrence parsed-style admission) — locally verified and approved
+
+Completes the renderer-admission defect class Session 17 opened. SoilField, ClimateField,
+Vegetation, Gbif and Botanical renderers no longer gate source creation on the global
+`isStyleLoaded()` signal; each admits against a parsed style with a once-per-map `style.load`
+listener, matching the `ec172e88` Fire/Water contract. `SoilSurveyLayer` stays excluded and is
+now the sole consumer of the unchanged shared hook. The occurrence pair additionally had a
+cleanup that removed installed layers on a data or zoom rerender and never restored them; that
+path is closed and picking handlers moved to a map-keyed effect so draw cycles cannot duplicate
+them. One integrated sweep: data-boundary, type check and lint passed (zero errors, 9,887
+warnings, baseline unchanged), frontend **193 files / 2,592 tests** in 173.81s plus twelve
+tooling tests, exit zero. No Python source changed and no Python suite was rerun.
+
+Independent review returned **APPROVE**, no blocking or major findings, confirming by diff that
+no assertion was weakened and that the untouched `LayerManager` and layer-contract suites
+genuinely needed no change. Four non-blocking findings are carried forward unfixed so applied
+source stays exactly what was reviewed: SoilField's callbacks are not empty-dep memoised, so its
+once-per-map listener is incidental rather than structural; `AGENTS.md` should name that
+exception; the admission and data effects in two files disagree on whether `getStyle()` can
+throw; and the vegetation composite-raster assertions silently vanish when the period is
+unpublished. Review also established that ClimateField's stale-`ids` teardown hazard is inert
+only because the parent keys `ClimateSignalLayer` on `signal` — a guarantee living outside the
+corrected file.
+
+Listener registration order is the one requirement here that tests structurally cannot verify;
+it needs a real-map basemap-swap observation before stacking is treated as proven. These are
+bounded code-level lifecycle regressions over stand-ins that never run MapLibre. **No whole QA
+case or checklist item is promoted; the 220-case matrix is unchanged.** See
+`evidence/runbook-session18-20260915.md` and `evidence/check-receipt-session18-20260915.json`.
+
 1. Choose one layer and freeze its source, day horizon, resolutions, current publication generation, and owning schedule.
 2. Read the physical Parquet objects, completion markers, and availability entry independently. Do not infer one from another.
 3. If coverage is missing, create bounded repair work against the original source. Preserve source identity, request bounds, and checksums.

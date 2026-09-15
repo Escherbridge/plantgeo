@@ -10,7 +10,7 @@
  * with its own ids is the smaller, safer diff, and it is what this file is.
  *
  * What IS shared: the structural pattern this file copies wholesale from
- * `BotanicalOccurrencesLayer.tsx` (useStyleReady, idempotent `addLayers` guarded by
+ * `BotanicalOccurrencesLayer.tsx` (parsed-style admission, idempotent `addLayers` guarded by
  * `getSource`/`getLayer`, a persistent `style.load` listener keyed on `[map]` alone so it never
  * falls out of the listener queue while below the detail floor -- see that file's own comment
  * and `src/components/map/AGENTS.md` "`isStyleLoaded()` is a signal to retry on, never a gate to
@@ -31,7 +31,6 @@ import { useEffect, useRef, useCallback } from "react";
 import type { Map as MapLibreMap, GeoJSONSource, MapMouseEvent } from "maplibre-gl";
 import { getFirstSymbolLayer, safeRemoveLayerAndSource } from "@/lib/map/layer-utils";
 import { BOTANICAL_DETAIL_MIN_ZOOM } from "@/lib/botanical-occurrences";
-import { useStyleReady } from "@/components/map/layers/use-style-ready";
 
 const SOURCE_ID = "gbif-occurrences";
 const LAYER_ID_EXACT = "gbif-occurrences-exact";
@@ -77,7 +76,6 @@ export function GbifOccurrencesLayer({
   propsRef.current = { geojson, visible, zoom };
   const onSelectFeatureRef = useRef(onSelectFeature);
   onSelectFeatureRef.current = onSelectFeature;
-  const styleReady = useStyleReady(map);
 
   const addLayers = useCallback((m: MapLibreMap) => {
     const { geojson } = propsRef.current;
@@ -157,7 +155,9 @@ export function GbifOccurrencesLayer({
 
   // See `BotanicalOccurrencesLayer`'s identical block for why this listener is keyed on `[map]`
   // alone and registered unconditionally rather than gated behind the zoom/visibility check --
-  // the check happens INSIDE the handler, not in the effect's dependencies.
+  // the check happens INSIDE the handler, not in the effect's dependencies. Its cleanup owns the
+  // teardown for the whole component, so it runs only on unmount or map replacement, never on a
+  // data/zoom tick.
   useEffect(() => {
     if (!map) return;
     const onStyleLoad = () => {
@@ -168,20 +168,30 @@ export function GbifOccurrencesLayer({
     map.on("style.load", onStyleLoad);
     return () => {
       map.off("style.load", onStyleLoad);
+      removeLayers(map);
     };
-  }, [map, addLayers]);
+  }, [map, addLayers, removeLayers]);
 
+  // Parsed style admits sources before unrelated tiles finish; see map/AGENTS.md. This effect has
+  // NO cleanup on purpose: it used to remove the layers on every data/zoom rerender and then
+  // re-add only if a global `isStyleLoaded()` read true, so a tick while readiness was pending
+  // left the layer removed-and-not-re-added. Now a rerender against a parsed style always ends
+  // installed and current (`addLayers` is idempotent and re-`setData`s an existing source), and a
+  // genuinely unparsed style simply waits for the persistent `style.load` listener above.
   useEffect(() => {
     if (!map) return;
     if (!visible || !geojson || zoom < BOTANICAL_DETAIL_MIN_ZOOM) {
       removeLayers(map);
-      return;
-    }
-
-    if (map.isStyleLoaded()) {
+    } else if (map.getStyle()) {
       addLayers(map);
     }
+  }, [map, geojson, visible, zoom, addLayers, removeLayers]);
 
+  // Delegated picking attaches ONCE per map, not once per draw cycle: layer-scoped handlers keyed
+  // on changing data/zoom would stack duplicates every tick. A handler bound to a layer that does
+  // not exist yet simply never fires, and the query re-filters on `getLayer` anyway.
+  useEffect(() => {
+    if (!map) return;
     const onClick = (event: MapMouseEvent) => {
       const features = map.queryRenderedFeatures(event.point, {
         layers: [LAYER_ID_EXACT, LAYER_ID_GENERALIZED].filter((id) => map.getLayer(id)),
@@ -197,9 +207,8 @@ export function GbifOccurrencesLayer({
     return () => {
       map.off("click", LAYER_ID_EXACT, onClick);
       map.off("click", LAYER_ID_GENERALIZED, onClick);
-      removeLayers(map);
     };
-  }, [map, geojson, visible, zoom, styleReady, addLayers, removeLayers]);
+  }, [map]);
 
   return null;
 }

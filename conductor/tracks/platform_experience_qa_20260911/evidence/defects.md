@@ -149,4 +149,48 @@ defect concerns the missed lifecycle path, not a claim that Fire never renders.
 The final local Candidate 2 passes 193 files / 2,550 tests and 12 tooling tests, with
 type/boundary/zero-error lint and unchanged Python receipt verification passing. Candidate 1's
 single outdated test expectation and its full failed sweep remain retained. D260915-31
+
+## Session 17 terminal outcome — deployment and live regression
+
+`ec172e881e4aa640231ae073a1d04408fd05ad5a` deployed: frontend `69fbe03b-3c2e-452d-aa9d-0eaa6d28b9d6`
+SUCCESS at 2026-09-15T02:24:14.199Z, Martin `de34dea0-dccb-4916-b251-4e1e8c01e8ec` SUCCESS at
+02:19:25.401Z. Data-API and job-executor deployments are SKIPPED for unchanged scope and retain their
+successful `d167e7f0` revision. Production build recorded 193 files / 2,550 tests plus 12 tooling
+tests, successful compilation, up-to-date migrations and readiness.
+
+The approved eight-case live regression at `live-regression/attempt-20260915-0224` produced
+**4 passes, 4 failures, 0 skips, 0 retries in 127.490632 seconds**; report SHA-256
+`e4f3f16959f575e25b7068c7026dcf8e769d3d7b14dc71f470bdc404bc0b3a25`; root terminal exited 1.
+All four Fire desktop/mobile aggregate/detail journeys passed. All four Water journeys passed
+their native first-enable source/layer installation and populated rendering assertions — the
+Session 17 correction's own subject matter was exercised and held — then failed at
+`regression.browser.ts` line 63, which asserted September 6 was a missing day. September 6 was
+in fact ready, with matching selected/served/observed day and positive data: 122 aggregate rows /
+1 detail row desktop, 62 aggregate rows / 1 detail row mobile. The missing-day and Latest-restoration
+portions of those journeys were never reached and remain unexercised, not failed-on-the-merits.
+
+**D260915-32** | Harness / live-regression anchor selection | The approved eight-case harness
+selected September 6 as a Water missing-day candidate; the currently retained Water capabilities
+advertise September 6 as the *only* coverage gap, with no governed absences, `coverageGapsTruncated=false`,
+and zero additional eligible gap dates in this capture — but the requested rung was in fact ready
+and populated at that date, so the harness's coverage-gap read did not match served reality. This is
+a harness anchor defect, not a product defect: the retained Water correction's first-enable and
+rendering assertions held. A discovery limitation (no eligible current gap candidate in this
+capture) is not missing-day acceptance; the harness must never manufacture a missing date, use an
+arbitrary future day, or prompt alteration of governed publication to satisfy this test. |
+`/root` owns live execution and this record; a separately reviewed capability-discovery pass for
+new gap candidates is needed before the missing-day/Latest-restoration Water journeys can be
+re-exercised. Not closed.
+
+**D260915-31 status update**: deployed and bounded-live-exercised, **not closed**. The bounded
+correction's first-enable/rendering subject matter passed for both Fire and Water on `ec172e88`.
+The missing-day clearing and Latest-restoration behavior remain unexercised for Water (blocked by
+D260915-32, not by the correction itself). Root viewed four images total — Fire desktop aggregate
+first-enable, Fire mobile aggregate missing-day, Water mobile detail first-enable, Water desktop
+aggregate first-enable — and a complete independent result/image review across all eight cases is
+still pending. Groundwater remains explicitly unpublished and returns an empty array; source
+installation does not establish populated-well or groundwater acceptance, and stays separate from
+this Water-gauge result. Fire perimeters and burn severity remain separate toggles/readers and
+distinct full-runbook obligations. No whole QA case or runbook checklist item is promoted; the
+formal matrix remains at its existing 0/220 whole-case state.
 stays open until the new revision is deployed and its bounded live renderer checks pass.

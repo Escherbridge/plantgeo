@@ -564,3 +564,33 @@ passes do not promote whole cases. `/root/workspace_social_audit` authors the fr
 moderation regression and the isolated visual follow-up; `/root/qa_inventory` independently
 approved the corrected Session 12 discovery/isolation harness. Both browser continuations wait
 for the source gates, and use the existing owned local services and bounded public bridge only.
+
+## Session 17 closeout — deployment and live regression terminal result
+
+`ec172e881e4aa640231ae073a1d04408fd05ad5a` (Fire/Water parsed-style admission) is deployed, not
+pending. `deployment-success.json` binds frontend `69fbe03b-3c2e-452d-aa9d-0eaa6d28b9d6` SUCCESS
+2026-09-15T02:24:14.199Z and Martin `de34dea0-dccb-4916-b251-4e1e8c01e8ec` SUCCESS 02:19:25.401Z;
+data-API and job-executor deployments are SKIPPED for unchanged scope and retain their successful
+`d167e7f0` revisions. Production build recorded 193 files / 2,550 tests plus 12 tooling tests,
+successful compilation, up-to-date migrations and readiness.
+
+Root's approved eight-case live regression (`live-regression/attempt-20260915-0224`) is the terminal
+live execution for this session: **4 passes, 4 failures, 0 skips, 0 retries in 127.490632 seconds**;
+report SHA-256 `e4f3f16959f575e25b7068c7026dcf8e769d3d7b14dc71f470bdc404bc0b3a25`; root terminal exited
+1. All four Fire desktop/mobile aggregate/detail journeys passed. All four Water journeys passed
+their native first-enable source/layer installation and populated rendering assertions, then failed
+at `regression.browser.ts` line 63 because the harness's September 6 missing-day anchor was actually
+a ready, populated day (122 aggregate rows / 1 detail row desktop; 62 aggregate rows / 1 detail row
+mobile). This is logged as **D260915-32**, a harness anchor defect, not a product defect; see
+[defects.md](defects.md). The missing-day and Latest-restoration portions of the Water journeys were
+never reached and remain unexercised.
+
+**D260915-31 is updated, not closed**: it now carries a deployed release and a bounded live result
+in which both Fire and Water first-enable/rendering assertions held under actual production data.
+Root viewed four of the eight cases' images (Fire desktop aggregate first-enable, Fire mobile
+aggregate missing-day, Water mobile detail first-enable, Water desktop aggregate first-enable); a
+complete independent result/image review across all eight cases remains pending. No whole QA case or
+runbook checklist item is promoted by this session; the formal case ledger remains at its existing
+220-case, zero-whole-case-pass state. Groundwater stays explicitly unpublished and separate from this
+Water-gauge result; Fire perimeters/burn severity remain distinct full-runbook obligations. Candidate
+1's failed check receipt remains retained failed evidence, not relabelled.

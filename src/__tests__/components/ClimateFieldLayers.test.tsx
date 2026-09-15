@@ -407,48 +407,99 @@ describe("each climate row draws the form the server actually served", () => {
    * nothing, silently, with no MapLibre error to find.
    */
   describe("the form decides the MapLibre layer built over the served geometry", () => {
-    /** Records what a real `ClimateFieldLayer` asks MapLibre to build. */
-    function createRecordingMap() {
+    /**
+     * Records what a real `ClimateFieldLayer` asks MapLibre to build, and keeps the two style
+     * milestones APART: `getStyle()` truthy means the style is PARSED and addSource/addLayer are
+     * permitted; `isStyleLoaded()` additionally means every source's tiles have landed, which is
+     * a later and unrelated event that only `sourcedata` reaches. A fixture that is globally
+     * ready cannot distinguish them and so cannot catch a late mount installing nothing.
+     */
+    function createRecordingMap(parsed = true) {
+      let styleParsed = parsed;
+      let sourcesLoaded = false;
       const layers = new Map<string, { id: string; type: string }>();
-      const sources = new Map<string, { setData: () => void }>();
+      const sources = new Map<string, { setData: ReturnType<typeof vi.fn> }>();
+      const listeners = new Map<string, Set<() => void>>();
       const added: { id: string; type: string }[] = [];
+      const removed: string[] = [];
+      const requireParsed = () => {
+        if (!styleParsed) throw new Error("Style is not done loading.");
+      };
+      const emit = (event: string) => {
+        for (const listener of [...(listeners.get(event) ?? [])]) listener();
+      };
       const recorder = {
-        isStyleLoaded: () => true,
-        getStyle: () => ({ layers: [] }),
-        on: () => {},
-        off: () => {},
+        isStyleLoaded: () => styleParsed && sourcesLoaded,
+        getStyle: () => (styleParsed ? { layers: [...layers.values()] } : undefined),
+        on: vi.fn((event: string, callback: () => void) => {
+          if (!listeners.has(event)) listeners.set(event, new Set());
+          listeners.get(event)?.add(callback);
+        }),
+        off: vi.fn((event: string, callback: () => void) => {
+          listeners.get(event)?.delete(callback);
+        }),
         getSource: (id: string) => sources.get(id),
-        addSource: (id: string) => {
-          sources.set(id, { setData: () => {} });
-        },
+        addSource: vi.fn((id: string) => {
+          requireParsed();
+          if (sources.has(id)) throw new Error(`Duplicate source ${id}`);
+          sources.set(id, { setData: vi.fn() });
+        }),
         getLayer: (id: string) => layers.get(id),
-        addLayer: (layer: { id: string; type: string }) => {
+        addLayer: vi.fn((layer: { id: string; type: string }) => {
+          requireParsed();
+          if (layers.has(layer.id)) throw new Error(`Duplicate layer ${layer.id}`);
           layers.set(layer.id, layer);
           added.push(layer);
-        },
+        }),
         removeLayer: (id: string) => {
           layers.delete(id);
+          removed.push(id);
         },
         removeSource: (id: string) => {
           sources.delete(id);
         },
-        setPaintProperty: () => {},
+        setPaintProperty: vi.fn(),
       };
       // The narrow stand-in cast every fake-map case in this suite makes: these are the only
       // members the layer's effects touch, and widening the fake to the full Map is noise.
-      return { map: recorder as unknown as MapLibreMap, added };
+      return {
+        map: recorder as unknown as MapLibreMap,
+        added,
+        removed,
+        layers,
+        sources,
+        listeners,
+        recorder,
+        emit,
+        /** The style finishes PARSING. Tiles are still in flight. */
+        parseStyle: () => { styleParsed = true; sourcesLoaded = false; emit("style.load"); },
+        /** Tiles land. `sourcedata` only -- never a stand-in style event. */
+        completeSources: () => { sourcesLoaded = true; emit("sourcedata"); },
+        swapStyle: () => {
+          layers.clear();
+          sources.clear();
+          styleParsed = true;
+          sourcesLoaded = false;
+          emit("style.load");
+        },
+      };
+    }
+
+    async function realLayerComponent() {
+      const { ClimateFieldLayer } = await vi.importActual<
+        typeof import("@/components/map/layers/ClimateFieldLayer")
+      >("@/components/map/layers/ClimateFieldLayer");
+      return ClimateFieldLayer;
     }
 
     async function renderRealLayer(
       renderForm: ClimateRenderForm,
       zoomTier: ZoomTier | null = 13
     ) {
-      const { ClimateFieldLayer } = await vi.importActual<
-        typeof import("@/components/map/layers/ClimateFieldLayer")
-      >("@/components/map/layers/ClimateFieldLayer");
+      const RealClimateFieldLayer = await realLayerComponent();
       const { map, added } = createRecordingMap();
       render(
-        <ClimateFieldLayer
+        <RealClimateFieldLayer
           map={map}
           signal="air-temperature"
           renderForm={renderForm}
@@ -501,6 +552,157 @@ describe("each climate row draws the form the server actually served", () => {
      */
     it("fills a dissolved band and draws its boundary over the fill", async () => {
       expect(await renderRealLayer("isoline", 9)).toEqual(["fill", "line"]);
+    });
+
+    /**
+     * A PARSED style admits this layer; a LOADED one is a later milestone it must not wait for.
+     * The defect: mounting after `style.load` had already fired left `isStyleLoaded()` false
+     * until unrelated tiles landed, the gate never opened, and the only event that followed was
+     * `sourcedata` -- whose handler writes to a source that was never created. The field never
+     * drew, with no MapLibre error to find.
+     */
+    describe("the parsed style admits the field, tile readiness does not gate it", () => {
+      const SOURCE_ID = "climate-field-air-temperature";
+      const SERVED: GeoJSON.FeatureCollection = {
+        type: "FeatureCollection",
+        features: [{
+          type: "Feature",
+          geometry: { type: "Polygon", coordinates: [[[-120, 44], [-119, 44], [-119, 45], [-120, 45], [-120, 44]]] },
+          properties: { value: 12.5, aggregated: false, observedDay: "2026-08-01" },
+        }],
+      };
+      const EMPTY: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
+
+      it("installs on a delayed mount while sources are still loading", async () => {
+        const RealClimateFieldLayer = await realLayerComponent();
+        const fixture = createRecordingMap();
+        // `style.load` fired before this component existed. Nothing will fire it again.
+        fixture.emit("style.load");
+        expect(fixture.map.isStyleLoaded()).toBe(false);
+        const mounted = render(
+          <RealClimateFieldLayer map={fixture.map} signal="air-temperature" renderForm="field" zoomTier={13} geojson={SERVED} />
+        );
+        expect(fixture.sources.has(SOURCE_ID)).toBe(true);
+        expect(fixture.added.map((layer) => layer.type)).toEqual(["fill", "line", "symbol"]);
+        const built = fixture.added.length;
+        act(() => fixture.completeSources());
+        expect(fixture.map.isStyleLoaded()).toBe(true);
+        expect(fixture.added).toHaveLength(built);
+        mounted.unmount();
+        expect(fixture.sources.size).toBe(0);
+        expect(fixture.layers.size).toBe(0);
+        expect([...fixture.listeners.values()].every((set) => set.size === 0)).toBe(true);
+      });
+
+      it("waits for a genuinely unparsed style and installs the latest pending form", async () => {
+        const RealClimateFieldLayer = await realLayerComponent();
+        const fixture = createRecordingMap(false);
+        const mounted = render(
+          <RealClimateFieldLayer map={fixture.map} signal="air-temperature" renderForm="field" zoomTier={13} geojson={EMPTY} />
+        );
+        mounted.rerender(
+          <RealClimateFieldLayer map={fixture.map} signal="air-temperature" renderForm="symbol" zoomTier={13} geojson={SERVED} />
+        );
+        act(() => fixture.completeSources());
+        // An unparsed style REJECTS addSource/addLayer, so neither may have been attempted.
+        expect(fixture.recorder.addSource).not.toHaveBeenCalled();
+        expect(fixture.recorder.addLayer).not.toHaveBeenCalled();
+        act(() => fixture.parseStyle());
+        expect(fixture.map.isStyleLoaded()).toBe(false);
+        expect(fixture.added.map((layer) => layer.type)).toEqual(["circle", "symbol"]);
+        mounted.unmount();
+      });
+
+      it("rebuilds on a form change and on a rung change without re-registering its listener", async () => {
+        const RealClimateFieldLayer = await realLayerComponent();
+        const fixture = createRecordingMap();
+        fixture.emit("style.load");
+        const mounted = render(
+          <RealClimateFieldLayer map={fixture.map} signal="air-temperature" renderForm="field" zoomTier={13} geojson={SERVED} />
+        );
+        const own = [...(fixture.listeners.get("style.load") ?? [])][0];
+        expect([...fixture.layers.keys()].sort()).toEqual([
+          `${SOURCE_ID}-fill`, `${SOURCE_ID}-outline`, `${SOURCE_ID}-value-labels`,
+        ]);
+        // Rung change: the detail outline must go, because a stroke per cell reads as seams.
+        mounted.rerender(
+          <RealClimateFieldLayer map={fixture.map} signal="air-temperature" renderForm="field" zoomTier={5} geojson={SERVED} />
+        );
+        expect([...fixture.layers.keys()].sort()).toEqual([
+          `${SOURCE_ID}-fill`, `${SOURCE_ID}-value-labels`,
+        ]);
+        expect(fixture.removed).toContain(`${SOURCE_ID}-outline`);
+        // Form change: a fill over Points draws nothing, so the type itself is rebuilt.
+        mounted.rerender(
+          <RealClimateFieldLayer map={fixture.map} signal="air-temperature" renderForm="symbol" zoomTier={5} geojson={SERVED} />
+        );
+        expect([...fixture.layers.keys()].sort()).toEqual([
+          `${SOURCE_ID}-point`, `${SOURCE_ID}-value-labels`,
+        ]);
+        expect(fixture.removed).toContain(`${SOURCE_ID}-fill`);
+        // Rebuilding the BUILD must never re-register the style listener: its position in the
+        // `style.load` order decides this layer's stacking after a basemap swap.
+        expect(fixture.recorder.on.mock.calls.filter(([event]) => event === "style.load")).toHaveLength(1);
+        expect(fixture.recorder.off.mock.calls.filter(([event]) => event === "style.load")).toHaveLength(0);
+        expect([...(fixture.listeners.get("style.load") ?? [])]).toEqual([own]);
+        act(() => fixture.swapStyle());
+        expect([...fixture.layers.keys()].sort()).toEqual([
+          `${SOURCE_ID}-point`, `${SOURCE_ID}-value-labels`,
+        ]);
+        mounted.unmount();
+      });
+
+      it("clears an empty collection while enabled and stays torn down while hidden", async () => {
+        const RealClimateFieldLayer = await realLayerComponent();
+        const fixture = createRecordingMap();
+        const mounted = render(
+          <RealClimateFieldLayer map={fixture.map} signal="air-temperature" renderForm="field" zoomTier={13} geojson={SERVED} />
+        );
+        const source = fixture.sources.get(SOURCE_ID)!;
+        mounted.rerender(
+          <RealClimateFieldLayer map={fixture.map} signal="air-temperature" renderForm="field" zoomTier={13} geojson={EMPTY} />
+        );
+        // Data moves through setData: the source is the same object, never a rebuild.
+        expect(fixture.sources.get(SOURCE_ID)).toBe(source);
+        expect(source.setData).toHaveBeenLastCalledWith(EMPTY);
+        expect(fixture.recorder.addSource).toHaveBeenCalledTimes(1);
+        mounted.rerender(
+          <RealClimateFieldLayer map={fixture.map} signal="air-temperature" renderForm="field" zoomTier={13} geojson={SERVED} visible={false} />
+        );
+        expect(fixture.layers.size).toBe(0);
+        expect(fixture.sources.size).toBe(0);
+        act(() => fixture.swapStyle());
+        expect(fixture.sources.size).toBe(0);
+        mounted.rerender(
+          <RealClimateFieldLayer map={fixture.map} signal="air-temperature" renderForm="field" zoomTier={13} geojson={SERVED} />
+        );
+        expect(fixture.sources.has(SOURCE_ID)).toBe(true);
+        mounted.unmount();
+      });
+
+      it("detaches the previous map and installs on the replacement", async () => {
+        const RealClimateFieldLayer = await realLayerComponent();
+        const first = createRecordingMap();
+        const second = createRecordingMap(false);
+        const mounted = render(
+          <RealClimateFieldLayer map={first.map} signal="air-temperature" renderForm="field" zoomTier={13} geojson={SERVED} />
+        );
+        expect(first.sources.has(SOURCE_ID)).toBe(true);
+        mounted.rerender(
+          <RealClimateFieldLayer map={second.map} signal="air-temperature" renderForm="field" zoomTier={13} geojson={SERVED} />
+        );
+        expect(first.sources.size).toBe(0);
+        expect(first.layers.size).toBe(0);
+        expect([...first.listeners.values()].every((set) => set.size === 0)).toBe(true);
+        act(() => first.emit("style.load"));
+        expect(first.sources.size).toBe(0);
+        expect(second.sources.size).toBe(0);
+        act(() => second.parseStyle());
+        expect(second.sources.has(SOURCE_ID)).toBe(true);
+        mounted.unmount();
+        expect(second.sources.size).toBe(0);
+        expect(second.layers.size).toBe(0);
+      });
     });
   });
 });

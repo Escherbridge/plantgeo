@@ -9,7 +9,6 @@ import {
   SOIL_FIELD_ATTRIBUTION,
   type SoilFieldMeasure,
 } from "@/lib/environmental/soil-field";
-import { useStyleReady } from "@/components/map/layers/use-style-ready";
 import { scaleOpacityValue } from "@/lib/map/layer-opacity";
 import type { ExpressionSpecification } from "@/types/map";
 import { measuredValueLabelLayer } from "@/lib/map/measured-value-label";
@@ -126,9 +125,8 @@ export function SoilFieldLayer({
     [opacityScale]
   );
   // Latest props behind a ref so the style.load handler re-attaches with current values.
-  const propsRef = useRef({ geojson, fillOpacity, outlineOpacity, labelOpacity });
-  propsRef.current = { geojson, fillOpacity, outlineOpacity, labelOpacity };
-  const styleReady = useStyleReady(map);
+  const propsRef = useRef({ geojson, fillOpacity, outlineOpacity, labelOpacity, visible });
+  propsRef.current = { geojson, fillOpacity, outlineOpacity, labelOpacity, visible };
 
   const addLayers = useCallback(
     (mapInstance: MapLibreMap) => {
@@ -194,33 +192,38 @@ export function SoilFieldLayer({
   );
 
   // Persistent listener, never `once` alongside `on` -- see src/components/map/AGENTS.md
-  // "Style.load listener order". This is what survives a basemap swap.
+  // "Style.load listener order". This is what survives a basemap swap. Registration order is
+  // load-bearing for stacking, so `visible` and the served collection are deliberately NOT
+  // dependencies: the handler reads current visibility off propsRef instead of being torn down
+  // and re-registered behind every other layer each time the reader toggles this one.
   useEffect(() => {
     if (!map) return;
-    if (!visible) {
-      removeLayers(map);
-      return;
-    }
-    const onStyleLoad = () => addLayers(map);
-    if (map.isStyleLoaded()) addLayers(map);
+
+    const onStyleLoad = () => {
+      if (propsRef.current.visible) addLayers(map);
+    };
     map.on("style.load", onStyleLoad);
+
     return () => {
       map.off("style.load", onStyleLoad);
       removeLayers(map);
     };
-  }, [map, visible, addLayers, removeLayers]);
+  }, [map, addLayers, removeLayers]);
 
-  // The mount-time race the persistent listener above cannot catch: if the current style had
-  // already finished loading when this component mounted, no further `style.load` arrives and
-  // nothing retries. `styleReady` is a trigger, not a gate -- it can be a tick stale mid-render,
-  // so the live `isStyleLoaded()` below is what decides. See AGENTS.md "Custom-added layers
-  // need a retriggerable readiness signal". `addLayers` is idempotent, so the overlap with the
-  // effect above is a no-op rather than a throw.
+  // A PARSED style admits addSource/addLayer -- it does not have to be a LOADED one. The old
+  // gate here was `isStyleLoaded()`, which stays false until every unrelated source's tiles
+  // land, so a late mount (after `style.load` had already fired) installed nothing and then
+  // only ever saw `sourcedata`, whose handler updates sources that already exist. `getStyle()`
+  // truthy is the real precondition; a genuinely unparsed style falls through to `style.load`
+  // above, and `addLayers` is idempotent so the two paths cannot collide.
   useEffect(() => {
-    if (!map || !visible) return;
-    if (!map.isStyleLoaded()) return;
-    addLayers(map);
-  }, [map, visible, styleReady, addLayers]);
+    if (!map) return;
+    if (!visible) {
+      removeLayers(map);
+    } else if (map.getStyle()) {
+      addLayers(map);
+    }
+  }, [map, visible, addLayers, removeLayers]);
 
   useEffect(() => {
     if (!map || !visible) return;

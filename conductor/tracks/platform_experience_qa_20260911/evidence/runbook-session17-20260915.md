@@ -149,3 +149,42 @@ populated first-enable rendering, honest empty-day clearing and Latest restorati
 and retain groundwater's unpublished status. This candidate is locally checked; commit,
 deployment, final live execution and visual acceptance remain pending at this snapshot.
 No formal QA case or runbook checklist item is promoted.
+
+## Terminal outcome — deployment and live regression
+
+Commit, deployment and live execution are no longer pending. `ec172e881e4aa640231ae073a1d04408fd05ad5a`
+deployed: frontend `69fbe03b-3c2e-452d-aa9d-0eaa6d28b9d6` SUCCESS 2026-09-15T02:24:14.199Z, Martin
+`de34dea0-dccb-4916-b251-4e1e8c01e8ec` SUCCESS 02:19:25.401Z (`deployment-success.json`). Data-API
+and job-executor deployments are SKIPPED for unchanged scope and retain their successful `d167e7f0`
+revisions. Production build recorded 193 files / 2,550 tests plus 12 tooling tests, successful
+compilation, up-to-date migrations and readiness.
+
+The independently approved eight-case harness executed at `live-regression/attempt-20260915-0224`
+(reviewed in [independent-review.md](../../../../.omc/research/runbook-20260915-session17/live-regression/independent-review.md),
+approval SHA-256 `4686760b8eaf50fb58db2ab7a9bb875618b3a4ce0ab9bfe7978a85999d176996`) produced **4
+passes, 4 failures, 0 skips, 0 retries in 127.490632 seconds**; report SHA-256
+`e4f3f16959f575e25b7068c7026dcf8e769d3d7b14dc71f470bdc404bc0b3a25`; root terminal exited 1.
+
+All four Fire desktop/mobile aggregate/detail journeys passed. All four Water journeys passed their
+native first-enable source/layer installation and populated rendering assertions — exercising and
+holding the Session 17 correction's own subject matter — then failed at `regression.browser.ts`
+line 63, which asserted September 6 was a missing day. September 6 was in fact ready, with matching
+selected/served/observed day and positive data: 122 aggregate rows / 1 detail row desktop, 62
+aggregate rows / 1 detail row mobile. The missing-day and Latest-restoration portions of those
+journeys were never reached and remain unexercised, not failed-on-the-merits. This is logged as
+**D260915-32**, a live-regression harness anchor defect: the retained Water capabilities advertise
+only September 6 as a coverage gap, with no governed absences, `coverageGapsTruncated=false`, and
+zero additional eligible gap dates in this capture (`live-regression/anchors.json`). A discovery
+limitation is not missing-day acceptance; the harness must never manufacture a missing date, use an
+arbitrary future day, or alter governed publication to satisfy this test. See
+[defects.md](defects.md) and [task-ledger.md](task-ledger.md).
+
+**D260915-31 is updated to reflect deployment plus this bounded live result; it is not closed.**
+The missing-day clearing and Latest-restoration behavior remain unexercised for Water, and root
+viewed only four of the eight cases' images (Fire desktop aggregate first-enable, Fire mobile
+aggregate missing-day, Water mobile detail first-enable, Water desktop aggregate first-enable) —
+a complete independent result/image review is still pending. Groundwater remains explicitly
+unpublished and its reader returns an empty array; this Water-gauge result does not establish
+populated-well or groundwater acceptance. Fire perimeters and burn severity remain separate
+toggles/readers and distinct full-runbook obligations. No whole QA case or runbook checklist item
+is promoted; the formal 220-case matrix is unchanged by this session.

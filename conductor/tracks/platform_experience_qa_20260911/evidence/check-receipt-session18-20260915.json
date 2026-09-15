@@ -1,0 +1,116 @@
+{
+  "type": "check_receipt",
+  "session": 18,
+  "candidate": 1,
+  "date": "2026-09-15",
+  "recorded_at": "2026-09-15T16:17:18.256649+00:00",
+  "author": "coordinator/integrator",
+  "gate_executor": "coordinator/integrator",
+  "canonical_packet_review": "independent source reviewer, separate context, APPROVE with four non-blocking findings carried forward",
+  "base_commit": "ec172e881e4aa640231ae073a1d04408fd05ad5a",
+  "engineering_status": "locally_verified_batch_approved_not_deployed",
+  "deployment_status": "pending_at_receipt",
+  "post_fix_live_status": "not_executed",
+  "overall_runbook_status": "RED_full_platform_qa_open",
+  "whole_case_promotions": [],
+  "formal_case_matrix": {
+    "accepted": 0,
+    "total": 220,
+    "changed_by_this_session": false
+  },
+  "changed_sources": {
+    "src/components/map/layers/SoilFieldLayer.tsx": {
+      "bytes": 9589,
+      "sha256": "b4d78495e3efd9c0386f0c25ba432fc6ab6244b54c898ecf0d7b60a11bb50c7a"
+    },
+    "src/components/map/layers/ClimateFieldLayer.tsx": {
+      "bytes": 18433,
+      "sha256": "fd90d74271c9b82d8af6ebfe69e36c508ca6b6208e80ebf717ba4f67b605a763"
+    },
+    "src/components/map/layers/VegetationLayer.tsx": {
+      "bytes": 22188,
+      "sha256": "3bee79c96630cfcfe46b98d5b9e3b9bfdd48f60470ba911f33d411e7a396ea80"
+    },
+    "src/components/map/layers/GbifOccurrencesLayer.tsx": {
+      "bytes": 8987,
+      "sha256": "0b1bdfcc7cf63fe70fca56f9e3f95f4be81774c15637fbced388b334ae389b74"
+    },
+    "src/components/map/layers/BotanicalOccurrencesLayer.tsx": {
+      "bytes": 11776,
+      "sha256": "6c2a24c59bb941ce9ffced67cc2cc49aba434e78c99d426f761aba4310b9c42f"
+    },
+    "src/__tests__/components/ScalarFieldLabels.test.tsx": {
+      "bytes": 12520,
+      "sha256": "563f1d90c95065d40383d29930ca1d8e3e32f70f5c00a0c847c2017c0af0d99f"
+    },
+    "src/__tests__/components/ClimateFieldLayers.test.tsx": {
+      "bytes": 37711,
+      "sha256": "723493ade32a36d2fd5ee1353000e513dceb022748b8b0053cbab263b2de3290"
+    },
+    "src/__tests__/components/VegetationLayer.test.tsx": {
+      "bytes": 17487,
+      "sha256": "aa64d72260848c869aea9d2cc030ae702b80d3658dbfe5ebcfecc4a70275f492"
+    },
+    "src/__tests__/components/botanical-occurrence-experience.test.tsx": {
+      "bytes": 24328,
+      "sha256": "145bfee766834737c69c13443c3f4e8de162abae2af171d5b897052bc8bb259d"
+    },
+    "src/components/map/AGENTS.md": {
+      "bytes": 134550,
+      "sha256": "d475d69804788dbba0e00c9c1a7da82d4dc07f46d38f4498b487fcd05467ed98"
+    }
+  },
+  "checks": [
+    {
+      "name": "data_boundary",
+      "command": "npm run check:data-boundary",
+      "exit_code": 0,
+      "status": "passed",
+      "detail": "12 documented URL rules; client/server restricted-import; observation-fabrication over 7 display roots"
+    },
+    {
+      "name": "type_check",
+      "command": "npm run type-check",
+      "exit_code": 0,
+      "status": "passed",
+      "detail": "tsc --noEmit clean"
+    },
+    {
+      "name": "lint",
+      "command": "npx eslint . --ignore-pattern \".omc/**\" --ignore-pattern \".agentgraph/**\"",
+      "exit_code": 0,
+      "status": "passed",
+      "errors": 0,
+      "warnings": 9887,
+      "detail": "baseline unchanged; bare npm run lint aborts EPERM on a stale unreadable .omc/pytest-regional-* directory, a pre-existing local environment artifact"
+    },
+    {
+      "name": "frontend_suite",
+      "command": "npm test",
+      "exit_code": 0,
+      "status": "passed",
+      "files_passed": 193,
+      "files_failed": 0,
+      "tests_passed": 2592,
+      "tests_failed": 0,
+      "tests_total": 2592,
+      "duration_seconds": 173.81,
+      "tooling_tests_passed": 12,
+      "log_sha256": "b6bdbfb50f00c43ffb1d8906d76971a6a9fb370dafeea54cddbffb609ede23f0",
+      "detail": "prior recorded total 2550; increase is this batch added regressions"
+    }
+  ],
+  "python": {
+    "suite_rerun": false,
+    "receipt_rerun": false,
+    "python_source_changed": false,
+    "note": "existing unchanged 885-input quality receipt remains the Python gate"
+  },
+  "carried_findings": [
+    "SoilFieldLayer add/removeLayers memoised on [ids, fillColor, measure] rather than empty deps; once-per-map listener holds only because measure is a literal at all three call sites",
+    "AGENTS.md states once-per-map registration as a guarantee for all five; incidental for SoilFieldLayer and the exception should be named",
+    "admission effect calls getStyle() bare while the data effect guards the same call in try/catch in SoilFieldLayer and ClimateFieldLayer",
+    "VegetationLayer.test.tsx early-returns its composite-raster assertions when the period is unpublished, shrinking the exclusivity contract on a green tick"
+  ],
+  "acceptance_boundary": "Bounded code-level lifecycle regressions over hand-written stand-ins; no fixture runs MapLibre. Listener registration order is not verifiable by these tests and needs a real-map basemap-swap observation. Browser rendering, scientific values, legends, conservation, accessibility, time-history, agent parity, source admission and production validation remain separate obligations."
+}
