@@ -168,3 +168,16 @@ runbook checklist item is promoted by this evidence; the 220-case matrix is unch
 
 The lane confirmed no Playwright browsers, servers or ports were left running, no local
 application server was ever started, and no tracked file was modified.
+
+## Deployment
+
+Session 19's source landed in `f26beda8` and the live-evidence record in `03a90adc`, a direct
+descendant. Railway superseded `f26beda8`'s in-flight builds when the newer commit arrived, which
+is its normal behavior for a queued revision; the deployed artifact therefore contains Session
+19's source by descent rather than through its own successful build. **`03a90adc` is the revision
+to cite**: both of its services reported SUCCESS (`cc4d124b`, `e901b45f`) and
+`https://plantgeo.aevani.com/api/ready` returned 200 afterward. The data API and job executor
+retain `d167e7f0`, correct because no Python source changed in either commit.
+
+Note for future sessions: a superseded build is not a failed build, but it is also not evidence
+that the superseded commit itself ever built. Cite the revision that actually reported SUCCESS.
