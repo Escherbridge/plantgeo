@@ -41,6 +41,26 @@ const EMPTY_COLLECTION: GeoJSON.FeatureCollection = {
   features: [],
 };
 
+/**
+ * Is there a PARSED style to add to?
+ *
+ * MapLibre v5's `Map.getStyle()` returns `undefined` before the Style object exists and
+ * `Style.serialize()` itself returns `undefined` while `_loaded` is false -- neither throws, so a
+ * bare call would in fact be safe (maplibre-gl/dist/maplibre-gl-dev.js, `getStyle()` and
+ * `Style.serialize()`). It is wrapped anyway, in ONE place used by every gate in this file, because
+ * serialize() walks live source/terrain objects and a map torn down under a pending effect is the
+ * one case where that walk is not ours to reason about. Same helper on both gates: this file used
+ * to guard the data effect and not the admission effect, which read as a disagreement about
+ * whether getStyle() can throw.
+ */
+function hasParsedStyle(mapInstance: MapLibreMap): boolean {
+  try {
+    return Boolean(mapInstance.getStyle());
+  } catch {
+    return false;
+  }
+}
+
 /** Every id one signal's instance owns. Derived, so two instances can never collide. */
 function layerIdsFor(signal: ClimateFieldSignalId) {
   const sourceId = `climate-field-${signal}`;
@@ -399,7 +419,7 @@ export function ClimateFieldLayer({
       removeLayers(map);
       return;
     }
-    if (map.getStyle()) addLayers(map);
+    if (hasParsedStyle(map)) addLayers(map);
     return () => {
       removeLayers(map);
     };
@@ -407,11 +427,7 @@ export function ClimateFieldLayer({
 
   useEffect(() => {
     if (!map || !visible) return;
-    try {
-      if (!map.getStyle()) return;
-    } catch {
-      return;
-    }
+    if (!hasParsedStyle(map)) return;
     // setData rather than a re-add, so panning or a new day swaps this signal's features
     // without tearing the source down under the map. A missing source here is the legitimate
     // first-pass case: the style had not loaded, and addLayers creates it from propsRef with

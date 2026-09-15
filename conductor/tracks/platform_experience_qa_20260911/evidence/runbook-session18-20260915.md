@@ -139,3 +139,21 @@ parity, source admission and production validation all remain separate obligatio
 **No whole QA case and no runbook checklist item is promoted by this session.** The formal
 220-case matrix is unchanged. Deployment and live validation are recorded separately below once
 observed; local verification alone certifies no release.
+
+## Deployment
+
+`a112a754731d` pushed to `main` and deployed 2026-09-15. Two services report SUCCESS bound to
+that exact commit hash: `b1fe9f0b-7066-4df0-8be0-8f4380101c28` and
+`f5e5beeb-2eff-4e72-a4d1-d37ef1a3cf15`. The data API (`690c027b`) and job executor (`62fdcac0`)
+retain their successful `d167e7f0` revision, which is correct for this batch: no Python source
+changed, so their scope was unchanged. The linked service left the building state after roughly
+eight minutes and `https://plantgeo.aevani.com/api/ready` returned 200 on the deployed revision.
+
+Committed source identity was verified before the push: all ten changed source paths hash
+identically to the bytes the independent reviewer approved and the integrated sweep executed.
+The `eslint --fix` pre-commit task re-staged nothing, so no unreviewed byte entered the commit.
+
+A 200 readiness probe and a successful build are not visual or behavioral acceptance. The five
+corrected renderers have had no live first-enable observation on this revision, and listener
+registration order remains unverified by any executed evidence. Live validation is owed and is
+tracked as the next bounded action.

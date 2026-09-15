@@ -236,7 +236,7 @@ unexercised for Water; full independent image review across all eight cases is p
 No whole QA case or checklist item is promoted; the 220-case matrix is unchanged. See
 `evidence/runbook-session17-20260915.md`, `evidence/defects.md`, `evidence/task-ledger.md`.
 
-### Session 18 (scalar, vegetation and occurrence parsed-style admission) — locally verified and approved
+### Session 18 (scalar, vegetation and occurrence parsed-style admission) — deployed
 
 Completes the renderer-admission defect class Session 17 opened. SoilField, ClimateField,
 Vegetation, Gbif and Botanical renderers no longer gate source creation on the global
@@ -266,12 +266,54 @@ bounded code-level lifecycle regressions over stand-ins that never run MapLibre.
 case or checklist item is promoted; the 220-case matrix is unchanged.** See
 `evidence/runbook-session18-20260915.md` and `evidence/check-receipt-session18-20260915.json`.
 
+`a112a754731d` deployed 2026-09-15 with two services reporting SUCCESS bound to that exact
+commit (`b1fe9f0b`, `f5e5beeb`); the data API and job executor correctly retain `d167e7f0`
+because no Python source changed. `https://plantgeo.aevani.com/api/ready` returned 200 on the
+deployed revision. All ten changed paths hashed identically to the reviewed and swept bytes,
+so no unreviewed byte entered the commit. A readiness probe is not visual acceptance: the five
+corrected renderers still have no live first-enable observation on this revision.
+
 1. Choose one layer and freeze its source, day horizon, resolutions, current publication generation, and owning schedule.
 2. Read the physical Parquet objects, completion markers, and availability entry independently. Do not infer one from another.
 3. If coverage is missing, create bounded repair work against the original source. Preserve source identity, request bounds, and checksums.
 4. Publish all required rungs and completion receipts before advancing availability.
 5. Verify the public selected-day reader, map rendering, and agent tool against the same generation. Exercise populated, absent, unavailable, and source-ceiling responses.
 6. Record the evidence in the owning active track and update its metadata and this runbook only when the outstanding state changes.
+
+### Session 19 (carried review findings) — locally verified and approved
+
+Fixes exactly the four non-blocking findings the Session 18 review raised. SoilField's
+`style.load` listener is now structurally once-per-map rather than incidentally so: its callbacks
+are memoised with empty dependency arrays and read changing values through the props ref, so a
+`measure` change can no longer re-register the handler at the back of the queue and invert layer
+stacking. The measure rebuild is now explicit in the admission effect, whose cleanup removes the
+captured outgoing ids rather than the ref's already-updated incoming ids. A new regression pins
+that registration order survives a measure change; the reviewer confirmed it genuinely fails
+under the previous dependency chain. The `getStyle()` inconsistency is resolved behind one helper
+per file: MapLibre v5 does not throw — `Style.serialize()` returns `undefined` before load by
+design — verified independently against `node_modules`. Vegetation's composite-raster assertions
+now report a skip as a skip instead of early-returning into a green tick.
+
+One integrated sweep: boundary, type check and lint passed (zero errors, 9,887 warnings,
+baseline unchanged); frontend **193 files / 2,593 tests, zero skipped**, plus twelve tooling
+tests, exit zero. No Python source changed.
+
+Independent review returned **APPROVE**, no blocking or major findings, having traced every free
+identifier in both callbacks and enumerated four transition orderings of the relocated rebuild
+without finding a stranding, double-add or wrong-id path. Three findings carry forward. The one
+that matters: **`ClimateFieldLayer`'s admission cleanup reads ids from the props ref after React
+has updated it**, so if `ids` ever changed on a mounted instance it would strand the outgoing
+signal's source and six layers permanently. It is inert only because the parent renders
+`ClimateSignalLayer` with `key={signal}` — and **nothing asserts that key**, while `ids` sits in
+the effect's dependency array as though a signal change were supported. SoilField is now correct
+here and ClimateField is not. Also carried: SoilField's owned-id list is now stated in two places
+that can drift, and `hasParsedStyle`'s catch can turn a genuine failure into silently never
+admitting.
+
+Fixture-level only; no fixture runs MapLibre, so listener registration order is structurally
+guaranteed in source but still unproven by executed evidence. **No whole QA case or checklist
+item is promoted; the 220-case matrix is unchanged.** See
+`evidence/runbook-session19-20260915.md` and `evidence/check-receipt-session19-20260915.json`.
 
 ## Recovery
 

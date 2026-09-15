@@ -143,7 +143,13 @@ function createFakeMap(parsed = true) {
 
 type FakeMap = ReturnType<typeof createFakeMap>;
 
-/** Everything the native (non-scalar) rendering path owns for a requestable composite period. */
+/**
+ * Everything the native (non-scalar) rendering path owns for a requestable composite period.
+ *
+ * These SHRINK when GIBS stops publishing RASTER_YEAR/RASTER_MONTH, which is why the one test
+ * that cannot degrade quietly -- the composite-raster attachment -- is `it.skipIf`d rather than
+ * early-returned: a dropped period then reads as a reported skip instead of a green tick.
+ */
 const EXPECTED_SOURCES = [CELL_SOURCE_ID, ...(RASTER_AVAILABLE ? [RASTER_SOURCE_ID] : [])];
 const EXPECTED_LAYERS = [CELL_FILL_ID, CELL_OUTLINE_ID, ...(RASTER_AVAILABLE ? [RASTER_ID] : [])];
 
@@ -341,8 +347,11 @@ describe("VegetationLayer parsed-style admission", () => {
     mounted.unmount();
   });
 
-  it("attaches the composite raster once a period arrives after admission", () => {
-    if (!RASTER_AVAILABLE) return;
+  // SKIPPED, never silently passed: if GIBS ever stops publishing RASTER_YEAR/RASTER_MONTH the
+  // raster half of the raster/measured exclusivity contract stops being asserted, and an early
+  // `return` would report that loss as a green test. A reported skip is the visible version of
+  // the same fact -- the suite must not fail over a legitimately unpublished period.
+  it.skipIf(!RASTER_AVAILABLE)("attaches the composite raster once a period arrives after admission", () => {
     const fixture = createFakeMap();
     // Capabilities have not landed, so there is honestly no composite period to request.
     const mounted = render(element(fixture.map, 1, true, false));

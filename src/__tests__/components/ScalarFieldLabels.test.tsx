@@ -225,6 +225,32 @@ describe("scalar field label lifecycle", () => {
     mounted.unmount();
   });
 
+  it("keeps the soil style.load registration untouched when the measure changes", () => {
+    const fixture = recordingMap();
+    const mounted = render(<SoilFieldLayer map={fixture.map} measure="moisture" geojson={served} />);
+    const own = [...(fixture.listeners.get("style.load") ?? [])][0];
+    // A neighbour registers AFTER us, so any re-registration would put us behind it -- which is
+    // exactly the MapLibre stacking inversion this shape exists to prevent.
+    const later = vi.fn();
+    fixture.recorder.on("style.load", later);
+
+    mounted.rerender(<SoilFieldLayer map={fixture.map} measure="temperature" geojson={served} />);
+
+    // The callbacks read ids/ramp/measure off propsRef, so they keep their identity and the
+    // listener effect never re-runs: one registration for the life of the map, still first.
+    expect(fixture.recorder.off.mock.calls.filter(([event]) => event === "style.load")).toHaveLength(0);
+    expect(fixture.recorder.on.mock.calls.filter(([event]) => event === "style.load")).toHaveLength(2);
+    expect([...(fixture.listeners.get("style.load") ?? [])]).toEqual([own, later]);
+    // The measure swap still rebuilds: the new ids are installed and the old ones are gone.
+    expect([...fixture.layers.keys()].sort()).toEqual([
+      "soil-temperature-field-fill",
+      "soil-temperature-field-outline",
+      "soil-temperature-field-value-labels",
+    ]);
+    expect([...fixture.sources.keys()]).toEqual(["soil-temperature-field"]);
+    mounted.unmount();
+  });
+
   it("writes current data and paint on an existing soil source without rebuilding it", () => {
     const fixture = recordingMap();
     const mounted = render(<SoilFieldLayer map={fixture.map} measure="moisture" geojson={served} opacityScale={1} />);

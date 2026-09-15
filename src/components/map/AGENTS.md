@@ -1325,8 +1325,19 @@ whose existing data effect already admits a missing source against a parsed styl
 now single-consumer; do not adopt it in a new renderer without re-reading this section first.
 
 Each corrected renderer registers its persistent `style.load` listener exactly once per map,
-including while hidden, with `[map, addAllLayers, removeAllLayers]`-shaped deps and current
-visibility read from a ref. A separate visibility effect creates the sources/layers immediately
+including while hidden. The deps are `[map, addAllLayers, removeAllLayers]`-shaped, and that is
+only once-per-map because **both callbacks are memoised with an EMPTY dep array**: every value
+they need that can change -- visibility, the served collection, the layer ids, the colour ramp,
+the render form, the rung -- is read out of a props ref at call time rather than closed over. That
+is the whole invariant. Closing over any changing value puts it in a `useCallback` dep array,
+which puts it in the listener effect's deps, which makes a mere prop change run the cleanup and
+re-register the handler at the BACK of the `style.load` queue; because MapLibre stacks
+later-added layers above earlier ones sharing a `beforeId`, that silently inverts this renderer
+against every other one. SoilField was the last exception -- its callbacks were keyed on
+`[ids, fillColor, measure]` and were inert only because `measure` is a JSX literal at all three
+`LayerManager` call sites -- and was made structural on September 15;
+`ScalarFieldLabels.test.tsx` now pins it by changing `measure` and asserting `off("style.load")`
+is never called. A separate visibility effect creates the sources/layers immediately
 when `getStyle()` returns a parsed style, or removes them when hidden; a genuinely unparsed
 style waits for `style.load`. This separates permission to create native style resources from
 the completion of unrelated source tile requests. It does not claim admitted data has painted.
@@ -1336,7 +1347,16 @@ ClimateField still tears down and rebuilds on form, rung and id changes, in an e
 from the listener registration so that a rebuild never moves the handler behind another
 renderer; its cleanup removes every form's ids for the source, so an isoline/field swap cannot
 strand the outgoing wash. SoilField retains its measure ids and the aggregated-cell outline
-opacity expression exactly. Vegetation keeps the scalar controller construction, the inspection
+opacity expression exactly, and -- like ClimateField -- rebuilds on an id change in the admission
+effect rather than the listener effect; its cleanup removes the ids it CAPTURED, not the ones the
+props ref holds by cleanup time, which are already the incoming measure's.
+
+`map.getStyle()` is reached through one local `hasParsedStyle(map)` helper in each scalar file,
+used by the admission gate and the data gate alike. MapLibre v5 does not throw here -- `getStyle()`
+returns `undefined` with no Style object, and `Style.serialize()` returns `undefined` while
+`_loaded` is false -- so the try/catch is defence for a map torn down under a pending effect, not
+a documented throw. What matters is that one file no longer guards one call site and not the
+identical one ten lines below it. Vegetation keeps the scalar controller construction, the inspection
 gate published through `ScalarFieldLayer.sync`, and raster/measured exclusivity resolved by the
 single `ndviEncodingVisibility` call; because `ndviTemplateFor` returns an empty template while
 no day is named, its update effect now calls idempotent `addAllLayers` first so a source that

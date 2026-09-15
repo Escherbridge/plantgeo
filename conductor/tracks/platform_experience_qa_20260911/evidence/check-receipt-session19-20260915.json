@@ -1,0 +1,101 @@
+{
+  "type": "check_receipt",
+  "session": 19,
+  "candidate": 1,
+  "date": "2026-09-15",
+  "recorded_at": "2026-09-15T16:47:29.990003+00:00",
+  "author": "carried-findings author lane",
+  "gate_executor": "coordinator/integrator",
+  "canonical_packet_review": "independent source reviewer, separate context, APPROVE with three non-blocking findings carried forward",
+  "base_commit": "a112a754731d",
+  "engineering_status": "locally_verified_batch_approved",
+  "deployment_status": "pending_at_receipt",
+  "post_fix_live_status": "not_executed",
+  "overall_runbook_status": "RED_full_platform_qa_open",
+  "whole_case_promotions": [],
+  "formal_case_matrix": {
+    "accepted": 0,
+    "total": 220,
+    "changed_by_this_session": false
+  },
+  "changed_sources": {
+    "src/components/map/layers/SoilFieldLayer.tsx": {
+      "bytes": 11995,
+      "sha256": "552899bc1b100623d407ed43772998cd804b2ea3650f8592c7097fe1b9e7da68"
+    },
+    "src/components/map/layers/ClimateFieldLayer.tsx": {
+      "bytes": 19299,
+      "sha256": "7888cf8c41247943b079703b9607c289f804c034a8e59cd84aeea8bf4bcb85c7"
+    },
+    "src/__tests__/components/ScalarFieldLabels.test.tsx": {
+      "bytes": 14030,
+      "sha256": "0830fc65fb31c25b9353f18eed31f73944880b2b7e283d5475180ae59ea4e612"
+    },
+    "src/__tests__/components/VegetationLayer.test.tsx": {
+      "bytes": 18142,
+      "sha256": "2ec505c7f3b4ea92a50aaa0f54cfee9e58036b291fbfbc3b26d6bae84a65b061"
+    },
+    "src/components/map/AGENTS.md": {
+      "bytes": 136315,
+      "sha256": "1e8527b4de8a1bc8087d6eb43e32b568d607ec1ebe0a1ac39ab23c774a824d44"
+    }
+  },
+  "checks": [
+    {
+      "name": "data_boundary",
+      "command": "npm run check:data-boundary",
+      "exit_code": 0,
+      "status": "passed",
+      "detail": "12 documented URL rules; client/server restricted-import; observation-fabrication over 7 display roots"
+    },
+    {
+      "name": "type_check",
+      "command": "npm run type-check",
+      "exit_code": 0,
+      "status": "passed",
+      "detail": "tsc --noEmit clean"
+    },
+    {
+      "name": "lint",
+      "command": "npx eslint . --ignore-pattern .omc/** --ignore-pattern .agentgraph/**",
+      "exit_code": 0,
+      "status": "passed",
+      "errors": 0,
+      "warnings": 9887,
+      "detail": "baseline unchanged"
+    },
+    {
+      "name": "frontend_suite",
+      "command": "npm test",
+      "exit_code": 0,
+      "status": "passed",
+      "files_passed": 193,
+      "files_failed": 0,
+      "tests_passed": 2593,
+      "tests_failed": 0,
+      "tests_total": 2593,
+      "tests_skipped": 0,
+      "duration_seconds": 189.13,
+      "tooling_tests_passed": 12,
+      "detail": "zero skips confirms the new skipIf is not masking the composite-raster assertions"
+    }
+  ],
+  "python": {
+    "suite_rerun": false,
+    "receipt_rerun": false,
+    "python_source_changed": false,
+    "note": "existing unchanged 885-input quality receipt remains the Python gate"
+  },
+  "findings_fixed": [
+    "SoilFieldLayer listener is structurally once-per-map; callbacks memoised with empty deps and changing values read through the props ref",
+    "AGENTS.md states the invariant with its mechanism rather than asserting an unguaranteed result",
+    "getStyle consistency resolved behind one hasParsedStyle helper per file; MapLibre v5 getStyle does not throw, verified against node_modules",
+    "VegetationLayer composite-raster assertions use skipIf so a lost period reports as a skip, not a green tick"
+  ],
+  "carried_findings": [
+    "ClimateFieldLayer admission cleanup reads ids from the props ref after React updated it; would strand the outgoing signal source and six layers if ids ever changed on a mounted instance. Inert only because the parent renders ClimateSignalLayer with key={signal}, which nothing asserts. SoilField is now correct here and ClimateField is not.",
+    "SoilFieldLayer owned-id list is stated twice, in removeLayers and in the admission cleanup hand-inlined copy, so a future added layer wired into only one would be stranded by a measure change",
+    "hasParsedStyle catch can convert a genuine failure into silently never admitting, because serialize walks live tile managers and terrain; judged real but low severity and preferable to an uncaught throw in a React effect"
+  ],
+  "acceptance_boundary": "Fixture-level only; no fixture runs MapLibre. Runtime behavior against a real map and a live basemap swap remains unestablished, and listener registration order is unproven by executed evidence despite now being structurally guaranteed in source. The four other renderers corrected in a112a754 were not re-reviewed."
+}
