@@ -1,7 +1,7 @@
 ---
 type: runbook
 status: active
-updated_on: 2026-09-14
+updated_on: 2026-09-15
 ---
 
 # Current operating runbook
@@ -50,7 +50,25 @@ tests. Type and data-boundary checks pass; its scoped test-file lint and Candida
 are recorded distinctly in Session 11. Real local D26 publication-date and stale-moderation browser
 regressions pass independent review, as does unobstructed desktop temperature/VPD rendering.
 The mobile visual continuation remains failed at the local QA bridge before its first field
-capture; no product-renderer conclusion is drawn from that failure. Live deployment is being prepared.
+capture; no product-renderer conclusion is drawn from that failure.
+
+The first [incremental release checkpoint](tracks/platform_experience_qa_20260911/evidence/release-checkpoint-20260915.md)
+was pushed to `main` as `10cbd69581e979f08fd915418232df37a0730d8e`. Martin and the frontend
+deployed successfully; the frontend passed its full build and readiness gates. The data API and job executor correctly refused a stale checked-in
+Python quality receipt (880 old inputs versus 885 current inputs). A fresh receipt must be
+produced by the required Linux check workflow and shipped before those deployments can pass.
+The original failed deployments remain evidence; the earlier local Linux pass does not make
+the stale production receipt valid. The new full Linux workflow has now generated that receipt:
+4,494 passes, 150 skips and one expected failure, with all four quality gates and the receipt
+verifier passing. The exact 885-input digest matches the rejected build's current tree.
+
+Four bounded live desktop/mobile smoke cases now pass against the deployed frontend: health,
+readiness, anonymous social pages, real weather Latest and September 6 selection/missingness,
+and opening the unsent proposal/AI workspace. The first four failures are retained as a harness
+analytics-guard issue; the second run explicitly excludes that exact injected analytics script.
+These passes do not certify all rendered frames, authenticated workflows, model calls, or the
+220-case matrix. The feed disclosure wording and early blank-frame evidence are tracked in the
+[defect ledger](tracks/platform_experience_qa_20260911/evidence/defects.md).
 
 ### Active long-horizon run — September 14, 2026
 

@@ -65,3 +65,16 @@ test; the precise cause of the original intermittent failures remains unproven. 
 full Python gate failed. D260914-17's first three Session 5 attempts retain their inspection/cleanup
 failures; later process exit or port closure did not convert them into clean-run passes. Attempt 4
 and the separate mobile attempt 5 now supply the bounded successful cleanup evidence recorded above.
+
+## September 15 first live smoke follow-up
+
+The first production attempt `attempt-20260915-0025` retains four failures: the
+product assertions completed, but final network guards rejected the injected
+Cloudflare analytics script. This is not recorded as four passes. See the retained
+[independent live review](../../../../.omc/research/runbook-20260914/release/live-smoke/independent-live1-review.md)
+and its hashed local bindings; raw screenshots and response evidence remain local.
+
+| ID | Severity / requirement | Evidence and observed behavior | Owner / disposition |
+| --- | --- | --- | --- |
+| D260915-29 | Medium / proposal-publication disclosure | Both live anonymous feed screenshots display an Access notice saying contributors consent to publication on PlantGeo, "not to the open internet." `src/app/feed/InterventionFeed.tsx` retains this sentence, while the community page and proposal consent explain that approved proposals become public. The anonymous pending-feed gate itself works. | Social/publication copy owner; clarify that the access restriction concerns proposals awaiting review. Open for a bounded copy correction and review; no authorization policy change inferred. |
+| D260915-30 | Evidence gap / mobile weather and proposal-map visual readiness | First live mobile latest-weather screenshot is dark/blank despite a ready six-row September14 response and completed control/date assertions. A later historical frame shows the basemap. Both immediate proposal-entry screenshots have blank drawing canvases. | Live QA owner; no proven product rendering defect or drawing-map acceptance follows from these early frames. Retain the original images and obtain a separately reviewed bounded settling capture before classifying rendering. Desktop weather cells/labels and historical removal are visible; those observations do not fill the mobile/drawing gap. |
