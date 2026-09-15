@@ -1,0 +1,224 @@
+{
+  "type": "qa-check-receipt",
+  "session": 16,
+  "date": "2026-09-15",
+  "recorded_at": "2026-09-15T01:12:35.787171+00:00",
+  "author": "/root/independent_verifier",
+  "gate_executor": "/root",
+  "canonical_packet_review": "pending_separate_root_review",
+  "base_commit": "d167e7f0231804827422f0788f3b0604393a8ba8",
+  "engineering_status": "integrated_checks_passed",
+  "deployment_status": "pending_new_revision",
+  "post_fix_live_status": "pending",
+  "overall_runbook_status": "RED",
+  "whole_case_promotions": [],
+  "source": {
+    "manifest": {
+      "path": ".omc/research/runbook-20260915-session16/source-manifest.json",
+      "bytes": 256189,
+      "sha256": "fa0b101ef75cd6af1879c8108887fa885b748b8f55b64742d2037f1d39e675cd"
+    },
+    "file_count": 1751,
+    "post_check_current_hash_mismatches": [],
+    "verification": "All listed current files match the captured manifest; four application outputs also match."
+  },
+  "checks": [
+    {
+      "name": "type",
+      "command": "npm run type-check",
+      "exit_code": 0,
+      "status": "pass",
+      "log_encoding": "UTF-16 LE with BOM; ANSI removed for parsing only",
+      "exit_encoding": "UTF-8 with BOM",
+      "log": {
+        "path": ".omc/research/runbook-20260915-session16/checks/type.log",
+        "bytes": 100,
+        "sha256": "5a73c140c0ad128d7dfaf1a28f01b54adf8c3d29c10d317d96d4e791294fc7ec"
+      },
+      "exit": {
+        "path": ".omc/research/runbook-20260915-session16/checks/type.exit",
+        "bytes": 6,
+        "sha256": "9585fbece5c402088f2d6a2def7e60d1c7ffecc24b16d32d5823a064b008935b"
+      }
+    },
+    {
+      "name": "boundary",
+      "command": "npm run check:data-boundary",
+      "exit_code": 0,
+      "status": "pass",
+      "log_encoding": "UTF-16 LE with BOM; ANSI removed for parsing only",
+      "exit_encoding": "UTF-8 with BOM",
+      "log": {
+        "path": ".omc/research/runbook-20260915-session16/checks/boundary.log",
+        "bytes": 528,
+        "sha256": "9eafe413dfe6c6bd02229c9b983c8136949d7ba2d4c4cfd272e9b4bcd9f81f0d"
+      },
+      "exit": {
+        "path": ".omc/research/runbook-20260915-session16/checks/boundary.exit",
+        "bytes": 6,
+        "sha256": "9585fbece5c402088f2d6a2def7e60d1c7ffecc24b16d32d5823a064b008935b"
+      }
+    },
+    {
+      "name": "lint",
+      "command": "npm run lint -- --ignore-pattern .omc/**",
+      "exit_code": 0,
+      "status": "pass",
+      "log_encoding": "UTF-16 LE with BOM; ANSI removed for parsing only",
+      "exit_encoding": "UTF-8 with BOM",
+      "log": {
+        "path": ".omc/research/runbook-20260915-session16/checks/lint.log",
+        "bytes": 3918814,
+        "sha256": "5daaf70977bc8125c347932709cb28e9b303d24bc769e4a3d74c31930428f6b1"
+      },
+      "exit": {
+        "path": ".omc/research/runbook-20260915-session16/checks/lint.exit",
+        "bytes": 6,
+        "sha256": "9585fbece5c402088f2d6a2def7e60d1c7ffecc24b16d32d5823a064b008935b"
+      }
+    },
+    {
+      "name": "test",
+      "command": "npm.cmd test",
+      "exit_code": 0,
+      "status": "pass",
+      "log_encoding": "UTF-16 LE with BOM; ANSI removed for parsing only",
+      "exit_encoding": "UTF-8 with BOM",
+      "log": {
+        "path": ".omc/research/runbook-20260915-session16/checks/test.log",
+        "bytes": 804508,
+        "sha256": "3378810427c7316b371d0e176ca29545659d4b04a25e2479c190f216cdb96057"
+      },
+      "exit": {
+        "path": ".omc/research/runbook-20260915-session16/checks/test.exit",
+        "bytes": 6,
+        "sha256": "9585fbece5c402088f2d6a2def7e60d1c7ffecc24b16d32d5823a064b008935b"
+      }
+    },
+    {
+      "name": "python-receipt",
+      "command": "Existing scripts/verify_quality_receipt.py verification; exact launcher not printed in retained log",
+      "exit_code": 0,
+      "status": "pass",
+      "log_encoding": "UTF-16 LE with BOM; ANSI removed for parsing only",
+      "exit_encoding": "UTF-8 with BOM",
+      "log": {
+        "path": ".omc/research/runbook-20260915-session16/checks/python-receipt.log",
+        "bytes": 308,
+        "sha256": "1f90197c7aeaa9fabadf7e1470894cc73ed808c7e994ced573cf0ddc9c3653e8"
+      },
+      "exit": {
+        "path": ".omc/research/runbook-20260915-session16/checks/python-receipt.exit",
+        "bytes": 6,
+        "sha256": "9585fbece5c402088f2d6a2def7e60d1c7ffecc24b16d32d5823a064b008935b"
+      }
+    }
+  ],
+  "results": {
+    "frontend": {
+      "test_files_passed": 193,
+      "tests_passed": 2545,
+      "vitest_duration_seconds": 212.61,
+      "scope": "full Vitest run with two workers"
+    },
+    "tooling": {
+      "tests": 12,
+      "passed": 12,
+      "failed": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0,
+      "scope": "two tooling files run by npm test"
+    },
+    "lint": {
+      "errors": 0,
+      "warnings": 9887,
+      "scope": "eslint . --ignore-pattern .omc/**; includes historical .claude worktrees",
+      "clean_warning_claim": false
+    },
+    "boundary": {
+      "documented_url_rules": 12,
+      "restricted_import_check": "pass",
+      "observation_fabrication_rules": 2,
+      "display_roots": 7
+    },
+    "python": {
+      "action": "verify existing receipt only",
+      "suite_rerun": false,
+      "receipt": {
+        "path": "services/agri-data-service/QUALITY_RECEIPT.json",
+        "bytes": 1019,
+        "sha256": "4229c16dcd0ac081abe50f26b367e3a6997708f73916401df8f67b7670e4cf77"
+      },
+      "tree_digest": "sha256:e73ccd5b704f9009e45deed33d0dc2db60f072cf22d8992a5e3463a1030e0f05",
+      "digest_file_count": 885,
+      "original_receipt_generated_at": "2026-09-15T00:29:21.185841Z",
+      "source_and_receipt_unchanged_by_session16": true
+    }
+  },
+  "application_and_review_artifacts": [
+    {
+      "path": ".omc/research/runbook-20260915-session16/application.json",
+      "bytes": 1282,
+      "sha256": "da02c5d8fdf5b03f7172570de06c549318adc7c226a3d04202987a2c1695349d"
+    },
+    {
+      "path": ".omc/research/runbook-20260915-session16/manifest.json",
+      "bytes": 1061,
+      "sha256": "1803695d847a3940a525d45b7a416f19f5e11e61794bacebec8ed0f62d5eaeb6"
+    },
+    {
+      "path": ".omc/research/runbook-20260915-session16/weather-readiness.patch",
+      "bytes": 21454,
+      "sha256": "55c94e40843cea70578c7c4dffcb809779999c47bee80e97fd1220f546601fa5"
+    },
+    {
+      "path": ".omc/research/runbook-20260915-session16/feed-copy/manifest.json",
+      "bytes": 1570,
+      "sha256": "ff6db8e20646d1803b0ca5f2466d3fb99de9b9f05e99d1fb4d2b60cc9fb76d26"
+    },
+    {
+      "path": ".omc/research/runbook-20260915-session16/feed-copy/feed.patch",
+      "bytes": 1566,
+      "sha256": "333e9c3c1380bd2810b9f783e3ecd986f031b7f56eb79aadcf4d304a72739a11"
+    },
+    {
+      "path": ".omc/research/runbook-20260915-session16/independent-weather-review.md",
+      "bytes": 3697,
+      "sha256": "969acd259744194638ccc3fa007b6099382ef9323370a6ab133af7f434449637"
+    },
+    {
+      "path": ".omc/research/runbook-20260915-session16/feed-copy/independent-review.md",
+      "bytes": 1587,
+      "sha256": "f4b2c05de3c51b8741a7f8940a102ad3095140dd4273566dc87e85d216cb0ec8"
+    },
+    {
+      "path": ".omc/research/runbook-20260915-session16/use-style-ready-impact.md",
+      "bytes": 3840,
+      "sha256": "fe6ddde524604a9a16bda24024001f5dbb4cf89daf4f2cfdf2bd64050b2627e1"
+    },
+    {
+      "path": ".omc/research/runbook-20260915-session16/live-diagnostic/independent-before-fix-review.md",
+      "bytes": 4795,
+      "sha256": "2e6aa0647eaa9dc5ef53009fe198a86837a973cec678f5f3599ec773c29cb192"
+    },
+    {
+      "path": ".omc/research/runbook-20260915-session16/live-diagnostic/independent-before-fix-bindings.json",
+      "bytes": 1584,
+      "sha256": "72c4b128756b815136d2d31994f33fe127a5298b1f940a95c0a7ac60e8e651aa"
+    },
+    {
+      "path": ".omc/research/runbook-20260915-session16/live-diagnostic/attempt-before-fix-1/report.json",
+      "bytes": 3930,
+      "sha256": "cb235e54e00d9e45e0089385d2d9429ed0bf3e916a1fc712c348f4065f7f5cea"
+    }
+  ],
+  "collector_correction": "An earlier metadata collector expected the literal # tests 12. Actual decoded Node summary uses U+2139 tests 12. This was a collector assertion failure, not a test failure. Raw logs and exits were preserved; no checks rerun. Logs are UTF-16 LE BOM; exits are UTF-8 BOM.",
+  "limits": [
+    "No Python suite rerun or new Python quality receipt generated.",
+    "Pre-fix diagnostic reproduced a product failure; its passing diagnostic result does not certify the corrected deployment.",
+    "Eight remaining direct shared-readiness component consumers remain unaudited for behavioral acceptance.",
+    "No whole QA case or runbook promotion.",
+    "New deployment and post-fix live behavior remain pending."
+  ]
+}

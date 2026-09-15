@@ -300,17 +300,24 @@ An `if (!map.isStyleLoaded()) return;` at the top of an effect therefore does no
 
 **Why redundant passes are cheap rather than merely tolerable.** `Style.setLayoutProperty`, `Style.setPaintProperty` and `Style.setFilter` all `deepEqual` the incoming value against the live one and return before touching the style, so re-writing an unchanged value is a genuine no-op — it marks nothing dirty, triggers no repaint, and crucially fires no further `styledata`. Without that early return a `styledata` handler that writes style properties would feed itself one pass per frame forever. Any new writer added to that path must be checked against the same property.
 
-## Custom-added layers need a retriggerable readiness signal, not `once()`
+## Custom-added layers: parsed style versus source readiness
 
-A component that adds its own sources/layers (rather than toggling visibility on layers the style already declares, like `applyVisibility` above) faces a sharper version of the same race. `FireLayer` and `WaterLayer` both hard-loaded invisibly in dark mode: `map.isStyleLoaded()` read `false` on mount, the code fell back to `map.once("style.load", () => addAllLayers(map))`, and that handler never ran. `isStyleLoaded()` requires every source's tiles to be in, not just the style JSON parsed, so it can stay `false` well after `style.load` — including the synchronous fire inside `setStyle()`'s diff path — has already come and gone. A `once` registered against that already-past event fires never; switching the basemap or toggling the layer off/on "fixed" it only because those actions register a fresh listener against a fresh `style.load`.
+The earlier Fire/Water correction replaced a missed `once("style.load")` callback with
+persistent style listeners and the shared `useStyleReady` hook. That hook subscribes to
+`style.load` and `styledata` and recomputes `map.isStyleLoaded()`. It can retry after those
+style events; it does not guarantee recovery when an already-parsed style has pending
+source tiles and only `sourcedata` follows. Source completion is not a styledata event.
+In particular, an all-source readiness gate can reject a delayed component mount after
+style.load even though the parsed style already permits addSource/addLayer.
 
-The fix is `src/components/map/layers/use-style-ready.ts` — `useStyleReady(map)` subscribes with `on` (never `once`) to both `style.load` and `styledata`, recomputes `map.isStyleLoaded()` on each, and returns that boolean. Consumers don't gate on the returned value directly (mid-render it can be one tick stale); they put it in a `useEffect` dependency array purely to force a re-run, then re-read `map.isStyleLoaded()` live inside the effect — the same decoupled trigger-vs-gate shape `LayerManager`'s `styleReady` state already uses. `FireLayer` and `WaterLayer` now run two effects: one registers a persistent, unconditional `on("style.load", addAllLayers)` (safe because `addLayer`/`addSource` only require the style's `_loaded` flag, which is set at the same moment `style.load` fires — see `node_modules/maplibre-gl/src/style/style.ts` `_load()`/`setState()` — so this is also the primary mechanism that survives a basemap swap); the other depends on `useStyleReady`'s output and re-checks `map.isStyleLoaded()` live, which is what catches the mount-time race where no further `style.load` will ever arrive. Both call the same `addAllLayers`, which is idempotent — every `addSource`/`addLayer` call is guarded by `getSource`/`getLayer` — so redundant invocations from the two effects, or from a rapid style-catch-up, are no-ops rather than throws.
-
-**Remaining files with the same class of bug (not fixed in this pass — do not assume they are safe):**
-- `SoilLayer.tsx`, `DroughtLayer.tsx` — use `map.once("style.load", ...)`, the exact shape this section fixes in Fire/Water. (The other files this list named — `ErosionLayer`, `CarbonPotentialLayer`, `BurnHistoryLayer`, `ReforestationLayer`, `LandFireLayer`, `RecoveryLayer`, `LandCoverLayer`, `RouteLayer`, `IsochroneLayer`, `ModelLayer`, `AnimatedBeacon`, `ThreeLayer` — were never mounted and were deleted 2026-08-08; recover them from git history if a producer ever ships.)
-- `VegetationLayer.tsx`, `WeatherLayer.tsx`, `DemandHeatmapLayer.tsx` — already dropped `once()` in favor of `if (map.isStyleLoaded()) addAllLayers(map); map.on("style.load", onStyleLoad);`, which fixes the basemap-swap case but **not** the mount-time race: if `isStyleLoaded()` reads `false` on mount and no later `style.load` arrives (because the current style already finished loading before this component mounted), nothing retries. These are the closest candidates for a follow-up `useStyleReady` adoption since the persistent-listener half is already in place.
-
-Adopting `useStyleReady` in the files above is a known, deliberately deferred follow-up — each has its own layer/source ids and idempotency assumptions to verify individually rather than a mechanical find-replace.
+The September 15 weather correction below uses public parsed-style admission plus a
+persistent style.load listener. Weather had already adopted `useStyleReady` before this
+correction and now leaves that hook; recommending another hook adoption would not address
+the source-only sequence. The other eight direct component consumers (Water, Fire,
+Vegetation, SoilSurvey, SoilField, ClimateField, Gbif and Botanical layers) remain
+unaudited for that sequence. This weather-only batch neither repairs them nor certifies
+their individual source/layer admission assumptions. Review each renderer's identity,
+current-data refs, listener ordering and cleanup before choosing its admission contract.
 
 ## Popups and hover labels
 
@@ -1220,7 +1227,8 @@ unset keeps the native presentation. See `src/lib/map/AGENTS.md` §scalar-field 
 `docs/scalar-field-renderer.md` for scientific constraints and rollout gates. This layer never
 stacks measured NDVI with the satellite composite. It keeps its existing fill ID as the native
 picking target, passes all opacity changes through one controller, and rebuilds the custom layer
-on style load. The `useStyleReady` retry additionally closes the missed initial style-load race.
+on style load. The `useStyleReady` retry handles later style events; delayed mounting
+with source-only completion remains separately unaudited for this renderer.
 Native fill, outline and value labels have zero-duration opacity transitions in the opt-in
 path, so an invalidated collection disappears before a queued source clear. The map-scoped
 scalar inspection gate excludes retained transparent features from hover/tap and map-click
@@ -1246,3 +1254,30 @@ Typed manager and climate readers opt into publicationMode typed, so absent data
 load or error has no served date. Legacy untyped adapters retain request bookkeeping. The
 combined streamflow/groundwater water row remains legacy in this bounded change; aggregate
 publication-date semantics require separate work and are not certified here.
+
+## Weather parsed-style admission (September 15 readiness correction)
+
+WeatherLayer now distinguishes a parsed style from all-source readiness. In the installed
+MapLibre implementation, public `Map.getStyle()` delegates to `Style.serialize()`, which
+returns undefined until `Style._loaded`; `addSource`/`addLayer` enforce that same flag through
+`_checkLoaded()`. A present style therefore permits weather sources/layers to be added while
+unrelated raster/Martin tiles are still pending. This avoids waiting on `isStyleLoaded()`,
+whose all-source predicate can remain false after the style.load event has already fired.
+Source completion emits sourcedata, so the historical style-event hook adoption above
+does not guarantee recovery for that sequence. Weather no longer uses that shared hook;
+its other consumers and their individual admission assumptions are outside this batch.
+
+The weather style.load listener is registered once per map and fixed layer/source identity,
+including while hidden. It reads latest visibility/data/strength from refs. A separate
+visibility effect adds immediately to a parsed style or removes when hidden; changes to
+day data, strength or visibility never move the persistent listener behind another layer.
+A truly unparsed style waits for the unconditional future style.load path. Empty weather
+data retains empty mounted sources/layers, swaps refill from current refs, and map replacement
+or unmount detaches the old listener and removes owned layers/source. There is no polling,
+new source-event listener, private MapLibre field access, or all-source readiness feedback loop.
+
+Regressions model a delayed dynamic mount with parsed style and pending source tiles, then
+source-only completion without fabricating styledata; genuinely unparsed style arrival;
+current data/opacity on swaps; empty and hidden states; listener order; and cleanup/map replacement.
+This fixes a source-proven admission gap. The earlier live blank weather captures still need
+separate bounded observation and visual verification before this is called their proved cause.

@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import type { Map as MapLibreMap } from "maplibre-gl";
 import { safeRemoveLayerAndSource } from "@/lib/map/layer-utils";
-import { useStyleReady } from "@/components/map/layers/use-style-ready";
 import { supportCellPolygon, type AggregateEnvelopeSupport } from "@/lib/map/layer-render-contract";
 
 /** A published sample or declared aggregate; each drawn signal remains independently nullable. */
@@ -149,7 +148,6 @@ export function WeatherLayer({
   sourceId = "weather-wind-source",
   opacityScale = 1,
 }: WeatherLayerProps) {
-  const styleReady = useStyleReady(map);
   const geojson = useMemo<GeoJSON.FeatureCollection>(
     () => weatherFeatures(data),
     [data]
@@ -292,38 +290,30 @@ export function WeatherLayer({
     [layerId, temperatureLayerId, cellLayerId, temperatureLabelLayerId, sourceId]
   );
 
-  // Add/remove and re-add across style swaps, which wipe custom layers.
-  // Only `visible` may remove the layer -- an empty feed renders an empty
-  // source so a style swap can never be mistaken for the toggle being off.
+  // Preserve listener order across data, opacity and visibility changes.
   useEffect(() => {
     if (!map) return;
 
-    if (!visible) {
-      removeAllLayers(map);
-      return;
-    }
-
     const onStyleLoad = () => {
-      if (!propsRef.current.visible) return;
-      addAllLayers(map);
+      if (propsRef.current.visible) addAllLayers(map);
     };
-
-    if (map.isStyleLoaded()) addAllLayers(map);
     map.on("style.load", onStyleLoad);
 
     return () => {
       map.off("style.load", onStyleLoad);
       removeAllLayers(map);
     };
-  }, [map, visible, addAllLayers, removeAllLayers]);
+  }, [map, addAllLayers, removeAllLayers]);
 
-  // `style.load` can happen before this dynamically imported component registers its
-  // listener. Re-read the live readiness on every style-data transition so that missed
-  // event cannot leave a visible weather layer blank until the next basemap swap.
+  // Parsed style is sufficient; unrelated source tiles need not be ready (see map/AGENTS.md).
   useEffect(() => {
-    if (!map || !visible || !map.isStyleLoaded()) return;
-    addAllLayers(map);
-  }, [map, visible, styleReady, addAllLayers]);
+    if (!map) return;
+    if (!visible) {
+      removeAllLayers(map);
+    } else if (map.getStyle()) {
+      addAllLayers(map);
+    }
+  }, [map, visible, addAllLayers, removeAllLayers]);
 
   // Push new observations into the existing source without a remount cycle.
   useEffect(() => {

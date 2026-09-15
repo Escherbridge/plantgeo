@@ -58,9 +58,9 @@ function SignedOutGate() {
     <EditorialSection index="01" title="Access" id="access">
       <EditorialNotice title="Sign in required" role="status">
         <p>
-          Contributors consent to publishing a proposal on PlantGeo, not to the
-          open internet. The feed and the sites it names are therefore shown to
-          signed-in accounts only.
+          Sign in to view proposals awaiting review. These proposals are shared
+          with signed-in readers while a decision is pending. Once approved,
+          their locations and proposal details become public.
         </p>
       </EditorialNotice>
       <div className="mt-comfortable flex flex-wrap gap-tight">
@@ -187,10 +187,11 @@ export function InterventionFeed() {
 
         <EditorialProse className="mt-comfortable">
           <p>
-            These are proposals, not decisions. Each one names a real site and
-            was submitted with its author&rsquo;s consent to publish; none is on
-            the public map until an expert reviews it. Following an entry moves
-            the map to the site — it does not endorse the proposal.
+            These proposals were submitted with their authors&rsquo; consent to
+            publish. Signed-in readers can view them while they await a decision.
+            Once approved, their locations and proposal details become public.
+            Following an entry moves the map to the site — it does not endorse
+            the proposal.
           </p>
         </EditorialProse>
 

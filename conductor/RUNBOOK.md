@@ -62,13 +62,31 @@ the stale production receipt valid. The new full Linux workflow has now generate
 4,494 passes, 150 skips and one expected failure, with all four quality gates and the receipt
 verifier passing. The exact 885-input digest matches the rejected build's current tree.
 
+Corrective checkpoint `d167e7f0231804827422f0788f3b0604393a8ba8` is now deployed successfully
+on all four services: frontend, data API, job executor and Martin. The latest frontend build
+again passed 193 test files / 2,542 tests, its production build and readiness check. A final
+live confirmation on that complete deployment passed all four desktop/mobile smoke cases in
+38.041 seconds. The committed correction contains the generated Python receipt and evidence
+updates; application source is unchanged from the first checkpoint.
+
 Four bounded live desktop/mobile smoke cases now pass against the deployed frontend: health,
 readiness, anonymous social pages, real weather Latest and September 6 selection/missingness,
 and opening the unsent proposal/AI workspace. The first four failures are retained as a harness
 analytics-guard issue; the second run explicitly excludes that exact injected analytics script.
 These passes do not certify all rendered frames, authenticated workflows, model calls, or the
 220-case matrix. The feed disclosure wording and early blank-frame evidence are tracked in the
-[defect ledger](tracks/platform_experience_qa_20260911/evidence/defects.md).
+[defect ledger](tracks/platform_experience_qa_20260911/evidence/defects.md). Later captures show
+the proposal map and controls on both viewports, while weather overlay visibility remains
+unaccepted despite passing date/data/control checks. Session 16 subsequently reproduced a
+weather installation failure: the enabled layer remained absent after unrelated map sources
+became ready, and a normal off/on installed it. The independently reviewed correction admits
+weather layers when the map style is parsed and clarifies the feed's pending/approved disclosure.
+Its integrated sweep passes 193 files / 2,545 frontend tests plus 12 tooling tests, type checking,
+data-boundary checking, and lint excluding local `.omc` artifacts (zero errors; 9,887 warnings).
+The unchanged Python quality receipt verifies. See the
+[Session 16 evidence](tracks/platform_experience_qa_20260911/evidence/runbook-session16-20260915.md).
+The new deployment and first-enable desktop/mobile rendering validation remain pending;
+no full-case or checklist completion is inferred from these local checks.
 
 ### Active long-horizon run — September 14, 2026
 

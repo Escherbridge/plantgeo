@@ -78,3 +78,33 @@ and its hashed local bindings; raw screenshots and response evidence remain loca
 | --- | --- | --- | --- |
 | D260915-29 | Medium / proposal-publication disclosure | Both live anonymous feed screenshots display an Access notice saying contributors consent to publication on PlantGeo, "not to the open internet." `src/app/feed/InterventionFeed.tsx` retains this sentence, while the community page and proposal consent explain that approved proposals become public. The anonymous pending-feed gate itself works. | Social/publication copy owner; clarify that the access restriction concerns proposals awaiting review. Open for a bounded copy correction and review; no authorization policy change inferred. |
 | D260915-30 | Evidence gap / mobile weather and proposal-map visual readiness | First live mobile latest-weather screenshot is dark/blank despite a ready six-row September14 response and completed control/date assertions. A later historical frame shows the basemap. Both immediate proposal-entry screenshots have blank drawing canvases. | Live QA owner; no proven product rendering defect or drawing-map acceptance follows from these early frames. Retain the original images and obtain a separately reviewed bounded settling capture before classifying rendering. Desktop weather cells/labels and historical removal are visible; those observations do not fill the mobile/drawing gap. |
+
+Second live attempt `attempt-20260915-0031` passes all four automated cases in
+36.101 seconds with the exact analytics script intentionally blocked and accounted
+for separately. Independent review of sixteen stage images resolves the early
+blank **basemap and proposal-map entry** captures: the delayed mobile map shows the
+basemap, and both proposal canvases show real imagery plus Point/Polygon/Clear
+controls. No geometry interaction was exercised. D260915-30 remains open for
+**settled weather overlay visibility on both desktop and mobile**: September14
+responses contain 18/6 rows and the date summary is present, but the later images
+show no weather cells or numeric labels. First-attempt desktop cells were visible.
+This observation requires renderer/viewport investigation; it is not proof of a
+specific product cause, and four passing control/data smoke cases do not accept
+weather rendering. See the retained
+[second independent live review](../../../../.omc/research/runbook-20260914/release/live-smoke/independent-live2-review.md).
+
+Session 16 refines D260915-30 from an unclassified visual gap to a reproduced weather
+installation defect on `d167e7f0231804827422f0788f3b0604393a8ba8`: weather remained
+enabled without its source or four layers after global style readiness, through the
+five-second post-response capture. A normal off/on installed them and produced visible
+cells and labels. The original failed frames remain evidence; this bounded desktop
+trace does not establish every earlier blank frame's cause.
+
+The separately reviewed weather fix and D260915-29 disclosure correction are applied
+locally. The integrated frontend suite (193 files / 2,545 tests plus 12 tooling tests),
+type and boundary checks pass. Lint excluding `.omc` reports zero errors and 9,887
+warnings; the unchanged Python receipt verifies. Both defects remain open for the
+new deployment and post-fix live checks. The approved harness requires first-enable
+weather rendering, missing-day clearing and Latest restoration before any recovery
+toggle, and the corrected anonymous feed disclosure on desktop and emulated mobile.
+See [Session 16](runbook-session16-20260915.md) for exact source and evidence bindings.
