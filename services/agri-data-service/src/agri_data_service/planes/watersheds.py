@@ -274,8 +274,8 @@ def _read_ring(data: bytes, offset: int, endian: str) -> tuple[_Ring, int]:
     offset += 4
     points: list[_Point] = []
     for _ in range(count):
-        x, y = struct.unpack_from(f"{endian}dd", data, offset)
-        points.append((x, y))
+        longitude, latitude = struct.unpack_from(f"{endian}dd", data, offset)
+        points.append((longitude, latitude))
         offset += 16
     return tuple(points), offset
 
@@ -325,27 +325,32 @@ def decode_polygon_rings(payload: bytes) -> tuple[_PolygonRings, ...]:
         raise WatershedGeometryError(f"WKB payload is truncated or malformed: {exc}") from exc
 
 
-def _point_in_ring(x: float, y: float, ring: Sequence[_Point]) -> bool:
-    """Even-odd ray-casting test against one closed ring."""
+def _point_in_ring(longitude: float, latitude: float, ring: Sequence[_Point]) -> bool:
+    """Crossing-number (even-odd ray casting) test against one closed ring; see Franklin's PNPOLY."""
     inside = False
-    count = len(ring)
-    j = count - 1
-    for i in range(count):
-        xi, yi = ring[i]
-        xj, yj = ring[j]
-        if (yi > y) != (yj > y) and x < (xj - xi) * (y - yi) / (yj - yi) + xi:
-            inside = not inside
-        j = i
+    vertex_count = len(ring)
+    previous_index = vertex_count - 1
+    for index in range(vertex_count):
+        current_longitude, current_latitude = ring[index]
+        previous_longitude, previous_latitude = ring[previous_index]
+        straddles_ray = (current_latitude > latitude) != (previous_latitude > latitude)
+        if straddles_ray:
+            crossing_longitude = (previous_longitude - current_longitude) * (latitude - current_latitude) / (
+                previous_latitude - current_latitude
+            ) + current_longitude
+            if longitude < crossing_longitude:
+                inside = not inside
+        previous_index = index
     return inside
 
 
-def _point_in_polygon_rings(x: float, y: float, rings: _PolygonRings) -> bool:
+def _point_in_polygon_rings(longitude: float, latitude: float, rings: _PolygonRings) -> bool:
     """A point is inside a polygon-with-holes iff inside the exterior and outside every hole."""
     if not rings:
         return False
-    if not _point_in_ring(x, y, rings[0]):
+    if not _point_in_ring(longitude, latitude, rings[0]):
         return False
-    return all(not _point_in_ring(x, y, hole) for hole in rings[1:])
+    return all(not _point_in_ring(longitude, latitude, hole) for hole in rings[1:])
 
 
 def point_is_within_watershed_geometry(payload: bytes, *, longitude: float, latitude: float) -> bool:

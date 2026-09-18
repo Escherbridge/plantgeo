@@ -150,6 +150,31 @@ compiler's strict mode; it does not replace it.
   actor and relevant abuse boundary; define and test the availability posture
   rather than defaulting to fail-open.
 
+## Readability and region portability
+
+- Full-word identifiers: `boundingBox`, `horizontalPadding`, `requestTimeoutMs`.
+  No `bb`, `padH`, `tmo`. Field-standard terms (`NDVI`, `HUC12`, `bbox` inside a
+  type or query-parameter name that the API already exposes) count as words.
+- Name the algorithm at its implementation in one line (`// Douglas-Peucker`)
+  and link a reference for an esoteric one; everything else about *why* goes in
+  the nearest `AGENTS.md` with a one-line pointer from the code.
+- Soft size ceiling, applied in review, not by lint: modules ~600 lines,
+  functions ~60, nesting ≤3. The 2026-09-18 readability pass split
+  `parquet-trpc-readers.ts` (2,601 → 77-line barrel over
+  `parquet-trpc-readers/<layer>.ts`) and `routers/teams.ts` (1,676 → 28-line
+  composer over `routers/teams/<procedure-group>.ts`); the barrel/composer
+  keeps the public surface, and new readers or procedure groups go in a new
+  sibling file, never back into the barrel.
+- No footprint literal outside the region manifest. `NAMED_COVERAGE_REGIONS`
+  in `src/lib/map/coverage-region.ts` and `PNW_STATE_CODES` in the land-context
+  schema are the migration list, not a pattern to copy. Components, hooks and
+  readers take the region as a typed value; the only permitted literal box is
+  the explicit world-extent "no viewport" sentinel.
+- No region name in a symbol, route, query key, store slice or object-store
+  prefix. `region.slug` is data. A layer with no source bound for this region
+  renders a governed "not available in this region" state, never an empty
+  layer that looks like an outage (`federation.md` §2).
+
 ## Tests and review gates
 
 - Add or update focused Vitest coverage with each behavior change. Test parsing
@@ -174,3 +199,8 @@ compiler's strict mode; it does not replace it.
 4. Does every state-changing operation verify permission and require the right
    human confirmation?
 5. Do tests cover the successful path and the failure/partial path?
+6. Is every coordinate, state code or region name read from the region
+   manifest rather than declared here, and does an unbound layer degrade to a
+   named "not available in this region" state?
+7. Full-word names, algorithm named, rationale reachable from `AGENTS.md`, and
+   no module pushed further past the soft size ceiling?

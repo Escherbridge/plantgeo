@@ -30,7 +30,11 @@ SHA_LENGTH = 64
 
 
 def checked_sha(value: object) -> str:
-    if not isinstance(value, str) or len(value) != SHA_LENGTH or any(c not in "0123456789abcdef" for c in value):
+    if (
+        not isinstance(value, str)
+        or len(value) != SHA_LENGTH
+        or any(character not in "0123456789abcdef" for character in value)
+    ):
         raise ValueError("invalid MTBS staged content identity")
     return value
 

@@ -302,6 +302,31 @@ place. Its watermark comes from the clock and its own listing: a version covers 
 and must reach `today + 400`, so it regenerates roughly annually instead of daily.
 
 ## `gap_fill.py` — the bounded driver the executor invokes
+
+### Six modules since 2026-09-18, and `gap_fill.py` is now only `run_gap_fill`
+
+It was 2,386 lines. The walk itself is one function; everything else was the vocabulary it speaks,
+the census it consumes and the two per-day engines it drives, so those are now siblings and
+`gap_fill.py` re-exports all of them through `__all__`. `drain.py`, every lane adapter and
+`tests/parquet/test_gap_fill.py` import exactly what they imported before.
+
+| module | holds |
+| --- | --- |
+| `gap_fill_contract.py` | the export tier and its derived ladder, the budgets, `statement_timeout`, the `LaneFillOutcome`/`LaneDayOutcome`/`LadderRepairOutcome` vocabulary, `LaneGapCensus`/`LaneFillVerdict`/`GapFillSummary`, `lane_window`, the governed zero-row absence, and the advisory lock (`postgres_lane_day_lock`) with its test seams |
+| `gap_census.py` | both queues: `missing_days` from the window or watermark walk, and `ladder_repair_days` from the whole bucket |
+| `gap_fill_progress.py` | `_LaneProgress` and the recorders that turn one day's outcome into a verdict, plus the owed-availability drain |
+| `gap_fill_day.py` | filling one lane-day: export, prune, mark, the absence ladder, and the availability extension |
+| `gap_fill_repair.py` | re-deriving a ladder over base parts that are already correct, touching no lane adapter |
+
+**`LaneDayLock`, `VegetationPublicationBarrier` and `TierDeriver` are declared once**, in
+`gap_fill_contract.py`'s `TYPE_CHECKING` block; the other modules import them from there and
+`gap_fill.py` lists them in `__all__` so `drain.py` and the tests keep their existing import. Three
+copies of a one-line `Callable` alias is still three definitions of one contract.
+
+`gap_fill_day.py` (711 lines) is the one module left over the ~600 soft ceiling. It is one
+export→prune→mark sequence plus its absence path; cutting it further would put the absence ladder in
+a different file from the write that retracts it.
+
 A time-axis lane may declare `writer_ceiling`; `lane_window` clamps to it so generic gap-fill and
 the missing-data drain cannot cross into a dedicated writer's ownership. Ladder derivation is
 still allowed there because it reads the published base rung and never invokes the old writer.
@@ -410,6 +435,32 @@ down and lost every lane's tally. Each lane-day also rolls back: SQLAlchemy 2.0 
 lock statement, so a walk that never rolled back would hold ONE transaction open for hours, which
 `idle_in_transaction_session_timeout` eventually terminates mid-run. The advisory lock is
 session-scoped, so the rollback does not release it.
+
+## What `run_drain`'s knobs mean
+
+- **`selection`** decides WHAT a day owes, never how the walk behaves. `missing` exports days with
+  no base rung from Postgres; `ladder` derives the coarse rungs of days whose base rung is already
+  published, and touches no lane adapter and no source table at all.
+- **`time_budget_seconds` is optional and unset by default**, which is the whole point of the drain:
+  the cron's 600-second ceiling is what made this job necessary. When it is set it bounds when a new
+  DAY is STARTED, never a day already in hand — the same rule `run_gap_fill` applies, so a bounded
+  drain still never abandons a half-written day.
+- **`on_day` is a callback, not a logger.** It is called after every finished day so a CLI can stream
+  progress across a run measured in hours. This module has no opinion about where a human is watching
+  from, and a drain that printed would be untestable.
+- **One DuckDB session serves the whole ladder walk.** A geometry lane otherwise opens a session and
+  pays `LOAD spatial` PER RUNG — three per day, ~3,000 across the measured 1,037-day repair — and
+  `derivation_session` exists to be reused exactly this way. The export selection opens none here:
+  its rungs are derived inside `gap_fill`, which owns that path's session.
+- **`availability_storage` defaults to `None` and is therefore inert.** A drain writes the same
+  terminal lane-days the hourly cron writes, so it owes the same availability entries; passing the
+  storage is how a bulk repair stops leaving the published index thousands of days behind the bucket.
+  It stays optional because the ladder selection exports nothing, and because a caller that has not
+  bootstrapped a lane's index has nothing for the extension step to extend.
+- **When it is wired, the owed ledger is drained FIRST**, exactly as `run_gap_fill` drains it. A
+  drain that only extended the days of THIS run would leave every claim an earlier turn could not
+  finish where it was, and the base-tier census never revisits a completed day — so a claim nothing
+  retries is a terminal day permanently outside the index, on a green tick.
 
 ## Retiring the pre-zoom layout: superseded means SERVABLE, not mentioned
 The keys written before the zoom axis existed sit one path segment shallower, so all three live
@@ -562,6 +613,43 @@ other direction (`gap_fill` -> `availability_extension`, twice) had to be a lazy
 import carrying a `# noqa: PLC0415`. One leaf module removes the cycle and all of the lazy imports.
 
 ## `availability_index.py` — immutable generations, one conditional pointer
+
+### Six modules, one import path (split 2026-09-18)
+
+`availability_index.py` was 3,164 lines, which `code_styleguides/federation.md` §3 names as a module
+that is not to grow and is to be split along the seam the lattice already draws the next time a
+change touches it. It now holds only the **operations** — bootstrap, publish, rollback, read,
+`_write_generation` and the generation serialization — and re-exports, through an explicit `__all__`,
+every public name its siblings define. No importer, script or test changed: `from
+agri_data_service.pipeline.parquet.availability_index import X` still resolves for every `X` it ever
+resolved for, including the underscored helpers the contract tests reach for one refusal at a time.
+
+The siblings, in strict dependency order (each may import only the ones above it):
+
+| module | holds | may import |
+| --- | --- | --- |
+| `availability_primitives.py` | the refusal hierarchy, every byte ceiling and schema-version constant, the document field sets, and the scalar/JSON/lane-path parsers (`_parse_date`, `_require_sha256`, `_physical_lane_identity`, ...) | nothing else in the family |
+| `availability_documents.py` | `EvidenceReceipt`, `AvailabilityIdentity`, `AvailabilityConfig`, `AvailabilityRow`, `AvailabilityPointer`, `AvailabilityIndex`, the key builders, the generation-row validators, the row/pointer parsers and `_generation_receipt_sha256` | primitives |
+| `availability_evidence.py` | `TypedEvidenceArtifact`, `BootstrapInventoryEvidence`, `SourceEvidence`, `TerminalEvidence`, the `build_*` wrappers, `compute_verified_source_inventory_root` | primitives, documents |
+| `availability_requests.py` | `BootstrapRequest`, `PublicationRequest`, `PublicationResult`, the pinned-document loaders, `_merge_rows`, `_classify_request_rows` | primitives, documents |
+| `availability_storage.py` | the `AvailabilityStorage` protocol, `BotoAvailabilityStorage`, `StoredAvailabilityObject`, `EvidenceSnapshot` and the snapshot dedupe/revalidation bookkeeping | primitives |
+| `availability_verification.py` | every `_verify_*`: the store reads that prove a receipt against the bytes it names, before a pointer may move | all of the above |
+
+Why this cut and not another: the module already had exactly these five phases, run in this order by
+every publication path — parse scalars, build documents, wrap them as content-addressed evidence,
+admit a request, then fetch and prove. `EvidenceSnapshot` sits in `storage` rather than `documents`
+because its `max_bytes` is a property of the *read*, not of the object (see `_snapshot_identity`).
+`TerminalEvidence` sits in `evidence` rather than `documents` because its `__post_init__` is checked
+against the row's derived provenance, so it must be able to import the row and not the reverse.
+
+**Nothing moved changed one byte.** Every generation, pointer, receipt and marker is content-SHA
+bound, so the canonical serializers, the field sets, the sort orders and the datetime rendering were
+relocated verbatim. The only behaviour-adjacent edit was deleting `_materialize_generation`, a
+one-line wrapper around `pq.ParquetFile.read()` with a single call site and no override anywhere in
+the tree.
+
+A new helper belongs in the lowest module that can hold it. Adding an import that points *upward*
+(say, `documents` importing `verification`) closes a cycle and is the one thing this layout forbids.
 
 Each time-bearing physical lane owns `<lane-root>/availability/_LATEST.json` and content-addressed
 `generation=<parquet-byte-sha>/availability.parquet` objects. A generation contains complete
@@ -1298,6 +1386,84 @@ LOCK ORDER. `postgres_lane_day_lock` already holds the lane's SHARED publication
 whole lane-day, and `publish_availability` takes the EXCLUSIVE one. Same session, so its own shared
 hold does not conflict; ANOTHER writer's does, and that is a `retry_owed` rather than a fault — the
 drain and the hourly cron are designed to overlap.
+
+## The lane-day advisory lock is session-scoped, and that has a precondition elsewhere
+
+`gap_fill_contract.postgres_lane_day_lock` holds the shared lane barrier and then one lane-day's
+exclusive lock, yielding whether both were taken.
+
+- **Session-scoped, not transaction-scoped**, and that is the whole reason this is not
+  `execution/provenance.py::advisory_lock`. That helper takes `pg_advisory_xact_lock`, which the very
+  next `session.rollback()` releases — and this driver rolls back immediately after every export,
+  BEFORE the prune that deletes objects and the mark that publishes the day. A transaction lock would
+  cover the read and leave the destructive half unguarded, which is exactly backwards. A session lock
+  survives those rollbacks.
+- **Try, never wait.** This driver runs on a wall-clock budget; blocking on a lane-day another run is
+  already writing would spend the tick queueing to redo work that is being done. The day stays
+  missing and the next tick takes it.
+- **`pg_advisory_unlock` is not transactional either**, so the release survives the caller's next
+  rollback and needs none of its own. A failed release is swallowed: the lock dies with the
+  connection, and losing a tick over it would be the larger fault.
+- **The precondition lives in another module.** A session lock belongs to one BACKEND, and SQLAlchemy
+  returns the connection to the pool on every rollback — which this driver does between acquire and
+  release on every path. Acquire and release land on the same backend only because `db/engine.py:121`
+  pins `pool_size=1, max_overflow=0` for this engine. **Raise that pool and this breaks silently:**
+  the unlock goes to a different connection, the original holds the lock for its lifetime, every
+  later tick reports `contended` for that lane-day, and the day is never filled — on a green tick,
+  because `contended` is deliberately not a failure. Anything changing that pool must move this to an
+  explicitly checked-out connection first.
+
+## What a lane census counts, and what it does not
+
+`gap_census.build_lane_census` classifies one lane's coverage from the object LISTING alone, never by
+opening a file.
+
+- **A governed-absence marker counts as covered, not as a gap.** `missing_partition_days` already
+  treats it that way, which is what stops the driver re-attempting a day the source truly has nothing
+  for on every tick forever.
+- **A day holding parts WITHOUT a completion marker counts as work — but only for a SERIES lane**,
+  where it is reported as `incomplete_days` and appears in `missing_days` too, because repairing it is
+  the same operation as filling a day never attempted. A STATIC lane's `missing_days` still holds only
+  the version its watermark owes: its day is a version stamp, not a calendar position, so an
+  unfinished old version is reported through `incomplete_days` and `static_detail` and left for an
+  admin. See `_static_lane_census`.
+- **The export tier is `GAP_FILL_ZOOM_TIER` and the ladder is censused beside it.** `zoom`, and every
+  count keyed to it, still describes the base rung alone — this driver can only EXPORT the tier its
+  lane adapters produce. What the row adds is `ladder_repair_days`: base-complete days whose derived
+  rungs do not all hold them, which owe a re-derivation rather than an export. Keeping them in a
+  separate field rather than folding them into `missing_days` is what stops a repair from ever being
+  answered with a Postgres export, and what stops the two counts from meaning the same thing.
+- **The two fields are scoped differently on purpose.** `missing_days` is over the settled window,
+  which `lane_window` clamps to `writer_ceiling`; `ladder_repair_days` is over that window UNIONED
+  with the days a direct writer owns past the ceiling, and whatever falls outside is counted in
+  `ladder_out_of_scope_days` rather than dropped.
+
+## Writing an absence ladder
+
+`derivation.write_absence_ladder` marks one lane-day absent at every named rung, or marks none.
+
+- **The whole ladder is checked before the first marker is written**, and a rung that fails after an
+  earlier one succeeded is ROLLED BACK. Writing rung by rung and refusing on the first conflict
+  leaves coarse rungs governing a day whose base rung still serves rows — the exact stable lie the
+  marker contract exists to prevent, and one no census brings back, because `build_gap_census` walks
+  the base tier and finds its parts and its completion marker intact.
+- **One `GovernedAbsence` for the whole ladder, never one per rung.** Every rung is handed the same
+  object and therefore the same canonical bytes, which is what
+  `availability_index.py::_validate_generation_day` requires — "availability day ... mixes absence
+  reasons across its ladder" is raised on a day whose rungs disagree — and what `_verify_absence_object`
+  re-proves per rung against the row's own `absence_reason`. A caller minting a fresh reason per rung
+  would publish four markers no generation can carry.
+- **The rollback never removes a marker it did not create.** Which rungs already carried a marker is
+  read BEFORE the first write, so a re-run over an already-governed day that fails part way leaves
+  that day exactly as governed as it found it, rather than stripping rungs a previous run proved.
+- **Every named rung is written, including one that already holds these bytes**, and that is
+  deliberate rather than lazy: `availability_extension.py::_rung_objects` binds an absent day from
+  THIS RUN'S written-object ledger, so a rung skipped as unchanged is a rung the availability step
+  then reports as "carries no governed-absence marker from this run" and the day goes back to being a
+  ladder gap. Re-putting identical bytes at the same key is the object store's own no-op — one key,
+  one object, the same digest before and after — so nothing is duplicated by writing it. A caller
+  that must not pay for the redundant writes passes `tiers` naming only the rungs it knows are
+  missing; `scripts/backfill_absence_ladder.py` is exactly that caller.
 
 ## Governed absences settle the whole ladder, not just the censused rung
 

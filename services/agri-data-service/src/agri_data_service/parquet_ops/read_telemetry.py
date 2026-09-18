@@ -38,6 +38,7 @@ def _clock() -> tuple[float, float, float] | None:
         if all(math.isfinite(value) for value in (wall, cpu, process)):
             return wall, cpu, process
     except Exception:
+        # Telemetry never changes a read's outcome: an unreadable clock is no measurement.
         pass
     return None
 
@@ -46,7 +47,9 @@ def _duration(start: tuple[float, float, float] | None) -> tuple[float, float, f
     end = _clock()
     if start is None or end is None:
         return None
-    wall, thread, process = (round(min(MAX_SECONDS, max(0.0, b - a)), 6) for a, b in zip(start, end, strict=True))
+    wall, thread, process = (
+        round(min(MAX_SECONDS, max(0.0, finished - began)), 6) for began, finished in zip(start, end, strict=True)
+    )
     return wall, thread, process
 
 

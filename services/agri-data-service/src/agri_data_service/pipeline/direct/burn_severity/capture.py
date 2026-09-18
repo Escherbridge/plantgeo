@@ -157,7 +157,7 @@ def _query(  # noqa: PLR0913 - transport, budget, archive, receipt sink, query a
 def _parameters(year: int) -> dict[str, str]:
     return {
         "where": f"year = {year}",
-        "geometry": ",".join(str(n) for n in BBOX),
+        "geometry": ",".join(str(edge) for edge in BBOX),
         "geometryType": "esriGeometryEnvelope",
         "inSR": "4326",
         "spatialRel": "esriSpatialRelIntersects",
@@ -318,7 +318,7 @@ def validate_capture(capture: Path, expected_sha256: str) -> tuple[dict[str, Any
     inventory_roles = [role for year in years for role in (f"count:{year}", f"attributes:{year}")]
     geometry_roles = [f"geometry:{year}:{offset}" for year in years for offset in range(0, counts[year], 25)]
     expected_roles = [*inventory_roles, *geometry_roles, *inventory_roles]
-    if len(expected_roles) > MAX_REQUESTS or [r["role"] for r in manifest["responses"]] != expected_roles:
+    if len(expected_roles) > MAX_REQUESTS or [response["role"] for response in manifest["responses"]] != expected_roles:
         raise ValueError("capture response graph is incomplete or out of order")
     features = []
     consumed = 0
@@ -329,7 +329,7 @@ def validate_capture(capture: Path, expected_sha256: str) -> tuple[dict[str, Any
         if (
             not isinstance(identity, str)
             or len(identity) != SHA256_LENGTH
-            or any(c not in "0123456789abcdef" for c in identity)
+            or any(character not in "0123456789abcdef" for character in identity)
         ):
             raise ValueError("invalid source blob identity")
         blob = capture / "blobs" / identity

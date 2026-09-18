@@ -1,4 +1,14 @@
-"""The single stateful scheduler for PlantGeo ingestion and Parquet publication work."""
+"""The single stateful scheduler for PlantGeo ingestion and Parquet publication work.
+
+The declarative lane table and cadence-bucket/failed-checkpoint math have their own modules
+(`lane_specs.py`, `lane_scheduling.py`); the per-tick result containers live in `turn_reports.py`. This
+module re-exports their public names so no importer of `job_executor_service` changes, and keeps the
+turn-report cache, subprocess command execution, leader-lock/definition-registration/tick-planning and
+service-loop orchestration together: `tests/execution/test_command_stderr_capture.py` monkeypatches
+`LANE_SPECS`, `parse_activation`, `_default_stderr_sink`, `_default_stdout_sink` and `_LANE_TURN_REPORTS`
+as one unit on this module, so `run_scheduled_command` and the cache it folds into must keep reading
+those same module globals. See execution/AGENTS.md.
+"""
 
 from __future__ import annotations
 
@@ -11,8 +21,7 @@ import time
 import uuid
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime, timedelta
-from types import MappingProxyType
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Final, Literal
 
 import click
@@ -31,28 +40,44 @@ from agri_data_service.execution.gap_repair_contract import (
     RepairRequest,
     RepairRequestError,
 )
-from agri_data_service.execution.lane_ids import (
-    BURN_SEVERITY_DIRECT_LANE_ID,
-    CLIMATE_DIRECT_LANE_ID,
-    DROUGHT_DIRECT_LANE_ID,
-    EVACUATION_ZONES_DIRECT_LANE_ID,
-    FIRE_DETECTIONS_DIRECT_LANE_ID,
-    FIRE_PERIMETERS_DIRECT_LANE_ID,
-    MTBS_FORWARD_LANE_ID,
-    SENSORS_DIRECT_LANE_ID,
-    SOIL_DIRECT_LANE_ID,
-    VEGETATION_DIRECT_LANE_ID,
-    WATER_GAUGES_DIRECT_LANE_ID,
-    WATERSHEDS_DIRECT_LANE_ID,
-    WEATHER_OBSERVATIONS_DIRECT_LANE_ID,
+from agri_data_service.execution.lane_scheduling import (
+    SUPERSEDE_RUN_COMMAND,
+    CheckpointVerdict,
+    DueLane,
+    LatestRun,
+    bucket_after,
+    fair_due_order,
+    judge_failed_checkpoint,
+    next_scheduled_bucket,
+    scheduled_bucket,
+    supersession_command,
+)
+from agri_data_service.execution.lane_specs import (
+    ACTIVE_LANES_VARIABLE,
+    CLOCK_RELEASE_STREAK_LIMIT,
+    EXECUTOR_DEFINITION_PREFIX,
+    EXECUTOR_DEFINITION_VERSION,
+    EXECUTOR_HANDLER_TOKEN,
+    EXECUTOR_REQUESTED_BY,
+    EXECUTOR_WORK_ITEM_KIND,
+    FAILURE_STREAK_PROBE_LIMIT,
+    LANE_SPECS,
+    ActivationConfig,
+    ExecutorConfigurationError,
+    LaneExecutionSpec,
+    parse_activation,
+)
+from agri_data_service.execution.turn_reports import (
+    ExecutorTickSummary,
+    LaneTickResult,
+    LaneTickState,
+    OperatorAction,
 )
 from agri_data_service.jobs import (
     JobDefinitionRecord,
-    JobDefinitionSpec,
     JobHandlerOutcome,
     JobInvocation,
     JobWorkItemSpec,
-    RetryPolicy,
     ShutdownSignal,
     job_handler,
     load_job_definition,
@@ -69,61 +94,26 @@ from agri_data_service.jobs.lease import (
     redact_text,
     required_column,
 )
-from agri_data_service.pipeline.constants import (
-    FIRE_DETECTIONS_DIRECT_WRITER_START_DAY,
-    WATER_GAUGES_DIRECT_WRITER_START_DAY,
-)
-from agri_data_service.pipeline.direct.burn_severity.forward import BURN_SEVERITY_MAX_TIME_BUDGET_SECONDS
-from agri_data_service.pipeline.direct.climate.products import (
-    CLIMATE_DEFAULT_TIME_BUDGET_SECONDS,
-    CLIMATE_FIELD_PRODUCTS,
-    CLIMATE_SHORTWAVE_RADIATION_PUBLICATION_LAG_DAYS,
-)
-from agri_data_service.pipeline.direct.drought.forward import DROUGHT_DEFAULT_TIME_BUDGET_SECONDS
-from agri_data_service.pipeline.direct.evacuation_zones.forward import EVACUATION_ZONES_DEFAULT_TIME_BUDGET_SECONDS
-from agri_data_service.pipeline.direct.fire_perimeters.forward import FIRE_PERIMETERS_DEFAULT_TIME_BUDGET_SECONDS
-from agri_data_service.pipeline.direct.sensors.forward import SENSORS_DEFAULT_TIME_BUDGET_SECONDS
-from agri_data_service.pipeline.direct.soil.products import (
-    ERA5_LAND_ARCHIVE_PUBLICATION_LAG_DAYS,
-    SOIL_DEFAULT_TIME_BUDGET_SECONDS,
-    SOIL_FIELD_PRODUCTS,
-)
-from agri_data_service.pipeline.direct.vegetation.forward import VEGETATION_DEFAULT_TIME_BUDGET_SECONDS
-from agri_data_service.pipeline.direct.vegetation.products import VEGETATION_DIRECT_WRITER_START_DAY
-from agri_data_service.pipeline.direct.weather_observations.forward import (
-    WEATHER_OBSERVATIONS_DEFAULT_TIME_BUDGET_SECONDS,
-)
-from agri_data_service.pipeline.parquet.lane_registry import LANE_REGISTRY
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Mapping, Sequence
+    from collections.abc import Callable, Iterable, Mapping
     from collections.abc import Set as AbstractSet
 
 logger = structlog.get_logger(__name__)
 
-EXECUTOR_DEFINITION_PREFIX: Final = "plantgeo.executor."
-EXECUTOR_DEFINITION_VERSION: Final = "2"
-EXECUTOR_HANDLER_TOKEN: Final = "plantgeo.executor.command.v1"
-EXECUTOR_WORK_ITEM_KIND: Final = "scheduled-command"
+EXECUTOR_LEADER_LOCK_KEY: Final = "plantgeo:unified-job-executor:v1"
 #: The two work item kinds the one handler runs: a cadence bucket's command, or a bounded repair turn of the
 #: same command. See execution/AGENTS.md, "Bounded gap repair".
 EXECUTOR_WORK_ITEM_KINDS: Final[frozenset[str]] = frozenset({EXECUTOR_WORK_ITEM_KIND, EXECUTOR_REPAIR_WORK_ITEM_KIND})
-EXECUTOR_LEADER_LOCK_KEY: Final = "plantgeo:unified-job-executor:v1"
-EXECUTOR_REQUESTED_BY: Final = "agri-service ops jobs-executor"
 
 #: A failed or partial checkpoint run an operator has superseded is one resolved `agri.job_incident` row
 #: keyed by this prefix plus the run id; `select_latest_run.sql` reads it as `superseded_by_operator`.
 #: See execution/AGENTS.md, "Failed checkpoints are superseded by the clock or by an operator".
 RUN_SUPERSESSION_INCIDENT_TYPE: Final = "plantgeo.executor.run_superseded"
 RUN_SUPERSESSION_FINGERPRINT_PREFIX: Final = "plantgeo.executor.run-superseded:"
-SUPERSEDE_RUN_COMMAND: Final = "agri-service ops jobs-supersede-run"
 #: The two run statuses that settle a checkpoint without success and block the lane behind it.
 SETTLED_WITHOUT_SUCCESS: Final[frozenset[str]] = frozenset({"failed", "partial"})
-#: How many of a lane's newest terminal runs the checkpoint query inspects for its failure streak. One
-#: bounded backward index probe; no policy below ever needs a longer streak than this.
-FAILURE_STREAK_PROBE_LIMIT: Final = 3
 
-ACTIVE_LANES_VARIABLE: Final = "PLANTGEO_JOB_EXECUTOR_ACTIVE_LANES"
 POLL_SECONDS_VARIABLE: Final = "PLANTGEO_JOB_EXECUTOR_POLL_SECONDS"
 MAX_LANES_PER_TICK_VARIABLE: Final = "PLANTGEO_JOB_EXECUTOR_MAX_LANES_PER_TICK"
 #: How often the leader re-reads Parquet coverage and authors bounded repair turns; `0` disables authoring.
@@ -163,547 +153,9 @@ TURN_REPORT_DETAIL_CHARS: Final = 200
 #: The blocker string prefix `_held_checkpoint_result` writes; the typed `operator_action` carries the same command.
 OPERATOR_SUPERSESSION_BLOCKER_PREFIX: Final = "operator supersession required: "
 
-LaneWorkClass = Literal["incremental", "backlog"]
-MigrationDisposition = Literal["consolidatable", "source-specific", "snapshot-only"]
-CatchUpPolicy = Literal["coalesce_latest", "replay_oldest"]
-ReleaseMechanism = Literal["clock", "operator"]
-#: The failure streak at which the clock stops releasing a lane and an operator must record a supersession.
-#: A coalesce_latest lane tolerates two transient failed buckets (the third in a row is a broken lane); a
-#: replay_oldest lane tolerates none, because every one of its buckets is owed.
-CLOCK_RELEASE_STREAK_LIMIT: Final[Mapping[CatchUpPolicy, int]] = MappingProxyType(
-    {"coalesce_latest": 3, "replay_oldest": 1}
-)
-LaneTickState = Literal[
-    "shadow",
-    "source_specific",
-    "paused",
-    "not_due",
-    "deferred_fairness",
-    "deferred_shutdown",
-    "ran",
-    "failed",
-]
-
-
-class ExecutorConfigurationError(ValueError):
-    """Raised when executor lane configuration is invalid."""
-
 
 class ExecutorLeaderUnlockError(RuntimeError):
     """Raised when the pinned PostgreSQL backend cannot confirm leader-lock release."""
-
-
-if max(CLOCK_RELEASE_STREAK_LIMIT.values()) > FAILURE_STREAK_PROBE_LIMIT:
-    # The query caps the streak at the probe limit, so a limit above it could never be reached and the
-    # breaker would be silently disarmed: a broken lane would mint one dead letter per bucket forever.
-    raise ExecutorConfigurationError("FAILURE_STREAK_PROBE_LIMIT must cover every CLOCK_RELEASE_STREAK_LIMIT")
-
-
-@dataclass(frozen=True, slots=True)
-class LaneExecutionSpec:
-    """One code-owned scheduling contract."""
-
-    lane_id: str
-    conflicts_with: tuple[str, ...]
-    work_class: LaneWorkClass
-    migration_disposition: MigrationDisposition
-    cadence_seconds: int | None
-    phase_offset_seconds: int
-    schedule: str | None
-    publication_lag_days: int | None
-    publication_cadence_days: int | None
-    publication_lag_source: str
-    selection_policy: str
-    catch_up_policy: CatchUpPolicy
-    command: tuple[str, ...] | None
-    command_timeout_seconds: int
-    description: str
-    writer_floor: str | None = None
-    writer_ceiling: str | None = None
-
-    def __post_init__(self) -> None:
-        if not self.lane_id.strip():
-            raise ExecutorConfigurationError("lane_id must not be empty")
-        if self.cadence_seconds is not None and self.cadence_seconds <= 0:
-            raise ExecutorConfigurationError(f"{self.lane_id}: cadence_seconds must be positive")
-        if self.phase_offset_seconds < 0:
-            raise ExecutorConfigurationError(f"{self.lane_id}: phase_offset_seconds must not be negative")
-        if self.cadence_seconds is not None and self.phase_offset_seconds >= self.cadence_seconds:
-            raise ExecutorConfigurationError(
-                f"{self.lane_id}: phase_offset_seconds must be smaller than cadence_seconds"
-            )
-        if self.command is not None and not self.command:
-            raise ExecutorConfigurationError(f"{self.lane_id}: command must not be empty")
-        if self.command_timeout_seconds <= 0:
-            raise ExecutorConfigurationError(f"{self.lane_id}: command_timeout_seconds must be positive")
-
-    @property
-    def definition_name(self) -> str:
-        return f"{EXECUTOR_DEFINITION_PREFIX}{self.lane_id}"
-
-    @property
-    def executable(self) -> bool:
-        return self.command is not None and self.cadence_seconds is not None
-
-    def definition_spec(self) -> JobDefinitionSpec:
-        """Declare the durable outer command run without changing a stored pause switch."""
-        return JobDefinitionSpec(
-            name=self.definition_name,
-            version=EXECUTOR_DEFINITION_VERSION,
-            handler=EXECUTOR_HANDLER_TOKEN,
-            schedule=self.schedule,
-            concurrency_key=f"plantgeo-executor:{self.lane_id}",
-            max_attempts=5,
-            lease_seconds=self.command_timeout_seconds + 120,
-            time_budget_seconds=self.command_timeout_seconds + 30,
-            retry_policy=RetryPolicy(
-                initial_backoff_seconds=30,
-                backoff_multiplier=2,
-                maximum_backoff_seconds=3600,
-            ),
-            parameters={
-                "lane_id": self.lane_id,
-                "work_class": self.work_class,
-                "migration_disposition": self.migration_disposition,
-                "cadence_seconds": self.cadence_seconds,
-                "phase_offset_seconds": self.phase_offset_seconds,
-                "publication_lag_days": self.publication_lag_days,
-                "publication_cadence_days": self.publication_cadence_days,
-                "publication_lag_source": self.publication_lag_source,
-                "selection_policy": self.selection_policy,
-                "catch_up_policy": self.catch_up_policy,
-                "writer_floor": self.writer_floor,
-                "writer_ceiling": self.writer_ceiling,
-            },
-        )
-
-    def inventory_row(self, *, active: bool) -> dict[str, object]:
-        return {
-            "lane_id": self.lane_id,
-            "conflicts_with": list(self.conflicts_with),
-            "active": active,
-            "work_class": self.work_class,
-            "migration_disposition": self.migration_disposition,
-            "cadence_seconds": self.cadence_seconds,
-            "phase_offset_seconds": self.phase_offset_seconds,
-            "schedule": self.schedule,
-            "publication_lag_days": self.publication_lag_days,
-            "publication_cadence_days": self.publication_cadence_days,
-            "publication_lag_source": self.publication_lag_source,
-            "selection_policy": self.selection_policy,
-            "catch_up_policy": self.catch_up_policy,
-            "command": None if self.command is None else list(self.command),
-            "command_timeout_seconds": self.command_timeout_seconds,
-            "checkpoint": "agri.job_work_item.cursor",
-            "lease_seconds": self.command_timeout_seconds + 120,
-            "max_attempts": 5,
-            "retry_policy": {
-                "initial_backoff_seconds": 30,
-                "backoff_multiplier": 2,
-                "maximum_backoff_seconds": 3600,
-            },
-            "dead_letter_visibility": "agri.job_work_item status=dead_letter and agri.job_event",
-            "rollback": f"remove lane from {ACTIVE_LANES_VARIABLE}",
-            "executable": self.executable,
-            "description": self.description,
-            "writer_floor": self.writer_floor,
-            "writer_ceiling": self.writer_ceiling,
-            "source_watermark_parity": "not_evaluated",
-        }
-
-
-def _registration(slug: str) -> tuple[int, int, str | None]:
-    lane = LANE_REGISTRY[slug]
-    ceiling = None if lane.writer_ceiling is None else lane.writer_ceiling.isoformat()
-    return lane.publication_lag_days, lane.cadence_days, ceiling
-
-
-def _spec(  # noqa: PLR0913 - this is the declarative constructor for the code-owned lane table
-    lane_id: str,
-    *,
-    command: tuple[str, ...] | None,
-    conflicts_with: tuple[str, ...] = (),
-    work_class: LaneWorkClass = "incremental",
-    disposition: MigrationDisposition = "consolidatable",
-    cadence_seconds: int | None = 3600,
-    phase_offset_seconds: int = 0,
-    schedule: str | None = "0 * * * *",
-    publication_lag_days: int | None = None,
-    publication_cadence_days: int | None = None,
-    publication_lag_source: str = "source command contract",
-    selection_policy: str = "newest available source receipt first",
-    catch_up_policy: CatchUpPolicy | None = None,
-    timeout_seconds: int = 900,
-    description: str,
-    writer_floor: str | None = None,
-    writer_ceiling: str | None = None,
-) -> LaneExecutionSpec:
-    return LaneExecutionSpec(
-        lane_id=lane_id,
-        conflicts_with=conflicts_with,
-        work_class=work_class,
-        migration_disposition=disposition,
-        cadence_seconds=cadence_seconds,
-        phase_offset_seconds=phase_offset_seconds,
-        schedule=schedule,
-        publication_lag_days=publication_lag_days,
-        publication_cadence_days=publication_cadence_days,
-        publication_lag_source=publication_lag_source,
-        selection_policy=selection_policy,
-        catch_up_policy=("replay_oldest" if work_class == "backlog" else "coalesce_latest")
-        if catch_up_policy is None
-        else catch_up_policy,
-        command=command,
-        command_timeout_seconds=timeout_seconds,
-        description=description,
-        writer_floor=writer_floor,
-        writer_ceiling=writer_ceiling,
-    )
-
-
-# Environmental source schedules are explicit below. Generic `parquet-*` gap-fill and drain
-# schedules were removed from the executor catalog on 2026-09-12; they were the last reactivation
-# surface for a PostgreSQL-backed environmental export. Direct source packages own acquisition and
-# publication, and an unadmitted product remains unavailable until its Parquet contract is published.
-# Bounded gap repair of what those writers publish is NOT a generic lane either: it is a per-lane repair
-# definition that runs the owning writer's own command (`repair_lane_spec`, `gap_repair_contract.py`).
-# The lane identifiers themselves live in `execution/lane_ids.py`, a leaf, so the repair contract can name
-# a lane without importing this scheduler.
-
-# PostgreSQL materialized-view refresh jobs were retired with the forecast/source cutover.
-_DURABLE_JOB_SCHEDULES: Final[tuple[tuple[str, int, int, int, str, CatchUpPolicy], ...]] = ()
-
-
-_JOBS_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
-    *(
-        _spec(
-            f"jobs-{lane}",
-            command=(
-                "agri-service",
-                "ops",
-                "jobs-pulse",
-                "--lane",
-                lane,
-                "--skip-maintenance",
-                "--time-budget-seconds",
-                "600",
-            ),
-            work_class="backlog",
-            cadence_seconds=cadence_seconds,
-            phase_offset_seconds=phase_offset_seconds,
-            schedule=schedule,
-            catch_up_policy=catch_up_policy,
-            publication_lag_source=f"durable definition {lane}",
-            selection_policy="one isolated durable slice per turn",
-            timeout_seconds=inner_budget + COMMAND_CLEANUP_MARGIN_SECONDS,
-            description=f"Independent durable failure domain for {lane}.",
-        )
-        for lane, inner_budget, cadence_seconds, phase_offset_seconds, schedule, catch_up_policy in (
-            _DURABLE_JOB_SCHEDULES
-        )
-    ),
-)
-
-_MIGRATION_INPUT_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
-    _spec(
-        FIRE_DETECTIONS_DIRECT_LANE_ID,
-        command=("python", "-m", "agri_data_service.pipeline.direct.fire_detections"),
-        phase_offset_seconds=900,
-        schedule="15 * * * *",
-        publication_lag_days=_registration("fire-detections")[0],
-        publication_cadence_days=_registration("fire-detections")[1],
-        publication_lag_source="pipeline/parquet/lane_registry.py fire-detections contract",
-        description="Direct FIRMS forward writer for the admitted Parquet stream.",
-        writer_floor=FIRE_DETECTIONS_DIRECT_WRITER_START_DAY.isoformat(),
-    ),
-    _spec(
-        WATER_GAUGES_DIRECT_LANE_ID,
-        command=("python", "-m", "agri_data_service.pipeline.parquet.water_gauges_forward"),
-        disposition="source-specific",
-        phase_offset_seconds=900,
-        schedule="15 * * * *",
-        publication_lag_days=_registration("water-gauges")[0],
-        publication_cadence_days=_registration("water-gauges")[1],
-        publication_lag_source="pipeline/parquet/lane_registry.py water-gauges contract",
-        timeout_seconds=1800,
-        description="Bounded direct water forward writer for the admitted Parquet stream.",
-        writer_floor=WATER_GAUGES_DIRECT_WRITER_START_DAY.isoformat(),
-    ),
-    _spec(
-        MTBS_FORWARD_LANE_ID,
-        command=("python", "-m", "agri_data_service.pipeline.direct.burn_severity"),
-        cadence_seconds=604800,
-        phase_offset_seconds=460500,
-        schedule="55 7 * * 2",
-        publication_lag_days=_registration("burn-severity")[0],
-        publication_cadence_days=_registration("burn-severity")[1],
-        publication_lag_source="pipeline/parquet/lane_registry.py burn-severity contract",
-        timeout_seconds=1800,
-        description="Source-direct MTBS capture and governed Parquet publication.",
-    ),
-    _spec(
-        CLIMATE_DIRECT_LANE_ID,
-        command=("python", "-m", "agri_data_service.pipeline.direct.climate"),
-        # The larger of the two source lags and the earliest of the eight floors cover the shared
-        # direct writer contract.
-        disposition="source-specific",
-        phase_offset_seconds=2400,
-        schedule="40 * * * *",
-        publication_lag_days=CLIMATE_SHORTWAVE_RADIATION_PUBLICATION_LAG_DAYS,
-        publication_cadence_days=1,
-        publication_lag_source="pipeline/parquet/lane_registry.py climate-field-* contracts",
-        selection_policy="newest settled unfilled day first, one product-day per lane-day lock",
-        timeout_seconds=int(CLIMATE_DEFAULT_TIME_BUDGET_SECONDS) + COMMAND_CLEANUP_MARGIN_SECONDS,
-        description=(
-            "Direct NASA POWER forward writer for the eight climate-field streams and the three "
-            "soil-wetness depths. ACTIVE in production: the ledger opens and runs one bucket per hour "
-            "(measured 2026-09-15, buckets 00:40, 01:40, 12:40, 13:40, 23:40 each `ran`/`succeeded`)."
-        ),
-        writer_floor=min(product.history_floor for product in CLIMATE_FIELD_PRODUCTS).isoformat(),
-    ),
-    _spec(
-        SOIL_DIRECT_LANE_ID,
-        command=("python", "-m", "agri_data_service.pipeline.direct.soil"),
-        # One shared lag applies: unlike the climate writer's two publication clocks, all eight
-        # ERA5-Land streams come off one model on one release schedule. The phase offset is
-        # its own so the two direct writers never open their fan-outs in the same minute -- they
-        # share no lane, but they do share this container's CPU and egress.
-        disposition="source-specific",
-        phase_offset_seconds=3000,
-        schedule="50 * * * *",
-        publication_lag_days=ERA5_LAND_ARCHIVE_PUBLICATION_LAG_DAYS,
-        publication_cadence_days=1,
-        publication_lag_source="pipeline/parquet/lane_registry.py soil-field-*/soil-temperature-* contracts",
-        selection_policy="newest settled unfilled day first, one product-day per lane-day lock",
-        timeout_seconds=int(SOIL_DEFAULT_TIME_BUDGET_SECONDS) + COMMAND_CLEANUP_MARGIN_SECONDS,
-        description=(
-            "Direct Open-Meteo ERA5-Land forward writer for the three moisture, four temperature and "
-            "one VPD streams. ACTIVE in production, one bucket per hour at :50 (measured 2026-09-15)."
-        ),
-        writer_floor=min(product.history_floor for product in SOIL_FIELD_PRODUCTS).isoformat(),
-    ),
-    _spec(
-        VEGETATION_DIRECT_LANE_ID,
-        command=("python", "-m", "agri_data_service.pipeline.direct.vegetation"),
-        # This is the sole scheduled owner of the source-direct stream.
-        disposition="source-specific",
-        phase_offset_seconds=300,
-        schedule="5 * * * *",
-        publication_lag_days=_registration("vegetation")[0],
-        publication_cadence_days=_registration("vegetation")[1],
-        publication_lag_source="pipeline/parquet/lane_registry.py vegetation contract",
-        selection_policy="newest unfilled settled day first, one product-day per lane-day lock",
-        timeout_seconds=int(VEGETATION_DEFAULT_TIME_BUDGET_SECONDS) + COMMAND_CLEANUP_MARGIN_SECONDS,
-        description=(
-            "Direct Sentinel-2 NDVI forward writer for the admitted Parquet stream. Historical repair "
-            "and parity are manual source-direct operations, never a scheduled database export."
-        ),
-        # forward.py::history_floor() == max(registered floor, START_DAY + 1 day): the boundary day
-        # itself belongs to backfill.py, not to this lane. See VEGETATION_PLANE_STREAM's writer_ceiling
-        # in pipeline/parquet/lane_registry.py for the other side of the same boundary.
-        writer_floor=(VEGETATION_DIRECT_WRITER_START_DAY + timedelta(days=1)).isoformat(),
-    ),
-    _spec(
-        WEATHER_OBSERVATIONS_DIRECT_LANE_ID,
-        command=("python", "-m", "agri_data_service.pipeline.direct.weather_observations"),
-        disposition="source-specific",
-        phase_offset_seconds=1800,
-        schedule="30 * * * *",
-        publication_lag_days=_registration("weather-observations")[0],
-        publication_cadence_days=_registration("weather-observations")[1],
-        publication_lag_source="pipeline/parquet/lane_registry.py weather-observations contract",
-        selection_policy="one current-conditions poll merged into the (at most two) day buckets it touched",
-        timeout_seconds=int(WEATHER_OBSERVATIONS_DEFAULT_TIME_BUDGET_SECONDS) + COMMAND_CLEANUP_MARGIN_SECONDS,
-        description=(
-            "Direct Open-Meteo current-conditions forward writer for weather-observations. Unlike "
-            "vegetation/fire-detections/water-gauges, no cited ownership-boundary constant exists yet "
-            "in pipeline/direct/weather_observations/ (no backfill.py, no *_DIRECT_WRITER_START_DAY), "
-            "so no writer_ceiling/writer_floor was guessed here without one to cite. ACTIVE since 2026-09-07, "
-            "and LANE_REGISTRY['weather-observations'].adapter became a source-direct refusal in the same "
-            "wave: a boundary day is only worth having while TWO writers share the window, and they no "
-            "longer do. There is still no cited boundary; there is no longer anything for it to divide."
-        ),
-    ),
-    _spec(
-        DROUGHT_DIRECT_LANE_ID,
-        command=("python", "-m", "agri_data_service.pipeline.direct.drought"),
-        disposition="source-specific",
-        phase_offset_seconds=2700,
-        schedule="45 * * * *",
-        publication_lag_days=_registration("drought")[0],
-        publication_cadence_days=_registration("drought")[1],
-        publication_lag_source="pipeline/parquet/lane_registry.py drought contract",
-        selection_policy="newest settled USDM release Tuesday first, one release per lane-day lock",
-        timeout_seconds=int(DROUGHT_DEFAULT_TIME_BUDGET_SECONDS) + COMMAND_CLEANUP_MARGIN_SECONDS,
-        description=(
-            "Direct USDM forward writer for the admitted Parquet stream. Forward and historical repair "
-            "are source-direct and no database export lane is registered."
-        ),
-        # The direct writer's own floor, not a boundary: `forward.py:125` scans from
-        # `max(lane.history_floor, ...)` and `backfill.py:72` walks `release_weeks(lane.history_floor,
-        # ...)`, so both halves start at exactly this registration's floor.
-        writer_floor=LANE_REGISTRY["drought"].history_floor.isoformat(),
-    ),
-    # --- Source-direct writers: one scheduled owner per stream -------------------------
-    _spec(
-        FIRE_PERIMETERS_DIRECT_LANE_ID,
-        command=("python", "-m", "agri_data_service.pipeline.direct.fire_perimeters"),
-        disposition="source-specific",
-        phase_offset_seconds=600,
-        schedule="10 * * * *",
-        publication_lag_days=_registration("fire-perimeters")[0],
-        publication_cadence_days=_registration("fire-perimeters")[1],
-        publication_lag_source="pipeline/parquet/lane_registry.py fire-perimeters contract",
-        selection_policy="one source-watermark resolution per turn; at most one version published, or none at all",
-        timeout_seconds=int(FIRE_PERIMETERS_DEFAULT_TIME_BUDGET_SECONDS) + COMMAND_CLEANUP_MARGIN_SECONDS,
-        description=(
-            "Direct WFIGS _Current forward writer for fire-perimeters, a static_lookup lane. The "
-            "direct writer owns both its source capture and version clock. NO "
-            "writer_ceiling is declared on the registration and none is possible: "
-            "LaneRegistration.__post_init__ refuses a ceiling on a version-stamped lane. There is no "
-            "backfill module and there cannot be one -- WFIGS _Current retains nothing, so no past "
-            "version is re-fetchable and the 45 days the retired daily_series shape wrote are all the "
-            "history this lane will ever have. Hourly at :10, the cadence of the _Current poller it "
-            "replaces. Shadow until activated; the adapter AND watermark swap belongs in the same push "
-            "that drops geo.features."
-        ),
-    ),
-    _spec(
-        SENSORS_DIRECT_LANE_ID,
-        command=("python", "-m", "agri_data_service.pipeline.direct.sensors"),
-        disposition="source-specific",
-        phase_offset_seconds=1200,
-        schedule="20 * * * *",
-        publication_lag_days=_registration("sensors")[0],
-        publication_cadence_days=_registration("sensors")[1],
-        publication_lag_source="pipeline/parquet/lane_registry.py sensors contract",
-        selection_policy="one rolling-window poll, merge-published into every day bucket it touched, newest first",
-        timeout_seconds=int(SENSORS_DEFAULT_TIME_BUDGET_SECONDS) + COMMAND_CLEANUP_MARGIN_SECONDS,
-        description=(
-            "Direct NOAA NWS forward writer for sensors. One poll fetches the FULL rolling window every "
-            "run (SENSORS_MAX_DAYS = NWS_OBSERVATION_RETENTION.days + 1, seven buckets), which "
-            "self-heals across a missed tick at no extra HTTP cost: observation_url issues one request "
-            "per station whether a window is asked for or not. HOURLY AT :20 IS A DECIDED TRADE, not a "
-            "default -- roughly hourly is NWS's own publication cadence, so a :15/:30-style sub-hourly "
-            "slot would re-transfer the same mostly-unchanged six days several times an hour for no new "
-            "readings, while a slower slot risks a day ageing out of NWS's rolling retention unseen, "
-            "which loses it from the source forever. Like weather-observations, this package ships no "
-            "*_DIRECT_WRITER_START_DAY and no backfill.py, so no writer_floor was guessed without a boundary "
-            "day to cite. ACTIVE since 2026-09-07; the adapter became a source-direct refusal once "
-            "postgres-sensors was deleted, because a FROZEN geo.features is not a deeper archive -- it "
-            "is a fixed set of past days, so no database export is registered for this lane."
-        ),
-    ),
-    _spec(
-        WATERSHEDS_DIRECT_LANE_ID,
-        command=("python", "-m", "agri_data_service.pipeline.direct.watersheds"),
-        disposition="source-specific",
-        cadence_seconds=86400,
-        phase_offset_seconds=10800,
-        schedule="0 3 * * *",
-        publication_lag_days=_registration("watersheds")[0],
-        publication_cadence_days=_registration("watersheds")[1],
-        publication_lag_source="pipeline/parquet/lane_registry.py watersheds contract",
-        selection_policy="one source-derived version per turn, published only when NHDPlus_HR's own loaddate has moved",
-        # `pipeline/direct/watersheds/forward.py` exposes no `--time-budget-seconds` -- its CLI is
-        # `--max-days/--bbox/--run-id` -- so this command timeout is the ONLY bound on a turn, and it
-        # is sized for the whole walk rather than copied from the 300 s siblings that move small JSON.
-        timeout_seconds=1800,
-        description=(
-            "Direct NHDPlus_HR WBDHU12 forward writer for watersheds. The adapter-and-watermark swap "
-            "this description used to say activation still owed LANDED 2026-09-06: "
-            "LANE_REGISTRY['watersheds'] now carries a source-direct refusal and a watermark reading "
-            "NHDPlus_HR's own loaddate, so neither half depends on geo.features any longer and the "
-            "census cannot freeze when postgres-watersheds stops -- and it HAS stopped: that lane, its "
-            "ingest-watersheds verb and the Postgres exporter behind it were deleted on 2026-09-06, so "
-            "this is now the ONLY writer of the watersheds stream. DAILY at 03:00, one hour after the "
-            "02:00 slot the deleted postgres-watersheds lane held, a phase kept so the parity receipt "
-            "and any operator re-run never open the same fetch minute: one turn is the same "
-            "~9,400-basin, ~47-request NHDPlus_HR walk the export itself "
-            "performs, against a national reference layer measured to hold exactly ONE load day in its "
-            "whole history, so an hourly slot would pay that walk 24 times a day to detect a change "
-            "that has happened once. Shadow until activated."
-        ),
-    ),
-    _spec(
-        EVACUATION_ZONES_DIRECT_LANE_ID,
-        command=("python", "-m", "agri_data_service.pipeline.direct.evacuation_zones"),
-        disposition="source-specific",
-        phase_offset_seconds=2100,
-        schedule="35 * * * *",
-        publication_lag_days=_registration("evacuation-zones")[0],
-        publication_cadence_days=_registration("evacuation-zones")[1],
-        publication_lag_source="pipeline/parquet/lane_registry.py evacuation-zones contract",
-        selection_policy=(
-            "one statewide capture per turn, published only when its content digest differs from the "
-            "newest already-published version"
-        ),
-        timeout_seconds=int(EVACUATION_ZONES_DEFAULT_TIME_BUDGET_SECONDS) + COMMAND_CLEANUP_MARGIN_SECONDS,
-        description=(
-            "Direct Oregon OEM forward writer for evacuation-zones, a static_lookup lane whose change "
-            "test moved INTO the writer: it digests the captured population (rows.content_digest) and "
-            "publishes only when that differs from the newest version already published, so a tick that "
-            "finds nothing changed writes nothing and a skipped tick costs nothing. No writer_ceiling is "
-            "possible here either -- a version-stamped lane has no calendar window to divide -- so "
-            "The direct writer is the only scheduled owner of this source-direct stream. The watermark "
-            "replacement this description used to say was still owed "
-            "LANDED 2026-09-06: _evacuation_zones_watermark no longer reads geo.features or geo.geometry, "
-            "it runs the SAME content digest the writer publishes on, so census and writer cannot "
-            "disagree and neither survives a last_edited_date re-stamp on an unchanged area. Hourly at "
-            ":35, the cadence of the postgres-evacuation-zones poller it replaced -- that lane, its "
-            "ingest-evacuation-zones verb and the job behind it were deleted on 2026-09-07, so this is "
-            "now the ONLY writer of the evacuation-zones stream. Shadow until activated."
-        ),
-    ),
-    _spec(
-        BURN_SEVERITY_DIRECT_LANE_ID,
-        command=(
-            "python",
-            "-m",
-            "agri_data_service.pipeline.direct.burn_severity",
-            "--current-snapshots",
-            "--time-budget-seconds",
-            "1800",
-        ),
-        disposition="source-specific",
-        cadence_seconds=86400,
-        phase_offset_seconds=32100,
-        schedule="55 8 * * *",
-        publication_lag_days=None,
-        publication_cadence_days=None,
-        publication_lag_source="mixed: historical registered cohorts; current capture D+1 UTC with no extra lag",
-        selection_policy=(
-            "daily earliest eligible staged snapshot; weekly bounded current capture; five historical cohorts retained"
-        ),
-        timeout_seconds=int(BURN_SEVERITY_MAX_TIME_BUDGET_SECONDS) + COMMAND_CLEANUP_MARGIN_SECONDS,
-        description=(
-            "Daily 08:55 UTC eligible-stage check and weekly bounded current MTBS capture. "
-            "Current snapshots become eligible the UTC day after capture and replace the current "
-            "2018-2026 footprint; 2023-2026 mapping remains partial. Identical source content records "
-            "a check without another release. Historical five-cohort repair retains its registered "
-            "release dates and lag. The fixed year horizon refuses 2027 until reviewed."
-        ),
-        # The direct writer's own floor, not a boundary: `products.governed_release_days()` opens at
-        # 2020-11-24, which is exactly the day this registration's floor cites (measured 2026-09-06,
-        # pinned by `tests/test_job_executor_service.py`).
-        writer_floor=LANE_REGISTRY["burn-severity"].history_floor.isoformat(),
-    ),
-)
-
-_LANE_SPECS: Final[tuple[LaneExecutionSpec, ...]] = (
-    *_JOBS_SPECS,
-    *_MIGRATION_INPUT_SPECS,
-)
-
-LANE_SPECS: Final[Mapping[str, LaneExecutionSpec]] = MappingProxyType({spec.lane_id: spec for spec in _LANE_SPECS})
-
-# Every conflict must name a lane that exists. `parse_activation` intersects `conflicts_with` with the
-# ACTIVE set, so a misspelled or renamed target is not merely unenforced there -- it is invisible: the
-# intersection is empty and the pairing activates. Direct source lanes currently have no conflicts;
-# this assertion remains for any future control-plane mutual exclusion.
-assert not {target for spec in _LANE_SPECS for target in spec.conflicts_with} - LANE_SPECS.keys(), (
-    "a lane declares conflicts_with against a lane id that is not in LANE_SPECS"
-)
 
 
 _TRY_LEADER_LOCK: Final = text("SELECT pg_try_advisory_lock(hashtextextended(:lock_key, 0)) AS acquired")
@@ -711,166 +163,6 @@ _RELEASE_LEADER_LOCK: Final = text("SELECT pg_advisory_unlock(hashtextextended(:
 _SELECT_DEFINITION_STATE: Final = text(load_query_sql("execution/select_definition_state.sql"))
 _INSERT_DEFINITION: Final = text(load_query_sql("execution/insert_definition.sql"))
 _SELECT_LATEST_RUN: Final = text(load_query_sql("execution/select_latest_run.sql"))
-
-
-@dataclass(frozen=True, slots=True)
-class ActivationConfig:
-    """The explicit lane allow-list."""
-
-    active_lanes: frozenset[str]
-
-    def is_active(self, lane_id: str) -> bool:
-        return lane_id in self.active_lanes
-
-
-def _comma_tokens(value: str) -> tuple[str, ...]:
-    return tuple(token.strip() for token in value.split(",") if token.strip())
-
-
-def parse_activation(environment: Mapping[str, str] | None = None) -> ActivationConfig:
-    """Parse and validate the active lane allow-list, defaulting every lane to shadow."""
-    source = os.environ if environment is None else environment
-    active = frozenset(_comma_tokens(source.get(ACTIVE_LANES_VARIABLE, "")))
-    unknown = sorted(active - LANE_SPECS.keys())
-    if unknown:
-        raise ExecutorConfigurationError(f"unknown active lane(s): {', '.join(unknown)}")
-
-    for lane_id in sorted(active):
-        conflicts = sorted(set(LANE_SPECS[lane_id].conflicts_with) & active)
-        if conflicts:
-            raise ExecutorConfigurationError(f"lane {lane_id!r} conflicts with active lane(s): {', '.join(conflicts)}")
-
-    for lane_id in sorted(active):
-        spec = LANE_SPECS[lane_id]
-        if not spec.executable:
-            raise ExecutorConfigurationError(
-                f"lane {lane_id!r} is {spec.migration_disposition} and has no executor command"
-            )
-    return ActivationConfig(active_lanes=active)
-
-
-def scheduled_bucket(spec: LaneExecutionSpec, now: datetime) -> datetime:
-    """Return this lane's current cadence bucket using its declared phase offset."""
-    if now.utcoffset() is None:
-        raise ExecutorConfigurationError("the scheduler clock must include a timezone")
-    if spec.cadence_seconds is None:
-        raise ExecutorConfigurationError(f"lane {spec.lane_id!r} has no recurring cadence")
-    epoch_seconds = int(now.timestamp())
-    bucket = (
-        (epoch_seconds - spec.phase_offset_seconds) // spec.cadence_seconds
-    ) * spec.cadence_seconds + spec.phase_offset_seconds
-    return datetime.fromtimestamp(bucket, tz=UTC)
-
-
-def next_scheduled_bucket(
-    spec: LaneExecutionSpec,
-    now: datetime,
-    latest_scheduled_for: datetime | None,
-) -> datetime:
-    """Choose the next logical bucket under the lane's restart catch-up contract."""
-    current = scheduled_bucket(spec, now)
-    if latest_scheduled_for is None or latest_scheduled_for >= current:
-        return current
-    if spec.catch_up_policy == "coalesce_latest":
-        return current
-    return min(bucket_after(spec, latest_scheduled_for), current)
-
-
-def bucket_after(spec: LaneExecutionSpec, scheduled_for: datetime) -> datetime:
-    """Return the cadence bucket immediately after `scheduled_for`: the one a replayed lane opens next."""
-    if spec.cadence_seconds is None:
-        raise ExecutorConfigurationError(f"lane {spec.lane_id!r} has no recurring cadence")
-    return datetime.fromtimestamp(int(scheduled_for.timestamp()) + spec.cadence_seconds, tz=UTC)
-
-
-@dataclass(frozen=True, slots=True)
-class LatestRun:
-    run_id: uuid.UUID
-    scheduled_for: datetime
-    status: str
-    work_claimable: bool
-    has_work_items: bool = True
-    terminal_items_need_rollup: bool = False
-    definition_id: uuid.UUID | None = None
-    definition_version: str = EXECUTOR_DEFINITION_VERSION
-    definition_enabled: bool = True
-    superseded_by_operator: bool = False
-    consecutive_failures: int = 0
-
-    @property
-    def open(self) -> bool:
-        return self.status in {"queued", "running"}
-
-
-@dataclass(frozen=True, slots=True)
-class DueLane:
-    spec: LaneExecutionSpec
-    definition: JobDefinitionRecord
-    scheduled_for: datetime
-    existing_run_id: uuid.UUID | None
-    last_scheduled_for: datetime | None
-    #: The failed or partial checkpoint this bucket supersedes, and what released it; None for an ordinary bucket.
-    superseded_run_id: uuid.UUID | None = None
-    supersession: ReleaseMechanism | None = None
-
-
-def fair_due_order(candidates: Sequence[DueLane]) -> tuple[DueLane, ...]:
-    """Interleave work classes while ordering eligible lanes by their oldest cadence checkpoint."""
-    oldest = datetime.min.replace(tzinfo=UTC)
-
-    def lane_key(candidate: DueLane) -> tuple[datetime, str]:
-        return (candidate.last_scheduled_for or oldest, candidate.spec.lane_id)
-
-    incremental = sorted(
-        (candidate for candidate in candidates if candidate.spec.work_class == "incremental"),
-        key=lane_key,
-    )
-    backlog = sorted(
-        (candidate for candidate in candidates if candidate.spec.work_class == "backlog"),
-        key=lane_key,
-    )
-    ordered: list[DueLane] = []
-    while incremental or backlog:
-        if incremental:
-            ordered.append(incremental.pop(0))
-        if backlog:
-            ordered.append(backlog.pop(0))
-    return tuple(ordered)
-
-
-@dataclass(frozen=True, slots=True)
-class LaneTickResult:
-    lane_id: str
-    state: LaneTickState
-    scheduled_for: datetime | None = None
-    run_id: uuid.UUID | None = None
-    run_status: str | None = None
-    detail: str | None = None
-    slice_summary: Mapping[str, object] | None = None
-    command: tuple[str, ...] | None = None
-    blockers: tuple[str, ...] = ()
-    due_prediction: str | None = None
-    #: The exact `jobs-supersede-run` invocation that releases this lane, when only an operator can. Typed so
-    #: a consumer never parses it back out of `blockers`; see execution/AGENTS.md, "Operator action surface".
-    operator_action: str | None = None
-    #: What the lane's own terminal report said this bucket, when the command ran in this process.
-    turn_report: TurnReport | None = None
-
-    def to_dict(self) -> dict[str, object]:
-        return {
-            "lane_id": self.lane_id,
-            "state": self.state,
-            "scheduled_for": None if self.scheduled_for is None else self.scheduled_for.isoformat(),
-            "run_id": None if self.run_id is None else str(self.run_id),
-            "run_status": self.run_status,
-            "detail": self.detail,
-            "slice": None if self.slice_summary is None else dict(self.slice_summary),
-            "command": None if self.command is None else list(self.command),
-            "blockers": list(self.blockers),
-            "due_prediction": self.due_prediction,
-            "operator_action": self.operator_action,
-            "turn_report": None if self.turn_report is None else self.turn_report.to_dict(),
-        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -971,66 +263,6 @@ def record_turn_report(lane_id: str, report: Mapping[str, object] | None) -> Tur
     if kept is not None:
         _LANE_TURN_REPORTS[lane_id] = kept
     return kept
-
-
-@dataclass(frozen=True, slots=True)
-class OperatorAction:
-    """One held lane and the single command that releases it."""
-
-    lane_id: str
-    run_id: uuid.UUID | None
-    command: str
-
-    def to_dict(self) -> dict[str, object]:
-        return {
-            "lane_id": self.lane_id,
-            "run_id": None if self.run_id is None else str(self.run_id),
-            "command": self.command,
-        }
-
-
-@dataclass(frozen=True, slots=True)
-class ExecutorTickSummary:
-    observed_at: datetime
-    leader: bool
-    lanes: tuple[LaneTickResult, ...]
-
-    @property
-    def failed(self) -> bool:
-        return any(lane.state == "failed" for lane in self.lanes)
-
-    @property
-    def operator_actions(self) -> tuple[OperatorAction, ...]:
-        """Every lane this tick found held behind a recorded-supersession requirement, with its release command."""
-        return tuple(
-            OperatorAction(lane_id=lane.lane_id, run_id=lane.run_id, command=lane.operator_action)
-            for lane in self.lanes
-            if lane.operator_action is not None
-        )
-
-    @property
-    def incomplete_lanes(self) -> tuple[LaneTickResult, ...]:
-        """Every lane that ran this tick, exited 0, and still reported days it could not write."""
-        return tuple(lane for lane in self.lanes if lane.turn_report is not None and lane.turn_report.incomplete)
-
-    def to_dict(self) -> dict[str, object]:
-        return {
-            "event": "plantgeo_job_executor_tick",
-            "observed_at": self.observed_at.isoformat(),
-            "leader": self.leader,
-            "failed": self.failed,
-            "operator_actions": [action.to_dict() for action in self.operator_actions],
-            "incomplete_lanes": [
-                {
-                    "lane_id": lane.lane_id,
-                    "days_unwritten": lane.turn_report.days_unwritten,
-                    "consecutive_incomplete_buckets": lane.turn_report.consecutive_incomplete_buckets,
-                }
-                for lane in self.incomplete_lanes
-                if lane.turn_report is not None
-            ],
-            "lanes": [lane.to_dict() for lane in self.lanes],
-        }
 
 
 async def _try_leader_lock(session: AsyncSession) -> bool:
@@ -1162,58 +394,6 @@ async def read_lane_checkpoint(session: AsyncSession, spec: LaneExecutionSpec) -
         superseded_by_operator=required_column(row, "superseded_by_operator", bool),
         consecutive_failures=required_column(row, "consecutive_failures", int),
     )
-
-
-@dataclass(frozen=True, slots=True)
-class CheckpointVerdict:
-    """The planner's ruling on a checkpoint that settled without success; the operator verb rules by it too."""
-
-    #: The bucket that opens once the checkpoint is released. Never the failed bucket itself.
-    next_bucket: datetime
-    #: Whether `next_bucket` is already reachable on the clock, or is the bucket after a failed current one.
-    newer_bucket_exists: bool
-    #: What releases the lane: the clock (the next bucket supersedes the failure) or a recorded supersession.
-    release: ReleaseMechanism
-    #: Whether the planner opens `next_bucket` on this tick.
-    released: bool
-    #: The unbroken run of settled-without-success checkpoints ending in this one, at least 1.
-    consecutive_failures: int
-
-
-def judge_failed_checkpoint(spec: LaneExecutionSpec, latest: LatestRun, now: datetime) -> CheckpointVerdict:
-    """Rule on a failed or partial checkpoint: the bucket that opens next, what releases it, and whether that is now.
-
-    The clock releases a lane while its failure streak is below its policy's limit. A coalesce_latest lane
-    declares a missed bucket not owed, so a transient failure is superseded by the next bucket -- but three
-    in a row is a broken lane, and the breaker holds it until an operator records a supersession; the
-    a former maintenance loop minted 200 dead letters for want of exactly that. A replay_oldest lane owes every
-    bucket, so its limit is one and only a recorded supersession ever releases it.
-
-    Whatever releases it, the lane resumes at the CURRENT bucket, never at the buckets the hold cost: a
-    coalesce_latest lane never owed them, and an operator's supersession forgives them for a replay_oldest
-    lane -- its command re-censuses its own backlog, and `fair_due_order` favours the oldest checkpoint, so
-    replaying a day of buckets would hand one lane the backlog class's single turn for hours. Nothing
-    reopens the failed bucket itself: its logical run key is spent and its dead letter stays as the record.
-    See execution/AGENTS.md, "Failed checkpoints are superseded by the clock or by an operator".
-    """
-    current = scheduled_bucket(spec, now)
-    newer_bucket_exists = current > latest.scheduled_for
-    next_bucket = current if newer_bucket_exists else bucket_after(spec, latest.scheduled_for)
-    streak = max(latest.consecutive_failures, 1)
-    release: ReleaseMechanism = "clock" if streak < CLOCK_RELEASE_STREAK_LIMIT[spec.catch_up_policy] else "operator"
-    released = newer_bucket_exists and (release == "clock" or latest.superseded_by_operator)
-    return CheckpointVerdict(
-        next_bucket=next_bucket,
-        newer_bucket_exists=newer_bucket_exists,
-        release=release,
-        released=released,
-        consecutive_failures=streak,
-    )
-
-
-def supersession_command(spec: LaneExecutionSpec, run_id: uuid.UUID) -> str:
-    """The exact operator invocation that records this checkpoint's supersession."""
-    return f"{SUPERSEDE_RUN_COMMAND} --lane {spec.lane_id} --run-id {run_id}"
 
 
 def _held_checkpoint_result(spec: LaneExecutionSpec, latest: LatestRun, verdict: CheckpointVerdict) -> LaneTickResult:
@@ -2508,6 +1688,8 @@ __all__ = [
     "CLOCK_RELEASE_STREAK_LIMIT",
     "COMMAND_STDERR_SUMMARY_CHARS",
     "COMMAND_STDERR_TAIL_BYTES",
+    "EXECUTOR_DEFINITION_PREFIX",
+    "EXECUTOR_DEFINITION_VERSION",
     "EXECUTOR_WORK_ITEM_KINDS",
     "FAILURE_STREAK_PROBE_LIMIT",
     "LANE_SPECS",

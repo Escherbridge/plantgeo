@@ -66,11 +66,11 @@ def compute_conformal_margin(residuals: Sequence[float], alpha: float) -> float:
     """The finite-sample split-conformal quantile margin over |residual|, level ceil((n+1)(1-a))/n."""
     if not 0.0 < alpha < 1.0:
         raise ValueError("alpha must be strictly between 0 and 1")
-    n = len(residuals)
-    if n == 0:
+    sample_count = len(residuals)
+    if sample_count == 0:
         return 0.0
     absolute_residuals = np.abs(np.asarray(residuals, dtype=float))
-    level = min(max(math.ceil((n + 1) * (1.0 - alpha)) / n, 0.0), 1.0)
+    level = min(max(math.ceil((sample_count + 1) * (1.0 - alpha)) / sample_count, 0.0), 1.0)
     return float(np.quantile(absolute_residuals, level, method="higher"))
 
 

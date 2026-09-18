@@ -259,8 +259,8 @@ def _unpack_uint32(data: bytes, offset: int, byte_order: str) -> int:
 
 
 def _unpack_point(data: bytes, offset: int, byte_order: str) -> tuple[float, float]:
-    x, y = struct.unpack_from(byte_order + "dd", data, offset)
-    return float(x), float(y)
+    longitude, latitude = struct.unpack_from(byte_order + "dd", data, offset)
+    return float(longitude), float(latitude)
 
 
 def _read_ring(data: bytes, offset: int, byte_order: str) -> tuple[list[tuple[float, float]], int]:
@@ -321,17 +321,21 @@ def _decode_wkb_polygons(payload: bytes) -> list[list[list[tuple[float, float]]]
     )
 
 
-def _ring_contains_point(ring: Sequence[tuple[float, float]], x: float, y: float) -> bool:
-    """Standard ray-casting point-in-polygon test over one closed ring."""
+def _ring_contains_point(ring: Sequence[tuple[float, float]], longitude: float, latitude: float) -> bool:
+    """Crossing-number (even-odd ray casting) test over one closed ring; see Franklin's PNPOLY."""
     inside = False
     count = len(ring)
     previous_index = count - 1
     for index in range(count):
-        point_x, point_y = ring[index]
-        previous_x, previous_y = ring[previous_index]
-        crosses = (point_y > y) != (previous_y > y)
-        if crosses and x < (previous_x - point_x) * (y - point_y) / (previous_y - point_y) + point_x:
-            inside = not inside
+        point_longitude, point_latitude = ring[index]
+        previous_longitude, previous_latitude = ring[previous_index]
+        straddles_ray = (point_latitude > latitude) != (previous_latitude > latitude)
+        if straddles_ray:
+            crossing_longitude = (previous_longitude - point_longitude) * (latitude - point_latitude) / (
+                previous_latitude - point_latitude
+            ) + point_longitude
+            if longitude < crossing_longitude:
+                inside = not inside
         previous_index = index
     return inside
 

@@ -182,12 +182,8 @@ def day_of_year_index(value: date) -> int:
     return value.timetuple().tm_yday
 
 
-def _circular_day_distance(first_day_of_year: int, second_day_of_year: int) -> int:
-    direct = abs(first_day_of_year - second_day_of_year)
-    return min(direct, DAYS_PER_SEASONAL_CYCLE - direct)
-
-
 def _seasonal_window_mask(days_of_year: NDArray[numpy.int64], target_day_of_year: int) -> NDArray[numpy.bool_]:
+    """Circular day-of-year distance, vectorised: the window wraps 31 Dec to 1 Jan."""
     direct = numpy.abs(days_of_year - target_day_of_year)
     circular = numpy.minimum(direct, DAYS_PER_SEASONAL_CYCLE - direct)
     return numpy.asarray(circular <= SEASONAL_WINDOW_DAYS, dtype=numpy.bool_)

@@ -112,6 +112,40 @@ it does not replace them. It inherits `engineering-principles.md`.
 - Apply a transaction-local statement timeout on direct SQL callers, matching the
   CLI/procedure convention (120 s).
 
+## Readability and region portability
+
+- Full-word identifiers: `bounding_box`, `request_timeout_seconds`,
+  `ensemble_size`. No `bb`, `tmo`, `n_ens`. Field-standard terms (`ndvi`,
+  `huc12`, `srid`) count as words. Name the algorithm at its implementation in
+  one line (`# Kahan summation`) and link a reference for an esoteric one.
+- Soft size ceiling, applied in review, not by `ruff`: modules ~600 lines,
+  functions ~60, nesting ≤3. The 2026-09-18 readability pass split
+  `pipeline/parquet/availability_index.py` (3,164 → 911 lines, six
+  `availability_*` siblings), `parquet_ops/snapshot_products.py` (2,398 → 454,
+  seven `snapshot_*` siblings), `pipeline/parquet/gap_fill.py` (2,386 → 321,
+  `gap_fill_*` siblings plus `gap_census.py`) and
+  `execution/job_executor_service.py` (2,552 → 1,784; `lane_specs.py`,
+  `lane_scheduling.py`, `turn_reports.py`), each original re-exporting its
+  public names. None may grow back; `job_executor_service.py` still owes a
+  split of `run_scheduled_command` once
+  `tests/execution/test_command_stderr_capture.py` stops monkeypatching its
+  globals as one unit.
+- **The region is a value, not a constant.** `foundation/region/` owns the
+  frozen `Region` model and the one PNW manifest; lanes, planes and agent tools
+  take a `Region` parameter. `PACIFIC_NORTHWEST_BBOX` (`ingest/mtbs.py`) and
+  `SEED_ENVELOPE` (`foundation/botanical_occurrences/coordinates.py`) are the
+  migration list. A new literal latitude, longitude, envelope or state code
+  outside the manifest fails review (`federation.md` §1).
+- **Sources implement a layer protocol and declare coverage.** A regional
+  source (SSURGO, USDM, MTBS) lives at `<layer>/<source>.py` and implements the
+  layer's `Protocol`; layer logic (schema, Monte Carlo, plane, agent tool) never
+  branches on a source name. A region with the layer unbound gets a governed
+  absence with a reason, never a fallback to the pilot's source
+  (`federation.md` §2).
+- Region-specific assumptions (fire-season months, growing-degree base, snowmelt
+  window) are manifest fields or live inside a source implementation with the
+  region named beside them, never in shared `method`/`planes` code.
+
 ## Tests and review gates
 
 - Each behavior change ships focused `pytest` coverage of success **and** the
@@ -148,7 +182,11 @@ it does not replace them. It inherits `engineering-principles.md`.
 4. Are evaluation-only artifacts prevented from reaching publication/serving?
 5. Is every input validated at ingress and every query/loop bounded?
 6. Do tests cover the failure/partial path; did the full sweep pass once?
-7. **Guide-consistency review.** If the change makes any rule in this guide false,
+7. Does the change read the region from a `Region` value rather than a literal,
+   put any new source behind its layer's `Protocol` with a `coverage` claim,
+   and keep names full-word and the module under (or no further past) the soft
+   size ceiling?
+8. **Guide-consistency review.** If the change makes any rule in this guide false,
    the same change fixes the rule and names the ruling or measurement that
    supersedes it. A checklist item that has quietly outlived its decision is worse
    than a missing one: it fails review for the wrong reason and teaches the

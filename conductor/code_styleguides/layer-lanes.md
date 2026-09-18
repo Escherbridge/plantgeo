@@ -107,6 +107,36 @@ meteorological season (RUNBOOK §0.28.3). Time of day, astronomical season and d
 elsewhere — a separate sub-daily dimension and a solar fact per `(cell, date)` — because crossing
 them in multiplies the row count for nothing and daylight is not a function of the date alone.
 
+## 1b. A lane binds a source through the layer's protocol and declares coverage
+
+*Added 2026-09-18 with the federation standard (`federation.md` §2). Owner
+ruling: abstract source interface per layer.*
+
+A **layer** is platform vocabulary (`soil-survey`, `drought`, `burn-severity`).
+A **source** is how one region fills it (SSURGO, USDM, MTBS). The pilot binds US
+sources; the next region binds its own without touching layer logic.
+
+- **Each layer owns a `Protocol`** at the lattice layer of record: the pull,
+  the normalized record (SI, WGS84, UTC plus declared local timezone), the
+  provenance fields, the availability query and the coverage claim. Source
+  implementations live at `<layer>/<source>.py` under `pipeline/lanes/`,
+  `pipeline/validation/` and `ingest/<domain>/`; a bare `<source>.py` at the
+  layer root is the migration list (`mtbs.py`, `usdm.py`, `ssurgo.py`), not a
+  pattern.
+- **Every source declares `coverage`**: `global` or `regional` with the ISO
+  codes it serves. The region manifest may bind only a source whose coverage
+  contains the region's envelope; a mismatch fails at startup.
+- **Schema, Monte Carlo, plane and agent tool consume the protocol's record
+  and never the source's name.** A branch on `source == "usdm"` in `method/`,
+  `planes/` or `agent/` means the normalization is incomplete; fix the source.
+- **A layer with no source bound for this region is a governed absence**
+  (`absence_reason = source_unbound_for_region`) in the availability index,
+  the slider catalogue, legends and agent tools. Never fall back to the pilot's
+  source, never render an empty layer that reads as an outage.
+- **The envelope a lane pulls is the manifest's, passed in.** `--bbox`
+  defaults and module constants like `PACIFIC_NORTHWEST_BBOX` are replaced by
+  the `Region` value the runner receives.
+
 ## 2. Observed and forecast are separate streams that share one grain
 
 This is the coupling the contract exists to enforce. Each lane produces **two**
@@ -265,3 +295,8 @@ A lane change is not done until each is true:
 - [ ] Validation compares against the **source system**, not local state.
 - [ ] Absences are recorded as governed absences, never interpolated.
 - [ ] Nothing new was added under a top-level `lanes/` package — it does not exist.
+- [ ] The source implements its layer's `Protocol`, sits at `<layer>/<source>`,
+      and declares `coverage` (§1b).
+- [ ] No `method/`, `planes/` or `agent/` code branches on a source name.
+- [ ] The lane's envelope comes from the `Region` value, not a module literal.
+- [ ] An unbound layer surfaces as `source_unbound_for_region`, not an outage.

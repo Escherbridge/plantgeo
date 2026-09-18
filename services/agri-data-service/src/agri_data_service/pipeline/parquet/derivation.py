@@ -1043,31 +1043,8 @@ def write_absence_ladder(  # noqa: PLR0913 - one coordinate of the day being gov
 ) -> tuple[AbsenceWriteReceipt, ...]:
     """Mark one lane-day absent at EVERY named rung with ONE piece of evidence, or mark none of them.
 
-    THE WHOLE LADDER IS CHECKED BEFORE THE FIRST MARKER IS WRITTEN, and a rung that fails after an
-    earlier one succeeded is ROLLED BACK. Writing rung by rung and refusing on the first conflict
-    leaves coarse rungs governing a day whose base rung still serves rows -- the exact stable lie the
-    marker contract exists to prevent, and one no census brings back, because `build_gap_census`
-    walks the base tier and finds its parts and its completion marker intact.
-
-    ONE `GovernedAbsence` FOR THE WHOLE LADDER, NEVER ONE PER RUNG. Every rung is handed the same
-    object and therefore the same canonical bytes, which is what
-    `availability_index.py::_validate_generation_day` requires -- "availability day ... mixes absence
-    reasons across its ladder" is raised on a day whose rungs disagree -- and what
-    `_verify_absence_object` re-proves per rung against the row's own `absence_reason`. A caller
-    minting a fresh reason per rung would publish four markers no generation can carry.
-
-    THE ROLLBACK NEVER REMOVES A MARKER IT DID NOT CREATE. Which rungs already carried a marker is
-    read BEFORE the first write, so a re-run over an already-governed day that fails part way leaves
-    that day exactly as governed as it found it, rather than stripping rungs a previous run proved.
-
-    EVERY NAMED RUNG IS WRITTEN, INCLUDING ONE THAT ALREADY HOLDS THESE BYTES, and that is deliberate
-    rather than lazy: `availability_extension.py::_rung_objects` binds an absent day from THIS RUN'S
-    written-object ledger, so a rung skipped as unchanged is a rung the availability step then reports
-    as "carries no governed-absence marker from this run" and the day goes back to being a ladder gap.
-    Re-putting identical bytes at the same key is the object store's own no-op -- one key, one object,
-    the same digest before and after -- so nothing is duplicated by writing it. A caller that must not
-    pay for the redundant writes passes `tiers` naming only the rungs it knows are missing;
-    `scripts/backfill_absence_ladder.py` is exactly that caller.
+    The all-or-nothing rule, the single shared `GovernedAbsence`, the rollback bound, and why an
+    already-marked rung is re-written: see `AGENTS.md` in this directory, "Writing an absence ladder".
     """
     ordered = tuple(tiers)
     if not ordered:

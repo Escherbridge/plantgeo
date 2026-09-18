@@ -23,6 +23,13 @@ procedure, and trigger. PostgreSQL 16 + PostGIS + TimescaleDB. It inherits
 - Name for intent: `v_` views, `mv_` materialized views, `ck_`/`fk_`/`ix_`
   constraints and indexes, `guard_`/`enforce_`/`verify_` trigger functions.
   Keep rationale in `db/AGENTS.md` and `alembic/AGENTS.md`, not inline essays.
+- Region-agnostic by construction (`federation.md`): no region name in a
+  table, column, view, function or index name; no literal envelope, state-code
+  list or region-specific `CHECK` constraint in the schema. A geometry column
+  declares its SRID explicitly (WGS84 `4326` for storage; a projected SRID only
+  where the manifest's `crs` supplies it) and a function that needs the
+  footprint takes it as a parameter. Region-scoped seed data lives in a seed
+  file named for the region, never in a migration that every deployment runs.
 
 ## The declarative schema project (source of truth)
 
@@ -168,7 +175,22 @@ there breaks the parity test's assumption that every file is an object definitio
   triggers, and `SECURITY DEFINER` search-path pinning rather than with grants.
 - All local credentials live in ignored env files, never in tracked SQL or docs.
 
+## Readability
+
+- Full-word identifiers in objects, columns, parameters and CTE names
+  (`observed_at`, `bounding_box`, `ensemble_size`); no `obs_ts`, `bb`, `n`.
+  Field-standard terms (`ndvi`, `huc12`, `srid`) count as words.
+- One CTE per named step, each doing one thing; a query a reader cannot
+  summarise in a sentence per CTE is split. Name the algorithm a function
+  implements in its one-line comment (`-- Welford running variance`).
+- Soft ceiling, in review not tooling: a function or view body past ~150 lines
+  is split into named helpers. The runtime `.sql` file header states inputs,
+  outputs and the bound that keeps the scan finite.
+
 ## Review checklist
+
+0. Region-agnostic: no region name, literal envelope or state list in the
+   object, and SRID declared explicitly?
 
 1. Is the object defined once in `db/agri/**`, applied via a forward-loading
    migration, with the parity test regenerated and green?

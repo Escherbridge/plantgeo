@@ -754,9 +754,13 @@ def fit_logistic(
 def _macro_f1(actual: Sequence[str], predicted: Sequence[str], classes: Sequence[str]) -> float:
     scores: list[float] = []
     for label in classes:
-        true_positive = sum(1 for a, p in zip(actual, predicted, strict=True) if a == label and p == label)
-        predicted_positive = sum(1 for p in predicted if p == label)
-        actual_positive = sum(1 for a in actual if a == label)
+        true_positive = sum(
+            1
+            for observed, prediction in zip(actual, predicted, strict=True)
+            if observed == label and prediction == label
+        )
+        predicted_positive = sum(1 for prediction in predicted if prediction == label)
+        actual_positive = sum(1 for observed in actual if observed == label)
         if actual_positive == 0:
             continue
         precision = true_positive / predicted_positive if predicted_positive else 0.0
@@ -858,7 +862,12 @@ def evaluate_leave_one_source_out(
                 "held_out_labels": len({key for key, keep in zip(matrix.label_keys, holdout, strict=True) if keep}),
                 "scored": True,
                 "accuracy": float(
-                    sum(1 for a, p in zip(fold_actual, fold_predictions, strict=True) if a == str(p)) / len(fold_actual)
+                    sum(
+                        1
+                        for observed, prediction in zip(fold_actual, fold_predictions, strict=True)
+                        if observed == str(prediction)
+                    )
+                    / len(fold_actual)
                 ),
                 "mean_absolute_utility_error": float(sum(fold_utility_errors) / len(fold_utility_errors)),
                 "held_out_outcomes": sorted(set(fold_actual)),
@@ -876,7 +885,10 @@ def evaluate_leave_one_source_out(
         fold_count=folds_scored,
         scored_row_count=len(actual),
         effective_sample_size=matrix.label_count,
-        accuracy=float(sum(1 for a, p in zip(actual, predicted, strict=True) if a == p) / len(actual)),
+        accuracy=float(
+            sum(1 for observed, prediction in zip(actual, predicted, strict=True) if observed == prediction)
+            / len(actual)
+        ),
         macro_f1=_macro_f1(actual, predicted, classes),
         mean_absolute_utility_error=float(sum(utility_errors) / len(utility_errors)),
         root_mean_squared_utility_error=float(

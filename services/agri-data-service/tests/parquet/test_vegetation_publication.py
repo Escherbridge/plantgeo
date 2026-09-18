@@ -125,7 +125,7 @@ def test_registration_and_generic_vegetation_writer_share_the_global_barrier() -
     registration = (_SERVICE_ROOT / "src" / "agri_data_service" / "execution" / "vegetation_ndvi_plane.py").read_text(
         encoding="utf-8"
     )
-    gap_fill = (_SERVICE_ROOT / "src" / "agri_data_service" / "pipeline" / "parquet" / "gap_fill.py").read_text(
+    gap_fill = (_SERVICE_ROOT / "src" / "agri_data_service" / "pipeline" / "parquet" / "gap_fill_day.py").read_text(
         encoding="utf-8"
     )
 

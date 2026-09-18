@@ -63,6 +63,61 @@ Protocol-independent parsing, four-state resolution, coverage, wire rendering, o
 refusals, and bounded DuckDB execution. HTTP, CLI, and agent adapters consume this package; this
 package must never import a surface package.
 
+## `snapshot_products.py` is six modules (split 2026-09-18)
+
+It was 2,398 lines, one of the four modules `code_styleguides/python.md` names as not to grow. It now
+holds only the **resolution operations** — `resolve_snapshot_product`, `resolve_snapshot_window`,
+their evidence-taking twins, the bounded read and the schema check — and re-exports every public name
+its siblings define through `__all__`. Nothing imports differently than it did.
+
+In dependency order, each importing only the ones above it:
+
+| module | holds |
+| --- | --- |
+| `snapshot_product_catalog.py` | `SnapshotProduct`, the frozen product table, column tuples, pinned Arrow schemas, and the object-key grammar (`_DAILY_PART`, `_MONTHLY_PART`, the three checkpoint patterns) plus the key→day parsers |
+| `snapshot_store.py` | the `SnapshotStore` protocol, `ObjectStoreSnapshotStore`, and the value types the later stages pass around (`SnapshotEvidence`, `SnapshotObjectReceipt`, `SnapshotCoverage*`, `ForwardAvailability*`), with the bounded JSON read and the one-object digest |
+| `snapshot_receipts.py` | the fail-closed receipt graph: daily and monthly serving receipts, the checkpoint lineage digest, and the identity checks that bind each part to the rung-day it claims |
+| `snapshot_evidence.py` | `load_snapshot_evidence` and its bounded, per-key-locked memo of one manifest read per product |
+| `snapshot_forward_edge.py` | the live half: the days written past `forward_first_day`, read from the availability index when the policy allows and from a listing otherwise |
+| `snapshot_contiguity.py` | which manifest days a product may call selectable — declared, grid-complete, and rung-consistent |
+| `snapshot_coverage.py` | the join: the closed manifest half against the live half, and `SnapshotCoverageCache` |
+
+The cut follows the order a coverage request already runs in: name the product, read an object, prove
+its receipts, memoise the evidence, find its live edge, then census it. `snapshot_receipts.py` (775
+lines) is the one module still above the ~600 soft ceiling: it is one fail-closed graph, and
+splitting it further would put a check in a different file from the thing it checks.
+
+`_MONTHLY_PART`, `_lineage_digest`, `_duckdb_type_for_arrow` and `clear_snapshot_evidence_cache` are
+in `__all__` because `tests/parquet_ops/test_snapshot_products.py` reaches for them by module
+attribute; keeping them exported is what makes the split invisible to that suite.
+
+## A snapshot product with a forward edge reports both halves
+
+`snapshot_coverage._build_product_coverage` builds all four rungs for one product, or raises one
+product-local typed refusal.
+
+- **An immutable product owns no availability index yet**, so it stays `census` authority and states
+  its own last day as its source ceiling. That ceiling is what stops the census's
+  `evaluated_through_day` from reading as a claim that the frozen snapshot is current through it.
+- **Days below `forward_first_day` come from the closed manifest; days at or above it come from the
+  live lane**, proven by whichever authority the coverage policy allows. The manifest-equality check
+  therefore holds only over the closed half — above the boundary the manifest is silent BY
+  CONSTRUCTION, and asking it to agree there would refuse the whole product the moment the writer
+  wrote a day.
+- **A manifest day at or above the boundary refuses the product.** The frozen snapshot cannot
+  legitimately declare a day it was closed before; a day excluded from the equality check and then
+  unioned into the answer anyway is a manifest claim nothing verified, published as if it were.
+- **`coverage_authority` on a forward product names what proved its LIVE edge**, because that is the
+  only half whose evidence can change: the closed half is manifest-bound under either policy, and a
+  frozen product stays `census` because it has no live edge to prove.
+- **A withheld forward half withholds the whole product** — null bounds and empty ranges, in exactly
+  the shape `availability_coverage.withheld_lane_coverage` uses. The manifest did not stop being
+  evidence, but the CLIENT cannot gate on half a lane: a non-null `withheld_reason` withholds the
+  whole capability there, so shipping the closed half's bounds beside a reason publishes days nothing
+  on the wire will ever draw — and `tests/contract/test_wire_contract.py`'s "a withheld lane publishes
+  no selectable days" is a contract this row would break. The manifest's evidence is not lost; it is
+  simply not published until the forward half can prove itself.
+
 ## The contract is frozen elsewhere, and this directory obeys it
 
 `tests/contract/wire_contract.py` is the declaration; `tests/contract/fixtures/*.json` are the nine

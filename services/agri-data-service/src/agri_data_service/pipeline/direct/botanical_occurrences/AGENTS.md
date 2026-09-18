@@ -34,6 +34,21 @@ track spec. A `GridAggregation` over the finer rung would produce a number that 
 and is not one. The lattice also needs no simplification pass: a cell polygon is four corners
 computed from its own id.
 
+## Cell indices are snapped, never divided
+
+`GridSupport.cell_indices` binned with a bare `math.floor(value / degrees)` until 2026-09-18, and
+IEEE division makes that wrong on exactly the points that matter most: a coordinate that IS a
+multiple of the pitch. `46.05 / 0.05` evaluates to `920.9999999999999`, so a record sitting exactly
+on the origin of cell 921 was filed in cell 920 — one cell south of where its own id says it is, and
+a cell whose polygon does not contain it. The same class of defect was measured on the Polars side
+in `warehouse/parquet/tiers.py::floor_to_resolution` and fixed there with a snap tolerance; this is
+the scalar twin of that rule, with the same `1e-9` and for the same reason.
+
+The rule to keep: **bin by rounding the quotient to an integer and accepting it when it is within
+tolerance, and only then fall back to flooring.** Never compare or floor a raw `value / pitch`, and
+never assume two runs of the same division agree — they do not across frame lengths, and they do not
+across hosts.
+
 ## Quarantine is measured, never declared
 
 `quarantine.py` streams every member through `ZipFile.open` and extracts NOTHING to disk. The size,

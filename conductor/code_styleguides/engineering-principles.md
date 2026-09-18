@@ -6,9 +6,13 @@ type: engineering-principles
 
 The cross-cutting standard every language guide inherits. It exists because
 PlantGeo turns open environmental data into **real-world intervention plans**:
-wrong-but-plausible output is worse than an honest gap. These four pillars are
-enforced in review; the language guides (`python.md`, `sql.md`, `typescript.md`,
-`javascript.md`, `html-css.md`) make them concrete per stack.
+wrong-but-plausible output is worse than an honest gap, and because it is a
+**forward-deployed product**: the Pacific Northwest is the pilot region, and the
+same tree must stand up in the next georegion as a manifest change, not a fork.
+These five pillars are enforced in review; the language guides (`python.md`,
+`sql.md`, `typescript.md`, `javascript.md`, `html-css.md`), the lane contract
+(`layer-lanes.md`) and the portability standard (`federation.md`) make them
+concrete per stack.
 
 ## 1. Reusability
 
@@ -83,6 +87,27 @@ enforced in review; the language guides (`python.md`, `sql.md`, `typescript.md`,
   fixes first, then run the full sweep once. A wrong "done" costs more than an
   honest "unverified."
 
+## 5. Portability: the pilot is not the platform
+
+- **One region manifest declares the footprint.** Envelope, CRS, lattice pitch,
+  timezone, admin codes and enabled layer-to-source bindings live in a single
+  typed manifest and are passed down as a value. A literal coordinate, state
+  code or region name anywhere else is a defect (`federation.md` §1).
+- **Layers are the vocabulary; sources are a region's binding.** Every layer
+  defines a source protocol; a source implements it and declares `coverage`
+  (`global` or `regional`). Layer logic never branches on a source's name, and
+  the platform runs with a layer unbound, reporting a governed
+  "not available in this region" (`federation.md` §2).
+- **Readability is a portability requirement.** The next region's engineers
+  will not have the pilot's authors in the room. Full-word names, the
+  algorithm named at its implementation, rationale in the directory's
+  `AGENTS.md`, and modules kept near the soft ceiling (~600 lines, functions
+  ~60, nesting ≤3, guidance not tooling by owner ruling 2026-09-18) are how the
+  code teaches itself (`federation.md` §3).
+- **Regional assumptions are written where they are made.** A fire-season
+  window, a growing-degree base, a snowmelt month: manifest field or source
+  implementation, with the region named, never shared layer logic.
+
 ## Review checklist (applies on top of each language guide)
 
 1. Is there exactly one canonical definition, consumed through a typed contract?
@@ -91,3 +116,8 @@ enforced in review; the language guides (`python.md`, `sql.md`, `typescript.md`,
 4. Is the path time-honest (no leakage) and deterministic where checksummed?
 5. Does it fail closed on missing governed input, carrying provenance through?
 6. Do tests cover the failure/partial path, and did the full sweep pass once?
+7. Does it add no footprint literal outside the region manifest, and does any
+   new source declare coverage behind its layer's protocol?
+8. Could an engineer standing up the next region read this change cold: full
+   words, algorithm named, rationale reachable from an `AGENTS.md` pointer,
+   module not pushed past the soft size ceiling?

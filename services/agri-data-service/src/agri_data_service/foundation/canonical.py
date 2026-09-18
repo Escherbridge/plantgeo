@@ -28,10 +28,10 @@ def iso_date_prefix(val: date | datetime | str) -> str:
     """Extract standard ISO-8601 calendar date prefix YYYY-MM-DD."""
     if isinstance(val, (date, datetime)):
         return val.strftime("%Y-%m-%d")
-    s = str(val).strip()
+    text = str(val).strip()
     iso_calendar_date_length = 10
-    if len(s) >= iso_calendar_date_length and s[4] == "-" and s[7] == "-":
-        return s[:iso_calendar_date_length]
+    if len(text) >= iso_calendar_date_length and text[4] == "-" and text[7] == "-":
+        return text[:iso_calendar_date_length]
     raise ValueError(f"Invalid ISO date prefix input: {val!r}")
 
 

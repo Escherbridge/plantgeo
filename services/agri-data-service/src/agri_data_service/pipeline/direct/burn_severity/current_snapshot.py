@@ -70,14 +70,14 @@ def make_source_manifest(  # noqa: PLR0913 - immutable source identity binds six
         raise ValueError("capture interval exceeds the bounded contract")
     if years != tuple(range(2018, 2027)):
         raise ValueError("snapshot requires the explicit contiguous 2018-onward horizon")
-    if set(counts) != set(years) or any(type(n) is not int or n < 0 for n in counts.values()):
+    if set(counts) != set(years) or any(type(count) is not int or count < 0 for count in counts.values()):
         raise ValueError("snapshot counts do not cover the exact horizon")
     if sum(counts.values()) > MAX_CAPTURE_ROWS:
         raise ValueError("snapshot exceeds the row cap")
     if len(responses) > MAX_SOURCE_RESPONSES:
         raise ValueError("snapshot exceeds the source response cap")
     if len(source_content_sha256) != hashlib.sha256().digest_size * 2 or any(
-        c not in "0123456789abcdef" for c in source_content_sha256
+        character not in "0123456789abcdef" for character in source_content_sha256
     ):
         raise ValueError("snapshot source content identity is invalid")
     if bbox != (-125.0, 42.0, -111.0, 49.0):
@@ -110,7 +110,7 @@ def validate_source_manifest(manifest: object) -> dict[str, Any]:
     counts = manifest.get("counts_by_year")
     if not isinstance(counts, dict) or set(counts) != {str(year) for year in years}:
         raise ValueError("snapshot counts do not cover the exact horizon")
-    if any(type(n) is not int or not 0 <= n <= MAX_CAPTURE_ROWS for n in counts.values()):
+    if any(type(count) is not int or not 0 <= count <= MAX_CAPTURE_ROWS for count in counts.values()):
         raise ValueError("snapshot has invalid or excessive counts")
     responses = manifest.get("responses")
     if not isinstance(responses, list) or len(responses) > MAX_SOURCE_RESPONSES:
@@ -163,7 +163,7 @@ def prepare_snapshot(  # noqa: PLR0912, PLR0915 - validate the complete source c
             raise ValueError("source row is outside snapshot year coverage")
         actual_counts[year] += 1
         records.append(build_mtbs_snapshot_record(feature, year, manifest_sha256=identity, available_at=available_at))
-    if {str(y): n for y, n in actual_counts.items()} != manifest["counts_by_year"]:
+    if {str(year): count for year, count in actual_counts.items()} != manifest["counts_by_year"]:
         raise ValueError("candidate year counts differ from source inventory")
     ids = [record.producer_local_id for record in records]
     if len(set(ids)) != len(ids):

@@ -396,8 +396,13 @@ class DrainSummary:
                 for lane in self.lanes
             ],
             "failure_sample": [
-                {"lane": f.slug, "day": f.day.isoformat(), "outcome": f.outcome, "detail": f.detail}
-                for f in self.failures[:20]
+                {
+                    "lane": failure.slug,
+                    "day": failure.day.isoformat(),
+                    "outcome": failure.outcome,
+                    "detail": failure.detail,
+                }
+                for failure in self.failures[:20]
             ],
         }
 
@@ -661,35 +666,8 @@ async def run_drain(  # noqa: PLR0913 - one parameter per operator-tunable knob 
 ) -> DrainSummary:
     """Walk every lane's outstanding history and write it, round-robin, until nothing is left.
 
-    `selection` decides WHAT a day owes, never how the walk behaves -- see "Two selections, one
-    walk" in the module docstring. `missing` exports days with no base rung from Postgres; `ladder`
-    derives the coarse rungs of days whose base rung is already published, and touches no lane
-    adapter and no source table at all.
-
-    `time_budget_seconds` is OPTIONAL here and unset by default, which is the whole point of the
-    drain: the cron's 600-second ceiling is what made this job necessary. When it is set it bounds
-    when a new DAY is STARTED, never a day already in hand -- the same rule `run_gap_fill` applies,
-    so a bounded drain still never abandons a half-written day.
-
-    `on_day` is called after every finished day so a CLI can stream progress across a run measured
-    in hours. It is deliberately a callback rather than a logger: this module has no opinion about
-    where a human is watching from, and a drain that printed would be untestable.
-
-    ONE DUCKDB SESSION SERVES THE WHOLE LADDER WALK. A geometry lane opens a session and pays
-    `LOAD spatial` PER RUNG otherwise -- three per day, ~3,000 across the measured 1,037-day repair
-    -- and `derivation_session` exists to be reused exactly this way. The export selection opens
-    none here: its rungs are derived inside `gap_fill`, which owns that path's session.
-
-    `availability_storage` DEFAULTS TO None AND IS THEREFORE INERT. A drain writes the same terminal
-    lane-days the hourly cron writes, so it owes the same availability entries; passing the storage
-    is how a bulk repair stops leaving the published index thousands of days behind the bucket. It
-    stays optional because the ladder selection exports nothing, and because a caller that has not
-    bootstrapped a lane's index has nothing for the extension step to extend.
-
-    WHEN IT IS WIRED, THE OWED LEDGER IS DRAINED FIRST, exactly as `run_gap_fill` drains it. A drain
-    that only extended the days of THIS run would leave every claim an earlier turn could not finish
-    where it was, and the base-tier census never revisits a completed day -- so a claim nothing
-    retries is a terminal day permanently outside the index, on a green tick.
+    What each knob means and why it defaults the way it does: see `AGENTS.md` in this directory,
+    "What `run_drain`'s knobs mean".
     """
     deadline = None if time_budget_seconds is None else monotonic() + time_budget_seconds
     started = monotonic()

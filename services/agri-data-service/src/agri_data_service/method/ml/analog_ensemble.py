@@ -91,9 +91,8 @@ def find_analogs(  # noqa: PLR0913 - one parameter per search knob is the contra
         raise ValueError("horizon_days must not be negative")
 
     horizon_boundary = query_date - timedelta(days=horizon_days)
-    horizon_safe_mask = np.array([d < horizon_boundary for d in history_dates], dtype=bool)
-    # Apply temporal exclusion mask: exclude dates within +/- exclusion_days of query_date
-    exclusion_mask = np.array([abs((d - query_date).days) > exclusion_days for d in history_dates], dtype=bool)
+    horizon_safe_mask = np.array([day < horizon_boundary for day in history_dates], dtype=bool)
+    exclusion_mask = np.array([abs((day - query_date).days) > exclusion_days for day in history_dates], dtype=bool)
     valid_mask = horizon_safe_mask & exclusion_mask
 
     if not np.any(valid_mask):
@@ -104,19 +103,18 @@ def find_analogs(  # noqa: PLR0913 - one parameter per search knob is the contra
 
     valid_indices = np.flatnonzero(valid_mask)
     valid_history = history_matrix[valid_mask]
-    valid_dates = [history_dates[int(idx)] for idx in valid_indices]
+    valid_dates = [history_dates[int(index)] for index in valid_indices]
 
-    # Apply feature weighting if provided
     weights = feature_weights if feature_weights is not None else np.ones(history_matrix.shape[1])
     weighted_query = (query_vector * weights).reshape(1, -1)
     weighted_history = valid_history * weights
 
-    n_neighbors = min(k, len(valid_dates))
-    nbrs = NearestNeighbors(n_neighbors=n_neighbors, algorithm="brute", metric="euclidean")
-    nbrs.fit(weighted_history)
+    neighbor_count = min(k, len(valid_dates))
+    neighbors = NearestNeighbors(n_neighbors=neighbor_count, algorithm="brute", metric="euclidean")
+    neighbors.fit(weighted_history)
 
-    distances, indices = nbrs.kneighbors(weighted_query)
-    selected_dates = tuple(valid_dates[i] for i in indices[0])
+    distances, indices = neighbors.kneighbors(weighted_query)
+    selected_dates = tuple(valid_dates[index] for index in indices[0])
 
     return distances[0], selected_dates
 
@@ -155,52 +153,52 @@ def generate_anen_forecast(  # noqa: PLR0913 - one parameter per forecast input 
 
         for analog_date in analog_dates:
             target_date = analog_date + timedelta(days=step)
-            val = target_series.get(target_date)
-            if val is not None and math.isfinite(val):
-                analog_successors.append(val)
-                res = residuals_map.get(analog_date)
-                if res is not None and math.isfinite(res):
-                    bias_terms.append(res)
+            successor = target_series.get(target_date)
+            if successor is not None and math.isfinite(successor):
+                analog_successors.append(successor)
+                residual = residuals_map.get(analog_date)
+                if residual is not None and math.isfinite(residual):
+                    bias_terms.append(residual)
 
         if not analog_successors:
-            # Fallback to latest target if no analog successor exists
+            # No analog had a successor at this step: the last observed target stands in, flat.
             fallback = target_series.get(query_date, 0.0)
-            low_val, med_val, high_val = fallback, fallback, fallback
-            bias_corr = 0.0
+            low_value, median_value, high_value = fallback, fallback, fallback
+            bias_correction = 0.0
         else:
-            bias_corr = float(np.mean(bias_terms)) if bias_terms else 0.0
-            adjusted = np.array(analog_successors) - bias_corr
-            low_val = float(np.percentile(adjusted, 10))
-            med_val = float(np.percentile(adjusted, 50))
-            high_val = float(np.percentile(adjusted, 90))
+            bias_correction = float(np.mean(bias_terms)) if bias_terms else 0.0
+            adjusted = np.array(analog_successors) - bias_correction
+            low_value = float(np.percentile(adjusted, 10))
+            median_value = float(np.percentile(adjusted, 50))
+            high_value = float(np.percentile(adjusted, 90))
 
         steps.append(
             AnEnForecastStep(
                 horizon_step=step,
                 valid_day=valid_day,
-                low_value=validate_finite(low_val, "low_value"),
-                median_value=validate_finite(med_val, "median_value"),
-                high_value=validate_finite(high_val, "high_value"),
+                low_value=validate_finite(low_value, "low_value"),
+                median_value=validate_finite(median_value, "median_value"),
+                high_value=validate_finite(high_value, "high_value"),
                 analog_count=len(analog_successors),
-                mean_bias_correction=bias_corr,
+                mean_bias_correction=bias_correction,
             )
         )
 
-    governed_ref = f"anen_history_{query_date.isoformat()}_{len(history_dates)}_rows"
-    result_dict = {
+    governed_reference = f"anen_history_{query_date.isoformat()}_{len(history_dates)}_rows"
+    receipt = {
         "method_name": METHOD_NAME,
         "query_origin_day": query_date.isoformat(),
         "hyperparameters": asdict(params),
-        "governed_data_reference": governed_ref,
+        "governed_data_reference": governed_reference,
         "step_count": len(steps),
     }
-    artifact_hash = sha256_digest(canonical_json(result_dict))
+    artifact_checksum = sha256_digest(canonical_json(receipt))
 
     return AnEnForecastResult(
         method_name=METHOD_NAME,
         query_origin_day=query_date,
         hyperparameters=params,
         steps=tuple(steps),
-        governed_data_reference=governed_ref,
-        artifact_checksum=artifact_hash,
+        governed_data_reference=governed_reference,
+        artifact_checksum=artifact_checksum,
     )

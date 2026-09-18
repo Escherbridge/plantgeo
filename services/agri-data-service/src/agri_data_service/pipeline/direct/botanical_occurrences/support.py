@@ -37,6 +37,19 @@ POINT_DISTANCE: Final = "to_record_point"
 CENTROID_DISTANCE: Final = "to_cell_centroid"
 
 
+#: How close `value / degrees` must be to an integer before the point counts as ON a cell edge. The
+#: same rule and the same tolerance as `warehouse/parquet/tiers.py::floor_to_resolution`; see
+#: `AGENTS.md` in this directory, "Cell indices are snapped, never divided".
+_CELL_EDGE_TOLERANCE: Final = 1e-9
+
+
+def _floor_to_cell(value: float, degrees: float) -> int:
+    """Return the index of the `degrees`-wide cell holding `value`, snapping a point on an edge into it."""
+    quotient = value / degrees
+    nearest = round(quotient)
+    return nearest if abs(quotient - nearest) < _CELL_EDGE_TOLERANCE else math.floor(quotient)
+
+
 class SupportError(ValueError):
     """Raised when a support id is not one this lane publishes."""
 
@@ -50,7 +63,7 @@ class GridSupport:
 
     def cell_indices(self, longitude: float, latitude: float) -> tuple[int, int]:
         """Return the (column, row) of the cell containing a point."""
-        return math.floor(longitude / self.degrees), math.floor(latitude / self.degrees)
+        return _floor_to_cell(longitude, self.degrees), _floor_to_cell(latitude, self.degrees)
 
     def cell_id(self, column: int, row: int) -> str:
         """Return the cell identifier, which carries its own support so two rungs never collide."""

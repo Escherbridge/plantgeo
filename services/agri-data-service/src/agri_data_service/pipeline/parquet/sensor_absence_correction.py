@@ -152,8 +152,8 @@ def ledger_wire(ledger: WrittenObjectLedger) -> dict[str, object]:
         json.loads(
             encode(
                 {
-                    "partitions": [asdict(r) for r in ledger.partitions.values()],
-                    "completions": [asdict(r) for r in ledger.completions.values()],
+                    "partitions": [asdict(record) for record in ledger.partitions.values()],
+                    "completions": [asdict(record) for record in ledger.completions.values()],
                 }
             )
         ),
@@ -179,7 +179,7 @@ def finalized(plan: Mapping[str, Any], day: date, request_sha: str) -> Finalized
         source=LaneDaySource(
             origin="captured-nws-positive-absence-correction",
             run_id=plan["run_id"],
-            row_count=sum(r.row_count for r in base),
+            row_count=sum(part.row_count for part in base),
             part_count=len(base),
             exported_at=published,
             detail=f"repair={LANE_ROOT}/availability/repairs/{request_sha}/request.json; source_complete=false; "
@@ -286,13 +286,14 @@ def verify_index_row(row: AvailabilityRow, outcome: FinalizedLaneDay, identity: 
         row.source_ceiling == outcome.source_ceiling and row.provenance == "digested",
         "indexed coverage/provenance differs",
     )
-    parts = tuple(r for r in outcome.written.partitions.values() if r.zoom == row.rung)
-    marker = next((r for r in outcome.written.completions.values() if r.zoom == row.rung), None)
+    parts = tuple(part for part in outcome.written.partitions.values() if part.zoom == row.rung)
+    marker = next((written for written in outcome.written.completions.values() if written.zoom == row.rung), None)
     require(
-        {(r.key, r.sha256) for r in row.data_receipts} == {(r.relative_path, r.sha256) for r in parts},
+        {(receipt.key, receipt.sha256) for receipt in row.data_receipts}
+        == {(part.relative_path, part.sha256) for part in parts},
         "indexed parts differ from prepared parts",
     )
-    require(row.row_count == sum(r.row_count for r in parts), "indexed row count differs")
+    require(row.row_count == sum(part.row_count for part in parts), "indexed row count differs")
     require(marker is not None and row.completion_receipt is not None, "indexed completion is missing")
     if marker is not None and row.completion_receipt is not None:
         require(
@@ -304,13 +305,13 @@ def verify_index_row(row: AvailabilityRow, outcome: FinalizedLaneDay, identity: 
             day=outcome.day,
             rung=row.rung,
             terminal_state="published",
-            row_count=sum(r.row_count for r in parts),
+            row_count=sum(part.row_count for part in parts),
             source_ceiling=outcome.source_ceiling,
             published_at=outcome.published_at,
             source_receipt=source_artifact.receipt,
             data_receipts=tuple(
-                EvidenceReceipt(key=r.relative_path, sha256=r.sha256)
-                for r in sorted(parts, key=lambda r: r.relative_path)
+                EvidenceReceipt(key=part.relative_path, sha256=part.sha256)
+                for part in sorted(parts, key=lambda part: part.relative_path)
             ),
             completion_receipt=EvidenceReceipt(key=marker.relative_path, sha256=marker.sha256),
             absence_receipt=None,

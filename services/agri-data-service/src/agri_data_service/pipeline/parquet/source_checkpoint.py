@@ -105,6 +105,8 @@ class SourceResponseCheckpoints:
                     if current.retrieved_at >= checkpoint.retrieved_at:
                         return
                 except ValueError:
+                    # A prior checkpoint we cannot decode states nothing; overwrite it rather than
+                    # letting a corrupt object pin the lane to its last readable retrieval.
                     pass
             changed = self.storage.compare_and_swap(
                 identity.key,
