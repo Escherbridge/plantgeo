@@ -3,7 +3,11 @@
 import { useEffect, useRef, useCallback } from "react";
 import type { Map as MapLibreMap, GeoJSONSource, MapMouseEvent } from "maplibre-gl";
 import { getFirstSymbolLayer, safeRemoveLayerAndSource } from "@/lib/map/layer-utils";
-import { BOTANICAL_DETAIL_MIN_ZOOM, type BotanicalOccurrenceFeature } from "@/lib/botanical-occurrences";
+import {
+  BOTANICAL_DETAIL_MIN_ZOOM,
+  type BotanicalOccurrenceFeature,
+  type BotanicalSupportBand,
+} from "@/lib/botanical-occurrences";
 import { isProvisionalBotanicalCollection } from "@/lib/environmental/botanical-governance-status";
 
 const SOURCE_ID = "botanical-occurrences";
@@ -95,6 +99,20 @@ export function describeBotanicalOccurrencesState(snapshot: {
   isStale: boolean;
   isPartial: boolean;
   error: { reason: string; detail?: string } | null;
+  band?: BotanicalSupportBand;
+  servingBand?: BotanicalSupportBand | null;
+}): string | null {
+  const sentences = [describeReadState(snapshot), describeServingRung(snapshot)].filter(
+    (sentence): sentence is string => sentence !== null
+  );
+  return sentences.length === 0 ? null : sentences.join(" ");
+}
+
+function describeReadState(snapshot: {
+  phase: "idle" | "loading" | "success" | "empty" | "error";
+  isStale: boolean;
+  isPartial: boolean;
+  error: { reason: string; detail?: string } | null;
 }): string | null {
   if (snapshot.phase === "error") {
     return snapshot.error === null
@@ -107,6 +125,32 @@ export function describeBotanicalOccurrencesState(snapshot: {
   if (snapshot.phase === "empty") return "This release holds no specimen records in this view.";
   if (snapshot.isPartial) return "More specimen records match this view than are drawn.";
   return null;
+}
+
+/** How each rung reads in a sentence; `detail` is points, the other two are published cell grids. */
+const BOTANICAL_BAND_LABEL: Readonly<Record<BotanicalSupportBand, string>> = {
+  detail: "individual specimen points",
+  "grid-0.05": "the grid-0.05 support rung",
+  "grid-0.25": "the grid-0.25 support rung",
+};
+
+/**
+ * Says so when a WIDER RUNG answered than the zoom asked for.
+ *
+ * Since the owner decision of 2026-09-18 a viewport too wide for its zoom's own rung is served
+ * from the next rung out instead of being refused (`botanicalServingBandForViewport`). That is a
+ * substitution of evidence -- cells where points were asked for, or coarser cells than expected --
+ * and a reader who is not told has no way to know the drawing changed meaning. Silent when the
+ * served rung is the requested one, which is the ordinary case.
+ */
+function describeServingRung(snapshot: {
+  band?: BotanicalSupportBand;
+  servingBand?: BotanicalSupportBand | null;
+}): string | null {
+  const { band, servingBand } = snapshot;
+  if (band === undefined || servingBand === undefined || servingBand === null) return null;
+  if (servingBand === band) return null;
+  return `Showing ${BOTANICAL_BAND_LABEL[servingBand]}: this view is wider than ${BOTANICAL_BAND_LABEL[band]} can answer.`;
 }
 
 interface BotanicalOccurrencesLayerProps {

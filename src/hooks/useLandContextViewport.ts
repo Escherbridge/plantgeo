@@ -21,6 +21,7 @@ import {
   type ZoomTier,
 } from "@/lib/map/zoom-tiers";
 import { bboxSquareDegrees } from "@/lib/map/viewport-bbox";
+import { selectFinestAdmittingRung } from "@/lib/map/rung-selection";
 import { trpc } from "@/lib/trpc/client";
 import { LAND_CONTEXT_GROUP_IDS, type LandContextGroupId } from "@/stores/land-context-store";
 import { useViewportBounds, PROXIED_RETRY_COUNT } from "@/hooks/useViewportProxiedLayers";
@@ -74,12 +75,14 @@ export function landContextRungForViewport(
     if (error instanceof ZoomTierResolutionError) return null;
     throw error;
   }
-  const finestFirst = [...ZOOM_TIERS].sort((left, right) => right - left);
-  for (const tier of finestFirst) {
-    if (tier > zoomTier) continue;
-    if (areaSquareDegrees <= LAND_CONTEXT_RUNG_MAX_BBOX_SQUARE_DEGREES[tier]) return tier;
-  }
-  return null;
+  // The walk is shared with the botanical plane and the server-side reader; see
+  // `@/lib/map/rung-selection`. Only the ladder, its ceilings and the zoom gate are local.
+  return selectFinestAdmittingRung({
+    coarsestFirst: ZOOM_TIERS,
+    maxBboxSquareDegrees: LAND_CONTEXT_RUNG_MAX_BBOX_SQUARE_DEGREES,
+    areaSquareDegrees,
+    finestAllowed: zoomTier,
+  });
 }
 
 /** Why this hook is or is not asking, in the words a caption may use verbatim. */

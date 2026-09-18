@@ -69,7 +69,16 @@ import {
 // exported there: the spatial guard that drops nonspatial specimens must not exist twice.
 // Imported statically while the components above are dynamic -- these are pure functions with
 // no MapLibre dependency, so they cost nothing at SSR.
-import { botanicalOccurrencesToGeoJSON } from "@/components/map/layers/BotanicalOccurrencesLayer";
+import {
+  botanicalOccurrencesToGeoJSON,
+  describeBotanicalOccurrencesState,
+} from "@/components/map/layers/BotanicalOccurrencesLayer";
+import {
+  useBotanicalOccurrences,
+  type BotanicalOccurrencesPhase,
+} from "@/hooks/useBotanicalOccurrences";
+import { useLandContextViewport } from "@/hooks/useLandContextViewport";
+import { useLandContextStore } from "@/stores/land-context-store";
 import { GBIF_COLLECTION_KEY } from "@/lib/environmental/botanical-governance-status";
 import { BOTANICAL_DETAIL_MIN_ZOOM } from "@/lib/botanical-occurrences";
 import { botanicalRichnessToGeoJSON } from "@/components/map/layers/BotanicalRichnessLayer";
@@ -552,16 +561,68 @@ export default function LayerManager() {
   // (once per source's independent MapLibre source/layer set). Any OTHER future collection_key
   // still falls through to this, the general layer -- only GBIF is carved out, because only GBIF
   // has its own sibling component so far.
-  const botanicalOccurrencesGeoJSON = useMemo(
+  //
+  // The UBC detail layer reads through the Next.js PROXY route below rather than this query, so
+  // the collection it draws is `botanicalViewportGeoJSON`; the carve-out is applied there.
+
+  // The detail lane, over the proxy route, beside the tRPC read above.
+  //
+  // WHY BOTH. The proxy lane (`useBotanicalOccurrences` -> `/api/botanical-occurrences`) is the
+  // one that selects a serving rung from zoom AND bbox size, so a wide viewport is answered from
+  // a coarser rung instead of refused (owner decision 2026-09-18). The tRPC read above still
+  // serves the two aggregate layers, GBIF's own toggle, and the store the filters panel and the
+  // details panel read -- so it stays enabled exactly as before. At a detail zoom with the UBC
+  // toggle on, both lanes read the same generation with the same filters; that duplication is
+  // deliberate for now and is the one thing to collapse when the aggregate layers move over too.
+  const botanicalViewport = useBotanicalOccurrences({
+    bbox,
+    zoom,
+    enabled: botanicalOccurrencesVisible && botanicalBand === "detail",
+    taxonConceptId: botanicalFilters.taxon_concept_id || undefined,
+    family: botanicalFilters.family || undefined,
+    collectionKey: botanicalFilters.collection_key || undefined,
+    eventStart: botanicalFilters.event_start || undefined,
+    eventEnd: botanicalFilters.event_end || undefined,
+    spatialQuality: botanicalFilters.spatial_quality,
+  });
+  // The answer's OWN state, never the requested band -- same rule as `botanicalDetail` above.
+  const botanicalViewportDetail =
+    botanicalViewport.answer?.state === "detail" ? botanicalViewport.answer : null;
+  // `presentBotanicalOccurrence` is the only sanctioned seam between the proxy's camelCase and
+  // the layer components' snake_case; see src/lib/environmental/botanical-presentation.ts.
+  const botanicalViewportFeatures = useMemo(
+    () => (botanicalViewportDetail?.features ?? []).map(presentBotanicalOccurrence),
+    [botanicalViewportDetail]
+  );
+  const botanicalViewportGeoJSON = useMemo(
     () =>
-      botanicalDetail === null
+      botanicalViewportDetail === null
         ? null
         : botanicalOccurrencesToGeoJSON(
-            botanicalFeatures.filter((feature) => feature.collection_key !== GBIF_COLLECTION_KEY),
-            botanicalDetail.publishedAt
+            botanicalViewportFeatures.filter(
+              (feature) => feature.collection_key !== GBIF_COLLECTION_KEY
+            ),
+            botanicalViewportDetail.publishedAt
           ),
-    [botanicalDetail, botanicalFeatures]
+    [botanicalViewportDetail, botanicalViewportFeatures]
   );
+  // One sentence for whatever the proxy lane currently reports -- including which rung answered
+  // when it is not the one this zoom asked for. Null when the layer is simply drawing.
+  const botanicalViewportCaption = describeBotanicalOccurrencesState(botanicalViewport);
+  // The same read-state vocabulary applied to the tRPC lane GBIF still draws from, so "the read
+  // has landed" means one thing on this component rather than two. The mapping is the one W1-D
+  // recorded: a failed query is `error`, a fetching or retained one is `loading`, a landed detail
+  // answer with no rows is `empty`.
+  const gbifReadPhase: BotanicalOccurrencesPhase =
+    botanicalQuery.isError === true
+      ? "error"
+      : botanicalQuery.isFetching === true || botanicalQuery.isPlaceholderData === true
+        ? "loading"
+        : botanicalQuery.isSuccess !== true
+          ? "idle"
+          : botanicalDetail !== null && botanicalDetail.features.length === 0
+            ? "empty"
+            : "success";
   // GBIF draws through its OWN component/toggle (`GbifOccurrencesLayer`), independently
   // switchable from the UBC layer above, even though both read the same `botanicalFeatures`
   // response -- collection_key is the only thing that tells the two sources apart, so the split
@@ -634,14 +695,18 @@ export default function LayerManager() {
   // already holds, and the store slice the panel reads is the only thing that changes. Resolved
   // here rather than in the layer because the layer only carries MapLibre feature properties --
   // four fields -- and the panel needs the whole record including rights and attribution.
+  //
+  // Both lanes are searched because both draw: UBC points come from the proxy read, GBIF points
+  // from the tRPC read. Searching only one would make a click on the other lane's dot clear the
+  // panel instead of opening it.
   const handleSelectBotanicalOccurrence = useCallback(
     (occurrenceId: string) => {
-      const selected = botanicalFeatures.find(
-        (feature) => feature.occurrence_id === occurrenceId
-      );
+      const selected =
+        botanicalViewportFeatures.find((feature) => feature.occurrence_id === occurrenceId) ??
+        botanicalFeatures.find((feature) => feature.occurrence_id === occurrenceId);
       setSelectedBotanicalFeature(selected ?? null);
     },
-    [botanicalFeatures, setSelectedBotanicalFeature]
+    [botanicalViewportFeatures, botanicalFeatures, setSelectedBotanicalFeature]
   );
 
   // The three ERA5-Land soil fields. `zoom` is not a hint here -- it selects the server-side
@@ -769,6 +834,16 @@ export default function LayerManager() {
 
   const burnSnapshot = burnSeverityQuery.data?.state === "ready"
     ? burnSeverityQuery.data.mtbsSnapshot : undefined;
+
+  // The automatic land-context viewport read (owner decision 2026-09-18). Click-driven
+  // point/parcel lookup is untouched -- this hook keys its own entry and only follows the
+  // viewport. Its `state` is a CAPTION, never an outage: `area_over_budget` means "zoom in" and
+  // `no_group_enabled` means nothing is switched on, so neither is dressed as a fault below.
+  const landContextEnabledGroups = useLandContextStore((state) => state.enabledGroups);
+  const landContextViewport = useLandContextViewport({
+    enabledGroups: landContextEnabledGroups,
+  });
+
   const parquetLayerFaults = [
     burnSeverityEnabled && burnSnapshot
       ? {
@@ -954,12 +1029,14 @@ export default function LayerManager() {
         }
       : null,
     // Only the settled returned slice supports an empty notice; see AGENTS.md §GBIF feedback.
+    // "Settled" is decided by `gbifReadPhase`, the SHARED read-state vocabulary, so this lane and
+    // the proxy lane below cannot disagree about when a read has landed. The message itself stays
+    // authored here: it is a statement about the GBIF SLICE of a shared answer, which the
+    // lane-wide vocabulary has no sentence for.
     gbifOccurrencesVisible &&
     botanicalBand === "detail" &&
     bbox !== null &&
-    botanicalQuery.isSuccess === true &&
-    botanicalQuery.isFetching !== true &&
-    botanicalQuery.isPlaceholderData !== true &&
+    (gbifReadPhase === "success" || gbifReadPhase === "empty") &&
     botanicalDetail !== null &&
     gbifFeatures.length === 0
       ? {
@@ -968,6 +1045,27 @@ export default function LayerManager() {
           message: botanicalDetail.truncated
             ? "No GBIF occurrence points appear in this limited result. The row limit prevents a complete assessment of this viewport and its current filters."
             : "No GBIF occurrence points were returned for this viewport and current filters.",
+        }
+      : null,
+    // What the proxy lane reports about the UBC detail layer, in the one wording
+    // `describeBotanicalOccurrencesState` owns -- including "a coarser rung answered than this
+    // zoom asked for", which is the visible half of the 2026-09-18 rung-select decision. A
+    // `notice`: a rung substitution and a stale frame are both real answers, not outages.
+    botanicalOccurrencesVisible && botanicalBand === "detail" && botanicalViewportCaption !== null
+      ? {
+          layerId: "botanical-viewport-read",
+          tone: botanicalViewport.phase === "error" ? ("fault" as const) : ("notice" as const),
+          message: botanicalViewportCaption,
+        }
+      : null,
+    // Land-context asks for nothing above its AOI budget. Saying so is the whole fix: an
+    // automatic read that silently does not fire is indistinguishable from one that failed.
+    landContextViewport.state === "area_over_budget"
+      ? {
+          layerId: "land-context-area-over-budget",
+          tone: "notice" as const,
+          message:
+            "Land-context boundaries load automatically for a viewport of about one square degree or smaller. Zoom in to read them for this view.",
         }
       : null,
   ].filter((fault): fault is NonNullable<typeof fault> => fault !== null);
@@ -1544,10 +1642,13 @@ export default function LayerManager() {
           whatever it was handed. */}
       <BotanicalOccurrencesLayer
         map={map}
-        geojson={botanicalOccurrencesGeoJSON}
+        geojson={botanicalViewportGeoJSON}
         zoom={zoom}
         visible={botanicalOccurrencesVisible && botanicalBand === "detail"}
         onSelectFeature={handleSelectBotanicalOccurrence}
+        // Takes the layers down on a FAILED read rather than retaining a collection that no
+        // longer describes the viewport; a pending read keeps drawing. See the prop's docstring.
+        readPhase={botanicalViewport.phase}
       />
       {/* GBIF's own toggle over the SAME one query, filtered above to GBIF's collection_key --
           see `gbifOccurrencesGeoJSON`'s definition for why the split happens in this container

@@ -84,7 +84,18 @@ export const botanicalProxyPointerSchema = z.object({
   publishedAt: z.string().nullable(),
 });
 
+/** The three published rungs, in the plane's own `support_id` vocabulary. */
+export const botanicalServingRungSchema = z.enum(["detail", "grid-0.05", "grid-0.25"]);
+
 const proxyAnswerBase = {
+  /**
+   * WHICH RUNG ANSWERED, always stated. The route selects it from zoom AND bbox size
+   * (`botanicalServingBandForViewport`), so a wide viewport at a detail zoom is answered from a
+   * coarser rung rather than refused -- and a reader must be able to tell that happened. Without
+   * this field a caption would have to infer the rung from the zoom it asked with, which is exactly
+   * the inference the owner decision of 2026-09-18 made wrong.
+   */
+  servingRung: botanicalServingRungSchema,
   releaseSetId: z.string(),
   publishedAt: z.string().nullable(),
   taxonomyRecipeVersion: z.string().nullable(),
@@ -131,6 +142,7 @@ export const botanicalProxyErrorSchema = z.object({
 export type BotanicalProxyFeature = z.infer<typeof botanicalProxyFeatureSchema>;
 export type BotanicalProxyCell = z.infer<typeof botanicalProxyCellSchema>;
 export type BotanicalProxyPointer = z.infer<typeof botanicalProxyPointerSchema>;
+export type BotanicalServingRung = z.infer<typeof botanicalServingRungSchema>;
 export type BotanicalProxyAnswer = z.infer<typeof botanicalProxyAnswerSchema>;
 export type BotanicalProxyError = z.infer<typeof botanicalProxyErrorSchema>;
 

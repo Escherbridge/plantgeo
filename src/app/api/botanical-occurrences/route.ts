@@ -7,9 +7,10 @@ import {
   BotanicalOccurrencesUnavailableError,
 } from "@/lib/server/services/botanical-occurrences-client";
 import {
+  BOTANICAL_MAX_BBOX_SQUARE_DEGREES,
   BOTANICAL_OCCURRENCE_MAX_LIMIT,
-  botanicalBboxCeilingForZoom,
-  botanicalSupportBandForZoom,
+  botanicalServingBandForViewport,
+  botanicalServingZoomForBand,
 } from "@/lib/botanical-occurrences";
 import { PRIVATE_EPHEMERAL_HEADERS } from "@/lib/server/http/provider-response";
 import type { BotanicalProxyAnswer } from "@/lib/environmental/botanical-proxy-contract";
@@ -38,6 +39,14 @@ import {
  * `planes/botanical_occurrences.py` via `lib/botanical-occurrences.ts` rather than re-chosen here.
  * Refusing at ingress saves a round trip; refusing DIFFERENTLY from the plane would mean this route
  * has an opinion about coverage, which it must not.
+ *
+ * THE RUNG IS SELECTED HERE, FROM ZOOM AND BBOX SIZE. Owner decision 2026-09-18: a viewport wider
+ * than its zoom's own rung admits is served from the next rung OUT, not refused -- see
+ * `botanicalServingBandForViewport`. This route is where that happens because the plane derives its
+ * rung from `zoom` alone and takes no `support_id` parameter, so selecting a rung IS choosing which
+ * zoom to forward. The chosen rung travels back in `servingRung` so a caption can say which
+ * evidence the reader is looking at; above the coarse rung's ceiling the existing
+ * `bbox_too_large_for_zoom` refusal is unchanged, because there is nothing coarser to fall back to.
  *
  * ONE ERROR SHAPE. Every non-200 answers `{ error, reason, detail? }` so a client branches on
  * `reason` and never on a status code alone: `invalid_request` and `bbox_too_large_for_zoom` are
@@ -125,18 +134,22 @@ export async function GET(request: NextRequest) {
   }
 
   const { bbox, zoom } = parsed.data;
-  const ceiling = botanicalBboxCeilingForZoom(zoom);
-  if (bboxSquareDegrees(bbox) > ceiling) {
+  const servingRung = botanicalServingBandForViewport(zoom, bboxSquareDegrees(bbox));
+  if (servingRung === null) {
     // Refused BEFORE the upstream call and before the pointer is resolved, exactly as the plane
     // refuses before opening a generation: a bound that depended on what is published would leak
-    // what is published.
+    // what is published. Reached only above the COARSEST rung's ceiling now -- every narrower
+    // refusal became a rung selection above.
     return failure(
       400,
       "Invalid botanical-occurrences query",
       "bbox_too_large_for_zoom",
-      `a ${botanicalSupportBandForZoom(zoom)} answer is bounded at ${ceiling} square degrees`
+      `no published rung answers a bbox wider than ${BOTANICAL_MAX_BBOX_SQUARE_DEGREES} square degrees`
     );
   }
+  // The zoom that makes the plane answer from the rung selected above; the caller's own zoom
+  // whenever it already selects it.
+  const servingZoom = botanicalServingZoomForBand(servingRung, zoom);
 
   const timeout = AbortSignal.timeout(ROUTE_TIMEOUT_MS);
   // The caller's cancellation AND this route's ceiling: a client that navigates away must not hold
@@ -145,7 +158,7 @@ export async function GET(request: NextRequest) {
     request.signal === undefined ? timeout : AbortSignal.any([request.signal, timeout]);
 
   try {
-    const result = await getBotanicalOccurrences({ ...parsed.data, signal });
+    const result = await getBotanicalOccurrences({ ...parsed.data, zoom: servingZoom, signal });
     if (result.state === "refused") {
       return failure(400, "The botanical-occurrences plane refused this query", result.reason, result.detail);
     }
@@ -155,7 +168,10 @@ export async function GET(request: NextRequest) {
     // The published contract, checked by the compiler rather than by hope: if the server client's
     // decoded shape ever drifts from `botanicalProxyAnswerSchema`, this assignment stops compiling
     // instead of the hook receiving a field it cannot find.
-    const body: BotanicalProxyAnswer = result;
+    // Spread per branch rather than once over the union: a discriminated union assembled by one
+    // spread loses its discriminant to TypeScript, and this assignment exists to be checked.
+    const body: BotanicalProxyAnswer =
+      result.state === "detail" ? { ...result, servingRung } : { ...result, servingRung };
     return NextResponse.json(body, { headers: PRIVATE_EPHEMERAL_HEADERS });
   } catch (error) {
     if (error instanceof BotanicalOccurrencesUnavailableError) {

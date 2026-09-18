@@ -9,10 +9,12 @@ import {
   type BotanicalProxyError,
 } from "@/lib/environmental/botanical-proxy-contract";
 import {
+  BOTANICAL_MAX_BBOX_SQUARE_DEGREES,
   BOTANICAL_OCCURRENCE_MAX_LIMIT,
-  botanicalBboxCeilingForZoom,
+  botanicalServingBandForViewport,
   botanicalSupportBandForZoom,
   type BotanicalSpatialQuality,
+  type BotanicalSupportBand,
 } from "@/lib/botanical-occurrences";
 
 /**
@@ -56,6 +58,13 @@ export interface BotanicalOccurrencesSnapshot {
   isPartial: boolean;
   /** Which band this answer came from, so a caption never claims specimens over grid cells. */
   band: ReturnType<typeof botanicalSupportBandForZoom>;
+  /**
+   * The rung that actually answered, which is NOT always `band`: a viewport wider than its zoom's
+   * own rung admits is served from the next rung out (owner decision 2026-09-18). The route states
+   * it in `servingRung`; before an answer lands this is the hook's own selection, and it is null
+   * only when no rung admits the viewport at all.
+   */
+  servingBand: BotanicalSupportBand | null;
 }
 
 /** The viewport and filters one read is keyed on. A null bbox disables the read entirely. */
@@ -81,13 +90,18 @@ const IDLE: BotanicalOccurrencesSnapshot = {
   isStale: false,
   isPartial: false,
   band: "grid-0.25",
+  servingBand: "grid-0.25",
 };
 
-/** A bbox the plane would refuse anyway, refused here without spending a round trip. */
-function exceedsBboxCeiling(bbox: string, zoom: number): boolean {
+/**
+ * The rung this viewport selects, or null when no rung admits it -- the ONE case still refused
+ * without spending a round trip. The route runs the same selection over the same table, so this
+ * copy can only agree with it or be wrong, never be stricter.
+ */
+function servingBandForViewport(bbox: string, zoom: number): BotanicalSupportBand | null {
   const [west, south, east, north] = bbox.split(",").map((part) => Number(part));
-  if (![west, south, east, north].every(Number.isFinite)) return false;
-  return (east - west) * (north - south) > botanicalBboxCeilingForZoom(zoom);
+  if (![west, south, east, north].every(Number.isFinite)) return botanicalSupportBandForZoom(zoom);
+  return botanicalServingBandForViewport(zoom, (east - west) * (north - south));
 }
 
 function buildRequestUrl(options: UseBotanicalOccurrencesOptions, bbox: string): string {
@@ -129,6 +143,9 @@ export function useBotanicalOccurrences(
   );
 
   const band = botanicalSupportBandForZoom(options.zoom);
+  // The rung this viewport will be served from, which the route re-derives identically.
+  const selectedBand =
+    options.bbox === null ? band : servingBandForViewport(options.bbox, options.zoom);
   const latestRequest = useRef(0);
 
   useEffect(() => {
@@ -136,18 +153,19 @@ export function useBotanicalOccurrences(
       setSnapshot(IDLE);
       return;
     }
-    if (options.bbox !== null && exceedsBboxCeiling(options.bbox, options.zoom)) {
+    if (selectedBand === null) {
       setSnapshot({
         phase: "error",
         answer: null,
         error: {
-          error: "The viewport is wider than this zoom's published ceiling",
+          error: "The viewport is wider than every published rung",
           reason: "bbox_too_large_for_zoom",
-          detail: `a ${band} answer is bounded at ${botanicalBboxCeilingForZoom(options.zoom)} square degrees`,
+          detail: `no published rung answers a bbox wider than ${BOTANICAL_MAX_BBOX_SQUARE_DEGREES} square degrees`,
         },
         isStale: false,
         isPartial: false,
         band,
+        servingBand: null,
       });
       return;
     }
@@ -162,6 +180,7 @@ export function useBotanicalOccurrences(
       error: null,
       isStale: previous.answer !== null,
       band,
+      servingBand: selectedBand,
     }));
 
     void (async () => {
@@ -184,6 +203,7 @@ export function useBotanicalOccurrences(
             isStale: false,
             isPartial: false,
             band,
+            servingBand: selectedBand,
           });
           return;
         }
@@ -200,6 +220,7 @@ export function useBotanicalOccurrences(
             isStale: false,
             isPartial: false,
             band,
+            servingBand: selectedBand,
           });
           return;
         }
@@ -215,6 +236,9 @@ export function useBotanicalOccurrences(
           isStale: false,
           isPartial: answer.truncated,
           band,
+          // The ANSWER's own rung, never the request's guess: the route is the authority on which
+          // rung answered, and a caption that disagreed with it would misname the evidence.
+          servingBand: answer.servingRung,
         });
       } catch (error) {
         if (controller.signal.aborted || latestRequest.current !== sequence) return;
@@ -229,12 +253,13 @@ export function useBotanicalOccurrences(
           isStale: false,
           isPartial: false,
           band,
+          servingBand: selectedBand,
         });
       }
     })();
 
-    // `requestUrl` already encodes every request-shaping field, and `band` is derived from the zoom
-    // inside it, so those two are the whole dependency of this effect.
+    // `requestUrl` already encodes every request-shaping field, and both `band` and `selectedBand`
+    // are derived from the zoom and bbox inside it, so those two are the whole dependency here.
     return () => controller.abort();
   }, [requestUrl, options.enabled]);
 
