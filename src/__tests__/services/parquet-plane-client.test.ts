@@ -460,6 +460,36 @@ describe("getParquetWarehouseCoverage", () => {
     ]);
   });
 
+  it("decodes the region layer bindings the slider reads for a governed absence", async () => {
+    mockedFetch.mockResolvedValue({
+      ...census,
+      layer_bindings: [
+        { layer: "soil-survey", binding: "unbound", source: null, reason: "no_source_bound_in_region" },
+        { layer: "fire-detections", binding: "bound_global", source: "firms", reason: null },
+      ],
+    });
+
+    const coverage = await getParquetWarehouseCoverage();
+
+    expect(coverage.layerBindings).toEqual([
+      { layer: "soil-survey", binding: "unbound", source: null, reason: "no_source_bound_in_region" },
+      { layer: "fire-detections", binding: "bound_global", source: "firms", reason: null },
+    ]);
+  });
+
+  it("accepts a census that states no bindings at all, without bumping the schema version", async () => {
+    // The additive half of the contract: a serving side predating the field still decodes at
+    // version 3, and its silence lands as an empty list rather than a refusal. A rejection here
+    // would blank a working slider during the deploy window for a field whose absence claims
+    // nothing -- see `ParquetWarehouseCoverage.layerBindings`.
+    mockedFetch.mockResolvedValue(census);
+
+    const coverage = await getParquetWarehouseCoverage();
+
+    expect(coverage.coverageSchemaVersion).toBe(3);
+    expect(coverage.layerBindings).toEqual([]);
+  });
+
   it("keeps a never-drained lane's nulls rather than inventing a span for it", async () => {
     mockedFetch.mockResolvedValue(census);
 

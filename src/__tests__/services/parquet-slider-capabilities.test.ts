@@ -5,7 +5,10 @@ import {
   climateFieldStreamName,
 } from "@/lib/environmental/climate-field";
 import { UpstreamHttpError } from "@/lib/server/http/bounded-upstream";
-import type { ParquetLaneCoverage } from "@/lib/server/services/parquet-plane-client";
+import type {
+  ParquetLaneCoverage,
+  ParquetRegionLayerBinding,
+} from "@/lib/server/services/parquet-plane-client";
 
 const mocks = vi.hoisted(() => ({
   getParquetWarehouseCoverage: vi.fn(),
@@ -145,12 +148,18 @@ function completeCoverage(): CoverageRow[] {
   );
 }
 
-function setCoverage(lanes: CoverageRow[]): void {
+/**
+ * `layerBindings` defaults to EMPTY, which is what a serving side that states no bindings sends and
+ * is exactly today's payload -- so every case below keeps asserting over the pre-federation shape
+ * unless it deliberately passes bindings.
+ */
+function setCoverage(lanes: CoverageRow[], layerBindings: ParquetRegionLayerBinding[] = []): void {
   mocks.getParquetWarehouseCoverage.mockResolvedValue({
     coverageSchemaVersion: 3,
     generatedAt: "2026-08-28T12:00:00Z",
     evaluatedThroughDay: "2026-08-28",
     lanes,
+    layerBindings,
   });
 }
 
@@ -192,7 +201,12 @@ describe("getParquetSliderCapabilities", () => {
   it("restamps UTC today after a cold read crosses midnight", async () => {
     mocks.getParquetWarehouseCoverage.mockImplementation(async () => {
       vi.setSystemTime(new Date("2026-08-29T00:00:00Z"));
-      return { generatedAt: "2026-08-28T12:00:00Z", evaluatedThroughDay: "2026-08-28", lanes: completeCoverage() };
+      return {
+        generatedAt: "2026-08-28T12:00:00Z",
+        evaluatedThroughDay: "2026-08-28",
+        lanes: completeCoverage(),
+        layerBindings: [],
+      };
     });
     const result = await getParquetSliderCapabilities();
     expect(result.serverCurrentDate).toBe("2026-08-29");
@@ -878,6 +892,7 @@ describe("getParquetSliderCapabilities", () => {
             generatedAt: "2026-08-28T12:00:00Z",
             evaluatedThroughDay: "2026-08-28",
             lanes,
+            layerBindings: [],
           });
       })
     );
@@ -927,6 +942,7 @@ describe("getParquetSliderCapabilities", () => {
       generatedAt: "2026-08-27T23:59:59Z",
       evaluatedThroughDay: "2026-08-27",
       lanes: completeCoverage(),
+      layerBindings: [],
     });
 
     const result = await getParquetSliderCapabilities();
@@ -1040,6 +1056,7 @@ describe("getParquetSliderCapabilities", () => {
       lanes: withLane(completeCoverage(), "vegetation", {
         withheldReason: "availability_unpublished",
       }),
+      layerBindings: [],
     });
 
     const result = await getParquetSliderCapabilities();
@@ -1457,5 +1474,45 @@ describe("governed-absence reporting on an absence-dominated axis", () => {
 
     expect(vegetation?.governedAbsenceRanges).toEqual(governedAbsenceRanges.slice(1));
     expect(vegetation?.describedFromDay).toBe(governedAbsenceRanges[1].from);
+  });
+});
+
+describe("region layer bindings on the capability payload", () => {
+  /**
+   * `conductor/code_styleguides/federation.md` §2 -- "the platform must run with a layer unbound".
+   * The census states the bindings; this module's only job with them is to carry them through
+   * unchanged into the payload the slider catalogue and the legends read.
+   */
+  it("carries the census's bindings through, snake_case translated and nothing else", async () => {
+    setCoverage(completeCoverage(), [
+      { layer: "soil-survey", binding: "unbound", source: null, reason: "no_source_bound_in_region" },
+      { layer: "fire-detections", binding: "bound_global", source: "firms", reason: null },
+    ]);
+
+    const result = await getParquetSliderCapabilities();
+
+    expect(result.layerBindings).toEqual([
+      { layerSlug: "soil-survey", binding: "unbound", sourceSlug: null, reason: "no_source_bound_in_region" },
+      { layerSlug: "fire-detections", binding: "bound_global", sourceSlug: "firms", reason: null },
+    ]);
+  });
+
+  it("publishes an empty binding list when the census states none, which is today's payload", async () => {
+    const result = await getParquetSliderCapabilities();
+    expect(result.layerBindings).toEqual([]);
+  });
+
+  it("states no bindings rather than inventing them when coverage is unavailable", async () => {
+    // The census is what states the bindings and is exactly what did not answer. Fabricating
+    // "everything is bound" here would be a claim; an empty list is the absence of one, and leaves
+    // every toggle enabled -- the same place this branch already leaves the slider.
+    mocks.getParquetWarehouseCoverage.mockRejectedValue(
+      new UpstreamHttpError(503)
+    );
+
+    const result = await getParquetSliderCapabilities();
+
+    expect(result.parquetCoverageUnavailable).toBe(true);
+    expect(result.layerBindings).toEqual([]);
   });
 });

@@ -279,7 +279,7 @@ async def _run_coverage_read() -> dict[str, object]:
     )
 
 
-def _region_layer_bindings() -> tuple[LayerBindingCoverage, ...]:
+def region_layer_bindings() -> tuple[LayerBindingCoverage, ...]:
     """This deployment's per-layer binding status, for the slider's "not available here" path.
 
     Read through `load_region()` on every census build rather than captured at import: the census is
@@ -332,7 +332,7 @@ async def _build_coverage_payload(generated_at: datetime) -> dict[str, object]:
             generated_at=generated_at,
             evaluated_through_day=evaluated_through_day,
             lanes=direct_rows,
-            layer_bindings=_region_layer_bindings(),
+            layer_bindings=region_layer_bindings(),
         ).to_wire()
 
     return await asyncio.to_thread(work)
