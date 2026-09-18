@@ -35,3 +35,20 @@ they do not prove upstream absence. Its unregistered PostgreSQL-to-Parquet expor
 on 2026-09-10. Publication belongs to `direct/burn_severity/adapter.py`, whose source evidence,
 all-rung finalization and bounded parts remain unchanged. The SQL and reconciliation reader stay
 until their own retirement proof is discharged.
+
+## Source bindings
+
+`source_bindings.py` is the one table mapping a region manifest's `source_slug` to the coverage
+claim the source implementation declares, and it is the only thing that knows all three of
+`burn_severity/mtbs.py`, `drought/usdm.py` and `soil_survey/ssurgo.py` at once.
+
+It sits at `pipeline/` root rather than in `pipeline/direct/` because every module directly inside
+`pipeline/direct/` IS a lane under `layer-lanes.md` §1, and a registry that imports three lanes
+would be a cross-lane import three times over
+(`tests/test_layer_import_contract.py::test_lanes_do_not_import_each_other`). One level up, it is
+ordinary pipeline-layer wiring.
+
+Its imports are inside the function, not at module scope: each source module pulls its layer's
+ingest transport and lane registry, and the sole caller is `app.py`'s boot check. Paying for all of
+`pipeline/direct/` merely to name the registry would put a heavy third edge into the application's
+import graph for no benefit.

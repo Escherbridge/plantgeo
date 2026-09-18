@@ -11,7 +11,13 @@ from sanic.response import BaseHTTPResponse
 
 from agri_data_service.config import settings
 from agri_data_service.db.engine import dispose_combined_local_engine, dispose_service_engines
+from agri_data_service.foundation.region import (
+    assert_region_bindings_are_servable,
+    load_region,
+    unverified_binding_slugs,
+)
 from agri_data_service.interface.http import botanical_occurrences_bp, botanical_species_information_bp, parquet_bp
+from agri_data_service.pipeline.source_bindings import declared_source_coverage_claims
 from agri_data_service.routes import (
     agent_bp,
     agent_tools_bp,
@@ -25,8 +31,26 @@ logger = structlog.get_logger()
 type AgriApp = Sanic[Config, SimpleNamespace]
 
 
+def _assert_region_is_servable() -> None:
+    """Fail at boot when this deployment's manifest binds a layer to a source that cannot serve it.
+
+    `federation.md` §2: "the manifest may only bind a source whose coverage contains the region's
+    envelope; a binding that does not is a startup error, not a runtime surprise". Runs before the
+    Sanic app exists so the process dies on a mis-binding rather than serving the wrong region's
+    data under this one's name. Sources with no declared claim yet are logged, not raised on --
+    see `foundation/region/bindings.py::unverified_binding_slugs`.
+    """
+    region = load_region()
+    source_claims = declared_source_coverage_claims()
+    assert_region_bindings_are_servable(region, source_claims)
+    unverified = unverified_binding_slugs(region, source_claims)
+    if unverified:
+        logger.info("region_bindings_unverified", region=region.slug, source_slugs=list(unverified))
+
+
 def create_app(_args: object | None = None) -> AgriApp:
     """Create and configure the Sanic application."""
+    _assert_region_is_servable()
     app: AgriApp = Sanic("agri-data-service")
 
     # --- sanic-ext configuration ---
