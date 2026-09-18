@@ -16,6 +16,7 @@ from agri_data_service.pipeline.direct.botanical_occurrences.publish import (
     COMPLETION_MARKER,
     LocalPublicationTarget,
     generation_prefix,
+    latest_pointer_path,
     pointer_path,
     read_pointer,
 )
@@ -86,7 +87,9 @@ def test_the_completion_marker_is_written_after_every_other_artifact(valid_archi
     marker_index = target.writes.index(f"{prefix}/{COMPLETION_MARKER}")
     generation_writes = [index for index, path in enumerate(target.writes) if path.startswith(prefix)]
     assert marker_index == max(generation_writes)
-    assert target.writes[-1] == pointer_path(), "the pointer moves only after the marker is durable"
+    # BOTH pointers move only after the marker, and the checksum-bound one moves LAST of all: a
+    # serving read resolves it, so it must never name a generation whose manifest is not durable.
+    assert target.writes[-2:] == [pointer_path(), latest_pointer_path()]
 
 
 def test_replaying_the_same_release_set_is_a_no_op(valid_archive: Path, tmp_path: Path) -> None:
