@@ -24,7 +24,11 @@ from agri_data_service.pipeline.direct.drought.source_protocol import DroughtSou
 from agri_data_service.pipeline.direct.drought.usdm import USDM_DROUGHT_SOURCE
 from agri_data_service.pipeline.direct.soil_survey.source_protocol import SoilSurveySource
 from agri_data_service.pipeline.direct.soil_survey.ssurgo import SSURGO_SOIL_SURVEY_SOURCE
-from agri_data_service.pipeline.source_bindings import declared_source_coverage_claims
+from agri_data_service.pipeline.source_bindings import (
+    UnboundLayerError,
+    declared_source_coverage_claims,
+    resolve_drought_source,
+)
 
 #: Every implemented source, with the protocol it claims to satisfy and its manifest slug.
 SOURCE_IMPLEMENTATIONS = (
@@ -151,3 +155,60 @@ def test_the_burn_severity_shim_re_exports_what_it_always_did() -> None:
     assert source.BurnSeverityDaySource is mtbs.BurnSeverityDaySource
     assert source.BurnSeverityFetchError is mtbs.BurnSeverityFetchError
     assert source.fetch_burn_severity_release_day is mtbs.fetch_burn_severity_release_day
+
+
+def _region_bound_to_fake_source(source_slug: str) -> Region:
+    """A fabricated single-layer region whose `drought` binding names `source_slug`, not `usdm`."""
+    return Region(
+        slug="fabricated-fake-source-region",
+        display_name="Fabricated Fake-Source Region",
+        envelope={"west": -126.0, "south": 41.0, "east": -110.0, "north": 50.0},
+        default_camera_envelope={"west": -125.0, "south": 42.0, "east": -111.0, "north": 49.0},
+        crs=4326,
+        lattice_pitch_degrees=0.01,
+        lattice_origin_rule="floor_to_cell_origin",
+        timezone="America/Los_Angeles",
+        iso_country_codes=("US",),
+        admin_codes=("US-WA",),
+        enabled_layers=({"layer_slug": "drought", "source_slug": source_slug, "coverage": "regional"},),
+    )
+
+
+def test_resolve_drought_source_calls_whatever_the_regions_own_binding_names(monkeypatch: pytest.MonkeyPatch) -> None:
+    """S5, W3 review: a lane resolves through the binding, not `usdm.py` by name.
+
+    A fabricated source object -- not USDM, not even a real protocol implementation -- is what
+    `resolve_drought_source` must return once the region's binding names it, proving the lookup is
+    live at call time rather than a comment describing an import that never actually branches.
+    """
+
+    class FakeDroughtSource:
+        source_slug = "fake-drought-source"
+        coverage = None
+
+    fake_source = FakeDroughtSource()
+
+    def fake_registry() -> dict[str, object]:
+        return {"fake-drought-source": fake_source}
+
+    monkeypatch.setattr("agri_data_service.pipeline.source_bindings._source_registry", fake_registry)
+
+    region = _region_bound_to_fake_source("fake-drought-source")
+    assert resolve_drought_source(region=region) is fake_source
+
+
+def test_resolve_drought_source_refuses_a_binding_with_no_registered_implementation() -> None:
+    """A binding naming a source slug the registry does not know about must refuse, not guess."""
+    region = _region_bound_to_fake_source("a-source-nobody-registered")
+
+    with pytest.raises(UnboundLayerError, match="a-source-nobody-registered"):
+        resolve_drought_source(region=region)
+
+
+def test_resolve_drought_source_refuses_a_region_with_no_drought_binding_at_all() -> None:
+    """A region that never enables the drought layer must refuse rather than fall back silently."""
+    region = _region_bound_to_fake_source("usdm")
+    no_drought_region = region.model_copy(update={"enabled_layers": ()})
+
+    with pytest.raises(UnboundLayerError, match="drought"):
+        resolve_drought_source(region=no_drought_region)

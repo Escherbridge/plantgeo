@@ -48,7 +48,6 @@ from agri_data_service.pipeline.direct.drought.products import (
     newest_settled_tuesday,
     release_weeks,
 )
-from agri_data_service.pipeline.direct.drought.source import DroughtDaySource, fetch_drought_day
 from agri_data_service.pipeline.parquet.availability_extension import AvailabilityExtensionTally
 from agri_data_service.pipeline.parquet.availability_index import BotoAvailabilityStorage
 from agri_data_service.pipeline.parquet.gap_fill import (
@@ -58,6 +57,7 @@ from agri_data_service.pipeline.parquet.gap_fill import (
     unlocked_lane_day,
 )
 from agri_data_service.pipeline.parquet.objectstore import ObjectStore
+from agri_data_service.pipeline.source_bindings import resolve_drought_source
 from agri_data_service.warehouse.parquet.tiers import DERIVED_ZOOM_TIERS
 from agri_data_service.warehouse.schemas.drought import DROUGHT_STREAM
 
@@ -67,6 +67,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from agri_data_service.foundation.parquet.paths import PartitionDayStatus
+    from agri_data_service.pipeline.direct.drought.source_protocol import DroughtReleaseDay as DroughtDaySource
     from agri_data_service.foundation.parquet.zoom import ZoomTier
     from agri_data_service.pipeline.parquet.availability_index import AvailabilityStorage
     from agri_data_service.pipeline.parquet.lane_registry import LaneRegistration
@@ -347,7 +348,10 @@ async def _publish_locked_release_with_retries(  # noqa: PLR0913
         if time.monotonic() >= deadline:
             return _skipped_result(day, outcome=DROUGHT_TIME_BUDGET_OUTCOME)
         adapter = DirectDroughtAdapter(
-            fetch_source=lambda: fetch_drought_day(
+            # Resolved fresh from the region's OWN binding on every call (S5, W3 review), never
+            # `usdm.py`'s module functions by name: a different region binding a different drought
+            # source changes this lane by editing the manifest, not this file.
+            fetch_source=lambda: resolve_drought_source().fetch_release_day(
                 day,
                 retry_attempts=1,
                 retry_base_seconds=config.retry_base_seconds,

@@ -34,7 +34,9 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from agri_data_service.pipeline.direct.burn_severity.source import BurnSeverityDaySource
+    from agri_data_service.pipeline.direct.burn_severity.source_protocol import (
+        BurnSeverityReleaseDay as BurnSeverityDaySource,
+    )
     from agri_data_service.pipeline.parquet.lane_registry import LaneRunResult
     from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 

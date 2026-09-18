@@ -33,5 +33,11 @@ after writing an implementation the lane cannot consume.
 ## Wave-4 deletion list
 
 - `source.py` — a deprecation shim re-exporting `DroughtDaySource`, `DroughtSourceError` and
-  `fetch_drought_day` from `usdm.py`. Delete once `adapter.py`, `forward.py` and
-  `tests/direct/test_drought_adapter.py` import `usdm.py` directly.
+  `fetch_drought_day` from `usdm.py`. `forward.py` no longer imports it (2026-09-18, S5 fix): it
+  resolves the fetch through `pipeline/source_bindings.py::resolve_drought_source()`, which reads
+  the region's OWN binding per call rather than naming `usdm.py`, so a second region binding a
+  different drought source changes this lane by editing a manifest, not this file. The shim's
+  terminal step is therefore NOT "repoint every importer at `usdm.py` directly" — that would be
+  the opposite of resolving through the binding — it is deleting the shim once
+  `tests/direct/test_drought_adapter.py` is the last importer left, which it does not have to be
+  bound-resolved (it constructs `DroughtDaySource` fixtures directly, never through the manifest).
