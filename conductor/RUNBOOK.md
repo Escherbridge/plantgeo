@@ -382,7 +382,12 @@ to the allow-list, the executor redeployed on the variable change (58dce0ef), op
 bucket on start, repaired 51 invalid perimeters and published a version -- 90 rows at every rung,
 served_day 2026-09-18, a 14-day stall closed to today. Sensors opened the current 12:20Z bucket on release and
 succeeded: seven days republished (2,451–2,866 rows each), availability_stale cleared, the layer back on
-the map. shortwave still reads 2026-05-31 at this capture; its first post-deploy hourly turn drains one day per turn and the six-hourly repair turn adds five, so movement is expected within the hour. Owner gate after deploy: the
+the map. shortwave is withheld as availability_stale: the corrected lag makes its old pointer
+honestly stale, and the first post-deploy turn (13:40Z) refused the six-day frontier day as source-
+unsettled — POWER's solar edge was at least seven days behind that day — which is the safety design
+working. The walk's defect is that it re-selects that same frontier every hour and never drains the
+backlog beneath it; a bounded fall-through is in authoring (Session 21). The repair path's refusal to
+author for a withheld lane is recorded as a design gap. Owner gate after deploy: the
 sensors breaker supersession (CLI, explicit), the fire-perimeters allow-list activation (the
 repair-audit durability trade is recorded as an owner decision), and the desktop click-reach
 change. **No whole QA case or checklist item is promoted; the 220-case matrix is unchanged.**

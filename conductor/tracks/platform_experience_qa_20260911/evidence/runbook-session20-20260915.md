@@ -379,5 +379,33 @@ Sensors, observed after the supersession: the lane opened the current 12:20Z buc
 `published` for every day 2026-09-12 through 2026-09-18 (2,451–2,866 rows each), coverage reports
 `withheld_reason: null` at z0 and z13 with `latest_day 2026-09-18`, and the layer is back in the
 slider capability list. `tick_unhealthy` no longer names any lane. Days older than NWS's rolling
-window are lost at the source, as diagnosed. Climate: shortwave still reads 2026-05-31 at this capture; its first post-deploy hourly turn drains one day per turn and the six-hourly repair turn adds five, so movement is expected within the hour. **No whole QA case or checklist item is
+window are lost at the source, as diagnosed. Climate: at this capture shortwave is ABSENT from the capability list — coverage reports
+`withheld_reason: availability_stale` at every rung. The cause is honest and pre-existing, not the
+new grace coupling (that constant was already 3): correcting the lag from 75 to 6 moved the lane's
+required ceiling to today−6 while its pointer still reads 2026-06-24, so the withholding rule that
+hid sensors now hides shortwave. The forward writer selects newest-first, so the first post-deploy
+climate turn (13:40Z bucket; the executor started 12:53Z) should publish 2026-09-12 and clear it.
+Design gap recorded for follow-up: the repair authoring reported
+`climate-field-shortwave-radiation: coverage_withheld` — the self-healing path refuses to author a
+repair for a withheld lane, and a withheld lane is exactly the one that needs repair; shortwave is
+saved by its hourly forward drain, a lane without one would deadlock. **No whole QA case or checklist item is
 promoted; the 220-case matrix is unchanged.**
+
+Fire-perimeters, second scheduled tick 13:10:17Z: fetched with `geometry_repaired=51` again and
+resolved against the unchanged feed — the explicit unchanged-source check plan R1 requires beside
+a publication advance. Two consecutive scheduled ticks succeeded; `tick_unhealthy` names no lane and
+no `bucket_incomplete` event has fired. R1's exit criterion (three advances or unchanged-source
+verdicts with captured receipts) is one more tick away and is not claimed here.
+
+Climate, observed after the first post-deploy turn (13:40Z): the honest report works — for
+`shortwave-radiation`, day 2026-09-12, `outcome: source_unsettled`, detail "POWER answered for all 397
+support cells and every ALLSKY_SFC_SW_DWN value was a fill value, and no later settled day of this product
+is published with values ... refused rather than governed as absent"; `requests_spent 397` of 794 (the ten
+siblings were idempotent no-ops, so the fan-out was shortwave's own). The refusal is the safety design
+working: POWER's solar edge was at least seven days behind on 2026-09-18, so the six-day frontier day is
+genuinely unpublished. The defect it exposes is in the walk: newest-first selection with one day per
+turn picks the same unsettled frontier every hour, so the ~100-day backlog beneath it never drains, and
+the lane — withheld as `availability_stale` — is excluded from autonomous repair (`coverage_withheld`).
+A bounded fall-through past an unsettled frontier to the next older pending day, within the turn's
+budget, is in authoring as Session 21 (A2b) with its own review. Shortwave remains absent from the
+slider until the first older day publishes.
