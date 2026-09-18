@@ -1401,3 +1401,95 @@ type-keyed set silently deduplicated and would have hidden a duplicate-handler r
 These are bounded code-level lifecycle regressions. Scientific rendering, serving availability,
 legends, accessibility, agent parity and production first-enable evidence remain separate
 obligations and are not established here.
+
+## LayerManager's three extracted seams (2026-09-18)
+
+`LayerManager.tsx` was 1,727 lines against `federation.md` §3's ~600-line ceiling, and style
+review W3 (S12) made the next change touching it responsible for the split. Three seams moved
+out whole, into `src/components/map/layer-manager/`. Nothing about the behaviour changed; the
+comments moved with the code they explain, so the rationale for each lane still sits beside it.
+
+### The fault and notice stack
+
+`parquet-layer-faults.ts` holds `buildParquetLayerFaults`, the ~220-line array that was inline.
+It is a PURE function of plain data -- booleans, strings and counts, never a react-query result,
+a store handle or a MapLibre map -- for two reasons. A test can state "the fire lane answered
+`absent` with this evidence sentence" in one object literal instead of mocking a query. And the
+narrow input is a structural refusal: a future lane cannot smuggle a fetch or a subscription into
+the caption layer, because there is nothing in scope to fetch with.
+
+Entry order is load-bearing and is preserved exactly: the banner renders the array in order, so
+reordering the entries reorders the pills a reader sees.
+
+### The botanical viewport lanes
+
+`useBotanicalViewportLanes.ts` holds both occurrence lanes (the tRPC read that serves the two
+aggregate layers and GBIF, and the proxy read that serves UBC detail), the band exclusivity, the
+two store writes and the click resolution that searches both lanes. `LayerManager` now reads six
+fields off it and passes them to four layer components.
+
+### The land-context viewport lane
+
+`useLandContextViewportBoundaries.ts` is the consumer that closes blocker B1. Before it,
+`LayerManager` mounted `useLandContextViewport` and read ONE field off the result
+(`state === "area_over_budget"`), so one `resolveBoundaryInArea` round trip per pan was parsed
+and thrown away, and four of the lane's five states rendered nothing at all -- which is precisely
+the "indistinguishable from a read that failed" the rest of this file exists to prevent.
+
+Three things changed together.
+
+**One decoder, not two.** `toFeature`/`toResults`/`toCoverageNotices` moved out of
+`useLandContextQuery.ts` into `land-context/land-context-features.ts`, and both lanes import
+them. The rule they encode -- a result whose `coverageState` is not `matched` never becomes a
+feature -- must not exist in two places, because the second copy is where it drifts.
+
+**The fetch is gated on the region binding.** `isRegionLayerBoundHere` (in
+`lib/map/layer-region-binding.ts`) answers for a bare manifest slug, and it fails CLOSED on
+manifest silence -- the opposite of the toggle-keyed `isLayerUnboundInRegion` beside it. The
+difference is the evidence source. That helper reads the coverage PAYLOAD, which arrives over
+the network and is silent for a whole deploy window, so silence there must not disable a working
+layer. This one reads `getRegion().enabledLayers`, which is compiled into the bundle and states
+the region's COMPLETE binding set, so absence from it is a claim rather than a gap. Under the PNW
+manifest, which binds no `land-context` layer, the automatic read therefore issues no request at
+all -- which is the whole budget half of B1.
+
+**A second source, never the click lane's.** `LandContextViewportLayer` holds
+`land-context-viewport`; `LandContextLayer` keeps `land-context-results`, and
+`useLandContextStore.setResults` stays that slice's single writer. Publishing pan-driven
+boundaries into the store would make a pan silently replace the reader's clicked selection. The
+viewport layer binds no hover, click or identity card either: selection stays click-driven by
+spec.
+
+#### The caption table
+
+Every state produces a distinct caption, and only `no_group_enabled` is silent -- the reader has
+switched nothing on, so there is no absence to explain. The ids below are both the React key and
+the `data-testid` suffix (`parquet-layer-unavailable-<id>`).
+
+| lane state / read phase | id | tone | says |
+| --- | --- | --- | --- |
+| `no_group_enabled` | — | — | nothing; nothing was asked for |
+| `layer_unbound_in_region` | `land-context-unbound-in-region` | notice | no source is bound here, so this view is not read |
+| `viewport_unavailable` | `land-context-viewport-unavailable` | notice | the view could not be measured, so nothing was read |
+| `no_rung_serves_this_viewport` | `land-context-no-rung-serves-viewport` | notice | no published rung serves a view this wide |
+| `area_over_budget` | `land-context-area-over-budget` | notice | over the one-square-degree AOI budget; zoom in |
+| `reading` + `query.isError` | `land-context-request-failed` | **fault** | the read failed before returning a state |
+| `reading` + `budget_exceeded` response | `land-context-read-refused` | notice | the plane declined, quoting its own reason |
+| `reading`, no response yet | `land-context-reading` | notice | the read is in flight |
+| `reading`, retained frame | `land-context-retained` | notice | what is drawn is the PREVIOUS view's answer |
+| settled, zero features, `source_unbound_for_region` stated | `land-context-source-unbound` | notice | a governed absence, in the plane's own words |
+| settled, zero features, any other coverage state | `land-context-empty` | notice | no boundaries, plus the stated coverage |
+| settled, features + a coverage statement | `land-context-partial` | notice | N drawn, and they are not the whole answer |
+| settled, features, all matched | `land-context-drawn` | notice | N boundaries are drawn for this view |
+
+The last row is the one to revisit first if the stack proves noisy: a successful read already
+surfaces itself as geometry on the canvas, so its pill is belt-and-braces. It is stated anyway
+because W3 asked that no state render nothing, and because `servedZoomTier` is `rung_unknown`
+today -- a reader cannot tell which rung answered from the shapes alone. Change it in
+`captionFor`, which is the one place any of these sentences is written.
+
+Today every land-context read returns `source_unbound_for_region`: W2-C established there is no
+land-context Parquet lane anywhere in the service, so the drawing path below `land-context-drawn`
+is correct but unexercised. That is deliberate -- the renderer exists so the lane's first real
+release draws rather than needing this work done again -- and it is why the empty-with-coverage
+row above is the one that actually ships.

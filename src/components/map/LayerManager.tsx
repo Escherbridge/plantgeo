@@ -16,13 +16,10 @@ import {
 import { scaleOpacityValue, styleLayerOpacityTargets } from "@/lib/map/layer-opacity";
 import { useParquetFireDetections } from "@/hooks/useParquetFireDetections";
 import {
-  botanicalBandForZoom,
-  useBotanicalOccurrencesQuery,
   useSoilFieldQuery,
   useSoilSurveyQuery,
   useViewportBounds,
 } from "@/hooks/useViewportProxiedLayers";
-import { useBotanicalOccurrenceStore } from "@/stores/botanical-occurrence-store";
 import { trpc } from "@/lib/trpc/client";
 import { useInterventionDraftsOverlay } from "@/lib/map/use-intervention-drafts";
 import { INTERVENTION_DRAFTS_SOURCE_ID } from "@/lib/map/sources";
@@ -61,28 +58,16 @@ import {
   PARQUET_FEATURE_SOURCE_IDS,
   type ParquetFeatureSourceId,
 } from "@/lib/map/sources";
+// The three orchestration seams this component composes rather than inlines (style review W3,
+// S12). Each is a plain module with no MapLibre dependency, so all three are static imports
+// while the layer COMPONENTS below stay dynamic.
+import { useBotanicalViewportLanes } from "@/components/map/layer-manager/useBotanicalViewportLanes";
+import { useLandContextViewportBoundaries } from "@/components/map/layer-manager/useLandContextViewportBoundaries";
 import {
-  presentBotanicalCell,
-  presentBotanicalOccurrence,
-} from "@/lib/environmental/botanical-presentation";
-// The three GeoJSON builders come from the layer modules themselves, which is why they are
-// exported there: the spatial guard that drops nonspatial specimens must not exist twice.
-// Imported statically while the components above are dynamic -- these are pure functions with
-// no MapLibre dependency, so they cost nothing at SSR.
-import {
-  botanicalOccurrencesToGeoJSON,
-  describeBotanicalOccurrencesState,
-} from "@/components/map/layers/BotanicalOccurrencesLayer";
-import {
-  useBotanicalOccurrences,
-  type BotanicalOccurrencesPhase,
-} from "@/hooks/useBotanicalOccurrences";
-import { useLandContextViewport } from "@/hooks/useLandContextViewport";
-import { useLandContextStore } from "@/stores/land-context-store";
-import { GBIF_COLLECTION_KEY } from "@/lib/environmental/botanical-governance-status";
+  buildParquetLayerFaults,
+  type ParquetLaneReport,
+} from "@/components/map/layer-manager/parquet-layer-faults";
 import { BOTANICAL_DETAIL_MIN_ZOOM } from "@/lib/botanical-occurrences";
-import { botanicalRichnessToGeoJSON } from "@/components/map/layers/BotanicalRichnessLayer";
-import { botanicalEffortToGeoJSON } from "@/components/map/layers/BotanicalCollectionEffortLayer";
 import { ParquetLayerFaultBanner } from "@/components/map/ParquetLayerFaultBanner";
 import { WORLD_EXTENT_BBOX } from "@/lib/map/world-extent";
 
@@ -232,6 +217,16 @@ const BotanicalCollectionEffortLayer = dynamic(
 );
 const QueryPointLayer = dynamic(
   () => import("@/components/map/layers/QueryPointLayer").then((m) => ({ default: m.QueryPointLayer })),
+  { ssr: false }
+);
+
+// The automatic land-context viewport lane's renderer. Its own source and layers, never the click
+// lane's -- see the component's module doc for why the two must not share one.
+const LandContextViewportLayer = dynamic(
+  () =>
+    import("@/components/map/layers/LandContextViewportLayer").then((m) => ({
+      default: m.LandContextViewportLayer,
+    })),
   { ssr: false }
 );
 
@@ -492,222 +487,21 @@ export default function LayerManager() {
   // SoilDetails instead, from this same query key. See src/lib/server/AGENTS.md §soil-survey.
   const soilSurveyGeoJSON = soilSurveyQuery.data ?? EMPTY_FEATURE_COLLECTION;
 
-  // The three herbarium specimen rows, over ONE read.
-  //
-  // The plane answers `detail` (individual specimens) at zoom >= 11 and `aggregate` (support
-  // cells) below it, from the same route on the same inputs -- so one query serves all three
-  // toggles and they can never disagree about which generation they are drawing. The zoom band
-  // is what decides which of them can draw at all, which is the exclusivity
-  // `BotanicalOccurrencesLayer`'s own docstring delegates to "whichever container chooses which
-  // layer to mount". This is that container.
-  //
-  // The floor is 11 and the `ZOOM_TIERS` ladder's rungs are 0/5/9/13, so `botanicalBandForZoom`
-  // is a bare comparison rather than a `resolveZoomTier` call -- rounding onto the ladder would
-  // send a zoom-11 detail request to the z9 aggregate rung.
-  const botanicalFilters = useBotanicalOccurrenceStore((state) => state.filters);
-  const setBotanicalResponse = useBotanicalOccurrenceStore((state) => state.setLastResponse);
-  const setSelectedBotanicalFeature = useBotanicalOccurrenceStore(
-    (state) => state.setSelectedFeature
-  );
-  const botanicalBand = botanicalBandForZoom(zoom);
+  // The three herbarium rows and the two lanes that feed them; see
+  // `src/components/map/layer-manager/useBotanicalViewportLanes.ts` for why there are two.
   const botanicalOccurrencesVisible = layerVisibility["botanical-occurrences"];
   const botanicalRichnessVisible = layerVisibility["botanical-richness"];
   const botanicalEffortVisible = layerVisibility["botanical-collection-effort"];
   const gbifOccurrencesVisible = layerVisibility["gbif-occurrences"];
-  // Enabled when a toggle that could actually DRAW at this band is on. A lit occurrence switch
-  // at zoom 4 fetches nothing, because the detail layer cannot draw there and the aggregate
-  // layers are off -- the gate is about what is drawable, not about what is switched on.
-  // `gbifOccurrencesVisible` joins the detail-band condition alongside the UBC toggle, since
-  // GBIF's toggle only ever draws in the same detail band and shares the same one query.
-  const botanicalQueryEnabled =
-    botanicalBand === "detail"
-      ? botanicalOccurrencesVisible || gbifOccurrencesVisible
-      : botanicalRichnessVisible || botanicalEffortVisible;
-  // Empty filter strings are "unset" in the store, never sent as an empty query parameter --
-  // the service would read `family=` as a filter matching nothing.
-  const botanicalQuery = useBotanicalOccurrencesQuery(bbox, {
-    enabled: botanicalQueryEnabled,
-    zoom,
-    taxonConceptId: botanicalFilters.taxon_concept_id || undefined,
-    family: botanicalFilters.family || undefined,
-    collectionKey: botanicalFilters.collection_key || undefined,
-    eventStart: botanicalFilters.event_start || undefined,
-    eventEnd: botanicalFilters.event_end || undefined,
-    spatialQuality: botanicalFilters.spatial_quality,
-  });
-  // The RETURNED state, never the requested band. A retained frame outlives the zoom it was
-  // fetched for (`placeholderData` holds the previous answer across a pan or a zoom), so during
-  // a zoom across the floor the band says "detail" while the cells in hand are still aggregate.
-  // Reading the answer's own state is what keeps aggregate cells out of the detail layer and
-  // specimen points out of the two choropleths.
-  const botanicalResult = botanicalQuery.data;
-  const botanicalDetail = botanicalResult?.state === "detail" ? botanicalResult : null;
-  const botanicalAggregate = botanicalResult?.state === "aggregate" ? botanicalResult : null;
-  // Presented into the snake_case vocabulary the three layer components were built against;
-  // see src/lib/environmental/botanical-presentation.ts for why the two vocabularies differ.
-  const botanicalFeatures = useMemo(
-    () => (botanicalDetail?.features ?? []).map(presentBotanicalOccurrence),
-    [botanicalDetail]
-  );
-  const botanicalCells = useMemo(
-    () => (botanicalAggregate?.cells ?? []).map(presentBotanicalCell),
-    [botanicalAggregate]
-  );
-  // `publishedAt` and the release id are threaded onto every drawn feature, not kept beside the
-  // collection: the shared hover manager (`lib/map/hover-fields.ts`) reads MapLibre feature
-  // properties and cannot reach a response object, and source + staleness on hover is the point.
-  // Excludes GBIF's own collection_key: GBIF draws through its own component/toggle below, and
-  // without this exclusion a reader with BOTH toggles on would see every GBIF point drawn twice
-  // (once per source's independent MapLibre source/layer set). Any OTHER future collection_key
-  // still falls through to this, the general layer -- only GBIF is carved out, because only GBIF
-  // has its own sibling component so far.
-  //
-  // The UBC detail layer reads through the Next.js PROXY route below rather than this query, so
-  // the collection it draws is `botanicalViewportGeoJSON`; the carve-out is applied there.
-
-  // The detail lane, over the proxy route, beside the tRPC read above.
-  //
-  // WHY BOTH. The proxy lane (`useBotanicalOccurrences` -> `/api/botanical-occurrences`) is the
-  // one that selects a serving rung from zoom AND bbox size, so a wide viewport is answered from
-  // a coarser rung instead of refused (owner decision 2026-09-18). The tRPC read above still
-  // serves the two aggregate layers, GBIF's own toggle, and the store the filters panel and the
-  // details panel read -- so it stays enabled exactly as before. At a detail zoom with the UBC
-  // toggle on, both lanes read the same generation with the same filters; that duplication is
-  // deliberate for now and is the one thing to collapse when the aggregate layers move over too.
-  const botanicalViewport = useBotanicalOccurrences({
+  const botanical = useBotanicalViewportLanes({
     bbox,
     zoom,
-    enabled: botanicalOccurrencesVisible && botanicalBand === "detail",
-    taxonConceptId: botanicalFilters.taxon_concept_id || undefined,
-    family: botanicalFilters.family || undefined,
-    collectionKey: botanicalFilters.collection_key || undefined,
-    eventStart: botanicalFilters.event_start || undefined,
-    eventEnd: botanicalFilters.event_end || undefined,
-    spatialQuality: botanicalFilters.spatial_quality,
+    occurrencesVisible: botanicalOccurrencesVisible,
+    richnessVisible: botanicalRichnessVisible,
+    effortVisible: botanicalEffortVisible,
+    gbifVisible: gbifOccurrencesVisible,
   });
-  // The answer's OWN state, never the requested band -- same rule as `botanicalDetail` above.
-  const botanicalViewportDetail =
-    botanicalViewport.answer?.state === "detail" ? botanicalViewport.answer : null;
-  // `presentBotanicalOccurrence` is the only sanctioned seam between the proxy's camelCase and
-  // the layer components' snake_case; see src/lib/environmental/botanical-presentation.ts.
-  const botanicalViewportFeatures = useMemo(
-    () => (botanicalViewportDetail?.features ?? []).map(presentBotanicalOccurrence),
-    [botanicalViewportDetail]
-  );
-  const botanicalViewportGeoJSON = useMemo(
-    () =>
-      botanicalViewportDetail === null
-        ? null
-        : botanicalOccurrencesToGeoJSON(
-            botanicalViewportFeatures.filter(
-              (feature) => feature.collection_key !== GBIF_COLLECTION_KEY
-            ),
-            botanicalViewportDetail.publishedAt
-          ),
-    [botanicalViewportDetail, botanicalViewportFeatures]
-  );
-  // One sentence for whatever the proxy lane currently reports -- including which rung answered
-  // when it is not the one this zoom asked for. Null when the layer is simply drawing.
-  const botanicalViewportCaption = describeBotanicalOccurrencesState(botanicalViewport);
-  // The same read-state vocabulary applied to the tRPC lane GBIF still draws from, so "the read
-  // has landed" means one thing on this component rather than two. The mapping is the one W1-D
-  // recorded: a failed query is `error`, a fetching or retained one is `loading`, a landed detail
-  // answer with no rows is `empty`.
-  const gbifReadPhase: BotanicalOccurrencesPhase =
-    botanicalQuery.isError === true
-      ? "error"
-      : botanicalQuery.isFetching === true || botanicalQuery.isPlaceholderData === true
-        ? "loading"
-        : botanicalQuery.isSuccess !== true
-          ? "idle"
-          : botanicalDetail !== null && botanicalDetail.features.length === 0
-            ? "empty"
-            : "success";
-  // GBIF draws through its OWN component/toggle (`GbifOccurrencesLayer`), independently
-  // switchable from the UBC layer above, even though both read the same `botanicalFeatures`
-  // response -- collection_key is the only thing that tells the two sources apart, so the split
-  // happens here, once, on the shared feature list, rather than teaching either map component
-  // about the other's source. See `GbifOccurrencesLayer.tsx`'s module doc for why this is a new
-  // component rather than a parameterized mode of the UBC one.
-  const gbifFeatures = useMemo(
-    () => botanicalFeatures.filter((feature) => feature.collection_key === GBIF_COLLECTION_KEY),
-    [botanicalFeatures]
-  );
-  const gbifOccurrencesGeoJSON = useMemo(
-    () =>
-      botanicalDetail === null
-        ? null
-        : botanicalOccurrencesToGeoJSON(gbifFeatures, botanicalDetail.publishedAt),
-    [botanicalDetail, gbifFeatures]
-  );
-  const botanicalRichnessGeoJSON = useMemo(
-    () =>
-      botanicalAggregate === null
-        ? null
-        : botanicalRichnessToGeoJSON(
-            botanicalCells,
-            botanicalAggregate.publishedAt,
-            botanicalAggregate.releaseSetId
-          ),
-    [botanicalAggregate, botanicalCells]
-  );
-  const botanicalEffortGeoJSON = useMemo(
-    () =>
-      botanicalAggregate === null
-        ? null
-        : botanicalEffortToGeoJSON(
-            botanicalCells,
-            botanicalAggregate.publishedAt,
-            botanicalAggregate.releaseSetId
-          ),
-    [botanicalAggregate, botanicalCells]
-  );
-  // Published to the store so `BotanicalFilters` and the details panel describe the SAME answer
-  // the map is drawing rather than issuing a second read of their own. Written in an effect
-  // rather than during render because it is a store write; the dependency is the query result
-  // object, which react-query keeps referentially stable until a new answer lands.
-  useEffect(() => {
-    if (botanicalResult === undefined) return;
-    setBotanicalResponse({
-      state: botanicalResult.state,
-      releaseSetId: "releaseSetId" in botanicalResult ? botanicalResult.releaseSetId : null,
-      publishedAt: "publishedAt" in botanicalResult ? botanicalResult.publishedAt : null,
-    });
-  }, [botanicalResult, setBotanicalResponse]);
-  // The generation the answer was actually served from, published back into the store.
-  //
-  // `BotanicalFilters` was built expecting a reader to TYPE a `release_set_id` and gates its
-  // whole form until one is set, because when it was written this plane had no pointer route on
-  // the client. It does now: `getBotanicalOccurrences` resolves `/current` server-side and the
-  // browser never names a generation. So the id flows the other way -- the answer reports which
-  // generation it came from, and the panel displays it. Written from the RESPONSE rather than
-  // from a second `/current` read, so the id the panel shows is provably the one the cells on
-  // the map were read from and not a pointer that has since moved.
-  const servedBotanicalReleaseSetId =
-    botanicalDetail?.releaseSetId ?? botanicalAggregate?.releaseSetId ?? null;
-  const setBotanicalReleaseSetId = useBotanicalOccurrenceStore((state) => state.setReleaseSetId);
-  useEffect(() => {
-    if (servedBotanicalReleaseSetId === null) return;
-    setBotanicalReleaseSetId(servedBotanicalReleaseSetId);
-  }, [servedBotanicalReleaseSetId, setBotanicalReleaseSetId]);
-  // Clicking a specimen opens the details panel, the same way every other layer with a detail
-  // surface does it: the layer reports an id, this component resolves it against the features it
-  // already holds, and the store slice the panel reads is the only thing that changes. Resolved
-  // here rather than in the layer because the layer only carries MapLibre feature properties --
-  // four fields -- and the panel needs the whole record including rights and attribution.
-  //
-  // Both lanes are searched because both draw: UBC points come from the proxy read, GBIF points
-  // from the tRPC read. Searching only one would make a click on the other lane's dot clear the
-  // panel instead of opening it.
-  const handleSelectBotanicalOccurrence = useCallback(
-    (occurrenceId: string) => {
-      const selected =
-        botanicalViewportFeatures.find((feature) => feature.occurrence_id === occurrenceId) ??
-        botanicalFeatures.find((feature) => feature.occurrence_id === occurrenceId);
-      setSelectedBotanicalFeature(selected ?? null);
-    },
-    [botanicalViewportFeatures, botanicalFeatures, setSelectedBotanicalFeature]
-  );
+  const botanicalBand = botanical.band;
 
   // The three ERA5-Land soil fields. `zoom` is not a hint here -- it selects the server-side
   // aggregation tier, so zooming out makes the answer SMALLER (isobands over a coarse
@@ -801,33 +595,46 @@ export default function LayerManager() {
   // watershed set, burn-severity union, sensor roster, evacuation-zone snapshot or perimeter
   // snapshot with nothing on the map saying the drawn shapes stop short of the viewport --
   // the exact silent-refusal-as-absence this codebase's fire lane was already fixed against.
-  const wavecLanes = [
-    { layerId: "sensors" as const, isDrawn: sensorsEnabled, data: sensorsQuery.data, subject: "Sensor station readings" },
+  const wavecLanes: ParquetLaneReport[] = [
     {
-      layerId: "evacuation-zones" as const,
+      layerId: "sensors",
+      isDrawn: sensorsEnabled,
+      state: sensorsQuery.data?.state,
+      truncated: sensorsQuery.data?.state === "ready" && sensorsQuery.data.truncated === true,
+      subject: "Sensor station readings",
+    },
+    {
+      layerId: "evacuation-zones",
       isDrawn: evacuationZonesEnabled,
-      data: evacuationZonesQuery.data,
+      state: evacuationZonesQuery.data?.state,
+      truncated:
+        evacuationZonesQuery.data?.state === "ready" && evacuationZonesQuery.data.truncated === true,
       subject: "Evacuation zones",
     },
     {
-      layerId: "burn-severity" as const,
+      layerId: "burn-severity",
       isDrawn: burnSeverityEnabled,
-      data: burnSeverityQuery.data,
+      state: burnSeverityQuery.data?.state,
+      truncated:
+        burnSeverityQuery.data?.state === "ready" && burnSeverityQuery.data.truncated === true,
       subject: "Burn history boundaries",
     },
     {
-      layerId: "watersheds" as const,
+      layerId: "watersheds",
       isDrawn: watershedsEnabled,
-      data: watershedsQuery.data,
+      state: watershedsQuery.data?.state,
+      truncated: watershedsQuery.data?.state === "ready" && watershedsQuery.data.truncated === true,
       subject: "Watershed boundaries",
     },
-    // Missing from this list entirely until now: the fifth wave-C layer never surfaced an
+    // Missing from this list entirely until 2026-09-18: the fifth wave-C layer never surfaced an
     // upstream fault OR a truncation notice, so a failed or capped perimeter read looked exactly
     // like an ordinary quiet fire season.
     {
-      layerId: "fire-perimeters" as const,
+      layerId: "fire-perimeters",
       isDrawn: firePerimetersEnabled,
-      data: firePerimetersQuery.data,
+      state: firePerimetersQuery.data?.state,
+      truncated:
+        firePerimetersQuery.data?.state === "ready" && firePerimetersQuery.data.truncated === true,
       subject: "Fire perimeters",
     },
   ];
@@ -835,240 +642,32 @@ export default function LayerManager() {
   const burnSnapshot = burnSeverityQuery.data?.state === "ready"
     ? burnSeverityQuery.data.mtbsSnapshot : undefined;
 
-  // The automatic land-context viewport read (owner decision 2026-09-18). Click-driven
-  // point/parcel lookup is untouched -- this hook keys its own entry and only follows the
-  // viewport. Its `state` is a CAPTION, never an outage: `area_over_budget` means "zoom in" and
-  // `no_group_enabled` means nothing is switched on, so neither is dressed as a fault below.
-  const landContextEnabledGroups = useLandContextStore((state) => state.enabledGroups);
-  const landContextViewport = useLandContextViewport({
-    enabledGroups: landContextEnabledGroups,
-  });
+  // The automatic land-context viewport read (owner decision 2026-09-18), now CONSUMED rather
+  // than mounted and dropped. The hook gates the fetch on the plane being bound in this region,
+  // decodes the answer through the click lane's own feature path, and hands back both the
+  // boundaries to draw and the one caption that states which of its states it is in.
+  const landContextViewport = useLandContextViewportBoundaries();
 
-  const parquetLayerFaults = [
-    burnSeverityEnabled && burnSnapshot
-      ? {
-          layerId: "burn-severity-capture",
-          tone: "notice" as const,
-          message: `MTBS captured ${burnSnapshot.capturedThrough}; available ${burnSnapshot.availableDay}. `
-            + `Fire years ${burnSnapshot.coveredYears.from}–${burnSnapshot.coveredYears.to}. `
-            + (burnSnapshot.partialFireYears.length
-              ? `Mapping remains incomplete for ${burnSnapshot.partialFireYears.join(", ")}.`
-              : "The captured query scope is complete."),
-        }
-      : null,
-    ...wavecLanes.map((lane) =>
-      lane.isDrawn && lane.data?.state === "upstream_unavailable"
-        ? {
-            layerId: lane.layerId,
-            tone: "fault" as const,
-            message: `${lane.subject} are temporarily unavailable from the data service.`,
-          }
-        : null
-    ),
-    // A `notice`, not a `fault`: the lane answered, and the answer is real geometry that stops
-    // short of the row budget rather than an outage. Reusing the fire lane's own wording keeps
-    // one sentence for "this shape is a subset" across every layer that can say it.
-    ...wavecLanes.map((lane) =>
-      lane.isDrawn && lane.data?.state === "ready" && lane.data.truncated
-        ? {
-            layerId: `${lane.layerId}-truncated`,
-            tone: "notice" as const,
-            message: lane.layerId === "burn-severity"
-              ? "Burn history is incomplete because some history is unpublished or a read limit was reached. Available published burn history boundaries are shown."
-              : `The Parquet row budget was reached. The ${lane.subject.toLowerCase()} drawn are a subset of this viewport.`,
-          }
-        : null
-    ),
-    vegetationEnabled && vegetationQuery.data?.state === "upstream_unavailable"
-      ? {
-          layerId: "vegetation",
-          tone: "fault" as const,
-          message:
-            "Measured vegetation observations are temporarily unavailable from the data service.",
-        }
-      : null,
-    weatherEnabled && weatherQuery.data?.state === "upstream_unavailable"
-      ? {
-          layerId: "weather",
-          tone: "fault" as const,
-          message: "Weather observations are temporarily unavailable from the data service.",
-        }
-      : null,
-    layerVisibility.fire && fire.state === "upstream_unavailable"
-      ? {
-          layerId: "fire",
-          tone: "fault" as const,
-          message: "Fire detections are temporarily unavailable from the data service.",
-        }
-      : null,
-    // The transport failed before the reader returned any state at all, so there is no typed
-    // refusal to quote -- and an empty canvas beside a lit switch would read as "no fires".
-    // A `fault` and not a `notice`: nothing about the lane was established.
-    layerVisibility.fire && fire.state === "request_failed"
-      ? {
-          layerId: "fire-request-failed",
-          tone: "fault" as const,
-          message:
-            "The fire detections request failed before returning a state. No fallback is shown.",
-        }
-      : null,
-    // Every accepted fire answer is asserted un-truncated; a truncated one is surfaced here
-    // instead of being quietly drawn as the whole viewport's detections.
-    layerVisibility.fire && fire.truncated
-      ? {
-          layerId: "fire-truncated",
-          tone: "notice" as const,
-          message:
-            "The Parquet row budget was reached. The fire detections drawn are a subset of this viewport.",
-        }
-      : null,
-    // The two refusals an empty canvas cannot tell apart from "no fires burned here", and the
-    // reason each is a `notice` rather than a `fault`: nothing is down. A governed absence is a
-    // POSITIVE record that the upstream was checked and published nothing, so the reason it
-    // carries is the evidence and is quoted verbatim -- the same sentence `FireDetails` shows,
-    // because a reader looking at the map and a reader looking at the dock must not be told two
-    // different things about one day.
-    layerVisibility.fire && fire.state === "absent"
-      ? {
-          layerId: "fire-absent",
-          tone: "notice" as const,
-          message: `The fire lane recorded a governed absence for this day: ${
-            fire.result?.state === "absent" ? fire.result.evidence.reason : "reason unavailable"
-          }.`,
-        }
-      : null,
-    // `not_generated` is the opposite claim: nobody checked. Named by which silence it is --
-    // one day missing from a written lane, or a lane that has never been written at all --
-    // because "no detections" would assert an observation neither one made.
-    layerVisibility.fire && fire.state === "not_generated"
-      ? {
-          layerId: "fire-not-generated",
-          tone: "notice" as const,
-          message:
-            fire.result?.state === "not_generated" && fire.result.reason === "lane_never_written"
-              ? "The fire lane has never been written, so no detections can be drawn for any day."
-              : "This day has not been written for the fire lane, so no detections can be drawn for it.",
-        }
-      : null,
-    // The occurrence plane's own two non-answers, surfaced because an empty canvas beside a lit
-    // switch reads as "no specimens were ever collected here" -- which is the one thing a
-    // collection-bias layer must never imply.
-    //
-    // Both are a `notice`, not a `fault`, and the split is the same one the fire lane makes: the
-    // service ANSWERED in both cases. `refused` is a governed refusal (a request the plane
-    // declines to serve -- too wide a bbox, a filter combination it will not honour) and
-    // `unavailable` is the plane reporting that no generation is published. Neither is an
-    // outage, so neither is dressed as one. The service-authored `note` is quoted verbatim for
-    // the same reason the fire lane quotes its evidence: the plane's own words are what a reader
-    // can act on, and paraphrasing them would put this component in the business of explaining a
-    // refusal it did not make. A genuine transport fault throws in the procedure instead and
-    // reaches the map as a failed query, not as a state here.
-    botanicalQueryEnabled && botanicalResult?.state === "refused"
-      ? {
-          layerId: "botanical-refused",
-          tone: "notice" as const,
-          message: `The specimen occurrence plane declined this request: ${botanicalResult.note}`,
-        }
-      : null,
-    botanicalQueryEnabled && botanicalResult?.state === "unavailable"
-      ? {
-          layerId: "botanical-unavailable",
-          tone: "notice" as const,
-          message: `Specimen occurrences are not published: ${botanicalResult.note}`,
-        }
-      : null,
-    botanicalQueryEnabled && botanicalQuery.isError === true
-      ? {
-          layerId: "botanical-request-failed",
-          tone: "fault" as const,
-          message: "The botanical and GBIF occurrence request failed. Current viewport results could not be verified.",
-        }
-      : null,
-    // A `notice` for the same reason every other lane's is: the records drawn are real, they
-    // just stop short of the viewport. Saying so is what keeps a capped read from looking like
-    // a collecting gap -- which, for this plane specifically, is a claim about where botanists
-    // have and have not been.
-    botanicalQueryEnabled &&
-    (botanicalDetail?.truncated === true || botanicalAggregate?.truncated === true)
-      ? {
-          layerId: "botanical-truncated",
-          tone: "notice" as const,
-          message:
-            botanicalBand === "detail"
-              ? "The specimen row budget was reached. The occurrences drawn are a subset of this viewport."
-              : "The cell budget was reached. The support cells drawn are a subset of this viewport.",
-        }
-      : null,
-    // Withheld records are a POSITIVE fact the plane reports and the map cannot show: a specimen
-    // whose locality is protected has no dot, and without this line its absence is
-    // indistinguishable from it never having been collected.
-    botanicalQueryEnabled && (botanicalDetail?.counts.withheld ?? 0) > 0
-      ? {
-          layerId: "botanical-withheld",
-          tone: "notice" as const,
-          message: `${botanicalDetail?.counts.withheld} specimen records in this release have their locality withheld by the publisher and cannot be drawn anywhere.`,
-        }
-      : null,
-    // The Occurrences toggle is switched on but the map is below the detail floor, so nothing is
-    // drawn and nothing was even fetched (`botanicalQueryEnabled` is false in that case, since the
-    // detail layer cannot draw at this band). Without this line a reader who turned the toggle on
-    // at a continental zoom sees an empty map and no explanation -- indistinguishable from the
-    // layer being broken.
-    botanicalOccurrencesVisible && botanicalBand !== "detail"
-      ? {
-          layerId: "botanical-below-detail-floor",
-          tone: "notice" as const,
-          message: `Individual specimen points draw at zoom ${BOTANICAL_DETAIL_MIN_ZOOM} and above. Zoom in to see them, or turn on Herbarium Specimen Richness / Collection Evidence & Effort for this zoom.`,
-        }
-      : null,
-    gbifOccurrencesVisible && botanicalBand !== "detail"
-      ? {
-          layerId: "gbif-below-detail-floor",
-          tone: "notice" as const,
-          message: `GBIF occurrence points draw at zoom ${BOTANICAL_DETAIL_MIN_ZOOM} and above. Zoom in to see published records.`,
-        }
-      : null,
-    // Only the settled returned slice supports an empty notice; see AGENTS.md §GBIF feedback.
-    // "Settled" is decided by `gbifReadPhase`, the SHARED read-state vocabulary, so this lane and
-    // the proxy lane below cannot disagree about when a read has landed. The message itself stays
-    // authored here: it is a statement about the GBIF SLICE of a shared answer, which the
-    // lane-wide vocabulary has no sentence for.
-    gbifOccurrencesVisible &&
-    botanicalBand === "detail" &&
-    bbox !== null &&
-    (gbifReadPhase === "success" || gbifReadPhase === "empty") &&
-    botanicalDetail !== null &&
-    gbifFeatures.length === 0
-      ? {
-          layerId: "gbif-empty",
-          tone: "notice" as const,
-          message: botanicalDetail.truncated
-            ? "No GBIF occurrence points appear in this limited result. The row limit prevents a complete assessment of this viewport and its current filters."
-            : "No GBIF occurrence points were returned for this viewport and current filters.",
-        }
-      : null,
-    // What the proxy lane reports about the UBC detail layer, in the one wording
-    // `describeBotanicalOccurrencesState` owns -- including "a coarser rung answered than this
-    // zoom asked for", which is the visible half of the 2026-09-18 rung-select decision. A
-    // `notice`: a rung substitution and a stale frame are both real answers, not outages.
-    botanicalOccurrencesVisible && botanicalBand === "detail" && botanicalViewportCaption !== null
-      ? {
-          layerId: "botanical-viewport-read",
-          tone: botanicalViewport.phase === "error" ? ("fault" as const) : ("notice" as const),
-          message: botanicalViewportCaption,
-        }
-      : null,
-    // Land-context asks for nothing above its AOI budget. Saying so is the whole fix: an
-    // automatic read that silently does not fire is indistinguishable from one that failed.
-    landContextViewport.state === "area_over_budget"
-      ? {
-          layerId: "land-context-area-over-budget",
-          tone: "notice" as const,
-          message:
-            "Land-context boundaries load automatically for a viewport of about one square degree or smaller. Zoom in to read them for this view.",
-        }
-      : null,
-  ].filter((fault): fault is NonNullable<typeof fault> => fault !== null);
+  const parquetLayerFaults = buildParquetLayerFaults({
+    burnSeverityEnabled,
+    burnSnapshot,
+    wavecLanes,
+    vegetationEnabled,
+    vegetationUnavailable: vegetationQuery.data?.state === "upstream_unavailable",
+    weatherEnabled,
+    weatherUnavailable: weatherQuery.data?.state === "upstream_unavailable",
+    fire: {
+      isDrawn: layerVisibility.fire,
+      state: fire.state,
+      truncated: fire.truncated === true,
+      absenceReason: fire.result?.state === "absent" ? fire.result.evidence.reason : null,
+      isLaneNeverWritten:
+        fire.result?.state === "not_generated" && fire.result.reason === "lane_never_written",
+    },
+    botanical: botanical.laneReport,
+    botanicalDetailMinZoom: BOTANICAL_DETAIL_MIN_ZOOM,
+    landContextFault: landContextViewport.fault,
+  });
 
   // What each live layer is actually DRAWING, for the surfaces that caption the map. The other
   // half of `keepPreviousData` above; see src/components/map/AGENTS.md "A layer must not blank
@@ -1642,24 +1241,24 @@ export default function LayerManager() {
           whatever it was handed. */}
       <BotanicalOccurrencesLayer
         map={map}
-        geojson={botanicalViewportGeoJSON}
+        geojson={botanical.occurrencesGeoJSON}
         zoom={zoom}
         visible={botanicalOccurrencesVisible && botanicalBand === "detail"}
-        onSelectFeature={handleSelectBotanicalOccurrence}
+        onSelectFeature={botanical.onSelectOccurrence}
         // Takes the layers down on a FAILED read rather than retaining a collection that no
         // longer describes the viewport; a pending read keeps drawing. See the prop's docstring.
-        readPhase={botanicalViewport.phase}
+        readPhase={botanical.occurrencesReadPhase}
       />
       {/* GBIF's own toggle over the SAME one query, filtered above to GBIF's collection_key --
-          see `gbifOccurrencesGeoJSON`'s definition for why the split happens in this container
+          see `useBotanicalViewportLanes`'s `gbifGeoJSON` for why the split happens in that hook
           rather than inside either map component. Independently switchable from the UBC layer
           just above: a reader can have UBC-only, GBIF-only, both, or neither on at once. */}
       <GbifOccurrencesLayer
         map={map}
-        geojson={gbifOccurrencesGeoJSON}
+        geojson={botanical.gbifGeoJSON}
         zoom={zoom}
         visible={gbifOccurrencesVisible && botanicalBand === "detail"}
-        onSelectFeature={handleSelectBotanicalOccurrence}
+        onSelectFeature={botanical.onSelectOccurrence}
       />
       {/* Richness is the primary aggregate read -- "how many taxa are documented here" -- and
           effort is the context layer UNDER it that says how hard anyone looked. They are two
@@ -1680,15 +1279,15 @@ export default function LayerManager() {
           allow. */}
       <BotanicalRichnessLayer
         map={map}
-        geojson={botanicalRichnessGeoJSON}
-        releaseSetId={botanicalAggregate?.releaseSetId ?? null}
+        geojson={botanical.richnessGeoJSON}
+        releaseSetId={botanical.aggregateReleaseSetId}
         visible={botanicalRichnessVisible && botanicalBand === "aggregate"}
         opacity={0.75 * layerOpacity["botanical-richness"]}
       />
       <BotanicalCollectionEffortLayer
         map={map}
-        geojson={botanicalEffortGeoJSON}
-        measure={botanicalFilters.effort_measure}
+        geojson={botanical.effortGeoJSON}
+        measure={botanical.effortMeasure}
         visible={botanicalEffortVisible && botanicalBand === "aggregate"}
         opacity={0.55 * layerOpacity["botanical-collection-effort"]}
       />
@@ -1708,6 +1307,14 @@ export default function LayerManager() {
         data={weatherData}
         visible={weatherEnabled}
         opacityScale={layerOpacity.weather}
+      />
+      {/* The boundaries the AUTOMATIC land-context read returned for this viewport. Drawn only
+          when the lane produced features; every other state of that lane reaches the reader as a
+          caption in the stack above, never as an unexplained empty canvas. */}
+      <LandContextViewportLayer
+        map={map}
+        geojson={landContextViewport.geoJSON}
+        visible={landContextViewport.geoJSON !== null}
       />
       <ParquetLayerFaultBanner faults={parquetLayerFaults} />
       {/* Not a data layer and so not in the registry: it marks where the user clicked,

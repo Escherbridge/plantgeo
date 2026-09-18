@@ -85,9 +85,16 @@ export function landContextRungForViewport(
   });
 }
 
-/** Why this hook is or is not asking, in the words a caption may use verbatim. */
+/**
+ * Why this hook is or is not asking, in the words a caption may use verbatim.
+ *
+ * Every one of these must reach a reader as a distinct sentence; a state that renders nothing is
+ * indistinguishable from a read that failed, which is the defect the 2026-09-18 style review
+ * raised as B1. The caption table lives in `useLandContextViewportBoundaries`.
+ */
 export type LandContextViewportState =
   | "no_group_enabled"
+  | "layer_unbound_in_region"
   | "viewport_unavailable"
   | "area_over_budget"
   | "no_rung_serves_this_viewport"
@@ -122,6 +129,15 @@ const NO_VIEWPORT_BBOX: LandContextViewportBbox = WORLD_EXTENT_ENVELOPE;
 export interface UseLandContextViewportOptions {
   /** Which land-context groups the user has toggled on; the query is a no-op when none are. */
   enabledGroups: Record<LandContextGroupId, boolean>;
+  /**
+   * Whether this deployment's region binds a source for the land-context plane at all.
+   *
+   * The second half of `federation.md` §2's "no fetch issued": an unbound region must not pay one
+   * tRPC round trip per pan for a plane nothing here can answer. Defaults to bound so a caller
+   * that has not been taught about regions behaves exactly as before; `isRegionLayerBoundHere`
+   * (`@/lib/map/layer-region-binding`) is the one function that answers it.
+   */
+  isLayerBoundInRegion?: boolean;
 }
 
 /**
@@ -156,6 +172,7 @@ export interface UseLandContextViewportResult {
  */
 export function useLandContextViewport({
   enabledGroups,
+  isLayerBoundInRegion = true,
 }: UseLandContextViewportOptions): UseLandContextViewportResult {
   const { zoom, bbox: viewportBboxString } = useViewportBounds();
 
@@ -183,7 +200,14 @@ export function useLandContextViewport({
     return { bbox, state: "reading" as const };
   }, [viewportBboxString, zoom]);
 
-  const state: LandContextViewportState = hasEnabledGroup ? resolved.state : "no_group_enabled";
+  // Nothing switched on outranks everything: a reader who has asked for nothing is owed no
+  // sentence. An unbound region outranks every viewport verdict below it, because measuring a
+  // viewport for a plane no source fills here would caption a refusal that is not the reason.
+  const state: LandContextViewportState = !hasEnabledGroup
+    ? "no_group_enabled"
+    : !isLayerBoundInRegion
+      ? "layer_unbound_in_region"
+      : resolved.state;
   const isAsking = state === "reading" && resolved.bbox !== null;
 
   const query = trpc.landContext.resolveBoundaryInArea.useQuery(
