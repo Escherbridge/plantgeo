@@ -2,13 +2,33 @@
  * Requirement 2: coverage states are distinct, never collapsed to
  * null/undefined.
  *
- * `parquet-reader.ts` is currently a stub returning empty-with-gap for every
- * function. Every bounded reader must still surface a typed `CoverageState`
- * for that outcome (e.g. "unknown_coverage"), never a bare null/undefined or
- * an empty array with no accompanying state, per types.ts:
- * "three distinct states the spec forbids collapsing into a bare null."
+ * `parquet-reader.ts` now issues a real pointer GET against the warehouse
+ * coverage census, and no land-context lane is registered, so every read
+ * resolves to empty-with-gap-stated. Every bounded reader must still surface a
+ * typed `CoverageState` for that outcome (e.g. "unknown_coverage"), never a
+ * bare null/undefined or an empty array with no accompanying state, per
+ * types.ts: "three distinct states the spec forbids collapsing into a bare
+ * null."
+ *
+ * The census is mocked to an EMPTY warehouse so this file asserts coverage
+ * typing against a deterministic "no land-context lane" answer rather than
+ * against whatever the network happens to do.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+const { getParquetWarehouseCoverage } = vi.hoisted(() => ({
+  getParquetWarehouseCoverage: vi.fn(async () => ({
+    coverageSchemaVersion: 1,
+    generatedAt: "2026-09-18T00:00:00Z",
+    evaluatedThroughDay: "2026-09-18",
+    lanes: [],
+  })),
+}));
+
+vi.mock("@/lib/server/services/parquet-plane-client", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/server/services/parquet-plane-client")>()),
+  getParquetWarehouseCoverage,
+}));
 import {
   readPointContainment,
   readBoundedAoiIntersection,

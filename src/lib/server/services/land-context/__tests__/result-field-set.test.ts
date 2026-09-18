@@ -2,11 +2,29 @@
  * Requirement 5: every `LandContextResult` carries the full required field
  * set (source feature/release, overlap basis, org/office, route meaning,
  * assignment evidence, public contact URL, verification time, documented
- * help, unresolved gaps) — even when most are null because the underlying
- * source is a stub, the KEYS must be present with an explicit sentinel, not
- * simply absent from the object.
+ * help, unresolved gaps) — even when most are null because no land-context
+ * lane is registered in the warehouse, the KEYS must be present with an
+ * explicit sentinel, not simply absent from the object.
+ *
+ * The coverage census is mocked to an EMPTY warehouse, so the readers take
+ * their real pointer-GET path to a deterministic "no lane" answer instead of
+ * depending on the network.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+const { getParquetWarehouseCoverage } = vi.hoisted(() => ({
+  getParquetWarehouseCoverage: vi.fn(async () => ({
+    coverageSchemaVersion: 1,
+    generatedAt: "2026-09-18T00:00:00Z",
+    evaluatedThroughDay: "2026-09-18",
+    lanes: [],
+  })),
+}));
+
+vi.mock("@/lib/server/services/parquet-plane-client", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/server/services/parquet-plane-client")>()),
+  getParquetWarehouseCoverage,
+}));
 import {
   readPointContainment,
   readBoundedAoiIntersection,
