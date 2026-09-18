@@ -38,6 +38,7 @@ from agri_data_service.foundation.parquet.paths import (
 from agri_data_service.pipeline.parquet.derivation import (
     TierWriteError,
     derive_and_write_day_tiers,
+    latitude_banding,
 )
 from agri_data_service.pipeline.parquet.drain import (
     MAX_CONTENDED_RETRIES_PER_DAY,
@@ -298,3 +299,9 @@ async def test_a_drain_over_a_lane_with_nothing_missing_terminates_immediately()
     assert summary.lanes == ()
     assert summary.days_written == 0
     assert summary.days_remaining == 0
+
+
+def test_every_registered_lane_takes_the_whole_day_path() -> None:
+    """DO NOT DELETE. No existing lane declares a latitude band, so each keeps the derivation it had before banding."""
+    banded = [slug for slug in LANE_REGISTRY if latitude_banding(slug) is not None]
+    assert banded == [], f"{banded} declare a band; a lane that opts in must pin its own byte-identity"

@@ -1055,12 +1055,172 @@ forward API-direct writers of RUNBOOK 0.32.1 decision 1, and `repair_one_lane_da
 base rung itself because it needs the parts' digests for the day's availability claim. It accepts a
 Polars frame or an Arrow table; `_as_frame` normalises.
 
-**The memory risk is real and named:** the read-back materialises the whole base day at once, which
-is exactly what `soil-survey`'s ~3,016-part streaming export avoids on the write side. At its full
-1.5M-delineation universe that table is gigabytes. `MAX_DERIVATION_ROWS` refuses rather than swaps,
-so the failure is loud — but a lane that trips it needs this function taught to fold rung-by-rung
-over batches, which is only correct for associative aggregates (`sum`/`min`/`max`/`all`/`any`) and
-NOT for `mean`.
+**The memory risk is real and named, and the fold is the answer to it.** The whole-day read-back
+materialises the whole base day at once, which is exactly what `soil-survey`'s ~3,016-part streaming
+export avoids on the write side; at its full 1.5M-delineation universe that table is gigabytes.
+`MAX_DERIVATION_ROWS` refuses rather than swaps, so the failure is loud. The cap bounds the rows ONE
+`derive_tier` CALL may hold — not one lane-day; the authoritative reading is in
+`warehouse/parquet/AGENTS.md` beside the constant, and it is not to be raised to admit a day. A lane
+whose day exceeds it declares a latitude band (next section) and is derived in pieces whose union is
+the day, each piece under the cap.
+
+### Latitude-band folding: `register_latitude_banding`, `_derive_banded`, `write_banded_base_day`
+
+**Who takes which path.** `latitude_banding(layer)` is `None` for every lane that did not call
+`register_latitude_banding`, and `None` is the whole-day path exactly as it stood before banding
+existed — `tests/parquet/test_banded_derivation.py` loads `git show d4bb3491:…/derivation.py` (the
+last pre-banding commit; the oracle is asserted to lack `latitude_banding`, so the pin cannot drift
+into the tree comparing with itself) beside the tree and asserts every written object is
+byte-identical, and `test_derivation_and_drain.py` pins that no registered lane declares a band.
+
+**Where the declaration lives, and the ordering it imposes.** The declaration is a process-wide
+registry HERE, keyed by stream, rather than a field on `TierDerivation`: `warehouse/parquet/tiers.py`
+was closed when banding landed, and `warehouse` may not import `pipeline`, so a lane's schema module
+cannot declare it. `register_latitude_banding` reads `tier_derivation(stream)` and therefore must run
+AFTER `register_tier_derivation` and BEFORE the first derive, from a pipeline module the executor and
+the drain import — the lane package's adapter/products module (for `vegetation-type`,
+`pipeline/direct/vegetation_type/products.py` or `adapter.py`). The lane owner (p1c) owns a test that
+the executor/drain import graph registers it, because a lane whose declaration is not imported
+silently takes the whole-day path and trips `MAX_DERIVATION_ROWS` on its first real day. Folding the
+declaration into `TierDerivation` later is a one-field change plus one lookup in `latitude_banding`.
+
+**The invariant, stated once.** A band is an INTEGER run of z5 cells:
+`LatitudeBanding(z5_cells_per_band, base_resolution_degrees)`, or `LatitudeBanding.of_height(degrees,
+base)` which refuses a height that is not a whole number of 0.2° cells (42.1, 0.3, 0.5 are refused).
+`__post_init__` also refuses a base pitch that does not divide the z5 pitch (0.007 is refused), so a
+base cell never straddles a band edge either. The lane states its base pitch because the platform
+cannot know it — ROW-CAP-ANALYSIS §4.1 recommends 1.0° (5 cells) at 0.005° (~3.3M rows/band, 7 bands)
+and 0.4° (2 cells) at 0.0025° (~3.7M, 18 bands).
+
+**One integer rule for band membership, from the declared lattice.** A latitude becomes a base-cell
+index `round(lat / base_resolution_degrees)` (`LatitudeBanding.base_cell_index_expression`), then a
+z5 cell `// cells_per_z5` (an exact integer: `__post_init__` requires the base pitch to divide 0.2),
+then a band `// z5_cells_per_band`. `round` is the one float touch, and it absorbs ulp noise of any
+division path because a lattice origin is `k × base`; both `//` steps are integer arithmetic on which
+Python and Polars agree (negatives included). The SAME expression bands rows, records each written
+part's z5 cell range (`write_banded_base_day` → `PartCellRange`), enumerates the bands from those
+ranges, and selects a band's parts (`LatitudeBanding.part_selector`, inclusive integer compare). Two
+rules this replaced, and why: `floor(lat / h)` in Python vs Polars disagreed at edges (24.4 was band
+60 and 61); then `floor(lat / 0.2)` in Polars alone was STILL not one rule, because Polars 1.43
+evaluates `col / c` through a different path for 1-row frames than for N-row frames — `32.8 / 0.2` is
+163.999… on one and 164.0 on the other, 46 envelope latitudes at 0.0025° differ — so a 1-row part
+recorded a range the bulk filter then excluded and the row was lost with every rung marked complete.
+Both are pinned: `REVIEWER_REPRODUCERS`, `ONE_ROW_PART_CASES`, and a test that evaluates the
+membership expression on 1-row and N-row frames at every z5 edge of the envelope (the only latitudes
+a division path can move) plus a stride sample, at each recommended base.
+
+**The contract beside the primitive: base rows are lattice ORIGINS, never centroids.** `round(lat /
+base)` is unambiguous only when `lat` is `k × base` — a centroid `k × base + base / 2` sits exactly
+between two integers, and the reviewer measured ~120 of ~5,000 centroid rows per pair landing in the
+next z5 cell, with one genuine 1-row-vs-bulk disagreement (`0.595 / 0.01 = 59.49999999999999`). Spec
+FR-6 already requires 4326 cell origins; `write_banded_base_day` ENFORCES it before the first put
+(`LatitudeBanding.refuse_non_lattice_origins`): any located latitude further than 1e-6 base cells
+from an integer multiple is refused with "base rows must be lattice origins, not centroids". Float
+noise on a true origin (~1e-12) passes; an unlocated (null/NaN) row is exempt.
+
+**What the integer rule does and does not buy.** Membership no longer tracks `_derive_grid_tier`'s
+flooring at all — that flooring is `floor(lat / r)` per rung with IEEE division, so as the platform
+floors them a z9 cell OR a z5 cell may hold rows from two bands at a handful of edges (32.8 is in the
+z9 cell whose origin prints as 32.79). That is a property of the platform's flooring, not of banding,
+and it is why the fold does not rely on alignment for exactness: `_merge_split_cells` is
+grain-generic and re-aggregates any grain row two bands both produced, at z9 and z5 alike, with
+`_MERGE_AGGREGATES` mirroring `tiers._POLARS_AGGREGATES` entry for entry (all-null sums to null,
+`all`/`any` keep nulls, typed `null`). For associative aggregates that merge IS the whole-day value,
+so banded == whole-day at every rung for every lawful pair — the envelope property test proves it
+for (0.4, 0.0025), (0.2, 0.01), (1.0, 0.005) and (2.0, 0.005) and REPORTS the z9 and z5 split-cell
+counts rather than asserting zero. No height is refused on exactness grounds; none needs to be.
+
+**Two stated exceptions to "banded == whole-day".** (1) Float `sum` is associative only up to
+rounding: summing pieces in band order rather than base order can differ in the last ulps of a
+float column (`1e16 + 1 − 1e16`); integer sums — the vegetation lane's only `sum` — are exact. (2)
+`tiers.floor_to_resolution` is itself frame-length dependent (the same Polars 1.43 path split), so a
+band frame of ONE row can floor an edge latitude into a different z5 origin than the whole-day frame
+does (32.8 → 32.6 alone, 32.8 in company). That is a pre-existing platform defect for the tiers.py
+owner, pinned as a strict `xfail` in `test_banded_derivation.py` so the pin flips when it is fixed;
+the fold loses no row in that case, it lands it in the neighbouring origin exactly as `derive_tier`
+would have on a 1-row day.
+
+**z9 and z5 per band; z0 from the written z5.** Per band the in-band base rows are asserted
+`≤ MAX_DERIVATION_ROWS` (refused naming the band and asking for fewer cells per band, never a higher
+cap) and `derive_tier` is called once per per-band rung; after the last band each rung's pieces are
+concatenated, merged where split, and sorted to the grain (`grid_key_columns(strategy, tier)` behind
+the coordinates), so the frame is the one the whole-day path produces, part slicing included. z0
+(5.0°) is not required to fit a band — a 5° cell spans several bands — so it is
+`derive_tier(z5_frame, tier=0)`, never the base. That chain is lawful because `GridAggregation`'s
+chain-safety check (`warehouse/parquet/AGENTS.md`) guarantees every z0 key survives z5.
+
+**Which aggregates the fold admits, and the `first` contract.** `BAND_SAFE_AGGREGATES` is
+`sum`/`min`/`max`/`all`/`any`/`null`/`first`. The first five are associative and `null` is constant.
+`first` is NOT associative in general — whole-day `first` is the first base row in base order, the
+banded one is the first row of a grain-sorted piece; the reviewer's probe showed `['V9','V4','V3']`
+against `['V2','V4','V0']` at z0 — so it is admitted ONLY under the constancy contract: one distinct
+value per group at every derived rung. The fold ENFORCES it: `_refuse_varying_first` groups the band's
+rows exactly as `_derive_grid_tier` will and raises `NonConstantFirstError` naming column and group
+when any `first` column has more than one value; the same check runs on the z5 frame before the z0
+chain (constant per band does not mean constant across the 5° cell — two LANDFIRE vintages in one
+day would be refused there) and across a split cell before it is merged. `mean` and `sha256-lines`
+are refused at declaration, naming the column — a mean of band means and a digest of band digests are
+values the day never had.
+
+**Where the band's rows come from: ranges in hand, never a cache.** `base_table` given: the frame is
+filtered by band index, never re-read (`repair_one_lane_day` already holds the day for its digests).
+Otherwise the caller passes `part_cell_ranges` — the `BandedBaseWrite.part_cell_ranges` that
+`write_banded_base_day` RETURNED, one `PartCellRange(sha256, z5_cell_min, z5_cell_max)` per part —
+and the fold enumerates the bands from them and reads each band through
+`read_partition_with_receipts(part_selector=…)`, which fetches only the parts whose range meets the
+band (a part with `None` bounds holds unlocated rows and is read for every band). The store holds NO
+cache of what a part contains: a first version memoised ranges per store keyed by path, and another
+process re-exporting the same day under the same keys left that memo describing bytes that were gone
+— the stale extent enumerated the old bands, every row filtered out, and all three rungs were
+retracted as derived-empty. Two guards replace it. The extent is KNOWN only when every part the
+bucket lists today is named by the ranges AND at least one range has bounds (a re-export that grew
+the day makes it unknown; so does an export of only unlocated rows, whose ranges are all `None`), and
+every fetched part's digest is re-checked against its range record: a mismatch is a `TierWriteError`
+naming the part ("was rewritten since its z5 cell range was recorded"), never a mis-banded read. The
+all-`None` case matters because the alternative — enumerating ZERO bands — fetched nothing, so the
+digest check never ran and every rung of a day another process had since rewritten with located rows
+was retracted as derived-empty (reviewer probe, round 3). An unknown extent therefore always goes
+through the whole read, which IS digest-checked against whatever ranges are in hand, then bands by
+filter. Both guards and the all-unlocated rewrite are pinned in `test_banded_derivation.py`.
+
+**With no ranges in hand, the fold does ONE of two things, never a third.** If
+`part_count × BANDED_BASE_ROWS_PER_PART ≤ MAX_DERIVATION_ROWS` it reads the day whole and bands by
+filtering (fail-open, still exact); otherwise it raises `UnknownPartBoundsError` naming the lane, the
+day and the missing ranges BEFORE any part is downloaded, because each per-band `derive_tier` would
+stay under the cap while the whole-day frame quietly exhausted the host. THE ESTIMATE ASSUMES THE
+BANDED WRITER'S PART SIZE (250,000 rows), and the message says so: a day written by another path in
+fewer, larger parts is under-estimated (20 parts of 1M rows read as 5M and are read whole at 20M).
+The listing carries no object sizes; a byte-based bound via `ObjectStoreBackend.size_of` (one HEAD
+per part) or durable per-part bounds (a manifest object, or footer statistics read by range) are the
+recorded follow-ups that would remove this refusal.
+
+**Accepted cost.** Each band runs one extra `group_by` per per-band rung for the `first` constancy
+check, plus one `is_duplicated` per rung at assembly. For a static-lookup lane that derives once per
+LANDFIRE release (~7–18 bands) that is seconds, and it is what makes `first` admissible at all.
+
+**Follow-ups recorded here.** (a) `tiers.floor_to_resolution` / `derive_tier` are frame-length
+dependent on Polars 1.43 (a 1-row frame floors `32.8 / 0.2` to 163, an N-row frame to 164); the
+whole-day derivation itself is therefore not a fixed function of the rows at a handful of edge
+latitudes — tiers.py owner, pinned as a strict xfail. (b) Durable per-part bounds, above. (c) A
+byte-based whole-read bound, above. (d) Folding the band declaration into `TierDerivation`.
+
+**NaN is unlocated.** `z5_cell_index_expression` applies `fill_nan(None)` before flooring, so a NaN
+latitude is in no band on both the derive path and the band-major writer — consistent with
+`drop_nulls` on the coordinates in `_derive_grid_tier` — rather than surfacing as a raw Polars
+`InvalidOperationError` from a strict cast.
+
+**Emptiness across bands.** A rung is retracted only when EVERY band left it empty (or no band
+existed: a day of unlocated rows). One filled band anywhere writes the rung; the `emptied` /
+`_retract_tier` semantics below are unchanged per rung.
+
+**Part sizing, band-major.** `write_banded_base_day` sorts by band, latitude, longitude, cuts parts
+at band edges and at `BANDED_BASE_ROWS_PER_PART` (250,000) rows, numbers them contiguously from 0,
+and refuses the whole plan against `MAX_PART_INDEX` before the first put. The arithmetic
+(ROW-CAP-ANALYSIS §2.3, §3.2): 22.8M rows at 0.005° → 92 parts (+6 band cuts); 65.2M at 0.0025° →
+261 (+17), 85.6M at the top of the range → 343 — all far under 10,000 numberable parts and, at
+~200 B per part in the availability receipt, ~70 KiB against its 1 MiB cap. The derived rungs' 10,000
+rows/part would mint 6,520 base parts at 0.0025° and overflow that receipt, which is why the base has
+its own constant.
 
 **`connection` is the reuse `derivation_session` advertises.** A geometry lane opens a DuckDB session
 per rung and `LOAD spatial` on each — three per geometry day, three thousand across a thousand-day
@@ -1094,6 +1254,17 @@ Parts are read in INDEX ORDER, not listing order: S3 lists lexically, so `part-1
 SKIPPED rather than raised on — only a concurrent prune removes a part, and RUNBOOK 0.33.3 B has the
 bulk drain running alongside the hourly cron by design. `read_partition_with_receipts` is the same
 read plus a digest per part, computed from bytes already in hand.
+
+`part_selector` (a predicate on the part's relative path) narrows that read to the parts the caller
+wants; the banded fold passes `LatitudeBanding.part_selector(band, part_cell_ranges)`, which selects
+the parts whose recorded z5 cell range meets the band and every part the ranges do not describe
+(unknown fails OPEN — a banded lane is never silently truncated). A day whose parts are all
+deselected reads as an empty table with no receipts rather than the "nothing to read" refusal, which
+is about the day. The caller still filters rows: a part is skipped on its range, never trusted on it.
+The store knows nothing about bands and caches nothing about a part's contents — see "Latitude-band
+folding" for why a path-keyed cache was removed, where the ranges come from, and how a rewritten part
+is caught. `list_day_parts` is the read-free listing the fold uses to decide whether its ranges name
+every part the bucket holds today.
 
 ### One definition of a lane-day, two walks
 

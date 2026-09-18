@@ -82,6 +82,7 @@ from agri_data_service.foundation.canonical import sha256_digest
 from agri_data_service.foundation.parquet.absence import GovernedAbsence
 from agri_data_service.foundation.parquet.completion import PartitionCompletion
 from agri_data_service.foundation.parquet.paths import (
+    MAX_PART_INDEX,
     absence_marker_path,
     completion_marker_path,
     day_prefix,
@@ -99,7 +100,7 @@ from agri_data_service.warehouse.parquet.schema import ParquetStreamSchema, get_
 from agri_data_service.warehouse.parquet.tiers import BASE_ZOOM_TIER, base_non_null_columns
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Iterator
+    from collections.abc import Callable, Iterable, Iterator
     from datetime import date
 
     from agri_data_service.foundation.parquet.paths import PartitionKind
@@ -122,6 +123,13 @@ _AVAILABILITY_RETRY_DAY_PREFIX: Final = "day="
 _AVAILABILITY_RETRY_SUFFIX: Final = ".json"
 _AVAILABILITY_RETRY_QUARANTINE_SUFFIX: Final = ".quarantined.json"
 _ABSENT_OBJECT_CODES: Final = frozenset({"404", "NoSuchKey", "NotFound"})
+# Rows per BASE part for a lane whose day is folded over latitude bands (`derivation.py`). Sized so
+# the largest estimated base (0.0025 deg, 85.6M rows at the top of ROW-CAP-ANALYSIS section 2.3's
+# range) fits both ceilings with room: 85.6M / 250k = 343 parts (+1 cut per band edge) against
+# `MAX_PART_INDEX` = 9,999, and ~200 B per part in the availability receipt = ~70 KiB against its
+# 1 MiB cap. At 0.005 deg (22.8M rows) it is ~92 parts. The 10,000-row derived part size would mint
+# 6,520 parts at 0.0025 deg and likely overflow the receipt. See `AGENTS.md`, "Part sizing".
+BANDED_BASE_ROWS_PER_PART: Final = 250_000
 
 
 def availability_lane_root(layer: str, kind: PartitionKind) -> str:
@@ -805,12 +813,27 @@ class ObjectStore:
         """
         return self.read_partition_with_receipts(layer, kind, zoom, day).table
 
-    def read_partition_with_receipts(self, layer: str, kind: PartitionKind, zoom: ZoomTier, day: date) -> PartitionRead:
+    def read_partition_with_receipts(
+        self,
+        layer: str,
+        kind: PartitionKind,
+        zoom: ZoomTier,
+        day: date,
+        *,
+        part_selector: Callable[[str], bool] | None = None,
+    ) -> PartitionRead:
         """Read one rung-day back AND digest each part as it passes, so nothing is downloaded twice.
 
         The digests are what an availability claim cites a day it did not write by. Computing them
         here is free -- the bytes are already in hand -- while a caller hashing them afterwards would
         pay a second full download of the day.
+
+        `part_selector`, given a part's relative path, says whether to fetch it; the banded derivation
+        passes one built from the part ranges its caller recorded. A day whose parts are all deselected
+        reads as an EMPTY table with no receipts -- the "nothing to read" refusal is about the day, not
+        the selection. The store knows nothing about bands: it holds no cache of what a part contains,
+        because a cache keyed by path goes stale the moment another process rewrites the day in place.
+        See `AGENTS.md`, "read_partition".
         """
         parsed = []
         for relative_path in self.list_partition_keys(layer, kind, zoom, year=day.year, month=day.month):
@@ -822,6 +845,10 @@ class ObjectStore:
                 f"no part files to read for {layer!r} {kind} z{zoom} {day.isoformat()}; a tier cannot be derived "
                 f"from a day that holds nothing"
             )
+        if part_selector is not None:
+            parsed = [(index, path) for index, path in parsed if part_selector(path)]
+            if not parsed:
+                return PartitionRead(table=get_stream_schema(layer, kind).arrow_schema.empty_table(), parts=())
         tables = []
         receipts: list[ReadPartReceipt] = []
         for _, relative_path in sorted(parsed):
@@ -844,6 +871,15 @@ class ObjectStore:
                 f"the read; a concurrent prune emptied the day mid-derivation"
             )
         return PartitionRead(table=pa.concat_tables(tables), parts=tuple(receipts))
+
+    def list_day_parts(self, layer: str, kind: PartitionKind, zoom: ZoomTier, day: date) -> tuple[str, ...]:
+        """Return one rung-day's part files as relative paths in PART-INDEX order, without reading any of them."""
+        parsed = []
+        for relative_path in self.list_partition_keys(layer, kind, zoom, year=day.year, month=day.month):
+            partition = try_parse_partition_path(relative_path)
+            if partition is not None and partition.day == day:
+                parsed.append((partition.part_index, relative_path))
+        return tuple(path for _, path in sorted(parsed))
 
     def retract_partition_tier(self, layer: str, kind: PartitionKind, zoom: ZoomTier, day: date) -> SurplusPruneResult:
         """Empty ONE rung of one day: clear its completion claim, then delete every part it holds.
@@ -1034,6 +1070,19 @@ def _refuse_null_base_columns(table: pa.Table, *, layer: str, zoom: ZoomTier, da
             f"so the coarse rungs may null them; a null here means the producer regressed, not that the tier axis "
             f"permits it"
         )
+
+
+def required_part_count(row_count: int, rows_per_part: int) -> int:
+    """Return how many `rows_per_part`-row parts `row_count` rows need, refusing more than the layout can number."""
+    if rows_per_part <= 0:
+        raise ValueError(f"rows_per_part must be positive, got {rows_per_part}")
+    count = -(-row_count // rows_per_part)
+    if count > MAX_PART_INDEX + 1:
+        raise ParquetWriteError(
+            f"{row_count:,} rows at {rows_per_part:,} rows/part need {count:,} parts, but the layout numbers at "
+            f"most {MAX_PART_INDEX + 1:,} (`MAX_PART_INDEX`); widen the parts rather than the layout"
+        )
+    return count
 
 
 def conform_to_stream_schema(table: pa.Table, stream: ParquetStreamSchema) -> pa.Table:

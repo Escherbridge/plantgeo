@@ -39,6 +39,7 @@ from agri_data_service.warehouse.parquet.schema import (
     FORECAST_PROVENANCE_FIELDS,
     SIGNAL_PLANE_SCHEMA,
     SIGNAL_PLANE_STREAM,
+    observed_stream_schema,
 )
 
 if TYPE_CHECKING:
@@ -791,3 +792,80 @@ def test_polars_storage_options_shape() -> None:
         "aws_access_key_id": "access-key-value",
         "aws_secret_access_key": "secret-key-value",
     }
+
+
+# --- Part receipts carry the latitude range the banded read-back filters on ---------------------------
+
+
+def _fire_detections_day(latitudes: tuple[float, ...]) -> pa.Table:
+    return pa.Table.from_pylist(
+        [
+            {
+                "cell_longitude": -116.0 - index * 0.001,
+                "cell_latitude": latitude,
+                "observed_day": date(2026, 8, 1),
+                "detection_count": 1,
+                "frp_sum": 1.0,
+                "frp_observation_count": 1,
+                "high_confidence_detection_count": 1,
+                "newest_observed_at": datetime(2026, 8, 1, tzinfo=UTC),
+            }
+            for index, latitude in enumerate(latitudes)
+        ],
+        schema=observed_stream_schema("fire-detections").arrow_schema,
+    )
+
+
+ROWS_ACROSS_THREE_PARTS: Final = 6
+
+
+def test_list_day_parts_returns_the_day_in_part_index_order_and_nothing_else() -> None:
+    store = ObjectStore(RecordingBackend())
+    day = date(2026, 8, 1)
+    for index in (10, 2, 0, 1):
+        store.write_partition(
+            _fire_detections_day((42.0,)), layer="fire-detections", kind="observed", zoom=13, day=day, part_index=index
+        )
+    store.write_partition(
+        _fire_detections_day((42.0,)), layer="fire-detections", kind="observed", zoom=13, day=date(2026, 8, 2)
+    )
+    store.write_partition(_fire_detections_day((42.0,)), layer="fire-detections", kind="observed", zoom=9, day=day)
+
+    assert store.list_day_parts("fire-detections", "observed", 13, day) == tuple(
+        partition_path("fire-detections", "observed", 13, day, index) for index in (0, 1, 2, 10)
+    )
+
+
+def test_a_part_selector_skips_deselected_parts_and_reads_the_rest_in_index_order() -> None:
+    backend = RecordingBackend()
+    store = ObjectStore(backend)
+    day = date(2026, 8, 1)
+    low = store.write_partition(
+        _fire_detections_day((42.0, 42.5)), layer="fire-detections", kind="observed", zoom=13, day=day, part_index=0
+    )
+    high = store.write_partition(
+        _fire_detections_day((44.0, 44.5)), layer="fire-detections", kind="observed", zoom=13, day=day, part_index=1
+    )
+    other = store.write_partition(
+        _fire_detections_day((46.0, 46.5)), layer="fire-detections", kind="observed", zoom=13, day=day, part_index=2
+    )
+    fetched: list[str] = []
+    original_get = backend.get
+
+    def recording_get(key: str) -> bytes | None:
+        fetched.append(key)
+        return original_get(key)
+
+    backend.get = recording_get  # type: ignore[method-assign]
+
+    read = store.read_partition_with_receipts(
+        "fire-detections", "observed", 13, day, part_selector=lambda path: path != high.relative_path
+    )
+
+    assert fetched == [low.key, other.key], "the deselected part was fetched, or the order is not index order"
+    assert [receipt.relative_path for receipt in read.parts] == [low.relative_path, other.relative_path]
+    # Without a selector the read is exactly what it always was: every part, in index order.
+    fetched.clear()
+    everything = store.read_partition_with_receipts("fire-detections", "observed", 13, day)
+    assert fetched == [low.key, high.key, other.key]
+    assert everything.table.num_rows == ROWS_ACROSS_THREE_PARTS
