@@ -54,10 +54,10 @@ one lane in this case the object is a single day-row.
 
 from __future__ import annotations
 
-from itertools import pairwise
 import hashlib
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
+from itertools import pairwise
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Final, Literal
 

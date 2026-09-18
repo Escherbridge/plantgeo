@@ -29,11 +29,11 @@ sweep and is looked at before a schema trusts it.
 
 from __future__ import annotations
 
-from itertools import pairwise
 import csv
 import datetime as dt
 import hashlib
 from collections import defaultdict
+from itertools import pairwise
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
