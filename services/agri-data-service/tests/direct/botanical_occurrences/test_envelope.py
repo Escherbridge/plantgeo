@@ -7,8 +7,6 @@ from __future__ import annotations
 from datetime import date
 from typing import TYPE_CHECKING
 
-import pytest
-
 from agri_data_service.foundation.botanical_occurrences.coordinates import (
     ENVELOPE_PAD_DEGREES,
     botanical_seed_envelope,
@@ -86,17 +84,6 @@ def test_botanical_seed_envelope_is_the_region_manifest_botanical_seed_sub_envel
     envelope = load_region().sub_envelopes["botanical_seed"]
     assert (envelope.west, envelope.south, envelope.east, envelope.north) == botanical_seed_envelope()
     assert botanical_seed_envelope() == (-125.0, 41.0, -110.0, 50.0)
-
-
-def test_the_deprecated_seed_envelope_alias_still_resolves_and_warns() -> None:
-    """`SEED_ENVELOPE` survives one more release as a lazily resolved, warning alias."""
-    from agri_data_service.foundation.botanical_occurrences import (  # noqa: PLC0415 - the module object itself is the assertion target, not a name from it
-        coordinates as coordinates_module,
-    )
-
-    with pytest.deprecated_call():
-        alias_value = coordinates_module.SEED_ENVELOPE
-    assert alias_value == botanical_seed_envelope()
 
 
 def test_the_envelope_tracks_the_actual_extent_of_the_records() -> None:

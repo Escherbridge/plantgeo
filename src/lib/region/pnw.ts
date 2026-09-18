@@ -33,7 +33,11 @@ export const PNW = {
   latticeOriginRule: "floor_to_cell_origin",
   timezone: "America/Los_Angeles",
   isoCountryCodes: ["US"],
-  adminCodes: [...PNW_ADMIN_CODES],
+  // `satisfies` pins the spread to the tuple: writing `[...PNW_ADMIN_CODES, "US-MT"]` here -- a
+  // plausible next-region edit -- stops compiling instead of leaving `RegionSubdivisionCode`,
+  // `PnwStateCode`, `parcelKeySchema` and the Drizzle enum promising three codes the manifest no
+  // longer has (STYLE-REVIEW-W4 S2).
+  adminCodes: [...PNW_ADMIN_CODES] satisfies readonly (typeof PNW_ADMIN_CODES)[number][],
   enabledLayers: [
     { layerSlug: "soil-survey", sourceSlug: "ssurgo", coverage: "regional" },
     { layerSlug: "fire-detections", sourceSlug: "firms", coverage: "global" },

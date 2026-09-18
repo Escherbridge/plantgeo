@@ -4,8 +4,9 @@ Layer L0 (`foundation`). Extracted 2026-09-18 from `ingest/mtbs.py`, which minte
 for MTBS's own `--bbox` flag; six `pipeline/direct/<domain>` lanes came to import
 `inline_bbox_value` from a single source's ingest module -- the exact cross-domain leak
 `conductor/code_styleguides/layer-lanes.md` §5a names directly: "the shared half moves down; the
-dependents never move sideways." See `foundation/geography/AGENTS.md` for the full extraction record
-and `ingest/mtbs.py`'s `__getattr__` for the deprecated re-export this move left behind.
+dependents never move sideways." See `foundation/geography/AGENTS.md` for the full extraction
+record. `ingest/mtbs.py` carried deprecated re-exports of these names until 2026-09-18, when they
+were deleted rather than disabled (STYLE-REVIEW-W4 S3; `DEPRECATED_ALIASES.md`).
 """
 
 from __future__ import annotations
@@ -51,6 +52,7 @@ def format_bounding_box_inline(argv: Sequence[str]) -> list[str]:
     return normalised
 
 
-#: Documented alias for the pre-extraction name, importable directly from this module. Not
-#: deprecated here -- only `ingest.mtbs.inline_bbox_value` warns; this is the mechanism's new home.
+#: Documented alias for the pre-extraction name, importable directly from this module, and a plain
+#: name rather than a warning shim: this module is the mechanism's home, so the older spelling of it
+#: is not deprecated anywhere (`foundation/geography/AGENTS.md`).
 inline_bbox_value = format_bounding_box_inline

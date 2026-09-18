@@ -80,17 +80,6 @@ def test_burn_severity_bbox_is_one_definition_read_from_the_region_manifest() ->
     assert burn_severity_bounding_box() == expected == (-125.0, 42.0, -111.0, 49.0)
 
 
-def test_the_deprecated_current_snapshot_bbox_alias_still_resolves_and_warns() -> None:
-    """`current_snapshot.BBOX` survives one more release as a lazily resolved, warning alias."""
-    from agri_data_service.pipeline.direct.burn_severity import (  # noqa: PLC0415 - the module object itself is the assertion target, not a name from it
-        current_snapshot,
-    )
-
-    with pytest.deprecated_call():
-        alias_value = current_snapshot.BBOX
-    assert alias_value == burn_severity_bounding_box()
-
-
 def test_manifest_availability_is_after_actual_capture_and_mapping_stays_partial() -> None:
     start = datetime(2026, 9, 10, 23, 59, tzinfo=UTC)
     end = start + timedelta(minutes=2)

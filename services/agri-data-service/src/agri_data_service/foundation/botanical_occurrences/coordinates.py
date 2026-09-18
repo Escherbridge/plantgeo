@@ -4,15 +4,13 @@ from __future__ import annotations
 
 import math
 import struct
-import warnings
 from dataclasses import dataclass
-from types import MappingProxyType
 from typing import TYPE_CHECKING, Final, Literal
 
 from agri_data_service.foundation.region import load_region
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Mapping
+    from collections.abc import Iterable
 
 SpatialClass = Literal["exact", "generalized", "withheld", "nonspatial"]
 
@@ -35,31 +33,6 @@ def botanical_seed_envelope() -> tuple[float, float, float, float]:
     """
     envelope = load_region().sub_envelopes["botanical_seed"]
     return (envelope.west, envelope.south, envelope.east, envelope.north)
-
-
-#: Deprecated module attributes resolved lazily by `__getattr__`; see `DEPRECATED_ALIASES.md`.
-_DEPRECATED_MODULE_ATTRIBUTES: Final[Mapping[str, Callable[[], object]]] = MappingProxyType(
-    {"SEED_ENVELOPE": botanical_seed_envelope},
-)
-
-
-def __getattr__(name: str) -> object:
-    """Resolve a deprecated module attribute at access time, never at import time.
-
-    Deprecated: `SEED_ENVELOPE` is kept importable for one release so existing importers do not break
-    (`federation.md` §5 step 2); call `botanical_seed_envelope()` instead. Removal condition is
-    recorded in `services/agri-data-service/DEPRECATED_ALIASES.md`.
-    """
-    resolve_deprecated_attribute = _DEPRECATED_MODULE_ATTRIBUTES.get(name)
-    if resolve_deprecated_attribute is None:
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    warnings.warn(
-        f"{__name__}.{name} is deprecated; call botanical_seed_envelope() so the region manifest is "
-        "read per call (see DEPRECATED_ALIASES.md)",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    return resolve_deprecated_attribute()
 
 
 #: Pad added on each side of the measured extent. One quarter degree is exactly one `grid-0.25` cell

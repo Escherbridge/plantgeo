@@ -226,9 +226,17 @@ export async function readBoundaryByParcelKey(
   if (!isPilotState(key.state)) {
     return budgetExceeded("outside_pilot_states", PILOT_STATES.length, null);
   }
-  const { feature, gap } = await findBoundaryByParcelKey(key);
+  const { feature, gap, refusal } = await findBoundaryByParcelKey(key);
   if (!feature) {
-    return { status: "ok", data: emptyResult("no_match_in_proven_coverage", gap) };
+    // The pointer GET's typed refusal wins: an unregistered lane is `source_unbound_for_region` and
+    // a census timeout is `upstream_unavailable`. Answering either with `no_match_in_proven_coverage`
+    // asserts the area IS proven-covered and this parcel is not in it -- a stronger positive claim
+    // than the `partial_area_coverage` W2 B3 blocked (`layer-lanes.md` §1b; W4 B3). Only when the
+    // pointer resolved and the wire offers no key-addressed read is the answer an unknown.
+    return {
+      status: "ok",
+      data: emptyResult(refusal?.coverageState ?? "unknown_coverage", refusal?.detail ?? gap),
+    };
   }
   return {
     status: "ok",
@@ -266,13 +274,20 @@ export async function readContactsForSubject(
     return budgetExceeded("feature_count_would_exceed_limit", maxFeatures, 0);
   }
 
-  const { relationships, offices, routes, gap } = await findRelationshipsAndRoutes(
+  const { relationships, offices, routes, gap, refusal } = await findRelationshipsAndRoutes(
     subjectId,
     topic
   );
 
   if (relationships.length === 0) {
-    return { status: "ok", data: [emptyResult("unknown_coverage", gap)] };
+    // `source_unbound_for_region` and `upstream_unavailable` are propagated distinctly: a census
+    // timeout is a transport failure, and reporting it as a coverage finding is the exact collapse
+    // this directory's AGENTS.md forbids (W4 B3). `unknown_coverage` is reserved for a resolved
+    // pointer whose contacts product simply held no matching row.
+    return {
+      status: "ok",
+      data: [emptyResult(refusal?.coverageState ?? "unknown_coverage", refusal?.detail ?? gap)],
+    };
   }
 
   if (relationships.length > maxFeatures) {
@@ -331,8 +346,17 @@ export async function readCoverageForRegion(
   if (!isPilotState(state)) {
     return budgetExceeded("outside_pilot_states", PILOT_STATES.length, null);
   }
-  const { covered, gap } = await readCoverageStatus(state, county);
+  const { covered, gap, refusal } = await readCoverageStatus(state, county);
+  // A pointer refusal names itself: no lane bound for this region, or a census that did not
+  // complete. Only a RESOLVED pointer lets `covered` speak, and it is still always `null` until a
+  // per-region coverage product exists (W4 B3).
   const coverageState: LandContextResult["coverageState"] =
-    covered === true ? "matched" : covered === false ? "no_match_in_proven_coverage" : "unknown_coverage";
-  return { status: "ok", data: { state, county, coverageState, gap } };
+    refusal !== null
+      ? refusal.coverageState
+      : covered === true
+        ? "matched"
+        : covered === false
+          ? "no_match_in_proven_coverage"
+          : "unknown_coverage";
+  return { status: "ok", data: { state, county, coverageState, gap: refusal?.detail ?? gap } };
 }

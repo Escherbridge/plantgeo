@@ -5,9 +5,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
-import warnings
 from datetime import UTC, date, datetime, timedelta
-from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
 import polars as pl
@@ -24,7 +22,7 @@ from agri_data_service.warehouse.parquet.tiers import DERIVED_ZOOM_TIERS, derive
 from agri_data_service.warehouse.schemas.burn_severity import BURN_SEVERITY_SCHEMA
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, Sequence
+    from collections.abc import Mapping, Sequence
     from pathlib import Path
 
     import pyarrow as pa
@@ -35,32 +33,6 @@ MAX_MANIFEST_BYTES = 2 * 1024 * 1024
 MAX_SOURCE_RESPONSES = 400
 SNAPSHOT_SCHEMA = "mtbs-current-snapshot/v1"
 FIRST_PARTIAL_YEAR = 2023
-
-#: Deprecated module attributes resolved lazily by `__getattr__`; see `DEPRECATED_ALIASES.md`. The
-#: reviewed deployment footprint is `ingest.mtbs.burn_severity_bounding_box()`, which reads
-#: `foundation/region`'s `sub_envelopes["burn_severity"]` per call (`federation.md` §1).
-_DEPRECATED_MODULE_ATTRIBUTES: Mapping[str, Callable[[], object]] = MappingProxyType(
-    {"BBOX": burn_severity_bounding_box},
-)
-
-
-def __getattr__(name: str) -> object:
-    """Resolve a deprecated module attribute at access time, never at import time.
-
-    Deprecated: `BBOX` is kept importable for one release so existing importers do not break
-    (`federation.md` §5 step 2); call `burn_severity_bounding_box()` instead. Removal condition is
-    recorded in `services/agri-data-service/DEPRECATED_ALIASES.md`.
-    """
-    resolve_deprecated_attribute = _DEPRECATED_MODULE_ATTRIBUTES.get(name)
-    if resolve_deprecated_attribute is None:
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    warnings.warn(
-        f"{__name__}.{name} is deprecated; call burn_severity_bounding_box() so the region manifest "
-        "is read per call (see DEPRECATED_ALIASES.md)",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    return resolve_deprecated_attribute()
 
 
 def canonical_bytes(value: object) -> bytes:

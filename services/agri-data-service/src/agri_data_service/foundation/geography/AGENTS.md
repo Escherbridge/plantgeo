@@ -22,8 +22,8 @@ Passes `foundation/AGENTS.md`'s four-criterion test with no ruled exception, unl
 ## What moved, what stayed
 
 Moved: `BoundingBox`, `parse_bounding_box`, `inline_bbox_value` (renamed
-`format_bounding_box_inline`; the old name is kept as a plain alias here, not deprecated -- only its
-old home deprecates it) and the two constants they need (`BBOX_OPTION`, `BBOX_ORDINATE_COUNT`).
+`format_bounding_box_inline`; the old name is kept as a plain alias here, not deprecated anywhere)
+and the two constants they need (`BBOX_OPTION`, `BBOX_ORDINATE_COUNT`).
 
 Stayed in `ingest/mtbs.py`, deliberately: `bounding_box_token` (a release-identity fingerprint tied
 to MTBS's release-set keying; never imported by another lane), `_bbox_parameters` (renders the
@@ -31,15 +31,20 @@ envelope the way the retired TypeScript's ArcGIS query did -- one source's wire 
 mechanism) and `burn_severity_bounding_box()` (reads the region manifest's `burn_severity`
 sub-envelope; a manifest read is I/O and lane-specific, not generic bbox math).
 
-## Deprecated aliases left behind
+## No aliases left behind
 
-`ingest.mtbs.parse_bounding_box` and `ingest.mtbs.inline_bbox_value` resolve lazily via that
-module's `__getattr__` and warn on access; see `DEPRECATED_ALIASES.md`. `ingest.mtbs.BoundingBox`
-was **not** put behind the same warning -- it is a bare type alias with no runtime behaviour,
-re-exported plainly (`from agri_data_service.foundation.geography.bounding_box import BoundingBox as
-BoundingBox`) so `ingest/mtbs.py`'s own function signatures, which use it throughout, keep resolving
-without adding deprecation noise to a name nothing calls at runtime (`from __future__ import
-annotations` means annotation references to it are never evaluated at runtime in the first place).
+`ingest.mtbs.parse_bounding_box` and `ingest.mtbs.inline_bbox_value` briefly resolved lazily via a
+module-level `__getattr__` that warned on access. Both were DELETED on 2026-09-18 with the shim
+itself: nothing in `src/` read them, and a module `__getattr__` costs the whole module its
+unknown-attribute checking under `mypy.ini`'s `strict = true` while its `DeprecationWarning` is
+filtered out of a deployed process anyway (STYLE-REVIEW-W4 S3; `DEPRECATED_ALIASES.md` records the
+removal). Read them from this module.
+
+`ingest.mtbs.BoundingBox` was never behind that warning and still is not -- it is a bare type alias
+with no runtime behaviour, re-exported plainly (`from
+agri_data_service.foundation.geography.bounding_box import BoundingBox as BoundingBox`) so
+`ingest/mtbs.py`'s own function signatures, which use it throughout, keep resolving (`from __future__
+import annotations` means annotation references to it are never evaluated at runtime in any case).
 
 ## Known near-duplicate, not touched here
 

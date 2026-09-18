@@ -25,9 +25,9 @@ from agri_data_service.foundation.geography.bounding_box import (
 
 #: `pipeline/direct/<domain>/forward.py` (or a bare `<domain>.py`) modules that imported
 #: `inline_bbox_value` from `ingest/mtbs.py` before this extraction. `burn_severity/forward.py` is
-#: the one lane that legitimately owned `ingest/mtbs.py` and is included anyway: leaving it on the
-#: deprecated alias would fire a `DeprecationWarning` on every run of the domain that still owns the
-#: module the warning points away from.
+#: the one lane that legitimately owned `ingest/mtbs.py` and is included anyway: the extraction moved
+#: the mechanism down, so every lane reads it from its new home and `ingest/mtbs.py` keeps no
+#: re-export of it at all (the warning shims were deleted 2026-09-18, STYLE-REVIEW-W4 S3).
 LANES_THAT_USED_TO_IMPORT_INLINE_BBOX_VALUE_FROM_INGEST_MTBS: tuple[str, ...] = (
     "pipeline/direct/burn_severity/forward.py",
     "pipeline/direct/evacuation_zones/forward.py",

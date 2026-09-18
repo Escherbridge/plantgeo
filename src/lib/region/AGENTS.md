@@ -51,13 +51,24 @@ callers have to know to switch to.
 
 ## Admin codes are declared once and derived twice
 
-`pnw.ts` keeps `PNW_ADMIN_CODES` as a `const` tuple and spreads it into `adminCodes`, so the string
-literals survive into the type system. `region.ts` then derives everything else from it:
-`RegionAdminCode` is `(typeof PNW.adminCodes)[number]`, and `REGION_SUBDIVISION_CODES` maps the
-codes to their two-letter suffixes, keeping the TUPLE shape that `z.enum` and Drizzle's enum
-builders require. Its values come from the validated, frozen `getRegion()`; only the shape is
-asserted, and that shape is computed from the tuple, so it cannot promise codes the manifest no
-longer has.
+`pnw.ts` keeps `PNW_ADMIN_CODES` as a `const` tuple and spreads it into `adminCodes` under a
+`satisfies` clause, so the string literals survive into the type system AND the spread cannot be
+edited apart from the tuple. `region.ts` derives everything else from that one tuple:
+`RegionAdminCode` is `(typeof PNW_ADMIN_CODES)[number]`, and `REGION_SUBDIVISION_CODES` is
+`subdivisionCodesOf(PNW_ADMIN_CODES)`, which maps the codes to their two-letter suffixes while
+keeping the TUPLE shape `z.enum` and Drizzle's enum builders require.
+
+Both the value and the type therefore come from the same tuple. Until 2026-09-18 the value came
+from `getRegion().adminCodes` and only the type came from the tuple, joined by an `as` cast that
+checked nothing — and, being a module-level `getRegion()` call, it was the import-time region read
+`federation.md` §1 forbids, with `budgets.ts`, `shared.ts` and `land-context-contract.ts` as three
+importers of the hidden dependency (STYLE-REVIEW-W4 S1/S2). On the day this function gains the
+`NEXT_PUBLIC_PLANTGEO_REGION`-keyed registry above, a module-level constant would have frozen
+whichever region resolved first.
+
+The manifest is still checked against the tuple, in the one place a read belongs:
+`assertAdminCodesMatchDeclaredTuple` runs inside `getRegion()` on first call, and a manifest whose
+`adminCodes` are not exactly `PNW_ADMIN_CODES` fails closed there.
 
 `PNW_STATE_CODES` (`db/schema/land-context/shared.ts`), `PILOT_STATES`
 (`services/land-context/budgets.ts`) and `PilotState`

@@ -548,20 +548,34 @@ export async function findContainingFeatures(
  * The frozen Parquet wire (`parquet-plane-client.ts` §WIRE) offers day, window, release and
  * coverage reads and no key-addressed one, so resolving a parcel key means either a key-index
  * product this plane does not publish or a full scan of a boundary lane -- and an unbounded scan
- * is exactly what the reference-plane spec forbids. The pointer GET still runs, so the gap
- * distinguishes "no lane at all" from "a lane that is simply not key-addressable".
+ * is exactly what the reference-plane spec forbids. The pointer GET still runs, so the TYPED
+ * `refusal` distinguishes "no lane at all" (and "the census did not answer") from "a lane that is
+ * simply not key-addressable", which carries no refusal and is an unknown.
  */
 export async function findBoundaryByParcelKey(
   key: ParcelKey
-): Promise<{ feature: CandidateBoundaryFeature | null; gap: string }> {
+): Promise<{
+  feature: CandidateBoundaryFeature | null;
+  gap: string;
+  refusal: CoverageRefusal | null;
+}> {
   const resolved = await resolveServingPartition(
     LAND_CONTEXT_PRODUCT_LAYERS.boundaries,
     RUNG_MAX_BBOX_SQUARE_DEGREES[13]
   );
-  if (resolved.partition === null) return { feature: null, gap: resolved.detail };
+  if (resolved.partition === null) {
+    return {
+      feature: null,
+      gap: resolved.detail,
+      refusal: { coverageState: resolved.coverageState, detail: resolved.detail },
+    };
+  }
   return {
     feature: null,
     gap: `${resolved.partition.layer} publishes rung z${resolved.partition.zoomTier}, but the frozen Parquet wire exposes no key-addressed read; ${key.sourceNamespace}:${key.originalId} cannot be resolved without a parcel-key index product or a bounding box`,
+    // The pointer RESOLVED; the wire simply offers no key-addressed read. That is an unknown, never
+    // the positive `no_match_in_proven_coverage` this reader answered before 2026-09-18 (W4 B3).
+    refusal: null,
   };
 }
 
@@ -582,13 +596,20 @@ export async function findRelationshipsAndRoutes(
   offices: OrganizationOfficeRef[];
   routes: PublicContactRouteRef[];
   gap: string;
+  refusal: CoverageRefusal | null;
 }> {
-  const empty = { relationships: [], offices: [], routes: [] };
+  const empty = { relationships: [], offices: [], routes: [], refusal: null };
   const resolved = await resolveServingPartition(
     LAND_CONTEXT_PRODUCT_LAYERS.contacts,
     RUNG_MAX_BBOX_SQUARE_DEGREES[0]
   );
-  if (resolved.partition === null) return { ...empty, gap: resolved.detail };
+  if (resolved.partition === null) {
+    return {
+      ...empty,
+      gap: resolved.detail,
+      refusal: { coverageState: resolved.coverageState, detail: resolved.detail },
+    };
+  }
 
   const { rows, gap } = await readProductRows(resolved.partition, contactRowSchema, null);
   const matching = rows
@@ -607,6 +628,7 @@ export async function findRelationshipsAndRoutes(
     offices: dedupeByOfficeId(matching.map(toOfficeRef)),
     routes: matching.map(toRouteRef),
     gap,
+    refusal: null,
   };
 }
 
@@ -662,22 +684,30 @@ function dedupeByOfficeId(offices: readonly OrganizationOfficeRef[]): Organizati
  *
  * Always `null` -- unknown -- and the two gaps say which unknown it is. The warehouse census
  * reports what a LANE published, never which counties a source covered, so answering `false`
- * here would claim a proven-coverage area that nothing has proved; `reader.ts` would then render
- * it as `no_match_in_proven_coverage`. Closing this needs a per-region coverage product, not a
- * cleverer read of the census.
+ * here would claim a proven-coverage area that nothing has proved. A pointer refusal is returned
+ * as a TYPED `refusal` instead, so `reader.ts` reports an unregistered lane and a census timeout
+ * as themselves rather than as a coverage finding. Closing the `null` needs a per-region coverage
+ * product, not a cleverer read of the census.
  */
 export async function readCoverageStatus(
   state: string,
   county: string | null
-): Promise<{ covered: boolean | null; gap: string }> {
+): Promise<{ covered: boolean | null; gap: string; refusal: CoverageRefusal | null }> {
   const place = county === null ? state : `${county}, ${state}`;
   const resolved = await resolveServingPartition(
     LAND_CONTEXT_PRODUCT_LAYERS.boundaries,
     RUNG_MAX_BBOX_SQUARE_DEGREES[0]
   );
-  if (resolved.partition === null) return { covered: null, gap: resolved.detail };
+  if (resolved.partition === null) {
+    return {
+      covered: null,
+      gap: resolved.detail,
+      refusal: { coverageState: resolved.coverageState, detail: resolved.detail },
+    };
+  }
   return {
     covered: null,
     gap: `${resolved.partition.layer} publishes rung z${resolved.partition.zoomTier} as of ${resolved.partition.day}, but no per-region coverage product states whether ${place} is within admitted coverage`,
+    refusal: null,
   };
 }

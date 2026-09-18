@@ -81,7 +81,10 @@ describe("coverage state typing against the stub parquet-reader", () => {
     expect(result.data.coverageState).not.toBeNull();
     expect(result.data.coverageState).not.toBeUndefined();
     expect(VALID_COVERAGE_STATES).toContain(result.data.coverageState);
-    expect(result.data.coverageState).toBe("no_match_in_proven_coverage");
+    // An unregistered lane is an UNBOUND source. `no_match_in_proven_coverage` -- what this reader
+    // answered until 2026-09-18 -- asserts the area IS proven-covered and this parcel is not in it,
+    // which is a stronger positive claim than the state W2 B3 already blocked (W4 B3).
+    expect(result.data.coverageState).toBe("source_unbound_for_region");
   });
 
   it("readContactsForSubject returns a typed coverageState when no relationships are found", async () => {
@@ -93,7 +96,7 @@ describe("coverage state typing against the stub parquet-reader", () => {
       expect(entry.coverageState).not.toBeUndefined();
       expect(VALID_COVERAGE_STATES).toContain(entry.coverageState);
     }
-    expect(result.data[0].coverageState).toBe("unknown_coverage");
+    expect(result.data[0].coverageState).toBe("source_unbound_for_region");
   });
 
   it("readCoverageForRegion returns a typed coverageState (unknown, not null) for a pilot state/county", async () => {
@@ -103,7 +106,7 @@ describe("coverage state typing against the stub parquet-reader", () => {
     expect(result.data.coverageState).not.toBeNull();
     expect(result.data.coverageState).not.toBeUndefined();
     expect(VALID_COVERAGE_STATES).toContain(result.data.coverageState);
-    expect(result.data.coverageState).toBe("unknown_coverage");
+    expect(result.data.coverageState).toBe("source_unbound_for_region");
   });
 
   it("readCoverageForRegion rejects a non-pilot state as outside_pilot_states, not a silent unknown", async () => {

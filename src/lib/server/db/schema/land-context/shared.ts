@@ -37,7 +37,8 @@ export const spatialPoint = customType<{ data: string; driverData: string }>({
  *
  * Deprecated aliases for `REGION_SUBDIVISION_CODES` / `RegionSubdivisionCode`
  * (`federation.md` §5 step 2); new code should read those directly. They are
- * now plain re-exports of the manifest-derived tuple: the old
+ * now plain re-exports of the one declared admin-code tuple (`PNW_ADMIN_CODES`, checked against
+ * the parsed manifest on first `getRegion()` call rather than at import -- W4 S1): the old
  * `as unknown as readonly ["WA","OR","ID"]` joined the runtime value and the
  * declared type by assertion alone, so a changed `pnw.ts` left every
  * `PnwStateCode`-typed surface promising three codes the value no longer had

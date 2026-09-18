@@ -30,11 +30,17 @@ import {
   exactIntersectCandidates,
   findBoundaryByParcelKey,
   findContainingFeatures,
+  findRelationshipsAndRoutes,
   pruneCandidatesByBbox,
   readCoverageStatus,
   selectServingRung,
 } from "@/lib/server/services/land-context/parquet-reader";
-import { readBoundedAoiIntersection } from "@/lib/server/services/land-context/reader";
+import {
+  readBoundaryByParcelKey,
+  readBoundedAoiIntersection,
+  readContactsForSubject,
+  readCoverageForRegion,
+} from "@/lib/server/services/land-context/reader";
 import { UpstreamTimeoutError } from "@/lib/server/http/bounded-upstream";
 
 const BOUNDARY_LAYER = LAND_CONTEXT_PRODUCT_LAYERS.boundaries;
@@ -368,6 +374,99 @@ describe("the reads that stop short, honestly", () => {
     expect(result.covered).toBeNull();
     expect(result.gap).toContain("no per-region coverage product");
     expect(result.gap).toContain("King, WA");
+    // The pointer RESOLVED, so there is no refusal to forward: this is a genuine unknown, and
+    // `reader.ts` is free to answer `unknown_coverage` for it.
+    expect(result.refusal).toBeNull();
+  });
+
+  it("findBoundaryByParcelKey carries the pointer's typed refusal, not only its prose", async () => {
+    getParquetWarehouseCoverage.mockResolvedValue(census([]));
+
+    const result = await findBoundaryByParcelKey({
+      sourceNamespace: "wa-king-county-assessor",
+      originalId: "0001234567",
+      state: "WA",
+    });
+
+    expect(result.refusal?.coverageState).toBe("source_unbound_for_region");
+  });
+
+  it("findRelationshipsAndRoutes carries the pointer's typed refusal, not only its prose", async () => {
+    getParquetWarehouseCoverage.mockResolvedValue(census([]));
+
+    const result = await findRelationshipsAndRoutes("some-subject-id", null);
+
+    expect(result.relationships).toEqual([]);
+    expect(result.refusal?.coverageState).toBe("source_unbound_for_region");
+  });
+
+  it("readCoverageStatus carries the pointer's typed refusal, not only its prose", async () => {
+    getParquetWarehouseCoverage.mockResolvedValue(census([]));
+
+    const result = await readCoverageStatus("WA", "King");
+
+    expect(result.refusal?.coverageState).toBe("source_unbound_for_region");
+  });
+});
+
+/**
+ * The three readers STYLE-REVIEW-W4 B3 found inventing a coverage state. Each one answered an
+ * unbound source and a failed census with the same member, so a transport failure was reported as a
+ * coverage finding -- the collapse `land-context/AGENTS.md` says never happens.
+ */
+describe("the three readers that used to invent a coverage state", () => {
+  it("readBoundaryByParcelKey reports a census timeout as upstream_unavailable", async () => {
+    getParquetWarehouseCoverage.mockRejectedValue(new UpstreamTimeoutError("census timed out"));
+
+    const response = await readBoundaryByParcelKey({
+      sourceNamespace: "wa-king-county-assessor",
+      originalId: "0001234567",
+      state: "WA",
+    });
+
+    expect(response.status).toBe("ok");
+    if (response.status !== "ok") throw new Error("expected ok");
+    expect(response.data.coverageState).toBe("upstream_unavailable");
+  });
+
+  it("readContactsForSubject reports a census timeout as upstream_unavailable", async () => {
+    getParquetWarehouseCoverage.mockRejectedValue(new UpstreamTimeoutError("census timed out"));
+
+    const response = await readContactsForSubject("some-subject-id", null);
+
+    expect(response.status).toBe("ok");
+    if (response.status !== "ok") throw new Error("expected ok");
+    expect(response.data[0].coverageState).toBe("upstream_unavailable");
+  });
+
+  it("readCoverageForRegion reports a census timeout as upstream_unavailable", async () => {
+    getParquetWarehouseCoverage.mockRejectedValue(new UpstreamTimeoutError("census timed out"));
+
+    const response = await readCoverageForRegion("WA", "King");
+
+    expect(response.status).toBe("ok");
+    if (response.status !== "ok") throw new Error("expected ok");
+    expect(response.data.coverageState).toBe("upstream_unavailable");
+    expect(response.data.gap).toContain("not a coverage finding");
+  });
+
+  it("each of the three reports an unregistered lane as source_unbound_for_region", async () => {
+    getParquetWarehouseCoverage.mockResolvedValue(census([]));
+
+    const parcel = await readBoundaryByParcelKey({
+      sourceNamespace: "wa-king-county-assessor",
+      originalId: "0001234567",
+      state: "WA",
+    });
+    const contacts = await readContactsForSubject("some-subject-id", null);
+    const region = await readCoverageForRegion("WA", "King");
+
+    if (parcel.status !== "ok" || contacts.status !== "ok" || region.status !== "ok") {
+      throw new Error("expected ok");
+    }
+    expect(parcel.data.coverageState).toBe("source_unbound_for_region");
+    expect(contacts.data[0].coverageState).toBe("source_unbound_for_region");
+    expect(region.data.coverageState).toBe("source_unbound_for_region");
   });
 });
 
