@@ -385,6 +385,64 @@ def test_domain_isolation_actually_has_domains_to_police() -> None:
     )
 
 
+#: The three layers `federation.md` section 5 step 3 gave a source protocol. Each is a LANE package in
+#: `pipeline/direct`, so the walks above already police it -- but only if the walk actually sees it.
+#: `soil_survey` is the trap: it sits beside the older `soil` lane (the ERA5-Land soil FIELD writer,
+#: an entirely different layer), and a prefix-matched sibling rule that treated `direct.soil.products`
+#: as an import of `soil_survey` -- or the reverse -- would either fire falsely forever or stop firing
+#: at all. Naming the three keeps the lane discovery honest the way
+#: `test_domain_isolation_actually_has_domains_to_police` does for domains.
+FEDERATED_SOURCE_LAYER_LANES: tuple[str, ...] = ("burn_severity", "drought", "soil_survey")
+
+
+def test_the_source_protocol_layers_are_lanes_the_lattice_actually_sees() -> None:
+    """The three federated layers are discovered as `pipeline/direct` lanes and cross none of them.
+
+    `federation.md` section 5 step 3 added `soil_survey/` next to the unrelated `soil/` lane and moved
+    two source modules inside their own packages. Both are exactly the shapes that can slip past a
+    lane walk: a package the discovery misses is unpoliced, and two lanes sharing a name prefix are
+    where a sibling check goes wrong in silence.
+    """
+    pkg_root = Path(__file__).resolve().parents[1] / "src" / "agri_data_service"
+    lanes = _lane_names(pkg_root / "pipeline" / "direct")
+
+    missing = [lane for lane in FEDERATED_SOURCE_LAYER_LANES if lane not in lanes]
+    assert not missing, f"lane discovery does not see {missing}; discovered {sorted(lanes)}"
+    assert "soil" in lanes, "the ERA5-Land soil FIELD lane must stay a separate lane from soil_survey"
+
+    violations = [
+        violation
+        for violation in _sibling_module_violations(pkg_root, "pipeline/direct")
+        if any(lane in violation for lane in FEDERATED_SOURCE_LAYER_LANES)
+    ]
+    assert not violations, "federated source layers cross a lane boundary:\n" + "\n".join(violations)
+
+
+def test_the_source_protocol_layers_obey_the_pipeline_layer_lattice() -> None:
+    """Nothing in the three packages reaches forward into `method`, `planes` or `interface`.
+
+    `test_layer_import_contract` walks all of `pipeline` and would already catch this; asserting it
+    per package names WHICH new code is being held to the rule, so a future split of these packages
+    cannot quietly drop them out of a directory-keyed walk.
+    """
+    pkg_root = Path(__file__).resolve().parents[1] / "src" / "agri_data_service"
+    forbidden = LAYER_FORBIDDEN_IMPORTS["pipeline"]
+    violations: list[str] = []
+
+    for lane in FEDERATED_SOURCE_LAYER_LANES:
+        lane_dir = pkg_root / "pipeline" / "direct" / lane
+        assert lane_dir.is_dir(), f"{lane} is not a package under pipeline/direct"
+        for py_file in sorted(lane_dir.glob("**/*.py")):
+            violations.extend(
+                f"{py_file.relative_to(pkg_root)}:{line_no} imports '{imp}' (forbidden in 'pipeline')"
+                for line_no, imp in _get_imports(py_file)
+                for forb in forbidden
+                if imp == forb or imp.startswith(forb + ".")
+            )
+
+    assert not violations, "Federated source layer lattice violations:\n" + "\n".join(violations)
+
+
 # --- interface/cli is an adapter, not an execution layer ------------------------------------------
 #
 # The lattice above lets `interface` import anything, which is right for a Click adapter and useless
