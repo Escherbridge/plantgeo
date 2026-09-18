@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, date, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -23,18 +23,22 @@ from agri_data_service.execution.vegetation_ndvi_plane import (
     SelectionMaterialisation,
 )
 from agri_data_service.execution.vegetation_partition_promotion import (
+    EmptyDayPartitionError,
     EvaluationArtifactNotPromotableError,
     VegetationDayPartitionKey,
     VegetationPromotionReceipt,
     day_partition_content_sha256,
     load_promotion_receipt,
     promote_vegetation_day_partition,
+    run_vegetation_promotion,
     save_promotion_receipt,
 )
 from agri_data_service.pipeline.parquet.objectstore import ListedObject, ObjectStore
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 DAY = date(2026, 9, 10)
 
@@ -232,3 +236,26 @@ def test_promotion_receipt_round_trips_through_the_object_store(store: ObjectSto
 def test_evaluation_kind_receipt_cannot_be_constructed() -> None:
     with pytest.raises(EvaluationArtifactNotPromotableError):
         VegetationDayPartitionKey(day=DAY, kind="evaluation")
+
+
+async def test_a_day_the_lane_never_wrote_is_a_governed_absence_not_a_failed_turn(store: ObjectStore) -> None:
+    """A missing partition names its lane and day and lets the rest of the turn run (S5)."""
+    session = cast("AsyncSession", object())  # never touched: the absent path reaches no register call
+
+    report = await run_vegetation_promotion(session, store, days=[DAY])
+
+    assert report["status"] == "completed"
+    assert report["absent_days"] == [DAY.isoformat()]
+    (entry,) = cast("list[dict[str, object]]", report["days"])
+    assert entry["status"] == "absent"
+    assert entry["reason"] == "no_day_partition_written"
+    assert entry["layer"] == "vegetation"
+    assert DAY.isoformat() in str(entry["detail"])
+
+
+def test_a_written_but_empty_partition_still_fails_naming_the_lane_and_the_day() -> None:
+    """The anomaly keeps its raise, and the message says which lane and which day (S5)."""
+    error = EmptyDayPartitionError(layer="vegetation", day=DAY)
+
+    assert "vegetation" in str(error)
+    assert DAY.isoformat() in str(error)

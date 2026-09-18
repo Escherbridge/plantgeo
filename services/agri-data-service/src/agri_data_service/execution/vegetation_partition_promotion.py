@@ -11,7 +11,8 @@ partition is keyed by THAT PARTITION'S OWN content SHA, matching the availabilit
 `execution/vegetation_ndvi_plane._corpus_digest` computes for its own, unrelated Postgres purpose.
 
 This module NEVER widens `register_governed_forward_plane`'s existing per-day-touched-cells
-scoping (`execution/vegetation_ndvi_plane.py:772-791`); it only decides, per partition, whether that
+scoping (`execution/vegetation_ndvi_plane.py::register_governed_forward_plane`, its `cell_days`
+argument); it only decides, per partition, whether that
 call is owed at all. Reuses `foundation.canonical.sha256_digest`/`canonical_json` -- the same digest
 routine the availability index binds into every generation key -- rather than a second one.
 
@@ -23,8 +24,8 @@ Lane wiring (`execution/lane_ids.py::VEGETATION_NDVI_PROMOTION_LANE_ID`,
 `execution/lane_specs.py`) registers this verb so it CAN be scheduled, but it is disabled by
 default: it is registered in `LANE_SPECS` and absent from the deployed
 `PLANTGEO_JOB_EXECUTOR_ACTIVE_LANES` allow-list (`execution/AGENTS.md` §Lane activation), which is a
-production mutation this backlog change deliberately does not make. See the worker log for the
-exact operator command.
+production mutation this backlog change deliberately does not make; the activation command lives
+with the allow-list in `execution/AGENTS.md` §Lane activation.
 """
 
 from __future__ import annotations
@@ -62,6 +63,23 @@ _RECEIPT_SCHEMA_VERSION: Final = 1
 DEFAULT_MAX_DAYS: Final = 1
 
 RegisterForwardPlane = Callable[..., Awaitable[RegistrationSummary]]
+
+
+class EmptyDayPartitionError(ValueError):
+    """A day partition that was WRITTEN but holds no cell values.
+
+    Distinct from a day the lane never wrote, which is a governed absence the turn records and moves
+    past (`layer-lanes.md` §4). A written-but-empty partition is an anomaly in the writer, so it
+    still fails -- loudly, and naming the lane and the day (`engineering-principles.md` §2).
+    """
+
+    def __init__(self, *, layer: str, day: date) -> None:
+        super().__init__(
+            f"{layer} day partition {day.isoformat()} was written but holds no cell values, so it cannot be "
+            f"content-addressed; the forward writer, not this promoter, owes the fix"
+        )
+        self.layer = layer
+        self.day = day
 
 
 class EvaluationArtifactNotPromotableError(ValueError):
@@ -280,10 +298,37 @@ async def run_vegetation_promotion(
     days: Sequence[date],
     now: datetime | None = None,
 ) -> dict[str, object]:
-    """Promote every named day, newest last, each idempotent against its own last receipt."""
+    """Promote every named day, newest last, each idempotent against its own last receipt.
+
+    A day the forward writer never published is a GOVERNED ABSENCE, not a failure: it is recorded
+    with its lane, its day and a named reason, and the remaining days still promote
+    (`layer-lanes.md` §4, "Report an honest gap rather than a filled one"). Before 2026-09-18 the
+    missing partition surfaced as a bare store error that failed the whole scheduled turn, including
+    the days that would have promoted (STYLE-REVIEW-W2 S5). A partition that exists and is empty
+    still raises, because that is the writer misbehaving rather than the source having nothing.
+    """
+    # Imported here, like `main()`'s own store import: the object-store module carries the heavy
+    # client dependencies this module otherwise only needs at CLI time.
+    from agri_data_service.pipeline.parquet.objectstore import ParquetWriteError  # noqa: PLC0415
+
     results: list[dict[str, object]] = []
     for day in days:
-        cell_values = read_day_partition_cell_values(store, day)
+        try:
+            cell_values = read_day_partition_cell_values(store, day)
+        except ParquetWriteError as absence:
+            results.append(
+                {
+                    "day": day.isoformat(),
+                    "layer": VEGETATION_PLANE_STREAM,
+                    "status": "absent",
+                    "reason": "no_day_partition_written",
+                    "detail": str(absence),
+                }
+            )
+            emit({"event": "vegetation_promotion_day", **results[-1]})
+            continue
+        if not cell_values:
+            raise EmptyDayPartitionError(layer=VEGETATION_PLANE_STREAM, day=day)
         previous_receipt = load_promotion_receipt(store, day=day)
         outcome = await promote_vegetation_day_partition(
             session,
@@ -297,13 +342,20 @@ async def run_vegetation_promotion(
         results.append(
             {
                 "day": day.isoformat(),
+                "layer": VEGETATION_PLANE_STREAM,
                 "status": outcome.status,
                 "content_sha256": outcome.content_sha256,
                 "cell_count": len(cell_values),
             }
         )
         emit({"event": "vegetation_promotion_day", **results[-1]})
-    return {"status": "completed", "days": results}
+    return {
+        "status": "completed",
+        "days": results,
+        # Surfaced at the top level so a scheduled turn's report states its absences without the
+        # reader walking every day entry.
+        "absent_days": [str(entry["day"]) for entry in results if entry["status"] == "absent"],
+    }
 
 
 async def main(argv: Sequence[str] | None = None) -> int:
@@ -333,6 +385,7 @@ async def main(argv: Sequence[str] | None = None) -> int:
 __all__ = [
     "DEFAULT_MAX_DAYS",
     "PROMOTABLE_KIND",
+    "EmptyDayPartitionError",
     "EvaluationArtifactNotPromotableError",
     "VegetationDayPartitionKey",
     "VegetationPromotionOutcome",
