@@ -80,12 +80,52 @@ export function botanicalOccurrencesToGeoJSON(
   };
 }
 
+/**
+ * A one-line caption for whatever `useBotanicalOccurrences` currently reports, or null when the
+ * layer is simply drawing what it was asked to draw.
+ *
+ * Exported beside the layer rather than left to each mounting surface: a reader looking at a
+ * specimen map must be able to tell "this generation holds nothing here" from "the read failed"
+ * from "you are looking at the previous viewport", and three call sites inventing three wordings
+ * for that is how one of them ends up silently omitting the distinction. `partial` in particular is
+ * NOT an error -- the plane bounded the answer and said so -- and must read that way.
+ */
+export function describeBotanicalOccurrencesState(snapshot: {
+  phase: "idle" | "loading" | "success" | "empty" | "error";
+  isStale: boolean;
+  isPartial: boolean;
+  error: { reason: string; detail?: string } | null;
+}): string | null {
+  if (snapshot.phase === "error") {
+    return snapshot.error === null
+      ? "Specimen records could not be loaded."
+      : `Specimen records could not be loaded (${snapshot.error.reason}).`;
+  }
+  if (snapshot.phase === "loading") {
+    return snapshot.isStale ? "Loading specimen records for this view; showing the previous one." : "Loading specimen records…";
+  }
+  if (snapshot.phase === "empty") return "This release holds no specimen records in this view.";
+  if (snapshot.isPartial) return "More specimen records match this view than are drawn.";
+  return null;
+}
+
 interface BotanicalOccurrencesLayerProps {
   map: MapLibreMap | null;
   geojson: GeoJSON.FeatureCollection | null;
   zoom: number;
   visible?: boolean;
   onSelectFeature?: (occurrenceId: string) => void;
+  /**
+   * The read's semantic state, when the mounting surface has one to pass.
+   *
+   * OPTIONAL and defaulted so the existing `LayerManager` mount keeps compiling untouched. Its only
+   * drawing effect is that `"error"` removes the layers: retaining a drawn collection under a
+   * failed read is a false claim about the current viewport, which is the same rule
+   * `useViewportProxiedLayers`'s `keepPreviousData` note states ("it retains across a pending
+   * request, NOT across a failure"). A pending read deliberately keeps drawing -- geometry in hand
+   * is still true where it is.
+   */
+  readPhase?: "idle" | "loading" | "success" | "empty" | "error";
 }
 
 /**
@@ -101,9 +141,13 @@ export function BotanicalOccurrencesLayer({
   zoom,
   visible = true,
   onSelectFeature,
+  readPhase = "success",
 }: BotanicalOccurrencesLayerProps) {
-  const propsRef = useRef({ geojson, visible, zoom });
-  propsRef.current = { geojson, visible, zoom };
+  // A failed read is treated exactly as "nothing to draw": the layers come down rather than keep
+  // asserting the last collection under an error the reader is being shown elsewhere.
+  const drawable = readPhase !== "error";
+  const propsRef = useRef({ geojson, visible, zoom, drawable });
+  propsRef.current = { geojson, visible, zoom, drawable };
   const onSelectFeatureRef = useRef(onSelectFeature);
   onSelectFeatureRef.current = onSelectFeature;
 
@@ -219,7 +263,8 @@ export function BotanicalOccurrencesLayer({
     if (!map) return;
     const onStyleLoad = () => {
       const current = propsRef.current;
-      if (!current.visible || !current.geojson || current.zoom < BOTANICAL_DETAIL_MIN_ZOOM) return;
+      if (!current.visible || !current.drawable || !current.geojson) return;
+      if (current.zoom < BOTANICAL_DETAIL_MIN_ZOOM) return;
       addLayers(map);
     };
     map.on("style.load", onStyleLoad);
@@ -239,12 +284,12 @@ export function BotanicalOccurrencesLayer({
   // persistent `style.load` listener above, which reads the latest props off the ref.
   useEffect(() => {
     if (!map) return;
-    if (!visible || !geojson || zoom < BOTANICAL_DETAIL_MIN_ZOOM) {
+    if (!visible || !drawable || !geojson || zoom < BOTANICAL_DETAIL_MIN_ZOOM) {
       removeLayers(map);
     } else if (map.getStyle()) {
       addLayers(map);
     }
-  }, [map, geojson, visible, zoom, addLayers, removeLayers]);
+  }, [map, geojson, visible, drawable, zoom, addLayers, removeLayers]);
 
   // Delegated picking attaches ONCE per map. Keying it on data/zoom stacked a fresh pair of
   // layer-scoped click handlers on every draw cycle; a handler bound to a not-yet-created layer
