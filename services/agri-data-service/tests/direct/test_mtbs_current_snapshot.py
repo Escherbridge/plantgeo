@@ -10,12 +10,14 @@ import pyarrow.parquet as pq  # type: ignore[import-untyped]
 import pytest
 
 from agri_data_service.foundation.region import load_region
-from agri_data_service.ingest.mtbs import MtbsReleaseNotPublishedError, build_mtbs_record, build_mtbs_snapshot_record
-from agri_data_service.pipeline.direct.burn_severity import capture
-from agri_data_service.pipeline.direct.burn_severity.capture import BBOX, CaptureBudget
-from agri_data_service.pipeline.direct.burn_severity.current_snapshot import (
-    BBOX as CURRENT_SNAPSHOT_BBOX,
+from agri_data_service.ingest.mtbs import (
+    MtbsReleaseNotPublishedError,
+    build_mtbs_record,
+    build_mtbs_snapshot_record,
+    burn_severity_bounding_box,
 )
+from agri_data_service.pipeline.direct.burn_severity import capture
+from agri_data_service.pipeline.direct.burn_severity.capture import CaptureBudget
 from agri_data_service.pipeline.direct.burn_severity.current_snapshot import (
     canonical_bytes,
     digest,
@@ -72,11 +74,19 @@ def test_snapshot_rejects_malformed_identity(identity: str) -> None:
 
 
 def test_burn_severity_bbox_is_one_definition_read_from_the_region_manifest() -> None:
-    """`current_snapshot.BBOX` reads the manifest; `capture.BBOX` re-exports the same object."""
+    """Capture, snapshot and the daily dispatcher all call one manifest-reading function."""
     envelope = load_region().sub_envelopes["burn_severity"]
     expected = (envelope.west, envelope.south, envelope.east, envelope.north)
-    assert CURRENT_SNAPSHOT_BBOX == expected == (-125.0, 42.0, -111.0, 49.0)
-    assert BBOX is CURRENT_SNAPSHOT_BBOX
+    assert burn_severity_bounding_box() == expected == (-125.0, 42.0, -111.0, 49.0)
+
+
+def test_the_deprecated_current_snapshot_bbox_alias_still_resolves_and_warns() -> None:
+    """`current_snapshot.BBOX` survives one more release as a lazily resolved, warning alias."""
+    from agri_data_service.pipeline.direct.burn_severity import current_snapshot
+
+    with pytest.deprecated_call():
+        alias_value = current_snapshot.BBOX
+    assert alias_value == burn_severity_bounding_box()
 
 
 def test_manifest_availability_is_after_actual_capture_and_mapping_stays_partial() -> None:

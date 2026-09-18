@@ -148,8 +148,10 @@ describe("pruneCandidatesByBbox: the pointer GET", () => {
     const pruned = await pruneCandidatesByBbox(SMALL_BBOX);
 
     expect(pruned.candidateKeys).toEqual([]);
-    expect(pruned.gap).toContain(BOUNDARY_LAYER);
-    expect(pruned.gap).toContain("source_unbound_for_region");
+    // The TYPED member is the assertion; the sentence is a caption. Pinning the prose is what let
+    // reader.ts report this as `partial_area_coverage` for a whole wave (STYLE-REVIEW-W2 B3).
+    expect(pruned.refusal?.coverageState).toBe("source_unbound_for_region");
+    expect(pruned.refusal?.detail).toContain(BOUNDARY_LAYER);
     expect(getParquetLatestRelease).not.toHaveBeenCalled();
   });
 
@@ -181,6 +183,7 @@ describe("pruneCandidatesByBbox: the pointer GET", () => {
     const pruned = await pruneCandidatesByBbox(REGIONAL_BBOX);
 
     expect(pruned.candidateKeys).toEqual([]);
+    expect(pruned.refusal?.coverageState).toBe("unknown_coverage");
     expect(pruned.gap).toContain("exceeds every published rung");
     expect(pruned.gap).toContain("4 square degrees");
   });
@@ -199,6 +202,7 @@ describe("pruneCandidatesByBbox: the pointer GET", () => {
     const pruned = await pruneCandidatesByBbox(SMALL_BBOX);
 
     expect(pruned.candidateKeys).toEqual([]);
+    expect(pruned.refusal?.coverageState).toBe("unknown_coverage");
     expect(pruned.gap).toContain("availability_checksum_mismatch");
   });
 
@@ -208,6 +212,8 @@ describe("pruneCandidatesByBbox: the pointer GET", () => {
     const pruned = await pruneCandidatesByBbox(SMALL_BBOX);
 
     expect(pruned.candidateKeys).toEqual([]);
+    // Distinct from every absence state: a failed read is `upstream_unavailable`, not a finding.
+    expect(pruned.refusal?.coverageState).toBe("upstream_unavailable");
     expect(pruned.gap).toContain("timeout");
     expect(pruned.gap).toContain("not a coverage finding");
   });
@@ -374,10 +380,12 @@ describe("the bounded reader above it", () => {
     expect(response.status).toBe("ok");
     if (response.status !== "ok") throw new Error("expected ok");
     expect(response.data).toHaveLength(1);
-    expect(response.data[0].coverageState).toBe("partial_area_coverage");
+    // The typed state, not the prose: an unregistered lane is an UNBOUND source, never the
+    // positive claim `partial_area_coverage` makes (STYLE-REVIEW-W2 B3).
+    expect(response.data[0].coverageState).toBe("source_unbound_for_region");
     expect(response.data[0].sourceFeature).toBeNull();
-    // Never an empty collection with nothing said: the gap travels out to the UI verbatim.
-    expect(response.data[0].unresolvedGaps[0]).toContain("source_unbound_for_region");
+    // Never an empty collection with nothing said: the census's own words travel out to the UI.
+    expect(response.data[0].unresolvedGaps[0]).toContain(BOUNDARY_LAYER);
   });
 });
 

@@ -92,7 +92,8 @@ lane publishes. The tightest possible bounding box is the opposite error: it wou
 unsampled cell beyond an outermost specimen as `evaluated_zero` when it was never surveyed either.
 One coarse cell of slack admits the ring the outermost specimens already sit inside and stops there.
 
-`SEED_ENVELOPE` survives only as the fallback for a generation that admits no exact coordinate at
+`botanical_seed_envelope()` (formerly the `SEED_ENVELOPE` constant) survives only as the fallback
+for a generation that admits no exact coordinate at
 all. Nothing is derived from zero points, and a lane that crashed or published a degenerate box in
 that case would be worse than one that falls back to a stated scoping guess.
 

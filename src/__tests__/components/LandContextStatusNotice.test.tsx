@@ -96,6 +96,28 @@ describe("deriveLandContextNotices", () => {
     expect(notices[0].message).toContain(`Stated gap: ${GAP}.`);
   });
 
+  it("renders an unbound source as a governed absence, never as partial coverage or a fault", () => {
+    const notices = deriveLandContextNotices(
+      input({
+        enabledGroups: { ...ALL_OFF, "blm-lands": true },
+        selection: POINT,
+        queryStatus: "settled",
+        resultMeta: {
+          totalCount: 0,
+          returnedCount: 0,
+          hasMore: false,
+          coverageNotices: [{ coverageState: "source_unbound_for_region", gaps: [GAP] }],
+        },
+      })
+    );
+    expect(notices).toHaveLength(1);
+    expect(notices[0].layerId).toBe("land-context-coverage-source_unbound_for_region");
+    // Amber caption tone, not the fault pill: nothing broke, nothing is bound here.
+    expect(notices[0].tone).toBe("notice");
+    expect(notices[0].message).toContain("not available in this region");
+    expect(notices[0].message).toContain(`Stated gap: ${GAP}.`);
+  });
+
   it("names only the families that came back empty, never one that matched", () => {
     const notices = deriveLandContextNotices(
       input({

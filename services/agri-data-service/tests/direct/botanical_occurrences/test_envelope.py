@@ -7,9 +7,11 @@ from __future__ import annotations
 from datetime import date
 from typing import TYPE_CHECKING
 
+import pytest
+
 from agri_data_service.foundation.botanical_occurrences.coordinates import (
     ENVELOPE_PAD_DEGREES,
-    SEED_ENVELOPE,
+    botanical_seed_envelope,
     derive_envelope,
 )
 from agri_data_service.foundation.botanical_occurrences.event_interval import EventInterval
@@ -79,11 +81,20 @@ def _release(records: tuple[NormalizedOccurrence, ...]) -> ReadRelease:
     )
 
 
-def test_seed_envelope_is_the_region_manifest_botanical_seed_sub_envelope() -> None:
-    """`SEED_ENVELOPE` is a deprecated alias; pin it to the manifest it now reads."""
+def test_botanical_seed_envelope_is_the_region_manifest_botanical_seed_sub_envelope() -> None:
+    """The seed envelope is read from the manifest per call, never snapshot at import."""
     envelope = load_region().sub_envelopes["botanical_seed"]
-    assert (envelope.west, envelope.south, envelope.east, envelope.north) == SEED_ENVELOPE
-    assert SEED_ENVELOPE == (-125.0, 41.0, -110.0, 50.0)
+    assert (envelope.west, envelope.south, envelope.east, envelope.north) == botanical_seed_envelope()
+    assert botanical_seed_envelope() == (-125.0, 41.0, -110.0, 50.0)
+
+
+def test_the_deprecated_seed_envelope_alias_still_resolves_and_warns() -> None:
+    """`SEED_ENVELOPE` survives one more release as a lazily resolved, warning alias."""
+    from agri_data_service.foundation.botanical_occurrences import coordinates as coordinates_module
+
+    with pytest.deprecated_call():
+        alias_value = coordinates_module.SEED_ENVELOPE
+    assert alias_value == botanical_seed_envelope()
 
 
 def test_the_envelope_tracks_the_actual_extent_of_the_records() -> None:
@@ -97,10 +108,10 @@ def test_the_envelope_tracks_the_actual_extent_of_the_records() -> None:
 
 
 def test_an_empty_release_falls_back_to_the_seed_rather_than_crashing() -> None:
-    assert derive_envelope([]) == SEED_ENVELOPE
-    assert derive_envelope(()) == SEED_ENVELOPE
-    assert generation_envelope(()) == SEED_ENVELOPE
-    assert generation_envelope((_record("a", None, None, spatial_class="nonspatial"),)) == SEED_ENVELOPE
+    assert derive_envelope([]) == botanical_seed_envelope()
+    assert derive_envelope(()) == botanical_seed_envelope()
+    assert generation_envelope(()) == botanical_seed_envelope()
+    assert generation_envelope((_record("a", None, None, spatial_class="nonspatial"),)) == botanical_seed_envelope()
 
 
 def test_only_exact_records_are_measured_from() -> None:

@@ -17,8 +17,9 @@ from typing import TYPE_CHECKING, cast
 
 from agri_data_service.config import settings
 from agri_data_service.db.engine import local_source_loader_session
+from agri_data_service.ingest.mtbs import burn_severity_bounding_box
 from agri_data_service.ingest.policy import parse_bbox, resolve_bounded_bbox
-from agri_data_service.pipeline.direct.burn_severity.capture import BBOX, YEARS, capture_snapshot, prepare_capture
+from agri_data_service.pipeline.direct.burn_severity.capture import YEARS, capture_snapshot, prepare_capture
 from agri_data_service.pipeline.direct.burn_severity.current_snapshot import digest
 from agri_data_service.pipeline.direct.burn_severity.forward import run_burn_severity_forward
 from agri_data_service.pipeline.direct.burn_severity.publish_snapshot import publish_stage
@@ -87,7 +88,7 @@ async def _run_daily_owned(config: BurnSeverityForwardConfig) -> dict[str, objec
     if today != datetime.now(UTC).date() or today.year > YEARS[-1]:
         raise ValueError("MTBS daily dispatcher needs the actual current day and a reviewed year horizon")
     configured = resolve_bounded_bbox(config.bbox)
-    if configured is None or parse_bbox(configured) != BBOX:
+    if configured is None or parse_bbox(configured) != burn_severity_bounding_box():
         raise ValueError("MTBS daily dispatcher requires its exact reviewed deployment footprint")
     deadline = time.monotonic() + config.time_budget_seconds
     storage = BotoAvailabilityStorage.from_settings()

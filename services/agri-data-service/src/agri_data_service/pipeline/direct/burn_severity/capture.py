@@ -12,10 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
-from agri_data_service.ingest.mtbs import MTBS_FEATURE_SERVICE_QUERY_URL
-from agri_data_service.pipeline.direct.burn_severity.current_snapshot import (
-    BBOX as BBOX,  # noqa: PLC0414 - public reexport: `daily.py` imports the one burn envelope definition through here
-)
+from agri_data_service.ingest.mtbs import MTBS_FEATURE_SERVICE_QUERY_URL, burn_severity_bounding_box
 from agri_data_service.pipeline.direct.burn_severity.current_snapshot import (
     MAX_CAPTURE_ROWS,
     canonical_bytes,
@@ -159,7 +156,7 @@ def _query(  # noqa: PLR0913 - transport, budget, archive, receipt sink, query a
 def _parameters(year: int) -> dict[str, str]:
     return {
         "where": f"year = {year}",
-        "geometry": ",".join(str(edge) for edge in BBOX),
+        "geometry": ",".join(str(edge) for edge in burn_severity_bounding_box()),
         "geometryType": "esriGeometryEnvelope",
         "inSR": "4326",
         "spatialRel": "esriSpatialRelIntersects",
@@ -279,7 +276,7 @@ def _capture_snapshot(output: Path) -> dict[str, object]:  # noqa: PLR0912 - seq
                 raise ValueError("MTBS changed its source inventory during capture")
     budget.remaining()
     manifest = make_source_manifest(
-        bbox=BBOX,
+        bbox=burn_severity_bounding_box(),
         years=YEARS,
         captured_from=started,
         captured_through=datetime.now(UTC),

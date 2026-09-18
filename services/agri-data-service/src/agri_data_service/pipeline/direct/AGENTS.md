@@ -1066,7 +1066,8 @@ a fresh licensing review") rather than inventing a new value or defaulting to `T
   on stdout). No `--product`: this lane publishes exactly one stream. `--max-days` (default 1, max 5) is
   a RELEASE-DAY count, taken newest-governed-first. `--bbox` overrides `INGEST_BBOX`; an unconfigured
   bbox is a no-op turn (`ingest/policy.py::UNCONFIGURED_BBOX_REASON`), matching the Postgres-era job's
-  own `resolve_bounded_bbox` refusal rather than silently defaulting to `PACIFIC_NORTHWEST_BBOX`.
+  own `resolve_bounded_bbox` refusal rather than silently defaulting to the reviewed footprint
+  (`ingest/mtbs.py::burn_severity_bounding_box`).
 - `python -m agri_data_service.pipeline.direct.burn_severity.backfill` -- the oldest-governed-first
   walker over the WHOLE candidate set (there is no bounded recent-window scan to configure, unlike
   drought's `DROUGHT_BACKLOG_SCAN_WEEKS`); shares every locked publish-and-verify function `forward.py`

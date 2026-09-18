@@ -17,6 +17,7 @@ import { z } from "zod";
 import { MAX_FEATURES_RETURNED, PILOT_STATES } from "./budgets";
 import type {
   BoundaryVersionRef,
+  CoverageState,
   OrganizationOfficeRef,
   OverlapBasis,
   ParcelKey,
@@ -145,18 +146,31 @@ export function selectServingRung(
 }
 
 /** A read that produced no partition to touch, with the census's own words for why. */
-interface PointerRefusal {
+/**
+ * A refusal to name a partition, as a TYPED coverage finding plus the sentence explaining it.
+ *
+ * The state is the field machine consumers branch on; `detail` is prose for a caption and for
+ * `unresolvedGaps`. Before 2026-09-18 only the prose existed, so `reader.ts` resolved every refusal
+ * -- including "no lane is registered anywhere" and "the census request timed out" -- to
+ * `partial_area_coverage`, a positive coverage assertion (STYLE-REVIEW-W2 B3). Callers that cannot
+ * yet carry a state still read `detail` through the `gap` channel.
+ */
+export interface CoverageRefusal {
+  coverageState: CoverageState;
+  detail: string;
+}
+
+interface PointerRefusal extends CoverageRefusal {
   partition: null;
-  gap: string;
 }
 
 interface PointerResolution {
   partition: ServingPartition;
-  gap: string;
+  detail: "";
 }
 
-function refusal(gap: string): PointerRefusal {
-  return { partition: null, gap };
+function refusal(coverageState: CoverageState, detail: string): PointerRefusal {
+  return { partition: null, coverageState, detail };
 }
 
 /** Every census lane describing one product's observed stream, whatever its rung. */
@@ -186,6 +200,7 @@ async function resolveServingPartition(
     const failure = parquetUpstreamFailure(error);
     if (failure === null) throw error;
     return refusal(
+      "upstream_unavailable",
       `land-context coverage census unavailable (${failure.fault.kind}): ${failure.fault.message}; this is a transport failure, not a coverage finding`
     );
   }
@@ -193,7 +208,8 @@ async function resolveServingPartition(
   const productLanes = lanesForProduct(census.lanes, layer);
   if (productLanes.length === 0) {
     return refusal(
-      `no Parquet lane named "${layer}" appears in the warehouse coverage census; source_unbound_for_region for the land-context reference plane`
+      "source_unbound_for_region",
+      `no Parquet lane named "${layer}" appears in the warehouse coverage census; the land-context reference plane binds no source for it in this region`
     );
   }
 
@@ -204,6 +220,7 @@ async function resolveServingPartition(
   if (readable.length === 0) {
     const reasons = [...new Set(withheld.map((lane) => lane.withheldReason))].join(", ");
     return refusal(
+      "unknown_coverage",
       reasons.length > 0
         ? `every published rung of "${layer}" is withheld by its availability index (${reasons})`
         : `"${layer}" is registered but has written no day on any rung`
@@ -215,6 +232,7 @@ async function resolveServingPartition(
   if (zoomTier === null) {
     const coarsest = Math.min(...publishedTiers) as ZoomTier;
     return refusal(
+      "unknown_coverage",
       `a ${bboxAreaSquareDegrees.toFixed(2)} square degree request exceeds every published rung of "${layer}"; the coarsest published rung (z${coarsest}) is bounded at ${RUNG_MAX_BBOX_SQUARE_DEGREES[coarsest]} square degrees`
     );
   }
@@ -222,12 +240,15 @@ async function resolveServingPartition(
   const lane = readable.find((candidate) => candidate.zoomTier === zoomTier);
   // `selectServingRung` chose from `publishedTiers`, so the lane it named is always present.
   if (lane === undefined || lane.latestDay === null) {
-    return refusal(`rung z${zoomTier} of "${layer}" vanished between census read and partition select`);
+    return refusal(
+      "unknown_coverage",
+      `rung z${zoomTier} of "${layer}" vanished between census read and partition select`
+    );
   }
 
   return {
     partition: { layer, zoomTier, day: lane.latestDay },
-    gap: "",
+    detail: "",
   };
 }
 
@@ -432,13 +453,19 @@ async function readProductRows<TRow>(
  */
 export async function pruneCandidatesByBbox(
   bbox: BboxDegrees
-): Promise<{ candidateKeys: string[]; gap: string }> {
+): Promise<{ candidateKeys: string[]; gap: string; refusal: CoverageRefusal | null }> {
   const resolved = await resolveServingPartition(
     LAND_CONTEXT_PRODUCT_LAYERS.boundaries,
     bboxSquareDegrees(bbox)
   );
-  if (resolved.partition === null) return { candidateKeys: [], gap: resolved.gap };
-  return { candidateKeys: [partitionKey(resolved.partition)], gap: "" };
+  if (resolved.partition === null) {
+    return {
+      candidateKeys: [],
+      gap: resolved.detail,
+      refusal: { coverageState: resolved.coverageState, detail: resolved.detail },
+    };
+  }
+  return { candidateKeys: [partitionKey(resolved.partition)], gap: "", refusal: null };
 }
 
 /**
@@ -488,7 +515,7 @@ export async function exactIntersectCandidates(
 export async function findContainingFeatures(
   lon: number,
   lat: number
-): Promise<{ features: CandidateBoundaryFeature[]; gap: string }> {
+): Promise<{ features: CandidateBoundaryFeature[]; gap: string; refusal: CoverageRefusal | null }> {
   const probe: BboxDegrees = {
     west: lon - POINT_PROBE_PAD_DEGREES,
     south: lat - POINT_PROBE_PAD_DEGREES,
@@ -496,8 +523,10 @@ export async function findContainingFeatures(
     north: lat + POINT_PROBE_PAD_DEGREES,
   };
   const pruned = await pruneCandidatesByBbox(probe);
-  if (pruned.candidateKeys.length === 0) return { features: [], gap: pruned.gap };
-  return exactIntersectCandidates(pruned.candidateKeys, probe);
+  if (pruned.candidateKeys.length === 0) {
+    return { features: [], gap: pruned.gap, refusal: pruned.refusal };
+  }
+  return { ...(await exactIntersectCandidates(pruned.candidateKeys, probe)), refusal: null };
 }
 
 /**
@@ -516,7 +545,7 @@ export async function findBoundaryByParcelKey(
     LAND_CONTEXT_PRODUCT_LAYERS.boundaries,
     RUNG_MAX_BBOX_SQUARE_DEGREES[13]
   );
-  if (resolved.partition === null) return { feature: null, gap: resolved.gap };
+  if (resolved.partition === null) return { feature: null, gap: resolved.detail };
   return {
     feature: null,
     gap: `${resolved.partition.layer} publishes rung z${resolved.partition.zoomTier}, but the frozen Parquet wire exposes no key-addressed read; ${key.sourceNamespace}:${key.originalId} cannot be resolved without a parcel-key index product or a bounding box`,
@@ -546,7 +575,7 @@ export async function findRelationshipsAndRoutes(
     LAND_CONTEXT_PRODUCT_LAYERS.contacts,
     RUNG_MAX_BBOX_SQUARE_DEGREES[0]
   );
-  if (resolved.partition === null) return { ...empty, gap: resolved.gap };
+  if (resolved.partition === null) return { ...empty, gap: resolved.detail };
 
   const { rows, gap } = await readProductRows(resolved.partition, contactRowSchema, null);
   const matching = rows
@@ -633,7 +662,7 @@ export async function readCoverageStatus(
     LAND_CONTEXT_PRODUCT_LAYERS.boundaries,
     RUNG_MAX_BBOX_SQUARE_DEGREES[0]
   );
-  if (resolved.partition === null) return { covered: null, gap: resolved.gap };
+  if (resolved.partition === null) return { covered: null, gap: resolved.detail };
   return {
     covered: null,
     gap: `${resolved.partition.layer} publishes rung z${resolved.partition.zoomTier} as of ${resolved.partition.day}, but no per-region coverage product states whether ${place} is within admitted coverage`,

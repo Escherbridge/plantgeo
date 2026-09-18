@@ -55,10 +55,12 @@ vi.mock("@/lib/server/services/land-context/parquet-reader", async () => {
         },
       ],
       gap: "",
+      refusal: null,
     })),
     pruneCandidatesByBbox: vi.fn(async () => ({
       candidateKeys: ["parcel-123", "parcel-456"],
       gap: "",
+      refusal: null,
     })),
     exactIntersectCandidates: vi.fn(async () => ({
       features: [

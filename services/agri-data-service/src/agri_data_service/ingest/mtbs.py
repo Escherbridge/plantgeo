@@ -7,6 +7,7 @@ import asyncio
 import hashlib
 import json
 import sys
+import warnings
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
@@ -73,16 +74,43 @@ MTBS_FEATURE_SERVICE_QUERY_URL: Final = "https://apps.fs.usda.gov/arcx/rest/serv
 MTBS_FEATURE_SERVICE_HOST: Final = "apps.fs.usda.gov"
 MTBS_LAYER_NAME: Final = "Burned Area Boundaries (All Years)"
 
-# Matches `src/__tests__/services/ingestion-jobs.test.ts:3` (west, south, east, north).
-# Deprecated alias for `foundation/region`'s `sub_envelopes["burn_severity"]`; kept so existing
-# importers do not break (`federation.md` §5 step 2). Read the manifest directly in new code.
-_burn_severity_envelope = load_region().sub_envelopes["burn_severity"]
-PACIFIC_NORTHWEST_BBOX: Final[BoundingBox] = (
-    _burn_severity_envelope.west,
-    _burn_severity_envelope.south,
-    _burn_severity_envelope.east,
-    _burn_severity_envelope.north,
+
+def burn_severity_bounding_box() -> BoundingBox:
+    """Read the burn-severity deployment envelope from the region manifest, once per call.
+
+    Matches `src/__tests__/services/ingestion-jobs.test.ts:3` (west, south, east, north). This is a
+    function and not a module constant because `federation.md` §1 forbids a module-level footprint:
+    the manifest is read per call, so `PLANTGEO_REGION` set after this module is imported is still
+    honoured, and a caller that depends on the region says so at the call site.
+    """
+    envelope = load_region().sub_envelopes["burn_severity"]
+    return (envelope.west, envelope.south, envelope.east, envelope.north)
+
+
+#: Deprecated module attributes resolved lazily by `__getattr__`; see `DEPRECATED_ALIASES.md`.
+_DEPRECATED_MODULE_ATTRIBUTES: Final[Mapping[str, Callable[[], object]]] = MappingProxyType(
+    {"PACIFIC_NORTHWEST_BBOX": burn_severity_bounding_box},
 )
+
+
+def __getattr__(name: str) -> object:
+    """Resolve a deprecated module attribute at access time, never at import time.
+
+    Deprecated: `PACIFIC_NORTHWEST_BBOX` is kept importable for one release so existing importers do
+    not break (`federation.md` §5 step 2); call `burn_severity_bounding_box()` instead. Removal
+    condition is recorded in `services/agri-data-service/DEPRECATED_ALIASES.md`.
+    """
+    resolve_deprecated_attribute = _DEPRECATED_MODULE_ATTRIBUTES.get(name)
+    if resolve_deprecated_attribute is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    warnings.warn(
+        f"{__name__}.{name} is deprecated; call burn_severity_bounding_box() so the region manifest "
+        "is read per call (see DEPRECATED_ALIASES.md)",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return resolve_deprecated_attribute()
+
 
 # Verbatim from the retired `src/lib/server/services/mtbs.ts:13-19`. Never renumbered, and never
 # consulted with a default: an absent or unrecognised code raises rather than becoming "unburned".
@@ -902,14 +930,19 @@ async def capture_release(
 async def ingest_mtbs(
     ignition_years: Sequence[int],
     *,
-    bounding_box: BoundingBox = PACIFIC_NORTHWEST_BBOX,
+    bounding_box: BoundingBox | None = None,
     output_root: Path | None = None,
     review: SourceReview | None = None,
     client: httpx.AsyncClient | None = None,
 ) -> list[MtbsReleaseCapture]:
-    """Capture every requested MTBS release; `ingest/commands.py` owns its CLI adapter."""
+    """Capture every requested MTBS release; `ingest/commands.py` owns its CLI adapter.
+
+    An omitted `bounding_box` resolves to `burn_severity_bounding_box()` inside this call, so the
+    region manifest is read per invocation rather than frozen into a default at import.
+    """
     if not ignition_years:
         raise ValueError("ingest_mtbs requires at least one ignition year")
+    requested_bounding_box = bounding_box if bounding_box is not None else burn_severity_bounding_box()
     root = output_root if output_root is not None else settings.local_execution_root
     owns_client = client is None
     if client is None:
@@ -922,7 +955,7 @@ async def ingest_mtbs(
         return [
             await capture_release(
                 ignition_year,
-                bounding_box=bounding_box,
+                bounding_box=requested_bounding_box,
                 output_root=root,
                 client=client,
                 review=review,
@@ -1203,7 +1236,9 @@ def build_argument_parser() -> argparse.ArgumentParser:
         prog="agri-ingest-mtbs",
         description="Capture MTBS burned-area boundaries one annual release at a time.",
     )
-    parser.add_argument("--bbox", type=parse_bounding_box, default=PACIFIC_NORTHWEST_BBOX)
+    # Evaluated here, not at import: the parser is built inside `main()`, so `--bbox` defaults to the
+    # manifest envelope as it reads at parse time.
+    parser.add_argument("--bbox", type=parse_bounding_box, default=burn_severity_bounding_box())
     parser.add_argument("--release-year", type=int, action="append", dest="release_years")
     parser.add_argument("--all-releases", action="store_true")
     parser.add_argument("--output-root", type=Path, default=None)

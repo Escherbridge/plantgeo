@@ -16,7 +16,8 @@ Northwest 0.25-degree vegetation lattice..."`) all mention the region by name wi
 its footprint. Restricting the walk to `Assign`/`AnnAssign` targets excludes bare-string docstrings
 (they are `Expr` statements) and call-keyword-argument dicts (they are not assignments) for free,
 while still catching every named constant federation.md §1 lists as an offender
-(`PACIFIC_NORTHWEST_BBOX`, `SEED_ENVELOPE`, `PNW_STATE_CODES`, `PNW_COARSE_NODES`).
+(the former `PACIFIC_NORTHWEST_BBOX` and `SEED_ENVELOPE`, now manifest-reading functions, plus
+`PNW_STATE_CODES` and `PNW_COARSE_NODES`).
 
 **Numeric 4-tuples are filtered by a western-hemisphere discriminator**, not just "four numbers in
 lon/lat range": `(0, 5, 9, 13)` (a zoom-tier ladder, appears in `foundation/parquet/zoom.py`,

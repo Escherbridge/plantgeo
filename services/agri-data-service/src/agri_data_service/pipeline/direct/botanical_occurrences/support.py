@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final
 
 from agri_data_service.foundation.botanical_occurrences.coordinates import (
-    SEED_ENVELOPE,
+    botanical_seed_envelope,
     polygon_wkb,
     within_declared_envelope,
 )
@@ -229,7 +229,7 @@ def evaluate_support(  # noqa: PLR0913 - release set, support, records, associat
     support: GridSupport,
     *,
     release_set_id: str,
-    envelope: tuple[float, float, float, float] = SEED_ENVELOPE,
+    envelope: tuple[float, float, float, float] | None = None,
     include_evaluated_zero: bool = True,
 ) -> tuple[SupportEvaluation, ...]:
     """Evaluate every cell this generation can honestly speak about, and no others.
@@ -240,7 +240,10 @@ def evaluate_support(  # noqa: PLR0913 - release set, support, records, associat
     honest reading of a cell nobody evaluated. `not_evaluated` is therefore never written by this
     function -- a cell it computed was, by definition, evaluated -- and the word exists in the schema
     for a future partial-coverage generation to use.
+
+    An omitted `envelope` resolves to `botanical_seed_envelope()` inside the call.
     """
+    declared_envelope = envelope if envelope is not None else botanical_seed_envelope()
     by_occurrence = {record.occurrence_id: record for record in records}
     cells: dict[str, list[SpatialAssociation]] = {}
     for association in associations:
@@ -275,7 +278,7 @@ def evaluate_support(  # noqa: PLR0913 - release set, support, records, associat
         )
 
     if include_evaluated_zero:
-        evaluations.extend(_evaluated_zero_cells(support, envelope, set(cells), release_set_id, excluded_total))
+        evaluations.extend(_evaluated_zero_cells(support, declared_envelope, set(cells), release_set_id, excluded_total))
     return tuple(evaluations)
 
 
@@ -358,9 +361,12 @@ def summarise_cell_taxa(
 def cell_within_envelope(
     support: GridSupport,
     cell_id: str,
-    envelope: tuple[float, float, float, float] = SEED_ENVELOPE,
+    envelope: tuple[float, float, float, float] | None = None,
 ) -> bool:
-    """Report whether a cell's centre lies inside the declared admitted envelope."""
+    """Report whether a cell's centre lies inside the declared admitted envelope.
+
+    An omitted `envelope` resolves to `botanical_seed_envelope()` inside `within_declared_envelope`.
+    """
     column, row = _cell_indices_from_id(cell_id)
     longitude, latitude = support.centroid(column, row)
     return within_declared_envelope(longitude, latitude, envelope)

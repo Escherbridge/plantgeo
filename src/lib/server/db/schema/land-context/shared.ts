@@ -13,7 +13,11 @@
  * glob) once the freeze is confirmed. Nothing here is queried by app code.
  */
 import { pgSchema, customType } from "drizzle-orm/pg-core";
-import { getRegion, type RegionAdminCode } from "@/lib/region/region";
+import {
+  REGION_SUBDIVISION_CODES,
+  type RegionAdminCode,
+  type RegionSubdivisionCode,
+} from "@/lib/region/region";
 
 export const landContextSchema = pgSchema("land_context");
 
@@ -31,15 +35,17 @@ export const spatialPoint = customType<{ data: string; driverData: string }>({
 /**
  * WA/OR/ID per the spec's geographic boundary; not a general US state enum.
  *
- * Deprecated aliases for `getRegion().adminCodes`'s two-letter suffixes
- * (`federation.md` §5 step 2); new code should read `RegionAdminCode`
- * directly rather than importing these.
+ * Deprecated aliases for `REGION_SUBDIVISION_CODES` / `RegionSubdivisionCode`
+ * (`federation.md` §5 step 2); new code should read those directly. They are
+ * now plain re-exports of the manifest-derived tuple: the old
+ * `as unknown as readonly ["WA","OR","ID"]` joined the runtime value and the
+ * declared type by assertion alone, so a changed `pnw.ts` left every
+ * `PnwStateCode`-typed surface promising three codes the value no longer had
+ * (STYLE-REVIEW-W2 S1).
  */
-export const PNW_STATE_CODES = getRegion().adminCodes.map(
-  (adminCode) => adminCode.split("-")[1],
-) as unknown as readonly ["WA", "OR", "ID"];
-export type PnwStateCode = (typeof PNW_STATE_CODES)[number];
-export type { RegionAdminCode };
+export const PNW_STATE_CODES = REGION_SUBDIVISION_CODES;
+export type PnwStateCode = RegionSubdivisionCode;
+export type { RegionAdminCode, RegionSubdivisionCode };
 
 /**
  * Source admission verdict, verbatim from spec §"Source/releases" and

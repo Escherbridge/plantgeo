@@ -20,8 +20,8 @@ import {
   ZoomTierResolutionError,
   type ZoomTier,
 } from "@/lib/map/zoom-tiers";
-import { bboxSquareDegrees } from "@/lib/map/viewport-bbox";
 import { selectFinestAdmittingRung } from "@/lib/map/rung-selection";
+import { WORLD_EXTENT_ENVELOPE } from "@/lib/map/world-extent";
 import { trpc } from "@/lib/trpc/client";
 import { LAND_CONTEXT_GROUP_IDS, type LandContextGroupId } from "@/stores/land-context-store";
 import { useViewportBounds, PROXIED_RETRY_COUNT } from "@/hooks/useViewportProxiedLayers";
@@ -112,25 +112,36 @@ function parseViewportBbox(bbox: string | null): LandContextViewportBbox | null 
 
 /**
  * Placeholder bbox for a viewport that cannot be read; the query is disabled in that case, and
- * this value is never sent. Mirrors `NO_VIEWPORT_BBOX` in `useViewportProxiedLayers.ts`.
+ * this value is never sent. It is the explicit world-extent "no viewport" sentinel -- the ONE
+ * literal box `federation.md` §1 permits -- read from `@/lib/map/world-extent`, exactly as
+ * `useViewportProxiedLayers.ts` does (`const NO_VIEWPORT_BBOX = WORLD_EXTENT_BBOX;`). A regional
+ * box here would make a disabled query one `enabled` regression away from sending a footprint.
  */
-const NO_VIEWPORT_BBOX: LandContextViewportBbox = {
-  west: -125,
-  south: 42,
-  east: -111,
-  north: 49,
-};
+const NO_VIEWPORT_BBOX: LandContextViewportBbox = WORLD_EXTENT_ENVELOPE;
 
 export interface UseLandContextViewportOptions {
   /** Which land-context groups the user has toggled on; the query is a no-op when none are. */
   enabledGroups: Record<LandContextGroupId, boolean>;
 }
 
+/**
+ * The rung a result was actually served from, as the SERVER reports it.
+ *
+ * `"rung_unknown"` is not a tier and must never be rendered as one: it is the honest answer while
+ * `resolveBoundaryInArea` returns `LandContextResult[]` carrying no served rung. The client walk
+ * below cannot stand in for it -- `selectServingRung` takes no zoom and walks finest-first, so for
+ * a small bbox at a low map zoom the two disagree by up to two rungs.
+ */
+export type LandContextServedRung = ZoomTier | "rung_unknown";
+
 export interface UseLandContextViewportResult {
   /** The bbox actually asked for, or null when nothing was asked. */
   bbox: LandContextViewportBbox | null;
-  /** The rung this viewport expects to be served from; null when none admits it. */
-  expectedZoomTier: ZoomTier | null;
+  /**
+   * The rung the server served this result from; `"rung_unknown"` when a result is in hand and the
+   * response states no rung (every response today), and null when nothing has answered yet.
+   */
+  servedZoomTier: LandContextServedRung | null;
   state: LandContextViewportState;
   query: ReturnType<typeof trpc.landContext.resolveBoundaryInArea.useQuery>;
 }
@@ -156,17 +167,20 @@ export function useLandContextViewport({
   const resolved = useMemo(() => {
     const bbox = parseViewportBbox(viewportBboxString);
     if (bbox === null) {
-      return { bbox: null, expectedZoomTier: null, state: "viewport_unavailable" as const };
+      return { bbox: null, state: "viewport_unavailable" as const };
     }
-    const area = bboxSquareDegrees(viewportBboxString ?? "") ?? Number.POSITIVE_INFINITY;
-    const expectedZoomTier = landContextRungForViewport(zoom, area);
-    if (expectedZoomTier === null) {
-      return { bbox, expectedZoomTier, state: "no_rung_serves_this_viewport" as const };
+    // Measured from the parsed box: `parseViewportBbox` already rejected an unorderable or
+    // non-finite one, so there is no unparseable case left for a fallback to catch.
+    const area = (bbox.east - bbox.west) * (bbox.north - bbox.south);
+    // A GATE, not a label: this decides whether any rung can answer the viewport at all. Which rung
+    // actually serves it is the server's choice and is reported as `servedZoomTier`.
+    if (landContextRungForViewport(zoom, area) === null) {
+      return { bbox, state: "no_rung_serves_this_viewport" as const };
     }
     if (area > LAND_CONTEXT_MAX_AOI_SQUARE_DEGREES) {
-      return { bbox, expectedZoomTier, state: "area_over_budget" as const };
+      return { bbox, state: "area_over_budget" as const };
     }
-    return { bbox, expectedZoomTier, state: "reading" as const };
+    return { bbox, state: "reading" as const };
   }, [viewportBboxString, zoom]);
 
   const state: LandContextViewportState = hasEnabledGroup ? resolved.state : "no_group_enabled";
@@ -184,7 +198,10 @@ export function useLandContextViewport({
 
   return {
     bbox: isAsking ? resolved.bbox : null,
-    expectedZoomTier: resolved.expectedZoomTier,
+    // The response states no rung, so the only honest answer once one is in hand is that the served
+    // rung is unknown. Reporting the client walk here would caption evidence with a rung the server
+    // did not use.
+    servedZoomTier: query.data === undefined ? null : "rung_unknown",
     state,
     query,
   };

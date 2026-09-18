@@ -99,13 +99,17 @@ export async function readPointContainment(
     return budgetExceeded("aoi_area_exceeds_limit", 0, null);
   }
 
-  const { features, gap } = await findContainingFeatures(lon, lat);
+  const { features, gap, refusal } = await findContainingFeatures(lon, lat);
 
   if (features.length === 0) {
-    // The placeholder reader cannot yet distinguish "point is outside every
-    // admitted pilot boundary" from "coverage for this point is unknown" —
-    // both collapse to unknown_coverage until a real lane is wired in.
-    return { status: "ok", data: [emptyResult("unknown_coverage", gap)] };
+    // A pointer refusal carries its own typed state (no source bound here, or the census read did
+    // not complete). Only when the pointer resolved and the read simply found nothing is the
+    // honest answer "coverage for this point is unknown": this reader still cannot tell "outside
+    // every admitted pilot boundary" from "coverage unknown".
+    return {
+      status: "ok",
+      data: [emptyResult(refusal?.coverageState ?? "unknown_coverage", refusal?.detail ?? gap)],
+    };
   }
 
   const bounded = features.slice(0, maxFeatures);
@@ -169,9 +173,19 @@ export async function readBoundedAoiIntersection(
   const { features, gap } = await exactIntersectCandidates(pruned.candidateKeys, bbox);
 
   if (features.length === 0) {
+    // The pointer GET's typed refusal wins: a layer with no lane registered anywhere is
+    // `source_unbound_for_region` and a census timeout is `upstream_unavailable`, neither of which
+    // may be reported as `partial_area_coverage` -- a POSITIVE claim that part of this area was
+    // covered (`layer-lanes.md` §1b; STYLE-REVIEW-W2 B3). `partial_area_coverage` is reserved for
+    // the case the pointer resolved a partition and the data read returned no intersecting row.
     return {
       status: "ok",
-      data: [emptyResult("partial_area_coverage", pruned.gap || gap)],
+      data: [
+        emptyResult(
+          pruned.refusal?.coverageState ?? "partial_area_coverage",
+          pruned.refusal?.detail ?? gap
+        ),
+      ],
     };
   }
 

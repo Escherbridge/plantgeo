@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
 
 from agri_data_service.foundation.botanical_occurrences.coordinates import (
-    SEED_ENVELOPE,
+    botanical_seed_envelope,
     derive_envelope,
     within_declared_envelope,
 )
@@ -176,7 +176,9 @@ class BotanicalForwardConfig:
     time_budget_seconds: float = DEFAULT_TIME_BUDGET_SECONDS
     #: The envelope each archive is READ against. The published one is measured from the records
     #: this turn actually admitted (`generation_envelope`), so this is only the seed for that pass.
-    envelope: tuple[float, float, float, float] = SEED_ENVELOPE
+    #: Resolved per plan instance, never at import: the region manifest is read when a plan is
+    #: built (`federation.md` §1).
+    envelope: tuple[float, float, float, float] = field(default_factory=botanical_seed_envelope)
     advance_pointer: bool = True
     target: PublicationTarget | None = field(default=None, compare=False)
 
@@ -375,9 +377,12 @@ def _restamped(
 def generation_envelope(
     records: Sequence[NormalizedOccurrence],
     *,
-    seed: tuple[float, float, float, float] = SEED_ENVELOPE,
+    seed: tuple[float, float, float, float] | None = None,
 ) -> tuple[float, float, float, float]:
-    """Measure this generation's admitted envelope from its own EXACT records; see the module AGENTS.md."""
+    """Measure this generation's admitted envelope from its own EXACT records; see the module AGENTS.md.
+
+    An omitted `seed` resolves to `botanical_seed_envelope()` inside `derive_envelope`.
+    """
     return derive_envelope(
         (
             (record.longitude, record.latitude)

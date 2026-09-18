@@ -26,8 +26,8 @@ boxes); `defaultCameraEnvelope` is `coverage-region.ts`'s `FALLBACK_COVERAGE_BBO
 (`-125,42,-111,49`) — kept as its own field, not read from `envelope`, so pointing that constant at
 the manifest stayed behaviour-neutral; `subEnvelopes.burn_severity` is MTBS's own admitted bbox
 (also `-125,42,-111,49` — the same numbers as `defaultCameraEnvelope` by coincidence, not by rule);
-and `subEnvelopes.botanical_seed` is the botanical-occurrence classifier's `SEED_ENVELOPE`
-(`-125,41,-110,50`). All are real, distinct claims; none is a typo of another.
+and `subEnvelopes.botanical_seed` is what the botanical-occurrence classifier's
+`botanical_seed_envelope()` reads (`-125,41,-110,50`). All are real, distinct claims; none is a typo of another.
 
 ## Remaining footprint literals `coverage-region.ts` still carries
 
@@ -48,3 +48,20 @@ later) `.subEnvelopes.<purpose>` — instead of importing a new constant. `getRe
 today because only one manifest exists; a later multi-region deployment adds a
 `NEXT_PUBLIC_PLANTGEO_REGION`-keyed registry inside this function, not a second exported constant
 callers have to know to switch to.
+
+## Admin codes are declared once and derived twice
+
+`pnw.ts` keeps `PNW_ADMIN_CODES` as a `const` tuple and spreads it into `adminCodes`, so the string
+literals survive into the type system. `region.ts` then derives everything else from it:
+`RegionAdminCode` is `(typeof PNW.adminCodes)[number]`, and `REGION_SUBDIVISION_CODES` maps the
+codes to their two-letter suffixes, keeping the TUPLE shape that `z.enum` and Drizzle's enum
+builders require. Its values come from the validated, frozen `getRegion()`; only the shape is
+asserted, and that shape is computed from the tuple, so it cannot promise codes the manifest no
+longer has.
+
+`PNW_STATE_CODES` (`db/schema/land-context/shared.ts`), `PILOT_STATES`
+(`services/land-context/budgets.ts`) and `PilotState`
+(`lib/environmental/land-context-contract.ts`) are now aliases of that one definition. Each was a
+separate hand-written `["WA","OR","ID"]`, and `PNW_STATE_CODES` joined its runtime value to its
+declared type with `as unknown as` -- so a changed `pnw.ts` would have left every typed surface
+promising three codes the value no longer had (STYLE-REVIEW-W2 S1/S2).

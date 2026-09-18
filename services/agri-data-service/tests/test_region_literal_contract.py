@@ -54,11 +54,10 @@ _ALLOWED_RELATIVE_PATHS: Final[frozenset[str]] = frozenset(
 #: value is read from `load_region()` is the only edit this set may receive; a new offender
 #: anywhere else fails this test rather than growing this set.
 #:
-#: Empty today: the 2026-09-18 wave-2 push already pointed every Python-side footprint constant
-#: this guard can see (`PACIFIC_NORTHWEST_BBOX` in `ingest/mtbs.py`, `SEED_ENVELOPE` in
-#: `foundation/botanical_occurrences/coordinates.py`) at `load_region()` -- both are now tuples of
-#: `Attribute` reads off the manifest, not `Constant` literals, so this walk does not see them as
-#: offenders. Kept as a real (initially empty) set, not a comment, so the next offender this walk
+#: Empty today: the 2026-09-18 waves already replaced every Python-side footprint constant this
+#: guard can see with a manifest-reading function (`burn_severity_bounding_box()` in `ingest/mtbs.py`,
+#: `botanical_seed_envelope()` in `foundation/botanical_occurrences/coordinates.py`), so there is no
+#: module-level tuple left for this walk to see as an offender. Kept as a real (initially empty) set, not a comment, so the next offender this walk
 #: finds has somewhere to go without inventing the shape.
 KNOWN_OFFENDERS: Final[frozenset[tuple[str, int, str]]] = frozenset()
 

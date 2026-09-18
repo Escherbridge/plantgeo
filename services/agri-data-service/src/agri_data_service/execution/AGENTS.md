@@ -40,6 +40,14 @@ Lane cadence, phase offset, command, timeout, catch-up policy, and publication c
 `LANE_SPECS` (see `lane_specs.py`). Keep each current source-direct lane as a separate failure domain.
 New recurring work must be registered there instead of adding a Railway cron.
 
+`VEGETATION_NDVI_PROMOTION_LANE_ID` is registered and deliberately NOT in the deployed allow-list.
+Activating it is a production mutation an owner makes by adding the identifier to that variable on
+the job-executor service (the lane's own command carries no `--day`, so it promotes
+`settled_through(today)` backwards by `--max-days`). A day the vegetation forward writer never
+published is reported by that turn as a governed absence (`status: "absent"`,
+`reason: "no_day_partition_written"`, with the lane and the day) and does not fail the turn; a day
+that was written and is empty still fails, naming both.
+
 ## Durable execution
 
 The executor uses the `agri.job_*` tables for definitions, logical runs, work items, attempts,

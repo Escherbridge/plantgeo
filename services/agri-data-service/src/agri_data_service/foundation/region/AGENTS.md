@@ -34,19 +34,21 @@ before this package did, and they are genuinely different claims:
 - `envelope` = `(-126, 41, -110, 50)` — the **named region** row from
   `src/lib/map/coverage-region.ts`'s `NAMED_COVERAGE_REGIONS`, the widest of the three and the one
   this manifest's top-level field carries.
-- `sub_envelopes.burn_severity` = `(-125, 42, -111, 49)` — `PACIFIC_NORTHWEST_BBOX`
-  (`ingest/mtbs.py:76`), restated in three `pipeline/direct/burn_severity/*.py` files and in the
+- `sub_envelopes.burn_severity` = `(-125, 42, -111, 49)` — read by `burn_severity_bounding_box()`
+  (`ingest/mtbs.py`, which `pipeline/direct/burn_severity/*.py` now calls rather than restating) and by the
   `parquet-trpc-readers/burn-severity.ts` reader's `SUPPORTED_BURN_SNAPSHOT_SCOPE` default. It is
   also the current `FALLBACK_COVERAGE_BBOX` value in `coverage-region.ts` — a coincidence of which
   literal someone reached for, not a rule that the fallback camera and the burn envelope must
   match.
-- `sub_envelopes.botanical_seed` = `(-125, 41, -110, 50)` — `SEED_ENVELOPE`
-  (`foundation/botanical_occurrences/coordinates.py:22`).
+- `sub_envelopes.botanical_seed` = `(-125, 41, -110, 50)` — read by `botanical_seed_envelope()`
+  (`foundation/botanical_occurrences/coordinates.py`).
 
 None of the three is wrong; they describe three different things (the platform's named footprint,
 MTBS's admitted bbox, and the botanical-occurrence classifier's admitted-coverage envelope) that
 happened to be typed as three separate near-identical tuples. `sub_envelopes` gives step 2 a place
-to point `PACIFIC_NORTHWEST_BBOX` and `SEED_ENVELOPE` at instead of restating them a fourth time;
+for `burn_severity_bounding_box()` and `botanical_seed_envelope()` to read instead of restating them
+a fourth time (the two old constant names survive one release as deprecated lazy aliases, listed in
+`services/agri-data-service/DEPRECATED_ALIASES.md`);
 it is not itself in `federation.md` §1's required-fields list, and a later step may decide one or
 both should collapse into `envelope` once every caller of the narrower box has been reviewed.
 
