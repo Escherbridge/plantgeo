@@ -29,10 +29,10 @@ evaluates it on 1-row and N-row frames for every envelope lattice latitude at ea
 from __future__ import annotations
 
 import datetime as dt
-import shutil
-import subprocess
+import hashlib
 import sys
 import types
+from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
 import polars as pl
@@ -92,8 +92,12 @@ RUN_ID: Final = "banded-test-run"
 FROZEN_NOW: Final = dt.datetime(2026, 9, 1, 12, tzinfo=dt.UTC)
 KIND: Final = "observed"
 FIRE_DETECTIONS_STREAM: Final = "fire-detections"
-#: The last commit whose `derivation.py` had no banding at all: the oracle the unbanded path is pinned to.
+#: The last commit whose `derivation.py` had no banding at all: the oracle the unbanded path is pinned to,
+#: vendored byte-exact (`git show d4bb3491:...derivation.py`, git blob 4b8cddfc6c09beeed0674d1ec9800af5a1bfc88f)
+#: as a `.py.txt` so no linter, formatter or collector ever touches it, and pinned by digest before it is exec'd.
 ORACLE_COMMIT: Final = "d4bb3491"
+ORACLE_PATH: Final = Path(__file__).parent / "fixtures" / f"derivation_oracle_{ORACLE_COMMIT}.py.txt"
+ORACLE_SHA256: Final = "8bac193e4e1ec5bd41f359f721c1841f7f0d54bec488223efeb3b9e56e28d7c4"
 
 BANDED_STREAM: Final = "test-banded-evt-lane"
 UNBANDED_TWIN_STREAM: Final = "test-banded-evt-lane-whole-day"
@@ -115,8 +119,8 @@ BAND_43_CELLS: Final = (215, 219)
 FIRST_CELL_OF_BAND_42: Final = 210
 FIRST_CELL_OF_BAND_44: Final = 220
 LARGE_PART_ROWS: Final = 1_000
-#: A z9 cell the float floor splits across two 0.4 deg bands: 32.8 / 0.01 floors to 3279 (origin "32.79")
-#: while 32.8 is base cell 13120 -> z5 cell 164, which opens band 82; 32.7975 is z5 cell 163, band 81.
+#: Two origins either side of a 0.4 deg band edge: 32.8 is base cell 13120 -> z5 cell 164, which opens band 82;
+#: 32.7975 is z5 cell 163, band 81. Before `FLOOR_SNAP_TOLERANCE` the platform floored 32.8 into the z9 cell "32.79".
 SPLIT_CELL_LATITUDES: Final = (32.7975, 32.8)
 RECOMMENDED_BASES: Final = (0.0025, 0.005, 0.01)
 LEGEND_CONIFER: Final = 7011
@@ -312,23 +316,10 @@ def _assert_banded_equals_whole_day(store: ObjectStore, stream: str, base: pl.Da
 
 
 def _derivation_module_before_banding() -> types.ModuleType:
-    """Load `derivation.py` exactly as committed at `ORACLE_COMMIT`, beside the working tree's copy."""
-    if shutil.which("git") is None:
-        pytest.skip("git is not on PATH, so the pre-banding derivation.py cannot be loaded for the side-by-side pin")
-    root = subprocess.run(
-        ["git", "rev-parse", "--show-toplevel"], check=True, capture_output=True, text=True
-    ).stdout.strip()
-    source = subprocess.run(
-        [
-            "git",
-            "show",
-            f"{ORACLE_COMMIT}:services/agri-data-service/src/agri_data_service/pipeline/parquet/derivation.py",
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-        cwd=root,
-    ).stdout
+    """Load `derivation.py` exactly as committed at `ORACLE_COMMIT` from the vendored bytes, digest-pinned."""
+    payload = ORACLE_PATH.read_bytes()
+    assert hashlib.sha256(payload).hexdigest() == ORACLE_SHA256, "the vendored oracle is not the committed bytes"
+    source = payload.decode("utf-8")
     module = types.ModuleType("agri_data_service_derivation_before_banding")
     # Registered first: `dataclass` resolves string annotations through `sys.modules[cls.__module__]`.
     sys.modules[module.__name__] = module
@@ -415,12 +406,11 @@ def test_every_cell_lies_in_exactly_one_band_across_the_envelope_and_the_fold_is
 ) -> None:
     """The property behind the fold, on the full 24-50 N lattice for every pair ROW-CAP section 4 recommends.
 
-    Band membership is exact integer arithmetic on the lattice, while `_derive_grid_tier` floors each
-    rung with its own IEEE division, so a z9 OR a z5 cell as the platform floors it may hold rows from
-    two bands at a handful of edges (32.8 is in the z9 cell printed 32.79). The split counts are
-    measured and reported, not assumed zero; exactness does not depend on them: written band-major and
-    derived band by band, every rung equals the whole-day derivation because a split cell's pieces are
-    merged with the same associative aggregates.
+    Band membership is exact integer arithmetic on the lattice and, since `floor_to_resolution` snaps
+    lattice origins (`FLOOR_SNAP_TOLERANCE`), so is the platform's flooring of every rung -- so NO z9
+    or z5 cell holds rows from two bands anywhere in the envelope, and that is asserted. Exactness is
+    then the associativity of the aggregates: written band-major and derived band by band, every rung
+    equals the whole-day derivation.
     """
     banding = LatitudeBanding.of_height(band_height, base_pitch)
     slug = f"h{band_height}-b{base_pitch}".replace(".", "")
@@ -442,7 +432,7 @@ def test_every_cell_lies_in_exactly_one_band_across_the_envelope_and_the_fold_is
 
     assert sum(receipt.row_count for receipt in written.receipts) == base.height
     _assert_banded_equals_whole_day(store, stream, base)
-    assert all(count >= 0 for count in split_cells.values()), "measured for the record; exactness did not depend on it"
+    assert split_cells == {"z9_origin": 0, "z5_origin": 0}, "a snapped floor puts every origin cell in one band"
 
 
 @pytest.mark.parametrize("base_pitch", RECOMMENDED_BASES)
@@ -459,9 +449,7 @@ def test_membership_agrees_between_a_one_row_frame_and_a_bulk_frame_for_every_en
     # The only latitudes a division path can move across a z5 cell are the ones AT a z5 edge (and the
     # origin just below it); every other origin sits a whole base cell inside its z5 cell. Those plus a
     # stride sample of the rest keep the loop honest and the file fast.
-    edge_indexes = {
-        index for index, lat in enumerate(envelope) if round(lat / base_pitch) % banding.cells_per_z5 == 0
-    }
+    edge_indexes = {index for index, lat in enumerate(envelope) if round(lat / base_pitch) % banding.cells_per_z5 == 0}
     below_edges = {index - 1 for index in edge_indexes if index > 0}
     chosen = sorted(edge_indexes | below_edges | set(range(0, len(envelope), 97)))
     latitudes = [envelope[index] for index in chosen]
@@ -479,24 +467,45 @@ def test_membership_agrees_between_a_one_row_frame_and_a_bulk_frame_for_every_en
     assert bulk == exact
 
 
-def test_a_z9_cell_the_float_floor_splits_across_two_bands_is_merged_exactly() -> None:
-    """32.7975 and 32.8 share the z9 cell printed 32.79 but sit in z5 cells 163 and 164; at 0.4 deg that is an edge."""
-    banding = LatitudeBanding.of_height(0.4, 0.0025)
-    stream = _register_vegetation_like_lane("test-banded-split-z9-cell", banding)
-    base = _lattice(latitudes=list(SPLIT_CELL_LATITUDES), longitudes=(-116.0,))
-    bands = base.select(banding.band_index_expression("cell_lat").alias("band"))["band"].unique().sort().to_list()
-    z9_origins = base.select(floor_to_resolution(pl.col("cell_lat"), Z9_PITCH).alias("o"))["o"].n_unique()
-    assert len(bands) == len(SPLIT_CELL_LATITUDES), "the fixture must straddle a band edge, one row per side"
-    assert z9_origins == 1, "the fixture must share one z9 cell, or the merge is never exercised"
-    store = ObjectStore(RecordingBackend())
-    written = write_banded_base_day(store, base, layer=stream, kind=KIND, day=DAY, rows_per_part=EDGE_PART_ROWS)
+def _two_pieces_of_one_z9_cell(*, class_system_by_piece: tuple[str, str] = ("LF2025", "LF2025")) -> pl.DataFrame:
+    """Two band pieces that both derived the same z9 grain row, as `_assemble_rungs` concatenates them."""
+    rows = []
+    for piece, (class_system, pixels) in enumerate(zip(class_system_by_piece, (5, 7), strict=True)):
+        rows.append(
+            {
+                "cell_lon": -116.0,
+                "cell_lat": 32.79,
+                "class_system": class_system,
+                "evt_code": None,
+                "evt_group_code": 645,
+                "evt_phys": "Conifer",
+                "evt_lifeform": "Tree",
+                "pixel_count": pixels + piece,
+                "release_day": DAY,
+            }
+        )
+    frame = pl.from_arrow(pa.Table.from_pylist(rows, schema=_vegetation_arrow_schema()))
+    assert isinstance(frame, pl.DataFrame)
+    return frame
 
-    _derive_banded_day(store, stream, written)
 
-    _assert_banded_equals_whole_day(store, stream, base)
-    z9 = _read_rung(store, stream, 9)
-    assert z9["pixel_count"].sum() == base["pixel_count"].sum()
-    assert z9.select("cell_lon", "cell_lat", *JOINT_LADDER[9]).is_duplicated().sum() == 0
+def test_a_cell_two_bands_both_derived_is_merged_exactly_by_the_assembly_defence(banded_lane: str) -> None:
+    """Unreachable from an origin lattice now the floor is exact; kept as defence. The merge is the whole-day sum."""
+    pieces = _two_pieces_of_one_z9_cell()
+
+    merged = derivation._merge_split_cells(pieces, _vegetation_strategy(), tier=9, layer=banded_lane, day=DAY)
+
+    assert merged.height == 1
+    assert merged["pixel_count"].item() == pieces["pixel_count"].sum()
+    assert merged.select("cell_lon", "cell_lat", *JOINT_LADDER[9]).is_duplicated().sum() == 0
+    assert merged.columns == pieces.columns
+
+
+def test_a_first_column_that_differs_across_a_split_cell_is_refused_at_the_merge(banded_lane: str) -> None:
+    pieces = _two_pieces_of_one_z9_cell(class_system_by_piece=("LF2024", "LF2025"))
+
+    with pytest.raises(NonConstantFirstError, match=r"was derived in two bands and column 'class_system'"):
+        derivation._merge_split_cells(pieces, _vegetation_strategy(), tier=9, layer=banded_lane, day=DAY)
 
 
 ONE_ROW_PART_CASES: Final = [
@@ -560,34 +569,13 @@ def test_a_row_alone_in_its_band_is_derived_not_lost() -> None:
     assert _read_rung(store, stream, 0).equals(derive_tier(base, stream=stream, tier=0))
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="tiers.floor_to_resolution is frame-length dependent (Polars 1.43): a 1-row band frame floors 32.8 into "
-    "the z5 cell 32.6 while the 2-row whole-day frame floors it into 32.8. Pre-existing platform defect, "
-    "tiers.py owner; remove this xfail when floor_to_resolution is made length-independent",
-)
 def test_a_row_alone_in_its_band_gets_the_same_z5_origin_as_the_whole_day() -> None:
+    """Once `floor_to_resolution` snapped lattice origins, a 1-row band frame and the whole day agree at z5 too."""
     stream, base, store, written = _single_row_band_fixture()
 
     _derive_banded_day(store, stream, written)
 
     assert _read_rung(store, stream, 5).equals(derive_tier(base, stream=stream, tier=5))
-
-
-def test_a_first_column_that_differs_across_a_split_cell_is_refused_at_the_merge() -> None:
-    banding = LatitudeBanding.of_height(0.4, 0.0025)
-    stream = _register_vegetation_like_lane("test-banded-split-z9-cell-first", banding)
-    base = _lattice(latitudes=list(SPLIT_CELL_LATITUDES), longitudes=(-116.0,)).with_columns(
-        pl.when(pl.col("cell_lat") == SPLIT_CELL_LATITUDES[0])
-        .then(pl.lit("LF2024"))
-        .otherwise(pl.lit("LF2025"))
-        .alias("class_system")
-    )
-    store = ObjectStore(RecordingBackend())
-    written = write_banded_base_day(store, base, layer=stream, kind=KIND, day=DAY, rows_per_part=EDGE_PART_ROWS)
-
-    with pytest.raises(NonConstantFirstError, match=r"was derived in two bands and column 'class_system'"):
-        _derive_banded_day(store, stream, written)
 
 
 REVIEWER_REPRODUCERS: Final = [

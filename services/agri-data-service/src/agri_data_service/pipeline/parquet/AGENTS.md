@@ -1118,27 +1118,26 @@ FR-6 already requires 4326 cell origins; `write_banded_base_day` ENFORCES it bef
 from an integer multiple is refused with "base rows must be lattice origins, not centroids". Float
 noise on a true origin (~1e-12) passes; an unlocated (null/NaN) row is exempt.
 
-**What the integer rule does and does not buy.** Membership no longer tracks `_derive_grid_tier`'s
-flooring at all — that flooring is `floor(lat / r)` per rung with IEEE division, so as the platform
-floors them a z9 cell OR a z5 cell may hold rows from two bands at a handful of edges (32.8 is in the
-z9 cell whose origin prints as 32.79). That is a property of the platform's flooring, not of banding,
-and it is why the fold does not rely on alignment for exactness: `_merge_split_cells` is
-grain-generic and re-aggregates any grain row two bands both produced, at z9 and z5 alike, with
-`_MERGE_AGGREGATES` mirroring `tiers._POLARS_AGGREGATES` entry for entry (all-null sums to null,
-`all`/`any` keep nulls, typed `null`). For associative aggregates that merge IS the whole-day value,
-so banded == whole-day at every rung for every lawful pair — the envelope property test proves it
-for (0.4, 0.0025), (0.2, 0.01), (1.0, 0.005) and (2.0, 0.005) and REPORTS the z9 and z5 split-cell
-counts rather than asserting zero. No height is refused on exactness grounds; none needs to be.
+**What the integer rule buys, now that the platform floor is exact too.** `tiers.floor_to_resolution`
+used to be `floor(v / r)` on a raw IEEE quotient, and the SAME Polars path split that broke the
+membership rule broke it: on Windows a 1-row frame floored `32.8` into the z5 cell `32.6` while the
+bulk frame gave `32.8`; on the Linux receipt image it was the BULK whole-day frame that moved an edge
+origin into the neighbouring cell. The whole-day oracle was therefore not a fixed function of its
+rows. Fixed at the root (round 5, `tiers.FLOOR_SNAP_TOLERANCE`): a quotient within 1e-9 of an integer
+is snapped to it before flooring, so a lattice origin lands in the cell that starts there on every
+frame length and every host, while a coordinate a half-cell inside is still floored. p1a's golden
+digests for every registered grid lane were re-run against the change and did not move. With both
+rules exact, NO z9 or z5 cell holds rows from two bands anywhere in the 24–50 N envelope for any
+lawful pair — the property test now asserts the split counts are zero for (0.4, 0.0025), (0.2, 0.01),
+(1.0, 0.005) and (2.0, 0.005) — and banded == whole-day is the associativity of the aggregates alone.
+`_merge_split_cells` stays as DEFENCE, unit-tested directly: grain-generic, it re-aggregates any grain
+row two bands both produced with `_MERGE_AGGREGATES` mirroring `tiers._POLARS_AGGREGATES` entry for
+entry (all-null sums to null, `all`/`any` keep nulls, typed `null`), so a future floor regression
+degrades to an exact merge rather than a duplicated row. No height is refused on exactness grounds.
 
-**Two stated exceptions to "banded == whole-day".** (1) Float `sum` is associative only up to
-rounding: summing pieces in band order rather than base order can differ in the last ulps of a
-float column (`1e16 + 1 − 1e16`); integer sums — the vegetation lane's only `sum` — are exact. (2)
-`tiers.floor_to_resolution` is itself frame-length dependent (the same Polars 1.43 path split), so a
-band frame of ONE row can floor an edge latitude into a different z5 origin than the whole-day frame
-does (32.8 → 32.6 alone, 32.8 in company). That is a pre-existing platform defect for the tiers.py
-owner, pinned as a strict `xfail` in `test_banded_derivation.py` so the pin flips when it is fixed;
-the fold loses no row in that case, it lands it in the neighbouring origin exactly as `derive_tier`
-would have on a 1-row day.
+**One stated exception to "banded == whole-day".** Float `sum` is associative only up to rounding:
+summing pieces in band order rather than base order can differ in the last ulps of a float column
+(`1e16 + 1 − 1e16`); integer sums — the vegetation lane's only `sum` — are exact.
 
 **z9 and z5 per band; z0 from the written z5.** Per band the in-band base rows are asserted
 `≤ MAX_DERIVATION_ROWS` (refused naming the band and asking for fewer cells per band, never a higher
@@ -1198,11 +1197,11 @@ recorded follow-ups that would remove this refusal.
 check, plus one `is_duplicated` per rung at assembly. For a static-lookup lane that derives once per
 LANDFIRE release (~7–18 bands) that is seconds, and it is what makes `first` admissible at all.
 
-**Follow-ups recorded here.** (a) `tiers.floor_to_resolution` / `derive_tier` are frame-length
-dependent on Polars 1.43 (a 1-row frame floors `32.8 / 0.2` to 163, an N-row frame to 164); the
-whole-day derivation itself is therefore not a fixed function of the rows at a handful of edge
-latitudes — tiers.py owner, pinned as a strict xfail. (b) Durable per-part bounds, above. (c) A
-byte-based whole-read bound, above. (d) Folding the band declaration into `TierDerivation`.
+**Follow-ups recorded here.** (a) CLOSED in round 5: `tiers.floor_to_resolution` snaps lattice
+origins (`FLOOR_SNAP_TOLERANCE`), the frame-length/platform dependence is gone, the xfail was
+removed and replaced by an equality assertion, and the golden digests did not move. (b) Durable
+per-part bounds, above. (c) A byte-based whole-read bound, above. (d) Folding the band declaration
+into `TierDerivation`.
 
 **NaN is unlocated.** `z5_cell_index_expression` applies `fill_nan(None)` before flooring, so a NaN
 latitude is in no band on both the derive path and the band-major writer — consistent with

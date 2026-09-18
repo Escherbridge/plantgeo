@@ -108,6 +108,11 @@ TIER_RESOLUTION_DEGREES: Final[Mapping[ZoomTier, float]] = {9: 0.01, 5: 0.2, 0: 
 # (`.omc/research/runbook-20260915-vegetation-type/ROW-CAP-ANALYSIS.md` section 4.1).
 MAX_DERIVATION_ROWS: Final = 5_000_000
 
+# How close `v / r` must be to an integer for `floor_to_resolution` to treat `v` as ON a cell edge.
+# Seven orders above the ulp of the largest quotient this warehouse sees (~1e5) and seven orders
+# below any half-cell, so it snaps float noise and nothing else.
+FLOOR_SNAP_TOLERANCE: Final = 1e-9
+
 # THE RESOURCE GUARDS EVERY DUCKDB SESSION THIS MODULE OPENS MUST CARRY.
 #
 # An unbounded local DuckDB query CONSUMED THE HOST on 2026-08-24, and the shape of query that did
@@ -399,8 +404,17 @@ def floor_to_resolution(values: pl.Expr, resolution: float) -> pl.Expr:
     Written as `floor(v / r) * r` rather than `v - v % r` because Python's and Polars' modulo of a
     negative number is not the C modulo a reader might expect, and every longitude in this
     warehouse's PNW universe is negative -- the two forms disagree on exactly the data this repo has.
+
+    A quotient within `FLOOR_SNAP_TOLERANCE` of an integer is snapped to it before flooring: Polars
+    evaluates `v / r` by different paths per frame length and platform (`32.8 / 0.2` is 163.999... on
+    one and 164.0 on another), and a coordinate that IS a multiple of `r` must land in the cell that
+    starts there, on every frame and every host, or a lattice origin at an edge derives differently
+    from one run to the next.
     """
-    return (values / resolution).floor() * resolution
+    quotient = values / resolution
+    nearest = quotient.round()
+    origin_cell = pl.when((quotient - nearest).abs() < FLOOR_SNAP_TOLERANCE).then(nearest).otherwise(quotient.floor())
+    return origin_cell * resolution
 
 
 def _require_columns(frame: pl.DataFrame, columns: Sequence[str], *, role: str, stream: str) -> None:
@@ -903,6 +917,7 @@ __all__ = [
     "DERIVATION_TEMP_DIRECTORY_SIZE",
     "DERIVATION_THREAD_COUNT",
     "DERIVED_ZOOM_TIERS",
+    "FLOOR_SNAP_TOLERANCE",
     "MAX_DERIVATION_ROWS",
     "TIER_RESOLUTION_DEGREES",
     "Aggregation",

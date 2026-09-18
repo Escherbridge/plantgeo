@@ -332,3 +332,36 @@ def test_load_spatial_points_duckdb_at_the_image_directory_before_its_first_load
 
 def test_the_serving_and_derivation_sessions_share_one_extension_directory() -> None:
     assert duckdb_session.SERVING_EXTENSION_DIRECTORY == duckdb_extensions.SERVING_EXTENSION_DIRECTORY
+
+
+# --- floor_to_resolution is exact for lattice origins on every frame length --------------------------------
+
+Z5_PITCH_FOR_FLOOR: Final = 0.2
+FLOOR_ORIGIN_PITCHES: Final = (0.0025, 0.005, 0.01)
+FLOOR_ENVELOPE: Final = (24.0, 50.0)
+
+
+def _z5_edge_origins(pitch: float) -> list[float]:
+    """Every 0.2-multiple origin in 24-50 N, spelled as the lattice at `pitch` would spell it."""
+    per_cell = round(Z5_PITCH_FOR_FLOOR / pitch)
+    steps = round((FLOOR_ENVELOPE[1] - FLOOR_ENVELOPE[0]) / pitch)
+    return [round(FLOOR_ENVELOPE[0] + step * pitch, 6) for step in range(0, steps + 1, per_cell)]
+
+
+@pytest.mark.parametrize("pitch", FLOOR_ORIGIN_PITCHES)
+def test_floor_to_resolution_gives_an_edge_origin_the_same_cell_on_a_one_row_and_a_bulk_frame(pitch: float) -> None:
+    origins = _z5_edge_origins(pitch)
+    expression = tiers.floor_to_resolution(pl.col("v"), Z5_PITCH_FOR_FLOOR)
+    bulk = pl.DataFrame({"v": origins}).select(expression)["v"].to_list()
+    single = [pl.DataFrame({"v": [origin]}).select(expression).item() for origin in origins]
+
+    assert bulk == single
+    # And it is the cell that STARTS at the origin, not the one below it.
+    assert bulk == pytest.approx(origins)
+    assert len(origins) > 100  # noqa: PLR2004 - ~130 z5 edges in the envelope
+
+
+def test_floor_to_resolution_still_floors_a_coordinate_inside_a_cell() -> None:
+    inside = [32.7, 32.7999, -116.1, -0.1]
+    floored = pl.DataFrame({"v": inside}).select(tiers.floor_to_resolution(pl.col("v"), Z5_PITCH_FOR_FLOOR))["v"]
+    assert floored.to_list() == pytest.approx([32.6, 32.6, -116.2, -0.2])
