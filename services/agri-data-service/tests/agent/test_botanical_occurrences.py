@@ -142,6 +142,21 @@ def _failing_target(probe: str, error: Exception) -> ObjectStorePublicationTarge
     def read(key: str) -> bytes:
         if probe == "pointer" or key.endswith("manifest.json"):
             raise error
+        if key.endswith("_LATEST.json"):
+            # The checksum-bound pointer the current-release read resolves. Valid on purpose: these
+            # cases probe TRANSPORT, so the pointer must parse or the read would fail as malformed
+            # before it ever reached the manifest GET under test.
+            return json.dumps(
+                {
+                    "pointer_schema_version": 1,
+                    "product": "botanical-occurrences",
+                    "generation_id": "0" * 64,
+                    "manifest_key": f"botanical-occurrences/{'0' * 64}/manifest.json",
+                    "manifest_sha256": "a" * 64,
+                    "published_at": None,
+                    "pointer_written_at": "2026-09-18T00:00:00+00:00",
+                }
+            ).encode()
         return json.dumps({"release_set_id": "0" * 64}).encode()
 
     backend.get.side_effect = read
@@ -172,8 +187,9 @@ async def _call_occurrence_tool(tool_name: str) -> str:
         ("temporal", "marker", EndpointConnectionError),
         ("region", "incomplete_manifest", ReadTimeoutError),
         ("region", "manifest", ReadTimeoutError),
+        # The current-release read is ONE pointer GET and ONE data GET and never touches the
+        # completion marker, so those two GETs are the whole transport surface it has.
         ("current", "pointer", EndpointConnectionError),
-        ("current", "marker", EndpointConnectionError),
         ("current", "manifest", ReadTimeoutError),
     ],
 )
@@ -189,7 +205,10 @@ async def test_storage_transport_failure_is_unavailable_without_private_error_de
     payload = json.loads(encoded)
 
     assert payload["state"] == "unavailable"
-    assert payload["reason"] == "the botanical occurrence object store could not complete the bounded read"
+    # The query path puts the prose in `reason`; the pointer path puts a CLOSED reason there and the
+    # prose in `detail`. Either way the operator-facing text is present and carries no private URL.
+    transport_text = "the botanical occurrence object store could not complete the bounded read"
+    assert transport_text in (payload["reason"], payload.get("detail"))
     assert "exact" not in payload
     assert "features" not in payload
     assert "release_set_id" not in payload
