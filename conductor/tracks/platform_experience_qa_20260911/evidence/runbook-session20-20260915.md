@@ -319,3 +319,32 @@ per lane ever on that ledger — the conservative direction); prefer an explicit
 
 **All nine partitions independently approved.** The single integrated sweep over the complete
 batch follows.
+
+## Sweep, commit and the Linux receipt gate (2026-09-18)
+
+The single integrated sweep over the complete batch: Python format, lint, mypy and full pytest
+passed after eight lint findings were fixed at the sweep (three by `ruff --fix`, five by hand:
+a `PLR0911` noqa with reason on the reviewed seven-return `_publish_locked_day`, two
+annotation-only imports moved under `TYPE_CHECKING`, two compound asserts split); frontend
+data-boundary, type check and lint passed; the frontend suite passed **201 files / 2,676 tests**.
+The batch was committed as `a17650b4` from an explicit 96-path allowlist plus the three
+coordinator records (98 staged; the concurrent session's 15 untracked evidence paths and
+`.agentgraph/` deliberately left untracked). The pre-commit hook rewrote no source: the only byte
+drift from the reviewed baseline was the coordinator's own RUNBOOK sweep line.
+
+The Python quality receipt is produced from the committed tree inside the retained QA image by a
+parameterized copy of the 2026-09-14 recovery runner. Its first run failed before creating a
+container on a repo-root path computed one level too high (`parents[4]` → `parents[3]`); the
+second run built the container and executed all four gates on Linux: format, lint and mypy
+passed, pytest ran 4,798 with **two failures**, both in the new climate quota-pause tests, which
+asserted the recorded cooldown equals the planned pause exactly and received `19.99992…`. The
+sleep is `resume_at − monotonic()` two clock reads apart; Windows' ~15 ms monotonic resolution
+returned identical reads and masked it, Linux' microsecond clock did not. Test-only fix
+(`pytest.approx(…, abs=1e-3)`) committed as `b815e4a0`; the pause series and semantics are
+unchanged. The receipt build is re-running against that commit. Lesson: a timing-derived float
+must be asserted with a tolerance, and the Linux receipt gate is the place such a fixture fails.
+
+The rebuilt receipt against `b815e4a0` passed all four gates on Linux (pytest 177.51 s), covers 900
+digest inputs, and its tree digest equals the host tree's; the unchanged verifier accepted it on the
+host. Receipt SHA-256 `e2b87486edd891ecb6e046e39bc1fcd440df5d6230081e9210178d35e7969e69` (1019 bytes), copied unchanged from
+`agri-data-service` attempt `1364e27ef5d740bfba98a1a4a97662cd`.
