@@ -54,9 +54,11 @@ one lane in this case the object is a single day-row.
 
 from __future__ import annotations
 
+from itertools import pairwise
 import hashlib
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Final, Literal
 
 import duckdb
@@ -94,10 +96,16 @@ DERIVED_ZOOM_TIERS: Final[tuple[ZoomTier, ...]] = tuple(tier for tier in reverse
 # nothing here may quietly re-introduce per-layer breakpoints to escape it.
 TIER_RESOLUTION_DEGREES: Final[Mapping[ZoomTier, float]] = {9: 0.01, 5: 0.2, 0: 5.0}
 
-# How many rows a single derivation may hold at once before the caller must batch. The drain walks
-# one lane-day at a time and the largest measured day is soil-survey's ~1.5M delineations (RUNBOOK
-# section 0.32.2 decision 4), which fits; this ceiling exists so a future lane that does NOT fit
-# says so instead of exhausting the machine.
+# How many rows ONE `derive_tier` CALL may hold, not how many a lane-day may have. Its sole
+# consumer is the height check at the top of `derive_tier`; it bounds the table handed to one
+# call and nothing else -- not the write side, not the derived rungs, not the day. A lane-day
+# larger than this is derived in pieces whose union is the day (latitude bands whose edges are
+# multiples of every rung pitch, so flooring composes exactly; the fold lives in
+# `pipeline/parquet/derivation.py`), each piece under this cap. The largest whole day measured
+# is soil-survey's ~1.5M delineations (RUNBOOK section 0.32.2 decision 4), which fits unbanded.
+# Do NOT raise this to admit a whole day: it is the only guard a `GridAggregation` lane has, and a
+# value that admitted the 23M-row vegetation-type base would bound nothing the host can hold
+# (`.omc/research/runbook-20260915-vegetation-type/ROW-CAP-ANALYSIS.md` section 4.1).
 MAX_DERIVATION_ROWS: Final = 5_000_000
 
 # THE RESOURCE GUARDS EVERY DUCKDB SESSION THIS MODULE OPENS MUST CARRY.
@@ -149,6 +157,10 @@ class ColumnAggregation:
     how: Aggregation
 
 
+# The only two fates a key column may have at a rung that no longer keys on it.
+_DROPPED_KEY_AGGREGATES: Final[frozenset[str]] = frozenset({"first", "null"})
+
+
 @dataclass(frozen=True, slots=True)
 class GridAggregation:
     """Coarsen a lane that carries coordinates: re-floor the grid, then re-aggregate onto it.
@@ -163,12 +175,87 @@ class GridAggregation:
     (`sql/pipeline/fire_detections_day_export.sql` snaps with the same arithmetic), so a coarse cell
     contains exactly the base cells whose own origin floors into it -- an invariant a reader can
     check, which rounding to centres would break at every tier boundary.
+
+    `key_columns_by_tier`, when set, replaces `key_columns` rung by rung (a vocabulary ladder such
+    as EVT code -> group -> physiognomy -> lifeform). `None` means `key_columns` at every rung. A
+    column keyed at any rung but not at THIS one is a DROPPED key and must aggregate `first` or
+    `null` -- `first` is lawful only where the finer vocabulary nests inside the coarser one, and
+    the lane owns proving that. See `warehouse/parquet/AGENTS.md`, "Per-rung key columns".
     """
 
     longitude_column: str
     latitude_column: str
     key_columns: tuple[str, ...]
     aggregations: tuple[ColumnAggregation, ...]
+    key_columns_by_tier: Mapping[ZoomTier, tuple[str, ...]] | None = None
+
+    def __post_init__(self) -> None:
+        """Refuse a ladder that is incomplete, contradicts the base grain, drops a key unlawfully or breaks a chain."""
+        if self.key_columns_by_tier is None:
+            overlap = sorted({spec.column for spec in self.aggregations} & set(self.key_columns))
+            if overlap:
+                raise TierDerivationError(
+                    f"column(s) {overlap} are both in `key_columns` and in `aggregations`; with no per-rung ladder a "
+                    f"key is never dropped, so its aggregate would never apply -- state each column's fate once"
+                )
+            return
+        declared = {validate_zoom_tier(tier): tuple(keys) for tier, keys in self.key_columns_by_tier.items()}
+        # A read-only COPY, so a later mutation of the caller's dict cannot bypass these checks, and so
+        # the frozen dataclass stays hashable (`__hash__` below) and `TierDerivation.__eq__` keeps working.
+        object.__setattr__(self, "key_columns_by_tier", MappingProxyType(declared))
+        missing = [tier for tier in DERIVED_ZOOM_TIERS if tier not in declared]
+        if missing:
+            raise TierDerivationError(
+                f"key_columns_by_tier names no key columns for z{missing}; every derived rung "
+                f"{tuple(DERIVED_ZOOM_TIERS)} must say what it keys on, or leave the mapping None so `key_columns` "
+                f"applies to all of them"
+            )
+        base_keys = declared.get(BASE_ZOOM_TIER)
+        if base_keys is not None and base_keys != self.key_columns:
+            raise TierDerivationError(
+                f"key_columns_by_tier[{BASE_ZOOM_TIER}] is {base_keys} but `key_columns` is {self.key_columns}; "
+                f"the base rung's grain is stated once, by `key_columns`"
+            )
+        aggregate_by_column = {spec.column: spec.how for spec in self.aggregations}
+        keyed_anywhere = {*self.key_columns, *(column for keys in declared.values() for column in keys)}
+        for tier in DERIVED_ZOOM_TIERS:
+            for column in sorted(keyed_anywhere - set(declared[tier])):
+                how = aggregate_by_column.get(column)
+                if how not in _DROPPED_KEY_AGGREGATES:
+                    raise TierDerivationError(
+                        f"key column {column!r} is dropped from the grain at z{tier} but aggregates {how!r}; a dropped "
+                        f"key may only be carried (`first`, lawful when the finer vocabulary nests inside the coarser) "
+                        f"or nulled (`null`) -- any arithmetic on a label fabricates a value no coarse row measured"
+                    )
+        # CHAIN SAFETY. A coarser rung may be derived from the finer derived rung above it (the banded
+        # fold derives z0 from the written z5), so every key the coarser rung needs must SURVIVE the
+        # finer one: be one of its keys, or be carried through it by `first`. A key nulled at the
+        # finer rung would make the coarser rung group on an all-null column -- silently, with no
+        # exception, collapsing every class into one row.
+        for finer, coarser in pairwise(DERIVED_ZOOM_TIERS):
+            for column in declared[coarser]:
+                if column in declared[finer] or aggregate_by_column.get(column) == "first":
+                    continue
+                raise TierDerivationError(
+                    f"key column {column!r} keys z{coarser} but does not survive z{finer}: it is not a z{finer} key "
+                    f"and aggregates {aggregate_by_column.get(column)!r} there, so z{coarser} derived from the "
+                    f"z{finer} rung would group on an all-null column. Key z{finer} on it too, or carry it with `first`"
+                )
+
+    def __hash__(self) -> int:
+        """Hash the ladder by its sorted items; `MappingProxyType` is not hashable on its own."""
+        ladder = None if self.key_columns_by_tier is None else tuple(sorted(self.key_columns_by_tier.items()))
+        return hash((self.longitude_column, self.latitude_column, self.key_columns, self.aggregations, ladder))
+
+
+def grid_key_columns(strategy: GridAggregation, tier: ZoomTier) -> tuple[str, ...]:
+    """Return the non-spatial key columns `tier` keys on: the per-rung tuple when declared, else `key_columns`."""
+    if strategy.key_columns_by_tier is None:
+        return strategy.key_columns
+    keys = strategy.key_columns_by_tier.get(validate_zoom_tier(tier))
+    # Only the base rung may be absent (`__post_init__` requires every derived one), and its grain
+    # is `key_columns` by definition.
+    return strategy.key_columns if keys is None else tuple(keys)
 
 
 @dataclass(frozen=True, slots=True)
@@ -417,13 +504,15 @@ def _derive_grid_tier(frame: pl.DataFrame, strategy: GridAggregation, *, tier: Z
     """Re-floor a coordinate lane onto `tier`'s grid and re-aggregate onto the coarser cells."""
     resolution = tier_resolution_degrees(tier)
     coordinates = (strategy.longitude_column, strategy.latitude_column)
+    keys = grid_key_columns(strategy, tier)
     _require_columns(frame, coordinates, role="coordinate", stream=stream)
-    _require_columns(frame, strategy.key_columns, role="key", stream=stream)
+    _require_columns(frame, keys, role="key", stream=stream)
     _require_columns(frame, [spec.column for spec in strategy.aggregations], role="aggregated", stream=stream)
-    grain = (*coordinates, *strategy.key_columns)
-    _require_total_coverage(
-        frame, keyed=grain, aggregated=[spec.column for spec in strategy.aggregations], stream=stream
-    )
+    grain = (*coordinates, *keys)
+    # A column keyed at THIS rung is part of the grain, so its declared aggregate (for the rungs
+    # that drop it) is not applied here.
+    aggregations = tuple(spec for spec in strategy.aggregations if spec.column not in keys)
+    _require_total_coverage(frame, keyed=grain, aggregated=[spec.column for spec in aggregations], stream=stream)
     # A ROW WITH NO POSITION HAS NO RUNG. `water-gauges` carries nullable latitude/longitude (its
     # `geometry_linked` column records which rows lack a location at all), and a null coordinate
     # cannot be floored onto a grid. Polars would otherwise group every such row together into a
@@ -435,9 +524,7 @@ def _derive_grid_tier(frame: pl.DataFrame, strategy: GridAggregation, *, tier: Z
         floor_to_resolution(pl.col(strategy.longitude_column), resolution).alias(strategy.longitude_column),
         floor_to_resolution(pl.col(strategy.latitude_column), resolution).alias(strategy.latitude_column),
     )
-    aggregated = coarsened.group_by(grain).agg(
-        *(_aggregate_expression(spec, stream=stream) for spec in strategy.aggregations)
-    )
+    aggregated = coarsened.group_by(grain).agg(*(_aggregate_expression(spec, stream=stream) for spec in aggregations))
     # Re-select in the base table's own column order. `group_by` returns keys first, and a table
     # whose columns are correct but reordered is refused by `conform_to_stream_schema` -- a failure
     # that reads as a schema regression rather than as the column shuffle it actually is.
@@ -774,7 +861,14 @@ def validate_derivation_against_schema(stream: str) -> tuple[str, ...]:
         for role, name in (("longitude", strategy.longitude_column), ("latitude", strategy.latitude_column)):
             if name not in columns:
                 problems.append(f"{stream}: the derivation names {role} column {name!r}, which its schema lacks")
-        named = {strategy.longitude_column, strategy.latitude_column, *strategy.key_columns}
+        per_tier_keys: set[str] = set()
+        if strategy.key_columns_by_tier is not None:
+            per_tier_keys.update(column for keys in strategy.key_columns_by_tier.values() for column in keys)
+        problems.extend(
+            f"{stream}: the derivation keys a rung on column {missing!r}, which its schema lacks"
+            for missing in sorted({*strategy.key_columns, *per_tier_keys} - set(columns))
+        )
+        named = {strategy.longitude_column, strategy.latitude_column, *strategy.key_columns, *per_tier_keys}
         named.update(aggregation.column for aggregation in aggregations)
         problems.extend(
             f"{stream}: column {missing!r} is neither grain nor aggregated, so `derive_tier` will refuse it"
@@ -826,6 +920,7 @@ __all__ = [
     "derivation_session",
     "derive_tier",
     "floor_to_resolution",
+    "grid_key_columns",
     "register_tier_derivation",
     "registered_tier_derivations",
     "tier_derivation",

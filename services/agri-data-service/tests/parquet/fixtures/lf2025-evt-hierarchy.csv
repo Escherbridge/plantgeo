@@ -1,0 +1,1070 @@
+VALUE,EVT_GP,EVT_PHYS,EVT_LF
+-9999,-9999,Fill-NoData,Fill-NoData
+4401,762,Shrubland,Shrub
+4402,763,Riparian,Tree
+4403,763,Riparian,Tree
+4404,750,Shrubland,Shrub
+4405,775,Shrubland,Shrub
+4406,779,Sparsely Vegetated,Sparse
+4407,767,Grassland,Herb
+4408,752,Shrubland,Shrub
+4409,784,Conifer,Tree
+4410,784,Conifer,Tree
+4411,773,Riparian,Shrub
+4412,762,Shrubland,Shrub
+4413,763,Riparian,Tree
+4414,751,Riparian,Shrub
+4415,752,Shrubland,Shrub
+4416,754,Grassland,Herb
+4417,767,Grassland,Herb
+4418,683,Conifer,Tree
+4419,782,Conifer,Tree
+4420,782,Conifer,Tree
+4421,627,Conifer,Tree
+4422,683,Conifer,Tree
+4423,638,Conifer,Tree
+4424,772,Riparian,Shrub
+4425,750,Shrubland,Shrub
+4426,754,Grassland,Herb
+4427,783,Riparian,Herb
+4428,700,Sparsely Vegetated,Sparse
+4429,762,Shrubland,Shrub
+4430,767,Grassland,Herb
+4431,786,Shrubland,Shrub
+4432,700,Sparsely Vegetated,Sparse
+4434,700,Sparsely Vegetated,Sparse
+4435,775,Shrubland,Shrub
+4436,762,Shrubland,Shrub
+4437,773,Riparian,Shrub
+4438,765,Riparian,Herb
+4439,775,Grassland,Herb
+4440,767,Grassland,Herb
+4441,775,Shrubland,Shrub
+4442,786,Shrubland,Shrub
+4443,775,Shrubland,Shrub
+4444,762,Shrubland,Shrub
+4445,777,Shrubland,Shrub
+4446,783,Riparian,Herb
+4447,754,Grassland,Herb
+4448,781,Shrubland,Shrub
+4449,780,Riparian,Herb
+4450,781,Grassland,Herb
+4453,762,Shrubland,Shrub
+4454,767,Grassland,Herb
+4455,700,Sparsely Vegetated,Sparse
+4456,683,Conifer,Tree
+4457,758,Conifer,Tree
+4458,700,Sparsely Vegetated,Sparse
+4459,760,Shrubland,Shrub
+4460,759,Grassland,Herb
+4461,765,Riparian,Herb
+4462,763,Riparian,Tree
+4463,756,Hardwood,Tree
+4464,783,Riparian,Herb
+4465,786,Shrubland,Shrub
+4466,785,Conifer,Tree
+4467,758,Conifer,Tree
+4468,763,Riparian,Tree
+4469,770,Riparian,Tree
+4470,772,Riparian,Shrub
+4471,774,Shrubland,Shrub
+4472,762,Shrubland,Shrub
+4473,783,Riparian,Shrub
+4474,778,Conifer,Tree
+4475,784,Conifer,Tree
+4476,758,Conifer,Tree
+4477,783,Riparian,Herb
+4478,753,Hardwood,Tree
+4479,785,Conifer-Hardwood,Tree
+4480,785,Conifer-Hardwood,Tree
+4481,785,Conifer-Hardwood,Tree
+4482,785,Conifer-Hardwood,Tree
+4483,785,Conifer-Hardwood,Tree
+4484,758,Conifer-Hardwood,Tree
+4485,763,Riparian,Tree
+4486,763,Riparian,Tree
+4487,763,Riparian,Tree
+4488,763,Riparian,Tree
+4489,763,Riparian,Tree
+4490,763,Riparian,Tree
+4491,770,Riparian,Tree
+4492,770,Riparian,Tree
+4601,700,Sparsely Vegetated,Sparse
+4602,700,Sparsely Vegetated,Sparse
+4603,700,Sparsely Vegetated,Sparse
+4604,810,Hardwood,Tree
+4605,801,Hardwood,Tree
+4606,810,Hardwood,Tree
+4609,806,Hardwood,Tree
+4610,809,Riparian,Herb
+4611,809,Riparian,Tree
+4612,804,Hardwood,Tree
+4614,810,Hardwood,Tree
+4615,700,Sparsely Vegetated,Sparse
+4616,700,Sparsely Vegetated,Sparse
+4617,700,Sparsely Vegetated,Sparse
+4618,803,Hardwood,Tree
+4620,808,Hardwood,Tree
+4621,802,Hardwood,Tree
+4622,806,Hardwood,Tree
+4623,809,Riparian,Tree
+4624,806,Riparian,Shrub
+4627,802,Shrubland,Shrub
+4628,802,Grassland,Herb
+4629,802,Shrubland,Shrub
+4630,802,Grassland,Herb
+4902,763,Riparian,Shrub
+4903,763,Riparian,Shrub
+4904,763,Riparian,Herb
+4905,763,Riparian,Herb
+4911,773,Riparian,Herb
+4913,763,Riparian,Shrub
+4914,751,Riparian,Herb
+4937,773,Riparian,Herb
+4943,781,Grassland,Herb
+4947,700,Sparsely Vegetated,Sparse
+4962,763,Riparian,Shrub
+4963,700,Sparsely Vegetated,Sparse
+4964,700,Sparsely Vegetated,Sparse
+4965,700,Sparsely Vegetated,Sparse
+4966,700,Sparsely Vegetated,Sparse
+4968,763,Riparian,Shrub
+4969,770,Riparian,Shrub
+4970,772,Riparian,Herb
+4973,783,Riparian,Herb
+4985,763,Riparian,Shrub
+4986,763,Riparian,Shrub
+4987,763,Riparian,Shrub
+4988,763,Riparian,Shrub
+4989,763,Riparian,Shrub
+4990,763,Riparian,Shrub
+4991,770,Riparian,Shrub
+4992,770,Riparian,Shrub
+7008,629,Hardwood,Tree
+7009,602,Hardwood,Tree
+7010,644,Conifer,Tree
+7011,602,Hardwood,Tree
+7012,605,Hardwood,Tree
+7013,659,Hardwood,Tree
+7014,626,Conifer,Tree
+7015,634,Conifer,Tree
+7016,630,Conifer,Tree
+7017,620,Conifer,Tree
+7018,643,Conifer,Tree
+7019,630,Conifer,Tree
+7020,621,Conifer,Tree
+7021,645,Conifer,Tree
+7022,645,Conifer,Tree
+7023,696,Conifer-Hardwood,Tree
+7024,610,Conifer-Hardwood,Tree
+7025,630,Conifer,Tree
+7026,610,Conifer-Hardwood,Tree
+7027,625,Conifer,Tree
+7028,643,Conifer,Tree
+7029,629,Hardwood,Tree
+7030,610,Conifer,Tree
+7031,631,Conifer,Tree
+7032,633,Conifer,Tree
+7033,640,Conifer,Tree
+7034,607,Conifer,Tree
+7035,614,Conifer,Tree
+7036,638,Conifer,Tree
+7037,615,Conifer,Tree
+7038,627,Conifer,Tree
+7039,615,Conifer,Tree
+7041,627,Conifer,Tree
+7042,642,Conifer,Tree
+7043,626,Conifer,Tree
+7044,627,Conifer,Tree
+7045,625,Conifer,Tree
+7046,640,Conifer,Tree
+7047,643,Conifer,Tree
+7048,639,Conifer,Tree
+7049,621,Conifer,Tree
+7050,622,Conifer,Tree
+7051,625,Conifer,Tree
+7052,643,Conifer,Tree
+7053,631,Conifer,Tree
+7054,631,Conifer,Tree
+7055,639,Conifer,Tree
+7056,639,Conifer,Tree
+7057,621,Conifer,Tree
+7058,622,Conifer,Tree
+7059,630,Conifer,Tree
+7060,610,Conifer,Tree
+7061,603,Conifer-Hardwood,Tree
+7062,628,Conifer,Tree
+7063,632,Hardwood,Tree
+7064,623,Shrubland,Shrub
+7065,613,Shrubland,Shrub
+7066,636,Shrubland,Shrub
+7067,601,Shrubland,Shrub
+7068,601,Shrubland,Shrub
+7069,601,Grassland,Herb
+7070,601,Shrubland,Shrub
+7071,601,Shrubland,Shrub
+7072,623,Shrubland,Shrub
+7073,609,Shrubland,Shrub
+7074,611,Shrubland,Shrub
+7075,636,Shrubland,Shrub
+7076,613,Shrubland,Shrub
+7077,641,Shrubland,Shrub
+7078,606,Shrubland,Shrub
+7079,623,Shrubland,Shrub
+7080,604,Shrubland,Shrub
+7081,636,Shrubland,Shrub
+7082,613,Shrubland,Shrub
+7083,612,Shrubland,Shrub
+7084,612,Shrubland,Shrub
+7085,604,Shrubland,Shrub
+7086,612,Shrubland,Shrub
+7087,611,Shrubland,Shrub
+7088,636,Shrubland,Shrub
+7090,613,Shrubland,Shrub
+7091,613,Shrubland,Shrub
+7092,609,Shrubland,Shrub
+7093,637,Shrubland,Shrub
+7094,637,Shrubland,Shrub
+7096,607,Shrubland,Shrub
+7097,607,Shrubland,Shrub
+7098,607,Shrubland,Shrub
+7099,607,Shrubland,Shrub
+7100,613,Shrubland,Shrub
+7101,607,Shrubland,Shrub
+7102,699,Shrubland,Shrub
+7103,607,Shrubland,Shrub
+7104,607,Shrubland,Shrub
+7105,607,Shrubland,Shrub
+7106,612,Shrubland,Shrub
+7107,612,Shrubland,Shrub
+7108,607,Shrubland,Shrub
+7109,613,Shrubland,Shrub
+7110,607,Shrubland,Shrub
+7111,624,Shrubland,Shrub
+7112,629,Hardwood,Tree
+7113,629,Hardwood,Tree
+7114,610,Conifer,Tree
+7115,620,Conifer,Tree
+7116,620,Conifer,Tree
+7117,631,Conifer,Tree
+7118,629,Hardwood,Tree
+7119,620,Conifer,Tree
+7120,629,Grassland,Herb
+7121,618,Shrubland,Shrub
+7122,618,Grassland,Herb
+7123,618,Grassland,Herb
+7124,623,Shrubland,Shrub
+7125,604,Shrubland,Shrub
+7126,604,Shrubland,Shrub
+7127,613,Shrubland,Shrub
+7128,609,Shrubland,Shrub
+7129,617,Grassland,Herb
+7130,617,Grassland,Herb
+7131,617,Grassland,Herb
+7132,646,Grassland,Herb
+7133,617,Grassland,Herb
+7134,617,Grassland,Herb
+7135,617,Grassland,Herb
+7136,616,Grassland,Herb
+7137,601,Grassland,Herb
+7138,617,Grassland,Herb
+7139,617,Grassland,Herb
+7140,617,Grassland,Herb
+7141,646,Grassland,Herb
+7142,617,Grassland,Herb
+7143,601,Grassland,Herb
+7144,616,Grassland,Herb
+7145,601,Grassland,Herb
+7146,617,Grassland,Herb
+7147,617,Grassland,Herb
+7148,647,Grassland,Herb
+7149,648,Grassland,Herb
+7150,649,Grassland,Herb
+7151,635,Riparian,Tree
+7152,635,Riparian,Shrub
+7153,619,Shrubland,Shrub
+7156,632,Riparian,Tree
+7157,632,Riparian,Shrub
+7158,635,Riparian,Tree
+7159,635,Riparian,Shrub
+7161,639,Riparian,Tree
+7165,614,Conifer,Tree
+7166,614,Conifer,Tree
+7167,622,Conifer,Tree
+7168,612,Shrubland,Shrub
+7169,612,Shrubland,Shrub
+7170,607,Conifer,Tree
+7171,617,Grassland,Herb
+7172,643,Conifer,Tree
+7173,625,Conifer,Tree
+7174,642,Conifer,Tree
+7177,610,Conifer,Tree
+7178,645,Conifer,Tree
+7179,631,Conifer,Tree
+7191,710,Grassland,Herb
+7192,720,Shrubland,Shrub
+7193,730,Conifer,Tree
+7195,710,Grassland,Herb
+7196,720,Shrubland,Shrub
+7197,730,Conifer,Tree
+7198,710,Grassland,Herb
+7199,720,Shrubland,Shrub
+7200,730,Conifer,Tree
+7207,646,Shrubland,Shrub
+7234,607,Shrubland,Shrub
+7238,665,Hardwood,Tree
+7239,665,Conifer-Hardwood,Tree
+7240,685,Hardwood,Tree
+7241,685,Conifer-Hardwood,Tree
+7242,676,Hardwood,Tree
+7243,676,Conifer-Hardwood,Tree
+7247,670,Grassland,Herb
+7248,654,Grassland,Herb
+7249,687,Riparian,Shrub
+7250,628,Shrubland,Shrub
+7256,618,Grassland,Herb
+7260,610,Hardwood,Tree
+7261,610,Conifer-Hardwood,Tree
+7262,610,Hardwood,Tree
+7263,610,Conifer-Hardwood,Tree
+7264,610,Hardwood,Tree
+7265,610,Conifer-Hardwood,Tree
+7268,602,Shrubland,Shrub
+7270,607,Shrubland,Shrub
+7272,666,Riparian,Shrub
+7286,663,Grassland,Herb
+7288,651,Grassland,Herb
+7289,651,Shrubland,Shrub
+7290,663,Grassland,Herb
+7291,670,Grassland,Herb
+7292,11,Open Water,Water
+7295,32,Quarries-Strip Mines-Gravel Pits-Well and Wind Pads,Barren
+7296,22,Developed-Low Intensity,Developed
+7297,23,Developed-Medium Intensity,Developed
+7298,24,Developed-High Intensity,Developed
+7299,25,Developed-Roads,Developed
+7300,21,Developed-Open Space,Developed
+7301,652,Hardwood,Tree
+7302,682,Hardwood,Tree
+7303,660,Hardwood,Tree
+7304,660,Hardwood,Tree
+7305,661,Hardwood,Tree
+7306,667,Hardwood,Tree
+7307,658,Hardwood,Tree
+7308,662,Hardwood,Tree
+7309,682,Hardwood,Tree
+7310,660,Hardwood,Tree
+7311,663,Hardwood,Tree
+7312,681,Hardwood,Tree
+7313,655,Hardwood,Tree
+7314,655,Hardwood,Tree
+7315,661,Hardwood,Tree
+7316,667,Hardwood,Tree
+7317,661,Hardwood,Tree
+7318,655,Hardwood,Tree
+7320,681,Hardwood,Tree
+7321,655,Hardwood,Tree
+7322,667,Hardwood,Tree
+7323,680,Hardwood,Tree
+7324,658,Hardwood,Tree
+7325,680,Hardwood,Tree
+7326,673,Hardwood,Tree
+7327,667,Hardwood,Tree
+7328,680,Hardwood,Tree
+7329,667,Hardwood,Tree
+7330,658,Hardwood,Tree
+7331,602,Hardwood,Tree
+7333,672,Hardwood,Tree
+7334,655,Hardwood,Tree
+7335,658,Hardwood,Tree
+7336,672,Hardwood,Tree
+7337,672,Hardwood,Tree
+7338,656,Hardwood,Tree
+7339,656,Hardwood,Tree
+7340,664,Conifer-Hardwood,Tree
+7342,662,Hardwood,Tree
+7343,680,Hardwood,Tree
+7346,677,Conifer,Tree
+7347,677,Conifer,Tree
+7348,677,Conifer,Tree
+7349,677,Conifer,Tree
+7350,693,Conifer,Tree
+7351,677,Conifer,Tree
+7352,686,Conifer,Tree
+7353,695,Conifer,Tree
+7354,686,Conifer,Tree
+7355,686,Conifer,Tree
+7356,677,Conifer,Tree
+7357,680,Hardwood,Tree
+7358,689,Conifer,Tree
+7360,684,Conifer,Tree
+7361,679,Hardwood,Tree
+7362,665,Conifer,Tree
+7363,670,Conifer-Hardwood,Tree
+7364,662,Hardwood,Tree
+7366,685,Conifer,Tree
+7367,690,Conifer,Tree
+7368,664,Conifer,Tree
+7369,664,Conifer,Tree
+7370,685,Conifer,Tree
+7371,689,Conifer,Tree
+7372,690,Conifer,Tree
+7373,693,Conifer,Tree
+7374,693,Conifer-Hardwood,Tree
+7375,670,Conifer-Hardwood,Tree
+7376,660,Hardwood,Tree
+7377,664,Conifer,Tree
+7378,689,Conifer,Tree
+7379,679,Hardwood,Tree
+7380,679,Hardwood,Tree
+7381,662,Hardwood,Tree
+7382,679,Hardwood,Tree
+7383,662,Hardwood,Tree
+7384,679,Hardwood,Tree
+7385,635,Riparian,Tree
+7386,651,Shrubland,Shrub
+7387,691,Shrubland,Shrub
+7389,651,Conifer,Tree
+7390,613,Shrubland,Shrub
+7391,624,Hardwood,Tree
+7392,613,Shrubland,Shrub
+7393,696,Shrubland,Shrub
+7394,659,Hardwood,Tree
+7395,663,Hardwood,Tree
+7396,635,Riparian,Shrub
+7397,670,Conifer-Hardwood,Tree
+7398,670,Conifer-Hardwood,Tree
+7399,674,Grassland,Herb
+7400,670,Conifer-Hardwood,Tree
+7401,670,Conifer-Hardwood,Tree
+7403,670,Conifer-Hardwood,Tree
+7405,670,Conifer-Hardwood,Tree
+7406,664,Hardwood,Tree
+7407,676,Conifer,Tree
+7408,670,Conifer-Hardwood,Tree
+7409,671,Grassland,Herb
+7410,670,Conifer-Hardwood,Tree
+7411,675,Riparian,Herb
+7412,649,Grassland,Herb
+7413,688,Grassland,Herb
+7414,670,Shrubland,Shrub
+7415,688,Grassland,Herb
+7416,688,Grassland,Herb
+7417,688,Grassland,Herb
+7418,688,Grassland,Herb
+7419,688,Grassland,Herb
+7420,649,Grassland,Herb
+7421,649,Grassland,Herb
+7422,649,Grassland,Herb
+7423,649,Grassland,Herb
+7424,688,Grassland,Herb
+7425,688,Grassland,Herb
+7426,654,Grassland,Herb
+7428,688,Grassland,Herb
+7429,688,Grassland,Herb
+7430,688,Grassland,Herb
+7431,654,Grassland,Herb
+7434,675,Riparian,Herb
+7435,654,Grassland,Herb
+7436,654,Shrubland,Shrub
+7437,654,Grassland,Herb
+7438,617,Grassland,Herb
+7439,617,Shrubland,Shrub
+7441,688,Hardwood,Tree
+7442,688,Hardwood,Tree
+7444,666,Riparian,Tree
+7445,657,Riparian,Tree
+7446,684,Conifer,Tree
+7447,657,Riparian,Tree
+7448,664,Conifer-Hardwood,Tree
+7449,684,Riparian,Tree
+7450,684,Riparian,Tree
+7451,684,Riparian,Tree
+7452,687,Riparian,Tree
+7453,684,Conifer,Tree
+7454,684,Conifer,Tree
+7455,684,Conifer,Tree
+7456,686,Riparian,Tree
+7457,673,Riparian,Tree
+7458,684,Conifer,Tree
+7459,657,Riparian,Tree
+7460,657,Riparian,Tree
+7461,694,Riparian,Tree
+7462,694,Riparian,Tree
+7463,664,Hardwood,Tree
+7464,692,Conifer,Tree
+7465,692,Conifer,Tree
+7466,675,Riparian,Tree
+7467,666,Riparian,Tree
+7468,694,Riparian,Tree
+7469,694,Riparian,Shrub
+7471,672,Shrubland,Shrub
+7472,672,Shrubland,Shrub
+7474,666,Riparian,Shrub
+7475,666,Riparian,Herb
+7476,668,Riparian,Tree
+7481,694,Riparian,Tree
+7482,650,Riparian,Herb
+7483,653,Riparian,Herb
+7484,675,Riparian,Herb
+7485,675,Riparian,Herb
+7486,675,Riparian,Herb
+7487,675,Riparian,Herb
+7488,650,Riparian,Herb
+7489,675,Riparian,Herb
+7500,700,Sparsely Vegetated,Sparse
+7501,694,Riparian,Tree
+7502,664,Conifer-Hardwood,Tree
+7503,617,Grassland,Herb
+7504,650,Riparian,Herb
+7505,662,Hardwood,Tree
+7506,673,Riparian,Tree
+7507,689,Conifer,Tree
+7509,667,Hardwood,Tree
+7510,690,Conifer-Hardwood,Tree
+7511,685,Hardwood,Tree
+7512,685,Conifer-Hardwood,Tree
+7513,684,Riparian,Tree
+7514,650,Riparian,Herb
+7515,675,Riparian,Herb
+7516,675,Riparian,Herb
+7517,663,Hardwood,Tree
+7518,673,Riparian,Tree
+7519,662,Hardwood,Tree
+7522,674,Shrubland,Shrub
+7523,696,Conifer-Hardwood,Tree
+7524,605,Hardwood,Tree
+7525,668,Riparian,Tree
+7527,690,Hardwood,Tree
+7545,684,Riparian,Tree
+7546,690,Conifer-Hardwood,Tree
+7547,684,Riparian,Tree
+7548,684,Riparian,Tree
+7554,693,Hardwood,Tree
+7555,693,Conifer-Hardwood,Tree
+7556,664,Hardwood,Tree
+7557,664,Conifer-Hardwood,Tree
+7560,613,Shrubland,Shrub
+7561,670,Grassland,Herb
+7562,668,Riparian,Shrub
+7563,668,Riparian,Shrub
+7564,668,Riparian,Herb
+7565,691,Conifer,Tree
+7566,688,Shrubland,Shrub
+7567,688,Conifer-Hardwood,Tree
+7571,694,Riparian,Shrub
+7573,668,Riparian,Herb
+7578,675,Riparian,Tree
+7582,690,Hardwood,Tree
+7583,690,Conifer-Hardwood,Tree
+7584,689,Hardwood,Tree
+7585,689,Conifer-Hardwood,Tree
+7586,689,Hardwood,Tree
+7587,689,Conifer-Hardwood,Tree
+7588,684,Hardwood,Tree
+7589,684,Conifer-Hardwood,Tree
+7590,684,Hardwood,Tree
+7591,684,Conifer-Hardwood,Tree
+7662,765,Riparian,Herb
+7663,774,Shrubland,Shrub
+7668,780,Riparian,Herb
+7669,700,Sparsely Vegetated,Sparse
+7733,700,Sparsely Vegetated,Sparse
+7734,700,Sparsely Vegetated,Sparse
+7735,12,Snow-Ice,Snow-Ice
+7736,700,Sparsely Vegetated,Sparse
+7737,700,Sparsely Vegetated,Sparse
+7754,81,Agricultural,Herb
+7755,82,Agricultural,Agriculture
+7800,797,Riparian,Tree
+7802,797,Riparian,Tree
+7804,765,Riparian,Herb
+7806,675,Grassland,Herb
+7807,809,Grassland,Herb
+7808,790,Hardwood,Tree
+7809,790,Hardwood,Tree
+7810,790,Hardwood,Tree
+7811,794,Shrubland,Shrub
+7812,792,Hardwood,Tree
+7813,791,Hardwood,Tree
+7814,792,Hardwood,Tree
+7815,791,Hardwood,Tree
+7816,792,Hardwood,Tree
+7817,793,Shrubland,Shrub
+7818,794,Shrubland,Shrub
+7819,795,Grassland,Herb
+7820,796,Grassland,Herb
+7821,793,Shrubland,Shrub
+7822,795,Grassland,Herb
+7823,796,Grassland,Herb
+7824,794,Shrubland,Shrub
+7826,794,Shrubland,Shrub
+7827,794,Shrubland,Shrub
+7828,794,Shrubland,Shrub
+7829,700,Sparsely Vegetated,Sparse
+7830,700,Sparsely Vegetated,Sparse
+7831,700,Sparsely Vegetated,Sparse
+7832,798,Riparian,Shrub
+7833,798,Riparian,Shrub
+7834,60,Agricultural,Tree
+7835,62,Agricultural,Shrub
+7836,69,Agricultural,Agriculture
+7837,70,Agricultural,Herb
+7838,62,Agricultural,Shrub
+7860,826,Hardwood,Tree
+7861,678,Riparian,Tree
+7862,700,Sparsely Vegetated,Sparse
+7863,828,Shrubland,Shrub
+7864,828,Shrubland,Shrub
+7865,822,Hardwood,Tree
+7866,824,Riparian,Herb
+7867,678,Riparian,Tree
+7868,826,Riparian,Tree
+7869,824,Riparian,Herb
+7870,821,Hardwood,Tree
+7871,829,Grassland,Herb
+7872,821,Hardwood,Tree
+7873,821,Hardwood,Tree
+7874,824,Riparian,Shrub
+7875,826,Riparian,Tree
+7876,700,Sparsely Vegetated,Sparse
+7877,700,Sparsely Vegetated,Sparse
+7878,820,Hardwood,Tree
+7879,821,Hardwood,Tree
+7880,821,Hardwood,Tree
+7881,821,Hardwood,Tree
+7882,828,Shrubland,Shrub
+7883,825,Hardwood,Tree
+7884,826,Riparian,Tree
+7885,826,Riparian,Tree
+7886,700,Sparsely Vegetated,Sparse
+7887,826,Riparian,Shrub
+7888,826,Riparian,Shrub
+7900,13,Developed,Tree
+7901,14,Developed,Tree
+7902,15,Developed,Tree
+7903,16,Developed,Herb
+7904,17,Developed,Shrub
+7905,13,Developed,Tree
+7906,14,Developed,Tree
+7907,15,Developed,Tree
+7908,16,Developed,Herb
+7909,17,Developed,Shrub
+7910,13,Developed,Tree
+7911,14,Developed,Tree
+7912,15,Developed,Tree
+7913,16,Developed,Herb
+7914,17,Developed,Shrub
+7915,13,Developed,Tree
+7916,14,Developed,Tree
+7917,15,Developed,Tree
+7918,16,Developed,Herb
+7919,17,Developed,Shrub
+7920,13,Developed,Tree
+7921,14,Developed,Tree
+7922,15,Developed,Tree
+7923,17,Developed,Shrub
+7924,16,Developed,Herb
+7925,13,Developed,Tree
+7926,14,Developed,Tree
+7927,15,Developed,Tree
+7928,17,Developed,Shrub
+7929,16,Developed,Herb
+7930,13,Developed,Tree
+7931,14,Developed,Tree
+7932,15,Developed,Tree
+7933,17,Developed,Shrub
+7934,16,Developed,Herb
+7935,13,Developed,Tree
+7936,14,Developed,Tree
+7937,15,Developed,Tree
+7938,17,Developed,Shrub
+7939,16,Developed,Herb
+7960,60,Agricultural,Tree
+7961,61,Agricultural,Agriculture
+7962,62,Agricultural,Shrub
+7963,63,Agricultural,Agriculture
+7964,64,Agricultural,Agriculture
+7965,65,Agricultural,Agriculture
+7966,66,Agricultural,Herb
+7967,67,Agricultural,Herb
+7968,68,Agricultural,Agriculture
+7969,69,Agricultural,Agriculture
+7970,60,Agricultural,Tree
+7971,61,Agricultural,Agriculture
+7972,62,Agricultural,Shrub
+7973,63,Agricultural,Agriculture
+7974,64,Agricultural,Agriculture
+7975,65,Agricultural,Agriculture
+7976,66,Agricultural,Herb
+7977,67,Agricultural,Herb
+7978,68,Agricultural,Agriculture
+7979,69,Agricultural,Agriculture
+7980,60,Agricultural,Tree
+7981,61,Agricultural,Agriculture
+7982,62,Agricultural,Shrub
+7983,63,Agricultural,Agriculture
+7984,64,Agricultural,Agriculture
+7985,65,Agricultural,Agriculture
+7986,66,Agricultural,Herb
+7987,67,Agricultural,Herb
+7988,68,Agricultural,Agriculture
+7989,69,Agricultural,Agriculture
+7990,60,Agricultural,Tree
+7991,61,Agricultural,Agriculture
+7992,62,Agricultural,Shrub
+7993,63,Agricultural,Agriculture
+7994,64,Agricultural,Agriculture
+7995,65,Agricultural,Agriculture
+7996,66,Agricultural,Herb
+7997,67,Agricultural,Herb
+7998,68,Agricultural,Agriculture
+7999,69,Agricultural,Agriculture
+9001,700,Sparsely Vegetated,Sparse
+9002,635,Riparian,Tree
+9003,635,Riparian,Tree
+9004,700,Sparsely Vegetated,Sparse
+9005,650,Riparian,Herb
+9006,700,Sparsely Vegetated,Sparse
+9008,700,Sparsely Vegetated,Sparse
+9009,700,Sparsely Vegetated,Sparse
+9010,700,Sparsely Vegetated,Sparse
+9011,765,Riparian,Herb
+9012,635,Riparian,Tree
+9014,635,Riparian,Tree
+9015,635,Riparian,Tree
+9016,700,Sparsely Vegetated,Sparse
+9017,669,Riparian,Herb
+9018,700,Sparsely Vegetated,Sparse
+9019,635,Riparian,Tree
+9021,635,Riparian,Shrub
+9022,635,Riparian,Tree
+9023,700,Sparsely Vegetated,Sparse
+9024,700,Sparsely Vegetated,Sparse
+9025,650,Riparian,Herb
+9026,635,Riparian,Tree
+9027,650,Riparian,Herb
+9028,635,Riparian,Tree
+9029,650,Riparian,Herb
+9030,635,Riparian,Shrub
+9032,700,Sparsely Vegetated,Sparse
+9033,700,Sparsely Vegetated,Sparse
+9034,635,Riparian,Tree
+9035,635,Riparian,Tree
+9036,653,Riparian,Herb
+9037,653,Riparian,Herb
+9038,683,Riparian,Shrub
+9039,694,Riparian,Tree
+9040,700,Sparsely Vegetated,Sparse
+9041,668,Riparian,Tree
+9042,668,Riparian,Tree
+9044,653,Riparian,Herb
+9045,653,Riparian,Herb
+9047,653,Riparian,Herb
+9048,773,Riparian,Shrub
+9050,666,Riparian,Tree
+9051,666,Riparian,Tree
+9055,683,Riparian,Shrub
+9056,683,Riparian,Tree
+9057,675,Riparian,Shrub
+9059,666,Riparian,Tree
+9060,668,Riparian,Tree
+9061,700,Sparsely Vegetated,Sparse
+9062,700,Sparsely Vegetated,Sparse
+9063,675,Riparian,Herb
+9064,700,Sparsely Vegetated,Sparse
+9065,700,Sparsely Vegetated,Sparse
+9066,694,Riparian,Tree
+9068,668,Riparian,Tree
+9069,666,Riparian,Tree
+9071,666,Riparian,Tree
+9073,700,Sparsely Vegetated,Sparse
+9075,694,Riparian,Tree
+9077,650,Riparian,Herb
+9080,694,Riparian,Tree
+9082,666,Riparian,Tree
+9083,694,Riparian,Tree
+9085,668,Riparian,Tree
+9088,676,Conifer,Tree
+9089,693,Conifer,Tree
+9091,700,Sparsely Vegetated,Sparse
+9092,666,Riparian,Tree
+9094,653,Riparian,Herb
+9095,653,Riparian,Herb
+9097,700,Sparsely Vegetated,Sparse
+9098,675,Riparian,Herb
+9099,700,Sparsely Vegetated,Sparse
+9100,700,Sparsely Vegetated,Sparse
+9101,700,Sparsely Vegetated,Sparse
+9102,675,Riparian,Herb
+9103,700,Sparsely Vegetated,Sparse
+9104,653,Riparian,Herb
+9105,653,Riparian,Herb
+9106,694,Riparian,Tree
+9110,700,Sparsely Vegetated,Sparse
+9111,676,Conifer,Tree
+9112,676,Conifer,Tree
+9113,700,Sparsely Vegetated,Sparse
+9114,675,Riparian,Shrub
+9115,700,Sparsely Vegetated,Sparse
+9116,670,Conifer-Hardwood,Tree
+9117,666,Riparian,Tree
+9118,675,Riparian,Herb
+9119,700,Sparsely Vegetated,Sparse
+9120,783,Riparian,Herb
+9121,618,Shrubland,Shrub
+9122,700,Sparsely Vegetated,Sparse
+9125,700,Sparsely Vegetated,Sparse
+9129,635,Riparian,Tree
+9130,700,Sparsely Vegetated,Sparse
+9133,635,Riparian,Tree
+9134,700,Sparsely Vegetated,Sparse
+9136,653,Riparian,Herb
+9137,653,Riparian,Herb
+9138,694,Riparian,Tree
+9139,666,Riparian,Tree
+9140,666,Riparian,Tree
+9141,666,Riparian,Tree
+9142,653,Riparian,Herb
+9143,653,Riparian,Herb
+9145,700,Sparsely Vegetated,Sparse
+9146,700,Sparsely Vegetated,Sparse
+9147,700,Sparsely Vegetated,Sparse
+9148,669,Riparian,Herb
+9150,700,Sparsely Vegetated,Sparse
+9151,700,Sparsely Vegetated,Sparse
+9152,635,Riparian,Tree
+9153,700,Sparsely Vegetated,Sparse
+9154,635,Riparian,Tree
+9160,700,Sparsely Vegetated,Sparse
+9165,645,Riparian,Tree
+9166,688,Grassland,Herb
+9167,609,Grassland,Herb
+9170,610,Conifer-Hardwood,Tree
+9171,700,Sparsely Vegetated,Sparse
+9173,700,Sparsely Vegetated,Sparse
+9174,694,Riparian,Tree
+9175,700,Sparsely Vegetated,Sparse
+9176,675,Riparian,Herb
+9177,694,Riparian,Tree
+9178,694,Riparian,Tree
+9179,666,Riparian,Tree
+9180,675,Riparian,Herb
+9181,670,Conifer-Hardwood,Tree
+9182,675,Riparian,Shrub
+9183,675,Riparian,Shrub
+9184,700,Sparsely Vegetated,Sparse
+9185,694,Riparian,Tree
+9186,651,Conifer,Tree
+9187,694,Riparian,Tree
+9188,694,Riparian,Tree
+9189,653,Riparian,Herb
+9190,658,Hardwood,Tree
+9191,653,Riparian,Herb
+9192,668,Riparian,Herb
+9193,700,Sparsely Vegetated,Sparse
+9195,668,Riparian,Tree
+9197,653,Riparian,Herb
+9198,694,Riparian,Tree
+9202,675,Riparian,Herb
+9203,675,Riparian,Herb
+9207,668,Riparian,Tree
+9208,670,Conifer-Hardwood,Tree
+9209,694,Riparian,Tree
+9210,694,Riparian,Tree
+9211,666,Riparian,Tree
+9213,700,Sparsely Vegetated,Sparse
+9216,694,Riparian,Tree
+9218,694,Riparian,Tree
+9220,668,Riparian,Tree
+9221,700,Sparsely Vegetated,Sparse
+9222,668,Riparian,Herb
+9223,666,Riparian,Tree
+9224,668,Riparian,Tree
+9226,700,Sparsely Vegetated,Sparse
+9227,700,Sparsely Vegetated,Sparse
+9228,675,Riparian,Herb
+9229,657,Riparian,Tree
+9230,666,Riparian,Tree
+9231,666,Riparian,Tree
+9232,694,Riparian,Tree
+9233,670,Conifer-Hardwood,Tree
+9234,700,Sparsely Vegetated,Sparse
+9237,675,Riparian,Herb
+9239,650,Riparian,Herb
+9240,700,Sparsely Vegetated,Sparse
+9241,653,Riparian,Herb
+9242,666,Riparian,Tree
+9243,653,Riparian,Herb
+9244,700,Sparsely Vegetated,Sparse
+9245,694,Riparian,Tree
+9246,700,Sparsely Vegetated,Sparse
+9247,666,Riparian,Tree
+9248,694,Riparian,Tree
+9249,694,Riparian,Tree
+9250,658,Riparian,Tree
+9251,700,Sparsely Vegetated,Sparse
+9256,670,Conifer-Hardwood,Tree
+9257,700,Sparsely Vegetated,Sparse
+9258,666,Riparian,Tree
+9259,668,Riparian,Tree
+9260,670,Conifer-Hardwood,Tree
+9261,675,Riparian,Herb
+9262,700,Sparsely Vegetated,Sparse
+9265,700,Sparsely Vegetated,Sparse
+9266,650,Riparian,Tree
+9268,668,Riparian,Shrub
+9270,613,Shrubland,Shrub
+9272,675,Riparian,Herb
+9273,700,Sparsely Vegetated,Sparse
+9274,653,Riparian,Herb
+9275,653,Riparian,Herb
+9282,666,Riparian,Tree
+9283,694,Riparian,Tree
+9284,668,Riparian,Tree
+9288,660,Hardwood,Tree
+9289,610,Conifer-Hardwood,Tree
+9290,700,Sparsely Vegetated,Sparse
+9295,676,Conifer-Hardwood,Tree
+9301,704,Exotic Herbaceous,Herb
+9302,707,Exotic Tree-Shrub,Tree
+9303,828,Shrubland,Shrub
+9304,821,Hardwood,Tree
+9305,821,Hardwood,Tree
+9307,704,Exotic Herbaceous,Herb
+9308,702,Exotic Herbaceous,Herb
+9309,703,Exotic Herbaceous,Herb
+9310,706,Exotic Tree-Shrub,Shrub
+9311,706,Exotic Tree-Shrub,Shrub
+9312,731,Conifer,Tree
+9314,740,Riparian,Tree
+9315,740,Conifer-Hardwood,Tree
+9316,706,Exotic Tree-Shrub,Shrub
+9317,706,Exotic Tree-Shrub,Shrub
+9318,709,Riparian,Herb
+9319,707,Exotic Tree-Shrub,Tree
+9320,708,Riparian,Tree
+9321,707,Conifer-Hardwood,Tree
+9322,731,Conifer,Tree
+9323,706,Exotic Tree-Shrub,Shrub
+9324,709,Riparian,Herb
+9325,706,Exotic Tree-Shrub,Shrub
+9326,706,Exotic Tree-Shrub,Shrub
+9327,701,Riparian,Tree
+9328,706,Exotic Tree-Shrub,Shrub
+9329,708,Riparian,Shrub
+9332,708,Riparian,Tree
+9336,706,Exotic Tree-Shrub,Shrub
+9337,706,Exotic Tree-Shrub,Shrub
+9340,821,Hardwood,Tree
+9341,821,Hardwood,Tree
+9343,707,Hardwood,Tree
+9344,709,Riparian,Herb
+9345,708,Riparian,Tree
+9346,709,Riparian,Herb
+9347,804,Hardwood,Tree
+9348,811,Hardwood,Tree
+9349,811,Hardwood,Tree
+9350,812,Shrubland,Shrub
+9351,812,Shrubland,Shrub
+9352,812,Shrubland,Shrub
+9353,731,Hardwood,Tree
+9354,829,Grassland,Herb
+9355,821,Hardwood,Tree
+9502,635,Riparian,Shrub
+9503,635,Riparian,Shrub
+9504,635,Riparian,Herb
+9505,635,Riparian,Herb
+9512,635,Riparian,Shrub
+9513,635,Riparian,Shrub
+9514,635,Riparian,Herb
+9515,635,Riparian,Shrub
+9516,669,Riparian,Herb
+9519,635,Riparian,Shrub
+9526,635,Riparian,Shrub
+9527,635,Riparian,Herb
+9528,635,Riparian,Shrub
+9529,669,Riparian,Herb
+9533,669,Riparian,Herb
+9534,635,Riparian,Shrub
+9535,635,Riparian,Shrub
+9541,668,Riparian,Shrub
+9542,668,Riparian,Herb
+9559,666,Riparian,Shrub
+9560,668,Riparian,Shrub
+9561,666,Riparian,Herb
+9562,668,Riparian,Herb
+9568,668,Riparian,Shrub
+9569,666,Riparian,Shrub
+9570,668,Riparian,Herb
+9571,666,Riparian,Herb
+9582,666,Riparian,Shrub
+9583,666,Riparian,Herb
+9585,668,Riparian,Shrub
+9586,668,Riparian,Herb
+9592,666,Riparian,Shrub
+9593,666,Riparian,Herb
+9601,654,Grassland,Herb
+9604,653,Riparian,Shrub
+9605,653,Riparian,Shrub
+9611,676,Shrubland,Shrub
+9616,670,Shrubland,Shrub
+9617,666,Riparian,Shrub
+9620,675,Riparian,Shrub
+9629,635,Riparian,Shrub
+9633,635,Riparian,Shrub
+9639,666,Riparian,Shrub
+9640,666,Riparian,Shrub
+9641,666,Riparian,Herb
+9642,666,Riparian,Herb
+9652,635,Riparian,Shrub
+9654,635,Riparian,Shrub
+9667,609,Shrubland,Shrub
+9677,694,Riparian,Shrub
+9679,666,Riparian,Shrub
+9682,675,Riparian,Herb
+9683,675,Riparian,Herb
+9686,651,Shrubland,Shrub
+9695,668,Riparian,Shrub
+9696,668,Riparian,Herb
+9707,668,Riparian,Shrub
+9708,668,Riparian,Herb
+9722,668,Riparian,Tree
+9723,666,Riparian,Shrub
+9724,668,Riparian,Shrub
+9725,666,Riparian,Herb
+9726,668,Riparian,Herb
+9730,666,Riparian,Shrub
+9731,666,Riparian,Shrub
+9732,666,Riparian,Herb
+9733,666,Riparian,Herb
+9742,666,Riparian,Shrub
+9743,666,Riparian,Herb
+9758,666,Riparian,Shrub
+9759,668,Riparian,Shrub
+9760,666,Riparian,Herb
+9761,668,Riparian,Herb
+9766,650,Riparian,Shrub
+9774,653,Riparian,Shrub
+9775,653,Riparian,Shrub
+9782,666,Riparian,Shrub
+9783,666,Riparian,Herb
+9784,668,Riparian,Shrub
+9785,668,Riparian,Herb
+9803,829,Grassland,Herb
+9810,703,Exotic Herbaceous,Herb
+9811,703,Exotic Herbaceous,Herb
+9816,703,Exotic Herbaceous,Herb
+9817,703,Exotic Herbaceous,Herb
+9823,703,Exotic Herbaceous,Herb
+9825,703,Exotic Herbaceous,Herb
+9826,703,Exotic Herbaceous,Herb
+9827,701,Riparian,Shrub
+9828,703,Exotic Herbaceous,Herb
+9829,709,Riparian,Herb
+9848,812,Shrubland,Shrub
+9850,813,Grassland,Herb
+9851,813,Grassland,Herb
+9852,813,Grassland,Herb
+9993,675,Riparian,Herb
+9994,675,Riparian,Herb

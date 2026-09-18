@@ -126,6 +126,82 @@ contract. Both engines sort the contributing string values, append one newline t
 those exact bytes with SHA-256. This mirrors the immutable builder's coarse-tier lineage and must
 not be replaced with `first`, which would silently discard all but one child digest.
 
+## Per-rung key columns on `GridAggregation` (`key_columns_by_tier`, 2026-09-18)
+
+`key_columns` was one tuple for every rung, so a lane whose *vocabulary* coarsens with zoom — the
+vegetation-type ladder EVT code (1,069) → group (193) → physiognomy (20) → lifeform (10) across
+z13/z9/z5/z0; the three coarse counts include the `-9999 Fill-NoData` sentinel, so the real
+vocabularies are 192/19/9 and the test fixture pins the sentinel-inclusive numbers on purpose — was
+not expressible: keying on the code kept 1,069 classes per cell at z0.
+`key_columns_by_tier: Mapping[ZoomTier, tuple[str, ...]] | None = None` replaces the grain rung by
+rung. **`None` is today's behaviour for every existing lane, byte for byte**, pinned by
+`tests/parquet/test_grid_per_tier_keys.py` with content digests computed at HEAD `ec172e88` before
+the field existed, over a synthetic lane that exercises every member of the `Aggregation`
+vocabulary and over the real `fire-detections` lane. Resolution is `grid_key_columns(strategy, tier)`;
+`_derive_grid_tier` groups on the tier's tuple and skips the declared aggregate of any column that
+is a key at that rung.
+
+**The dropped-key rule.** A column that is a key at *any* rung (`key_columns` or any tier tuple) but
+not at this one is a *dropped* key and may only aggregate `first` or `null` — refused otherwise at
+declaration (`GridAggregation.__post_init__`), naming the column and the rung. A label is carried or
+withheld, never summed. `__post_init__` also requires every derived rung to be named (no silent
+fallback — `HierarchicalDissolve.code_length_by_tier` has the same rule, enforced later, at
+derivation) and requires a `13:` entry, if present, to equal `key_columns`, so the base grain is
+stated once. With no ladder at all, a column in both `key_columns` and `aggregations` is refused:
+such a key is never dropped, so its aggregate would silently never apply (before this field Polars
+raised a duplicate-column error for the same declaration; the failure stays loud). The one thing
+declaration cannot catch is a column misspelled identically at every rung; `_require_columns`
+refuses that at derivation and `validate_derivation_against_schema` — which now checks per-tier keys
+AND `key_columns` against the arrow schema — reports it at registration, where the sweep runs it
+over every lane.
+
+**Chain safety.** A coarser rung may be derived from the finer *derived* rung above it, not only
+from the base — the banded fold derives z0 from the written z5. So for each consecutive pair of
+derived rungs (finer F, coarser C) every key of C must *survive* F: be a key of F, or be carried
+through F by `first`. A key nulled at F would make C group on an all-null column — silently, no
+exception, every class collapsed into one row per cell. `__post_init__` refuses this naming both
+rungs. The joint ladder below satisfies it trivially (each coarser tuple ⊆ the finer one); the
+single-column ladder satisfies it only under `first`.
+The observable symptom of a non-nested `first` is not an exception: a rung derived from the rung
+above it silently differs from the same rung derived from the base, and counts migrate between
+labels. A lane that relies on `first` must therefore prove chained == base on its real legend in its
+own tests; the platform can only refuse what it can see at declaration.
+
+**The ladder is copied and the strategy stays hashable.** `__post_init__` replaces the caller's
+mapping with a read-only `MappingProxyType` copy (a later `d[5] = ...` on the caller's dict cannot
+bypass the refusals), and `GridAggregation.__hash__` is explicit because a proxy is unhashable while
+a frozen dataclass advertises hashability; `TierDerivation.__eq__`, which `register_tier_derivation`
+uses to detect conflicting re-registration, compares the proxies by value.
+
+**`first` is lawful only where the finer vocabulary nests functionally inside the coarser** (each
+child value has exactly one parent), because `first` over a group picks an arbitrary member. The
+lane, not the platform, owns proving that. Measured on the real LF2025 legend (fixture
+`tests/parquet/fixtures/lf2025-evt-hierarchy.csv`, source sha256 `5ccc130b…`): `VALUE → EVT_GP`
+nests; **`EVT_GP → EVT_PHYS` does not** (47 of 193 groups span several physiognomies — including
+PNW groups 645 Western Red-cedar–Western Hemlock, 632 Red Alder, 629 Western Oak Woodland, 609
+Pacific Coastal Scrub, 617/618 Grassland and Steppe); **`EVT_PHYS → EVT_LF` does not** (Riparian,
+Agricultural, Developed, Exotic Tree-Shrub each span Tree/Shrub/Herb). So the plan's single-column
+ladder with `first` on `evt_phys` at z9 and `evt_lifeform` at z5 would fabricate labels. The honest
+ladder widens the tuple where nesting fails — `{9: ("evt_group_code","evt_phys","evt_lifeform"),
+5: ("evt_phys","evt_lifeform"), 0: ("evt_lifeform",)}` with the finer codes `null` — and is
+expressible with this field as it stands (the last test in that file constructs it). One `how` per
+column serves every rung; a "first here, null there" declaration is not expressible and should not
+be added for this.
+
+**`MAX_DERIVATION_ROWS` is a per-CALL bound.** Its sole consumer is the height check at the top of
+`derive_tier`; it bounds the table handed to one call, not a lane-day. A day larger than the cap is
+derived in latitude bands whose edges are multiples of every rung pitch (the fold belongs to
+`pipeline/parquet/derivation.py`, track `vegetation_type_landfire_evt_20260918` Phase 1B). Do not
+raise it: it is the only guard a grid lane has, and a value admitting the 23 M-row vegetation-type
+base would bound nothing the host can hold (`ROW-CAP-ANALYSIS.md` §4.1).
+
+**Deriving a rung from the rung above it is lawful only for associative aggregates.** z0-from-z5
+(and any banded fold) equals z0-from-base only for `sum`, `min`, `max`, `all`, `any`, `null` and
+`first` under functional nesting; `mean` of means is not the mean, and `sha256-lines` of digests is
+not the digest of the lines. The associativity test in `test_grid_per_tier_keys.py` uses only those.
+Refusing `mean`/`sha256-lines` in a chained or banded derivation is 1B's job, where the fold is
+introduced; the constraint is recorded here because this is where the ladder is declared.
+
 ## The DuckDB guards in `tiers.py`, and the one thing they are NOT
 Only the geometry lanes open DuckDB at all — a `GridAggregation` lane coarsens in Polars and a
 `TierPassthrough` lane does nothing. Every session this module opens carries `DERIVATION_MEMORY_LIMIT`
