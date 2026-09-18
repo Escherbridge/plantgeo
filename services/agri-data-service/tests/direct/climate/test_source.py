@@ -445,7 +445,11 @@ async def test_provider_quota_stops_queued_requests_and_keeps_completed_response
     assert fetch.await_count == 1 + TERMINAL_QUOTA_ANSWERS, "one held answer, then every pause spent on one cell"
     assert cache.requests_spent == 1 + TERMINAL_QUOTA_ANSWERS
     assert cache.quota_pauses == NASA_POWER_QUOTA_PAUSE_LIMIT
-    assert slept == [quota_pause_seconds(pause) for pause in range(NASA_POWER_QUOTA_PAUSE_LIMIT)]
+    # The recorded sleep is `resume_at - monotonic()`, two clock reads apart: exact on Windows's ~15 ms
+    # clock, a few microseconds short on Linux. The claim is "the whole pause", so compare to the ms.
+    assert slept == pytest.approx(
+        [quota_pause_seconds(pause) for pause in range(NASA_POWER_QUOTA_PAUSE_LIMIT)], abs=1e-3
+    )
     assert list(cache.responses.values()) == [response]
 
 
@@ -506,7 +510,7 @@ async def test_one_429_pauses_the_fan_out_once_and_the_day_still_completes_in_th
     # The refused worker waits the whole pause; with `asyncio.sleep` recorded rather than slept, the
     # clock never reaches the resume instant, so every later cell also waits out "the remainder" of
     # that same pause. One pause, never a second one.
-    assert slept[0] == quota_pause_seconds(0)
+    assert slept[0] == pytest.approx(quota_pause_seconds(0), abs=1e-3)  # two monotonic reads apart
     assert max(slept) <= quota_pause_seconds(0)
     assert cache.deferred_refusal is None
 
