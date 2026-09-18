@@ -18,6 +18,8 @@
  * encode. Nothing here claims a capability the source spec did not admit.
  */
 
+import type { RegionSubdivisionCode } from "@/lib/region/region";
+
 // TODO(worker-1): import row shapes from
 // `@/lib/server/db/schema/land-context` once that module lands
 // (boundary_versions, organizations_offices, public_contact_routes,
@@ -26,8 +28,13 @@
 // the five relations documented in the reference-plane spec's "Reference
 // records and identity" section.
 
-/** WA/OR/ID only, per the reference-plane spec's admitted scope. */
-export type PilotState = "WA" | "OR" | "ID";
+/**
+ * WA/OR/ID only, per the reference-plane spec's admitted scope — derived from the region manifest's
+ * `adminCodes` rather than restated, so the contract cannot outlive a change to them
+ * (STYLE-REVIEW-W2 S1). Type-only import: `@/lib/region/region` is client-safe, and nothing runtime
+ * enters this module through it.
+ */
+export type PilotState = RegionSubdivisionCode;
 
 /**
  * A parcel/tract identity as the spec requires: county/source namespace plus

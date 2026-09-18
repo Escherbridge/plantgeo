@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { PNW } from "@/lib/region/pnw";
+import { PNW, PNW_ADMIN_CODES } from "@/lib/region/pnw";
 
 /** A WGS84 west/south/east/north bounding box; the manifest's own footprint claim. */
 export const regionEnvelopeSchema = z
@@ -67,14 +67,26 @@ export const regionSchema = z
 export type Region = z.infer<typeof regionSchema>;
 
 /**
- * The literal admin-code union the PNW pilot manifest declares. `regionSchema` itself only asserts
- * `z.array(z.string())` (a future multi-region manifest may add codes this deployment never binds),
- * so this literal mirrors `pnw.ts`'s `adminCodes` values by hand rather than indexing `typeof PNW`,
- * which would widen to `string` the moment `pnw.ts`'s array literal is read outside a `const`
- * context. Callers that need a typed two-letter state code (`PnwStateCode` in
- * `src/lib/server/db/schema/land-context/shared.ts`) narrow from this.
+ * The literal admin-code union this deployment's manifest declares, INDEXED off the manifest rather
+ * than restated: `pnw.ts` keeps `PNW_ADMIN_CODES` as a `const` tuple and spreads it into
+ * `adminCodes`, so the literals survive and a code added or renamed there changes this union with
+ * no second edit (STYLE-REVIEW-W2 S1). `regionSchema` still validates only `z.array(z.string())`,
+ * because a future region may bind codes this one never does.
  */
-export type RegionAdminCode = "US-WA" | "US-OR" | "US-ID";
+export type RegionAdminCode = (typeof PNW.adminCodes)[number];
+
+/** "US-WA" -> "WA": one admin code's subdivision suffix, at type level. */
+type SubdivisionCodeOf<Code extends string> = Code extends `${string}-${infer Subdivision}`
+  ? Subdivision
+  : never;
+
+/** The same map across a whole tuple, so the TUPLE shape (not just the union) survives. */
+type SubdivisionCodesOf<Codes extends readonly string[]> = {
+  -readonly [Index in keyof Codes]: SubdivisionCodeOf<Codes[Index]>;
+};
+
+/** The two-letter subdivision code every admin code in this region carries. */
+export type RegionSubdivisionCode = SubdivisionCodeOf<RegionAdminCode>;
 
 /**
  * Recursively `Object.freeze`s a parsed manifest so no caller can mutate a value reachable from
@@ -110,3 +122,16 @@ export function getRegion(): Region {
   }
   return cachedRegion;
 }
+
+/**
+ * The manifest's admin codes reduced to their subdivision suffixes, as the literal tuple Zod's
+ * `z.enum` and Drizzle's enum builders require.
+ *
+ * The values come from the VALIDATED, frozen manifest (`getRegion()` -- which is why this sits
+ * below it); only the tuple SHAPE is asserted, and it is computed from `PNW_ADMIN_CODES`, so it cannot drift from the manifest the way
+ * the old hand-written `as unknown as readonly ["WA","OR","ID"]` could (STYLE-REVIEW-W2 S1/S2).
+ */
+export const REGION_SUBDIVISION_CODES: Readonly<SubdivisionCodesOf<typeof PNW_ADMIN_CODES>> =
+  getRegion().adminCodes.map((adminCode) =>
+    adminCode.slice(adminCode.indexOf("-") + 1)
+  ) as SubdivisionCodesOf<typeof PNW_ADMIN_CODES>;

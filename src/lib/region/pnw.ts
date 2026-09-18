@@ -10,6 +10,15 @@ import type { Region } from "@/lib/region/region";
  * `src/__tests__/region/manifest-parity.test.ts` diffs the two, and `src/lib/region/AGENTS.md`
  * explains why `envelope` and `subEnvelopes` carry three different-looking PNW boxes on purpose.
  */
+/**
+ * The pilot's admin codes as a literal tuple, declared once so both the union type
+ * (`RegionAdminCode`) and the two-letter state tuple the Zod/Drizzle enums need are DERIVED from
+ * this manifest rather than hand-copied beside it (`engineering-principles.md` §1).
+ * `regionSchema` itself only asserts `z.array(z.string())`, because a future region may bind codes
+ * this deployment never does, so the literal types live here with the values.
+ */
+export const PNW_ADMIN_CODES = ["US-WA", "US-OR", "US-ID"] as const;
+
 export const PNW = {
   slug: "pnw",
   displayName: "Pacific Northwest",
@@ -24,7 +33,7 @@ export const PNW = {
   latticeOriginRule: "floor_to_cell_origin",
   timezone: "America/Los_Angeles",
   isoCountryCodes: ["US"],
-  adminCodes: ["US-WA", "US-OR", "US-ID"],
+  adminCodes: [...PNW_ADMIN_CODES],
   enabledLayers: [
     { layerSlug: "soil-survey", sourceSlug: "ssurgo", coverage: "regional" },
     { layerSlug: "fire-detections", sourceSlug: "firms", coverage: "global" },

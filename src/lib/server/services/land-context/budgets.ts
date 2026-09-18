@@ -12,6 +12,8 @@
  * scoped, reviewed change, not a silent runtime knob.
  */
 
+import { REGION_SUBDIVISION_CODES } from "@/lib/region/region";
+
 /** Largest AOI a single bounded query may cover, in square degrees (EPSG:4326). */
 export const MAX_AOI_AREA_SQUARE_DEGREES = 1;
 
@@ -27,8 +29,15 @@ export const MAX_RESPONSE_BYTES = 2_000_000;
 /** Largest page size a paginated reader will honor. */
 export const MAX_PAGE_SIZE = 50;
 
-/** Pilot states this reader plane admits. Anything else is `outside_pilot`, not a silent miss. */
-export const PILOT_STATES = ["WA", "OR", "ID"] as const;
+/**
+ * Pilot states this reader plane admits. Anything else is `outside_pilot`, not a silent miss.
+ *
+ * Read from the region manifest, not restated: this was the twin of `PNW_STATE_CODES` that step 2
+ * left behind, and the Parquet reader's row schema binds to it (STYLE-REVIEW-W2 S2). One canonical
+ * definition means a next region changing `admin_codes` cannot leave the manifest, the alias and
+ * the reader disagreeing.
+ */
+export const PILOT_STATES = REGION_SUBDIVISION_CODES;
 
 /**
  * Rough byte-size estimate for a candidate result set, used to decide whether returning it
