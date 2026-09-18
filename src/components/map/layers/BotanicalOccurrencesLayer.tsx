@@ -99,8 +99,11 @@ export function describeBotanicalOccurrencesState(snapshot: {
   isStale: boolean;
   isPartial: boolean;
   error: { reason: string; detail?: string } | null;
-  band?: BotanicalSupportBand;
-  servingBand?: BotanicalSupportBand | null;
+  // Required, not optional (style review W3, NIT 8): the only caller is a
+  // `BotanicalOccurrencesSnapshot`, which always carries both, and optionality only created a
+  // path where the rung-substitution sentence silently disappeared.
+  band: BotanicalSupportBand;
+  servingBand: BotanicalSupportBand | null;
 }): string | null {
   const sentences = [describeReadState(snapshot), describeServingRung(snapshot)].filter(
     (sentence): sentence is string => sentence !== null
@@ -144,8 +147,11 @@ const BOTANICAL_BAND_LABEL: Readonly<Record<BotanicalSupportBand, string>> = {
  * served rung is the requested one, which is the ordinary case.
  */
 function describeServingRung(snapshot: {
-  band?: BotanicalSupportBand;
-  servingBand?: BotanicalSupportBand | null;
+  // Required, not optional (style review W3, NIT 8): the only caller is a
+  // `BotanicalOccurrencesSnapshot`, which always carries both, and optionality only created a
+  // path where the rung-substitution sentence silently disappeared.
+  band: BotanicalSupportBand;
+  servingBand: BotanicalSupportBand | null;
 }): string | null {
   const { band, servingBand } = snapshot;
   if (band === undefined || servingBand === undefined || servingBand === null) return null;
@@ -185,7 +191,9 @@ export function BotanicalOccurrencesLayer({
   zoom,
   visible = true,
   onSelectFeature,
-  readPhase = "success",
+  // `idle` is the honest default (style review W3, NIT 11): a caller that forgets the prop must
+  // not be told the read succeeded. `drawable` below is unchanged -- only `error` takes layers down.
+  readPhase = "idle",
 }: BotanicalOccurrencesLayerProps) {
   // A failed read is treated exactly as "nothing to draw": the layers come down rather than keep
   // asserting the last collection under an error the reader is being shown elsewhere.
