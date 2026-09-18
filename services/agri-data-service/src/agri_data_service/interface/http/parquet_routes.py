@@ -16,6 +16,7 @@ from sanic import Blueprint, Request, json
 from sanic.response import HTTPResponse  # noqa: TC002 - sanic-ext evaluates handler annotations at runtime.
 
 from agri_data_service.config import settings
+from agri_data_service.foundation.region import load_region, region_layer_availability
 from agri_data_service.parquet_ops import faults
 from agri_data_service.parquet_ops.availability_coverage import (
     AvailabilityCoverageReaderHolder,
@@ -47,6 +48,7 @@ from agri_data_service.parquet_ops.wire import (
     ROUTE_DAY,
     ROUTE_RELEASE,
     ROUTE_WINDOW,
+    LayerBindingCoverage,
     WarehouseCoverage,
     render_window,
 )
@@ -277,6 +279,25 @@ async def _run_coverage_read() -> dict[str, object]:
     )
 
 
+def _region_layer_bindings() -> tuple[LayerBindingCoverage, ...]:
+    """This deployment's per-layer binding status, for the slider's "not available here" path.
+
+    Read through `load_region()` on every census build rather than captured at import: the census is
+    already rebuilt on a 120 s cache clock, and a module-level snapshot is the hidden region
+    dependency `federation.md` §1 forbids. See `foundation/region/AGENTS.md`.
+    """
+    availability = region_layer_availability(load_region())
+    return tuple(
+        LayerBindingCoverage(
+            layer=status.layer_slug,
+            binding=status.binding,
+            source=status.source_slug,
+            reason=status.reason,
+        )
+        for status in availability.values()
+    )
+
+
 async def _build_coverage_payload(generated_at: datetime) -> dict[str, object]:
     """Resolve registered lane coverage from availability and policy-permitted census fallback."""
 
@@ -311,6 +332,7 @@ async def _build_coverage_payload(generated_at: datetime) -> dict[str, object]:
             generated_at=generated_at,
             evaluated_through_day=evaluated_through_day,
             lanes=direct_rows,
+            layer_bindings=_region_layer_bindings(),
         ).to_wire()
 
     return await asyncio.to_thread(work)

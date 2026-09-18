@@ -75,5 +75,6 @@
       "availability_pointer_key": null, "source_ceiling_day": null,
       "required_rungs": [], "withheld_reason": null
     }
-  ]
+  ],
+  "layer_bindings": []
 }
