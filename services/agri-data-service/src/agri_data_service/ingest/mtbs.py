@@ -29,6 +29,13 @@ from agri_data_service.execution.source_ingestion import (
     SourceIngestionPlan,
     SourceReleasePlan,
 )
+from agri_data_service.foundation.geography.bounding_box import BoundingBox as BoundingBox  # noqa: PLC0414 - public compatibility re-export
+from agri_data_service.foundation.geography.bounding_box import (
+    format_bounding_box_inline as _format_bounding_box_inline,
+)
+from agri_data_service.foundation.geography.bounding_box import (
+    parse_bounding_box as _parse_bounding_box,
+)
 from agri_data_service.foundation.region import load_region
 from agri_data_service.ingest.http import UpstreamBounds, upstream_client
 from agri_data_service.ingest.identity import (
@@ -63,7 +70,6 @@ if TYPE_CHECKING:
     from agri_data_service.ingest.records import FeatureWriter
     from agri_data_service.ingest.source import UpstreamRecord
 
-BoundingBox = tuple[float, float, float, float]
 Sleep = Callable[[float], Awaitable[None]]
 BurnSeverityClass = Literal["unburned", "low", "moderate", "high", "increased_greenness"]
 
@@ -89,23 +95,38 @@ def burn_severity_bounding_box() -> BoundingBox:
 
 #: Deprecated module attributes resolved lazily by `__getattr__`; see `DEPRECATED_ALIASES.md`.
 _DEPRECATED_MODULE_ATTRIBUTES: Final[Mapping[str, Callable[[], object]]] = MappingProxyType(
-    {"PACIFIC_NORTHWEST_BBOX": burn_severity_bounding_box},
+    {
+        "PACIFIC_NORTHWEST_BBOX": burn_severity_bounding_box,
+        "inline_bbox_value": lambda: _format_bounding_box_inline,
+        "parse_bounding_box": lambda: _parse_bounding_box,
+    },
+)
+
+#: Replacement text named in the `DeprecationWarning` for each key in `_DEPRECATED_MODULE_ATTRIBUTES`.
+_DEPRECATED_ATTRIBUTE_REPLACEMENTS: Final[Mapping[str, str]] = MappingProxyType(
+    {
+        "PACIFIC_NORTHWEST_BBOX": "burn_severity_bounding_box() so the region manifest is read per call",
+        "inline_bbox_value": "agri_data_service.foundation.geography.bounding_box.format_bounding_box_inline()",
+        "parse_bounding_box": "agri_data_service.foundation.geography.bounding_box.parse_bounding_box()",
+    },
 )
 
 
 def __getattr__(name: str) -> object:
     """Resolve a deprecated module attribute at access time, never at import time.
 
-    Deprecated: `PACIFIC_NORTHWEST_BBOX` is kept importable for one release so existing importers do
-    not break (`federation.md` §5 step 2); call `burn_severity_bounding_box()` instead. Removal
-    condition is recorded in `services/agri-data-service/DEPRECATED_ALIASES.md`.
+    Deprecated: `PACIFIC_NORTHWEST_BBOX`, `inline_bbox_value` and `parse_bounding_box` are kept
+    importable for one release so existing importers do not break (`federation.md` §5 step 2;
+    `foundation/geography/AGENTS.md` for the 2026-09-18 bbox-helper extraction). Removal condition is
+    recorded in `services/agri-data-service/DEPRECATED_ALIASES.md`. `BoundingBox` is unaffected -- it
+    is a plain re-exported type alias, not deprecated (see the same `AGENTS.md`).
     """
     resolve_deprecated_attribute = _DEPRECATED_MODULE_ATTRIBUTES.get(name)
     if resolve_deprecated_attribute is None:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
     warnings.warn(
-        f"{__name__}.{name} is deprecated; call burn_severity_bounding_box() so the region manifest "
-        "is read per call (see DEPRECATED_ALIASES.md)",
+        f"{__name__}.{name} is deprecated; call {_DEPRECATED_ATTRIBUTE_REPLACEMENTS[name]} instead "
+        "(see DEPRECATED_ALIASES.md)",
         DeprecationWarning,
         stacklevel=2,
     )
@@ -212,8 +233,6 @@ MIN_PUBLICATION_AGE = timedelta(seconds=60)
 MIN_IGNITION_YEAR: Final = 1984
 MAX_IGNITION_YEAR: Final = 2200
 IGNITION_DATE_DIGITS: Final = 8
-BBOX_ORDINATE_COUNT: Final = 4
-BBOX_OPTION: Final = "--bbox"
 
 
 class MtbsIngestError(Exception):
@@ -1190,20 +1209,6 @@ async def run_mtbs_ingestion_job(
         return await _run_mtbs_job(write_features, area, owned_client, release_years=release_years, now=now)
 
 
-def parse_bounding_box(value: str) -> BoundingBox:
-    """Parse a `west,south,east,north` bounding box, rejecting an inverted or malformed envelope."""
-    parts = [part.strip() for part in value.split(",")]
-    if len(parts) != BBOX_ORDINATE_COUNT:
-        raise argparse.ArgumentTypeError("bbox must be west,south,east,north")
-    try:
-        west, south, east, north = (float(part) for part in parts)
-    except ValueError as error:
-        raise argparse.ArgumentTypeError("bbox ordinates must be numbers") from error
-    if west >= east or south >= north:
-        raise argparse.ArgumentTypeError("bbox must satisfy west < east and south < north")
-    return west, south, east, north
-
-
 def parse_reviewed_at(value: str) -> datetime:
     """Parse the operator's review timestamp, which must carry an explicit UTC offset."""
     try:
@@ -1215,21 +1220,6 @@ def parse_reviewed_at(value: str) -> datetime:
     return moment.astimezone(UTC)
 
 
-def inline_bbox_value(argv: Sequence[str]) -> list[str]:
-    """Rewrite `--bbox -125,42,...` to `--bbox=-125,42,...`; argparse reads a leading `-` as a flag."""
-    items = list(argv)
-    normalised: list[str] = []
-    index = 0
-    while index < len(items):
-        if items[index] == BBOX_OPTION and index + 1 < len(items):
-            normalised.append(f"{BBOX_OPTION}={items[index + 1]}")
-            index += 2
-            continue
-        normalised.append(items[index])
-        index += 1
-    return normalised
-
-
 def build_argument_parser() -> argparse.ArgumentParser:
     """Describe the capture verb registered by `ingest/commands.py` as `ingest-mtbs`."""
     parser = argparse.ArgumentParser(
@@ -1238,7 +1228,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
     )
     # Evaluated here, not at import: the parser is built inside `main()`, so `--bbox` defaults to the
     # manifest envelope as it reads at parse time.
-    parser.add_argument("--bbox", type=parse_bounding_box, default=burn_severity_bounding_box())
+    parser.add_argument("--bbox", type=_parse_bounding_box, default=burn_severity_bounding_box())
     parser.add_argument("--release-year", type=int, action="append", dest="release_years")
     parser.add_argument("--all-releases", action="store_true")
     parser.add_argument("--output-root", type=Path, default=None)
@@ -1266,7 +1256,7 @@ def build_review(reviewed_by: str | None, reviewed_at: datetime | None) -> Sourc
 def main() -> None:
     """Capture reviewed MTBS releases to the local run root without opening a database connection."""
     parser = build_argument_parser()
-    args = parser.parse_args(inline_bbox_value(sys.argv[1:]))
+    args = parser.parse_args(_format_bounding_box_inline(sys.argv[1:]))
     years = resolve_requested_years(args.release_years, all_releases=args.all_releases)
     captures = asyncio.run(
         ingest_mtbs(

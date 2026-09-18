@@ -44,7 +44,7 @@ from agri_data_service.config import settings
 from agri_data_service.db.engine import local_source_loader_session
 from agri_data_service.foundation.parquet.lane_contract import resolve_static_lane
 from agri_data_service.foundation.parquet.paths import partition_day_statuses
-from agri_data_service.ingest.mtbs import inline_bbox_value
+from agri_data_service.foundation.geography.bounding_box import inline_bbox_value
 from agri_data_service.pipeline.direct import (
     LANE_DAY_OUTCOMES,
     REFUSE_UNCONFIGURED_BBOX,
@@ -711,8 +711,9 @@ def parse_args(argv: Sequence[str] | None = None) -> FirePerimetersForwardConfig
     sees it, matching `ingest/mtbs.py::main` and `burn_severity/forward.py`. Without it argparse
     reads the leading `-125` as a second flag rather than this option's value and the documented
     operator command dies with "argument --bbox: expected one argument". The helper lives in
-    `ingest/mtbs.py` because that is where the trap was first paid for; every `--bbox` writer in
-    `pipeline/direct` imports the one implementation rather than restating the rewrite.
+    `foundation/geography/bounding_box.py` (extracted 2026-09-18 from `ingest/mtbs.py`, where the
+    trap was first paid for); every `--bbox` writer in `pipeline/direct` imports the one
+    implementation rather than restating the rewrite.
     """
     raw = list(argv) if argv is not None else sys.argv[1:]
     built = parser()

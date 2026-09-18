@@ -57,7 +57,7 @@ from agri_data_service.db.engine import local_source_loader_session
 from agri_data_service.foundation.parquet.paths import partition_day_statuses
 from agri_data_service.foundation.parquet.zoom import ZOOM_TIERS
 from agri_data_service.ingest.http import upstream_client
-from agri_data_service.ingest.mtbs import inline_bbox_value
+from agri_data_service.foundation.geography.bounding_box import inline_bbox_value
 from agri_data_service.ingest.open_meteo import OPEN_METEO_BOUNDS
 from agri_data_service.pipeline.direct import (
     COMPLETE,
