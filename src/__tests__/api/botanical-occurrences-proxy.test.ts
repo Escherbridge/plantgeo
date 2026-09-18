@@ -33,6 +33,7 @@ const wirePointer = {
   generation_id: "ubc-v16.43",
   manifest_sha256: "b".repeat(64),
   manifest_key: "botanical-occurrences/ubc-v16.43/manifest.json",
+  pointer_kind: "latest_v1",
   pointer_schema_version: 1,
   pointer_written_at: "2026-09-10T00:00:00Z",
 };
@@ -172,6 +173,21 @@ describe("pointer resolution", () => {
       expect(mockedFetch).toHaveBeenCalledTimes(1);
     }
   );
+
+  it("passes a bridged answer's legacy pointer kind through to the browser", async () => {
+    mockedFetch.mockResolvedValueOnce({
+      ...wirePointer,
+      pointer_kind: "legacy_current_json",
+      pointer_written_at: null,
+    });
+    mockedFetch.mockResolvedValueOnce(wireDetail);
+
+    const response = await GET(requestFor("bbox=-124,48,-122,50&zoom=13"));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.pointer).toMatchObject({ pointerKind: "legacy_current_json", pointerWrittenAt: null });
+  });
 
   it("reports a pointer body it cannot parse as a contract mismatch, not an absence", async () => {
     mockedFetch.mockResolvedValueOnce({ product: "botanical-occurrences", state: "current", release_set_id: "x" });

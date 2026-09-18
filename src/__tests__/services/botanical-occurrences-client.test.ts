@@ -17,6 +17,7 @@ vi.mock("@/lib/server/http/bounded-upstream", async (importOriginal) => {
 import { fetchBoundedJson, providerUrl } from "@/lib/server/http/bounded-upstream";
 import {
   getBotanicalOccurrences,
+  getCurrentBotanicalRelease,
   getCurrentBotanicalReleaseSetId,
   BotanicalOccurrencesContractError,
   BotanicalOccurrencesUnavailableError,
@@ -50,6 +51,7 @@ const wireCurrentPointer = {
   generation_id: "ubc-v16.43",
   manifest_sha256: "a".repeat(64),
   manifest_key: "botanical-occurrences/ubc-v16.43/manifest.json",
+  pointer_kind: "latest_v1",
   pointer_schema_version: 1,
   pointer_written_at: "2026-09-10T00:00:00Z",
 };
@@ -147,6 +149,32 @@ describe("getCurrentBotanicalReleaseSetId", () => {
       await expect(getCurrentBotanicalReleaseSetId()).rejects.toMatchObject({ failure: reason });
     }
   );
+
+  /**
+   * The bridge must be VISIBLE to the browser, not just to the serving side's logs: a caption that
+   * cannot tell a checksum-bound answer from a bridged one implies a guarantee not yet in force.
+   */
+  it("carries the legacy pointer kind through when the serving side is still bridged", async () => {
+    mockedFetch.mockResolvedValue({
+      ...wireCurrentPointer,
+      pointer_kind: "legacy_current_json",
+      pointer_written_at: null,
+    });
+
+    await expect(getCurrentBotanicalRelease()).resolves.toMatchObject({
+      pointerKind: "legacy_current_json",
+      pointerWrittenAt: null,
+    });
+  });
+
+  it("refuses a pointer that does not say which kind it is", async () => {
+    const { pointer_kind: _omitted, ...withoutKind } = wireCurrentPointer;
+    mockedFetch.mockResolvedValue(withoutKind);
+
+    await expect(getCurrentBotanicalReleaseSetId()).rejects.toBeInstanceOf(
+      BotanicalOccurrencesContractError
+    );
+  });
 
   it("refuses a pointer whose checksum is not a sha256 rather than trusting it", async () => {
     mockedFetch.mockResolvedValue({ ...wireCurrentPointer, manifest_sha256: "not-a-digest" });

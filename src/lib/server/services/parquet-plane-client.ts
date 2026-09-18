@@ -874,17 +874,37 @@ export const LANE_POINTER_FAILURES = [
 
 export type LanePointerFailure = (typeof LANE_POINTER_FAILURES)[number];
 
+/**
+ * WHICH pointer document answered, and they are not equally strong.
+ *
+ * `latest_v1` is the §4a checksum-bound pointer: it names the digest of the manifest it points at,
+ * so the reader proves the two belong together. `legacy_current_json` is the bridge over a bucket
+ * published before that document existed (owner's bridge-then-cut pattern) — the serving side
+ * re-reads the completion marker and digests the manifest itself, which is honest but is a weaker
+ * binding, because nothing written by the publisher attests to the pair.
+ *
+ * Carried into provenance rather than smoothed away: a consumer that cannot tell them apart cannot
+ * tell how much the provenance it is showing is worth, and a bridge nobody can see is a bridge that
+ * quietly becomes permanent.
+ */
+export const LANE_POINTER_KINDS = ["latest_v1", "legacy_current_json"] as const;
+
+export type LanePointerKind = (typeof LANE_POINTER_KINDS)[number];
+
 /** A pointer answer that broke its published shape. Permanent until a deploy fixes one side. */
 export class LanePointerContractError extends Error {}
 
 /** The resolved generation plus the provenance that proves which bytes answered. */
 export interface LaneCurrentPointer {
   generationId: string;
-  /** The sha256 the pointer bound its generation's manifest by; carried into response provenance. */
+  /** The sha256 binding the generation's manifest; carried into response provenance. */
   manifestChecksum: string;
   manifestKey: string;
+  /** Which pointer document answered. See `LANE_POINTER_KINDS` -- the two are not equally strong. */
+  pointerKind: LanePointerKind;
   pointerSchemaVersion: number;
-  pointerWrittenAt: string;
+  /** Null on a `legacy_current_json` answer: that document records no write time, and none is invented. */
+  pointerWrittenAt: string | null;
   publishedAt: string | null;
 }
 
@@ -910,8 +930,12 @@ const laneCurrentPointerWireSchema = z.discriminatedUnion("state", [
     generation_id: z.string().min(1),
     manifest_sha256: z.string().regex(LANE_POINTER_CHECKSUM_PATTERN),
     manifest_key: z.string().min(1),
+    // REQUIRED, with no default. A default would decide on the serving side's behalf which
+    // guarantee the answer carries, and it would decide wrong exactly when a deploy skew makes the
+    // question matter.
+    pointer_kind: z.enum(LANE_POINTER_KINDS),
     pointer_schema_version: z.number().int().positive(),
-    pointer_written_at: z.string().min(1),
+    pointer_written_at: z.string().min(1).nullish(),
     published_at: z.string().nullish(),
   }),
   z.object({
@@ -952,8 +976,9 @@ export function decodeLaneCurrentPointer(payload: unknown): LaneCurrentPointerRe
       generationId: wire.generation_id,
       manifestChecksum: wire.manifest_sha256,
       manifestKey: wire.manifest_key,
+      pointerKind: wire.pointer_kind,
       pointerSchemaVersion: wire.pointer_schema_version,
-      pointerWrittenAt: wire.pointer_written_at,
+      pointerWrittenAt: wire.pointer_written_at ?? null,
       publishedAt: wire.published_at ?? null,
     },
   };

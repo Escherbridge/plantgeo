@@ -266,3 +266,20 @@ alarm and "nothing published yet" cannot branch on prose.
 refuses one whose `release_set_id` is not the pinned generation. That check can only fire if the
 pin is being ignored, which is exactly why it throws rather than draws: the alternative is a map
 whose every provenance line names a generation the rows did not come from.
+
+### `pointerKind` is required, and it is the bridge made visible
+
+`LaneCurrentPointer` carries `pointerKind: "latest_v1" | "legacy_current_json"`, required with no
+default. The serving side may still be BRIDGED over a bucket published before the checksum-bound
+pointer existed (owner's bridge-then-cut pattern, repoint decisions 2026-08-25): that answer is
+honest — the marker is re-read and the manifest digested on the spot — but the binding is weaker,
+because nothing the publisher wrote attests to the pair.
+
+Defaulting the field would decide on the serving side's behalf which guarantee an answer carries,
+and would decide wrong exactly when a deploy skew makes the question matter. `pointerWrittenAt` is
+nullable for the same reason: the legacy document records no write time, and borrowing the
+generation's publication timestamp would invent provenance.
+
+A caption showing a generation id ought to say when it is looking at a bridged answer. Once the
+owner authorises the pointer advance and the Python bridge is deleted, `legacy_current_json` becomes
+unreachable and this enum can lose a member — in that same follow-up, not before.
