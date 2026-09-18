@@ -158,6 +158,7 @@ vi.mock("@/lib/server/services/land-context/parquet-reader", async () => {
         },
       ],
       gap: "",
+      refusal: null,
     })),
   };
 });

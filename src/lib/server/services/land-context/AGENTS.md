@@ -29,6 +29,16 @@ availability index, the lane is registered but has written nothing, no published
 bbox this wide, or the transport failed. A transport failure is never rendered as "the warehouse
 published nothing": it carries `upstream_unavailable`, a state of its own, per `parquet-envelope.ts`.
 
+"Every read" means all five entry points, and that is checkable rather than asserted:
+`pruneCandidatesByBbox`, `findContainingFeatures`, `findBoundaryByParcelKey`,
+`findRelationshipsAndRoutes` and `readCoverageStatus` each return `refusal: CoverageRefusal | null`,
+and `reader.ts` forwards `refusal?.coverageState` at every one of its five empty answers. Until
+2026-09-18 three of the five dropped the typed member one line after computing it, and this
+paragraph generalised from the two that did not (STYLE-REVIEW-W4 B3). The BOUNDARY of the typed
+channel: it covers the POINTER phase only. `exactIntersectCandidates` and `readProductRows` return
+prose gaps and `refusal: null`, so a refusal originating in the data read has no typed state yet --
+correct while that read cannot refuse, and the first thing to extend when it can.
+
 ### Two products, denormalized, because §4a allows one Parquet GET
 
 `land-context-boundaries` is `boundary_versions` joined to its `source_releases` row;
