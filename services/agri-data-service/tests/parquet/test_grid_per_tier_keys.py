@@ -70,6 +70,7 @@ if TYPE_CHECKING:
 
     from agri_data_service.foundation.parquet.zoom import ZoomTier
 
+BASE_ZOOM_TIER: Final = 13  # the base rung every ladder restates
 DAY: Final = dt.date(2026, 8, 1)
 NOON: Final = dt.datetime(2026, 8, 1, 12, tzinfo=dt.UTC)
 LATER: Final = dt.datetime(2026, 8, 1, 18, tzinfo=dt.UTC)
@@ -483,7 +484,7 @@ def test_a_base_entry_must_restate_key_columns() -> None:
 
 
 def test_a_ladder_may_omit_the_base_entry() -> None:
-    derived_only = {tier: keys for tier, keys in VEGETATION_LIKE_LADDER.items() if tier != 13}
+    derived_only = {tier: keys for tier, keys in VEGETATION_LIKE_LADDER.items() if tier != BASE_ZOOM_TIER}
     assert grid_key_columns(_vegetation_like_strategy(ladder=derived_only), 13) == ("evt_code",)
 
 
