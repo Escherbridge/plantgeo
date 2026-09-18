@@ -54,6 +54,7 @@ const mockedCoverage = vi.mocked(getParquetWarehouseCoverage);
 function burnCoverage(days = ['2024-03-01', '2022-05-10']): ParquetWarehouseCoverage {
   return {
     coverageSchemaVersion: 4, generatedAt: '2026-08-26T00:00:00Z', evaluatedThroughDay: '2026-08-26',
+    layerBindings: [],
     lanes: [{
       layer: 'burn-severity', nature: 'release_series', kind: 'observed', zoomTier: 13,
       earliestDay: [...days].sort()[0] ?? null, latestDay: [...days].sort().at(-1) ?? null,

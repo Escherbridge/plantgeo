@@ -2,6 +2,10 @@
 
 See `AGENTS.md` in this directory, section "The source protocol", for what the layer owns, what a
 source owns, and why this layer's pull signature carries an ignition-year cohort the others do not.
+
+`BurnSeverityRecordPayload`/`BurnSeverityThresholdsPayload` enumerate EXACTLY the members the lane
+reads off one burned-area record -- nothing wider, so `mypy` sees the same shape `rows.py` does,
+and nothing narrower, so a second region's source can satisfy them without inheriting from anything.
 """
 
 from __future__ import annotations
@@ -9,7 +13,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
     from datetime import date, datetime
 
     from agri_data_service.foundation.region.source_coverage import SourceCoverageClaim
@@ -18,6 +22,135 @@ if TYPE_CHECKING:
 #: (which also defines it) so the layer's contract does not name one source's module; the two
 #: aliases collapse when the shared alias moves down into `foundation`.
 BoundingBox = tuple[float, float, float, float]
+
+
+@runtime_checkable
+class BurnSeverityThresholdsPayload(Protocol):
+    """The per-fire dNBR thresholds a source publishes in place of a polygon-level severity class.
+
+    Every member is `int | None` because a burn-severity programme may publish any subset of them;
+    `None` is "this programme does not publish this threshold", never zero. dNBR is a dimensionless
+    index, so there is no SI conversion owed here (`federation.md` §2) -- the numbers are the
+    index's own scaled integers and cross a source boundary unchanged.
+    """
+
+    #: Read-only properties, not plain attributes -- see `BurnSeverityReleaseDay` for why.
+    @property
+    def dnbr_offset(self) -> int | None:
+        """The dNBR offset subtracted before the thresholds below are applied."""
+        ...
+
+    @property
+    def dnbr_standard_deviation(self) -> int | None:
+        """The dNBR standard deviation the thresholds were derived against."""
+        ...
+
+    @property
+    def nodata_threshold(self) -> int | None:
+        """Below this dNBR the pixel is no-data rather than a severity class."""
+        ...
+
+    @property
+    def greenness_threshold(self) -> int | None:
+        """Below this dNBR the pixel reads as increased greenness."""
+        ...
+
+    @property
+    def low_threshold(self) -> int | None:
+        """The dNBR floor of the low-severity class."""
+        ...
+
+    @property
+    def moderate_threshold(self) -> int | None:
+        """The dNBR floor of the moderate-severity class."""
+        ...
+
+    @property
+    def high_threshold(self) -> int | None:
+        """The dNBR floor of the high-severity class."""
+        ...
+
+
+@runtime_checkable
+class BurnSeverityRecordPayload(Protocol):
+    """One burned-area boundary as the layer consumes it: identity, provenance, dates and geometry.
+
+    These members are the WHOLE of what `rows.py` writes and `adapter.py`/`forward.py` count; a
+    member nothing reads is a member the next region's implementer would have to fake
+    (`federation.md` §2, "layer logic is source-agnostic"). `acres` is the one member whose unit is
+    NOT SI -- see `AGENTS.md`, "What is NOT normalized yet", for why the schema pins it there.
+    """
+
+    #: Read-only properties, not plain attributes -- see `BurnSeverityReleaseDay` for why.
+    @property
+    def producer_local_id(self) -> str:
+        """The source's own identifier for this fire, unique within one release day."""
+        ...
+
+    @property
+    def natural_key(self) -> str:
+        """`<producer>:<producer_local_id>`, minted by the identity builder and carried, not rebuilt."""
+        ...
+
+    @property
+    def release_identifier(self) -> str:
+        """Which release published this boundary; two releases of one fire differ here."""
+        ...
+
+    @property
+    def mapping_revision(self) -> str:
+        """The source's own revision of the mapping, distinguishing a re-map from a re-release."""
+        ...
+
+    @property
+    def ignition_year(self) -> int:
+        """The cohort year this fire ignited in, which is what a release is published per."""
+        ...
+
+    @property
+    def ignition_date(self) -> date:
+        """The day the fire ignited, as the source's own fire-calendar date."""
+        ...
+
+    @property
+    def data_available_at(self) -> datetime:
+        """When the source made this boundary available, UTC (`federation.md` §2)."""
+        ...
+
+    @property
+    def fire_name(self) -> str | None:
+        """The fire's published name, or `None` when the source names no fire."""
+        ...
+
+    @property
+    def fire_type(self) -> str | None:
+        """The source's fire-type word (wildfire, prescribed, ...), or `None` when unpublished."""
+        ...
+
+    @property
+    def assessment_type(self) -> str | None:
+        """The source's assessment word (initial, extended, ...), or `None` when unpublished."""
+        ...
+
+    @property
+    def acres(self) -> float | None:
+        """Burned area in ACRES, not SI -- the unit `warehouse/schemas/burn_severity.py` pins."""
+        ...
+
+    @property
+    def severity_class(self) -> str | None:
+        """The polygon-level severity word, or `None` when the source publishes thresholds instead."""
+        ...
+
+    @property
+    def severity_thresholds(self) -> BurnSeverityThresholdsPayload:
+        """The dNBR thresholds this record carries; always present, its members individually optional."""
+        ...
+
+    @property
+    def geometry(self) -> Mapping[str, object]:
+        """The burned area's WGS84 GeoJSON polygon, unrepaired as the source published it."""
+        ...
 
 
 @runtime_checkable
@@ -50,8 +183,14 @@ class BurnSeverityReleaseDay(Protocol):
         ...
 
     @property
-    def records(self) -> tuple[object, ...]:
-        """Read-only so a concrete source may narrow this to its own release-record type."""
+    def records(self) -> Sequence[BurnSeverityRecordPayload]:
+        """Every burned-area boundary this release day publishes; empty is an honest zero.
+
+        Read-only so a concrete source may narrow this to its own release-record type -- MTBS's
+        `ingest.mtbs.MtbsBurnSeverityRecord` satisfies `BurnSeverityRecordPayload` structurally, and
+        `tests/foundation/test_source_protocols.py` proves it on a fixture rather than asserting it
+        in a comment.
+        """
         ...
 
 
@@ -99,6 +238,8 @@ class BurnSeveritySource(Protocol):
 
 __all__ = [
     "BoundingBox",
+    "BurnSeverityRecordPayload",
     "BurnSeverityReleaseDay",
     "BurnSeveritySource",
+    "BurnSeverityThresholdsPayload",
 ]

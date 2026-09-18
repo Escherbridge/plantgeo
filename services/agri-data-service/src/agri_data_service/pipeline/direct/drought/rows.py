@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import date
 from typing import TYPE_CHECKING, Final
 
 import pyarrow as pa  # type: ignore[import-untyped]
@@ -13,7 +12,7 @@ from agri_data_service.warehouse.schemas.drought import DROUGHT_SCHEMA
 if TYPE_CHECKING:
     from datetime import datetime
 
-    from agri_data_service.ingest.usdm import DroughtRelease
+    from agri_data_service.pipeline.direct.drought.source_protocol import DroughtReleasePayload
 
 #: Namespaces a direct row's `area_id` as never a genuine `geo.drought_areas.id`. There is no
 #: Postgres row behind a direct fetch, so a reader that joined this column back to that table on the
@@ -27,19 +26,24 @@ def direct_area_id(valid_date: str, drought_monitor_category: int) -> str:
     return f"{DIRECT_AREA_ID_PREFIX}:{valid_date}:{drought_monitor_category}"
 
 
-def drought_release_table(release: DroughtRelease, *, ingested_at: datetime) -> pa.Table:
+def drought_release_table(release: DroughtReleasePayload, *, ingested_at: datetime) -> pa.Table:
     """Build the base-rung Arrow table for one release, repairing every class through DuckDB spatial.
 
     `ingested_at` is the caller's fetch instant, matching `water_gauges.py`'s convention (see
     `pipeline/direct/AGENTS.md`, "Water gauges"): a direct row truthfully records when THIS repo
     fetched it, never a Postgres write time that never happened.
+
+    Takes the LAYER's payload protocol, never `ingest.usdm.DroughtRelease`: this module is lane
+    logic, and lane logic that names one source's type is the source-name branch `federation.md` §2
+    calls the bug. `release.release_day` is already a `date` because the source normalised USDM's
+    ISO string at its own boundary (`ingest/usdm.py::DroughtRelease.release_day`).
     """
     with drought_geometry_session() as session:
         repaired = repair_drought_areas_to_wkb(session, release.areas)
-    valid_date = date.fromisoformat(release.valid_date)
+    valid_date = release.release_day
     rows = [
         {
-            "area_id": direct_area_id(release.valid_date, area.drought_monitor_category),
+            "area_id": direct_area_id(valid_date.isoformat(), area.drought_monitor_category),
             "valid_date": valid_date,
             "dm_category": area.drought_monitor_category,
             "source_url": release.source_url,

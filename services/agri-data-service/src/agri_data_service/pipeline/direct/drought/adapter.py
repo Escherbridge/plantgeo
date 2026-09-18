@@ -74,7 +74,11 @@ class DirectDroughtAdapter:
         if source.day != day:
             raise DirectDroughtError(f"the fetch closure for {day} returned source day {source.day}")
         self.source = source
-        if source.release is None:
+        # Bound to a local rather than re-read as `source.release` below: the protocol types it as a
+        # read-only property, and a local is the one narrowing no later call between here and the
+        # write can invalidate.
+        release = source.release
+        if release is None:
             proof = self.mirrored_past_proof()
             if proof is None:
                 # USDM HAS NOT ANSWERED, IT HAS NOT YET PUBLISHED. A governed absence for the newest
@@ -99,7 +103,7 @@ class DirectDroughtAdapter:
         self._retract_disproven_absence(store, day=day, run_id=run_id)
         return normalise_export_outcome(
             store.write_partition(
-                drought_release_table(source.release, ingested_at=source.fetched_at),
+                drought_release_table(release, ingested_at=source.fetched_at),
                 layer=DROUGHT_STREAM,
                 kind=DROUGHT_DIRECT_KIND,
                 zoom=LANE_BASE_ZOOM_TIER,

@@ -41,8 +41,8 @@ from agri_data_service.agent.surfaces import (
     surface_lanes,
     surface_region_layer,
 )
-from agri_data_service.foundation.region import is_layer_bound, load_region
 from agri_data_service.db.engine import published_reader_session
+from agri_data_service.foundation.region import is_layer_bound, load_region
 from agri_data_service.parquet_ops.coverage import registered_census_lanes
 from agri_data_service.parquet_ops.faults import ServingRefusalError
 from agri_data_service.parquet_ops.warehouse_reader import (
@@ -1623,7 +1623,7 @@ def _surface_neighbors(  # noqa: PLR0913 - one argument per coordinate of the ne
 
 
 @_refuses_serving_faults("feature_value_near_point")
-async def query_feature_value_near_point(  # noqa: PLR0913 - the parameter list is the published tool schema.
+async def query_feature_value_near_point(  # noqa: PLR0913, PLR0911 - schema; region gate is 7th return.
     surface_name: str,
     day: str,
     longitude: float,
@@ -1789,7 +1789,7 @@ async def _surface_lane_result(  # noqa: PLR0913 - one coordinate per bounded su
 
 
 @_refuses_serving_faults("surface_value_near_point")
-async def query_surface_value_near_point(  # noqa: PLR0913 - published bounded tool schema.
+async def query_surface_value_near_point(  # noqa: PLR0913, PLR0911 - schema; region gate is 7th return.
     surface_name: str,
     day: str,
     longitude: float,

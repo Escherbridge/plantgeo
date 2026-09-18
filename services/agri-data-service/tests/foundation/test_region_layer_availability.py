@@ -112,9 +112,11 @@ def global_only_region(monkeypatch: pytest.MonkeyPatch) -> Region:
     monkeypatch.setattr(
         region_manifest,
         "_KNOWN_REGION_SLUGS",
-        (*region_manifest._KNOWN_REGION_SLUGS, GLOBAL_ONLY_REGION_SLUG),  # noqa: SLF001 - the registry this fixture extends
+        # The private registry this fixture extends, never replaces.
+        (*region_manifest._KNOWN_REGION_SLUGS, GLOBAL_ONLY_REGION_SLUG),
     )
-    monkeypatch.setitem(region_manifest._REGION_CACHE, GLOBAL_ONLY_REGION_SLUG, region)  # noqa: SLF001 - seeded, never re-parsed
+    # The private cache, seeded rather than re-parsed: there is no `<slug>.json` to read.
+    monkeypatch.setitem(region_manifest._REGION_CACHE, GLOBAL_ONLY_REGION_SLUG, region)
     monkeypatch.setenv(region_manifest.REGION_ENV_VAR, GLOBAL_ONLY_REGION_SLUG)
     return region
 
@@ -147,9 +149,8 @@ async def _tool_payload(tool: Callable[[], Any]) -> dict[str, Any]:
 def test_a_region_binding_only_global_sources_reports_the_rest_unbound(global_only_region: Region) -> None:
     availability = region_layer_availability(global_only_region)
     assert set(availability) == set(PLATFORM_LAYER_SLUGS)
-    assert [slug for slug, status in availability.items() if status.binding == "unbound"] == sorted(
-        UNBOUND_LAYER_SLUGS
-    )
+    unbound = [slug for slug, status in availability.items() if status.binding == "unbound"]
+    assert unbound == sorted(UNBOUND_LAYER_SLUGS)
     assert all(availability[binding.layer_slug].binding == "bound_global" for binding in GLOBAL_LAYER_BINDINGS)
 
 
@@ -161,15 +162,24 @@ def test_an_unbound_layer_names_a_reason_and_no_source(global_only_region: Regio
     assert soil.reason == "no_source_bound_in_region"
 
 
-def test_the_app_boots_with_only_global_lanes_bound(global_only_region: Region) -> None:
+# ARG001 below and in the four tests after it: the fixture is applied for its SIDE EFFECT (it
+# registers the fabricated region as this process's manifest). pytest resolves a fixture by
+# parameter name, so the name can be neither dropped nor `_`-prefixed the way a dummy would be.
+def test_the_app_boots_with_only_global_lanes_bound(
+    global_only_region: Region,  # noqa: ARG001
+) -> None:
     """`federation.md` §4's checklist item: an unbound layer is a governed absence, never a boot failure."""
-    from agri_data_service import app as app_module
+    # Imported inside the test so `create_app()` is first reached with the fixture's region
+    # already registered, never at module import time.
+    from agri_data_service import app as app_module  # noqa: PLC0415
 
     assert load_region().slug == GLOBAL_ONLY_REGION_SLUG
     assert app_module.create_app() is not None
 
 
-def test_the_capabilities_payload_marks_the_regional_layers_unbound(global_only_region: Region) -> None:
+def test_the_capabilities_payload_marks_the_regional_layers_unbound(
+    global_only_region: Region,  # noqa: ARG001
+) -> None:
     """The census field the web slider reads, built from the same manifest the boot check passed."""
     bindings = {binding.layer: binding for binding in region_layer_bindings()}
     assert set(bindings) == set(PLATFORM_LAYER_SLUGS)
@@ -199,7 +209,9 @@ async def test_every_unbound_layers_coverage_tool_refuses_by_region(
     assert "REFUSAL, not an absence" in payload["note"]
 
 
-async def test_an_unbound_feature_layer_refuses_before_it_reads_a_lane(global_only_region: Region) -> None:
+async def test_an_unbound_feature_layer_refuses_before_it_reads_a_lane(
+    global_only_region: Region,  # noqa: ARG001
+) -> None:
     """`feature_value_near_point` is the other half of the triad, and answers the same way."""
     payload = await _tool_payload(
         lambda: agent_tools.query_feature_value_near_point(
@@ -213,7 +225,9 @@ async def test_an_unbound_feature_layer_refuses_before_it_reads_a_lane(global_on
     assert payload["unbound_layers"] == ["soil-survey"]
 
 
-async def test_an_unbound_release_lane_tool_refuses_by_region(global_only_region: Region) -> None:
+async def test_an_unbound_release_lane_tool_refuses_by_region(
+    global_only_region: Region,  # noqa: ARG001
+) -> None:
     """Drought's own tool reads a fixed lane rather than a surface name, and is gated the same way."""
     payload = await _tool_payload(
         lambda: agent_tools.query_drought_history_at_point(
@@ -225,7 +239,9 @@ async def test_an_unbound_release_lane_tool_refuses_by_region(global_only_region
     assert payload["unbound_layers"] == ["drought"]
 
 
-async def test_a_globally_bound_layers_tool_is_not_refused_by_region(global_only_region: Region) -> None:
+async def test_a_globally_bound_layers_tool_is_not_refused_by_region(
+    global_only_region: Region,  # noqa: ARG001
+) -> None:
     """The other direction, and the reason the test above is not vacuous.
 
     `fire-detections` binds FIRMS, which is global, so the region gate must let it through -- it
@@ -233,9 +249,7 @@ async def test_a_globally_bound_layers_tool_is_not_refused_by_region(global_only
     is a LANE refusal, not just "not the region one", is what proves the gate ran and passed.
     """
     payload = await _tool_payload(
-        lambda: agent_tools.query_observation_coverage_on_day(
-            surface_name="fire-detections", day=SELECTED_DAY
-        )
+        lambda: agent_tools.query_observation_coverage_on_day(surface_name="fire-detections", day=SELECTED_DAY)
     )
     assert payload["error"] != "not_available_in_region"
 

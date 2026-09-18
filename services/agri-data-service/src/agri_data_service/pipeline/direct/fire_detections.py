@@ -22,6 +22,7 @@ import pyarrow as pa  # type: ignore[import-untyped]
 
 from agri_data_service.config import settings
 from agri_data_service.db.engine import local_source_loader_session
+from agri_data_service.foundation.geography.bounding_box import inline_bbox_value
 from agri_data_service.foundation.parquet.absence import GovernedAbsence
 from agri_data_service.foundation.parquet.paths import (
     PartitionDayStatus,
@@ -37,7 +38,6 @@ from agri_data_service.ingest.firms import (
     products_covering_span,
 )
 from agri_data_service.ingest.http import upstream_client
-from agri_data_service.foundation.geography.bounding_box import inline_bbox_value
 from agri_data_service.ingest.policy import resolve_bounded_bbox
 from agri_data_service.pipeline.constants import FIRE_DETECTIONS_DIRECT_WRITER_START_DAY, LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.direct import (

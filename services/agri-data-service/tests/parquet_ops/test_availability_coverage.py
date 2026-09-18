@@ -29,7 +29,7 @@ from agri_data_service.parquet_ops.availability_coverage import (
     resolve_availability_lanes,
 )
 from agri_data_service.parquet_ops.coverage import CensusLane, build_coverage, build_lane_coverage
-from agri_data_service.parquet_ops.wire import DayRange, WarehouseCoverage
+from agri_data_service.parquet_ops.wire import DayRange, LayerBindingCoverage, WarehouseCoverage
 from agri_data_service.pipeline.parquet.availability_index import (
     BOOTSTRAP_MARKER_SCHEMA_VERSION,
     AvailabilityChecksumError,
@@ -334,6 +334,18 @@ def test_a_valid_index_reproduces_the_frozen_availability_payload() -> None:
         generated_at=NOW,
         evaluated_through_day=date(2026, 8, 25),
         lanes=merge_direct_lane_rows(lanes=lanes, resolution=resolution, census_rows=()),
+        # The golden fixture is shared with W5-B's own binding-decode tests (0b7a3fe3 added
+        # `layer_bindings` to this same file); these four rows are that fixture's, not new here.
+        layer_bindings=(
+            LayerBindingCoverage(layer="burn-severity", binding="bound_regional", source="mtbs", reason=None),
+            LayerBindingCoverage(layer="drought", binding="bound_regional", source="usdm", reason=None),
+            LayerBindingCoverage(
+                layer="signal", binding="bound_global", source="era5_land_and_nasa_power", reason=None
+            ),
+            LayerBindingCoverage(
+                layer="soil-survey", binding="unbound", source=None, reason="no_source_bound_in_region"
+            ),
+        ),
     )
 
     assert coverage.to_wire() == payload

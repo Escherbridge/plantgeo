@@ -21,7 +21,7 @@ import pyarrow as pa  # type: ignore[import-untyped]
 from agri_data_service.foundation.parquet.duckdb_extensions import extension_directory_setting
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Sequence
+    from collections.abc import Iterator, Mapping, Sequence
 
     from duckdb import DuckDBPyConnection
 
@@ -101,12 +101,14 @@ def burn_severity_geometry_session() -> Iterator[DuckDBPyConnection]:
 
 def repair_burn_severity_geometries_to_wkb(
     session: DuckDBPyConnection,
-    features: Sequence[tuple[str, dict[str, object]]],
+    features: Sequence[tuple[str, Mapping[str, object]]],
 ) -> dict[str, bytes]:
     """Repair every fire's GeoJSON polygon to valid WKB in one DuckDB round trip, keyed by Fire_ID.
 
     `features` is `(fire_id, geometry)` pairs rather than a richer record type, so this module never
-    has to import `ingest.mtbs.MtbsBurnSeverityRecord` just to read two of its fields.
+    has to import a record type at all just to read two of its fields. The geometry is `Mapping`
+    rather than `dict` because that is what the layer's own record contract publishes
+    (`source_protocol.py::BurnSeverityRecordPayload.geometry`), and nothing here mutates it.
 
     Refuses (`BurnSeverityGeometryError`) the WHOLE release day the moment any one fire's polygon
     repairs to empty, matching Postgres's own trigger refusal

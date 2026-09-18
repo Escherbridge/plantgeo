@@ -1,3 +1,7 @@
+// @vitest-environment node
+// jsdom (this repo's default environment) does not resolve `import.meta.url` to a real `file:`
+// URL, so `fileURLToPath` below throws "The URL must be of scheme file"; this file needs the real
+// filesystem to walk `src/`, same reason `manifest-parity.test.ts` carries the same pragma.
 // Stray-literal guard: fails on a new WGS84 footprint literal outside the region manifest.
 // `conductor/code_styleguides/federation.md` §1 "Permitted literal coordinates" and §5 step 4.
 // Regex-scans every `src/**/*.{ts,tsx}` file (excluding tests and `src/lib/region/pnw.ts`) for a

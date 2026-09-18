@@ -73,6 +73,19 @@ class DroughtRelease:
     source_url: str
     areas: tuple[DroughtArea, ...]
 
+    @property
+    def release_day(self) -> date:
+        """The UTC calendar day this release is valid for, parsed from USDM's own ISO spelling.
+
+        This is the calendar normalisation `federation.md` §2 puts at the SOURCE boundary: USDM
+        dates a release as an ISO `YYYY-MM-DD` string, the drought layer's contract
+        (`pipeline/direct/drought/source_protocol.py::DroughtReleasePayload`) wants a `date`.
+        Converting here rather than in `pipeline/direct/drought/rows.py` is what keeps the lane free
+        of the source's spelling; `_require_tuesday` has already proved the string round-trips as
+        canonical ISO before any release is constructed, so this cannot raise on a fetched release.
+        """
+        return date.fromisoformat(self.valid_date)
+
 
 def usdm_source_url(valid_date: str) -> str:
     """Return the exact upstream file a release is read from, which is stored as its provenance."""

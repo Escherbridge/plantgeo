@@ -62,9 +62,9 @@ from typing import TYPE_CHECKING, Final
 
 from agri_data_service.config import settings
 from agri_data_service.db.engine import local_source_loader_session
+from agri_data_service.foundation.geography.bounding_box import inline_bbox_value
 from agri_data_service.foundation.parquet.lane_contract import SourceWatermark
 from agri_data_service.foundation.parquet.paths import partition_day_statuses
-from agri_data_service.foundation.geography.bounding_box import inline_bbox_value
 from agri_data_service.pipeline.constants import LANE_BASE_ZOOM_TIER
 from agri_data_service.pipeline.direct import (
     BBOX_UNCONFIGURED,

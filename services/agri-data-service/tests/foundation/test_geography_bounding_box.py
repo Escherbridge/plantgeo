@@ -40,7 +40,7 @@ LANES_THAT_USED_TO_IMPORT_INLINE_BBOX_VALUE_FROM_INGEST_MTBS: tuple[str, ...] = 
 
 
 def _src_root() -> Path:
-    return Path(__file__).resolve().parents[1] / "src" / "agri_data_service"
+    return Path(__file__).resolve().parents[2] / "src" / "agri_data_service"
 
 
 def _imported_modules(py_path: Path) -> set[str]:
@@ -89,8 +89,9 @@ def test_parse_and_format_round_trip_through_the_new_module() -> None:
 
 
 def test_bbox_constants_and_type_are_exported() -> None:
+    expected_ordinate_count = 4
     assert BBOX_OPTION == "--bbox"
-    assert BBOX_ORDINATE_COUNT == 4
+    assert expected_ordinate_count == BBOX_ORDINATE_COUNT
     # `BoundingBox` is a bare 4-tuple alias, not a runtime-constructible class; this proves the
     # module exports the same name `ingest/mtbs.py` used to define locally.
     assert BoundingBox == tuple[float, float, float, float]

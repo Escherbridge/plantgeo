@@ -42,9 +42,9 @@ from typing import TYPE_CHECKING, Final
 
 from agri_data_service.config import settings
 from agri_data_service.db.engine import local_source_loader_session
+from agri_data_service.foundation.geography.bounding_box import inline_bbox_value
 from agri_data_service.foundation.parquet.lane_contract import resolve_static_lane
 from agri_data_service.foundation.parquet.paths import partition_day_statuses
-from agri_data_service.foundation.geography.bounding_box import inline_bbox_value
 from agri_data_service.pipeline.direct import (
     LANE_DAY_OUTCOMES,
     REFUSE_UNCONFIGURED_BBOX,

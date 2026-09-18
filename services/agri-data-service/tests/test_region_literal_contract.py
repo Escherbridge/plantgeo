@@ -29,6 +29,8 @@ def _name_is_footprint_hinted(name: str) -> bool:
     around `BBOX`; normalising underscores to spaces first restores the hint for real
     `snake_case`/`SCREAMING_SNAKE_CASE` Python identifiers, which is the common case here."""
     return bool(_NAME_HINT_PATTERN.search(name.replace("_", " ")))
+
+
 _ADMIN_CODE_PATTERN: Final = re.compile(r"^US-(WA|OR|ID)$")
 _REGION_WORD_PATTERN: Final = re.compile(r"\b(Pacific Northwest|PNW)\b")
 
@@ -75,12 +77,41 @@ _ALLOWED_RELATIVE_PATHS: Final[frozenset[str]] = frozenset(
 #: Removing an entry once its value is read from `load_region()` is the only edit this set may
 #: receive; a new offender anywhere else fails this test rather than growing this set.
 #:
-#: Empty today: the 2026-09-18 waves already replaced every Python-side footprint constant this
-#: guard can see with a manifest-reading function (`burn_severity_bounding_box()` in `ingest/mtbs.py`,
+#: The 2026-09-18 waves already replaced every Python-side footprint constant this guard can see
+#: with a manifest-reading function (`burn_severity_bounding_box()` in `ingest/mtbs.py`,
 #: `botanical_seed_envelope()` in `foundation/botanical_occurrences/coordinates.py`), so there is no
-#: module-level tuple left for this walk to see as an offender. Kept as a real (initially empty) set, not a comment, so the next offender this walk
-#: finds has somewhere to go without inventing the shape.
-KNOWN_OFFENDERS: Final[frozenset[tuple[str, str]]] = frozenset()
+#: module-level TUPLE left for this walk to see as an offender.
+#:
+#: The nine entries below are the scalar branch's own predicate widening: normalising underscores
+#: before the name-hint match (S1, wave 5 review) makes `\bbbox\b`/`\blat\b` finally reach into
+#: `SCREAMING_SNAKE_CASE` names like `BBOX_ORDINATE_COUNT`, which is the bug S1 fixed -- but the
+#: scalar branch (unlike the tuple branch) has no zoom-ladder/colour-tuple/plausible-span exclusion,
+#: so a hinted name whose value is a COUNT, MARGIN, SPAN CEILING or COSINE FLOOR (never itself a
+#: coordinate) now also matches "in range for a lat/lon component". Verified individually by
+#: reading each definition: none of the nine is a footprint value.
+KNOWN_OFFENDERS: Final[frozenset[tuple[str, str]]] = frozenset(
+    {
+        # `cos(radians(lat))` floor, not a latitude -- `agent/tools.py:258`.
+        ("agent/tools.py", "name-hinted scalar 0.01 assigned to _MIN_LATITUDE_COSINE"),
+        # A unitless multiplier on a computed degree-radius, not a coordinate -- `agent/tools.py:255`.
+        ("agent/tools.py", "name-hinted scalar 1.05 assigned to _BBOX_SAFETY_MARGIN"),
+        # A padding amount added to an envelope, not the envelope itself --
+        # `foundation/botanical_occurrences/coordinates.py:41`.
+        ("foundation/botanical_occurrences/coordinates.py", "name-hinted scalar 0.25 assigned to ENVELOPE_PAD_DEGREES"),
+        # The arity of a bbox tuple (always 4), not an ordinate --
+        # `foundation/geography/bounding_box.py:23`, `ingest/policy.py:19`.
+        ("foundation/geography/bounding_box.py", "name-hinted scalar 4.0 assigned to BBOX_ORDINATE_COUNT"),
+        ("ingest/policy.py", "name-hinted scalar 4.0 assigned to BBOX_ORDINATE_COUNT"),
+        # Span CEILINGS (a validation bound on `east - west` / `north - south`), not a coordinate --
+        # `ingest/policy.py:24-25`.
+        ("ingest/policy.py", "name-hinted scalar 20.0 assigned to MAX_LATITUDE_SPAN"),
+        ("ingest/policy.py", "name-hinted scalar 30.0 assigned to MAX_LONGITUDE_SPAN"),
+        # The arity of a bbox tuple, not an ordinate -- `parquet_ops/request_params.py:37`.
+        ("parquet_ops/request_params.py", "name-hinted scalar 4.0 assigned to BBOX_COMPONENT_COUNT"),
+        # The arity of a bbox tuple, not an ordinate -- `planes/botanical_occurrences.py:108`.
+        ("planes/botanical_occurrences.py", "name-hinted scalar 4.0 assigned to _BBOX_ORDINATES"),
+    }
+)
 
 
 def _constant_number(node: ast.expr) -> float | None:

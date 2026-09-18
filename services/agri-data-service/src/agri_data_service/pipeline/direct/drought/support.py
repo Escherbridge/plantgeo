@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
     from duckdb import DuckDBPyConnection
 
-    from agri_data_service.ingest.usdm import DroughtArea
+    from agri_data_service.pipeline.direct.drought.source_protocol import DroughtAreaPayload
 
 #: The exact PostGIS repair chain `sql/ingest/store_drought_area.sql` runs, restated for DuckDB
 #: spatial: MakeValid repairs a self-intersecting ring (publishers emit these routinely at national
@@ -101,7 +101,7 @@ def drought_geometry_session() -> Iterator[DuckDBPyConnection]:
 
 def repair_drought_areas_to_wkb(
     session: DuckDBPyConnection,
-    areas: Sequence[DroughtArea],
+    areas: Sequence[DroughtAreaPayload],
 ) -> dict[int, bytes]:
     """Repair every class's GeoJSON to valid WKB in one DuckDB round trip, keyed by drought class.
 

@@ -31,12 +31,48 @@ which also defines it. A layer contract naming one source's module would be the 
 the standard forbids, one level up. The two aliases collapse when the shared alias moves down into
 `foundation`, which is wave-4 work.
 
-### What is NOT normalized yet
+### The record payload, and what is still NOT normalized
 
-`BurnSeverityReleaseDay.records` is typed `tuple[object, ...]`: what `mtbs.py` returns is still
-`ingest.mtbs.MtbsBurnSeverityRecord`, MTBS's own record shape. Same named debt as the drought
-lane's `release` field — the normalized record belongs in `warehouse/schemas/burn_severity.py` and
-moving `rows.py` onto it is a later push.
+**Retired 2026-09-18 (wave 5):** `BurnSeverityReleaseDay.records` was typed `tuple[object, ...]`,
+which was honest about the debt and useless to the type checker — `adapter.py` handed that tuple to
+`burn_severity_release_day_table`, whose signature named `ingest.mtbs.MtbsBurnSeverityRecord`, and
+it only failed under `mypy --strict` once the type-only import was repointed at this protocol. It
+is now `Sequence[BurnSeverityRecordPayload]`, a `runtime_checkable` Protocol in `source_protocol.py`
+exposing **exactly** the fourteen members `rows.py` writes and `adapter.py`/`forward.py` count, and
+nothing else: `producer_local_id`, `natural_key`, `release_identifier`, `mapping_revision`,
+`ignition_year`, `ignition_date`, `data_available_at`, `fire_name`, `fire_type`, `assessment_type`,
+`acres`, `severity_class`, `severity_thresholds` and `geometry`. MTBS's `producer` and `geom_kind`
+are deliberately absent: nothing in the lane reads them, and a member nothing reads is a member the
+next region's implementer has to fake.
+
+`BurnSeverityThresholdsPayload` is the same treatment one level down — the seven `int | None` dNBR
+thresholds `rows.py` flattens into columns. `rows.py` now takes the payload protocol and no longer
+imports `ingest.mtbs` at all, and `support.py`'s repair takes `Mapping[str, object]` geometry rather
+than `dict`, matching what the contract publishes.
+
+`ingest.mtbs.MtbsBurnSeverityRecord` satisfies `BurnSeverityRecordPayload` **structurally**; nothing
+inherits, and `tests/foundation/test_source_protocols.py` proves it with `isinstance` on a fixture
+plus a fabricated non-MTBS record that also satisfies it.
+
+**Still not normalized, stated rather than hidden:**
+
+- **`acres` is not SI.** `federation.md` §2 asks for SI at the source boundary, and burned area
+  crosses it in US survey acres because `warehouse/schemas/burn_severity.py` pins a column literally
+  named `acres` that the serving plane, the agent tool and the web legend all read. Converting is a
+  schema migration plus a client contract change, not a source-implementation fix, so the protocol
+  states the unit in the member's own docstring instead of pretending. A metric national programme
+  binding this layer today must convert m² → acres inside its own implementation; that is the wrong
+  direction and it is written down here so the next author does not discover it by reading rows.
+- **`ignition_date` carries no timezone.** It is the source's own fire-calendar date, which is a
+  local civil date for every programme that publishes one. `data_available_at` IS UTC
+  (`ingest/mtbs.py::build_mtbs_snapshot_record` refuses a non-zero offset), so the provenance clock
+  is normalized and the fire calendar is not.
+- **`severity_class` is typed `str | None`, not an enum.** The warehouse schema stores it as a
+  nullable string (`warehouse/schemas/burn_severity.py`), so the layer's contract is a string; MTBS
+  narrows it to its own `Literal` internally, which the read-only property permits.
+- **The calendar half of the protocol is not bound-resolved.** `release_days()` /
+  `ignition_years_by_release_day()` are still read from `products.py`, which imports `ingest.mtbs`
+  directly; only `fetch_release_day` resolves through the region binding (W5-C's own residual note).
 
 ## Wave-4 deletion list
 

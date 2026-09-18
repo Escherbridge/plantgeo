@@ -8,6 +8,10 @@ sources cannot serve, and that the deprecation shims still export exactly what t
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+from datetime import UTC, date, datetime
+from typing import TYPE_CHECKING
+
 import pytest
 
 from agri_data_service.foundation.region import (
@@ -18,9 +22,19 @@ from agri_data_service.foundation.region import (
     unverified_binding_slugs,
 )
 from agri_data_service.foundation.region.source_coverage import GLOBAL_SOURCE_COVERAGE, SourceCoverageClaim
+from agri_data_service.ingest.mtbs import MtbsBurnSeverityRecord
+from agri_data_service.ingest.usdm import DroughtArea, DroughtRelease
 from agri_data_service.pipeline.direct.burn_severity.mtbs import MTBS_BURN_SEVERITY_SOURCE
-from agri_data_service.pipeline.direct.burn_severity.source_protocol import BurnSeveritySource
-from agri_data_service.pipeline.direct.drought.source_protocol import DroughtSource
+from agri_data_service.pipeline.direct.burn_severity.source_protocol import (
+    BurnSeverityRecordPayload,
+    BurnSeveritySource,
+    BurnSeverityThresholdsPayload,
+)
+from agri_data_service.pipeline.direct.drought.source_protocol import (
+    DroughtAreaPayload,
+    DroughtReleasePayload,
+    DroughtSource,
+)
 from agri_data_service.pipeline.direct.drought.usdm import USDM_DROUGHT_SOURCE
 from agri_data_service.pipeline.direct.soil_survey.source_protocol import SoilSurveySource
 from agri_data_service.pipeline.direct.soil_survey.ssurgo import SSURGO_SOIL_SURVEY_SOURCE
@@ -29,6 +43,9 @@ from agri_data_service.pipeline.source_bindings import (
     declared_source_coverage_claims,
     resolve_drought_source,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 #: Every implemented source, with the protocol it claims to satisfy and its manifest slug.
 SOURCE_IMPLEMENTATIONS = (
@@ -212,3 +229,117 @@ def test_resolve_drought_source_refuses_a_region_with_no_drought_binding_at_all(
 
     with pytest.raises(UnboundLayerError, match="drought"):
         resolve_drought_source(region=no_drought_region)
+
+
+#: A tiny valid WGS84 ring. Geometry content is irrelevant to a structural conformance check -- these
+#: fixtures are never repaired or written -- but a well-formed one keeps the fixture readable.
+_WGS84_RING = {
+    "type": "Polygon",
+    "coordinates": [[[-120.0, 45.0], [-119.0, 45.0], [-119.0, 46.0], [-120.0, 46.0], [-120.0, 45.0]]],
+}
+
+
+def test_the_usdm_release_satisfies_the_drought_payload_protocols() -> None:
+    """The concrete USDM dataclass must satisfy `DroughtReleasePayload` structurally, not by comment.
+
+    This is the claim `adapter.py` and `rows.py` now type against: before wave 5 the protocol said
+    `release: object | None` and the lane read `.areas` off it anyway, which only `mypy --strict`
+    could catch. An `isinstance` on a real fixture is what keeps the two halves from drifting again.
+    """
+    release = DroughtRelease(
+        valid_date="2026-09-15",
+        source_url="https://droughtmonitor.unl.edu/data/json/usdm_20260915.json",
+        areas=(DroughtArea(drought_monitor_category=0, geometry=_WGS84_RING),),
+    )
+
+    assert isinstance(release, DroughtReleasePayload)
+    assert isinstance(release.areas[0], DroughtAreaPayload)
+    # The calendar normalisation lives in the SOURCE, not in `rows.py` (federation.md §2).
+    assert release.release_day == date(2026, 9, 15)
+
+
+def test_a_fabricated_non_usdm_release_satisfies_the_same_drought_payload_protocol() -> None:
+    """The whole point of a protocol: a second region's release type needs no USDM ancestry at all."""
+
+    @dataclass(frozen=True)
+    class FabricatedDroughtArea:
+        drought_monitor_category: int
+        geometry: Mapping[str, object]
+
+    @dataclass(frozen=True)
+    class FabricatedNationalDroughtRelease:
+        release_day: date
+        source_url: str
+        areas: tuple[FabricatedDroughtArea, ...]
+
+    release = FabricatedNationalDroughtRelease(
+        release_day=date(2026, 9, 15),
+        source_url="https://example.invalid/national-drought/20260915.json",
+        areas=(FabricatedDroughtArea(drought_monitor_category=3, geometry=_WGS84_RING),),
+    )
+
+    assert isinstance(release, DroughtReleasePayload)
+    assert isinstance(release.areas[0], DroughtAreaPayload)
+
+
+def test_the_mtbs_record_satisfies_the_burn_severity_payload_protocols() -> None:
+    """The concrete MTBS model must satisfy `BurnSeverityRecordPayload` and its nested thresholds."""
+    record = MtbsBurnSeverityRecord(
+        natural_key="mtbs:ID4212011950720220704",
+        producer="mtbs",
+        producer_local_id="ID4212011950720220704",
+        geometry=_WGS84_RING,
+        release_identifier="mtbs-annual:2022",
+        mapping_revision="1",
+        data_available_at=datetime(2026, 1, 2, tzinfo=UTC),
+        ignition_date=date(2022, 7, 4),
+        ignition_year=2022,
+    )
+
+    assert isinstance(record, BurnSeverityRecordPayload)
+    assert isinstance(record.severity_thresholds, BurnSeverityThresholdsPayload)
+
+
+def test_a_fabricated_non_mtbs_record_satisfies_the_same_burn_severity_payload_protocol() -> None:
+    """A second region's burned-area record needs none of MTBS's `producer`/`geom_kind` members."""
+
+    @dataclass(frozen=True)
+    class FabricatedThresholds:
+        dnbr_offset: int | None = None
+        dnbr_standard_deviation: int | None = None
+        nodata_threshold: int | None = None
+        greenness_threshold: int | None = None
+        low_threshold: int | None = None
+        moderate_threshold: int | None = None
+        high_threshold: int | None = None
+
+    @dataclass(frozen=True)
+    class FabricatedNationalBurnRecord:
+        producer_local_id: str
+        natural_key: str
+        release_identifier: str
+        mapping_revision: str
+        ignition_year: int
+        ignition_date: date
+        data_available_at: datetime
+        geometry: Mapping[str, object]
+        fire_name: str | None = None
+        fire_type: str | None = None
+        assessment_type: str | None = None
+        acres: float | None = None
+        severity_class: str | None = None
+        severity_thresholds: FabricatedThresholds = field(default_factory=FabricatedThresholds)
+
+    record = FabricatedNationalBurnRecord(
+        producer_local_id="NAT-2022-000123",
+        natural_key="national-burn-programme:NAT-2022-000123",
+        release_identifier="national-burn-programme:2022",
+        mapping_revision="a",
+        ignition_year=2022,
+        ignition_date=date(2022, 7, 4),
+        data_available_at=datetime(2026, 1, 2, tzinfo=UTC),
+        geometry=_WGS84_RING,
+    )
+
+    assert isinstance(record, BurnSeverityRecordPayload)
+    assert isinstance(record.severity_thresholds, BurnSeverityThresholdsPayload)

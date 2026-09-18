@@ -544,6 +544,57 @@ deprecation aliases, `WORLD_EXTENT_ENVELOPE`, a typed `source_unbound_for_region
 `as const` from the manifest, server-reported rung, governed absence for an unwritten NDVI day).
 Lesson in memory `plantgeo-manifest-moves-must-be-lazy`.
 
+**Push `37963657` (21:35Z, wave 4; receipt `b7706c4a`/950) PASS on all four services:** land-context
+`resolveBoundaryInArea`/`AtPoint` answer the typed `source_unbound_for_region`; the eight readers whose
+bbox helper moved are byte-identical; zero alias `DeprecationWarning`s in production logs.
+`coverageStatus` still answers `unknown_coverage` from its own tri-state (by design, W5-E leaves it).
+
+**Style review of wave 3 (`STYLE-REVIEW-W3.md`): CHANGES-REQUIRED, 2 BLOCKER** — the land-context
+viewport hook read on every pan and discarded the payload while four of five states rendered nothing;
+the web literal guard could not match a multi-line object (no trailing-comma/newline in the pattern) and
+had no self-detection test. **Style review of wave 4 (`STYLE-REVIEW-W4.md`): CHANGES-REQUIRED, 3
+BLOCKER** — the NDVI absence was inferred from a base-class `except` that also caught a mid-read prune
+race and swallowed schema/empty/conflict errors, and the scheduled turn then exited 0 forever on an
+unwritten day; the absence was logged, never recorded in the availability vocabulary; only two of five
+land-context reader paths carried the typed state while `AGENTS.md` claimed all five. The Python
+import-time region read was confirmed genuinely gone.
+
+**Wave 5 (merged locally, 21 commits / 91 files, one sweep before push).** W5-A: `foundation/geography/
+bounding_box.py` (`parse_bounding_box`, `format_bounding_box_inline`); six lanes plus burn-severity
+stop importing `ingest.mtbs` (the earlier count of five was stale — fire-perimeters had gained the
+import). W5-B: `foundation/region/layer_availability.py` answers bound-global / bound-regional /
+unbound over a platform-layer vocabulary that is *not* the manifest (a catalogue derived from
+`enabled_layers` could only contain bound layers); agent tools stay registered and refuse with
+`_region_absence`; `/api/v1/parquet/coverage` gains an additive `layer_bindings` key
+(`COVERAGE_SCHEMA_VERSION` deliberately stays 3 — silence renders as today; **reviewer yes/no owed**);
+`useLayerVisibility` is the one web seam (unbound → no fetch, toggle disabled, amber caption); fail-open
+on silence, only an explicit `unbound` disables. Boot-with-global-lanes proof: a fabricated
+global-only region boots, marks regional layers unbound, each regional agent tool refuses. W5-C:
+hemisphere-neutral footprint predicate with planted-literal self-tests (Kenya box included),
+`KNOWN_OFFENDERS` keyed by path + value, soil-survey protocol members read-only, drought/burn lanes
+resolve their source through `pipeline/source_bindings.py` from the region binding (the contract is
+now load-bearing), `selectFinestAdmittingRungResult` discriminated union with an exhaustive botanical
+ladder. W5-D: `LayerManager.tsx` 1,727 → 1,334 via `layer-manager/{parquet-layer-faults.ts,
+useBotanicalViewportLanes.ts, useLandContextViewportBoundaries.ts}`; the viewport read is consumed by a
+second source (`LandContextViewportLayer`, never the click lane's store slice), gated on
+`isLayerBoundInRegion` which reads the compiled manifest and **fails closed** (the opposite of W5-B's
+payload-based helper, argued in `layer-region-binding.ts`); thirteen captions, one silent
+(`no_group_enabled`). PNW binds no land-context layer, so the automatic read issues no request today.
+W5-E: `PartitionNotWrittenError` is the only absence-shaped `ParquetWriteError`;
+`ConcurrentPrunePartitionError` is distinct; the promoter consults the availability index first
+(indexed `governed_absence` → reported with its own reason, no object opened; no row →
+`not_yet_indexed`; `published` with no parts → conflict, raised); exit 0 only for `completed`;
+`refusal: CoverageRefusal | null` on all five reader paths; `subdivisionCodesOf` derives value and type
+from one tuple; the three `__getattr__` shims and their tests deleted (nothing in `src/` read them),
+`DEPRECATED_ALIASES.md` keeps only the two `source.py` modules.
+
+**Still owed after wave 5:** `LandContextStatusNotice` renders `upstream_unavailable` in the same amber
+tone as a governed absence (`FAULT_CLASS` unused); `LandContextPanel.partialCoverage` is permanently
+false and should read `coverageNotices`; `servedZoomTier` is a constant with an unreachable arm; both
+botanical lanes read at detail zoom with the UBC toggle on; drought/burn records behind the protocols
+are still `object`-typed; `mtbsSnapshot` contract-versioned rename; `OfflinePanel.tsx:52` box (a
+product decision); the two `source.py` shims next release.
+
 ## Recovery
 
 - Disable the affected current schedule and preserve the last valid immutable generation and pointer.

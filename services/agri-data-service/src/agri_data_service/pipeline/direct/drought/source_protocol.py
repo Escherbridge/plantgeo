@@ -2,6 +2,10 @@
 
 See `AGENTS.md` in this directory, section "The source protocol", for what the layer owns, what a
 source owns, and which part of the record is not normalized yet.
+
+`DroughtReleasePayload`/`DroughtAreaPayload` enumerate EXACTLY the members the lane reads off a
+release -- nothing wider, so `mypy` sees the same shape the code does, and nothing narrower, so a
+second region's source can satisfy them without inheriting from anything.
 """
 
 from __future__ import annotations
@@ -9,9 +13,58 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
     from datetime import date, datetime
 
     from agri_data_service.foundation.region.source_coverage import SourceCoverageClaim
+
+
+@runtime_checkable
+class DroughtAreaPayload(Protocol):
+    """One drought class of one release: the severity step and the polygon it covers.
+
+    `geometry` is a GeoJSON mapping in WGS84 (`federation.md` §2), the datum every geometry lane in
+    this tree stores and serves in. A source publishing in a projected CRS reprojects inside its own
+    implementation; the lane's repair chain (`support.py::repair_drought_areas_to_wkb`) assumes 4326
+    and has no CRS argument to tell it otherwise.
+    """
+
+    #: Read-only properties, not plain attributes -- see `DroughtReleaseDay` for why.
+    @property
+    def drought_monitor_category(self) -> int:
+        """The severity step this area covers, `0`..`4` (D0 abnormally dry .. D4 exceptional)."""
+        ...
+
+    @property
+    def geometry(self) -> Mapping[str, object]:
+        """The area's WGS84 GeoJSON `Polygon`/`MultiPolygon`, unrepaired as the source published it."""
+        ...
+
+
+@runtime_checkable
+class DroughtReleasePayload(Protocol):
+    """One dated drought release's payload, in exactly the shape the lane reads it.
+
+    These three members are the WHOLE of what `rows.py`, `adapter.py` and `forward.py` consume; a
+    second region's source satisfies this protocol structurally and the lane never learns its name
+    (`federation.md` §2, "layer logic is source-agnostic"). Deliberately NOT the union of everything
+    USDM happens to publish: a member nothing reads is a member the next implementer has to fake.
+    """
+
+    @property
+    def release_day(self) -> date:
+        """The UTC calendar day this release is valid for."""
+        ...
+
+    @property
+    def source_url(self) -> str:
+        """The exact upstream file this release was read from, stored as the row's provenance."""
+        ...
+
+    @property
+    def areas(self) -> Sequence[DroughtAreaPayload]:
+        """Every drought class this release publishes, one per severity step."""
+        ...
 
 
 @runtime_checkable
@@ -39,8 +92,14 @@ class DroughtReleaseDay(Protocol):
         ...
 
     @property
-    def release(self) -> object | None:
-        """Read-only so a concrete source may narrow this to its own release payload type."""
+    def release(self) -> DroughtReleasePayload | None:
+        """The release's payload, or `None` for the source's own "not published yet" answer.
+
+        Read-only so a concrete source may narrow this to its own release payload type -- USDM's
+        `ingest.usdm.DroughtRelease` satisfies `DroughtReleasePayload` structurally, and
+        `tests/foundation/test_source_protocols.py` proves it on a fixture rather than asserting it
+        in a comment.
+        """
         ...
 
 
@@ -75,6 +134,8 @@ class DroughtSource(Protocol):
 
 
 __all__ = [
+    "DroughtAreaPayload",
     "DroughtReleaseDay",
+    "DroughtReleasePayload",
     "DroughtSource",
 ]

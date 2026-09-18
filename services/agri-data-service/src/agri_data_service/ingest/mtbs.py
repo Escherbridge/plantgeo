@@ -28,7 +28,9 @@ from agri_data_service.execution.source_ingestion import (
     SourceIngestionPlan,
     SourceReleasePlan,
 )
-from agri_data_service.foundation.geography.bounding_box import BoundingBox as BoundingBox  # noqa: PLC0414 - public compatibility re-export
+from agri_data_service.foundation.geography.bounding_box import (
+    BoundingBox as BoundingBox,  # noqa: PLC0414 - public compatibility re-export
+)
 from agri_data_service.foundation.geography.bounding_box import (
     format_bounding_box_inline as _format_bounding_box_inline,
 )

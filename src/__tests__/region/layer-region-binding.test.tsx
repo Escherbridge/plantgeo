@@ -109,9 +109,9 @@ describe("the catalogue under a region that binds only global sources", () => {
   it("disables the toggle for an unbound layer and never claims the record has a gap", () => {
     useTimeSliderStore.setState({ capabilities: capabilities(globalOnlyBindings()) });
     renderRow("soil-survey");
-    const toggle = screen.getByRole("switch");
-    expect(toggle).toBeDisabled();
-    expect(toggle).toHaveAttribute("aria-checked", "false");
+    const toggle = screen.getByRole("switch") as HTMLButtonElement;
+    expect(toggle.disabled).toBe(true);
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
     // The three captions a bound layer can carry are all claims about a publishing record, and an
     // unbound layer has none here to describe. Any of them beside the region sentence would be the
     // "two captions, one of them false" defect `LayerRow` already records once.
@@ -130,7 +130,7 @@ describe("the catalogue under a region that binds only global sources", () => {
     useTimeSliderStore.setState({ capabilities: capabilities(globalOnlyBindings()) });
     renderRow("fire");
     expect(screen.queryByTestId("layer-region-absence-fire")).toBeNull();
-    expect(screen.getByRole("switch")).not.toBeDisabled();
+    expect((screen.getByRole("switch") as HTMLButtonElement).disabled).toBe(false);
   });
 });
 

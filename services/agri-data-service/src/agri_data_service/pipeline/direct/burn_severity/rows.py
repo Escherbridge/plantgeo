@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from datetime import date
 
-    from agri_data_service.ingest.mtbs import MtbsBurnSeverityRecord
+    from agri_data_service.pipeline.direct.burn_severity.source_protocol import BurnSeverityRecordPayload
 
 #: Namespaces a direct row's `feature_id` as never a genuine `geo.features.id`. The schema documents
 #: `feature_id` as `features.id::text` for every Postgres-sourced row
@@ -33,11 +33,15 @@ def direct_feature_id(fire_id: str) -> str:
 
 
 def burn_severity_release_day_table(
-    records: Sequence[MtbsBurnSeverityRecord],
+    records: Sequence[BurnSeverityRecordPayload],
     *,
     observed_day: date,
 ) -> pa.Table:
     """Build the base-rung Arrow table for one release day, repairing every fire's polygon through DuckDB spatial.
+
+    Takes the LAYER's record protocol, never `ingest.mtbs.MtbsBurnSeverityRecord`: this module is
+    lane logic, and lane logic that names one source's type is the source-name branch
+    `federation.md` §2 calls the bug. Every field read below is a member of that protocol.
 
     `observed_day` is the caller's own release day, never re-derived from `records`: a release day's
     records are already the union of every ignition-year cohort whose `data_available_at` resolves

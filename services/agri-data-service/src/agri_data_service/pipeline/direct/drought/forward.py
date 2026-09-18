@@ -67,8 +67,8 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from agri_data_service.foundation.parquet.paths import PartitionDayStatus
-    from agri_data_service.pipeline.direct.drought.source_protocol import DroughtReleaseDay as DroughtDaySource
     from agri_data_service.foundation.parquet.zoom import ZoomTier
+    from agri_data_service.pipeline.direct.drought.source_protocol import DroughtReleaseDay as DroughtDaySource
     from agri_data_service.pipeline.parquet.availability_index import AvailabilityStorage
     from agri_data_service.pipeline.parquet.lane_registry import LaneRegistration
 

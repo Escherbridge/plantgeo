@@ -12,8 +12,10 @@ were deleted rather than disabled (STYLE-REVIEW-W4 S3; `DEPRECATED_ALIASES.md`).
 from __future__ import annotations
 
 import argparse
-from collections.abc import Sequence
-from typing import Final
+from typing import TYPE_CHECKING, Final
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 BoundingBox = tuple[float, float, float, float]
 
