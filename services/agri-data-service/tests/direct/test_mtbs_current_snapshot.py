@@ -15,6 +15,8 @@ from agri_data_service.pipeline.direct.burn_severity import capture
 from agri_data_service.pipeline.direct.burn_severity.capture import BBOX, CaptureBudget
 from agri_data_service.pipeline.direct.burn_severity.current_snapshot import (
     BBOX as CURRENT_SNAPSHOT_BBOX,
+)
+from agri_data_service.pipeline.direct.burn_severity.current_snapshot import (
     canonical_bytes,
     digest,
     make_source_manifest,

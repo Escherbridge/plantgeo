@@ -759,9 +759,7 @@ class ObjectStore:
     def write_promotion_receipt(self, payload: bytes, *, layer: str, kind: PartitionKind, day: date) -> str:
         """Record one day partition's governed-plane promotion decision; returns the receipt path."""
         if not payload or len(payload) > MAX_PROMOTION_RECEIPT_BYTES:
-            raise ValueError(
-                f"a promotion receipt must be 1..{MAX_PROMOTION_RECEIPT_BYTES} bytes, got {len(payload)}"
-            )
+            raise ValueError(f"a promotion receipt must be 1..{MAX_PROMOTION_RECEIPT_BYTES} bytes, got {len(payload)}")
         relative_path = promotion_receipt_path(layer, kind, day)
         self._backend.put(self.key_for(relative_path), payload, content_type=PROMOTION_RECEIPT_CONTENT_TYPE)
         return relative_path

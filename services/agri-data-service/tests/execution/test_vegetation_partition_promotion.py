@@ -6,6 +6,8 @@ register call, so no real Postgres session or Parquet partition is required to p
 scoping decision (owner 2026-09-18) is correct.
 """
 
+# ruff: noqa: PLR2004 - the literals here are fixture call counts, and naming each one hides the assertion.
+
 from __future__ import annotations
 
 import uuid
@@ -102,7 +104,9 @@ class RecordingRegister:
     def __init__(self) -> None:
         self.calls: list[tuple[date, tuple[tuple[str, date], ...]]] = []
 
-    async def __call__(self, session: object, *, cutoff_day: date, cell_days: tuple[tuple[str, date], ...]) -> RegistrationSummary:
+    async def __call__(
+        self, session: object, *, cutoff_day: date, cell_days: tuple[tuple[str, date], ...]
+    ) -> RegistrationSummary:
         del session
         self.calls.append((cutoff_day, cell_days))
         return _registration_summary()

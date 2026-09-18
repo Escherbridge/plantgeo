@@ -35,7 +35,7 @@ import sys
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
-from typing import TYPE_CHECKING, Final, Literal
+from typing import TYPE_CHECKING, Final, Literal, cast
 
 from agri_data_service.execution.vegetation_ndvi_plane import (
     RegistrationSummary,
@@ -49,6 +49,7 @@ from agri_data_service.warehouse.schemas.vegetation import VEGETATION_PLANE_STRE
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from agri_data_service.foundation.parquet.paths import PartitionKind
     from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 
 #: The only kind this verb is ever asked about. Anything else is refused at construction, never
@@ -83,7 +84,7 @@ class VegetationDayPartitionKey:
 
     day: date
     kind: str = PROMOTABLE_KIND
-    layer: Literal["vegetation"] = VEGETATION_PLANE_STREAM  # type: ignore[assignment]
+    layer: Literal["vegetation"] = VEGETATION_PLANE_STREAM
 
     def __post_init__(self) -> None:
         if self.kind != PROMOTABLE_KIND:
@@ -160,7 +161,7 @@ def day_partition_content_sha256(cell_values: Sequence[tuple[str, float]]) -> st
     return sha256_digest(canonical_json(ordered))
 
 
-async def promote_vegetation_day_partition(
+async def promote_vegetation_day_partition(  # noqa: PLR0913 - one argument per idempotency input; bundling loses the per-field docstring above
     session: AsyncSession,
     *,
     day: date,
@@ -211,7 +212,9 @@ async def promote_vegetation_day_partition(
     )
 
 
-def load_promotion_receipt(store: ObjectStore, *, day: date, kind: str = PROMOTABLE_KIND) -> VegetationPromotionReceipt | None:
+def load_promotion_receipt(
+    store: ObjectStore, *, day: date, kind: PartitionKind = PROMOTABLE_KIND
+) -> VegetationPromotionReceipt | None:
     """Return the last recorded promotion receipt for one day partition, or `None` when never promoted."""
     payload = store.read_promotion_receipt(VEGETATION_PLANE_STREAM, kind, day)
     return None if payload is None else VegetationPromotionReceipt.from_json_bytes(payload)
@@ -219,10 +222,12 @@ def load_promotion_receipt(store: ObjectStore, *, day: date, kind: str = PROMOTA
 
 def save_promotion_receipt(store: ObjectStore, receipt: VegetationPromotionReceipt) -> str:
     """Durably record one promotion decision so the next turn can re-run it as a no-op."""
+    # `receipt.partition.kind` is `str` -- `VegetationDayPartitionKey.__post_init__` already refuses
+    # construction for anything but `PROMOTABLE_KIND`, so this narrows a runtime-guaranteed value.
     return store.write_promotion_receipt(
         receipt.to_json_bytes(),
         layer=VEGETATION_PLANE_STREAM,
-        kind=receipt.partition.kind,
+        kind=cast("PartitionKind", receipt.partition.kind),
         day=receipt.partition.day,
     )
 
@@ -303,9 +308,9 @@ async def run_vegetation_promotion(
 
 async def main(argv: Sequence[str] | None = None) -> int:
     """Run one bounded promotion turn over explicitly named days and emit one terminal report."""
-    from agri_data_service.config import settings
-    from agri_data_service.db.engine import local_source_loader_session
-    from agri_data_service.pipeline.parquet.objectstore import ObjectStore
+    from agri_data_service.config import settings  # noqa: PLC0415 - CLI-only
+    from agri_data_service.db.engine import local_source_loader_session  # noqa: PLC0415 - CLI-only
+    from agri_data_service.pipeline.parquet.objectstore import ObjectStore  # noqa: PLC0415 - CLI-only
 
     arguments = parser().parse_args(argv)
     days = (

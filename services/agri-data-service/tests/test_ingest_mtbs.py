@@ -280,7 +280,7 @@ def _page_offsets(service: RecordedMtbsService) -> list[int]:
 def test_pacific_northwest_bbox_is_the_region_manifest_burn_severity_sub_envelope() -> None:
     """`PACIFIC_NORTHWEST_BBOX` is a deprecated alias; pin it to the manifest it now reads."""
     envelope = load_region().sub_envelopes["burn_severity"]
-    assert PACIFIC_NORTHWEST_BBOX == (envelope.west, envelope.south, envelope.east, envelope.north)
+    assert (envelope.west, envelope.south, envelope.east, envelope.north) == PACIFIC_NORTHWEST_BBOX
     assert PACIFIC_NORTHWEST_BBOX == (-125.0, 42.0, -111.0, 49.0)
 
 

@@ -82,7 +82,7 @@ def _release(records: tuple[NormalizedOccurrence, ...]) -> ReadRelease:
 def test_seed_envelope_is_the_region_manifest_botanical_seed_sub_envelope() -> None:
     """`SEED_ENVELOPE` is a deprecated alias; pin it to the manifest it now reads."""
     envelope = load_region().sub_envelopes["botanical_seed"]
-    assert SEED_ENVELOPE == (envelope.west, envelope.south, envelope.east, envelope.north)
+    assert (envelope.west, envelope.south, envelope.east, envelope.north) == SEED_ENVELOPE
     assert SEED_ENVELOPE == (-125.0, 41.0, -110.0, 50.0)
 
 

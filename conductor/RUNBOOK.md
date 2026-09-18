@@ -466,6 +466,47 @@ eight dead service modules deleted (719 lines; `analytics.ts` kept — the swarm
 global-lanes test); botanical B7–B8 + rung-select ceiling; land-context R3–R5 with auto viewport;
 NDVI promotion arming (P4); the E1–E4/W1–W2/A1 track items unchanged.
 
+**Pushes after wave 1 (all four services SUCCESS, probes PASS, checkpoints in
+`tracks/platform_experience_qa_20260911/evidence/`):** `7f2d8f69` (19:41Z, region manifest,
+dead modules, docs — receipt `b964e9c1`/930 files) and `5325e600` (19:56Z, botanical
+current-pointer + proxy — receipt `1de73dfa`/932 files). Production now answers botanical reads
+through the **legacy bridge** (`pointer_kind = legacy_current_json`, generation `956c0be7…`) on the
+proxy, the data API `/current`, and all four agent tools. Correction to the record: hotfix
+`8451ebcf` also carried the eight dead-module deletions because `git rm` had staged them; its
+message names only the URL fix.
+
+**Owner gates still open (production mutations, not code):** (1) advance the botanical pointer —
+`advance_latest_pointer(publication_target(), "956c0be7…")` — then delete the bridge
+(`_resolve_legacy_current_pointer`, `legacy_current_json`); (2) add
+`vegetation-ndvi-governed-plane-promotion` to `PLANTGEO_JOB_EXECUTOR_ACTIVE_LANES` once its first
+shadow tick is observed. Owner rulings recorded in memory `plantgeo-owner-decisions-2026-09-18`:
+botanical bbox ceiling by rung-select; land-context gains an auto viewport query; NDVI promotion
+checksum per day-partition content SHA. **ML is out of scope for this run** (separate session).
+
+**Wave 2 (merged locally as `5eee97ef`, one sweep before push).** W2-B/E: `PACIFIC_NORTHWEST_BBOX`,
+`SEED_ENVELOPE`, the burn envelope (×2 in `current_snapshot.py`, incl. one inside
+`validate_source_manifest` the ticket had missed), `PNW_STATE_CODES` and
+`SUPPORTED_BURN_SNAPSHOT_SCOPE` now read the manifest; `stage.py` carried no literal;
+`PNW_COARSE_NODES` is a test fixture, not footprint. Style review of wave 1 (opus, `STYLE-REVIEW-W1.md`,
+2 BLOCKER / 8 SHOULD-FIX) fixed: the manifest omitted drought, signal and botanical-occurrences and
+listed Postgres-only `interventions`; `PNW` was exported as a module constant (now `load_region()`
+is the only door, lazy, `PLANTGEO_REGION` honoured per call); `getRegion()` parses and deep-freezes;
+`extra="forbid"`/`.strict()`; recursive key-set parity. `mtbsSnapshot` in `parquet-trpc-readers/shared.ts`
+stays — a served field, owed a contract-versioned rename (layer-lanes §1b). W2-C: **there is no
+land-context Parquet lane** (no plane, no registry entry, no rungs); the four reader bodies now do
+the §4a pointer + data reads against the declared slugs and return `source_unbound_for_region`,
+never an empty collection; RUNBOOK finding 4.2 (`decodeBoundaryGeometry` in `toFeature`) was
+already done server-side in `attach-decoded-geometry.ts` on 2026-09-15 and doing it in `toFeature`
+would break the client/server import check; `useLandContextViewport` refuses above 1 sq degree
+(auto read from ~z10), mount snippet in `src/hooks/AGENTS.md`. W2-D: `register_governed_forward_plane`
+had never had a caller; `execution/vegetation_partition_promotion.py` keys promotion by each day
+partition's content SHA (reusing `foundation/canonical.py`), receipts in the object store, lane
+`vegetation-ndvi-governed-plane-promotion` at `25 * * * *`, shadow by default.
+
+**Tripwire:** `src/__tests__/components/map-view-workspace.test.tsx` failed once in the botanical
+sweep (a `scrollIntoView` error in `RegionalIntelligencePanel.tsx:687`) on files no wave touched,
+after passing in the wave-1 sweep; treated as flaky until it fails twice.
+
 ## Recovery
 
 - Disable the affected current schedule and preserve the last valid immutable generation and pointer.

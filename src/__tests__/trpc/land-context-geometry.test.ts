@@ -11,6 +11,24 @@ import type { CandidateBoundaryFeature } from "@/lib/server/services/land-contex
 vi.mock("@/lib/server/db", () => ({ db: {} }));
 vi.mock("@/lib/server/auth", () => ({ getServerSession: vi.fn() }));
 
+// `parquet-reader.ts` now issues a real pointer GET against the warehouse coverage census
+// before falling through to the placeholder gap; mock it to an EMPTY warehouse so the
+// "placeholder storage layer" test path never reaches the network, per the same pattern as
+// `coverage-state.test.ts`.
+const { getParquetWarehouseCoverage } = vi.hoisted(() => ({
+  getParquetWarehouseCoverage: vi.fn(async () => ({
+    coverageSchemaVersion: 1,
+    generatedAt: "2026-09-18T00:00:00Z",
+    evaluatedThroughDay: "2026-09-18",
+    lanes: [],
+  })),
+}));
+
+vi.mock("@/lib/server/services/parquet-plane-client", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/server/services/parquet-plane-client")>()),
+  getParquetWarehouseCoverage,
+}));
+
 const storage = vi.hoisted(() => ({ features: [] as unknown[] }));
 
 vi.mock("@/lib/server/services/land-context/parquet-reader", async (importOriginal) => {
@@ -81,7 +99,7 @@ describe("landContext.resolveBoundaryAtPoint geometry", () => {
     expect(response.data[0].coverageState).toBe("unknown_coverage");
     expect(response.data[0].geometry).toBeNull();
     expect(response.data[0].unresolvedGaps).toEqual([
-      "no Parquet lane wired in yet; reference plane not yet admitted for reads",
+      'no Parquet lane named "land-context-boundaries" appears in the warehouse coverage census; source_unbound_for_region for the land-context reference plane',
     ]);
   });
 

@@ -7,7 +7,26 @@
  * "A request outside the pilot or over budget gets a typed response; no
  * silent truncation."
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+// `reader.ts` now issues a real pointer GET (`parquet-reader.ts`) against the warehouse
+// coverage census; mock it to an EMPTY warehouse so this file's budget assertions stay
+// deterministic and never reach the network, per the same pattern as
+// `coverage-state.test.ts`.
+const { getParquetWarehouseCoverage } = vi.hoisted(() => ({
+  getParquetWarehouseCoverage: vi.fn(async () => ({
+    coverageSchemaVersion: 1,
+    generatedAt: "2026-09-18T00:00:00Z",
+    evaluatedThroughDay: "2026-09-18",
+    lanes: [],
+  })),
+}));
+
+vi.mock("@/lib/server/services/parquet-plane-client", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/server/services/parquet-plane-client")>()),
+  getParquetWarehouseCoverage,
+}));
+
 import { readBoundedAoiIntersection } from "@/lib/server/services/land-context/reader";
 import { MAX_AOI_AREA_SQUARE_DEGREES } from "@/lib/server/services/land-context/budgets";
 

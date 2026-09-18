@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Mapping
+from collections.abc import Mapping  # noqa: TC003 - pydantic resolves this at runtime
 from importlib import resources
 from types import MappingProxyType
 from typing import Final, Literal
