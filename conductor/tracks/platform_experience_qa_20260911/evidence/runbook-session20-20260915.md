@@ -348,3 +348,36 @@ The rebuilt receipt against `b815e4a0` passed all four gates on Linux (pytest 17
 digest inputs, and its tree digest equals the host tree's; the unchanged verifier accepted it on the
 host. Receipt SHA-256 `e2b87486edd891ecb6e046e39bc1fcd440df5d6230081e9210178d35e7969e69` (1019 bytes), copied unchanged from
 `agri-data-service` attempt `1364e27ef5d740bfba98a1a4a97662cd`.
+
+## Deployment, owner gate and live outcome (2026-09-18)
+
+`c150250d` (batch `a17650b4` + timing-test fix `b815e4a0` + receipt): Martin `de78fa54`, Parquet API
+`4cf7f38e` and job executor `d3bb095e` SUCCESS; frontend `75d413b0` **FAILED** on
+`sync-index.test.ts > prunes a day whose entry has passed its TTL` — a pre-existing test storing a
+20 ms real-clock TTL and sleeping 40 ms, untouched by any lane, green locally 3/3, expired before
+`hydrate` indexed it on the slower build container. Fixed test-only (`vi.useFakeTimers({toFake:
+["Date"]})`, timers and promises left real) as `767d9980`; frontend `064079d2` and Martin `ef8a6429`
+SUCCESS, readiness 200, and the live About page shows LANDFIRE absent, Canadensys present, the
+"Withheld" gloss present.
+
+Owner decisions taken: release sensors via explicit CLI supersession; activate fire-perimeters
+accepting the recorded audit-durability trade; acknowledge the desktop click-reach change.
+`ProcessStartRelease` shipped OFF. Executed: `jobs-supersede-run --lane sensors-direct-forward
+--run-id def58693-a0b6-4d97-90f2-3127bfc9b418` dry run (`outcome: dry_run`, ledger untouched) then
+`--apply`, evidence naming the retired-adapter markers and the reviewed fix. The allow-list gained
+`fire-perimeters-direct-forward` (12 lanes); Railway redeployed the executor on the variable change
+(`58dce0ef` SUCCESS 12:53Z, `d3bb095e` REMOVED — a redeploy is NOT implied by a variable edit in
+general, but this one did trigger; verify per change). The new process opened the current 12:10Z
+fire-perimeters bucket immediately: `fire_perimeters_forward_fetched geometry_repaired=51`, the
+`geometry_repaired` audit event, `resolved`, `version_complete outcome=written`; the serving reader
+answers `published, served_day 2026-09-18, 90 rows` at z5 and z13. The 2026-09-04 stall is closed to
+today. Sensors: the supersession is recorded; the first post-release poll is the 13:20Z bucket and
+its result is appended below when observed. **No whole QA case or checklist item is promoted.**
+
+Sensors, observed after the supersession: the lane opened the current 12:20Z bucket at once (run
+`67179b8a-40db-4061-9da2-472570498a3f`, succeeded, no operator action); the serving reader answers
+`published` for every day 2026-09-12 through 2026-09-18 (2,451–2,866 rows each), coverage reports
+`withheld_reason: null` at z0 and z13 with `latest_day 2026-09-18`, and the layer is back in the
+slider capability list. `tick_unhealthy` no longer names any lane. Days older than NWS's rolling
+window are lost at the source, as diagnosed. Climate: shortwave still reads 2026-05-31 at this capture; its first post-deploy hourly turn drains one day per turn and the six-hourly repair turn adds five, so movement is expected within the hour. **No whole QA case or checklist item is
+promoted; the 220-case matrix is unchanged.**

@@ -371,7 +371,18 @@ effort; land-context enterable by a bare canvas click with pointer-aware click o
 server-side WKB decode, honest per-family notices, and the agent popup now opening over vector
 ground where at HEAD it fired only beyond the PNW extract.
 
-Integrated sweep: Python format, lint, mypy and full pytest passed (eight lint findings fixed mechanically at the sweep, five by hand); frontend boundary, type check and lint passed; frontend suite 201 files / 2,676 tests, exit zero. Deployment: PENDING-DEPLOY. Owner gate after deploy: the
+Integrated sweep: Python format, lint, mypy and full pytest passed (eight lint findings fixed mechanically at the sweep, five by hand); frontend boundary, type check and lint passed; frontend suite 201 files / 2,676 tests, exit zero. Deployment: the batch landed as a17650b4 and its receipt as c150250d; Martin, the Parquet API and the
+job executor built SUCCESS on that commit, the frontend FAILED on one pre-existing real-clock TTL test
+that no lane had touched (a 20 ms margin lost on a slow build container), fixed test-only in 767d9980,
+after which frontend and Martin built SUCCESS and readiness returned 200. The Linux receipt gate caught
+two exact-float timing assertions in the new climate quota-pause tests that Windows' coarse clock had
+masked (test-only fix b815e4a0). Owner gate executed: the sensors breaker supersession was recorded
+against run def58693 (dry run, then apply; one incident row); fire-perimeters-direct-forward was added
+to the allow-list, the executor redeployed on the variable change (58dce0ef), opened the current 12:10Z
+bucket on start, repaired 51 invalid perimeters and published a version -- 90 rows at every rung,
+served_day 2026-09-18, a 14-day stall closed to today. Sensors opened the current 12:20Z bucket on release and
+succeeded: seven days republished (2,451–2,866 rows each), availability_stale cleared, the layer back on
+the map. shortwave still reads 2026-05-31 at this capture; its first post-deploy hourly turn drains one day per turn and the six-hourly repair turn adds five, so movement is expected within the hour. Owner gate after deploy: the
 sensors breaker supersession (CLI, explicit), the fire-perimeters allow-list activation (the
 repair-audit durability trade is recorded as an owner decision), and the desktop click-reach
 change. **No whole QA case or checklist item is promoted; the 220-case matrix is unchanged.**
