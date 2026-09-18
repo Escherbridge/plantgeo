@@ -1,12 +1,19 @@
 /**
- * PLACEHOLDER Parquet reader for the land-context reference plane: real pruning shape, always an
- * empty-with-gap-stated result, because no admitted lane is wired in.
+ * Parquet-plane storage layer for the land-context reference plane.
  *
- * A `no_match` or `unknown_coverage` from here is NOT a coverage finding.
- * TODO(lane owner): replace these bodies with real Parquet reads, keeping the
- * pruning-then-intersection call shape. See `src/lib/server/services/land-context/AGENTS.md`.
+ * Two published products, two phases, one pointer GET and one data GET per read -- the shape
+ * `conductor/code_styleguides/layer-lanes.md` §4a requires. See
+ * `src/lib/server/services/land-context/AGENTS.md` for why the two products are denormalized,
+ * why a parcel-key read still stops short, and what an empty answer here does and does not prove.
  */
 
+import { getParquetLatestRelease, getParquetWarehouseCoverage } from "@/lib/server/services/parquet-plane-client";
+import type { ParquetLaneCoverage } from "@/lib/server/services/parquet-plane-client";
+import { ZOOM_TIERS, zoomTierPathSegment, type ZoomTier } from "@/lib/map/zoom-tiers";
+import { parquetUpstreamFailure } from "@/lib/server/services/parquet-trpc-readers/shared";
+import { assertExhaustiveParquetPlaneState } from "@/lib/server/services/parquet-envelope";
+import { z } from "zod";
+import { MAX_FEATURES_RETURNED, PILOT_STATES } from "./budgets";
 import type {
   BoundaryVersionRef,
   OrganizationOfficeRef,
@@ -14,17 +21,53 @@ import type {
   ParcelKey,
   PlaceOfficeTopicRelationshipRef,
   PublicContactRouteRef,
+  RouteMeaning,
   SourceReleaseRef,
 } from "./types";
 import { decodeBoundaryGeometry } from "./geometry/boundary-geometry-adapter";
 
-// Re-exported so callers of this reader (and its eventual real Parquet-lane
-// replacement) can decode `CandidateBoundaryFeature.boundary.geometryWkb`
-// without importing from `./geometry` directly. See
-// `./geometry/boundary-geometry-adapter.ts` for the null-vs-throw contract:
-// a `null` `geometryWkb` decodes to `null`, malformed-but-present WKB
-// throws `WkbDecodeError`.
+// Re-exported so callers of this reader can decode
+// `CandidateBoundaryFeature.boundary.geometryWkb` without importing from `./geometry` directly.
+// See `./geometry/boundary-geometry-adapter.ts` for the null-vs-throw contract: a `null`
+// `geometryWkb` decodes to `null`, malformed-but-present WKB throws `WkbDecodeError`.
 export { decodeBoundaryGeometry };
+
+/**
+ * The two Parquet products this reader reads, by their layer slug.
+ *
+ * NEITHER SLUG IS REGISTERED IN `pipeline/parquet/lane_registry.py` TODAY. They are a declared
+ * expectation, and the warehouse coverage census -- not this constant -- is what decides whether
+ * anything is published: an unregistered slug simply never appears in the census, and every read
+ * below reports that as a stated gap rather than as an empty collection.
+ */
+export const LAND_CONTEXT_PRODUCT_LAYERS = {
+  /** `land_context.boundary_versions` joined to its `source_releases` row, one flat row per feature. */
+  boundaries: "land-context-boundaries",
+  /** `place_office_topic_relationships` joined to `organizations` and `public_contact_routes`. */
+  contacts: "land-context-contacts",
+} as const;
+
+/**
+ * Largest bbox, in square degrees, each rung of the ladder will answer for.
+ *
+ * Mirrors the shape of `MAX_BBOX_SQUARE_DEGREES` in `planes/botanical_occurrences.py` and exists
+ * for the reason the 2026-09-14 handoff recorded against that plane: a rung whose budget is too
+ * tight for a viewport that legitimately wants regional coverage refuses the read at exactly the
+ * zooms a reader cares about. Selecting the rung from zoom AND bbox size, rather than zoom alone,
+ * is what keeps a wide viewport on a coarse rung instead of refusing it on a fine one.
+ */
+export const RUNG_MAX_BBOX_SQUARE_DEGREES: Readonly<Record<ZoomTier, number>> = {
+  13: 4,
+  9: 100,
+  5: 1_600,
+  0: 64_800,
+};
+
+/** Half-width of the bbox a point read probes with; a degenerate bbox is not a readable rectangle. */
+const POINT_PROBE_PAD_DEGREES = 0.0001;
+
+/** Only `observed` partitions: this plane publishes no forecast stream and never will. */
+const LAND_CONTEXT_PARTITION_KIND = "observed";
 
 export interface BboxDegrees {
   west: number;
@@ -39,107 +82,558 @@ export interface CandidateBoundaryFeature {
   sourceRelease: SourceReleaseRef;
 }
 
+/* -------------------------------------------------------------------------
+ * Pointer phase: the warehouse coverage census
+ * ---------------------------------------------------------------------- */
+
+/** One resolved partition to read, as `pruneCandidatesByBbox` hands it to `exactIntersectCandidates`. */
+interface ServingPartition {
+  layer: string;
+  zoomTier: ZoomTier;
+  day: string;
+}
+
 /**
- * Step 1 of the two-phase spatial read: cheap bbox/row-group pruning against
- * whatever index the underlying Parquet lane exposes (partition pruning,
- * row-group stats, etc). Returns candidate feature keys only — never a
- * legal/authoritative determination on its own, per the spec:
- * "Intersection finds candidate reported features, not legal proof."
+ * `layer/kind=observed/zoom=NN/day=YYYY-MM-DD`, the partition prefix the data GET will touch.
  *
- * PLACEHOLDER: always returns no candidates, since no lane is wired in.
+ * The candidate keys this reader hands out are real partition identities rather than opaque
+ * tokens, so the second phase reads exactly what the first phase proved published WITHOUT a
+ * second census: one pointer GET, then one data GET, per §4a.
+ */
+const PARTITION_KEY_PATTERN =
+  /^(?<layer>[a-z0-9-]+)\/kind=observed\/zoom=(?<zoom>\d{2})\/day=(?<day>\d{4}-\d{2}-\d{2})$/;
+
+function partitionKey(partition: ServingPartition): string {
+  // `zoomTierPathSegment` already renders the whole `zoom=NN` segment, padding included.
+  return `${partition.layer}/kind=${LAND_CONTEXT_PARTITION_KIND}/${zoomTierPathSegment(partition.zoomTier)}/day=${partition.day}`;
+}
+
+function parsePartitionKey(key: string): ServingPartition | null {
+  const matched = PARTITION_KEY_PATTERN.exec(key);
+  if (matched?.groups === undefined) return null;
+  const zoom = Number(matched.groups.zoom);
+  const zoomTier = ZOOM_TIERS.find((tier) => tier === zoom);
+  if (zoomTier === undefined) return null;
+  return { layer: matched.groups.layer, zoomTier, day: matched.groups.day };
+}
+
+export function bboxSquareDegrees(bbox: BboxDegrees): number {
+  return Math.max(0, bbox.east - bbox.west) * Math.max(0, bbox.north - bbox.south);
+}
+
+/**
+ * The finest published rung whose own ceiling admits this bbox, or null when none does.
+ *
+ * Finest-that-fits, walking the ladder from z13 down: a caller that asks for a small area gets
+ * the most detailed rung published for it, and a caller that asks for a regional one is moved
+ * DOWN the ladder rather than refused -- the third of the three fix directions the 2026-09-14
+ * handoff left undecided for the botanical plane, applied here where no published lane yet
+ * depends on either of the other two.
+ */
+export function selectServingRung(
+  publishedTiers: readonly ZoomTier[],
+  bboxAreaSquareDegrees: number
+): ZoomTier | null {
+  const finestFirst = [...ZOOM_TIERS].sort((left, right) => right - left);
+  for (const tier of finestFirst) {
+    if (!publishedTiers.includes(tier)) continue;
+    if (bboxAreaSquareDegrees <= RUNG_MAX_BBOX_SQUARE_DEGREES[tier]) return tier;
+  }
+  return null;
+}
+
+/** A read that produced no partition to touch, with the census's own words for why. */
+interface PointerRefusal {
+  partition: null;
+  gap: string;
+}
+
+interface PointerResolution {
+  partition: ServingPartition;
+  gap: string;
+}
+
+function refusal(gap: string): PointerRefusal {
+  return { partition: null, gap };
+}
+
+/** Every census lane describing one product's observed stream, whatever its rung. */
+function lanesForProduct(
+  lanes: readonly ParquetLaneCoverage[],
+  layer: string
+): ParquetLaneCoverage[] {
+  return lanes.filter((lane) => lane.layer === layer && lane.kind === LAND_CONTEXT_PARTITION_KIND);
+}
+
+/**
+ * Pointer GET: which partition, if any, can answer this product for this bbox.
+ *
+ * Never throws an upstream fault at the caller. A transport failure is reported as a gap, because
+ * this module's callers publish its outcome as a COVERAGE state and "the request did not complete"
+ * must never be rendered as "the warehouse published nothing" -- the same rule
+ * `parquet-envelope.ts` states for the four warehouse states.
+ */
+async function resolveServingPartition(
+  layer: string,
+  bboxAreaSquareDegrees: number
+): Promise<PointerResolution | PointerRefusal> {
+  let census: Awaited<ReturnType<typeof getParquetWarehouseCoverage>>;
+  try {
+    census = await getParquetWarehouseCoverage();
+  } catch (error) {
+    const failure = parquetUpstreamFailure(error);
+    if (failure === null) throw error;
+    return refusal(
+      `land-context coverage census unavailable (${failure.fault.kind}): ${failure.fault.message}; this is a transport failure, not a coverage finding`
+    );
+  }
+
+  const productLanes = lanesForProduct(census.lanes, layer);
+  if (productLanes.length === 0) {
+    return refusal(
+      `no Parquet lane named "${layer}" appears in the warehouse coverage census; source_unbound_for_region for the land-context reference plane`
+    );
+  }
+
+  const withheld = productLanes.filter((lane) => lane.withheldReason !== null);
+  const readable = productLanes.filter(
+    (lane) => lane.withheldReason === null && lane.latestDay !== null
+  );
+  if (readable.length === 0) {
+    const reasons = [...new Set(withheld.map((lane) => lane.withheldReason))].join(", ");
+    return refusal(
+      reasons.length > 0
+        ? `every published rung of "${layer}" is withheld by its availability index (${reasons})`
+        : `"${layer}" is registered but has written no day on any rung`
+    );
+  }
+
+  const publishedTiers = readable.map((lane) => lane.zoomTier);
+  const zoomTier = selectServingRung(publishedTiers, bboxAreaSquareDegrees);
+  if (zoomTier === null) {
+    const coarsest = Math.min(...publishedTiers) as ZoomTier;
+    return refusal(
+      `a ${bboxAreaSquareDegrees.toFixed(2)} square degree request exceeds every published rung of "${layer}"; the coarsest published rung (z${coarsest}) is bounded at ${RUNG_MAX_BBOX_SQUARE_DEGREES[coarsest]} square degrees`
+    );
+  }
+
+  const lane = readable.find((candidate) => candidate.zoomTier === zoomTier);
+  // `selectServingRung` chose from `publishedTiers`, so the lane it named is always present.
+  if (lane === undefined || lane.latestDay === null) {
+    return refusal(`rung z${zoomTier} of "${layer}" vanished between census read and partition select`);
+  }
+
+  return {
+    partition: { layer, zoomTier, day: lane.latestDay },
+    gap: "",
+  };
+}
+
+/* -------------------------------------------------------------------------
+ * Data phase: the row schemas each product must publish
+ * ---------------------------------------------------------------------- */
+
+const pilotStateSchema = z.enum(PILOT_STATES);
+const nullableText = z.string().nullable();
+
+/**
+ * One flat boundary row: `land_context.boundary_versions` joined to its `source_releases` row.
+ *
+ * Column names mirror the relational declarations in
+ * `src/lib/server/db/schema/land-context/` (the only schema this plane declares anywhere) --
+ * `family`, not `family_type`; `geom_wkb` names the encoding because Parquet has no PostGIS type
+ * and the frozen contract carries hex WKB. Deliberately NOT `.strict()`, unlike the readers in
+ * `parquet-trpc-readers/`: those mirror registered lanes whose columns are frozen, and this one
+ * states a MINIMUM a lane that does not exist yet must publish.
+ */
+const boundaryRowSchema = z.object({
+  source_namespace: z.string().min(1),
+  native_feature_key: z.string().min(1),
+  native_feature_version: nullableText,
+  family: z.string().min(1),
+  interest_type: z.string().min(1),
+  state: pilotStateSchema,
+  county: nullableText,
+  geom_wkb: nullableText,
+  release_publisher: z.string().min(1),
+  release_canonical_endpoint: z.string().min(1),
+  release_source_version: z.string().min(1),
+  release_captured_at: nullableText,
+  release_source_watermark_at: nullableText,
+  release_admission_verdict: z.enum(["admitted", "rejected", "pending"]),
+});
+
+/** The five route meanings, in `RouteMeaning`'s own order; `toRouteRef`'s assignment ties them. */
+const routeMeaningSchema = z.enum([
+  "records_assistance",
+  "responsible_agency_program",
+  "advisory_sme",
+  "contact_process_inquiry",
+  "documented_introduction_forwarding",
+]);
+
+/** Compile-time tie: a divergence between the schema and the contract fails here, not at runtime. */
+export const ROUTE_MEANING_VALUES: readonly RouteMeaning[] = routeMeaningSchema.options;
+
+/** One flat contact row: a relationship joined to the office it names and that office's route. */
+const contactRowSchema = z.object({
+  subject_id: z.string().min(1),
+  object_id: z.string().min(1),
+  relationship_kind: z.string().min(1),
+  applicable_geography: nullableText,
+  documented_topic: nullableText,
+  assignment_method: z.string().min(1),
+  review_status: z.enum(["reviewed", "unreviewed", "unknown"]),
+  effective_from: nullableText,
+  effective_to: nullableText,
+  source_evidence_url: nullableText,
+  organization_id: z.string().min(1),
+  office_id: z.string().min(1),
+  official_public_name: z.string().min(1),
+  office_type: z.string().min(1),
+  parent_organization_id: nullableText,
+  route_type: z.string().min(1),
+  route_meaning: routeMeaningSchema,
+  documented_help: nullableText,
+  official_inquiry_url: nullableText,
+  public_business_phone: nullableText,
+  public_business_email: nullableText,
+  published_professional_name: nullableText,
+  route_status: z.enum(["active", "stale", "broken", "unverified"]),
+  verified_at: nullableText,
+  forwarding_documented: z.boolean(),
+});
+
+type BoundaryRow = z.infer<typeof boundaryRowSchema>;
+type ContactRow = z.infer<typeof contactRowSchema>;
+
+function toBoundaryRef(row: BoundaryRow): BoundaryVersionRef {
+  return {
+    sourceNamespace: row.source_namespace,
+    nativeFeatureKey: row.native_feature_key,
+    nativeFeatureVersion: row.native_feature_version,
+    familyType: row.family,
+    interestType: row.interest_type,
+    state: row.state,
+    county: row.county,
+    geometryWkb: row.geom_wkb,
+  };
+}
+
+function toSourceReleaseRef(row: BoundaryRow): SourceReleaseRef {
+  return {
+    publisher: row.release_publisher,
+    canonicalEndpoint: row.release_canonical_endpoint,
+    sourceVersion: row.release_source_version,
+    captureTime: row.release_captured_at,
+    sourceEffectiveTime: row.release_source_watermark_at,
+    // `source_releases` declares no publication-date column; null rather than restating the
+    // watermark, which is a change clock and not a release date.
+    sourcePublishedTime: null,
+    admissionVerdict: row.release_admission_verdict,
+  };
+}
+
+/**
+ * How a row returned by a bbox-filtered Parquet read overlaps the caller's selection.
+ *
+ * Always `bbox_intersection`, never `point_containment` or `exact_geometry_intersection`, even on
+ * the point read: the plane filters by rectangle, so a returned feature is a CANDIDATE whose
+ * containment nobody has proved. Claiming otherwise would be the reduction the reference-plane
+ * spec forbids -- "Intersection finds candidate reported features, not legal proof."
+ */
+function bboxOverlapBasis(partition: ServingPartition, bbox: BboxDegrees): OverlapBasis {
+  return {
+    kind: "bbox_intersection",
+    description: `reported feature whose bounding rectangle intersects ${bbox.west},${bbox.south},${bbox.east},${bbox.north} on rung z${partition.zoomTier} of ${partition.layer} (release day ${partition.day}); containment is not proved`,
+  };
+}
+
+/** Rows this product published for the resolved partition, or the stated reason there are none. */
+interface ProductRows<TRow> {
+  rows: TRow[];
+  gap: string;
+}
+
+async function readProductRows<TRow>(
+  partition: ServingPartition,
+  rowSchema: z.ZodType<TRow>,
+  bbox: BboxDegrees | null
+): Promise<ProductRows<TRow>> {
+  let envelope: Awaited<ReturnType<typeof getParquetLatestRelease>>;
+  try {
+    envelope = await getParquetLatestRelease({
+      layer: partition.layer,
+      asOfDay: partition.day,
+      zoomTier: partition.zoomTier,
+      kind: LAND_CONTEXT_PARTITION_KIND,
+      ...(bbox === null
+        ? {}
+        : { bbox: `${bbox.west},${bbox.south},${bbox.east},${bbox.north}` }),
+    });
+  } catch (error) {
+    const failure = parquetUpstreamFailure(error);
+    if (failure === null) throw error;
+    return {
+      rows: [],
+      gap: `land-context read of ${partition.layer} failed (${failure.fault.kind}): ${failure.fault.message}; this is a transport failure, not a coverage finding`,
+    };
+  }
+
+  switch (envelope.state) {
+    case "published": {
+      const parsed = z.array(rowSchema).safeParse(envelope.rows);
+      if (!parsed.success) {
+        return {
+          rows: [],
+          gap: `${partition.layer} rows do not match the schema this reader declares; see src/lib/server/services/land-context/AGENTS.md`,
+        };
+      }
+      return {
+        rows: parsed.data,
+        gap: envelope.truncated
+          ? `${partition.layer} hit the serving row budget on ${envelope.servedDay}; the answer is a subset, not the whole partition`
+          : "",
+      };
+    }
+    case "governed_absence":
+      return {
+        rows: [],
+        gap: `${partition.layer} recorded a governed absence for ${envelope.servedDay}: ${envelope.evidence.reason} (upstream said "${envelope.evidence.upstreamResponse}", run ${envelope.evidence.runId})`,
+      };
+    case "day_not_written":
+      return {
+        rows: [],
+        gap: `${partition.layer} has written nothing for ${envelope.requestedDay} on rung z${partition.zoomTier}`,
+      };
+    case "lane_never_written":
+      return {
+        rows: [],
+        gap: `${partition.layer} has never written a partition on any day`,
+      };
+    default:
+      return assertExhaustiveParquetPlaneState(envelope);
+  }
+}
+
+/* -------------------------------------------------------------------------
+ * The reads
+ * ---------------------------------------------------------------------- */
+
+/**
+ * Step 1 of the two-phase spatial read: the pointer GET.
+ *
+ * The candidate key it returns names the exact published partition step 2 will read, so the pair
+ * costs one pointer GET and one data GET. Returns no candidates -- with the census's own words --
+ * whenever the lane is unregistered, withheld, or too coarse for this bbox. AN EMPTY CANDIDATE
+ * SET IS NEVER A COVERAGE FINDING; read the gap.
  */
 export async function pruneCandidatesByBbox(
-  _bbox: BboxDegrees
+  bbox: BboxDegrees
 ): Promise<{ candidateKeys: string[]; gap: string }> {
-  return {
-    candidateKeys: [],
-    gap: "no Parquet lane wired in yet; reference plane not yet admitted for reads",
-  };
+  const resolved = await resolveServingPartition(
+    LAND_CONTEXT_PRODUCT_LAYERS.boundaries,
+    bboxSquareDegrees(bbox)
+  );
+  if (resolved.partition === null) return { candidateKeys: [], gap: resolved.gap };
+  return { candidateKeys: [partitionKey(resolved.partition)], gap: "" };
 }
 
 /**
- * Step 2: exact intersection against the pruned candidate set. Only ever
- * called with candidates already narrowed by `pruneCandidatesByBbox` or a
- * point-containment equivalent; never runs an unbounded full-table scan.
+ * Step 2: the data GET, against the partitions step 1 proved published.
  *
- * PLACEHOLDER: always returns no matches, with the same stated gap.
+ * Never runs without candidates, so there is no path here that scans the warehouse unbounded.
+ * The intersection is the plane's own bbox filter; see `bboxOverlapBasis` for why that is
+ * reported as a candidate overlap and not as containment.
  */
 export async function exactIntersectCandidates(
-  _candidateKeys: string[],
-  _bbox: BboxDegrees
+  candidateKeys: string[],
+  bbox: BboxDegrees
 ): Promise<{ features: CandidateBoundaryFeature[]; gap: string }> {
-  return {
-    features: [],
-    gap: "no Parquet lane wired in yet; reference plane not yet admitted for reads",
-  };
+  if (candidateKeys.length === 0) {
+    return {
+      features: [],
+      gap: "no candidate partition was pruned for this bbox; nothing was read",
+    };
+  }
+
+  const features: CandidateBoundaryFeature[] = [];
+  const gaps: string[] = [];
+  for (const key of candidateKeys) {
+    const partition = parsePartitionKey(key);
+    if (partition === null) {
+      gaps.push(`candidate key "${key}" is not a partition key this reader issued`);
+      continue;
+    }
+    const { rows, gap } = await readProductRows(partition, boundaryRowSchema, bbox);
+    if (gap.length > 0) gaps.push(gap);
+    for (const row of rows) {
+      features.push({
+        boundary: toBoundaryRef(row),
+        overlapBasis: bboxOverlapBasis(partition, bbox),
+        sourceRelease: toSourceReleaseRef(row),
+      });
+    }
+  }
+  return { features, gap: gaps.join("; ") };
 }
 
 /**
- * Point-containment read. Structured the same two-phase way: bbox pruning
- * of the point's containing cell first, exact polygon-contains second.
- *
- * PLACEHOLDER: always returns no matches, with the stated gap.
+ * Point read, structured the same two phases: the point is probed as a small square, because a
+ * degenerate rectangle is not a readable bbox. Every returned feature is a CANDIDATE -- the plane
+ * filtered by rectangle and nothing here has run a polygon-contains test.
  */
 export async function findContainingFeatures(
-  _lon: number,
-  _lat: number
+  lon: number,
+  lat: number
 ): Promise<{ features: CandidateBoundaryFeature[]; gap: string }> {
-  return {
-    features: [],
-    gap: "no Parquet lane wired in yet; reference plane not yet admitted for reads",
+  const probe: BboxDegrees = {
+    west: lon - POINT_PROBE_PAD_DEGREES,
+    south: lat - POINT_PROBE_PAD_DEGREES,
+    east: lon + POINT_PROBE_PAD_DEGREES,
+    north: lat + POINT_PROBE_PAD_DEGREES,
   };
+  const pruned = await pruneCandidatesByBbox(probe);
+  if (pruned.candidateKeys.length === 0) return { features: [], gap: pruned.gap };
+  return exactIntersectCandidates(pruned.candidateKeys, probe);
 }
 
 /**
- * Looks up a validated parcel key directly (no spatial pruning needed since
- * the key is already resolved).
+ * Parcel-key lookup. STOPS SHORT, on purpose, and says so.
  *
- * PLACEHOLDER: always returns null with the stated gap.
+ * The frozen Parquet wire (`parquet-plane-client.ts` §WIRE) offers day, window, release and
+ * coverage reads and no key-addressed one, so resolving a parcel key means either a key-index
+ * product this plane does not publish or a full scan of a boundary lane -- and an unbounded scan
+ * is exactly what the reference-plane spec forbids. The pointer GET still runs, so the gap
+ * distinguishes "no lane at all" from "a lane that is simply not key-addressable".
  */
 export async function findBoundaryByParcelKey(
-  _key: ParcelKey
+  key: ParcelKey
 ): Promise<{ feature: CandidateBoundaryFeature | null; gap: string }> {
+  const resolved = await resolveServingPartition(
+    LAND_CONTEXT_PRODUCT_LAYERS.boundaries,
+    RUNG_MAX_BBOX_SQUARE_DEGREES[13]
+  );
+  if (resolved.partition === null) return { feature: null, gap: resolved.gap };
   return {
     feature: null,
-    gap: "no Parquet lane wired in yet; reference plane not yet admitted for reads",
+    gap: `${resolved.partition.layer} publishes rung z${resolved.partition.zoomTier}, but the frozen Parquet wire exposes no key-addressed read; ${key.sourceNamespace}:${key.originalId} cannot be resolved without a parcel-key index product or a bounding box`,
   };
 }
 
 /**
- * Relationship/contact lookup by validated subject ID and/or topic.
+ * Relationship/contact lookup against the denormalized contacts product.
  *
- * PLACEHOLDER: always returns no relationships and no routes, with the
- * stated gap.
+ * Read WITHOUT a bbox and filtered in memory: a relationship/office/route join is a small
+ * reference table with no geometry to prune on, and the serving side's own row budget bounds it
+ * (a hit is reported through `truncated`, which becomes a gap here rather than a silent subset).
+ * That is the one read in this module that is not spatially pruned, and it is bounded by the
+ * product's nature rather than by a rectangle.
  */
 export async function findRelationshipsAndRoutes(
-  _subjectId: string,
-  _topic: string | null
+  subjectId: string,
+  topic: string | null
 ): Promise<{
   relationships: PlaceOfficeTopicRelationshipRef[];
   offices: OrganizationOfficeRef[];
   routes: PublicContactRouteRef[];
   gap: string;
 }> {
+  const empty = { relationships: [], offices: [], routes: [] };
+  const resolved = await resolveServingPartition(
+    LAND_CONTEXT_PRODUCT_LAYERS.contacts,
+    RUNG_MAX_BBOX_SQUARE_DEGREES[0]
+  );
+  if (resolved.partition === null) return { ...empty, gap: resolved.gap };
+
+  const { rows, gap } = await readProductRows(resolved.partition, contactRowSchema, null);
+  const matching = rows
+    .filter((row) => row.subject_id === subjectId)
+    .filter((row) => topic === null || row.documented_topic === topic);
+  if (matching.length === 0) return { ...empty, gap };
+  if (matching.length > MAX_FEATURES_RETURNED) {
+    return {
+      ...empty,
+      gap: `${resolved.partition.layer} holds ${matching.length} relationships for subject ${subjectId}, over the ${MAX_FEATURES_RETURNED} feature budget; refused rather than truncated`,
+    };
+  }
+
   return {
-    relationships: [],
-    offices: [],
-    routes: [],
-    gap: "no Parquet lane wired in yet; reference plane not yet admitted for reads",
+    relationships: matching.map(toRelationshipRef),
+    offices: dedupeByOfficeId(matching.map(toOfficeRef)),
+    routes: matching.map(toRouteRef),
+    gap,
   };
 }
 
+function toRelationshipRef(row: ContactRow): PlaceOfficeTopicRelationshipRef {
+  return {
+    subjectId: row.subject_id,
+    objectId: row.object_id,
+    relationshipKind: row.relationship_kind,
+    applicableGeography: row.applicable_geography,
+    documentedTopic: row.documented_topic,
+    assignmentMethod: row.assignment_method,
+    reviewStatus: row.review_status,
+    effectiveFrom: row.effective_from,
+    effectiveTo: row.effective_to,
+    sourceEvidenceUrl: row.source_evidence_url,
+  };
+}
+
+function toOfficeRef(row: ContactRow): OrganizationOfficeRef {
+  return {
+    organizationId: row.organization_id,
+    officeId: row.office_id,
+    officialPublicName: row.official_public_name,
+    officeType: row.office_type,
+    parentOrganizationId: row.parent_organization_id,
+  };
+}
+
+function toRouteRef(row: ContactRow): PublicContactRouteRef {
+  return {
+    officeId: row.office_id,
+    routeType: row.route_type,
+    routeMeaning: row.route_meaning,
+    documentedTopic: row.documented_topic,
+    documentedHelp: row.documented_help,
+    officialInquiryUrl: row.official_inquiry_url,
+    publicPhone: row.public_business_phone,
+    publicEmail: row.public_business_email,
+    optionalProfessionalName: row.published_professional_name,
+    status: row.route_status,
+    verificationTime: row.verified_at,
+    supportsIntroductionOrForwarding: row.forwarding_documented,
+  };
+}
+
+/** One office per ID: the denormalized product repeats an office once per route it owns. */
+function dedupeByOfficeId(offices: readonly OrganizationOfficeRef[]): OrganizationOfficeRef[] {
+  return [...new Map(offices.map((office) => [office.officeId, office])).values()];
+}
+
 /**
- * Coverage status for a given state/county, independent of any specific
- * feature lookup.
+ * Coverage status for a state/county.
  *
- * PLACEHOLDER: always reports unknown coverage.
+ * Always `null` -- unknown -- and the two gaps say which unknown it is. The warehouse census
+ * reports what a LANE published, never which counties a source covered, so answering `false`
+ * here would claim a proven-coverage area that nothing has proved; `reader.ts` would then render
+ * it as `no_match_in_proven_coverage`. Closing this needs a per-region coverage product, not a
+ * cleverer read of the census.
  */
 export async function readCoverageStatus(
-  _state: string,
-  _county: string | null
+  state: string,
+  county: string | null
 ): Promise<{ covered: boolean | null; gap: string }> {
+  const place = county === null ? state : `${county}, ${state}`;
+  const resolved = await resolveServingPartition(
+    LAND_CONTEXT_PRODUCT_LAYERS.boundaries,
+    RUNG_MAX_BBOX_SQUARE_DEGREES[0]
+  );
+  if (resolved.partition === null) return { covered: null, gap: resolved.gap };
   return {
     covered: null,
-    gap: "no Parquet lane wired in yet; coverage census not yet published for this pilot",
+    gap: `${resolved.partition.layer} publishes rung z${resolved.partition.zoomTier} as of ${resolved.partition.day}, but no per-region coverage product states whether ${place} is within admitted coverage`,
   };
 }
