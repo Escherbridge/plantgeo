@@ -9,6 +9,7 @@ import {
   type LandContextSelectionInput,
 } from "@/stores/land-context-store";
 import type { LandContextResult } from "@/lib/environmental/land-context-contract";
+import { getRegion } from "@/lib/region/region";
 
 /**
  * Reads the PNW land-context reference plane via the read-only
@@ -138,7 +139,7 @@ export function useLandContextQuery(
   }, [selection]);
 
   const areaQuery = trpc.landContext.resolveBoundaryInArea.useQuery(
-    { bbox: areaBbox ?? { west: -125, south: 42, east: -111, north: 49 } },
+    { bbox: areaBbox ?? getRegion().defaultCameraEnvelope },
     { enabled: areaEnabled }
   );
 
