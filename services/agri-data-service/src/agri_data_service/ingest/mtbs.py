@@ -7,7 +7,6 @@ import asyncio
 import hashlib
 import json
 import sys
-import warnings
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
@@ -91,46 +90,6 @@ def burn_severity_bounding_box() -> BoundingBox:
     """
     envelope = load_region().sub_envelopes["burn_severity"]
     return (envelope.west, envelope.south, envelope.east, envelope.north)
-
-
-#: Deprecated module attributes resolved lazily by `__getattr__`; see `DEPRECATED_ALIASES.md`.
-_DEPRECATED_MODULE_ATTRIBUTES: Final[Mapping[str, Callable[[], object]]] = MappingProxyType(
-    {
-        "PACIFIC_NORTHWEST_BBOX": burn_severity_bounding_box,
-        "inline_bbox_value": lambda: _format_bounding_box_inline,
-        "parse_bounding_box": lambda: _parse_bounding_box,
-    },
-)
-
-#: Replacement text named in the `DeprecationWarning` for each key in `_DEPRECATED_MODULE_ATTRIBUTES`.
-_DEPRECATED_ATTRIBUTE_REPLACEMENTS: Final[Mapping[str, str]] = MappingProxyType(
-    {
-        "PACIFIC_NORTHWEST_BBOX": "burn_severity_bounding_box() so the region manifest is read per call",
-        "inline_bbox_value": "agri_data_service.foundation.geography.bounding_box.format_bounding_box_inline()",
-        "parse_bounding_box": "agri_data_service.foundation.geography.bounding_box.parse_bounding_box()",
-    },
-)
-
-
-def __getattr__(name: str) -> object:
-    """Resolve a deprecated module attribute at access time, never at import time.
-
-    Deprecated: `PACIFIC_NORTHWEST_BBOX`, `inline_bbox_value` and `parse_bounding_box` are kept
-    importable for one release so existing importers do not break (`federation.md` §5 step 2;
-    `foundation/geography/AGENTS.md` for the 2026-09-18 bbox-helper extraction). Removal condition is
-    recorded in `services/agri-data-service/DEPRECATED_ALIASES.md`. `BoundingBox` is unaffected -- it
-    is a plain re-exported type alias, not deprecated (see the same `AGENTS.md`).
-    """
-    resolve_deprecated_attribute = _DEPRECATED_MODULE_ATTRIBUTES.get(name)
-    if resolve_deprecated_attribute is None:
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    warnings.warn(
-        f"{__name__}.{name} is deprecated; call {_DEPRECATED_ATTRIBUTE_REPLACEMENTS[name]} instead "
-        "(see DEPRECATED_ALIASES.md)",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    return resolve_deprecated_attribute()
 
 
 # Verbatim from the retired `src/lib/server/services/mtbs.ts:13-19`. Never renumbered, and never

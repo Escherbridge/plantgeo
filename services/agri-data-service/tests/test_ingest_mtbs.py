@@ -283,17 +283,6 @@ def test_burn_severity_bounding_box_is_the_region_manifest_burn_severity_sub_env
     assert burn_severity_bounding_box() == (-125.0, 42.0, -111.0, 49.0)
 
 
-def test_the_deprecated_bbox_alias_still_resolves_and_warns() -> None:
-    """`PACIFIC_NORTHWEST_BBOX` survives one more release as a lazily resolved, warning alias."""
-    from agri_data_service.ingest import (  # noqa: PLC0415 - the module object itself is the assertion target, not a name from it
-        mtbs as mtbs_module,
-    )
-
-    with pytest.deprecated_call():
-        alias_value = mtbs_module.PACIFIC_NORTHWEST_BBOX
-    assert alias_value == burn_severity_bounding_box()
-
-
 def test_three_pages_reassemble_into_one_complete_cohort_at_the_right_offsets() -> None:
     features = _cohort(7)
     service = RecordedMtbsService(features)
@@ -672,23 +661,6 @@ def test_the_cli_reads_a_negative_bbox_as_a_value_rather_than_a_flag() -> None:
     ]
     assert parse_bounding_box("-125,42,-111,49") == burn_severity_bounding_box()
     assert format_bounding_box_inline(["--all-releases"]) == ["--all-releases"]
-
-
-def test_the_deprecated_bbox_helper_aliases_still_resolve_and_warn() -> None:
-    """`inline_bbox_value` and `parse_bounding_box` survive one more release as lazily resolved,
-
-    warning aliases on `ingest.mtbs`, matching `PACIFIC_NORTHWEST_BBOX`'s pattern -- see
-    `foundation/geography/AGENTS.md` for the 2026-09-18 extraction this test guards.
-    """
-    from agri_data_service.ingest import mtbs as mtbs_module
-
-    with pytest.deprecated_call():
-        inline_alias = mtbs_module.inline_bbox_value
-    assert inline_alias(["--bbox", "-125,42,-111,49"]) == ["--bbox=-125,42,-111,49"]
-
-    with pytest.deprecated_call():
-        parse_alias = mtbs_module.parse_bounding_box
-    assert parse_alias("-125,42,-111,49") == parse_bounding_box("-125,42,-111,49")
 
 
 def test_a_transient_server_error_is_retried_rather_than_failing_the_capture() -> None:

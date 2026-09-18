@@ -47,8 +47,9 @@ None of the three is wrong; they describe three different things (the platform's
 MTBS's admitted bbox, and the botanical-occurrence classifier's admitted-coverage envelope) that
 happened to be typed as three separate near-identical tuples. `sub_envelopes` gives step 2 a place
 for `burn_severity_bounding_box()` and `botanical_seed_envelope()` to read instead of restating them
-a fourth time (the two old constant names survive one release as deprecated lazy aliases, listed in
-`services/agri-data-service/DEPRECATED_ALIASES.md`);
+a fourth time (the two old constant names, `PACIFIC_NORTHWEST_BBOX` and `SEED_ENVELOPE`, were
+deleted on 2026-09-18 rather than kept as warning aliases -- `services/agri-data-service/DEPRECATED_ALIASES.md`
+records why);
 it is not itself in `federation.md` §1's required-fields list, and a later step may decide one or
 both should collapse into `envelope` once every caller of the narrower box has been reviewed.
 
