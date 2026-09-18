@@ -10,7 +10,9 @@ from typing import TYPE_CHECKING, Final
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
-from agri_data_service.foundation.region.manifest import SourceCoverage
+from agri_data_service.foundation.region.manifest import (
+    SourceCoverage,  # noqa: TC001 -- pydantic field type, needed at runtime
+)
 
 if TYPE_CHECKING:
     from agri_data_service.foundation.region.manifest import Region

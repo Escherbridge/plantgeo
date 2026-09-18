@@ -24,9 +24,24 @@ class DroughtReleaseDay(Protocol):
     source boundary"); the region's declared local timezone lives in the manifest, not here.
     """
 
-    day: date
-    release: object | None
-    fetched_at: datetime
+    #: Read-only properties, not plain attributes: a frozen dataclass implementation's fields are
+    #: themselves read-only, and mypy's Protocol structural check requires a plain attribute to be
+    #: settable, so a settable-attribute Protocol member can never be satisfied by a frozen
+    #: dataclass field even when the types match exactly.
+    @property
+    def day(self) -> date:
+        """The dated release this record answers for."""
+        ...
+
+    @property
+    def fetched_at(self) -> datetime:
+        """When this record was read, UTC."""
+        ...
+
+    @property
+    def release(self) -> object | None:
+        """Read-only so a concrete source may narrow this to its own release payload type."""
+        ...
 
 
 @runtime_checkable

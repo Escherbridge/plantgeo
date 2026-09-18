@@ -61,8 +61,8 @@ class SsurgoSoilSurveySource:
     async def fetch_release(
         self,
         *,
-        bounding_box: BoundingBox,
-        survey_area_symbols: Sequence[str],
+        bounding_box: BoundingBox,  # noqa: ARG002 -- protocol signature; body raises before use
+        survey_area_symbols: Sequence[str],  # noqa: ARG002 -- protocol signature; body raises before use
     ) -> SoilSurveyRelease:
         """Refuse: no source-direct SSURGO pull exists; see `SSURGO_PULL_RETIRED_REASON`."""
         raise SsurgoPullRetiredError(SSURGO_PULL_RETIRED_REASON)

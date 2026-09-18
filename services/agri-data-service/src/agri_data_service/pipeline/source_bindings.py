@@ -26,9 +26,9 @@ def declared_source_coverage_claims() -> dict[str, SourceCoverageClaim]:
     through `unverified_binding_slugs` rather than treating as a failure — `federation.md` §5 lands
     the protocols three layers at a time.
     """
-    from agri_data_service.pipeline.direct.burn_severity.mtbs import MTBS_BURN_SEVERITY_SOURCE
-    from agri_data_service.pipeline.direct.drought.usdm import USDM_DROUGHT_SOURCE
-    from agri_data_service.pipeline.direct.soil_survey.ssurgo import SSURGO_SOIL_SURVEY_SOURCE
+    from agri_data_service.pipeline.direct.burn_severity.mtbs import MTBS_BURN_SEVERITY_SOURCE  # noqa: PLC0415
+    from agri_data_service.pipeline.direct.drought.usdm import USDM_DROUGHT_SOURCE  # noqa: PLC0415
+    from agri_data_service.pipeline.direct.soil_survey.ssurgo import SSURGO_SOIL_SURVEY_SOURCE  # noqa: PLC0415
 
     return {
         source.source_slug: source.coverage

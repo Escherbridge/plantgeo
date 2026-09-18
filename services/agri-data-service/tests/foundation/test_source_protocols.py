@@ -137,7 +137,7 @@ def test_a_claim_must_name_the_countries_its_coverage_word_implies() -> None:
 
 def test_the_drought_shim_re_exports_what_it_always_did() -> None:
     """`source.py` must stay a lossless door onto `usdm.py` until wave 4 repoints its importers."""
-    from agri_data_service.pipeline.direct.drought import source, usdm
+    from agri_data_service.pipeline.direct.drought import source, usdm  # noqa: PLC0415
 
     assert source.DroughtDaySource is usdm.DroughtDaySource
     assert source.DroughtSourceError is usdm.DroughtSourceError
@@ -146,7 +146,7 @@ def test_the_drought_shim_re_exports_what_it_always_did() -> None:
 
 def test_the_burn_severity_shim_re_exports_what_it_always_did() -> None:
     """`source.py` must stay a lossless door onto `mtbs.py` until wave 4 repoints its importers."""
-    from agri_data_service.pipeline.direct.burn_severity import mtbs, source
+    from agri_data_service.pipeline.direct.burn_severity import mtbs, source  # noqa: PLC0415
 
     assert source.BurnSeverityDaySource is mtbs.BurnSeverityDaySource
     assert source.BurnSeverityFetchError is mtbs.BurnSeverityFetchError

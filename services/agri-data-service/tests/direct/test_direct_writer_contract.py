@@ -92,6 +92,11 @@ NON_WRITER_MODULES: Final[dict[str, str]] = {
     "`tables_by_publisher_day` and `merge_water_gauges_day`, which the water-gauges gap-fill lane "
     "calls. It has no `parser()`, no turn, and no bounded run to report an outcome for, so every "
     "field of a DirectWriterContract would be vacuous.",
+    "soil_survey": "the SSURGO source-protocol binding only (`pipeline/direct/soil_survey/"
+    "source_protocol.py`, `ssurgo.py`) -- the Postgres-era SSURGO ingest module was retired in the "
+    "2026-09 cleanup and no source-direct SSURGO forward lane has been admitted since "
+    "(`pipeline/parquet/lane_registry.py` refuses its retired watermark). No `forward.py`, no "
+    "`parser()`, no turn to report an outcome for.",
 }
 
 #: The seven writers whose upstream really is bounded by `INGEST_BBOX`. Derived from each writer's

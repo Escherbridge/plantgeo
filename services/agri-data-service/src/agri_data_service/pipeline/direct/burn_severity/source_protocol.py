@@ -30,10 +30,29 @@ class BurnSeverityReleaseDay(Protocol):
     a past release. Timestamps are UTC (`federation.md` §2).
     """
 
-    day: date
-    ignition_years: tuple[int, ...]
-    records: tuple[object, ...]
-    fetched_at: datetime
+    #: Read-only properties, not plain attributes: a frozen dataclass implementation's fields are
+    #: themselves read-only, and mypy's Protocol structural check requires a plain attribute to be
+    #: settable, so a settable-attribute Protocol member can never be satisfied by a frozen
+    #: dataclass field even when the types match exactly.
+    @property
+    def day(self) -> date:
+        """The governed release day this record answers for."""
+        ...
+
+    @property
+    def ignition_years(self) -> tuple[int, ...]:
+        """Every ignition-year cohort this release day's records were drawn from."""
+        ...
+
+    @property
+    def fetched_at(self) -> datetime:
+        """When this record was read, UTC."""
+        ...
+
+    @property
+    def records(self) -> tuple[object, ...]:
+        """Read-only so a concrete source may narrow this to its own release-record type."""
+        ...
 
 
 @runtime_checkable
@@ -64,7 +83,7 @@ class BurnSeveritySource(Protocol):
         """Each governed release day mapped to the ignition-year cohort(s) it publishes."""
         ...
 
-    async def fetch_release_day(
+    async def fetch_release_day(  # noqa: PLR0913 -- the layer's own pull shape (`AGENTS.md`, "The source protocol")
         self,
         day: date,
         ignition_years: Sequence[int],

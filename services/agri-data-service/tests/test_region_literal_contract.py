@@ -28,6 +28,14 @@ _REGION_WORD_PATTERN: Final = re.compile(r"\b(Pacific Northwest|PNW)\b")
 #: The world-extent sentinel federation.md §1 permits explicitly: "no viewport" bbox.
 _WORLD_EXTENT: Final = (-180.0, -90.0, 180.0, 90.0)
 
+#: WGS84 bounds and the footprint-tuple arity, named so the range checks below read as domain
+#: constants rather than magic numbers.
+_FOOTPRINT_TUPLE_LENGTH: Final = 4
+_MIN_LONGITUDE: Final = -180.0
+_MAX_LONGITUDE: Final = 180.0
+_MIN_LATITUDE: Final = -90.0
+_MAX_LATITUDE: Final = 90.0
+
 #: A string this long is prose (a citation, a docstring-adjacent rationale), not a declared
 #: identifier or region code; capping length keeps the region-word/admin-code check from matching
 #: sentences that merely mention the pilot region rather than restating its footprint.
@@ -66,9 +74,9 @@ def _constant_number(node: ast.expr) -> float | None:
     return None
 
 
-def _looks_like_footprint_tuple(elements: list[ast.expr]) -> tuple[float, ...] | None:
+def _looks_like_footprint_tuple(elements: list[ast.expr]) -> tuple[float, ...] | None:  # noqa: PLR0911
     """Returns the four numbers if `elements` reads as a west/south/east/north WGS84 footprint."""
-    if len(elements) != 4:
+    if len(elements) != _FOOTPRINT_TUPLE_LENGTH:
         return None
     values = [_constant_number(element) for element in elements]
     if any(value is None for value in values):
@@ -76,7 +84,12 @@ def _looks_like_footprint_tuple(elements: list[ast.expr]) -> tuple[float, ...] |
     west, south, east, north = values  # type: ignore[misc]
     if tuple(values) == _WORLD_EXTENT:
         return None  # the permitted "no viewport" sentinel, not a footprint claim
-    if not (-180 <= west <= 180 and -90 <= south <= 90 and -180 <= east <= 180 and -90 <= north <= 90):
+    if not (
+        _MIN_LONGITUDE <= west <= _MAX_LONGITUDE
+        and _MIN_LATITUDE <= south <= _MAX_LATITUDE
+        and _MIN_LONGITUDE <= east <= _MAX_LONGITUDE
+        and _MIN_LATITUDE <= north <= _MAX_LATITUDE
+    ):
         return None
     if not (west < east and south < north):
         return None
@@ -94,7 +107,7 @@ def _assignment_targets(node: ast.Assign | ast.AnnAssign) -> list[str]:
     return [target.id for target in targets if isinstance(target, ast.Name)]
 
 
-def _find_offenders() -> list[tuple[str, int, str]]:
+def _find_offenders() -> list[tuple[str, int, str]]:  # noqa: PLR0912
     """Walks the source tree, returning `(relative_path, line, description)` for every offender."""
     offenders: list[tuple[str, int, str]] = []
     for path in sorted(_SRC_ROOT.rglob("*.py")):
@@ -114,25 +127,29 @@ def _find_offenders() -> list[tuple[str, int, str]]:
                 if isinstance(subnode, (ast.Tuple, ast.List)):
                     footprint = _looks_like_footprint_tuple(list(subnode.elts))
                     if footprint is not None:
-                        offenders.append(
-                            (relative_path, node.lineno, f"footprint tuple {footprint} assigned via {names or '<nested>'}")
-                        )
+                        description = f"footprint tuple {footprint} assigned via {names or '<nested>'}"
+                        offenders.append((relative_path, node.lineno, description))
                 if isinstance(subnode, ast.Constant) and isinstance(subnode.value, str):
                     text = subnode.value
                     if len(text) > _MAX_DECLARED_STRING_LENGTH:
                         continue
                     if _ADMIN_CODE_PATTERN.match(text):
-                        offenders.append((relative_path, node.lineno, f"admin code literal {text!r} assigned via {names or '<nested>'}"))
+                        description = f"admin code literal {text!r} assigned via {names or '<nested>'}"
+                        offenders.append((relative_path, node.lineno, description))
                     elif _REGION_WORD_PATTERN.search(text):
-                        offenders.append((relative_path, node.lineno, f"region-name literal {text!r} assigned via {names or '<nested>'}"))
+                        description = f"region-name literal {text!r} assigned via {names or '<nested>'}"
+                        offenders.append((relative_path, node.lineno, description))
 
             # A scalar (single lat/lon component) assigned to a name that says what it is, even
             # without a 4-number sibling -- e.g. a lone `default_latitude = 46.5`.
             for name in names:
                 if _NAME_HINT_PATTERN.search(name):
                     scalar = _constant_number(value)
-                    if scalar is not None and (-180 <= scalar <= 180) and scalar not in (-180.0, 180.0, -90.0, 90.0):
-                        offenders.append((relative_path, node.lineno, f"name-hinted scalar {scalar} assigned to {name}"))
+                    is_in_range = scalar is not None and _MIN_LONGITUDE <= scalar <= _MAX_LONGITUDE
+                    is_world_extent_component = scalar in (_MIN_LONGITUDE, _MAX_LONGITUDE, _MIN_LATITUDE, _MAX_LATITUDE)
+                    if is_in_range and not is_world_extent_component:
+                        description = f"name-hinted scalar {scalar} assigned to {name}"
+                        offenders.append((relative_path, node.lineno, description))
     return offenders
 
 
