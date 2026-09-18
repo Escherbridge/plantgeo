@@ -4,7 +4,6 @@ import { LngLat } from "maplibre-gl";
 type Coord = [number, number];
 
 // Ramer-Douglas-Peucker line simplification, on planar degrees.
-// https://en.wikipedia.org/wiki/Ramer%E2%80%93Douglas%E2%80%93Peucker_algorithm
 function douglasPeucker(points: Coord[], epsilon: number): Coord[] {
   if (points.length <= 2) return points;
   let maxDistance = 0;
