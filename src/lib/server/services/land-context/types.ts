@@ -24,3 +24,5 @@ export type {
   RouteMeaning,
   SourceReleaseRef,
 } from "@/lib/environmental/land-context-contract";
+
+export { COVERAGE_STATES } from "@/lib/environmental/land-context-contract";

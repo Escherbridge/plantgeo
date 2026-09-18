@@ -2,7 +2,7 @@
  * Client-safe types for the land-context bounded readers.
  *
  * Moved out of `src/lib/server/services/land-context/types.ts` (which stays as the module the
- * server-side readers import) because it is pure type declarations with no runtime code, yet
+ * server-side readers import) because it is (near enough) pure type declarations, yet
  * browser components need to import from it too -- `useLandContextQuery.ts` and the panel/adapter
  * files reshape `LandContextResult` into the UI-facing store shape. `scripts/check-client-server-imports.mjs`
  * enforces that browser code never reach into `@/lib/server/**`, deliberately without a type-only
@@ -126,15 +126,33 @@ export interface SourceReleaseRef {
 /**
  * Distinguishes "no matching feature in a proven-covered area" from
  * "coverage itself is unknown" from "requested history is unavailable" —
- * three distinct states the spec forbids collapsing into a bare null.
+ * distinct states the spec forbids collapsing into a bare null.
+ *
+ * Declared as a runtime tuple, not a bare union, so the two Zod enums that validate this field on
+ * the wire (`land-context-tools.ts`, `trpc/routers/land-context.ts`) derive from it instead of
+ * restating the members — `engineering-principles.md` §1, one canonical definition. It is the only
+ * runtime value in this otherwise type-only module, and it is a frozen string tuple, so it stays
+ * client-safe.
+ *
+ * `source_unbound_for_region` and `upstream_unavailable` were added on 2026-09-18
+ * (STYLE-REVIEW-W2 B3): both had been collapsed into `partial_area_coverage`, which is a POSITIVE
+ * coverage assertion — "we covered part of this area" standing in for "this platform binds no
+ * source here" and for "the census request did not complete".
  */
-export type CoverageState =
-  | "matched"
-  | "no_match_in_proven_coverage"
-  | "unknown_coverage"
-  | "unavailable_history"
-  | "outside_pilot"
-  | "partial_area_coverage";
+export const COVERAGE_STATES = [
+  "matched",
+  "no_match_in_proven_coverage",
+  "unknown_coverage",
+  "unavailable_history",
+  "outside_pilot",
+  "partial_area_coverage",
+  /** No source is bound for this layer in this region: a governed absence (`layer-lanes.md` §1b). */
+  "source_unbound_for_region",
+  /** The read did not complete. A transport failure, never a statement about what is published. */
+  "upstream_unavailable",
+] as const;
+
+export type CoverageState = (typeof COVERAGE_STATES)[number];
 
 /** How a reported feature overlaps the caller's selection. */
 export interface OverlapBasis {

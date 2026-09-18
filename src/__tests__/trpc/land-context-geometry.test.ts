@@ -40,7 +40,7 @@ vi.mock("@/lib/server/services/land-context/parquet-reader", async (importOrigin
     // verbatim "no Parquet lane wired in yet" gap is what the router is seen to carry.
     findContainingFeatures: async (lon: number, lat: number) =>
       storage.features.length > 0
-        ? { features: storage.features, gap: "" }
+        ? { features: storage.features, gap: "", refusal: null }
         : actual.findContainingFeatures(lon, lat),
   };
 });

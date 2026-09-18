@@ -17,8 +17,8 @@ vi.mock("@/lib/server/services/land-context/parquet-reader", async (importOrigin
     await importOriginal<typeof import("@/lib/server/services/land-context/parquet-reader")>();
   return {
     ...actual,
-    findContainingFeatures: vi.fn(async () => ({ features: storage.features, gap: "" })),
-    pruneCandidatesByBbox: vi.fn(async () => ({ candidateKeys: ["candidate"], gap: "" })),
+    findContainingFeatures: vi.fn(async () => ({ features: storage.features, gap: "", refusal: null })),
+    pruneCandidatesByBbox: vi.fn(async () => ({ candidateKeys: ["candidate"], gap: "", refusal: null })),
     exactIntersectCandidates: vi.fn(async () => ({ features: storage.features, gap: "" })),
     findBoundaryByParcelKey: vi.fn(async () => ({ feature: storage.features[0] ?? null, gap: "" })),
   };

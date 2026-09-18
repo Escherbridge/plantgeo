@@ -5,7 +5,7 @@
  * `parquet-reader.ts` now issues a real pointer GET against the warehouse
  * coverage census, and no land-context lane is registered, so every read
  * resolves to empty-with-gap-stated. Every bounded reader must still surface a
- * typed `CoverageState` for that outcome (e.g. "unknown_coverage"), never a
+ * typed `CoverageState` for that outcome ("source_unbound_for_region" when no lane is bound), never a
  * bare null/undefined or an empty array with no accompanying state, per
  * types.ts: "three distinct states the spec forbids collapsing into a bare
  * null."
@@ -36,16 +36,10 @@ import {
   readContactsForSubject,
   readCoverageForRegion,
 } from "@/lib/server/services/land-context/reader";
-import type { CoverageState } from "@/lib/server/services/land-context/types";
+import { COVERAGE_STATES } from "@/lib/server/services/land-context/types";
 
-const VALID_COVERAGE_STATES: CoverageState[] = [
-  "matched",
-  "no_match_in_proven_coverage",
-  "unknown_coverage",
-  "unavailable_history",
-  "outside_pilot",
-  "partial_area_coverage",
-];
+// Derived, never restated: a new member must be admitted here by the contract, not by this list.
+const VALID_COVERAGE_STATES: readonly string[] = COVERAGE_STATES;
 
 describe("coverage state typing against the stub parquet-reader", () => {
   it("readPointContainment returns a typed coverageState, never null/undefined, for an unresolved point", async () => {
@@ -58,7 +52,9 @@ describe("coverage state typing against the stub parquet-reader", () => {
       expect(entry.coverageState).not.toBeNull();
       expect(VALID_COVERAGE_STATES).toContain(entry.coverageState);
     }
-    expect(result.data[0].coverageState).toBe("unknown_coverage");
+    // The census is mocked EMPTY, so no land-context lane is bound here at all: the governed
+    // absence, not the weaker "coverage unknown" (STYLE-REVIEW-W2 B3).
+    expect(result.data[0].coverageState).toBe("source_unbound_for_region");
   });
 
   it("readBoundedAoiIntersection returns a typed coverageState for a within-budget AOI with no matches", async () => {
@@ -71,7 +67,7 @@ describe("coverage state typing against the stub parquet-reader", () => {
       expect(entry.coverageState).not.toBeUndefined();
       expect(VALID_COVERAGE_STATES).toContain(entry.coverageState);
     }
-    expect(result.data[0].coverageState).toBe("partial_area_coverage");
+    expect(result.data[0].coverageState).toBe("source_unbound_for_region");
   });
 
   it("readBoundaryByParcelKey returns a typed coverageState for a pilot-state key with no match", async () => {

@@ -9,6 +9,7 @@ import {
   readContactsForSubject,
   readCoverageForRegion,
   readPointContainment,
+  COVERAGE_STATES,
   MAX_FEATURES_RETURNED,
   PILOT_STATES,
 } from "@/lib/server/services/land-context";
@@ -143,14 +144,7 @@ export const landContextRouter = router({
         // `lookupContactsForSubject` — this procedure does not re-resolve
         // it, so UI and agent stay pinned to the same evidence.
         contact: z.object({
-          coverageState: z.enum([
-            "matched",
-            "no_match_in_proven_coverage",
-            "unknown_coverage",
-            "unavailable_history",
-            "outside_pilot",
-            "partial_area_coverage",
-          ]),
+          coverageState: z.enum(COVERAGE_STATES),
           organizationOffice: z
             .object({
               organizationId: z.string(),

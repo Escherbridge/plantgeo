@@ -93,6 +93,12 @@ function coverageMessage(
       return `${families}: the selected area is only partly covered by admitted sources and returned no features for these groups.${statedGaps(gaps)}`;
     case "outside_pilot":
       return `${where.charAt(0).toUpperCase()}${where.slice(1)} is outside the pilot states (Washington, Oregon, Idaho); ${families} are not looked up there.${statedGaps(gaps)}`;
+    case "source_unbound_for_region":
+      // Amber caption, never a fault pill: a layer with no source bound here is a governed absence
+      // (`layer-lanes.md` §1b), not an outage and not a partial answer.
+      return `${families} are not available in this region: no admitted source is bound to them here, so nothing is drawn.${statedGaps(gaps)}`;
+    case "upstream_unavailable":
+      return `${families}: the lookup did not complete, so nothing is known about coverage at ${where}. This is a failed read, not an absence of data.${statedGaps(gaps)}`;
     case "unavailable_history":
       return `${families}: history for the selected day is unavailable; only the current reference can be shown.${statedGaps(gaps)}`;
     case "matched":

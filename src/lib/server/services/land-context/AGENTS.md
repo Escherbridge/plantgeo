@@ -16,14 +16,18 @@ land-context; `land_context` / `land-context` appears nowhere in
 `services/agri-data-service/src/`. The two slugs this module names --
 `land-context-boundaries` and `land-context-contacts` -- are therefore a **declared expectation**,
 not a published fact. The census, never the constant, decides: an unregistered slug simply never
-appears in it, and every read reports that as `source_unbound_for_region` in its `gap` string.
+appears in it, and every read reports that as the TYPED `CoverageState` member
+`source_unbound_for_region` (with the census's sentence as the refusal's `detail`), which is what
+the panel, the agent tools and the slider all branch on. It was a substring of an English gap
+sentence until 2026-09-18, while the typed field said `partial_area_coverage` — a positive coverage
+claim standing in for a governed absence (STYLE-REVIEW-W2 B3).
 
 So the module's outcome is unchanged in practice and changed entirely in kind. **An empty answer
 here is still not a coverage finding** -- but it is now a statement the census produced, and it
 names which of five things happened: the lane is unregistered, every rung is withheld by its
 availability index, the lane is registered but has written nothing, no published rung admits a
 bbox this wide, or the transport failed. A transport failure is never rendered as "the warehouse
-published nothing"; it says so in its own words, per `parquet-envelope.ts`.
+published nothing": it carries `upstream_unavailable`, a state of its own, per `parquet-envelope.ts`.
 
 ### Two products, denormalized, because §4a allows one Parquet GET
 
